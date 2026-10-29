@@ -29,6 +29,8 @@ public static class RemoteMethods
     public const string Hello = "hello";
     public const string Ping = "$/ping";
     public const string Shutdown = "server/shutdown";
+    /// <summary>What the server holds for this connection (diagnostics, leak checks).</summary>
+    public const string Status = "server/status";
 
     public const string FsStat = "fs/stat";
     public const string FsReadDir = "fs/readDir";
@@ -108,6 +110,10 @@ public sealed record HelloResult(
     string Home,
     string DataDir,
     IReadOnlyList<string> Capabilities);
+
+public sealed record OpenDocumentInfo(Uri Uri, int Version, int Length);
+
+public sealed record ServerStatus(IReadOnlyList<OpenDocumentInfo> Documents, int Watches, int Searches, int Uploads, int Registrations, long ManagedBytes, int Threads);
 
 // ------------------------------------------------------------------------------------------------------------------- file system
 

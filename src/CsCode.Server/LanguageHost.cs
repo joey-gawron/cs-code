@@ -52,7 +52,7 @@ internal sealed class LanguageHost : IDisposable
         _commandsTimer = new Timer(_ => PublishCommands(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
-    public int OpenDocuments => _open.Count;
+    public IReadOnlyList<OpenDocumentInfo> Documents => _open.Values.Select(d => new OpenDocumentInfo(d.Doc.Uri, d.Doc.Version, d.Doc.Length)).ToArray();
 
     public void Register()
     {

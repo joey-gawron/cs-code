@@ -76,20 +76,36 @@ public sealed class ServerHost : IAsyncDisposable
             return ValueTask.FromResult(Empty.Value);
         });
 
+        _peer.OnRequest<Empty, ServerStatus>(RemoteMethods.Status, (_, _) => ValueTask.FromResult(Status()));
+
         var fs = new FileSystemHandlers(sp.GetRequiredService<IFileSystem>(), sp.GetRequiredService<IoLane>(), () => _clientGzip);
         fs.Register(_peer);
-        _handlers.Add(fs);
+        _handlers.Add(_fsHandlers = fs);
         var watch = new WatchHandlers(sp.GetRequiredService<IFileWatcher>());
         watch.Register(_peer);
-        _handlers.Add(watch);
+        _handlers.Add(_watchHandlers = watch);
         var search = new SearchHandlers(sp.GetRequiredService<IFileSystem>(), sp.GetRequiredService<IFileWatcher>(), sp.GetRequiredService<IoLane>(), sp.GetRequiredService<PlatformOptions>());
         search.Register(_peer);
-        _handlers.Add(search);
+        _handlers.Add(_searchHandlers = search);
         new WorkspaceHandlers(sp.GetRequiredService<WorkspaceService>(), sp.GetRequiredService<ConfigurationService>(), sp.GetRequiredService<IFileSystem>()).Register(_peer);
         var languages = new LanguageHost(sp, _peer);
         languages.Register();
-        _handlers.Add(languages);
+        _handlers.Add(_languages = languages);
     }
+
+    private FileSystemHandlers? _fsHandlers;
+    private WatchHandlers? _watchHandlers;
+    private SearchHandlers? _searchHandlers;
+    private LanguageHost? _languages;
+
+    private ServerStatus Status() => new(
+        _languages?.Documents ?? [],
+        _watchHandlers?.Count ?? 0,
+        _searchHandlers?.ActiveSessions ?? 0,
+        _fsHandlers?.ActiveUploads ?? 0,
+        (_services.GetService<Core.Languages.ILanguageFeatureRegistry>() as MirroringFeatureRegistry)?.Registrations.Count ?? 0,
+        GC.GetTotalMemory(false),
+        System.Diagnostics.Process.GetCurrentProcess().Threads.Count);
 
     private HelloResult Hello(HelloParams p)
     {
