@@ -4,13 +4,14 @@
 Samsung **netcoredbg** (MIT), Node.js/TypeScript through Microsoft's **js-debug** and Rust (and C/C++) through **GDB's native DAP**. No Avalonia, no Newtonsoft, no extension host: the protocol layer is hand-written on `System.Text.Json`,
 and customisation is native and file based (`launch.json`, `tasks.json`, the `cscode.debuggers` setting).
 
-> **Status in one paragraph.** Everything in the brief's MUST list is implemented and covered by **514 passing tests against scripted
+> **Status in one paragraph.** Everything in the brief's MUST list is implemented and covered by **587 passing tests against scripted
 > in-process fake adapters, real child processes (`/bin/sh`, `python3`, `node`) and real TCP/unix sockets**, plus the SHOULD items listed below.
-> The **real-adapter suites (`Category=RealAdapter`, 42 tests) pass**: netcoredbg 3.2.0-1092 (8 tests including the 10-session soak) and
+> The **real-adapter suites (`Category=RealAdapter`, 70 tests) pass**: netcoredbg 3.2.0-1092 (8 tests including the 10-session soak),
 > **js-debug v1.140.0 for Node.js/TypeScript** on Node.js 24.21.0 (34 tests: the whole TypeScript evaluation matrix of
-> [DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md), the private socket, a 10-session soak), on Linux x64, three runs in a row, no adapter,
-> debuggee, task process or socket directory left behind. **Rust through GDB 18.1** (`gdb -i=dap`, no download): `RealGdbRustTests`
-> (31 tests: the Rust evaluation matrix of [DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-gdb), a 1M-line flood, a 10-session soak). Run them with
+> [DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md), the private socket, a 10-session soak) and **Rust through GDB 18.1** (`gdb -i=dap`, no
+> download; 28 tests: the Rust evaluation matrix of [DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-gdb), a 1M-line flood, a
+> 10-session soak), on Linux x64, three runs in a row (2026-10-29, the GDB round), no adapter, debuggee, task process or socket directory left
+> behind. Run them with
 > `tools/fetch-netcoredbg.sh && tools/fetch-js-debug.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter`.
 > See [Real-adapter tests](#real-adapter-tests-netcoredbg).
 
@@ -278,7 +279,7 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 ## Tests (`tests/CsCode.Dap.Tests`, xUnit v3)
 
 ```
-dotnet test tests/CsCode.Dap.Tests --filter "Category!=RealAdapter"     # 514 tests: fakes, real processes/sockets, threading, leaks
+dotnet test tests/CsCode.Dap.Tests --filter "Category!=RealAdapter"     # 587 tests: fakes, real processes/sockets, threading, leaks
 dotnet test tests/CsCode.Dap.Tests --filter Category=RealTools          # SDK build of the sample project only (never starts netcoredbg)
 tools/fetch-netcoredbg.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter   # the real netcoredbg end-to-end suite
 ```
