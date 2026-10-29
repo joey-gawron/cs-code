@@ -432,6 +432,26 @@ public class RealAppContextMenuTests
         await DevScene.SettleAsync(5);
     }
 
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task Text_boxes_take_all_the_standard_clipboard_keys_and_keep_their_Cut_Copy_Paste_menu()
+    {
+        await using var host = await RealAppHost.Create().StartAsync();
+        var running = await host.OpenPaletteAsync(KnownCommands.QuickOpen);
+        var box = host.Window.GetVisualDescendants().OfType<TextBox>().First(t => t.IsFocused || t.IsKeyboardFocusWithin);
+        Assert.NotNull(box.ContextFlyout ?? (object?)box.ContextMenu); // Fluent's Cut / Copy / Paste flyout (the shell's window handler leaves it alone)
+        box.Text = "hello";
+        box.SelectAll();
+        host.Window.KeyPress(Key.Insert, RawInputModifiers.Control, PhysicalKey.Insert, null);
+        await DevScene.SettleAsync(5);
+        Assert.Equal("hello", await host.Window.Clipboard!.TryGetTextAsync());
+        host.Window.KeyPress(Key.Delete, RawInputModifiers.Shift, PhysicalKey.Delete, null);
+        await DevScene.SettleAsync(5);
+        Assert.Equal("", box.Text);
+        host.Window.KeyPress(Key.Insert, RawInputModifiers.Shift, PhysicalKey.Insert, null);
+        Assert.True(await RealAppHost.WaitFor(() => box.Text == "hello"), box.Text);
+        await host.ClosePaletteAsync(running);
+    }
+
     // ---------------------------------------------------------------- screenshots (written to .scratch/screenshots, git-ignored)
 
     [AvaloniaFact(Timeout = 60_000)]
