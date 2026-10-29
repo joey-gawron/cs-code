@@ -189,6 +189,41 @@ public class DependencyInjectionTests : IDisposable
         Assert.True(File.Exists(Path.Combine(_f.Paths.GlobalStorageDir, "state.json")));
     }
 
+    [Fact]
+    public async Task Workspace_settings_created_after_the_folder_was_opened_apply_while_another_module_watches_the_missing_directories()
+    {
+        _f.Services.AddCsCodePlatform(o => o.WatchDebounce = TimeSpan.FromMilliseconds(40));
+        var workspace = _f.Get<IWorkspaceService>();
+        var config = _f.Get<IConfigurationService>();
+        var root = _f.Temp.Combine("project");
+        Directory.CreateDirectory(root);
+        // As in the real app: DAP's launch.json watch watches .cscode/ and .vscode/ of the folder before either exists.
+        using var launchCscode = workspace.Watcher.Watch(FileUri.FromDirectoryPath(Path.Combine(root, ".cscode")), false, null, _ => { });
+        using var launchVscode = workspace.Watcher.Watch(FileUri.FromDirectoryPath(Path.Combine(root, ".vscode")), false, null, _ => { });
+        await workspace.OpenFolderAsync(FileUri.FromDirectoryPath(root), Ct);
+
+        // The directory first; the settings file a moment later (after the folder-level re-arm and reload are long done).
+        Directory.CreateDirectory(Path.Combine(root, ".cscode"));
+        await Task.Delay(500, Ct);
+        File.WriteAllText(Path.Combine(root, ".cscode", "settings.json"), """{ "editor.tabSize": 3 }""");
+        await WaitUntil(() => config.Get<int>(SettingKeys.EditorTabSize) == 3, "the new .cscode/settings.json to apply");
+
+        Directory.CreateDirectory(Path.Combine(root, ".vscode"));
+        await Task.Delay(500, Ct);
+        File.WriteAllText(Path.Combine(root, ".vscode", "settings.json"), """{ "editor.fontSize": 19 }""");
+        await WaitUntil(() => config.Get<int>(SettingKeys.EditorFontSize) == 19, "the new .vscode/settings.json to apply");
+
+        // and later edits keep flowing
+        File.WriteAllText(Path.Combine(root, ".cscode", "settings.json"), """{ "editor.tabSize": 5 }""");
+        await WaitUntil(() => config.Get<int>(SettingKeys.EditorTabSize) == 5, "an edit of .cscode/settings.json to apply");
+    }
+
+    private static async Task WaitUntil(Func<bool> condition, string what)
+    {
+        for (var i = 0; i < 500 && !condition(); i++) await Task.Delay(20, Ct);
+        Assert.True(condition(), "Timed out waiting for " + what);
+    }
+
     // ---- shutdown ----------------------------------------------------------------------------------------------------------------
 
     [Fact]

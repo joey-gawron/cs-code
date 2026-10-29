@@ -524,21 +524,160 @@ public class FileWatcherTests : IDisposable
     }
 
     [Fact]
-    public async Task Watching_a_missing_directory_faults_Ready_but_does_not_throw_from_Watch()
-    {
-        var missing = FileUri.FromDirectoryPath(_f.P("not/there"));
-        var h = (FileWatchHandle)_f.Watcher.Watch(missing, true, null, _ => { });
-        await Assert.ThrowsAsync<DirectoryNotFoundException>(async () => await h.Ready);
-        h.Dispose();
-    }
-
-    [Fact]
     public void Other_schemes_are_rejected()
     {
         Assert.Throws<NotSupportedException>(() => _f.Watcher.Watch(new Uri("ssh://host/x"), true, null, _ => { }));
     }
 
+    // ---- roots that do not exist (yet), or stop existing -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_missing_directory_is_watched_for_its_creation_and_what_appears_in_it_is_reported()
+    {
+        var events = new Collector();
+        var sw = Stopwatch.StartNew();
+        var h = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P("not/there")), true, null, events.Add);
+        Assert.True(sw.ElapsedMilliseconds < 50, $"Watch() blocked the caller for {sw.ElapsedMilliseconds} ms");
+        await h.Ready;                                                       // armed: its creation will be noticed
+        Assert.DoesNotContain(_f.Log.Entries, e => e.Level >= LogLevel.Warning);
+
+        // `mkdir -p` + an immediate write: both happen before any OS watch on the new directories can exist
+        Directory.CreateDirectory(_f.P("not/there/sub"));
+        File.WriteAllText(_f.P("not/there/sub/early.txt"), "x");
+        await events.WaitForKind("early.txt", FileChangeKind.Created, Ct);
+
+        await Task.Delay(150, Ct);
+        File.WriteAllText(_f.P("not/there/later.txt"), "x");               // from then on it is an ordinary watch
+        File.WriteAllText(_f.P("not/sibling.txt"), "x");                   // and nothing outside its root is reported
+        await events.WaitForKind("later.txt", FileChangeKind.Created, Ct);
+        await Task.Delay(150, Ct);
+        Assert.All(events.Snapshot(), c => Assert.StartsWith(_f.P("not/there") + "/", FileUri.ToPath(c.Uri), StringComparison.Ordinal));
+        h.Dispose();
+    }
+
+    [Fact]
+    public async Task Every_subscriber_of_a_directory_created_after_the_first_watch_gets_its_events()
+    {
+        // Two modules watch the same directory before it exists (DAP's launch.json watch and the settings service both watch .cscode/):
+        // the later one must not join a dead watch and the earlier one must not stay deaf.
+        var dir = FileUri.FromDirectoryPath(_f.P(".cscode"));
+        var first = new Collector();
+        var h1 = (FileWatchHandle)_f.Watcher.Watch(dir, false, [], first.Add);
+        await h1.Ready;
+        Directory.CreateDirectory(_f.P(".cscode"));
+        await Task.Delay(200, Ct);
+        var second = new Collector();
+        var h2 = (FileWatchHandle)_f.Watcher.Watch(dir, false, [], second.Add);
+        await h2.Ready;
+
+        File.WriteAllText(_f.P(".cscode/settings.json"), "{}");
+        await first.WaitForKind("settings.json", FileChangeKind.Created, Ct);
+        await second.WaitForKind("settings.json", FileChangeKind.Created, Ct);
+        h1.Dispose();
+        h2.Dispose();
+    }
+
+    [Fact]
+    public async Task A_watched_directory_that_is_deleted_and_created_again_keeps_reporting()
+    {
+        Directory.CreateDirectory(_f.P("cfg"));
+        File.WriteAllText(_f.P("cfg/a.json"), "x");
+        var events = new Collector();
+        var h = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P("cfg")), false, [], events.Add);
+        await h.Ready;
+
+        Directory.Delete(_f.P("cfg"), recursive: true);                    // the OS watch dies with its directory, silently on Linux
+        await events.WaitForKind("a.json", FileChangeKind.Deleted, Ct);
+        await Task.Delay(200, Ct);
+        Directory.CreateDirectory(_f.P("cfg"));
+        File.WriteAllText(_f.P("cfg/b.json"), "x");
+        await events.WaitForKind("b.json", FileChangeKind.Created, Ct);
+        await Task.Delay(150, Ct);
+        File.WriteAllText(_f.P("cfg/c.json"), "x");
+        await events.WaitForKind("c.json", FileChangeKind.Created, Ct);
+        h.Dispose();
+    }
+
+    [Fact]
+    public async Task A_directory_replaced_in_an_instant_under_a_watched_parent_is_watched_again()
+    {
+        // `git checkout` / `rm -rf .vscode && mkdir .vscode`: too quick for any later existence check to see a gap. The parent's watch
+        // (the settings service watches the workspace folder) reports the re-creation, which the directory's own dead watch cannot.
+        Directory.CreateDirectory(_f.P("cfg"));
+        File.WriteAllText(_f.P("cfg/a.json"), "x");
+        var (_, parent) = _f.Start(recursive: false);
+        var events = new Collector();
+        var h = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P("cfg")), false, [], events.Add);
+        await Task.WhenAll(parent.Ready, h.Ready);
+
+        Directory.Delete(_f.P("cfg"), recursive: true);
+        Directory.CreateDirectory(_f.P("cfg"));
+        File.WriteAllText(_f.P("cfg/b.json"), "x");
+        await events.WaitForKind("b.json", FileChangeKind.Created, Ct);
+        await Task.Delay(150, Ct);
+        File.WriteAllText(_f.P("cfg/c.json"), "x");
+        await events.WaitForKind("c.json", FileChangeKind.Created, Ct);
+        h.Dispose();
+        parent.Dispose();
+    }
+
+    [Fact]
+    public async Task Rewatching_a_directory_that_was_moved_away_watches_whatever_is_at_that_path_now()
+    {
+        Directory.CreateDirectory(_f.P("cfg"));
+        var first = new Collector();
+        var h1 = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P("cfg")), false, [], first.Add);
+        await h1.Ready;
+        Directory.Move(_f.P("cfg"), _f.P("cfg.bak"));                       // nothing reaches a watch on the directory itself
+        var second = new Collector();                                       // a module re-watching after its parent watch reported the move
+        var h2 = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P("cfg")), false, [], second.Add);
+        await h2.Ready;
+
+        Directory.CreateDirectory(_f.P("cfg"));
+        File.WriteAllText(_f.P("cfg/new.json"), "x");
+        File.WriteAllText(_f.P("cfg.bak/moved.json"), "x");
+        await second.WaitForKind("new.json", FileChangeKind.Created, Ct);
+        await first.WaitForKind("new.json", FileChangeKind.Created, Ct);
+        await Task.Delay(200, Ct);
+        Assert.DoesNotContain(first.Snapshot(), c => Collector.Name(c) == "moved.json"); // the moved directory is not reported under the old path
+        h1.Dispose();
+        h2.Dispose();
+    }
+
     // ---- handle accounting -------------------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Watches_waiting_for_their_directory_share_the_parents_os_watch_and_release_it_on_dispose()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fd");
+        var baseline = WatchFixture.InotifyFds();
+        var (_, hr) = _f.Start(recursive: false);                           // e.g. the settings service watching the workspace folder
+        var a = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P(".cscode")), false, null, _ => { });
+        var b = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P(".vscode")), false, null, _ => { });
+        await Task.WhenAll(hr.Ready, a.Ready, b.Ready);
+        Assert.Equal(baseline + 1, WatchFixture.InotifyFds());             // both wait through the folder's existing OS watch
+        Assert.Equal(1, _f.Watcher.ActiveBackends);
+
+        a.Dispose();
+        b.Dispose();
+        hr.Dispose();
+        Assert.True(await WatchFixture.SettledInotifyFds(baseline, Ct) <= baseline, "inotify handle leaked");
+        Assert.Equal(0, _f.Watcher.ActiveBackends);
+    }
+
+    [Fact]
+    public void A_disposed_watch_on_a_missing_directory_and_its_callback_are_not_retained()
+    {
+        LeakAssert.NotRetained(() =>
+        {
+            var target = new object();
+            var h = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P("missing/dir")), true, null, _ => GC.KeepAlive(target));
+            h.Ready.GetAwaiter().GetResult();
+            h.Dispose();
+            return [target, h];
+        });
+        Assert.Equal(0, _f.Watcher.ActiveBackends);
+    }
 
     [Fact]
     public async Task Disposing_the_subscription_stops_callbacks_and_releases_the_inotify_handle()

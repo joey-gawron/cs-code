@@ -109,7 +109,7 @@ Layers, lowest to highest: **registered defaults → user `settings.json` → wo
   (An *unregistered* object setting is expanded by dots — register such settings via `RegisterProperties`.)
 * **Reads**: `Get<T>(key, default)` / `GetRaw(key)` / section reads (`GetRaw("editor")` returns the merged object). A registered default beats the caller's fallback; a value of the
   wrong type yields the fallback (never throws). Primitive reads allocate nothing after the first read of a key.
-* **Live reload**: the settings directories are watched; a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
+* **Live reload**: the settings directories are watched — the workspace's `.cscode/` and `.vscode/` also when they are created after the folder was opened; a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
   setting reports itself). Rewriting a file with the same values (different comments/order) fires nothing, nor does the echo of our own write.
 * **`UpdateAsync` edits the file in place** with a small JSONC-aware minimal-edit writer: only the value span is replaced; a new key is inserted before the closing brace using the file's
   indentation (tab/spaces), EOL (LF/CRLF), comma style (a trailing-comma file stays one) and single-line/multi-line shape; flat dotted keys, nested objects and mixes are found; `null` removes the key
@@ -192,6 +192,14 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
 
 `FileWatcher`: one `FileSystemWatcher` per (root, recursive), **shared** by every subscription on that root (each OS watcher costs an inotify instance — the default limit is 128 per user) and disposed with the last one.
 `Watch()` and disposal return immediately (the tree walk that arms inotify happens on the lane; `FileWatchHandle.Ready` completes when armed — events before that are not reported).
+* **Roots that do not exist yet** (`.cscode/` / `.vscode/` of a folder opened without them — the settings service and DAP's `launch.json` watch both watch them) are not an error:
+  the watch waits through a non-recursive watch on the nearest existing ancestor (shared like any other, so usually the folder's own — no extra inotify instance), arms when the directory appears
+  and reports what is already inside as created; `Ready` completes once the wait is armed. Before this, the watch failed (`Cannot watch '…': it is not a directory`) and stayed in the shared
+  table dead, so every later subscriber of that directory — the settings service re-watching when `.cscode` appeared — joined a watch that never fired: settings created after opening a folder
+  were ignored until a restart.
+* **Roots that go away**: an OS watch dies silently with its directory (no error on Linux; one on a moved directory keeps reporting it under the old path). A root is re-checked when a watched parent
+  reports it deleted, renamed or (re-)created, after deletions below it, and when another subscriber joins it: a deleted root goes back to waiting, a re-created one is re-armed on the new directory
+  (announcing its content). Not detected: a root replaced — or an empty one removed — while nothing watches its parent and nobody re-watches it.
 * Excludes (`files.watcherExclude` unless an explicit list is passed; `[]` = none) are matched on root-relative paths and drop events before they cost memory. *The OS still watches excluded directories — `FileSystemWatcher` cannot skip them.*
 * Debounce 75 ms after the last event, never later than 500 ms after the burst began; batches ≤ 1000 changes, delivered on lane threads, never concurrently per subscription; a throwing callback keeps receiving.
 * Coalescing: Created+Changed → Created · Created+Deleted → nothing · Changed+Deleted → Deleted · Deleted+Created → Changed · Renamed → Deleted+Created; events below a deleted directory are dropped;
@@ -266,7 +274,9 @@ dotnet test tests/CsCode.Platform.Tests -c Release   # also asserts the strict 5
 (On a Nix-provided `dotnet` for the Avalonia projects, `source tools/nix-dev-env.sh` first; the Platform tests need none of its library paths.)
 Suites: when-clause (~200 cases) and context keys · JSONC parser/editor golden files + a random-edit model test · configuration (layering, reload, update, echo suppression, malformed recovery) ·
 keybindings (chords, timeouts via a manual clock, precedence/negatives/platforms, presets, user file, contributions) · local file system (atomicity stress, fault injection, symlinks, trash, cancellation via chunk hooks) ·
-file watcher (real `FileSystemWatcher` + inotify fd accounting, coalescing, excludes, polling fallback by fault injection) · workspace/gitignore/walker · fuzzy matcher (oracle + benchmark) · state, logging, editorconfig, language scopes · DI container.
+file watcher (real `FileSystemWatcher` + inotify fd accounting, coalescing, excludes, polling fallback by fault injection, roots created/deleted/replaced/moved after watching) · workspace/gitignore/walker · fuzzy matcher (oracle + benchmark) · state, logging, editorconfig, language scopes · DI container (incl. workspace settings
+created after opening a folder while another module watches the missing directories). The same scenario through the real app composition (settings + DAP `launch.json`) is
+`tests/CsCode.App.Tests/WorkspaceSettingsWatchTests.cs`.
 Conventions: a test needing an unavailable feature **skips with a reason** (`Assert.SkipWhen/SkipUnless`: Windows-only, root, non-Linux fd counting); no test touches `~/.cscode`, `~/.config/cscode`, `~/.vscode*` or `~/.ssh`, mutates the process environment,
 or kills processes by name — every test uses a unique temp directory and `AppPaths(getEnv: …)`. The watcher and perf tests run in non-parallel collections because they count process-wide handles / measure time.
 Every lifecycle-bearing type has a `LeakAssert.NotRetained` test; every API that does background work has a "does not block the caller" test against a saturated `IoLane`; the hot paths have 1M-call allocation tests.

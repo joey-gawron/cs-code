@@ -23,7 +23,10 @@ public interface IFileSystem
     ValueTask CopyAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default);
 }
 
-/// <summary>Recursive, debounced, exclude-aware watcher (honours files.watcherExclude). Disposing stops OS watches.</summary>
+/// <summary>
+/// Recursive, debounced, exclude-aware watcher (honours files.watcherExclude). Disposing stops OS watches. A root that does not exist yet,
+/// or is deleted later, is not an error: the watch waits for the directory to (re)appear and then reports what is inside it as created.
+/// </summary>
 public interface IFileWatcher
 {
     IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges);
