@@ -211,7 +211,10 @@ python3 tools/lspgen/lspgen.py              # regenerate the protocol types
 ```
 Real-server tests (`RealTypeScriptServerTests`, and `RealZlsAndNilServerTests` for the zls and nil binaries found on PATH or in `cscode.lsp.searchDirs`:
 initialize, diagnostics, hover, formatting, below-normal priority, shutdown with no process left, all with a private HOME/XDG so the user's configuration
-and caches are never touched) and the hostile suite SKIP with an explicit reason when `node`/the tools are missing. `BuiltinServerTests` cover every built-in
+and caches are never touched) and the hostile suite SKIP with an explicit reason when `node`/the tools are missing. `RealStoreServerTests` runs ten more
+built-in definitions against servers found in the Nix store (marksman, docker-langserver, sqls, terraform-ls, svelteserver, graphql-lsp, taplo, and the
+alternatives nixd, protols and elp), reached only through `cscode.lsp.searchDirs`: initialize, launch line, priority, diagnostics where the server checks
+syntax on open, shutdown, no process left; each skips when its package is not in the store. `BuiltinServerTests` cover every built-in
 definition without running it (launch line, alternatives, search directories, install hints, the not-found path through the real process factory, root
 detection per server layout, initialization options). The fake-server tests use an
 independent in-proc peer (`Harness/FakeLspServer`: own framing over `System.IO.Pipelines`, document mirror applying real LSP change semantics).

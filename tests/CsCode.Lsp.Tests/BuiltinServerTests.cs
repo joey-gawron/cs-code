@@ -14,7 +14,7 @@ namespace CsCode.Lsp.Tests;
 /// B3 (themes-languages-treesitter brief): the built-in server definitions added for Java, Kotlin, Scala, Zig, TOML, Markdown, Nix, Terraform,
 /// Ruby, PHP, Haskell, Elixir, Erlang, OCaml, Swift, Dart, Dockerfile, CMake, SQL, Protobuf, GraphQL, Vue, Svelte and Clojure. Configuration
 /// tests only (resolution, alternatives, install hints, root detection, options): servers installed on this machine are smoke-tested for real
-/// in <see cref="RealZlsAndNilServerTests"/>.
+/// in <see cref="RealZlsAndNilServerTests"/>, servers the Nix store holds in <see cref="RealStoreServerTests"/>.
 /// </summary>
 public class BuiltinServerTests
 {
@@ -307,6 +307,8 @@ public class BuiltinServerTests
         { "sourcekit-lsp", ["pkg/Package.swift"], "pkg/Sources/App/main.swift", "pkg" },
         { "clojure-lsp", ["svc/deps.edn"], "svc/src/core.clj", "svc" },
         { "graphql", ["api/.graphqlrc.yml"], "api/schema.graphql", "api" },
+        { "marksman", ["notes/.marksman.toml"], "notes/a/b.md", "notes" },
+        { "marksman", ["wiki/.git/HEAD"], "wiki/docs/a.md", "wiki" },   // a git repository (a directory marker)
         { "svelte", ["web/svelte.config.js"], "web/src/App.svelte", "web" },
         { "vue", ["web/package.json"], "web/src/App.vue", "web" },
         { "erlang", ["rebar.config", "apps/a/rebar.config"], "apps/a/src/a.erl", "" },

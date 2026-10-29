@@ -218,7 +218,9 @@ public static class BuiltinLanguageServers
             "none (graphql-lsp does not format)"),
 
         // ---- documents -----------------------------------------------------------------------------------------------------------------------
-        S(Def("marksman", "Markdown (Marksman)", ["markdown"], "marksman", ["server"], [".marksman.toml"]),
+        // Marksman indexes a folder only when it holds .marksman.toml or .git ("workspace folder is bogus" otherwise, and it works file by
+        // file without link diagnostics), so a git repository is a root too.
+        S(Def("marksman", "Markdown (Marksman)", ["markdown"], "marksman", ["server"], [".marksman.toml", ".git"]),
             new("Download marksman-linux-x64 (or -arm64) from https://github.com/artempyanykh/marksman/releases, rename it to marksman, chmod +x it and put it on PATH "
                     + "(or: nix profile install nixpkgs#marksman)",
                 "Install it with: brew install marksman",
