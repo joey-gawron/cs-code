@@ -1,0 +1,142 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:icons="using:CsCode.Ui.Icons">
+  <!--
+    Shared look of the debug tool windows: VS2022 flat, dense lists. Colours come only from the vsc:* workbench brushes the shell publishes
+    (never hard-coded), so a theme switch repaints these windows without re-templating them.
+  -->
+
+  <Style Selector="ListBox.debug">
+    <Setter Property="Background" Value="{DynamicResource vsc:panel.background}" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:foreground}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="FontFamily" Value="{DynamicResource ui:FontFamily}" />
+    <Setter Property="FontSize" Value="{DynamicResource ui:FontSize}" />
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" />
+  </Style>
+  <Style Selector="ListBox.debug > ListBoxItem">
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="Margin" Value="0" />
+    <Setter Property="MinHeight" Value="20" />
+    <Setter Property="CornerRadius" Value="0" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+  </Style>
+  <Style Selector="ListBox.debug > ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource vsc:list.hoverBackground}" />
+  </Style>
+  <!-- Selection: accent blue while the list has focus, grey when it does not (as in VS). -->
+  <Style Selector="ListBox.debug:focus-within > ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource vsc:list.activeSelectionBackground}" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:list.activeSelectionForeground}" />
+  </Style>
+  <Style Selector="ListBox.debug:not(:focus-within) > ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource vsc:list.inactiveSelectionBackground}" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:list.inactiveSelectionForeground}" />
+  </Style>
+
+  <!-- The Icon control draws its glyph at the top-left of whatever rectangle it is given, so it is always centred in its slot. -->
+  <Style Selector="icons|Icon">
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="TextBlock.cell">
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    <Setter Property="Padding" Value="4,0" />
+  </Style>
+  <Style Selector="TextBlock.dim">
+    <Setter Property="Opacity" Value="0.65" />
+  </Style>
+  <Style Selector="TextBlock.code">
+    <Setter Property="FontFamily" Value="{DynamicResource ui:CodeFontFamily}" />
+  </Style>
+  <Style Selector="TextBlock.changed">
+    <Setter Property="Foreground" Value="{DynamicResource vsc:errorForeground}" />
+  </Style>
+  <Style Selector="TextBlock.error">
+    <Setter Property="Foreground" Value="{DynamicResource vsc:errorForeground}" />
+  </Style>
+  <Style Selector="TextBlock.stale">
+    <Setter Property="Opacity" Value="0.55" />
+  </Style>
+
+  <!-- Column header of the list-style tool windows. -->
+  <Style Selector="Border.header">
+    <Setter Property="Background" Value="{DynamicResource vsc:sideBarSectionHeader.background}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource vsc:panel.border}" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
+    <Setter Property="Height" Value="22" />
+  </Style>
+  <Style Selector="Border.header TextBlock">
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="Padding" Value="6,0" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:sideBarSectionHeader.foreground}" />
+  </Style>
+  <Style Selector="GridSplitter.colsplit">
+    <Setter Property="Width" Value="1" />
+    <Setter Property="Background" Value="{DynamicResource vsc:panel.border}" />
+    <Setter Property="ResizeDirection" Value="Columns" />
+    <Setter Property="MinWidth" Value="1" />
+    <Setter Property="Cursor" Value="SizeWestEast" />
+  </Style>
+
+  <!-- Inline editors (value, expression, condition): a flat 1px box with the accent border, like VS. -->
+  <Style Selector="TextBox.inline">
+    <Setter Property="MinHeight" Value="18" />
+    <Setter Property="MinWidth" Value="40" />
+    <Setter Property="Padding" Value="3,0" />
+    <Setter Property="Margin" Value="1,1" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="0" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="FontFamily" Value="{DynamicResource ui:FontFamily}" />
+    <Setter Property="FontSize" Value="{DynamicResource ui:FontSize}" />
+  </Style>
+
+  <!-- Flat toolbar buttons (icon only). -->
+  <Style Selector="Button.tool">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="4" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="CornerRadius" Value="2" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:icon.foreground}" />
+  </Style>
+  <Style Selector="Button.tool:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource vsc:toolbar.hoverBackground}" />
+  </Style>
+  <Style Selector="Button.tool:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource vsc:toolbar.activeBackground}" />
+  </Style>
+  <Style Selector="Button.tool:disabled">
+    <Setter Property="Opacity" Value="0.4" />
+  </Style>
+  <Style Selector="ToggleButton.tool">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="4" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="CornerRadius" Value="2" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:icon.foreground}" />
+  </Style>
+  <Style Selector="ToggleButton.tool:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource vsc:toolbar.hoverBackground}" />
+  </Style>
+  <Style Selector="ToggleButton.tool:checked /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource vsc:toolbar.activeBackground}" />
+  </Style>
+
+  <Style Selector="TextBlock.status">
+    <Setter Property="Foreground" Value="{DynamicResource vsc:descriptionForeground}" />
+    <Setter Property="Margin" Value="12,10" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+</Styles>

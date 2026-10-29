@@ -92,6 +92,15 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     public bool HasError => _errorText is not null;
     private string? _errorText;
 
+    /// <summary>Delete key / "Delete Watch" on a row (the Watch window wires it; Locals and Autos leave it unset).</summary>
+    public Action<VariableNodeViewModel>? DeleteRequested { get; set; }
+
+    /// <summary>Alt+Up/Down and "Move Up/Down" on a row: moves it by the given number of positions (Watch only).</summary>
+    public Action<VariableNodeViewModel, int>? MoveRequested { get; set; }
+
+    /// <summary>"Delete All Watches" (Watch only).</summary>
+    public Action? DeleteAllRequested { get; set; }
+
     /// <summary>Called when the user commits an expression edit on a Watch/NewWatch row.</summary>
     public Func<VariableNodeViewModel, string, Task>? ExpressionCommitted { get; set; }
 
@@ -633,5 +642,8 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         _current.Clear();
         RefreshRequested = null;
         ExpressionCommitted = null;
+        DeleteRequested = null;
+        MoveRequested = null;
+        DeleteAllRequested = null;
     }
 }

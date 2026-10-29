@@ -1,6 +1,9 @@
+using System.Windows.Input;
 using Avalonia;
+using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CsCode.Core.Debugging;
+using CsCode.Panels.Debug.Infrastructure;
 
 namespace CsCode.Panels.Debug.Variables;
 
@@ -95,7 +98,7 @@ public sealed class VariableNodeViewModel : ObservableObject
     public bool IsExpanded { get => _isExpanded; internal set { if (SetProperty(ref _isExpanded, value)) OnPropertyChanged(nameof(ChevronKind)); } }
 
     /// <summary>Codicon name of the expander glyph (empty = no expander).</summary>
-    public string? ChevronKind => HasChildren ? (_isExpanded ? "chevron-down" : "chevron-right") : null;
+    public string? ChevronKind => HasChildren ? (_isExpanded ? "triangle-down" : "triangle-right") : null;
 
     public bool IsLoading { get => _isLoading; internal set => SetProperty(ref _isLoading, value); }
 
@@ -119,6 +122,29 @@ public sealed class VariableNodeViewModel : ObservableObject
     public string? EditError { get => _editError; internal set { if (SetProperty(ref _editError, value)) OnPropertyChanged(nameof(HasEditError)); } }
     public bool HasEditError => _editError is not null;
     internal EditField EditFieldKind => _editField;
+
+    /// <summary>Pager and message rows use the whole row width for their text.</summary>
+    public int NameSpan => Kind is VariableRowKind.More or VariableRowKind.Message ? 3 : 1;
+    public FontStyle NameStyle => Kind == VariableRowKind.More ? FontStyle.Italic : FontStyle.Normal;
+    public bool ShowColumns => Kind is not (VariableRowKind.More or VariableRowKind.Message);
+
+    private UiCommand? _toggle, _commit, _cancel;
+
+    /// <summary>The expander glyph's command: expands (loading children lazily) or collapses.</summary>
+    public ICommand ToggleCommand => _toggle ??= new UiCommand(() => Tree.ToggleAsync(this));
+    /// <summary>Enter in an inline editor.</summary>
+    public ICommand CommitEditCommand => _commit ??= new UiCommand(() => Tree.CommitEditAsync(this));
+    /// <summary>Escape in an inline editor.</summary>
+    public ICommand CancelEditCommand => _cancel ??= new UiCommand(() => Tree.CancelEdit(this));
+
+    /// <summary>The inline editor lost focus: an expression edit is kept (like VS), a value edit is abandoned.</summary>
+    public Task EditorLostFocusAsync()
+    {
+        if (!IsEditing) return Task.CompletedTask;
+        if (IsEditingExpression) return Tree.CommitEditAsync(this);
+        Tree.CancelEdit(this);
+        return Task.CompletedTask;
+    }
 
     public bool IsMore => Kind == VariableRowKind.More;
     public bool IsNewWatch => Kind == VariableRowKind.NewWatch;

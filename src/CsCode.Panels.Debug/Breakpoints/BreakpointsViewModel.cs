@@ -57,6 +57,7 @@ public sealed class BreakpointRow : ObservableObject
     /// <summary>1-based line the adapter bound the breakpoint to when it moved it.</summary>
     public int? MovedToLine { get; internal init; }
 
+    public bool IsFailed => Verification == BreakpointVerification.Failed;
     public bool IsHeader => Kind == BreakpointRowKind.Header;
     public bool IsBreakpoint => Kind is BreakpointRowKind.Source or BreakpointRowKind.Function;
     public bool HasCheckbox => Kind != BreakpointRowKind.Header;

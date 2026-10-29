@@ -1,0 +1,108 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:CsCode.Panels.Debug.Console"
+             xmlns:icons="using:CsCode.Ui.Icons"
+             x:Class="CsCode.Panels.Debug.Views.ConsoleView"
+             x:DataType="vm:DebugConsoleViewModel">
+  <UserControl.Styles>
+    <StyleInclude Source="avares://CsCode.Panels.Debug/Views/DebugPanelStyles.axaml" />
+    <Style Selector="TextBlock.line">
+      <Setter Property="FontFamily" Value="{DynamicResource ui:CodeFontFamily}" />
+      <Setter Property="Padding" Value="8,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="TextBlock.line.err">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:errorForeground}" />
+    </Style>
+    <Style Selector="TextBlock.line.dbg">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:descriptionForeground}" />
+    </Style>
+    <Style Selector="TextBlock.line.imp">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:editorWarning.foreground}" />
+    </Style>
+    <Style Selector="TextBlock.line.inp">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:textLink.foreground}" />
+    </Style>
+    <Style Selector="TextBlock.line.info">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:descriptionForeground}" />
+      <Setter Property="FontStyle" Value="Italic" />
+    </Style>
+    <Style Selector="TextBox.repl">
+      <Setter Property="Background" Value="{DynamicResource vsc:input.background}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="Padding" Value="4,3" />
+      <Setter Property="MinHeight" Value="24" />
+      <Setter Property="MaxHeight" Value="110" />
+      <Setter Property="FontFamily" Value="{DynamicResource ui:CodeFontFamily}" />
+      <Setter Property="FontSize" Value="{DynamicResource ui:FontSize}" />
+      <Setter Property="AcceptsReturn" Value="True" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="TextBox.repl:focus /template/ Border#PART_BorderElement">
+      <Setter Property="Background" Value="{DynamicResource vsc:input.background}" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+    <Style Selector="TextBox.filter">
+      <Setter Property="MinHeight" Value="20" />
+      <Setter Property="Height" Value="22" />
+      <Setter Property="MinWidth" Value="120" />
+      <Setter Property="Padding" Value="4,0" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto" Background="{DynamicResource vsc:panel.background}">
+    <Border Grid.Row="0" Background="{DynamicResource vsc:sideBarSectionHeader.background}" BorderBrush="{DynamicResource vsc:panel.border}" BorderThickness="0,0,0,1" Padding="4,2">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="2">
+          <Button Classes="tool" Command="{Binding ClearCommand}" ToolTip.Tip="Clear Console" AutomationProperties.Name="Clear Console">
+            <icons:Icon Kind="clear-all" Size="14" />
+          </Button>
+          <ToggleButton Classes="tool" IsChecked="{Binding ScrollLock, Mode=TwoWay}" ToolTip.Tip="Lock Scrolling" AutomationProperties.Name="Lock Scrolling">
+            <icons:Icon Kind="lock" Size="14" />
+          </ToggleButton>
+        </StackPanel>
+        <TextBox Grid.Column="2" Classes="filter" Text="{Binding Filter, Mode=TwoWay}" PlaceholderText="Filter output" AutomationProperties.Name="Filter output" />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1">
+      <ListBox x:Name="Lines" Classes="debug" ItemsSource="{Binding Lines}" SelectionMode="Multiple" AutomationProperties.Name="Debug Console output">
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:ConsoleLine">
+            <TextBlock Classes="line" Text="{Binding Text}" Classes.err="{Binding IsError}" Classes.dbg="{Binding IsDebuggerMessage}"
+                       Classes.imp="{Binding IsImportant}" Classes.inp="{Binding IsInput}" Classes.info="{Binding IsInfo}" />
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+
+      <!-- Completions for the REPL input, floating above it. -->
+      <Border x:Name="CompletionPopup" IsVisible="{Binding CompletionsOpen}" HorizontalAlignment="Left" VerticalAlignment="Bottom" MaxHeight="170" MinWidth="220"
+              Background="{DynamicResource vsc:editorSuggestWidget.background}" BorderBrush="{DynamicResource vsc:editorSuggestWidget.border}" BorderThickness="1" Margin="22,0,0,0">
+        <ListBox x:Name="Completions" Classes="debug" ItemsSource="{Binding Completions}" SelectedItem="{Binding SelectedCompletion, Mode=TwoWay}"
+                 Background="{DynamicResource vsc:editorSuggestWidget.background}" AutomationProperties.Name="Completions">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:CompletionEntry">
+              <Grid ColumnDefinitions="*,Auto" MinHeight="20">
+                <TextBlock Classes="cell code" Text="{Binding Label}" />
+                <TextBlock Grid.Column="1" Classes="cell dim" Text="{Binding Type}" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="2" Background="{DynamicResource vsc:input.background}" BorderBrush="{DynamicResource vsc:panel.border}" BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="22,*">
+        <icons:Icon Kind="chevron-right" Size="14" VerticalAlignment="Top" Margin="4,6,0,0" Foreground="{DynamicResource vsc:textLink.foreground}" />
+        <TextBox x:Name="Input" Grid.Column="1" Classes="repl" Text="{Binding Input, Mode=TwoWay}"
+                 PlaceholderText="Evaluate an expression (Enter runs it, Shift+Enter adds a line)" AutomationProperties.Name="Debug Console input" />
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

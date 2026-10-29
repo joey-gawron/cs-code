@@ -30,6 +30,9 @@ public sealed class WatchViewModel : ObservableObject, IDisposable
         Tree = new VariablesTreeViewModel(services);
         Tree.ExpressionCommitted = OnExpressionCommitted;
         Tree.RefreshRequested = RefreshAll;
+        Tree.DeleteRequested = Remove;
+        Tree.MoveRequested = Move;
+        Tree.DeleteAllRequested = RemoveAll;
         _newRow = Tree.NewNode(VariableRowKind.NewWatch, null, "", "watch:", Tree.Generation);
         services.Watches.EnsureLoaded();
         SyncRows();

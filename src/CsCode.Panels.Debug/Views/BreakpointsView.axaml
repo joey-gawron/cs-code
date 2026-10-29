@@ -1,0 +1,94 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:CsCode.Panels.Debug.Breakpoints"
+             xmlns:icons="using:CsCode.Ui.Icons"
+             x:Class="CsCode.Panels.Debug.Views.BreakpointsView"
+             x:DataType="vm:BreakpointsViewModel">
+  <UserControl.Styles>
+    <StyleInclude Source="avares://CsCode.Panels.Debug/Views/DebugPanelStyles.axaml" />
+    <Style Selector="icons|Icon.bp">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:debugIcon.breakpointForeground}" />
+    </Style>
+    <Style Selector="CheckBox.bp">
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="6,0,2,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.badge">
+      <Setter Property="Background" Value="{DynamicResource vsc:badge.background}" />
+      <Setter Property="CornerRadius" Value="2" />
+      <Setter Property="Padding" Value="5,0" />
+      <Setter Property="Margin" Value="4,2,0,2" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.badge > TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:badge.foreground}" />
+      <Setter Property="FontSize" Value="{DynamicResource ui:FontSizeSmall}" />
+    </Style>
+    <Style Selector="TextBlock.note">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:editorWarning.foreground}" />
+    </Style>
+    <Style Selector="TextBlock.note.fail">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:errorForeground}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*" Background="{DynamicResource vsc:panel.background}">
+    <Border Grid.Row="0" Background="{DynamicResource vsc:sideBarSectionHeader.background}" BorderBrush="{DynamicResource vsc:panel.border}" BorderThickness="0,0,0,1" Padding="4,2">
+      <StackPanel Orientation="Horizontal" Spacing="2">
+        <Button Classes="tool" Command="{Binding AddFunctionCommand}" ToolTip.Tip="New Function Breakpoint…" AutomationProperties.Name="New Function Breakpoint">
+          <icons:Icon Kind="add" Size="14" />
+        </Button>
+        <Button Classes="tool" Command="{Binding DeleteSelectedCommand}" ToolTip.Tip="Delete the Selected Breakpoint (Del)" AutomationProperties.Name="Delete Breakpoint">
+          <icons:Icon Kind="trash" Size="14" />
+        </Button>
+        <Button Classes="tool" Command="{Binding DeleteAllCommand}" ToolTip.Tip="Delete All Breakpoints" AutomationProperties.Name="Delete All Breakpoints">
+          <icons:Icon Kind="clear-all" Size="14" />
+        </Button>
+        <Border Width="1" Margin="4,3" Background="{DynamicResource vsc:panel.border}" />
+        <Button Classes="tool" Command="{Binding EnableAllCommand}" ToolTip.Tip="Enable All Breakpoints" AutomationProperties.Name="Enable All Breakpoints">
+          <icons:Icon Kind="check-all" Size="14" />
+        </Button>
+        <Button Classes="tool" Command="{Binding DisableAllCommand}" ToolTip.Tip="Disable All Breakpoints" AutomationProperties.Name="Disable All Breakpoints">
+          <icons:Icon Kind="circle-slash" Size="14" />
+        </Button>
+      </StackPanel>
+    </Border>
+
+    <ListBox x:Name="Rows" Grid.Row="1" Classes="debug" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+             SelectionMode="Single" AutomationProperties.Name="Breakpoints">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="vm:BreakpointRow">
+          <Panel ToolTip.Tip="{Binding Tooltip}">
+            <!-- Section header. -->
+            <Border IsVisible="{Binding IsHeader}" Background="{DynamicResource vsc:sideBarSectionHeader.background}" Padding="6,2">
+              <TextBlock Text="{Binding Label}" FontWeight="SemiBold" Foreground="{DynamicResource vsc:sideBarSectionHeader.foreground}" />
+            </Border>
+            <!-- Breakpoint / exception filter. -->
+            <Grid IsVisible="{Binding !IsHeader}" ColumnDefinitions="Auto,18,*,Auto" MinHeight="20">
+              <CheckBox Grid.Column="0" Classes="bp" IsChecked="{Binding IsEnabled, Mode=TwoWay}" IsEnabled="{Binding CanToggle}" />
+              <icons:Icon Grid.Column="1" Classes="bp" Kind="{Binding GlyphKind}" Size="14" VerticalAlignment="Center" />
+              <Grid Grid.Column="2" ColumnDefinitions="Auto,*" ClipToBounds="True">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Classes="cell" Text="{Binding Label}" />
+                  <TextBlock Classes="cell note" Classes.fail="{Binding IsFailed}" Text="{Binding Note}" IsVisible="{Binding HasNote}" />
+                </StackPanel>
+                <TextBlock Grid.Column="1" Classes="cell dim" Text="{Binding Detail}" />
+              </Grid>
+              <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="0,0,4,0">
+                <Border Classes="badge" IsVisible="{Binding HasCondition}"><TextBlock Text="{Binding ConditionBadge}" /></Border>
+                <Border Classes="badge" IsVisible="{Binding HasHitCondition}"><TextBlock Text="{Binding HitBadge}" /></Border>
+                <Border Classes="badge" IsVisible="{Binding HasLogMessage}"><TextBlock Text="{Binding LogBadge}" /></Border>
+              </StackPanel>
+            </Grid>
+          </Panel>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+
+    <TextBlock Grid.Row="1" Classes="status" Text="No breakpoints. Click in the editor margin or press F9 to set one." IsVisible="{Binding IsEmpty}"
+               VerticalAlignment="Top" HorizontalAlignment="Left" IsHitTestVisible="False" />
+  </Grid>
+</UserControl>

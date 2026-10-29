@@ -48,6 +48,12 @@ public sealed class ConsoleLine
     public string Location => Source is { } s && Line is { } l ? $"{(!string.IsNullOrEmpty(s.Name) ? s.Name : System.IO.Path.GetFileName(s.Path ?? ""))}:{l + 1}" : "";
     public bool HasLocation => Source is not null && Line is not null;
 
+    public bool IsError => Kind is ConsoleLineKind.Error or ConsoleLineKind.ResultError;
+    public bool IsDebuggerMessage => Kind == ConsoleLineKind.Console;
+    public bool IsImportant => Kind == ConsoleLineKind.Important;
+    public bool IsInput => Kind == ConsoleLineKind.Input;
+    public bool IsInfo => Kind == ConsoleLineKind.Info;
+
     /// <summary>Name of the style class the row template applies (<c>out</c>, <c>err</c>, <c>info</c>…).</summary>
     public string StyleClass => Kind switch
     {

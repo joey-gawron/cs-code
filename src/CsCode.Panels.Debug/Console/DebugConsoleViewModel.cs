@@ -71,7 +71,14 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
     public UiCommand SubmitCommand { get; }
 
     /// <summary>Keep the newest line in view as output arrives (the lock button turns this off).</summary>
-    public bool AutoScroll { get => _autoScroll; set => SetProperty(ref _autoScroll, value); }
+    public bool AutoScroll
+    {
+        get => _autoScroll;
+        set { if (SetProperty(ref _autoScroll, value)) OnPropertyChanged(nameof(ScrollLock)); }
+    }
+
+    /// <summary>The "lock scroll" toggle: the inverse of <see cref="AutoScroll"/>.</summary>
+    public bool ScrollLock { get => !_autoScroll; set => AutoScroll = !value; }
 
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
@@ -194,6 +201,13 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
         _appliedSequence = newest;
         TrimToBound();
         ScheduleApply();
+    }
+
+    /// <summary>Copies the text of the given lines (the selection) to the clipboard, one per line.</summary>
+    public async Task CopyAsync(IEnumerable<ConsoleLine> lines)
+    {
+        var text = string.Join(Environment.NewLine, lines.OrderBy(l => l.Sequence).Select(l => l.Text));
+        if (text.Length > 0 && _s.Window is { } window) await window.CopyToClipboardAsync(text);
     }
 
     /// <summary>Clears the console and the history kept for late subscribers.</summary>

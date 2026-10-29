@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CsCode.Core.Debugging;
 using CsCode.Core.Text;
@@ -30,7 +31,7 @@ public sealed class CallStackRow : ObservableObject
     public int ThreadId { get; internal init; }
     public DebugStackFrame? Frame { get; internal init; }
     public bool IsExternal { get; internal init; }
-    /// <summary>First frame of its thread (the one execution stopped in).</summary>
+    /// <summary>The stopped location: the first frame of the thread execution stopped in (shows the yellow arrow, whatever frame is picked).</summary>
     public bool IsTopFrame { get; internal init; }
     public int HiddenFrames { get; internal init; }
 
@@ -46,11 +47,13 @@ public sealed class CallStackRow : ObservableObject
     public bool IsThread => Kind == CallStackRowKind.Thread;
     public bool IsFrame => Kind == CallStackRowKind.Frame;
     public bool IsPager => Kind is CallStackRowKind.More or CallStackRowKind.Message;
-    public bool ShowArrow => Kind == CallStackRowKind.Frame && _isCurrent;
-    /// <summary>Yellow arrow on the stopped location (top frame), outlined arrow for a caller frame picked by the user.</summary>
+    public bool ShowArrow => Kind == CallStackRowKind.Frame && (_isCurrent || IsTopFrame);
+    /// <summary>Yellow arrow on the stopped location (top frame); a caller frame picked by the user gets an outlined (green) arrow, as in Visual Studio.</summary>
     public string ArrowKind => IsTopFrame ? "debug-stackframe-active" : "debug-stackframe";
-    public string? ChevronKind => Kind == CallStackRowKind.Thread ? (_isExpanded ? "chevron-down" : "chevron-right") : null;
+    public string? ChevronKind => Kind == CallStackRowKind.Thread ? (_isExpanded ? "triangle-down" : "triangle-right") : null;
     public Thickness Indent => new(Depth * 16, 0, 0, 0);
+    public FontWeight TextWeight => Kind == CallStackRowKind.Thread ? FontWeight.SemiBold : FontWeight.Normal;
+    public FontStyle TextStyle => Kind is CallStackRowKind.More or CallStackRowKind.ExternalCode ? FontStyle.Italic : FontStyle.Normal;
     public string Tooltip => Kind == CallStackRowKind.Frame ? (Location.Length > 0 ? $"{Text}\n{Location}" : Text) : Text;
 
     public override string ToString() => Text;
@@ -301,7 +304,7 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable
             FlushHidden();
             rows.Add(new CallStackRow(CallStackRowKind.Frame, depth, f.Name)
             {
-                Frame = f, ThreadId = t.Thread.Id, IsExternal = external, IsTopFrame = i == 0, Location = LocationOf(f), Module = f.ModuleId,
+                Frame = f, ThreadId = t.Thread.Id, IsExternal = external, IsTopFrame = i == 0 && t.Thread.Id == _currentThread, Location = LocationOf(f), Module = f.ModuleId,
                 IsCurrent = isCurrent,
             });
         }
