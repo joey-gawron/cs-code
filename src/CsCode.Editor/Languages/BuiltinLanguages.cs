@@ -12,7 +12,10 @@ internal sealed record BuiltinGrammar(
     string ResourceName,
     IReadOnlyDictionary<string, string>? EmbeddedLanguages);
 
-internal sealed record BuiltinCatalog(IReadOnlyList<LanguageContribution> Languages, IReadOnlyList<BuiltinGrammar> Grammars)
+/// <summary>A snippet file shipped with a built-in language (VS Code <c>.code-snippets</c>).</summary>
+internal sealed record BuiltinSnippetFile(string LanguageId, string ResourceName);
+
+internal sealed record BuiltinCatalog(IReadOnlyList<LanguageContribution> Languages, IReadOnlyList<BuiltinGrammar> Grammars, IReadOnlyList<BuiltinSnippetFile> Snippets)
 {
     private readonly Dictionary<string, string> _scopeByLanguage = Grammars
         .Where(g => g.LanguageId is not null)
@@ -114,6 +117,7 @@ internal static class BuiltinLanguages
     {
         var langs = new Dictionary<string, Mutable>(StringComparer.Ordinal);
         var grammars = new List<BuiltinGrammar>();
+        var snippets = new List<BuiltinSnippetFile>();
 
         foreach (var name in Asm.GetManifestResourceNames().Where(n => n.StartsWith(ResourcePrefix, StringComparison.Ordinal) && n.EndsWith(".package.json", StringComparison.Ordinal)).OrderBy(n => n, StringComparer.Ordinal))
         {
@@ -152,6 +156,14 @@ internal static class BuiltinLanguages
                         embedded = e.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.String).ToDictionary(p => p.Name, p => p.Value.GetString()!);
                     grammars.Add(new BuiltinGrammar(g.TryGetProperty("language", out var gl) ? gl.GetString() : null, g.GetProperty("scopeName").GetString()!, res, embedded));
                 }
+
+            if (contributes.TryGetProperty("snippets", out var sn))
+                foreach (var s in sn.EnumerateArray())
+                {
+                    if (!s.TryGetProperty("language", out var lang) || !s.TryGetProperty("path", out var spath)) continue;
+                    var res = ResourceName(package, spath.GetString()!);
+                    if (Asm.GetManifestResourceInfo(res) is not null) snippets.Add(new BuiltinSnippetFile(lang.GetString()!, res));
+                }
         }
 
         foreach (var (id, name, ext, files) in Supplements)
@@ -177,7 +189,7 @@ internal static class BuiltinLanguages
                 m.ConfigResource is null ? null : BuiltinPathPrefix + m.ConfigResource,
                 m.MimeTypes))
             .ToArray();
-        return new BuiltinCatalog(result, grammars);
+        return new BuiltinCatalog(result, grammars, snippets);
     }
 
     private static IEnumerable<string> Strings(JsonElement obj, string name) =>
