@@ -74,7 +74,8 @@ argument to keep TextMate (plus the language server's semantic tokens) as C#'s e
   nearby lines, live switch both ways, per-language section, fallback without a grammar, theme switch re-colours without re-parsing, typing
   during the first parse of a 1.2 MB file abandons the stale parse and costs the UI thread nothing more than TextMate); quality (screenshots +
   colour agreement, §3); lifetime (40 documents opened/edited/closed: views, sessions, engines collectable and **native bytes back to the
-  baseline**, counted by the allocation-tracking allocator; destroying the last view frees the tree); the real app (`AppServices` + Platform
+  baseline**, counted by the allocation-tracking allocator; destroying the last view frees the tree); the give-up guard (a document the grammar
+  cannot parse in time is handed to TextMate, a normal one is not); the real app (`AppServices` + Platform
   settings + document well: the setting is registered and switches an open editor through `settings.json`).
 
 ## 3. Quality
