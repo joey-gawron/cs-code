@@ -194,7 +194,13 @@ internal sealed class TokenizationSession : IDisposable
 
         var viewportDone = Store.HasTokens(vFirst, vLast) && vLast < valid;
         int begin;
-        if (!viewportDone) begin = Math.Min(vFirst, valid);
+        if (!viewportDone)
+        {
+            // Resume at the first viewport line that still needs work, not at the viewport's top: under load a 6 ms slice may tokenise only a
+            // few lines, and restarting from the top every slice never got past the valid prefix (the "stalls under full-suite load" issue).
+            // Lines before `valid` keep a consistent chain, so starting anywhere up to it is correct.
+            begin = valid < vFirst ? valid : Math.Min(valid, FirstLineWithoutTokens(vFirst, Math.Min(vLast, valid - 1)) ?? valid);
+        }
         else if (valid <= target && vFirst - valid <= MaxCatchUpLines) begin = valid; // viewport is good: read ahead along the valid chain
         else
         {
@@ -225,7 +231,9 @@ internal sealed class TokenizationSession : IDisposable
             var text = snap.GetLineText(line);
             batch.Add(TokenizeLine(grammar, text, ref state));
 
-            var sliceOver = clock.Elapsed >= SliceBudget;
+            // the lines between the checkpoint and `begin` only rebuild the state: a slice always gets at least one line past them, so a slow
+            // grammar on a loaded machine still makes progress instead of redoing the same few lines every slice
+            var sliceOver = clock.Elapsed >= SliceBudget && line >= begin;
             if (batch.Count >= 16 || sliceOver || line == target)
             {
                 if (!Store.Publish(snap.Version, batchStart, batch, checkpoints, chain)) return; // stale: drop it, a newer job follows the newer version
@@ -243,6 +251,13 @@ internal sealed class TokenizationSession : IDisposable
         }
         // the viewport is done; the read-ahead beyond it was held back for the typing pause: pick it up when that is over
         if (!quiet && chain && target < Math.Min(lineCount - 1, vLast + ReadAheadLines)) ScheduleReadAheadLater();
+    }
+
+    private int? FirstLineWithoutTokens(int first, int last)
+    {
+        for (var i = first; i <= last; i++)
+            if (Store.GetTokens(i) is null) return i;
+        return null;
     }
 
     // ---- tree-sitter engine plumbing (worker) ----
