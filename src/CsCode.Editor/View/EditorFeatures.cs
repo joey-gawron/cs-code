@@ -16,6 +16,8 @@ internal static class EditorFeatures
             new Features.FoldingFeature(view),
             new Features.SnippetFeature(view),
             new Features.CompletionFeature(view),
+            new Features.DiagnosticsFeature(view),
+            new Features.HoverFeature(view),
         };
         // further components are added here (each takes the view and unhooks itself on Dispose)
         return list;

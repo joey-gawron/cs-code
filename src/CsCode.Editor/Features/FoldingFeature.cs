@@ -186,6 +186,15 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
         _pendingFolds = null;
     }
 
+    /// <summary>The hidden text of the collapsed region whose placeholder is at <paramref name="offset"/> (its header-line end), first 20 lines; null when none.</summary>
+    internal string? FoldedTextAt(int offset)
+    {
+        var section = _manager.GetFoldingsAt(offset).FirstOrDefault(f => f.IsFolded && f.StartOffset == offset);
+        if (section is null) return null;
+        var lines = section.TextContent.Split('\n');
+        return string.Join('\n', lines.Take(20)) + (lines.Length > 20 ? "\n…" : "");
+    }
+
     // ---- commands ----
 
     public void Fold(bool recursive = false) => Toggle(fold: true, recursive);
