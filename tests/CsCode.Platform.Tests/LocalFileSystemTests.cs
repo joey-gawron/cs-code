@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using CsCode.Core.Platform;
@@ -291,11 +292,18 @@ public class LocalFileSystemTests : IDisposable
             }
         }, Ct)).ToArray();
 
-        for (var i = 0; i < 60; i++) await _f.Fs.WriteFileAsync(_f.U("shared.bin"), i % 2 == 0 ? b : a, ct: Ct);
+        // Keep replacing the file until the readers have done a meaningful number of reads, so reads and renames genuinely overlap.
+        var writes = 0;
+        var sw = Stopwatch.StartNew();
+        while (Volatile.Read(ref reads) < 300 && sw.Elapsed < TimeSpan.FromSeconds(30))
+        {
+            await _f.Fs.WriteFileAsync(_f.U("shared.bin"), writes++ % 2 == 0 ? b : a, ct: Ct);
+        }
         await cts.CancelAsync();
         await Task.WhenAll(readers).WaitAsync(TimeSpan.FromSeconds(30), Ct);
 
-        Assert.True(reads > 10, "readers made no progress");
+        Assert.True(reads >= 300, $"readers made only {reads} reads");
+        Assert.True(writes >= 5, $"only {writes} writes overlapped the reads");
         Assert.Equal(0, torn);
     }
 

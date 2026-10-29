@@ -27,6 +27,9 @@ public sealed class PlatformOptions
     /// <summary>State storage coalesces writes for this long after the last <c>Set</c>.</summary>
     public TimeSpan StateFlushDelay { get; set; } = TimeSpan.FromMilliseconds(500);
 
+    /// <summary>Unsaved state is written at the latest this long after the first change, however busy the writer is.</summary>
+    public TimeSpan StateMaxUnsaved { get; set; } = TimeSpan.FromSeconds(5);
+
     /// <summary>Clock used for chord timeouts (tests substitute a manual one).</summary>
     public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 }
