@@ -362,6 +362,19 @@ public class MenuModelTests
     }
 
     [Fact]
+    public void A_refresh_still_queued_when_the_menus_are_disposed_does_not_run()
+    {
+        var rig = new Rig();
+        rig.Tools.Add(new FakeTool("explorer", "Explorer", "workbench.view.explorer"));
+        var refreshes = rig.Menu.RefreshCount;
+        rig.Keys.Set("anything", true); // schedules a coalesced refresh
+        rig.Menu.Dispose();             // the window closed (and the provider behind isToolVisible is gone) before it ran
+        rig.Visible.Clear();
+        rig.Ui.RunPending();
+        Assert.Equal(refreshes, rig.Menu.RefreshCount);
+    }
+
+    [Fact]
     public void The_menu_bar_has_exactly_the_nine_visual_studio_menus_in_order()
     {
         using var rig = new Rig();

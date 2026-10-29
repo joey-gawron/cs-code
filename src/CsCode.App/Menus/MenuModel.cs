@@ -54,6 +54,7 @@ public sealed class MenuModel : IDisposable
     private readonly Func<string, bool> _isToolVisible;
     private readonly DisposableStore _subs = new();
     private readonly List<MenuItemVm> _all = new();
+    private bool _disposed;
 
     public MenuModel(IReadOnlyList<MenuNode> definition, ICommandService commands, IContextKeyService keys, IUiDispatcher ui,
         IKeybindingService? bindings = null, IWorkspaceService? workspace = null,
@@ -80,7 +81,8 @@ public sealed class MenuModel : IDisposable
     /// <summary>Number of refresh passes performed (tests assert coalescing).</summary>
     public int RefreshCount { get; private set; }
 
-    public void ScheduleRefresh() => _ui.PostCoalesced("menus.refresh", Refresh);
+    // A refresh posted just before the window closed must not run against the disposed shell (it reads tool-window visibility from the provider).
+    public void ScheduleRefresh() => _ui.PostCoalesced("menus.refresh", () => { if (!_disposed) Refresh(); });
 
     private MenuItemVm Create(MenuNode node)
     {
@@ -178,6 +180,7 @@ public sealed class MenuModel : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _subs.Dispose();
         _all.Clear();
     }
