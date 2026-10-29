@@ -5,6 +5,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Lsp.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="StreamJsonRpc" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />

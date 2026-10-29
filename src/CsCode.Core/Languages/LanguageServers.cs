@@ -4,7 +4,11 @@ using CsCode.Core.Text;
 
 namespace CsCode.Core.Languages;
 
-public enum LanguageServerState { Stopped, Starting, Running, Stopping, Faulted }
+/// <remarks>
+/// <c>Unresponsive</c> (appended, additive) = the process is alive but N consecutive requests timed out (circuit breaker open); it is
+/// probed periodically and returns to <c>Running</c> by itself when it answers again.
+/// </remarks>
+public enum LanguageServerState { Stopped, Starting, Running, Stopping, Faulted, Unresponsive }
 
 /// <summary>How to run one native (C#-hosted) language client. Sources: built-in defaults, `cscode.languageServers` setting.</summary>
 public sealed record LanguageServerDefinition(
