@@ -432,6 +432,34 @@ public class RealAppContextMenuTests
         await DevScene.SettleAsync(5);
     }
 
+    // ---------------------------------------------------------------- screenshots (written to .scratch/screenshots, git-ignored)
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task Screenshots_of_the_editor_menu_and_the_tab_menu_in_the_dark_theme()
+    {
+        await using var host = await StartWithFileAsync();
+        var tab = host.Shell.Well.ActiveEditor!;
+        tab.Controller!.SetSelection(TextRange.FromLines(4, 12, 4, 18));
+        await DevScene.SettleAsync(5);
+        foreach (var (name, open) in new (string, Func<Task<ContextMenu>>)[]
+        {
+            ("context-menu-editor", () => RightClickAsync(host, tab.LiveView!, PointOfOffset(tab.LiveView!, 4, 14))),
+            ("context-menu-tab", () => RightClickAsync(host, host.Window.GetVisualDescendants().OfType<DocumentTabStripItem>().First(i => ReferenceEquals(i.DataContext, tab)), new Point(10, 8))),
+        })
+        {
+            var menu = await open();
+            await DevScene.SettleAsync(10);
+            var root = TopLevel.GetTopLevel(menu) ?? host.Window;
+            var frame = root.CaptureRenderedFrame();
+            Assert.NotNull(frame);
+            var path = Path.Combine(DevHost.ScreenshotDirectory(), name + ".png");
+            frame!.Save(path, new Avalonia.Media.Imaging.PngBitmapEncoderOptions());
+            Assert.True(new FileInfo(path).Length > 2_000, name + " has content");
+            menu.Close();
+            await DevScene.SettleAsync(5);
+        }
+    }
+
     // ---------------------------------------------------------------- A5: middle-click in the real composition
 
     [AvaloniaFact(Timeout = 60_000)]
