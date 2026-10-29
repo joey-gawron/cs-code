@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using CsCode.Core.Contributions;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
@@ -48,7 +49,22 @@ public sealed class SearchPanelsHost : IDisposable
         _services = new Lazy<SearchServices>(() => SearchServices.From(_sp));
         if (_sp.GetService<IConfigurationService>() is { } config) _store.Add(config.RegisterProperties(SearchSettings.Properties()));
         if (_sp.GetService<ICommandService>() is { } commands) RegisterCommands(commands);
+        if (_sp.GetService<IContributionRegistry>() is { } contributions) _store.Add(contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory, DefaultKeybindings));
     }
+
+    /// <summary>
+    /// F4 / Shift+F4 step through the results from anywhere (the editor included) while the panel is open. Neither preset keymap binds them,
+    /// and the panel's own key handler only sees keys while it has focus; the platform's keybinding service layers built-in contributions
+    /// over the preset (and the user's keybindings.json over both, so they can be removed or rebound there).
+    /// </summary>
+    public static IReadOnlyList<KeybindingContribution> DefaultKeybindings { get; } =
+    [
+        new(NextResult, "f4", When: SearchViewletVisible),
+        new(PreviousResult, "shift+f4", When: SearchViewletVisible),
+    ];
+
+    /// <summary>Context key set while the Find in Files view exists.</summary>
+    public const string SearchViewletVisible = "searchViewletVisible";
 
     /// <summary>Shared services (created on first use: the engine and replace service own threads, so they are not built until a view needs them).</summary>
     public SearchServices Services => _services.Value;
@@ -62,7 +78,7 @@ public sealed class SearchPanelsHost : IDisposable
     {
         var vm = new FindInFilesViewModel(Services);
         _liveFind = vm;
-        Services.ContextKeys?.Set("searchViewletVisible", true);
+        Services.ContextKeys?.Set(SearchViewletVisible, true);
         if (_pendingFind is { } req)
         {
             _pendingFind = null;
@@ -76,7 +92,7 @@ public sealed class SearchPanelsHost : IDisposable
         if (ReferenceEquals(_liveFind, vm))
         {
             _liveFind = null;
-            Services.ContextKeys?.Set("searchViewletVisible", false);
+            Services.ContextKeys?.Set(SearchViewletVisible, false);
         }
         vm.Dispose();
     }
