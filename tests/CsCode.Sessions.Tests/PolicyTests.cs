@@ -169,6 +169,18 @@ public class HiddenSessionPolicyTests
     }
 
     [Fact]
+    public void A_disposed_policy_is_not_retained()
+    {
+        LeakAssert.NotRetained(() =>
+        {
+            var policy = new HiddenSessionPolicy(TimeProvider.System, () => HiddenPolicySettings.Default, () => { }, () => { });
+            policy.OnHidden();
+            policy.Dispose();
+            return [policy];
+        });
+    }
+
+    [Fact]
     public void Hiding_twice_does_not_rearm_and_dispose_stops_the_timers()
     {
         var (policy, clock, log) = Create();
@@ -241,6 +253,20 @@ public class SerialLaneTests
         using var lane = new SerialLane("test lane");
         await Assert.ThrowsAsync<IOException>(() => lane.RunAsync(() => throw new IOException("x")));
         Assert.Equal(1, await lane.RunAsync(() => 1));
+    }
+
+    [Fact]
+    public void A_disposed_lane_is_not_retained_and_its_thread_ends()
+    {
+        Thread? thread = null;
+        LeakAssert.NotRetained(() =>
+        {
+            var lane = new SerialLane("leak lane");
+            lane.RunAsync(() => thread = Thread.CurrentThread).GetAwaiter().GetResult();
+            lane.Dispose();
+            return [lane];
+        });
+        Assert.False(thread!.IsAlive);
     }
 
     [Fact]
