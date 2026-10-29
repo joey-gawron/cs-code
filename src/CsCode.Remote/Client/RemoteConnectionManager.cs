@@ -198,6 +198,7 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
 
     private IRemoteTransport CreateTransport(string host, RemoteAuthority authority)
     {
+        if (_options.TransportFactory is { } factory) return factory(host, authority);
         var config = Get<IConfigurationService>();
         var ssh = new SshOptions
         {

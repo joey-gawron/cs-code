@@ -38,6 +38,15 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
         public Action<IReadOnlyList<FileChange>>? OnChanges = onChanges;
         public SshUriMapper Mapper { get; } = mapper;
         public RemoteSession? ArmedOn;
+        public readonly TaskCompletionSource FirstArmed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    /// <summary>A remote watch. <see cref="Ready"/> completes when the server's OS watch is armed (changes before that are not reported).</summary>
+    public sealed class Handle(Action dispose, Task ready) : IDisposable
+    {
+        private Action? _dispose = dispose;
+        public Task Ready { get; } = ready;
+        public void Dispose() => Interlocked.Exchange(ref _dispose, null)?.Invoke();
     }
 
     public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges)
@@ -56,12 +65,13 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
         var sub = new Subscription(Guid.NewGuid().ToString("N"), root, path, recursive, excludeGlobs, onChanges, mapper);
         _subs[sub.Id] = sub;
         if (session is not null) _ = ArmAsync(sub, session, rescan: false);
-        return Disposable.Create(() =>
+        return new Handle(() =>
         {
             if (!_subs.TryRemove(sub.Id, out _)) return;
             sub.OnChanges = null; // a batch already queued is dropped, and the closure is not kept
+            sub.FirstArmed.TrySetCanceled();
             if (sub.ArmedOn is { IsOpen: true } s) s.Peer.Fire(RemoteMethods.WatchStop, new WatchStopParams(sub.Id)); // fire and forget
-        });
+        }, sub.FirstArmed.Task);
     }
 
     private async Task ArmAsync(Subscription sub, RemoteSession session, bool rescan)
@@ -71,6 +81,7 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
             await session.Peer.InvokeAsync<WatchStartParams, Empty>(RemoteMethods.WatchStart, new WatchStartParams(sub.Id, sub.Path, sub.Recursive, sub.Excludes)).ConfigureAwait(false);
             sub.ArmedOn = session;
             if (!_subs.ContainsKey(sub.Id)) { session.Peer.Fire(RemoteMethods.WatchStop, new WatchStopParams(sub.Id)); return; } // disposed meanwhile
+            sub.FirstArmed.TrySetResult();
             if (rescan) Deliver(sub, [new FileChange(sub.Root, FileChangeKind.Changed)]);
         }
         catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException)

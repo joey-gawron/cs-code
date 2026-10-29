@@ -26,12 +26,13 @@ public sealed class ProcessChannel : IAsyncDisposable
 
     private readonly Process _process;
     private readonly Queue<string> _stderr = new();
-    private readonly TaskCompletionSource<int> _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<int> _exited;
     private int _disposed;
 
-    private ProcessChannel(Process process)
+    private ProcessChannel(Process process, TaskCompletionSource<int> exited)
     {
         _process = process;
+        _exited = exited;
         Input = process.StandardOutput.BaseStream;
         Output = process.StandardInput.BaseStream;
     }
@@ -83,9 +84,10 @@ public sealed class ProcessChannel : IAsyncDisposable
             }
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        var channel = new ProcessChannel(process) { StderrLine = stderrLine };
-        process.Exited += (_, _) => channel.OnExited();
+        var exited = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        process.Exited += (_, _) => OnExited(process, exited);
         process.Start();
+        var channel = new ProcessChannel(process, exited) { StderrLine = stderrLine };
         if (launch.BelowNormalPriority && !useNice)
         {
             try { process.PriorityClass = ProcessPriorityClass.BelowNormal; }
@@ -93,15 +95,15 @@ public sealed class ProcessChannel : IAsyncDisposable
         }
         var drain = new Thread(channel.DrainStderr) { IsBackground = true, Name = "CsCode.Remote-stderr", Priority = ThreadPriority.BelowNormal };
         drain.Start();
-        if (process.HasExited) channel.OnExited();
+        if (process.HasExited) OnExited(process, exited);
         return channel;
     }
 
-    private void OnExited()
+    private static void OnExited(Process process, TaskCompletionSource<int> exited)
     {
         int code;
-        try { code = _process.ExitCode; } catch (InvalidOperationException) { code = -1; }
-        _exited.TrySetResult(code);
+        try { code = process.ExitCode; } catch (InvalidOperationException) { code = -1; }
+        exited.TrySetResult(code);
     }
 
     private void DrainStderr()

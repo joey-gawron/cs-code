@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../../src/CsCode.Platform/CsCode.Platform.csproj" />
+    <ProjectReference Include="../../src/CsCode.Lsp/CsCode.Lsp.csproj" />
+    <ProjectReference Include="../../src/CsCode.Remote/CsCode.Remote.csproj" />
+    <!-- the real server: its build output (cscode-server.dll + runtimeconfig) lands next to the tests, which start it as a child process -->
+    <ProjectReference Include="../../src/CsCode.Server/CsCode.Server.csproj" />
+    <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
+  </ItemGroup>
+
+</Project>

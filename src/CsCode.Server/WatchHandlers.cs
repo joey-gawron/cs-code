@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using CsCode.Core.Platform;
 using CsCode.Platform.Io;
+using CsCode.Platform.Watching;
 using CsCode.Remote.Protocol;
 
 namespace CsCode.Server;
@@ -18,7 +19,7 @@ internal sealed class WatchHandlers(IFileWatcher watcher) : IDisposable
 
     public void Register(RpcPeer peer)
     {
-        peer.OnRequest<WatchStartParams, Empty>(RemoteMethods.WatchStart, (p, _) =>
+        peer.OnRequest<WatchStartParams, Empty>(RemoteMethods.WatchStart, async (p, ct) =>
         {
             if (_watches.Count >= MaxWatches) throw new RemoteException(RpcErrorCodes.Busy, $"More than {MaxWatches} watches");
             var root = FileUri.FromDirectoryPath(FileSystemHandlers.Uri(p.Root).LocalPath);
@@ -38,7 +39,10 @@ internal sealed class WatchHandlers(IFileWatcher watcher) : IDisposable
                 handle.Dispose();
                 throw new ArgumentException($"Duplicate watch id '{id}'");
             }
-            return ValueTask.FromResult(Empty.Value);
+            // Answer once the OS watch is armed (events before that are not reported), so the client knows from when on it sees changes.
+            if (handle is FileWatchHandle armed)
+                await Task.WhenAny(armed.Ready, Task.Delay(TimeSpan.FromSeconds(10), ct)).ConfigureAwait(false);
+            return Empty.Value;
         });
         peer.OnRequest<WatchStopParams, Empty>(RemoteMethods.WatchStop, (p, _) =>
         {

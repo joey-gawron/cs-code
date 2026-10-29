@@ -21,6 +21,12 @@ public sealed class RemoteOptions
     /// <summary>Tag for the servers this client starts (<c>--marker</c>), so tests and leak checks can find exactly them.</summary>
     public string? ServerMarker { get; set; }
 
+    /// <summary>
+    /// Replaces the ssh transport (tests: a loopback server behind an <c>ssh://</c> authority, chaos wrappers). Receives the host as typed and its
+    /// authority; called for every connection attempt.
+    /// </summary>
+    public Func<string, Protocol.RemoteAuthority, Transport.IRemoteTransport>? TransportFactory { get; set; }
+
     public ReconnectPolicy? Reconnect { get; set; }
     public TimeProvider? Time { get; set; }
 

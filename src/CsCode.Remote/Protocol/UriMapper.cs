@@ -107,6 +107,11 @@ public sealed record RemoteAuthority
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
         Host = host.StartsWith('[') && host.EndsWith(']') ? host[1..^1] : host;
         User = string.IsNullOrEmpty(user) ? null : user;
+        // A destination is handed to ssh as one argument: refuse what could be read as an option or split into words (defence in depth: SshArgs checks again).
+        if (Host.StartsWith('-') || Host.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || c is '/' or '@' or '\\'))
+            throw new ArgumentException($"Invalid host '{host}'", nameof(host));
+        if (User is not null && (User.StartsWith('-') || User.Any(c => char.IsWhiteSpace(c) || char.IsControl(c))))
+            throw new ArgumentException($"Invalid user '{user}'", nameof(user));
         Port = port is > 0 and < 65536 ? port : null;
         var sb = new StringBuilder(SshUriMapper.Scheme).Append("://");
         if (User is not null) sb.Append(Uri.EscapeDataString(User)).Append('@');

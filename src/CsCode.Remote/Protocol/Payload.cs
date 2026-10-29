@@ -17,7 +17,7 @@ public sealed record Payload(byte[] Data, bool Gzip = false)
     {
         if (allowCompression && bytes.Length >= MinCompressBytes)
         {
-            using var ms = new MemoryStream(bytes.Length / 2);
+            using var ms = new MemoryStream(Math.Min(bytes.Length / 4, 16 * 1024)); // grows as needed: never a large-object allocation up front
             using (var gz = new GZipStream(ms, CompressionLevel.Fastest, leaveOpen: true)) gz.Write(bytes);
             if (ms.Length < bytes.Length * 9L / 10) return new Payload(ms.ToArray(), true);
         }
