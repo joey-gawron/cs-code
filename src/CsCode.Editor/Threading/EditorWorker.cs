@@ -158,54 +158,59 @@ public sealed class EditorWorker : IDisposable
     {
         while (true)
         {
-            Job job;
+            Job? job;
             lock (_gate)
             {
                 while (true)
                 {
                     if (_disposed) return;
-                    var next = PopNext();
-                    if (next is not null)
-                    {
-                        job = next;
-                        break;
-                    }
+                    job = PopNext();
+                    if (job is not null) break;
                     Monitor.Wait(_gate);
                 }
             }
 
-            var start = Stopwatch.GetTimestamp();
+            Execute(job);
+            // Drop the reference BEFORE waiting for the next job: a stack slot still pointing at the last job (its closure, the view it captured)
+            // would keep that view alive for as long as the worker idles.
+            job = null;
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void Execute(Job job)
+    {
+        var start = Stopwatch.GetTimestamp();
+        try
+        {
+            job.Run(job.Cts.Token); // a job superseded while queued was removed from the queue, so anything popped is live
+        }
+        catch (OperationCanceledException)
+        {
+            // a superseded job stopped itself: expected
+        }
+        catch (Exception ex)
+        {
             try
             {
-                job.Run(job.Cts.Token); // a job superseded while queued was removed from the queue, so anything popped is live
+                OnError?.Invoke(ex);
             }
-            catch (OperationCanceledException)
+            catch (Exception)
             {
-                // a superseded job stopped itself: expected
+                // the error handler must not kill the lane
             }
-            catch (Exception ex)
-            {
-                try
-                {
-                    OnError?.Invoke(ex);
-                }
-                catch (Exception)
-                {
-                    // the error handler must not kill the lane
-                }
-            }
-            var elapsed = Stopwatch.GetElapsedTime(start);
-            Interlocked.Increment(ref _completed);
-            if (elapsed > TimeSpan.FromMilliseconds(10)) Interlocked.Increment(ref _longJobs);
-            long ticks = elapsed.Ticks, seen;
-            while (ticks > (seen = Interlocked.Read(ref _maxJobTicks)) && Interlocked.CompareExchange(ref _maxJobTicks, ticks, seen) != seen) { }
-
-            lock (_gate)
-            {
-                if (job.Key is not null && _keyed.TryGetValue(job.Key, out var cur) && ReferenceEquals(cur.Job, job)) _keyed.Remove(job.Key);
-            }
-            job.Cts.Dispose();
         }
+        var elapsed = Stopwatch.GetElapsedTime(start);
+        Interlocked.Increment(ref _completed);
+        if (elapsed > TimeSpan.FromMilliseconds(10)) Interlocked.Increment(ref _longJobs);
+        long ticks = elapsed.Ticks, seen;
+        while (ticks > (seen = Interlocked.Read(ref _maxJobTicks)) && Interlocked.CompareExchange(ref _maxJobTicks, ticks, seen) != seen) { }
+
+        lock (_gate)
+        {
+            if (job.Key is not null && _keyed.TryGetValue(job.Key, out var cur) && ReferenceEquals(cur.Job, job)) _keyed.Remove(job.Key);
+        }
+        job.Cts.Dispose();
     }
 
     private Job? PopNext()

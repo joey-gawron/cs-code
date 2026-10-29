@@ -307,6 +307,8 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         Tokens?.DetachView();
         Tokens = null;
         _disposables.Dispose();
+        TextArea.Caret.Hide(); // stops the caret's blink timer: a running DispatcherTimer would keep the whole text area alive
+        Documents.UndoStackScrubber.Scrub(Document.Buffer, TextArea); // the document's undo history would otherwise pin this text area (and the view) forever
         TextArea.IndentationStrategy = null!;
         Editor.Document = null!; // releases the buffer: the TextEditor's internals unsubscribe from it
         Content = null;
