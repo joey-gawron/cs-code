@@ -18,6 +18,7 @@ using CsCode.Profiling;
 using CsCode.Ui;
 using CsCode.Ui.Threading;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace CsCode.App;
 
@@ -55,6 +56,7 @@ public static class AppServices
     public static IServiceCollection AddCsCodeShell(this IServiceCollection services, IReadOnlyList<string> args)
     {
         services.AddSingleton(CommandLineOptions.Parse(args));
+        services.TryAddSingleton(_ => App.Crash); // the process-wide handler (installed before the container exists): the window reports late failures through it
         services.AddSingleton<IUiDispatcher>(_ => AvaloniaUiDispatcher.Instance);
         services.AddSingleton<WindowHolder>();
         services.AddSingleton<IShellHost>(sp => new AvaloniaShellHost(() => sp.GetRequiredService<WindowHolder>().Window));
