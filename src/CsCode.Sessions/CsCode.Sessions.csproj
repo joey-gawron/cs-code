@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Background mode + saved sessions: session model and store, hot-exit backups, per-user local IPC, session locks and the launcher's
+       decision logic. Avalonia-free and UI-thread-free (docs/SESSIONS.md); the shell glue lives in CsCode.App/Background. The launcher runs
+       this code before Avalonia initialises, so it stays small: System.Text.Json source generation, no reflection-based serialisation. -->
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Sessions.Tests" />
+    <InternalsVisibleTo Include="CsCode.App.Tests" />
+    <InternalsVisibleTo Include="cscode" />
+  </ItemGroup>
+
+</Project>
