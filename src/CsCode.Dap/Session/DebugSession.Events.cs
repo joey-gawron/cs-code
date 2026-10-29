@@ -78,13 +78,25 @@ public sealed partial class DebugSession
     }
 
     /// <summary>The program's latest output (bounded), kept only for adapters with client-side exception filters; cleared on resume.</summary>
-    private string RecentOutput => _recentOutput?.ToString() ?? "";
+    private string RecentOutput
+    {
+        get
+        {
+            if (_recentOutput is not { } recent) return "";
+            return recent.Length > RecentOutputChars ? recent.ToString(recent.Length - RecentOutputChars, RecentOutputChars) : recent.ToString();
+        }
+    }
 
+    /// <summary>
+    /// Lane only, once per output event (a flood is a million of them): the head is cut only when the buffer reached twice its size, so the
+    /// copying stays amortised O(1) per character instead of moving 8 KB per line.
+    /// </summary>
     private void RememberOutput(string text)
     {
         if (_recentOutput is not { } recent) return;
+        if (text.Length >= RecentOutputChars) { recent.Clear(); recent.Append(text, text.Length - RecentOutputChars, RecentOutputChars); return; }
         recent.Append(text);
-        if (recent.Length > RecentOutputChars) recent.Remove(0, recent.Length - RecentOutputChars);
+        if (recent.Length > 2 * RecentOutputChars) recent.Remove(0, recent.Length - RecentOutputChars);
     }
 
     private async Task FetchExceptionInfoAsync(int threadId)
