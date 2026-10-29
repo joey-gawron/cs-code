@@ -62,6 +62,31 @@ internal sealed class DiagnosticsFeature : IThemeAware, IDisposable
     internal IReadOnlyList<Diagnostic> At(int offset) =>
         _segments.FindSegmentsContaining(offset).Select(s => s.Diagnostic).OrderBy(d => (int)d.Severity).ToList();
 
+    /// <summary>
+    /// Start offset of the next (<paramref name="forward"/>) or previous diagnostic after/before <paramref name="offset"/>, wrapping around the
+    /// document like VS Code's Next/Previous Problem; null when there is none.
+    /// </summary>
+    internal int? NextMarker(int offset, bool forward)
+    {
+        if (_segments.Count == 0) return null;
+        int? best = null, wrap = null;
+        foreach (var s in _segments)
+        {
+            var start = s.StartOffset;
+            if (forward)
+            {
+                if (start > offset && (best is null || start < best)) best = start;
+                if (wrap is null || start < wrap) wrap = start;
+            }
+            else
+            {
+                if (start < offset && (best is null || start > best)) best = start;
+                if (wrap is null || start > wrap) wrap = start;
+            }
+        }
+        return best ?? wrap;
+    }
+
     internal IReadOnlyList<Diagnostic> Overlapping(int start, int end) =>
         _segments.FindOverlappingSegments(start, Math.Max(0, end - start)).Select(s => s.Diagnostic).OrderBy(d => (int)d.Severity).ToList();
 

@@ -142,6 +142,9 @@ internal static class EditorCommands
         Cmd(KnownCommands.TriggerSuggest, "Trigger Suggest", (view, _) => { view.Feature<ICompletionFeature>()?.Trigger(); return Task.CompletedTask; });
         Cmd(KnownCommands.TriggerParameterHints, "Trigger Parameter Hints", (view, _) => { view.Feature<ISignatureFeature>()?.Trigger(); return Task.CompletedTask; });
         Cmd(KnownCommands.QuickFix, "Quick Fix", (view, _) => view.Feature<ICodeActionFeature>()?.ShowQuickFixAsync() ?? Task.CompletedTask);
+        Cmd("editor.action.showHover", "Show Hover", (view, _) => view.Feature<HoverFeature>()?.HoverAtAsync(view.Editor.CaretOffset) ?? Task.CompletedTask);
+        Cmd("editor.action.marker.next", "Go to Next Problem", (view, _) => GoToProblemAsync(view, forward: true));
+        Cmd("editor.action.marker.prev", "Go to Previous Problem", (view, _) => GoToProblemAsync(view, forward: false));
         Cmd("editor.action.organizeImports", "Organize Imports", (view, _) => view.Feature<ICodeActionFeature>()?.OrganizeImportsAsync() ?? Task.CompletedTask);
         Cmd(KnownCommands.GotoDefinition, "Go to Definition", (view, _) => view.Feature<INavigationFeature>()?.GoToDefinitionAsync() ?? Task.CompletedTask);
         Cmd("editor.action.goToDeclaration", "Go to Declaration", (view, _) => view.Feature<INavigationFeature>()?.GoToDefinitionAsync(DefinitionKind.Declaration) ?? Task.CompletedTask);
@@ -174,6 +177,15 @@ internal static class EditorCommands
             return Task.CompletedTask;
         });
         return store;
+    }
+
+    /// <summary>Moves the caret to the next/previous diagnostic (wrapping) and shows its hover, like VS Code's F8 / Shift+F8.</summary>
+    private static Task GoToProblemAsync(CodeEditorControl view, bool forward)
+    {
+        if (view.Feature<DiagnosticsFeature>()?.NextMarker(view.Editor.CaretOffset, forward) is not { } offset) return Task.CompletedTask;
+        var at = view.Document.PositionAt(offset);
+        view.Controller.SetSelection(new TextRange(at, at), reveal: true);
+        return view.Feature<HoverFeature>()?.HoverAtAsync(offset) ?? Task.CompletedTask;
     }
 
     private static async Task RunPlanAsync(CodeEditorControl view, EditorViewFactory factory, Func<EditorDocument, TextRange, EditingContext, EditPlan?> compute)

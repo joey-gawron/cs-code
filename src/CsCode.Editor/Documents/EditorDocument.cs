@@ -28,6 +28,7 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
     private readonly Emitter<ITextDocument> _languageChanged = new();
     private readonly Emitter<IEditorDocument> _saved = new();
     private readonly Emitter<IEditorDocument> _dirtyChanged = new();
+    private readonly Emitter<TextContentChange> _beforeChange = new();
     private readonly DisposableStore _disposables = new();
     private DocumentSnapshot _published;
     private string _languageId;
@@ -93,6 +94,12 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
     public IEventSource<ITextDocument> LanguageIdChanged => _languageChanged;
     public IEventSource<IEditorDocument> Saved => _saved;
     public IEventSource<IEditorDocument> DirtyChanged => _dirtyChanged;
+
+    /// <summary>
+    /// Raised for every primitive change BEFORE the buffer mutates (UI thread), with its range against the text as it still is: a handler can
+    /// read the lines the change is about to replace. One per change of an atomic group; <see cref="Changed"/> follows at the end of the group.
+    /// </summary>
+    public IEventSource<TextContentChange> BeforeChange => _beforeChange;
 
     /// <summary>The live AvaloniaEdit buffer. UI thread only; views bind their <c>TextEditor</c> to it.</summary>
     internal TextDocument Buffer => _text;
@@ -218,6 +225,31 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
 
     public void Redo() => _text.UndoStack.Redo();
 
+    /// <summary>
+    /// Opens an undo group (UI thread): every change until the matching <see cref="EndUndoGroup"/> becomes ONE undo step; with
+    /// <paramref name="continueLast"/> they join the last step instead (when the history allows it). Groups nest. Undo/Redo must not be
+    /// called while one is open (the buffer throws). Used by modal editing layers to make one Vim change one undo step.
+    /// </summary>
+    public void BeginUndoGroup(bool continueLast)
+    {
+        if (continueLast) _text.UndoStack.StartContinuedUndoGroup();
+        else _text.UndoStack.StartUndoGroup();
+    }
+
+    public void EndUndoGroup() => _text.UndoStack.EndUndoGroup();
+
+    /// <summary>
+    /// Records a marker in the open undo group (UI thread; a group must be open): <paramref name="onUndoRedo"/> runs when the group is undone
+    /// (false) or redone (true). The marker is not a modification (dirty tracking ignores it), and a group holding nothing else is dropped.
+    /// </summary>
+    public void AddUndoMarker(Action<bool> onUndoRedo) => _text.UndoStack.PushOptional(new UndoMarker(onUndoRedo));
+
+    private sealed class UndoMarker(Action<bool> callback) : IUndoableOperation
+    {
+        public void Undo() => callback(false);
+        public void Redo() => callback(true);
+    }
+
     /// <summary>Runs <paramref name="action"/> as one atomic change group (one event, one undo unit).</summary>
     public void RunAtomic(Action action)
     {
@@ -241,11 +273,13 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
         // Runs BEFORE the mutation, so positions are expressed against the state the change applies to.
         var start = _text.GetLocation(e.Offset);
         var end = e.RemovalLength == 0 ? start : _text.GetLocation(e.Offset + e.RemovalLength);
-        _pending.Add(new TextContentChange(
+        var change = new TextContentChange(
             new TextRange(new TextPosition(start.Line - 1, start.Column - 1), new TextPosition(end.Line - 1, end.Column - 1)),
             e.Offset,
             e.RemovalLength,
-            e.InsertedText.Text));
+            e.InsertedText.Text);
+        _pending.Add(change);
+        _beforeChange.Fire(change);
     }
 
     private void OnUpdateFinished(object? sender, EventArgs e)
@@ -283,5 +317,6 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
         _languageChanged.Clear();
         _saved.Clear();
         _dirtyChanged.Clear();
+        _beforeChange.Clear();
     }
 }

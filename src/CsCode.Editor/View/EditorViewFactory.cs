@@ -26,6 +26,8 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
     private readonly Dictionary<EditorDocument, TokenizationSession> _sessions = new();
     private readonly List<CodeEditorControl> _views = new();
     private readonly DisposableStore _disposables = new();
+    private readonly Emitter<CodeEditorControl> _viewOpened = new();
+    private readonly Emitter<CodeEditorControl> _viewClosing = new();
     private readonly bool _ownsServices;
     private int _untitledCounter;
     private CodeEditorControl? _active;
@@ -77,6 +79,12 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
             lock (_gate) return _views.ToArray();
         }
     }
+
+    /// <summary>A view was created (raised at the end of its construction, before it is shown). UI thread.</summary>
+    public IEventSource<CodeEditorControl> ViewOpened => _viewOpened;
+
+    /// <summary>A view is being destroyed (raised first thing in its dispose, while it is still intact). UI thread.</summary>
+    public IEventSource<CodeEditorControl> ViewClosing => _viewClosing;
 
     // ---- IEditorViewFactory ----
 
@@ -186,8 +194,12 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         lock (_gate) _views.Add(view);
     }
 
+    /// <summary>Called by the view once it is fully constructed.</summary>
+    internal void NotifyOpened(CodeEditorControl view) => _viewOpened.Fire(view);
+
     internal void Unregister(CodeEditorControl view)
     {
+        _viewClosing.Fire(view);
         lock (_gate)
         {
             _views.Remove(view);
@@ -227,5 +239,7 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
             _sessions.Clear();
         }
         _disposables.Dispose();
+        _viewOpened.Clear();
+        _viewClosing.Clear();
     }
 }

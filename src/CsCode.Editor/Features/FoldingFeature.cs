@@ -237,6 +237,71 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
         if (target is not null) target.IsFolded = fold;
     }
 
+    // ---- by line (the modal editing surface: Vim's zo zc za zO zC zR zM and closed-fold queries) ----
+
+    /// <summary>Lines of a region: its first (visible) line and its last.</summary>
+    private (int Start, int End) LinesOf(FoldingSection f) => (_v.Document.PositionAt(f.StartOffset).Line, _v.Document.PositionAt(f.EndOffset).Line);
+
+    /// <summary>The outermost collapsed region whose lines include <paramref name="line"/>. Uses the manager's segment tree, never a scan.</summary>
+    internal bool TryGetClosedFold(int line, out int startLine, out int endLine)
+    {
+        startLine = endLine = line;
+        var buffer = _v.Document.Buffer;
+        if (line < 0 || line >= buffer.LineCount) return false;
+        var dl = buffer.GetLineByNumber(line + 1);
+        FoldingSection? best = null;
+        void Consider(FoldingSection f)
+        {
+            if (!f.IsFolded) return;
+            var (s, e) = LinesOf(f);
+            if (line < s || line > e) return;
+            if (best is null || f.StartOffset < best.StartOffset || (f.StartOffset == best.StartOffset && f.EndOffset > best.EndOffset)) best = f;
+        }
+        foreach (var f in _manager.GetFoldingsContaining(dl.Offset)) Consider(f);
+        foreach (var f in _manager.GetFoldingsContaining(dl.EndOffset)) Consider(f);
+        foreach (var f in _manager.GetFoldingsAt(dl.EndOffset)) Consider(f);
+        if (best is null) return false;
+        (startLine, endLine) = LinesOf(best);
+        return true;
+    }
+
+    internal void FoldLines(EditorFoldAction action, int startLine, int endLine)
+    {
+        if (endLine < startLine) (startLine, endLine) = (endLine, startLine);
+        switch (action)
+        {
+            case EditorFoldAction.OpenAll: UnfoldAll(); return;
+            case EditorFoldAction.CloseAll: FoldAll(); return;
+        }
+        // regions touching the line range, innermost (latest start) first
+        var sections = _manager.AllFoldings.Where(f =>
+        {
+            var (s, e) = LinesOf(f);
+            return s <= endLine && e >= startLine;
+        }).OrderByDescending(f => f.StartOffset).ThenBy(f => f.EndOffset).ToList();
+        if (sections.Count == 0) return;
+        switch (action)
+        {
+            case EditorFoldAction.OpenRecursive:
+                foreach (var f in sections) f.IsFolded = false;
+                break;
+            case EditorFoldAction.CloseRecursive:
+                foreach (var f in sections) f.IsFolded = true;
+                break;
+            case EditorFoldAction.Open:
+                // the outermost closed region shows; opening it reveals the next level (Vim's zo)
+                if (sections.LastOrDefault(f => f.IsFolded) is { } closed) closed.IsFolded = false;
+                break;
+            case EditorFoldAction.Close:
+                if (sections.FirstOrDefault(f => !f.IsFolded) is { } open) open.IsFolded = true;
+                break;
+            case EditorFoldAction.Toggle:
+                if (sections.LastOrDefault(f => f.IsFolded) is { } c) c.IsFolded = false;
+                else sections[0].IsFolded = true;
+                break;
+        }
+    }
+
     private IEnumerable<FoldingSection> SectionsAtCaret()
     {
         var caret = _v.Editor.CaretOffset;
