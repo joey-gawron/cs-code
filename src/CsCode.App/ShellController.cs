@@ -98,6 +98,8 @@ public sealed class ShellController : IDisposable
         ContextKeys = new ContextKeyTracker(keys, well, _ui, quick, workspace, debug);
         _disposables.Add(ContextKeys);
 
+        if (_sp.GetService<ActiveSelectionProvider>() is { } selection) _disposables.Add(selection.Track(well));
+
         Layout = new LayoutPersistence(Factory, Tools, well, _ui, state, Tools.Tools.Select(t => t.Spec.Id).Except(DefaultLayoutTools));
 
         _disposables.Add(ShellCommands.Register(new ShellCommandContext(
