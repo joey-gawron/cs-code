@@ -61,6 +61,13 @@ internal sealed class TreeSitterHighlighter : IDisposable
     public const int ReadBehindLines = 500;
     public const int ChunkLines = 200;
 
+    /// <summary>
+    /// Worker time a document may spend parsing without producing a tree before the engine gives up on it (TextMate takes over for that
+    /// document). Guards against grammars whose error recovery explodes on syntax they do not know: one C# 11 list pattern the C# grammar
+    /// cannot parse made a 1.2 MB file take minutes (docs/TREE-SITTER-EVALUATION.md §1, B1c). Settable for tests.
+    /// </summary>
+    internal static TimeSpan MaxParseTimeWithoutTree { get; set; } = TimeSpan.FromSeconds(5);
+
     private readonly TreeSitterService _service;
     private readonly SyntaxDocument _syntax;
     private readonly PaintBuffer _paint = new();
@@ -73,6 +80,7 @@ internal sealed class TreeSitterHighlighter : IDisposable
     private (int First, int Last, int Generation) _viewportDone = (-1, -1, -1);
     private bool _fullRefresh = true;
     private bool _disposed;
+    private TimeSpan _parseTimeSinceTree;
 
     private TreeSitterHighlighter(TreeSitterService service, SyntaxDocument syntax, string languageId, int generation)
     {
@@ -100,6 +108,12 @@ internal sealed class TreeSitterHighlighter : IDisposable
 
     /// <summary>The managed thread that ran the last slice (tests prove it is the editor worker, never the UI thread).</summary>
     public int LastSliceThreadId { get; private set; }
+
+    /// <summary>True once parsing took longer than <see cref="MaxParseTimeWithoutTree"/> without a result: the session hands the document to TextMate.</summary>
+    public bool GaveUp { get; private set; }
+
+    /// <summary>Worker time spent parsing since the last completed tree (all slices, abandoned parses included).</summary>
+    public TimeSpan ParseTimeSinceTree => _parseTimeSinceTree;
 
     /// <summary>Worker only. Null (and the reason logged once by the service) when tree-sitter cannot handle the language here.</summary>
     public static TreeSitterHighlighter? TryCreate(TreeSitterService service, string languageId, int generation)
@@ -136,11 +150,20 @@ internal sealed class TreeSitterHighlighter : IDisposable
         // 2. parse (incremental, sliced, cancellable)
         if (_treeVersion != snap.Version)
         {
-            if (_syntax.Parse(text, deadline) == ParseOutcome.Halted)
+            var parseStarted = Stopwatch.GetTimestamp();
+            var outcome = _syntax.Parse(text, deadline);
+            _parseTimeSinceTree += Stopwatch.GetElapsedTime(parseStarted);
+            if (outcome == ParseOutcome.Halted)
             {
+                if (_parseTimeSinceTree > MaxParseTimeWithoutTree)
+                {
+                    GaveUp = true; // the session disposes this engine and lets TextMate colour the document
+                    return;
+                }
                 if (session.Document.Version == snap.Version) session.ScheduleSlice(WorkPriority.Visible); // out of budget: resume next slice
                 return; // otherwise a newer edit cancelled it and its Changed handler scheduled the next slice
             }
+            _parseTimeSinceTree = TimeSpan.Zero;
             _treeVersion = snap.Version;
             CompletedParses++;
             Volatile.Write(ref _estimatedBytes, _syntax.EstimatedTreeBytes);

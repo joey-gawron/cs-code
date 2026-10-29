@@ -23,7 +23,7 @@ Contents: [1 Recommendation](#1-recommendation) · [2 The prototype](#2-the-prot
 
 | Option | Verdict | Why |
 |---|---|---|
-| **Switch** (tree-sitter for everything, drop TextMate) | **No** | Grammars exist for ~50 of CsCode's languages, not all; a native grammar per language per platform must be built, licence-checked and shipped (§8); first colours of a big file wait for a whole-document parse (§4: 1 MB of C# ≈ 2 s here, TextMate colours the viewport in milliseconds); C#'s grammar is the slowest one measured and C# is the editor's main language. |
+| **Switch** (tree-sitter for everything, drop TextMate) | **No** | Grammars exist for ~50 of CsCode's languages, not all; a native grammar per language per platform must be built, licence-checked and shipped (§8); first colours of a big file wait for a whole-document parse (§4: 1 MB of C# ≈ 2 s here, TextMate colours the viewport in milliseconds); C#'s grammar is the slowest one measured, C# is the editor's main language, and **one valid C# 11 construct the grammar does not know (`['f', .. var n]`, used in this repository) turns the rest of the file into an error region: parsing becomes 7× slower and every keystroke re-parses the whole file** (§4 B1c). |
 | **Hybrid** (tree-sitter where a grammar is installed and enabled, TextMate otherwise) | **Yes — staged** | Same token rows, same themes, same features: the prototype proves the engines are interchangeable per document with zero per-theme work (§6). Tree-sitter colours structure TextMate's regexes cannot see (types, properties, namespaces, calls — closer to what VS Code shows with semantic tokens), handles injections well (Markdown fences, HTML script/style, §3), parses 1 MB 5–35× faster than TextMate tokenises it (§4 B1b), and grammars + queries for **all 17 languages CsCode cannot colour today** are on this machine and compile with the prototype (test `Grammars_for_the_languages_TextMate_cannot_highlight_load_and_compile`). |
 | **Stay** (TextMate only) | No | Leaves the 17 languages uncoloured unless third-party TextMate grammars are downloaded (one licence check per file), and leaves the structural features in §7 to language servers. |
 
@@ -35,6 +35,14 @@ Staging proposal (each step needs the user's go-ahead):
    tree-sitter's colouring is richer; keep C# on TextMate (+ Roslyn semantic tokens from the language server) until its grammar is faster.
 4. **Structural features** (§7) on top of the same trees: folding, expand/shrink selection, outline, Vim text objects, sticky scroll.
 
+**The finding that matters most for C#:** tree-sitter's robustness depends on the grammar keeping up with the language. The C# grammar
+(v0.23.5, the newest on this machine) cannot parse one file of this repository (a C# 11 list pattern with a slice designation,
+`['f', .. var n] when …`, in `KeyboardShortcutsViewModel.cs`). The whole file becomes one ERROR region (colours there degrade), and — measured
+in plain C as well, so it is the library, not the binding — with that construct at the top of 1.2 MB of otherwise simple C# the full parse takes
+7× longer and an incremental reparse after one keystroke goes from ~25 ms to ~8 s, because nothing after the error is reusable. TextMate
+degrades locally (one wrong colour) on syntax it does not know. For a fast-moving language this is the strongest argument to keep TextMate
+(plus the language server's semantic tokens) as C#'s engine.
+
 ## 2. The prototype
 
 * **Setting:** `editor.experimental.treeSitter` (boolean, default `false`; registered with `IConfigurationService` so the Settings panel lists it;
@@ -42,7 +50,7 @@ Staging proposal (each step needs the user's go-ahead):
   C#, TypeScript, TSX, JavaScript(React), Rust, Python, Markdown (with injections), C, C++, HTML (with JS/CSS injections), CSS. Every other
   language, and every failure (no runtime, grammar missing, ABI mismatch, query that does not compile), stays on / falls back to TextMate; the
   reason is logged once per grammar. `CodeEditorControl.SyntaxEngine` says which engine colours a view.
-* **Where:** `src/CsCode.Editor.TreeSitter/` (new, UI-free, no packages): `Native/TsApi.cs` (the P/Invoke layer: ~45 of the 145 exported
+* **Where:** `src/CsCode.Editor.TreeSitter/` (new, UI-free, no packages): `Native/TsApi.cs` (the P/Invoke layer: 48 of the runtime's 145 exported
   functions, blittable structs only), `Native/TsRuntime.cs` (finds and checks `libtree-sitter`, optional counting allocator), `TsLanguage.cs`
   (grammar loading + ABI check), `Queries/` (query compilation, predicates, Lua patterns), `Grammars/` (discovery, Neovim `; inherits:`,
   bundles, injection-language aliases), `Highlighting/` (`SyntaxDocument`: sliced incremental parser + highlighter, `CaptureScopes`,
@@ -190,11 +198,12 @@ Exceptions to watch: GPL-3.0 and EUPL-1.2 grammars cannot be bundled into a non-
 
 ## 9. .NET binding
 
-**Own thin P/Invoke layer (this prototype) — recommended.** ~45 functions, blittable structs only, `LibraryImport` source-generated stubs, a
-DllImport resolver that loads and API-checks the runtime, `UnmanagedCallersOnly` callbacks for input reading and progress. About 1,000 lines
-for the whole engine including queries/predicates/injections. It follows the C API directly (0.25 renamed/removed functions — e.g. the
-cancellation flag and timeout were replaced by progress callbacks — and the layer was written against 0.26 in an afternoon), adds no
-package or transitive native assets, and keeps memory/threading under the editor's own rules (confinement, counting allocator for tests).
+**Own thin P/Invoke layer (this prototype) — recommended.** 48 functions (`Native/TsApi.cs`, 250 lines), blittable structs only,
+`LibraryImport` source-generated stubs, a DllImport resolver that loads and API-checks the runtime, `UnmanagedCallersOnly` callbacks for input
+reading and progress. The whole engine (binding, discovery, queries/predicates, injections, highlighter) is ~2,500 lines with comments, the
+editor integration ~700. It follows the C API directly (0.25 removed the cancellation flag and the timeout in favour of progress callbacks and
+renamed `ts_language_version` → `ts_language_abi_version`; a binding has to follow such changes), adds no package or transitive native
+assets, and keeps memory/threading under the editor's own rules (confinement, counting allocator for tests).
 
 **Existing bindings** (from knowledge, NOT verified on this offline machine — check the current state before relying on it): community
 NuGet packages exist that wrap the C API and bundle prebuilt native grammars for several platforms (e.g. *TreeSitter.DotNet*). Pros: native

@@ -48,6 +48,7 @@ internal sealed class TokenizationSession : IDisposable
     // Decided on the UI thread (construction, Restart) from the setting; the engine itself is created and used on the worker only. When it
     // cannot run (no runtime, no grammar...) the slice falls through to the TextMate path below, so TextMate is always the fallback.
     private volatile bool _treeSitterWanted;
+    private volatile bool _treeSitterGaveUp; // this document parsed too slowly with tree-sitter: TextMate until the setting/language changes
     private volatile TreeSitterHighlighter? _treeSitter;
     private int _treeSitterGeneration;
 
@@ -134,7 +135,7 @@ internal sealed class TokenizationSession : IDisposable
     {
         Store.Reset(_doc.LineCount, _doc.Version);
         _hasGrammar = false;
-        _treeSitterWanted = _owner.TreeSitter.IsEnabledFor(_doc.LanguageId);
+        _treeSitterWanted = _owner.TreeSitter.IsEnabledFor(_doc.LanguageId) && !_treeSitterGaveUp;
         Interlocked.Increment(ref _treeSitterGeneration); // the running engine (if any) is replaced on the worker
         TreeSitterEdits.Clear();
         Schedule(WorkPriority.Visible);
@@ -289,7 +290,15 @@ internal sealed class TokenizationSession : IDisposable
     internal void MarkViewportReady(int version) => Volatile.Write(ref _viewportReady, new ViewportReadyMark(version, Stopwatch.GetTimestamp()));
 
     /// <summary>UI thread: the setting now asks for a different engine than the one this session runs (a restart switches it).</summary>
-    internal bool TreeSitterWantedChanged() => _owner.TreeSitter.IsEnabledFor(_doc.LanguageId) != _treeSitterWanted;
+    internal bool TreeSitterWantedChanged()
+    {
+        var wanted = _owner.TreeSitter.IsEnabledFor(_doc.LanguageId);
+        if (!wanted) _treeSitterGaveUp = false; // switching the setting off (or to another language) forgets an earlier give-up
+        return (wanted && !_treeSitterGaveUp) != _treeSitterWanted;
+    }
+
+    /// <summary>True when tree-sitter gave up on this document (too slow to parse) and TextMate colours it.</summary>
+    internal bool TreeSitterGaveUp => _treeSitterGaveUp;
 
     internal void NotifyTokensChanged(int first, int last) => NotifyChanged(first, last);
 
@@ -323,6 +332,18 @@ internal sealed class TokenizationSession : IDisposable
         }
         _hasGrammar = true;
         engine.RunSlice(this);
+        if (engine.GaveUp)
+        {
+            _owner.Log.LogWarning("tree-sitter spent {Seconds:0.0} s parsing {Uri} without a result (grammar error recovery?); TextMate colours it instead",
+                engine.ParseTimeSinceTree.TotalSeconds, _doc.Uri);
+            _treeSitterGaveUp = true;
+            _treeSitter = null;
+            engine.Dispose();
+            _owner.Ui.Post(() =>
+            {
+                if (!_disposed) Restart();
+            });
+        }
         return true;
     }
 

@@ -247,21 +247,6 @@ public class TreeSitterBenchmarks
 
     // ---- B1c: error recovery ----
 
-    /// <summary>A construct the C# grammar (v0.23.5) does not parse: a list pattern with a slice designation (valid C# 11).</summary>
-    private const string Unparsable = """
-        namespace N;
-
-        public static class K
-        {
-            public static string F(string s) => s switch
-            {
-                ['f', .. var n] when int.TryParse(n, out _) => "F" + n,
-                _ => s,
-            };
-        }
-
-        """;
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -269,19 +254,25 @@ public class TreeSitterBenchmarks
     {
         RequireBench();
         var bundle = RequireGrammar("c_sharp");
-        var body = string.Concat(Enumerable.Range(0, 20_000).Select(i => $"public class C{i} {{ int F{i}(int a) {{ return a * {i}; }} }}\n"));
-        var text = (withUnparsable ? Unparsable : "namespace N;\n\n") + body;
-        var scenario = $"B1c 1.2 MB of simple C#, {(withUnparsable ? "WITH" : "without")} one unparsable list pattern at the top";
-        using var registry = NewRegistry();
-        using var doc = new SyntaxDocument(registry, bundle);
-        var sw = Stopwatch.StartNew();
-        doc.Parse(new StringInput(text), long.MaxValue);
-        Record(scenario, "tree-sitter", "full parse", sw.Elapsed.TotalMilliseconds, "ms");
-        Record(scenario, "tree-sitter", "tree has ERROR nodes (1 = yes)", doc.RootHasError ? 1 : 0, "flag");
-        var times = new List<double>();
-        foreach (var at in new[] { 0.25, 0.5, 0.75 })
+        // with the construct the parse can take many minutes: every parse here is capped (sliced with a deadline) and reported as "> cap"
+        var cap = TimeSpan.FromSeconds(120);
+        foreach (var classes in new[] { 2_000, 20_000 })
         {
-            var offset = text.IndexOf(" F", (int)(text.Length * at), StringComparison.Ordinal) + 2;
+            var body = string.Concat(Enumerable.Range(0, classes).Select(i => $"public class C{i} {{ int F{i}(int a) {{ return a * {i}; }} }}\n"));
+            var text = (withUnparsable ? TreeSitterGuardTests.Unparsable : "namespace N;\n\n") + body;
+            var scenario = $"B1c {text.Length / 1024} K chars of simple C#, {(withUnparsable ? "WITH" : "without")} one unparsable list pattern at the top";
+            using var registry = NewRegistry();
+            using var doc = new SyntaxDocument(registry, bundle);
+            var sw = Stopwatch.StartNew();
+            var outcome = doc.Parse(new StringInput(text), Stopwatch.GetTimestamp() + (long)(cap.TotalSeconds * Stopwatch.Frequency));
+            if (outcome == ParseOutcome.Halted)
+            {
+                Record(scenario, "tree-sitter", $"full parse (did not finish: stopped at the {cap.TotalSeconds:0} s cap)", sw.Elapsed.TotalMilliseconds, "ms");
+                continue;
+            }
+            Record(scenario, "tree-sitter", "full parse", sw.Elapsed.TotalMilliseconds, "ms");
+            Record(scenario, "tree-sitter", "tree has ERROR nodes (1 = yes)", doc.RootHasError ? 1 : 0, "flag");
+            var offset = text.IndexOf(" F", text.Length / 2, StringComparison.Ordinal) + 2;
             var before = new StringInput(text);
             var line = before.LineOfOffset(offset);
             var col = offset - before.LineStart(line);
@@ -289,12 +280,9 @@ public class TreeSitterBenchmarks
             var after = new StringInput(text);
             doc.ApplyEdit(new TextEditInfo(offset, offset, offset + 1, line, col, line, col, line, col + 1));
             sw.Restart();
-            doc.Parse(after, long.MaxValue);
-            times.Add(sw.Elapsed.TotalMilliseconds);
+            outcome = doc.Parse(after, Stopwatch.GetTimestamp() + (long)(cap.TotalSeconds * Stopwatch.Frequency));
+            Record(scenario, "tree-sitter", outcome == ParseOutcome.Completed ? "incremental reparse after 1 char" : $"incremental reparse after 1 char (stopped at the {cap.TotalSeconds:0} s cap)", sw.Elapsed.TotalMilliseconds, "ms");
         }
-        times.Sort();
-        Record(scenario, "tree-sitter", "incremental reparse after 1 char (median of 3)", times[1], "ms");
-        Assert.Equal(withUnparsable, doc.RootHasError);
     }
 
     // ---- B1b: per-language throughput (1 MB of each evaluated language: its sample repeated) ----
