@@ -11,8 +11,12 @@ Read `docs/briefs/00-common.md` first (rules, threading, memory). Visual Studio 
 * **Clipboard:** the editor declares `editor.action.clipboardCopyAction` / `CutAction` / `PasteAction`, `IWindowService.CopyToClipboardAsync` exists,
   and a few panels copy (Call Stack, Debug Console, Exception helper, Find in Files, Explorer). Nobody has checked the system clipboard in both
   directions on the user's desktop: KDE Plasma on **Wayland**, with CsCode running through XWayland. No `xclip`, `xsel` or `wl-copy` is installed.
-* **Vim:** `IVimHost.ReadClipboard` / `WriteClipboard` (registers `+` and `*`) are stubs that return null and do nothing. The Vim↔editor adapter is being
-  built in a separate session (workflow `wf_386b8644-ed6`). Implement the `+`/`*` registers there, or coordinate with that session, rather than twice.
+* **Vim:** the Vim↔editor adapter (separate session, workflow `wf_386b8644-ed6`) backs **both** `+` and `*` with the system CLIPBOARD through
+  `IVimHost.ReadClipboard` / `WriteClipboard`, so `"+y`, `"+p`, `"*y` and `"*p` work against CLIPBOARD once it merges. The Linux PRIMARY selection was
+  left to this wave, for three reasons:
+  * Avalonia 12.1.4 has no public primary-selection API (Avalonia.X11 knows XA_PRIMARY only internally);
+  * xclip, xsel and wl-clipboard are not installed;
+  * the host members take no register name, so the host cannot tell `*` from `+`.
 
 ## A. Clipboard (MUST)
 1. Cut / Copy / Paste work everywhere text can be selected or copied:
@@ -40,7 +44,13 @@ Read `docs/briefs/00-common.md` first (rules, threading, memory). Visual Studio 
 4. **Clipboard ring** (Visual Studio's Ctrl+Shift+V): the last 20 copies, in memory only (never persisted: copied secrets must not land on disk),
    each capped at 1 MB. Repeated Ctrl+Shift+V cycles through them in place.
 5. **Linux primary selection:** selecting text sets PRIMARY, and middle-click pastes it (setting `editor.selectionClipboard`, on by default on Linux as
-   in VS Code, off on other platforms).
+   in VS Code, off on other platforms). This needs:
+   * a primary-selection service that owns the X11 PRIMARY selection and answers SelectionRequest events through XWayland, or speaks the Wayland
+     primary-selection protocol when the app runs natively. It must work without xclip, xsel or wl-clipboard;
+   * additive `IVimHost` overloads `ReadClipboard(char register)` and `WriteClipboard(char register, string text, VimRegisterType type)`, whose
+     defaults call the current members. This is a small engine change, and the Vim engine's tests must stay green;
+   * `*` mapped to PRIMARY in the Vim host (`+` stays CLIPBOARD);
+   * middle-click paste in the editor.
 6. **Remote editing:** copy and paste always use the local clipboard, never the remote host's.
 7. **SHOULD:** *Copy with formatting* (HTML with the theme's syntax colours, for pasting into documents and mail), and *Copy path* / *Copy relative
    path* on tabs and in the Explorer.
