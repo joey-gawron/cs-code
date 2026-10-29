@@ -20,7 +20,7 @@ public enum FakeLatency
 /// and completions, with real handle semantics (everything handed out before a resume throws afterwards) and per-request counters.
 /// Events are public emitters so a test can fire any sequence.
 /// </summary>
-public sealed class FakeDebugSession : IDebugSession
+public class FakeDebugSession : IDebugSession
 {
     private readonly object _gate = new();
     private long _stopGeneration = 1;
@@ -319,4 +319,27 @@ public sealed class FakeDebugSession : IDebugSession
     public int SubscriberCount =>
         StoppedEmitter.SubscriberCount + ContinuedEmitter.SubscriberCount + OutputEmitter.SubscriberCount + ThreadEmitter.SubscriberCount
         + StateEmitter.SubscriberCount + TerminatedEmitter.SubscriberCount + BreakpointStatusEmitter.SubscriberCount + InvalidatedEmitter.SubscriberCount;
+}
+
+/// <summary>
+/// A session that keeps its module list like the DAP module's (<see cref="IDebugSessionModules"/>): <see cref="ModuleList"/> plays the modules
+/// the adapter reported with <c>module</c> events. Nothing here answers the raw <c>modules</c> request unless the test sets a CustomHandler.
+/// </summary>
+public sealed class FakeModulesDebugSession : FakeDebugSession, IDebugSessionModules
+{
+    private int _modulesCalls;
+
+    public List<DebugModule> ModuleList { get; } = new();
+    public int ModulesCalls => Volatile.Read(ref _modulesCalls);
+
+    public IReadOnlyList<DebugModule> Modules
+    {
+        get { lock (ModuleList) return [.. ModuleList]; }
+    }
+
+    public ValueTask<IReadOnlyList<DebugModule>> GetModulesAsync(CancellationToken ct = default)
+    {
+        Interlocked.Increment(ref _modulesCalls);
+        return ValueTask.FromResult(Modules);
+    }
 }

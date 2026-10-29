@@ -10,6 +10,7 @@ using CsCode.Dap.Adapters;
 using CsCode.Panels.Debug.Breakpoints;
 using CsCode.Panels.Debug.CallStack;
 using CsCode.Panels.Debug.Console;
+using CsCode.Panels.Debug.Modules;
 using CsCode.Panels.Debug.Tests.Fakes;
 using CsCode.Panels.Debug.Threads;
 using CsCode.Panels.Debug.Variables;
@@ -174,6 +175,7 @@ public class RealDebuggerEndToEndTests
         var watch = ((WatchViewModel)tools["debug.watch"].CreateView(provider).DataContext!).Tree;
         var threads = (ThreadsViewModel)tools["debug.threads"].CreateView(provider).DataContext!;
         var console = (DebugConsoleViewModel)tools["debug.console"].CreateView(provider).DataContext!;
+        var modules = (ModulesViewModel)tools["debug.modules"].CreateView(provider).DataContext!;
 
         var stops = 0;
         IDebugSession? session = null;
@@ -208,6 +210,12 @@ public class RealDebuggerEndToEndTests
             await PanelRig.Eventually(() => threads.Rows.Count >= 1 && threads.Rows.All(r => r.State == "Stopped"), 20_000, "threads");
             await PanelRig.Eventually(() => console.Lines.Any(l => l.Text == "loop 4"), 20_000, "program stdout in the console");
             Assert.Equal(["loop 0", "loop 1", "loop 2", "loop 3", "loop 4"], console.Lines.Where(l => l.Kind == ConsoleLineKind.Output).Select(l => l.Text).Take(5));
+
+            // modules: netcoredbg reports them with `module` events only (it does not implement the `modules` request)
+            await PanelRig.Eventually(() => modules.Rows.Count > 0 || modules.StatusText != "Not debugging", 20_000, "modules window loaded");
+            Note($"modules: {modules.Rows.Count} (status: {modules.StatusText}), e.g. " + string.Join(" | ", modules.Rows.Take(3).Select(r => $"{r.Name} {r.Version} user={r.UserCode} {r.SymbolStatus}")));
+            Assert.Null(modules.StatusText);
+            Assert.Contains(modules.Rows, r => r.Path is { } p && p.EndsWith("Sample.dll", StringComparison.Ordinal));
 
             // watch: `a + b` evaluates in Add (52), `x + 1` cannot (x lives in Main) and shows the adapter's error
             await PanelRig.Eventually(() => watch.Rows.Any(r => r.Name == "a + b" && r.DisplayValue == "52"), 20_000, "watch a + b");
@@ -254,7 +262,7 @@ public class RealDebuggerEndToEndTests
         finally
         {
             await debug.StopAllAsync();
-            foreach (var t in new[] { breakpoints as IDisposable, callStack, threads, console }) t.Dispose();
+            foreach (var t in new[] { breakpoints as IDisposable, callStack, threads, console, modules }) t.Dispose();
         }
     }
 
