@@ -1,0 +1,240 @@
+# Languages
+
+What CsCode does for each language it recognises, and where each piece comes from. The two tables at the end are **generated** from the
+running composition by `LanguageMatrixTests` (`tests/CsCode.App.Tests`), which fails when they differ from the code, so they cannot drift.
+After changing a language, a server or a debugger, regenerate them:
+
+```
+CSCODE_UPDATE_LANGUAGES_MD=1 dotnet test tests/CsCode.App.Tests --filter LanguageMatrixTests
+```
+
+There is no extension system: everything below is built in or configured in `settings.json` (see "Your own languages and servers").
+
+## 1. The columns
+
+| Column | Where it comes from |
+|---|---|
+| **Detection** | `ILanguageService` (`src/CsCode.Editor/Languages`): `files.associations` → exact file name → file-name pattern → longest extension → first-line regex → `plaintext`. The table lists only what really detects the language (an extension two languages claim is listed under the one that wins). Built-in languages are VS Code's built-in extensions (their `package.json`, embedded by TextMateSharp.Grammars) plus CsCode's supplement table in `BuiltinLanguages.cs`. |
+| **Highlighting** | A TextMate grammar from VS Code's built-in extensions (TextMateSharp.Grammars, MIT), tokenised on the editor worker. Languages without one say *none yet: waits for the tree-sitter decision*: part B2 of `docs/briefs/themes-languages-treesitter.md` adds their highlighting once the tree-sitter evaluation (part C) is done and the user has chosen between tree-sitter and TextMate grammars (third-party grammar downloads need the user's OK). Semantic tokens from a language server paint over either. |
+| **Language configuration** | VS Code's `language-configuration.json` for the language, or CsCode's own file in the same format (`src/CsCode.Editor/Languages/Configurations`) for languages VS Code ships none for, or the editor's defaults (bracket and quote pairs only). It drives toggle comment, auto-closing and surrounding pairs, indentation on Enter and on typing a closer, bracket matching and folding markers. |
+| **Snippets** | VS Code's built-in snippet files where they exist; *user only* means none is built in (the snippet service merges user snippet contributions, see section 4). Completion snippets from a language server come on top. |
+| **Folding** | Always by indentation (off-side for layout languages, where the block's trailing blank lines stay outside it), plus `#region`-style markers from the language configuration, plus `foldingRange` from the language server when one runs and supports it. |
+| **Language server** | Built-in definitions (`src/CsCode.Lsp/Manager/BuiltinLanguageServers.cs`) plus the `cscode.languageServers` setting. A server starts lazily with the first matching document, runs on the Language lane at below-normal OS priority, and is never installed by CsCode. |
+| **Formatter** | CsCode has no formatter of its own: Format Document / Selection / on save / on type are the language server's. The entry names what the server formats with (from its documentation). |
+| **Debugger** | Built-in debug adapters (`IDebugService.DebuggerTypes`); any other adapter can be configured with the `cscode.debuggers` setting. |
+
+## 2. Finding a server's executable
+
+For a definition's `command` CsCode looks, in order, at: an absolute or relative path as written; `PATH` (the definition's own `env.PATH`
+when it sets one); the per-user install directories of **`cscode.lsp.searchDirs`** (default on Linux: `~/.nix-profile/bin`,
+`/nix/var/nix/profiles/default/bin`, `~/.cargo/bin`, `~/.local/bin`, `~/go/bin`, `~/.dotnet/tools`, `~/.local/share/coursier/bin`,
+`~/.ghcup/bin`; macOS adds `/opt/homebrew/bin` and `/usr/local/bin`; Windows `~/.cargo/bin`, `~/go/bin`, `~/.dotnet/tools`, `%APPDATA%/npm`,
+`~/scoop/shims`, Coursier and GHCup) because an editor started from a desktop launcher rarely has them on its PATH; then the managed tools
+directory `{ToolsDir}/lsp/**` (`tools/fetch-lsp-tools.sh`). A built-in definition with **alternatives** (Nix: `nil` then `nixd`; Elixir:
+`elixir-ls`, `language_server.sh`, `lexical`; Erlang: `erlang_ls` then `elp server`; Protobuf: `buf lsp serve` then `protols`; Haskell:
+`haskell-language-server-wrapper` then `haskell-language-server`) runs the first one installed, with that alternative's own arguments. A user
+who sets `cscode.languageServers.<id>.command` gets exactly that command, never a substitute.
+
+When nothing is found the server stays *Stopped*, its `LastError` says which executables were looked for, and **one** message per server and
+root shows the install hint for the current platform (the last three columns of the server table). Nothing is retried automatically and
+nothing is downloaded: after an install the server starts for the next project root it is needed in, after `ILanguageServerManager.StartAsync`
+/ `RestartAsync`, or after restarting CsCode.
+
+## 3. Project roots
+
+A server runs once per (definition, root). The root is the nearest ancestor of the file that contains one of the definition's root markers,
+never leaving the workspace folder that holds the file (fallback: that folder, then the file's directory). Servers whose build systems nest
+marker files (Maven and Gradle modules, Mix umbrellas, Cabal projects, dune, rebar3, buf, Nix trees with a `default.nix` per package) use
+the **outermost** marked directory inside the workspace folder instead, so a multi-module build gets one server, not one per module. A user
+override of `rootMarkers` switches a definition back to the nearest marker. Definitions without markers (JSON, YAML, Terraform, Dockerfile,
+SQL, …) run one server for all workspace folders. `${workspaceFolder}` (the root) and `${userHome}` expand in a definition's `args` and
+`initializationOptions`; the Vue definition uses it to point the server at the project's TypeScript SDK.
+
+## 4. Your own languages and servers
+
+* **A language server for any language**, or a different one for a built-in language: `cscode.languageServers` in `settings.json`, keyed by id.
+  Overriding a built-in keeps everything not mentioned:
+
+  ```jsonc
+  "cscode.languageServers": {
+    "nix": { "command": "nixd" },                                  // prefer nixd over nil
+    "jdtls": { "env": { "JAVA_HOME": "/opt/jdk-21" } },
+    "marksman": { "enabled": false },
+    "my-lsp": { "command": "my-lsp", "args": ["--stdio"], "selector": ["mylang"], "rootMarkers": ["my.project"] }
+  }
+  ```
+* **File associations**: `files.associations` (`{ "*.conf": "nix" }`) maps files onto any language id above. **Debuggers**: `cscode.debuggers`.
+* **New languages, grammars, language configurations and snippets** are accepted through the contribution registry (`LanguageContribution` with a
+  `ConfigurationPath` to a VS Code-format `language-configuration.json`, `GrammarContribution`, `SnippetContribution`; user entries win over
+  built-ins and apply live). *Not done yet:* nothing reads `{UserDataDir}/languages.json`, `grammars/` or `snippets/` into the registry, so
+  today these come only from code (found while writing this page; outside this work's files).
+
+## 5. What was verified, and the limits
+
+* Real-server tests on this machine: **zls** and **nil** (`RealZlsAndNilServerTests`: initialize, diagnostics, hover, formatting — nil through
+  nixfmt —, below-normal priority, shutdown, no process left behind) and **typescript-language-server** (`RealTypeScriptServerTests`, after
+  `tools/fetch-lsp-tools.sh`). `RealStoreServerTests` also runs ten servers that this machine's Nix store holds although they are not
+  installed for the user (read-only use of the store; each is reached only through `cscode.lsp.searchDirs`, with PATH cut down to
+  `/usr/bin:/bin`): **marksman**, **docker-langserver**, **sqls**, **terraform-ls**, **svelteserver**, **graphql-lsp**, **taplo**, and the
+  alternatives **nixd** (for nil), **protols** (for buf) and **elp** (for erlang_ls). For each it checks initialize, the exact launch line,
+  below-normal priority, a diagnostic for a broken document (marksman, docker-langserver, terraform-ls, taplo, nixd), shutdown and no process
+  left behind. Every test skips with its reason when its server is not there. The other definitions (jdtls, kotlin-language-server, Metals,
+  clojure-lsp, SourceKit-LSP, HLS, ElixirLS / Lexical, erlang_ls, ocamllsp, buf, cmake-language-server, ruby-lsp, Phpactor, Dart,
+  vue-language-server) are covered by configuration tests only (`BuiltinServerTests`: launch line, executable resolution and alternatives,
+  install hints, root detection, options); their commands, arguments and install routes follow each project's documentation but were not
+  run here.
+* The *Formatter* column restates each server's documentation; only zls (zig fmt) and nil (nixfmt) were verified.
+* Marksman indexes a folder (and reports broken links) only when it holds `.marksman.toml` or `.git`; elsewhere it works file by file
+  without link diagnostics, so both are its root markers. protols reports errors through `protoc`, which must be on its PATH.
+* `@vue/language-server` is configured for 2.x (non-hybrid mode, TypeScript from the project's `node_modules`). Version 3 expects the client to
+  route TypeScript through a tsserver plugin, which CsCode does not do; only its HTML/CSS features work then.
+* `buf lsp serve` needs a recent buf (older releases call it `buf beta lsp`: set `cscode.languageServers.protobuf.args`). The brief's
+  `pls` for Protobuf was read as `protols`, a maintained stand-alone Protobuf server (`pls` is also the name of a Perl server).
+* jdtls needs Java 21+ and Python 3 for its launcher; Phpactor and nil/nixd have no native Windows support (use WSL).
+* Typing behaviour inherited from the editor: a `decreaseIndentPattern` keyword dedents as soon as it is typed (as in VS Code), so a line that
+  starts with an identifier such as `endpoint` (Elixir, Erlang, OCaml, Scala `end`) is pulled back too; the Nix configuration therefore dedents
+  on brackets only (`in` is how `inherit` starts). A closer the editor auto-inserts (`(` → `()`) does not re-check the line, which is why
+  CMake's rule matches `endif` without its parenthesis. The editor steps over only the single-character closers it inserted, so CsCode's own
+  configurations auto-close no multi-character string delimiters (`"""…"""` in Kotlin, Scala, TOML, Elixir and GraphQL, `'''…'''` in TOML,
+  `''…''` in Nix): a typed closing delimiter would otherwise be doubled. They are typed in full; `/**` → ` */` behaves as in TypeScript.
+* GNU assembler sources (`.s`) and NASM/MASM sources (`.asm`, `.nasm`) are separate languages because their comment characters conflict;
+  `.tfvars` is `terraform-vars`, the id terraform-ls expects.
+
+## 6. The matrix
+
+<!-- BEGIN GENERATED: LanguageMatrixTests (do not edit by hand) -->
+
+85 languages, 36 built-in language servers, 1 built-in debugger(s). Highlighted: 62; with a language server: 45.
+
+### Support matrix
+
+| Language | Detection | Highlighting | Language configuration | Snippets | Folding | Language server | Formatter | Debugger |
+|---|---|---|---|---|---|---|---|---|
+| Asciidoc `asciidoc` | `.adoc` | TextMate `document.adoc` (VS Code `asciidoc`) | VS Code: `//`, `//// ////`, pairs | user only | indentation | none built in | none | none built in |
+| Assembly `assembly` | `.asm` `.nasm` | none yet: waits for the tree-sitter decision | CsCode: `;`, pairs, word pattern | user only | indentation, region markers | none built in | none | none built in |
+| Batch `bat` | `.bat` `.cmd` | TextMate `source.batchfile` (VS Code `bat`) | VS Code: `@REM`, pairs | built-in (VS Code) | indentation, region markers | none built in | none | none built in |
+| BibTeX `bibtex` | `.bib` | TextMate `text.bibtex` (VS Code `latex`) | defaults: no comments, default pairs | user only | indentation | none built in | none | none built in |
+| C `c` | `.c` `.i` | TextMate `source.c` (VS Code `cpp`) | VS Code: `//`, `/* */`, pairs, word pattern | built-in (VS Code) | indentation, region markers, server ranges | `clangd`: clangd | clangd (clang-format rules) | none built in |
+| C# `csharp` | `.cs` `.csx` `.cake` | TextMate `source.cs` (VS Code `csharp`) | VS Code: `//`, `/* */`, pairs | built-in (VS Code) | indentation, region markers, server ranges | `csharp`: csharp-ls | csharp-ls | `coreclr` (.NET (netcoredbg)) |
+| C++ `cpp` | `.cpp` `.cc` `.cxx` `.c++` `.hpp` `.hh` `.hxx` `.h++` +10 more | TextMate `source.cpp` (VS Code `cpp`) | VS Code: `//`, `/* */`, pairs, word pattern | built-in (VS Code) | indentation, region markers, server ranges | `clangd`: clangd | clangd (clang-format rules) | none built in |
+| Clojure `clojure` | `.clj` `.cljs` `.cljc` `.cljx` `.clojure` `.edn` | TextMate `source.clojure` (VS Code `clojure`) | VS Code: `;;`, pairs | user only | indentation (off-side), server ranges | `clojure-lsp`: clojure-lsp | clojure-lsp (cljfmt) | none built in |
+| CMake `cmake` | `.cmake` `CMakeLists.txt` | none yet: waits for the tree-sitter decision | CsCode: `#`, `#[[ ]]`, pairs, indent rules, word pattern | user only | indentation, region markers, server ranges | `cmake`: cmake-language-server | cmake-language-server (cmake-format, when installed) | none built in |
+| CoffeeScript `coffeescript` | `.coffee` `.cson` `.iced` | TextMate `source.coffee` (VS Code `coffeescript`) | VS Code: `#`, `### ###`, pairs | built-in (VS Code) | indentation (off-side), region markers | none built in | none | none built in |
+| Compose `dockercompose` | names `compose.yml` `compose.yaml` `compose.*.yml` … | TextMate `source.yaml` (VS Code `yaml`) | VS Code: `#`, pairs, indent rules | user only | indentation (off-side), region markers | none built in | none | none built in |
+| CSS `css` | `.css` | TextMate `source.css` (VS Code `css`) | VS Code: `/* */`, pairs, indent rules, word pattern | user only | indentation, region markers, server ranges | `css`: vscode-css-language-server | vscode-css-language-server | none built in |
+| CSV `csv` | `.csv` | none yet: waits for the tree-sitter decision | CsCode: no comments, pairs, word pattern | user only | indentation | none built in | none | none built in |
+| CUDA C++ `cuda-cpp` | `.cu` `.cuh` | TextMate `source.cuda-cpp` (VS Code `cpp`) | VS Code: `//`, `/* */`, pairs, word pattern | user only | indentation, region markers | none built in | none | none built in |
+| Dart `dart` | `.dart` | TextMate `source.dart` (VS Code `dart`) | VS Code: `//`, `/* */`, pairs | user only | indentation, server ranges | `dart`: dart | dart language-server (dart format) | none built in |
+| Diff `diff` | `.diff` `.patch` `.rej` | TextMate `source.diff` (VS Code `diff`) | VS Code: `#`, `#  `, pairs | user only | indentation | none built in | none | none built in |
+| Docker `dockerfile` | `.dockerfile` `.containerfile` `Dockerfile` `Containerfile` names `Dockerfile.*` `Containerfile.*` | TextMate `source.dockerfile` (VS Code `docker`) | VS Code: `#`, pairs | user only | indentation, server ranges | `dockerfile`: docker-langserver | docker-langserver | none built in |
+| Elixir `elixir` | `.ex` `.exs` | none yet: waits for the tree-sitter decision | CsCode: `#`, pairs, indent rules, word pattern | user only | indentation, region markers, server ranges | `elixir`: elixir-ls / language_server.sh / lexical | ElixirLS / Lexical (mix format) | none built in |
+| Erlang `erlang` | `.erl` `.hrl` `rebar.config` | none yet: waits for the tree-sitter decision | CsCode: `%`, pairs, indent rules, on-Enter rules, word pattern | user only | indentation, region markers, server ranges | `erlang`: erlang_ls / elp | erlang_ls / ELP | none built in |
+| F# `fsharp` | `.fs` `.fsi` `.fsx` `.fsscript` | TextMate `source.fsharp` (VS Code `fsharp`) | VS Code: `//`, `(* *)`, pairs | built-in (VS Code) | indentation (off-side), region markers | none built in | none | `coreclr` (.NET (netcoredbg)) |
+| GNU Assembler `gas` | `.s` | none yet: waits for the tree-sitter decision | CsCode: `#`, `/* */`, pairs, word pattern | user only | indentation, region markers | none built in | none | none built in |
+| Go `go` | `.go` | TextMate `source.go` (VS Code `go`) | VS Code: `//`, `/* */`, pairs, indent rules | user only | indentation, region markers, server ranges | `gopls`: gopls | gopls (gofmt) | none built in |
+| GraphQL `graphql` | `.graphql` `.gql` `.graphqls` | none yet: waits for the tree-sitter decision | CsCode: `#`, pairs, indent rules, word pattern | user only | indentation, region markers, server ranges | `graphql`: graphql-lsp | none (graphql-lsp does not format) | none built in |
+| Groovy `groovy` | `.groovy` `.gvy` `.gradle` `.jenkinsfile` `.nf` `Jenkinsfile` names `Jenkinsfile.*` first line `^#!.*\bgroovy\b` | TextMate `source.groovy` (VS Code `groovy`) | VS Code: `//`, `/* */`, pairs | built-in (VS Code) | indentation | none built in | none | none built in |
+| Handlebars `handlebars` | `.handlebars` `.hbs` `.hjs` | TextMate `text.html.handlebars` (VS Code `handlebars`) | VS Code: `{{!-- --}}`, pairs, on-Enter rules, word pattern | user only | indentation | none built in | none | none built in |
+| Haskell `haskell` | `.hs` `.lhs` | none yet: waits for the tree-sitter decision | CsCode: `--`, `{- -}`, pairs, indent rules, word pattern | user only | indentation (off-side), region markers, server ranges | `haskell-language-server`: haskell-language-server-wrapper / haskell-language-server | haskell-language-server (Ormolu / Fourmolu plugins) | none built in |
+| HLSL `hlsl` | `.hlsl` `.hlsli` `.fx` `.fxh` `.vsh` `.psh` `.cginc` `.compute` | TextMate `source.hlsl` (VS Code `hlsl`) | VS Code: `//`, `/* */`, pairs | user only | indentation | none built in | none | none built in |
+| HTML `html` | `.html` `.htm` `.shtml` `.xhtml` `.xht` `.mdoc` `.jsp` `.asp` +5 more | TextMate `text.html.derivative` (VS Code `html`) | VS Code: `<!-- -->`, pairs, indent rules, on-Enter rules, word pattern | user only | indentation, region markers, server ranges | `html`: vscode-html-language-server | vscode-html-language-server | none built in |
+| Ignore `ignore` | `.gitignore_global` `.gitignore` | TextMate `source.ignore` (VS Code `git`) | VS Code: `#`, pairs | user only | indentation | none built in | none | none built in |
+| Ini `ini` | `.ini` | TextMate `source.ini` (VS Code `ini`) | VS Code: `;`, `;  `, pairs | user only | indentation | none built in | none | none built in |
+| Java `java` | `.java` `.jav` | TextMate `source.java` (VS Code `java`) | VS Code: `//`, `/* */`, pairs | built-in (VS Code) | indentation, region markers, server ranges | `jdtls`: jdtls | jdtls (Eclipse formatter) | none built in |
+| JavaScript `javascript` | `.js` `.es6` `.mjs` `.cjs` `.pac` `jakefile` first line `^#!.*\bnode` | TextMate `source.js` (VS Code `javascript`) | VS Code: `//`, `/* */`, pairs, indent rules, on-Enter rules, word pattern | built-in (VS Code) | indentation, region markers, server ranges | `typescript`: typescript-language-server | typescript-language-server (tsserver) | none built in |
+| JavaScript React `javascriptreact` | `.jsx` | TextMate `source.js.jsx` (VS Code `javascript`) | VS Code: `//`, `/* */`, pairs, indent rules, on-Enter rules, word pattern | built-in (VS Code) | indentation, region markers, server ranges | `typescript`: typescript-language-server | typescript-language-server (tsserver) | none built in |
+| JSON `json` | `.json` `.bowerrc` `.jscsrc` `.webmanifest` `.js.map` `.css.map` `.ts.map` `.har` +7 more | TextMate `source.json` (VS Code `json`) | VS Code: `//`, `/* */`, pairs, indent rules | user only | indentation, server ranges | `json`: vscode-json-language-server | vscode-json-language-server | none built in |
+| JSON Lines `jsonl` | `.jsonl` `.ndjson` | none yet: waits for the tree-sitter decision | CsCode: no comments, pairs | user only | indentation | none built in | none | none built in |
+| JSON with Comments `jsonc` | `.jsonc` `.eslintrc` `.eslintrc.json` `.jsfmtrc` `.jshintrc` `.swcrc` `.hintrc` `.babelrc` +7 more names `tsconfig.*.json` `jsconfig.*.json` `tsconfig-*.json` … | TextMate `source.json.comments` (VS Code `json`) | VS Code: `//`, `/* */`, pairs, indent rules | user only | indentation, server ranges | `json`: vscode-json-language-server | vscode-json-language-server | none built in |
+| Julia `julia` | `.jl` first line `^#!\s*/.*\bjulia[0-9.-]*\b` | TextMate `source.julia` (VS Code `julia`) | VS Code: `#`, `#= =#`, pairs, indent rules | user only | indentation, region markers | none built in | none | none built in |
+| Julia Markdown `juliamarkdown` | `.jmd` | none yet: waits for the tree-sitter decision | defaults: no comments, default pairs | user only | indentation | none built in | none | none built in |
+| Kotlin `kotlin` | `.kt` `.kts` | none yet: waits for the tree-sitter decision | CsCode: `//`, `/* */`, pairs, indent rules, on-Enter rules, word pattern | user only | indentation, region markers, server ranges | `kotlin-language-server`: kotlin-language-server | kotlin-language-server (ktfmt) | none built in |
+| LaTeX `latex` | `.tex` `.ltx` `.ctx` | TextMate `text.tex.latex` (VS Code `latex`) | VS Code: `%`, pairs, indent rules | user only | indentation, region markers | none built in | none | none built in |
+| Less `less` | `.less` | TextMate `source.css.less` (VS Code `less`) | VS Code: `//`, `/* */`, pairs, indent rules, word pattern | user only | indentation, region markers, server ranges | `css`: vscode-css-language-server | vscode-css-language-server | none built in |
+| Log `log` | `.log` | TextMate `text.log` (VS Code `log`) | defaults: no comments, default pairs | user only | indentation | none built in | none | none built in |
+| Lua `lua` | `.lua` | TextMate `source.lua` (VS Code `lua`) | VS Code: `--`, `--[[ ]]`, pairs, indent rules | user only | indentation, server ranges | `lua`: lua-language-server | lua-language-server (EmmyLuaCodeStyle) | none built in |
+| Makefile `makefile` | `.mak` `.mk` `Makefile` `GNUmakefile` `OCamlMakefile` first line `^#!\s*/usr/bin/make` | TextMate `source.makefile` (VS Code `make`) | VS Code: `#`, pairs | user only | indentation | none built in | none | none built in |
+| Markdown `markdown` | `.md` `.mkd` `.mdwn` `.mdown` `.markdown` `.markdn` `.mdtxt` `.mdtext` +1 more | TextMate `text.html.markdown` (VS Code `markdownbasics`) | VS Code: `<!-- -->`, pairs | built-in (VS Code) | indentation (off-side), region markers, server ranges | `marksman`: marksman | none (Marksman does not format) | none built in |
+| Nix `nix` | `.nix` | none yet: waits for the tree-sitter decision | CsCode: `#`, `/* */`, pairs, indent rules, word pattern | user only | indentation, region markers, server ranges | `nix`: nil / nixd | nil / nixd running nixfmt | none built in |
+| Objective-C `objective-c` | `.m` | TextMate `source.objc` (VS Code `objectivec`) | VS Code: `//`, `/* */`, pairs | user only | indentation, server ranges | `clangd`: clangd | clangd (clang-format rules) | none built in |
+| Objective-C++ `objective-cpp` | `.mm` | TextMate `source.objcpp` (VS Code `objectivec`) | VS Code: `//`, `/* */`, pairs | user only | indentation | none built in | none | none built in |
+| OCaml `ocaml` | `.ml` `.mli` | none yet: waits for the tree-sitter decision | CsCode: `(* *)`, pairs, indent rules, word pattern | user only | indentation, server ranges | `ocaml-lsp`: ocamllsp | ocamllsp (ocamlformat, when installed) | none built in |
+| Pascal `pascal` | `.pas` `.pp` | TextMate `source.pascal` (VS Code `pascal`) | VS Code: `//`, `(* *)`, pairs, word pattern | user only | indentation | none built in | none | none built in |
+| Perl `perl` | `.pl` `.pm` `.pod` `.t` `.psgi` first line `^#!.*\bperl\b` | TextMate `source.perl` (VS Code `perl`) | VS Code: `#`, pairs | user only | indentation, region markers | none built in | none | none built in |
+| Perl 6 `perl6` | `.p6` `.pl6` `.pm6` `.nqp` first line `(^#!.*\bperl6\b)\|use\s+v6` | TextMate `source.perl.6` (VS Code `perl`) | VS Code: `#`, pairs | user only | indentation | none built in | none | none built in |
+| PHP `php` | `.php` `.php4` `.php5` `.phtml` `.ctp` first line `^#!\s*/.*\bphp\b` | TextMate `source.php` (VS Code `php`) | VS Code: `//`, `/* */`, pairs, indent rules, on-Enter rules, word pattern | built-in (VS Code) | indentation, region markers, server ranges | `phpactor`: phpactor | none by default (Phpactor's php-cs-fixer integration is opt-in) | none built in |
+| Plain Text `plaintext` | `.txt` | none (plain text) | defaults: no comments, default pairs | user only | indentation | none built in | none | none built in |
+| PowerShell `powershell` | `.ps1` `.psm1` `.psd1` `.pssc` `.psrc` first line `^#!\s*/.*\bpwsh\b` | TextMate `source.powershell` (VS Code `powershell`) | VS Code: `#`, `<# #>`, pairs | user only | indentation, region markers | none built in | none | none built in |
+| Properties `properties` | `.properties` `.cfg` `.conf` `.directory` `.gitattributes` `.gitconfig` `.gitmodules` `.editorconfig` +2 more names `**/.config/git/config` `**/.git/config` | TextMate `source.ini` (VS Code `ini`) | VS Code: `#`, `#  `, pairs | user only | indentation | none built in | none | none built in |
+| Protocol Buffers `protobuf` | `.proto` | none yet: waits for the tree-sitter decision | CsCode: `//`, `/* */`, pairs, indent rules, word pattern | user only | indentation, region markers, server ranges | `protobuf`: buf / protols | buf (buf format) / protols (clang-format) | none built in |
+| Pug `jade` | `.pug` `.jade` | TextMate `text.pug` (VS Code `pug`) | VS Code: `//-`, pairs | user only | indentation (off-side) | none built in | none | none built in |
+| Python `python` | `.py` `.rpy` `.pyw` `.cpy` `.gyp` `.gypi` `.pyi` `.ipy` +4 more first line `^#!\s*/?.*\bpython[0-9.-]*\b` | TextMate `source.python` (VS Code `python`) | VS Code: `#`, `""" """`, pairs, on-Enter rules | user only | indentation (off-side), region markers, server ranges | `python`: pyright-langserver | none (Pyright does not format) | none built in |
+| R `r` | `.r` `.rhistory` `.rprofile` `.rt` | TextMate `source.r` (VS Code `r`) | VS Code: `#`, pairs | user only | indentation | none built in | none | none built in |
+| Razor `razor` | `.cshtml` `.razor` | TextMate `text.html.cshtml` (VS Code `razor`) | VS Code: `<!-- -->`, pairs | user only | indentation | none built in | none | none built in |
+| reStructuredText `restructuredtext` | `.rst` | none yet: waits for the tree-sitter decision | CsCode: `..`, pairs, word pattern | user only | indentation (off-side) | none built in | none | none built in |
+| Ruby `ruby` | `.rb` `.rbx` `.rjs` `.gemspec` `.rake` `.ru` `.erb` `.podspec` +24 more first line `^#!\s*/.*\bruby\b` | TextMate `source.ruby` (VS Code `ruby`) | VS Code: `#`, `=begin =end`, pairs, indent rules | user only | indentation, server ranges | `ruby-lsp`: ruby-lsp | ruby-lsp (RuboCop or Syntax Tree, when in the bundle) | none built in |
+| Rust `rust` | `.rs` | TextMate `source.rust` (VS Code `rust`) | VS Code: `//`, `/* */`, pairs, indent rules | user only | indentation, region markers, server ranges | `rust-analyzer`: rust-analyzer | rust-analyzer (rustfmt) | none built in |
+| Scala `scala` | `.scala` `.sc` `.sbt` | none yet: waits for the tree-sitter decision | CsCode: `//`, `/* */`, pairs, indent rules, on-Enter rules, word pattern | user only | indentation, region markers, server ranges | `metals`: metals | Metals (scalafmt) | none built in |
+| SCSS `scss` | `.scss` | TextMate `source.css.scss` (VS Code `scss`) | VS Code: `//`, `/* */`, pairs, indent rules, on-Enter rules, word pattern | user only | indentation, region markers, server ranges | `css`: vscode-css-language-server | vscode-css-language-server | none built in |
+| ShaderLab `shaderlab` | `.shader` | TextMate `source.shaderlab` (VS Code `shaderlab`) | VS Code: `//`, `/* */`, pairs | user only | indentation | none built in | none | none built in |
+| Shell Script `shellscript` | `.sh` `.bash` `.bashrc` `.bash_aliases` `.bash_profile` `.bash_login` `.ebuild` `.profile` +29 more first line `^#!.*\b(bash\|zsh\|sh\|ksh\|dtksh\|pdksh\|mksh\|ash\|dash\|yash\|sh\|csh\|jcsh\|tcsh\|itcsh).*\|^#\s*-\*-[^*]*mode:\s*shell-script[^*]*-\*-` | TextMate `source.shell` (VS Code `shellscript`) | VS Code: `#`, pairs | user only | indentation, region markers, server ranges | `bash`: bash-language-server | bash-language-server (shfmt, when installed) | none built in |
+| SQL `sql` | `.sql` `.dsql` | TextMate `source.sql` (VS Code `sql`) | VS Code: `--`, `/* */`, pairs | user only | indentation, region markers, server ranges | `sqls`: sqls | sqls | none built in |
+| Svelte `svelte` | `.svelte` | none yet: waits for the tree-sitter decision | CsCode: `<!-- -->`, pairs, indent rules, on-Enter rules, word pattern | user only | indentation, region markers, server ranges | `svelte`: svelteserver | svelteserver (prettier-plugin-svelte) | none built in |
+| Swift `swift` | `.swift` | TextMate `source.swift` (VS Code `swift`) | VS Code: `//`, `/* */`, pairs | built-in (VS Code) | indentation, server ranges | `sourcekit-lsp`: sourcekit-lsp | sourcekit-lsp (swift-format, Swift 6+) | none built in |
+| Terraform `terraform` | `.tf` | none yet: waits for the tree-sitter decision | CsCode: `#`, `/* */`, pairs, indent rules, word pattern | user only | indentation, region markers, server ranges | `terraform-ls`: terraform-ls | terraform-ls (terraform fmt; needs terraform on PATH) | none built in |
+| Terraform Variables `terraform-vars` | `.tfvars` | none yet: waits for the tree-sitter decision | CsCode: `#`, `/* */`, pairs, indent rules, word pattern | user only | indentation, region markers, server ranges | `terraform-ls`: terraform-ls | terraform-ls (terraform fmt; needs terraform on PATH) | none built in |
+| TeX `tex` | `.sty` `.cls` `.bbx` `.cbx` | TextMate `text.tex` (VS Code `latex`) | VS Code: `%`, pairs, indent rules | user only | indentation, region markers | none built in | none | none built in |
+| TOML `toml` | `.toml` `Cargo.lock` `Pipfile` `poetry.lock` | none yet: waits for the tree-sitter decision | CsCode: `#`, pairs, indent rules, word pattern | user only | indentation, region markers, server ranges | `taplo`: taplo | taplo | none built in |
+| TypeScript `typescript` | `.ts` `.mts` `.cts` | TextMate `source.ts` (VS Code `typescriptbasics`) | VS Code: `//`, `/* */`, pairs | built-in (VS Code) | indentation, region markers, server ranges | `typescript`: typescript-language-server | typescript-language-server (tsserver) | none built in |
+| TypeScript React `typescriptreact` | `.tsx` | TextMate `source.tsx` (VS Code `typescriptbasics`) | VS Code: `//`, `/* */`, pairs | built-in (VS Code) | indentation, region markers, server ranges | `typescript`: typescript-language-server | typescript-language-server (tsserver) | none built in |
+| Typst `typst` | `.typ` | TextMate `source.typst` (VS Code `typst`) | VS Code: `//`, `/* */`, pairs | user only | indentation | none built in | none | none built in |
+| Typst (Code Mode) `typst-code` | `.typc` | TextMate `source.typst-code` (VS Code `typst`) | VS Code: `//`, `/* */`, pairs | user only | indentation | none built in | none | none built in |
+| Visual Basic `vb` | `.vb` `.brs` `.vbs` `.bas` | TextMate `source.asp.vb.net` (VS Code `vb`) | VS Code: `'`, pairs | built-in (VS Code) | indentation, region markers | none built in | none | `coreclr` (.NET (netcoredbg)) |
+| Vue `vue` | `.vue` | none yet: waits for the tree-sitter decision | CsCode: `<!-- -->`, pairs, indent rules, on-Enter rules, word pattern | user only | indentation, region markers, server ranges | `vue`: vue-language-server | vue-language-server | none built in |
+| XML `xml` | `.xml` `.xsd` `.ascx` `.atom` `.axml` `.axaml` `.bpmn` `.cpt` +53 more first line `(\<\?xml.*)\|(\<svg)\|(\<\!doctype\s+svg)` | TextMate `text.xml` (VS Code `xml`) | VS Code: `<!-- -->`, pairs | user only | indentation, region markers | none built in | none | none built in |
+| XSL `xsl` | `.xsl` `.xslt` | TextMate `text.xml.xsl` (VS Code `xml`) | VS Code: `<!-- -->`, pairs | user only | indentation | none built in | none | none built in |
+| YAML `yaml` | `.yml` `.eyaml` `.eyml` `.yaml` first line `^#cloud-config` | TextMate `source.yaml` (VS Code `yaml`) | VS Code: `#`, pairs, indent rules | user only | indentation (off-side), region markers, server ranges | `yaml`: yaml-language-server | yaml-language-server (built-in Prettier) | none built in |
+| Zig `zig` | `.zig` `.zon` | none yet: waits for the tree-sitter decision | CsCode: `//`, pairs, indent rules, on-Enter rules, word pattern | user only | indentation, region markers, server ranges | `zls`: zls | zls (zig fmt) | none built in |
+
+### Built-in language servers
+
+| Id | Languages | Executable (alternatives) and arguments | Root markers | Initialization options / settings | Install: Linux | Install: macOS | Install: Windows |
+|---|---|---|---|---|---|---|---|
+| `bash` | `shellscript` | `bash-language-server start` | none: one server for all workspace folders | - | Install it with: npm install -g bash-language-server | Install it with: npm install -g bash-language-server | Install it with: npm install -g bash-language-server |
+| `clangd` | `c` `cpp` `objective-c` | `clangd` | `compile_commands.json` `compile_flags.txt` `.clangd` (nearest) | - | Install clangd from your LLVM / distribution package (e.g. sudo apt install clangd). | Install it with: brew install llvm (clangd is in $(brew --prefix llvm)/bin), or xcode-select --install for Apple's clangd. | Install it with: winget install LLVM.LLVM |
+| `clojure-lsp` | `clojure` | `clojure-lsp` | `deps.edn` `project.clj` `shadow-cljs.edn` `bb.edn` `build.boot` `.lsp` (nearest) | - | Install it with: bash < <(curl -s https://raw.githubusercontent.com/clojure-lsp/clojure-lsp/master/install) (or: nix profile install nixpkgs#clojure-lsp) | Install it with: brew install clojure-lsp/brew/clojure-lsp-native | Install it with: scoop bucket add scoop-clojure https://github.com/littleli/scoop-clojure; scoop install clojure-lsp |
+| `cmake` | `cmake` | `cmake-language-server` | `CMakePresets.json` `CMakeUserPresets.json` `CTestConfig.cmake` (nearest) | init `{"buildDirectory":"build"}` | Install it with: pipx install cmake-language-server (or: pip install --user cmake-language-server) | Install it with: pipx install cmake-language-server (or: pip install --user cmake-language-server) | Install it with: pipx install cmake-language-server (or: pip install --user cmake-language-server) |
+| `csharp` | `csharp` | `csharp-ls` | `*.sln` `*.slnx` `*.csproj` (nearest) | - | Install it with: dotnet tool install --global csharp-ls | Install it with: dotnet tool install --global csharp-ls | Install it with: dotnet tool install --global csharp-ls |
+| `css` | `css` `scss` `less` | `vscode-css-language-server --stdio` | none: one server for all workspace folders | init `{"provideFormatter":true}` | Install it with: npm install -g vscode-langservers-extracted | Install it with: npm install -g vscode-langservers-extracted | Install it with: npm install -g vscode-langservers-extracted |
+| `dart` | `dart` | `dart language-server --protocol=lsp` | `pubspec.yaml` (nearest) | init `{"onlyAnalyzeProjectsWithOpenFiles":true,"suggestFromUnimportedLibraries":true,"closingLabels":false,"outline":false,"flutterOutline":false}` | Install the Dart SDK (it includes the server): add Google's apt repository and run sudo apt-get install dart (https://dart.dev/get-dart), or use the Flutter SDK's dart | Install it with: brew tap dart-lang/dart && brew install dart | Install it with: choco install dart-sdk |
+| `dockerfile` | `dockerfile` | `docker-langserver --stdio` | none: one server for all workspace folders | - | Install it with: npm install -g dockerfile-language-server-nodejs | Install it with: npm install -g dockerfile-language-server-nodejs | Install it with: npm install -g dockerfile-language-server-nodejs |
+| `elixir` | `elixir` | `elixir-ls` or `language_server.sh` or `lexical` | `mix.exs` (outermost) | - | Download elixir-ls-*.zip from https://github.com/elixir-lsp/elixir-ls/releases, extract it and put language_server.sh on PATH, or: nix profile install nixpkgs#elixir-ls (Lexical: nixpkgs#lexical) | Install it with: brew install elixir-ls | Download elixir-ls-*.zip from https://github.com/elixir-lsp/elixir-ls/releases, extract it and set cscode.languageServers.elixir.command to its language_server.bat. |
+| `erlang` | `erlang` | `erlang_ls` or `elp server` | `rebar.config` `erlang.mk` `erlang_ls.config` `.elp.toml` (outermost) | - | Build it: git clone https://github.com/erlang-ls/erlang_ls && cd erlang_ls && make && sudo make install (or install ELP from https://github.com/WhatsApp/erlang-language-platform/releases) | Install it with: brew install erlang_ls | Build it with rebar3: git clone https://github.com/erlang-ls/erlang_ls && cd erlang_ls && rebar3 escriptize, then set cscode.languageServers.erlang.command to _build/default/bin/erlang_ls (run through escript). |
+| `gopls` | `go` | `gopls` | `go.work` `go.mod` (nearest) | - | Install it with: go install golang.org/x/tools/gopls@latest | Install it with: go install golang.org/x/tools/gopls@latest | Install it with: go install golang.org/x/tools/gopls@latest |
+| `graphql` | `graphql` | `graphql-lsp server -m stream` | `.graphqlrc*` `graphql.config.*` `package.json` (nearest) | - | Install it with: npm install -g graphql-language-service-cli | Install it with: npm install -g graphql-language-service-cli | Install it with: npm install -g graphql-language-service-cli |
+| `haskell-language-server` | `haskell` | `haskell-language-server-wrapper --lsp` or `haskell-language-server --lsp` | `hie.yaml` `cabal.project` `stack.yaml` `*.cabal` `package.yaml` (outermost) | - | Install it with GHCup (https://www.haskell.org/ghcup/): ghcup install hls | Install it with GHCup (https://www.haskell.org/ghcup/): ghcup install hls | Install it with GHCup (https://www.haskell.org/ghcup/): ghcup install hls |
+| `html` | `html` | `vscode-html-language-server --stdio` | none: one server for all workspace folders | init `{"provideFormatter":true,"embeddedLanguages":{"css":true,"javascript":true}}` | Install it with: npm install -g vscode-langservers-extracted | Install it with: npm install -g vscode-langservers-extracted | Install it with: npm install -g vscode-langservers-extracted |
+| `jdtls` | `java` | `jdtls` | `settings.gradle` `settings.gradle.kts` `pom.xml` `build.gradle` `build.gradle.kts` `build.xml` `.project` (outermost) | - | Download the latest jdt-language-server-*.tar.gz from https://download.eclipse.org/jdtls/milestones/, extract it and put its bin/ on PATH (needs Java 21+ and Python 3), or: nix profile install nixpkgs#jdt-language-server | Install it with: brew install jdtls | Download the latest jdt-language-server-*.tar.gz from https://download.eclipse.org/jdtls/milestones/, extract it and add its bin\ (jdtls.bat) to PATH (needs Java 21+ and Python 3). |
+| `json` | `json` `jsonc` | `vscode-json-language-server --stdio` | none: one server for all workspace folders | init `{"provideFormatter":true}` | Install it with: npm install -g vscode-langservers-extracted | Install it with: npm install -g vscode-langservers-extracted | Install it with: npm install -g vscode-langservers-extracted |
+| `kotlin-language-server` | `kotlin` | `kotlin-language-server` | `settings.gradle` `settings.gradle.kts` `build.gradle` `build.gradle.kts` `pom.xml` (outermost) | - | Download server.zip from https://github.com/fwcd/kotlin-language-server/releases, extract it and put server/bin on PATH, or: nix profile install nixpkgs#kotlin-language-server | Install it with: brew install kotlin-language-server | Download server.zip from https://github.com/fwcd/kotlin-language-server/releases, extract it and add server\bin (kotlin-language-server.bat) to PATH. |
+| `lua` | `lua` | `lua-language-server` | `.luarc.json` `.luarc.jsonc` `.stylua.toml` (nearest) | - | Install lua-language-server from https://github.com/LuaLS/lua-language-server/releases (extract it and put bin/ on PATH). | Install it with: brew install lua-language-server | Install lua-language-server from https://github.com/LuaLS/lua-language-server/releases (extract it and add bin\ to PATH). |
+| `marksman` | `markdown` | `marksman server` | `.marksman.toml` `.git` (nearest) | - | Download marksman-linux-x64 (or -arm64) from https://github.com/artempyanykh/marksman/releases, rename it to marksman, chmod +x it and put it on PATH (or: nix profile install nixpkgs#marksman) | Install it with: brew install marksman | Download marksman.exe from https://github.com/artempyanykh/marksman/releases and put it on PATH. |
+| `metals` | `scala` | `metals` | `build.sbt` `build.sc` `build.mill` `.scala-build` `pom.xml` `build.gradle` `build.gradle.kts` (outermost) | init `{"statusBarProvider":"log-message","compilerOptions":{"snippetAutoIndent":false}}` | Install it with Coursier (https://get-coursier.io): cs install metals | Install it with Coursier (https://get-coursier.io): cs install metals | Install it with Coursier (https://get-coursier.io): cs install metals |
+| `nix` | `nix` | `nil` or `nixd` | `flake.nix` `default.nix` `shell.nix` (outermost) | settings `{"nil":{"formatting":{"command":["nixfmt"]}},"nixd":{"formatting":{"command":["nixfmt"]}}}` | Install it with: nix profile install nixpkgs#nil (or nixpkgs#nixd); formatting uses nixfmt: nix profile install nixpkgs#nixfmt | Install it with: nix profile install nixpkgs#nil (or nixpkgs#nixd); formatting uses nixfmt: nix profile install nixpkgs#nixfmt | nil and nixd do not run on Windows natively: use them through WSL. |
+| `ocaml-lsp` | `ocaml` | `ocamllsp` | `dune-project` `dune-workspace` `*.opam` `esy.json` `_opam` (outermost) | - | Install it with opam: opam install ocaml-lsp-server (formatting also needs: opam install ocamlformat) | Install it with opam: opam install ocaml-lsp-server (formatting also needs: opam install ocamlformat) | Install it with opam: opam install ocaml-lsp-server (formatting also needs: opam install ocamlformat) |
+| `phpactor` | `php` | `phpactor language-server` | `composer.json` `.phpactor.json` `.phpactor.yml` (nearest) | - | Install it with: curl -Lo ~/.local/bin/phpactor https://github.com/phpactor/phpactor/releases/latest/download/phpactor.phar && chmod +x ~/.local/bin/phpactor (needs PHP 8.1+) | Install it with: brew install phpactor | Phpactor does not support Windows: use it through WSL. |
+| `protobuf` | `protobuf` | `buf lsp serve` or `protols` — Older buf releases name the server `buf beta lsp`: set cscode.languageServers.protobuf.args to ["beta", "lsp"] for those. | `buf.yaml` `buf.work.yaml` (outermost) | - | Install it with: npm install -g @bufbuild/buf (or the alternative server: cargo install protols) | Install it with: brew install bufbuild/buf/buf (or the alternative server: cargo install protols) | Install it with: npm install -g @bufbuild/buf (or the alternative server: cargo install protols) |
+| `python` | `python` | `pyright-langserver --stdio` | `pyrightconfig.json` `pyproject.toml` `setup.py` `setup.cfg` `requirements.txt` (nearest) | - | Install it with: npm install -g pyright | Install it with: npm install -g pyright | Install it with: npm install -g pyright |
+| `ruby-lsp` | `ruby` | `ruby-lsp` | `Gemfile` `gems.rb` (nearest) | - | Install it with: gem install ruby-lsp | Install it with: gem install ruby-lsp | Install it with: gem install ruby-lsp |
+| `rust-analyzer` | `rust` | `rust-analyzer` | `Cargo.toml` (nearest) | - | Install it with: rustup component add rust-analyzer | Install it with: rustup component add rust-analyzer | Install it with: rustup component add rust-analyzer |
+| `sourcekit-lsp` | `swift` | `sourcekit-lsp` | `Package.swift` `buildServer.json` `compile_commands.json` `*.xcodeproj` `*.xcworkspace` (nearest) | - | Install the Swift toolchain from https://www.swift.org/install/linux/ (it includes sourcekit-lsp) and put its usr/bin on PATH. | It ships with Xcode and the Command Line Tools: xcode-select --install | Install the Swift toolchain (it includes sourcekit-lsp): winget install --id Swift.Toolchain -e |
+| `sqls` | `sql` | `sqls` | none: one server for all workspace folders | - | Install it with: go install github.com/sqls-server/sqls@latest | Install it with: go install github.com/sqls-server/sqls@latest | Install it with: go install github.com/sqls-server/sqls@latest |
+| `svelte` | `svelte` | `svelteserver --stdio` | `svelte.config.js` `package.json` (nearest) | - | Install it with: npm install -g svelte-language-server | Install it with: npm install -g svelte-language-server | Install it with: npm install -g svelte-language-server |
+| `taplo` | `toml` | `taplo lsp stdio` | `.taplo.toml` `taplo.toml` (nearest) | - | Install it with: cargo install --locked taplo-cli --features lsp | Install it with: brew install taplo | Install it with: cargo install --locked taplo-cli --features lsp |
+| `terraform-ls` | `terraform` `terraform-vars` | `terraform-ls serve` | none: one server for all workspace folders | - | Download terraform-ls from https://releases.hashicorp.com/terraform-ls/ and put it on PATH (or: sudo apt install terraform-ls from HashiCorp's apt repository) | Install it with: brew install hashicorp/tap/terraform-ls | Download terraform-ls from https://releases.hashicorp.com/terraform-ls/ and put terraform-ls.exe on PATH. |
+| `typescript` | `typescript` `typescriptreact` `javascript` `javascriptreact` | `typescript-language-server --stdio` | `tsconfig.json` `jsconfig.json` `package.json` (nearest) | - | Install it with: npm install -g typescript-language-server typescript (or run tools/fetch-lsp-tools.sh). | Install it with: npm install -g typescript-language-server typescript (or run tools/fetch-lsp-tools.sh). | Install it with: npm install -g typescript-language-server typescript (or run tools/fetch-lsp-tools.sh). |
+| `vue` | `vue` | `vue-language-server --stdio` — Written for @vue/language-server 2.x (non-hybrid mode); 3.x needs a tsserver plugin route CsCode does not implement. | `package.json` (nearest) | init `{"typescript":{"tsdk":"${workspaceFolder}/node_modules/typescript/lib"},"vue":{"hybridMode":false}}` | Install it with: npm install -g @vue/language-server@2 (the project needs typescript in its node_modules) | Install it with: npm install -g @vue/language-server@2 (the project needs typescript in its node_modules) | Install it with: npm install -g @vue/language-server@2 (the project needs typescript in its node_modules) |
+| `yaml` | `yaml` | `yaml-language-server --stdio` | none: one server for all workspace folders | - | Install it with: npm install -g yaml-language-server | Install it with: npm install -g yaml-language-server | Install it with: npm install -g yaml-language-server |
+| `zls` | `zig` | `zls` | `build.zig` `zls.json` (nearest) | - | Download zls for your Zig version from https://github.com/zigtools/zls/releases and put it on PATH, or: nix profile install nixpkgs#zls | Install it with: brew install zls | Download zls.exe for your Zig version from https://github.com/zigtools/zls/releases and put it on PATH. |
+
+<!-- END GENERATED -->

@@ -1,0 +1,60 @@
+// CsCode built-in language configuration for gas (VS Code language-configuration.json format).
+// Source: GNU assembler (as) syntax (.s, .S): # line comments (x86, RISC-V; a # in column 0 on every target), /* */ block comments, %registers.
+{
+	"comments": {
+		"lineComment": "#",
+		"blockComment": [
+			"/*",
+			"*/"
+		]
+	},
+	"brackets": [
+		[
+			"(",
+			")"
+		],
+		[
+			"[",
+			"]"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"(",
+			")"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"\"",
+			"\""
+		]
+	],
+	"folding": {
+		"markers": {
+			"start": "^\\s*#\\s*region\\b",
+			"end": "^\\s*#\\s*endregion\\b"
+		}
+	},
+	"wordPattern": "(%[A-Za-z0-9]+)|([.$A-Za-z_][\\w.$]*)"
+}

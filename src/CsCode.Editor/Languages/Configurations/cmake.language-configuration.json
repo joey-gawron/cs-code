@@ -1,0 +1,82 @@
+// CsCode built-in language configuration for cmake (VS Code language-configuration.json format).
+// Source: CMake language (cmake-language(7)): # line comments, #[[ ]] bracket comments, case-insensitive command blocks if()/endif() etc.
+{
+	"comments": {
+		"lineComment": "#",
+		"blockComment": [
+			"#[[",
+			"]]"
+		]
+	},
+	"brackets": [
+		[
+			"(",
+			")"
+		],
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"(",
+			")"
+		],
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"\"",
+			"\""
+		]
+	],
+	"folding": {
+		"markers": {
+			"start": "^\\s*#\\s*region\\b",
+			"end": "^\\s*#\\s*endregion\\b"
+		}
+	},
+	"wordPattern": "[A-Za-z_][A-Za-z0-9_]*",
+	"indentationRules": {
+		"increaseIndentPattern": {
+			"pattern": "^\\s*(if|elseif|else|foreach|while|function|macro|block)\\s*\\(",
+			"flags": "i"
+		},
+		"decreaseIndentPattern": {
+			"pattern": "^\\s*(endif|elseif|else|endforeach|endwhile|endfunction|endmacro|endblock)\\b",
+			"flags": "i"
+		}
+	}
+}

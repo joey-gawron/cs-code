@@ -240,7 +240,7 @@ public class ManagerTests
     {
         var all = BuiltinLanguageServers.All.ToDictionary(d => d.Id);
         string[] ids = ["typescript", "csharp", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua"];
-        Assert.Equal(ids.Order(), all.Keys.Order());
+        Assert.All(ids, id => Assert.Contains(id, all.Keys)); // the original twelve; the servers added later are covered by BuiltinServerTests
 
         Assert.Equal("typescript-language-server", all["typescript"].Command);
         Assert.Equal(["--stdio"], all["typescript"].Args);
@@ -287,7 +287,8 @@ public class ManagerTests
         Assert.Same(manager, provider.GetRequiredService<ILanguageServerManager>());
         Assert.Same(manager, provider.GetRequiredService<IWillSaveParticipant>());
         Assert.Same(manager, provider.GetRequiredService<IFileOperationParticipant>());
-        Assert.Equal(12, manager.Definitions.Count); // built-ins registered without any consumer doing anything
+        Assert.Equal(BuiltinLanguageServers.All.Count, manager.Definitions.Count); // built-ins registered without any consumer doing anything
+        Assert.True(manager.Definitions.Count >= 36, $"only {manager.Definitions.Count} built-in definitions");
 
         // it observes documents resolved from the same container
         var docs = provider.GetRequiredService<IDocumentManager>();

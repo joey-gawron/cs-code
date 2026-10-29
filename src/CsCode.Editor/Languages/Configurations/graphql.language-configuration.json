@@ -1,0 +1,73 @@
+// CsCode built-in language configuration for graphql (VS Code language-configuration.json format).
+// Source: GraphQL specification (October 2021): # comments, "…" and """…""" block strings, $variables and @directives.
+// """…""" is not auto-closed: the editor steps over only the single-character closers it inserted, so typing the closing delimiter would double it.
+{
+	"comments": {
+		"lineComment": "#"
+	},
+	"brackets": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		],
+		[
+			"\"",
+			"\""
+		]
+	],
+	"folding": {
+		"markers": {
+			"start": "^\\s*#\\s*region\\b",
+			"end": "^\\s*#\\s*endregion\\b"
+		}
+	},
+	"wordPattern": "[$@]?[_A-Za-z][_0-9A-Za-z]*",
+	"indentationRules": {
+		"increaseIndentPattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$",
+		"decreaseIndentPattern": "^\\s*[\\}\\]\\)]"
+	}
+}

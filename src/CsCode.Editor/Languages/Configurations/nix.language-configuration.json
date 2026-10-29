@@ -1,0 +1,77 @@
+// CsCode built-in language configuration for nix (VS Code language-configuration.json format).
+// Source: Nix language reference: # and /* */ comments, "…" and ''…'' strings, let … in, if … then … else, identifiers with - and '.
+// ''…'' is not auto-closed: the editor steps over only the single-character closers it inserted, so typing the closing delimiter would double it.
+{
+	"comments": {
+		"lineComment": "#",
+		"blockComment": [
+			"/*",
+			"*/"
+		]
+	},
+	"brackets": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		],
+		[
+			"\"",
+			"\""
+		]
+	],
+	"folding": {
+		"markers": {
+			"start": "^\\s*#\\s*region\\b",
+			"end": "^\\s*#\\s*endregion\\b"
+		}
+	},
+	"wordPattern": "(-?\\d*\\.\\d\\w*)|([A-Za-z_][\\w'\\-]*)",
+	"indentationRules": {
+		"increaseIndentPattern": "^.*(\\{[^}]*|\\[[^\\]]*|\\([^)]*|\\blet|\\bthen|\\belse|=|'')\\s*(#.*)?$",
+		"decreaseIndentPattern": "^\\s*[\\}\\]\\)]"
+	}
+}

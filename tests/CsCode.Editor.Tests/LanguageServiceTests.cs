@@ -211,7 +211,7 @@ public class LanguageServiceTests : IDisposable
     [Fact]
     public void Languages_without_a_configuration_get_sane_default_pairs()
     {
-        var c = _svc.GetConfiguration("zig");
+        var c = _svc.GetConfiguration("log"); // VS Code's Log package ships a grammar but no configuration
         Assert.Contains(c.AutoClosingPairs, p => p.Open == "(");
         Assert.NotEmpty(c.Brackets);
         Assert.Null(c.LineComment);

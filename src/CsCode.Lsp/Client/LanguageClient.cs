@@ -7,6 +7,7 @@ using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Lsp.Features;
+using CsCode.Lsp.Manager;
 using CsCode.Lsp.Runtime;
 using Microsoft.Extensions.Logging;
 using StreamJsonRpc;
@@ -163,10 +164,12 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         var settings = _ctx.Settings();
         try
         {
-            var cwd = RootUri is { IsFile: true } r ? r.LocalPath : WorkspaceFolders.FirstOrDefault(f => f.IsFile)?.LocalPath ?? Definition.WorkingDirectory;
+            var cwd = RootFolder ?? Definition.WorkingDirectory;
             var log = _log; // capture the log only: a callback held by the transport must not keep the whole client alive
+            var launch = Definition with { Args = LaunchVariables.Expand(Definition.Args, RootFolder) };
             var connection = await _ctx.Connections.ConnectAsync(
-                new LspLaunchRequest(Definition, _ctx.Services.Paths?.ToolsDir, Definition.WorkingDirectory ?? cwd, settings.Priority, line => log.Add(line), settings.CpuQuotaPercent), ct).ConfigureAwait(false);
+                new LspLaunchRequest(launch, _ctx.Services.Paths?.ToolsDir, Definition.WorkingDirectory ?? cwd, settings.Priority, line => log.Add(line), settings.CpuQuotaPercent,
+                    settings.SearchDirs, BuiltinLanguageServers.AlternativesFor(Definition)), ct).ConfigureAwait(false);
             _connection = connection;
 
             var formatter = new SystemTextJsonFormatter();
@@ -260,12 +263,15 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             Locale = CultureInfo.CurrentUICulture.Name,
             RootPath = rootPath,
             RootUri = RootUri is null ? null : LspMapper.ToUriString(RootUri),
-            InitializationOptions = Definition.InitializationOptions,
+            InitializationOptions = LaunchVariables.Expand(Definition.InitializationOptions, RootFolder),
             Capabilities = ClientCapabilitiesFactory.Create(s.AutoPositionEncoding),
             Trace = s.Trace switch { LspTraceMode.Verbose => P.TraceValues.Verbose, LspTraceMode.Messages => P.TraceValues.Messages, _ => P.TraceValues.Off },
             WorkspaceFolders = WorkspaceFolders.Select(f => new P.WorkspaceFolder { Uri = LspMapper.ToUriString(f), Name = FolderName(f) }).ToArray(),
         };
     }
+
+    /// <summary>The directory the server works in: its root, else the first local workspace folder (also <c>${workspaceFolder}</c> in a definition).</summary>
+    private string? RootFolder => RootUri is { IsFile: true } r ? r.LocalPath : WorkspaceFolders.FirstOrDefault(f => f.IsFile)?.LocalPath;
 
     private static string FolderName(Uri f)
     {

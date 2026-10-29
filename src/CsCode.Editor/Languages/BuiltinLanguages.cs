@@ -34,19 +34,29 @@ internal sealed record BuiltinCatalog(IReadOnlyList<LanguageContribution> Langua
 /// The built-in languages, grammars and language configurations. They are the real VS Code built-in extensions that
 /// TextMateSharp.Grammars embeds (MIT); this reads their <c>package.json</c> manifests directly instead of going through
 /// <c>RegistryOptions</c>, so it is cheap, synchronous and needs no TextMate registry. A short supplement table adds
-/// languages VS Code ships no grammar for (Kotlin, Zig, TOML, …) so detection still yields the id language servers expect.
+/// languages VS Code ships no grammar for (Kotlin, Zig, TOML, …) so detection still yields the id language servers expect,
+/// each with a language configuration of CsCode's own (<c>Languages/Configurations/*.language-configuration.json</c>, embedded
+/// in this assembly, same VS Code format) so comments, brackets, auto-closing and indentation work before any highlighting does.
 /// </summary>
 internal static class BuiltinLanguages
 {
     internal const string ResourcePrefix = "TextMateSharp.Grammars.Resources.Grammars.";
     internal const string BuiltinPathPrefix = "builtin:";
+    /// <summary>Resource names of CsCode's own language configurations (this assembly, see CsCode.Editor.csproj).</summary>
+    internal const string OwnConfigurationPrefix = "CsCode.Editor.Languages.Configurations.";
 
     private static readonly Assembly Asm = typeof(RegistryOptions).Assembly;
+    private static readonly Assembly OwnAsm = typeof(BuiltinLanguages).Assembly;
     private static readonly Lazy<BuiltinCatalog> CatalogLazy = new(Build);
 
     public static BuiltinCatalog Catalog => CatalogLazy.Value;
 
-    public static Stream? Open(string resourceName) => Asm.GetManifestResourceStream(resourceName);
+    public static Stream? Open(string resourceName) =>
+        resourceName.StartsWith(OwnConfigurationPrefix, StringComparison.Ordinal)
+            ? OwnAsm.GetManifestResourceStream(resourceName)
+            : Asm.GetManifestResourceStream(resourceName);
+
+    internal static string OwnConfigurationResource(string name) => OwnConfigurationPrefix + name + ".language-configuration.json";
 
     public static string? ReadText(string resourceName)
     {
@@ -78,29 +88,34 @@ internal static class BuiltinLanguages
         }
     }
 
-    // Languages VS Code has no built-in grammar for. Detection only (plus whatever language server the user configures).
-    private static readonly (string Id, string Name, string[] Ext, string[] Files)[] Supplements =
+    // Languages VS Code has no built-in grammar for: detection, a language configuration of our own (Config = the file name under
+    // Languages/Configurations) and whatever built-in or user language server serves the id. No highlighting yet (docs/LANGUAGES.md).
+    private static readonly (string Id, string Name, string[] Ext, string[] Files, string? Config)[] Supplements =
     [
-        ("plaintext", "Plain Text", [".txt"], []),
-        ("toml", "TOML", [".toml"], ["Cargo.lock", "Pipfile", "poetry.lock"]),
-        ("cmake", "CMake", [".cmake"], ["CMakeLists.txt"]),
-        ("kotlin", "Kotlin", [".kt", ".kts"], []),
-        ("scala", "Scala", [".scala", ".sc", ".sbt"], []),
-        ("zig", "Zig", [".zig"], []),
-        ("protobuf", "Protocol Buffers", [".proto"], []),
-        ("graphql", "GraphQL", [".graphql", ".gql"], []),
-        ("haskell", "Haskell", [".hs", ".lhs"], []),
-        ("elixir", "Elixir", [".ex", ".exs"], []),
-        ("erlang", "Erlang", [".erl", ".hrl"], []),
-        ("ocaml", "OCaml", [".ml", ".mli"], []),
-        ("vue", "Vue", [".vue"], []),
-        ("svelte", "Svelte", [".svelte"], []),
-        ("terraform", "Terraform", [".tf", ".tfvars"], []),
-        ("nix", "Nix", [".nix"], []),
-        ("restructuredtext", "reStructuredText", [".rst"], []),
-        ("assembly", "Assembly", [".asm", ".s"], []),
-        ("csv", "CSV", [".csv"], []),
-        ("jsonl", "JSON Lines", [".jsonl", ".ndjson"], []),
+        ("plaintext", "Plain Text", [".txt"], [], null),
+        ("toml", "TOML", [".toml"], ["Cargo.lock", "Pipfile", "poetry.lock"], "toml"),
+        ("cmake", "CMake", [".cmake"], ["CMakeLists.txt"], "cmake"),
+        ("kotlin", "Kotlin", [".kt", ".kts"], [], "kotlin"),
+        ("scala", "Scala", [".scala", ".sc", ".sbt"], [], "scala"),
+        ("zig", "Zig", [".zig", ".zon"], [], "zig"),
+        ("protobuf", "Protocol Buffers", [".proto"], [], "protobuf"),
+        ("graphql", "GraphQL", [".graphql", ".gql", ".graphqls"], [], "graphql"),
+        ("haskell", "Haskell", [".hs", ".lhs"], [], "haskell"),
+        ("elixir", "Elixir", [".ex", ".exs"], [], "elixir"),
+        ("erlang", "Erlang", [".erl", ".hrl"], ["rebar.config"], "erlang"),
+        ("ocaml", "OCaml", [".ml", ".mli"], [], "ocaml"),
+        ("vue", "Vue", [".vue"], [], "vue"),
+        ("svelte", "Svelte", [".svelte"], [], "svelte"),
+        // terraform-ls tells variable files apart by language id, as HashiCorp's VS Code extension does
+        ("terraform", "Terraform", [".tf"], [], "terraform"),
+        ("terraform-vars", "Terraform Variables", [".tfvars"], [], "terraform"),
+        ("nix", "Nix", [".nix"], [], "nix"),
+        ("restructuredtext", "reStructuredText", [".rst"], [], "restructuredtext"),
+        // two comment syntaxes: ';' (NASM/MASM, .asm) is a statement separator in GNU as (.s), whose comment character is '#'
+        ("assembly", "Assembly", [".asm", ".nasm"], [], "assembly"),
+        ("gas", "GNU Assembler", [".s"], [], "gas"),
+        ("csv", "CSV", [".csv"], [], "csv"),
+        ("jsonl", "JSON Lines", [".jsonl", ".ndjson"], [], "jsonl"),
     ];
 
     // Extensions the bundled (older) manifests omit.
@@ -166,12 +181,14 @@ internal static class BuiltinLanguages
                 }
         }
 
-        foreach (var (id, name, ext, files) in Supplements)
+        foreach (var (id, name, ext, files, config) in Supplements)
         {
             if (!langs.TryGetValue(id, out var m)) langs[id] = m = new Mutable(id);
             Mutable.AddAll(m.Aliases, [name]);
             Mutable.AddAll(m.Extensions, ext);
             Mutable.AddAll(m.Filenames, files);
+            if (config is not null && OwnAsm.GetManifestResourceInfo(OwnConfigurationResource(config)) is not null)
+                m.ConfigResource ??= OwnConfigurationResource(config); // a VS Code configuration, should an upgrade bring one, wins
         }
         foreach (var (id, ext) in ExtraExtensions)
             if (langs.TryGetValue(id, out var m)) Mutable.AddAll(m.Extensions, ext);

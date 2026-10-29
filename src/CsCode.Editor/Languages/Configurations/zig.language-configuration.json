@@ -1,0 +1,99 @@
+// CsCode built-in language configuration for zig (VS Code language-configuration.json format).
+// Source: Zig language reference: // comments only (no block comments), /// and //! doc comments, \\ multiline strings, 'c' character literals.
+{
+	"comments": {
+		"lineComment": "//"
+	},
+	"brackets": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string"
+			]
+		},
+		{
+			"open": "'",
+			"close": "'",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		],
+		[
+			"\"",
+			"\""
+		],
+		[
+			"'",
+			"'"
+		]
+	],
+	"folding": {
+		"markers": {
+			"start": "^\\s*//\\s*#?region\\b",
+			"end": "^\\s*//\\s*#?endregion\\b"
+		}
+	},
+	"wordPattern": "(-?\\d*\\.\\d\\w*)|(@?[A-Za-z_][A-Za-z0-9_]*)",
+	"indentationRules": {
+		"increaseIndentPattern": "^((?!//).)*(\\{[^}\\\"']*|\\([^)\\\"']*|\\[[^\\]\\\"']*)$",
+		"decreaseIndentPattern": "^\\s*[\\}\\]\\)]"
+	},
+	"onEnterRules": [
+		{
+			"beforeText": "^\\s*///(?!/).*$",
+			"action": {
+				"indent": "none",
+				"appendText": "/// "
+			}
+		},
+		{
+			"beforeText": "^\\s*//!.*$",
+			"action": {
+				"indent": "none",
+				"appendText": "//! "
+			}
+		}
+	]
+}

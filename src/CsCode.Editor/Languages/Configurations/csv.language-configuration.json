@@ -1,0 +1,21 @@
+// CsCode built-in language configuration for csv (VS Code language-configuration.json format).
+// Source: RFC 4180: no comments, fields separated by commas, double-quoted fields.
+{
+	"brackets": [],
+	"autoClosingPairs": [
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"\"",
+			"\""
+		]
+	],
+	"wordPattern": "[^,;\\t\\\"\\r\\n]+"
+}

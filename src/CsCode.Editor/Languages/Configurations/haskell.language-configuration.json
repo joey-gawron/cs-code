@@ -1,0 +1,85 @@
+// CsCode built-in language configuration for haskell (VS Code language-configuration.json format).
+// Source: Haskell 2010 report: -- and {- -} comments, layout rule (off-side folding), primes in identifiers ('), no auto-closed single quote.
+{
+	"comments": {
+		"lineComment": "--",
+		"blockComment": [
+			"{-",
+			"-}"
+		]
+	},
+	"brackets": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		],
+		[
+			"\"",
+			"\""
+		],
+		[
+			"'",
+			"'"
+		],
+		[
+			"`",
+			"`"
+		]
+	],
+	"folding": {
+		"offSide": true,
+		"markers": {
+			"start": "^\\s*--\\s*#?region\\b",
+			"end": "^\\s*--\\s*#?endregion\\b"
+		}
+	},
+	"wordPattern": "(-?\\d*\\.\\d\\w*)|([A-Za-z_][\\w']*)",
+	"indentationRules": {
+		"increaseIndentPattern": "^.*(\\b(where|let|do|mdo|of|then|else|rec)|=|->|<-|\\{[^}]*|\\([^)]*|\\[[^\\]]*)\\s*(--.*)?$",
+		"decreaseIndentPattern": "^\\s*[\\}\\]\\)]"
+	}
+}

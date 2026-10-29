@@ -31,6 +31,7 @@ public static class LspSettingKeys
     public const string RestartWindowSeconds = "cscode.lsp.restartWindowSeconds";
     public const string RestartBackoffMs = "cscode.lsp.restartBackoffMs";
     public const string ShutdownTimeoutMs = "cscode.lsp.shutdownTimeoutMs";
+    public const string SearchDirs = "cscode.lsp.searchDirs";
 }
 
 /// <summary>Immutable snapshot of every tunable; re-read when configuration changes. Defaults are the documented ones.</summary>
@@ -57,6 +58,8 @@ internal sealed record LspSettings
     public int MaxRestarts { get; init; } = 5;
     public TimeSpan RestartWindow { get; init; } = TimeSpan.FromMinutes(3);
     public TimeSpan[] RestartBackoff { get; init; } = [TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8)];
+    /// <summary>Expanded install directories searched for server executables after PATH (<see cref="LspSettingKeys.SearchDirs"/>).</summary>
+    public IReadOnlyList<string> SearchDirs { get; init; } = ExpandDirs(ToolResolver.DefaultSearchDirs);
 
     public static LspSettings Read(IConfigurationService? cfg)
     {
@@ -87,8 +90,12 @@ internal sealed record LspSettings
             RestartBackoff = Raw<int[]?>(cfg, LspSettingKeys.RestartBackoffMs, null) is { Length: > 0 } ms
                 ? ms.Select(m => TimeSpan.FromMilliseconds(Math.Max(0, m))).ToArray()
                 : d.RestartBackoff,
+            SearchDirs = Raw<string[]?>(cfg, LspSettingKeys.SearchDirs, null) is { } dirs ? ExpandDirs(dirs) : d.SearchDirs,
         };
     }
+
+    private static string[] ExpandDirs(IEnumerable<string> dirs) =>
+        dirs.Select(ToolResolver.ExpandDirectory).Where(d => d is not null).Select(d => d!).Distinct(StringComparer.Ordinal).ToArray();
 
     /// <summary>
     /// Reads one setting through GetRaw so an UNSET value-typed key yields the documented default (not default(T)) whatever the
@@ -134,6 +141,8 @@ internal sealed record LspSettings
         yield return new(LspSettingKeys.BackgroundTimeoutMs, J(30000), "Timeout for background requests (semantic tokens, inlay hints, pull diagnostics...).");
         yield return new(LspSettingKeys.InitializeTimeoutMs, J(60000), "Timeout for the initialize handshake.");
         yield return new(LspSettingKeys.PositionEncoding, J("utf-16"), "utf-16 (default, zero-cost) or auto (negotiate utf-8/utf-32 when the server supports it).");
+        yield return new(LspSettingKeys.SearchDirs, J(ToolResolver.DefaultSearchDirs),
+            "Directories searched for language-server executables after PATH and before the managed tools directory (~ = home directory). An editor started from a desktop launcher often lacks these in its PATH.");
         yield return new(LspSettingKeys.LanguageServers, null, "Language server definitions keyed by id: { command, args, env, selector, initializationOptions, settings, enabled, rootMarkers }.");
     }
 }

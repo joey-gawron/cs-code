@@ -1,0 +1,143 @@
+// CsCode built-in language configuration for vue (VS Code language-configuration.json format).
+// Source: Vue single-file components: HTML at the top level (VS Code's HTML configuration) with <script>/<style> blocks.
+{
+	"comments": {
+		"blockComment": [
+			"<!--",
+			"-->"
+		]
+	},
+	"brackets": [
+		[
+			"<!--",
+			"-->"
+		],
+		[
+			"<",
+			">"
+		],
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "'",
+			"close": "'",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		},
+		{
+			"open": "`",
+			"close": "`",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		},
+		{
+			"open": "<!--",
+			"close": "-->",
+			"notIn": [
+				"comment",
+				"string"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"'",
+			"'"
+		],
+		[
+			"\"",
+			"\""
+		],
+		[
+			"`",
+			"`"
+		],
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		],
+		[
+			"<",
+			">"
+		]
+	],
+	"folding": {
+		"markers": {
+			"start": "^\\s*<!--\\s*#region\\b.*-->",
+			"end": "^\\s*<!--\\s*#endregion\\b.*-->"
+		}
+	},
+	"wordPattern": "(-?\\d*\\.\\d\\w*)|([^\\`\\~\\!\\@\\$\\^\\&\\*\\(\\)\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\s]+)",
+	"onEnterRules": [
+		{
+			"beforeText": {
+				"pattern": "<(?!(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr))([_:\\w][_:\\w-.\\d]*)(?:(?:[^'\\\"/>]|\\\"[^\\\"]*\\\"|'[^']*')*?(?!\\/)>)[^<]*$",
+				"flags": "i"
+			},
+			"afterText": {
+				"pattern": "^<\\/([_:\\w][_:\\w-.\\d]*)\\s*>",
+				"flags": "i"
+			},
+			"action": {
+				"indent": "indentOutdent"
+			}
+		},
+		{
+			"beforeText": {
+				"pattern": "<(?!(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr))([_:\\w][_:\\w-.\\d]*)(?:(?:[^'\\\"/>]|\\\"[^\\\"]*\\\"|'[^']*')*?(?!\\/)>)[^<]*$",
+				"flags": "i"
+			},
+			"action": {
+				"indent": "indent"
+			}
+		}
+	],
+	"indentationRules": {
+		"increaseIndentPattern": "<(?!\\?|(?:area|base|br|col|frame|hr|html|img|input|keygen|link|menuitem|meta|param|source|track|wbr)\\b|[^>]*\\/>)([-_\\.A-Za-z0-9]+)(?=\\s|>)\\b[^>]*>(?!.*<\\/\\1>)|<!--(?!.*-->)|\\{[^}\\\"']*$",
+		"decreaseIndentPattern": "^\\s*(<\\/(?!html)[-_\\.A-Za-z0-9]+\\b[^>]*>|-->|\\})"
+	}
+}
