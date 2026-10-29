@@ -75,17 +75,31 @@ public sealed class ToolWindowManager : IDisposable
     public bool IsVisible(string id) =>
         _tools.TryGetValue(id, out var t) && !(_factory.Root is IRootDock r && r.HiddenDockables?.Contains(t) == true) && IsInLayout(t);
 
+    // An auto-hidden (pinned) tool sits on an edge strip of the root, in none of the wells: it is still in the layout, and on screen as a strip tab.
     private bool IsInLayout(ToolTab t) => _factory.LeftTools.VisibleDockables!.Contains(t) || _factory.RightTools.VisibleDockables!.Contains(t) || _factory.BottomTools.VisibleDockables!.Contains(t)
-        || (t.Owner is IDock owner && owner.VisibleDockables?.Contains(t) == true);
+        || (t.Owner is IDock owner && owner.VisibleDockables?.Contains(t) == true) || IsPinned(t);
+
+    private bool IsPinned(ToolTab t) => _factory.Root is IRootDock r && _factory.IsDockablePinned(t, r);
 
     public void Show(string id)
     {
         if (!_tools.TryGetValue(id, out var t)) return;
         if (!IsVisible(id)) Restore(t);
-        _factory.SetActiveDockable(t);
-        if (t.Owner is IDock owner) owner.ActiveDockable = t;
+        if (IsPinned(t))
+            _factory.PreviewPinnedDockable(t); // slides out of its strip and stays auto-hidden, as in Visual Studio
+        else
+        {
+            _factory.SetActiveDockable(t);
+            if (t.Owner is IDock owner) owner.ActiveDockable = t;
+        }
         t.EnsureHost(); // the view, inside the host Dock presents (Dock may reuse the host it cached for this tool)
         _visibilityChanged.Fire((id, true));
+    }
+
+    /// <summary>Docks an auto-hidden tool back into its well (a no-op for any other tool). Layouts do not record Auto Hide.</summary>
+    public void Unpin(ToolTab t)
+    {
+        if (IsPinned(t)) _factory.PinDockable(t); // toggles
     }
 
     /// <summary>

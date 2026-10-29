@@ -114,13 +114,87 @@ public class RealAppViewTests
         await AssertOnScreenAsync(host, explorer);
     }
 
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task An_auto_hidden_tool_window_stays_one_window_through_its_command_its_toggle_debug_auto_show_and_Reset()
+    {
+        await using var host = await RealAppHost.Create().StartAsync();
+        var tools = host.Shell.Tools;
+        var keys = host.Get<IContextKeyService>();
+        var explorer = tools.Get("explorer")!;
+
+        // Auto Hide (the pin in the window's title bar) moves the window to the edge strip. Showing it used to dock a second copy in its well
+        // while the first stayed pinned; hiding and showing again then left two Explorer tabs on screen.
+        await ClickPinAsync(host, explorer);
+        Assert.True(IsPinned(host, explorer));
+        AssertOnce(host, explorer);
+        Assert.True(tools.IsVisible("explorer")); // on the edge strip
+        tools.Show("explorer");
+        AssertOnce(host, explorer);
+        Assert.True(IsPinned(host, explorer)); // showing slides it out; it stays auto-hidden
+        await host.RunAsync("workbench.view.explorer"); // its toggle (View > Tool Windows): hides it
+        AssertOnce(host, explorer);
+        Assert.False(tools.IsVisible("explorer"));
+        await host.RunAsync("workbench.view.explorer"); // and shows it again, docked
+        AssertOnce(host, explorer);
+        await AssertOnScreenAsync(host, explorer);
+
+        // Debug auto-show: a window pinned while debugging is not docked again by the next context-key change, nor by the next session.
+        keys.Set("inDebugMode", true);
+        var callStack = tools.Get("debug.callstack")!;
+        Assert.True(await RealAppHost.WaitFor(() => tools.IsVisible("debug.callstack")));
+        tools.Show("debug.callstack"); // its tab selected: the group's title bar pins the selected tab
+        await ClickPinAsync(host, callStack);
+        Assert.True(IsPinned(host, callStack));
+        keys.Set("cscode.debug.exceptionStopped", false); // any context-key change re-evaluates auto-show
+        await DevScene.SettleAsync(10);
+        AssertOnce(host, callStack);
+        keys.Set("inDebugMode", false);
+        await DevScene.SettleAsync(10);
+        AssertOnce(host, callStack);
+        keys.Set("inDebugMode", true);
+        Assert.True(await RealAppHost.WaitFor(() => tools.IsVisible("debug.callstack")));
+        AssertOnce(host, callStack);
+        keys.Set("inDebugMode", false);
+        await DevScene.SettleAsync(10);
+
+        // Reset Window Layout docks every window where the default layout puts it: no longer auto-hidden, exactly once.
+        await ClickPinAsync(host, explorer);
+        Assert.True(IsPinned(host, explorer));
+        await host.RunAsync(ShellMenus.ResetLayout);
+        Assert.False(IsPinned(host, explorer));
+        AssertOnce(host, explorer);
+        AssertOnce(host, callStack);
+        Assert.Equal(DefaultLayout, VisibleTools(tools));
+        await AssertOnScreenAsync(host, explorer);
+    }
+
+    private static bool IsPinned(RealAppHost host, ToolTab tool) => host.Shell.Factory.IsDockablePinned(tool, host.Shell.Factory.Root as Dock.Model.Controls.IRootDock);
+
+    /// <summary>The tool is in exactly one place: a well, an edge strip (auto-hidden) or the hidden list.</summary>
+    private static void AssertOnce(RealAppHost host, ToolTab tool)
+    {
+        var f = host.Shell.Factory;
+        var root = (Dock.Model.Controls.IRootDock)f.Root!;
+        IEnumerable<Dock.Model.Core.IDockable>?[] places =
+        [
+            f.LeftTools.VisibleDockables, f.RightTools.VisibleDockables, f.BottomTools.VisibleDockables, root.HiddenDockables,
+            root.LeftPinnedDockables, root.RightPinnedDockables, root.TopPinnedDockables, root.BottomPinnedDockables,
+        ];
+        Assert.Equal(1, places.Sum(p => p?.Count(d => ReferenceEquals(d, tool)) ?? 0));
+    }
+
+    /// <summary>Clicks the Auto Hide pin of <paramref name="tool"/>'s window chrome (Dock binds it to <c>Factory.PinDockable</c>).</summary>
+    private static Task ClickPinAsync(RealAppHost host, ToolTab tool) => ClickChromeButtonAsync(host, tool, "PART_PinButton");
+
     /// <summary>Clicks the close button of <paramref name="tool"/>'s window chrome (Dock binds it to <c>Factory.CloseDockable</c>).</summary>
-    private static async Task ClickCloseAsync(RealAppHost host, ToolTab tool)
+    private static Task ClickCloseAsync(RealAppHost host, ToolTab tool) => ClickChromeButtonAsync(host, tool, "PART_CloseButton");
+
+    private static async Task ClickChromeButtonAsync(RealAppHost host, ToolTab tool, string part)
     {
         Button? x = null;
         Assert.True(await RealAppHost.WaitFor(() =>
-            (x = host.Window.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Name == "PART_CloseButton" && ReferenceEquals(b.CommandParameter, tool)))
-                is { IsEffectivelyVisible: true, IsEffectivelyEnabled: true, Bounds.Width: > 0 }), $"no close button for {tool.Spec.Id}");
+            (x = host.Window.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Name == part && ReferenceEquals(b.CommandParameter, tool)))
+                is { IsEffectivelyVisible: true, IsEffectivelyEnabled: true, Bounds.Width: > 0 }), $"no {part} for {tool.Spec.Id}");
         var button = x!;
         var center = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), host.Window)!.Value;
         host.Window.MouseMove(center);
