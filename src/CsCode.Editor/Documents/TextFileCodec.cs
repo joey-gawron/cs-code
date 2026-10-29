@@ -63,9 +63,9 @@ public static class TextFileCodec
         if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) return FileEncoding.Utf16Le;
         if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF) return FileEncoding.Utf16Be;
         if (configured is not null && configured.Name != "utf8") return configured;
-        if (Utf8.IsValid(bytes)) return FileEncoding.Utf8;
-        var utf16 = GuessBomlessUtf16(bytes);
-        return utf16 ?? FileEncoding.Windows1252;
+        // BOM-less UTF-16 is ALSO valid UTF-8 (NUL is a legal byte), so the NUL-pattern check must come first.
+        if (GuessBomlessUtf16(bytes) is { } utf16) return utf16;
+        return Utf8.IsValid(bytes) ? FileEncoding.Utf8 : FileEncoding.Windows1252;
     }
 
     private static FileEncoding? GuessBomlessUtf16(ReadOnlySpan<byte> bytes)

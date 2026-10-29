@@ -41,10 +41,10 @@ public sealed class AvaloniaUiThread : IUiThread
     {
         get
         {
-            if (_owner is { } t) return t;
-            // Only resolvable from the UI thread itself; capture lazily the first time anyone on it asks.
-            if (!CheckAccess()) throw new InvalidOperationException("UI thread not captured yet; first use must be on the UI thread.");
-            return _owner = Thread.CurrentThread;
+            // Only resolvable from the UI thread itself: refresh the cached thread whenever the UI thread asks (a headless test
+            // session may recreate it), and serve the cache to everybody else.
+            if (CheckAccess()) return _owner = Thread.CurrentThread;
+            return _owner ?? throw new InvalidOperationException("UI thread not captured yet; first use must be on the UI thread.");
         }
     }
 

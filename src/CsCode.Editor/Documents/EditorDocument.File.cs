@@ -279,8 +279,8 @@ public sealed partial class EditorDocument
         if (!settings.FormatOnSave || IsLargeFile) return;
         var providers = svc.Features.GetProviders<IDocumentFormattingProvider>(this);
         if (providers.Count == 0) return;
-        var tabSize = ec.EffectiveIndentSize ?? svc.Config.Get("editor.tabSize", 4);
-        var insertSpaces = ec.IndentStyle is { } style ? style == "space" : svc.Config.Get("editor.insertSpaces", true);
+        var tabSize = ec.EffectiveIndentSize ?? svc.Config.GetOr("editor.tabSize", LanguageId, 4);
+        var insertSpaces = ec.IndentStyle is { } style ? style == "space" : svc.Config.GetOr("editor.insertSpaces", LanguageId, true);
         var options = new FormattingOptions(tabSize, insertSpaces);
         var versionBefore = Version;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);

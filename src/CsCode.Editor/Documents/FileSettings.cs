@@ -37,16 +37,16 @@ internal sealed record FileSettings(
     public const int DefaultLongLineChars = 20_000;
 
     public static FileSettings Read(IConfigurationService cfg) => new(
-        Encoding: FileEncoding.FromSettingName(cfg.Get<string>(EditorSettingKeys.FilesEncoding)),
-        Eol: cfg.Get(EditorSettingKeys.FilesEol, "auto") ?? "auto",
-        InsertFinalNewline: cfg.Get(EditorSettingKeys.FilesInsertFinalNewline, false),
-        TrimFinalNewlines: cfg.Get(EditorSettingKeys.FilesTrimFinalNewlines, false),
-        TrimTrailingWhitespace: cfg.Get(EditorSettingKeys.FilesTrimTrailingWhitespace, false),
-        LargeFileThresholdBytes: cfg.Get(EditorSettingKeys.LargeFileThresholdBytes, DefaultLargeFileThreshold),
-        MaxFileSizeBytes: cfg.Get(EditorSettingKeys.MaxFileSizeBytes, DefaultMaxFileSize),
-        LongLineChars: cfg.Get(EditorSettingKeys.LargeFileLongLine, DefaultLongLineChars),
-        UndoLimit: cfg.Get(EditorSettingKeys.UndoLimit, 1000),
-        FormatOnSave: cfg.Get(EditorSettingKeys.FormatOnSave, false));
+        Encoding: FileEncoding.FromSettingName(cfg.GetOr<string?>(EditorSettingKeys.FilesEncoding, null)),
+        Eol: cfg.GetOr(EditorSettingKeys.FilesEol, "auto"),
+        InsertFinalNewline: cfg.GetOr(EditorSettingKeys.FilesInsertFinalNewline, false),
+        TrimFinalNewlines: cfg.GetOr(EditorSettingKeys.FilesTrimFinalNewlines, false),
+        TrimTrailingWhitespace: cfg.GetOr(EditorSettingKeys.FilesTrimTrailingWhitespace, false),
+        LargeFileThresholdBytes: cfg.GetOr(EditorSettingKeys.LargeFileThresholdBytes, DefaultLargeFileThreshold),
+        MaxFileSizeBytes: cfg.GetOr(EditorSettingKeys.MaxFileSizeBytes, DefaultMaxFileSize),
+        LongLineChars: cfg.GetOr(EditorSettingKeys.LargeFileLongLine, DefaultLongLineChars),
+        UndoLimit: cfg.GetOr(EditorSettingKeys.UndoLimit, 1000),
+        FormatOnSave: cfg.GetOr(EditorSettingKeys.FormatOnSave, false));
 
     /// <summary>The EOL for new/empty buffers: the setting when explicit, else the platform default.</summary>
     public string DefaultEol => Eol is "\n" or "\r\n" or "\r" ? Eol : OperatingSystem.IsWindows() ? "\r\n" : "\n";
