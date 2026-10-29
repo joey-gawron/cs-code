@@ -54,7 +54,7 @@ public sealed class ErrorListView : UserControl, IDisposable
             header.Children.Add(t);
         }
 
-        _list = new ListBox { ItemsSource = vm.Rows, ItemTemplate = new FuncDataTemplate<ErrorRow>((r, _) => RowFor(r), supportsRecycling: true), SelectionMode = SelectionMode.Single };
+        _list = new ListBox { ItemsSource = vm.Rows, ItemTemplate = new FuncDataTemplate<ErrorRow>((r, _) => r is null ? new Panel() : RowFor(r), supportsRecycling: true), SelectionMode = SelectionMode.Single };
         vm.PropertyChanged += OnVmChanged;
         _list.DoubleTapped += async (_, _) => { if (_list.SelectedItem is ErrorRow r) await vm.NavigateAsync(r).ConfigureAwait(true); };
         _list.KeyDown += async (_, e) => { if (e.Key == Key.Enter && _list.SelectedItem is ErrorRow r) { e.Handled = true; await vm.NavigateAsync(r).ConfigureAwait(true); } };

@@ -52,7 +52,7 @@ public sealed class ExplorerView : UserControl, IDisposable
         var filter = new FilterBox { Watermark = "Filter", Margin = new Thickness(6, 2, 6, 4) };
         filter.Bind(FilterBox.TextProperty, new Avalonia.Data.Binding(nameof(ExplorerViewModel.Filter)) { Mode = Avalonia.Data.BindingMode.TwoWay });
 
-        _list = new ListBox { ItemsSource = vm.Rows, ItemTemplate = new FuncDataTemplate<ExplorerNode>((n, _) => RowFor(n), supportsRecycling: false), SelectionMode = SelectionMode.Single };
+        _list = new ListBox { ItemsSource = vm.Rows, ItemTemplate = new FuncDataTemplate<ExplorerNode>((n, _) => n is null ? new Panel() : RowFor(n), supportsRecycling: false), SelectionMode = SelectionMode.Single };
         _list.Bind(Avalonia.Controls.Primitives.SelectingItemsControl.SelectedItemProperty, new Avalonia.Data.Binding(nameof(ExplorerViewModel.Selected)) { Mode = Avalonia.Data.BindingMode.TwoWay });
         _list.KeyDown += OnKeyDown;
         _list.TextInput += OnTextInput;

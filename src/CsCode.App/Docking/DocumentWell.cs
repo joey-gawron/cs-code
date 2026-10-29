@@ -118,6 +118,7 @@ public sealed class DocumentWell : IDisposable
 
     private EditorTab Add(EditorTab tab, bool preview, bool preserveFocus)
     {
+        tab.Owned.Add(tab.DirtyStateChanged.Subscribe(_ => _tabsChanged.Fire(null))); // title / status follow the dirty flag
         var group = ActiveGroup();
         tab.IsPreview = preview;
         if (preview)

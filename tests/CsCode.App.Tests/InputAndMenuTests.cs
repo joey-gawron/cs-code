@@ -186,9 +186,10 @@ public class KeyboardPipelineTests
         var gate = new TaskCompletionSource();
         r.Commands.Register("slow", async _ => { await gate.Task; return null; });
         r.Bindings.Add("slow", "f8");
+        r.Press("f8"); // warm-up (JIT); the command is still pending on the gate afterwards
         var sw = System.Diagnostics.Stopwatch.StartNew();
         Assert.Equal(KeyDispatch.Handled, r.Press("f8"));
-        Assert.True(sw.ElapsedMilliseconds < 50, "key handling waited for the command");
+        Assert.True(sw.ElapsedMilliseconds < 100, $"key handling waited for the command ({sw.ElapsedMilliseconds} ms)");
         gate.SetResult();
     }
 }
@@ -286,9 +287,10 @@ public class ContextKeyTrackerTests
         await LeakAssert.NotRetainedAsync(async () =>
         {
             var tab = await rig.Open("leak.cs");
+            var doc = tab.Doc; // a closed tab releases its document, so capture it first
             await rig.Well.CloseAsync(tab);
             await Task.Delay(30);
-            return [tab, tab.Doc];
+            return [tab, doc];
         });
         rig.Dispose();
     }

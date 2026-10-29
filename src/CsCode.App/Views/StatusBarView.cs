@@ -68,39 +68,79 @@ public sealed class StatusBarView : Border, IDisposable
         };
         Background = ThemeBrushes.Get(bg);
         TextElement.SetForeground(this, ThemeBrushes.Get(fg));
-        Rebuild(_service.Items);
+        Rebuild(_service.Items, force: true); // the foreground changed: every item's content must be recreated once
     }
 
-    private void Rebuild(IReadOnlyList<StatusBarItemModel> items)
+    // Incremental: elements are keyed by item id and only touched when their model changed, so a status update (caret move, diagnostics
+    // count) costs one small content rebuild instead of destroying and recreating the whole bar.
+    private sealed class Entry(Control element, StatusBarItemModel model)
     {
-        _left.Children.Clear();
-        _right.Children.Clear();
-        var fg = ThemeBrushes.Get(_state switch { StatusBarState.Debugging => "statusBar.debuggingForeground", StatusBarState.NoFolder => "statusBar.noFolderForeground", _ => "statusBar.foreground" });
+        public Control Element { get; } = element;
+        public StatusBarItemModel Model { get; set; } = model;
+    }
+
+    private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+
+    private IBrush ForegroundBrush => ThemeBrushes.Get(_state switch { StatusBarState.Debugging => "statusBar.debuggingForeground", StatusBarState.NoFolder => "statusBar.noFolderForeground", _ => "statusBar.foreground" });
+
+    private void Rebuild(IReadOnlyList<StatusBarItemModel> items, bool force = false)
+    {
+        if (force) _entries.Clear();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var left = new List<Control>();
+        var right = new List<Control>();
         foreach (var item in items)
         {
             if (!item.IsVisible) continue;
-            var content = ViewHelpers.RichText(item.Text, item.ColorKey is { } ck ? ThemeBrushes.Get(ck) : fg);
-            Control element;
-            if (item.CommandId is { } cmd)
+            seen.Add(item.Id);
+            if (_entries.TryGetValue(item.Id, out var entry))
             {
-                var b = new Button { Content = content, Padding = new Thickness(7, 0), MinHeight = 0, Height = 22, CornerRadius = new CornerRadius(0), Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
-                b.Classes.Add("statusitem");
-                b.Click += async (_, _) => { try { await _commands.ExecuteAsync(cmd).ConfigureAwait(true); } catch (CommandNotFoundException) { } };
-                element = b;
+                if (!entry.Model.Equals(item))
+                {
+                    var rebuilt = Create(item);
+                    entry = _entries[item.Id] = new Entry(rebuilt, item);
+                }
             }
-            else element = new Border { Child = content, Padding = new Thickness(7, 0), Height = 22 };
-            if (item.Tooltip is { } tip) ToolTip.SetTip(element, tip);
-            (item.Alignment == StatusBarAlignment.Left ? _left : _right).Children.Add(element);
+            else _entries[item.Id] = entry = new Entry(Create(item), item);
+            (item.Alignment == StatusBarAlignment.Left ? left : right).Add(entry.Element);
         }
+        foreach (var gone in _entries.Keys.Where(k => !seen.Contains(k)).ToArray()) _entries.Remove(gone);
+
         // Right-aligned items are listed highest priority first = rightmost, so render them in reverse.
-        var rev = _right.Children.Reverse().ToArray();
-        _right.Children.Clear();
-        _right.Children.AddRange(rev);
+        right.Reverse();
+        SyncChildren(_left, left);
+        SyncChildren(_right, right);
+    }
+
+    private static void SyncChildren(Panel panel, List<Control> desired)
+    {
+        var same = panel.Children.Count == desired.Count;
+        for (var i = 0; same && i < desired.Count; i++) same = ReferenceEquals(panel.Children[i], desired[i]);
+        if (same) return;
+        panel.Children.Clear();
+        panel.Children.AddRange(desired);
+    }
+
+    private Control Create(StatusBarItemModel item)
+    {
+        var content = ViewHelpers.RichText(item.Text, item.ColorKey is { } ck ? ThemeBrushes.Get(ck) : ForegroundBrush);
+        Control element;
+        if (item.CommandId is { } cmd)
+        {
+            var b = new Button { Content = content, Padding = new Thickness(7, 0), MinHeight = 0, Height = 22, CornerRadius = new CornerRadius(0), Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
+            b.Classes.Add("statusitem");
+            b.Click += async (_, _) => { try { await _commands.ExecuteAsync(cmd).ConfigureAwait(true); } catch (CommandNotFoundException) { } };
+            element = b;
+        }
+        else element = new Border { Child = content, Padding = new Thickness(7, 0), Height = 22 };
+        if (item.Tooltip is { } tip) ToolTip.SetTip(element, tip);
+        return element;
     }
 
     public void Dispose()
     {
         _subs.Dispose();
+        _entries.Clear();
         _left.Children.Clear();
         _right.Children.Clear();
     }

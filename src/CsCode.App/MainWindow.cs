@@ -122,9 +122,9 @@ public sealed class MainWindow : Window, IWindowChrome
         var factory = _shell.Factory;
         var layout = factory.EnsureLayout();
         var dock = new DockControl { Layout = layout, Factory = factory, InitializeLayout = false, InitializeFactory = false };
-        dock.DataTemplates.Add(new FuncDataTemplate<EditorTab>((t, _) => Mark(t!.EnsureView(), FocusArea.Editor)));
-        dock.DataTemplates.Add(new FuncDataTemplate<ShellDocument>((t, _) => Mark(t!.EnsureView(), FocusArea.None)));
-        dock.DataTemplates.Add(new FuncDataTemplate<ToolTab>((t, _) => Mark(t!.EnsureView(), t.Spec.Id is "explorer" ? FocusArea.Explorer : FocusArea.Panel)));
+        dock.DataTemplates.Add(new FuncDataTemplate<EditorTab>((t, _) => t is null ? new Panel() : Mark(t.EnsureHost(), FocusArea.Editor)));
+        dock.DataTemplates.Add(new FuncDataTemplate<ShellDocument>((t, _) => t is null ? new Panel() : Mark(t.EnsureHost(), FocusArea.None)));
+        dock.DataTemplates.Add(new FuncDataTemplate<ToolTab>((t, _) => t is null ? new Panel() : Mark(t.EnsureHost(), t.Spec.Id is "explorer" ? FocusArea.Explorer : FocusArea.Panel)));
         // Tool windows exist in the model before they are shown: the manager adds them to their docks, then the layout is restored.
         _ = _shell.Tools;
         return dock;

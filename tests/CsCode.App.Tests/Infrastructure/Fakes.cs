@@ -81,8 +81,9 @@ public sealed class FakeEditorDocument : IEditorDocument
 public sealed class FakeEditorViewFactory(IDocumentManager? documents = null) : IEditorViewFactory
 {
     private readonly Dictionary<Uri, FakeEditorDocument> _docs = new();
-    private readonly Dictionary<Control, FakeController> _controllers = new(ReferenceEqualityComparer.Instance);
-    private readonly IDisposable?[] _regs = new IDisposable?[1];
+    // Weak: a real editor must not keep views alive either; the shell drops its own references when a tab closes.
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Control, FakeController> _controllers = new();
+    private readonly Dictionary<Uri, IDisposable> _registrations = new();
     private int _untitled;
 
     public int ViewsCreated { get; private set; }
@@ -95,7 +96,7 @@ public sealed class FakeEditorViewFactory(IDocumentManager? documents = null) : 
         if (!_docs.TryGetValue(uri, out var d))
         {
             _docs[uri] = d = new FakeEditorDocument(uri, TextFor(uri));
-            documents?.Register(d);
+            if (documents is not null) _registrations[uri] = documents.Register(d); // disposed in CloseDocumentAsync, like the real editor
         }
         return ValueTask.FromResult<IEditorDocument>(d);
     }
@@ -110,17 +111,19 @@ public sealed class FakeEditorViewFactory(IDocumentManager? documents = null) : 
     public Control CreateView(IEditorDocument document)
     {
         ViewsCreated++;
-        var box = new TextBox { Text = document.GetText() };
-        _controllers[box] = ControllerFactory?.Invoke((FakeEditorDocument)document) ?? new FakeController(document);
-        return box;
+        // A plain Border: a real TextBox starts focus-dependent timers (caret blink) whose lifetime is not ours to control in tests.
+        var view = new Border { Child = new TextBlock { Text = document.GetText() } };
+        _controllers.Add(view, ControllerFactory?.Invoke((FakeEditorDocument)document) ?? new FakeController(document));
+        return view;
     }
 
-    public IEditorViewController? GetController(Control view) => _controllers.GetValueOrDefault(view);
+    public IEditorViewController? GetController(Control view) => _controllers.TryGetValue(view, out var c) ? c : null;
 
     public ValueTask CloseDocumentAsync(IEditorDocument document)
     {
         Closed.Add(document.Uri);
         _docs.Remove(document.Uri);
+        if (_registrations.Remove(document.Uri, out var reg)) reg.Dispose();
         return ValueTask.CompletedTask;
     }
 
