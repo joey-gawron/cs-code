@@ -477,7 +477,7 @@ public class DebugServiceStopLocationTests
     }
 
     [Fact]
-    public async Task SetFocusedFrame_ignores_unknown_sessions_frames_and_running_sessions()
+    public async Task SetFocusedFrame_fails_for_ended_sessions_unknown_frames_and_after_a_resume_without_moving_the_focus()
     {
         await using var h = new ServiceHarness();
         var session = await h.StartAsync();
@@ -485,9 +485,59 @@ public class DebugServiceStopLocationTests
         await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
         var before = h.Service.StopLocation;
         var focus = (IDebugFrameFocus)h.Service;
-        await focus.SetFocusedFrameAsync("nope", 1, 101, Ct);
-        await focus.SetFocusedFrameAsync(session.Id, 1, 99999, Ct);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await focus.SetFocusedFrameAsync("nope", 1, 101, Ct));
+        await Assert.ThrowsAsync<DebugHandleInvalidatedException>(async () => await focus.SetFocusedFrameAsync(session.Id, 1, 99999, Ct));
         Assert.Equal(before, h.Service.StopLocation);
+        Assert.Equal(before!.FrameId, h.Service.FocusedFrameId);
+
+        // A frame of the stop is dead once the debuggee resumed.
+        await session.ContinueAsync(ct: Ct);
+        await Assert.ThrowsAsync<DebugHandleInvalidatedException>(async () => await focus.SetFocusedFrameAsync(session.Id, 1, 101, Ct));
+        Assert.Null(h.Service.FocusedFrameId);
+    }
+
+    private static IReadOnlyList<DapStackFrame> DeepStack(int count) =>
+        [.. Enumerable.Range(0, count).Select(i => new DapStackFrame { Id = 1000 + i, Name = "Level" + i, Source = new DapSource { Name = "Deep.cs", Path = "/work/Deep.cs" }, Line = 10 + i, Column = 1 })];
+
+    [Fact]
+    public async Task SetFocusedFrame_focuses_a_frame_from_a_later_call_stack_page_of_the_stopped_thread()
+    {
+        await using var h = new ServiceHarness(configureHost: host => host.Configure = (a, _) => a.Frames = DeepStack(120));
+        var session = await h.StartAsync();
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+        Assert.Equal(1000, h.Service.StopLocation!.FrameId);
+
+        // What the Call Stack window does: pages of 50, then "load more".
+        await session.GetStackTraceAsync(1, 0, 50, Ct);
+        var second = await session.GetStackTraceAsync(1, 50, 50, Ct);
+        var deep = second[25]; // level 75, far beyond what the stop itself fetched
+        await ((IDebugFrameFocus)h.Service).SetFocusedFrameAsync(session.Id, 1, deep.Id, Ct);
+
+        Assert.Equal(deep.Id, h.Service.FocusedFrameId);
+        Assert.Equal((deep.Id, deep.Line, "frame"), (h.Service.StopLocation!.FrameId, h.Service.StopLocation.Line, h.Service.StopLocation.Reason));
+        Assert.Equal(new Uri("/work/Deep.cs"), h.Service.StopLocation.Uri);
+        Assert.Equal(3, h.AdapterFor(0).CountOf("stackTrace")); // the stop's own fetch + the two pages: focusing did not ask again
+    }
+
+    [Fact]
+    public async Task SetFocusedFrame_focuses_a_deep_frame_of_another_thread()
+    {
+        await using var h = new ServiceHarness(configureHost: host => host.Configure = (a, _) =>
+        {
+            a.Frames = DeepStack(80);
+            a.On("threads", _ => new DapThreadsResponse { Threads = [new DapThread { Id = 1, Name = "main" }, new DapThread { Id = 2, Name = "worker" }] });
+        });
+        var session = await h.StartAsync();
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+
+        await session.GetStackTraceAsync(2, 0, 50, Ct);
+        var page = await session.GetStackTraceAsync(2, 50, 50, Ct);
+        await ((IDebugFrameFocus)h.Service).SetFocusedFrameAsync(session.Id, 2, page[10].Id, Ct);
+
+        Assert.Equal((2, page[10].Id, page[10].Line), (h.Service.StopLocation!.ThreadId, h.Service.StopLocation.FrameId, h.Service.StopLocation.Line));
+        Assert.Equal(page[10].Id, h.Service.FocusedFrameId);
     }
 
     [Fact]

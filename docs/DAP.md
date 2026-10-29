@@ -85,7 +85,10 @@ The tests that read process-wide counters or latency budgets run in a non-parall
   that follows the response in the same read batch can never be overwritten; a failed resume rolls back only if no newer stop arrived.
 * **Handles.** `variablesReference`s and frame ids are valid only for the current stop: they are tracked per stop, results are cached in a
   bounded LRU, and *everything is dropped on resume/step/`invalidated`/new stop*. Using a stale handle throws `DebugHandleInvalidatedException`
-  **without contacting the adapter** (and a response that arrives after a resume is discarded the same way).
+  **without contacting the adapter** (and a response that arrives after a resume is discarded the same way). The frames a session hands out
+  during a stop (any thread, any page; ≤ 10,000) are remembered, so `IDebugFrameFocus.SetFocusedFrameAsync` focuses a frame however deep the
+  Call Stack window paged without asking the adapter again; it **throws** (`DebugHandleInvalidatedException` for a dead frame or a running
+  session, `InvalidOperationException` for an ended or no-longer-focused session) instead of returning as if focus had moved.
 * Termination: graceful (`terminate` if supported and the session is a launch, else `disconnect{terminateDebuggee}` / detach for attach),
   waits `StopTimeout` (5 s), then hard kill of the adapter process tree. After `terminated` the client sends a courtesy `disconnect`.
   `RestartAsync` uses the adapter's `restart` request when advertised, otherwise stops silently and re-runs the whole handshake with the same

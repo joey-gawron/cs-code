@@ -57,7 +57,6 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private long _stopEpoch;
     private int _sessionCounter;
     private int _disposed;
-    private (string SessionId, int ThreadId, IReadOnlyList<DebugStackFrame> Frames)? _frameCache;
 
     private readonly LinkedList<(DebugOutputEventArgs Event, int Lines, int Chars)> _history = new();
     private int _historyLines, _historyChars;
@@ -326,7 +325,6 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private void OnSessionStopped(DebugSession session, DebugStoppedEventArgs e)
     {
         var epoch = Interlocked.Increment(ref _stopEpoch);
-        lock (_gate) _frameCache = null;
         ActiveSession = session; // a stop brings that session to the front (like VS Code)
         RecomputeState();
         UpdateContextKeys();
@@ -336,8 +334,11 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private void OnSessionContinued(DebugSession session, DebugContinuedEventArgs e)
     {
         Interlocked.Increment(ref _stopEpoch); // any in-flight stack fetch for the previous stop is now stale
-        lock (_gate) _frameCache = null;
-        if (ReferenceEquals(ActiveSession, session) && session.State != DebugSessionState.Stopped) SetStopLocation(null);
+        if (ReferenceEquals(ActiveSession, session) && session.State != DebugSessionState.Stopped)
+        {
+            Volatile.Write(ref _focusedFrameId, -1); // its frame died with the stop
+            SetStopLocation(null);
+        }
         RecomputeState();
         UpdateContextKeys();
     }
@@ -404,7 +405,6 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             wasActive = ReferenceEquals(_active, session);
             _compounds.Remove(session, out group);
             group?.Members.Remove(session);
-            if (_frameCache?.SessionId == session.Id) _frameCache = null;
         }
         hooks.Subscriptions.Dispose();
         ArchiveHistory(session);
@@ -455,12 +455,12 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             if (tid is not { } t) return;
             var frames = await session.GetStackTraceAsync(t, 0, 20);
             if (Interlocked.Read(ref _stopEpoch) != epoch || session.State != DebugSessionState.Stopped) return; // resumed or stopped again meanwhile
-            lock (_gate) _frameCache = (session.Id, t, frames);
             if (frames.Count == 0) { SetStopLocation(null); return; }
             // Prefer the first frame we can show (adapters may start with runtime frames that have no source).
             var frame = frames.FirstOrDefault(f => session.ResolveSourceUri(f.Source) is not null) ?? frames[0];
+            if (!ReferenceEquals(ActiveSession, session)) return; // focus moved to another session meanwhile: its frame ids are not ours
             Volatile.Write(ref _focusedFrameId, frame.Id);
-            if (ReferenceEquals(ActiveSession, session)) SetStopLocation(ToLocation(session, t, frame, reason));
+            SetStopLocation(ToLocation(session, t, frame, reason));
         }
         catch (Exception ex) when (ex is DebugHandleInvalidatedException or InvalidOperationException or IOException or TimeoutException or ObjectDisposedException)
         {
@@ -471,20 +471,36 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private static DebugStopLocation ToLocation(DebugSession session, int threadId, DebugStackFrame frame, string reason) =>
         new(session, threadId, frame.Id, session.ResolveSourceUri(frame.Source), frame.Line, frame.Column, reason);
 
+    /// <summary>
+    /// Focuses a frame the UI got from <paramref name="sessionId"/>'s <c>GetStackTraceAsync</c> during the current stop, however deep (the Call
+    /// Stack window pages 50+ frames, other threads, "load more"). Fails with <see cref="DebugHandleInvalidatedException"/> when the frame is no
+    /// longer valid (resumed, stopped again, invalidated) and <see cref="InvalidOperationException"/> when the session has ended, so the caller
+    /// never believes focus moved when it did not.
+    /// </summary>
     public ValueTask SetFocusedFrameAsync(string sessionId, int threadId, int frameId, CancellationToken ct = default) =>
         new(_lane.RunAsync(async () =>
         {
-            var session = Sessions.OfType<DebugSession>().FirstOrDefault(s => s.Id == sessionId);
-            if (session is null || session.State != DebugSessionState.Stopped) return 0;
-            (string SessionId, int ThreadId, IReadOnlyList<DebugStackFrame> Frames)? cache;
-            lock (_gate) cache = _frameCache;
-            var frames = cache is { } c && c.SessionId == sessionId && c.ThreadId == threadId ? c.Frames : await session.GetStackTraceAsync(threadId, 0, 50, ct);
-            var frame = frames.FirstOrDefault(f => f.Id == frameId);
-            if (frame is null) return 0;
+            var session = Sessions.OfType<DebugSession>().FirstOrDefault(s => s.Id == sessionId)
+                ?? throw new InvalidOperationException($"The debug session '{sessionId}' has ended.");
+            if (session.State != DebugSessionState.Stopped) throw StaleFrame();
+            if (!session.TryGetFrame(frameId, out var frame))
+            {
+                // Every frame id a caller can hold came from this session, which remembers what it handed out during this stop. Only when that
+                // bounded registry overflowed is the id possibly valid yet unknown: then ask for the whole (capped) stack of the thread.
+                if (!session.IsFrameValid(frameId)) throw StaleFrame();
+                frame = (await session.GetStackTraceAsync(threadId, 0, 0, ct)).FirstOrDefault(f => f.Id == frameId);
+                if (frame is null || session.State != DebugSessionState.Stopped) throw StaleFrame();
+            }
+            // FocusedFrameId and StopLocation describe the ACTIVE session (the REPL evaluates in that frame): a frame of another session
+            // (the focus moved on while this call was queued) must not end up there.
+            if (!ReferenceEquals(ActiveSession, session)) throw new InvalidOperationException($"The debug session '{session.Name}' is no longer the focused session.");
             Volatile.Write(ref _focusedFrameId, frameId);
-            if (ReferenceEquals(ActiveSession, session)) SetStopLocation(ToLocation(session, threadId, frame, "frame"));
+            SetStopLocation(ToLocation(session, threadId, frame, "frame"));
             return 0;
         }, ct));
+
+    private static DebugHandleInvalidatedException StaleFrame() =>
+        new("The stack frame is no longer valid: the debuggee has resumed or stopped again since it was obtained.");
 
     private void SetStopLocation(DebugStopLocation? location)
     {
@@ -605,7 +621,6 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             _compounds.Clear();
             _history.Clear();
             _historyLines = _historyChars = 0;
-            _frameCache = null;
         }
         _sessionStarted.Clear(); _sessionTerminated.Clear(); _activeChanged.Clear(); _stateChanged.Clear();
         _stopLocationChanged.Clear(); _output.Clear(); _outputCleared.Clear();

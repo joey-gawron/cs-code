@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using CsCode.Core.Debugging;
 
 namespace CsCode.Dap.Session;
@@ -62,19 +63,20 @@ internal sealed class BoundedLru<TKey, TValue> where TKey : notnull
 
 /// <summary>
 /// DAP <c>variablesReference</c>s (and frame ids) are only valid while the debuggee stays stopped. This tracks which handles were
-/// issued during the CURRENT stop, caches variable pages for cheap re-expansion, and forgets everything on resume/step/invalidated.
-/// All of it is bounded: at most <c>maxCachedVariables</c> cached items and <c>maxTrackedHandles</c> remembered handles (beyond that
-/// we stop tracking and stop rejecting, never grow).
+/// issued during the CURRENT stop, remembers the frames handed out (so a frame picked anywhere in a paged call stack can be found again
+/// without re-asking the adapter), caches variable pages for cheap re-expansion, and forgets everything on resume/step/invalidated.
+/// All of it is bounded: at most <c>maxCachedVariables</c> cached items, <c>maxTrackedHandles</c> remembered handles and
+/// <c>maxTrackedFrames</c> remembered frames (beyond that we stop tracking and stop rejecting, never grow).
 /// </summary>
-internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int maxTrackedHandles = 100_000)
+internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int maxTrackedHandles = 100_000, int maxTrackedFrames = 10_000)
 {
     internal readonly record struct VariablesKey(int Reference, string? Filter, int? Start, int? Count);
 
     private readonly HashSet<int> _handles = new();
-    private readonly HashSet<int> _frames = new();
+    private readonly Dictionary<int, DebugStackFrame> _frames = new();
     private readonly BoundedLru<VariablesKey, IReadOnlyList<DebugVariable>> _pages = new(maxCachedVariables, v => v.Count);
     private readonly BoundedLru<int, IReadOnlyList<DebugScope>> _scopes = new(2_000, v => v.Count);
-    private bool _overflowed;
+    private bool _overflowed, _framesOverflowed;
 
     public long Generation { get; private set; }
     public int TrackedHandles => _handles.Count;
@@ -87,7 +89,7 @@ internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int m
         _frames.Clear();
         _pages.Clear();
         _scopes.Clear();
-        _overflowed = false;
+        _overflowed = _framesOverflowed = false;
     }
 
     /// <summary>Only the cached pages (e.g. after setVariable changed a value); handles stay valid.</summary>
@@ -100,16 +102,19 @@ internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int m
         _handles.Add(reference);
     }
 
-    public void RegisterFrame(int frameId)
+    public void RegisterFrame(DebugStackFrame frame)
     {
-        if (_frames.Count >= maxTrackedHandles) { _overflowed = true; return; }
-        _frames.Add(frameId);
+        if (_frames.Count >= maxTrackedFrames && !_frames.ContainsKey(frame.Id)) { _framesOverflowed = true; return; }
+        _frames[frame.Id] = frame;
     }
 
     /// <summary>0 is "no children". Unknown handles are rejected unless tracking overflowed (then we can't know).</summary>
     public bool IsValidHandle(int reference) => reference <= 0 || _overflowed || _handles.Contains(reference);
 
-    public bool IsValidFrame(int frameId) => _overflowed || _frames.Contains(frameId);
+    public bool IsValidFrame(int frameId) => _framesOverflowed || _frames.ContainsKey(frameId);
+
+    /// <summary>A frame handed out during the current stop (any thread, any page). False also when tracking overflowed.</summary>
+    public bool TryGetFrame(int frameId, [MaybeNullWhen(false)] out DebugStackFrame frame) => _frames.TryGetValue(frameId, out frame);
 
     public bool TryGetPage(VariablesKey key, out IReadOnlyList<DebugVariable> page) => _pages.TryGet(key, out page!);
     public void SetPage(VariablesKey key, IReadOnlyList<DebugVariable> page) => _pages.Set(key, page);

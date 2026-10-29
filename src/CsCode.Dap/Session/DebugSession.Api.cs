@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using CsCode.Core.Debugging;
 using CsCode.Dap.Client;
@@ -64,8 +66,26 @@ public sealed partial class DebugSession
         var resp = DapJson.Deserialize<DapStackTraceResponse>(await RequestAsync("stackTrace", args, ct)) ?? new DapStackTraceResponse();
         IEnumerable<DapStackFrame> frames = delayed ? resp.StackFrames : resp.StackFrames.Skip(startFrame);
         var mapped = frames.Take(take).Select(f => DapMapping.ToCore(f, _positions)).ToArray();
-        if (gen == _handles.Generation) foreach (var f in mapped) _handles.RegisterFrame(f.Id);
+        if (gen == _handles.Generation) foreach (var f in mapped) _handles.RegisterFrame(f);
         return mapped;
+    }
+
+    /// <summary>
+    /// Lane only. A frame this session handed out during the current stop — any thread, any page (the Call Stack window pages 50+ frames) —
+    /// so it can be focused without asking the adapter again. False when the id is stale, and also when the bounded registry overflowed
+    /// (then <see cref="IsFrameValid"/> still says true and only the adapter can tell).
+    /// </summary>
+    internal bool TryGetFrame(int frameId, [MaybeNullWhen(false)] out DebugStackFrame frame)
+    {
+        Debug.Assert(_lane.IsOnLane, "session state is lane-confined");
+        return _handles.TryGetFrame(frameId, out frame);
+    }
+
+    /// <summary>Lane only. Whether <paramref name="frameId"/> may still be used (handed out during this stop, or tracking overflowed).</summary>
+    internal bool IsFrameValid(int frameId)
+    {
+        Debug.Assert(_lane.IsOnLane, "session state is lane-confined");
+        return _handles.IsValidFrame(frameId);
     }
 
     public ValueTask<IReadOnlyList<DebugScope>> GetScopesAsync(int frameId, CancellationToken ct = default) => OnLane(() => GetScopesCoreAsync(frameId, ct), ct);
