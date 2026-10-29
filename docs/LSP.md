@@ -159,6 +159,8 @@ plus `didChange`/`didSave`/`didOpen`/`didClose`/`willSave*`, watched files, exec
   folder that contains the file; fallback = that folder, then the file's directory. Definitions *without* markers get one server serving all workspace folders
   (multi-root aware, `didChangeWorkspaceFolders`). Root probing is file-system I/O, so routing runs on the lane, never on the thread that fired the document event.
 * `Start/Stop/Restart/StopAll`, `ServersChanged`; `Dispose`/`DisposeAsync` stops everything (including stops already in flight) and kills the process trees.
+  The lifecycle calls hop onto the Language lane before doing anything blocking (process creation/teardown), so a shell calling them from the UI thread
+  pays one enqueue (`Manager_start_stop_and_restart_never_run_blocking_work_on_the_calling_thread`).
 * Lazy start on the first matching opened document when `AutoStart`.
 
 ## 8. Settings

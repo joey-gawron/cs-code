@@ -69,34 +69,37 @@ internal enum LspEndpointKind { Process, Tcp, Pipe, Unix }
 /// <summary>Default factory: spawns child processes (no shell) or connects to TCP / pipe / unix-socket endpoints.</summary>
 public sealed class DefaultLspConnectionFactory : ILspConnectionFactory
 {
-    private readonly object _probeGate = new();
-    private string? _systemdRun;
-    private bool _systemdProbed;
+    private Task<string?>? _systemdProbe;
 
     /// <summary>
     /// Path of a usable <c>systemd-run</c> (probed ONCE by actually creating a user scope), or null when the host cannot cap CPU this way
-    /// (no systemd, no user session bus, not Linux). The result is per factory instance, not static.
+    /// (no systemd, no user session bus, not Linux). The result is per factory instance, not static; a benign race may probe twice.
     /// </summary>
-    private string? SystemdRun()
+    private Task<string?> SystemdRunAsync() => _systemdProbe ??= ProbeSystemdAsync();
+
+    private static async Task<string?> ProbeSystemdAsync()
     {
-        lock (_probeGate)
+        if (!OperatingSystem.IsLinux()) return null;
+        var path = ToolResolver.FindOnPath("systemd-run", null);
+        if (path is null) return null;
+        try
         {
-            if (_systemdProbed) return _systemdRun;
-            _systemdProbed = true;
-            if (!OperatingSystem.IsLinux()) return null;
-            var path = ToolResolver.FindOnPath("systemd-run", null);
-            if (path is null) return null;
+            var psi = new ProcessStartInfo(path) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+            foreach (var a in new[] { "--user", "--scope", "--quiet", "--", "true" }) psi.ArgumentList.Add(a);
+            using var probe = Process.Start(psi)!;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             try
             {
-                var psi = new ProcessStartInfo(path) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
-                foreach (var a in new[] { "--user", "--scope", "--quiet", "--", "true" }) psi.ArgumentList.Add(a);
-                using var probe = Process.Start(psi)!;
-                if (probe.WaitForExit(5000) && probe.ExitCode == 0) _systemdRun = path;
-                else if (!probe.HasExited) probe.Kill();
+                await probe.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                return probe.ExitCode == 0 ? path : null;
             }
-            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { }
-            return _systemdRun;
+            catch (OperationCanceledException)
+            {
+                try { probe.Kill(); } catch (InvalidOperationException) { }
+                return null;
+            }
         }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { return null; }
     }
 
     public async ValueTask<ILspConnection> ConnectAsync(LspLaunchRequest request, CancellationToken ct)
@@ -108,7 +111,7 @@ public sealed class DefaultLspConnectionFactory : ILspConnectionFactory
             {
                 var resolved = ToolResolver.Resolve(request.Definition.Command, request.ToolsDir, request.WorkingDirectory, request.Definition.Env)
                     ?? throw new ServerNotFoundException(request.Definition.Command);
-                var systemdRun = request.CpuQuotaPercent > 0 ? SystemdRun() : null;
+                var systemdRun = request.CpuQuotaPercent > 0 ? await SystemdRunAsync().ConfigureAwait(false) : null;
                 if (request.CpuQuotaPercent > 0 && systemdRun is null)
                     request.OnStderrLine?.Invoke("[client] cscode.lsp.cpuQuotaPercent is set but systemd-run (user scopes) is not usable here; starting without a CPU cap");
                 return ProcessConnection.Start(request, resolved, systemdRun);
