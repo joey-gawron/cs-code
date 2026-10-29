@@ -137,8 +137,7 @@ public sealed class DebugPanelsRuntime : IDisposable
                 expression = await window.ShowInputBoxAsync(new InputBoxOptions(Title: "Add Watch", Prompt: "Expression to watch"));
         }
         if (string.IsNullOrWhiteSpace(expression)) return null;
-        services.Watches.EnsureLoaded();
-        services.Watches.Add(expression);
+        services.Watches.Add(expression); // loads the saved list first
         return null;
     }
 

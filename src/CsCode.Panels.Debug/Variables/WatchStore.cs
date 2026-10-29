@@ -47,14 +47,20 @@ public sealed class WatchStore : IDisposable
     /// <summary>Restores the persisted list into the debug service once, and only if the service has none yet (it outlives panels).</summary>
     public void EnsureLoaded()
     {
-        lock (_gate)
-        {
-            if (_loaded) return;
-            _loaded = true;
-            _loadedFolder = PrimaryFolder;
-            if (_debug.Watches.Count > 0) return;
-            foreach (var expression in ReadSaved()) _debug.AddWatch(expression);
-        }
+        lock (_gate) LoadOnce();
+    }
+
+    /// <summary>
+    /// Under <see cref="_gate"/>. Every edit calls it first, wherever it comes from (Locals' "Add Watch", the command): saving before the
+    /// load would write the service's list over the folder's saved one, and the load would then find a non-empty service and skip it.
+    /// </summary>
+    private void LoadOnce()
+    {
+        if (_loaded) return;
+        _loaded = true;
+        _loadedFolder = PrimaryFolder;
+        if (_debug.Watches.Count > 0) return;
+        foreach (var expression in ReadSaved()) _debug.AddWatch(expression);
     }
 
     /// <summary>Another folder was opened: show its watches instead of carrying the previous folder's over (and later saving them into it).</summary>
@@ -86,6 +92,7 @@ public sealed class WatchStore : IDisposable
         WatchExpression watch;
         lock (_gate)
         {
+            LoadOnce();
             watch = _debug.AddWatch(expression.Trim());
             Save();
         }
@@ -97,6 +104,7 @@ public sealed class WatchStore : IDisposable
     {
         lock (_gate)
         {
+            LoadOnce();
             _debug.RemoveWatch(watch);
             Save();
         }
@@ -107,6 +115,7 @@ public sealed class WatchStore : IDisposable
     {
         lock (_gate)
         {
+            LoadOnce();
             watch.Expression = expression.Trim();
             Save();
         }
@@ -117,6 +126,7 @@ public sealed class WatchStore : IDisposable
     {
         lock (_gate)
         {
+            LoadOnce();
             foreach (var w in _debug.Watches.ToArray()) _debug.RemoveWatch(w);
             Save();
         }
@@ -131,6 +141,7 @@ public sealed class WatchStore : IDisposable
     {
         lock (_gate)
         {
+            LoadOnce();
             var order = _debug.Watches.Select(w => w.Expression).ToList();
             var from = _debug.Watches.ToList().FindIndex(w => ReferenceEquals(w, watch));
             if (from < 0) return;

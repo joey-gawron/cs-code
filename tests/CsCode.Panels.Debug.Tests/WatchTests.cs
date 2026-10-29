@@ -100,6 +100,26 @@ public class WatchTests
     }
 
     [AvaloniaFact]
+    public async Task Adding_a_watch_from_locals_before_the_watch_window_was_ever_opened_keeps_the_folders_saved_watches()
+    {
+        // Regression (debug-ct-4 / dbgp-persist-1, "never save before the load"): only the Watch window loaded the saved list. An edit made
+        // elsewhere first (Locals' "Add Watch") saved the service's list over it, and the later load saw a non-empty service and skipped it.
+        using var rig = new PanelRig();
+        var a = new Uri("file:///work/a/");
+        SaveWatches(rig, a, "a1", "a2");
+        await rig.Workspace.OpenFolderAsync(a);
+        using var locals = new LocalsViewModel(rig.Services);
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => locals.Tree.Rows.Any(r => r.Name == "x"), what: "locals");
+
+        locals.Tree.AddToWatch(locals.Tree.Rows.Single(r => r.Name == "x"));
+        Assert.Equal(["a1", "a2", "x"], rig.Debug.Watches.Select(w => w.Expression));
+        Assert.Equal(["a1", "a2", "x"], SavedWatches(rig, a));
+        using var vm = new WatchViewModel(rig.Services);
+        Assert.Equal(["a1", "a2", "x"], WatchNames(vm));
+    }
+
+    [AvaloniaFact]
     public async Task A_folder_without_saved_watches_starts_empty_and_adding_a_second_root_keeps_the_list()
     {
         using var rig = new PanelRig(withSession: false);
