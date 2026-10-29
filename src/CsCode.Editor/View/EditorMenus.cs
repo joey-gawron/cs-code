@@ -73,7 +73,7 @@ internal static class EditorMenus
             new(BreakpointSubmenu, KnownCommands.DebugToggleBreakpoint, "1@2", LineHasBreakpointKey) { Title = "_Delete Breakpoint" },
             new(BreakpointSubmenu, ToggleBreakpointEnabled, "1@3", LineHasBreakpointKey + " && " + LineBreakpointEnabledKey) { Title = "Disa_ble Breakpoint" },
             new(BreakpointSubmenu, ToggleBreakpointEnabled, "1@4", LineHasBreakpointKey + " && !" + LineBreakpointEnabledKey) { Title = "E_nable Breakpoint" },
-            new(BreakpointSubmenu, EditBreakpointCondition, "2@1") { Title = "_Conditions..." },
+            new(BreakpointSubmenu, EditBreakpointCondition, "1@5") { Title = "_Conditions..." },
             new(Menu, RunToCursor, "3_debug@2", BreakpointsAvailableKey + " && debugState != 'running'") { Title = "Run To C_ursor" },
             new(Menu, AddWatch, "3_debug@3", "inDebugMode") { Title = "Add _Watch", Icon = "watch" },
             new(Menu, QuickWatch, "3_debug@4", "debugState == 'stopped'") { Title = "_QuickWatch...", Icon = "eye" },

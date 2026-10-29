@@ -1,4 +1,3 @@
-using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using CsCode.App.Services.X11;
@@ -14,6 +13,53 @@ public interface IPrimarySelectionBackend : IDisposable
     bool IsAvailable { get; }
     void SetOwner(Func<string>? provider);
     Task<string?> ReadAsync(TimeSpan timeout, CancellationToken ct);
+}
+
+/// <summary>
+/// The platform clipboard as <see cref="ClipboardService"/> uses it, called on the UI thread. Avalonia's <see cref="IClipboard"/> is the real one
+/// (<see cref="AvaloniaPlatformClipboard"/>); it cannot be implemented outside Avalonia, so tests substitute this (a clipboard owner that never answers).
+/// </summary>
+public interface IPlatformClipboard
+{
+    Task<string?> TryGetTextAsync();
+    Task<bool> HasTextAsync();
+    /// <param name="html">Also offered as <c>text/html</c> where the platform takes it (X11/Wayland), for pasting with formatting.</param>
+    Task SetAsync(string text, string? html);
+}
+
+/// <summary><see cref="IPlatformClipboard"/> over a window's Avalonia clipboard (X11 CLIPBOARD under XWayland on Linux; in-memory when headless).</summary>
+public sealed class AvaloniaPlatformClipboard(IClipboard clipboard) : IPlatformClipboard
+{
+    // `text/html` is the MIME target X11 (and Wayland) applications ask for; Windows' "HTML Format" needs a CF_HTML header and is not written.
+    private static readonly DataFormat<string> HtmlFormat = DataFormat.CreateStringPlatformFormat("text/html");
+
+    public Task<string?> TryGetTextAsync() => clipboard.TryGetTextAsync();
+
+    public async Task<bool> HasTextAsync() => (await clipboard.GetDataFormatsAsync().ConfigureAwait(true)).Contains(DataFormat.Text);
+
+    public Task SetAsync(string text, string? html)
+    {
+        var item = new DataTransferItem();
+        item.SetText(text);
+        if (html is not null && OperatingSystem.IsLinux()) item.Set(HtmlFormat, html);
+        var transfer = new DataTransfer();
+        transfer.Add(item);
+        return clipboard.SetDataAsync(transfer);
+    }
+
+    /// <summary>A factory over a window's clipboard (re-created when the window or its clipboard changes; null without a window).</summary>
+    public static Func<IPlatformClipboard?> Of(Func<Avalonia.Controls.TopLevel?> window)
+    {
+        AvaloniaPlatformClipboard? cached = null;
+        return () =>
+        {
+            if (window()?.Clipboard is not { } c) return null;
+            if (cached is null || !ReferenceEquals(cached.Inner, c)) cached = new AvaloniaPlatformClipboard(c);
+            return cached;
+        };
+    }
+
+    internal IClipboard Inner => clipboard;
 }
 
 /// <summary>PRIMARY over X11 (also under XWayland): <see cref="X11SelectionClient"/> on <c>$DISPLAY</c>.</summary>
@@ -49,7 +95,7 @@ public sealed class ClipboardService : IClipboardService, IDisposable
     public static TimeSpan ReadTimeout { get; set; } = TimeSpan.FromSeconds(2);
 
     private readonly IUiDispatcher _ui;
-    private readonly Func<TopLevel?> _topLevel;
+    private readonly Func<IPlatformClipboard?> _platform;
     private readonly Lazy<IPrimarySelectionBackend?> _primary;
     private readonly Emitter<ClipboardText> _ringChanged = new();
     private readonly object _gate = new();
@@ -59,10 +105,10 @@ public sealed class ClipboardService : IClipboardService, IDisposable
     private bool _disposed;
 
     /// <param name="primary">Creates the PRIMARY backend on first use (null: none). Default: X11 when <c>$DISPLAY</c> is set.</param>
-    public ClipboardService(IUiDispatcher ui, Func<TopLevel?> topLevel, Func<IPrimarySelectionBackend?>? primary = null)
+    public ClipboardService(IUiDispatcher ui, Func<IPlatformClipboard?> platform, Func<IPrimarySelectionBackend?>? primary = null)
     {
         _ui = ui;
-        _topLevel = topLevel;
+        _platform = platform;
         _primary = new Lazy<IPrimarySelectionBackend?>(primary ?? DefaultPrimary, LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
@@ -80,8 +126,8 @@ public sealed class ClipboardService : IClipboardService, IDisposable
 
     public async ValueTask<bool> HasTextAsync(CancellationToken ct = default)
     {
-        var formats = await WithTimeout(async ui => (object?)await ui.GetDataFormatsAsync().ConfigureAwait(true), ct, TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
-        return formats is IReadOnlyList<DataFormat> list && list.Contains(DataFormat.Text);
+        var has = await WithTimeout(async ui => (object?)await ui.HasTextAsync().ConfigureAwait(true), ct, TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
+        return has is true;
     }
 
     public async ValueTask WriteAsync(ClipboardText content, CancellationToken ct = default)
@@ -96,25 +142,13 @@ public sealed class ClipboardService : IClipboardService, IDisposable
         catch (Exception ex) when (ex is not OutOfMemoryException) { /* no clipboard (a closing window): the ring still has the copy */ }
     }
 
-    private Task SetOnUi(ClipboardText content)
-    {
-        if (_topLevel()?.Clipboard is not { } clipboard) return Task.CompletedTask;
-        var item = new DataTransferItem();
-        item.SetText(content.Text);
-        if (content.Html is { } html && OperatingSystem.IsLinux()) item.Set(HtmlFormat, html);
-        var transfer = new DataTransfer();
-        transfer.Add(item);
-        return clipboard.SetDataAsync(transfer);
-    }
-
-    // `text/html` is the MIME target X11 (and Wayland) applications ask for; Windows' "HTML Format" needs a CF_HTML header and is not written.
-    private static readonly DataFormat<string> HtmlFormat = DataFormat.CreateStringPlatformFormat("text/html");
+    private Task SetOnUi(ClipboardText content) => _platform() is { } clipboard ? clipboard.SetAsync(content.Text, content.Html) : Task.CompletedTask;
 
     /// <summary>Starts a platform clipboard call on the UI thread and waits for it off the UI thread, at most <paramref name="timeout"/>.</summary>
-    private async Task<T?> WithTimeout<T>(Func<IClipboard, Task<T?>> call, CancellationToken ct, TimeSpan? timeout = null) where T : class
+    private async Task<T?> WithTimeout<T>(Func<IPlatformClipboard, Task<T?>> call, CancellationToken ct, TimeSpan? timeout = null) where T : class
     {
         if (_disposed) return null;
-        var started = await _ui.InvokeAsync(() => _topLevel()?.Clipboard is { } clipboard ? call(clipboard) : Task.FromResult<T?>(null)).ConfigureAwait(false);
+        var started = await _ui.InvokeAsync(() => _platform() is { } clipboard ? call(clipboard) : Task.FromResult<T?>(null)).ConfigureAwait(false);
         var limit = Task.Delay(timeout ?? ReadTimeout, ct);
         if (await Task.WhenAny(started, limit).ConfigureAwait(false) != started)
         {

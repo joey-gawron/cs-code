@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using Avalonia.VisualTree;
 using CsCode.App.Docking;
 using CsCode.Core.Lifecycle;
@@ -49,7 +50,19 @@ public sealed class ClipboardRouter : IDisposable
         UpdateKeys();
     }
 
-    /// <summary>The window reports every focus change; focus moving into a menu or popup is ignored (the menu acts on what had focus before).</summary>
+    /// <summary>
+    /// Follows keyboard focus in <paramref name="root"/> (the main window). Handled focus events count too: AvaloniaEdit's text area marks its
+    /// GotFocus handled, so a plain handler never sees the editor take focus.
+    /// </summary>
+    public IDisposable Attach(Control root)
+    {
+        root.AddHandler(InputElement.GotFocusEvent, OnGotFocus, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+        return Disposable.Create(() => root.RemoveHandler(InputElement.GotFocusEvent, OnGotFocus));
+    }
+
+    private void OnGotFocus(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => NoteFocus(e.Source as Visual);
+
+    /// <summary>Records a focus change; focus moving into a menu or popup is ignored (the menu acts on what had focus before).</summary>
     public void NoteFocus(Visual? focused)
     {
         if (focused is null || IsMenuOrPopup(focused)) return;
@@ -58,18 +71,18 @@ public sealed class ClipboardRouter : IDisposable
 
     private static bool IsMenuOrPopup(Visual v)
     {
+        // A context menu is not a MenuBase in Avalonia 12, and an overlay popup lives inside the window's own tree: test for both explicitly.
         for (var c = v; c is not null; c = c.GetVisualParent())
-            if (c is MenuItem or MenuBase or PopupRoot or OverlayPopupHost) return true;
+            if (c is MenuItem or MenuBase or ContextMenu or Popup or PopupRoot or OverlayPopupHost) return true;
         return false;
     }
 
     /// <summary>What Cut/Copy/Paste act on now (null: nothing that can use the clipboard has focus).</summary>
     public IClipboardTarget? Resolve()
     {
-        Visual? focused = null;
-        if (_focused?.TryGetTarget(out var remembered) == true && remembered.IsAttachedToVisualTree()) focused = remembered;
-        // Nothing remembered yet (focus set before the window reported it): what the window's focus manager says, unless that is a menu.
-        if (focused is null && _window()?.FocusManager?.GetFocusedElement() is Visual current && !IsMenuOrPopup(current)) focused = current;
+        // What has focus now, unless that is a menu or popup (the Edit menu or a context menu is open): then what had focus before it.
+        Visual? focused = _window()?.FocusManager?.GetFocusedElement() is Visual current && !IsMenuOrPopup(current) ? current : null;
+        if (focused is null && _focused?.TryGetTarget(out var remembered) == true && remembered.IsAttachedToVisualTree()) focused = remembered;
         for (var v = focused; v is not null; v = v.GetVisualParent())
         {
             if (v is TextBox box) return new TextBoxClipboardTarget(box);
