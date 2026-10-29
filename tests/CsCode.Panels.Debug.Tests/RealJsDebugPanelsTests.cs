@@ -75,12 +75,22 @@ public class RealJsDebugPanelsTests
             return new App { Provider = services.BuildServiceProvider(), Sample = sample, Navigation = navigation, Window = window, Paths = paths };
         }
 
-        public DebugConfiguration Config(params string[] args) => DebugConfiguration.FromJson(JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        public DebugConfiguration Config(params string[] args) => ConfigFor(Sample.MainJs, args.Contains("flood") ? "std" : "console", args);
+
+        /// <summary>A launch of <paramref name="program"/> (the sample's own, or a JavaScript file written next to it).</summary>
+        public DebugConfiguration ConfigFor(string program, string outputCapture, params string[] args) => DebugConfiguration.FromJson(JsonSerializer.SerializeToElement(new Dictionary<string, object?>
         {
-            ["type"] = "pwa-node", ["request"] = "launch", ["name"] = "ts", ["program"] = Sample.MainJs, ["cwd"] = Sample.Dir.Path,
+            ["type"] = "pwa-node", ["request"] = "launch", ["name"] = Path.GetFileNameWithoutExtension(program), ["program"] = program, ["cwd"] = Sample.Dir.Path,
             ["outFiles"] = new[] { Sample.OutDir + "/**/*.js" }, ["sourceMaps"] = true, ["skipFiles"] = new[] { "<node_internals>/**" },
-            ["console"] = "internalConsole", ["args"] = args, ["outputCapture"] = args.Contains("flood") ? "std" : "console",
+            ["console"] = "internalConsole", ["args"] = args, ["outputCapture"] = outputCapture,
         }), Sample.Dir.Uri);
+
+        public string WriteProgram(string name, string source)
+        {
+            var path = Sample.Dir.Combine(name);
+            File.WriteAllText(path, source);
+            return path;
+        }
 
         public async ValueTask DisposeAsync()
         {
@@ -205,9 +215,15 @@ public class RealJsDebugPanelsTests
             Assert.Equal(["add", "work"], frames.Take(2).Select(r => r.Text));
             Assert.Equal($"src/main.ts : {JsDebugSample.MainLine("async") + 1}", frames[1].Location);
             Assert.False(frames[0].IsExternal || frames[1].IsExternal);
-            // node internals (skipped through skipFiles, hinted "deemphasize") are greyed like other external code
+            // node internals (skipped through skipFiles, hinted "deemphasize") are folded into one row by default, as VS Code does; a click
+            // shows them, greyed like other external code
+            Assert.DoesNotContain(callStack.Rows, r => r.Location.StartsWith("<node_internals>", StringComparison.Ordinal));
+            var skipped = callStack.Rows.Single(r => r.Kind == CallStackRowKind.ExternalCode);
+            Assert.True(skipped.HiddenFrames >= 2, $"{skipped.HiddenFrames} folded");
+            await callStack.ActivateAsync(skipped, takeFocus: false);
+            Note("call stack (skipped frames shown): " + Rows(callStack));
             var internals = callStack.Rows.Where(r => r.Location.StartsWith("<node_internals>", StringComparison.Ordinal)).ToList();
-            Assert.NotEmpty(internals);
+            Assert.Equal(skipped.HiddenFrames, internals.Count);
             Assert.All(internals, r => Assert.True(r.IsExternal, r.Text + " is greyed"));
             // folding external code keeps the async boundary between work() and main() visible and folds the node internals into one row
             callStack.ShowExternalCode = false;
@@ -281,4 +297,76 @@ public class RealJsDebugPanelsTests
             callStack.Dispose();
         }
     }
+
+    /// <summary>A large array, a getter that throws, a getter that works, and two stops in the same frame (review findings, for real).</summary>
+    private const string ExtrasProgram = """
+        class Shape {
+          get boom() { throw new Error("getter failed"); }
+          get fine() { return 7; }
+        }
+        const huge = Array.from({ length: 10000 }, (_, i) => i * 3);
+        const shape = new Shape();
+        for (let round = 0; round < 2; round++) {
+          debugger;
+        }
+        console.log("extras done " + huge.length);
+
+        """;
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task Locals_page_a_ten_thousand_element_array_to_its_end_and_show_getters_that_throw_or_were_evaluated_truthfully()
+    {
+        await using var app = await App.CreateAsync();
+        var debug = app.Debug;
+        var locals = app.View<FrameVariablesViewModel>("debug.locals").Tree;
+        var stops = 0;
+        debug.SessionStarted.Subscribe(s => s.Stopped.Subscribe(_ => Interlocked.Increment(ref stops)));
+        _ = await debug.StartAsync(app.ConfigFor(app.WriteProgram("extras.js", ExtrasProgram), "console")) ?? throw new InvalidOperationException("no session");
+        await PanelRig.Eventually(() => stops >= 1 && locals.Rows.Any(r => r.Name == "huge") && locals.Rows.Any(r => r.Name == "shape"), 40_000, "stopped at the debugger statement");
+        Note("extras locals: " + Rows(locals));
+
+        // 10,000 elements: every page down to the last element, and no cap notice (it used to stop at 9,997 and claim "10,000 of 10,000")
+        var huge = locals.Rows.First(r => r.Name == "huge");
+        await locals.ToggleAsync(huge);
+        await PanelRig.Eventually(() => locals.Rows.Any(r => r.Parent == huge && r.Kind == VariableRowKind.More), 20_000, "first page of huge");
+        var pages = 1;
+        for (; pages < 150 && locals.Rows.FirstOrDefault(r => r.Parent == huge && r.Kind == VariableRowKind.More) is { } more; pages++) await locals.LoadMoreAsync(more);
+        var children = locals.Rows.Where(r => r.Parent == huge).ToList();
+        var elements = children.Where(r => r.Kind == VariableRowKind.Variable && int.TryParse(r.Name, out _)).ToList();
+        Note($"huge after {pages} pages: {elements.Count} elements, last {elements[^1].Name}={elements[^1].DisplayValue}, named: {string.Join(",", children.Where(r => r.Kind == VariableRowKind.Variable && !int.TryParse(r.Name, out _)).Select(r => r.Name))}, messages: {string.Join(" | ", children.Where(r => r.Kind == VariableRowKind.Message).Select(r => r.Name))}");
+        Assert.Equal(10_000, elements.Count);
+        Assert.Equal(("9999", "29997"), (elements[^1].Name, elements[^1].DisplayValue));
+        Assert.DoesNotContain(children, r => r.Kind == VariableRowKind.Message);
+        await locals.ToggleAsync(huge);
+
+        // getters: one throws, one works
+        var shape = locals.Rows.First(r => r.Name == "shape");
+        await locals.ToggleAsync(shape);
+        await PanelRig.Eventually(() => locals.Rows.Any(r => r.Parent == shape && r.Name == "boom") && locals.Rows.Any(r => r.Parent == shape && r.Name == "fine"), 20_000, "shape expanded");
+        var boom = locals.Rows.First(r => r.Parent == shape && r.Name == "boom");
+        await locals.ActivateAsync(boom);
+        await PanelRig.Eventually(() => !boom.IsLoading && !boom.IsLazy || boom.IsError, 20_000, "the throwing getter ran");
+        Note($"throwing getter: '{boom.DisplayValue}' error={boom.IsError} children={boom.HasChildren}");
+        Assert.True(boom.IsError);
+        Assert.Equal(VariablesTreeViewModel.LazyFailedText, boom.DisplayValue);
+        var fine = locals.Rows.First(r => r.Parent == shape && r.Name == "fine");
+        Note($"getter before evaluation: '{fine.DisplayValue}' type '{fine.Type}' lazy={fine.IsLazy}");
+        Assert.Null(fine.Type); // js-debug types the placeholder "function" (the accessor), not its value
+        await locals.ActivateAsync(fine);
+        await PanelRig.Eventually(() => fine.DisplayValue == "7", 20_000, "the working getter evaluated in place");
+        Assert.Equal("number", fine.Type);
+
+        // the next stop in the same frame: the evaluated getter is a placeholder again and NOT marked changed; the loop variable is
+        await debug.StopLocation!.Session.ContinueAsync();
+        await PanelRig.Eventually(() => stops >= 2 && locals.Rows.Any(r => r.Name == "round" && r.DisplayValue == "1"), 40_000, "second stop");
+        await PanelRig.Eventually(() => locals.Rows.Any(r => r.Parent?.Name == "shape" && r.Name == "fine"), 20_000, "shape expanded again");
+        var fineAgain = locals.Rows.First(r => r.Parent?.Name == "shape" && r.Name == "fine");
+        Note("second stop: " + Rows(locals));
+        Assert.True(fineAgain.IsLazy);
+        Assert.False(fineAgain.IsChanged);
+        Assert.True(locals.Rows.First(r => r.Name == "round").IsChanged);
+        await debug.StopAllAsync();
+        await PanelRig.Eventually(() => debug.State == DebugState.Inactive, 20_000, "ended");
+    }
+
 }

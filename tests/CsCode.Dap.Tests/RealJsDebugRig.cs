@@ -135,9 +135,25 @@ internal sealed class RealJsDebugRig : IAsyncDisposable
         return all;
     }
 
+    /// <summary>
+    /// Disposes the service; then, as a safety net for a test that failed before it could stop everything (or a fix that is broken), kills
+    /// whatever this rig's own servers left: their process trees and the processes carrying their markers. Says so in the metrics.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         try { await H.DisposeAsync(); }
-        finally { Sample.Dispose(); }
+        finally
+        {
+            Sample.Dispose();
+            int[] servers;
+            string[] markers;
+            lock (ServerPids) servers = [.. ServerPids];
+            lock (Markers) markers = [.. Markers];
+            var left = servers.Where(ProcessTable.IsAlive).Concat(markers.SelectMany(m => ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", m))).Distinct().ToList();
+            if (left.Count > 0) TestMetrics.Report("[js-debug] rig cleanup killed what the test left running: " + string.Join("; ", left.Select(p => $"{p} {ProcessTable.CommandLine(p)}")));
+            foreach (var pid in left)
+                try { using var p = System.Diagnostics.Process.GetProcessById(pid); p.Kill(entireProcessTree: true); }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
+        }
     }
 }

@@ -115,6 +115,42 @@ public class RealJsDebugTests
 
     // ------------------------------------------------------------------ breakpoint kinds
 
+    /// <summary>
+    /// Integrator finding: stopped at a breakpoint, adding another one in the same file turned the first into "Unbound breakpoint" in the
+    /// Breakpoints window, although the program still stopped there. Both sessions (the orchestrating parent and the program's child) get the
+    /// file's breakpoints again; what each one answers is recorded.
+    /// </summary>
+    [Fact]
+    public async Task Adding_a_breakpoint_while_stopped_keeps_the_other_breakpoints_of_the_file_verified()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        var reports = new List<string>();
+        rig.Service.SessionStarted.Subscribe(s =>
+        {
+            if (s is DebugSession ds)
+                ds.BreakpointStatusChanged.Subscribe(st => { lock (reports) reports.Add($"{(ds.Parent is null ? "parent" : "child")}: {st.BreakpointId} verified={st.Verified} line={st.ActualLine} '{st.Message}'"); });
+        });
+        var loop = rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
+        await rig.StartAsync();
+        await rig.WaitForStopAsync(1);
+        await SessionHarness.Eventually(() => rig.H.Breakpoints.GetStatus(loop.Id) is { Verified: true }, 10_000, "the loop breakpoint is verified");
+        lock (reports) reports.Add("--- adding a breakpoint while stopped");
+
+        var done = rig.H.Breakpoints.Add(rig.MainUri, InMain("done"));
+        await SessionHarness.Eventually(() => rig.H.Breakpoints.GetStatus(done.Id) is { Verified: true }, 10_000, "the new breakpoint is verified");
+        await Task.Delay(1_000, Ct); // every session answered (and any breakpoint event arrived)
+        lock (reports) Note("statuses per session: " + string.Join(" | ", reports));
+        Assert.True(rig.H.Breakpoints.GetStatus(loop.Id) is { Verified: true }, $"the loop breakpoint stays verified: {rig.H.Breakpoints.GetStatus(loop.Id)}");
+
+        await rig.Service.StopLocation!.Session.ContinueAsync(ct: Ct);
+        var again = await rig.WaitForStopAsync(2);
+        AssertAt(again, "main.ts", InMain("loop")); // and it still stops there
+        Assert.True(rig.H.Breakpoints.GetStatus(loop.Id) is { Verified: true });
+        await rig.Service.StopAllAsync(Ct);
+        await rig.WaitForEndAsync();
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
     [Fact]
     public async Task Conditional_breakpoint_stops_only_when_the_condition_holds()
     {
@@ -490,6 +526,160 @@ public class RealJsDebugTests
         Assert.Contains(byDefault, o => o.Contains("flood done", StringComparison.Ordinal));
         Assert.Contains(withStd, o => o.Contains("flood line 2", StringComparison.Ordinal));
         Assert.Contains(inTerminal, o => o.Contains("flood line 2", StringComparison.Ordinal));
+        // There is no terminal: a terminal launch runs in the console with the streams captured, so a console.log line shows ONCE (it used to
+        // come twice: through the runInTerminal pipe and from js-debug's own console capture).
+        Assert.Equal(1, string.Concat(inTerminal).Split("flood done").Length - 1);
+    }
+
+    // ------------------------------------------------------------------ processes the program starts, stop while running, shutdown
+
+    private static string WriteProgram(RealJsDebugRig rig, string name, string source)
+    {
+        var path = rig.Sample.Dir.Combine(name);
+        File.WriteAllText(path, source);
+        return path;
+    }
+
+    /// <summary>Spawns `sleep 600` detached into its own session (Node's detached + unref: how `open`/xdg-open start a browser), prints its pid.</summary>
+    private const string DetachProgram = """
+        const { spawn } = require("child_process");
+        const child = spawn("sleep", ["600"], { detached: true, stdio: "ignore" });
+        child.unref();
+        console.log("detached " + child.pid);
+        if (process.argv[2] === "stay") setInterval(() => {}, 1000);
+
+        """;
+
+    private static async Task<int> DetachedPidAsync(RealJsDebugRig rig)
+    {
+        var pid = 0;
+        await SessionHarness.Eventually(() =>
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(rig.OutputText, @"detached (\d+)");
+            if (m.Success) pid = int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            return pid > 0;
+        }, 30_000, "the program reported the pid it detached");
+        return pid;
+    }
+
+    private static void KillTestProcess(int pid)
+    {
+        if (pid <= 0) return;
+        try { using var p = Process.GetProcessById(pid); p.Kill(); } // the sleep this test's program started
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
+    }
+
+    [Fact]
+    public async Task A_process_the_program_detached_on_purpose_outlives_a_session_that_ended_normally()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        var program = WriteProgram(rig, "detach.js", DetachProgram);
+        var detached = 0;
+        try
+        {
+            await rig.StartAsync(rig.Config("detach", program: program));
+            detached = await DetachedPidAsync(rig);
+            await rig.WaitForEndAsync();
+            await SessionHarness.Eventually(() => rig.ServerPids.All(p => !ProcessTable.IsAlive(p)), 10_000, "the js-debug server is gone");
+            await Task.Delay(1_500, Ct);
+            Note($"detached process {detached} ({ProcessTable.CommandLine(detached)}) after the session ended: alive={ProcessTable.IsAlive(detached)}");
+            Assert.True(ProcessTable.IsAlive(detached), "a process the program detached on purpose (a browser it opened) must not be killed with the session");
+        }
+        finally { KillTestProcess(detached); }
+    }
+
+    [Fact]
+    public async Task An_adapter_crash_reaps_the_orphaned_debuggee_but_not_a_process_it_detached_on_purpose()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        var program = WriteProgram(rig, "detach.js", DetachProgram);
+        var detached = 0;
+        try
+        {
+            var parent = await rig.StartAsync(rig.Config("detach-stay", new Dictionary<string, object?> { ["args"] = new[] { "stay" } }, program));
+            detached = await DetachedPidAsync(rig);
+            var server = parent.AdapterProcessId!.Value;
+            var marker = parent.AdapterProcessMarker!;
+            var debuggees = ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", marker).Where(p => p != server && p != detached).ToList();
+            Note($"before the crash: server {server} sid {CsCode.Dap.Transport.AdapterProcessReaper.SessionOf(server)}; debuggees " +
+                string.Join(", ", debuggees.Select(p => $"{p} sid {CsCode.Dap.Transport.AdapterProcessReaper.SessionOf(p)} '{ProcessTable.CommandLine(p)}'")) +
+                $"; detached {detached} sid {CsCode.Dap.Transport.AdapterProcessReaper.SessionOf(detached)}");
+            Assert.NotEmpty(debuggees);
+            using (var p = Process.GetProcessById(server)) p.Kill(); // the adapter alone dies
+            await rig.WaitForEndAsync(20_000);
+            foreach (var pid in debuggees) await SessionHarness.Eventually(() => !ProcessTable.IsAlive(pid), 10_000, $"orphaned debuggee {pid} reaped");
+            Assert.True(ProcessTable.IsAlive(detached), "the process the program detached into its own session is left running");
+        }
+        finally { KillTestProcess(detached); }
+    }
+
+    [Fact]
+    public async Task Stop_while_the_program_runs_ends_every_session_and_process_quickly()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        await rig.StartAsync(rig.Config("serve", new Dictionary<string, object?> { ["args"] = new[] { "serve" } }));
+        await SessionHarness.Eventually(() => { lock (rig.Started) return rig.Started.OfType<DebugSession>().Any(s => s.Parent is not null && s.State == DebugSessionState.Running); },
+            30_000, "the program runs in the child session");
+        await Task.Delay(300, Ct); // a few timer ticks
+        var sw = Stopwatch.StartNew();
+        await rig.Service.StopAllAsync(Ct);
+        await rig.WaitForEndAsync();
+        Note($"stop while running: every session ended after {sw.ElapsedMilliseconds} ms");
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
+    /// <summary>
+    /// Since a normal close no longer reaps processes that left the server's tree: a program that starts another Node.js process (js-debug
+    /// auto-attaches it as a grandchild session, with its watchdog processes) still leaves nothing behind when debugging is stopped.
+    /// </summary>
+    [Fact]
+    public async Task Stop_ends_a_program_that_started_another_node_process_with_every_session_and_process()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        var program = WriteProgram(rig, "parent.js", """
+            const { spawn } = require("child_process");
+            const child = spawn(process.execPath, ["-e", "setInterval(() => console.log('child tick'), 200)"], { stdio: "inherit" });
+            console.log("spawned " + child.pid);
+            setInterval(() => {}, 1000);
+
+            """);
+        await rig.StartAsync(rig.Config("parent", program: program));
+        await SessionHarness.Eventually(() => rig.OutputText.Contains("child tick", StringComparison.Ordinal), 30_000, "the second node process runs");
+        await Task.Delay(300, Ct);
+        string sessions;
+        lock (rig.Started) sessions = string.Join(", ", rig.Started.Select(s => $"{s.Name}{(s.Parent is { } p ? " <- " + p.Name : "")}"));
+        var marked = rig.Markers.SelectMany(m => ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", m)).Select(p => $"{p} '{ProcessTable.CommandLine(p)}'").ToList();
+        var sw = Stopwatch.StartNew();
+        await rig.Service.StopAllAsync(Ct);
+        await rig.WaitForEndAsync();
+        Note($"a program with a second node process: sessions {sessions}; processes carrying the marker before Stop: {string.Join(" | ", marked)}; everything ended after {sw.ElapsedMilliseconds} ms");
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
+    [Fact]
+    public async Task Disposing_the_debug_service_synchronously_while_the_lane_is_busy_leaves_no_js_debug_process()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
+        await rig.StartAsync();
+        await rig.WaitForStopAsync(1);
+        var release = new int[1];
+        var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.H.Lane.Post(() =>
+        {
+            blocked.TrySetResult();
+            var deadline = Stopwatch.GetTimestamp() + 30 * Stopwatch.Frequency;
+            while (Volatile.Read(ref release[0]) == 0 && Stopwatch.GetTimestamp() < deadline) Thread.Sleep(5);
+        });
+        await blocked.Task;
+        try
+        {
+            var sw = Stopwatch.StartNew();
+            rig.Service.Dispose(); // what a synchronous container dispose does; the async shutdown cannot run on the busy lane
+            await rig.AssertNothingLeftRunningAsync(3_000);
+            Note($"synchronous dispose with the lane busy: js-debug and the program gone after {sw.ElapsedMilliseconds} ms");
+        }
+        finally { Volatile.Write(ref release[0], 1); }
     }
 
     // ------------------------------------------------------------------ attach
@@ -598,6 +788,36 @@ public class RealJsDebugTests
         await rig.AssertNothingLeftRunningAsync();
     }
 
+    /// <summary>
+    /// A package whose tsc outDir is OUTSIDE the opened folder (a monorepo package with "outDir": "../build"): the generated template must point
+    /// outFiles there and let js-debug read source maps there, or no .ts breakpoint binds.
+    /// </summary>
+    [Fact]
+    public async Task The_typescript_template_of_a_package_whose_outDir_is_outside_the_folder_stops_in_the_ts_source()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        using var repo = new TempDirectory("jsdebug-monorepo-");
+        repo.WriteFile("pkg/src/main.ts", JsDebugSample.MainSource);
+        repo.WriteFile("pkg/src/util.ts", JsDebugSample.UtilSource);
+        repo.WriteFile("pkg/tsconfig.json", JsDebugSample.TsConfig.Replace("\"outDir\": \"out\"", "\"outDir\": \"../build\"", StringComparison.Ordinal));
+        var folder = new Uri(repo.Combine("pkg") + "/");
+        var launchJson = await rig.H.Configurations.CreateLaunchJsonAsync("pwa-node", folder, Ct);
+        Note("generated launch.json (outDir ../build): " + File.ReadAllText(launchJson.LocalPath).Replace("\n", " ", StringComparison.Ordinal));
+        var config = (await rig.H.Configurations.GetLaunchConfigurationsAsync(folder, Ct)).Single(c => c.Name == "TypeScript: Launch (tsc build)");
+        var mainTs = repo.Combine("pkg", "src", "main.ts");
+        var bp = rig.H.Breakpoints.Add(new Uri(mainTs), InMain("loop"));
+
+        await rig.StartAsync(config);
+        Assert.True(File.Exists(repo.Combine("build", "main.js.map")), "the preLaunchTask compiled into ../build");
+        var loc = await rig.WaitForStopAsync(1);
+        Assert.Equal(mainTs, loc.Uri?.LocalPath);
+        Assert.Equal(InMain("loop"), loc.Line);
+        Assert.True(rig.H.Breakpoints.GetStatus(bp.Id) is { Verified: true });
+        await rig.Service.StopAllAsync(Ct);
+        await rig.WaitForEndAsync();
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
     // ------------------------------------------------------------------ leaks
 
     [Fact]
@@ -696,6 +916,65 @@ public class RealJsDebugTests
         Assert.Contains("flood done", rig.OutputText);
         Assert.InRange(history, 1, 12_000);
         Assert.True(GC.GetTotalMemory(true) - before < 64L * 1024 * 1024, "heap stays bounded");
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
+    /// <summary>One <c>console.log</c> per line: with js-debug's default capture every line is its own DAP output event (1,000,000 events).</summary>
+    internal const string LogsProgram = """
+        const n = Number(process.argv[2] || "1000000");
+        for (let i = 0; i < n; i++) console.log("log line " + i);
+        console.log("logs done");
+
+        """;
+
+    [Fact]
+    public async Task A_million_console_log_lines_each_its_own_event_stay_bounded_and_keep_the_debug_lane_responsive()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        var program = WriteProgram(rig, "logs.js", LogsProgram);
+        var lane = rig.H.Lane;
+        var latencies = new List<double>();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var probe = Task.Run(async () =>
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                var t0 = Stopwatch.GetTimestamp();
+                await lane.RunAsync(() => Task.FromResult(0));
+                lock (latencies) latencies.Add(Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
+                try { await Task.Delay(5, cts.Token); } catch (OperationCanceledException) { }
+            }
+        }, CancellationToken.None);
+        var events = 0;
+        using var counting = rig.Service.Output.Subscribe(_ => Interlocked.Increment(ref events));
+
+        var before = GC.GetTotalMemory(true);
+        var sw = Stopwatch.StartNew();
+        await rig.StartAsync(rig.Config("logs", new Dictionary<string, object?> { ["args"] = new[] { "1000000" } }, program)); // default outputCapture
+        await rig.WaitForEndAsync(240_000);
+        sw.Stop();
+        cts.Cancel();
+        await probe;
+        double[] sorted;
+        lock (latencies) sorted = [.. latencies.Order()];
+        var p99 = sorted[(int)(sorted.Length * 0.99)];
+        var history = rig.Service.GetOutputHistory().Sum(e => e.Output.Count(c => c == '\n'));
+        int recorded;
+        lock (rig.Output)
+        {
+            recorded = rig.Output.Count;
+            rig.Output.Clear(); // the rig's own record of every event (a million of them) is test memory, not the product's
+        }
+        var heap = GC.GetTotalMemory(true) - before;
+        long dropped;
+        lock (rig.Started) dropped = rig.Started.OfType<DebugSession>().Sum(s => s.DroppedOutputChars);
+        Assert.Equal(Volatile.Read(ref events), recorded);
+        Note($"1M console.log lines through js-debug (one event each): {sw.ElapsedMilliseconds} ms, {Volatile.Read(ref events):N0} output events reached the service, {dropped:N0} chars dropped, history {history:N0} lines, lane round trip p99 {p99:F1} ms max {sorted[^1]:F1} ms ({sorted.Length} probes), heap delta {heap / 1024} KB");
+        Assert.True(Volatile.Read(ref events) > 0);
+        Assert.True(p99 < 250, $"lane round trip p99 {p99:F1} ms during the flood");
+        Assert.Contains(rig.Service.GetOutputHistory(), e => e.Output == "logs done\n");
+        Assert.InRange(history, 1, DebugServiceHistory.MaxLines);
+        Assert.True(heap < 64L * 1024 * 1024, "heap stays bounded");
         await rig.AssertNothingLeftRunningAsync();
     }
 }

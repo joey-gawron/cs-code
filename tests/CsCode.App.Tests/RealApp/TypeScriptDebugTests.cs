@@ -53,36 +53,89 @@ public class RealAppTypeScriptDebugTests
     private static int? StopLineOf(CsCode.Editor.IEditorViewController? controller) =>
         (int?)controller?.GetType().GetProperty("StopLine", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(controller);
 
+    /// <summary>A folder with the TypeScript sample, launch.json and tasks.json, and the host's settings pointing at js-debug.</summary>
+    private static RealAppHost CreateHost() => RealAppHost.Create(h =>
+    {
+        h.Files.WriteFile("src/main.ts", JsDebugSample.MainSource);
+        h.Files.WriteFile("src/util.ts", JsDebugSample.UtilSource);
+        h.Files.WriteFile("tsconfig.json", JsDebugSample.TsConfig);
+        h.Files.WriteFile(".vscode/launch.json", LaunchJson);
+        h.Files.WriteFile(".vscode/tasks.json", TasksJson);
+        // The host's settings (language servers off) plus where js-debug is: never the download offer in a test.
+        var settingsPath = h.Home.Combine("config", "settings.json");
+        var settings = JsonNode.Parse(File.ReadAllText(settingsPath))!.AsObject();
+        settings[JsDebugAdapterFactory.SettingPath] = JsDebugToolchain.FindJsDebug();
+        File.WriteAllText(settingsPath, settings.ToJsonString());
+    });
+
+    // No try/finally StopAllAsync any more: a failing assertion disposes the host, and a disposed host leaves nothing running
+    // (Disposing_the_host_while_stopped_at_a_breakpoint_leaves_no_js_debug_server_or_program_running).
     [AvaloniaFact(Timeout = 180_000)]
     public async Task F5_builds_with_tsc_and_stops_at_a_ts_breakpoint_with_the_call_stack_and_the_stop_line_shown()
     {
         Assert.SkipWhen(JsDebugToolchain.SkipReason() is not null, JsDebugToolchain.SkipReason() ?? "");
-        var jsDebug = JsDebugToolchain.FindJsDebug()!;
-        await using var host = RealAppHost.Create(h =>
-        {
-            h.Files.WriteFile("src/main.ts", JsDebugSample.MainSource);
-            h.Files.WriteFile("src/util.ts", JsDebugSample.UtilSource);
-            h.Files.WriteFile("tsconfig.json", JsDebugSample.TsConfig);
-            h.Files.WriteFile(".vscode/launch.json", LaunchJson);
-            h.Files.WriteFile(".vscode/tasks.json", TasksJson);
-            // The host's settings (language servers off) plus where js-debug is: never the download offer in a test.
-            var settingsPath = h.Home.Combine("config", "settings.json");
-            var settings = JsonNode.Parse(File.ReadAllText(settingsPath))!.AsObject();
-            settings[JsDebugAdapterFactory.SettingPath] = jsDebug;
-            File.WriteAllText(settingsPath, settings.ToJsonString());
-        });
+        await using var host = CreateHost();
         await host.StartAsync([host.Files.Path]);
-        var debug = host.Get<IDebugService>();
+        await DebugAsync(host, host.Get<IDebugService>());
+    }
+
+    /// <summary>
+    /// Integrator finding: two js-debug servers outlived failed runs of the test above. The host disposes the container synchronously (no
+    /// AppShutdown), and the debug service's Dispose only STARTED its asynchronous shutdown, which runs on the debug lane — disposed right after
+    /// it in the same container dispose, or never reached when the process exits first. js-debug's server never exits by itself. A disposed host
+    /// (any synchronous container dispose) must leave no server and no program running, at once.
+    /// </summary>
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task Disposing_the_host_while_stopped_at_a_breakpoint_leaves_no_js_debug_server_or_program_running()
+    {
+        Assert.SkipWhen(JsDebugToolchain.SkipReason() is not null, JsDebugToolchain.SkipReason() ?? "");
+        var host = CreateHost();
+        var serverPid = 0;
+        string? marker = null;
         try
         {
-            await DebugAsync(host, debug);
+            await host.StartAsync([host.Files.Path]);
+            var debug = host.Get<IDebugService>();
+            var main = new Uri(host.Files.Combine("src", "main.ts"));
+            debug.Breakpoints.Add(main, JsDebugSample.MainLine("loop"));
+            Assert.True(await RealAppHost.WaitFor(() => debug.Configurations.Selected?.Name == "TypeScript: Launch (tsc build)", 10_000), "launch.json read");
+            var start = host.Get<ICommandService>().ExecuteAsync(KnownCommands.DebugStart).AsTask();
+            Assert.True(await RealAppHost.WaitFor(() => debug.State == DebugState.Stopped && debug.StopLocation is not null, 90_000), $"stopped (state {debug.State})");
+            await start;
+            var parent = (DebugSession)debug.Sessions.Single(s => s.Parent is null);
+            serverPid = parent.AdapterProcessId!.Value;
+            marker = parent.AdapterProcessMarker!;
+            Assert.True(ProcessTable.IsAlive(serverPid));
+            Assert.Contains(ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", marker), p => p != serverPid); // the program runs
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await host.DisposeAsync(); // still stopped at the breakpoint: no Shift+F5, no AppShutdown
+            var gone = await RealAppHost.WaitFor(() => !ProcessTable.IsAlive(serverPid) && ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", marker).Count == 0, 3_000);
+            TestNote($"host disposed while stopped: js-debug server and program gone={gone} after {sw.ElapsedMilliseconds} ms; left: " +
+                string.Join("; ", ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", marker).Select(p => $"{p} {ProcessTable.CommandLine(p)}")));
+            Assert.True(gone, "a disposed host leaves no js-debug server or program running");
         }
         finally
         {
-            // The host disposes the container synchronously (no AppShutdown), which only STARTS the debug service's asynchronous shutdown:
-            // a failing assertion must not leave js-debug's server (it never exits by itself) running after the test process ends.
-            await debug.StopAllAsync();
+            await host.DisposeAsync();
+            KillLeftovers(serverPid, marker); // only when the assertion above failed: this test's own server and what it started
         }
+    }
+
+    private static void TestNote(string text)
+    {
+        if (Environment.GetEnvironmentVariable("CSCODE_DAP_TEST_METRICS") is { Length: > 0 } path) File.AppendAllText(path, "[app] " + text + Environment.NewLine);
+    }
+
+    private static void KillLeftovers(int serverPid, string? marker)
+    {
+        if (serverPid > 0)
+            try { using var p = System.Diagnostics.Process.GetProcessById(serverPid); p.Kill(entireProcessTree: true); }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
+        if (marker is null) return;
+        foreach (var pid in ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", marker)) // the marker of this test's own server
+            try { using var p = System.Diagnostics.Process.GetProcessById(pid); p.Kill(); }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
     }
 
     private static async Task DebugAsync(RealAppHost host, IDebugService debug)
