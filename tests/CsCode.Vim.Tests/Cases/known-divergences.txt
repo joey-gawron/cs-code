@@ -1,0 +1,4 @@
+# Cases where CsCode.Vim intentionally or knowingly differs from Neovim 0.12. Format: <file>:<case> | reason
+# A case listed here is still run through nvim and reported, but does not fail the differential suite.
+textobj:textobj-082 | d2it when the closing tag starts a line: Vim removes the line break between the tags; the engine leaves it (tag objects are a simplified port)
+visual:visual-042 | '> after a linewise Visual change keeps its line in nvim; the engine moves it up like for a delete

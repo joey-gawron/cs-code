@@ -720,6 +720,20 @@ public sealed partial class VimEngine
         }
         var newText = sb.ToString();
         var lastLen = L(first + count - 1).Length;
+        {
+            var offset = 0;
+            for (var t = 0; t < count; t++)
+            {
+                offset += spaces[t];
+                if (t > 0)
+                {
+                    var removed = L(first + t).Length - L(first + t).TrimStart(' ', '\t').Length;
+                    if (!insertSpace) removed = 0;
+                    _bs.MarkColAdjust(first + t, 0, -t, offset - removed);
+                }
+                offset += parts[t].Length;
+            }
+        }
         ReplaceRange(new TextPosition(first, 0), new TextPosition(first + count - 1, lastLen), newText);
         NoteChange(first + 1, 0);
         _bs.OpEnd = new TextPosition(first, Math.Max(0, sum));

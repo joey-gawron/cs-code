@@ -51,12 +51,19 @@ public sealed partial class VimEngine
         _col = col;
     }
 
-    private int CurVcol() => VimText.VcolOf(CurLine, _col, O.TabStop);
+    /// <summary>Virtual column of the cursor: on a TAB in Normal mode the cursor sits on the tab's last cell (Vim's getvcol "cursor" column).</summary>
+    private int CurVcol()
+    {
+        var s = CurLine;
+        if (_col < s.Length && s[_col] == '\t' && !O.List && _mode is not (VimMode.Insert or VimMode.Replace)
+            && !(VisualActive && new TextPosition(_line, _col) < _visualStart)) return VimText.VcolEndOf(s, _col, O.TabStop);
+        return VimText.VcolOf(s, _col, O.TabStop);
+    }
 
     private void UpdateCurswant()
     {
         if (!_setCurswant) return;
-        _curswant = VimText.VcolOf(CurLine, _col, O.TabStop);
+        _curswant = CurVcol();
         _setCurswant = false;
     }
 
@@ -256,15 +263,23 @@ public sealed partial class VimEngine
         SaveUndo(start.Line, oldLines, newLines);
         HostEdit(new VimEdit(start, end, text));
         var delta = newLines - oldLines;
+        // where the text that followed the replaced range starts now
+        var lastNew = text.LastIndexOf('\n');
+        var tailStartCol = lastNew < 0 ? start.Character + text.Length : text.Length - lastNew - 1;
         if (delta != 0)
         {
             if (delta < 0)
             {
                 // marks in fully removed middle lines vanish; marks on the old last line follow the joined text
                 if (end.Line - 1 >= start.Line + 1) _bs.MarkAdjust(start.Line + 1, end.Line - 1, 0, 0, delete: true);
-                _bs.MarkAdjust(end.Line, end.Line, start.Line + newLines - 1 - end.Line, delta, delete: false);
+                _bs.MarkColAdjust(end.Line, 0, start.Line + newLines - 1 - end.Line, tailStartCol);
+                _bs.MarkAdjust(end.Line + 1, int.MaxValue / 2, 0, delta, delete: false);
             }
-            else _bs.MarkAdjust(start.Line + 1, int.MaxValue / 2, delta, 0, delete: false);
+            else
+            {
+                _bs.MarkAdjust(end.Line + 1, int.MaxValue / 2, 0, delta, delete: false);
+                _bs.MarkColAdjust(end.Line, end.Character, start.Line + newLines - 1 - end.Line, tailStartCol - end.Character);
+            }
         }
         _ = endLineText;
         NoteChange(delta < 0 ? start.Line + 1 : start.Line, delta < 0 ? 0 : start.Character);

@@ -158,6 +158,7 @@ public sealed partial class VimEngine
         }
 
         c.Key = k;
+        if (k == Keys.Plug && _pendingVisualRedo is not null) return ParseResult.Complete;
         var kind = ClassifyFirst(k);
         if (kind == Kind.Invalid) return ParseResult.Invalid;
 

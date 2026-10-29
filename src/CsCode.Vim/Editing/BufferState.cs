@@ -196,6 +196,20 @@ internal sealed class BufferState
         else if (ULineNr >= 0 && ULineNr > line2 && amountAfter != 0) ULineNr += amountAfter;
     }
 
+    /// <summary>Vim's mark_col_adjust: marks on <paramref name="line"/> at or after <paramref name="minCol"/> move to another line/column (lines joined or split).</summary>
+    public void MarkColAdjust(int line, int minCol, int lineAmount, int colAmount)
+    {
+        TextPosition? Adj(TextPosition? p)
+        {
+            if (p is { } q && q.Line == line && q.Character >= minCol) return new TextPosition(q.Line + lineAmount, Math.Max(0, q.Character + colAmount));
+            return p;
+        }
+        for (var i = 0; i < Marks.Length; i++) Marks[i] = Adj(Marks[i]);
+        OpStart = Adj(OpStart); OpEnd = Adj(OpEnd); VisualStart = Adj(VisualStart); VisualEnd = Adj(VisualEnd);
+        LastChange = Adj(LastChange); LastInsert = Adj(LastInsert); LastCursor = Adj(LastCursor); PcMark = Adj(PcMark); PrevPcMark = Adj(PrevPcMark);
+        for (var i = 0; i < ChangeList.Count; i++) ChangeList[i] = Adj(ChangeList[i])!.Value;
+    }
+
     /// <summary>Clamps every mark to a buffer of <paramref name="lineCount"/> lines (after a foreign edit we cannot track precisely).</summary>
     public void ClampMarks(int lineCount)
     {

@@ -725,6 +725,7 @@ public sealed partial class VimEngine
             rb.Keys.Add(Keys.Esc);
         }
         _redoBuilding = null;
+        var blockIns = _blockInsert;
         _insert = null;
         var wasRestart = _restartEdit;
         _restartEdit = false;
@@ -734,6 +735,7 @@ public sealed partial class VimEngine
         if (!noMove && _col > 0) _col = VimText.PrevCharStart(CurLine, Math.Min(_col, CurLine.Length));
         _setCurswant = true;
         CheckCursor();
+        if (blockIns is not null) FinishBlockInsert(end, 0);
         _ = wasRestart; _ = toNormal;
     }
 }

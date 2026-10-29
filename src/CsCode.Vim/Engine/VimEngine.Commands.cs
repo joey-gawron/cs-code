@@ -190,7 +190,7 @@ public sealed partial class VimEngine
                 SetRedoPlain(c);
                 StartInsert('R', count1, restart: false);
                 return;
-            case 'i' or 'a' or 'I' or 'A' or 'o' or 'O':
+            case 'i' or 'a' or 'I' or 'A' or 'o' or 'O' when !(VisualActive && k is 'i' or 'a'):
                 if (!CanModify()) return;
                 SetRedoPlain(c);
                 InsertCommand(c);

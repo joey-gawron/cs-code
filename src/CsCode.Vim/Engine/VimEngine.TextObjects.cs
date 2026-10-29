@@ -520,6 +520,7 @@ public sealed partial class VimEngine
 
     private bool CurrentTag(OpArgs oap, int count, bool include)
     {
+        if (!VisualActive || _visualStart == new TextPosition(_line, _col)) SetPcmark();
         // Materialise the buffer once (tag objects are rare): offsets <-> positions via line starts.
         var text = string.Join('\n', Enumerable.Range(0, LineCount).Select(L));
         var starts = new int[LineCount];
@@ -582,6 +583,16 @@ public sealed partial class VimEngine
         {
             so = pick.Open.EndOff;
             eo = pick.Close.StartOff - 1;
+            // a closing tag at the start of a line: end exclusive AT the '<' so the line break is part of the object
+            var closeAt = PosOf(pick.Close.StartOff);
+            if (closeAt.Character == 0 && !VisualActive && eo >= so)
+            {
+                oap.Start = PosOf(so);
+                oap.Type = MType.Char;
+                oap.Inclusive = false;
+                _line = closeAt.Line; _col = 0;
+                return true;
+            }
             if (eo < so) { // empty tag content: operate on nothing
                 _line = PosOf(so).Line; _col = PosOf(so).Character;
                 if (VisualActive) return false;

@@ -286,7 +286,6 @@ public sealed partial class VimEngine
         catch (VimRegexException ex) { ExError(ex.Message); return false; }
         if (pat is null) { ExError(VimRegexMessage(pattern)); return false; }
         var global = flags.Global ^ O.GDefault;
-        if (!_globalBusy) SetPcmark();
         var work = SubstituteWork(pat, rep, flags, global, l1, l2);
         if (_nest > 0 || _globalBusy) { DrainEnumerator(work); return _subResultOk; }
         StartWork(work);
@@ -456,6 +455,13 @@ public sealed partial class VimEngine
             yield break;
         }
         if (_globalBusy) _globalSubs += subs;
+        if (!_globalBusy)
+        {
+            var keepL = _line; var keepC = _col;
+            _line = Math.Clamp(firstLineWithMatch, 0, LastLine);
+            SetPcmark();
+            _line = keepL; _col = keepC;
+        }
         ApplyLineBatch(edits);
         var delta = edits.Sum(e => e.NewLines.Length - e.OldCount);
         var lastSubLine = Math.Clamp(edits[^1].Line + edits[^1].NewLines.Length - 1, 0, LastLine);
