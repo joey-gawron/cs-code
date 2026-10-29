@@ -8,30 +8,32 @@ using CsCode.Dap.Transport;
 
 namespace CsCode.Dap.Tests.Fakes;
 
-/// <summary>One direction of an in-memory pipe (bounded, so a fast writer feels back-pressure like with a real OS pipe).</summary>
+/// <summary>One direction of an in-memory pipe (bounded, so a fast writer feels back-pressure like with a real OS pipe). Chunks are pooled so
+/// large-frame tests measure the CLIENT's allocations, not the fake's.</summary>
 public sealed class ByteChannelStream : Stream
 {
-    private readonly Channel<byte[]> _channel;
+    private readonly Channel<(byte[] Array, int Length)> _channel;
     private byte[]? _current;
-    private int _position;
+    private int _currentLength, _position;
 
     public ByteChannelStream(int capacity = 256) =>
-        _channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(capacity) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
+        _channel = Channel.CreateBounded<(byte[], int)>(new BoundedChannelOptions(capacity) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
 
     public void CompleteWriting() => _channel.Writer.TryComplete();
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        while (_current is null || _position >= _current.Length)
+        while (_current is null || _position >= _currentLength)
         {
+            if (_current is not null) { ArrayPool<byte>.Shared.Return(_current); _current = null; }
             try
             {
                 if (!await _channel.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false)) return 0;
             }
             catch (ChannelClosedException) { return 0; }
-            if (_channel.Reader.TryRead(out var next)) { _current = next; _position = 0; }
+            if (_channel.Reader.TryRead(out var next)) { _current = next.Array; _currentLength = next.Length; _position = 0; }
         }
-        var n = Math.Min(buffer.Length, _current.Length - _position);
+        var n = Math.Min(buffer.Length, _currentLength - _position);
         _current.AsMemory(_position, n).CopyTo(buffer);
         _position += n;
         return n;
@@ -39,8 +41,11 @@ public sealed class ByteChannelStream : Stream
 
     public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        try { await _channel.Writer.WriteAsync(buffer.ToArray(), cancellationToken).ConfigureAwait(false); }
-        catch (ChannelClosedException) { throw new IOException("pipe closed"); }
+        var rented = ArrayPool<byte>.Shared.Rent(buffer.Length);
+        buffer.CopyTo(rented);
+        try { await _channel.Writer.WriteAsync((rented, buffer.Length), cancellationToken).ConfigureAwait(false); }
+        catch (ChannelClosedException) { ArrayPool<byte>.Shared.Return(rented); throw new IOException("pipe closed"); }
+        catch { ArrayPool<byte>.Shared.Return(rented); throw; }
     }
 
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken ct) => WriteAsync(buffer.AsMemory(offset, count), ct).AsTask();
@@ -327,7 +332,8 @@ public sealed class FakeDebugAdapter : IAsyncDisposable
         await AfterResponseAsync(req);
     }
 
-    private sealed class DeferResponse;
+    /// <summary>Return from a handler that wrote its own response (or will never answer).</summary>
+    public sealed class DeferResponse;
     private TaskCompletionSource? _deferredLaunch;
     private FakeRequest? _launchRequest;
 

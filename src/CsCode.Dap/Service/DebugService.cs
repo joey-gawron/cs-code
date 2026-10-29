@@ -364,6 +364,16 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         _output.Fire(e);
     }
 
+    /// <summary>History lines of an ended session keep their label but must not keep the session alive.</summary>
+    private void ArchiveHistory(DebugSession session)
+    {
+        var ended = new EndedSession(session.Id, session.Name, session.Configuration);
+        lock (_gate)
+            for (var node = _history.First; node is not null; node = node.Next)
+                if (ReferenceEquals(node.Value.Event.Session, session))
+                    node.Value = (node.Value.Event with { Session = ended }, node.Value.Lines, node.Value.Chars);
+    }
+
     private static string TailLines(string text, int maxLines, int maxChars)
     {
         if (text.Length > maxChars) text = text[^maxChars..];
@@ -388,6 +398,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             if (_frameCache?.SessionId == session.Id) _frameCache = null;
         }
         hooks.Subscriptions.Dispose();
+        ArchiveHistory(session);
         if (wasActive)
         {
             IDebugSession? next;

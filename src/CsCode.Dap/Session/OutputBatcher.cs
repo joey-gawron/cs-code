@@ -6,9 +6,9 @@ namespace CsCode.Dap.Session;
 
 /// <summary>
 /// Coalesces a debuggee's output into small immutable batches delivered at most once per window (default 16 ms) so a program that
-/// prints a million lines a second costs the UI one event per frame, not a million. The pending buffer is a BOUNDED ring: when a
-/// window collects more than <c>maxPendingChars</c> the oldest text is dropped (and a one-line marker says how much), which is the
-/// "drop-oldest" policy of ARCHITECTURE §6. Lane-affine: every member is called on the debug lane.
+/// prints a million lines a second costs the UI about one event per frame per category, not a million. The pending buffer is a
+/// BOUNDED ring: when a window collects more than <c>maxPendingChars</c> (128 K chars) the oldest text is dropped (and a one-line
+/// marker says how much), which is the "drop-oldest" policy of ARCHITECTURE §6. Lane-affine: every member is called on the debug lane.
 /// </summary>
 internal sealed class OutputBatcher
 {
@@ -32,7 +32,7 @@ internal sealed class OutputBatcher
     private long _droppedChars, _reportedDropped;
     private bool _scheduled, _disposed;
 
-    public OutputBatcher(DebugLane lane, IDebugSession session, Action<DebugOutputEventArgs> deliver, TimeSpan window, int maxPendingChars = 512 * 1024, int maxBatchChars = 64 * 1024)
+    public OutputBatcher(DebugLane lane, IDebugSession session, Action<DebugOutputEventArgs> deliver, TimeSpan window, int maxPendingChars = 128 * 1024, int maxBatchChars = 128 * 1024)
     {
         _lane = lane;
         _session = session;
