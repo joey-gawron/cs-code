@@ -69,9 +69,13 @@ IDebugService / IDebugSession events (any thread)
 * **Lazy + paged**: `GetVariablesAsync(ref, start, 100)`; the `… N more` row loads the next page. A value with `IndexedVariables` from a session
   that implements the Core `IDebugSessionVariablePaging` (the DAP session does) pages through `filter: "indexed"` and lists its named children
   (`length`, `[[Prototype]]`) once, first — DAP only promises `start`/`count` on a filtered set, and js-debug ignores `start` without one.
-  A **lazy** value (`DebugVariable.IsLazy`, DAP `presentationHint.lazy`: js-debug's getters) shows `(…)` and runs only when activated (Enter,
-  double-click, →), then shows its value in place. A short page ends the list whatever the adapter
-  announced; at most 10,000 children per node are ever held (then a notice row). An adapter that ignores `start/count` is recognised and cannot
+  A **lazy** value (`DebugVariable.IsLazy`, DAP `presentationHint.lazy`: js-debug's getters) shows `(…)` and no type (js-debug types the
+  placeholder `function`) and runs only when activated (Enter, double-click, →), then shows its value and type in place. An answer other than
+  exactly one child (js-debug answers a getter that *throws* with the getter function's own properties) shows "The debugger did not compute a
+  value: the getter may have thrown an exception." Change highlighting compares a lazy row by its placeholder, so an evaluated getter is not
+  marked changed at the next stop. A short page ends the list whatever the adapter
+  announced; at most 10,000 **paged** children per node are ever held (then a notice row "Showing the first 10,000 of N items"); the named
+  children listed with them (`length`, `[[Prototype]]`) do not count against it. An adapter that ignores `start/count` is recognised and cannot
   duplicate rows; a page of up to 10,000 nodes is created in ≤ 4 ms slices (`UiDispatcher.PostBatched`) and inserted in 100-row chunks.
   A chunk's position is resolved when it goes in (the end of the parent's block *then*), not before the yield: Watch re-expands every root
   at once after a stop, and the user can collapse in between. A per-node `RowsVersion` (bumped by collapse, dropped handles and newer inserts)
@@ -108,7 +112,9 @@ IDebugService / IDebugSession events (any thread)
 * Flat frame list for one thread, otherwise thread rows with their frames. Frames are paged (50 per request + `… load more frames`). Frames without
   source, hinted `subtle`/`label`, or de-emphasised by the adapter (`deemphasize` on the frame or its source: js-debug's skipped Node internals)
   are greyed; "Show External Code" off folds runs of them into one `[External Code]` row — except `label` frames (js-debug's `await` between the
-  frames of an async call stack), which stay visible as separators and cannot be picked.
+  frames of an async call stack), which stay visible as separators and cannot be picked. Frames the **adapter skips** (`deemphasize`, js-debug's
+  `skipFiles` such as `<node_internals>/**`) fold even with "Show External Code" on (the default) when two or more are in a row, as VS Code
+  collapses them. Clicking (or Enter on) an `[External Code]` row shows its frames, greyed, until the next stop.
 * Yellow arrow = the stopped location; a picked caller frame gets the outlined (green) arrow. Click picks the frame through
   `IDebugFrameFocus.SetFocusedFrameAsync` (which moves the editor's stop marker and re-scopes Locals/Autos/Watch) and opens the source via
   `INavigationService` (keeps keyboard focus in the window); double-click/Enter also moves focus to the editor. Copy Call Stack. The service
@@ -183,8 +189,9 @@ real Skia headless platform.
 | `InteractionTests` | real views in a headless window: keyboard model, inline editors, drag-reorder, context routing |
 | `ScreenshotTests` | renders every window in the VS Dark/Light/Blue themes → `.scratch/screenshots/debug-*.png` (git-ignored) |
 | `RealDebuggerEndToEndTests` | **real `CsCode.Dap` + real netcoredbg**: breakpoint, real frames, real locals, frame switch, step with a highlighted change, watch, REPL, console stdout, modules from `module` events, clean exit, no stray processes |
-| `RealJsDebugPanelsTests` | **real `CsCode.Dap` + real js-debug** on a TypeScript program compiled by tsc: moved breakpoint in the Breakpoints window, Locals values (classes, `'strings'`, Map/Set, a getter run in place, a 250-element array paged to its end), REPL + completions, set variable from Locals, Autos, Watch errors, the async call stack with greyed/folded Node internals, an async frame without variables, step highlighting, stderr in red, the Exception window |
-| `RealJsDebugResponsivenessTests` | a TypeScript program printing 1,000,000 lines through js-debug with the Debug Console on screen: dispatcher p99 < 16 ms, max < 50 ms (measured ≈ 9–11 / 10–14 ms) |
+| `RealJsDebugPanelsTests` | **real `CsCode.Dap` + real js-debug** on a TypeScript program compiled by tsc: moved breakpoint in the Breakpoints window, Locals values (classes, `'strings'`, Map/Set, a getter run in place, a 250-element array paged to its end), REPL + completions, set variable from Locals, Autos, Watch errors, the async call stack with Node internals folded by default and shown greyed on a click, an async frame without variables, step highlighting, stderr in red, the Exception window; a 10,000-element array paged to its last element, a getter that throws, a getter's type, an evaluated getter at the next stop |
+| `RealJsDebugResponsivenessTests` | 1,000,000 lines through js-debug with the Debug Console on screen, in two shapes (batched `process.stdout.write`, and one `console.log` per line = one DAP event each): dispatcher p99 < 16 ms, max < 50 ms (numbers in docs/DEBUGGING-RUST-TS.md) |
+| `JsDebugReviewFixTests` | regression tests of the second round (reviews and the integrator's run on a real display): skipped frames folded by default, the 10,000 cap and its notice, a throwing getter, an evaluated getter at the next stop, a lazy value's type |
 | `JsDebugPanelFixTests` | regression tests of the js-debug wave: deemphasized/label frames, quoted strings, lazy getters, filtered paging, `Return value` shape, opening the stop file, the throwing frame focus (fake and real), hit counts/logpoints per capability |
 | `ResponsivenessTests` | dispatcher heartbeat (p99 < 16 ms, max < 50 ms) under the hostile scenarios; `.scratch/responsiveness.log` has the measured numbers |
 | `LeakTests` | show/hide ×100 across 20 sessions: nothing reachable, no subscriptions left on service/sessions/breakpoint manager |
