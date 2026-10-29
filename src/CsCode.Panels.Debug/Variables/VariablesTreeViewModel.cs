@@ -35,9 +35,17 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     private readonly DebugPanelServices _s;
     private readonly IUiDispatcher _ui;
     private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
-    private Dictionary<string, string> _previous = new(StringComparer.Ordinal);
+    // Change highlighting. A frame's "shape" (its first root names) keys the values it showed: _epochSnapshots holds what each shape showed
+    // earlier in THIS stop (the user may switch frames), _baselines what each shape showed at the most recent EARLIER stop. Only
+    // _baselines is ever compared with, so switching frames back and forth never turns a stop's own values into the baseline.
+    private const int MaxBaselineShapes = 8;
+    private const int MaxTrackedValueChars = 1_024;
     private Dictionary<string, string> _current = new(StringComparer.Ordinal);
-    private string? _previousSignature, _currentSignature;
+    private Dictionary<string, string>? _previous;
+    private readonly Dictionary<string, Dictionary<string, string>> _epochSnapshots = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<string, string>> _baselines = new(StringComparer.Ordinal);
+    private readonly Queue<string> _baselineOrder = new();
+    private string? _currentSignature;
     private bool _compare;
     private long _loadedEpoch = -1;
     private CancellationTokenSource _cts = new();
@@ -115,10 +123,11 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     public LoadToken BeginLoad(IDebugSession session, long epoch)
     {
         CancelPending();
-        if (_loadedEpoch != epoch && _current.Count > 0) PromoteCurrentToPrevious();
+        if (_loadedEpoch != epoch) PromoteEpoch();
+        else StashCurrent();
         _loadedEpoch = epoch;
-        _current.Clear();
         _currentSignature = null;
+        _previous = null;
         _compare = false;
         _session = session;
         _holder = null;
@@ -133,8 +142,38 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     /// </summary>
     private void ApplySignature(IEnumerable<string> rootNames)
     {
-        _currentSignature = string.Join('\n', rootNames.Take(40));
-        _compare = _previousSignature is not null && _previousSignature == _currentSignature && _previous.Count > 0;
+        UseSignature(string.Join('\n', rootNames.Take(40)));
+    }
+
+    private void UseSignature(string signature)
+    {
+        _currentSignature = signature;
+        _previous = _baselines.GetValueOrDefault(signature);
+        _compare = _previous is { Count: > 0 };
+    }
+
+    /// <summary>The frame being left (another one was picked at the same stop) keeps what it showed, under its shape.</summary>
+    private void StashCurrent()
+    {
+        if (_currentSignature is not null && _current.Count > 0)
+        {
+            _epochSnapshots[_currentSignature] = _current;
+            _current = new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+        else _current.Clear();
+    }
+
+    /// <summary>The stop is over (resume, or another stop began): what each frame shape showed becomes that shape's baseline.</summary>
+    private void PromoteEpoch()
+    {
+        StashCurrent();
+        foreach (var (signature, values) in _epochSnapshots)
+        {
+            if (!_baselines.ContainsKey(signature)) _baselineOrder.Enqueue(signature);
+            _baselines[signature] = values;
+        }
+        _epochSnapshots.Clear();
+        while (_baselineOrder.Count > MaxBaselineShapes) _baselines.Remove(_baselineOrder.Dequeue());
     }
 
     /// <summary>Like <see cref="BeginLoad"/> but keeps the root rows (Watch): the caller re-evaluates them under the returned token.</summary>
@@ -143,13 +182,12 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         CancelPending();
         if (_loadedEpoch != epoch)
         {
-            if (_current.Count > 0) PromoteCurrentToPrevious();
+            PromoteEpoch();
             CaptureBaselines();
         }
+        else StashCurrent();
         _loadedEpoch = epoch;
-        _current.Clear();
-        _currentSignature = signature;
-        _compare = _previousSignature is not null && _previousSignature == signature && _previous.Count > 0;
+        UseSignature(signature);
         _session = session;
         ErrorText = null;
         RemoveNonRootRows();
@@ -165,7 +203,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     public void Invalidate(string? status, bool keepRoots = false)
     {
         CancelPending();
-        if (_current.Count > 0) PromoteCurrentToPrevious();
+        PromoteEpoch();
         _loadedEpoch = -1;
         _session = null;
         _holder = null;
@@ -199,13 +237,6 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         try { old.Cancel(); }
         catch (AggregateException) { /* a cancellation callback threw: nothing to do, the loads are abandoned anyway */ }
         old.Dispose();
-    }
-
-    private void PromoteCurrentToPrevious()
-    {
-        (_previous, _current) = (_current, _previous);
-        _current.Clear();
-        _previousSignature = _currentSignature;
     }
 
     private void ClearRows()
@@ -246,8 +277,9 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
 
     private void TrackValue(VariableNodeViewModel node, string value)
     {
-        if (_current.Count < MaxTrackedValues) _current[node.Path] = value;
-        if (_compare && _previous.TryGetValue(node.Path, out var old) && !string.Equals(old, value, StringComparison.Ordinal)) node.IsChanged = true;
+        var tracked = value.Length > MaxTrackedValueChars ? value[..MaxTrackedValueChars] : value;
+        if (_current.Count < MaxTrackedValues) _current[node.Path] = tracked;
+        if (_compare && _previous!.TryGetValue(node.Path, out var old) && !string.Equals(old, tracked, StringComparison.Ordinal)) node.IsChanged = true;
     }
 
     /// <summary>Records a (re-)evaluated child value for change detection (Watch children use it).</summary>
@@ -638,8 +670,11 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         _selected = null;
         Rows.Reset();
         _expanded.Clear();
-        _previous.Clear();
+        _previous = null;
         _current.Clear();
+        _epochSnapshots.Clear();
+        _baselines.Clear();
+        _baselineOrder.Clear();
         RefreshRequested = null;
         ExpressionCommitted = null;
         DeleteRequested = null;
