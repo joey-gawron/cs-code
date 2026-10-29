@@ -92,6 +92,7 @@ public class RealAppTypeScriptDebugTests
         var host = CreateHost();
         var serverPid = 0;
         string? marker = null;
+        string? socketDir = null;
         try
         {
             await host.StartAsync([host.Files.Path]);
@@ -105,8 +106,10 @@ public class RealAppTypeScriptDebugTests
             var parent = (DebugSession)debug.Sessions.Single(s => s.Parent is null);
             serverPid = parent.AdapterProcessId!.Value;
             marker = parent.AdapterProcessMarker!;
+            socketDir = parent.AdapterSocketDirectory;
             Assert.True(ProcessTable.IsAlive(serverPid));
             Assert.Contains(ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", marker), p => p != serverPid); // the program runs
+            if (OperatingSystem.IsLinux()) Assert.True(socketDir is not null && Directory.Exists(socketDir), "js-debug listens on a private socket");
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             await host.DisposeAsync(); // still stopped at the breakpoint: no Shift+F5, no AppShutdown
@@ -114,11 +117,13 @@ public class RealAppTypeScriptDebugTests
             TestNote($"host disposed while stopped: js-debug server and program gone={gone} after {sw.ElapsedMilliseconds} ms; left: " +
                 string.Join("; ", ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", marker).Select(p => $"{p} {ProcessTable.CommandLine(p)}")));
             Assert.True(gone, "a disposed host leaves no js-debug server or program running");
+            Assert.True(socketDir is null || !Directory.Exists(socketDir), $"a disposed host leaves no socket directory ({socketDir})");
         }
         finally
         {
             await host.DisposeAsync();
             KillLeftovers(serverPid, marker); // only when the assertion above failed: this test's own server and what it started
+            if (socketDir is not null && Directory.Exists(socketDir)) Directory.Delete(socketDir, recursive: true);
         }
     }
 
@@ -163,6 +168,8 @@ public class RealAppTypeScriptDebugTests
         var parent = (DebugSession)debug.Sessions.Single(s => s.Parent is null);
         var serverPid = parent.AdapterProcessId!.Value;
         var marker = parent.AdapterProcessMarker!;
+        var socketDir = parent.AdapterSocketDirectory;
+        if (OperatingSystem.IsLinux()) Assert.True(socketDir is not null && Directory.Exists(socketDir), "js-debug listens on a private socket");
         Assert.Same(parent, location.Session.Parent); // stopped in js-debug's child session
 
         // The Call Stack window (auto-shown while debugging) shows the TypeScript frame with the arrow.
@@ -191,6 +198,7 @@ public class RealAppTypeScriptDebugTests
         await host.RunAsync(KnownCommands.DebugStop);
         Assert.True(await RealAppHost.WaitFor(() => debug.State == DebugState.Inactive && debug.Sessions.Count == 0, 20_000), "debugging stopped");
         Assert.True(await RealAppHost.WaitFor(() => !ProcessTable.IsAlive(serverPid) && ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", marker).Count == 0, 10_000), "no js-debug server or debuggee left");
+        Assert.True(await RealAppHost.WaitFor(() => socketDir is null || !Directory.Exists(socketDir), 10_000), $"no socket directory left ({socketDir})");
         Assert.True(await RealAppHost.WaitFor(() => StopLineOf(tab.Controller) is null, 10_000), "the stop line cleared");
     }
 }

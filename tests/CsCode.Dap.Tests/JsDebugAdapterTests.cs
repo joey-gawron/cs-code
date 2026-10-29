@@ -44,22 +44,33 @@ public class JsDebugFactoryTests
     private static DebugConfiguration Cfg(object o, Uri? folder = null) => DebugConfiguration.FromJson(JsonSerializer.SerializeToElement(o), folder);
 
     [Fact]
-    public async Task It_starts_dapDebugServer_on_node_on_a_free_loopback_port_below_normal_priority()
+    public async Task It_starts_dapDebugServer_on_node_on_a_private_socket_below_normal_priority()
     {
         using var scratch = new TempDirectory();
+        using var runtime = new TempDirectory();
         var script = FakeJsDebug(scratch.Path);
         var node = FakeNode(Path.Combine(scratch.Path, "bin"));
-        var f = Make(env: new() { ["CSCODE_JSDEBUG"] = Path.Combine(scratch.Path, "js-debug"), ["PATH"] = Path.GetDirectoryName(node) });
+        var f = Make(env: new() { ["CSCODE_JSDEBUG"] = Path.Combine(scratch.Path, "js-debug"), ["PATH"] = Path.GetDirectoryName(node), ["XDG_RUNTIME_DIR"] = runtime.Path });
         foreach (var type in new[] { "pwa-node", "node", "PWA-NODE" })
         {
             var d = Assert.IsType<DebugAdapterServerProcess>(await f.CreateDescriptorAsync(Cfg(new { type, request = "launch", name = "n" }), Ct));
             Assert.Equal(node, d.Command);
-            Assert.Equal([script, "0", "127.0.0.1"], d.Args);
+            // a socket path, never a TCP port that any local process could connect to (dapDebugServer.js: "[port|socket path=8123] [host=localhost]")
+            Assert.Equal([script, DebugAdapterServerProcess.SocketPathArgument], d.Args);
+            Assert.True(d.PrivateSocket);
+            Assert.Equal(runtime.Path, d.SocketRoot);
+            Assert.Equal(JsDebugAdapterFactory.SocketPrefix, d.SocketPrefix);
             Assert.True(d.BelowNormalPriority);
-            Assert.Matches(d.ListeningPattern, "Debug server listening at 127.0.0.1:41235");
+            Assert.Matches(d.ListeningPattern, "Debug server listening at /run/user/1000/cscode-jsdebug-1-2-ab/dap.sock");
+            Assert.Matches(d.ListeningPattern, @"Debug server listening at \\.\pipe\cscode-jsdebug-ab");
+            Assert.Matches(d.ListeningPattern, "Debug server listening at 127.0.0.1:41235"); // the server's TCP form still reads as such
             var m = System.Text.RegularExpressions.Regex.Match("Debug server listening at 127.0.0.1:41235", d.ListeningPattern);
             Assert.Equal(("127.0.0.1", "41235"), (m.Groups["host"].Value, m.Groups["port"].Value));
         }
+        // without XDG_RUNTIME_DIR: the temp directory
+        var noRuntime = Make(env: new() { ["CSCODE_JSDEBUG"] = Path.Combine(scratch.Path, "js-debug"), ["PATH"] = Path.GetDirectoryName(node) });
+        var plain = Assert.IsType<DebugAdapterServerProcess>(await noRuntime.CreateDescriptorAsync(Cfg(new { type = "pwa-node", request = "launch", name = "n" }), Ct));
+        Assert.Equal(Path.GetTempPath(), plain.SocketRoot);
         Assert.Null(await f.CreateDescriptorAsync(Cfg(new { type = "coreclr", request = "launch", name = "n" }), Ct));
     }
 
@@ -410,7 +421,8 @@ public class ServerProcessTransportTests
             var transport = await ServerProcessTransport.StartAsync(Sh($"echo starting; echo 'Debug server listening at 127.0.0.1:{port}'; sleep 300 & (sleep 301 &) ; wait"), NullLogger.Instance, Ct);
             marker = transport.Marker;
             using var accepted = await listener.AcceptSocketAsync(Ct);
-            Assert.Equal(("127.0.0.1", port), (transport.Host, transport.Port));
+            Assert.Equal(new DebugAdapterServer("127.0.0.1", port), transport.Endpoint);
+            Assert.Null(transport.SocketDirectory);
             var pid = transport.ProcessId!.Value;
             Assert.Equal(10, Nice(pid)); // nice -n 10: below normal, inherited by everything it spawns
             await SessionHarness.Eventually(() => ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", transport.Marker).Count >= 3, 5_000, "server + children carry the marker");
@@ -469,7 +481,7 @@ public class ServerProcessTransportTests
         var session = (DebugSession)await h.StartAsync(ServiceHarness.Config("s", "scripted", folder: h.Dir.Uri));
         var pid = session.AdapterProcessId!.Value;
         Assert.True(ProcessTable.IsAlive(pid));
-        Assert.Equal(("127.0.0.1", h.Host.Port), session.AdapterEndpoint);
+        Assert.Equal(new DebugAdapterServer("127.0.0.1", h.Host.Port), session.AdapterEndpoint);
         await session.StopAsync(Ct);
         await SessionHarness.Eventually(() => !ProcessTable.IsAlive(pid), 10_000, "the server process ended with its session");
     }

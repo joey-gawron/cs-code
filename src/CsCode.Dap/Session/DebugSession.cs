@@ -113,10 +113,15 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     public long? DebuggeeProcessId { get; private set; }
     public string? DebuggeeProcessName { get; private set; }
     public int? AdapterProcessId => _client?.Transport.ProcessId;
-    /// <summary>The TCP endpoint of the adapter server this session is connected to (null for stdio and pipe adapters); its child sessions connect there.</summary>
-    public (string Host, int Port)? AdapterEndpoint => _client?.Transport is { } t ? DapTransportFactory.EndpointOf(t) : null;
+    /// <summary>
+    /// How to reach the adapter server this session is connected to (its private socket / named pipe, or a TCP port; null for a stdio adapter);
+    /// its child sessions connect there.
+    /// </summary>
+    public DebugAdapterDescriptor? AdapterEndpoint => _client?.Transport is { } t ? DapTransportFactory.EndpointOf(t) : null;
     /// <summary>Environment marker carried by an adapter server this session started and by everything it spawned (null otherwise).</summary>
     public string? AdapterProcessMarker => (_client?.Transport as ServerProcessTransport)?.Marker;
+    /// <summary>The private directory of the socket of an adapter server this session started (null otherwise); deleted with the session.</summary>
+    public string? AdapterSocketDirectory => (_client?.Transport as ServerProcessTransport)?.SocketDirectory;
 
     /// <summary>
     /// Kills the adapter process this session owns (with its tree: the debuggees an adapter server launched) and the debuggees it spawned for

@@ -20,7 +20,7 @@ public class JsDebugWaveFixTests
         await using var h = new ServiceHarness();
         var parent = (CsCode.Dap.Session.DebugSession)await h.StartAsync();
         Assert.Equal(1, h.FakeFactory.Calls);
-        Assert.Equal(("127.0.0.1", h.Host.Port), parent.AdapterEndpoint);
+        Assert.Equal(new DebugAdapterServer("127.0.0.1", h.Host.Port), parent.AdapterEndpoint);
         await h.AdapterFor(0).RequestFromAdapterAsync("startDebugging", new DapStartDebuggingArguments
         {
             Request = "launch", Configuration = new JsonObject { ["name"] = "child", ["__pendingTargetId"] = "t1" },

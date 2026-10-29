@@ -8,11 +8,13 @@ using Microsoft.Extensions.Logging;
 namespace CsCode.Dap.Transport;
 
 /// <summary>
-/// An adapter that runs as a SERVER process (js-debug's <c>dapDebugServer.js</c>): it is started, prints the port it listens on, and the client
-/// connects over TCP. The process belongs to the session that started it — closing that session's transport kills it with its whole tree
-/// (debuggees it spawned included) — while child sessions (<c>startDebugging</c>) open their own connections to the same server.
+/// An adapter that runs as a SERVER process (js-debug's <c>dapDebugServer.js</c>): it is started, says that it listens, and the client connects —
+/// to a private socket the transport chose (<see cref="PrivateSocket"/>), or to the TCP port the server printed. The process belongs to the
+/// session that started it — closing that session's transport kills it with its whole tree (debuggees it spawned included) — while child
+/// sessions (<c>startDebugging</c>) open their own connections to the same server.
 /// </summary>
-/// <param name="ListeningPattern">Regex matched against each stdout line until it matches; group <c>port</c> (required) and <c>host</c> (optional).</param>
+/// <param name="ListeningPattern">Regex matched against each stdout line until it matches. TCP: group <c>port</c> (required) and <c>host</c>
+/// (optional). Private socket: any match (the path is the transport's own).</param>
 public sealed record DebugAdapterServerProcess(
     string Command,
     IReadOnlyList<string> Args,
@@ -28,11 +30,29 @@ public sealed record DebugAdapterServerProcess(
     public string DefaultHost { get; init; } = "127.0.0.1";
     /// <summary>Name used in messages and the memory monitor ("js-debug").</summary>
     public string DisplayName { get; init; } = "debug adapter server";
+
+    /// <summary>
+    /// Listen on a PRIVATE socket instead of a TCP port any local process can connect to: the transport creates a fresh directory only this user
+    /// can enter (0700, under <see cref="SocketRoot"/>) and passes <c>&lt;directory&gt;/dap.sock</c> in place of each argument equal to
+    /// <see cref="SocketPathArgument"/> (Windows: a named pipe <c>\\.\pipe\&lt;prefix&gt;-&lt;random&gt;</c>). The client and every child session
+    /// connect to that path; the directory goes with the transport (stale ones of a killed CsCode go at the next start).
+    /// </summary>
+    public bool PrivateSocket { get; init; }
+
+    /// <summary>Where the private socket's directory is created; null: <c>$XDG_RUNTIME_DIR</c> when set, else the temp directory.</summary>
+    public string? SocketRoot { get; init; }
+
+    /// <summary>Name prefix of the private socket's directory (<c>&lt;prefix&gt;-&lt;pid&gt;-&lt;start&gt;-&lt;random&gt;</c>).</summary>
+    public string SocketPrefix { get; init; } = "cscode-dap";
+
+    /// <summary>The argument replaced by the private socket's path.</summary>
+    public const string SocketPathArgument = "${cscode:socketPath}";
 }
 
 /// <summary>
-/// TCP connection to an adapter server this transport started (<see cref="DebugAdapterServerProcess"/>). Owns the server process: on close the
-/// socket is closed, then the server's process tree is killed (a server never exits by itself), so no adapter or debuggee outlives its session.
+/// Connection to an adapter server this transport started (<see cref="DebugAdapterServerProcess"/>): a private Unix domain socket / named pipe,
+/// or TCP. Owns the server process: on close the connection is closed, then the server's process tree is killed (a server never exits by itself)
+/// and its private socket directory deleted, so no adapter, debuggee or socket outlives its session.
 /// <para>Processes that LEFT the tree are left alone on a normal close: a program may detach a process on purpose (a dev server opening the
 /// browser through xdg-open, a daemon started with setsid), and VS Code leaves those running too. Only when the server DIED on its own (crashed,
 /// was killed) are the processes it orphaned reaped (Linux): those that carry this server's environment marker AND still belong to the server's
@@ -44,7 +64,8 @@ public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
     private const int TailChars = 16 * 1024;
 
     private readonly Process _process;
-    private readonly TcpTransport _tcp;
+    private readonly IDapTransport _connection;
+    private readonly PrivateSocket? _socket;
     private readonly string _marker;
     private readonly int? _sessionId;
     private readonly ILogger _logger;
@@ -56,10 +77,13 @@ public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
     private int _disposed;
     private int _killedByUs;
 
-    private ServerProcessTransport(Process process, TcpTransport tcp, string marker, int? sessionId, OutputTail stdout, OutputTail stderr, Task pumps, ILogger logger, string name)
+    private ServerProcessTransport(Process process, IDapTransport connection, DebugAdapterDescriptor endpoint, PrivateSocket? socket, string marker, int? sessionId,
+        OutputTail stdout, OutputTail stderr, Task pumps, ILogger logger, string name)
     {
         _process = process;
-        _tcp = tcp;
+        _connection = connection;
+        _socket = socket;
+        Endpoint = endpoint;
         _marker = marker;
         _sessionId = sessionId;
         _stdout = stdout;
@@ -67,29 +91,56 @@ public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
         _pumps = pumps;
         _logger = logger;
         ProcessId = process.Id;
-        Description = $"{name} (pid {process.Id}) {tcp.Description}";
+        Description = $"{name} (pid {process.Id}) {connection.Description}";
         process.Exited += OnExited;
         if (process.HasExited) _completion.TrySetResult();
-        _ = tcp.Completion.ContinueWith(_ => _completion.TrySetResult(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        _ = connection.Completion.ContinueWith(_ => _completion.TrySetResult(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
-    public Stream Input => _tcp.Input;
-    public Stream Output => _tcp.Output;
+    public Stream Input => _connection.Input;
+    public Stream Output => _connection.Output;
     public Task Completion => _completion.Task;
     public int? ProcessId { get; }
     public string Description { get; }
-    public string Host => _tcp.Host;
-    public int Port => _tcp.Port;
+    /// <summary>Where the server listens (<see cref="DebugAdapterNamedPipe"/>: its private socket / pipe; <see cref="DebugAdapterServer"/>: TCP).</summary>
+    public DebugAdapterDescriptor Endpoint { get; }
+    /// <summary>The private directory of the server's socket (null for TCP and named pipes); deleted when the transport closes.</summary>
+    public string? SocketDirectory => _socket?.Directory;
     /// <summary>The marker this server and everything it spawned carry in their environment (tests use it to find leftovers).</summary>
     public string Marker => _marker;
     /// <summary>The server's session id (Linux <c>/proc/&lt;pid&gt;/stat</c>), read when it started; null elsewhere.</summary>
     public int? ServerSessionId => _sessionId;
     public string StandardErrorTail => _stderr.Text;
 
-    /// <summary>Starts the server, waits (bounded) for its listening line, and connects. On any failure the process tree is killed before throwing.</summary>
+    /// <summary>
+    /// Starts the server, waits (bounded) for its listening line, and connects. On any failure the process tree is killed (and the private
+    /// socket directory deleted) before throwing.
+    /// </summary>
     public static async ValueTask<ServerProcessTransport> StartAsync(DebugAdapterServerProcess descriptor, ILogger logger, CancellationToken ct)
     {
         var pattern = new Regex(descriptor.ListeningPattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        PrivateSocket? socket = null;
+        if (descriptor.PrivateSocket)
+        {
+            try { socket = PrivateSocket.Create(descriptor.SocketPrefix, descriptor.SocketRoot); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new InvalidOperationException($"Could not create a private socket for the {descriptor.DisplayName}: {ex.Message}", ex);
+            }
+        }
+        try
+        {
+            return await StartCoreAsync(descriptor, pattern, socket, logger, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            socket?.Delete(); // the server is dead by now (StartCoreAsync killed it)
+            throw;
+        }
+    }
+
+    private static async ValueTask<ServerProcessTransport> StartCoreAsync(DebugAdapterServerProcess descriptor, Regex pattern, PrivateSocket? socket, ILogger logger, CancellationToken ct)
+    {
         var marker = Guid.NewGuid().ToString("N");
         var psi = new ProcessStartInfo
         {
@@ -109,7 +160,7 @@ public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
         launch.Add(descriptor.Command);
         psi.FileName = launch[0];
         foreach (var a in launch.Skip(1)) psi.ArgumentList.Add(a);
-        foreach (var a in descriptor.Args) psi.ArgumentList.Add(a);
+        foreach (var a in descriptor.Args) psi.ArgumentList.Add(socket is not null && a == DebugAdapterServerProcess.SocketPathArgument ? socket.Path : a);
         if (descriptor.Cwd is { Length: > 0 } cwd && Directory.Exists(cwd)) psi.WorkingDirectory = cwd;
         if (descriptor.Env is not null)
             foreach (var (k, v) in descriptor.Env) psi.Environment[k] = v;
@@ -143,7 +194,9 @@ public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
                 Match m;
                 try { m = pattern.Match(line); }
                 catch (RegexMatchTimeoutException) { return; }
-                if (m.Success && int.TryParse(m.Groups["port"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var port))
+                if (!m.Success) return;
+                if (socket is not null) listening.TrySetResult(("", 0)); // listening on the path we gave it
+                else if (int.TryParse(m.Groups["port"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var port))
                     listening.TrySetResult((m.Groups["host"] is { Success: true, Value.Length: > 0 } h ? h.Value : descriptor.DefaultHost, port));
             }),
             PumpAsync(process.StandardError, stderr, null));
@@ -159,12 +212,24 @@ public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
             try { endpoint = await listening.Task.WaitAsync(descriptor.StartTimeout, ct).ConfigureAwait(false); }
             catch (TimeoutException)
             {
-                throw new TimeoutException($"The {descriptor.DisplayName} did not report a listening port within {descriptor.StartTimeout.TotalSeconds:0.#}s{Tail(stderr, stdout)}");
+                throw new TimeoutException($"The {descriptor.DisplayName} did not report {(socket is null ? "a listening port" : "that it listens on its socket")} within {descriptor.StartTimeout.TotalSeconds:0.#}s{Tail(stderr, stdout)}");
             }
             var remaining = descriptor.StartTimeout - Stopwatch.GetElapsedTime(started);
-            var tcp = await TcpTransport.ConnectAsync(endpoint.Host, endpoint.Port, remaining > TimeSpan.FromSeconds(1) ? remaining : TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
-            logger.LogDebug("Started {Name} (pid {Pid}) listening at {Host}:{Port}", descriptor.DisplayName, process.Id, endpoint.Host, endpoint.Port);
-            return new ServerProcessTransport(process, tcp, marker, sessionId, stdout, stderr, pumps, logger, descriptor.DisplayName);
+            var connectTimeout = remaining > TimeSpan.FromSeconds(1) ? remaining : TimeSpan.FromSeconds(1);
+            IDapTransport connection;
+            DebugAdapterDescriptor where;
+            if (socket is not null)
+            {
+                connection = await PipeTransport.ConnectAsync(socket.Path, connectTimeout, ct).ConfigureAwait(false);
+                where = new DebugAdapterNamedPipe(socket.Path);
+            }
+            else
+            {
+                connection = await TcpTransport.ConnectAsync(endpoint.Host, endpoint.Port, connectTimeout, ct).ConfigureAwait(false);
+                where = new DebugAdapterServer(endpoint.Host, endpoint.Port);
+            }
+            logger.LogDebug("Started {Name} (pid {Pid}) listening at {Where}", descriptor.DisplayName, process.Id, connection.Description);
+            return new ServerProcessTransport(process, connection, where, socket, marker, sessionId, stdout, stderr, pumps, logger, descriptor.DisplayName);
         }
         catch
         {
@@ -213,17 +278,19 @@ public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
 
     /// <summary>
     /// Closes the connection and ends the server: it never exits by itself, so there is no grace period to wait out. A server that had already
-    /// died on its own (crash, external kill) orphaned its debuggees: those are reaped (see the class remarks).
+    /// died on its own (crash, external kill) orphaned its debuggees: those are reaped (see the class remarks). The private socket's directory
+    /// is deleted in every case (the server cannot delete it once it was killed).
     /// </summary>
     public async ValueTask CloseAsync(TimeSpan grace)
     {
         if (Interlocked.Exchange(ref _closed, 1) != 0) return;
         var crashed = HasExited(_process) && Volatile.Read(ref _killedByUs) == 0;
-        await _tcp.CloseAsync(TimeSpan.Zero).ConfigureAwait(false);
+        await _connection.CloseAsync(TimeSpan.Zero).ConfigureAwait(false);
         Interlocked.Exchange(ref _killedByUs, 1);
         KillTree(_process);
         if (crashed) await ReapOrphansAsync(_marker, _sessionId).ConfigureAwait(false);
         await WaitForExitAsync(_process).ConfigureAwait(false);
+        _socket?.Delete();
         try { await _pumps.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch (TimeoutException) { }
         _completion.TrySetResult();
     }
@@ -236,6 +303,7 @@ public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
     {
         Interlocked.Exchange(ref _killedByUs, 1);
         KillTree(_process);
+        _socket?.Delete(); // unlinking a socket its (dying) server still holds is fine; nothing can connect to it any more
     }
 
     /// <summary>Exited, or a zombie the runtime has not reaped yet (the session can learn of a crash from the closed socket first).</summary>
@@ -276,7 +344,8 @@ public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         try { await CloseAsync(TimeSpan.Zero).ConfigureAwait(false); }
         catch (Exception ex) { _logger.LogDebug(ex, "Closing the adapter server"); }
-        await _tcp.DisposeAsync().ConfigureAwait(false);
+        _socket?.Delete();
+        await _connection.DisposeAsync().ConfigureAwait(false);
         _process.Exited -= OnExited;
         _process.Dispose();
     }

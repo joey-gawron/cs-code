@@ -46,13 +46,15 @@ public static class DapTransportFactory
         };
 
     /// <summary>
-    /// The TCP endpoint of an adapter SERVER a transport is connected to, else null. A child session of the same debug type (or one carrying
+    /// How to reach the adapter SERVER a transport is connected to — its private socket / named pipe (<see cref="DebugAdapterNamedPipe"/>) or
+    /// its TCP port (<see cref="DebugAdapterServer"/>) — else null (a stdio adapter). A child session of the same debug type (or one carrying
     /// js-debug's <c>__pendingTargetId</c>) connects to the same server; see DebugService.
     /// </summary>
-    public static (string Host, int Port)? EndpointOf(IDapTransport transport) => transport switch
+    public static DebugAdapterDescriptor? EndpointOf(IDapTransport transport) => transport switch
     {
-        ServerProcessTransport s => (s.Host, s.Port),
-        TcpTransport t => (t.Host, t.Port),
+        ServerProcessTransport s => s.Endpoint,
+        TcpTransport t => new DebugAdapterServer(t.Host, t.Port),
+        PipeTransport p => new DebugAdapterNamedPipe(p.Path),
         _ => null,
     };
 }
@@ -267,12 +269,16 @@ public sealed class PipeTransport : IDapTransport
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _disposed;
 
-    private PipeTransport(IDisposable owner, Stream stream, string description)
+    private PipeTransport(IDisposable owner, Stream stream, string path, string description)
     {
         _owner = owner;
         _stream = stream;
+        Path = path;
         Description = description;
     }
+
+    /// <summary>The socket path (Unix) or pipe path (<c>\\.\pipe\name</c>, Windows) this transport connected to.</summary>
+    public string Path { get; }
 
     public Stream Input => _stream;
     public Stream Output => _stream;
@@ -298,7 +304,7 @@ public sealed class PipeTransport : IDapTransport
                 pipe.Dispose();
                 throw;
             }
-            return new PipeTransport(pipe, pipe, $"pipe:{path}");
+            return new PipeTransport(pipe, pipe, path, $"pipe:{path}");
         }
 
         while (true)
@@ -307,7 +313,7 @@ public sealed class PipeTransport : IDapTransport
             try
             {
                 await socket.ConnectAsync(new UnixDomainSocketEndPoint(path), deadline.Token).ConfigureAwait(false);
-                return new PipeTransport(socket, new NetworkStream(socket, ownsSocket: false), $"unix:{path}");
+                return new PipeTransport(socket, new NetworkStream(socket, ownsSocket: false), path, $"unix:{path}");
             }
             catch (SocketException) when (!deadline.IsCancellationRequested)
             {

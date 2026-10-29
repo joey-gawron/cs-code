@@ -821,6 +821,52 @@ public class RealJsDebugTests
     // ------------------------------------------------------------------ leaks
 
     [Fact]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")] // skipped elsewhere
+    public async Task Js_debug_listens_on_a_private_unix_socket_only_this_user_can_reach_and_opens_no_tcp_port()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "reads the server's sockets from Linux /proc");
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        // A CsCode killed during a session left its socket directory (and the socket file) behind: the next start removes it.
+        var root = Path.TrimEndingDirectorySeparator(CsCode.Dap.Transport.PrivateSocket.DefaultRoot());
+        var stale = Path.Combine(root, $"{CsCode.Dap.Adapters.JsDebugAdapterFactory.SocketPrefix}-{SocketTable.DeadPid()}-1-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(stale, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        File.WriteAllText(Path.Combine(stale, CsCode.Dap.Transport.PrivateSocket.SocketFileName), "");
+        try
+        {
+            rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
+            var parent = await rig.StartAsync();
+            var loc = await rig.WaitForStopAsync(1);
+            var child = (DebugSession)loc.Session;
+            Assert.False(Directory.Exists(stale), "the stale socket directory of a killed CsCode is removed at the next start");
+
+            var path = Assert.IsType<DebugAdapterNamedPipe>(parent.AdapterEndpoint).Path;
+            Assert.Equal(parent.AdapterEndpoint, child.AdapterEndpoint); // the program's session connects to the same socket
+            var dir = parent.AdapterSocketDirectory!;
+            Assert.Equal(Path.Combine(dir, CsCode.Dap.Transport.PrivateSocket.SocketFileName), path);
+            Assert.Equal(root, Path.GetDirectoryName(dir)); // $XDG_RUNTIME_DIR when set, else the temp directory
+            Assert.Equal((SocketTable.MyUid(), "700"), SocketTable.OwnerAndMode(dir));
+            var server = parent.AdapterProcessId!.Value;
+            var unix = SocketTable.UnixSocketPaths(server);
+            var tcp = SocketTable.TcpListeners(server);
+            Note($"js-debug server pid {server}: listens on {path} (dir mode {SocketTable.OwnerAndMode(dir).Mode}, owner uid {SocketTable.OwnerAndMode(dir).Uid}); TCP listeners: [{string.Join(", ", tcp)}]; unix sockets: [{string.Join(", ", unix)}]");
+            Assert.Contains(path, unix);
+            Assert.Empty(tcp);
+            foreach (var program in ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", parent.AdapterProcessMarker!).Where(p => p != server))
+                Note($"debuggee pid {program} ({ProcessTable.CommandLine(program)}): TCP listeners [{string.Join(", ", SocketTable.TcpListeners(program))}]");
+
+            await rig.Service.StopAllAsync(Ct);
+            await rig.WaitForEndAsync();
+            // the session list empties first; the transport's close (server killed, then the directory deleted) completes right after
+            await SessionHarness.Eventually(() => !Directory.Exists(dir), 10_000, "the socket directory goes with the session");
+            await rig.AssertNothingLeftRunningAsync();
+        }
+        finally
+        {
+            if (Directory.Exists(stale)) Directory.Delete(stale, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Ten_real_sessions_leave_no_processes_threads_or_retained_sessions()
     {
         await using var rig = await RealJsDebugRig.CreateAsync();

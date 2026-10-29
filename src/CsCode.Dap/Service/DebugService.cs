@@ -195,7 +195,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         // launched program as a child session (`startDebugging`) on the server the parent started, and only that server knows the pending target.
         // A child of ANOTHER debug type (without js-debug's pending target) belongs to that type's adapter: its factory creates it.
         DebugAdapterDescriptor? descriptor;
-        if (parent?.AdapterEndpoint is { } endpoint && SharesParentAdapter(parent, resolved)) descriptor = new DebugAdapterServer(endpoint.Host, endpoint.Port);
+        if (parent?.AdapterEndpoint is { } endpoint && SharesParentAdapter(parent, resolved)) descriptor = endpoint;
         else
         {
             try { descriptor = await CreateDescriptorAsync(resolved, ct); }

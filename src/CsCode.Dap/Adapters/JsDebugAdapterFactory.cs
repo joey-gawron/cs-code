@@ -12,9 +12,11 @@ namespace CsCode.Dap.Adapters;
 
 /// <summary>
 /// Node.js / TypeScript debugging through Microsoft's standalone <b>js-debug</b> (<c>dapDebugServer.js</c>, MIT): the adapter runs as a server on
-/// the user's Node.js (<c>node dapDebugServer.js 0 127.0.0.1</c>, below-normal priority, a tracked child process owned by the session), prints its
-/// loopback port, and the session connects over TCP. The launched program becomes a CHILD session (DAP <c>startDebugging</c>) that the debug
-/// service connects to the same server; breakpoints hit there. Types <c>pwa-node</c> and its legacy alias <c>node</c>.
+/// the user's Node.js (<c>node dapDebugServer.js &lt;socket path&gt;</c>, below-normal priority, a tracked child process owned by the session) and
+/// listens on a PRIVATE socket — a Unix domain socket in a fresh 0700 directory under <c>$XDG_RUNTIME_DIR</c> (else the temp directory), a named
+/// pipe on Windows — never on a TCP port that any local process could connect to and have it launch programs as the user. The launched program
+/// becomes a CHILD session (DAP <c>startDebugging</c>) that the debug service connects to the same socket; breakpoints hit there. Types
+/// <c>pwa-node</c> and its legacy alias <c>node</c>.
 /// <para>Lookup of the adapter: setting <c>cscode.debug.jsDebugPath</c> → environment variable <c>CSCODE_JSDEBUG</c> → the installed copy
 /// <c>{ToolsDir}/js-debug/&lt;version&gt;/js-debug</c>; either may name the js-debug directory or <c>dapDebugServer.js</c> itself. When none
 /// exists the user is OFFERED the pinned download (never silent). Node.js: setting <c>cscode.debug.nodePath</c> → PATH.</para>
@@ -30,8 +32,13 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
     public const string PrimaryType = "pwa-node";
     public static readonly IReadOnlyList<string> Types = [PrimaryType, "node"];
     public static readonly IReadOnlyList<string> Languages = ["typescript", "javascript", "typescriptreact", "javascriptreact"];
-    /// <summary>What dapDebugServer.js prints once it listens (v1.140.0: "Debug server listening at 127.0.0.1:41235").</summary>
-    public const string ListeningPattern = @"^Debug server listening at (?<host>[^\s]+?):(?<port>\d+)\s*$";
+    /// <summary>
+    /// What dapDebugServer.js prints once it listens (v1.140.0: "Debug server listening at /run/user/1000/…/dap.sock" for a socket path,
+    /// "Debug server listening at 127.0.0.1:41235" for a port).
+    /// </summary>
+    public const string ListeningPattern = @"^Debug server listening at (?:(?<host>[^\s]+?):(?<port>\d+)|(?<path>\S.*?))\s*$";
+    /// <summary>Name prefix of the private socket directories (<c>cscode-jsdebug-&lt;pid&gt;-&lt;start&gt;-&lt;random&gt;</c>).</summary>
+    public const string SocketPrefix = "cscode-jsdebug";
     internal const string PendingTargetKey = "__pendingTargetId";
 
     private readonly DapPlatform _p;
@@ -62,10 +69,15 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
             "The JavaScript debugger (js-debug) was not found. Install it with tools/fetch-js-debug.sh, set 'cscode.debug.jsDebugPath' or CSCODE_JSDEBUG to the js-debug directory, or accept the download offer.");
         var folder = configuration.WorkspaceFolder ?? _p.PrimaryFolder;
         var cwd = folder is { IsFile: true } f && Directory.Exists(f.LocalPath) ? f.LocalPath : Path.GetTempPath();
-        return new DebugAdapterServerProcess(node, [script, "0", "127.0.0.1"], ListeningPattern, null, cwd)
+        // A socket path instead of a port: dapDebugServer.js listens on any argument that is not a number as a path (usage line:
+        // "[port|socket path=8123] [host=localhost]").
+        return new DebugAdapterServerProcess(node, [script, DebugAdapterServerProcess.SocketPathArgument], ListeningPattern, null, cwd)
         {
             DisplayName = "js-debug",
             StartTimeout = TimeSpan.FromSeconds(30),
+            PrivateSocket = true,
+            SocketPrefix = SocketPrefix,
+            SocketRoot = OperatingSystem.IsWindows() ? null : PrivateSocket.DefaultRoot(Environment),
         };
     }
 

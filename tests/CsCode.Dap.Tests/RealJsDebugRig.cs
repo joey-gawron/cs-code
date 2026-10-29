@@ -23,6 +23,8 @@ internal sealed class RealJsDebugRig : IAsyncDisposable
     public List<DebugTerminatedEventArgs> Terminated { get; } = new();
     public List<int> ServerPids { get; } = new();
     public List<string> Markers { get; } = new();
+    /// <summary>The private socket directories of this rig's servers (each must be gone once its session ended).</summary>
+    public List<string> SocketDirectories { get; } = new();
     public DebugService Service => H.Service;
     public Uri MainUri => new(Sample.MainTs);
     public Uri UtilUri => new(Sample.UtilTs);
@@ -48,6 +50,7 @@ internal sealed class RealJsDebugRig : IAsyncDisposable
                     // The server exists once the session is connected (SessionStarted fires before that); a restart may start a new one.
                     if (ds.AdapterProcessId is { } pid) lock (rig.ServerPids) if (!rig.ServerPids.Contains(pid)) rig.ServerPids.Add(pid);
                     if (ds.AdapterProcessMarker is { } marker) lock (rig.Markers) if (!rig.Markers.Contains(marker)) rig.Markers.Add(marker);
+                    if (ds.AdapterSocketDirectory is { } dir) lock (rig.SocketDirectories) if (!rig.SocketDirectories.Contains(dir)) rig.SocketDirectories.Add(dir);
                 });
             s.Stopped.Subscribe(e => { lock (rig.Stops) rig.Stops.Add(e); });
             s.Terminated.Subscribe(e => { lock (rig.Terminated) rig.Terminated.Add(e); });
@@ -103,14 +106,21 @@ internal sealed class RealJsDebugRig : IAsyncDisposable
     public async Task WaitForEndAsync(int timeoutMs = 30_000) =>
         await SessionHarness.Eventually(() => Service.Sessions.Count == 0, timeoutMs, "every session ended: " + string.Join(", ", Service.Sessions.Select(s => $"{s.Name}={s.State}")));
 
-    /// <summary>Every process the adapter servers of this rig started is gone: the servers, the debuggees, anything re-parented that carries their marker.</summary>
+    /// <summary>
+    /// Every process the adapter servers of this rig started is gone: the servers, the debuggees, anything re-parented that carries their
+    /// marker — and every server's private socket directory (with its socket).
+    /// </summary>
     public async Task AssertNothingLeftRunningAsync(int timeoutMs = 10_000)
     {
         int[] servers;
         string[] markers;
+        string[] sockets;
         lock (ServerPids) servers = [.. ServerPids];
         lock (Markers) markers = [.. Markers];
+        lock (SocketDirectories) sockets = [.. SocketDirectories];
         Assert.NotEmpty(servers);
+        if (OperatingSystem.IsLinux()) Assert.Equal(servers.Length, sockets.Length); // every js-debug server listened on a private socket
+        foreach (var dir in sockets) await SessionHarness.Eventually(() => !Directory.Exists(dir), timeoutMs, $"the socket directory {dir} is deleted");
         foreach (var pid in servers) await SessionHarness.Eventually(() => !ProcessTable.IsAlive(pid), timeoutMs, $"js-debug server pid {pid} exits");
         foreach (var marker in markers)
             await SessionHarness.Eventually(() => ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", marker).Count == 0, timeoutMs,
@@ -150,6 +160,8 @@ internal sealed class RealJsDebugRig : IAsyncDisposable
             lock (ServerPids) servers = [.. ServerPids];
             lock (Markers) markers = [.. Markers];
             List<int> Left() => [.. servers.Where(ProcessTable.IsAlive).Concat(markers.SelectMany(m => ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", m))).Distinct()];
+            string[] sockets;
+            lock (SocketDirectories) sockets = [.. SocketDirectories];
             // A debuggee killed with the server's tree a moment ago may still be exiting: give it time before calling it a leftover.
             var left = Left();
             var deadline = System.Diagnostics.Stopwatch.GetTimestamp() + 3 * System.Diagnostics.Stopwatch.Frequency;
@@ -162,6 +174,12 @@ internal sealed class RealJsDebugRig : IAsyncDisposable
             foreach (var pid in left)
                 try { using var p = System.Diagnostics.Process.GetProcessById(pid); p.Kill(entireProcessTree: true); }
                 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            foreach (var dir in sockets.Where(Directory.Exists))
+            {
+                TestMetrics.Report("[js-debug] rig cleanup deleted a socket directory the test left: " + dir);
+                try { Directory.Delete(dir, recursive: true); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
         }
     }
 }
