@@ -217,9 +217,9 @@ public sealed class FakeDebugService : IDebugService, IDebugFrameFocus, IDebugOu
     }
 
     /// <summary>Stops the session, then publishes the top frame as the stop location (what the real service does a moment later).</summary>
-    public void StopAt(FakeDebugSession session, string reason = "breakpoint", int frameIndex = 0, int threadId = 1)
+    public void StopAt(FakeDebugSession session, string reason = "breakpoint", int frameIndex = 0, int threadId = 1, string? description = null, string? text = null)
     {
-        session.Stop(reason, threadId);
+        session.Stop(reason, threadId, true, description, text);
         var frame = session.Frames[threadId][frameIndex];
         SetStopLocation(new DebugStopLocation(session, threadId, frame.Id, frame.Source?.ToUri(), frame.Line, frame.Column, reason));
     }

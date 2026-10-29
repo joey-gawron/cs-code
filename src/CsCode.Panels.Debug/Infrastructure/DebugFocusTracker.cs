@@ -6,7 +6,10 @@ namespace CsCode.Panels.Debug.Infrastructure;
 /// <summary>What the debugger is currently showing: the focused session, whether it is stopped, and the thread/frame the stop location points at.</summary>
 /// <param name="Epoch">Increases on every stop, resume, invalidation and session switch: "is this a new stop?" is <c>Epoch</c> changed.</param>
 /// <param name="LocationPending">Stopped, but the stack-derived stop location of THIS stop has not been published yet (frame id still unknown).</param>
-public readonly record struct DebugFocus(IDebugSession? Session, DebugSessionState? State, int? ThreadId, int? FrameId, long Epoch, bool LocationPending)
+/// <param name="StopReason">Why the current stop happened (<c>breakpoint</c>, <c>step</c>, <c>exception</c>…), null while running.</param>
+/// <param name="StopDescription">The adapter's one-line description of the stop (for an exception: its type and message), if it gave one.</param>
+public readonly record struct DebugFocus(IDebugSession? Session, DebugSessionState? State, int? ThreadId, int? FrameId, long Epoch, bool LocationPending,
+    string? StopReason = null, string? StopDescription = null, int? StopThreadId = null)
 {
     public bool IsStopped => Session is not null && State == DebugSessionState.Stopped;
     public bool HasFrame => IsStopped && FrameId is not null && ThreadId is not null;
@@ -34,6 +37,7 @@ public sealed class DebugFocusTracker : IDisposable
     private IDebugSession? _bound;
     private long _epoch;
     private long _locationEpoch = -1;
+    private (string Reason, string? Description, int? ThreadId)? _stop;
     private DebugFocus _last;
     private bool _delivered;
     private Timer? _graceTimer;
@@ -81,11 +85,20 @@ public sealed class DebugFocusTracker : IDisposable
             if (ReferenceEquals(_bound, session)) return;
             old = _sessionSubs;
             _bound = session;
+            _stop = null;
             if (session is not null)
             {
                 fresh = new DisposableStore();
-                fresh.Add(session.Stopped.Subscribe(_ => Bump()));
-                fresh.Add(session.Continued.Subscribe(_ => Bump()));
+                fresh.Add(session.Stopped.Subscribe(e =>
+                {
+                    lock (_gate) _stop = (e.Reason, e.Text is { Length: > 0 } text ? (e.Description is { Length: > 0 } d ? d + ": " + text : text) : e.Description, e.ThreadId);
+                    Bump();
+                }));
+                fresh.Add(session.Continued.Subscribe(_ =>
+                {
+                    lock (_gate) _stop = null;
+                    Bump();
+                }));
                 fresh.Add(session.Invalidated.Subscribe(_ => Bump()));
                 fresh.Add(session.StateChanged.Subscribe(_ => Schedule()));
                 fresh.Add(session.Terminated.Subscribe(_ => Schedule()));
@@ -121,11 +134,13 @@ public sealed class DebugFocusTracker : IDisposable
 
         if (pending && locationMatches) ArmGraceTimer(epoch);
 
+        (string Reason, string? Description, int? ThreadId)? stop;
+        lock (_gate) stop = stopped ? _stop : null;
         var focus = new DebugFocus(
             session, state,
             fresh ? location!.ThreadId : stopped ? session!.FocusedThreadId : null,
             fresh ? location!.FrameId : null,
-            epoch, pending);
+            epoch, pending, stop?.Reason, stop?.Description, stop?.ThreadId);
         if (_delivered && focus == _last) return;
         _last = focus;
         _delivered = true;

@@ -9,7 +9,7 @@ public static class ServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the debug tool windows (<c>debug.callstack</c>, <c>debug.locals</c>, <c>debug.autos</c>, <c>debug.watch</c>,
-    /// <c>debug.breakpoints</c>, <c>debug.threads</c>, <c>debug.console</c>) as <see cref="IToolWindow"/> singletons, plus the shared
+    /// <c>debug.breakpoints</c>, <c>debug.threads</c>, <c>debug.console</c>, <c>debug.exception</c>, <c>debug.modules</c>) as <see cref="IToolWindow"/> singletons, plus the shared
     /// <see cref="DebugPanelsRuntime"/> (which registers the <c>debug.addToWatch</c> command). The panels consume
     /// <c>IDebugService</c>, <c>IDebugFrameFocus</c>, <c>IDebugOutputHistory</c>, <c>INavigationService</c>, <c>IWindowService</c>,
     /// <c>ICommandService</c>, <c>IStateStorage</c>, <c>IDocumentManager</c> and <c>IUiDispatcher</c> from DI when a view is created; only
@@ -26,6 +26,8 @@ public static class ServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, BreakpointsToolWindow>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, ThreadsToolWindow>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, DebugConsoleToolWindow>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, ExceptionToolWindow>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, ModulesToolWindow>());
         return services;
     }
 }

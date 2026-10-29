@@ -4,6 +4,8 @@ using Avalonia.Markup.Xaml.MarkupExtensions;
 using CsCode.Panels.Debug.Breakpoints;
 using CsCode.Panels.Debug.CallStack;
 using CsCode.Panels.Debug.Console;
+using CsCode.Panels.Debug.Exceptions;
+using CsCode.Panels.Debug.Modules;
 using CsCode.Panels.Debug.Threads;
 using CsCode.Panels.Debug.Variables;
 using CsCode.Panels.Debug.Views;
@@ -23,7 +25,7 @@ public abstract class DebugToolWindow(DebugPanelsRuntime runtime) : IToolWindow
     public abstract string? IconKey { get; }
     public abstract string? ToggleCommandId { get; }
     public ToolWindowLocation DefaultLocation => ToolWindowLocation.Bottom;
-    public string? AutoShowWhen => "inDebugMode";
+    public virtual string? AutoShowWhen => "inDebugMode";
 
     public Control CreateView(IServiceProvider services) =>
         runtime.GetServices() is { } s ? Create(s, runtime) : Unavailable();
@@ -112,4 +114,29 @@ public sealed class DebugConsoleToolWindow(DebugPanelsRuntime runtime) : DebugTo
     public override string? IconKey => "debug-console";
     public override string? ToggleCommandId => "workbench.debug.action.toggleDebugConsole";
     protected override Control Create(DebugPanelServices services, DebugPanelsRuntime runtime) => new ConsoleView { DataContext = new DebugConsoleViewModel(services) };
+}
+
+/// <summary>
+/// The Exception Helper as a tool window: shows type, message, stack and inner exceptions while the debuggee is stopped on an exception
+/// (auto-shown through the context key <see cref="DebugPanelsRuntime.ExceptionStoppedKey"/>, which the runtime keeps up to date).
+/// </summary>
+public sealed class ExceptionToolWindow(DebugPanelsRuntime runtime) : DebugToolWindow(runtime)
+{
+    public override string Id => "debug.exception";
+    public override string Title => "Exception";
+    public override string? IconKey => "error";
+    public override string? ToggleCommandId => "workbench.debug.action.toggleException";
+    public override string? AutoShowWhen => DebugPanelsRuntime.ExceptionStoppedKey;
+    protected override Control Create(DebugPanelServices services, DebugPanelsRuntime runtime) => new ExceptionHelperView { DataContext = new ExceptionHelperViewModel(services) };
+}
+
+/// <summary>Modules window (manual: opened from the View menu, not auto-shown).</summary>
+public sealed class ModulesToolWindow(DebugPanelsRuntime runtime) : DebugToolWindow(runtime)
+{
+    public override string Id => "debug.modules";
+    public override string Title => "Modules";
+    public override string? IconKey => "package";
+    public override string? ToggleCommandId => "workbench.debug.action.toggleModules";
+    public override string? AutoShowWhen => null;
+    protected override Control Create(DebugPanelServices services, DebugPanelsRuntime runtime) => new ModulesView { DataContext = new ModulesViewModel(services) };
 }

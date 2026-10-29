@@ -43,7 +43,7 @@ public sealed class PanelRig : IDisposable
     }
 
     /// <summary>Stops at <paramref name="frameIndex"/> and publishes the stop location (the real service does that a moment after <c>stopped</c>).</summary>
-    public void StopAt(int frameIndex = 0, string reason = "breakpoint") => Debug.StopAt(Session, reason, frameIndex);
+    public void StopAt(int frameIndex = 0, string reason = "breakpoint", string? description = null, string? text = null) => Debug.StopAt(Session, reason, frameIndex, 1, description, text);
 
     /// <summary>The debuggee resumes (step/continue): handles die, the service clears the stop location.</summary>
     public void Resume()

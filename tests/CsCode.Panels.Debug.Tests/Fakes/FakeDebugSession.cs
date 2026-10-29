@@ -98,7 +98,7 @@ public sealed class FakeDebugSession : IDebugSession
     // ------------------------------------------------------------------ state changes (call from tests)
 
     /// <summary>The debuggee stops: new handle generation, state Stopped, <c>Stopped</c> then <c>StateChanged</c> fired.</summary>
-    public void Stop(string reason = "breakpoint", int threadId = 1, bool allThreads = true)
+    public void Stop(string reason = "breakpoint", int threadId = 1, bool allThreads = true, string? description = null, string? text = null)
     {
         lock (_gate)
         {
@@ -107,7 +107,7 @@ public sealed class FakeDebugSession : IDebugSession
         }
         FocusedThreadId = threadId;
         StateEmitter.Fire(DebugSessionState.Stopped);
-        StoppedEmitter.Fire(new DebugStoppedEventArgs(this, reason, threadId, allThreads));
+        StoppedEmitter.Fire(new DebugStoppedEventArgs(this, reason, threadId, allThreads, description, text));
     }
 
     /// <summary>The debuggee resumes: handles die, state Running, <c>Continued</c> fired.</summary>

@@ -88,10 +88,10 @@ public class LeakTests
         using var sc = new Scenario(stopped: false);
         sc.Session.Terminate();
         sc.Rig.Debug.RemoveSession(sc.Session);
-        Assert.Equal(7, sc.Tools.Count);
+        Assert.Equal(9, sc.Tools.Count);
 
         var weak = await RunSessionsAsync(sc, sessions: 20, cyclesPerSession: 5, showInWindow: false);
-        Assert.True(weak.Count >= 20 + 20 * 5 * 7 * 2 - 100); // sessions + 700 views + their view-models were tracked
+        Assert.True(weak.Count >= 20 + 20 * 5 * 9 * 2 - 100); // sessions + 900 views + their view-models were tracked
 
         await AssertNothingRetained(weak);
         await Task.Delay(200);

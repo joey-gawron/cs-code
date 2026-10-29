@@ -1,5 +1,6 @@
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
+using CsCode.Panels.Debug.Infrastructure;
 using CsCode.Panels.Debug.Variables;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -13,18 +14,23 @@ public sealed class DebugPanelsRuntime : IDisposable
 {
     public const string AddToWatchCommand = "debug.addToWatch";
 
+    /// <summary>Context key that is true while the debuggee is stopped on an exception (the Exception window auto-shows on it).</summary>
+    public const string ExceptionStoppedKey = "cscode.debug.exceptionStopped";
+
     private readonly IServiceProvider _provider;
     private readonly DisposableStore _subs = new();
     private readonly object _gate = new();
     private DebugPanelServices? _services;
     private bool _resolved;
     private WeakReference<WatchViewModel>? _activeWatch;
+    private DebugFocusTracker? _exceptionKey;
 
     public DebugPanelsRuntime(IServiceProvider provider)
     {
         _provider = provider;
         if (provider.GetService<ICommandService>() is { } commands)
             _subs.Add(commands.Register(AddToWatchCommand, AddToWatchAsync, new CommandMetadata(AddToWatchCommand, "Add Watch", "Debug")));
+        GetServices(); // resolves the debug service now (it registers the debug commands) and starts the exception context key
     }
 
     /// <summary>The panels' services, or null when no <see cref="CsCode.Core.Debugging.IDebugService"/> is registered.</summary>
@@ -36,9 +42,20 @@ public sealed class DebugPanelsRuntime : IDisposable
             {
                 _services = DebugPanelServices.TryCreate(_provider);
                 _resolved = _services is not null; // keep looking while the debug module has not registered yet
+                if (_services is not null) StartExceptionKey(_services);
             }
             return _services;
         }
+    }
+
+    private void StartExceptionKey(DebugPanelServices services)
+    {
+        if (services.ContextKeys is not { } keys) return;
+        var tracker = new DebugFocusTracker(services, focus =>
+            keys.Set(ExceptionStoppedKey, focus.IsStopped && (focus.StopReason == "exception" || (services.Debug.StopLocation is { Reason: "exception" } l && ReferenceEquals(l.Session, focus.Session)))));
+        _exceptionKey = tracker;
+        _subs.Add(tracker);
+        tracker.Start();
     }
 
     /// <summary>The open Watch window, if any (the command focuses its "add" row instead of prompting).</summary>
