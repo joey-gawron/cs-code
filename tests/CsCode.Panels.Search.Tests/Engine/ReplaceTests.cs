@@ -39,6 +39,35 @@ public sealed class DiskApplyingNavigation(IDocumentManager documents) : INaviga
     }
 }
 
+/// <summary>
+/// <see cref="DiskApplyingNavigation"/> plus the shell's failure path: a closed file it cannot write (read-only) makes it AWAIT its action-less
+/// error toast before returning false, as NavigationService.FailAsync does (resolved by the shell 20 s later, or never).
+/// </summary>
+public sealed class ShellLikeNavigation(IDocumentManager documents, IWindowService windows) : INavigationService
+{
+    private readonly DiskApplyingNavigation _inner = new(documents);
+    public List<Uri> Asked { get; } = new();
+    public IEditorDocument? ActiveDocument => null;
+    public TextPosition? ActiveCaret => null;
+    public IEventSource<IEditorDocument?> ActiveDocumentChanged => _inner.ActiveDocumentChanged;
+    public IReadOnlyList<IEditorDocument> OpenDocuments => _inner.OpenDocuments;
+    public ValueTask<IEditorDocument?> OpenAsync(Uri uri, TextRange? selection = null, bool preview = false, bool preserveFocus = false, CancellationToken ct = default) => _inner.OpenAsync(uri, selection, preview, preserveFocus, ct);
+
+    public async ValueTask<bool> ApplyWorkspaceEditAsync(WorkspaceEdit edit, string? label = null, CancellationToken ct = default)
+    {
+        foreach (var uri in edit.Changes.Keys)
+        {
+            Asked.Add(uri);
+            if (documents.Get(uri) is null && new FileInfo(uri.LocalPath).IsReadOnly)
+            {
+                await windows.ShowMessageAsync(MessageSeverity.Error, $"Workspace edit failed: Access to the path '{uri.LocalPath}' is denied.", ct: ct);
+                return false;
+            }
+        }
+        return await _inner.ApplyWorkspaceEditAsync(edit, label, ct);
+    }
+}
+
 public class ReplaceTests : IDisposable
 {
     private readonly SearchHarness _h = new();

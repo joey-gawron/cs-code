@@ -535,6 +535,35 @@ public class FindInFilesViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_read_only_file_is_skipped_before_the_shell_could_stall_the_replace_on_it()
+    {
+        // The shell refuses to write a read-only file and awaits its own error toast before returning; files go one by one, so that toast
+        // would hold up every later file (20 s each, or forever when the toast is pushed off the stack).
+        var a = _f.Harness.Write("a.txt", "foo");
+        var ro = _f.Harness.Write("b.txt", "foo");
+        var c = _f.Harness.Write("c.txt", "foo");
+        File.SetAttributes(ro, FileAttributes.ReadOnly);
+        try
+        {
+            var windows = new ScriptedWindowService { OnConfirm = () => Task.FromResult<string?>("Replace") };   // toasts without actions never resolve
+            var nav = new ShellLikeNavigation(_f.Harness.Documents, windows);
+            using var vm = new FindInFilesViewModel(_f.With(windows, nav));
+            await _f.SearchAsync(vm, "foo");
+            vm.ReplaceVisible = true;
+            vm.ReplaceText = "bar";
+            await vm.ReplaceAllAsync().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            Assert.Equal("bar", await File.ReadAllTextAsync(a, TestContext.Current.CancellationToken));
+            Assert.Equal("foo", await File.ReadAllTextAsync(ro, TestContext.Current.CancellationToken));
+            Assert.Equal("bar", await File.ReadAllTextAsync(c, TestContext.Current.CancellationToken));
+            Assert.DoesNotContain(new Uri(ro), nav.Asked);                     // never handed to the shell
+            Assert.DoesNotContain(windows.Messages, m => m.Severity == MessageSeverity.Error);
+            Assert.Contains(windows.Messages, m => m.Severity == MessageSeverity.Warning && m.Message.Contains("b.txt") && m.Message.Contains("read-only"));
+            Assert.Equal(1, vm.TotalMatches);                                  // b.txt's match stays in the tree
+        }
+        finally { File.SetAttributes(ro, FileAttributes.Normal); }
+    }
+
+    [Fact]
     public async Task Files_that_change_while_the_confirmation_is_pending_are_skipped_not_corrupted()
     {
         _f.Harness.Write("a.txt", "foo\n");

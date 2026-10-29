@@ -248,6 +248,9 @@ public sealed class ReplaceService : IDisposable
             var stat = await _workspace.FileSystem.StatAsync(uri, ct).ConfigureAwait(true);
             if (stat is null) return new Content(null, null, null, "the file no longer exists");
             if (stat.Size > maxFileSizeBytes) return new Content(null, null, null, "the file is too large");
+            // A closed file is written to disk by the shell, which refuses read-only files and then awaits its own error toast (about 20 s)
+            // before returning; files are applied one by one, so each read-only file would hold up the rest. Skip it here, with a reason.
+            if (stat.IsReadOnly) return new Content(null, null, null, "the file is read-only");
             var bytes = await _workspace.FileSystem.ReadFileAsync(uri, ct).ConfigureAwait(true);
             if (!TryDecode(bytes, out var decoded)) return new Content(null, null, null, "the file is not valid UTF-8 or UTF-16 (replace is only supported for those)");
             return new Content(decoded, DetectLineEnding(decoded), null, null);

@@ -94,6 +94,27 @@ public class RealPlatformTests : IDisposable
     }
 
     [Fact]
+    public async Task A_read_only_closed_file_is_skipped_when_planning()
+    {
+        // LocalFileSystem refuses to write it, and the shell then awaits its error toast before the next file is applied.
+        _work.WriteFile("a.txt", "foo");
+        var ro = _work.WriteFile("ro.txt", "foo");
+        File.SetAttributes(ro, FileAttributes.ReadOnly);
+        try
+        {
+            var ws = new TestWorkspace(_work.Uri) { FileSystem = _fs };
+            using var replace = new ReplaceService(ws, new CsCode.Core.Text.DocumentManager());
+            var plan = await replace.PlanAsync(new SearchQuery("foo"), [new ReplaceTarget(new Uri(ro)), new ReplaceTarget(new Uri(_work.Combine("a.txt")))],
+                new ReplaceOptions("bar"), Ct);
+            Assert.Equal(["a.txt"], plan.Files.Select(f => Path.GetFileName(f.Uri.LocalPath)));
+            var skip = Assert.Single(plan.Skipped);
+            Assert.Equal(new Uri(ro), skip.Uri);
+            Assert.Contains("read-only", skip.Reason);
+        }
+        finally { File.SetAttributes(ro, FileAttributes.Normal); }
+    }
+
+    [Fact]
     public async Task Replace_reads_and_plans_through_the_real_file_system()
     {
         _work.WriteFile("a.txt", "one foo\r\ntwo foo\r\n");
