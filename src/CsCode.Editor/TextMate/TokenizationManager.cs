@@ -3,6 +3,7 @@ using CsCode.Core.Diagnostics;
 using CsCode.Core.Lifecycle;
 using CsCode.Editor.Documents;
 using CsCode.Editor.Threading;
+using CsCode.Editor.TreeSitter;
 using Microsoft.Extensions.Logging;
 
 namespace CsCode.Editor.TextMate;
@@ -28,7 +29,15 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
         Interner = new ScopeInterner();
         Log = services.LoggerFactory.CreateLogger<TokenizationManager>();
         Ui = services.Ui;
+        TreeSitter = new TreeSitterService(services, worker, Interner);
+        _subscriptions.Add(TreeSitter);
         _subscriptions.Add(services.Contributions.Of<GrammarContribution>().Changed.Subscribe(_ => OnGrammarsChanged()));
+        // EXPERIMENTAL: editor.experimental.treeSitter (global or "[language]") switches documents between the engines live
+        _subscriptions.Add(services.Config.RegisterProperties([TreeSitterService.Property]));
+        _subscriptions.Add(services.Config.Changed.Subscribe(e =>
+        {
+            if (e.Affects(TreeSitterService.SettingKey) || e.AffectedKeys.Any(k => k.StartsWith('['))) OnEngineSettingChanged();
+        }));
         if (services.Memory is { } monitor) _monitorRegistration = monitor.Register(this);
     }
 
@@ -38,6 +47,9 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
     public ScopeInterner Interner { get; }
     internal ILogger Log { get; }
     internal IUiThread Ui { get; }
+
+    /// <summary>The EXPERIMENTAL tree-sitter engine's shared state (off unless <c>editor.experimental.treeSitter</c> is set).</summary>
+    internal TreeSitterService TreeSitter { get; }
 
     public int SessionCount
     {
@@ -50,7 +62,8 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
     /// <summary>True when a grammar exists for the language (a user contribution or a built-in): otherwise there is nothing to tokenise with.</summary>
     internal bool HasGrammar(string languageId) =>
         Services.Contributions.Of<GrammarContribution>().Items.Any(c => c.Value.LanguageId == languageId)
-        || Languages.BuiltinLanguages.Catalog.ScopeForLanguage(languageId) is not null;
+        || Languages.BuiltinLanguages.Catalog.ScopeForLanguage(languageId) is not null
+        || TreeSitter.IsEnabledFor(languageId);
 
     internal TokenizationSession CreateSession(EditorDocument document)
     {
@@ -62,6 +75,17 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
     internal void Remove(TokenizationSession session)
     {
         lock (_gate) _sessions.Remove(session);
+    }
+
+    private void OnEngineSettingChanged()
+    {
+        TokenizationSession[] all;
+        lock (_gate) all = _sessions.ToArray();
+        Ui.Post(() =>
+        {
+            foreach (var s in all)
+                if (s.TreeSitterWantedChanged()) s.RestartFromManager();
+        });
     }
 
     private void OnGrammarsChanged()
@@ -86,7 +110,8 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
         {
             TokenizationSession[] all;
             lock (_gate) all = _sessions.ToArray();
-            return all.Sum(s => s.Store.EstimatedBytes) + Interner.EstimatedBytes;
+            // + the tree-sitter syntax trees (native memory; estimated, see SyntaxDocument.EstimatedTreeBytes)
+            return all.Sum(s => s.Store.EstimatedBytes + s.TreeSitterBytes) + Interner.EstimatedBytes;
         }
     }
 
