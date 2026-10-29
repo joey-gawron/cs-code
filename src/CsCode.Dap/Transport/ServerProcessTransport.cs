@@ -32,10 +32,13 @@ public sealed record DebugAdapterServerProcess(
 
 /// <summary>
 /// TCP connection to an adapter server this transport started (<see cref="DebugAdapterServerProcess"/>). Owns the server process: on close the
-/// socket is closed, then the server's process tree is killed (a server never exits by itself) and processes that were re-parented away from the
-/// tree but still carry this server's environment marker (Linux) are reaped too, so no adapter or debuggee outlives its session.
+/// socket is closed, then the server's process tree is killed (a server never exits by itself), so no adapter or debuggee outlives its session.
+/// <para>Processes that LEFT the tree are left alone on a normal close: a program may detach a process on purpose (a dev server opening the
+/// browser through xdg-open, a daemon started with setsid), and VS Code leaves those running too. Only when the server DIED on its own (crashed,
+/// was killed) are the processes it orphaned reaped (Linux): those that carry this server's environment marker AND still belong to the server's
+/// session, i.e. did not detach into a session of their own (<see cref="AdapterProcessReaper"/>).</para>
 /// </summary>
-public sealed class ServerProcessTransport : IDapTransport
+public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
 {
     internal const string MarkerVariable = "CSCODE_DAP_ADAPTER";
     private const int TailChars = 16 * 1024;
@@ -43,6 +46,7 @@ public sealed class ServerProcessTransport : IDapTransport
     private readonly Process _process;
     private readonly TcpTransport _tcp;
     private readonly string _marker;
+    private readonly int? _sessionId;
     private readonly ILogger _logger;
     private readonly OutputTail _stderr;
     private readonly OutputTail _stdout;
@@ -50,12 +54,14 @@ public sealed class ServerProcessTransport : IDapTransport
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _closed;
     private int _disposed;
+    private int _killedByUs;
 
-    private ServerProcessTransport(Process process, TcpTransport tcp, string marker, OutputTail stdout, OutputTail stderr, Task pumps, ILogger logger, string name)
+    private ServerProcessTransport(Process process, TcpTransport tcp, string marker, int? sessionId, OutputTail stdout, OutputTail stderr, Task pumps, ILogger logger, string name)
     {
         _process = process;
         _tcp = tcp;
         _marker = marker;
+        _sessionId = sessionId;
         _stdout = stdout;
         _stderr = stderr;
         _pumps = pumps;
@@ -76,6 +82,8 @@ public sealed class ServerProcessTransport : IDapTransport
     public int Port => _tcp.Port;
     /// <summary>The marker this server and everything it spawned carry in their environment (tests use it to find leftovers).</summary>
     public string Marker => _marker;
+    /// <summary>The server's session id (Linux <c>/proc/&lt;pid&gt;/stat</c>), read when it started; null elsewhere.</summary>
+    public int? ServerSessionId => _sessionId;
     public string StandardErrorTail => _stderr.Text;
 
     /// <summary>Starts the server, waits (bounded) for its listening line, and connects. On any failure the process tree is killed before throwing.</summary>
@@ -123,6 +131,7 @@ public sealed class ServerProcessTransport : IDapTransport
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { /* best effort */ }
         }
         try { process.StandardInput.Close(); } catch (Exception ex) when (ex is IOException or InvalidOperationException) { }
+        var sessionId = ReadSessionId(process);
 
         var stdout = new OutputTail(TailChars);
         var stderr = new OutputTail(TailChars);
@@ -155,15 +164,22 @@ public sealed class ServerProcessTransport : IDapTransport
             var remaining = descriptor.StartTimeout - Stopwatch.GetElapsedTime(started);
             var tcp = await TcpTransport.ConnectAsync(endpoint.Host, endpoint.Port, remaining > TimeSpan.FromSeconds(1) ? remaining : TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
             logger.LogDebug("Started {Name} (pid {Pid}) listening at {Host}:{Port}", descriptor.DisplayName, process.Id, endpoint.Host, endpoint.Port);
-            return new ServerProcessTransport(process, tcp, marker, stdout, stderr, pumps, logger, descriptor.DisplayName);
+            return new ServerProcessTransport(process, tcp, marker, sessionId, stdout, stderr, pumps, logger, descriptor.DisplayName);
         }
         catch
         {
-            await KillAsync(process, marker).ConfigureAwait(false);
+            var crashed = process.HasExited;
+            KillTree(process);
+            // A server that died while starting may have orphaned something already; one we gave up on is killed with its tree.
+            if (crashed) await ReapOrphansAsync(marker, sessionId).ConfigureAwait(false);
+            await WaitForExitAsync(process).ConfigureAwait(false);
             process.Dispose();
             throw;
         }
     }
+
+    // Read right after the start, while the server is certainly alive (its pid cannot have been reused yet).
+    private static int? ReadSessionId(Process process) => AdapterProcessReaper.SessionOf(process.Id);
 
     private static string Tail(OutputTail stderr, OutputTail stdout)
     {
@@ -195,24 +211,63 @@ public sealed class ServerProcessTransport : IDapTransport
 
     private void OnExited(object? sender, EventArgs e) => _completion.TrySetResult();
 
-    /// <summary>Closes the connection and ends the server: it never exits by itself, so there is no grace period to wait out.</summary>
+    /// <summary>
+    /// Closes the connection and ends the server: it never exits by itself, so there is no grace period to wait out. A server that had already
+    /// died on its own (crash, external kill) orphaned its debuggees: those are reaped (see the class remarks).
+    /// </summary>
     public async ValueTask CloseAsync(TimeSpan grace)
     {
         if (Interlocked.Exchange(ref _closed, 1) != 0) return;
+        var crashed = HasExited(_process) && Volatile.Read(ref _killedByUs) == 0;
         await _tcp.CloseAsync(TimeSpan.Zero).ConfigureAwait(false);
-        await KillAsync(_process, _marker).ConfigureAwait(false);
+        Interlocked.Exchange(ref _killedByUs, 1);
+        KillTree(_process);
+        if (crashed) await ReapOrphansAsync(_marker, _sessionId).ConfigureAwait(false);
+        await WaitForExitAsync(_process).ConfigureAwait(false);
         try { await _pumps.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch (TimeoutException) { }
         _completion.TrySetResult();
     }
 
-    private static async Task KillAsync(Process process, string marker)
+    /// <summary>
+    /// Kills the server's process tree right now, without waiting (a container disposed synchronously, a test host about to exit): nothing may
+    /// depend on an async shutdown that might never run. The debuggees the server launched are in its tree. <see cref="CloseAsync"/> still runs later.
+    /// </summary>
+    public void KillNow()
+    {
+        Interlocked.Exchange(ref _killedByUs, 1);
+        KillTree(_process);
+    }
+
+    /// <summary>Exited, or a zombie the runtime has not reaped yet (the session can learn of a crash from the closed socket first).</summary>
+    private static bool HasExited(Process process)
+    {
+        try
+        {
+            if (process.HasExited) return true;
+            return OperatingSystem.IsLinux() && !AdapterProcessReaper.IsAlive(process.Id);
+        }
+        catch (InvalidOperationException) { return true; }
+    }
+
+    private static void KillTree(Process process)
     {
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { /* already gone */ }
-        // Descendants the server's tree no longer contains (a debuggee's watchdog re-parented to init when its parent died) still carry the marker.
-        var reaped = AdapterProcessReaper.KillMarked(MarkerVariable, marker);
+    }
+
+    private static async Task WaitForExitAsync(Process process)
+    {
         try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); }
         catch (Exception ex) when (ex is TimeoutException or InvalidOperationException) { }
+    }
+
+    /// <summary>
+    /// After the server died on its own: kills the processes it orphaned. They were re-parented away from its tree but still carry its marker; a
+    /// process in a session of its own (setsid, Node's <c>detached: true</c>) was detached on purpose and is left alone.
+    /// </summary>
+    private static async Task ReapOrphansAsync(string marker, int? sessionId)
+    {
+        var reaped = AdapterProcessReaper.KillMarked(MarkerVariable, marker, sessionId);
         await AdapterProcessReaper.WaitUntilGoneAsync(reaped, TimeSpan.FromSeconds(2)).ConfigureAwait(false);
     }
 
@@ -247,13 +302,15 @@ public sealed class ServerProcessTransport : IDapTransport
 /// <summary>Finds and kills processes carrying a marker in their environment (Linux /proc). Only ever kills processes this app spawned.</summary>
 internal static class AdapterProcessReaper
 {
-    public static List<int> KillMarked(string variable, string marker)
+    /// <summary>Kills the live processes carrying <c>variable=marker</c>; with <paramref name="sessionId"/>, only those still in that session.</summary>
+    public static List<int> KillMarked(string variable, string marker, int? sessionId = null)
     {
         var killed = new List<int>();
         if (!OperatingSystem.IsLinux()) return killed;
         foreach (var pid in FindMarked(variable, marker))
         {
             if (pid == Environment.ProcessId) continue;
+            if (sessionId is { } sid && SessionOf(pid) != sid) continue; // detached into a session of its own: on purpose
             killed.Add(pid);
             try
             {
@@ -292,6 +349,19 @@ internal static class AdapterProcessReaper
         if (pids.Count == 0 || !OperatingSystem.IsLinux()) return;
         var deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
         while (pids.Any(IsAlive) && Stopwatch.GetTimestamp() < deadline) await Task.Delay(10).ConfigureAwait(false);
+    }
+
+    /// <summary>The session id of a process (field 6 of Linux <c>/proc/&lt;pid&gt;/stat</c>); null when it is gone or elsewhere.</summary>
+    public static int? SessionOf(int pid)
+    {
+        if (!OperatingSystem.IsLinux()) return null;
+        try
+        {
+            var stat = File.ReadAllText($"/proc/{pid}/stat");
+            var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+            return fields.Length > 3 && int.TryParse(fields[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var sid) ? sid : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentOutOfRangeException) { return null; }
     }
 
     /// <summary>A zombie waiting for its reaper counts as gone.</summary>

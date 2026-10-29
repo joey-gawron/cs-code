@@ -397,16 +397,18 @@ public class ServerProcessTransportTests
     private static void RequireSh() => Assert.SkipUnless(File.Exists("/bin/sh") && OperatingSystem.IsLinux(), "needs /bin/sh and Linux /proc");
 
     [Fact]
-    public async Task It_connects_to_the_port_the_server_prints_runs_it_below_normal_priority_and_kills_its_tree_on_close()
+    public async Task It_connects_to_the_port_the_server_prints_runs_it_below_normal_priority_and_kills_its_tree_on_close_but_not_what_left_it()
     {
         RequireSh();
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        string? marker = null;
         try
         {
             // Prints some noise, then the listening line; leaves a child behind and a grandchild re-parented away from its tree.
             var transport = await ServerProcessTransport.StartAsync(Sh($"echo starting; echo 'Debug server listening at 127.0.0.1:{port}'; sleep 300 & (sleep 301 &) ; wait"), NullLogger.Instance, Ct);
+            marker = transport.Marker;
             using var accepted = await listener.AcceptSocketAsync(Ct);
             Assert.Equal(("127.0.0.1", port), (transport.Host, transport.Port));
             var pid = transport.ProcessId!.Value;
@@ -415,11 +417,22 @@ public class ServerProcessTransportTests
             var marked = ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", transport.Marker);
             Assert.Contains(marked, p => !ProcessTable.Descendants(pid).Contains(p) && p != pid); // the re-parented grandchild
 
+            var child = ProcessTable.Descendants(pid).Single(p => ProcessTable.CommandLine(p) == "sleep 300");
+            var left = marked.Single(p => ProcessTable.CommandLine(p) == "sleep 301");
             await transport.DisposeAsync();
             Assert.False(ProcessTable.IsAlive(pid));
-            Assert.Empty(ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", transport.Marker)); // nothing it started survives
+            Assert.False(ProcessTable.IsAlive(child)); // the server's tree dies with it
+            // A process that LEFT the tree is not the server's to kill on a normal close (a program may detach a browser or a daemon on
+            // purpose); only the orphans of a server that died on its own are reaped (AdapterServerProcessLifetimeTests).
+            Assert.True(ProcessTable.IsAlive(left));
         }
-        finally { listener.Stop(); }
+        finally
+        {
+            listener.Stop();
+            foreach (var p in marker is null ? [] : ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", marker)) // this test's own processes
+                try { using var proc = Process.GetProcessById(p); proc.Kill(); }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
+        }
     }
 
     [Fact]

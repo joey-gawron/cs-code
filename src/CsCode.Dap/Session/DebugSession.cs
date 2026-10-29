@@ -117,6 +117,17 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     public (string Host, int Port)? AdapterEndpoint => _client?.Transport is { } t ? DapTransportFactory.EndpointOf(t) : null;
     /// <summary>Environment marker carried by an adapter server this session started and by everything it spawned (null otherwise).</summary>
     public string? AdapterProcessMarker => (_client?.Transport as ServerProcessTransport)?.Marker;
+
+    /// <summary>
+    /// Kills the adapter process this session owns (with its tree: the debuggees an adapter server launched) and the debuggees it spawned for
+    /// <c>runInTerminal</c>, synchronously and from any thread. For a container disposed synchronously (DebugService.Dispose), where the
+    /// graceful async shutdown may never get to run before the process exits.
+    /// </summary>
+    internal void KillProcessesNow()
+    {
+        _debuggees.KillAll();
+        if (Volatile.Read(ref _client)?.Transport is IKillableTransport transport) transport.KillNow();
+    }
     public IReadOnlyList<int> SpawnedDebuggeeProcessIds => _debuggees.LiveProcessIds;
     public IReadOnlyList<DebugModuleInfo> Modules { get { lock (_modules) return [.. _modules.Values]; } }
     public long DroppedOutputChars => _output.DroppedChars;

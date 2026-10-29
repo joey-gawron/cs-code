@@ -25,6 +25,13 @@ public interface IDapTransport : IAsyncDisposable
     ValueTask CloseAsync(TimeSpan grace);
 }
 
+/// <summary>A transport that owns an adapter process and can end it synchronously (a container disposed synchronously cannot wait for async shutdown).</summary>
+public interface IKillableTransport
+{
+    /// <summary>Kills the adapter's process tree now, without waiting for it; never throws. The async close still runs later.</summary>
+    void KillNow();
+}
+
 public static class DapTransportFactory
 {
     /// <summary>Opens the transport a descriptor describes. Executables are started at normal priority; TCP retries until <paramref name="connectTimeout"/>.</summary>
@@ -38,7 +45,10 @@ public static class DapTransportFactory
             _ => throw new NotSupportedException($"Unknown debug adapter descriptor {descriptor.GetType().Name}"),
         };
 
-    /// <summary>The TCP endpoint of an adapter SERVER a transport is connected to (child sessions connect to the same server), else null.</summary>
+    /// <summary>
+    /// The TCP endpoint of an adapter SERVER a transport is connected to, else null. A child session of the same debug type (or one carrying
+    /// js-debug's <c>__pendingTargetId</c>) connects to the same server; see DebugService.
+    /// </summary>
     public static (string Host, int Port)? EndpointOf(IDapTransport transport) => transport switch
     {
         ServerProcessTransport s => (s.Host, s.Port),
@@ -48,7 +58,7 @@ public static class DapTransportFactory
 }
 
 /// <summary>Adapter as a child process talking DAP over stdin/stdout. The process tree is killed on close: no zombies.</summary>
-public sealed class ProcessTransport : IDapTransport
+public sealed class ProcessTransport : IDapTransport, IKillableTransport
 {
     private const int StderrTailBytes = 16 * 1024;
     private readonly Process _process;
@@ -162,6 +172,8 @@ public sealed class ProcessTransport : IDapTransport
             _logger.LogDebug(ex, "Kill of debug adapter pid {Pid} failed (already gone?)", ProcessId);
         }
     }
+
+    public void KillNow() => KillTree();
 
     public async ValueTask DisposeAsync()
     {

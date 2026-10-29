@@ -59,8 +59,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private int _sessionCounter;
     private int _disposed;
 
-    private readonly LinkedList<(DebugOutputEventArgs Event, int Lines, int Chars)> _history = new();
-    private int _historyLines, _historyChars;
+    private readonly OutputHistory _history = new(MaxHistoryLines, MaxHistoryChars);
 
     private sealed record SessionHooks(IDisposable Subscriptions, string? PostDebugTask, Uri? Folder);
     private sealed class CompoundGroup(bool stopAll) { public bool StopAll { get; } = stopAll; public List<IDebugSession> Members { get; } = new(); }
@@ -194,8 +193,9 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
 
         // 4. adapter. A child of a session connected to an adapter SERVER opens its own connection to that same server: js-debug runs the
         // launched program as a child session (`startDebugging`) on the server the parent started, and only that server knows the pending target.
+        // A child of ANOTHER debug type (without js-debug's pending target) belongs to that type's adapter: its factory creates it.
         DebugAdapterDescriptor? descriptor;
-        if (parent?.AdapterEndpoint is { } endpoint) descriptor = new DebugAdapterServer(endpoint.Host, endpoint.Port);
+        if (parent?.AdapterEndpoint is { } endpoint && SharesParentAdapter(parent, resolved)) descriptor = new DebugAdapterServer(endpoint.Host, endpoint.Port);
         else
         {
             try { descriptor = await CreateDescriptorAsync(resolved, ct); }
@@ -220,7 +220,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             Settings = SettingsFor(final),
             StartChild = StartChildAsync,
         });
-        Attach(session, final.PostDebugTask, folder, group);
+        Attach(session, final.PostDebugTask, folder, group, configuration.Type);
         try
         {
             await session.StartAsync(ct);
@@ -233,6 +233,14 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         catch (OperationCanceledException) { return null; }
         return session;
     }
+
+    /// <summary>
+    /// Whether a child session goes to its parent's adapter server: when it asks for a target only that server holds (js-debug's
+    /// <c>__pendingTargetId</c>), or is of the parent's own debug type.
+    /// </summary>
+    private static bool SharesParentAdapter(DebugSession parent, DebugConfiguration child) =>
+        child.Properties.ContainsKey(JsDebugAdapterFactory.PendingTargetKey)
+        || string.Equals(child.Type, parent.Configuration.Type, StringComparison.OrdinalIgnoreCase);
 
     private DebugSessionSettings SettingsFor(DebugConfiguration config)
     {
@@ -309,7 +317,9 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
 
     // ------------------------------------------------------------------ session wiring
 
-    private void Attach(DebugSession session, string? postDebugTask, Uri? folder, CompoundGroup? group)
+    /// <param name="requestedType">The type the configuration asked for, before a provider resolved it (launch.json "node" → js-debug's
+    /// "pwa-node"): the last-known capabilities are recorded under both, since the UI looks them up by the selected configuration's type.</param>
+    private void Attach(DebugSession session, string? postDebugTask, Uri? folder, CompoundGroup? group, string requestedType)
     {
         var subs = new DisposableStore();
         subs.Add(session.Stopped.Subscribe(e => OnSessionStopped(session, e)));
@@ -318,7 +328,11 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         subs.Add(session.StateChanged.Subscribe(state =>
         {
             if (state is DebugSessionState.Running or DebugSessionState.Stopped)
-                lock (_gate) _knownCapabilities[session.Configuration.Type] = session.Capabilities;
+                lock (_gate)
+                {
+                    _knownCapabilities[session.Configuration.Type] = session.Capabilities;
+                    if (requestedType.Length > 0) _knownCapabilities[requestedType] = session.Capabilities;
+                }
             RecomputeState();
             UpdateContextKeys();
         }));
@@ -381,36 +395,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
 
     private void OnSessionOutput(DebugOutputEventArgs e)
     {
-        var text = e.Output;
-        var lines = Math.Max(1, text.Count(c => c == '\n'));
-        lock (_gate)
-        {
-            _history.AddLast((e, lines, text.Length));
-            _historyLines += lines;
-            _historyChars += text.Length;
-            // Keep the NEWEST lines up to the budget. A whole batch goes only when all of it is over the budget; otherwise just its head is
-            // cut. (Dropping whole batches used to empty the history down to the last event: after a flood batch of 5,000 lines, one more
-            // line removed the batch and left 1 line for a console opened later.)
-            while (_historyLines > MaxHistoryLines || _historyChars > MaxHistoryChars)
-            {
-                var first = _history.First!.Value;
-                var excessLines = _historyLines - MaxHistoryLines;
-                var excessChars = _historyChars - MaxHistoryChars;
-                if (_history.Count > 1 && (first.Lines <= excessLines || first.Chars <= excessChars))
-                {
-                    _history.RemoveFirst();
-                    _historyLines -= first.Lines;
-                    _historyChars -= first.Chars;
-                    continue;
-                }
-                var tail = TailLines(first.Event.Output, Math.Max(1, first.Lines - Math.Max(0, excessLines)), Math.Max(1, first.Chars - Math.Max(0, excessChars)));
-                if (tail.Length >= first.Chars) break; // nothing left to cut (cannot happen with the arithmetic above; never loop)
-                var tailLines = Math.Max(1, tail.Count(c => c == '\n'));
-                _history.First.Value = (first.Event with { Output = tail }, tailLines, tail.Length);
-                _historyLines += tailLines - first.Lines;
-                _historyChars += tail.Length - first.Chars;
-            }
-        }
+        lock (_gate) _history.Add(e); // keeps the NEWEST lines up to the budget, cutting the oldest event's head in place (OutputHistory)
         _output.Fire(e);
     }
 
@@ -418,19 +403,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private void ArchiveHistory(DebugSession session)
     {
         var ended = new EndedSession(session.Id, session.Name, session.Configuration);
-        lock (_gate)
-            for (var node = _history.First; node is not null; node = node.Next)
-                if (ReferenceEquals(node.Value.Event.Session, session))
-                    node.Value = (node.Value.Event with { Session = ended }, node.Value.Lines, node.Value.Chars);
-    }
-
-    private static string TailLines(string text, int maxLines, int maxChars)
-    {
-        if (text.Length > maxChars) text = text[^maxChars..];
-        var count = 0;
-        for (var i = text.Length - 1; i >= 0; i--)
-            if (text[i] == '\n' && ++count > maxLines) return text[(i + 1)..];
-        return text;
+        lock (_gate) _history.Relabel(session, ended);
     }
 
     private void OnSessionTerminated(DebugSession session)
@@ -614,16 +587,12 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
 
     public IReadOnlyList<DebugOutputEventArgs> GetOutputHistory()
     {
-        lock (_gate) return [.. _history.Select(h => h.Event)];
+        lock (_gate) return _history.Snapshot();
     }
 
     public void ClearOutputHistory()
     {
-        lock (_gate)
-        {
-            _history.Clear();
-            _historyLines = _historyChars = 0;
-        }
+        lock (_gate) _history.Clear();
         _outputCleared.Fire(null);
     }
 
@@ -668,19 +637,28 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             _sessions = [];
             _compounds.Clear();
             _history.Clear();
-            _historyLines = _historyChars = 0;
         }
         _sessionStarted.Clear(); _sessionTerminated.Clear(); _activeChanged.Clear(); _stateChanged.Clear();
         _stopLocationChanged.Clear(); _output.Clear(); _outputCleared.Clear();
     }
 
     /// <summary>
-    /// For a container disposed synchronously (the shell disposes its container on the UI thread after awaiting the graceful shutdown):
-    /// starts <see cref="DisposeAsync"/> and returns without waiting for adapters, so the caller never blocks. A no-op after <see cref="DisposeAsync"/>.
+    /// For a container disposed synchronously (the shell disposes its container on the UI thread after awaiting the graceful shutdown, so
+    /// normally no session is left): starts <see cref="DisposeAsync"/> without waiting for it, and kills every adapter process and debuggee
+    /// still running RIGHT NOW. The async shutdown may never get to run — the process can exit first (a test host after a failed assertion did,
+    /// and left js-debug servers running: they never exit by themselves). Killing is synchronous but does not wait for the processes.
+    /// A no-op after <see cref="DisposeAsync"/>.
     /// </summary>
     public void Dispose()
     {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        var live = Sessions.OfType<DebugSession>().ToArray();
         var pending = DisposeAsync();
+        foreach (var session in live)
+        {
+            try { session.KillProcessesNow(); }
+            catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { _logger.LogDebug(ex, "Killing the processes of {Session}", session.Id); }
+        }
         if (!pending.IsCompleted)
             _ = pending.AsTask().ContinueWith(t => _logger.LogDebug(t.Exception, "Disposing the debug service"), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }

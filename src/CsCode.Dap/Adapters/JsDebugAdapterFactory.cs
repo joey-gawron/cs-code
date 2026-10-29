@@ -151,6 +151,14 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
                 : configuration.GetString("program") is { Length: > 0 } program ? Path.GetDirectoryName(program) : null;
             if (root is not null) props["__workspaceFolder"] = JsonSerializer.SerializeToElement(root);
         }
+        // CsCode has no terminal for debuggees: a runInTerminal launch pipes the program's streams into the Debug Console, and js-debug ALSO
+        // reports every console.* call itself, so each console.log line would show twice. A terminal launch runs in the console instead, with
+        // js-debug capturing the program's streams (outputCapture "std"): every line once, process.stdout.write included, as a terminal shows it.
+        if (!configuration.IsAttach && configuration.GetString("console") is "integratedTerminal" or "externalTerminal")
+        {
+            props["console"] = JsonSerializer.SerializeToElement("internalConsole");
+            if (!props.ContainsKey("outputCapture")) props["outputCapture"] = JsonSerializer.SerializeToElement("std");
+        }
         // `${command:pickProcess}` substitutes the pid as TEXT: js-debug's attach expects "processId": "<pid>" (a string), which is what we have.
         return ValueTask.FromResult<DebugConfiguration?>(configuration with { Type = type, Properties = props });
     }
@@ -161,26 +169,33 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         var configs = new List<JsonObject>();
         if (layout.TypeScriptEntry is { } entry)
         {
-            configs.Add(new JsonObject
+            var ts = new JsonObject
             {
                 ["name"] = "TypeScript: Launch (tsc build)",
                 ["type"] = PrimaryType,
                 ["request"] = "launch",
-                ["program"] = "${workspaceFolder}/" + entry,
+                ["program"] = InFolder(entry),
                 ["preLaunchTask"] = "tsc: build",
-                ["outFiles"] = new JsonArray("${workspaceFolder}/" + layout.OutDir + "/**/*.js"),
+                ["outFiles"] = layout.OutDir is { Length: > 0 } outDir
+                    ? new JsonArray(InFolder(outDir) + "/**/*.js")
+                    : new JsonArray("${workspaceFolder}/**/*.js", "!**/node_modules/**"), // no outDir: tsc writes the .js next to the .ts
                 ["sourceMaps"] = true,
                 ["skipFiles"] = new JsonArray("<node_internals>/**"),
                 ["cwd"] = "${workspaceFolder}",
                 ["console"] = "internalConsole",
-            });
+            };
+            // js-debug only reads source maps under ${workspaceFolder} by default: an outDir outside the folder ("../build" in a monorepo
+            // package, an absolute path) must be allowed explicitly, or no map is found and .ts breakpoints never bind.
+            if (layout.OutDir is { Length: > 0 } outside && IsOutsideFolder(outside))
+                ts["resolveSourceMapLocations"] = new JsonArray("${workspaceFolder}/**", InFolder(outside) + "/**", "!**/node_modules/**");
+            configs.Add(ts);
         }
         configs.Add(new JsonObject
         {
             ["name"] = "Node.js: Launch Program",
             ["type"] = PrimaryType,
             ["request"] = "launch",
-            ["program"] = "${workspaceFolder}/" + layout.JavaScriptEntry,
+            ["program"] = InFolder(layout.JavaScriptEntry),
             ["skipFiles"] = new JsonArray("<node_internals>/**"),
             ["cwd"] = "${workspaceFolder}",
             ["console"] = "internalConsole",
@@ -196,19 +211,24 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         return [.. configs.Select(c => DebugConfiguration.FromJson(JsonSerializer.SerializeToElement(c), folder))];
     }
 
-    /// <summary>The <c>tsc: build</c> task the TypeScript template's preLaunchTask refers to (only when the folder has TypeScript).</summary>
+    /// <summary>
+    /// The <c>tsc: build</c> task the TypeScript template's preLaunchTask refers to (only when the folder has TypeScript). A PROCESS task: tsc
+    /// gets the tsconfig path as one argument, so a folder whose path contains <c>$</c>, quotes or spaces is never re-read by a shell. (Windows
+    /// keeps a shell task: tsc is a <c>.cmd</c> script there.)
+    /// </summary>
     public async ValueTask<IReadOnlyList<(string RelativePath, string Content)>> ProvideInitialFilesAsync(Uri? folder, CancellationToken ct)
     {
         var layout = await InspectFolderAsync(folder, ct);
         if (layout.TypeScriptEntry is null) return [];
         var project = layout.HasTsConfig ? "${workspaceFolder}/tsconfig.json" : "${workspaceFolder}";
+        var type = OperatingSystem.IsWindows() ? "shell" : "process";
         var tasks = $$"""
             {
                 "version": "2.0.0",
                 "tasks": [
                     {
                         "label": "tsc: build",
-                        "type": "shell",
+                        "type": "{{type}}",
                         "command": "tsc",
                         "args": ["-p", "{{project}}"],
                         "problemMatcher": "$tsc",
@@ -221,40 +241,63 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         return [("tasks.json", tasks)];
     }
 
-    internal sealed record FolderLayout(string? TypeScriptEntry, string OutDir, string JavaScriptEntry, bool HasTsConfig);
+    /// <param name="OutDir">tsc's outDir as written (relative to the folder, possibly "../x" or absolute); null or empty: next to the sources.</param>
+    internal sealed record FolderLayout(string? TypeScriptEntry, string? OutDir, string JavaScriptEntry, bool HasTsConfig);
+
+    /// <summary>
+    /// A path from tsconfig.json or package.json as the file means it, relative to the folder: only leading <c>./</c> segments and trailing
+    /// slashes go. <c>../build</c>, <c>.out</c> and absolute paths keep their meaning (trimming every leading '.' and '/' turned them into
+    /// other directories, so the generated outFiles matched nothing).
+    /// </summary>
+    internal static string CleanPath(string value)
+    {
+        var v = value.Trim().Replace('\\', '/');
+        while (v.StartsWith("./", StringComparison.Ordinal)) v = v[2..].TrimStart('/');
+        if (v == ".") return "";
+        return v.Length > 1 ? v.TrimEnd('/') : v;
+    }
+
+    private static bool IsAbsolute(string path) => path.StartsWith('/') || (path.Length > 1 && path[1] == ':') || Path.IsPathRooted(path);
+
+    /// <summary>A launch.json path for <paramref name="path"/>: under <c>${workspaceFolder}</c> when relative, as is when absolute.</summary>
+    internal static string InFolder(string path) => IsAbsolute(path) ? path : "${workspaceFolder}/" + path;
+
+    private static bool IsOutsideFolder(string path) => IsAbsolute(path) || path == ".." || path.StartsWith("../", StringComparison.Ordinal);
 
     /// <summary>Guesses the entry points and tsc's outDir from the folder (tsconfig.json, package.json "main", src/index.ts…).</summary>
     internal async Task<FolderLayout> InspectFolderAsync(Uri? folder, CancellationToken ct)
     {
         if (folder is not { IsFile: true } || _p.Workspace is not { } ws) return new FolderLayout(null, "out", "index.js", false);
         var root = folder.ToString().TrimEnd('/');
+        Uri UriOf(string relative) => IsAbsolute(relative) ? new Uri(Path.GetFullPath(relative)) : new Uri(root + "/" + relative);
         async Task<string?> ReadAsync(string relative)
         {
             try
             {
-                var uri = new Uri(root + "/" + relative);
+                var uri = UriOf(relative);
                 return await ws.FileSystem.StatAsync(uri, ct) is { Type: FileType.File } ? Encoding.UTF8.GetString(await ws.FileSystem.ReadFileAsync(uri, ct)) : null;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or UriFormatException or ArgumentException) { return null; }
         }
         async Task<bool> ExistsAsync(string relative)
         {
-            try { return await ws.FileSystem.StatAsync(new Uri(root + "/" + relative), ct) is { Type: FileType.File }; }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+            try { return await ws.FileSystem.StatAsync(UriOf(relative), ct) is { Type: FileType.File }; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or UriFormatException or ArgumentException) { return false; }
         }
 
         var tsconfig = await ReadAsync("tsconfig.json");
-        var outDir = "out";
+        string? outDir = "out";
         string? rootDir = null;
         if (tsconfig is not null)
         {
+            outDir = null; // tsc without an outDir writes each .js next to its .ts
             try
             {
                 var options = JsonNode.Parse(tsconfig, documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true })?["compilerOptions"];
-                if (options?["outDir"] is JsonValue o && o.TryGetValue<string>(out var od)) outDir = od.Trim().TrimStart('.', '/').TrimEnd('/') is { Length: > 0 } clean ? clean : "out";
-                if (options?["rootDir"] is JsonValue r && r.TryGetValue<string>(out var rd)) rootDir = rd.Trim().TrimStart('.', '/').TrimEnd('/');
+                if (options?["outDir"] is JsonValue o && o.TryGetValue<string>(out var od)) outDir = CleanPath(od);
+                if (options?["rootDir"] is JsonValue r && r.TryGetValue<string>(out var rd)) rootDir = CleanPath(rd);
             }
-            catch (JsonException) { /* keep the defaults */ }
+            catch (JsonException) { outDir = "out"; /* keep the defaults */ }
         }
 
         string? tsEntry = null;
@@ -271,7 +314,7 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         {
             try
             {
-                if (JsonNode.Parse(package)?["main"] is JsonValue m && m.TryGetValue<string>(out var main) && main.Trim().TrimStart('.', '/') is { Length: > 0 } clean) jsEntry = clean;
+                if (JsonNode.Parse(package)?["main"] is JsonValue m && m.TryGetValue<string>(out var main) && CleanPath(main) is { Length: > 0 } clean) jsEntry = clean;
             }
             catch (JsonException) { }
         }
