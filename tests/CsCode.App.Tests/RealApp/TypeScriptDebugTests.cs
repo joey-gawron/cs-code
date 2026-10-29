@@ -108,6 +108,18 @@ public class RealAppTypeScriptDebugTests
         var tab = host.Shell.Well.EditorTabs.Single(t => t.Title == "main.ts");
         Assert.True(await RealAppHost.WaitFor(() => StopLineOf(tab.Controller) == line, 10_000), "the editor's stop line");
 
+        // A stop in a file that is not open (util.ts) opens it at the stop line, as Visual Studio and VS Code do.
+        var util = new Uri(host.Files.Combine("src", "util.ts"));
+        Assert.DoesNotContain(host.Shell.Well.EditorTabs, t => t.Title == "util.ts");
+        debug.Breakpoints.Add(util, JsDebugSample.UtilLine("add"));
+        debug.Breakpoints.Remove(debug.Breakpoints.GetForUri(main).Single().Id);
+        await Task.Delay(300); // the breakpoint changes reach the adapter (debounced)
+        await commands.ExecuteAsync(KnownCommands.DebugContinue);
+        Assert.True(await RealAppHost.WaitFor(() => debug.StopLocation?.Uri == util, 30_000), "stopped in util.ts");
+        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Well.EditorTabs.Any(t => t.Title == "util.ts" && StopLineOf(t.Controller) == JsDebugSample.UtilLine("add")), 10_000),
+            "util.ts opened with the stop line; tabs: " + string.Join(", ", host.Shell.Well.EditorTabs.Select(t => t.Title)));
+        Assert.Null(StopLineOf(tab.Controller)); // main.ts no longer has the stop line
+
         // Shift+F5: everything ends, nothing is left running.
         await host.RunAsync(KnownCommands.DebugStop);
         Assert.True(await RealAppHost.WaitFor(() => debug.State == DebugState.Inactive && debug.Sessions.Count == 0, 20_000), "debugging stopped");

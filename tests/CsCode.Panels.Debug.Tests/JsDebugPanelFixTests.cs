@@ -148,6 +148,51 @@ public class JsDebugPanelFixTests
         Assert.False(vm.Tree.Rows.Single(r => r.Name == "a").IsChanged);
     }
 
+    // ------------------------------------------------------------------ showing where the debugger stopped
+
+    /// <summary>An editor document that only knows its URI (all the stop reveal looks at).</summary>
+    public class UriOnlyDocument : System.Reflection.DispatchProxy
+    {
+        public Uri Uri { get; set; } = new("file:///none");
+        protected override object? Invoke(System.Reflection.MethodInfo? method, object?[]? args) =>
+            method?.Name == "get_Uri" ? Uri : throw new NotSupportedException(method?.Name);
+
+        public static CsCode.Core.Text.IEditorDocument For(Uri uri)
+        {
+            var doc = Create<CsCode.Core.Text.IEditorDocument, UriOnlyDocument>();
+            ((UriOnlyDocument)(object)doc).Uri = uri;
+            return doc;
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task A_stop_in_a_file_that_is_not_the_active_editor_opens_it_at_the_stop_line()
+    {
+        using var sc = new Scenario(stopped: false);
+        _ = sc.Provider.GetRequiredService<CsCode.Panels.Debug.ToolWindows.DebugPanelsRuntime>();
+        var nav = sc.Rig.Navigation;
+        nav.ActiveDocument = UriOnlyDocument.For(new Uri("file:///work/Sample/Other.cs"));
+
+        sc.Rig.StopAt(0); // Program.cs, not the active editor
+        var top = sc.Session.Frames[1][0];
+        await PanelRig.Eventually(() => nav.Opened.Count == 1, what: "the stop file opened");
+        Assert.Equal(top.Source!.ToUri(), nav.Opened[0].Uri);
+        Assert.Equal(CsCode.Core.Text.TextRange.At(top.Line, top.Column), nav.Opened[0].Selection);
+
+        // already the active editor: the editor reveals the line itself, nothing is opened again
+        nav.ActiveDocument = UriOnlyDocument.For(top.Source.ToUri()!);
+        sc.Rig.Resume();
+        sc.Rig.StopAt(0);
+        await Task.Delay(200);
+        Assert.Single(nav.Opened);
+
+        // a frame picked in the Call Stack opens its source there, not here
+        nav.ActiveDocument = UriOnlyDocument.For(new Uri("file:///work/Sample/Other.cs"));
+        sc.Rig.Debug.SetStopLocation(sc.Rig.Debug.StopLocation! with { Reason = "frame", FrameId = 101 });
+        await Task.Delay(200);
+        Assert.Single(nav.Opened);
+    }
+
     // ------------------------------------------------------------------ follow-up (d): frame focus throws
 
     [Fact]
