@@ -85,19 +85,15 @@ public sealed class ClipboardRouter : IDisposable
         // What has focus now, unless that is a menu or popup (the Edit menu or a context menu is open): then what had focus before it.
         Visual? focused = _window()?.FocusManager?.GetFocusedElement() is Visual current && !IsMenuOrPopup(current) ? current : null;
         if (focused is null && _focused?.TryGetTarget(out var remembered) == true && remembered.IsAttachedToVisualTree()) focused = remembered;
+        if (focused is null) return null;
+        var tabs = _well.EditorTabs; // once: this runs on every menu refresh
         for (var v = focused; v is not null; v = v.GetVisualParent())
         {
             if (v is TextBox box) return new TextBoxClipboardTarget(box);
             if (v is IClipboardTarget target) return target;
-            if (v is Control c && EditorOf(c) is { } editor) return new EditorTarget(editor);
+            foreach (var tab in tabs)
+                if (ReferenceEquals(tab.LiveView, v) && tab.Controller is { } editor) return new EditorTarget(editor);
         }
-        return null;
-    }
-
-    private IEditorViewController? EditorOf(Control view)
-    {
-        foreach (var tab in _well.EditorTabs)
-            if (ReferenceEquals(tab.LiveView, view)) return tab.Controller;
         return null;
     }
 
