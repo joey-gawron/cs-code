@@ -463,6 +463,35 @@ public class RealJsDebugTests
         Assert.Contains(output, o => o.Category == "stdout" && o.Output.StartsWith("done hello", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// js-debug's <c>outputCapture</c> semantics (documented adapter behaviour, as in VS Code): the default "console" shows console.* calls only,
+    /// so text written with process.stdout.write never reaches the Debug Console; "std" captures the streams (and node's own "Debugger
+    /// attached." on stderr); <c>console: "integratedTerminal"</c> makes js-debug ask us to run the program (runInTerminal), and the session pipes
+    /// its streams to the Debug Console (there is no terminal UI).
+    /// </summary>
+    [Fact]
+    public async Task Raw_stdout_writes_reach_the_console_with_outputCapture_std_or_a_terminal_launch_but_not_by_default()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        async Task<List<string>> RunAsync(string name, Dictionary<string, object?> extra)
+        {
+            lock (rig.Output) rig.Output.Clear();
+            extra["args"] = new[] { "flood", "3" };
+            await rig.StartAsync(rig.Config(name, extra));
+            await rig.WaitForEndAsync();
+            await rig.AssertNothingLeftRunningAsync();
+            return [.. rig.OutputSnapshot.Where(o => o.Category is "stdout" or "stderr").Select(o => $"[{o.Category}]{o.Output.TrimEnd()}")];
+        }
+        var byDefault = await RunAsync("default-capture", new());
+        var withStd = await RunAsync("std-capture", new() { ["outputCapture"] = "std" });
+        var inTerminal = await RunAsync("terminal", new() { ["console"] = "integratedTerminal" });
+        Note($"process.stdout.write + console.log — outputCapture console (default): {string.Join(" | ", byDefault)}; outputCapture std: {string.Join(" | ", withStd).Replace("\n", "\\n", StringComparison.Ordinal)}; console integratedTerminal: {string.Join(" | ", inTerminal).Replace("\n", "\\n", StringComparison.Ordinal)}");
+        Assert.DoesNotContain(byDefault, o => o.Contains("flood line 2", StringComparison.Ordinal));
+        Assert.Contains(byDefault, o => o.Contains("flood done", StringComparison.Ordinal));
+        Assert.Contains(withStd, o => o.Contains("flood line 2", StringComparison.Ordinal));
+        Assert.Contains(inTerminal, o => o.Contains("flood line 2", StringComparison.Ordinal));
+    }
+
     // ------------------------------------------------------------------ attach
 
     [Fact]
