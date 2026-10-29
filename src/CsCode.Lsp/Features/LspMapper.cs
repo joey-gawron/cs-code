@@ -52,14 +52,15 @@ internal sealed class LspMapper(PositionEncoder encoder, Func<Uri, int, string?>
 
     public P.Range ToLsp(TextRange r, Uri uri) => new() { Start = ToLsp(r.Start, uri), End = ToLsp(r.End, uri) };
 
-    public TextPosition ToCore(P.Position p, Uri uri)
+    public TextPosition ToCore(P.Position? p, Uri uri)
     {
+        if (p is null) return default; // a sloppy server omitted a required member: degrade, never throw
         if (Encoder.IsIdentity) return new TextPosition(p.Line, p.Character);
         var line = lineSource(uri, p.Line);
         return new TextPosition(p.Line, line is null ? p.Character : Encoder.FromLsp(line, p.Character));
     }
 
-    public TextRange ToCore(P.Range r, Uri uri) => new(ToCore(r.Start, uri), ToCore(r.End, uri));
+    public TextRange ToCore(P.Range? r, Uri uri) => r is null ? default : new(ToCore(r.Start, uri), ToCore(r.End, uri));
 
     public TextRange ToCoreOrEmpty(P.Range? r, Uri uri) => r is null ? default : ToCore(r, uri);
 

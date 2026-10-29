@@ -275,7 +275,11 @@ class Gen:
             return "({v}.ValueKind == JsonValueKind.True || {v}.ValueKind == JsonValueKind.False)"
         if t.endswith("[]"):
             return "{v}.ValueKind == JsonValueKind.Array"
-        if t.startswith("Dictionary<") or t in self.structs or t in self.extra_names:
+        if t in self.structs or t in self.extra_names:
+            # recurse into the nested structure's own required members: {name, kind, location:{uri}} must not match a union arm whose
+            # `location` also needs a `range`
+            return "{v}.ValueKind == JsonValueKind.Object && " + t + ".MatchesShape({v})"
+        if t.startswith("Dictionary<"):
             return "{v}.ValueKind == JsonValueKind.Object"
         return None
 
