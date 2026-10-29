@@ -124,7 +124,8 @@ public sealed class IoLane : IDisposable
         {
             Interlocked.Increment(ref _idle);
             try { _items.Wait(_shutdown.Token); }
-            catch (OperationCanceledException) { Interlocked.Decrement(ref _idle); break; }
+            // ObjectDisposed: Dispose gave up waiting for a busy thread and released the token source; this thread must just leave, not crash the process.
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException) { Interlocked.Decrement(ref _idle); break; }
             Interlocked.Decrement(ref _idle);
 
             if (!_queue.TryDequeue(out var item)) continue;
