@@ -24,7 +24,8 @@ public class ShellDocument : Document, IDisposable
 
     private Border? _host;
     private WeakReference<TopLevel>? _window;
-    private WeakReference<ControlRecycling>? _recycling;
+    // Every Dock cache that presented this tab (a floating window has a DockControl, and a cache, of its own). Weak: the caches outlive no window.
+    private readonly List<WeakReference<ControlRecycling>> _recyclers = new(1);
 
     /// <summary>
     /// What Dock presents: a thin host holding the real view, so the view can be destroyed and recreated while Dock keeps presenting "this tab".
@@ -49,11 +50,9 @@ public class ShellDocument : Document, IDisposable
         if (TopLevel.GetTopLevel(host) is { } top) _window = new WeakReference<TopLevel>(top);
         for (var v = host; v is not null; v = v.GetVisualParent())
         {
-            if (ControlRecyclingDataTemplate.GetControlRecycling(v) is ControlRecycling recycling)
-            {
-                _recycling = new WeakReference<ControlRecycling>(recycling);
-                break;
-            }
+            if (ControlRecyclingDataTemplate.GetControlRecycling(v) is not ControlRecycling recycling) continue;
+            if (!_recyclers.Any(w => w.TryGetTarget(out var known) && ReferenceEquals(known, recycling))) _recyclers.Add(new WeakReference<ControlRecycling>(recycling));
+            break;
         }
     }
 
@@ -86,7 +85,9 @@ public class ShellDocument : Document, IDisposable
     {
         if (_host is { } host) host.AttachedToVisualTree -= OnHostAttached;
         _host = null;
-        if (_recycling?.TryGetTarget(out var recycling) == true) recycling.Remove(this);
+        foreach (var w in _recyclers)
+            if (w.TryGetTarget(out var recycling)) recycling.Remove(this);
+        _recyclers.Clear();
     }
 
     /// <summary>True when keyboard focus was inside this tab's view as it closed (the well then focuses the editor that takes its place).</summary>
