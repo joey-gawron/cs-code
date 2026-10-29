@@ -1,7 +1,7 @@
 # CsCode.Dap — Debug Adapter Protocol client and debugging services
 
 `src/CsCode.Dap` is a complete DAP client plus everything a Visual-Studio-style debugger UI binds to, with a working .NET story through
-Samsung **netcoredbg** (MIT). No Avalonia, no Newtonsoft, no extension host: the protocol layer is hand-written on `System.Text.Json`,
+Samsung **netcoredbg** (MIT), Node.js/TypeScript through Microsoft's **js-debug** and Rust (and C/C++) through **GDB's native DAP**. No Avalonia, no Newtonsoft, no extension host: the protocol layer is hand-written on `System.Text.Json`,
 and customisation is native and file based (`launch.json`, `tasks.json`, the `cscode.debuggers` setting).
 
 > **Status in one paragraph.** Everything in the brief's MUST list is implemented and covered by **514 passing tests against scripted
@@ -9,7 +9,8 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
 > The **real-adapter suites (`Category=RealAdapter`, 42 tests) pass**: netcoredbg 3.2.0-1092 (8 tests including the 10-session soak) and
 > **js-debug v1.140.0 for Node.js/TypeScript** on Node.js 24.21.0 (34 tests: the whole TypeScript evaluation matrix of
 > [DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md), the private socket, a 10-session soak), on Linux x64, three runs in a row, no adapter,
-> debuggee, task process or socket directory left behind. Run them with
+> debuggee, task process or socket directory left behind. **Rust through GDB 18.1** (`gdb -i=dap`, no download): `RealGdbRustTests`
+> (31 tests: the Rust evaluation matrix of [DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-gdb), a 1M-line flood, a 10-session soak). Run them with
 > `tools/fetch-netcoredbg.sh && tools/fetch-js-debug.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter`.
 > See [Real-adapter tests](#real-adapter-tests-netcoredbg).
 
@@ -25,7 +26,8 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
 | `Service/` | `DebugService : IDebugService` (+ `IDebugFrameFocus`, `IDebugOutputHistory`, `IDebugSourceContentProvider`), commands, `cscode.debuggers` contributions. |
 | `Configuration/` | `DebugConfigurationService`, `LaunchJson`, `VariableResolver`, `DapPlatform` (optional Core services bundle). |
 | `Tasks/TaskService.cs` | Minimal `tasks.json` runner (`ITaskService`). |
-| `Adapters/` | `NetCoreDbgAdapterFactory`, `NetCoreDbgInstaller`, `JsDebugAdapterFactory`, `JsDebugInstaller` (Node.js/TypeScript). |
+| `Adapters/` | `NetCoreDbgAdapterFactory`, `NetCoreDbgInstaller`, `JsDebugAdapterFactory`, `JsDebugInstaller` (Node.js/TypeScript), `GdbAdapterFactory` + `GdbAdapterQuirks` + `CargoArtifacts` (Rust/C/C++ through GDB's native DAP; `Gdb/cscode_gdb.py`, copied to the output, summarises Rust values). |
+| `Session/DebugAdapterQuirks.cs` | What a built-in adapter does differently, compensated in one place (REPL input, completions, hit conditions, client-side exception filters, output categories, frames, trailing output); `BuiltinDebugAdapter.Quirks`, applied to every session of the type. |
 | `tools/fetch-netcoredbg.sh` | Fetches netcoredbg into `.scratch/tools/netcoredbg/` (SHA-256 verified, safe extraction). |
 | `tools/fetch-js-debug.sh` | Fetches the pinned js-debug v1.140.0 into `.scratch/tools/js-debug/v1.140.0/` (pinned SHA-256; `JSDEBUG_ARCHIVE=` installs from a local archive without downloading). |
 
@@ -54,8 +56,10 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
   `cscode.debug.requestTimeoutSeconds`). A timeout fails that request with `DapRequestTimeoutException`, sets `DebugSession.IsUnresponsive`
   (+ `UnresponsiveChanged`), and any later answer/event from the adapter clears it. Nothing ever blocks a caller.
 * **Child processes** are killed as a *tree* on close/timeout/dispose and are tracked (`IMemoryMonitor.TrackChildProcess` when available). Stdio
-  adapters (netcoredbg) start at normal priority; adapter **servers** (`DebugAdapterServerProcess`, js-debug) start under `nice -n 10`
-  (PriorityClass BelowNormal on Windows), which the debuggees they launch inherit. Task processes (`tasks.json`, a preLaunchTask's `tsc`) are tracked
+  adapters from a `DebugAdapterExecutable` (netcoredbg) start at normal priority; adapter **servers** (`DebugAdapterServerProcess`, js-debug)
+  and stdio adapters from a `DebugAdapterStdioProcess` (GDB) start under `nice -n 10` (PriorityClass BelowNormal on Windows), which the
+  debuggees they launch inherit, with the environment marker `CSCODE_DAP_ADAPTER`; a stdio adapter that died (signal, non-zero exit — not GDB's
+  normal `quit`) has the processes still carrying its marker in its session reaped. Task processes (`tasks.json`, a preLaunchTask's `tsc`) are tracked
   too, and `TaskService.Dispose` (app shutdown) kills any task still running. A server transport kills the server's tree on close; processes
   that left the tree survive a normal close (a program's detached browser or daemon) and are reaped only after the server died on its own (its
   environment marker, same session only). `DebugService.Dispose` — a container disposed synchronously — kills every adapter tree and
@@ -200,6 +204,17 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   the user is **offered** the pinned download (`JsDebugInstaller`, SHA-256 checked). Node.js: `cscode.debug.nodePath` → PATH. The provider sets
   `__workspaceFolder` (without it js-debug resolves no source maps) and offers TypeScript (tsc build task), Node and attach templates. Breakpoint
   languages typescript, javascript, typescriptreact, javascriptreact. Evaluation and quirks: [docs/DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md).
+* Built-in `gdb` (and the alias `rust-gdb`) → **GDB's native DAP**: `nice -n 10 gdb [cscode.debug.gdbArgs] -q -iex … -i=dap` (a
+  `DebugAdapterStdioProcess`, GDB 14+, nothing to download). For Rust the factory does what rust-gdb does on GDB's command line: the Rust
+  pretty-printers from `$(rustc --print sysroot)` and `set substitute-path /rustc/<commit> <sysroot>/lib/rustlib/src/rust`; plus CsCode's
+  `cscode_gdb.py` (one-line summaries of Rust structs/enums, which GDB's DAP shows empty). Lookup `cscode.debug.gdbPath` → PATH. The provider moves
+  `env` to `set environment` commands (GDB's `env` replaces the whole environment), turns a textual `pid`/`processId` into a number and resolves
+  CodeLLDB's `"cargo": {"args": […], "filter": {…}}` key (cargo's reported executable becomes `program`: the test-binary template uses it).
+  Templates for a cargo package: binary (`cargo: build` process preLaunchTask), unit tests (`cargo` key), attach. `GdbAdapterQuirks`: the Debug
+  Console evaluates expressions (`-exec`/backtick for GDB commands), completions through `print`, hit counts as ignore counts, a client-side
+  **"Rust panics"** exception filter (`std::panicking::rust_panic`, reported as an exception with the panic's message), GDB's messages as
+  `console` output, logpoint line breaks, output after `terminated` kept, std/libc/symbol-less frames de-emphasised. Breakpoint languages rust,
+  c, cpp. Evaluation, quirks and limits: [docs/DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-gdb).
 * `${command:pickProcess}` is a built-in command (`pickProcess`) listing processes through `IWindowService.ShowQuickPickAsync` (enumeration runs
   off the caller thread; never lists the editor itself).
 * **User adapters, no extensions:** the `cscode.debuggers` setting (array of `{type, label, program, runtime, args, languages, windows/linux/osx,
@@ -215,13 +230,13 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 * Context keys (only if `IContextKeyService` resolves): `debugState` (`inactive|initializing|running|stopped`), `inDebugMode`, `debugType`,
   `debuggerAvailable`, `focusedSessionIsAttach`, `breakpointsExist`.
 * Settings registered with `IConfigurationService`: `cscode.debuggers`, `cscode.debug.netcoredbgPath`, `cscode.debug.jsDebugPath`,
-  `cscode.debug.nodePath`, `cscode.debug.requestTimeoutSeconds`.
+  `cscode.debug.nodePath`, `cscode.debug.gdbPath`, `cscode.debug.gdbArgs` (extra GDB arguments, e.g. `["-nx"]`), `cscode.debug.requestTimeoutSeconds`.
 
 ## Integration notes
 
 * `services.AddCsCodeDap()` registers a shared `DebugLane`, `BreakpointManager`/`IBreakpointManager`, `ITaskService`, `IDebugConfigurationService`,
   `IDebugService` (and the same instance as `IDebugFrameFocus`, `IDebugOutputHistory`, `IDebugSourceContentProvider`, `IDebugKnownCapabilities`)
-  and the built-in adapters (netcoredbg for `coreclr`; js-debug for `pwa-node` and `node`). Every Core platform service it can use is **optional** (`DapPlatform.From(sp)` uses `GetService`).
+  and the built-in adapters (netcoredbg for `coreclr`; js-debug for `pwa-node` and `node`; GDB for `gdb` and `rust-gdb`, with `GdbAdapterQuirks`). Every Core platform service it can use is **optional** (`DapPlatform.From(sp)` uses `GetService`).
   **Resolve `IDebugService` once at startup**: its constructor registers the commands, `${command:pickProcess}` and the context keys.
 * Additive Core files: `Core/Tasks/ITaskService.cs`; `Core/Debugging/DebugExtras.cs` (`IDebugFrameFocus`, `IDebugOutputHistory`,
   `IDebugSourceContentProvider`, `IDebugSessionHealth`, `IActiveSelectionProvider`, `DebugSourceUri`); `Core/Debugging/DebugKnownCapabilities.cs`
@@ -252,6 +267,10 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 * A flood beyond the 128 K-chars/16 ms window drops the *oldest* text by design; the console shows a dropped-characters marker. The history
   for late subscribers keeps the newest 5,000 lines (the oldest batch is cut, not dropped whole).
 * js-debug: function breakpoints are unsupported by the adapter; async parent frames have no variables; see docs/DEBUGGING-RUST-TS.md.
+* GDB: the program's stderr arrives as stdout (one pipe); hit counts mean "from the Nth hit on" (GDB ignore counts); a `println!` line stops
+  twice per pass; see docs/DEBUGGING-RUST-TS.md (Rust through GDB, known gaps).
+* A stop is shown at the first frame the adapter does not de-emphasise (VS Code's rule), so a pause in a library or a panic inside std shows
+  the user's code; the Call Stack still lists (folded) the frames above it.
 * Single-thread-only resumes fire `Continued` once locally and may fire a second (duplicate) event if the adapter also sends `continued`.
 * Windows named pipes (`DebugAdapterNamedPipe`, js-debug's private endpoint on Windows) and the Windows/macOS netcoredbg builds are implemented
   but only exercised on Linux here.
@@ -304,3 +323,14 @@ exit, timeout, `nice` 10, tree kill on close, detached/orphaned processes on a n
 and `PrivateSocketTests` (a Node.js stand-in on the socket: the 0700 directory, the path handed to the server, no TCP listener, the directory
 gone after close, crash, `KillNow` and a failed start; stale directories removed but not a live CsCode's, links or look-alikes; the
 `sun_path` fallback; `$XDG_RUNTIME_DIR`) need no download. `JsDebugWaveFixTests` and `JsDebugReviewFixTests` hold the regression tests of the fixes.
+
+### Real-adapter tests (GDB, Rust)
+
+`RealGdbRustTests` (trait `Category=RealAdapter`, serial) build a Rust cargo package offline with the real cargo
+(`tests/CsCode.TestDoubles/RustGdbSample.cs`, shared by the Dap, Panels and App tests) and run the Rust evaluation matrix through `DebugService`
+against GDB's native DAP (`-nx`: never the user's gdbinit): launch/exit at nice 10 with the marker, breakpoints (moved, added while stopped,
+conditional, hit counts, logpoints, `println!` lines, functions), Rust panics caught and uncaught, steps and the return value, pause, stop,
+restart, crash, generic and closure frames, Rust values, watch, set variable, the REPL and completions, output categories, threads, attach by
+pid, the `cargo` key's test binary, the templates, `env`, a 1M-line flood and a 10-session soak; each checks that no gdb, debuggee or marked
+process is left. They skip with the reason when gdb (14+ with Python), cargo or rustc is missing. `GdbQuirksTests` (fake adapters shaped like
+GDB 18) and `GdbAdapterFactoryTests` (stand-in scripts for gdb/rustc, the stdio transport's nice/marker/reaping) need no GDB.
