@@ -52,8 +52,8 @@
   </ItemGroup>
 
   <!-- ===================== DAP (module: Dap) ===================== -->
+  <!-- No packages: the DAP client and protocol models are hand-written on System.Text.Json (no Newtonsoft, no VSCodeDebugProtocol). -->
   <ItemGroup>
-    <PackageVersion Include="Microsoft.VisualStudio.Shared.VSCodeDebugProtocol" Version="18.0.10427.1" />
   </ItemGroup>
 
   <!-- ===================== EXTENSIONS (module: Extensions) ===================== -->

@@ -154,15 +154,26 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
     private void EnsureSelection(IReadOnlyList<DebugConfiguration> configs)
     {
         var current = Volatile.Read(ref _selected);
-        if (current is not null && configs.Any(c => c.Name == current.Name && c.WorkspaceFolder == current.WorkspaceFolder)) return;
+        if (current is not null && configs.FirstOrDefault(c => c.Name == current.Name && c.WorkspaceFolder == current.WorkspaceFolder) is { } fresh)
+        {
+            // Same entry, but launch.json may have been edited since it was selected: adopt the new object so a start never uses stale properties.
+            if (SameContent(current, fresh)) return;
+            Interlocked.Exchange(ref _selected, fresh);
+            _selectedChanged.Fire(fresh);
+            return;
+        }
         DebugConfiguration? next = null;
         if (_p.State?.Get<PersistedSelection>(SelectionKey, StorageScope.Workspace) is { } saved)
             next = configs.FirstOrDefault(c => c.Name == saved.Name && (saved.Folder is null || c.WorkspaceFolder?.ToString() == saved.Folder));
         next ??= configs.FirstOrDefault();
-        if (Equals(next, current)) return;
+        if (ReferenceEquals(next, current)) return;
         Interlocked.Exchange(ref _selected, next);
         _selectedChanged.Fire(next);
     }
+
+    private static bool SameContent(DebugConfiguration a, DebugConfiguration b) =>
+        a.Type == b.Type && a.Request == b.Request && a.Properties.Count == b.Properties.Count &&
+        a.Properties.All(kv => b.Properties.TryGetValue(kv.Key, out var other) && other.GetRawText() == kv.Value.GetRawText());
 
     private void PersistSelection(DebugConfiguration? value)
     {

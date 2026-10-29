@@ -2,6 +2,8 @@ using System.Text.Json;
 using CsCode.Core.Contributions;
 using CsCode.Core.Debugging;
 using CsCode.Core.Lifecycle;
+using CsCode.Core.Platform;
+using CsCode.Dap.Adapters;
 using CsCode.Dap.Configuration;
 using CsCode.Dap.Session;
 
@@ -19,8 +21,24 @@ public sealed partial class DebugService
 
     internal ContributedAdapterFactory ContributedFactory => _contributed ??= new ContributedAdapterFactory(_p);
 
+    private void RegisterSettings()
+    {
+        if (_p.Configuration is not { } cfg) return;
+        static JsonElement? Json(object? v) => JsonSerializer.SerializeToElement(v);
+        _contributionTokens.Add(cfg.RegisterProperties(
+        [
+            new ConfigurationProperty(DebuggersSetting, Json(Array.Empty<object>()),
+                "Debug adapters you configured (array of {type, label, program, runtime, args, languages, windows/linux/osx: {program}, initialConfigurations}). Replaces VS Code's debugger extensions."),
+            new ConfigurationProperty(NetCoreDbgAdapterFactory.SettingPath, Json(""),
+                "Path of the netcoredbg executable used for .NET debugging (empty: tools directory, then PATH, then an offer to download it)."),
+            new ConfigurationProperty("cscode.debug.requestTimeoutSeconds", Json(10),
+                "Seconds a debug adapter may take to answer one request before the session reports it unresponsive."),
+        ]));
+    }
+
     private void InitializeContributions()
     {
+        RegisterSettings();
         // Gutter breakpoints are enabled for the languages of the built-in debuggers.
         if (_p.Contributions is { } registry)
         {

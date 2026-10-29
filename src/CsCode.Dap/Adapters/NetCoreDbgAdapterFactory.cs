@@ -113,6 +113,13 @@ public sealed class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDebugConfi
                 configuration = configuration with { Properties = props };
             }
         }
+        // `${command:pickProcess}` substitutes TEXT; netcoredbg's attach wants the pid as a JSON number.
+        if (configuration.IsAttach && configuration.Properties.TryGetValue("processId", out var pid) && pid.ValueKind == JsonValueKind.String
+            && int.TryParse(pid.GetString(), out var number))
+        {
+            var props = new Dictionary<string, JsonElement>(configuration.Properties) { ["processId"] = JsonSerializer.SerializeToElement(number) };
+            configuration = configuration with { Properties = props };
+        }
         return ValueTask.FromResult<DebugConfiguration?>(configuration);
     }
 

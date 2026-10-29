@@ -146,7 +146,17 @@ internal sealed class BreakpointSync : IDisposable
 
         var args = new DapSetBreakpointsArguments { Source = DapMapping.ToWire(uri), Breakpoints = [.. sent.Select(s => s.Wire)], SourceModified = false };
         Interlocked.Increment(ref _requestsSent);
-        var body = await _host.RequestAsync("setBreakpoints", args, ct);
+        JsonElement body;
+        try { body = await _host.RequestAsync("setBreakpoints", args, ct); }
+        catch (DapRequestException ex)
+        {
+            // An adapter rejecting a source (unknown file, unsupported language...) must not abort the debug session: the breakpoints of
+            // that file are shown unverified with the adapter's reason (what VS Code does). Not retried until the file's content changes.
+            _sentSignatures[uri] = signature;
+            ForgetAdapterIds(uri);
+            foreach (var (bp, _) in sent) Report(new DebugBreakpointStatus(_host.Session, bp.Id, false, null, ex.AdapterMessage));
+            return;
+        }
         _sentSignatures[uri] = signature;
 
         ForgetAdapterIds(uri);
@@ -187,7 +197,14 @@ internal sealed class BreakpointSync : IDisposable
             })],
         };
         Interlocked.Increment(ref _requestsSent);
-        var body = await _host.RequestAsync("setFunctionBreakpoints", args, ct);
+        JsonElement body;
+        try { body = await _host.RequestAsync("setFunctionBreakpoints", args, ct); }
+        catch (DapRequestException ex)
+        {
+            _sentFunctions = signature;
+            foreach (var f in fns) Report(new DebugBreakpointStatus(_host.Session, f.Id, false, null, ex.AdapterMessage));
+            return;
+        }
         _sentFunctions = signature;
         var response = DapJson.Deserialize<DapBreakpointsResponse>(body)?.Breakpoints ?? [];
         for (var i = 0; i < fns.Count && i < response.Count; i++)
@@ -208,7 +225,14 @@ internal sealed class BreakpointSync : IDisposable
         var signature = string.Join('|', plain) + "#" + string.Join('|', withCondition.Select(o => o.FilterId + "=" + o.Condition));
         if (_sentFilters == signature) return;
         Interlocked.Increment(ref _requestsSent);
-        await _host.RequestAsync("setExceptionBreakpoints", new DapSetExceptionBreakpointsArguments { Filters = plain, FilterOptions = withCondition.Count > 0 ? withCondition : null }, ct);
+        try
+        {
+            await _host.RequestAsync("setExceptionBreakpoints", new DapSetExceptionBreakpointsArguments { Filters = plain, FilterOptions = withCondition.Count > 0 ? withCondition : null }, ct);
+        }
+        catch (DapRequestException ex)
+        {
+            _logger.LogDebug(ex, "Adapter rejected setExceptionBreakpoints");
+        }
         _sentFilters = signature;
     }
 

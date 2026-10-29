@@ -531,6 +531,32 @@ public class DebugConfigurationServiceTests
     }
 
     [Fact]
+    public async Task An_edited_launch_json_updates_the_selected_configuration_instead_of_leaving_a_stale_copy()
+    {
+        await using var f = new ConfigServiceFixture();
+        f.Dir.WriteFile(".cscode/launch.json", """{"configurations":[{"name":"A","type":"t","request":"launch","program":"old.dll"}]}""");
+        var svc = f.Create();
+        var seen = new List<string?>();
+        svc.SelectedChanged.Subscribe(c => { lock (seen) seen.Add(c?.GetString("program")); });
+        await svc.GetLaunchConfigurationsAsync(null, Ct);
+        Assert.Equal("old.dll", svc.Selected!.GetString("program"));
+
+        f.Dir.WriteFile(".cscode/launch.json", """{"configurations":[{"name":"A","type":"t","request":"launch","program":"new.dll"}]}""");
+        f.Workspace.FakeWatcher.Raise(new FileChange(new Uri(f.Folder, ".cscode/launch.json"), FileChangeKind.Changed));
+        await SessionHarness.Eventually(() => { lock (seen) return true; });
+        await Task.Delay(100, Ct);
+        await svc.GetLaunchConfigurationsAsync(null, Ct);
+        Assert.Equal("new.dll", svc.Selected!.GetString("program"));
+        lock (seen) Assert.Equal(["old.dll", "new.dll"], seen);
+
+        // an unchanged re-read does not announce a change
+        f.Workspace.FakeWatcher.Raise(new FileChange(new Uri(f.Folder, ".cscode/launch.json"), FileChangeKind.Changed));
+        await Task.Delay(150, Ct);
+        await svc.GetLaunchConfigurationsAsync(null, Ct);
+        lock (seen) Assert.Equal(2, seen.Count);
+    }
+
+    [Fact]
     public async Task Resolving_variables_substitutes_everything_recursively_and_keeps_the_rest()
     {
         await using var f = new ConfigServiceFixture();
