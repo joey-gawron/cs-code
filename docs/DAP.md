@@ -104,8 +104,12 @@ incl. `stepBack`/`reverseContinue`, `GetVariablesAsync(ref, filter, start, count
 
 `BreakpointManager` is the source of truth (copy-on-write snapshots, thread-safe, debounced persistence under `debug.breakpoints` in
 `StorageScope.Workspace`, flushed on dispose, reloaded when the workspace folder changes). `Toggle`/`Add` keep one breakpoint per line;
-`ApplyLineShift(uri, fromLine, delta)`: **`fromLine` is the first line after the edit position**; inserting lines moves breakpoints at/after it
-down; deleting `|delta|` lines removes breakpoints on the vanished lines and moves the rest up. Adapter verdicts (`ReportStatus`) are kept
+`ApplyLineShift(uri, fromLine, delta)` follows the editor's contract (docs/EDITOR.md): **every breakpoint at a line `>= fromLine` moves by `delta`**,
+where `fromLine` is the first line (before the edit) whose text moves — the line after the edit position for an insertion (the edit's own line for
+whole lines inserted at column 0), the first surviving line after the deleted range for a deletion. For `delta < 0` the `|delta|` lines just above it,
+`[fromLine + delta, fromLine)`, vanished: their breakpoints are removed (the editor removes them itself first; the manager does it too, so a moved
+breakpoint never lands on top of another). `BreakpointEditCompositionTests` (tests/CsCode.App.Tests) drives real edits in a real editor view into the
+real manager. Adapter verdicts (`ReportStatus`) are kept
 **per breakpoint per session**, so one session ending never erases another live session's verdict.
 
 Each live session mirrors the manager (`BreakpointSync`): per-file replace-all `setBreakpoints` (an empty list clears a file), debounced 50 ms,
