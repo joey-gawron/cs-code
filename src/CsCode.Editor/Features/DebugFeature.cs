@@ -371,26 +371,33 @@ internal static class BreakpointShift
         var delta = 0;
         if (removed > 0)
         {
-            // lines (start.Line, end.Line] merged into start.Line
-            vanishedFrom = start.Line + 1;
-            vanishedTo = end.Line;
-            fromLine = end.Line + 1;
+            // A deletion joins the tail of its end line onto its start line. When something of the start line survives (start column > 0, or the
+            // replacement text begins with code) it keeps its breakpoint and the end line's go; when nothing does, the surviving code is the end
+            // line's, so ITS breakpoint moves up and the start line's goes.
+            var keepsStart = start.Character > 0 || (change.Text.Length > 0 && change.Text[0] is not ('\n' or '\r'));
+            if (keepsStart)
+            {
+                vanishedFrom = start.Line + 1;
+                vanishedTo = end.Line;
+                fromLine = end.Line + 1;
+            }
+            else
+            {
+                vanishedFrom = start.Line;
+                vanishedTo = end.Line - 1;
+                fromLine = end.Line;
+            }
             delta = -removed;
         }
         if (inserted > 0)
         {
-            // the tail of start.Line moves down by `inserted` lines; when the insertion is whole lines at column 0 the line itself moves too
-            var wholeLines = start.Character == 0 && change.Text.Length > 0 && change.Text[^1] is '\n' or '\r';
             if (removed == 0)
             {
+                // the tail of start.Line moves down by `inserted` lines; when the insertion is whole lines at column 0 the line itself moves too
+                var wholeLines = start.Character == 0 && change.Text.Length > 0 && change.Text[^1] is '\n' or '\r';
                 fromLine = wholeLines ? start.Line : start.Line + 1;
-                delta = inserted;
             }
-            else
-            {
-                // replacement: vanished lines are handled above; the net shift applies after the merged line
-                delta += inserted;
-            }
+            delta += inserted;
         }
         return (vanishedFrom, vanishedTo, fromLine, delta);
     }

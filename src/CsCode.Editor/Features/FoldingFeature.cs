@@ -167,6 +167,9 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
         Schedule(immediate: true);
     }
 
+    /// <summary>Foldable regions currently installed (tests, diagnostics).</summary>
+    internal int RangeCount => _manager.AllFoldings.Count();
+
     public IReadOnlyList<int> FoldedStartLines =>
         _manager.AllFoldings.Where(f => f.IsFolded).Select(f => _v.Document.PositionAt(f.StartOffset).Line).Distinct().OrderBy(l => l).ToList();
 

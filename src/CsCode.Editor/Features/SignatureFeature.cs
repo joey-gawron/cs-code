@@ -46,6 +46,7 @@ internal sealed class SignatureFeature : ISignatureFeature, IThemeAware, IDispos
     }
 
     public bool IsOpen => _popup.IsOpen;
+    internal Control PopupRoot => _popup.Root;
     internal SignatureHelp? Current => _help;
     internal int ActiveSignature => _active;
 
@@ -140,8 +141,7 @@ internal sealed class SignatureFeature : ISignatureFeature, IThemeAware, IDispos
         }
         if (result is null)
         {
-            if (kind != SignatureHelpTriggerKind.TriggerCharacter || !retrigger) Close();
-            else Close();
+            Close();
             return;
         }
         _help = result;

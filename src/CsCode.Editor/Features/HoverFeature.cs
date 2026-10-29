@@ -56,6 +56,15 @@ internal sealed class HoverFeature : IThemeAware, IDisposable
     }
 
     public bool IsOpen => _popup.IsOpen;
+    internal Control PopupRoot => _popup.Root;
+
+    /// <summary>Shows the hover for the position at <paramref name="offset"/> right away (what the dwell timer does after the delay) — for tests and commands.</summary>
+    internal Task HoverAtAsync(int offset)
+    {
+        var word = WordAt(offset);
+        _word = word;
+        return ShowAsync(offset, word);
+    }
 
     public void OnThemeChanged() => _popup.ApplyTheme();
 
