@@ -215,8 +215,9 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
   characters after a path separator (`/` or `\`), the first character, and exact case; gaps are penalised (3 to open, 1 per extra char). `Score` is the allocation-free ranking path (vectorised prefilter, DP over match positions only);
   `Match`/`MatchPath` also return the matched indices; `ScorePath` adds a file-name bonus; `Rank` keeps the best N with a heap (ties: shorter text first). The DP is fuzz-tested against a brute-force oracle
   (never exceeds it; equals it in ≥ 97% of random cases — it keeps one best path per cell like fzf) and `Score` always equals `Match`'s score.
-  **Benchmark** (Release, 100,000 generated paths, top 50, shared and loaded machine): 12 ms for `mainwin`, 13 ms `ctxsvc`, 12 ms `txtdoc`, 33 ms for the worst case `cs` (matches nearly every path) — budget 50 ms, asserted in Release builds
-  (Debug builds assert a relaxed 250 ms regression guard).
+  **Benchmark** (Release, 100,000 generated paths, top 50, best of 8 runs, on a machine shared with other builds): typically 10–13 ms for `mainwin`/`ctxsvc`/`txtdoc` and 24–36 ms for the worst case `cs` (it matches nearly every path);
+  under heavy machine load the same runs measured up to ~46 ms, i.e. still inside the 50 ms budget but with little headroom — **a Release perf assertion can flake on a saturated machine** (it is the only timing test in a non-parallel
+  collection for that reason). Debug builds assert a relaxed 250 ms regression guard instead.
 
 ## State and logging
 
