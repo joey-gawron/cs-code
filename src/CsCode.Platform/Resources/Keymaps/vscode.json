@@ -1,0 +1,86 @@
+// CsCode keymap preset: "VS Code" (the VS Code default keybindings for the features CsCode implements).
+// Format and conventions: see visualstudio.json.
+[
+  // ---- debugging ----
+  { "key": "f5",                 "command": "workbench.action.debug.start",       "when": "!inDebugMode" },
+  { "key": "f5",                 "command": "workbench.action.debug.continue",    "when": "inDebugMode" },
+  { "key": "ctrl+f5",            "command": "workbench.action.debug.run",         "when": "!inDebugMode" },
+  { "key": "shift+f5",           "command": "workbench.action.debug.stop",        "when": "inDebugMode" },
+  { "key": "ctrl+shift+f5",      "command": "workbench.action.debug.restart",     "when": "inDebugMode" },
+  { "key": "f6",                 "command": "workbench.action.debug.pause",       "when": "inDebugMode && debugState == 'running'" },
+  { "key": "f9",                 "command": "editor.debug.action.toggleBreakpoint", "when": "editorTextFocus" },
+  { "key": "f10",                "command": "workbench.action.debug.stepOver",    "when": "inDebugMode" },
+  { "key": "f11",                "command": "workbench.action.debug.stepInto",    "when": "inDebugMode" },
+  { "key": "shift+f11",          "command": "workbench.action.debug.stepOut",     "when": "inDebugMode" },
+
+  // ---- navigation ----
+  { "key": "f12",                "command": "editor.action.revealDefinition",     "when": "editorTextFocus" },
+  { "key": "ctrl+f12",           "command": "editor.action.goToImplementation",   "when": "editorTextFocus" },
+  { "key": "alt+f12",            "command": "editor.action.peekDefinition",       "when": "editorTextFocus" },
+  { "key": "shift+f12",          "command": "editor.action.goToReferences",       "when": "editorTextFocus" },
+  { "key": "ctrl+g",             "command": "workbench.action.gotoLine",          "mac": "ctrl+g" },
+  { "key": "ctrl+t",             "command": "workbench.action.showAllSymbols",    "mac": "cmd+t" },
+  { "key": "ctrl+shift+o",       "command": "workbench.action.gotoSymbol",        "mac": "cmd+shift+o" },
+  { "key": "alt+left",           "command": "workbench.action.navigateBack",      "win": "alt+left", "linux": "ctrl+alt+-", "mac": "ctrl+-" },
+  { "key": "alt+right",          "command": "workbench.action.navigateForward",   "win": "alt+right", "linux": "ctrl+shift+-", "mac": "ctrl+shift+-" },
+  { "key": "ctrl+shift+\\",      "command": "editor.action.jumpToBracket",        "when": "editorTextFocus", "mac": "cmd+shift+\\" },
+  { "key": "f8",                 "command": "editor.action.marker.nextInFiles",   "when": "editorFocus" },
+  { "key": "shift+f8",           "command": "editor.action.marker.prevInFiles",   "when": "editorFocus" },
+
+  // ---- editing ----
+  { "key": "f2",                 "command": "editor.action.rename",               "when": "editorTextFocus && !editorReadonly" },
+  { "key": "shift+alt+f",        "command": "editor.action.formatDocument",       "when": "editorTextFocus && !editorReadonly", "mac": "shift+alt+f", "linux": "ctrl+shift+i" },
+  { "key": "ctrl+k ctrl+f",      "command": "editor.action.formatSelection",      "when": "editorTextFocus && !editorReadonly", "mac": "cmd+k cmd+f" },
+  { "key": "ctrl+k ctrl+c",      "command": "editor.action.addCommentLine",       "when": "editorTextFocus && !editorReadonly", "mac": "cmd+k cmd+c" },
+  { "key": "ctrl+k ctrl+u",      "command": "editor.action.removeCommentLine",    "when": "editorTextFocus && !editorReadonly", "mac": "cmd+k cmd+u" },
+  { "key": "ctrl+/",             "command": "editor.action.commentLine",          "when": "editorTextFocus && !editorReadonly", "mac": "cmd+/" },
+  { "key": "shift+alt+a",        "command": "editor.action.blockComment",         "when": "editorTextFocus && !editorReadonly" },
+  { "key": "ctrl+.",             "command": "editor.action.quickFix",             "when": "editorTextFocus && !editorReadonly", "mac": "cmd+." },
+  { "key": "ctrl+space",         "command": "editor.action.triggerSuggest",       "when": "editorTextFocus && !editorReadonly" },
+  { "key": "ctrl+shift+space",   "command": "editor.action.triggerParameterHints", "when": "editorTextFocus", "mac": "cmd+shift+space" },
+  { "key": "alt+up",             "command": "editor.action.moveLinesUpAction",    "when": "editorTextFocus && !editorReadonly" },
+  { "key": "alt+down",           "command": "editor.action.moveLinesDownAction",  "when": "editorTextFocus && !editorReadonly" },
+  { "key": "shift+alt+down",     "command": "editor.action.copyLinesDownAction",  "when": "editorTextFocus && !editorReadonly" },
+  { "key": "shift+alt+up",       "command": "editor.action.copyLinesUpAction",    "when": "editorTextFocus && !editorReadonly" },
+  { "key": "ctrl+shift+k",       "command": "editor.action.deleteLines",          "when": "editorTextFocus && !editorReadonly", "mac": "cmd+shift+k" },
+  { "key": "ctrl+]",             "command": "editor.action.indentLines",          "when": "editorTextFocus && !editorReadonly", "mac": "cmd+]" },
+  { "key": "ctrl+[",             "command": "editor.action.outdentLines",         "when": "editorTextFocus && !editorReadonly", "mac": "cmd+[" },
+  { "key": "ctrl+shift+[",       "command": "editor.fold",                        "when": "editorTextFocus", "mac": "cmd+alt+[" },
+  { "key": "ctrl+shift+]",       "command": "editor.unfold",                      "when": "editorTextFocus", "mac": "cmd+alt+]" },
+  { "key": "ctrl+k ctrl+0",      "command": "editor.foldAll",                     "when": "editorTextFocus" },
+  { "key": "ctrl+k ctrl+j",      "command": "editor.unfoldAll",                   "when": "editorTextFocus" },
+
+  // ---- find ----
+  { "key": "ctrl+f",             "command": "actions.find",                       "mac": "cmd+f" },
+  { "key": "ctrl+h",             "command": "editor.action.startFindReplace",     "mac": "cmd+alt+f" },
+  { "key": "f3",                 "command": "editor.action.nextMatchFindAction",     "when": "editorFocus", "mac": "cmd+g" },
+  { "key": "shift+f3",           "command": "editor.action.previousMatchFindAction", "when": "editorFocus", "mac": "cmd+shift+g" },
+  { "key": "ctrl+shift+f",       "command": "workbench.action.findInFiles",       "mac": "cmd+shift+f" },
+  { "key": "ctrl+shift+h",       "command": "workbench.action.replaceInFiles",    "mac": "cmd+shift+h" },
+
+  // ---- command surfaces ----
+  { "key": "ctrl+shift+p",       "command": "workbench.action.showCommands",      "mac": "cmd+shift+p" },
+  { "key": "f1",                 "command": "workbench.action.showCommands" },
+  { "key": "ctrl+p",             "command": "workbench.action.quickOpen",         "mac": "cmd+p" },
+  { "key": "ctrl+,",             "command": "workbench.action.openSettings",      "mac": "cmd+," },
+  { "key": "ctrl+k ctrl+t",      "command": "workbench.action.selectTheme",       "mac": "cmd+k cmd+t" },
+
+  // ---- files & editors ----
+  { "key": "ctrl+n",             "command": "workbench.action.files.newUntitledFile", "mac": "cmd+n" },
+  { "key": "ctrl+o",             "command": "workbench.action.files.openFile",    "mac": "cmd+o" },
+  { "key": "ctrl+k ctrl+o",      "command": "workbench.action.files.openFolder",  "mac": "cmd+k cmd+o" },
+  { "key": "ctrl+s",             "command": "workbench.action.files.save",        "mac": "cmd+s" },
+  { "key": "ctrl+k s",           "command": "workbench.action.files.saveAll",     "mac": "cmd+alt+s" },
+  { "key": "ctrl+w",             "command": "workbench.action.closeActiveEditor", "mac": "cmd+w" },
+  { "key": "ctrl+f4",            "command": "workbench.action.closeActiveEditor", "mac": "cmd+w" },
+  { "key": "ctrl+tab",           "command": "workbench.action.quickOpenPreviousRecentlyUsedEditorInGroup" },
+  { "key": "ctrl+shift+tab",     "command": "workbench.action.quickOpenLeastRecentlyUsedEditorInGroup" },
+  { "key": "ctrl+pagedown",      "command": "workbench.action.nextEditor",        "mac": "cmd+alt+right" },
+  { "key": "ctrl+pageup",        "command": "workbench.action.previousEditor",    "mac": "cmd+alt+left" },
+
+  // ---- views ----
+  { "key": "ctrl+shift+e",       "command": "workbench.view.explorer",            "mac": "cmd+shift+e" },
+  { "key": "ctrl+shift+u",       "command": "workbench.action.output.toggleOutput", "mac": "cmd+shift+u" },
+  { "key": "ctrl+shift+m",       "command": "workbench.actions.view.problems",    "mac": "cmd+shift+m" },
+  { "key": "ctrl+`",             "command": "workbench.action.terminal.toggleTerminal", "mac": "ctrl+`" }
+]
