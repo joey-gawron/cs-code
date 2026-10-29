@@ -107,6 +107,9 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
 
     internal EditorVimBuffer? BufferOf(EditorDocument document) => _buffers.GetValueOrDefault(document);
 
+    /// <summary>Keys waiting for a clipboard read (tests).</summary>
+    internal int HeldKeyCount => _held.Count;
+
     /// <summary>Wires the adapter (UI thread, once): the window's key interceptor calls arrive after this. <paramref name="chordPending"/> tells
     /// whether the shell is in the middle of a key chord (its second key must not go to Vim).</summary>
     public void Start(Func<bool> chordPending)
@@ -429,6 +432,12 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
 
     internal void OnModeChanged(VimView v, VimMode mode, in VimModeInfo info)
     {
+        if (v.Mode is VimMode.Insert or VimMode.Replace && mode is not (VimMode.Insert or VimMode.Replace or VimMode.InsertNormal))
+        {
+            // leaving Insert mode: IntelliSense belongs to typing (a list that opened late must not linger over Normal mode)
+            v.Surface.CloseCompletion();
+            v.Surface.CloseInfoPopups();
+        }
         v.Mode = mode;
         v.ModeInfo = info;
         if (ReferenceEquals(v, _current)) UpdateStatus();
