@@ -270,6 +270,7 @@ public class DocumentSyncTests
         env.AddFake();
         await env.Manager.StartAsync("fake", TestContext.Current.CancellationToken);
         var server = await env.Connections.WaitForServerAsync();
+        await server.WaitForAsync(LspMethods.TextDocumentDidOpen); // an edit that races didOpen is (correctly) folded into the opened text
         doc.ApplyEdits([TextEdit.Insert(new TextPosition(0, 1), "2")]);
         await TestHelpers.EventuallyAsync(() => server.CountOf(LspMethods.TextDocumentDidChange) >= 1, "change");
         reg.Dispose();

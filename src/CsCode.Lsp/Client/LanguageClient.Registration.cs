@@ -43,7 +43,10 @@ internal sealed partial class LanguageClient
                 return;
             case P.LspMethods.TextDocumentDidChange:
                 if (r.RegisterOptions is { } co && P.LspJson.Deserialize<P.TextDocumentChangeRegistrationOptions>(co) is { } change)
+                {
                     lock (_dynamicChange) _dynamicChange.Add((r.Id, selector, change.SyncKind));
+                    foreach (var sd in _docs.Values) _ctx.Queue.Post(LanePriority.Interactive, () => FlushOnLane(sd), exempt: true); // resync stale documents now
+                }
                 return;
             case P.LspMethods.TextDocumentDidSave:
                 lock (_dynamicSave) _dynamicSave.Add((r.Id, selector, r.RegisterOptions is { } so && P.LspJson.Deserialize<P.TextDocumentSaveRegistrationOptions>(so)?.IncludeText == true));

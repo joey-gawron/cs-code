@@ -156,7 +156,8 @@ public class ClientLifecycleTests
         env.Window.MessageActionResponses.Enqueue("Restart");
         env.AddFake();
         env.Open("a.fake", "x");
-        await env.WaitForStateAsync("fake", LanguageServerState.Running);
+        // A session that crashes right after `initialized` is transiently "Running": wait for the third (healthy) session itself.
+        await env.WaitForAsync(() => env.Connections.ConnectCount == 3 ? env.Manager.Servers.FirstOrDefault(s => s.State == LanguageServerState.Running) : null, "third session Running");
         Assert.Equal(3, env.Connections.ConnectCount);
         Assert.Single(env.Window.Messages, m => m.Severity == MessageSeverity.Error && m.Message.Contains("keeps crashing"));
     }

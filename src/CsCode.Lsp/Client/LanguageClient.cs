@@ -547,7 +547,6 @@ internal sealed class ServerLog(IOutputChannel? channel, LanguageWorkQueue queue
 
     private void Drain()
     {
-        Volatile.Write(ref _scheduled, 0);
         try
         {
             var batch = _lines.Drain(256);
@@ -560,6 +559,7 @@ internal sealed class ServerLog(IOutputChannel? channel, LanguageWorkQueue queue
             }
         }
         catch (Exception) { /* a faulty channel must not take the lane down */ }
+        finally { Volatile.Write(ref _scheduled, 0); } // single consumer: lines keep their order
         if (_lines.HasItems) Schedule();
     }
 }

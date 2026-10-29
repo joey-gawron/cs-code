@@ -24,6 +24,17 @@ public static class TestHelpers
     public static ValueTask<T?> Run<T>(this LanguageWorkQueue q, LanePriority priority, WorkKey key, Func<WorkContext, ValueTask<T?>> work) =>
         q.RunAsync(priority, key, work, TestContext.Current.CancellationToken);
 
+    /// <summary>Same, with a failure description computed at failure time (so it can include the state that never converged).</summary>
+    public static async Task EventuallyAsync(Func<bool> condition, Func<string> describe, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? DefaultTimeout);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) Assert.Fail("Timed out waiting for: " + describe());
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+    }
+
     /// <summary>Polls until <paramref name="condition"/> holds (tests of asynchronous effects), failing with <paramref name="what"/> on timeout.</summary>
     public static async Task EventuallyAsync(Func<bool> condition, string what, TimeSpan? timeout = null)
     {
