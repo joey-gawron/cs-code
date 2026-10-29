@@ -50,6 +50,9 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable
     }
 
     public IEventSource<BreakpointsChangedEventArgs> Changed => _changed;
+
+    /// <summary>Live subscribers of <see cref="Changed"/> (leak tests assert it returns to baseline after sessions end).</summary>
+    internal int ChangedSubscriberCount => _changed.SubscriberCount;
     public IReadOnlyList<SourceBreakpoint> SourceBreakpoints => Volatile.Read(ref _source);
     public IReadOnlyList<FunctionBreakpoint> FunctionBreakpoints => Volatile.Read(ref _functions);
     public IReadOnlyList<ExceptionFilterSetting> ExceptionFilters => Volatile.Read(ref _filters);

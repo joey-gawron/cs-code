@@ -50,6 +50,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private int _focusedThread = -1;
     private int _unresponsive;
     private int _disposeState;
+    private readonly TaskCompletionSource _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private DebugAdapterClient? _client;
     private DisposableStore? _clientSubs;
     private BreakpointSync? _sync;
@@ -96,6 +97,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
 
     // ---- richer than the Core interface
     public bool IsAttach => _o.Configuration.IsAttach;
+    /// <summary>Completes when <see cref="DisposeAsync"/> has finished releasing the adapter connection, debuggee processes and handlers.</summary>
+    public Task Disposed => _disposed.Task;
     public bool IsUnresponsive => Volatile.Read(ref _unresponsive) != 0;
     public IEventSource<bool> UnresponsiveChanged => _unresponsiveChanged;
     public IEventSource<DebugProgressEventArgs> Progress => _progress;
@@ -539,5 +542,6 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         _o.Breakpoints.ClearStatuses(Id);
         _stopped.Clear(); _continued.Clear(); _outputEvent.Clear(); _threadChanged.Clear(); _stateChanged.Clear(); _terminated.Clear();
         _breakpointStatus.Clear(); _invalidated.Clear(); _unresponsiveChanged.Clear(); _progress.Clear(); _exceptionInfo.Clear();
+        _disposed.TrySetResult();
     }
 }

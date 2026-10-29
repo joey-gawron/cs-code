@@ -84,6 +84,9 @@ public sealed class TcpFakeAdapterHost : IAsyncDisposable
             try { socket.Shutdown(SocketShutdown.Send); } catch (Exception ex) when (ex is SocketException or ObjectDisposedException) { }
         });
         await Task.WhenAll(inbound, outbound);
+        // Both directions are done: release the server-side socket now (a real adapter process exiting does exactly this).
+        lock (_adapters) _sockets.Remove(socket);
+        try { net.Dispose(); socket.Dispose(); } catch (ObjectDisposedException) { }
     }
 
     public async ValueTask DisposeAsync()
