@@ -82,11 +82,19 @@ IDebugService / IDebugSession events (any thread)
   voids an insert nobody wants any more.
 * **Handle lifetime**: on `Continued`/step/session end the generation is bumped, in-flight loads are cancelled, **every node is dropped**
   (nothing holds a stale `variablesReference`), but expansion *paths* and the shown values are remembered. After the next stop the tree is
-  re-expanded lazily (one request at a time) and values that differ from the previous stop are red. Baselines are kept **per frame shape**
-  (the frame's first root names; pseudo-variables with whitespace in their name, such as js-debug's `Return value` after a step, do not count),
-  so stepping into another function does not paint its locals red and picking another frame in the Call Stack
-  does not turn the current stop's values into the baseline. Autos keys its baseline by the frame's **full** variable list (and remembers all
-  of its values), not by the line-filtered subset it shows, so a step is always compared with the previous stop.
+  re-expanded lazily (one request at a time) and values that differ from the previous stop are red. Baselines are kept **per frame**,
+  recognised by its **function**: session, thread, frame name and source, read with one `stackTrace` request per stop location that Locals and
+  Autos share (`Infrastructure/FrameIdentityLookup`; a value-equal location — a loop — asks nothing). So a step within one function is
+  compared with the previous stop whatever variables appeared or disappeared (Node.js 24 hides a `const` until it is initialised, js-debug adds
+  `Return value` after a step, a `Block` scope comes and goes), a step into another function is not compared (even with a frame id the
+  adapter reuses for depth, or shared variable names), and picking another frame in the Call Stack does not turn the current stop's values
+  into the baseline. A variable that **appeared** since the previous stop of the same frame is red too (Visual Studio shows new locals red):
+  one missing from a list that was shown completely then (not paged, capped or collapsed), or inside a scope/variable that appeared itself;
+  frame-level pseudo-variables (names with whitespace, `Return value`) are not marked for appearing. A scope's variables have the same paths
+  whether the scope is a group (several scopes) or the roots (one scope), so a block scope coming or going changes nothing for the others.
+  When the frame's identity is unknown (the stack cannot be read, or the frame is deeper than 100) the frame's first root names key the
+  baseline, as before (a changed name list then means no comparison). Autos keys its baseline by the frame's **full** variable list (and
+  remembers all of its values), not by the line-filtered subset it shows, so a step is always compared with the previous stop.
 * **Editing**: `setVariable` (only when the adapter advertises it and the parent handle is live); a failure stays in the inline editor with the
   adapter's message. Display: strings quoted (unless the adapter already quoted them, `"…"` or js-debug's `'…'`), ≤ 200 chars + `…` (full text in tooltip and Copy Value), newlines shown as `⏎`, integers
   hex/decimal client-side (per tree and per row). Copy Value / Copy Expression (`evaluateName`) / Add Watch.
@@ -185,6 +193,7 @@ real Skia headless platform.
 |---|---|
 | `VariablesTests`, `WatchTests`, `CallStackTests`, `BreakpointsTests`, `ConsoleTests`, `ExceptionAndModulesTests` | view-model behaviour against fake `IDebugService`/`IDebugSession` (lazy expansion, paging, chunked inserts racing collapse/re-expansion, change highlighting incl. Autos, handle invalidation, edits, watch persistence and folder switches, frame focus incl. a declined focus, breakpoint states, console bounding/history/completions, REPL state across console views and across a session end, exception helper, modules) |
 | `InvalidationTests` | adapter `invalidated`: Locals/Watch reload in a live frame, renumbered frames, one shared stack request, no ended session kept by a tracker that outlives it |
+| `ChangeHighlightTests` | change highlighting by the frame's function (js-debug on Node.js 24 shapes): names added and removed between stops of one frame, a new local marked, a block scope coming and going, one shared identity request per stop, the name fallback without an identity |
 | `RuntimeTests` | `debug.addToWatch` with the Watch tab hidden / on screen / brought forward, and the Ctrl+Alt+W contribution |
 | `InteractionTests` | real views in a headless window: keyboard model, inline editors, drag-reorder, context routing |
 | `ScreenshotTests` | renders every window in the VS Dark/Light/Blue themes → `.scratch/screenshots/debug-*.png` (git-ignored) |

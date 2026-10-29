@@ -98,7 +98,10 @@ public abstract class FrameVariablesViewModel : ObservableObject, IDisposable
         _loadedSession = session;
         _loadedEpoch = focus.Epoch;
         _loadedFrame = focus.FrameId;
-        var token = Tree.BeginLoad(session, focus.Epoch);
+        // Asked alongside the scopes (one request per stop, shared by the panels): change highlighting compares this frame with what the same
+        // function showed at the previous stop, which the variable names alone cannot tell.
+        var identity = Services.FrameIdentities.GetAsync(session, focus.ThreadId!.Value, focus.FrameId!.Value, Services.Debug.StopLocation);
+        var token = Tree.BeginLoad(session, focus.Epoch, identity);
         Tree.SetStatus("Loading…");
         try
         {

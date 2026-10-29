@@ -41,6 +41,9 @@ public sealed class DebugPanelServices(
     /// <summary>Re-reads the stack after an adapter <c>invalidated</c> event, once for all panels (see <see cref="Infrastructure.DebugFocusTracker"/>).</summary>
     public Infrastructure.FrameRevalidator FrameRevalidation { get; } = new(frameFocus ?? debug as IDebugFrameFocus);
 
+    /// <summary>Which function the focused frame is in (change highlighting keys a frame's values by it), one request per stop for all panels.</summary>
+    public Infrastructure.FrameIdentityLookup FrameIdentities { get; } = new();
+
     /// <summary>The watch list shared by every Watch window (persisted per workspace, reloaded when another folder is opened).</summary>
     public Variables.WatchStore Watches { get; } = new(debug, state, workspace);
 
