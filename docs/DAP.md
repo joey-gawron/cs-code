@@ -4,12 +4,12 @@
 Samsung **netcoredbg** (MIT). No Avalonia, no Newtonsoft, no extension host: the protocol layer is hand-written on `System.Text.Json`,
 and customisation is native and file based (`launch.json`, `tasks.json`, the `cscode.debuggers` setting).
 
-> **Status in one paragraph.** Everything in the brief's MUST list is implemented and covered by **440 passing tests against scripted
+> **Status in one paragraph.** Everything in the brief's MUST list is implemented and covered by **455 passing tests against scripted
 > in-process fake adapters, real child processes (`/bin/sh`, `python3`) and real TCP/unix sockets**, plus the SHOULD items listed below.
-> The **real netcoredbg end-to-end tests are written, build, and are included in the suite as `Category=RealAdapter`, but were NOT executed in
-> the session that produced this module**: the netcoredbg release was downloaded and its SHA-256 verified, but this environment's permission
-> system refused to *execute* the downloaded binary, and no workaround was attempted. Run them yourself with
-> `tools/fetch-netcoredbg.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter` and treat netcoredbg behaviour as unverified until then.
+> The **real netcoredbg end-to-end suite (`Category=RealAdapter`, 8 tests including the 10-session soak) passes against netcoredbg
+> 3.2.0-1092** on Linux x64 (integration run; no adapter or debuggee process is left behind). It was not executed by the module's original
+> author (the permission system refused to run the downloaded binary then). Run it with
+> `tools/fetch-netcoredbg.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter`.
 > See [Real-adapter tests](#real-adapter-tests-netcoredbg).
 
 ## Layout
@@ -193,9 +193,9 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 
 ## Limits and known gaps
 
-* **netcoredbg has not been executed by this module's author** (see the status paragraph): its handshake order, logpoint support and exact
-  `stopped`/`exited` sequencing are handled generically (both `initialized` orders, capability-gated logpoints, `exited`+`terminated`), and the
-  real-adapter tests are written to be run by you, but nothing here proves they pass against 3.2.0-1092.
+* **netcoredbg 3.2.0-1092 has no hit-count breakpoints and no logpoints**: it advertises neither, and a `hitCondition` sent anyway is ignored
+  (it stops on the first hit — checked with a direct DAP probe). Such breakpoints are therefore not sent; they show unverified with
+  "This debug adapter does not support …" and never stop the program. Conditional breakpoints work.
 * `serverReadyAction` (open a URL when an output pattern appears) is not implemented; the connect-retry loop of `TcpTransport` covers "wait for the port".
 * `${selectedText}` needs the shell's `IActiveSelectionProvider`; `INavigationService` exposes only the caret.
 * `runInTerminal` has no terminal UI: debuggee stdin is closed (EOF) and output is plain text in the Debug Console. A `console: "externalTerminal"` window is not opened.
@@ -208,7 +208,7 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 ## Tests (`tests/CsCode.Dap.Tests`, xUnit v3)
 
 ```
-dotnet test tests/CsCode.Dap.Tests --filter "Category!=RealAdapter"     # 440 tests: fakes, real processes/sockets, threading, leaks
+dotnet test tests/CsCode.Dap.Tests --filter "Category!=RealAdapter"     # 455 tests: fakes, real processes/sockets, threading, leaks
 dotnet test tests/CsCode.Dap.Tests --filter Category=RealTools          # SDK build of the sample project only (never starts netcoredbg)
 tools/fetch-netcoredbg.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter   # the real netcoredbg end-to-end suite
 ```
@@ -227,7 +227,12 @@ tools/fetch-netcoredbg.sh && dotnet test tests/CsCode.Dap.Tests --filter Categor
 
 `RealNetCoreDbgTests` (trait `Category=RealAdapter`) writes a tiny C# console project to a temp dir, builds it with `dotnet build`, then drives
 `IDebugService` end-to-end: breakpoint → `Stopped(breakpoint)` at the right file/line → top frame `Main` → locals `x == 51`, `s` → `EvaluateAsync("x + 1")`
-→ step into/over/out → continue to exit with the program's exit code 7 → no `netcoredbg`/debuggee PIDs left; conditional and hit-count breakpoints;
-logpoint output (skips if the adapter does not advertise logpoints); exception filter + `exceptionInfo`; and 10 start/stop cycles with PID, thread and
-`LeakAssert` checks. They skip with an explicit reason when `.scratch/tools/netcoredbg/` (or `CSCODE_NETCOREDBG`) or `dotnet` is missing.
+→ step into (lands on the callee's opening brace: a Debug build has a sequence point there, as in Visual Studio) → focus the caller's frame
+(`SetFocusedFrameAsync`: stop location on the call line, evaluation in that frame) → over, over → out (lands back on the calling statement) →
+continue to exit with the program's exit code 7 → no `netcoredbg`/debuggee PIDs left; conditional breakpoints; hit-count breakpoints and logpoints
+(stop on the requested hit / print without stopping when advertised, otherwise reported unverified and never stopping — the netcoredbg case);
+exception filter + `exceptionInfo`; and 10 start/stop cycles with PID, thread and `LeakAssert` checks. They skip with an explicit reason when
+`.scratch/tools/netcoredbg/` (or `CSCODE_NETCOREDBG`) or `dotnet` is missing. Observed netcoredbg sequencing, all handled: a `capabilities` event
+before the `initialize` response, `initialized` before the `launch` response, frame ids starting at 0, `continued` before the response to a step,
+`exited` then `terminated`.
 `RealAdapterSampleTests` (trait `RealTools`) verifies the sample builds and its line markers resolve, without starting netcoredbg.
