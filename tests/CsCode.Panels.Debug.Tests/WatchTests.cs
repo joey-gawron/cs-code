@@ -196,6 +196,40 @@ public class WatchTests
     }
 
     [AvaloniaFact]
+    public async Task Two_expanded_watches_re_expanded_concurrently_keep_their_children_under_the_right_parent()
+    {
+        // Regression (debug-ct-1): every watch is re-evaluated and re-expanded concurrently after a stop. Each full page is inserted in a
+        // Background chunk whose position used to be computed before the yield, so b's children landed inside a's list.
+        var ui = new GatedUiDispatcher();
+        using var rig = new PanelRig(ui: ui);
+        rig.Session.Evaluator = (e, _, _) => new DebugEvaluateResult("int[1000]", "int[]", e == "a" ? 5000 : 6000, null, 1000);
+        rig.Session.Variables[5000] = Enumerable.Range(0, 1000).Select(i => new DebugVariable($"[{i}]", "1" + i, "int")).ToList();
+        rig.Session.Variables[6000] = Enumerable.Range(0, 1000).Select(i => new DebugVariable($"[{i}]", "2" + i, "int")).ToList();
+        rig.Debug.AddWatch("a");
+        rig.Debug.AddWatch("b");
+        using var vm = new WatchViewModel(rig.Services);
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => Watch(vm, "a").HasChildren && Watch(vm, "b").HasChildren, what: "evaluated");
+        await vm.Tree.ExpandAsync(Watch(vm, "a"));
+        await vm.Tree.ExpandAsync(Watch(vm, "b"));
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count == 2 * 102 + 1, what: "both expanded");
+        string Layout() => string.Join("|", vm.Tree.Rows.Select(r => $"{r.Depth}:{r.Name}={r.FullValue}"));
+        var expected = Layout();
+
+        rig.Resume();
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count == 3, what: "children dropped on resume");
+        ui.HoldBackground = true;
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => ui.HeldCount == 2, what: "both re-expansions created their nodes");
+        ui.ReleaseAll();
+        await PanelRig.Eventually(() => ui.HeldCount == 2, what: "both row inserts queued");
+        ui.HoldBackground = false;
+        ui.ReleaseAll();
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count == 2 * 102 + 1, what: "both re-expanded");
+        Assert.Equal(expected, Layout());
+    }
+
+    [AvaloniaFact]
     public async Task Watches_added_straight_to_the_debug_service_show_up_on_the_next_stop()
     {
         using var rig = new PanelRig();

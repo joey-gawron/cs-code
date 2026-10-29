@@ -101,6 +101,39 @@ public class VariablesTests
     }
 
     [AvaloniaFact]
+    public async Task Collapsing_a_node_while_its_children_wait_to_be_inserted_keeps_them_out_and_re_expanding_shows_them_once()
+    {
+        // Regression (debug-ct-1): a full page (100 + "more" row) is inserted in a Background-priority chunk whose position used to be
+        // computed before the yield; a collapse in between left the rows under the collapsed node and re-expanding inserted them again.
+        var ui = new GatedUiDispatcher();
+        using var rig = new PanelRig(ui: ui);
+        rig.Session.Variables[2000] = Enumerable.Range(0, 1000).Select(i => new DebugVariable($"[{i}]", i.ToString(), "int")).ToList();
+        rig.Session.Variables[1200][2] = new DebugVariable("arr", "int[1000]", "int[]", 2000, "arr", null, 1000);
+        using var vm = await StoppedLocals(rig);
+        var arr = vm.Tree.Rows.Single(r => r.Name == "arr");
+
+        ui.HoldBackground = true;
+        var expanding = vm.Tree.ExpandAsync(arr);
+        await PanelRig.Eventually(() => ui.HeldCount == 1, what: "node creation queued");
+        ui.ReleaseAll();
+        await PanelRig.Eventually(() => ui.HeldCount == 1 && arr.ChildrenLoaded, what: "row insert queued");
+        vm.Tree.Collapse(arr); // the user collapses after the answer arrived, before the rows went in
+        ui.HoldBackground = false;
+        ui.ReleaseAll();
+        await expanding;
+        await Task.Delay(50);
+        Assert.Equal("x,s,arr", Names(vm.Tree));
+        Assert.False(arr.IsExpanded);
+
+        await vm.Tree.ExpandAsync(arr);
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count >= 3 + 100 + 1, what: "re-expanded");
+        await Task.Delay(50);
+        Assert.Equal(3 + 100 + 1, vm.Tree.Rows.Count);
+        Assert.Equal(100, vm.Tree.Rows.Count(r => r.Depth == 1 && r.Kind == VariableRowKind.Variable));
+        Assert.Equal(VariableRowKind.More, vm.Tree.Rows[^1].Kind);
+    }
+
+    [AvaloniaFact]
     public async Task An_adapter_that_ignores_paging_cannot_make_the_tree_grow_beyond_its_cap()
     {
         using var rig = new PanelRig();
