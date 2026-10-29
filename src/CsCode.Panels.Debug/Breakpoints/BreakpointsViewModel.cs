@@ -224,6 +224,15 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable, IRowsR
     /// <summary>Re-reads the manager's snapshots and replaces the rows (selection kept by id). Completes when the rows are applied.</summary>
     public async Task RefreshAsync()
     {
+        try { await RefreshCoreAsync(); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (!IsDisposed) ReportError(ex); // a refresh runs fire-and-forget: it must never surface as an unobserved task exception
+        }
+    }
+
+    private async Task RefreshCoreAsync()
+    {
         if (IsDisposed) return;
         var version = Interlocked.Increment(ref _refreshVersion);
         var source = _manager.SourceBreakpoints;

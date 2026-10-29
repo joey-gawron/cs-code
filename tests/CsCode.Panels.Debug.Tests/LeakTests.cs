@@ -81,6 +81,13 @@ public class LeakTests
         Assert.True(alive.Length == 0, "still reachable after 12 full GCs: " + string.Join(", ", alive));
     }
 
+    private static int[] SubscriberSnapshot(Scenario sc) =>
+    [
+        sc.Rig.Debug.FakeBreakpoints.SubscriberCount, sc.Rig.Debug.OutputEmitter.SubscriberCount, sc.Rig.Debug.OutputClearedEmitter.SubscriberCount,
+        sc.Rig.Debug.StopLocationChangedEmitter.SubscriberCount, sc.Rig.Debug.ActiveSessionChangedEmitter.SubscriberCount, sc.Rig.Debug.StateChangedEmitter.SubscriberCount,
+        sc.Rig.Debug.SessionStartedEmitter.SubscriberCount, sc.Rig.Debug.SessionTerminatedEmitter.SubscriberCount,
+    ];
+
     [AvaloniaFact]
     public async Task Showing_and_hiding_every_panel_100_times_across_20_sessions_retains_nothing()
     {
@@ -89,6 +96,8 @@ public class LeakTests
         sc.Session.Terminate();
         sc.Rig.Debug.RemoveSession(sc.Session);
         Assert.Equal(9, sc.Tools.Count);
+        // The app-lifetime runtime (exception context key) legitimately keeps ITS subscriptions; what must not change is everything else.
+        var baseline = SubscriberSnapshot(sc);
 
         var weak = await RunSessionsAsync(sc, sessions: 20, cyclesPerSession: 5, showInWindow: false);
         Assert.True(weak.Count >= 20 + 20 * 5 * 9 * 2 - 100); // sessions + 900 views + their view-models were tracked
@@ -96,15 +105,11 @@ public class LeakTests
         await AssertNothingRetained(weak);
         await Task.Delay(200);
 
-        // the long-lived services hold no subscription of a hidden panel
+        // the long-lived services hold no subscription of a hidden panel: exactly what existed before the first view was created
+        Assert.Equal(baseline, SubscriberSnapshot(sc));
         Assert.Equal(0, sc.Rig.Debug.FakeBreakpoints.SubscriberCount);
         Assert.Equal(0, sc.Rig.Debug.OutputEmitter.SubscriberCount);
         Assert.Equal(0, sc.Rig.Debug.OutputClearedEmitter.SubscriberCount);
-        Assert.Equal(0, sc.Rig.Debug.StopLocationChangedEmitter.SubscriberCount - 0);
-        Assert.Equal(0, sc.Rig.Debug.ActiveSessionChangedEmitter.SubscriberCount);
-        Assert.Equal(0, sc.Rig.Debug.StateChangedEmitter.SubscriberCount - 0);
-        Assert.Equal(0, sc.Rig.Debug.SessionStartedEmitter.SubscriberCount);
-        Assert.Equal(0, sc.Rig.Debug.SessionTerminatedEmitter.SubscriberCount);
         Assert.Empty(sc.Rig.Debug.Sessions);
     }
 

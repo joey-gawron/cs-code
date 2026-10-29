@@ -165,5 +165,63 @@ public class ScreenshotTests
         (view as IDisposable)?.Dispose();
     }
 
+    /// <summary>All the debug windows together, arranged like a Visual Studio debugging layout (Locals | Call Stack over Watch | Breakpoints over the console).</summary>
+    [AvaloniaTheory]
+    [InlineData("dark")]
+    [InlineData("light")]
+    public async Task Debugging_layout_overview(string theme)
+    {
+        TestTheme.Apply(ThemeOf(theme));
+        using var sc = new Scenario(stopped: false);
+        foreach (var e in new[] { "x + 1", "s.Length", "item", "nope" }) sc.Rig.Debug.AddWatch(e);
+        sc.Rig.Debug.EmitOutput(new DebugOutputEventArgs(sc.Session, "console", "Loaded '/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.0/System.Runtime.dll'. Module is optimized.\n"));
+        sc.Rig.Debug.EmitOutput(new DebugOutputEventArgs(sc.Session, "stdout", "loop 0\nloop 1\nloop 2\nloop 3\nloop 4\n"));
+        var locals = sc.View("debug.locals");
+        var watch = sc.View("debug.watch");
+        var stack = sc.View("debug.callstack");
+        var breakpoints = sc.View("debug.breakpoints");
+        var console = sc.View("debug.console");
+        sc.Rig.StopAt(2);
+        await PanelRig.Eventually(() => TreeOf(locals).Rows.Count >= 8 && TreeOf(watch).Rows.Count(r => r.Kind == VariableRowKind.Watch && r.DisplayValue.Length > 0) == 4);
+        await TreeOf(locals).ToggleAsync(TreeOf(locals).Rows.Single(r => r.Name == "item"));
+        var model = (CallStack.CallStackViewModel)stack.DataContext!;
+        await PanelRig.Eventually(() => model.Rows.Count > 5);
+        model.ShowExternalCode = false;
+        var console2 = (DebugConsoleViewModel)console.DataContext!;
+        await PanelRig.Eventually(() => console2.Lines.Count >= 6);
+        console2.Input = "x * 2";
+        await console2.SubmitAsync();
+        await PanelRig.Eventually(() => console2.Lines.Count >= 8);
+
+        Control Panel(string title, Control content)
+        {
+            var header = new Border { Height = 24, Padding = new Avalonia.Thickness(8, 0), Child = new TextBlock { Text = title, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center, FontWeight = Avalonia.Media.FontWeight.SemiBold } };
+            header.Bind(Border.BackgroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("vsc:tab.activeBackground"));
+            ((TextBlock)header.Child).Bind(TextBlock.ForegroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("vsc:tab.activeForeground"));
+            var top = new Border { Height = 2 };
+            top.Bind(Border.BackgroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("vsc:tab.activeBorderTop"));
+            var grid = new Grid { RowDefinitions = new Avalonia.Controls.RowDefinitions("2,24,*") };
+            Grid.SetRow(header, 1);
+            Grid.SetRow(content, 2);
+            grid.Children.Add(top);
+            grid.Children.Add(header);
+            grid.Children.Add(content);
+            var frame = new Border { BorderThickness = new Avalonia.Thickness(1), Child = grid };
+            frame.Bind(Border.BorderBrushProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("vsc:panel.border"));
+            return frame;
+        }
+
+        var layout = new Grid { ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("*,*"), RowDefinitions = new Avalonia.Controls.RowDefinitions("*,*,*") };
+        void Place(Control c, int row, int col, int span = 1) { Grid.SetRow(c, row); Grid.SetColumn(c, col); Grid.SetColumnSpan(c, span); layout.Children.Add(c); }
+        Place(Panel("Locals", locals), 0, 0);
+        Place(Panel("Call Stack", stack), 0, 1);
+        Place(Panel("Watch 1", watch), 1, 0);
+        Place(Panel("Breakpoints", breakpoints), 1, 1);
+        Place(Panel("Debug Console", console), 2, 0, 2);
+        layout.Bind(Avalonia.Controls.Panel.BackgroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("vsc:panel.background"));
+        await TestTheme.ShotAsync(layout, $"debug-overview-{theme}", 1400, 900);
+        foreach (var v in new[] { locals, watch, stack, breakpoints, console }) (v as IDisposable)?.Dispose();
+    }
+
     private static CsCode.Core.Theming.ColorTheme ThemeOf(string name) => name switch { "light" => VsThemes.Light, "blue" => VsThemes.Blue, _ => VsThemes.Dark };
 }
