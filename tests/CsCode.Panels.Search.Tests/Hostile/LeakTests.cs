@@ -13,7 +13,15 @@ using Xunit;
 
 namespace CsCode.Panels.Search.Tests.Hostile;
 
+/// <summary>
+/// Leak and thread-count tests run alone: <see cref="LeakTests.CountThreads"/> sees every engine thread in the process, so a search started
+/// by a test class running in parallel would show up in the count.
+/// </summary>
+[CollectionDefinition(nameof(SerialLeakTests), DisableParallelization = true)]
+public sealed class SerialLeakTests;
+
 /// <summary>Every lifecycle-bearing type is proven released after dispose/close with <see cref="LeakAssert"/> (ARCHITECTURE §8).</summary>
+[Collection(nameof(SerialLeakTests))]
 public class LeakTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
