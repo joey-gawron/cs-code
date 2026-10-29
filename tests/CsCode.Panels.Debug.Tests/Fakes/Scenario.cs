@@ -16,7 +16,7 @@ public sealed class Scenario : IDisposable
     public IReadOnlyDictionary<string, IToolWindow> Tools { get; }
     public FakeDebugSession Session => Rig.Session;
 
-    public Scenario(bool stopped = true, int frame = 0)
+    public Scenario(bool stopped = true, int frame = 0, Action<IServiceCollection>? configure = null)
     {
         var session = new FakeDebugSession("s1", "Sample (netcoredbg)");
         ConfigureSession(session);
@@ -33,6 +33,7 @@ public sealed class Scenario : IDisposable
         services.AddSingleton<IContextKeyService>(Rig.ContextKeys);
         services.AddSingleton<ICommandService, CsCode.TestDoubles.TestCommandService>();
         CsCode.Panels.Debug.ServiceCollectionExtensions.AddCsCodeDebugPanels(services);
+        configure?.Invoke(services);
         Provider = services.BuildServiceProvider();
         Tools = Provider.GetServices<IToolWindow>().ToDictionary(t => t.Id);
 
