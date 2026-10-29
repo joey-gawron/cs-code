@@ -52,8 +52,6 @@ public static class SettingKeys
     public const string FilesWatcherExclude = "files.watcherExclude";
     public const string WorkbenchColorTheme = "workbench.colorTheme";
     public const string WorkbenchStartupEditor = "workbench.startupEditor";
-    public const string ExtensionsNodePath = "cscode.extensionHost.nodePath";
-    public const string ExtensionsAutoUpdate = "extensions.autoUpdate";
     public const string MemoryBudgetMb = "cscode.memory.budgetMb";
     public const string MemoryTrimOnIdle = "cscode.memory.trimOnIdle";
 }

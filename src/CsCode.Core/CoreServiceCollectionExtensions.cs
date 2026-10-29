@@ -1,4 +1,4 @@
-using CsCode.Core.Extensions;
+using CsCode.Core.Contributions;
 using CsCode.Core.Languages;
 using CsCode.Core.Text;
 using Microsoft.Extensions.DependencyInjection;

@@ -1,7 +1,7 @@
 # Common rules for every module agent
 
-You are implementing ONE module of **CsCode**, a VSCodium-class code editor in C# / .NET 10 (Avalonia UI, LSP, DAP, VS Code
-extension compatibility, memory-stable). Your working directory is a **git worktree on its own branch**; other agents are
+You are implementing ONE module of **CsCode**, a VSCodium-class code editor in C# / .NET 10 (Avalonia UI, LSP, DAP, Vim emulation,
+remote editing, memory-stable; there is deliberately NO extension system). Your working directory is a **git worktree on its own branch**; other agents are
 building the other modules at the same time in their own worktrees. Your work is merged later, so ownership boundaries matter.
 
 ## Read first (in this order)
@@ -28,7 +28,7 @@ building the other modules at the same time in their own worktrees. Your work is
   `IMemoryTrimmable`; no unbounded logs/queues; no allocation in hot paths. Every lifecycle-bearing type you add needs a
   `LeakAssert.NotRetained` test proving that, after dispose/close, nothing is retained.
 * **Real beats mock.** Besides fast unit tests with fakes, write integration tests against the REAL thing wherever the brief says
-  so (real language server, real debug adapter, real Node, real Open VSX extension archives). Download tools with a script under
+  so (real language server, real debug adapter, real `vim`/`nvim`, real `ssh`). Download tools with a script under
   `tools/` into `.scratch/tools/` (git-ignored). Never commit binaries, `node_modules`, downloads or screenshots. A test needing a
   tool/network must **skip with an explicit reason** (not fail) when the tool is unavailable — use an `Assert.Skip`/skip helper.
 * **Commits.** Commit early and often on your current branch: `git add -A && git commit -m "<imperative subject>"`. One logical
@@ -42,10 +42,20 @@ building the other modules at the same time in their own worktrees. Your work is
   for models, `ValueTask` for hot async paths, `CancellationToken` on every async API). Comments explain *why*, not *what*.
 * **Docs.** Each module writes a short `docs/<MODULE>.md` (design, public surface, limits, how to run the integration tests).
 
+## Threading rules (binding — ARCHITECTURE §6)
+The user's explicit requirement: **editing and the GUI stay on their own threads, isolated from the language servers**, which can burn a lot of CPU/memory.
+* **The UI thread is sacred.** It does input, layout, rendering coordination and the (unavoidable) AvaloniaEdit buffer mutations — nothing else. On it: **no blocking** (`.Result`, `.Wait()`, `.GetAwaiter().GetResult()`, `Thread.Sleep`, sync file/network I/O), no JSON (de)serialisation, no LSP/DAP result mapping, no tokenisation, no search/regex over document text, no sorting/filtering of > 1,000 items, no CPU work > 4 ms per dispatcher callback (chunk it). UI-facing projects enable the banned-API rule for the blocking calls above.
+* **The typing path never waits for anything**: keystroke → buffer mutation → return. Completion/hover/diagnostics/etc. are downstream, asynchronous, cancellable, and may arrive late or never without affecting typing.
+* **Non-UI projects** (Platform, Lsp, Dap, Vim, Profiling, Remote…) never reference Avalonia and never assume a UI thread; use `ConfigureAwait(false)` in library code; hop to your own dedicated lane before doing any non-trivial work, so a caller on the UI thread pays only the cost of enqueueing (< 0.1 ms).
+* **Producers → UI traffic is one-way, coalesced and bounded**: latest-wins per key (document+feature), tagged with the document version and dropped when stale, delivered in small immutable batches; never unbounded lists (page/cap/virtualise).
+* **Lanes** (dedicated threads, not the shared thread pool, so a CPU-hungry language server can't starve anything): UI (Avalonia dispatcher) · Editor worker (derived per-document work from immutable snapshots) · Language (LSP client work, BelowNormal priority) · IO (file system, watchers, search) · Debug (DAP client). Child processes (language servers, debug adapters) start at **below-normal OS priority** (setting `cscode.lsp.processPriority`).
+* **Prove it**: every module that does background work includes a "does not block the caller" test (assert the synchronous portion of the call on the caller thread), and the integration phase runs a *hostile-server responsiveness suite* (CPU-burning, slow, flooding, hanging, crashing servers) while simulated typing runs and asserts dispatcher latency and typing latency budgets (see `docs/briefs/profiling.md`).
+
 ## Seven agents share ONE machine — don't collide
 * **Never** `pkill`/`killall`/kill by process *name* (`node`, `dotnet`, `netcoredbg`, `typescript-language-server`…) — other agents run the same programs. Only kill PIDs **you** started (track them).
 * Use **ephemeral ports** (bind port 0), unique temp dirs (`TempDirectory`), and set `CSCODE_HOME` to a temp dir in tests. Never read or write the real `~/.cscode`, `~/.config/cscode`, `~/.vscode*`, or install global dotnet/npm tools: install tools into your worktree's `.scratch/tools/`.
 * Heavy commands (full builds, long soaks, big downloads) are fine but be a good neighbour: one build at a time, no busy loops, cap parallel test runners (`-- --maxthreads 4` style), clean up child processes and temp files you create.
+* **Never read, copy or use anything under `~/.ssh`** (it holds the user's real private keys), the user's ssh-agent, or the real `known_hosts`. Tests that need SSH generate throwaway keys/config in a temp dir.
 * Don't stash, reset, rebase or `git clean` anything outside your own work; don't touch other worktrees (`git worktree list` shows them — leave them alone).
 
 ## Final report

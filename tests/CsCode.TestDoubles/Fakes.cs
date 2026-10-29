@@ -12,7 +12,6 @@ public sealed class TestCommandService : ICommandService
     private readonly object _gate = new();
     private readonly Dictionary<string, List<Func<CommandInvocation, ValueTask<object?>>>> _handlers = new();
     private readonly Dictionary<string, CommandMetadata> _meta = new();
-    private readonly List<Func<string, CancellationToken, ValueTask<bool>>> _resolvers = new();
     private readonly Emitter<string> _registered = new();
 
     public IEventSource<string> Registered => _registered;
@@ -31,22 +30,9 @@ public sealed class TestCommandService : ICommandService
         return Disposable.Create(() => { lock (_gate) { if (_handlers.TryGetValue(id, out var l)) l.Remove(handler); } });
     }
 
-    public IDisposable AddUnknownCommandResolver(Func<string, CancellationToken, ValueTask<bool>> resolver)
-    {
-        lock (_gate) _resolvers.Add(resolver);
-        return Disposable.Create(() => { lock (_gate) _resolvers.Remove(resolver); });
-    }
-
     public async ValueTask<object?> ExecuteAsync(string id, params object?[] args)
     {
         var handler = Find(id);
-        if (handler is null)
-        {
-            Func<string, CancellationToken, ValueTask<bool>>[] resolvers;
-            lock (_gate) resolvers = _resolvers.ToArray();
-            foreach (var r in resolvers)
-                if (await r(id, CancellationToken.None)) { handler = Find(id); if (handler is not null) break; }
-        }
         if (handler is null) throw new CommandNotFoundException(id);
         return await handler(new CommandInvocation(id, args));
     }

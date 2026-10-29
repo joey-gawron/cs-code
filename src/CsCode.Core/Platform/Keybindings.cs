@@ -15,7 +15,7 @@ public readonly record struct KeyStroke(string Key, bool Ctrl = false, bool Shif
         string.Join('+', new[] { Ctrl ? "ctrl" : null, Shift ? "shift" : null, Alt ? "alt" : null, Meta ? "meta" : null, Key }.Where(s => s is not null));
 }
 
-public enum KeyBindingSource { Default = 0, Extension = 1, User = 2 }
+public enum KeyBindingSource { Default = 0, User = 1 }
 
 /// <param name="Chord">One stroke, or several for chords such as "ctrl+k ctrl+c".</param>
 /// <param name="IsNegative">A user/extension entry of the form {"command":"-foo"} that removes a default binding.</param>
@@ -35,7 +35,7 @@ public sealed record KeyResolveResult(KeyResolution Kind, KeyBinding? Binding = 
 
 /// <summary>
 /// Keybinding resolution with chord state, `when`-clause filtering (via <see cref="IContextKeyService"/>), and layered sources
-/// (user &gt; extension &gt; default; later wins; negative bindings remove). Presets: "visualstudio" (default) and "vscode".
+/// (user &gt; default; later wins; negative bindings remove). Presets: "visualstudio" (default) and "vscode".
 /// </summary>
 public interface IKeybindingService
 {

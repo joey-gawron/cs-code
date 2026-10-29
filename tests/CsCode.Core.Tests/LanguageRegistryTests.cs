@@ -1,4 +1,4 @@
-using CsCode.Core.Extensions;
+using CsCode.Core.Contributions;
 using CsCode.Core.Languages;
 using CsCode.Core.Text;
 using CsCode.Core.Theming;
@@ -88,7 +88,7 @@ public class LanguageRegistryTests
         t1.Dispose();
         Assert.Equal(["c"], set.Items.Select(i => i.Value.Id));
 
-        reg.RemoveExtension("pub.ext2");
+        reg.RemoveSource("pub.ext2");
         Assert.Empty(set.Items);
         Assert.Equal(4, notifications);
         Assert.Empty(reg.Of<GrammarContribution>().Items);

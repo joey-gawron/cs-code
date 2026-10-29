@@ -9,7 +9,7 @@
 This is the foundation every other module's runtime leans on, so correctness and test depth matter more than breadth.
 
 ## MUST
-1. **`AppPaths : IAppPaths`** — per-OS dirs (Linux XDG: `~/.config/cscode`, `~/.local/share/cscode/extensions`, cache, logs; Windows `%APPDATA%\CsCode`;
+1. **`AppPaths : IAppPaths`** — per-OS dirs (Linux XDG: `~/.config/cscode`, `~/.local/share/cscode` (user themes/grammars/snippets live in `themes/`, `grammars/`, `snippets/` below it), cache, logs; Windows `%APPDATA%\CsCode`;
    macOS `~/Library/Application Support/CsCode`), `CSCODE_HOME` override (everything under it; used by tests/portable), `InstallDir = AppContext.BaseDirectory`,
    workspace storage dir = stable hash of the folder URI.
 2. **`CommandService`** — thread-safe; stack semantics (later registration shadows; disposing a registration restores the previous handler);
@@ -27,12 +27,12 @@ This is the foundation every other module's runtime leans on, so correctness and
    (VS-like defaults: font "Cascadia Code, Consolas, 'Courier New', monospace" / size 14 / tabSize 4 / insertSpaces true / wordWrap off / minimap true / formatOnSave false / autoSave off / memory budget 0 / trimOnIdle true …).
    Malformed settings file → keep last good values, log, surface a single warning event (property `LastError`) — never crash.
 5. **`KeybindingService`** — implements `IKeybindingService` exactly as documented in `Core/Platform/Keybindings.cs`: chord state machine (prefix → `Pending`, timeout/escape/unknown → reset), `when` filtering through `IContextKeyService`,
-   precedence **user > extension > default**, later entry in the same source wins, negative bindings (`"-command"`) remove matching lower entries, platform-specific key overrides (`mac`/`linux`/`win` in contributions),
-   user `keybindings.json` (JSONC array `{key, command, when, args}`) live-reloaded, extension `KeybindingContribution`s from `IContributionRegistry` (live), `GetLabel` formatting per OS (`Ctrl+K, Ctrl+C`; macOS `⌘S`), `GetBindingsFor`.
+   precedence **user > default**, later entry in the same source wins, negative bindings (`"-command"`) remove matching lower entries, platform-specific key overrides (`mac`/`linux`/`win` in contributions),
+   user `keybindings.json` (JSONC array `{key, command, when, args}`) live-reloaded, `GetLabel` formatting per OS (`Ctrl+K, Ctrl+C`; macOS `⌘S`), `GetBindingsFor`.
    Ship two **embedded-resource default presets**: `visualstudio` (default — F5, Ctrl+F5, Shift+F5, Ctrl+Shift+F5, F9, F10, F11, Shift+F11, F12, Shift+F12, F2, Ctrl+K Ctrl+D, Ctrl+K Ctrl+C/U, Ctrl+. , Ctrl+Space, Ctrl+Shift+Space,
    Ctrl+Q quick launch, Ctrl+T/Ctrl+, go to all, Ctrl+Shift+P palette, Ctrl+P quick open, Ctrl+Shift+F find in files, Ctrl+F/H, Ctrl+G, Ctrl+S, Ctrl+Shift+S, Ctrl+Tab, Ctrl+W/F4 close, Ctrl+Alt+L explorer,
    Ctrl+Alt+O output, Ctrl+\\ Ctrl+E error list, Ctrl+` terminal, Alt+Up/Down move line, Ctrl+D duplicate? (VS: Ctrl+D), Ctrl+L delete line, Ctrl+/ comment toggle …) and `vscode` (the VS Code defaults). Use the command ids in `KnownCommands`
-   plus the standard VS Code ids (`editor.action.*`, `workbench.action.*`) so extensions' keybindings compose. Preset persisted via `IStateStorage`/setting `cscode.keymap`.
+   plus the standard VS Code ids (`editor.action.*`, `workbench.action.*`). Preset persisted via `IStateStorage`/setting `cscode.keymap`.
 6. **`LocalFileSystem : IFileSystem`** (`file:` scheme; others → `NotSupportedException`): stat (follow symlinks, report `SymbolicLink` flag), readdir (no recursion), read, **atomic write** (temp file + fsync + rename; preserve permissions;
    handle read-only), mkdir -p, delete (with **trash**: Linux freedesktop Trash spec incl. `.trashinfo`; macOS `~/.Trash`; Windows `SHFileOperationW`/recycle bin P/Invoke), rename/copy (recursive, overwrite flag), path ↔ `Uri` correctness
    (spaces, `#`, `%`, Windows drive letters, UNC), all async + cancellable, no blocking the thread pool on large reads (use `FileStream` async with 64 KB buffers).
@@ -49,6 +49,11 @@ This is the foundation every other module's runtime leans on, so correctness and
 * **`.editorconfig` support**: additive Core interface `IEditorConfigService` (`Core/Platform/EditorConfig.cs`) + implementation: resolve `indent_style`, `indent_size`, `tab_width`, `end_of_line`, `charset`, `trim_trailing_whitespace`, `insert_final_newline` for a file URI per the editorconfig spec (section globs incl. `{a,b}`, `[*.{cs,vb}]`, `root = true`), cached per directory with invalidation on change. (The Editor module will consume it if present.)
 * **Language-scoped settings** (`"[csharp]": {"editor.tabSize": 2}`): additive `IConfigurationService` extension method/interface for `Get<T>(key, languageId)`.
 * Settings JSON-schema metadata endpoint: `IConfigurationService.Properties` returns what `RegisterProperties` registered, incl. enum/description for a future settings UI.
+
+## Threading & isolation (binding)
+* File watching, workspace walking/search and all file I/O run on a dedicated **IO lane** (own threads, bounded parallelism) — never on the UI thread and never starving the shared thread pool; async APIs return to the caller immediately. `FindFilesAsync` yields in batches and honours cancellation within ~10 ms.
+* `CommandService.ExecuteAsync` invokes handlers as registered (handlers choose their own lane) but never holds a lock while awaiting; no sync-over-async anywhere.
+* Configuration/keybinding/context-key reads are called on every keystroke from the UI thread: lock-free or very-short-lock, **zero allocation** in `Resolve`/`Evaluate`/`Get` fast paths. Test: 1M `Evaluate` calls, assert no allocations after warm-up.
 
 ## Tests (xUnit v3; `tests/CsCode.Platform.Tests`)
 * When-clause: **≥ 80 cases** (precedence, short-circuit, type coercion, regex flags, `in`, malformed input, unicode, scopes, change events).

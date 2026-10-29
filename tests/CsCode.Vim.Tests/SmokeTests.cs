@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
-namespace CsCode.Extensions.Tests;
+namespace CsCode.Vim.Tests;
 
 public class SmokeTests
 {
@@ -9,6 +9,6 @@ public class SmokeTests
     public void Module_registers_without_throwing()
     {
         var services = new ServiceCollection();
-        CsCode.Extensions.ServiceCollectionExtensions.AddCsCodeExtensions(services);
+        CsCode.Vim.ServiceCollectionExtensions.AddCsCodeVim(services);
     }
 }

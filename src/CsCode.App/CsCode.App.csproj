@@ -14,7 +14,6 @@
     <ProjectReference Include="../CsCode.Platform/CsCode.Platform.csproj" />
     <ProjectReference Include="../CsCode.Lsp/CsCode.Lsp.csproj" />
     <ProjectReference Include="../CsCode.Dap/CsCode.Dap.csproj" />
-    <ProjectReference Include="../CsCode.Extensions/CsCode.Extensions.csproj" />
     <ProjectReference Include="../CsCode.Editor/CsCode.Editor.csproj" />
     <ProjectReference Include="../CsCode.Ui/CsCode.Ui.csproj" />
     <ProjectReference Include="../CsCode.Profiling/CsCode.Profiling.csproj" />

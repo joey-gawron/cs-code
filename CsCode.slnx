@@ -4,21 +4,21 @@
     <Project Path="src/CsCode.Core/CsCode.Core.csproj" />
     <Project Path="src/CsCode.Dap/CsCode.Dap.csproj" />
     <Project Path="src/CsCode.Editor/CsCode.Editor.csproj" />
-    <Project Path="src/CsCode.Extensions/CsCode.Extensions.csproj" />
     <Project Path="src/CsCode.Lsp/CsCode.Lsp.csproj" />
     <Project Path="src/CsCode.Platform/CsCode.Platform.csproj" />
     <Project Path="src/CsCode.Profiling/CsCode.Profiling.csproj" />
     <Project Path="src/CsCode.Ui/CsCode.Ui.csproj" />
+    <Project Path="src/CsCode.Vim/CsCode.Vim.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/CsCode.App.Tests/CsCode.App.Tests.csproj" />
     <Project Path="tests/CsCode.Core.Tests/CsCode.Core.Tests.csproj" />
     <Project Path="tests/CsCode.Dap.Tests/CsCode.Dap.Tests.csproj" />
     <Project Path="tests/CsCode.Editor.Tests/CsCode.Editor.Tests.csproj" />
-    <Project Path="tests/CsCode.Extensions.Tests/CsCode.Extensions.Tests.csproj" />
     <Project Path="tests/CsCode.Lsp.Tests/CsCode.Lsp.Tests.csproj" />
     <Project Path="tests/CsCode.MemoryTests/CsCode.MemoryTests.csproj" />
     <Project Path="tests/CsCode.Platform.Tests/CsCode.Platform.Tests.csproj" />
     <Project Path="tests/CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
+    <Project Path="tests/CsCode.Vim.Tests/CsCode.Vim.Tests.csproj" />
   </Folder>
 </Solution>
