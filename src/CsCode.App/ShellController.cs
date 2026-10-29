@@ -62,6 +62,9 @@ public sealed class ShellController : IDisposable
     public MenuModel Menus { get; private set; } = null!;
     public LayoutPersistence Layout { get; private set; } = null!;
     public ShellStatusItems StatusItems { get; private set; } = null!;
+    /// <summary>The Vim adapter (null when the composition has no Vim module or no real editor): sees keys before the key bindings.</summary>
+    public Vim.VimIntegration? Vim { get; private set; }
+    public IShellKeyInterceptor? KeyInterceptor => Vim;
     public ShellDockFactory Factory => _sp.GetRequiredService<ShellDockFactory>();
     public DocumentWell Well => _sp.GetRequiredService<DocumentWell>();
     public ToolWindowManager Tools => _sp.GetRequiredService<ToolWindowManager>();
@@ -128,6 +131,14 @@ public sealed class ShellController : IDisposable
 
         Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window, context: keys);
         _disposables.Add(Keyboard);
+
+        // Vim (docs/VIM.md, "Integration"): one engine per editor view; keys reach it before the key bindings (MainWindow).
+        Vim = global::CsCode.App.Vim.VimIntegration.TryCreate(_sp);
+        if (Vim is { } vim)
+        {
+            vim.Start(() => Keyboard.IsChordPending);
+            _disposables.Add(vim);
+        }
 
         Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs, id => Tools.IsVisible(id));
         _disposables.Add(Menus);
