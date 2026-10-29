@@ -31,6 +31,8 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
     private CancellationTokenSource? _linkCts;
     private (int Start, int End) _linkWord = (-1, -1);
     private IReadOnlyList<LocationLink>? _linkTargets;
+    private Uri? _linkUrl;
+    private static readonly System.Text.RegularExpressions.Regex UrlPattern = new(@"https?://[^\s<>""'`\]\[{}|\\^]+", System.Text.RegularExpressions.RegexOptions.CultureInvariant | System.Text.RegularExpressions.RegexOptions.Compiled, TimeSpan.FromMilliseconds(20));
     private bool _disposed;
 
     public NavigationFeature(CodeEditorControl view)
@@ -219,6 +221,16 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
             return;
         }
         var offset = _v.Document.OffsetAt(new TextPosition(p.Line - 1, p.Column - 1));
+        if (UrlAt(offset) is { } url)
+        {
+            if (_linkUrl == url.Uri) return;
+            ClearLink();
+            _linkUrl = url.Uri;
+            _underline.Range = (url.Start, url.End);
+            _v.Editor.Cursor = new Cursor(StandardCursorType.Hand);
+            _v.TextView.Redraw();
+            return;
+        }
         var word = FeatureSupport.WordAt(_v.Editor.Document, offset);
         if (word.End <= word.Start)
         {
@@ -250,8 +262,16 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
 
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (_disposed || _linkTargets is not { Count: > 0 } targets || (e.KeyModifiers & KeyModifiers.Control) == 0) return;
+        if (_disposed || (e.KeyModifiers & KeyModifiers.Control) == 0) return;
         if (!e.GetCurrentPoint(_v.Editor).Properties.IsLeftButtonPressed) return;
+        if (_linkUrl is { } url)
+        {
+            e.Handled = true;
+            ClearLink();
+            _ = _v.Services.Window?.OpenExternalAsync(url);
+            return;
+        }
+        if (_linkTargets is not { Count: > 0 } targets) return;
         e.Handled = true;
         ClearLink();
         _ = PickAndOpenAsync(targets.Select(t => new Location(t.TargetUri, t.TargetSelectionRange)).ToList(), "Go to Definition");
@@ -268,8 +288,9 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
     {
         _linkCts?.Cancel();
         _linkWord = (-1, -1);
-        if (_linkTargets is null && _underline.Range is null) return;
+        if (_linkTargets is null && _linkUrl is null && _underline.Range is null) return;
         _linkTargets = null;
+        _linkUrl = null;
         _underline.Range = null;
         _v.Editor.Cursor = null;
         if (!_disposed) _v.TextView.Redraw();
@@ -293,6 +314,32 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
                 e.Handled = true;
                 break;
         }
+    }
+
+    /// <summary>The http(s) URL at <paramref name="offset"/> (bounded: only the line it is on, at most 2000 characters of it), or null.</summary>
+    internal (Uri Uri, int Start, int End)? UrlAt(int offset)
+    {
+        var doc = _v.Editor.Document;
+        if (offset < 0 || offset > doc.TextLength) return null;
+        var line = doc.GetLineByOffset(offset);
+        if (line.Length is 0 or > 2000) return null;
+        var text = doc.GetText(line.Offset, line.Length);
+        try
+        {
+            foreach (System.Text.RegularExpressions.Match m in UrlPattern.Matches(text))
+            {
+                var value = m.Value.TrimEnd('.', ',', ';', ':', '!', '?', ')');
+                var start = line.Offset + m.Index;
+                var end = start + value.Length;
+                if (offset < start || offset > end) continue;
+                return Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? (uri, start, end) : null;
+            }
+        }
+        catch (System.Text.RegularExpressions.RegexMatchTimeoutException)
+        {
+            // a pathological line: no link
+        }
+        return null;
     }
 
     // ---- underline of the symbol under Ctrl ----

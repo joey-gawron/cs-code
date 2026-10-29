@@ -37,6 +37,7 @@ internal sealed class HoverFeature : IThemeAware, IDisposable
     {
         _v = view;
         _popup = new OverlayPopup(view, 580, 300);
+        Avalonia.Automation.AutomationProperties.SetName(_popup.Root, "Hover");
         view.Editor.PointerMoved += OnPointerMoved;
         view.Editor.PointerExited += OnPointerExited;
         view.TextView.ScrollOffsetChanged += OnScrolled;

@@ -34,6 +34,7 @@ internal sealed class SignatureFeature : ISignatureFeature, IThemeAware, IDispos
     {
         _v = view;
         _popup = new OverlayPopup(view, 640, 220);
+        Avalonia.Automation.AutomationProperties.SetName(_popup.Root, "Parameter hints");
         if (view.Typed is { } typed) _d.Add(typed.Subscribe(OnTyped));
         _d.Add(view.Controller.CaretChanged.Subscribe(_ => OnCaretChanged()));
         view.TextArea.AddHandler(InputElement.KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);

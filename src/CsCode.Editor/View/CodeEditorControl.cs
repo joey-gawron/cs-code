@@ -61,6 +61,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         Content = grid;
         Focusable = false;
 
+        Avalonia.Automation.AutomationProperties.SetName(Editor, "Editor: " + System.IO.Path.GetFileName(document.Uri.IsFile ? document.Uri.LocalPath : document.Uri.AbsolutePath));
         Controller = new EditorViewController(this);
         Palette = EditorPalette.From(factory.Themes);
         Settings = ReadSettings();
@@ -222,8 +223,9 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         o.LineHeightFactor = s.LineHeightFactor;
         o.CutCopyWholeLine = true;
         o.AllowScrollBelowDocument = true;
-        o.EnableHyperlinks = true;
-        o.RequireControlModifierForHyperlinkClick = true;
+        // URLs are underlined and opened by NavigationFeature (Ctrl+Click, through IWindowService.OpenExternalAsync, http/https only):
+        // AvaloniaEdit's own hyperlink generator would start the browser itself, behind the shell's back.
+        o.EnableHyperlinks = false;
         o.EnableEmailHyperlinks = false;
         o.EnableRectangularSelection = true;
         Document.Buffer.UndoStack.SizeLimit = s.UndoLimit;

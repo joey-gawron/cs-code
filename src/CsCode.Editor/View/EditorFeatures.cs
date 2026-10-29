@@ -24,6 +24,8 @@ internal static class EditorFeatures
             new Features.FormattingFeature(view),
             new Features.BracketFeature(view),
             new Features.HighlightFeature(view),
+            new Features.BreadcrumbFeature(view),
+            new Features.InlayHintFeature(view),
         };
         // the breakpoint margin, stop-line arrow and breakpoint tracking exist only when a debugger is registered
         if (view.Services.Debug is { } debug) list.Add(new Features.DebugFeature(view, debug));

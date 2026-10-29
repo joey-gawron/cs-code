@@ -45,6 +45,7 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
         _bulb = new Border { Child = _bulbShape, IsVisible = false, IsHitTestVisible = true, Cursor = new Cursor(StandardCursorType.Hand), Width = 18, Height = 18, Background = Brushes.Transparent };
         _bulb.PointerPressed += OnBulbPressed;
         ToolTip.SetTip(_bulb, "Show Code Actions (Ctrl+.)");
+        Avalonia.Automation.AutomationProperties.SetName(_bulb, "Show Code Actions");
         view.Overlay.Children.Add(_bulb);
         ApplyTheme();
         _d.Add(view.Controller.CaretChanged.Subscribe(_ => ScheduleBulb()));

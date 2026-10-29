@@ -213,6 +213,7 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
             Width = MarginWidth;
             Cursor = new Cursor(StandardCursorType.Arrow);
             ToolTip.SetShowDelay(this, 200);
+            Avalonia.Automation.AutomationProperties.SetName(this, "Breakpoint margin");
         }
 
         protected override Size MeasureOverride(Size availableSize) => new(MarginWidth, 0);

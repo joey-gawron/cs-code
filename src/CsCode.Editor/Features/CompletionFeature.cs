@@ -72,6 +72,7 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
         _popup = new OverlayPopup(view, 640, 300);
         _list = new ListBox { MaxHeight = 280, MinWidth = 280, MaxWidth = 380, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0), ItemTemplate = new FuncDataTemplate<FilteredCompletion>((f, _) => f is null ? null : BuildRow(f)) };
         _list.SelectionChanged += OnListSelectionChanged;
+        Avalonia.Automation.AutomationProperties.SetName(_list, "Suggestions");
         _docPanel = new Border { MaxWidth = 300, MinWidth = 180, Padding = new Thickness(8, 6), IsVisible = false, BorderThickness = new Thickness(1, 0, 0, 0) };
         _loading = new TextBlock { Text = "Loading…", Margin = new Thickness(10, 4), FontStyle = FontStyle.Italic, FontSize = 12, IsVisible = false };
         _content = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto") };
