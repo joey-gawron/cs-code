@@ -71,6 +71,7 @@ public sealed class EditorPalette
     public required IBrush InlayForeground { get; init; }
     public required IBrush InlayBackground { get; init; }
     public required IBrush CodeLens { get; init; }
+    public required IBrush LightBulb { get; init; }
     public required IBrush Gutter { get; init; }
     public required IBrush FoldingControl { get; init; }
     public required IBrush Overview { get; init; }
@@ -126,6 +127,7 @@ public sealed class EditorPalette
             InlayForeground = B("editorInlayHint.foreground"),
             InlayBackground = B("editorInlayHint.background"),
             CodeLens = B("editorCodeLens.foreground"),
+            LightBulb = B("editorLightBulb.foreground"),
             Gutter = B("editorGutter.background"),
             FoldingControl = B("editorGutter.foldingControlForeground"),
             Overview = B("editorOverviewRuler.border"),

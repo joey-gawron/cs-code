@@ -79,14 +79,16 @@ internal sealed class OverlayPopup : IDisposable
     }
 
     /// <summary>The editor-relative rectangle of the line containing <paramref name="position"/>'s character: bottom-left and top-left anchors.</summary>
-    public (Point Top, Point Bottom) AnchorFor(TextPosition position)
+    public (Point Top, Point Bottom) AnchorFor(TextPosition position) => AnchorFor(_view, position);
+
+    internal static (Point Top, Point Bottom) AnchorFor(CodeEditorControl view, TextPosition position)
     {
-        var textView = _view.TextView;
+        var textView = view.TextView;
         var tvp = new AvaloniaEdit.TextViewPosition(position.Line + 1, position.Character + 1);
         var top = textView.GetVisualPosition(tvp, VisualYPosition.LineTop) - textView.ScrollOffset;
         var bottom = textView.GetVisualPosition(tvp, VisualYPosition.LineBottom) - textView.ScrollOffset;
-        var t = textView.TranslatePoint(top, _view.Overlay) ?? top;
-        var b = textView.TranslatePoint(bottom, _view.Overlay) ?? bottom;
+        var t = textView.TranslatePoint(top, view.Overlay) ?? top;
+        var b = textView.TranslatePoint(bottom, view.Overlay) ?? bottom;
         return (t, b);
     }
 

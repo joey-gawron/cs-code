@@ -18,8 +18,15 @@ internal static class EditorFeatures
             new Features.CompletionFeature(view),
             new Features.DiagnosticsFeature(view),
             new Features.HoverFeature(view),
+            new Features.SignatureFeature(view),
+            new Features.CodeActionFeature(view),
+            new Features.NavigationFeature(view),
+            new Features.FormattingFeature(view),
+            new Features.BracketFeature(view),
+            new Features.HighlightFeature(view),
         };
-        // further components are added here (each takes the view and unhooks itself on Dispose)
+        // the breakpoint margin, stop-line arrow and breakpoint tracking exist only when a debugger is registered
+        if (view.Services.Debug is { } debug) list.Add(new Features.DebugFeature(view, debug));
         return list;
     }
 }

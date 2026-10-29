@@ -66,7 +66,18 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
 
     public void FormatDocument() => FormatHandler?.Invoke();
 
-    public void SetDebugStopLine(int? line) => StopLineHandler?.Invoke(line);
+    /// <summary>The line the debugger is stopped at in this view (0-based), or null.</summary>
+    internal int? StopLine { get; private set; }
+
+    internal Emitter<int?> StopLineChanged { get; } = new();
+
+    public void SetDebugStopLine(int? line)
+    {
+        if (_disposed) return;
+        StopLine = line;
+        StopLineHandler?.Invoke(line);
+        StopLineChanged.Fire(line);
+    }
 
     public IEventSource<TextPosition> CaretChanged => _caretChanged;
     public IEventSource<IReadOnlyList<TextRange>> SelectionChanged => _selectionChanged;
@@ -159,6 +170,7 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
         _disposed = true;
         _caretChanged.Clear();
         _selectionChanged.Clear();
+        StopLineChanged.Clear();
         FoldedLinesProvider = null;
         FoldRestorer = null;
         FormatHandler = null;

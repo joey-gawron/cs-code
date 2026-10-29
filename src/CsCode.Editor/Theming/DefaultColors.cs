@@ -129,6 +129,7 @@ public static class DefaultColors
         Def("editorError.foreground", "#F14C4C", "#E51400", "#F48771", "#B5200D");
         Def("editorWarning.foreground", "#CCA700", "#BF8803", "#FFD37A", "#895503");
         Def("editorInfo.foreground", "#3794FF", "#1A85FF", "#3794FF", "#1A85FF");
+        Def("editorLightBulb.foreground", "#FFCC00", "#DDB100", "#FFFF00", "#007ACC");
         Def("editorHint.foreground", "#EEEEEEB3", "#6C6C6C", "#EEEEEEB3", "#6C6C6C");
         Def("editorError.background", ""); Def("editorWarning.background", ""); Def("editorInfo.background", "");
         Def("editorError.border", ""); Def("editorWarning.border", ""); Def("editorInfo.border", ""); Def("editorHint.border", "");
