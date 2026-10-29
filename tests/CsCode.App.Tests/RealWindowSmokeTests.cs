@@ -5,6 +5,8 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CsCode.App.Tests.Hosting;
+using CsCode.App.Tests.Infrastructure;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace CsCode.App.Tests;
@@ -94,6 +96,88 @@ public class RealWindowSmokeTests
             .StartWithClassicDesktopLifetime([], ShutdownMode.OnMainWindowClose);
         host.Workspace.Dispose();
         if (failure is not null) throw new InvalidOperationException("real window run failed", failure);
+        Assert.Equal(0, exit);
+    }
+
+    /// <summary>
+    /// The real app with EVERY real module on the real desktop lifetime: it starts, opens a folder and a file whose language server (a fake one, if
+    /// python3 is available) starts, closes its main window the way the user does, and the process exits 0 with no crash log and the server gone.
+    /// </summary>
+    [Fact]
+    public async Task The_real_app_with_every_module_starts_and_shuts_down_cleanly_under_x11()
+    {
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY"))) Assert.Skip("DISPLAY is not set: no X server to open a real window on.");
+        using var env = new RealAppHome();
+        var python = FakeLanguageServer.Python;
+        if (python is not null) env.WriteUserSettings(FakeLanguageServer.Settings(env, python, "polite", shutdownTimeoutMs: 3000));
+        var file = env.Workspace.WriteFile("main" + FakeLanguageServer.Extension, "hello\n");
+        var pidFile = env.Home.Combine("server.pid");
+
+        var psi = new ProcessStartInfo("dotnet", $"\"{typeof(RealWindowSmokeTests).Assembly.Location}\" -method CsCode.App.Tests.RealWindowSmokeTests.RealAppChild")
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+        };
+        psi.Environment[ChildEnv] = "real";
+        psi.Environment["CSCODE_HOME"] = env.Home.Path; // never the user's real config/state
+        psi.Environment["XDG_DATA_HOME"] = env.Home.Combine("xdg-data");
+        psi.Environment["CSCODE_TEST_WORKSPACE"] = env.Workspace.Path;
+        psi.Environment["CSCODE_TEST_OPEN"] = file;
+        psi.Environment["CSCODE_TEST_PIDFILE"] = python is null ? "" : pidFile;
+        using var child = Process.Start(psi)!;
+        var stdout = child.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var stderr = child.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+        if (!child.WaitForExit(120_000))
+        {
+            child.Kill(entireProcessTree: true); // only the PID this test started
+            Assert.Fail("the real app did not exit within 120 s");
+        }
+        var log = await stdout + await stderr;
+        Assert.True(child.ExitCode == 0, $"child exit code {child.ExitCode}\n{log}");
+        var logs = env.Home.Combine("logs");
+        var crashLogs = Directory.Exists(logs) ? Directory.GetFiles(logs, "crash-*.log") : [];
+        Assert.True(crashLogs.Length == 0, "the app reported a crash:\n" + string.Join("\n", crashLogs.Select(File.ReadAllText)));
+        if (python is not null)
+        {
+            var pid = int.Parse(File.ReadAllText(pidFile), System.Globalization.CultureInfo.InvariantCulture);
+            using var cleanup = ProcessProbe.KillOnDispose(pid);
+            Assert.True(await ProcessProbe.WaitUntilGoneAsync(pid, 3000), $"the language server (pid {pid}) outlived the app");
+        }
+    }
+
+    /// <summary>Runs only in the child process of <see cref="The_real_app_with_every_module_starts_and_shuts_down_cleanly_under_x11"/>.</summary>
+    [Fact]
+    public void RealAppChild()
+    {
+        if (Environment.GetEnvironmentVariable(ChildEnv) != "real") Assert.Skip("child entry point: only runs when launched by the parent test");
+        var workspace = Environment.GetEnvironmentVariable("CSCODE_TEST_WORKSPACE")!;
+        var file = Environment.GetEnvironmentVariable("CSCODE_TEST_OPEN")!;
+        var pidFile = Environment.GetEnvironmentVariable("CSCODE_TEST_PIDFILE");
+        Exception? failure = null;
+        var exit = AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont()
+            .AfterSetup(_ => Dispatcher.UIThread.Post(async () =>
+            {
+                var lifetime = (IClassicDesktopStyleApplicationLifetime)Application.Current!.ApplicationLifetime!;
+                try
+                {
+                    for (var i = 0; i < 600 && lifetime.MainWindow is not MainWindow; i++) await Task.Delay(50);
+                    if (lifetime.MainWindow is not MainWindow main) throw new InvalidOperationException("the main window did not open: " + lifetime.MainWindow?.GetType().Name);
+                    var services = ((App)Application.Current!).Services ?? throw new InvalidOperationException("the app has no services");
+                    await services.GetRequiredService<Core.Platform.IWorkspaceService>().OpenFolderAsync(new Uri(Path.TrimEndingDirectorySeparator(workspace) + "/"));
+                    await services.GetRequiredService<Core.Platform.INavigationService>().OpenAsync(new Uri(file));
+                    if (!string.IsNullOrEmpty(pidFile))
+                    {
+                        var manager = services.GetRequiredService<Core.Languages.ILanguageServerManager>();
+                        int? Pid() => manager.Servers.FirstOrDefault(s => s.Id == FakeLanguageServer.Id && s.State == Core.Languages.LanguageServerState.Running)?.ProcessId;
+                        for (var i = 0; i < 400 && Pid() is null; i++) await Task.Delay(50);
+                        File.WriteAllText(pidFile, (Pid() ?? throw new InvalidOperationException("the language server did not start")).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    }
+                    await Task.Delay(1000);
+                    main.Close(); // the user's close: prompts (none: nothing is dirty), layout saved, then the app's orderly shutdown ends the lifetime
+                }
+                catch (Exception ex) { failure = ex; lifetime.Shutdown(1); }
+            }, DispatcherPriority.Background))
+            .StartWithClassicDesktopLifetime([]);
+        if (failure is not null) throw new InvalidOperationException("real app run failed", failure);
         Assert.Equal(0, exit);
     }
 }
