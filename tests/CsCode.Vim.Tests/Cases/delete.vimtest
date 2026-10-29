@@ -1,0 +1,587 @@
+# delete operator
+=== delete-001
+> ‸foo bar baz
+keys: dw
+< ‸bar baz
+
+=== delete-002
+> ‸foo bar baz
+keys: d2w
+< ‸baz
+
+=== delete-003
+> ‸foo bar baz
+keys: 2dw
+< ‸baz
+
+=== delete-004
+> ‸foo bar baz
+keys: 2d2w
+< ‸
+
+=== delete-005
+> ‸foo bar baz
+keys: dW
+< ‸bar baz
+
+=== delete-006
+> foo bar ‸baz
+keys: dw
+< foo bar‸ ⏎
+
+=== delete-007
+> foo ‸bar baz
+> next
+keys: d$
+< foo‸ ⏎
+< next
+
+=== delete-008
+> foo bar‸ baz
+> next
+keys: d0
+< ‸ baz
+< next
+
+=== delete-009
+> foo ‸bar baz
+keys: d^
+< ‸bar baz
+
+=== delete-010
+>   foo ‸bar
+keys: d^
+<   ‸bar
+
+=== delete-011
+> foo ‸bar baz
+> next
+keys: dd
+< ‸next
+
+=== delete-012
+> foo
+> ‸bar
+> baz
+keys: dd
+< foo
+< ‸baz
+
+=== delete-013
+> foo
+> bar
+> ‸baz
+keys: dd
+< foo
+< ‸bar
+
+=== delete-014
+> ‸only
+keys: dd
+< ‸
+
+=== delete-015
+> ‸a
+> b
+> c
+> d
+keys: 2dd
+< ‸c
+< d
+
+=== delete-016
+> ‸a
+> b
+> c
+> d
+keys: 3dd
+< ‸d
+
+=== delete-017
+> ‸a
+> b
+> c
+> d
+keys: 9dd
+< ‸
+
+=== delete-018
+> a
+> ‸b
+> c
+> d
+keys: d2j
+< ‸a
+
+=== delete-019
+> a
+> b
+> ‸c
+> d
+keys: dk
+< a
+< ‸d
+
+=== delete-020
+> a
+> b
+> ‸c
+> d
+keys: d2k
+< ‸d
+
+=== delete-021
+> ‸a
+> b
+keys: dk
+< ‸a
+< b
+
+=== delete-022
+> a
+> ‸b
+keys: dj
+< a
+< ‸b
+
+=== delete-023
+> ‸a
+> b
+> c
+> d
+keys: dG
+< ‸
+
+=== delete-024
+> a
+> b
+> ‸c
+> d
+keys: dgg
+< ‸d
+
+=== delete-025
+> ‸a
+> b
+> c
+> d
+keys: d2G
+< ‸c
+< d
+
+=== delete-026
+> foo ‸bar baz
+keys: de
+< foo ‸ baz
+
+=== delete-027
+> foo ‸bar baz
+keys: dE
+< foo ‸ baz
+
+=== delete-028
+> foo b‸ar baz
+keys: db
+< foo ‸ar baz
+
+=== delete-029
+> foo b‸ar baz
+keys: dB
+< foo ‸ar baz
+
+=== delete-030
+> foo bar‸ baz
+keys: dge
+< foo ba‸baz
+
+=== delete-031
+> ‸foo bar baz
+keys: dfa
+< ‸r baz
+
+=== delete-032
+> ‸foo bar baz
+keys: dta
+< ‸ar baz
+
+=== delete-033
+> ‸foo bar baz
+keys: d2fa
+< ‸z
+
+=== delete-034
+> foo bar ‸baz
+keys: dFo
+< fo‸baz
+
+=== delete-035
+> foo bar ‸baz
+keys: dTo
+< foo‸baz
+
+=== delete-036
+> ‸foo bar baz
+keys: dfz
+< ‸
+
+=== delete-037
+> ‸foo (bar) baz
+keys: df(d%
+< ‸bar) baz
+
+=== delete-038
+> foo ‸(bar) baz
+keys: d%
+< foo ‸ baz
+
+=== delete-039
+> foo (b‸ar) baz
+keys: d%
+< foo ‸r) baz
+
+=== delete-040
+> ‸foo bar
+> baz
+keys: dj
+< ‸
+
+=== delete-041
+> foo ‸bar
+> baz
+keys: dl
+< foo ‸ar
+< baz
+
+=== delete-042
+> foo ‸b
+> baz
+keys: dl
+< foo‸ ⏎
+< baz
+
+=== delete-043
+> foo bar‸
+keys: dl
+< foo b‸a
+
+=== delete-044
+> ‸
+keys: dl
+< ‸
+
+=== delete-045
+> ‸
+keys: x
+< ‸
+
+=== delete-046
+> a‸bc
+keys: x
+< a‸c
+
+=== delete-047
+> ab‸c
+keys: x
+< a‸b
+
+=== delete-048
+> a‸bc
+keys: 2x
+< ‸a
+
+=== delete-049
+> a‸bc
+keys: 9x
+< ‸a
+
+=== delete-050
+> ab‸c
+keys: X
+< a‸c
+
+=== delete-051
+> a‸bc
+keys: 2X
+< ‸bc
+
+=== delete-052
+> ‸abc
+keys: X
+< ‸abc
+
+=== delete-053
+> foo ‸bar baz
+keys: D
+< foo‸ ⏎
+
+=== delete-054
+> foo ‸bar baz
+> next
+keys: 2D
+< foo‸ ⏎
+
+=== delete-055
+> foo ‸bar baz
+> next
+> last
+keys: 2D
+< foo‸ ⏎
+< last
+
+=== delete-056
+> ‸foo
+keys: D
+< ‸
+
+=== delete-057
+> foo ‸bar
+keys: dd
+< ‸
+
+=== delete-058
+> foo ‸bar baz
+keys: d}
+< foo‸ ⏎
+
+=== delete-059
+> a
+> b‸
+> c
+>
+> d
+keys: d}
+< a
+< ‸
+< d
+
+=== delete-060
+> a
+> b
+>
+> ‸c
+> d
+keys: d{
+< a
+< b
+< ‸c
+< d
+
+=== delete-061
+> foo ‸bar.baz qux
+keys: dw
+< foo ‸.baz qux
+
+=== delete-062
+> foo ‸bar. baz
+keys: dw
+< foo ‸. baz
+
+=== delete-063
+> foo ‸bar
+>   baz
+keys: dw
+< foo‸ ⏎
+<   baz
+
+=== delete-064
+> foo ‸bar
+>   baz
+keys: 2dw
+< foo‸ ⏎
+
+=== delete-065
+> foo ‸bar
+>
+> baz
+keys: 2dw
+< foo‸ ⏎
+< baz
+
+=== delete-066
+> foo
+> ‸  bar
+> baz
+keys: dw
+< foo
+< ‸bar
+< baz
+
+=== delete-067
+> foo   ‸ bar
+keys: dw
+< foo   ‸bar
+
+=== delete-068
+> foo bar‸   ⏎
+keys: dw
+< foo ba‸r
+
+=== delete-069
+> ‸a b c d
+keys: d3w
+< ‸d
+
+=== delete-070
+> ‸a b
+> c d
+keys: d3w
+< ‸d
+
+=== delete-071
+> foo ‸bar
+> baz qux
+keys: d/baz<CR>
+< foo‸ ⏎
+< baz qux
+
+=== delete-072
+> foo ‸bar
+> baz qux
+keys: d?foo<CR>
+< ‸bar
+< baz qux
+
+=== delete-073
+> ‸foo bar baz
+keys: d/baz<CR>
+< ‸baz
+
+=== delete-074
+> ‸foo bar baz
+keys: d/ba<CR>
+< ‸bar baz
+
+=== delete-075
+> ‸foo bar baz
+keys: d/ba/e<CR>
+< ‸r baz
+
+=== delete-076
+> ‸foo bar
+> baz
+keys: dn
+< ‸foo bar
+< baz
+
+=== delete-077
+> ‸foo bar foo
+keys: /foo<CR>0dn
+< ‸foo
+
+=== delete-078
+> ‸a
+> b
+> c
+keys: dvj
+< ‸b
+< c
+
+=== delete-079
+> ‸abc
+> def
+keys: dvj
+< ‸def
+
+=== delete-080
+> abc‸
+> def
+keys: dvj
+< ab‸f
+
+=== delete-081
+> ‸abc
+> def
+keys: dVl
+< ‸def
+
+=== delete-082
+> ‸abc
+> def
+keys: d<C-v>j
+< ‸bc
+< ef
+
+=== delete-083
+> abc‸def
+keys: dvb
+< ‸ef
+
+=== delete-084
+> ‸foo bar
+keys: dve
+< ‸o bar
+
+=== delete-085
+> ‸foo bar
+keys: dvw
+< ‸ar
+
+=== delete-086
+> ‸foo bar
+keys: dv$
+< ‸r
+
+=== delete-087
+> foo‸ bar
+keys: dv0
+< ‸bar
+
+=== delete-088
+> ‸foo
+> bar
+keys: d$
+< ‸
+< bar
+
+=== delete-089
+> fo‸o
+>   bar
+> baz
+keys: d2$
+< f‸o
+< baz
+
+=== delete-090
+> ‸foo
+> bar
+> baz
+keys: d2$
+< ‸baz
+
+=== delete-091
+> ‸  foo
+>   bar
+keys: dd
+<   ‸bar
+
+=== delete-092
+> ‸a b
+> c
+keys: d)
+< ‸
+
+=== delete-093
+> a b. ‸c d. e
+keys: d(
+< ‸c d. e
+
+=== delete-094
+> a b. ‸c d. e
+keys: d)
+< a b. ‸e
+
+=== delete-095
+> ‸one
+> two
+> three
+keys: d}
+< ‸
+
+=== delete-096
+> ‸one
+> two
+> three
+keys: yyjdd
+< one
+< ‸three
+

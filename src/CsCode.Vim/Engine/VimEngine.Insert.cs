@@ -220,7 +220,16 @@ public sealed partial class VimEngine
         }
     }
 
+    private bool _insertBatch;
     private bool _litStarted;
+
+    /// <summary>Vim inserts runs of typed-ahead printable characters in ONE call, so '. keeps the column of the first one.</summary>
+    private bool NextKeyIsPlainChar()
+    {
+        var k = _stuff.Count > 0 ? _stuff.Peek() : _typed.Count > 0 ? _typed.Peek() : -1;
+        k &= ~NoRemapFlag;
+        return k >= 32 && Keys.IsChar(k) && k != 127;
+    }
     private int _litMax;
 
     private static int HexVal(int k, int radix)
@@ -303,8 +312,9 @@ public sealed partial class VimEngine
         else
         {
             if (_mode == VimMode.Replace) _insert!.ReplaceStack.Push((_line, _col, null));
-            InsertInLine(_line, _col, text);
+            InsertInLine(_line, _col, text, note: !_insertBatch);
         }
+        _insertBatch = _mode == VimMode.Insert && NextKeyIsPlainChar();
         _col += text.Length;
         _setCurswant = true;
         if (O.TextWidth > 0 && cp is not (' ' or '\t') && O.FoHas('t')) AutoWrap();
@@ -409,11 +419,18 @@ public sealed partial class VimEngine
         else if (_didAutoIndent && VimText.IsBlank(head)) head = "";
         if (_mode == VimMode.Replace && _insert is { } ins) ins.ReplaceStack.Push((_line, col, null));
         ReplaceRange(new TextPosition(_line, 0), new TextPosition(_line, s.Length), head + "\n" + indent + rest);
+        NoteChange(_line, col);
         _line++;
         _col = indent.Length;
         _didAutoIndent = indent.Length > 0;
         _aiCol = indent.Length;
         _setCurswant = true;
+    }
+
+    private void UnrecordLastKey()
+    {
+        var st = _insert;
+        if (st is { Replaying: false } && st.Typed.Count > 0) st.Typed.RemoveAt(st.Typed.Count - 1);
     }
 
     private void InsertBackspace(int mode)
@@ -423,7 +440,7 @@ public sealed partial class VimEngine
         var bs = O.Backspace;
         bool Can(string what) => bs == "2" || bs == "3" || OptionsHas(bs, what) || (bs == "1" && what is "indent" or "eol");
         var s = CurLine;
-        if (_line == 0 && _col == 0) { Beep(); return; }
+        if (_line == 0 && _col == 0) { Beep(); UnrecordLastKey(); return; }
 
         if (_col == 0)
         {
@@ -593,7 +610,7 @@ public sealed partial class VimEngine
     private void InsertLastInserted(bool stop)
     {
         var last = _s.Registers.LastInserted;
-        if (last.Length == 0) return;
+        if (string.IsNullOrEmpty(last)) return;
         var keys = Keys.Decode(last);
         var st = _insert!;
         foreach (var kk in keys)
@@ -698,7 +715,7 @@ public sealed partial class VimEngine
         if (!ctrlC || st.Typed.Count > 0)
         {
             var sbk = new StringBuilder();
-            foreach (var k in st.Typed) Keys.Encode(sbk, k);
+            foreach (var k in st.Typed) Keys.Encode(sbk, k == Keys.CR ? Keys.NL : k);
             _s.Registers.LastInserted = sbk.ToString();
         }
         // complete the change being recorded for `.`

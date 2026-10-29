@@ -674,6 +674,7 @@ public sealed partial class VimEngine
         if (l2 > LastLine) { if (l1 >= LastLine) { Beep(); return true; } l2 = LastLine; }
         _line = l1;
         DoJoin(l2 - l1 + 1, !c.Bang, setmark: true);
+        Beginline(BL.White | BL.Fix);
         return true;
     }
 

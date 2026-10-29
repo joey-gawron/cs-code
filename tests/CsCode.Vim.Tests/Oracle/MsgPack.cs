@@ -107,7 +107,32 @@ internal static class MsgPack
     private static int U16(Stream s) => BinaryPrimitives.ReadUInt16BigEndian(Take(s, 2));
     private static uint U32(Stream s) => BinaryPrimitives.ReadUInt32BigEndian(Take(s, 4));
     private static byte[] ReadBytes(Stream s, int n) => Take(s, n);
-    private static string ReadStr(Stream s, int n) => Encoding.UTF8.GetString(Take(s, n));
+    private static string ReadStr(Stream s, int n) => Lenient(Take(s, n));
+
+    /// <summary>UTF-8 decode where invalid bytes (Vim's K_SPECIAL 0x80 ...) map to the char with the same code instead of U+FFFD.</summary>
+    private static string Lenient(byte[] b)
+    {
+        var sb = new StringBuilder(b.Length);
+        for (var i = 0; i < b.Length;)
+        {
+            var c = b[i];
+            int len = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 0;
+            if (len > 0 && i + len <= b.Length)
+            {
+                var ok = true;
+                for (var j = 1; j < len; j++) if ((b[i + j] & 0xC0) != 0x80) ok = false;
+                if (ok)
+                {
+                    sb.Append(Encoding.UTF8.GetString(b, i, len));
+                    i += len;
+                    continue;
+                }
+            }
+            sb.Append((char)c);
+            i++;
+        }
+        return sb.ToString();
+    }
 
     private static List<object?> ReadArray(Stream s, int n)
     {

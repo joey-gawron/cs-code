@@ -286,6 +286,7 @@ public sealed partial class VimEngine
         catch (VimRegexException ex) { ExError(ex.Message); return false; }
         if (pat is null) { ExError(VimRegexMessage(pattern)); return false; }
         var global = flags.Global ^ O.GDefault;
+        if (!_globalBusy) SetPcmark();
         var work = SubstituteWork(pat, rep, flags, global, l1, l2);
         if (_nest > 0 || _globalBusy) { DrainEnumerator(work); return _subResultOk; }
         StartWork(work);

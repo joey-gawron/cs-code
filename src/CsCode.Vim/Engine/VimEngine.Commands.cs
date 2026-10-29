@@ -294,7 +294,7 @@ public sealed partial class VimEngine
             if (c.Key is 'a' or 'i') ok = RunTextObject(c, count0, oap);
             else ok = RunMotion(c, count0, oap);
             if (_searchPendingOp || _cmdline is not null) return;
-            if (!ok) { _line = before.Line; _col = before.Character; Beep(); return; }
+            if (!ok) { Beep(); CheckCursor(); return; }
             CheckPcmark();
             if (!VisualActive) CheckCursor();
             return;
@@ -330,10 +330,14 @@ public sealed partial class VimEngine
         while (n < count && i < s.Length) { i += VimText.CharLen(s, i); n++; }
         var swapped = SwapChars(OpType.Tilde, s, start, i);
         if (swapped != s) SetLine(_line, swapped, start);
-        _bs.OpStart = new TextPosition(_line, start);
-        _bs.OpEnd = new TextPosition(_line, Math.Max(start, i - 1));
         _col = i >= s.Length ? VimText.PrevCharStart(s, s.Length) : i;
         _setCurswant = true;
+        if (swapped != s)
+        {
+            NoteChange(_line, start);
+            _bs.OpStart = new TextPosition(_line, start);
+            _bs.OpEnd = new TextPosition(_line, _col > 0 ? VimText.PrevCharStart(CurLine, _col) : 0);
+        }
     }
 
     private void ReplaceCharCommand(Cmd c)
@@ -342,26 +346,22 @@ public sealed partial class VimEngine
         var s = CurLine;
         var count = c.Count1;
         var ch = c.NChar2 != 0 ? c.NChar2 : c.NChar;
-        if (ch == Keys.CR && false) { }
         // count characters must exist
         var i = _col;
         var n = 0;
         while (n < count && i < s.Length) { i += VimText.CharLen(s, i); n++; }
         if (n < count) { Beep(); return; }
         SetRedoPlain(c);
-        _bs.Undo.Synced = _bs.Undo.Synced;
-        if (ch is Keys.CR or Keys.NL)
+        if (c.NChar2 == 0 && ch is Keys.CR or Keys.NL)
         {
-            // replace count chars with ONE line break (and no replacement char)
-            ReplaceRange(new TextPosition(_line, _col), new TextPosition(_line, i), "\n");
-            var newLine = _line + 1;
-            if (O.AutoIndent) { }
-            _line = newLine;
-            _col = 0;
-            CheckCursor();
-            _bs.OpStart = new TextPosition(_line - 1, 0);
-            _bs.OpEnd = new TextPosition(_line, 0);
-            _setCurswant = true;
+            // Strange Vi behaviour kept by Vim: the characters are deleted and ONE line break is inserted, as if by R<CR><Esc>.
+            DeleteInLine(_line, _col, i - _col);
+            _redoBuilding = null;
+            StartInsert('r', 1, restart: false);
+            _insert!.Typed.Add(Keys.CR);
+            InsertNewlineRaw();
+            InsertEscape(false);
+            _s.Registers.LastInserted = "\n";
             return;
         }
         var rep = ch == 0 ? "" : char.ConvertFromUtf32(ch);
@@ -369,9 +369,12 @@ public sealed partial class VimEngine
         var start = _col;
         ReplaceInLine(_line, start, i - start, text);
         // cursor on the last replaced char
-        _col = start + text.Length - (text.Length > 0 ? VimText.CharLen(text, VimText.PrevCharStart(text, text.Length)) : 0);
+        var lastLen = text.Length > 0 ? VimText.CharLen(text, VimText.PrevCharStart(text, text.Length)) : 0;
+        _col = start + text.Length - lastLen;
+        NoteChange(_line, _col);
         _bs.OpStart = new TextPosition(_line, start);
         _bs.OpEnd = new TextPosition(_line, _col);
+        _s.Registers.LastInserted = Keys.Encode(ch);
         _setCurswant = true;
     }
 

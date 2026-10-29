@@ -120,6 +120,7 @@ internal sealed class BufferState
     public TextPosition? VisualStart, VisualEnd;     // '< '>
     public VimMode VisualMode = VimMode.Visual;
     public int VisualCurswant;
+    public TextPosition? PcMark, PrevPcMark;         // '  (previous context mark)
     public TextPosition? LastChange;                // '.
     public TextPosition? LastInsert;                // '^
     public TextPosition? LastCursor;                // '"
@@ -181,6 +182,7 @@ internal sealed class BufferState
         OpStart = Adj(OpStart, true); OpEnd = Adj(OpEnd, true);
         VisualStart = Adj(VisualStart, true); VisualEnd = Adj(VisualEnd, true);
         LastChange = Adj(LastChange, true); LastInsert = Adj(LastInsert, true); LastCursor = Adj(LastCursor, true);
+        PcMark = Adj(PcMark, false); PrevPcMark = Adj(PrevPcMark, false);
         for (var i = 0; i < ChangeList.Count; i++) ChangeList[i] = Adj(ChangeList[i], true)!.Value;
         if (GlobalLines is { } gl)
             for (var i = 0; i < gl.Count; i++)
@@ -200,7 +202,7 @@ internal sealed class BufferState
         TextPosition? C(TextPosition? p) => p is { } q && q.Line >= lineCount ? null : p;
         for (var i = 0; i < Marks.Length; i++) Marks[i] = C(Marks[i]);
         OpStart = C(OpStart); OpEnd = C(OpEnd); VisualStart = C(VisualStart); VisualEnd = C(VisualEnd);
-        LastChange = C(LastChange); LastInsert = C(LastInsert); LastCursor = C(LastCursor);
+        LastChange = C(LastChange); LastInsert = C(LastInsert); LastCursor = C(LastCursor); PcMark = C(PcMark); PrevPcMark = C(PrevPcMark);
         ChangeList.RemoveAll(p => p.Line >= lineCount);
         ChangeListIdx = Math.Min(ChangeListIdx, ChangeList.Count);
         if (ULineNr >= lineCount) { ULineNr = -1; ULineText = null; }

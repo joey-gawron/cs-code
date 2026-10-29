@@ -182,6 +182,16 @@ public sealed partial class VimEngine : IDisposable
     /// <summary>Types a string in Vim notation as if the user did (convenience for tests and scripting).</summary>
     public void TypeKeys(string notation)
     {
+        if (_host is null || !_s.Enabled) return;
+        SyncFromHost();
+        foreach (var k in Keys.ParseNotation(notation, _s.Leader, _s.LocalLeader)) _typed.Enqueue(k);
+        Pump(long.MaxValue / 4);
+        Drain();
+    }
+
+    /// <summary>Like <see cref="TypeKeys"/> but every key is a separate HandleKey call (no typeahead between keys), as with a slow human typist.</summary>
+    public void TypeKeysOneByOne(string notation)
+    {
         foreach (var k in Keys.ParseNotation(notation, _s.Leader, _s.LocalLeader))
         {
             HandleKey(k);

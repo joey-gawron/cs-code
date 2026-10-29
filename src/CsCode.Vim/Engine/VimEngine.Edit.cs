@@ -140,7 +140,7 @@ public sealed partial class VimEngine
 
     private void NoteChange(int line, int col)
     {
-        _bs.AddChange(new TextPosition(Math.Clamp(line, 0, LastLine), Math.Max(0, col)), O.TextWidth);
+        _bs.AddChange(new TextPosition(Math.Max(0, line), Math.Max(0, col)), O.TextWidth);
     }
 
     private void HostEdit(in VimEdit edit)
@@ -184,12 +184,12 @@ public sealed partial class VimEngine
         return i;
     }
 
-    private void InsertInLine(int l, int col, string text)
+    private void InsertInLine(int l, int col, string text, bool note = true)
     {
         if (text.Length == 0) return;
         SaveUndo(l, 1, 1);
         HostEdit(new VimEdit(new TextPosition(l, col), new TextPosition(l, col), text));
-        NoteChange(l, col);
+        if (note) NoteChange(l, col);
     }
 
     private void DeleteInLine(int l, int col, int len)
@@ -234,7 +234,7 @@ public sealed partial class VimEngine
             _bs.MarkAdjust(0, int.MaxValue / 2, 0, 0, delete: true);
         }
         else _bs.MarkAdjust(first, first + count - 1, 0, -count, delete: true);
-        NoteChange(Math.Min(first, LastLine), 0);
+        NoteChange(first, 0);
     }
 
     private void RawDeleteLines(int first, int count)
@@ -267,7 +267,7 @@ public sealed partial class VimEngine
             else _bs.MarkAdjust(start.Line + 1, int.MaxValue / 2, delta, 0, delete: false);
         }
         _ = endLineText;
-        NoteChange(start.Line, start.Character);
+        NoteChange(delta < 0 ? start.Line + 1 : start.Line, delta < 0 ? 0 : start.Character);
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -345,6 +345,7 @@ public sealed partial class VimEngine
             if (top < opStart.Line) opStart = new TextPosition(top, 0);
             if (newsize == 0 && top > opEnd.Line) opEnd = new TextPosition(top, 0);
             else if (top + newsize - 1 > opEnd.Line) opEnd = new TextPosition(top + newsize - 1, 0);
+            NoteChange(top, 0);
             newCountSum += newsize;
             oldCountSum += oldsize;
             e.Old = replaced;
@@ -387,6 +388,7 @@ public sealed partial class VimEngine
     {
         var tree = _bs.Undo;
         tree.Synced = true;
+        SetPcmark();
         for (var n = 0; n < Math.Max(1, count); n++)
         {
             if (tree.Current.Parent is null)
@@ -503,25 +505,23 @@ public sealed partial class VimEngine
 
     private readonly List<Jump> _jumps = [];
     private int _jumpIdx;
-    private TextPosition? _pcmark;
-    private TextPosition? _prevPcmark;
     private bool _noJumpList;
 
     /// <summary>Vim's setpcmark: remember the position before a jump.</summary>
     private void SetPcmark()
     {
         if (_noJumpList) return;
-        _prevPcmark = _pcmark;
-        _pcmark = new TextPosition(_line, _col);
+        _bs.PrevPcMark = _bs.PcMark;
+        _bs.PcMark = new TextPosition(_line, _col);
         if (_jumps.Count >= BufferState.JumpListSize) _jumps.RemoveAt(0);
-        _jumps.Add(new Jump { Buf = _bs, Pos = _pcmark.Value });
+        _jumps.Add(new Jump { Buf = _bs, Pos = _bs.PcMark.Value });
         _jumpIdx = _jumps.Count;
     }
 
     private void CheckPcmark()
     {
-        if (_prevPcmark is { } prev && (_pcmark is null || _pcmark == new TextPosition(_line, _col))) _pcmark = prev;
-        _prevPcmark = null;
+        if (_bs.PrevPcMark is { } prev && (_bs.PcMark is null || _bs.PcMark == new TextPosition(_line, _col))) _bs.PcMark = prev;
+        _bs.PrevPcMark = null;
     }
 
     private void SetMark(char c, TextPosition pos)
@@ -542,7 +542,7 @@ public sealed partial class VimEngine
         {
             >= 'a' and <= 'z' => _bs.Marks[c - 'a'],
             >= 'A' and <= 'Z' => _s.GlobalMarks.TryGetValue((char)c, out var g) && (g.Uri is null || g.Uri == _buf.Uri) ? g.Pos : null,
-            '\'' or '`' => _pcmark,
+            '\'' or '`' => _bs.PcMark,
             '[' => _bs.OpStart,
             ']' => _bs.OpEnd,
             '<' => _bs.VisualStart is { } vs && _bs.VisualEnd is { } ve ? (vs <= ve ? vs : ve) : _bs.VisualStart,

@@ -57,7 +57,7 @@ public sealed class RegisterFile
     private Register? _previous;
 
     /// <summary>The last text typed in Insert mode (register '.'), stored in key-encoded form.</summary>
-    public string LastInserted { get; set; } = "";
+    public string? LastInserted { get; set; }
     public string LastCommandLine { get; set; } = "";
     public string LastSearch { get; set; } = "";
     public Func<string?>? CurrentFileName { get; set; }
@@ -85,7 +85,7 @@ public sealed class RegisterFile
         switch (name)
         {
             case 0 or '"': return _previous ?? _regs[0];
-            case '.': return LastInserted.Length == 0 ? null : Register.FromText(LastInserted, VimRegisterType.Character);
+            case '.': return LastInserted is null ? null : Register.FromText(LastInserted, VimRegisterType.Character);
             case ':': return LastCommandLine.Length == 0 ? null : Register.FromText(LastCommandLine, VimRegisterType.Character);
             case '/': return LastSearch.Length == 0 ? null : Register.FromText(LastSearch, VimRegisterType.Character);
             case '%': return CurrentFileName?.Invoke() is { } f ? Register.FromText(f, VimRegisterType.Character) : null;
@@ -211,7 +211,7 @@ public sealed class RegisterFile
         for (var i = 0; i <= 9; i++) Row(i.ToString(), _regs[i]);
         for (var c = 'a'; c <= 'z'; c++) Row(c.ToString(), _regs[Index(c)]);
         Row("-", _regs[Small]);
-        if (LastInserted.Length > 0) Row(".", Register.FromText(LastInserted, VimRegisterType.Character));
+        if (!string.IsNullOrEmpty(LastInserted)) Row(".", Register.FromText(LastInserted, VimRegisterType.Character));
         if (LastCommandLine.Length > 0) Row(":", Register.FromText(LastCommandLine, VimRegisterType.Character));
         if (LastSearch.Length > 0) Row("/", Register.FromText(LastSearch, VimRegisterType.Character));
         return sb.ToString();

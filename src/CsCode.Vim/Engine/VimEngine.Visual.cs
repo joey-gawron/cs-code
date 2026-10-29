@@ -408,6 +408,7 @@ public sealed partial class VimEngine
         }
         _line = oap.Start.Line;
         CheckCursor();
+        NoteChange(oap.Start.Line, _col);
         oap.LineCount = 0;
     }
 

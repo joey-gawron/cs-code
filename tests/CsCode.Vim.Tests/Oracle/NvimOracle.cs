@@ -49,7 +49,7 @@ public static class NvimOracle
     [
         "set nomore noswapfile nobackup noautoindent nosmartindent nocindent startofline",
         "set shiftwidth=8 tabstop=8 softtabstop=0 noexpandtab nosmarttab",
-        "set cpo=aABceFs formatoptions=tcq jumpoptions= whichwrap=b,s backspace=indent,eol,start nrformats=bin,hex",
+        "set cpo=aABceFs_ formatoptions=tcq jumpoptions= whichwrap=b,s backspace=indent,eol,start nrformats=bin,hex",
         "set undolevels=1000 matchpairs=(:),{:},[:] comments= commentstring= textwidth=0 nowrap scrolloff=0 sidescrolloff=0 nojoinspaces",
         "set noignorecase nosmartcase wrapscan nohlsearch noincsearch magic selection=inclusive virtualedit= timeout timeoutlen=60000 ttimeoutlen=0",
         "silent! nunmap Y",
@@ -130,7 +130,8 @@ public static class NvimOracle
     public static void Type(NvimClient client, string keys)
     {
         if (keys.Length == 0) return;
-        client.Call("nvim_input", keys);
+        // nvim_input treats a bare '<' as the start of <Key> notation: re-emit with <lt> for literal '<'.
+        client.Call("nvim_input", CsCode.Vim.Keys.ToNotation(CsCode.Vim.Keys.ParseNotation(keys)));
     }
 
     public static VimSnapshot Run(OracleInput input)
@@ -183,7 +184,11 @@ public static class NvimOracle
     {
         if (byteCol <= 0) return 0;
         var bytes = Encoding.UTF8.GetBytes(line);
+        if (byteCol > (1 << 30)) return 1 << 30;
         if (byteCol >= bytes.Length) return line.Length + (byteCol - bytes.Length);
-        return Encoding.UTF8.GetString(bytes, 0, byteCol).Length;
+        // a byte column inside a multibyte character maps to that character
+        var start = byteCol;
+        while (start > 0 && (bytes[start] & 0xC0) == 0x80) start--;
+        return Encoding.UTF8.GetString(bytes, 0, start).Length;
     }
 }

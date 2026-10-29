@@ -305,9 +305,10 @@ public sealed partial class VimEngine
             {
                 oap.Inclusive = true;
                 _setCurswant = true;
-                ok = EndWord(count1, m.Key == 'E', false, false);
-                if (!ok && op == OpType.None) { } else ok = true || ok;
-                if (!EndWordOk) ok = false;
+                var beforeE = new TextPosition(_line, _col);
+                var rE = EndWord(count1, m.Key == 'E', false, false);
+                if (beforeE < new TextPosition(_line, _col)) AdjustCursorOp(oap);
+                if (!rE && op == OpType.None) ok = false;
                 break;
             }
             case 'b' or 'B':
@@ -321,9 +322,11 @@ public sealed partial class VimEngine
                 ok = RepeatFindChar(m.Key == ',', count1, oap);
                 break;
             case '%':
+                oap.UseRegOne = true;
                 ok = PercentMotion(count0, oap);
                 break;
             case '(' or ')':
+                oap.UseRegOne = true;
                 oap.Type = MType.Char;
                 oap.Inclusive = false;
                 _setCurswant = true;
@@ -364,8 +367,6 @@ public sealed partial class VimEngine
         _ = startPos;
         return ok;
     }
-
-    private bool EndWordOk => true;
 
     private void GotoLine(int line)
     {
@@ -532,6 +533,7 @@ public sealed partial class VimEngine
     private bool MarkMotion(int cmd, int markChar, OpArgs oap)
     {
         var linewise = cmd == '\'';
+        if (!linewise) oap.UseRegOne = true;
         TextPosition? pos;
         pos = GetMark(markChar);
         if (markChar is >= 'A' and <= 'Z' && _s.GlobalMarks.TryGetValue((char)markChar, out var gm) && gm.Uri != _buf.Uri && gm.Uri is not null)
@@ -700,7 +702,7 @@ public sealed partial class VimEngine
                 return true;
             case 'm':
                 oap.Inclusive = false;
-                _col = VimText.IndexOfVcol(s, segStart + (w > 0 ? w : VimText.DisplayWidth(s, O.TabStop)) / 2, O.TabStop, true);
+                _col = VimText.IndexOfVcol(s, segStart + Host.WindowWidth / 2, O.TabStop, true);
                 break;
             case 'M':
             {
@@ -772,7 +774,9 @@ public sealed partial class VimEngine
                 oap.Inclusive = false;
                 oap.UseRegOne = true;
                 _setCurswant = true;
-                return FindParagraph(forward, count1, flag, both: oap.Op != OpType.None && forward && flag == '{', oap);
+                var okp = FindParagraph(forward, count1, flag, both: oap.Op != OpType.None && forward && flag == '{', oap);
+                if (okp && oap.Op == OpType.None) Beginline(BL.White | BL.Fix);
+                return okp;
             }
             case '(' or '{' or ')' or '}':
             {
