@@ -12,6 +12,7 @@ using CsCode.Core.Contributions;
 using CsCode.Core.Platform;
 using CsCode.Ui.Controls;
 using CsCode.Ui.Icons;
+using CsCode.Ui.Menus;
 using CsCode.Ui.Theming;
 
 namespace CsCode.App.ToolWindows.Explorer;
@@ -20,7 +21,7 @@ namespace CsCode.App.ToolWindows.Explorer;
 /// The Explorer view: header actions, a filter box and a virtualised list of the model's flat visible rows. The view owns no tree logic;
 /// it forwards clicks, keys and context-menu commands to <see cref="ExplorerViewModel"/>. Disposed (with its view-model) when the tool window hides.
 /// </summary>
-public sealed class ExplorerView : UserControl, IDisposable
+public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget
 {
     private readonly ExplorerViewModel _vm;
     private readonly IWindowService _window;
@@ -31,9 +32,13 @@ public sealed class ExplorerView : UserControl, IDisposable
     private string _typeAhead = "";
     private DateTime _typeAheadAt;
 
-    public ExplorerView(ExplorerViewModel vm, IWindowService window, ICommandService? commands = null, IContextKeyService? keys = null, IContributionRegistry? contributions = null)
+    private readonly MenuServices? _menus;
+
+    public ExplorerView(ExplorerViewModel vm, IWindowService window, ICommandService? commands = null, IContextKeyService? keys = null, IContributionRegistry? contributions = null,
+        MenuServices? menus = null)
     {
         _vm = vm;
+        _menus = menus ?? (commands is not null && keys is not null ? new MenuServices(commands, keys, null, contributions) : null);
         _window = window;
         _commands = commands;
         _keys = keys;
@@ -175,12 +180,20 @@ public sealed class ExplorerView : UserControl, IDisposable
             case Key.Right when node.IsDirectory: e.Handled = true; if (!node.IsExpanded) await _vm.ExpandAsync(node).ConfigureAwait(true); break;
             case Key.Left: e.Handled = true; if (node.IsDirectory && node.IsExpanded) _vm.Collapse(node); else if (node.Parent is { } p) _vm.Selected = p; break;
             case Key.F2: e.Handled = true; if (!node.IsRoot) _vm.BeginRename(node); break;
-            case Key.Delete: e.Handled = true; await _vm.DeleteAsync(node).ConfigureAwait(true); break;
-            case Key.C when e.KeyModifiers == KeyModifiers.Control: e.Handled = true; _vm.Copy([node]); break;
-            case Key.X when e.KeyModifiers == KeyModifiers.Control: e.Handled = true; _vm.Cut([node]); break;
-            case Key.V when e.KeyModifiers == KeyModifiers.Control: e.Handled = true; await _vm.PasteAsync(node).ConfigureAwait(true); break;
+            // Shift+Delete is Cut (below), not Delete.
+            case Key.Delete when e.KeyModifiers == KeyModifiers.None: e.Handled = true; await _vm.DeleteAsync(node).ConfigureAwait(true); break;
+            default: ClipboardKeys.TryHandle(e, this); break; // Ctrl+C/X/V, Ctrl+Insert, Shift+Insert, Shift+Delete: the files
         }
     }
+
+    // ---- clipboard: like Solution Explorer, Cut/Copy/Paste move and copy the FILES (Copy Path puts the path on the system clipboard)
+
+    public bool CanCopy => _vm.Selected is not null;
+    public bool CanCut => _vm.Selected is { IsRoot: false };
+    public bool CanPaste => _vm.Selected is not null && _vm.CanPaste;
+    public Task CopyAsync() { if (_vm.Selected is { } n) _vm.Copy([n]); return Task.CompletedTask; }
+    public Task CutAsync() { if (_vm.Selected is { IsRoot: false } n) _vm.Cut([n]); return Task.CompletedTask; }
+    public async Task PasteAsync() { if (_vm.Selected is { } n) await _vm.PasteAsync(n).ConfigureAwait(true); }
 
     private void OnTextInput(object? sender, TextInputEventArgs e)
     {
@@ -212,45 +225,48 @@ public sealed class ExplorerView : UserControl, IDisposable
     {
         if (e.Source is not Visual v || ViewHelpersAncestor(v)?.DataContext is not ExplorerNode node) return;
         _vm.Selected = node;
-        var menu = new ContextMenu();
-        void Add(string header, Func<Task> action, bool enabled = true)
-        {
-            var item = new MenuItem { Header = header, IsEnabled = enabled };
-            item.Click += async (_, _) => await action().ConfigureAwait(true);
-            menu.Items.Add(item);
-        }
-        if (node.IsDirectory)
-        {
-            Add("New File...", () => CreateAsync(false));
-            Add("New Folder...", () => CreateAsync(true));
-            menu.Items.Add(new Separator());
-        }
-        Add("Rename", () => { _vm.BeginRename(node); return Task.CompletedTask; }, !node.IsRoot);
-        Add("Duplicate", () => _vm.DuplicateAsync(node), !node.IsRoot);
-        Add("Delete", () => _vm.DeleteAsync(node), !node.IsRoot);
-        menu.Items.Add(new Separator());
-        Add("Cut", () => { _vm.Cut([node]); return Task.CompletedTask; }, !node.IsRoot);
-        Add("Copy", () => { _vm.Copy([node]); return Task.CompletedTask; });
-        Add("Paste", () => _vm.PasteAsync(node), _vm.CanPaste);
-        menu.Items.Add(new Separator());
-        Add("Copy Path", () => _window.CopyToClipboardAsync(node.Uri.IsFile ? node.Uri.LocalPath : node.Uri.ToString()).AsTask());
-
-        // Contributed items (user files only; there is no extension system), gated by their `when` clause.
-        if (_contributions is not null && _commands is not null && _keys is not null)
-        {
-            var contributed = ContributedMenus.Get(_contributions, _commands, _keys, ContributedMenus.ExplorerContext);
-            if (contributed.Count > 0)
-            {
-                menu.Items.Add(new Separator());
-                foreach (var (item, title) in contributed)
-                {
-                    var id = item.Command;
-                    Add(title, async () => { await _commands.ExecuteAsync(id, node.Uri.ToString()).ConfigureAwait(true); }, _commands.Has(id));
-                }
-            }
-        }
-        menu.Open(_list);
         e.Handled = true;
+        ContextMenus.Open(MenuFor(node), _list, accessibleName: "Explorer menu");
+    }
+
+    /// <summary>
+    /// The Explorer's node menu (Visual Studio's Solution Explorer and VS Code's Explorer): New File / Folder, Reveal in File Manager, Open in
+    /// Terminal (when a terminal is registered), Find in Folder, Cut / Copy / Paste (files), Copy Path / Copy Relative Path, Rename, Duplicate,
+    /// Delete, then items other modules contribute to <c>explorer/context</c>. Built when it opens.
+    /// </summary>
+    internal IReadOnlyList<MenuEntry> MenuFor(ExplorerNode node)
+    {
+        var uri = node.Uri;
+        var folder = node.IsDirectory ? uri : node.Parent?.Uri ?? uri;
+        MenuEntry? Command(string header, string id, string? icon = null, params object?[] args) => _menus?.Command(header, id, icon, args: args);
+        return MenuSections.Join(
+            node.IsDirectory ?
+            [
+                new MenuEntry("New _File...", () => CreateAsync(false)) { Icon = IconKey.NewFile },
+                new MenuEntry("New Fol_der...", () => CreateAsync(true)) { Icon = IconKey.NewFolder },
+            ] : null,
+            [
+                Command("Reveal in File _Manager", Menus.ShellContextMenus.RevealInOs, "folder-opened", uri),
+                Command("Open in _Terminal", "workbench.action.terminal.newHere", IconKey.Terminal, folder),
+                node.IsDirectory ? Command("Find in F_older...", "search.action.findInFolder", "go-to-search", uri.ToString()) : null,
+            ],
+            [
+                new MenuEntry("Cu_t", CutAsync) { Gesture = ClipboardKeys.Gesture("X"), IsEnabled = CanCut },
+                new MenuEntry("_Copy", CopyAsync) { Gesture = ClipboardKeys.Gesture("C"), Icon = IconKey.Copy, IsEnabled = CanCopy },
+                new MenuEntry("_Paste", PasteAsync) { Gesture = ClipboardKeys.Gesture("V"), Icon = "clippy", IsEnabled = CanPaste },
+            ],
+            [
+                Command("Copy _Path", Menus.ShellContextMenus.CopyPath, null, uri)
+                    ?? new MenuEntry("Copy _Path", () => _window.CopyToClipboardAsync(node.Uri.IsFile ? node.Uri.LocalPath : node.Uri.ToString()).AsTask()),
+                Command("Copy Relati_ve Path", Menus.ShellContextMenus.CopyRelativePath, null, uri),
+            ],
+            [
+                new MenuEntry("Rena_me", () => { _vm.BeginRename(node); return Task.CompletedTask; }) { Gesture = "F2", IsEnabled = !node.IsRoot },
+                new MenuEntry("D_uplicate", () => _vm.DuplicateAsync(node)) { IsEnabled = !node.IsRoot },
+                new MenuEntry("_Delete", () => _vm.DeleteAsync(node)) { Gesture = "Del", Icon = IconKey.Trash, IsEnabled = !node.IsRoot },
+            ],
+            // Contributed items get the node's URI, as VS Code's explorer/context commands do.
+            _menus is null ? null : MenuContributions.Resolve(_menus, ContributedMenus.ExplorerContext, [uri.ToString()]));
     }
 
     public void Dispose()
