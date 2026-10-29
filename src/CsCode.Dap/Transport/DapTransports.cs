@@ -34,8 +34,17 @@ public static class DapTransportFactory
             DebugAdapterExecutable exe => ProcessTransport.Start(exe, logger),
             DebugAdapterServer server => await TcpTransport.ConnectAsync(server.Host, server.Port, connectTimeout, ct).ConfigureAwait(false),
             DebugAdapterNamedPipe pipe => await PipeTransport.ConnectAsync(pipe.Path, connectTimeout, ct).ConfigureAwait(false),
+            DebugAdapterServerProcess server => await ServerProcessTransport.StartAsync(server, logger, ct).ConfigureAwait(false),
             _ => throw new NotSupportedException($"Unknown debug adapter descriptor {descriptor.GetType().Name}"),
         };
+
+    /// <summary>The TCP endpoint of an adapter SERVER a transport is connected to (child sessions connect to the same server), else null.</summary>
+    public static (string Host, int Port)? EndpointOf(IDapTransport transport) => transport switch
+    {
+        ServerProcessTransport s => (s.Host, s.Port),
+        TcpTransport t => (t.Host, t.Port),
+        _ => null,
+    };
 }
 
 /// <summary>Adapter as a child process talking DAP over stdin/stdout. The process tree is killed on close: no zombies.</summary>
@@ -173,11 +182,13 @@ public sealed class TcpTransport : IDapTransport
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _disposed;
 
-    private TcpTransport(TcpClient client, string description)
+    private TcpTransport(TcpClient client, string host, int port)
     {
         _client = client;
         _stream = client.GetStream();
-        Description = description;
+        Host = host;
+        Port = port;
+        Description = $"tcp://{host}:{port}";
     }
 
     public Stream Input => _stream;
@@ -186,6 +197,8 @@ public sealed class TcpTransport : IDapTransport
     public int? ProcessId => null;
     public string Description { get; }
     public string StandardErrorTail => "";
+    public string Host { get; }
+    public int Port { get; }
 
     public static async ValueTask<TcpTransport> ConnectAsync(string host, int port, TimeSpan timeout, CancellationToken ct)
     {
@@ -198,7 +211,7 @@ public sealed class TcpTransport : IDapTransport
             try
             {
                 await client.ConnectAsync(host, port, deadline.Token).ConfigureAwait(false);
-                return new TcpTransport(client, $"tcp://{host}:{port}");
+                return new TcpTransport(client, host, port);
             }
             catch (Exception ex) when (ex is SocketException or IOException)
             {

@@ -31,6 +31,10 @@ public sealed partial class DebugService
                 "Debug adapters you configured (array of {type, label, program, runtime, args, languages, windows/linux/osx: {program}, initialConfigurations}). Replaces VS Code's debugger extensions."),
             new ConfigurationProperty(NetCoreDbgAdapterFactory.SettingPath, Json(""),
                 "Path of the netcoredbg executable used for .NET debugging (empty: tools directory, then PATH, then an offer to download it)."),
+            new ConfigurationProperty(JsDebugAdapterFactory.SettingPath, Json(""),
+                "Path of Microsoft's js-debug adapter used for Node.js/TypeScript debugging: the js-debug directory or its src/dapDebugServer.js (empty: CSCODE_JSDEBUG, then the tools directory, then an offer to download it)."),
+            new ConfigurationProperty(JsDebugAdapterFactory.NodeSettingPath, Json(""),
+                "Path of the Node.js executable that runs the js-debug adapter (empty: 'node' on PATH)."),
             new ConfigurationProperty("cscode.debug.requestTimeoutSeconds", Json(10),
                 "Seconds a debug adapter may take to answer one request before the session reports it unresponsive."),
         ]));

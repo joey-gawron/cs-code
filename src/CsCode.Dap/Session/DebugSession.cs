@@ -113,6 +113,10 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     public long? DebuggeeProcessId { get; private set; }
     public string? DebuggeeProcessName { get; private set; }
     public int? AdapterProcessId => _client?.Transport.ProcessId;
+    /// <summary>The TCP endpoint of the adapter server this session is connected to (null for stdio and pipe adapters); its child sessions connect there.</summary>
+    public (string Host, int Port)? AdapterEndpoint => _client?.Transport is { } t ? DapTransportFactory.EndpointOf(t) : null;
+    /// <summary>Environment marker carried by an adapter server this session started and by everything it spawned (null otherwise).</summary>
+    public string? AdapterProcessMarker => (_client?.Transport as ServerProcessTransport)?.Marker;
     public IReadOnlyList<int> SpawnedDebuggeeProcessIds => _debuggees.LiveProcessIds;
     public IReadOnlyList<DebugModuleInfo> Modules { get { lock (_modules) return [.. _modules.Values]; } }
     public long DroppedOutputChars => _output.DroppedChars;

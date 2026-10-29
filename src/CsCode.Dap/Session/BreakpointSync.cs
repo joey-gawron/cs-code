@@ -183,10 +183,17 @@ internal sealed class BreakpointSync : IDisposable
 
     private async Task SendFunctionsAsync(CancellationToken ct, bool force)
     {
-        if (_host.Capabilities.SupportsFunctionBreakpoints != true) return;
         var fns = _manager.FunctionBreakpoints.Where(f => f.Enabled).ToList();
         var signature = string.Join('|', fns.Select(f => $"{f.Name}:{f.Condition}:{f.HitCondition}"));
         if (!force && (_sentFunctions ?? "") == signature) return;
+        if (_host.Capabilities.SupportsFunctionBreakpoints != true)
+        {
+            // Nothing is sent (js-debug v1.140.0 advertises no function breakpoints), but the user must see why the breakpoint never hits,
+            // as for the source breakpoint kinds an adapter lacks. The signature keeps the verdict's own Changed event from looping back here.
+            _sentFunctions = signature;
+            foreach (var f in fns) Report(new DebugBreakpointStatus(_host.Session, f.Id, false, null, "This debug adapter does not support function breakpoints."));
+            return;
+        }
         var args = new DapSetFunctionBreakpointsArguments
         {
             Breakpoints = [.. fns.Select(f => new DapFunctionBreakpoint
