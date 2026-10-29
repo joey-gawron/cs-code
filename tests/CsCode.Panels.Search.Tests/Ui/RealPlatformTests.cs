@@ -1,12 +1,16 @@
 using System.Text.Json;
+using CsCode.Core.Contributions;
 using CsCode.Core.Platform;
 using CsCode.Panels.Search.Engine;
 using CsCode.Panels.Search.Settings;
 using CsCode.Platform;
 using CsCode.Platform.Configuration;
+using CsCode.Platform.Context;
 using CsCode.Platform.FileSystem;
 using CsCode.Platform.Io;
+using CsCode.Platform.Keybindings;
 using CsCode.TestDoubles;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace CsCode.Panels.Search.Tests.Ui;
@@ -55,6 +59,37 @@ public class RealPlatformTests : IDisposable
         var r = await SearchHarness.Collect(session);
         Assert.Equal(["a.cs", "readme.md"], r.FileNames);
         Assert.Equal(SearchOutcome.Completed, r.Outcome);
+    }
+
+    [Fact]
+    public async Task The_walker_keeps_its_filtering_on_the_coordinator_thread_with_the_real_io_lane()
+    {
+        // Directories without files make the walker go straight from one listing to the next, i.e. run its code in the continuation of
+        // the IO lane's completion. That code must resume on the coordinator, never on the shared thread pool.
+        for (var i = 0; i < 20; i++) Directory.CreateDirectory(_work.Combine($"empty{i:00}", "deeper"));
+        _work.WriteFile(".gitignore", "*.log\n");
+        _work.WriteFile("zz/needle.txt", "needle");
+        var recording = new ThreadRecordingFileSystem(_fs);
+        var ws = new TestWorkspace(_work.Uri) { FileSystem = recording };
+        using var engine = new SearchEngine(ws, null, null, new WalkingFileSource(recording));
+        using var session = engine.Start(new SearchQuery("needle", UseExcludeSettings: false));
+        var r = await SearchHarness.Collect(session);
+        Assert.Equal(["needle.txt"], r.FileNames);
+        Assert.True(recording.Threads.Count > 40);
+        Assert.All(recording.Threads, name => Assert.Equal("cscode-search-coordinator", name));
+    }
+
+    [Fact]
+    public async Task A_closed_untitled_buffer_among_the_targets_is_skipped_not_fatal()
+    {
+        _work.WriteFile("a.txt", "foo");
+        var ws = new TestWorkspace(_work.Uri) { FileSystem = _fs };
+        using var replace = new ReplaceService(ws, new CsCode.Core.Text.DocumentManager());
+        // A result from an untitled buffer ("search only in open editors") whose tab was closed since the search.
+        var plan = await replace.PlanAsync(new SearchQuery("foo"), [new ReplaceTarget(new Uri("untitled:Untitled-1")), new ReplaceTarget(new Uri(_work.Combine("a.txt")))],
+            new ReplaceOptions("bar"), Ct);
+        Assert.Equal(1, plan.ReplacementCount);
+        Assert.Contains("no longer open", Assert.Single(plan.Skipped).Reason);
     }
 
     [Fact]
@@ -153,6 +188,57 @@ public class RealPlatformTests : IDisposable
             await f.Ui.PumpUntilAsync(() => tab.Text == "6");
             Assert.True(tab.IsModified);
         }
+    }
+
+    /// <summary>What the (future) WorkspaceService does on open: hand the folders to the configuration (the interface is internal to Platform).</summary>
+    private async Task BindFoldersAsync(params Uri[] folders)
+    {
+        var bound = typeof(ConfigurationService).GetInterfaces().Single(i => i.Name == "IWorkspaceBound");
+        var call = bound.GetMethod("OnWorkspaceFoldersChangedAsync")!;
+        await (ValueTask)call.Invoke(_config, [(IReadOnlyList<Uri>)folders, Ct])!;
+    }
+
+    [Fact]
+    public async Task Keys_from_vscode_settings_say_where_they_come_from_and_are_modified_in_neither_tab()
+    {
+        _work.WriteFile(".vscode/settings.json", "{ \"editor.tabSize\": 2 }");
+        await BindFoldersAsync(_work.Uri);
+        var (vm, f) = await OpenSettingsAsync();
+        using (f)
+        using (vm)
+        {
+            Assert.Equal(2, _config.Get("editor.tabSize", 0));                  // the platform layers .vscode/settings.json in
+            var tab = (NumberSettingViewModel)vm.AllItems.Single(i => i.Key == "editor.tabSize");
+            Assert.False(tab.IsModified);                                       // Reset in the User tab could not remove it
+            Assert.Equal(".vscode/settings.json", tab.AlsoModifiedIn);
+            vm.SelectedScope = SettingsScope.Workspace;
+            await vm.RefreshAsync();
+            Assert.False(tab.IsModified);                                       // nor in the Workspace tab (that writes .cscode/settings.json)
+            Assert.Equal("2", tab.Text);
+            Assert.Equal(".vscode/settings.json", tab.AlsoModifiedIn);
+        }
+    }
+
+    [Fact]
+    public void F4_and_shift_f4_resolve_to_the_result_commands_through_the_real_keybinding_service()
+    {
+        var registry = new ContributionRegistry();
+        using var context = new ContextKeyService();
+        using var sp = new ServiceCollection()
+            .AddSingleton<IWorkspaceService>(new TestWorkspace(_work.Uri) { FileSystem = _fs })
+            .AddSingleton<IContributionRegistry>(registry)
+            .AddSingleton<IContextKeyService>(context)
+            .AddCsCodeSearchPanels()
+            .BuildServiceProvider();
+        _ = sp.GetServices<CsCode.Ui.IToolWindow>().ToList();                 // what the shell does at startup
+        using var keys = new KeybindingService(context, _paths, _lane, registry);
+        context.Set("searchViewletVisible", true);
+        var next = keys.Resolve(new KeyStroke("f4"));
+        Assert.Equal(KeyResolution.Matched, next.Kind);
+        Assert.Equal(SearchPanelsHost.NextResult, next.Binding!.Command);
+        Assert.Equal(SearchPanelsHost.PreviousResult, keys.Resolve(new KeyStroke("f4", Shift: true)).Binding?.Command);
+        context.Set("searchViewletVisible", false);
+        Assert.Equal(KeyResolution.None, keys.Resolve(new KeyStroke("f4")).Kind);
     }
 
     [Fact]
