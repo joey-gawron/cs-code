@@ -149,29 +149,41 @@ public class RealAppContextMenuTests
     }
 
     [AvaloniaFact(Timeout = 60_000)]
-    public async Task Shift_F10_and_the_menu_command_open_the_editor_menu_at_the_caret()
+    public async Task Shift_F10_the_Menu_key_and_the_menu_command_open_the_editor_menu_at_the_caret()
     {
         await using var host = await StartWithFileAsync();
         var controller = host.Shell.Well.ActiveEditor!.Controller!;
         controller.SetSelection(TextRange.At(4, 8));
         controller.Focus();
         await DevScene.SettleAsync(5);
-        var before = ContextMenus.LastOpened;
-        host.Window.KeyPress(Key.F10, RawInputModifiers.Shift, PhysicalKey.F10, null);
-        host.Window.KeyRelease(Key.F10, RawInputModifiers.Shift, PhysicalKey.F10, null);
-        await DevScene.SettleAsync(5);
-        var menu = ContextMenus.LastOpened;
-        if (menu is null || ReferenceEquals(menu, before))
+        async Task<ContextMenu> Opened(Func<Task> open)
         {
-            // The headless platform may not translate Shift+F10 into a context request: the command (also on the palette) does the same.
-            await host.RunAsync("editor.action.showContextMenu");
-            menu = ContextMenus.LastOpened;
+            var before = ContextMenus.LastOpened;
+            await open();
+            await DevScene.SettleAsync(5);
+            var menu = ContextMenus.LastOpened;
+            Assert.True(menu is not null && !ReferenceEquals(menu, before), "a menu opened");
+            Assert.Equal(Avalonia.Controls.PlacementMode.AnchorAndGravity, menu!.Placement); // below the caret, not at the pointer
+            Assert.Equal(controller.GetCaretBounds(), menu.PlacementRect);
+            Assert.Contains("Copy", Headers(menu));
+            menu.Close();
+            return menu;
         }
-        Assert.NotNull(menu);
-        Assert.Equal(Avalonia.Controls.PlacementMode.AnchorAndGravity, menu!.Placement); // below the caret, not at the pointer
-        Assert.Equal(controller.GetCaretBounds(), menu.PlacementRect);
-        Assert.Contains("Copy", Headers(menu));
-        menu.Close();
+        await Opened(() =>
+        {
+            host.Window.KeyPress(Key.F10, RawInputModifiers.Shift, PhysicalKey.F10, null);
+            host.Window.KeyRelease(Key.F10, RawInputModifiers.Shift, PhysicalKey.F10, null);
+            return Task.CompletedTask;
+        });
+        controller.Focus();
+        await Opened(() =>
+        {
+            host.Window.KeyPress(Key.Apps, RawInputModifiers.None, PhysicalKey.ContextMenu, null);
+            host.Window.KeyRelease(Key.Apps, RawInputModifiers.None, PhysicalKey.ContextMenu, null);
+            return Task.CompletedTask;
+        });
+        controller.Focus();
+        await Opened(() => host.RunAsync("editor.action.showContextMenu"));
     }
 
     [AvaloniaFact(Timeout = 60_000)]

@@ -35,11 +35,13 @@ internal sealed class EditorClipboard : IDisposable
         _v = view;
         var area = view.TextArea;
         area.AddHandler(InputElement.KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
+        area.AddHandler(InputElement.KeyUpEvent, OnKeyUp, RoutingStrategies.Tunnel);
         area.AddHandler(InputElement.PointerPressedEvent, OnPointerPressed, RoutingStrategies.Tunnel);
         area.SelectionChanged += OnSelectionChanged;
         _d.Add(Disposable.Create(() =>
         {
             area.RemoveHandler(InputElement.KeyDownEvent, OnKeyDown);
+            area.RemoveHandler(InputElement.KeyUpEvent, OnKeyUp);
             area.RemoveHandler(InputElement.PointerPressedEvent, OnPointerPressed);
             area.SelectionChanged -= OnSelectionChanged;
         }));
@@ -169,6 +171,14 @@ internal sealed class EditorClipboard : IDisposable
     {
         if (e.Handled) return;
         var m = e.KeyModifiers;
+        if (e.Key == Key.F10 && m == KeyModifiers.Shift)
+        {
+            // Visual Studio's Shift+F10 opens the menu at the caret. Avalonia's own keyboard context request knows only the Menu key (which
+            // reaches the host the same way, as a context request without a pointer position).
+            e.Handled = true;
+            _v.ShowContextMenu();
+            return;
+        }
         Func<Task>? run = (e.Key, m) switch
         {
             (Key.C, KeyModifiers.Control) or (Key.Insert, KeyModifiers.Control) => CopyAsync,
@@ -180,6 +190,12 @@ internal sealed class EditorClipboard : IDisposable
         if (run is null) return;
         e.Handled = true; // AvaloniaEdit's own clipboard bindings must not run as well
         _ = RunAsync(run);
+    }
+
+    // The release of Shift+F10 must not open a second menu where a platform's keyboard context request includes it.
+    private static void OnKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F10 && e.KeyModifiers == KeyModifiers.Shift) e.Handled = true;
     }
 
     private async Task RunAsync(Func<Task> run)
