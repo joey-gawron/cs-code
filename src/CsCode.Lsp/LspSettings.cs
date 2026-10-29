@@ -11,6 +11,7 @@ public static class LspSettingKeys
 {
     public const string LanguageServers = "cscode.languageServers";
     public const string MaxDocumentBytes = "cscode.lsp.maxDocumentBytes";
+    public const string MaxMessageBytes = "cscode.lsp.maxMessageBytes";
     public const string Trace = "cscode.lsp.trace";
     public const string WorkerThreads = "cscode.lsp.workerThreads";
     public const string ProcessPriority = "cscode.lsp.processPriority";
@@ -35,6 +36,7 @@ public static class LspSettingKeys
 internal sealed record LspSettings
 {
     public long MaxDocumentBytes { get; init; } = 10 * 1024 * 1024;
+    public long MaxMessageBytes { get; init; } = 64L * 1024 * 1024;
     public LspTraceMode Trace { get; init; } = LspTraceMode.Off;
     public int WorkerThreads { get; init; } = 2;
     public ProcessPriority Priority { get; init; } = ProcessPriority.BelowNormal;
@@ -61,6 +63,7 @@ internal sealed record LspSettings
         return d with
         {
             MaxDocumentBytes = Math.Max(1024, Raw(cfg, LspSettingKeys.MaxDocumentBytes, d.MaxDocumentBytes)),
+            MaxMessageBytes = Math.Max(64 * 1024, Raw(cfg, LspSettingKeys.MaxMessageBytes, d.MaxMessageBytes)),
             Trace = ParseTrace(cfg.Get<string>(LspSettingKeys.Trace)),
             WorkerThreads = Math.Clamp(Raw(cfg, LspSettingKeys.WorkerThreads, d.WorkerThreads), 1, 8),
             Priority = ParsePriority(cfg.Get<string>(LspSettingKeys.ProcessPriority)),
@@ -115,6 +118,7 @@ internal sealed record LspSettings
         static JsonElement J<T>(T v) => JsonSerializer.SerializeToElement(v);
         var d = new LspSettings();
         yield return new(LspSettingKeys.MaxDocumentBytes, J(d.MaxDocumentBytes), "Documents larger than this many bytes are not sent to language servers.");
+        yield return new(LspSettingKeys.MaxMessageBytes, J(d.MaxMessageBytes), "A language server that announces a single message larger than this many bytes has its connection dropped (the server is then restarted): parsing needs ~9x the message size in memory.");
         yield return new(LspSettingKeys.Trace, J("off"), "Language-server protocol tracing into the server's Output channel: off | messages | verbose.");
         yield return new(LspSettingKeys.WorkerThreads, J(d.WorkerThreads), "Dedicated (below-normal priority) threads of the language lane. Applies to servers started after the change.");
         yield return new(LspSettingKeys.ProcessPriority, J("belowNormal"), "OS priority of language-server child processes: belowNormal | normal | idle.");

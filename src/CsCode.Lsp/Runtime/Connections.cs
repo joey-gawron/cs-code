@@ -305,9 +305,11 @@ internal sealed class ProcessConnection : ILspConnection
             if (!_process.HasExited) _process.Kill(entireProcessTree: true);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { /* already gone */ }
-        ProcessReaper.KillMarked(_marker);
+        var killed = ProcessReaper.KillMarked(_marker);
         try { await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); }
         catch (Exception ex) when (ex is TimeoutException or InvalidOperationException) { }
+        // SIGKILL is asynchronous: when we return, nothing the server started may still be running.
+        await ProcessReaper.WaitUntilGoneAsync(killed, TimeSpan.FromSeconds(2)).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -325,13 +327,16 @@ internal sealed class ProcessConnection : ILspConnection
 /// <summary>Finds and kills processes carrying our session marker in their environment (Linux /proc). Only ever kills processes we spawned.</summary>
 internal static class ProcessReaper
 {
-    public static void KillMarked(string marker)
+    /// <summary>Kills every process carrying the marker and returns their pids.</summary>
+    public static List<int> KillMarked(string marker)
     {
-        if (!OperatingSystem.IsLinux()) return;
+        var killed = new List<int>();
+        if (!OperatingSystem.IsLinux()) return killed;
         var needle = Encoding.UTF8.GetBytes($"{ProcessConnection.MarkerVariable}={marker}");
         foreach (var pid in FindMarked(needle))
         {
             if (pid == Environment.ProcessId) continue;
+            killed.Add(pid);
             try
             {
                 using var p = Process.GetProcessById(pid);
@@ -339,6 +344,21 @@ internal static class ProcessReaper
             }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { /* exited meanwhile */ }
         }
+        return killed;
+    }
+
+    /// <summary>Waits (bounded) until the processes have really disappeared (a zombie awaiting its reaper counts as gone).</summary>
+    public static async Task WaitUntilGoneAsync(IReadOnlyCollection<int> pids, TimeSpan timeout)
+    {
+        if (pids.Count == 0 || !OperatingSystem.IsLinux()) return;
+        var deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
+        while (pids.Any(IsAlive) && Stopwatch.GetTimestamp() < deadline) await Task.Delay(10).ConfigureAwait(false);
+    }
+
+    private static bool IsAlive(int pid)
+    {
+        try { return !File.ReadAllText($"/proc/{pid}/stat").Contains(") Z ", StringComparison.Ordinal); }
+        catch (IOException) { return false; }
     }
 
     internal static List<int> FindMarked(byte[] needle)

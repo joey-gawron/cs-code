@@ -171,7 +171,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
 
             var formatter = new SystemTextJsonFormatter();
             ConfigureFormatter(formatter.JsonSerializerOptions);
-            var rpc = new JsonRpc(new HeaderDelimitedMessageHandler(connection.Input, connection.Output, formatter));
+            var rpc = new JsonRpc(new HeaderDelimitedMessageHandler(connection.Input, new FramingGuardStream(connection.Output, settings.MaxMessageBytes), formatter));
             rpc.CancelLocallyInvokedMethodsWhenConnectionIsClosed = true;
             rpc.AddLocalRpcTarget(new ServerRequestTarget(this), new JsonRpcTargetOptions { DisposeOnDisconnect = false });
             rpc.Disconnected += OnRpcDisconnected;
@@ -280,8 +280,14 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         HandleConnectionLost(connection.ExitDescription ?? "server process exited");
     }
 
-    private void OnRpcDisconnected(object? sender, JsonRpcDisconnectedEventArgs e) =>
-        HandleConnectionLost(e.Description ?? e.Exception?.Message ?? "connection closed");
+    private void OnRpcDisconnected(object? sender, JsonRpcDisconnectedEventArgs e)
+    {
+        var inner = e.Exception?.GetBaseException() ?? e.Exception;
+        var text = e.Description ?? "connection closed";
+        // keep the underlying cause (e.g. "language server announced a 25,000,000-byte message...") visible in the log and LastError
+        if (inner is { } ex && !text.Contains(ex.Message, StringComparison.Ordinal)) text += $" ({ex.Message})";
+        HandleConnectionLost(text);
+    }
 
     private void HandleConnectionLost(string reason)
     {

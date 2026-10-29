@@ -159,6 +159,52 @@ public class BoundedStructuresTests
         Assert.Equal(7, mapper.ToCore(new P.Position { Line = 9, Character = 7 }, uri).Character);
     }
 
+    // ---- FramingGuardStream: the per-message size limit in front of the JSON-RPC parser ----
+
+    private static byte[] Frame(string body) => System.Text.Encoding.UTF8.GetBytes($"Content-Length: {System.Text.Encoding.UTF8.GetByteCount(body)}\r\n\r\n{body}");
+
+    private static async Task<byte[]> DrainAsync(Stream s, int chunk)
+    {
+        var all = new MemoryStream();
+        var buf = new byte[chunk];
+        int n;
+        while ((n = await s.ReadAsync(buf.AsMemory(), TestContext.Current.CancellationToken)) > 0) all.Write(buf, 0, n);
+        return all.ToArray();
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(7)]
+    [InlineData(4096)]
+    public async Task Framing_guard_passes_frames_through_unchanged_whatever_the_read_sizes(int chunk)
+    {
+        var bytes = new[] { Frame("{\"a\":1}"), Frame(new string('x', 5000)), Frame("{}"), Frame("héllo wörld ✓") }.SelectMany(b => b).ToArray();
+        await using var guard = new FramingGuardStream(new MemoryStream(bytes), maxMessageBytes: 10_000);
+        Assert.Equal(bytes, await DrainAsync(guard, chunk));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    [InlineData(4096)]
+    public async Task Framing_guard_rejects_an_oversized_frame_from_its_header_alone(int chunk)
+    {
+        var big = System.Text.Encoding.ASCII.GetBytes("Content-Length: 1000001\r\n\r\n").Concat(new byte[1000]).ToArray(); // the body is never even needed
+        await using var guard = new FramingGuardStream(new MemoryStream(Frame("{}").Concat(big).ToArray()), maxMessageBytes: 1_000_000);
+        var ex = await Assert.ThrowsAsync<MessageTooLargeException>(() => DrainAsync(guard, chunk));
+        Assert.Equal(1_000_001, ex.Announced);
+    }
+
+    [Fact]
+    public async Task Framing_guard_accepts_a_frame_of_exactly_the_limit_and_survives_garbage_headers()
+    {
+        var exact = Frame(new string('y', 4096));
+        await using (var guard = new FramingGuardStream(new MemoryStream(exact), maxMessageBytes: 4096)) Assert.Equal(exact, await DrainAsync(guard, 100));
+        var garbage = new byte[5000];
+        Array.Fill(garbage, (byte)'g');
+        await using (var guard = new FramingGuardStream(new MemoryStream(garbage.Concat(Frame("{}")).ToArray()), maxMessageBytes: 4096)) Assert.Equal(5000 + Frame("{}").Length, (await DrainAsync(guard, 64)).Length);
+    }
+
     [Fact]
     public void Utf16_mapper_never_asks_for_line_text()
     {

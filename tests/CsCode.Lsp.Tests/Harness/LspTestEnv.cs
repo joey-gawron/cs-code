@@ -3,6 +3,7 @@ using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Lsp.Manager;
+using CsCode.Lsp.Runtime;
 using CsCode.Lsp.Protocol;
 using CsCode.TestDoubles;
 using Xunit;
@@ -89,6 +90,13 @@ public sealed class ProgressRecordingWindow(RecordingWindowService inner) : IWin
     }
 }
 
+/// <summary>Sends some definitions to a real child-process factory and the rest to another (usually fake) one.</summary>
+public sealed class RoutingConnectionFactory(Func<LspLaunchRequest, bool> useReal, ILspConnectionFactory real, ILspConnectionFactory other) : ILspConnectionFactory
+{
+    public ValueTask<ILspConnection> ConnectAsync(LspLaunchRequest request, CancellationToken ct) =>
+        (useReal(request) ? real : other).ConnectAsync(request, ct);
+}
+
 /// <summary>TestAppPaths with the tools directory pointed at the repo's .scratch/tools (where tools/fetch-lsp-tools.sh installs real servers).</summary>
 public sealed class ToolsAppPaths(IAppPaths inner, string toolsDir) : IAppPaths
 {
@@ -160,7 +168,7 @@ public sealed class LspTestEnv : IAsyncDisposable
     }
 
     /// <param name="realServers">Use the real child-process connection factory, the built-in definitions and the repo's tool directory (integration tests).</param>
-    public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false, bool memoryMonitor = false, IDiagnosticService? diagnostics = null, IOutputService? output = null, bool realServers = false)
+    public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false, bool memoryMonitor = false, IDiagnosticService? diagnostics = null, IOutputService? output = null, bool realServers = false, ILspConnectionFactory? connectionsOverride = null)
     {
         if (realServers) builtins = true;
         Memory = memoryMonitor ? new FakeMemoryMonitor() : null;
@@ -187,7 +195,7 @@ public sealed class LspTestEnv : IAsyncDisposable
             Watcher = Workspace,
             Commands = Commands,
             Paths = realServers ? new ToolsAppPaths(Paths, ToolsDir) : Paths,
-            Connections = realServers ? null : Connections, // null: the manager uses the real DefaultLspConnectionFactory
+            Connections = connectionsOverride ?? (realServers ? null : Connections), // null: the manager uses the real DefaultLspConnectionFactory
             Memory = Memory,
         };
         Manager = new LanguageServerManager(services);
