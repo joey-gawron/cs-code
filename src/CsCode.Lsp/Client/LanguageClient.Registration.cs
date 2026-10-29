@@ -43,7 +43,10 @@ internal sealed partial class LanguageClient
                 return;
             case P.LspMethods.TextDocumentDidChange:
                 if (r.RegisterOptions is { } co && P.LspJson.Deserialize<P.TextDocumentChangeRegistrationOptions>(co) is { } change)
+                {
                     lock (_dynamicChange) _dynamicChange.Add((r.Id, selector, change.SyncKind));
+                    foreach (var sd in _docs.Values) _ctx.Queue.Post(LanePriority.Interactive, () => FlushOnLane(sd), exempt: true); // resync stale documents now
+                }
                 return;
             case P.LspMethods.TextDocumentDidSave:
                 lock (_dynamicSave) _dynamicSave.Add((r.Id, selector, r.RegisterOptions is { } so && P.LspJson.Deserialize<P.TextDocumentSaveRegistrationOptions>(so)?.IncludeText == true));
@@ -239,11 +242,13 @@ internal sealed class SemanticTokenCache : CsCode.Core.Diagnostics.IMemoryTrimma
     private const int MaxDocuments = 32;
     private const long MaxBytes = 32L * 1024 * 1024;
 
-    private sealed record Entry(string ResultId, uint[] Data, long LastUsedTicks);
+    // Seq orders LRU eviction (the millisecond tick clock ties for entries stored back to back); Ticks only drive age-based trimming.
+    private sealed record Entry(string ResultId, uint[] Data, long LastUsedTicks, long Seq);
 
     private readonly object _gate = new();
     private readonly Dictionary<Uri, Entry> _items = new();
     private long _bytes;
+    private long _seq;
 
     public string Name => "lsp:semanticTokens";
     public long EstimatedBytes { get { lock (_gate) return _bytes; } }
@@ -255,7 +260,7 @@ internal sealed class SemanticTokenCache : CsCode.Core.Diagnostics.IMemoryTrimma
         {
             if (_items.TryGetValue(uri, out var e))
             {
-                _items[uri] = e with { LastUsedTicks = Environment.TickCount64 };
+                _items[uri] = e with { LastUsedTicks = Environment.TickCount64, Seq = ++_seq };
                 resultId = e.ResultId;
                 data = e.Data;
                 return true;
@@ -271,11 +276,11 @@ internal sealed class SemanticTokenCache : CsCode.Core.Diagnostics.IMemoryTrimma
         lock (_gate)
         {
             Remove_NoLock(uri);
-            _items[uri] = new Entry(resultId, data, Environment.TickCount64);
+            _items[uri] = new Entry(resultId, data, Environment.TickCount64, ++_seq);
             _bytes += (long)data.Length * 4;
             while ((_items.Count > MaxDocuments || _bytes > MaxBytes) && _items.Count > 1)
             {
-                var oldest = _items.MinBy(kv => kv.Value.LastUsedTicks).Key;
+                var oldest = _items.MinBy(kv => kv.Value.Seq).Key;
                 if (oldest == uri) break;
                 Remove_NoLock(oldest);
             }

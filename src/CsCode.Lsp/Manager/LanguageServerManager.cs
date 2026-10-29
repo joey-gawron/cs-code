@@ -33,6 +33,7 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
     private readonly List<(long Seq, LanguageServerDefinition Def)> _registered = new();
     private readonly Dictionary<(string Id, string Key), ServerSlot> _slots = new();
     private readonly ConcurrentDictionary<Uri, DocRoute> _routes = new();
+    private readonly List<Task> _pendingRemovals = new();
     private readonly Emitter<IReadOnlyList<LanguageServerInfo>> _changed = new();
     private Dictionary<string, DefinitionOverrides.Effective> _effective = new();
     private volatile LspSettings _settings;
@@ -170,8 +171,19 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         }
         foreach (var (slot, eff) in updates)
         {
-            if (eff is not { } e || !e.Enabled) { _ = RemoveSlotAsync(slot); continue; }
+            if (eff is not { } e || !e.Enabled) { RemoveSlot(slot); continue; }
             slot.UpdateDefinition(e.Definition, slot.Folders);
+        }
+    }
+
+    /// <summary>Starts removing a slot (stop + dispose) and remembers the task, so disposing the manager waits for stops already in flight.</summary>
+    private void RemoveSlot(ServerSlot slot)
+    {
+        var task = RemoveSlotAsync(slot);
+        lock (_gate)
+        {
+            _pendingRemovals.RemoveAll(t => t.IsCompleted);
+            _pendingRemovals.Add(task);
         }
     }
 
@@ -199,7 +211,7 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         ServerSlot[] doomed;
         lock (_gate)
             doomed = _slots.Values.Where(s => s.RootUri is { } r && e.Removed.Any(f => IsUnder(r, f))).ToArray();
-        foreach (var s in doomed) _ = RemoveSlotAsync(s);
+        foreach (var s in doomed) RemoveSlot(s);
     }
 
     private static bool IsUnder(Uri child, Uri parent) =>
@@ -341,12 +353,13 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         try { _store.Dispose(); } catch (AggregateException) { }
         ServerSlot[] slots;
-        lock (_gate) { slots = _slots.Values.ToArray(); _slots.Clear(); }
+        Task[] removals;
+        lock (_gate) { slots = _slots.Values.ToArray(); _slots.Clear(); removals = _pendingRemovals.ToArray(); }
         await Task.WhenAll(slots.Select(async s =>
         {
             try { await s.DisposeAsync().ConfigureAwait(false); }
             catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { }
-        })).ConfigureAwait(false);
+        }).Concat(removals)).ConfigureAwait(false); // stops that were already in flight (definition removed / folder closed) must finish too
         _routes.Clear();
         _queue.Dispose();
         _changed.Clear();
