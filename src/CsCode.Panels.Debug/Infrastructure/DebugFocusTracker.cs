@@ -43,7 +43,8 @@ public sealed class DebugFocusTracker : IDisposable
     private bool _delivered;
     private Timer? _graceTimer;
     // `invalidated` handling: the epoch the latest invalidation produced (no stop/continue since), when it was seen, which epoch's
-    // revalidation was started, and the live frame that replaces a location whose frame id died (adapters that renumber frames).
+    // revalidation was started, and the live frame that replaces a location whose frame id died (adapters that renumber frames; valid for
+    // that epoch only and cleared by the next Flush or Bind after it, so it never keeps an ended session reachable).
     private long _invalidatedEpoch = -1;
     private long _invalidatedAt;
     private long _revalidatedEpoch = -1;
@@ -94,6 +95,7 @@ public sealed class DebugFocusTracker : IDisposable
             old = _sessionSubs;
             _bound = session;
             _stop = null;
+            _liveFrame = null;
             if (session is not null)
             {
                 fresh = new DisposableStore();
@@ -166,7 +168,13 @@ public sealed class DebugFocusTracker : IDisposable
         lock (_gate)
         {
             stop = stopped ? _stop : null;
-            if (fresh && _liveFrame is { } live && live.Epoch == epoch && ReferenceEquals(live.Location, location)) frameId = live.FrameId;
+            if (_liveFrame is { } live)
+            {
+                // Only for the stop it was found for: dropped at the next stop, resume, invalidation or session change, because it holds the
+                // location and through it the session (the runtime's tracker lives as long as the app).
+                if (live.Epoch != epoch || !ReferenceEquals(live.Location.Session, session)) _liveFrame = null;
+                else if (fresh && ReferenceEquals(live.Location, location)) frameId = live.FrameId;
+            }
         }
         var focus = new DebugFocus(
             session, state,

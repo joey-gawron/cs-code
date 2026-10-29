@@ -1,6 +1,8 @@
+using System.Runtime.CompilerServices;
 using Avalonia.Headless.XUnit;
 using CsCode.Core.Debugging;
 using CsCode.Panels.Debug.CallStack;
+using CsCode.Panels.Debug.Infrastructure;
 using CsCode.Panels.Debug.Tests.Fakes;
 using CsCode.Panels.Debug.Variables;
 using Xunit;
@@ -64,6 +66,44 @@ public class InvalidationTests
         await PanelRig.Eventually(() => watch.Tree.Rows[0].FullValue == "x + 1@1102", what: "watch evaluated in the live frame");
         Assert.Contains(rig.Debug.FocusCalls, c => c.FrameId == 1102); // the service was asked to follow
         await PanelRig.Eventually(() => stack.Rows.Count == 3 && stack.Rows[2].IsCurrent && stack.Rows[2].Frame!.Id == 1102, what: "call stack arrow on the live frame");
+    }
+
+    [AvaloniaFact]
+    public async Task A_tracker_that_outlives_the_session_does_not_keep_it_reachable_after_its_frames_were_renumbered()
+    {
+        // Regression (review of debug-ct-3): the live frame that replaces a renumbered stop location was kept, with the location and through
+        // it the session, until the next renumbering invalidation. The runtime's exception-key tracker lives as long as the app.
+        using var rig = new PanelRig(withSession: false);
+        int? frameId = null;
+        var hasSession = false;
+        using var tracker = new DebugFocusTracker(rig.Services, f => { frameId = f.FrameId; hasSession = f.Session is not null; });
+        tracker.Start();
+
+        var session = await StopRenumberAndEndAsync(rig, () => frameId);
+        await PanelRig.Eventually(() => !hasSession, what: "the tracker saw the session end");
+        for (var i = 0; i < 12 && session.IsAlive; i++)
+        {
+            await Task.Delay(40);
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+        }
+        Assert.False(session.IsAlive, "the ended session is still reachable after 12 full GCs");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<WeakReference> StopRenumberAndEndAsync(PanelRig rig, Func<int?> frameId)
+    {
+        var session = new FakeDebugSession("renumbering", "Renumbering").WithDefaultScript();
+        session.TrackFrameIds = true;
+        rig.Debug.AddSession(session);
+        rig.Debug.StopAt(session, "breakpoint", 2);
+        await PanelRig.Eventually(() => frameId() == 102, what: "first stop");
+        rig.Debug.FocusableFrameLimit = 0; // the service ignores the renumbered frame, so the tracker itself has to remember it
+        session.Invalidate(renumberFrames: true);
+        await PanelRig.Eventually(() => frameId() == 1102, timeoutMs: 3_000, what: "the live frame");
+        rig.Debug.RemoveSession(session);
+        session.Terminate();
+        return new WeakReference(session);
     }
 
     [AvaloniaFact]
