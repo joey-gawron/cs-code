@@ -132,7 +132,8 @@ public sealed class MainWindow : Window, IWindowChrome
         // Dock's control recycling caches the content of every dockable it presented, keyed by the dockable, and never evicts: a closed tab's
         // host stayed reachable for the whole session and, through the host's composition visual (no longer updated once the host left the
         // tree), so did the editor view and document it had held. A closed document tab is never presented again (reopening creates a new tab),
-        // so its entry goes when it closes. Tool windows keep theirs: they are hidden, not closed, and their host is reused on the next show.
+        // so its entry goes when it closes. Tool windows keep theirs: closing one hides it (ShellDockFactory.HideToolsOnClose; Dock still raises
+        // DockableClosed for it) and its host is reused on the next show.
         void EvictClosed(object? sender, Dock.Model.Core.Events.DockableClosedEventArgs e)
         {
             if (e.Dockable is ShellDocument && ControlRecyclingDataTemplate.GetControlRecycling(dock) is ControlRecycling recycling) recycling.Remove(e.Dockable);

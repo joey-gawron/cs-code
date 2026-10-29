@@ -13,6 +13,15 @@ namespace CsCode.App.Docking;
 /// </summary>
 public sealed class ShellDockFactory : Factory
 {
+    public ShellDockFactory()
+    {
+        // A tool window's X (and its tab's Close) hides it, like Visual Studio: it stays in the layout model, its view is disposed
+        // (ToolWindowManager's hidden handler) and its command, menu entry or key shows it again. Removing it instead (Dock's default) left the
+        // view alive and the window unreachable for the rest of the session. Documents are still removed: the document well disposes them.
+        HideToolsOnClose = true;
+        HideDocumentsOnClose = false;
+    }
+
     public IRootDock? Root { get; private set; }
 
     /// <summary>Whether the layout has a left tool well. Must be set before <see cref="EnsureLayout"/>.</summary>

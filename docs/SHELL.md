@@ -74,7 +74,9 @@ DataGrid) still have Fluent's shape with VS colours. Hand-built VS controls: `St
 
 **Dock theme.** Dock.Avalonia's Fluent theme is retargeted through its `Dock*Brush` keys (see `ThemeApplier.DockBridge`). VS specifics: the active document tab carries a **top accent bar**
 (style in `MainWindow`), preview tabs are italic (`EditorTab.PreviewFontStyle`), Dock's drag grip and bottom indicator are suppressed, an empty tool well takes no space,
-tool windows have caption bars with the Dock dropdown (Dock / Float / Auto Hide / Hide), pin and close.
+tool windows have caption bars with the Dock dropdown (Dock / Float / Auto Hide / Hide), pin and close. Closing a tool window (its X or its tab's Close) **hides** it, like
+Visual Studio (`ShellDockFactory.HideToolsOnClose`): its view is disposed and its command, key, View menu entry or Reset Window Layout shows it again where it was. A tool that
+Dock removes from the layout some other way gets the same treatment (`ToolWindowManager.Restore` docks it in its last, else its default, well). Documents are still removed on close.
 
 ### `vsc:` colour keys panel authors may rely on
 
@@ -276,7 +278,8 @@ dockable, and never evicts; an emptied host whose child left while the host was 
   `DefaultLayoutTools` are in the default layout) and are brought up by their command through `IViewActivator.ShowViewAsync(id)`; a Left-located tool creates the left well; `Document`-located
   windows open as document tabs.
 * `tests/CsCode.App.Tests/RealApp/*` run the REAL composition (`AppServices.Build` with every module, `CSCODE_HOME` in a temp directory, all built-in language servers disabled;
-  `Infrastructure/RealAppHost.cs`): view activation, document windows, default layout, debug auto-show, command ownership, selection, Ln/Col, keys, wording.
+  `Infrastructure/RealAppHost.cs`): view activation (also after a tool window was closed with its X, clicked), document windows, default layout, debug auto-show, command
+  ownership (which module registered each duplicated id, in order), selection, Ln/Col, keys, wording.
 * The brief's `IExtensionService.ActivateByEventAsync("onStartupFinished")` is **not** used: the extension system was removed (commit "Drop the extension system").
 * Remaining mentions of the removed system outside this module (not edited, per ownership): `KnownCommands.InstallExtension/ShowExtensions`, `IAppPaths.ExtensionsDir`, `ConfigurationProperty.ExtensionId`, `ColorTheme.ExtensionId`, `LanguageInfo.ExtensionId`,
   `DebuggerType.ExtensionId`, doc comments in Core, the README tagline, and the empty "EXTENSIONS" section of `Directory.Packages.props`. None is used by the shell; the integrator may delete them.

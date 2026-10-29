@@ -273,6 +273,49 @@ public class LayoutPersistenceTests
         Assert.True(tools.IsVisible("modules"));
     }
 
+    [AvaloniaFact]
+    public void Closing_a_tool_the_way_its_X_does_hides_it_drops_its_view_and_Show_docks_it_where_it_was()
+    {
+        using var rig = new Rig();
+        rig.Tools.Show("output");
+        var output = rig.Tools.Get("output")!;
+        rig.Factory.CloseDockable(output); // what the tool window's X and its tab's Close call
+        Assert.False(rig.Tools.IsVisible("output"));
+        Assert.Null(output.LiveView);
+        Assert.Equal(1, rig.Output.Disposed);
+        Assert.Contains(output, rig.Factory.Root!.HiddenDockables!); // hidden, not removed: Dock can restore it
+        Assert.False(rig.Layout.Capture().Tools.Single(t => t.Id == "output").Visible);
+
+        rig.Tools.Show("output");
+        Assert.True(rig.Tools.IsVisible("output"));
+        Assert.Contains(output, rig.Factory.BottomTools.VisibleDockables!);
+        Assert.Equal(2, rig.Output.Created);
+        Assert.Same(output.LiveView, ((Border)output.EnsureHost()).Child); // the presented host holds the new view
+    }
+
+    [AvaloniaFact]
+    public async Task A_tool_that_Dock_removed_from_the_layout_drops_its_view_and_Show_and_Reset_dock_it_again()
+    {
+        using var rig = new Rig();
+        rig.Factory.HideToolsOnClose = false; // Dock's default: closing removes the tool from the layout
+        rig.Tools.Show("output");
+        var output = rig.Tools.Get("output")!;
+        rig.Factory.CloseDockable(output);
+        Assert.False(rig.Tools.IsVisible("output"));
+        Assert.Null(output.LiveView);
+        Assert.Equal(1, rig.Output.Disposed);
+
+        rig.Tools.Show("output");
+        Assert.True(rig.Tools.IsVisible("output"));
+        Assert.Contains(output, rig.Factory.BottomTools.VisibleDockables!);
+        Assert.Equal(2, rig.Output.Created);
+
+        rig.Factory.CloseDockable(output);
+        await rig.Layout.ResetAsync();
+        Assert.True(rig.Tools.IsVisible("output"));
+        Assert.Contains(output, rig.Factory.BottomTools.VisibleDockables!);
+    }
+
     [Fact]
     public void Document_location_windows_never_enter_a_tool_well()
     {
