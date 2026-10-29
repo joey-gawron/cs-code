@@ -105,10 +105,12 @@ public sealed class IoLane : IDisposable
 
     private void EnsureThread()
     {
-        if (Volatile.Read(ref _idle) > 0) return;
+        // Idle threads that are about to pick up already-queued items do not count as spare capacity: compare queued items to idle threads,
+        // otherwise two quick enqueues with one idle thread would leave the second item waiting behind a possibly long-running first one.
+        if (_queue.Count <= Volatile.Read(ref _idle)) return;
         lock (_threadGate)
         {
-            if (_disposed || _threads.Count >= _maxThreads || Volatile.Read(ref _idle) > 0) return;
+            if (_disposed || _threads.Count >= _maxThreads || _queue.Count <= Volatile.Read(ref _idle)) return;
             var t = new Thread(Loop) { IsBackground = true, Name = $"{_name}-{_threads.Count + 1}", Priority = _priority };
             _threads.Add(t);
             t.Start();

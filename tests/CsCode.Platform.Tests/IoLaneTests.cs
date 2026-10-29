@@ -40,6 +40,22 @@ public class IoLaneTests
     }
 
     [Fact]
+    public async Task A_second_item_is_not_stuck_behind_a_long_running_first_one_while_a_thread_is_free()
+    {
+        // Regression: with one idle thread about to take item A, a quick second enqueue must still get its own thread.
+        for (var round = 0; round < 50; round++)
+        {
+            using var lane = new IoLane("test.io", maxThreads: 2);
+            using var gate = new ManualResetEventSlim();
+            var first = lane.RunAsync(_ => { gate.Wait(); return 1; }, TestContext.Current.CancellationToken);
+            var second = lane.RunAsync(_ => 2, TestContext.Current.CancellationToken);
+            Assert.Equal(2, await second.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+            gate.Set();
+            Assert.Equal(1, await first);
+        }
+    }
+
+    [Fact]
     public async Task Parallelism_is_bounded_by_the_thread_count()
     {
         using var lane = new IoLane("test.io", maxThreads: 3);
