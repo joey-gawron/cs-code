@@ -8,11 +8,15 @@ namespace CsCode.Sessions;
 /// </summary>
 public static class AtomicFile
 {
+    private static long s_counter;
+
     public static void Write(string path, ReadOnlySpan<byte> content, string? backupPath = null)
     {
         var dir = Path.GetDirectoryName(path)!;
         Directory.CreateDirectory(dir);
-        var temp = Path.Combine(dir, "." + Path.GetFileName(path) + "." + Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".tmp");
+        // Unique per write (pid + counter): two writers never share a temp file, even within one process.
+        var unique = Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "-" + Interlocked.Increment(ref s_counter).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var temp = Path.Combine(dir, "." + Path.GetFileName(path) + "." + unique + ".tmp");
         try
         {
             using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 1, FileOptions.None))
@@ -20,12 +24,14 @@ public static class AtomicFile
                 stream.Write(content);
                 stream.Flush(flushToDisk: true);
             }
-            if (backupPath is not null && File.Exists(path))
+            if (backupPath is not null)
             {
-                // The current file becomes the backup only when it is complete: it was itself written by this method, so it is.
-                File.Replace(temp, path, backupPath, ignoreMetadataErrors: true);
+                // The current file (complete: it was itself written by this method) becomes the backup. A copy rather than File.Replace, whose
+                // Unix implementation fails when two writers race; rename below is the only step that must be atomic.
+                try { File.Copy(path, backupPath, overwrite: true); }
+                catch (FileNotFoundException) { /* first save */ }
             }
-            else File.Move(temp, path, overwrite: true);
+            File.Move(temp, path, overwrite: true);
         }
         finally
         {

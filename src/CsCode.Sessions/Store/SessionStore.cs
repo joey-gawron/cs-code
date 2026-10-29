@@ -27,6 +27,12 @@ public sealed class SessionStore
 {
     public const string LastActiveFile = "last-active";
 
+    // Writes of one session are serialised in this process (striped: bounded however many sessions there are). Across processes the session lock
+    // guarantees a single writer.
+    private readonly object[] _stripes = Enumerable.Range(0, 16).Select(_ => new object()).ToArray();
+
+    private object StripeOf(string name) => _stripes[(int)((uint)StringComparer.Ordinal.GetHashCode(name) % (uint)_stripes.Length)];
+
     public SessionStore(string userDataDir)
     {
         SessionsDir = Path.Combine(userDataDir, "sessions");
@@ -73,10 +79,14 @@ public sealed class SessionStore
     {
         if (SessionNames.Validate(session.Name) is { } invalid) throw new ArgumentException(invalid, nameof(session));
         var path = PathOf(session.Name);
-        var existing = TryRead(path, out _);
-        if (existing.Error == SessionFormatError.TooNew)
-            throw new InvalidOperationException($"Session '{session.Name}' was written by a newer CsCode; not overwriting it.");
-        AtomicFile.Write(path, SessionSerializer.Serialize(session), existing.Session is not null ? BackupPathOf(session.Name) : null);
+        var bytes = SessionSerializer.Serialize(session);
+        lock (StripeOf(session.Name))
+        {
+            var existing = TryRead(path, out _);
+            if (existing.Error == SessionFormatError.TooNew)
+                throw new InvalidOperationException($"Session '{session.Name}' was written by a newer CsCode; not overwriting it.");
+            AtomicFile.Write(path, bytes, existing.Session is not null ? BackupPathOf(session.Name) : null);
+        }
     }
 
     /// <summary>Saved sessions, most recently used first. Unreadable files are listed by name with no details rather than hidden.</summary>
