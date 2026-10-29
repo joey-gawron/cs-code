@@ -20,11 +20,15 @@ public abstract class UriMapper
     /// <summary>True when <paramref name="clientUri"/> denotes something on the other end (a document or file the server serves).</summary>
     public abstract bool Handles(Uri clientUri);
 
+    /// <summary>The server-side file path of a handled client URI (workspace folders), or null when it has none (untitled buffers).</summary>
+    public abstract string? ToServerPath(Uri clientUri);
+
     private sealed class IdentityMapper : UriMapper
     {
         public override Uri ToServer(Uri clientUri) => clientUri;
         public override Uri ToClient(Uri serverUri) => serverUri;
         public override bool Handles(Uri clientUri) => clientUri.IsAbsoluteUri && (clientUri.IsFile || clientUri.Scheme == "untitled");
+        public override string? ToServerPath(Uri clientUri) => clientUri.IsAbsoluteUri && clientUri.IsFile ? FileUris.ToPath(clientUri, OperatingSystem.IsWindows()) : null;
     }
 }
 
@@ -86,6 +90,8 @@ public sealed class SshUriMapper : UriMapper
         }
         return new Uri(sb.ToString(), UriKind.Absolute);
     }
+
+    public override string? ToServerPath(Uri clientUri) => Handles(clientUri) ? ToRemotePath(clientUri) : null;
 
     public override Uri ToServer(Uri clientUri) => Handles(clientUri) ? FileUris.FromPath(ToRemotePath(clientUri), WindowsRemote) : clientUri;
 

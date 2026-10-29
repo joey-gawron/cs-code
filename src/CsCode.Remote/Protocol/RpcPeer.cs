@@ -158,6 +158,14 @@ public sealed class RpcPeer : IDisposable
         return call.Task;
     }
 
+    /// <summary>Sends a request whose answer nobody waits for (cleanup calls: stop a watch, abort an upload); failures are ignored.</summary>
+    public void Fire<TParams>(string method, TParams args)
+    {
+        if (IsClosed) return;
+        _ = InvokeAsync<TParams, JsonElement?>(method, args).ContinueWith(static t => _ = t.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
     /// <summary>Sends a notification (enqueue-only). Returns false when the connection is closed.</summary>
     public bool Notify<T>(string method, T args) =>
         !IsClosed && Enqueue(new Outgoing(Outgoing.Kind.Notification, 0, method, args, typeof(T), null, 0, null));
