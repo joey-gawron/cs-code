@@ -42,7 +42,11 @@ public sealed class DebugPanelsRuntime : IDisposable
             {
                 _services = DebugPanelServices.TryCreate(_provider);
                 _resolved = _services is not null; // keep looking while the debug module has not registered yet
-                if (_services is not null) StartExceptionKey(_services);
+                if (_services is not null)
+                {
+                    _subs.Add(_services);
+                    StartExceptionKey(_services);
+                }
             }
             return _services;
         }
