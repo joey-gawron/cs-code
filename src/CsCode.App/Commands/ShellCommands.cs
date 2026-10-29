@@ -53,6 +53,8 @@ public static class ShellCommands
     public const string ReferencesShow = "cscode.references.show";
     public const string ChangeLanguageMode = "cscode.shell.changeLanguageMode";
     public const string ShowErrorList = "cscode.shell.showErrorList";
+    public const string GotoLine = "workbench.action.gotoLine";
+    public const string OpenSettingsJson = "workbench.action.openSettingsJson";
 
     public static IDisposable Register(ShellCommandContext c)
     {
@@ -69,7 +71,13 @@ public static class ShellCommands
         // ---- palette modes
         Run(KnownCommands.CommandPalette, "Show All Commands", "View", () => c.Palette.ShowAsync(">"));
         Run(KnownCommands.QuickOpen, "Go to File...", "Go", () => c.Palette.ShowAsync(""));
-        Run("workbench.action.gotoLine", "Go to Line/Column...", "Go", () => c.Palette.ShowAsync(":"));
+        // Shadows the editor's standalone Go to Line (input box); takes the same optional "line[:column]" argument so macros and bound args keep working.
+        Reg(GotoLine, "Go to Line/Column...", "Go", async inv =>
+        {
+            if (inv.Args is [{ } arg, ..] && arg.ToString() is { Length: > 0 } target) GoToLine(c, target);
+            else await c.Palette.ShowAsync(":").ConfigureAwait(true);
+            return null;
+        });
         Run("workbench.action.gotoSymbol", "Go to Symbol in Editor...", "Go", () => c.Palette.ShowAsync("@"));
         Run("workbench.action.showAllSymbols", "Go to Symbol in Workspace...", "Go", () => c.Palette.ShowAsync("#"));
 
@@ -125,8 +133,10 @@ public static class ShellCommands
         Run(ShellMenus.Welcome, "Welcome", "Help", () => { c.Well.OpenView("welcome", "Welcome", c.CreateWelcome); return Task.CompletedTask; });
         Run(ShellMenus.KeyboardReference, "Keyboard Shortcuts Reference", "Help", () => { c.Well.OpenView("keyboard", "Keyboard Shortcuts", c.CreateKeyboardReference); return Task.CompletedTask; });
         Run(ShellMenus.About, "About CsCode", "Help", async () => { await c.Dialogs.ShowAsync("About CsCode", AboutText.Build(), ["OK"]).ConfigureAwait(true); });
-        Run(KnownCommands.OpenSettings, "Open Settings", "Preferences", () => OpenSettingsFile(c));
-        Run("workbench.action.openSettingsJson", "Open Settings (JSON)", "Preferences", () => OpenSettingsFile(c));
+        // The Settings panel owns both ids (the Settings editor and the JSON file); these fallbacks only exist when no such panel is composed.
+        // The panels registered their commands while the tool windows were enumerated, before this runs (see ShellController.Initialize).
+        if (!c.Commands.Has(KnownCommands.OpenSettings)) Run(KnownCommands.OpenSettings, "Open Settings", "Preferences", () => OpenSettingsFile(c));
+        if (!c.Commands.Has(OpenSettingsJson)) Run(OpenSettingsJson, "Open Settings (JSON)", "Preferences", () => OpenSettingsFile(c));
         Run(KnownCommands.SelectTheme, "Color Theme", "Preferences", () => PickThemeAsync(c));
 
         // ---- tool windows (and document views such as Settings, when their module did not register its own command)
@@ -170,6 +180,23 @@ public static class ShellCommands
             if (target is not null) await tab.Doc.SaveAsAsync(target).ConfigureAwait(true);
         }
         else await tab.Doc.SaveAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>Moves the active editor's caret to "line" or "line:column" (1-based, clamped), as the editor's own Go to Line does with an argument.</summary>
+    private static void GoToLine(ShellCommandContext c, string target)
+    {
+        if (c.Well.ActiveEditor is not { } tab) return;
+        var parts = target.Split(':', StringSplitOptions.TrimEntries);
+        if (!int.TryParse(parts[0], out var line)) return;
+        line = Math.Clamp(line, 1, Math.Max(1, tab.Doc.LineCount));
+        var column = parts.Length > 1 && int.TryParse(parts[1], out var col) ? Math.Max(1, col) : 1;
+        var at = Core.Text.TextRange.At(line - 1, column - 1);
+        if (tab.Controller is { } editor)
+        {
+            editor.SetSelection(at, reveal: true);
+            editor.Focus();
+        }
+        else tab.PendingReveal = at; // applied when the view is created
     }
 
     private static void Cycle(ShellCommandContext c, int step)

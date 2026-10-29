@@ -80,11 +80,16 @@ public sealed class ShellController : IDisposable
         var keys = _sp.GetRequiredService<IContextKeyService>();
         var window = _sp.GetRequiredService<IWindowService>();
         var quick = _sp.GetRequiredService<QuickInputViewModel>();
+        // Command ownership is decided by registration order (the command table is a stack: the newest registration runs), so the order of
+        // the next three lines is part of the contract (docs/SHELL.md, "Command ownership"): the editor factory registers its standalone
+        // fallbacks first, Dap then owns the debug commands, the panels (built by enumerating the tool windows) register theirs, and only then
+        // does the shell register its own commands, skipping ids a panel already owns.
         var well = Well;
+        var debug = _sp.GetService<IDebugService>();
+        var specs = _sp.GetServices<IToolWindow>().ToArray();
         var nav = _sp.GetRequiredService<NavigationService>();
         var workspace = _sp.GetService<IWorkspaceService>();
         var state = _sp.GetService<IStateStorage>();
-        var debug = _sp.GetService<IDebugService>();
 
         Palette = new PaletteController(quick, new PaletteContext(commands, nav, well, keys, _sp.GetService<IKeybindingService>(), workspace, state,
             _sp.GetService<ILanguageFeatureRegistry>(), _sp.GetService<IMemoryMonitor>()), _ui, window);
@@ -95,7 +100,6 @@ public sealed class ShellController : IDisposable
 
         Layout = new LayoutPersistence(Factory, Tools, well, _ui, state, Tools.Tools.Select(t => t.Spec.Id).Except(DefaultLayoutTools));
 
-        var specs = _sp.GetServices<IToolWindow>().ToArray();
         _disposables.Add(ShellCommands.Register(new ShellCommandContext(
             commands, well, Tools, Palette, window, _sp.GetRequiredService<IModalDialogs>(), nav, workspace, config, themes, _sp.GetService<IKeybindingService>(),
             _sp.GetRequiredService<FindResultsViewModel>(), _sp.GetRequiredService<NotificationCenter>(), chrome,
