@@ -10,6 +10,8 @@ internal sealed class OpArgs
     public OpType Op;
     public int Reg;
     public TextPosition Start, End;
+    /// <summary>Where the cursor was when the operator started (before the motion moved it).</summary>
+    public TextPosition CursorStart;
     public MType Type;
     public bool Inclusive;
     public bool UseRegOne;

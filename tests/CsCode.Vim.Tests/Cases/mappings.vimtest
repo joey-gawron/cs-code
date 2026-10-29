@@ -1,0 +1,2985 @@
+# mappings: nmap/imap/vmap/omap/cmap, noremap, <leader>, special keys, recursion, <Nop>, mapclear, interplay with macros and :normal
+=== mappings-001
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-002
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: QQ
+< ‸seven
+
+=== mappings-003
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: 2Q
+< ‸seven
+
+=== mappings-004
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Qu
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-005
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Q.
+< ‸seven
+
+=== mappings-006
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: jQ.
+< ‸one two three
+
+=== mappings-007
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Qp
+< four five six
+< ‸one two three
+< seven
+
+=== mappings-008
+ex: nnoremap Q dw
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸two three
+< four five six
+< seven
+
+=== mappings-009
+ex: nnoremap Q dw
+> ‸one two three
+> four five six
+> seven
+keys: Q.
+< ‸three
+< four five six
+< seven
+
+=== mappings-010
+ex: nnoremap Q dw
+> ‸one two three
+> four five six
+> seven
+keys: 2Q
+< ‸three
+< four five six
+< seven
+
+=== mappings-011
+ex: nmap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-012
+ex: nmap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: 3Q
+< ‸
+
+=== mappings-013
+ex: nnoremap Q 2dd
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸seven
+
+=== mappings-014
+ex: nnoremap Q 2dd
+> ‸one two three
+> four five six
+> seven
+keys: 3Q
+< ‸
+
+=== mappings-015
+ex: nnoremap Q :d<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-016
+ex: nnoremap Q :d<CR>
+> ‸one two three
+> four five six
+> seven
+keys: 2Q
+< ‸seven
+
+=== mappings-017
+ex: nnoremap Q :d<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Qu
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-018
+ex: nnoremap Q :s/o/0/g<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸0ne tw0 three
+< four five six
+< seven
+
+=== mappings-019
+ex: nnoremap Q :s/o/0/g<CR>
+> ‸one two three
+> four five six
+> seven
+keys: jQ
+< one two three
+< ‸f0ur five six
+< seven
+
+=== mappings-020
+ex: nnoremap Q :s/o/0/g<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Qj@:
+< 0ne tw0 three
+< ‸four five six
+< seven
+
+=== mappings-021
+ex: nnoremap Q :%s/o/0/g<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< 0ne tw0 three
+< ‸f0ur five six
+< seven
+
+=== mappings-022
+ex: nnoremap Q :%s/o/0/g<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Qu
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-023
+ex: nnoremap Q /five<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< one two three
+< four ‸five six
+< seven
+
+=== mappings-024
+ex: nnoremap Q /five<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Qn
+< one two three
+< four ‸five six
+< seven
+
+=== mappings-025
+ex: nnoremap Q /five<CR>x
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< one two three
+< four ‸ive six
+< seven
+
+=== mappings-026
+ex: nnoremap Q ixx<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< x‸xone two three
+< four five six
+< seven
+
+=== mappings-027
+ex: nnoremap Q ixx<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: Q.
+< xx‸xxone two three
+< four five six
+< seven
+
+=== mappings-028
+ex: nnoremap Q ixx<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: QQ
+< xx‸xxone two three
+< four five six
+< seven
+
+=== mappings-029
+ex: nnoremap Q ixx<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: Qu
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-030
+ex: nnoremap Q ixx<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: 2Q
+< xxx‸xone two three
+< four five six
+< seven
+
+=== mappings-031
+ex: nnoremap Q Ax<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< one two three‸x
+< four five six
+< seven
+
+=== mappings-032
+ex: nnoremap Q Ax<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: Qj.
+< one two threex
+< four five six‸x
+< seven
+
+=== mappings-033
+ex: nnoremap Q Ax<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: jQ
+< one two three
+< four five six‸x
+< seven
+
+=== mappings-034
+ex: nnoremap Q Ax<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: jjQ
+< one two three
+< four five six
+< seven‸x
+
+=== mappings-035
+ex: nnoremap Q Ax<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: Qjj.
+< one two threex
+< four five six
+< seven‸x
+
+=== mappings-036
+ex: nnoremap Q Ax<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: Qu
+< one two thre‸e
+< four five six
+< seven
+
+=== mappings-038
+ex: nnoremap ,d dd
+> ‸one two three
+> four five six
+> seven
+keys: ,d
+< ‸four five six
+< seven
+
+=== mappings-039
+ex: nnoremap ,d dd
+> ‸one two three
+> four five six
+> seven
+keys: ,,d
+< ‸four five six
+< seven
+
+=== mappings-040
+ex: nnoremap ,d dd
+> ‸one two three
+> four five six
+> seven
+keys: ,x
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-041
+ex: nnoremap ,d dd
+> ‸one two three
+> four five six
+> seven
+keys: ,dd
+< ‸four five six
+< seven
+mode: no
+
+=== mappings-042
+ex: nnoremap ,d dd
+> ‸one two three
+> four five six
+> seven
+keys: x,d
+< ‸four five six
+< seven
+
+=== mappings-043
+ex: nnoremap ,d dd
+ex: nnoremap ,x x
+> ‸one two three
+> four five six
+> seven
+keys: ,x,d
+< ‸four five six
+< seven
+
+=== mappings-044
+ex: nnoremap ,d dd
+ex: nnoremap ,x x
+> ‸one two three
+> four five six
+> seven
+keys: ,d,x
+< ‸our five six
+< seven
+
+=== mappings-045
+ex: nnoremap ,d dd
+ex: nnoremap ,x x
+> ‸one two three
+> four five six
+> seven
+keys: ,y
+< ‸one two three
+< four five six
+< seven
+mode: no
+
+=== mappings-046
+ex: nnoremap <leader>d dd
+> ‸one two three
+> four five six
+> seven
+keys: \d
+< ‸four five six
+< seven
+
+=== mappings-047
+ex: nnoremap <leader>d dd
+> ‸one two three
+> four five six
+> seven
+keys: \\d
+< ‸four five six
+< seven
+
+=== mappings-048
+ex: nnoremap <leader>d dd
+> ‸one two three
+> four five six
+> seven
+keys: \x
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-049
+ex: let mapleader=','
+ex: nnoremap <leader>d dd
+> ‸one two three
+> four five six
+> seven
+keys: ,d
+< ‸four five six
+< seven
+
+=== mappings-050
+ex: let mapleader=' '
+ex: nnoremap <leader>d dd
+> ‸one two three
+> four five six
+> seven
+keys:  d
+< ‸one two three
+< four five six
+< seven
+mode: no
+
+=== mappings-051
+ex: let mapleader=' '
+ex: nnoremap <leader>d dd
+> ‸one two three
+> four five six
+> seven
+keys: \d
+< ‸one two three
+< four five six
+< seven
+mode: no
+
+=== mappings-052
+ex: nnoremap <C-j> dd
+> ‸one two three
+> four five six
+> seven
+keys: <C-j>
+< ‸four five six
+< seven
+
+=== mappings-053
+ex: nnoremap <C-k> dd
+> ‸one two three
+> four five six
+> seven
+keys: <C-k>
+< ‸four five six
+< seven
+
+=== mappings-054
+ex: nnoremap <C-h> dd
+> ‸one two three
+> four five six
+> seven
+keys: <C-h>
+< ‸four five six
+< seven
+
+=== mappings-055
+ex: nnoremap <C-l> dd
+> ‸one two three
+> four five six
+> seven
+keys: <C-l>
+< ‸four five six
+< seven
+
+=== mappings-056
+ex: nnoremap <C-a> dd
+> ‸one two three
+> four five six
+> seven
+keys: <C-a>
+< ‸four five six
+< seven
+
+=== mappings-057
+ex: nnoremap <C-x> dd
+> ‸one two three
+> four five six
+> seven
+keys: <C-x>
+< ‸four five six
+< seven
+
+=== mappings-058
+ex: nnoremap <C-s> dd
+> ‸one two three
+> four five six
+> seven
+keys: <C-s>
+< ‸four five six
+< seven
+
+=== mappings-059
+ex: nnoremap <C-d> dd
+> ‸one two three
+> four five six
+> seven
+keys: <C-d>
+< ‸four five six
+< seven
+
+=== mappings-060
+ex: nnoremap <Tab> dd
+> ‸one two three
+> four five six
+> seven
+keys: <Tab>
+< ‸four five six
+< seven
+
+=== mappings-061
+ex: nnoremap <BS> dd
+> ‸one two three
+> four five six
+> seven
+keys: <BS>
+< ‸four five six
+< seven
+
+=== mappings-062
+ex: nnoremap <CR> dd
+> ‸one two three
+> four five six
+> seven
+keys: <CR>
+< ‸four five six
+< seven
+
+=== mappings-063
+ex: nnoremap <Space> dd
+> ‸one two three
+> four five six
+> seven
+keys: <Space>
+< ‸four five six
+< seven
+
+=== mappings-064
+ex: nnoremap <Space> dd
+> ‸one two three
+> four five six
+> seven
+keys:  
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-065
+ex: nnoremap <Esc> dd
+> ‸one two three
+> four five six
+> seven
+keys: <Esc>
+< ‸four five six
+< seven
+
+=== mappings-066
+ex: nnoremap <Left> dd
+> ‸one two three
+> four five six
+> seven
+keys: <Left>
+< ‸four five six
+< seven
+
+=== mappings-067
+ex: nnoremap <Right> dd
+> ‸one two three
+> four five six
+> seven
+keys: <Right>
+< ‸four five six
+< seven
+
+=== mappings-068
+ex: nnoremap <Up> dd
+> ‸one two three
+> four five six
+> seven
+keys: <Up>
+< ‸four five six
+< seven
+
+=== mappings-069
+ex: nnoremap <Down> dd
+> ‸one two three
+> four five six
+> seven
+keys: <Down>
+< ‸four five six
+< seven
+
+=== mappings-070
+ex: nnoremap <Home> dd
+> ‸one two three
+> four five six
+> seven
+keys: <Home>
+< ‸four five six
+< seven
+
+=== mappings-071
+ex: nnoremap <End> dd
+> ‸one two three
+> four five six
+> seven
+keys: <End>
+< ‸four five six
+< seven
+
+=== mappings-072
+ex: nnoremap <Del> dd
+> ‸one two three
+> four five six
+> seven
+keys: <Del>
+< ‸four five six
+< seven
+
+=== mappings-073
+ex: nnoremap <F5> dd
+> ‸one two three
+> four five six
+> seven
+keys: <F5>
+< ‸four five six
+< seven
+
+=== mappings-074
+ex: nnoremap <F12> dd
+> ‸one two three
+> four five six
+> seven
+keys: <F12>
+< ‸four five six
+< seven
+
+=== mappings-075
+ex: nnoremap <A-j> dd
+> ‸one two three
+> four five six
+> seven
+keys: <A-j>
+< ‸four five six
+< seven
+
+=== mappings-076
+ex: nnoremap <M-j> dd
+> ‸one two three
+> four five six
+> seven
+keys: <M-j>
+< ‸four five six
+< seven
+
+=== mappings-077
+ex: nnoremap <S-Tab> dd
+> ‸one two three
+> four five six
+> seven
+keys: <S-Tab>
+< ‸four five six
+< seven
+
+=== mappings-078
+ex: nnoremap <C-Left> dd
+> ‸one two three
+> four five six
+> seven
+keys: <C-Left>
+< ‸four five six
+< seven
+
+=== mappings-079
+ex: nnoremap <S-Left> dd
+> ‸one two three
+> four five six
+> seven
+keys: <S-Left>
+< ‸four five six
+< seven
+
+=== mappings-080
+ex: nnoremap <lt> dd
+> ‸one two three
+> four five six
+> seven
+keys: <lt>
+< ‸four five six
+< seven
+
+=== mappings-081
+ex: nnoremap <Bar> dd
+> ‸one two three
+> four five six
+> seven
+keys: <Bar>
+< ‸four five six
+< seven
+
+=== mappings-082
+ex: nnoremap \| dd
+> ‸one two three
+> four five six
+> seven
+keys: |
+< ‸four five six
+< seven
+
+=== mappings-083
+ex: nnoremap <bslash> dd
+> ‸one two three
+> four five six
+> seven
+keys: \
+< ‸four five six
+< seven
+
+=== mappings-084
+ex: nnoremap j gj
+> ‸one two three
+> four five six
+> seven
+keys: j
+< one two three
+< ‸four five six
+< seven
+
+=== mappings-085
+ex: nnoremap j gj
+> ‸one two three
+> four five six
+> seven
+keys: jj
+< one two three
+< four five six
+< ‸seven
+
+=== mappings-086
+ex: nnoremap j gj
+> ‸one two three
+> four five six
+> seven
+keys: 3j
+< one two three
+< four five six
+< ‸seven
+
+=== mappings-087
+ex: nnoremap j gj
+> ‸one two three
+> four five six
+> seven
+keys: dj
+< ‸seven
+
+=== mappings-088
+ex: nnoremap j gj
+> ‸one two three
+> four five six
+> seven
+keys: yjp
+< one two three
+< ‸one two three
+< four five six
+< four five six
+< seven
+
+=== mappings-089
+ex: nnoremap k gk
+> ‸one two three
+> four five six
+> seven
+keys: jk
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-090
+ex: nnoremap x "_x
+> ‸one two three
+> four five six
+> seven
+keys: xp
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-091
+ex: nnoremap x "_x
+> ‸one two three
+> four five six
+> seven
+keys: x
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-092
+ex: nnoremap x "_x
+> ‸one two three
+> four five six
+> seven
+keys: yyx"0p
+< ne two three
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-093
+ex: nnoremap Y y$
+> ‸one two three
+> four five six
+> seven
+keys: Yp
+< oone two thre‸ene two three
+< four five six
+< seven
+
+=== mappings-094
+ex: nnoremap Y y$
+> ‸one two three
+> four five six
+> seven
+keys: wYP
+< one two thre‸etwo three
+< four five six
+< seven
+
+=== mappings-095
+ex: nnoremap Y y$
+> ‸one two three
+> four five six
+> seven
+keys: wY$p
+< one two threetwo thre‸e
+< four five six
+< seven
+
+=== mappings-096
+ex: nnoremap n nzz
+> ‸one two three
+> four five six
+> seven
+keys: /five<CR>gg0n
+< one two three
+< four ‸five six
+< seven
+
+=== mappings-097
+ex: nnoremap 0 ^
+> ‸one two three
+> four five six
+> seven
+keys: w0
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-098
+ex: nnoremap H ^
+> ‸one two three
+> four five six
+> seven
+keys: wH
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-099
+ex: nnoremap L $
+> ‸one two three
+> four five six
+> seven
+keys: L
+< one two thre‸e
+< four five six
+< seven
+
+=== mappings-100
+ex: nnoremap L $
+> ‸one two three
+> four five six
+> seven
+keys: dL
+< ‸
+
+=== mappings-101
+ex: nnoremap L $
+> ‸one two three
+> four five six
+> seven
+keys: yLP
+< ‸one two three
+< four five six
+< seven
+< one two three
+< four five six
+< seven
+
+=== mappings-102
+ex: onoremap L $
+> ‸one two three
+> four five six
+> seven
+keys: dL
+< ‸
+< four five six
+< seven
+
+=== mappings-103
+ex: onoremap L $
+> ‸one two three
+> four five six
+> seven
+keys: yLP
+< one two thre‸eone two three
+< four five six
+< seven
+
+=== mappings-104
+ex: onoremap L $
+> ‸one two three
+> four five six
+> seven
+keys: cLX<Esc>
+< ‸X
+< four five six
+< seven
+
+=== mappings-105
+ex: onoremap in( :<C-u>normal! f(vi(<CR>
+> ‸one two three
+> four five six
+> seven
+keys: din(
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-106
+ex: onoremap H ^
+> ‸one two three
+> four five six
+> seven
+keys: wdH
+< ‸two three
+< four five six
+< seven
+
+=== mappings-107
+ex: onoremap H ^
+> ‸one two three
+> four five six
+> seven
+keys: wyHP
+< one‸ one two three
+< four five six
+< seven
+
+=== mappings-108
+ex: nnoremap ;; :s/o/0/<CR>
+> ‸one two three
+> four five six
+> seven
+keys: ;;
+< ‸0ne two three
+< four five six
+< seven
+
+=== mappings-110
+ex: nnoremap ;; :s/o/0/<CR>
+> ‸one two three
+> four five six
+> seven
+keys: ;x
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-111
+ex: nnoremap ;; :s/o/0/<CR>
+> ‸one two three
+> four five six
+> seven
+keys: f;;;
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-113
+ex: nmap Q W
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< one ‸two three
+< four five six
+< seven
+
+=== mappings-114
+ex: nmap Q W
+ex: nmap W w
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< one ‸two three
+< four five six
+< seven
+
+=== mappings-115
+ex: nmap Q W
+ex: nnoremap W w
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< one ‸two three
+< four five six
+< seven
+
+=== mappings-116
+ex: nnoremap Q W
+ex: nmap W w
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< one ‸two three
+< four five six
+< seven
+
+=== mappings-117
+ex: nmap a b
+ex: nmap b a
+> ‸one two three
+> four five six
+> seven
+keys: a
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-118
+ex: nmap a a
+> ‸one two three
+> four five six
+> seven
+keys: a
+< o‸ne two three
+< four five six
+< seven
+mode: i
+
+=== mappings-119
+ex: nmap a b
+ex: nmap b c
+ex: nmap c d
+> ‸one two three
+> four five six
+> seven
+keys: a
+< ‸one two three
+< four five six
+< seven
+mode: no
+
+=== mappings-120
+ex: nmap Q Qx
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-121
+ex: nnoremap Q Qx
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-122
+ex: nmap Q Q
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-123
+ex: nmap Q ixQ<Esc>
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< x‸Qone two three
+< four five six
+< seven
+
+=== mappings-124
+ex: nnoremap Q x
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-125
+ex: nnoremap Q x
+ex: unmap Q
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-126
+ex: nnoremap Q x
+ex: nunmap Q
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-127
+ex: nnoremap Q x
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-128
+ex: nnoremap Q x
+ex: mapclear
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-129
+ex: nnoremap Q x
+ex: nmapclear
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-130
+ex: nnoremap Q x
+ex: imapclear
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-131
+ex: map Q x
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-132
+ex: map Q x
+> ‸one two three
+> four five six
+> seven
+keys: vjQ
+< ‸our five six
+< seven
+
+=== mappings-133
+ex: map Q x
+> ‸one two three
+> four five six
+> seven
+keys: dQ
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-134
+ex: nmap Q x
+ex: vmap Q d
+> ‸one two three
+> four five six
+> seven
+keys: vjQ
+< ‸our five six
+< seven
+
+=== mappings-135
+ex: xmap Q d
+> ‸one two three
+> four five six
+> seven
+keys: vjQ
+< ‸our five six
+< seven
+
+=== mappings-136
+ex: xmap Q d
+> ‸one two three
+> four five six
+> seven
+keys: VjQ
+< ‸seven
+
+=== mappings-137
+ex: xmap Q d
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-138
+ex: vmap Q d
+> ‸one two three
+> four five six
+> seven
+keys: vjQ
+< ‸our five six
+< seven
+
+=== mappings-139
+ex: vnoremap Q d
+> ‸one two three
+> four five six
+> seven
+keys: vjQ
+< ‸our five six
+< seven
+
+=== mappings-140
+ex: vnoremap Q d
+> ‸one two three
+> four five six
+> seven
+keys: vjQ.
+< ‸even
+
+=== mappings-141
+ex: vnoremap Q d
+> ‸one two three
+> four five six
+> seven
+keys: vjQu
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-142
+ex: vnoremap < <gv
+> ‸one two three
+> four five six
+> seven
+keys: Vj<
+< one two three
+< ‸four five six
+< seven
+mode: V
+
+=== mappings-143
+ex: vnoremap > >gv
+> ‸one two three
+> four five six
+> seven
+keys: Vj>
+< \tone two three
+< ‸\tfour five six
+< seven
+mode: V
+
+=== mappings-144
+ex: vnoremap > >gv
+> ‸one two three
+> four five six
+> seven
+keys: Vj>>
+< \t\tone two three
+< ‸\t\tfour five six
+< seven
+mode: V
+
+=== mappings-145
+ex: vnoremap > >gv
+> ‸one two three
+> four five six
+> seven
+keys: Vj>>>
+< \t\t\tone two three
+< ‸\t\t\tfour five six
+< seven
+mode: V
+
+=== mappings-146
+ex: vnoremap J :m '>+1<CR>gv=gv
+> ‸one two three
+> four five six
+> seven
+keys: VJ
+< four five six
+< ‸one two three
+< seven
+mode: V
+
+=== mappings-147
+ex: vnoremap K :m '<-2<CR>gv=gv
+> ‸one two three
+> four five six
+> seven
+keys: jVK
+< ‸four five six
+< one two three
+< seven
+mode: V
+
+=== mappings-148
+ex: vnoremap J :m '>+1<CR>gv
+> ‸one two three
+> four five six
+> seven
+keys: VJ
+< four five six
+< ‸one two three
+< seven
+mode: V
+
+=== mappings-149
+ex: vnoremap K :m '<-2<CR>gv
+> ‸one two three
+> four five six
+> seven
+keys: jVK
+< ‸four five six
+< one two three
+< seven
+mode: V
+
+=== mappings-150
+ex: xnoremap p "_dP
+> ‸one two three
+> four five six
+> seven
+keys: yyjVp
+< one two three
+< ‸one two three
+< seven
+
+=== mappings-151
+ex: xnoremap p "_dP
+> ‸one two three
+> four five six
+> seven
+keys: ywwviwp
+< one one‸  three
+< four five six
+< seven
+
+=== mappings-152
+ex: xnoremap p "_dP
+> ‸one two three
+> four five six
+> seven
+keys: ywwviwpwviwp
+< one one one‸  ⏎
+< four five six
+< seven
+
+=== mappings-153
+ex: xnoremap Q :normal Ax<CR>
+> ‸one two three
+> four five six
+> seven
+keys: VjQ
+< one two threex
+< four five six‸x
+< seven
+
+=== mappings-154
+ex: xnoremap Q :normal Ax<CR>
+> ‸one two three
+> four five six
+> seven
+keys: VjjQ
+< one two threex
+< four five sixx
+< seven‸x
+
+=== mappings-155
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjk
+< ‸xone two three
+< four five six
+< seven
+
+=== mappings-156
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjkx
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-157
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjjk
+< x‸jone two three
+< four five six
+< seven
+
+=== mappings-158
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjx
+< xjx‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-159
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjxk
+< xjxk‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-160
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjkjk
+< ‸xone two three
+< four five six
+< seven
+
+=== mappings-161
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjkIyjk
+< ‸yxone two three
+< four five six
+< seven
+
+=== mappings-162
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjkua
+< o‸ne two three
+< four five six
+< seven
+mode: i
+
+=== mappings-163
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjk.
+< ‸xxone two three
+< four five six
+< seven
+
+=== mappings-164
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjkj.
+< xone two three
+< ‸xfour five six
+< seven
+
+=== mappings-165
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: 3ixjk
+< xx‸xone two three
+< four five six
+< seven
+
+=== mappings-166
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjkjk
+< ‸xone two three
+< four five six
+< seven
+
+=== mappings-167
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: Ajk
+< one two thre‸e
+< four five six
+< seven
+
+=== mappings-169
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: Ajk.
+< one two thre‸e
+< four five six
+< seven
+
+=== mappings-170
+ex: inoremap jk <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: Aj<Esc>
+< one two three‸j
+< four five six
+< seven
+
+=== mappings-171
+ex: inoremap jj <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjj
+< ‸xone two three
+< four five six
+< seven
+
+=== mappings-172
+ex: inoremap jj <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjjjj
+< xone two three
+< four five six
+< ‸seven
+
+=== mappings-173
+ex: inoremap jj <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjjj
+< xone two three
+< ‸four five six
+< seven
+
+=== mappings-174
+ex: inoremap jj <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ixjjjx
+< xone two three
+< ‸our five six
+< seven
+
+=== mappings-175
+ex: inoremap <C-e> <Esc>
+> ‸one two three
+> four five six
+> seven
+keys: ix<C-e>
+< ‸xone two three
+< four five six
+< seven
+
+=== mappings-176
+ex: inoremap <C-j> <Down>
+> ‸one two three
+> four five six
+> seven
+keys: ix<C-j>y
+< xone two three
+< fy‸our five six
+< seven
+mode: i
+
+=== mappings-177
+ex: inoremap <C-k> <Up>
+> ‸one two three
+> four five six
+> seven
+keys: jix<C-k>y
+< oy‸ne two three
+< xfour five six
+< seven
+mode: i
+
+=== mappings-178
+ex: inoremap <C-h> <Left>
+> ‸one two three
+> four five six
+> seven
+keys: Ax<C-h>y
+< one two threey‸x
+< four five six
+< seven
+mode: i
+
+=== mappings-179
+ex: inoremap <C-l> <Right>
+> ‸one two three
+> four five six
+> seven
+keys: ix<C-l>y
+< xoy‸ne two three
+< four five six
+< seven
+mode: i
+
+=== mappings-180
+ex: inoremap <C-a> <Home>
+> ‸one two three
+> four five six
+> seven
+keys: Ax<C-a>y
+< y‸one two threex
+< four five six
+< seven
+mode: i
+
+=== mappings-181
+ex: inoremap <C-d> <Del>
+> ‸one two three
+> four five six
+> seven
+keys: ix<C-d>
+< x‸ne two three
+< four five six
+< seven
+mode: i
+
+=== mappings-182
+ex: inoremap <C-b> <BS>
+> ‸one two three
+> four five six
+> seven
+keys: Ax<C-b>
+< one two three‸
+< four five six
+< seven
+mode: i
+
+=== mappings-183
+ex: inoremap ( ()<Left>
+> ‸one two three
+> four five six
+> seven
+keys: Ax(
+< one two threex(‸)
+< four five six
+< seven
+mode: i
+
+=== mappings-184
+ex: inoremap ( ()<Left>
+> ‸one two three
+> four five six
+> seven
+keys: Ax(y
+< one two threex(y‸)
+< four five six
+< seven
+mode: i
+
+=== mappings-185
+ex: inoremap ( ()<Left>
+> ‸one two three
+> four five six
+> seven
+keys: Ax(y)
+< one two threex(y)‸)
+< four five six
+< seven
+mode: i
+
+=== mappings-186
+ex: inoremap ( ()<Left>
+> ‸one two three
+> four five six
+> seven
+keys: Ax(y<Esc>u
+< one two threex(‸)
+< four five six
+< seven
+
+=== mappings-187
+ex: inoremap ( ()<Left>
+> ‸one two three
+> four five six
+> seven
+keys: A(<Esc>.
+< one two three()(‸)
+< four five six
+< seven
+
+=== mappings-188
+ex: inoremap " ""<Left>
+> ‸one two three
+> four five six
+> seven
+keys: A"
+< one two three"‸"
+< four five six
+< seven
+mode: i
+
+=== mappings-189
+ex: inoremap " ""<Left>
+> ‸one two three
+> four five six
+> seven
+keys: A"x
+< one two three"x‸"
+< four five six
+< seven
+mode: i
+
+=== mappings-190
+ex: inoremap { {<CR>}<Esc>O
+> ‸one two three
+> four five six
+> seven
+keys: A{x
+< one two three{
+< x‸
+< }
+< four five six
+< seven
+mode: i
+
+=== mappings-191
+ex: inoremap { {<CR>}<Esc>O
+> ‸one two three
+> four five six
+> seven
+keys: A{x<Esc>u
+< one two thre‸e
+< four five six
+< seven
+
+=== mappings-192
+ex: inoremap { {<CR>}<Esc>O
+> ‸one two three
+> four five six
+> seven
+keys: A{x<Esc>.
+< one two three{
+< ‸x
+< x
+< }
+< four five six
+< seven
+
+=== mappings-193
+ex: inoremap {<CR> {<CR>}<Esc>O
+> ‸one two three
+> four five six
+> seven
+keys: A{<CR>x
+< one two three{
+< x‸
+< }
+< four five six
+< seven
+mode: i
+
+=== mappings-194
+ex: inoremap <silent> x y
+> ‸one two three
+> four five six
+> seven
+keys: ix
+< y‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-195
+ex: inoremap <buffer> x y
+> ‸one two three
+> four five six
+> seven
+keys: ix
+< y‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-196
+ex: inoremap <nowait> x y
+> ‸one two three
+> four five six
+> seven
+keys: ix
+< y‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-197
+ex: inoremap <unique> x y
+> ‸one two three
+> four five six
+> seven
+keys: ix
+< y‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-198
+ex: inoremap xx y
+> ‸one two three
+> four five six
+> seven
+keys: ixx
+< y‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-200
+ex: inoremap xx y
+> ‸one two three
+> four five six
+> seven
+keys: ixy
+< xy‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-203
+ex: inoremap xx y
+ex: inoremap x z
+> ‸one two three
+> four five six
+> seven
+keys: ixx
+< y‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-205
+ex: inoremap xx y
+ex: inoremap x z
+> ‸one two three
+> four five six
+> seven
+keys: ixa
+< za‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-206
+ex: nnoremap <silent> Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-207
+ex: nnoremap <buffer> Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-208
+ex: nnoremap <nowait> Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-209
+ex: nnoremap <silent> <nowait> Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-210
+ex: nnoremap <script> Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-211
+ex: nnoremap <unique> Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-213
+ex: nnoremap Q dd
+ex: nnoremap Q dd 
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< f‸our five six
+< seven
+
+=== mappings-214
+ex: nnoremap Q <Nop>
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-215
+ex: nnoremap Q <Nop>
+> ‸one two three
+> four five six
+> seven
+keys: Qx
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-216
+ex: nnoremap <Nop> x
+> ‸one two three
+> four five six
+> seven
+keys: x
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-217
+ex: nnoremap Q <NOP>
+> ‸one two three
+> four five six
+> seven
+keys: Qx
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-218
+ex: nnoremap Q
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-219
+ex: nnoremap Q dd
+ex: nnoremap
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-220
+ex: nnoremap Q dd
+ex: nmap Q
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-221
+ex: nnoremap Q dd
+ex: nmap
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-222
+ex: nnoremap Q dd
+ex: map
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-223
+ex: nnoremap Q dd
+ex: map Q
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-225
+ex: unmap Q
+> ‸one two three
+> four five six
+> seven
+keys: x
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-229
+ex: nnoremap Q dd
+ex: vunmap Q
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-231
+ex: noremap! Q x
+> ‸one two three
+> four five six
+> seven
+keys: iQ
+< x‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-232
+ex: noremap! Q x
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-233
+ex: noremap! Q x
+> ‸one two three
+> four five six
+> seven
+keys: :Q<C-c>
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-234
+ex: map! Q x
+> ‸one two three
+> four five six
+> seven
+keys: iQ
+< x‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-235
+ex: cnoremap Q d
+> ‸one two three
+> four five six
+> seven
+keys: :Q<CR>
+< ‸four five six
+< seven
+
+=== mappings-236
+ex: cnoremap Q d
+> ‸one two three
+> four five six
+> seven
+keys: :2Q<CR>
+< one two three
+< ‸seven
+
+=== mappings-237
+ex: cnoremap Q d
+> ‸one two three
+> four five six
+> seven
+keys: :Q|Q<CR>
+< ‸seven
+
+=== mappings-238
+ex: cnoremap <C-a> <Home>
+> ‸one two three
+> four five six
+> seven
+keys: :d<C-a>2<CR>
+< one two three
+< ‸seven
+
+=== mappings-239
+ex: cnoremap <C-e> <End>
+> ‸one two three
+> four five six
+> seven
+keys: :d<C-e>x<C-c>
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-240
+ex: cnoremap jk <C-c>
+> ‸one two three
+> four five six
+> seven
+keys: :djk
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-241
+ex: cnoremap jk <C-c>
+> ‸one two three
+> four five six
+> seven
+keys: :djkx
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-242
+ex: cnoremap jk <C-c>
+> ‸one two three
+> four five six
+> seven
+keys: :djx
+< ‸one two three
+< four five six
+< seven
+mode: c
+
+=== mappings-243
+ex: nnoremap Q :normal! dd<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-244
+ex: nnoremap Q :normal! 2dd<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸seven
+
+=== mappings-245
+ex: nnoremap Q :normal! 2dd<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Qu
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-246
+ex: nnoremap Q :normal! 2dd<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Q.
+< ‸seven
+
+=== mappings-247
+ex: nnoremap Q :exe 'normal! dd'<CR>
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸four five six
+< seven
+
+=== mappings-248
+ex: nnoremap Q @q
+> ‸one two three
+> four five six
+> seven
+keys: Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-249
+ex: nnoremap Q @q
+> ‸one two three
+> four five six
+> seven
+keys: qqxqQ
+< ‸e two three
+< four five six
+< seven
+
+=== mappings-250
+ex: nnoremap Q @q
+> ‸one two three
+> four five six
+> seven
+keys: qqxqQQ
+< ‸ two three
+< four five six
+< seven
+
+=== mappings-251
+ex: nnoremap Q @q
+> ‸one two three
+> four five six
+> seven
+keys: qqxq3Q
+< ‸two three
+< four five six
+< seven
+
+=== mappings-252
+ex: nnoremap Q @q
+> ‸one two three
+> four five six
+> seven
+keys: qqxq3Q.
+< ‸wo three
+< four five six
+< seven
+
+=== mappings-253
+ex: nnoremap Q @q
+> ‸one two three
+> four five six
+> seven
+keys: qqxqjQ
+< ne two three
+< ‸our five six
+< seven
+
+=== mappings-254
+ex: nnoremap Q @q
+> ‸one two three
+> four five six
+> seven
+keys: qqxjqQ
+< ne two three
+< our five six
+< ‸seven
+
+=== mappings-255
+ex: nnoremap Q @q
+> ‸one two three
+> four five six
+> seven
+keys: qqxjq2Q
+< ne two three
+< our five six
+< ‸even
+
+=== mappings-256
+ex: nnoremap Q @q
+> ‸one two three
+> four five six
+> seven
+keys: qqxQq
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-258
+ex: nnoremap Q qq
+> ‸one two three
+> four five six
+> seven
+keys: Qxq@q
+< ‸e two three
+< four five six
+< seven
+
+=== mappings-260
+ex: nnoremap Q qq
+ex: nnoremap R q
+> ‸one two three
+> four five six
+> seven
+keys: QxR@q
+< ‸e two three
+< four five six
+< seven
+
+=== mappings-261
+ex: nnoremap Q qq
+ex: nnoremap R q
+> ‸one two three
+> four five six
+> seven
+keys: QxR@q@@
+< ‸ two three
+< four five six
+< seven
+
+=== mappings-262
+ex: nnoremap qa qb
+> ‸one two three
+> four five six
+> seven
+keys: qaxq@b
+< ‸e two three
+< four five six
+< seven
+
+=== mappings-263
+ex: nnoremap qa qb
+> ‸one two three
+> four five six
+> seven
+keys: qaxq"bp
+< n‸xe two three
+< four five six
+< seven
+
+=== mappings-264
+ex: nnoremap x l
+> ‸one two three
+> four five six
+> seven
+keys: qaxxq"ap
+< onex‸x two three
+< four five six
+< seven
+
+=== mappings-265
+ex: nnoremap x l
+> ‸one two three
+> four five six
+> seven
+keys: qaxxq@a
+< one ‸two three
+< four five six
+< seven
+
+=== mappings-266
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: qaQq@a
+< ‸seven
+
+=== mappings-267
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: qaQq"ap
+< f‸Qour five six
+< seven
+
+=== mappings-268
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: qaQjq@a
+< ‸four five six
+
+=== mappings-269
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: qaQq2@a
+< ‸
+
+=== mappings-270
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: qaQq3@a
+< ‸
+
+=== mappings-271
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: :normal Q<CR>
+< ‸four five six
+< seven
+
+=== mappings-272
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: :normal! Q<CR>
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-273
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: :%normal Q<CR>
+< ‸
+
+=== mappings-274
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: :%normal! Q<CR>
+< one two three
+< four five six
+< ‸seven
+
+=== mappings-275
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: :2normal Q<CR>
+< one two three
+< ‸seven
+
+=== mappings-276
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: :g/o/normal Q<CR>
+< ‸seven
+
+=== mappings-277
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: :g/o/normal! Q<CR>
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-278
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: :exe 'normal Q'<CR>
+< ‸four five six
+< seven
+
+=== mappings-279
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: :exe 'normal! Q'<CR>
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-280
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: yyQP
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-281
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: yyQ"0P
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-282
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: Q"1P
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-283
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: QQ"1P"2P
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-284
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: QQQ"1p
+< 
+< ‸seven
+
+=== mappings-285
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: "aQ
+< ‸four five six
+< seven
+
+=== mappings-286
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: "aQ"ap
+< four five six
+< ‸one two three
+< seven
+
+=== mappings-287
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: "AQ
+< ‸four five six
+< seven
+
+=== mappings-288
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: "_Q
+< ‸four five six
+< seven
+
+=== mappings-289
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: "_Qp
+< ‸four five six
+< seven
+
+=== mappings-290
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: d2Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-291
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: dQ
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-292
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: cQ
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-293
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: yQ
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-295
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: >Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-296
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: f Q
+< ‸four five six
+< seven
+
+=== mappings-297
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: rQ
+< ‸Qne two three
+< four five six
+< seven
+
+=== mappings-298
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: mQ
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-299
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: 'Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-300
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: `Q
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-301
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: qQQ
+< ‸four five six
+< seven
+
+=== mappings-302
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: i<C-r>Q
+< ‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-303
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: iQ
+< Q‸one two three
+< four five six
+< seven
+mode: i
+
+=== mappings-304
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: AQ
+< one two threeQ‸
+< four five six
+< seven
+mode: i
+
+=== mappings-305
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: RQ
+< Q‸ne two three
+< four five six
+< seven
+mode: R
+
+=== mappings-306
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: vQ
+< ‸one two three
+< four five six
+< seven
+mode: v
+
+=== mappings-307
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: VQ
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-308
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: /Q<CR>
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-309
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: :s/o/Q/<CR>
+< ‸Qne two three
+< four five six
+< seven
+
+=== mappings-310
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: ixQ<Esc>
+< x‸Qone two three
+< four five six
+< seven
+
+=== mappings-311
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: ix<Esc>Q
+< ‸four five six
+< seven
+
+=== mappings-312
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: ix<Esc>jQ
+< xone two three
+< ‸seven
+
+=== mappings-313
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: ix<Esc>Qu
+< ‸xone two three
+< four five six
+< seven
+
+=== mappings-314
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: ix<Esc>Quu
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-315
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: ix<Esc>QUU
+< ‸four five six
+< seven
+
+=== mappings-316
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: xQ
+< ‸four five six
+< seven
+
+=== mappings-317
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: xQu
+< ‸ne two three
+< four five six
+< seven
+
+=== mappings-318
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: xQuu
+< ‸one two three
+< four five six
+< seven
+
+=== mappings-319
+ex: nnoremap Q dd
+> ‸one two three
+> four five six
+> seven
+keys: xQ<C-r>
+< ‸four five six
+< seven

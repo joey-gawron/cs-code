@@ -1,0 +1,3506 @@
+# search: / ? n N * # g* g# offsets, flags, options, gn, operators with searches, empty-pattern reuse
+=== search-001
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-002
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-003
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>nn
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-004
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>nnn
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-005
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>N
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-006
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>NN
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-007
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>nN
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-008
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ?foo<CR>
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-009
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ?foo<CR>n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-010
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ?foo<CR>N
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-011
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ?foo<CR>nn
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-012
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: G$?foo<CR>
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-013
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: G$?foo<CR>n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-014
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: G$?foo<CR>N
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-015
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: 2/foo<CR>
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-016
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: 3/foo<CR>
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-017
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: 4/foo<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-018
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: 2?foo<CR>
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-019
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>2n
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-020
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>3n
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-021
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>2N
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-022
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>5n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-023
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /bar<CR>
+< foo ‸bar foo
+< baz foo bar
+< foo
+
+=== search-024
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /bar<CR>n
+< foo bar foo
+< baz foo ‸bar
+< foo
+
+=== search-025
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /bar<CR>nn
+< foo ‸bar foo
+< baz foo bar
+< foo
+
+=== search-026
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /zzz<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-027
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /zzz<CR>n
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-028
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /fo<CR>
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-029
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/e<CR>
+< fo‸o bar foo
+< baz foo bar
+< foo
+
+=== search-030
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/e<CR>n
+< foo bar fo‸o
+< baz foo bar
+< foo
+
+=== search-031
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/e+1<CR>
+< foo‸ bar foo
+< baz foo bar
+< foo
+
+=== search-032
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/e-1<CR>
+< f‸oo bar foo
+< baz foo bar
+< foo
+
+=== search-033
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/s+1<CR>
+< f‸oo bar foo
+< baz foo bar
+< foo
+
+=== search-034
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/s-1<CR>
+< foo bar‸ foo
+< baz foo bar
+< foo
+
+=== search-035
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/b+1<CR>
+< f‸oo bar foo
+< baz foo bar
+< foo
+
+=== search-036
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/b-1<CR>
+< foo bar‸ foo
+< baz foo bar
+< foo
+
+=== search-037
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/+1<CR>
+< foo bar foo
+< ‸baz foo bar
+< foo
+
+=== search-038
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/-1<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-039
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/1<CR>
+< foo bar foo
+< ‸baz foo bar
+< foo
+
+=== search-040
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/0<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-041
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/;/bar<CR>
+< foo bar foo
+< baz foo ‸bar
+< foo
+
+=== search-042
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/;/bar/e<CR>
+< foo bar foo
+< baz foo ba‸r
+< foo
+
+=== search-043
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/e;/bar<CR>
+< foo ‸bar foo
+< baz foo bar
+< foo
+
+=== search-044
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ?foo?e<CR>
+< foo bar foo
+< baz foo bar
+< fo‸o
+
+=== search-045
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ?foo?e+1<CR>
+< foo bar foo
+< baz foo bar
+< fo‸o
+
+=== search-046
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ?foo?s-1<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-047
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ?foo?+1<CR>
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-048
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ?foo?;?bar<CR>
+< foo bar foo
+< baz foo ‸bar
+< foo
+
+=== search-049
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/e<CR>n
+< foo bar fo‸o
+< baz foo bar
+< foo
+
+=== search-050
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/e<CR>N
+< foo bar foo
+< baz foo bar
+< fo‸o
+
+=== search-051
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/e<CR>//<CR>
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-052
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/e<CR>//e<CR>
+< foo bar fo‸o
+< baz foo bar
+< foo
+
+=== search-053
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo/e<CR>//<CR>n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-054
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>//e<CR>
+< foo bar fo‸o
+< baz foo bar
+< foo
+
+=== search-055
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>/<CR>
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-056
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>/bar<CR>/<CR>
+< foo ‸bar foo
+< baz foo bar
+< foo
+
+=== search-057
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>?<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-058
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>?bar<CR>n
+< foo bar foo
+< baz foo ‸bar
+< foo
+
+=== search-059
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>?bar<CR>N
+< foo bar foo
+< baz foo ‸bar
+< foo
+
+=== search-060
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>?<CR>n
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-061
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: *
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-062
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: **
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-063
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ***
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-064
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: #
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-065
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ##
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-066
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: g*
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-067
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: g#
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-068
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: g*n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-069
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: 2*
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-070
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: 3*
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-071
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: 2#
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-072
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: *N
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-073
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: *n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-074
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: #n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-075
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: #N
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-076
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: j*
+< foo bar foo
+< ‸baz foo bar
+< foo
+
+=== search-077
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: jj*
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-078
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: jjw*
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-079
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: w*
+< foo bar foo
+< baz foo ‸bar
+< foo
+
+=== search-080
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: ww*
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-081
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: wwj*
+< foo ‸bar foo
+< baz foo bar
+< foo
+
+=== search-082
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: $#
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-083
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /the<CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-084
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /The<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-085
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /THE<CR>
+< The quick brown fox
+< jumps over the lazy dog
+< ‸THE END the end
+
+=== search-086
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /THE<CR>n
+< The quick brown fox
+< jumps over the lazy dog
+< ‸THE END the end
+
+=== search-087
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /the\c<CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-088
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\cthe<CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-089
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\Cthe<CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-090
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\CThe<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-091
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\cTHE<CR>n
+< The quick brown fox
+< jumps over the lazy dog
+< ‸THE END the end
+
+=== search-092
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\cTHE<CR>nn
+< The quick brown fox
+< jumps over the lazy dog
+< THE END ‸the end
+
+=== search-093
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\cTHE<CR>nnn
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-094
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /the\<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-095
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\<the\><CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-096
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\<the<CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-097
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /the\><CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-098
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\<the\><CR>n
+< The quick brown fox
+< jumps over the lazy dog
+< THE END ‸the end
+
+=== search-099
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\vthe|end<CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-100
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\vthe|end<CR>n
+< The quick brown fox
+< jumps over the lazy dog
+< THE END ‸the end
+
+=== search-101
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /the\|end<CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-102
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /the\|end<CR>nn
+< The quick brown fox
+< jumps over the lazy dog
+< THE END the ‸end
+
+=== search-103
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\v(the|The)<CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-104
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\v<the><CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-105
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\v<THE><CR>n
+< The quick brown fox
+< jumps over the lazy dog
+< ‸THE END the end
+
+=== search-106
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\cthe end<CR>
+< The quick brown fox
+< jumps over the lazy dog
+< ‸THE END the end
+
+=== search-107
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\c\vthe end<CR>
+< The quick brown fox
+< jumps over the lazy dog
+< ‸THE END the end
+
+=== search-108
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\VThe qu<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-109
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\V.<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-110
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\V\.<CR>
+< T‸he quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-111
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\M.<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-112
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\m.<CR>
+< T‸he quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-113
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\M\.<CR>
+< T‸he quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-114
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /o.\{2}<CR>
+< The quick br‸own fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-115
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /o.\{2,}<CR>
+< The quick br‸own fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-116
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /o\{1,2}<CR>
+< The quick br‸own fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-117
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\vo{1,2}<CR>
+< The quick br‸own fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-118
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\vo{2}<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-119
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\vo+<CR>
+< The quick br‸own fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-120
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /o\+<CR>
+< The quick br‸own fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-121
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /o\=<CR>
+< T‸he quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-122
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\vo?<CR>
+< T‸he quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-123
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /[aeiou]\{2}<CR>
+< The q‸uick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-124
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /[^a-z ]<CR>
+< The quick brown fox
+< jumps over the lazy dog
+< ‸THE END the end
+
+=== search-125
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\u<CR>
+< The quick brown fox
+< jumps over the lazy dog
+< ‸THE END the end
+
+=== search-126
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\l\u<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-127
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\a\+<CR>n
+< The quick ‸brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-128
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\s\+<CR>
+< The‸ quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-129
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\S\+<CR>n
+< The quick ‸brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-130
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\w\+<CR>nn
+< The quick brown ‸fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-131
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\W<CR>
+< The‸ quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-132
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\d<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-133
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\D<CR>
+< T‸he quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-134
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /^<CR>
+< The quick brown fox
+< ‸jumps over the lazy dog
+< THE END the end
+
+=== search-135
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /$<CR>
+< The quick brown fo‸x
+< jumps over the lazy dog
+< THE END the end
+
+=== search-136
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /^T<CR>
+< The quick brown fox
+< jumps over the lazy dog
+< ‸THE END the end
+
+=== search-137
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /d$<CR>
+< The quick brown fox
+< jumps over the lazy dog
+< THE END the en‸d
+
+=== search-138
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /^.*fox$<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-139
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\_^j<CR>
+< The quick brown fox
+< ‸jumps over the lazy dog
+< THE END the end
+
+=== search-140
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /fox\njumps<CR>
+< The quick brown ‸fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-141
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /fox\_s*jumps<CR>
+< The quick brown ‸fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-142
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /x\_.*d<CR>
+< The quick brown fo‸x
+< jumps over the lazy dog
+< THE END the end
+
+=== search-143
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\(the\) \1<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-144
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\(.\)\1<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-145
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\v(.)\1<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-146
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\v(.)\1<CR>n
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-147
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /quick\zs brown<CR>
+< The quick‸ brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-148
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /quick \zsbrown<CR>
+< The quick ‸brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-149
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /quick \zebrown<CR>
+< The ‸quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-150
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /quick\zs brown\ze fox<CR>
+< The quick‸ brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-151
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\zsthe<CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-152
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /the\ze <CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-153
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /[[:upper:]]<CR>
+< The quick brown fox
+< jumps over the lazy dog
+< ‸THE END the end
+
+=== search-154
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /[[:lower:]]\{3}<CR>
+< The ‸quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-155
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /[[:digit:]]<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-156
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /[[:alpha:]]\+<CR>
+< The ‸quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-157
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /[[:space:]]<CR>
+< The‸ quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-158
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /[[:punct:]]<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-159
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /~<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-160
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\%^T<CR>
+< ‸The quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-161
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\%$<CR>
+< The quick brown fox
+< jumps over the lazy dog
+< THE END the en‸d
+
+=== search-162
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\<\w\{5}\><CR>
+< The ‸quick brown fox
+< jumps over the lazy dog
+< THE END the end
+
+=== search-163
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /\<\w\{4}\><CR>n
+< The quick brown fox
+< jumps over the ‸lazy dog
+< THE END the end
+
+=== search-164
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d<CR>
+< a‸1 b22 c333
+< d4444 e
+< f55555 g
+
+=== search-165
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\+<CR>
+< a‸1 b22 c333
+< d4444 e
+< f55555 g
+
+=== search-166
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\+<CR>n
+< a1 b‸22 c333
+< d4444 e
+< f55555 g
+
+=== search-167
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\{3}<CR>
+< a1 b22 c‸333
+< d4444 e
+< f55555 g
+
+=== search-168
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\{3,}<CR>
+< a1 b22 c‸333
+< d4444 e
+< f55555 g
+
+=== search-169
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\{-1,}<CR>
+< a‸1 b22 c333
+< d4444 e
+< f55555 g
+
+=== search-170
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\{-2,3}<CR>
+< a1 b‸22 c333
+< d4444 e
+< f55555 g
+
+=== search-171
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\v\d{2,3}<CR>
+< a1 b‸22 c333
+< d4444 e
+< f55555 g
+
+=== search-172
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\v\d{3}<CR>n
+< a1 b22 c333
+< d‸4444 e
+< f55555 g
+
+=== search-173
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\v[a-f]\d+<CR>
+< a1 ‸b22 c333
+< d4444 e
+< f55555 g
+
+=== search-174
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\v[a-f]\d+<CR>n
+< a1 b22 ‸c333
+< d4444 e
+< f55555 g
+
+=== search-175
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /[a-z]\zs\d<CR>
+< a‸1 b22 c333
+< d4444 e
+< f55555 g
+
+=== search-176
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\ze\d<CR>
+< a1 b‸22 c333
+< d4444 e
+< f55555 g
+
+=== search-177
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\+\ze <CR>
+< a‸1 b22 c333
+< d4444 e
+< f55555 g
+
+=== search-178
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\(\d\)\1<CR>
+< a1 b‸22 c333
+< d4444 e
+< f55555 g
+
+=== search-179
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\v(\d)\1+<CR>
+< a1 b‸22 c333
+< d4444 e
+< f55555 g
+
+=== search-180
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\v(\d)\1+<CR>n
+< a1 b22 c‸333
+< d4444 e
+< f55555 g
+
+=== search-181
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\v(\d)\1+<CR>nn
+< a1 b22 c333
+< d‸4444 e
+< f55555 g
+
+=== search-182
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\+/e<CR>
+< a‸1 b22 c333
+< d4444 e
+< f55555 g
+
+=== search-183
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\+/e<CR>n
+< a1 b2‸2 c333
+< d4444 e
+< f55555 g
+
+=== search-184
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\+/e<CR>nn
+< a1 b22 c33‸3
+< d4444 e
+< f55555 g
+
+=== search-185
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\{4}/s+2<CR>
+< a1 b22 c333
+< d44‸44 e
+< f55555 g
+
+=== search-186
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\d\{4}/e-1<CR>
+< a1 b22 c333
+< d44‸44 e
+< f55555 g
+
+=== search-187
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\v<\a\d+><CR>
+< a1 ‸b22 c333
+< d4444 e
+< f55555 g
+
+=== search-188
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\v<\a\d{3}><CR>
+< a1 b22 ‸c333
+< d4444 e
+< f55555 g
+
+=== search-189
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /e<CR>
+< a1 b22 c333
+< d4444 ‸e
+< f55555 g
+
+=== search-190
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: / <CR>
+< a1‸ b22 c333
+< d4444 e
+< f55555 g
+
+=== search-191
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: / <CR>n
+< a1 b22‸ c333
+< d4444 e
+< f55555 g
+
+=== search-192
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: / <CR>nn
+< a1 b22 c333
+< d4444‸ e
+< f55555 g
+
+=== search-193
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: / \+<CR>
+< a1‸ b22 c333
+< d4444 e
+< f55555 g
+
+=== search-194
+> ‸a1 b22 c333
+> d4444 e
+> f55555 g
+keys: /\s<CR>
+< a1‸ b22 c333
+< d4444 e
+< f55555 g
+
+=== search-195
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/bar<CR>
+< ‸bar foo
+< baz foo bar
+< foo bar
+
+=== search-196
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/bar/e<CR>
+< ‸ foo
+< baz foo bar
+< foo bar
+
+=== search-197
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/bar/e+1<CR>
+< ‸foo
+< baz foo bar
+< foo bar
+
+=== search-198
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/bar/s-1<CR>
+< ‸ bar foo
+< baz foo bar
+< foo bar
+
+=== search-199
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/bar/+1<CR>
+< ‸foo bar
+
+=== search-200
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/bar/;/foo<CR>
+< ‸foo
+< baz foo bar
+< foo bar
+
+=== search-201
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: y/bar<CR>P
+< foo‸ foo bar foo
+< baz foo bar
+< foo bar
+
+=== search-202
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: y/bar/e<CR>P
+< foo ba‸rfoo bar foo
+< baz foo bar
+< foo bar
+
+=== search-203
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: c/bar<CR>X<Esc>
+< ‸Xbar foo
+< baz foo bar
+< foo bar
+
+=== search-204
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: c/bar/e<CR>X<Esc>
+< ‸X foo
+< baz foo bar
+< foo bar
+
+=== search-205
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d?bar<CR>
+< ‸bar
+
+=== search-206
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: dG?bar<CR>
+< ‸
+
+=== search-207
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/baz<CR>
+< ‸baz foo bar
+< foo bar
+
+=== search-208
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/baz<CR>.
+< ‸baz foo bar
+< foo bar
+
+=== search-209
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/foo<CR>
+< ‸foo
+< baz foo bar
+< foo bar
+
+=== search-210
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/foo<CR>.
+< ‸foo bar
+< foo bar
+
+=== search-211
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d2/foo<CR>
+< ‸foo bar
+< foo bar
+
+=== search-212
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: 2d/foo<CR>
+< ‸foo bar
+< foo bar
+
+=== search-213
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/\<foo<CR>
+< ‸foo
+< baz foo bar
+< foo bar
+
+=== search-214
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: dn
+< ‸foo bar foo
+< baz foo bar
+< foo bar
+
+=== search-215
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/bar<CR>u
+< ‸foo bar foo
+< baz foo bar
+< foo bar
+
+=== search-216
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/bar<CR>u<C-r>
+< ‸bar foo
+< baz foo bar
+< foo bar
+
+=== search-217
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/bar<CR>p
+< bfoo‸ ar foo
+< baz foo bar
+< foo bar
+
+=== search-218
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/bar<CR>jp
+< bar foo
+< bfoo‸ az foo bar
+< foo bar
+
+=== search-219
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: >/bar<CR>
+< \t‸foo bar foo
+< baz foo bar
+< foo bar
+
+=== search-220
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: gU/bar<CR>
+< ‸FOO bar foo
+< baz foo bar
+< foo bar
+
+=== search-221
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: gu/bar/e<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo bar
+
+=== search-222
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: g~/bar<CR>
+< ‸FOO bar foo
+< baz foo bar
+< foo bar
+
+=== search-223
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: gq/bar<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo bar
+
+=== search-224
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: =/bar<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo bar
+
+=== search-225
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: /bar<CR>dn
+< foo ‸bar
+< foo bar
+
+=== search-226
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: /bar<CR>dN
+< foo ‸bar
+
+=== search-227
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: /bar<CR>d//<CR>
+< foo ‸bar
+< foo bar
+
+=== search-228
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/bar<CR>`[
+< ‸bar foo
+< baz foo bar
+< foo bar
+
+=== search-229
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: y/bar<CR>`]
+< foo‸ bar foo
+< baz foo bar
+< foo bar
+
+=== search-230
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: y/bar/e<CR>`]
+< foo ba‸r foo
+< baz foo bar
+< foo bar
+
+=== search-231
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/zzz<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo bar
+
+=== search-232
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: c/zzz<CR>X<Esc>
+< ‸foo bar foo
+< baz foo bar
+< foo bar
+
+=== search-233
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: y/zzz<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo bar
+
+=== search-234
+> ‸foo bar foo
+> baz foo bar
+> foo bar
+keys: d/foo/;/bar<CR>
+< ‸bar
+< foo bar
+
+=== search-235
+ex: set ic
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /FOO<CR>
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-236
+ex: set ic
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /Foo<CR>n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-237
+ex: set ic scs
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /Foo<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-238
+ex: set ic scs
+> ‸x Foo foo
+keys: /foo<CR>
+< x ‸Foo foo
+
+=== search-239
+ex: set ic scs
+> ‸x Foo foo FOO
+keys: /foo<CR>n
+< x Foo ‸foo FOO
+
+=== search-240
+ex: set ic scs
+> ‸x Foo foo FOO
+keys: /Foo<CR>n
+< x ‸Foo foo FOO
+
+=== search-241
+ex: set ic scs
+> ‸Foo foo FOO foo
+keys: *
+< Foo ‸foo FOO foo
+
+=== search-242
+ex: set ic scs
+> ‸Foo foo FOO foo
+keys: #
+< Foo foo FOO ‸foo
+
+=== search-243
+ex: set ic
+> ‸Foo foo FOO foo
+keys: *
+< Foo ‸foo FOO foo
+
+=== search-244
+ex: set ic
+> ‸Foo foo FOO foo
+keys: g*
+< Foo ‸foo FOO foo
+
+=== search-245
+ex: set nows
+> foo
+> ‸bar
+keys: /foo<CR>
+< foo
+< ‸bar
+
+=== search-246
+ex: set nows
+> bar
+> ‸foo
+keys: ?foo<CR>
+< bar
+< ‸foo
+
+=== search-247
+ex: set nows
+> foo
+> ‸bar foo
+keys: /foo<CR>n
+< foo
+< bar ‸foo
+
+=== search-248
+ex: set nows
+> ‸foo bar
+keys: *
+< ‸foo bar
+
+=== search-249
+ex: set nows
+> ‸foo bar
+keys: #
+< ‸foo bar
+
+=== search-250
+ex: set nows
+> foo ‸bar foo
+keys: *
+< foo ‸bar foo
+
+=== search-251
+ex: set nows
+> ‸foo
+keys: nn
+< ‸foo
+
+=== search-252
+ex: set nows
+> bar
+> ‸baz foo
+> foo
+keys: d/foo<CR>
+< bar
+< ‸foo
+< foo
+
+=== search-253
+ex: set ws
+> foo
+> ‸bar
+keys: /foo<CR>
+< ‸foo
+< bar
+
+=== search-254
+ex: set nows
+> foo ‸foo
+> bar
+keys: /foo<CR>/<CR>
+< foo ‸foo
+< bar
+
+=== search-255
+ex: set ic
+> ‸Foo foo
+keys: /\Cfoo<CR>
+< Foo ‸foo
+
+=== search-256
+ex: set noic
+> ‸x Foo foo
+keys: /\cfoo<CR>
+< x ‸Foo foo
+
+=== search-257
+ex: set magic
+> ‸a.b axb
+keys: /a.b<CR>
+< a.b ‸axb
+
+=== search-258
+ex: set nomagic
+> ‸a.b axb
+keys: /a.b<CR>
+< ‸a.b axb
+
+=== search-259
+ex: set nomagic
+> ‸axb a.b
+keys: /a\.b<CR>
+< axb ‸a.b
+
+=== search-260
+ex: set ic
+> ‸Foo FOO foo
+keys: /foo<CR>nn
+< ‸Foo FOO foo
+
+=== search-261
+ex: set scs
+> ‸Foo foo
+keys: /foo<CR>
+< Foo ‸foo
+
+=== search-262
+ex: set ic scs
+> ‸x foo Foo
+keys: /\cFoo<CR>
+< x ‸foo Foo
+
+=== search-263
+ex: set ic scs
+> ‸x Foo foo
+keys: /\Cfoo<CR>
+< x Foo ‸foo
+
+=== search-264
+ex: set hls
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-265
+ex: set hls
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:noh<CR>n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-266
+ex: set is
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-267
+ex: set noic
+> ‸The quick brown fox
+> jumps over the lazy dog
+> THE END the end
+keys: /the<CR>
+< The quick brown fox
+< jumps over ‸the lazy dog
+< THE END the end
+
+=== search-268
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gn
+< fo‸o bar foo
+< baz foo bar
+< foo
+mode: v
+
+=== search-269
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gnd
+< ‸ bar foo
+< baz foo bar
+< foo
+
+=== search-270
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0dgn
+< ‸ bar foo
+< baz foo bar
+< foo
+
+=== search-271
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0cgnX<Esc>
+< ‸X bar foo
+< baz foo bar
+< foo
+
+=== search-272
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0cgnX<Esc>.
+< X bar ‸X
+< baz foo bar
+< foo
+
+=== search-273
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0cgnX<Esc>..
+< X bar X
+< baz ‸X bar
+< foo
+
+=== search-274
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0cgnX<Esc>...
+< X bar X
+< baz X bar
+< ‸X
+
+=== search-275
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0cgnX<Esc>....
+< X bar X
+< baz X bar
+< ‸X
+
+=== search-276
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0cgnX<Esc>.....
+< X bar X
+< baz X bar
+< ‸X
+
+=== search-277
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0dgn.
+<  bar‸ ⏎
+< baz foo bar
+< foo
+
+=== search-278
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0dgn..
+<  bar ⏎
+< baz ‸ bar
+< foo
+
+=== search-279
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0ygnP
+< fo‸ofoo bar foo
+< baz foo bar
+< foo
+
+=== search-280
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gUgn
+< ‸FOO bar foo
+< baz foo bar
+< foo
+
+=== search-281
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gUgn.
+< FOO bar ‸FOO
+< baz foo bar
+< foo
+
+=== search-282
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gUgn..
+< FOO bar FOO
+< baz ‸FOO bar
+< foo
+
+=== search-283
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gN
+< ‸foo bar foo
+< baz foo bar
+< foo
+mode: v
+
+=== search-284
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gNd
+< ‸ bar foo
+< baz foo bar
+< foo
+
+=== search-285
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>G$gNd
+< foo bar foo
+< baz foo bar
+< ‸
+
+=== search-286
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>G$dgN
+< foo bar foo
+< baz foo bar
+< ‸
+
+=== search-287
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>G$cgNX<Esc>
+< foo bar foo
+< baz foo bar
+< ‸X
+
+=== search-288
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>G$cgNX<Esc>.
+< foo bar foo
+< baz ‸X bar
+< X
+
+=== search-289
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gnvgn
+< fo‸o bar foo
+< baz foo bar
+< foo
+mode: v
+
+=== search-290
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gngn
+< foo bar fo‸o
+< baz foo bar
+< foo
+mode: v
+
+=== search-291
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gn<Esc>
+< fo‸o bar foo
+< baz foo bar
+< foo
+
+=== search-292
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gnx
+< ‸ bar foo
+< baz foo bar
+< foo
+
+=== search-293
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gnc
+< ‸ bar foo
+< baz foo bar
+< foo
+mode: i
+
+=== search-294
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>jgnd
+< foo bar foo
+< baz foo bar
+< ‸
+
+=== search-295
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>llgnd
+< foo bar‸ ⏎
+< baz foo bar
+< foo
+
+=== search-296
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>wgnd
+< foo bar foo
+< baz ‸ bar
+< foo
+
+=== search-297
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /zzz<CR>gnd
+< ‸foo bar foo
+< baz foo bar
+< foo
+mode: no
+
+=== search-298
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gn<Esc>gv
+< fo‸o bar foo
+< baz foo bar
+< foo
+mode: v
+
+=== search-299
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0gnoy$p
+< foo bar foofo‸o
+< baz foo bar
+< foo
+
+=== search-300
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0d2gn
+< foo bar‸ ⏎
+< baz foo bar
+< foo
+
+=== search-301
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg02gnd
+< foo bar‸ ⏎
+< baz foo bar
+< foo
+
+=== search-302
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>gg0vgnd
+< ‸ bar foo
+< baz foo bar
+< foo
+
+=== search-303
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /\<foo<CR>gg0dgn
+< ‸ bar foo
+< baz foo bar
+< foo
+
+=== search-304
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /ba.<CR>gg0cgn!<Esc>.
+< foo ! foo
+< ‸! foo bar
+< foo
+
+=== search-305
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /ba.<CR>gg0cgn!<Esc>3.
+< foo ! foo
+< ‸! foo bar
+< foo
+
+=== search-306
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:s//X/<CR>
+< ‸X bar foo
+< baz foo bar
+< foo
+
+=== search-307
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:s//X/g<CR>
+< ‸X bar X
+< baz foo bar
+< foo
+
+=== search-308
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:%s//X/g<CR>
+< X bar X
+< baz X bar
+< ‸X
+
+=== search-309
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:%s//X/<CR>
+< X bar foo
+< baz X bar
+< ‸X
+
+=== search-310
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:%s//X/g<CR>u
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-311
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>"/p
+< foo bar ffo‸ooo
+< baz foo bar
+< foo
+
+=== search-312
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>"/P
+< foo bar fo‸ofoo
+< baz foo bar
+< foo
+
+=== search-313
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:let @/='bar'<CR>n
+< foo bar foo
+< baz foo ‸bar
+< foo
+
+=== search-314
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:let @/='bar'<CR>N
+< foo ‸bar foo
+< baz foo bar
+< foo
+
+=== search-315
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :let @/='bar'<CR>n
+< foo ‸bar foo
+< baz foo bar
+< foo
+
+=== search-316
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :let @/='bar'<CR>:%s//X/g<CR>
+< foo X foo
+< ‸baz foo X
+< foo
+
+=== search-317
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :s/bar/Y/<CR>n
+< foo Y foo
+< baz foo ‸bar
+< foo
+
+=== search-318
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :s/bar/Y/<CR>:%s//X/g<CR>
+< foo Y foo
+< ‸baz foo X
+< foo
+
+=== search-319
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :s/bar/Y/<CR>N
+< foo Y foo
+< baz foo ‸bar
+< foo
+
+=== search-320
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :s/bar/Y/<CR>*
+< foo Y ‸foo
+< baz foo bar
+< foo
+
+=== search-321
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:g//d<CR>
+< ‸
+
+=== search-322
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:v//d<CR>
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-323
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:g//s//X/<CR>
+< X bar foo
+< baz X bar
+< ‸X
+
+=== search-324
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:%s/\(foo\)/[\1]/g<CR>
+< [foo] bar [foo]
+< baz [foo] bar
+< ‸[foo]
+
+=== search-325
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :g/bar/s//X/<CR>
+< foo X foo
+< ‸baz foo X
+< foo
+
+=== search-326
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :g/bar/s//X/g<CR>nn
+< foo X foo
+< ‸baz foo X
+< foo
+
+=== search-327
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:noh<CR>n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-328
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:noh<CR>nn
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-329
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>qaq
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-330
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>qa:s//X/<CR>q
+< ‸X bar foo
+< baz foo bar
+< foo
+
+=== search-331
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:/<CR>
+< foo bar foo
+< ‸baz foo bar
+< foo
+
+=== search-332
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:/bar<CR>
+< foo bar foo
+< ‸baz foo bar
+< foo
+
+=== search-333
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:?bar<CR>
+< foo bar foo
+< ‸baz foo bar
+< foo
+
+=== search-334
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :/foo/<CR>
+< foo bar foo
+< ‸baz foo bar
+< foo
+
+=== search-335
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :/foo/d<CR>
+< foo bar foo
+< ‸foo
+
+=== search-336
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :/bar/;+1d<CR>
+< ‸foo bar foo
+
+=== search-337
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :/bar/,/foo/d<CR>
+< foo bar foo
+< ‸foo
+
+=== search-338
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :?foo?d<CR>
+< foo bar foo
+< ‸baz foo bar
+
+=== search-339
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: G:?foo?d<CR>
+< foo bar foo
+< ‸foo
+
+=== search-340
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: G:?foo?,.d<CR>
+< ‸foo bar foo
+
+=== search-341
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :/foo/+1d<CR>
+< foo bar foo
+< ‸baz foo bar
+
+=== search-342
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :/foo/-1d<CR>
+< ‸baz foo bar
+< foo
+
+=== search-343
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :/foo/;/foo/d<CR>
+< ‸foo bar foo
+
+=== search-344
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: :\/d<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-345
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:\/d<CR>
+< foo bar foo
+< ‸foo
+
+=== search-346
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /bar<CR>:\?d<CR>
+< foo bar foo
+< ‸foo
+
+=== search-347
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /bar<CR>:\&d<CR>
+< foo ‸bar foo
+< baz foo bar
+< foo
+
+=== search-348
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: w/foo<CR>
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-349
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: $/foo<CR>
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-350
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: $?foo<CR>
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-351
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: j/foo<CR>
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-352
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: j$/foo<CR>
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-353
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: jj/foo<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-354
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: jj/foo<CR>n
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-355
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: G/foo<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-356
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: G/foo<CR>n
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-357
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: G$/foo<CR>
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-358
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: G$/foo<CR>nn
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-359
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: G0?foo<CR>
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-360
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: G0?foo<CR>n
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-361
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:2<CR>n
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-362
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>:3<CR>N
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-363
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>jn
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-364
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>kn
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-365
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>jN
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-366
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>m'n``
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-367
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>n``
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-368
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>n<C-o>
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-369
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>nn<C-o>
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-370
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>nn<C-o><C-o>
+< foo bar ‸foo
+< baz foo bar
+< foo
+
+=== search-371
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>nn<C-o><C-o><C-i>
+< foo bar foo
+< baz ‸foo bar
+< foo
+
+=== search-372
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>nn<C-o><C-o><C-i><C-i>
+< foo bar foo
+< baz foo bar
+< ‸foo
+
+=== search-373
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>''
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-374
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>'`
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-375
+> ‸foo bar foo
+> baz foo bar
+> foo
+keys: /foo<CR>``
+< ‸foo bar foo
+< baz foo bar
+< foo
+
+=== search-376
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: /foo\nbar<CR>
+< ‸foo
+< bar
+< 
+< baz
+< foo bar
+
+=== search-377
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: /foo\n<CR>
+< ‸foo
+< bar
+< 
+< baz
+< foo bar
+
+=== search-378
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: /\n<CR>
+< fo‸o
+< bar
+< 
+< baz
+< foo bar
+
+=== search-379
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: /\n\n<CR>
+< foo
+< ba‸r
+< 
+< baz
+< foo bar
+
+=== search-380
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: /^$<CR>
+< foo
+< bar
+< ‸
+< baz
+< foo bar
+
+=== search-381
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: /\_s\+<CR>
+< fo‸o
+< bar
+< 
+< baz
+< foo bar
+
+=== search-382
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: /bar\_.*baz<CR>
+< foo
+< ‸bar
+< 
+< baz
+< foo bar
+
+=== search-383
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: /bar\_.\{-}baz<CR>
+< foo
+< ‸bar
+< 
+< baz
+< foo bar
+
+=== search-384
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: /\_^b<CR>
+< foo
+< ‸bar
+< 
+< baz
+< foo bar
+
+=== search-385
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: /r\_$<CR>
+< foo
+< ba‸r
+< 
+< baz
+< foo bar
+
+=== search-386
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: /o\_$<CR>
+< fo‸o
+< bar
+< 
+< baz
+< foo bar
+
+=== search-387
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: d/\n<CR>
+< ‸o
+< bar
+< 
+< baz
+< foo bar
+
+=== search-388
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: d/baz<CR>
+< ‸baz
+< foo bar
+
+=== search-389
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: d/^baz<CR>
+< ‸baz
+< foo bar
+
+=== search-390
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: d/\nbaz<CR>
+< ‸
+< baz
+< foo bar
+
+=== search-391
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: y/\n<CR>P
+< f‸ofoo
+< bar
+< 
+< baz
+< foo bar
+
+=== search-392
+> ‸foo
+> bar
+> 
+> baz
+> foo bar
+keys: c/\n<CR>X<Esc>
+< ‸Xo
+< bar
+< 
+< baz
+< foo bar

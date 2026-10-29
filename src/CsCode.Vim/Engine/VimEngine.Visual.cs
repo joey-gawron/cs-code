@@ -30,7 +30,17 @@ public sealed partial class VimEngine
         }
         _visualStart = new TextPosition(_line, _col);
         SetMode(m);
-        if (_restartEdit) { }
+        // with a count (and no earlier Visual operation to copy) that many characters / lines are selected
+        if (count0 > 1)
+        {
+            for (var i = 1; i < count0; i++)
+            {
+                if (m == VimMode.VisualLine) { if (!CursorVertical(1, false)) break; }
+                else if (_col + 1 < CurLine.Length) _col += VimText.CharLen(CurLine, _col);
+                else break;
+            }
+            _setCurswant = true;
+        }
     }
 
     private void EndVisual()
@@ -213,6 +223,7 @@ public sealed partial class VimEngine
         var oap = _oap;
         oap.ResetForMotion(c.Op, c.Reg);
         oap.IsVisual = true;
+        oap.CursorStart = new TextPosition(_line, _col);
         var op = c.Op;
         var vmode = _mode;
         if (_forceLinewise) { if (vmode != VimMode.VisualBlock) vmode = VimMode.VisualLine; _forceLinewise = false; }

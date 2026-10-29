@@ -260,8 +260,9 @@ public sealed partial class VimEngine
         {
             AddHistory(_exHistory, text);
             if (_mode is VimMode.Visual or VimMode.VisualLine or VimMode.VisualBlock) EndVisual();
-            _s.Registers.LastCommandLine = text;
             if (text.Trim().Length > 0) ExecuteExLine(text);
+            // the last command line is remembered when the command has finished (a ':s///c' prompt keeps it running)
+            if (_awaitKey) _deferredLastCmd = text; else _s.Registers.LastCommandLine = text;
             if (_mode == VimMode.Normal) CheckCursor();
             if (_restartEdit && _insert is not null && _mode == VimMode.Normal) ResumeInsert();
             return;

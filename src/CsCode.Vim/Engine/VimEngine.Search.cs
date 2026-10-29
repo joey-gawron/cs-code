@@ -85,7 +85,13 @@ public sealed partial class VimEngine
                 var (s, e) = GroupSpan(m);
                 if (s < at && !pat.HasZs) { }
                 into.Add(new Hit(new TextPosition(line, s), new TextPosition(line, Math.Min(e, text.Length))));
-                var next = Math.Max(m.Index, s) + (m.Index < text.Length ? VimText.CharLen(text, Math.Min(m.Index, Math.Max(0, text.Length - 1))) : 1);
+                int next;
+                if (O.CpoHas('c'))
+                {
+                    next = e > s ? e : s + (s < text.Length ? VimText.CharLen(text, s) : 1);
+                    if (next <= m.Index) next = m.Index + 1;
+                }
+                else next = Math.Max(m.Index, s) + (m.Index < text.Length ? VimText.CharLen(text, Math.Min(m.Index, Math.Max(0, text.Length - 1))) : 1);
                 if (next <= at) next = at + 1;
                 at = next;
             }
@@ -104,7 +110,7 @@ public sealed partial class VimEngine
             if (s > lineEnd) break;
             if (s >= lineStart)
                 into.Add(new Hit(PosOfOffset(s), PosOfOffset(Math.Min(e, snap.Length))));
-            pos = Math.Max(pos, m.Index) + 1;
+            pos = O.CpoHas('c') && e > Math.Max(pos, m.Index) ? e : Math.Max(pos, m.Index) + 1;
             if (m.Index >= lineEnd + 1) break;
         }
     }
@@ -275,16 +281,27 @@ public sealed partial class VimEngine
         var cursor = new TextPosition(_line, _col);
         var startPos = cursor;
         var useEnd = off.End;
-        // With a line offset the search starts from the beginning/end of the cursor line so we do not re-find the same match.
-        if (off.Line)
+        var acceptAtStart = false;
+        // Like Vim's do_search: a character offset is subtracted from the start position so "/pat/s-2" and "?pat?e+2" do not get stuck.
+        // (Not for a line offset.) Running into the buffer edge starts the search before the first / after the last character.
+        if (!off.Line && off.Value != 0)
         {
-            // search from the line start (forward: end of the line) like Vim's do_search
-            startPos = forward ? new TextPosition(cursor.Line, Math.Max(0, L(cursor.Line).Length)) : new TextPosition(cursor.Line, 0);
-            if (forward) startPos = new TextPosition(cursor.Line, int.MaxValue / 2 > 0 ? L(cursor.Line).Length : 0);
+            var l = startPos.Line; var c = startPos.Character;
+            var n = off.Value;
+            var hitEdge = false;
+            if (n > 0) { for (; n > 0; n--) if (Decl(ref l, ref c) == -1) { hitEdge = true; break; } }
+            else { for (; n < 0; n++) if (Incl(ref l, ref c) == -1) { hitEdge = true; break; } }
+            if (hitEdge)
+            {
+                // before the first line (forward) or after the last one (backward): the start position itself may match
+                startPos = forward ? new TextPosition(0, 0) : new TextPosition(LastLine, L(LastLine).Length);
+                acceptAtStart = true;
+            }
+            else startPos = new TextPosition(l, c);
         }
-        if (!SearchIt(pat, startPos, forward, acceptAtStart: false, useEnd, count, out var hit, out var wrapped))
+        if (!SearchIt(pat, startPos, forward, acceptAtStart, useEnd, count, out var hit, out var wrapped))
         {
-            Error($"E486: Pattern not found: {pattern}");
+            Error(O.WrapScan ? $"E486: Pattern not found: {pattern}" : forward ? $"E385: Search hit BOTTOM without match for: {pattern}" : $"E384: Search hit TOP without match for: {pattern}");
             return false;
         }
         if (wrapped) Message(forward ? "search hit BOTTOM, continuing at TOP" : "search hit TOP, continuing at BOTTOM", VimMessageKind.Warning);
@@ -471,7 +488,11 @@ public sealed partial class VimEngine
         var pat = CompilePattern(_s.Search.Pattern, useSmartcase: false);
         if (pat is null) return false;
         var cursor = new TextPosition(_line, _col);
-        if (!SearchIt(pat, cursor, forward, false, false, count, out var hit, out var wrapped)) { Error($"E486: Pattern not found: {_s.Search.Pattern}"); return false; }
+        if (!SearchIt(pat, cursor, forward, false, false, count, out var hit, out var wrapped))
+        {
+            Error(O.WrapScan ? $"E486: Pattern not found: {_s.Search.Pattern}" : forward ? $"E385: Search hit BOTTOM without match for: {_s.Search.Pattern}" : $"E384: Search hit TOP without match for: {_s.Search.Pattern}");
+            return false;
+        }
         if (wrapped) Message(forward ? "search hit BOTTOM, continuing at TOP" : "search hit TOP, continuing at BOTTOM", VimMessageKind.Warning);
         _line = hit.Start.Line;
         _col = hit.Start.Character;
@@ -491,24 +512,26 @@ public sealed partial class VimEngine
         if (pat is null) return false;
         // a match at the cursor counts: start searching just before the cursor
         var cur = new TextPosition(_line, _col);
-        if (!FindGnMatch(pat, cur, forward, count1, out var hit)) { Error($"E486: Pattern not found: {mem.Pattern}"); return false; }
+        // an active Visual selection is extended: the search continues from the character after (before) the cursor
+        if (VisualActive) cur = forward ? NextOf(cur) : PrevOf(cur);
+        if (!FindGnMatch(pat, cur, forward, count1, out var hit, acceptAtStart: VisualActive)) { Error($"E486: Pattern not found: {mem.Pattern}"); return false; }
+        var last = hit.End == hit.Start ? hit.Start : PrevOf(hit.End);
         if (VisualActive)
         {
-            _visualStart = hit.Start;
-            var e = PrevOf(hit.End);
-            if (hit.End == hit.Start) e = hit.Start;
-            _line = e.Line; _col = e.Character;
+            var target = forward ? last : hit.Start;
+            _line = target.Line; _col = target.Character;
             return true;
         }
-        oap.Start = hit.Start;
-        var end = hit.End == hit.Start ? hit.Start : PrevOf(hit.End);
+        // gn selects the match with the cursor at its end, gN with the cursor at its start
+        oap.Start = forward ? hit.Start : last;
+        var end = forward ? last : hit.Start;
         _line = end.Line; _col = end.Character;
         oap.Inclusive = true;
         oap.Type = MType.Char;
         return true;
     }
 
-    private bool FindGnMatch(VimPattern pat, TextPosition cur, bool forward, int count, out Hit hit)
+    private bool FindGnMatch(VimPattern pat, TextPosition cur, bool forward, int count, out Hit hit, bool acceptAtStart = false)
     {
         hit = default;
         // is the cursor inside a match? then that match is the first one
@@ -518,7 +541,8 @@ public sealed partial class VimEngine
             if (h.Start <= cur && cur < (h.End == h.Start ? NextOf(h.End) : h.End)) { hit = h; count--; if (count == 0) return true; cur = forward ? h.End : h.Start; break; }
         for (; count > 0; count--)
         {
-            if (!SearchIt(pat, cur, forward, acceptAtStart: false, false, 1, out hit, out _)) return false;
+            if (!SearchIt(pat, cur, forward, acceptAtStart: acceptAtStart, false, 1, out hit, out _)) return false;
+            acceptAtStart = false;
             cur = forward ? hit.End : hit.Start;
         }
         return true;

@@ -189,12 +189,21 @@ public static class NvimOracle
     private static int ByteToChar(string line, int byteCol)
     {
         if (byteCol <= 0) return 0;
-        var bytes = Encoding.UTF8.GetBytes(line);
         if (byteCol > (1 << 30)) return 1 << 30;
-        if (byteCol >= bytes.Length) return line.Length + (byteCol - bytes.Length);
-        // a byte column inside a multibyte character maps to that character
-        var start = byteCol;
-        while (start > 0 && (bytes[start] & 0xC0) == 0x80) start--;
-        return Encoding.UTF8.GetString(bytes, 0, start).Length;
+        // C1 controls (U+0080..U+009F) are Vim's K_SPECIAL-style raw bytes (the decoder maps an invalid byte to the char with the same
+        // code), so each one counts as a single byte; every other char counts as its UTF-8 length.
+        var bytes = 0;
+        var i = 0;
+        while (i < line.Length)
+        {
+            var width = line[i] is >= '\u0080' and <= '\u009f' ? 1
+                : char.IsHighSurrogate(line[i]) && i + 1 < line.Length ? 4
+                : Encoding.UTF8.GetByteCount(line.AsSpan(i, 1));
+            // a byte column inside a multibyte character maps to that character
+            if (bytes + width > byteCol) return i;
+            bytes += width;
+            i += char.IsHighSurrogate(line[i]) && i + 1 < line.Length ? 2 : 1;
+        }
+        return line.Length + (byteCol - bytes);
     }
 }

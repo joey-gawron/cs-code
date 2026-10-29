@@ -109,7 +109,8 @@ public sealed partial class VimEngine
     {
         var u = _bs.Undo;
         if (!u.Synced) return;
-        u.NewHeader(new TextPosition(_line, _col), _bs.Marks, Now(), Math.Max(1, O.UndoLevels));
+        var header = u.NewHeader(new TextPosition(_line, _col), _bs.Marks, Now(), Math.Max(1, O.UndoLevels));
+        header.VisualStart = _bs.VisualStart; header.VisualEnd = _bs.VisualEnd; header.VisualMode = _bs.VisualMode; header.VisualCurswant = _bs.VisualCurswant;
         _bs.NewChange = true;
     }
 
@@ -311,6 +312,7 @@ public sealed partial class VimEngine
     private void ApplyUndoHeader(UndoHeader h, bool undo, out int oldCountSum, out int newCountSum)
     {
         var savedMarks = (TextPosition?[])_bs.Marks.Clone();
+        var savedVisual = (_bs.VisualStart, _bs.VisualEnd, _bs.VisualMode, _bs.VisualCurswant);
         var opStart = new TextPosition(LastLine, 0);
         var opEnd = new TextPosition(-1, 0);
         var curLnum = _line + 1;
@@ -378,6 +380,13 @@ public sealed partial class VimEngine
                 if (nm[i] is { } pm) _bs.Marks[i] = pm;
                 nm[i] = savedMarks[i];
             }
+        }
+
+        // the Visual area comes back as it was before the change; the current one is kept for the opposite direction
+        if (h.VisualStart is not null)
+        {
+            _bs.VisualStart = h.VisualStart; _bs.VisualEnd = h.VisualEnd; _bs.VisualMode = h.VisualMode; _bs.VisualCurswant = h.VisualCurswant;
+            h.VisualStart = savedVisual.VisualStart; h.VisualEnd = savedVisual.VisualEnd; h.VisualMode = savedVisual.VisualMode; h.VisualCurswant = savedVisual.VisualCurswant;
         }
 
         if (h.Cursor.Line + 2 == curLnum && curLnum > 1) curLnum--;

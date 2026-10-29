@@ -123,22 +123,56 @@ public sealed partial class VimEngine
 
     private static (string Head, string? Tail) SplitBar(string s)
     {
-        // commands that take the rest of the line (:g, :normal) are detected by the caller; here find the first unescaped '|'
+        // commands that take the rest of the line (:g, :normal) are detected here; otherwise find the first unescaped '|'
         var t = s.TrimStart(' ', '\t', ':');
-        var lead = s.Length - t.Length;
-        for (var i = 0; i < s.Length; i++)
+        var firstName = ReadName(t);
+        if (firstName is "g" or "gl" or "glo" or "glob" or "globa" or "global" or "v" or "vg" or "vgl" or "vglo" or "vglob" or "vgloba" or "vglobal" or "norm" or "norma" or "normal") return (s, null);
+        var scanFrom = SubstituteBodyEnd(s);
+        StringBuilder? head = null;
+        for (var i = scanFrom; i < s.Length; i++)
         {
-            if (s[i] == '\\' && i + 1 < s.Length) { i++; continue; }
-            if (s[i] == '\u0016' && i + 1 < s.Length) { i++; continue; }
+            if (s[i] == '\\' && i + 1 < s.Length)
+            {
+                // "\|" is a literal bar: the backslash is removed (like separate_nextcmd)
+                if (s[i + 1] == '|' && scanFrom == 0) { head ??= new StringBuilder(s, 0, i, s.Length); head.Append('|'); i++; continue; }
+                head?.Append(s[i]).Append(s[i + 1]);
+                i++;
+                continue;
+            }
+            if (s[i] == '\u0016' && i + 1 < s.Length) { head?.Append(s[i]).Append(s[i + 1]); i++; continue; }
             if (s[i] == '|')
             {
                 var name = ReadName(t);
                 if (name is "g" or "gl" or "glo" or "glob" or "globa" or "global" or "v" or "vg" or "vgl" or "vglo" or "vglob" or "vgloba" or "vglobal" or "norm" or "norma" or "normal") return (s, null);
-                return (s[..i], s[(i + 1)..]);
+                return (head?.ToString() ?? s[..i], s[(i + 1)..]);
             }
+            head?.Append(s[i]);
         }
-        _ = lead;
-        return (s, null);
+        return (head?.ToString() ?? s, null);
+    }
+
+    /// <summary>For :s{delim}pat{delim}rep{delim}: the index after the replacement (a '|' inside the pattern or replacement belongs to them); 0 for other commands.</summary>
+    private static int SubstituteBodyEnd(string s)
+    {
+        var i = 0;
+        while (i < s.Length && (s[i] is ' ' or '\t' or ':' || char.IsDigit(s[i]) || s[i] is '.' or '$' or '%' or ',' or ';' or '+' or '-' or '\'' or '<' or '>')) i++;
+        var nameStart = i;
+        while (i < s.Length && char.IsLetter(s[i])) i++;
+        var name = s[nameStart..i];
+        if (name.Length == 0 || !"substitute".StartsWith(name, StringComparison.Ordinal)) return 0;
+        if (i >= s.Length || char.IsLetterOrDigit(s[i]) || s[i] is '"' or '|' or '\\' or ' ' or '\t') return 0;
+        var delim = s[i++];
+        for (var part = 0; part < 2; part++)
+        {
+            while (i < s.Length && s[i] != delim)
+            {
+                if (s[i] == '\\' && i + 1 < s.Length) i++;
+                i++;
+            }
+            if (i >= s.Length) return s.Length;
+            i++;   // the delimiter
+        }
+        return i;
     }
 
     private static string ReadName(string t)
@@ -192,7 +226,7 @@ public sealed partial class VimEngine
         else { ExError($"E492: Not an editor command: {s}"); return false; }
         var nameEnd = i;
         // bang
-        if (i < s.Length && s[i] == '!' && name != "!" && name != "&&") { cmd.Bang = true; i++; }
+        if (i < s.Length && s[i] == '!' && name != "!" && name != "&&" && name != "s" && ResolveExName(name) != "substitute") { cmd.Bang = true; i++; }
         var args = s[i..];
         cmd.Name = name;
         cmd.Args = args.TrimStart(' ', '\t');
@@ -261,6 +295,7 @@ public sealed partial class VimEngine
                 if (found is null) return false;
                 addr = found;
             }
+            else if (c is ',' or ';' && count == 0) addr = _line; // ",+1": the first address is the cursor line
             else if (c is '+' or '-') addr = _line; // relative to the cursor line (or previous address)
             if (addr is null) break;
             var value = addr.Value;
@@ -338,6 +373,7 @@ public sealed partial class VimEngine
         var p = CompilePattern(pat);
         if (p is null) return null;
         _s.Search.Pattern = pat;
+        _s.Registers.LastSearch = pat;
         var hits = new List<Hit>();
         for (var step = 1; step <= LineCount; step++)
         {
@@ -364,6 +400,8 @@ public sealed partial class VimEngine
 
     private bool CheckRangeValid(ExCmd c)
     {
+        if (c.Line1 == -1) c.Line1 = 0;
+        if (c.Line2 == -1) c.Line2 = 0;
         if (c.Line1 < 0 || c.Line2 > LastLine || c.Line1 > LastLine)
         {
             if (c.Line2 > LastLine || c.Line1 > LastLine) { ExError("E16: Invalid range"); return false; }
@@ -464,7 +502,8 @@ public sealed partial class VimEngine
             {
                 var saved = _noJumpList;
                 if (full == "keepjumps") _noJumpList = true;
-                try { ExecuteExLine(c.Args); } finally { _noJumpList = saved; }
+                if (full == "silent" && c.Bang) _silentErrors++;
+                try { ExecuteExLine(c.Args); } finally { _noJumpList = saved; if (full == "silent" && c.Bang) _silentErrors--; }
                 return true;
             }
         }
@@ -534,6 +573,7 @@ public sealed partial class VimEngine
     private bool ExDelete(ExCmd c)
     {
         if (!CanModify()) return false;
+        SetPcmark();
         var (reg, count, _) = ParseRegCount(c, out _);
         var l1 = c.Line1; var l2 = c.Line2;
         if (count > 0) { l1 = l2; l2 = Math.Min(LastLine, l1 + count - 1); }
@@ -598,9 +638,21 @@ public sealed partial class VimEngine
     }
 
     /// <summary>Moves lines [l1,l2] to after line <paramref name="dest"/> (-1 = top). Cursor ends on the last moved line.</summary>
+    private static int count0(int l1, int l2) => l2 - l1 + 1;
+
+    /// <summary>The marks of the moved lines travel with them: they are parked far away while the lines in between shift, so the two adjustments never overlap (like do_move).</summary>
+    private void AdjustMarksForMove(int l1, int l2, int movedBy, int otherFrom, int otherTo, int otherBy)
+    {
+        var park = LineCount + 1_000_000;
+        _bs.MarkAdjust(l1, l2, park, 0, false);
+        _bs.MarkAdjust(otherFrom, otherTo, otherBy, 0, false);
+        _bs.MarkAdjust(l1 + park, l2 + park, movedBy - park, 0, false);
+    }
+
     private void DoMove(int l1, int l2, int dest)
     {
-        if (dest >= l1 && dest <= l2) { _line = l2; Beginline(BL.Sol | BL.Fix); return; }
+        // nothing to move: the cursor still goes where the move would have put it
+        if (dest == l1 - 1 || dest == l2 || (dest >= l1 && dest <= l2)) { _line = dest >= l1 ? dest : dest + count0(l1, l2); Beginline(BL.Sol | BL.Fix); return; }
         var count = l2 - l1 + 1;
         var lines = new string[count];
         for (var i = 0; i < count; i++) lines[i] = L(l1 + i);
@@ -611,22 +663,22 @@ public sealed partial class VimEngine
         {
             InsertLinesRaw(dest + 1, lines);
             DeleteLinesRaw(l1, count);
-            _bs.MarkAdjust(l1, l2, dest - l2, 0, false);
-            _bs.MarkAdjust(l2 + 1, dest, -count, 0, false);
+            AdjustMarksForMove(l1, l2, dest - l2, l2 + 1, dest, -count);
             _line = dest;
         }
         else
         {
             DeleteLinesRaw(l1, count);
             InsertLinesRaw(dest + 1, lines);
-            _bs.MarkAdjust(l1, l2, dest + 1 - l1, 0, false);
-            _bs.MarkAdjust(dest + 1, l1 - 1, count, 0, false);
+            AdjustMarksForMove(l1, l2, dest + 1 - l1, dest + 1, l1 - 1, count);
             _line = dest + count;
         }
         _ = moved;
-        _bs.OpStart = new TextPosition(Math.Min(l1, dest + 1), 0);
-        _bs.OpEnd = new TextPosition(_line, 0);
-        NoteChange(_line, 0);
+        // '[ and '] cover the moved lines at their new place; '. is where the text was cut (down) or inserted (up), like do_move
+        var moveDown = dest > l2;
+        _bs.OpStart = new TextPosition(moveDown ? dest - count + 1 : dest + 1, 0);
+        _bs.OpEnd = new TextPosition(moveDown ? dest : dest + count, 0);
+        NoteChange(moveDown ? l1 : dest + 1, 0);
         Beginline(BL.Sol | BL.Fix);
     }
 
@@ -661,6 +713,7 @@ public sealed partial class VimEngine
 
     private bool ExJoin(ExCmd c)
     {
+        _line = Math.Clamp(c.Line1, 0, LastLine);
         if (!CanModify()) return false;
         var l1 = c.Line1; var l2 = c.Line2;
         var a = c.Args.Trim();
@@ -681,6 +734,7 @@ public sealed partial class VimEngine
     private bool ExShift(ExCmd c)
     {
         if (!CanModify()) return false;
+        SetPcmark();
         var amount = 1;
         var a = c.Args;
         while (a.Length > 0 && a[0] == c.Name[0]) { amount++; a = a[1..]; }
@@ -812,9 +866,10 @@ public sealed partial class VimEngine
             RunNormalKeys(keys, remap: !c.Bang);
             return true;
         }
-        for (var l = c.Line1; l <= c.Line2 && l <= LastLine; l++)
+        // like Vim the line numbers are not adjusted when the command deletes lines: the cursor is clamped to the buffer
+        for (var l = c.Line1; l <= c.Line2; l++)
         {
-            _line = l; _col = 0;
+            _line = Math.Min(l, LastLine); _col = 0;
             RunNormalKeys(keys, remap: !c.Bang);
             // lines may have been added or removed by the command: adjust the end of the range
             if (_macroAborted && false) break;
@@ -836,9 +891,11 @@ public sealed partial class VimEngine
         var savedOpPending = _opPendingShown;
         var savedArg = _argPending;
         var savedMapBuf = _mapBuf.ToArray();
+        var savedMapTyped = _mapTyped.ToArray();
+        var outerWork = _work;
         var savedAborted = _macroAborted;
         _pend.Clear();
-        _mapBuf.Clear();
+        MapBufClear();
         _opPendingShown = false;
         _argPending = false;
         _macroAborted = false;
@@ -852,7 +909,7 @@ public sealed partial class VimEngine
                 var k = _stuff.Dequeue();
                 if (!CheckMacroBudget()) { _stuff.Clear(); break; }
                 ProcessKey(k, typed: false);
-                if (_work is not null) DrainWorkNow();
+                if (_work is not null && !ReferenceEquals(_work, outerWork)) DrainWorkNow();
             }
             if (_mapBuf.Count > 0) ReleaseMapBuf();
             // abort an unfinished command
@@ -874,7 +931,9 @@ public sealed partial class VimEngine
             _pend.Clear();
             _pend.AddRange(savedPend);
             _mapBuf.Clear();
+            _mapTyped.Clear();
             _mapBuf.AddRange(savedMapBuf);
+            _mapTyped.AddRange(savedMapTyped);
             _opPendingShown = savedOpPending;
             _argPending = savedArg;
             _macroAborted = savedAborted;

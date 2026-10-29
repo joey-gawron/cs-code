@@ -15,6 +15,7 @@ public sealed partial class VimEngine
         oap.ResetForMotion(c.Op, c.Reg);
         oap.Start = new TextPosition(_line, _col);
         var startCursor = oap.Start;
+        oap.CursorStart = startCursor;
         var count0 = EffCount(c, c.M);
         bool ok;
         if (c.Doubled)
@@ -131,13 +132,15 @@ public sealed partial class VimEngine
                 if (oap.Empty) { SaveUndo(_line, 1, 1); CheckCursor(); break; }
                 OpDelete(oap);
                 CheckCursor();
+                if (oap.Type == MType.Char) _setCurswant = true;
                 break;
             case OpType.Yank:
                 if (!oap.IsVisual && false) { }
                 OpYank(oap, deleting: false);
-                if (!oap.IsVisual || true) { _line = oap.Start.Line; _col = oap.Start.Character; if (oap.Type == MType.Line && !oap.IsVisual) { } }
-                if (oap.IsVisual && oap.Type == MType.Line) { }
+                _line = oap.Start.Line;
+                _col = oap.Start.Character;
                 CheckCursor();
+                _setCurswant = true;
                 break;
             case OpType.Change:
                 OpChange(oap);
@@ -149,6 +152,7 @@ public sealed partial class VimEngine
             case OpType.Tilde or OpType.Upper or OpType.Lower or OpType.Rot13:
                 OpTilde(oap);
                 CheckCursor();
+                _setCurswant = true;
                 break;
             case OpType.Indent:
                 OpReindent(oap);
@@ -615,7 +619,8 @@ public sealed partial class VimEngine
 
     private void OpFormat(OpArgs oap, bool keepCursor)
     {
-        var saved = new TextPosition(_line, _col);
+        // gw keeps the cursor where it was before the operator (moved along with the text it sits in)
+        var saved = oap.CursorStart;
         var first = oap.Start.Line;
         var last = oap.End.Line;
         var tw = O.TextWidth > 0 ? O.TextWidth : 79;
@@ -631,8 +636,30 @@ public sealed partial class VimEngine
             var indentStr = L(pStart).Substring(0, VimText.FirstNonBlank(L(pStart)));
             var contIndent = O.AutoIndent ? indentStr : "";
             var words = new List<string>();
-            for (var i = pStart; i <= pEnd; i++) words.AddRange(L(i).Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries));
+            var savedWord = -1;
+            var savedInWord = 0;
+            for (var i = pStart; i <= pEnd; i++)
+            {
+                var text = L(i);
+                var p = 0;
+                while (p < text.Length)
+                {
+                    while (p < text.Length && text[p] is ' ' or '\t') p++;
+                    if (p >= text.Length) break;
+                    var q = p;
+                    while (q < text.Length && text[q] is not (' ' or '\t')) q++;
+                    if (keepCursor && savedWord < 0 && saved.Line == i && saved.Character < q)
+                    {
+                        // the cursor is in this word, or in the blanks before it (then it goes to the start of the word)
+                        savedWord = words.Count;
+                        savedInWord = Math.Max(0, saved.Character - p);
+                    }
+                    words.Add(text.Substring(p, q - p));
+                    p = q;
+                }
+            }
             var outLines = new List<string>();
+            var wordPos = new List<(int Line, int Col)>();
             var cur = new StringBuilder(indentStr);
             var curHasWord = false;
             var curWidth = VimText.DisplayWidth(indentStr, O.TabStop);
@@ -647,6 +674,7 @@ public sealed partial class VimEngine
                     curHasWord = false;
                 }
                 if (curHasWord) { cur.Append(' '); curWidth++; }
+                wordPos.Add((outLines.Count, cur.Length));
                 cur.Append(w);
                 curWidth += ww;
                 curHasWord = true;
@@ -660,6 +688,11 @@ public sealed partial class VimEngine
                 ReplaceRange(new TextPosition(pStart, 0), new TextPosition(pEnd, L(pEnd).Length), string.Join('\n', outLines));
                 offset += outLines.Count - oldCount;
             }
+            if (keepCursor)
+            {
+                if (savedWord >= 0) saved = new TextPosition(pStart + wordPos[savedWord].Line, wordPos[savedWord].Col + savedInWord);
+                else if (saved.Line > pEnd) saved = new TextPosition(saved.Line + outLines.Count - oldCount, saved.Character);
+            }
             lastFormatted = pStart + outLines.Count - 1;
             l = pStart + outLines.Count;
         }
@@ -668,13 +701,15 @@ public sealed partial class VimEngine
             _line = Math.Min(saved.Line, LastLine);
             _col = saved.Character;
             CheckCursor();
+            _setCurswant = true;
         }
         else
         {
             _line = Math.Min(oap.EndAdjusted && lastFormatted < LastLine ? lastFormatted + 1 : lastFormatted, LastLine);
             Beginline(BL.White | BL.Fix);
         }
-        _bs.OpStart = new TextPosition(first, 0);
+        // '[ keeps the column the operator was typed at when the formatted area starts on that line (nvim: gww)
+        _bs.OpStart = !oap.IsVisual && oap.CursorStart.Line == first ? new TextPosition(first, oap.CursorStart.Character) : oap.Start;
         _bs.OpEnd = new TextPosition(Math.Min(lastFormatted, LastLine), 0);
     }
 
@@ -804,6 +839,8 @@ public sealed partial class VimEngine
         var yarr = reg.Lines;
         var ysize = yarr.Length;
         if ((flags & PutFlags.Line) != 0) type = VimRegisterType.Line;
+        // putting an empty one-line charwise register inserts nothing and leaves the cursor alone
+        if (type == VimRegisterType.Character && ysize == 1 && yarr[0].Length == 0) return true;
         var dir = forward;
         var nrLines = 0;
 

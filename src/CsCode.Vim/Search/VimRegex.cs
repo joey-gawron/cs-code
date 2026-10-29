@@ -393,7 +393,9 @@ public static class VimRegex
                             var atEnd = _p >= toks.Count || toks[_p] is { Kind: T.Op, C: '|' or ')' or '&' } || toks[_p] is { Kind: T.Cmd, C: 'n' };
                             return atEnd ? "$" : "\\$";
                         }
-                        case '~': return Regex.Escape(lastSubstitute);
+                        case '~':
+                            if (lastSubstitute.Length == 0) throw new VimRegexException("E33: No previous substitute regular expression");
+                            return Regex.Escape(lastSubstitute);
                         case '*' or '+' or '?': return t.C == '*' && atStart ? "\\*" : throw new VimRegexException($"E64: {(t.C == '?' ? "\\=" : "\\" + t.C)} follows nothing");
                         case '<': return "\\b(?=\\w)";
                         case '>': return "\\b(?<=\\w)";
@@ -535,8 +537,8 @@ public static class VimRegex
             }
             switch (t.Raw)
             {
-                case "^": return "\\A";
-                case "$": return "\\z";
+                case "^": Multiline = true; return "\\A";
+                case "$": Multiline = true; return "\\z";
             }
             throw new VimRegexException($"E-vimregex: \\%{t.Raw} is not supported (position atoms)");
         }

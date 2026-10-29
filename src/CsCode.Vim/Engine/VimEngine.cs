@@ -33,6 +33,11 @@ public sealed partial class VimEngine : IDisposable
     private readonly IntQueue _stuff = new();
     private readonly IntQueue _typed = new();
     private readonly List<int> _mapBuf = new(8);
+    /// <summary>Parallel to <see cref="_mapBuf"/>: true for keys the user typed (they survive an error, mapped/macro keys do not).</summary>
+    private readonly List<bool> _mapTyped = new(8);
+
+    private void MapBufClear() { _mapBuf.Clear(); _mapTyped.Clear(); }
+    private void MapBufRemoveFirst(int count = 1) { _mapBuf.RemoveRange(0, count); _mapTyped.RemoveRange(0, count); }
     private IDisposable? _mapTimer;
     private int _mapDepth;
     private int _noMap;            // >0 while an argument character is awaited (no mappings apply to it)
@@ -83,7 +88,7 @@ public sealed partial class VimEngine : IDisposable
     public TextPosition Cursor => new(_line, _col);
 
     /// <summary>Short mode code used by tests and the status line: n i R v V ^V no ni c.</summary>
-    public string ModeCode => Mode switch
+    public string ModeCode => _awaitKey ? "r?" : Mode switch
     {
         VimMode.Normal => "n", VimMode.Insert => "i", VimMode.Replace => "R", VimMode.Visual => "v", VimMode.VisualLine => "V",
         VimMode.VisualBlock => "^V", VimMode.OperatorPending => "no", VimMode.CommandLine => "c", VimMode.InsertNormal => "ni", _ => "n",
@@ -114,7 +119,7 @@ public sealed partial class VimEngine : IDisposable
     /// <summary>Fires true when sliced work is waiting for <see cref="RunPendingWork"/>, false when it finished.</summary>
     public IEventSource<bool> PendingWorkChanged => _workPending;
 
-    public bool HasPendingWork => _work is not null || _stuff.Count > 0 || _typed.Count > 0;
+    public bool HasPendingWork => (_work is not null && !_awaitKey) || _stuff.Count > 0 || _typed.Count > 0;
 
     /// <summary>Time budget per slice of sliced work (default 3 ms, so a dispatcher callback stays under its 4 ms budget).</summary>
     public TimeSpan SliceBudget
@@ -210,7 +215,7 @@ public sealed partial class VimEngine : IDisposable
         _argPending = false;
         _noMap = 0;
         StopMapTimer();
-        _mapBuf.Clear();
+        MapBufClear();
         CancelCommandLine();
         if (_insert is not null) AbortInsert();
         if (_mode is VimMode.Visual or VimMode.VisualLine or VimMode.VisualBlock) EndVisual();
@@ -339,8 +344,12 @@ public sealed partial class VimEngine : IDisposable
     }
 
     /// <summary>An error message (Vim's emsg): shows it, aborts macros/mappings in flight and cancels the pending command.</summary>
+    private int _silentErrors;
+
     private void Error(string text)
     {
+        // ":silent!" swallows errors: nothing is shown and macros keep going
+        if (_silentErrors > 0) { LastError = text; return; }
         Message(text, VimMessageKind.Error);
         Beep();
     }
@@ -349,8 +358,11 @@ public sealed partial class VimEngine : IDisposable
     private void Beep()
     {
         _stuff.Clear();
-        _mapBuf.Clear();
-        StopMapTimer();
+        // mapped and macro keys are dropped; keys the user typed that still wait for a mapping decision stay
+        var leading = 0;
+        while (leading < _mapTyped.Count && !_mapTyped[leading]) leading++;
+        if (leading > 0) MapBufRemoveFirst(leading);
+        if (_mapBuf.Count == 0) StopMapTimer();
         _macroAborted = true;
         _pend.Clear();
         _opPendingShown = false;
@@ -366,7 +378,7 @@ public sealed partial class VimEngine : IDisposable
     {
         if (_inPump) return;
         _inPump = true;
-        var wasPending = _work is not null || _stuff.Count > 0;
+        var wasPending = (_work is not null && !_awaitKey) || _stuff.Count > 0;
         try
         {
             var deadline = budgetTicks >= long.MaxValue / 8 ? long.MaxValue : Stopwatch.GetTimestamp() + budgetTicks;
@@ -377,6 +389,19 @@ public sealed partial class VimEngine : IDisposable
                 {
                     if (_work is not null)
                     {
+                        if (_awaitKey)
+                        {
+                            // a prompt of the running work (":s///c") consumes the next key
+                            bool typedKey;
+                            int k;
+                            if (_stuff.Count > 0) { k = _stuff.Dequeue(); typedKey = false; }
+                            else if (_typed.Count > 0) { k = _typed.Dequeue(); typedKey = true; }
+                            else break;
+                            if (typedKey) RecordTyped(k);
+                            _confirmKey = k & ~NoRemapFlag;
+                            _awaitKey = false;
+                            continue;
+                        }
                         if (!StepWork(deadline)) break;
                         continue;
                     }
@@ -398,7 +423,7 @@ public sealed partial class VimEngine : IDisposable
             {
                 if (_bs is not null) _bs.KnownVersion = _buf.Version;
                 FlushHost();
-                var pending = _work is not null || _stuff.Count > 0 || _typed.Count > 0;
+                var pending = (_work is not null && !_awaitKey) || _stuff.Count > 0 || _typed.Count > 0;
                 if (pending != wasPending) _workPending.Fire(pending);
             }
         }
@@ -415,8 +440,10 @@ public sealed partial class VimEngine : IDisposable
             if (!more)
             {
                 _work = null;
+                if (_deferredLastCmd is not null) { _s.Registers.LastCommandLine = _deferredLastCmd; _deferredLastCmd = null; }
                 return true;
             }
+            if (_awaitKey) return false;
             if (deadline != long.MaxValue && Stopwatch.GetTimestamp() > deadline) return false;
         }
     }
@@ -432,10 +459,12 @@ public sealed partial class VimEngine : IDisposable
     {
         var w = _work;
         _work = null;
+        _awaitKey = false;
         w?.Dispose();
     }
 
     private bool InWork => _work is not null;
+    private string? _deferredLastCmd;
 
     // ------------------------------------------------------------------------------------------------------------
     // Key intake: undo sync, recording, mapping
@@ -472,6 +501,7 @@ public sealed partial class VimEngine : IDisposable
             return;
         }
         _mapBuf.Add(key);
+        _mapTyped.Add(typed);
         ResolveMap(timedOut: false);
     }
 
@@ -479,8 +509,9 @@ public sealed partial class VimEngine : IDisposable
     {
         StopMapTimer();
         var keys = _mapBuf.ToArray();
-        _mapBuf.Clear();
-        foreach (var k in keys) Feed(k, typed: false);
+        var typedFlags = _mapTyped.ToArray();
+        MapBufClear();
+        for (var i = 0; i < keys.Length; i++) Feed(keys[i], typedFlags[i]);
     }
 
     private void ResolveMap(bool timedOut)
@@ -492,7 +523,7 @@ public sealed partial class VimEngine : IDisposable
             if (exact is not null && (!longer || exact.NoWait || timedOut))
             {
                 StopMapTimer();
-                _mapBuf.Clear();
+                MapBufClear();
                 ExpandMapping(exact);
                 return;
             }
@@ -502,10 +533,24 @@ public sealed partial class VimEngine : IDisposable
                 return;
             }
             StopMapTimer();
+            // no usable mapping for the whole buffer: the longest PREFIX that is a complete mapping applies (a later key broke a longer match)
+            var done = false;
+            for (var len = _mapBuf.Count - 1; len >= 1 && !done; len--)
+            {
+                var (prefixExact, _) = _s.Mappings.Lookup(mode, CollectionsMarshal.AsSpan(_mapBuf).Slice(0, len));
+                if (prefixExact is null) continue;
+                var leftover = _mapBuf.GetRange(len, _mapBuf.Count - len).ToArray();
+                MapBufClear();
+                _stuff.PushFront(leftover);
+                ExpandMapping(prefixExact);
+                done = true;
+            }
+            if (done) return;
             var first = _mapBuf[0];
-            _mapBuf.RemoveAt(0);
+            var firstTyped = _mapTyped[0];
+            MapBufRemoveFirst();
             timedOut = false;
-            Feed(first, typed: false);
+            Feed(first, firstTyped);
             if (_host is null) return;
             // The mode may have changed (e.g. a Feed that started Insert): re-resolve the rest under the new mode.
             if (!_s.Mappings.Any(CurrentMapMode())) { ReleaseMapBuf(); return; }
@@ -523,9 +568,10 @@ public sealed partial class VimEngine : IDisposable
         if (m.Commands is { Count: > 0 })
             foreach (var c in m.Commands) RunBindingCommand(c);
         if (m.Rhs.Length == 0) return;
-        var flag = m.NoRemap ? NoRemapFlag : 0;
+        // when the rhs starts with the lhs those first keys are not mapped again (":nmap Q Qx")
+        var selfLen = !m.NoRemap && m.Rhs.Length >= m.Lhs.Length && m.Rhs.AsSpan(0, m.Lhs.Length).SequenceEqual(m.Lhs) ? m.Lhs.Length : 0;
         Span<int> buf = m.Rhs.Length <= 64 ? stackalloc int[m.Rhs.Length] : new int[m.Rhs.Length];
-        for (var i = 0; i < m.Rhs.Length; i++) buf[i] = m.Rhs[i] | flag;
+        for (var i = 0; i < m.Rhs.Length; i++) buf[i] = m.Rhs[i] | (m.NoRemap || i < selfLen ? NoRemapFlag : 0);
         _stuff.PushFront(buf);
     }
 

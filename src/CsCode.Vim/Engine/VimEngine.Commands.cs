@@ -258,7 +258,7 @@ public sealed partial class VimEngine
                 RepeatLast(count0);
                 return;
             case '&':
-                if (_s.Search.SubPattern.Length == 0 && _s.Search.LastExCommand.Length == 0) { Error("E35: No previous regular expression"); return; }
+                if (_s.Search.SubPattern.Length == 0 && _s.Search.LastExCommand.Length == 0) { Error("E33: No previous substitute regular expression"); return; }
                 _s.Registers.LastCommandLine = "s";
                 ExecuteExLine("s");
                 return;
@@ -273,6 +273,10 @@ public sealed partial class VimEngine
                 return;
             case '@':
                 ExecuteRegisterMacro(c.NChar, count1);
+                return;
+            case 'Q':
+                if (_lastRecorded == '\0') { Error("E354: Invalid register name: '^@'"); return; }
+                ExecuteRegisterMacro(_lastRecorded, count1);
                 return;
             case 'q':
                 RecordCommand(c.NChar);

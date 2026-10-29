@@ -7,6 +7,7 @@ namespace CsCode.Vim;
 public sealed partial class VimEngine
 {
     private char _recReg;
+    private char _lastRecorded;
     private readonly StringBuilder _recBuf = new();
     private int _recLastCmdLen;
     private bool _macroAborted;
@@ -64,6 +65,7 @@ public sealed partial class VimEngine
             // when stopped via Ctrl-O q from Insert mode, drop the Ctrl-O as well
             if (_restartEdit && text.EndsWith('\u000f')) text = text[..^1];
             var name = _recReg;
+            _lastRecorded = name;
             _recReg = '\0';
             _recBuf.Clear();
             StoreMacro(name, text);
@@ -81,7 +83,7 @@ public sealed partial class VimEngine
 
     private void StoreMacro(char name, string text)
     {
-        var target = _s.Registers.ForWrite(name, out var append);
+        var target = _s.Registers.ForWrite(name, out var append, updatePrevious: false);
         if (target is null) return;
         var lines = text.Split('\n');
         RegisterFile.Store(target, lines, VimRegisterType.Character, 0, append);

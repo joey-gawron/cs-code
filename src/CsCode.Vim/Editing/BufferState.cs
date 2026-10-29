@@ -17,6 +17,10 @@ internal sealed class UndoHeader
     public readonly List<UndoEntry> Entries = [];
     public TextPosition Cursor;
     public TextPosition?[]? NamedMarks;
+    /// <summary>The Visual area ('&lt; '&gt;) at the time of the change; undo and redo swap it with the current one (uh_visual).</summary>
+    public TextPosition? VisualStart, VisualEnd;
+    public VimMode VisualMode;
+    public int VisualCurswant;
     public long TimeTicks;
     public UndoHeader? Parent;
     public readonly List<UndoHeader> Children = [];

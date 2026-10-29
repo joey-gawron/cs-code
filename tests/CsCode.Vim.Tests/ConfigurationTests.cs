@@ -159,11 +159,11 @@ public class ConfigurationTests
         Assert.Equal(["two", "three"], Lines(host));
         engine.TypeKeys("Yjp");
         Assert.Equal("two", host.Buffer.GetLine(0));
-        Assert.Equal("threetwo", host.Buffer.GetLine(1));
+        Assert.Equal("ttwohree", host.Buffer.GetLine(1));
         engine.TypeKeys("Ahi");
         engine.TypeKeys("jj");
         Assert.Equal(VimMode.Normal, engine.Mode);
-        Assert.Equal("threetwohi", host.Buffer.GetLine(1));
+        Assert.Equal("ttwohreehi", host.Buffer.GetLine(1));
         engine.TypeKeys("ggVj>");
         Assert.StartsWith("\t", host.Buffer.GetLine(0));
         Assert.Equal(VimMode.VisualLine, engine.Mode);
