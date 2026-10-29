@@ -24,21 +24,26 @@ public sealed record ResidentProcess(
 /// </summary>
 public static class ResidentDiscovery
 {
-    public static async Task<IReadOnlyList<ResidentProcess>> DiscoverAsync(RuntimeDirectory dir, TimeSpan timeout, CancellationToken ct = default, int? excludePid = null)
-    {
-        var pids = dir.ListEndpointPids().Where(p => p != excludePid).Distinct().ToArray();
-        var probes = pids.Select(pid => ProbeAsync(dir, pid, timeout, ct)).ToArray();
-        var results = await Task.WhenAll(probes).ConfigureAwait(false);
-        return results.OfType<ResidentProcess>().OrderBy(p => p.Pid).ToArray();
-    }
+    /// <summary>Off the calling thread (session processes call this from the UI thread's continuations).</summary>
+    public static Task<IReadOnlyList<ResidentProcess>> DiscoverAsync(RuntimeDirectory dir, TimeSpan timeout, CancellationToken ct = default, int? excludePid = null) =>
+        Task.Run(() => Discover(dir, timeout, excludePid), ct);
 
-    public static async Task<ResidentProcess?> ProbeAsync(RuntimeDirectory dir, int pid, TimeSpan timeout, CancellationToken ct = default)
+    public static Task<ResidentProcess?> ProbeAsync(RuntimeDirectory dir, int pid, TimeSpan timeout, CancellationToken ct = default) =>
+        Task.Run(() => Probe(dir, pid, timeout), ct);
+
+    /// <summary>
+    /// Blocking: one hello after another (a responsive process answers within a millisecond, so this is fast; each wedged one costs at most
+    /// <paramref name="timeout"/>). The launcher's path, which has no thread pool warmed up and nothing else to do meanwhile.
+    /// </summary>
+    public static IReadOnlyList<ResidentProcess> Discover(RuntimeDirectory dir, TimeSpan timeout, int? excludePid = null) =>
+        dir.ListEndpointPids().Where(p => p != excludePid).Distinct().Order().Select(pid => Probe(dir, pid, timeout)).OfType<ResidentProcess>().ToArray();
+
+    public static ResidentProcess? Probe(RuntimeDirectory dir, int pid, TimeSpan timeout)
     {
         var endpoint = dir.EndpointOf(pid);
         try
         {
-            var hello = await IpcClient.RequestAsync(endpoint, new IpcMessage { Type = IpcVerbs.Hello, ProtocolVersion = IpcMessage.ProtocolVersionCurrent },
-                timeout, timeout, ct).ConfigureAwait(false);
+            var hello = IpcClient.Request(endpoint, new IpcMessage { Type = IpcVerbs.Hello, ProtocolVersion = IpcMessage.ProtocolVersionCurrent }, timeout, timeout);
             if (hello.Ok == false) return new ResidentProcess(pid, endpoint, null, ProcessStates.Starting, null, false, null, Responsive: false);
             return new ResidentProcess(hello.Pid ?? pid, endpoint, hello.Session, hello.State ?? ProcessStates.Starting,
                 hello.LastShownUnixMs is { } ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null, hello.Debugging ?? false, hello.WorkingSetBytes, Responsive: true);

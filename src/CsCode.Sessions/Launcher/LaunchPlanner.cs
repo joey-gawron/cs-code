@@ -89,7 +89,8 @@ public static class LaunchPlanner
         var preference = settings.DefaultSession;
         if (string.Equals(preference, "new", StringComparison.Ordinal)) return (SessionNames.NextUnnamed(TakenNames(world)), true);
         if (!string.Equals(preference, "last", StringComparison.Ordinal) && SessionNames.IsValid(preference)) return (preference, false);
-        if (world.LastActive is { } last && (world.Saved.Any(s => s.Name == last) || world.Processes.Any(p => p.OwnsSession(last)))) return (last, false);
+        // Residents first: when the last session is running, the saved sessions are never read (the launcher reads them lazily).
+        if (world.LastActive is { } last && (world.Processes.Any(p => p.OwnsSession(last)) || world.Saved.Any(s => s.Name == last))) return (last, false);
         // No last session yet: the most recently shown resident one, else the most recently used saved one, else a new one.
         if (world.Processes.Where(p => p.Responsive && p.Session is not null && p.State != ProcessStates.Quitting)
                 .OrderByDescending(p => p.LastShownUtc ?? DateTimeOffset.MinValue).FirstOrDefault() is { Session: { } resident })

@@ -137,8 +137,10 @@ public sealed partial class SessionWindowController : IDisposable
             UpdateSessionIdentity();
             if (prepared.Document?.Window is { } bounds) ApplyBounds(bounds);
             _shell.RestoreOverride = () => RestoreAsync(prepared);
+            SessionTrace.Mark("host: restore start");
             try { await _shell.StartDeferredAsync().ConfigureAwait(true); }
             finally { _shell.RestoreOverride = null; }
+            SessionTrace.Mark("host: restored");
             SubscribeForAutosave();
             _autosave.MarkDirty(); // the session now exists on disk (WasResident) even if nothing changes
             if (hidden)
@@ -270,13 +272,16 @@ public sealed partial class SessionWindowController : IDisposable
         _ui.AssertUiThread();
         if (_quitting) return;
         var (serversWereStopped, _) = _policy.OnShown();
+        SessionTrace.Mark("host: show");
         if (!_window.IsVisible)
         {
             RecreateActiveViews(); // the hidden-session trim may have disposed them: the first frame must show the editors, not empty hosts
             _window.Show();
+            SessionTrace.Mark("host: shown");
         }
         _window.Activate();
         await WaitForPaintAsync().ConfigureAwait(true);
+        SessionTrace.Mark("host: painted");
         _host.MarkShown();
         if (_tray is not null) _ = _tray.TryLeadAsync(); // the process that showed the tray icon may have exited
         if (serversWereStopped) RestartServers();

@@ -104,10 +104,21 @@ public sealed class SessionStore
         var list = new List<SessionSummary>(names.Count);
         foreach (var name in names)
         {
-            var loaded = Load(name);
-            list.Add(loaded.Session is { } s
-                ? new SessionSummary(name, s.IsUnnamed, s.LastUsedUtc, s.Folders, s.Editors.Count, s.WasResident)
-                : new SessionSummary(name, false, DateTimeOffset.MinValue, [], 0));
+            // Fast path: the summary fields straight from the main file. Anything unusual (missing, damaged, old format) takes the full load.
+            SessionSummary? summary = null;
+            try
+            {
+                if (AtomicFile.ReadOrNull(PathOf(name)) is { } bytes) summary = SessionSerializer.TryReadSummary(bytes, name);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            if (summary is null)
+            {
+                var loaded = Load(name);
+                summary = loaded.Session is { } s
+                    ? new SessionSummary(name, s.IsUnnamed, s.LastUsedUtc, s.Folders, s.Editors.Count, s.WasResident)
+                    : new SessionSummary(name, false, DateTimeOffset.MinValue, [], 0);
+            }
+            list.Add(summary);
         }
         return list.OrderByDescending(s => s.LastUsedUtc).ThenBy(s => s.Name, StringComparer.Ordinal).ToArray();
     }

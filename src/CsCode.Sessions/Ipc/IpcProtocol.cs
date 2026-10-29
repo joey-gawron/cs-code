@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace CsCode.Sessions.Ipc;
 
@@ -90,14 +89,28 @@ public static class IpcFraming
 {
     public const int MaxMessageBytes = 4 * 1024 * 1024;
 
-    public static async ValueTask WriteAsync(Stream stream, IpcMessage message, CancellationToken ct)
+    /// <summary>The length-prefixed frame of a message.</summary>
+    public static byte[] Encode(IpcMessage message)
     {
-        var body = JsonSerializer.SerializeToUtf8Bytes(message, IpcJsonContext.Default.IpcMessage);
+        var body = IpcCodec.Encode(message);
         if (body.Length > MaxMessageBytes) throw new IpcProtocolException($"message too large ({body.Length} bytes)");
         var frame = new byte[4 + body.Length];
         BinaryPrimitives.WriteInt32LittleEndian(frame, body.Length);
         body.CopyTo(frame, 4);
-        await stream.WriteAsync(frame, ct).ConfigureAwait(false);
+        return frame;
+    }
+
+    /// <summary>The body length announced by a frame header (validated).</summary>
+    public static int BodyLength(ReadOnlySpan<byte> header)
+    {
+        var length = BinaryPrimitives.ReadInt32LittleEndian(header);
+        if (length <= 0 || length > MaxMessageBytes) throw new IpcProtocolException($"invalid frame length {length}");
+        return length;
+    }
+
+    public static async ValueTask WriteAsync(Stream stream, IpcMessage message, CancellationToken ct)
+    {
+        await stream.WriteAsync(Encode(message), ct).ConfigureAwait(false);
         await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
@@ -106,17 +119,9 @@ public static class IpcFraming
     {
         var header = new byte[4];
         if (!await FillAsync(stream, header, allowEof: true, ct).ConfigureAwait(false)) return null;
-        var length = BinaryPrimitives.ReadInt32LittleEndian(header);
-        if (length <= 0 || length > MaxMessageBytes) throw new IpcProtocolException($"invalid frame length {length}");
-        var body = new byte[length];
+        var body = new byte[BodyLength(header)];
         await FillAsync(stream, body, allowEof: false, ct).ConfigureAwait(false);
-        try
-        {
-            var message = JsonSerializer.Deserialize(body, IpcJsonContext.Default.IpcMessage);
-            if (message is null || string.IsNullOrEmpty(message.Type)) throw new IpcProtocolException("message without a type");
-            return message;
-        }
-        catch (JsonException ex) { throw new IpcProtocolException("malformed message: " + ex.Message); }
+        return IpcCodec.Decode(body);
     }
 
     private static async ValueTask<bool> FillAsync(Stream stream, byte[] buffer, bool allowEof, CancellationToken ct)
@@ -135,7 +140,3 @@ public static class IpcFraming
         return true;
     }
 }
-
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
-[JsonSerializable(typeof(IpcMessage))]
-internal sealed partial class IpcJsonContext : JsonSerializerContext;

@@ -27,6 +27,69 @@ public static class IpcClient
 {
     public static readonly TimeSpan DefaultConnectTimeout = TimeSpan.FromMilliseconds(300);
 
+    /// <summary>
+    /// The blocking variant (the launcher: a short-lived console process with nothing else to do, where async socket machinery would only add
+    /// start-up cost). Bounded the same way: a non-blocking connect polled for <paramref name="connectTimeout"/>, then socket send/receive timeouts.
+    /// </summary>
+    public static IpcMessage Request(string endpoint, IpcMessage request, TimeSpan connectTimeout, TimeSpan? replyTimeout)
+    {
+        if (OperatingSystem.IsWindows()) return RequestAsync(endpoint, request, connectTimeout, replyTimeout).GetAwaiter().GetResult();
+        if (!File.Exists(endpoint)) throw new IpcException(IpcFailure.NoEndpoint, "no endpoint at " + endpoint);
+        using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        try
+        {
+            socket.Blocking = false;
+            try { socket.Connect(new UnixDomainSocketEndPoint(endpoint)); }
+            catch (SocketException ex) when (ex.SocketErrorCode is SocketError.WouldBlock or SocketError.InProgress or SocketError.TryAgain)
+            {
+                // A listener whose backlog is full (it stopped accepting): wait a little, then count it as wedged.
+                if (!socket.Poll((int)connectTimeout.TotalMicroseconds, SelectMode.SelectWrite) || !socket.Connected)
+                    throw new IpcException(IpcFailure.Timeout, "connect timed out", ex);
+            }
+            socket.Blocking = true;
+        }
+        catch (SocketException ex)
+        {
+            throw ex.SocketErrorCode switch
+            {
+                SocketError.ConnectionRefused => new IpcException(IpcFailure.Refused, "nothing listens on " + endpoint, ex),
+                SocketError.AddressNotAvailable or SocketError.HostNotFound => new IpcException(IpcFailure.NoEndpoint, "no endpoint at " + endpoint, ex),
+                _ => new IpcException(IpcFailure.Broken, ex.Message, ex),
+            };
+        }
+        if (UnixNative.EffectiveUid() is { } uid && UnixNative.PeerCredentials(socket) is { } peer && peer.Uid != uid)
+            throw new IpcException(IpcFailure.WrongOwner, $"{endpoint} belongs to uid {peer.Uid}");
+        socket.SendTimeout = Math.Max(1, (int)connectTimeout.TotalMilliseconds);
+        socket.ReceiveTimeout = replyTimeout is { } t ? Math.Max(1, (int)(t + connectTimeout).TotalMilliseconds) : 0;
+        try
+        {
+            var frame = IpcFraming.Encode(request);
+            for (var sent = 0; sent < frame.Length;) sent += socket.Send(frame, sent, frame.Length - sent, SocketFlags.None);
+            var header = new byte[4];
+            if (!Fill(socket, header)) throw new IpcException(IpcFailure.Broken, "the process closed the connection without replying");
+            var body = new byte[IpcFraming.BodyLength(header)];
+            if (!Fill(socket, body)) throw new IpcException(IpcFailure.Broken, "connection closed mid-message");
+            return IpcCodec.Decode(body);
+        }
+        catch (SocketException ex) when (ex.SocketErrorCode is SocketError.TimedOut or SocketError.WouldBlock)
+        {
+            throw new IpcException(IpcFailure.Timeout, $"no reply to '{request.Type}' in time", ex);
+        }
+        catch (SocketException ex) { throw new IpcException(IpcFailure.Broken, ex.Message, ex); }
+        catch (IpcProtocolException ex) { throw new IpcException(IpcFailure.Broken, ex.Message, ex); }
+    }
+
+    private static bool Fill(Socket socket, byte[] buffer)
+    {
+        for (var read = 0; read < buffer.Length;)
+        {
+            var n = socket.Receive(buffer, read, buffer.Length - read, SocketFlags.None);
+            if (n == 0) return false;
+            read += n;
+        }
+        return true;
+    }
+
     /// <param name="replyTimeout">How long to wait for the reply once the request was sent (null = until the peer replies or disconnects: <c>--wait</c>).</param>
     public static async Task<IpcMessage> RequestAsync(string endpoint, IpcMessage request, TimeSpan connectTimeout, TimeSpan? replyTimeout, CancellationToken ct = default)
     {

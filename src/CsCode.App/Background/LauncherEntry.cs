@@ -18,6 +18,7 @@ internal static class LauncherEntry
 
     public static int Run(CommandLineOptions options)
     {
+        SessionTrace.Mark("launcher: main");
         var paths = new AppPaths();
         var runtime = RuntimeDirectory.Resolve();
         // Processes the launcher starts inherit the test platform switch; nothing else of the launcher's command line is passed on.

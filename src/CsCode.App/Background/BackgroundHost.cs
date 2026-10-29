@@ -71,6 +71,7 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     public static BackgroundHost? Start(CommandLineOptions options, CrashHandler crash, out int? refusedExitCode)
     {
         refusedExitCode = null;
+        SessionTrace.Mark("host: main");
         ProcessMemory.DetachFromTerminal();
         var runtime = RuntimeDirectory.Resolve();
         if (runtime.Ensure() is { } problem)
@@ -174,13 +175,16 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     /// <summary>Called by the app session on the UI thread once the main window exists (not shown yet). Shows it unless this is the spare or <c>--hidden</c>.</summary>
     internal async Task AttachAsync(MainWindow window, IServiceProvider services)
     {
+        SessionTrace.Mark("host: window built");
         var controller = new SessionWindowController(this, window, services);
         _controller = controller;
         _attached.TrySetResult(controller);
         if (_prepared is null)
         {
-            // The warm spare: everything is built, nothing is shown; give back the start-up garbage and wait for a claim.
+            // The warm spare: everything is built, nothing is shown. Warm up the first frame off screen, give back the start-up garbage, and wait
+            // for a claim (a claim may arrive at any point of this; it then simply runs after the current step).
             _state = ProcessStates.Spare;
+            await controller.WarmUpSpareAsync().ConfigureAwait(true);
             _ = Task.Run(() => ProcessMemory.TrimNow());
             _ = controller.QuitIfDuplicateSpareAsync();
             return;
@@ -231,9 +235,12 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
             return IpcMessage.Failure($"session '{name}' is owned by another CsCode process");
         }
         _state = ProcessStates.Starting;
+        SessionTrace.Mark("host: claim " + name);
         var prepared = await PrepareAsync(name!, request.Unnamed == true).ConfigureAwait(false);
+        SessionTrace.Mark("host: claim prepared");
         var controller = await _attached.Task.WaitAsync(ct).ConfigureAwait(false);
         await controller.ActivateOnUiAsync(prepared, hidden: request.Hidden == true).ConfigureAwait(false);
+        SessionTrace.Mark("host: claim done");
         return IpcMessage.Reply();
     }
 

@@ -44,6 +44,18 @@ public sealed class FileLock : IDisposable
         }
     }
 
+    /// <summary>Blocking variant of <see cref="AcquireAsync"/> for the launcher process.</summary>
+    public static FileLock? Acquire(string path, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            if (TryAcquire(path) is { } held) return held;
+            if (DateTime.UtcNow >= deadline) return null;
+            Thread.Sleep(10);
+        }
+    }
+
     /// <summary>True when somebody holds the lock right now (probes by taking it briefly).</summary>
     public static bool IsHeldElsewhere(string path)
     {

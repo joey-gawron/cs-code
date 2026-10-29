@@ -55,6 +55,53 @@ public static class SessionSerializer
         };
     }
 
+    /// <summary>
+    /// The list fields of a current-version session read with a forward-only reader (no document model: the launcher lists sessions before
+    /// anything else is warm). Null when the content is not a well-formed current-version session (the caller then does a full load).
+    /// </summary>
+    public static SessionSummary? TryReadSummary(ReadOnlySpan<byte> utf8, string name)
+    {
+        try
+        {
+            var reader = new Utf8JsonReader(utf8, new JsonReaderOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return null;
+            int? version = null;
+            bool unnamed = false, resident = false;
+            var lastUsed = DateTimeOffset.MinValue;
+            var folders = new List<string>();
+            var editors = 0;
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                var property = reader.GetString();
+                if (!reader.Read()) return null;
+                switch (property?.ToLowerInvariant())
+                {
+                    case "version" when reader.TokenType == JsonTokenType.Number: version = reader.GetInt32(); break;
+                    case "isunnamed" when reader.TokenType is JsonTokenType.True or JsonTokenType.False: unnamed = reader.GetBoolean(); break;
+                    case "wasresident" when reader.TokenType is JsonTokenType.True or JsonTokenType.False: resident = reader.GetBoolean(); break;
+                    case "lastusedutc" when reader.TokenType == JsonTokenType.String: lastUsed = reader.GetDateTimeOffset(); break;
+                    case "folders" when reader.TokenType == JsonTokenType.StartArray:
+                        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                            if (reader.TokenType == JsonTokenType.String && reader.GetString() is { Length: > 0 } f) folders.Add(f);
+                        break;
+                    case "editors" when reader.TokenType == JsonTokenType.StartArray:
+                        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                        {
+                            if (reader.TokenType == JsonTokenType.StartObject) editors++;
+                            reader.Skip();
+                        }
+                        break;
+                    default:
+                        reader.Skip();
+                        break;
+                }
+            }
+            if (reader.TokenType != JsonTokenType.EndObject || version != SessionDocument.CurrentVersion) return null;
+            return new SessionSummary(name, unnamed, lastUsed, folders, editors, resident);
+        }
+        catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException) { return null; }
+    }
+
     private static int ReadVersion(JsonObject root)
     {
         if (!root.TryGetPropertyValue("version", out var node) || node is null) return 1; // v1 files were written before the field was mandatory
