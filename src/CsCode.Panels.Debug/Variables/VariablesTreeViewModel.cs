@@ -179,7 +179,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     {
         foreach (var root in Rows)
             if (root.Depth == 0 && root.Kind == VariableRowKind.Watch)
-                root.BaselineValue = root.IsError ? null : root.FullValue;
+                root.BaselineValue = root.HasValue && !root.IsError ? root.FullValue : null;
     }
 
     private void CancelPending()

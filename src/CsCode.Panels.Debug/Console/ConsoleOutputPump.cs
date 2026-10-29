@@ -71,8 +71,10 @@ internal sealed class ConsoleOutputPump : IDisposable
     {
         if (Volatile.Read(ref _disposed) != 0) return;
         if (Interlocked.Exchange(ref _armed, 1) != 0) return;
-        var wait = delay ?? _interval - TimeSpan.FromTicks(Math.Max(0, System.Diagnostics.Stopwatch.GetTimestamp() - Volatile.Read(ref _lastDrainTicks)) * TimeSpan.TicksPerSecond / System.Diagnostics.Stopwatch.Frequency);
+        // Wait out the rest of the window since the last drain (never more than one interval, never negative).
+        var wait = delay ?? _interval - System.Diagnostics.Stopwatch.GetElapsedTime(Volatile.Read(ref _lastDrainTicks));
         if (wait < TimeSpan.Zero) wait = TimeSpan.Zero;
+        else if (wait > _interval) wait = _interval;
         try { _timer.Change(wait, Timeout.InfiniteTimeSpan); }
         catch (ObjectDisposedException) { }
     }

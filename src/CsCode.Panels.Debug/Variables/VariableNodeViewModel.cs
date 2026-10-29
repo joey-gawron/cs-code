@@ -176,8 +176,12 @@ public sealed class VariableNodeViewModel : ObservableObject
         SetValue(r.Result, r.Type, r.VariablesReference, r.NamedVariables, r.IndexedVariables);
     }
 
+    /// <summary>The row has shown a real value (a Watch row that was never evaluated has none, so there is nothing to compare with).</summary>
+    internal bool HasValue { get; private set; }
+
     internal void SetValue(string value, string? type, int variablesReference, int? named, int? indexed)
     {
+        HasValue = true;
         _fullValue = value;
         _type = type;
         NamedVariables = named;
@@ -194,6 +198,7 @@ public sealed class VariableNodeViewModel : ObservableObject
 
     internal void SetError(string message)
     {
+        HasValue = false;
         _fullValue = message;
         ErrorMessage = message;
         IsError = true;
