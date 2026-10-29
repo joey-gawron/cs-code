@@ -569,7 +569,7 @@ public sealed partial class VimEngine
             var p = containing[i];
             var s = include ? p.Open.StartOff : p.Open.EndOff;
             var e = include ? p.Close.EndOff - 1 : p.Close.StartOff - 1;
-            if (VisualActive && _visualStart != new TextPosition(_line, _col) && s >= startOff && e <= endOff && !(s == startOff && e == endOff && false)) { if (s == startOff && e == endOff) continue; if (s > startOff || e < endOff) continue; }
+            if (VisualActive && _visualStart != new TextPosition(_line, _col) && s >= startOff && e <= endOff) { if (s == startOff && e == endOff) continue; if (s > startOff || e < endOff) continue; }
             chosen = i;
             break;
         }

@@ -498,7 +498,7 @@ public sealed partial class VimEngine : IDisposable
     {
         VimMode.Insert or VimMode.Replace => MapModes.Insert,
         VimMode.CommandLine => MapModes.CommandLine,
-        VimMode.Visual or VimMode.VisualLine or VimMode.VisualBlock => _opPendingShown && false ? MapModes.OperatorPending : MapModes.Visual,
+        VimMode.Visual or VimMode.VisualLine or VimMode.VisualBlock => MapModes.Visual,
         _ => _opPendingShown ? MapModes.OperatorPending : MapModes.Normal,
     };
 
@@ -657,7 +657,7 @@ public sealed partial class VimEngine : IDisposable
 
     private bool IsVimKey(int key)
     {
-        if ((key & Keys.ModMask) != 0) return key is (Keys.ModCtrl | Keys.BS) && false;
+        if ((key & Keys.ModMask) != 0) return false;
         if (Keys.IsSpecial(key))
             return key is Keys.Up or Keys.Down or Keys.Left or Keys.Right or Keys.Home or Keys.End or Keys.PageUp or Keys.PageDown or Keys.Insert or Keys.Delete or Keys.BS or Keys.STab or Keys.Plug or Keys.Nop;
         if (key >= 32 || key is Keys.Esc or Keys.CR or Keys.NL or Keys.Tab or Keys.CtrlH) return true;

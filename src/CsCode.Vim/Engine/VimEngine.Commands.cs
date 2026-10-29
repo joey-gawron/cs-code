@@ -660,7 +660,6 @@ public sealed partial class VimEngine
         CleanupJumplist();
         if (_jumps.Count == 0) { Beep(); return; }
         var idx = _jumpIdx - count;
-        if (idx < 0 || idx >= _jumps.Count && _jumpIdx >= _jumps.Count && false) { Beep(); return; }
         if (idx < 0) { Beep(); return; }
         if (_jumpIdx == _jumps.Count)
         {

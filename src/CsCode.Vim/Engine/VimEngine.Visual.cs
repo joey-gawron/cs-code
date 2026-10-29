@@ -295,7 +295,6 @@ public sealed partial class VimEngine
 
         // exit Visual mode
         _mode = VimMode.Normal;
-        if (!OpOnLines(op) || true) { }
 
         // prepare redo
         if (op is not (OpType.Yank or OpType.Fold) && op != OpType.None)
@@ -527,7 +526,6 @@ public sealed partial class VimEngine
                 if (bd.IsShort) cells = Math.Min(numChars, bd.StartSpaces + textCells);
                 var perChar = VimText.CharWidth(ch) == 2 ? 2 : 1;
                 sb.Append(rep == "\r" ? " " : string.Concat(Enumerable.Repeat(rep, Math.Max(0, cells / perChar))));
-                if (bd.IsShort && false) { }
                 sb.Append(new string(' ', bd.StartSpaces == 0 ? 0 : 0));
                 sb.Append(old.Substring(Math.Min(old.Length, bd.TextCol + bd.TextLen)));
                 if (bd.EndSpaces > 0 && !bd.IsShort) { }
@@ -745,7 +743,6 @@ public sealed partial class VimEngine
         if (selWasLine)
         {
             // linewise selection: text goes in place of the deleted lines
-            forward = _line < LastLine || lastLineBefore - 0 > LineCount && false ? false : false;
             var deletedAtEnd = lo.Line >= LineCount;
             if (deletedAtEnd) { _line = LastLine; forward = true; }
             else { _line = Math.Min(lo.Line, LastLine); forward = false; }
@@ -765,7 +762,6 @@ public sealed partial class VimEngine
         DoPut(0, forward, c.Count1, flags, saved);
         _bs.VisualStart = _bs.OpStart; _bs.VisualEnd = _bs.OpEnd; _bs.VisualMode = savedVisualMode; _bs.VisualCurswant = savedVisualCurswant;
         _ = lo; _ = hi;
-        if (!keepRegister && false) { }
         _ = oldMode;
     }
 

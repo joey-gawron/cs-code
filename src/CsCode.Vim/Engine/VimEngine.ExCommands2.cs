@@ -124,7 +124,7 @@ public sealed partial class VimEngine
                 restB = rb ?? "";
             }
             if (pat.Length == 0) pat = mem.Pattern;
-            else if (delim != '/' || true) pat = UnescapeDelimiter(pat, delim);
+            else pat = UnescapeDelimiter(pat, delim);
             if (pat.Length == 0) { ExError("E476: Invalid command"); return false; }
             // `~` and `&` inside the replacement refer to the previous replacement / the match
             rep = ExpandTildeInReplacement(rep, mem.SubReplacement);

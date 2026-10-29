@@ -120,7 +120,6 @@ public sealed partial class VimEngine
         }
         if (c.Literal == 2)
         {
-            if (k is 18 or 15 or 16 or 23 && false) { }
             c.Literal = 0; _noMap--;
             var text = RegisterTextForCmdline(k);
             if (text is not null) { t.Insert(c.Cursor, text); c.Cursor += text.Length; }

@@ -289,7 +289,7 @@ public static class VimRegex
                 // postfix multis
                 atom = ParseMulti(atom);
                 sb.Append(atom);
-                atStart = startAnchor && false;
+                atStart = false;
                 if (t.Kind == T.UCmd && t.C == 'n') atStart = true;
                 if (t.Kind == T.Cmd && t.C == 'n') atStart = true;
             }

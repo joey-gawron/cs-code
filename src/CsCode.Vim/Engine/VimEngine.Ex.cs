@@ -110,7 +110,6 @@ public sealed partial class VimEngine
             var ok = ExecuteSingleEx(single, rest, out var consumedAll);
             if (!ok || consumedAll || rest is null) break;
             i = line.Length - rest.Length;
-            if (_macroAborted && false) break;
         }
         if (_exErrors != before || _errorCount != errorsBefore) LastErrorCount++;
     }
@@ -871,7 +870,7 @@ public sealed partial class VimEngine
     {
         var text = c.Args;
         if (text.Length == 0) { ExError("E471: Argument required"); return false; }
-        var keys = Keys.ParseNotation(UnescapeNormalArg(text), _s.Leader, _s.LocalLeader);
+        var keys = Keys.Decode(text);
         if (!c.HasRange)
         {
             RunNormalKeys(keys, remap: !c.Bang);
@@ -883,15 +882,9 @@ public sealed partial class VimEngine
             _line = Math.Min(l, LastLine); _col = 0;
             RunNormalKeys(keys, remap: !c.Bang);
             // lines may have been added or removed by the command: adjust the end of the range
-            if (_macroAborted && false) break;
         }
         return true;
     }
-
-    // The argument of :normal is raw keys, not <Key> notation (Vim has no notation parsing here): control characters arrive literally.
-    private static string UnescapeNormalArg(string text) => text.Replace("<", "\u0001LT\u0001").Replace("\u0001LT\u0001", "<lt>") is var x && false ? x : text.Replace("<", "<lt>") is var y && false ? y : EscapeLiteralLt(text);
-
-    private static string EscapeLiteralLt(string text) => text;
 
     /// <summary>Executes keys like :normal: stuffed (not typed), run to completion, and an unfinished command or insert is aborted.</summary>
     private void RunNormalKeys(IReadOnlyList<int> keys, bool remap)

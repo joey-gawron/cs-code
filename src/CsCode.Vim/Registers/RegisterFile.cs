@@ -68,8 +68,6 @@ public sealed class RegisterFile
         c is '"' or '-' or '_' or '.' or ':' or '/' or '%' or '#' or '+' or '*' or '=' || (c is >= '0' and <= '9') ||
         (c is >= 'a' and <= 'z') || (c is >= 'A' and <= 'Z');
 
-    public static bool IsWritable(int c) => IsValidName(c) && c is not ('.' or ':' or '/' or '%' or '#') || c == '/';
-
     private static int Index(int name) => name switch
     {
         >= '0' and <= '9' => name - '0',

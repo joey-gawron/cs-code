@@ -255,7 +255,7 @@ public sealed partial class VimEngine
                 if (ok) Beginline(BL.White | BL.Fix);
                 break;
             }
-            case '0' or Keys.Home when m.Key == '0' || true:
+            case '0' or Keys.Home:
                 Beginline(0);
                 _setCurswant = true;
                 break;
@@ -1063,34 +1063,29 @@ public sealed partial class VimEngine
         var step = forward ? 1 : -1;
         var l = line;
         var c = col;
-        var first = true;
         while (true)
         {
-            if (!first || true)
+            // advance one char
+            if (forward)
             {
-                // advance one char
-                if (forward)
+                c++;
+                while (c >= L(l).Length)
                 {
-                    c++;
-                    while (c >= L(l).Length)
-                    {
-                        if (l >= LastLine) return null;
-                        l++; c = 0;
-                        if (L(l).Length > 0) break;
-                    }
-                }
-                else
-                {
-                    c--;
-                    while (c < 0)
-                    {
-                        if (l <= 0) return null;
-                        l--; c = L(l).Length - 1;
-                        if (c >= 0) break;
-                    }
+                    if (l >= LastLine) return null;
+                    l++; c = 0;
+                    if (L(l).Length > 0) break;
                 }
             }
-            first = false;
+            else
+            {
+                c--;
+                while (c < 0)
+                {
+                    if (l <= 0) return null;
+                    l--; c = L(l).Length - 1;
+                    if (c >= 0) break;
+                }
+            }
             var t = L(l);
             if (c < 0 || c >= t.Length) continue;
             var ch = t[c];

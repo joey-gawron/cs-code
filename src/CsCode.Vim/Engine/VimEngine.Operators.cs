@@ -135,7 +135,6 @@ public sealed partial class VimEngine
                 if (oap.Type == MType.Char) _setCurswant = true;
                 break;
             case OpType.Yank:
-                if (!oap.IsVisual && false) { }
                 OpYank(oap, deleting: false);
                 _line = oap.Start.Line;
                 _col = oap.Start.Character;
@@ -285,7 +284,7 @@ public sealed partial class VimEngine
             if (type == VimRegisterType.Line) _bs.OpStart = new TextPosition(start.Line, 0);
             if (_s.Plugins.HighlightedYank) Host.OnYankHighlight(start, end, type == VimRegisterType.Line);
         }
-        if (regForClipboard is { } rc && IsClipboardReg(rc) || (deleting && regForClipboard is null && false))
+        if (regForClipboard is { } rc && IsClipboardReg(rc))
             SyncClipboardFrom(target!);
         var n = oap.LineCount;
         if (!deleting && n > O.Report) Message($"{n} lines yanked");
@@ -399,11 +398,8 @@ public sealed partial class VimEngine
                 CheckCursor();
             }
         }
-        if (oap.Op == OpType.Delete || true)
-        {
-            _bs.OpEnd = start;
-            _bs.OpStart = start;
-        }
+        _bs.OpEnd = start;
+        _bs.OpStart = start;
         return true;
     }
 
@@ -481,7 +477,7 @@ public sealed partial class VimEngine
             var s = L(l);
             if (s.Length == 0) continue;
             if (oap.BlockMode) ShiftBlockLine(oap, l, amount);
-            else if (s[0] != '#' || true) ShiftLine(l, oap.Op == OpType.ShiftLeft, O.ShiftRound, amount);
+            else ShiftLine(l, oap.Op == OpType.ShiftLeft, O.ShiftRound, amount);
         }
         if (oap.BlockMode) { _line = first; _col = oap.Start.Character == 0 ? blockCol : blockCol; }
         else if (cursTop) { _line = first; Beginline(BL.Sol | BL.Fix); }

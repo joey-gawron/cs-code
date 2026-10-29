@@ -339,7 +339,6 @@ public sealed partial class VimEngine
             var l = hit.End.Line; var c = hit.End.Character;
             // the last character of the match
             if (!(hit.End == hit.Start)) Dec(ref l, ref c);
-            if (c >= L(l).Length && c > 0 && hit.End.Character >= L(l).Length && false) c = VimText.PrevCharStart(L(l), L(l).Length);
             target = new TextPosition(l, c);
             target = MoveBy(target, off.Value);
             if (oap is not null) oap.Inclusive = true;

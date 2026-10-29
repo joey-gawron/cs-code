@@ -178,7 +178,7 @@ public sealed partial class VimEngine
                 while (true)
                 {
                     if (!Next(out var k2)) return ParseResult.NeedMore;
-                    if ((k2 >= '1' && k2 <= '9') || (k2 == '0' && c.Count0 > 0 && false)) { c.Count0 = c.Count0 * 10 + (k2 - '0'); continue; }
+                    if (k2 >= '1' && k2 <= '9') { c.Count0 = c.Count0 * 10 + (k2 - '0'); continue; }
                     c.Key2 = k2;
                     break;
                 }
@@ -261,7 +261,7 @@ public sealed partial class VimEngine
         _ => false,
     };
 
-    private bool PrefixNeedsArg(int k, int k2) => k == 'g' && k2 is '\'' or '`' || (k == 'z' && false);
+    private bool PrefixNeedsArg(int k, int k2) => k == 'g' && k2 is '\'' or '`';
 
     private bool NeedsNChar(Cmd c, int k, bool opActive)
     {
@@ -326,7 +326,7 @@ public sealed partial class VimEngine
 
         // doubled operator (dd, yy, g~~, g~g~ ...)
         var opLast = c.Key == 'g' || (c.Key == 'z') ? c.Key2 : c.Key;
-        if (m.Key == opLast && !(c.Key is 'g' or 'z' && false)) { c.Doubled = true; c.HasMotion = true; m.Key2 = 0; return ParseResult.Complete; }
+        if (m.Key == opLast) { c.Doubled = true; c.HasMotion = true; m.Key2 = 0; return ParseResult.Complete; }
         if ((c.Key is 'g' or 'z') && m.Key == c.Key)
         {
             if (!Next(out var k2)) return ParseResult.NeedMore;

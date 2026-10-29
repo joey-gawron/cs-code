@@ -67,7 +67,7 @@ public sealed partial class VimEngine
         if (_ctrlBackslash)
         {
             _ctrlBackslash = false;
-            if (k is 14 or 7) { InsertEscape(ctrlC: false, noMove: k == 14 || true, toNormal: true); return; }
+            if (k is 14 or 7) { InsertEscape(ctrlC: false, noMove: true, toNormal: true); return; }
             if (k == 15) { InsertCtrlO(); return; }
         }
 
