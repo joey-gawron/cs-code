@@ -5,7 +5,7 @@ namespace CsCode.Core.Languages;
 
 /// <summary>
 /// The single place where language-feature providers meet their consumers. Register returns a token; disposing it
-/// removes the provider (e.g. language server stopped, extension deactivated). Consumers ask for the providers that
+/// removes the provider (e.g. language server stopped or restarted). Consumers ask for the providers that
 /// apply to a document, best selector score first; they decide whether to use the first, merge all, or race them.
 /// </summary>
 public interface ILanguageFeatureRegistry
@@ -86,8 +86,8 @@ public sealed class LanguageFeatureRegistry : ILanguageFeatureRegistry
 }
 
 /// <summary>
-/// Shared diagnostics store keyed by (document, owner). LSP servers and extension-host DiagnosticCollections publish
-/// here; the editor draws squiggles and the Error List binds to <see cref="GetAll"/>. Owner = collection/server id.
+/// Shared diagnostics store keyed by (document, owner). Language servers and other producers publish
+/// here; the editor draws squiggles and the Error List binds to <see cref="GetAll"/>. Owner = server/producer id.
 /// </summary>
 public interface IDiagnosticService
 {

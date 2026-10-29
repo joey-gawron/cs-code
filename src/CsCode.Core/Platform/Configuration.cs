@@ -5,8 +5,8 @@ namespace CsCode.Core.Platform;
 
 public enum ConfigurationTarget { User = 1, Workspace = 2, WorkspaceFolder = 3 }
 
-/// <summary>Declared by `contributes.configuration` or by built-in modules (defaults + JSON schema fragment).</summary>
-public sealed record ConfigurationProperty(string Key, JsonElement? Default, string? Description = null, JsonElement? Schema = null, string? ExtensionId = null);
+/// <summary>Declared by the module that owns the setting through <see cref="IConfigurationService.RegisterProperties"/> (default + JSON schema fragment).</summary>
+public sealed record ConfigurationProperty(string Key, JsonElement? Default, string? Description = null, JsonElement? Schema = null);
 
 public sealed record ConfigurationChangedEventArgs(IReadOnlyCollection<string> AffectedKeys)
 {

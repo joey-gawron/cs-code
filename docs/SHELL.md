@@ -249,5 +249,4 @@ the test asserts the steady state (everything from tab 120 on is released, heap 
 * Editor views must be a `Control`; the shell wraps them in a host, sets the focus-area marker on the host, and disposes the view when the tab closes or loses its live-view slot.
 * `IToolWindow`s registered by other modules (`AddSingleton<IToolWindow, ...>`) are placed by `DefaultLocation`; `AutoShowWhen` windows start hidden and follow their context key; a Left-located tool creates the left well.
 * The brief's `IExtensionService.ActivateByEventAsync("onStartupFinished")` is **not** used: the extension system was removed (commit "Drop the extension system").
-* Remaining mentions of the removed system outside this module (not edited, per ownership): `KnownCommands.InstallExtension/ShowExtensions`, `IAppPaths.ExtensionsDir`, `ConfigurationProperty.ExtensionId`, `ColorTheme.ExtensionId`, `LanguageInfo.ExtensionId`,
-  `DebuggerType.ExtensionId`, doc comments in Core, the README tagline, and the empty "EXTENSIONS" section of `Directory.Packages.props`. None is used by the shell; the integrator may delete them.
+* The removed system's remnants elsewhere (extension command ids, `ExtensionsDir`, the `ExtensionId` members, Core wording, the README tagline) were deleted at integration.

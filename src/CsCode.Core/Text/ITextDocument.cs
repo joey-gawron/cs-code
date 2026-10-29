@@ -4,7 +4,7 @@ namespace CsCode.Core.Text;
 
 /// <summary>
 /// UI-independent view of an open document. The editor (Avalonia/AvaloniaEdit) implements this over its own
-/// rope; LSP, DAP, the extension host and tests only ever see this interface.
+/// rope; LSP, DAP and tests only ever see this interface.
 /// All members must be callable from any thread; implementations marshal to the UI thread internally if needed.
 /// </summary>
 public interface ITextDocument
@@ -53,7 +53,7 @@ public sealed record DocumentEvent(ITextDocument Document);
 
 /// <summary>
 /// Registry of open documents. The editor registers documents on open and disposes the registration on close;
-/// LSP (didOpen/didChange/didClose), the extension host and diagnostics subscribe here. Core ships a default
+/// LSP (didOpen/didChange/didClose) and diagnostics subscribe here. Core ships a default
 /// implementation (<see cref="DocumentManager"/>).
 /// </summary>
 public interface IDocumentManager

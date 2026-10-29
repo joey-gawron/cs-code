@@ -232,7 +232,6 @@ public sealed class TestAppPaths : IAppPaths, IDisposable
 {
     private readonly TempDirectory _dir = new("cscode-home-");
     public string UserDataDir => Dir("user");
-    public string ExtensionsDir => Dir("extensions");
     public string LogsDir => Dir("logs");
     public string CacheDir => Dir("cache");
     public string GlobalStorageDir => Dir("globalStorage");

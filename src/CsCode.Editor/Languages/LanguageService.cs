@@ -228,11 +228,11 @@ public sealed class LanguageService : ILanguageService, IDisposable
             configs[e.Id] = e.ConfigPath;
             if (e.Aliases.Count > 0)
             {
-                var info = new LanguageInfo(e.Id, e.Aliases[0], e.Extensions.ToArray(), e.Filenames.ToArray(), null);
+                var info = new LanguageInfo(e.Id, e.Aliases[0], e.Extensions.ToArray(), e.Filenames.ToArray());
                 infos.Add(info);
                 byId[e.Id] = info;
             }
-            else byId[e.Id] = new LanguageInfo(e.Id, e.Id, e.Extensions.ToArray(), e.Filenames.ToArray(), null);
+            else byId[e.Id] = new LanguageInfo(e.Id, e.Id, e.Extensions.ToArray(), e.Filenames.ToArray());
         }
 
         // Later (user) patterns must win over earlier (built-in) ones: reverse so the first match in the list is the most specific source.

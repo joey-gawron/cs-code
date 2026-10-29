@@ -3,7 +3,7 @@ using CsCode.Core.Text;
 
 namespace CsCode.Core.Languages;
 
-// Immutable, LSP-shaped (0-based, UTF-16) models shared by the native LSP client, the extension-host bridge,
+// Immutable, LSP-shaped (0-based, UTF-16) models shared by the native LSP client, the remote bridge,
 // the editor and the Error List. They intentionally mirror LSP 3.17 semantics so mapping is mechanical.
 
 public sealed record MarkupContent(string Value, bool IsMarkdown = false)

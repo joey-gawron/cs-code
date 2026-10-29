@@ -70,8 +70,6 @@ public sealed class AppPaths : IAppPaths
 
         GlobalStorageDir = Join(UserDataDir, "globalStorage");
         ToolsDir = Join(UserDataDir, "tools");
-        // CsCode has no extension system; the member exists only because IAppPaths (Core) still declares it. Never created or read.
-        ExtensionsDir = Join(UserDataDir, "extensions");
         WorkspaceStorageRoot = Join(UserDataDir, "workspaceStorage");
         InstallDir = AppContext.BaseDirectory;
     }
@@ -80,7 +78,6 @@ public sealed class AppPaths : IAppPaths
     public string ConfigDir { get; }
 
     public string UserDataDir { get; }
-    public string ExtensionsDir { get; }
     public string LogsDir { get; }
     public string CacheDir { get; }
     public string GlobalStorageDir { get; }

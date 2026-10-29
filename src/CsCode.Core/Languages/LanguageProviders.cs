@@ -5,7 +5,7 @@ namespace CsCode.Core.Languages;
 // One interface per language feature (the vscode.languages.register*Provider shape). A provider is registered
 // against a DocumentSelector in ILanguageFeatureRegistry; providers are produced by:
 //   - CsCode.Lsp         (native language clients: one provider instance per server per feature)
-//   - CsCode.Extensions  (providers registered by JS extensions via the extension host, proxied over RPC)
+//   - CsCode.Remote      (bridge providers for a remote workspace, whose language clients run in CsCode.Server)
 // and consumed by CsCode.Editor / CsCode.App. All calls are async and cancellable; return null for "no result".
 
 public interface ILanguageProvider { }

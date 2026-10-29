@@ -101,7 +101,6 @@ public sealed class RoutingConnectionFactory(Func<LspLaunchRequest, bool> useRea
 public sealed class ToolsAppPaths(IAppPaths inner, string toolsDir) : IAppPaths
 {
     public string UserDataDir => inner.UserDataDir;
-    public string ExtensionsDir => inner.ExtensionsDir;
     public string LogsDir => inner.LogsDir;
     public string CacheDir => inner.CacheDir;
     public string GlobalStorageDir => inner.GlobalStorageDir;

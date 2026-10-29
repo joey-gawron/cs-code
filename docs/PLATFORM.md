@@ -80,8 +80,7 @@ Mechanics worth knowing:
 
 ## File locations
 
-`AppPaths` is pure: computing a path never touches the disk. `IAppPaths.ExtensionsDir` exists only because the Core interface still declares it
-(CsCode has no extension system); it is never created or read.
+`AppPaths` is pure: computing a path never touches the disk.
 
 | | Linux (XDG) | Windows | macOS |
 |---|---|---|---|
@@ -261,9 +260,8 @@ Stated plainly — what is **not** done or **not verified**:
 * Events carry no ordering guarantee between different services.
 * The Windows recycle bin and macOS trash do not write "put back" metadata.
 
-Extension-system remnants outside this module (Core/other owners; removing them is not an additive change, so they are only reported): `IAppPaths.ExtensionsDir`, `KnownCommands.InstallExtension` / `ShowExtensions`,
-`ConfigurationProperty.ExtensionId`, `ColorTheme.ExtensionId`, "extension host" wording in Core doc comments, the "VS Code extension compatibility (Open VSX)" line in `README.md`, and the empty
-`EXTENSIONS (module: Extensions)` section in `Directory.Packages.props`. Platform implements none of it (`ExtensionsDir` returns an unused path that is never created).
+There is no extension system (ARCHITECTURE §1). Its last remnants (`IAppPaths.ExtensionsDir`, the extension command ids, the `ExtensionId` members of Core records, extension-host wording)
+were removed at integration; `NoExtensionSystemTests` keeps them from coming back.
 
 ## Tests
 
