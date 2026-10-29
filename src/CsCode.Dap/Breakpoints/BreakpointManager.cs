@@ -20,7 +20,7 @@ public sealed record PersistedBreakpoints(
 /// copy-on-write snapshots so readers (editor gutter on the UI thread) never block on a writer. Persisted per workspace in
 /// <see cref="IStateStorage"/> with a debounce (the file is not rewritten once per click).
 /// </summary>
-public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable
+public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable, IDisposable
 {
     public const string StateKey = "debug.breakpoints";
     private static readonly TimeSpan PersistDelay = TimeSpan.FromMilliseconds(400);
@@ -389,5 +389,16 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable
         }
         _subs.Dispose();
         _changed.Clear();
+    }
+
+    /// <summary>
+    /// For a container disposed synchronously (the shell disposes its container on the UI thread after awaiting the graceful shutdown):
+    /// persists now and lets the state flush finish in the background instead of blocking the caller. A no-op after <see cref="DisposeAsync"/>.
+    /// </summary>
+    public void Dispose()
+    {
+        var pending = DisposeAsync();
+        if (!pending.IsCompleted)
+            _ = pending.AsTask().ContinueWith(t => _logger.LogDebug(t.Exception, "Disposing the breakpoint manager"), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 }

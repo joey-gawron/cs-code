@@ -20,7 +20,7 @@ namespace CsCode.Dap.Service;
 /// without locks or waiting. <see cref="StartAsync"/> and friends only enqueue. Events fire on the lane: subscribers must be cheap and
 /// marshal themselves (the shell's UiDispatcher does).
 /// </summary>
-public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDebugOutputHistory, IDebugSourceContentProvider, IAsyncDisposable
+public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDebugOutputHistory, IDebugSourceContentProvider, IAsyncDisposable, IDisposable
 {
     public const int MaxHistoryLines = 5_000;
     private const int MaxHistoryChars = 4 * 1024 * 1024;
@@ -609,5 +609,16 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         }
         _sessionStarted.Clear(); _sessionTerminated.Clear(); _activeChanged.Clear(); _stateChanged.Clear();
         _stopLocationChanged.Clear(); _output.Clear(); _outputCleared.Clear();
+    }
+
+    /// <summary>
+    /// For a container disposed synchronously (the shell disposes its container on the UI thread after awaiting the graceful shutdown):
+    /// starts <see cref="DisposeAsync"/> and returns without waiting for adapters, so the caller never blocks. A no-op after <see cref="DisposeAsync"/>.
+    /// </summary>
+    public void Dispose()
+    {
+        var pending = DisposeAsync();
+        if (!pending.IsCompleted)
+            _ = pending.AsTask().ContinueWith(t => _logger.LogDebug(t.Exception, "Disposing the debug service"), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 }

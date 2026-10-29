@@ -25,7 +25,7 @@ internal sealed record PersistedSelection(string Name, string? Folder);
 /// (persisted per workspace); VS Code variable substitution; initial-file generation. File I/O goes through the workspace
 /// <see cref="IFileSystem"/> (so it also works for remote workspaces) and all work is hopped to the Debug lane first.
 /// </summary>
-public sealed class DebugConfigurationService : IDebugConfigurationService, IAsyncDisposable
+public sealed class DebugConfigurationService : IDebugConfigurationService, IAsyncDisposable, IDisposable
 {
     private const string SelectionKey = "debug.selectedConfiguration";
     private static readonly string[] LaunchLocations = [".cscode/launch.json", ".vscode/launch.json"];
@@ -301,9 +301,9 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
         return new Uri(baseText + relative);
     }
 
-    public ValueTask DisposeAsync()
+    public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return ValueTask.CompletedTask;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _subs.Dispose();
         foreach (var w in _watches) w.Dispose();
         _watches.Clear();
@@ -311,6 +311,11 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
         _providers.Clear();
         _selectedChanged.Clear();
         _configurationsChanged.Clear();
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Dispose();
         return ValueTask.CompletedTask;
     }
 }
