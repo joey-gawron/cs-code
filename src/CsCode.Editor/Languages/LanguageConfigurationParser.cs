@@ -4,8 +4,11 @@ using CsCode.Core.Languages;
 
 namespace CsCode.Editor.Languages;
 
+/// <summary>An <c>onEnterRules</c> entry including the <c>previousLineText</c> guard the Core record has no slot for.</summary>
+public sealed record EnterRuleEx(OnEnterRule Rule, string? PreviousLineText);
+
 /// <summary>Editor-side extras of a language configuration that the Core record has no slot for.</summary>
-public sealed record ExtendedLanguageConfiguration(LanguageConfiguration Base, string? AutoCloseBefore)
+public sealed record ExtendedLanguageConfiguration(LanguageConfiguration Base, string? AutoCloseBefore, IReadOnlyList<EnterRuleEx>? EnterRules = null)
 {
     /// <summary>VS Code's default: auto-close a bracket only when the next char is one of these (or whitespace/end of line).</summary>
     public const string DefaultAutoCloseBefore = ";:.,=}])> \n\t";
@@ -87,9 +90,16 @@ public static class LanguageConfigurationParser
         }
 
         var onEnter = new List<OnEnterRule>();
+        var onEnterEx = new List<EnterRuleEx>();
         if (root.TryGetProperty("onEnterRules", out var rules) && rules.ValueKind == JsonValueKind.Array)
             foreach (var rule in rules.EnumerateArray())
-                if (ParseRule(rule) is { } r) onEnter.Add(r);
+                if (ParseRule(rule) is { } r)
+                {
+                    onEnterEx.Add(r);
+                    // The Core record cannot express the previousLineText guard; applying such a rule without it would mis-indent, so the
+                    // Core list only carries the unguarded rules (the editor itself uses the full list, guards included).
+                    if (r.PreviousLineText is null) onEnter.Add(r.Rule);
+                }
 
         var config = new LanguageConfiguration
         {
@@ -108,7 +118,7 @@ public static class LanguageConfigurationParser
             OnEnterRules = onEnter,
             OffsideFolding = offside,
         };
-        return new ExtendedLanguageConfiguration(config, Str(root, "autoCloseBefore"));
+        return new ExtendedLanguageConfiguration(config, Str(root, "autoCloseBefore"), onEnterEx);
     }
 
     private static string? Str(JsonElement obj, string name) =>
@@ -153,18 +163,22 @@ public static class LanguageConfigurationParser
         return list;
     }
 
-    private static OnEnterRule? ParseRule(JsonElement rule)
+    private static EnterRuleEx? ParseRule(JsonElement rule)
     {
         if (rule.ValueKind != JsonValueKind.Object) return null;
-        // previousLineText has no slot in the Core record; applying such a rule without its guard would mis-indent, so it is skipped.
-        if (rule.TryGetProperty("previousLineText", out _)) return null;
+        string? previous = null;
+        if (rule.TryGetProperty("previousLineText", out var prev))
+        {
+            previous = RxValue(prev);
+            if (previous is null) return null; // a guard we cannot compile: do not apply the rule unguarded
+        }
         if (!rule.TryGetProperty("beforeText", out var before) || RxValue(before) is not { } beforeText) return null;
         var afterText = rule.TryGetProperty("afterText", out var after) ? RxValue(after) : null;
         if (!rule.TryGetProperty("action", out var action) || action.ValueKind != JsonValueKind.Object) return null;
         var kind = Str(action, "indent");
         if (kind is not ("none" or "indent" or "outdent" or "indentOutdent")) return null;
         var remove = action.TryGetProperty("removeText", out var rt) && rt.ValueKind == JsonValueKind.Number ? rt.GetInt32() : 0;
-        return new OnEnterRule(beforeText, afterText, kind, Str(action, "appendText"), remove);
+        return new EnterRuleEx(new OnEnterRule(beforeText, afterText, kind, Str(action, "appendText"), remove), previous);
     }
 
     private static string? Rx(JsonElement obj, string name) => obj.TryGetProperty(name, out var v) ? RxValue(v) : null;
