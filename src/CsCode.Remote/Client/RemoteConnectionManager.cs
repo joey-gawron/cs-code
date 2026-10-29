@@ -24,7 +24,7 @@ namespace CsCode.Remote.Client;
 /// Status lines and ssh's own stderr go to the "Remote" output channel. All dependencies are resolved lazily (the file system router resolves this
 /// class on its first ssh: call), so construction never cycles back.
 /// </summary>
-public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteEndpoint, IAsyncDisposable
+public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteEndpoint, IAsyncDisposable, IDisposable
 {
     public const string OutputChannel = "Remote";
 
@@ -229,6 +229,13 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
     {
         await h.Client.DisposeAsync().ConfigureAwait(false);
         h.Owned.Dispose();
+    }
+
+    /// <summary>Synchronous container disposal (the shell disposes this asynchronously first, which makes this a no-op): bounded, never hangs the exit.</summary>
+    public void Dispose()
+    {
+        if (_host is null) { _trimToken?.Dispose(); _statusChanged.Clear(); return; }
+        Task.Run(() => DisposeAsync().AsTask()).Wait(TimeSpan.FromSeconds(10));
     }
 
     public async ValueTask DisposeAsync()

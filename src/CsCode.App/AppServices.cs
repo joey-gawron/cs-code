@@ -17,6 +17,7 @@ using CsCode.Panels.Debug;
 using CsCode.Panels.Search;
 using CsCode.Platform;
 using CsCode.Profiling;
+using CsCode.Remote;
 using CsCode.Ui;
 using CsCode.Ui.Threading;
 using Microsoft.Extensions.DependencyInjection;
@@ -51,6 +52,7 @@ public static class AppServices
         services.AddCsCodeShell(args);
         services.AddCsCodeDebugPanels();
         services.AddCsCodeSearchPanels();
+        services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
         configure?.Invoke(services); // dev/test host: replace anything above
         AddChildProcessTracking(services); // last: wraps whichever memory monitor ended up registered
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });

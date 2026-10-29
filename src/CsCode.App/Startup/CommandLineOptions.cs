@@ -15,6 +15,9 @@ public sealed record CommandLineOptions(
     bool ShowVersion,
     IReadOnlyList<string> UnknownSwitches)
 {
+    /// <summary><c>ssh://[user@]host[:port]/path</c> arguments: remote folders to open (connecting first).</summary>
+    public IReadOnlyList<string> RemoteTargets { get; init; } = [];
+
     public static CommandLineOptions Empty { get; } = new([], false, false, false, false, []);
 
     public static CommandLineOptions Parse(IEnumerable<string> args, string? workingDirectory = null)
@@ -22,6 +25,7 @@ public sealed record CommandLineOptions(
         var cwd = workingDirectory ?? Directory.GetCurrentDirectory();
         var targets = new List<StartupTarget>();
         var unknown = new List<string>();
+        var remote = new List<string>();
         bool newWindow = false, wait = false, help = false, version = false, gotoNext = false;
         foreach (var arg in args)
         {
@@ -34,12 +38,13 @@ public sealed record CommandLineOptions(
                 case "-v" or "--version": version = true; break;
                 case "-g" or "--goto": gotoNext = true; break;
                 default:
-                    if (arg.StartsWith('-') && arg.Length > 1) unknown.Add(arg);
+                    if (arg.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)) remote.Add(arg);
+                    else if (arg.StartsWith('-') && arg.Length > 1) unknown.Add(arg);
                     else targets.Add(ParseTarget(arg, cwd));
                     break;
             }
         }
-        return new CommandLineOptions(targets, newWindow, wait, help, version, unknown);
+        return new CommandLineOptions(targets, newWindow, wait, help, version, unknown) { RemoteTargets = remote };
     }
 
     /// <summary>Splits a trailing <c>:line[:column]</c> unless the whole string already names an existing path (Windows drive letters and odd file names).</summary>
@@ -65,6 +70,7 @@ public sealed record CommandLineOptions(
         Usage: cscode [options] [paths...]
 
           <path>              A folder (opens as the workspace) or a file (opens in an editor). file:line[:col] jumps to a position.
+          ssh://[user@]host[:port]/path   Connect to the host over ssh and open the remote folder.
           -g, --goto <file:line[:col]>  Open a file at a position.
           -n, --new-window    Open in a new window.
           -w, --wait          Accepted for compatibility; ignored.

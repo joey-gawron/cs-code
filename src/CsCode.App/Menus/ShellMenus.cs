@@ -50,6 +50,7 @@ public static class ShellMenus
             M("_New File", KnownCommands.NewUntitledFile, icon: IconKey.NewFile),
             M("_Open File...", KnownCommands.OpenFile, icon: IconKey.File),
             M("Open _Folder...", KnownCommands.OpenFolder, icon: IconKey.FolderOpened),
+            M("Open Re_mote Folder...", "remote.openFolder", icon: IconKey.Remote),
             new MenuNode("Open _Recent", Dynamic: "recent", Children: []),
             S,
             M("_Save", KnownCommands.Save, "hasOpenEditors", IconKey.Save),
