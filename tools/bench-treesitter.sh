@@ -4,7 +4,8 @@
 #
 #   tools/bench-treesitter.sh            # Release build (default)
 #   tools/bench-treesitter.sh --debug    # Debug build (what the editor's other numbers in docs/EDITOR.md use)
-#   tools/bench-treesitter.sh --filter B1   # only the scenarios whose name contains B1 (B1..B5)
+#   tools/bench-treesitter.sh --filter B1   # only the scenarios whose name contains B1 (B1, B1b, B2_B3, B4, B5)
+#   tools/bench-treesitter.sh --pass timing # only the timing pass (or --pass memory)
 #
 # Results: .scratch/bench/treesitter-<run>.md (git-ignored). Two passes: timings with tree-sitter's counting allocator OFF, then memory with
 # it ON (exact native bytes). Needs what the evaluation used: libtree-sitter 0.25+ and compiled grammars (found automatically in the Nix
@@ -15,10 +16,12 @@ cd "$root"
 
 config=Release
 filter=TreeSitterBenchmarks
+passes="0 1"
 while [ $# -gt 0 ]; do
   case "$1" in
     --debug) config=Debug ;;
     --filter) shift; filter="TreeSitterBenchmarks&FullyQualifiedName~$1" ;;
+    --pass) shift; case "$1" in timing) passes=0 ;; memory) passes=1 ;; both) passes="0 1" ;; *) echo "--pass timing|memory|both" >&2; exit 2 ;; esac ;;
     *) echo "unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -47,7 +50,7 @@ export CSCODE_HOME="$home" CSCODE_BENCH_TREESITTER=1 CSCODE_BENCH_RUN="$run"
 } > "$out"
 
 dotnet build tests/CsCode.Editor.Tests/CsCode.Editor.Tests.csproj -c "$config" -nologo -v q
-for track in 0 1; do
+for track in $passes; do
   echo "== pass $((track + 1))/2 (allocation tracking $([ $track = 1 ] && echo on || echo off))"
   CSCODE_TREESITTER_TRACK_ALLOC=$track dotnet test tests/CsCode.Editor.Tests/CsCode.Editor.Tests.csproj -c "$config" --no-build \
     --filter "FullyQualifiedName~$filter" -- RunConfiguration.MaxCpuCount=1 || echo "(some benchmarks failed: see above)"

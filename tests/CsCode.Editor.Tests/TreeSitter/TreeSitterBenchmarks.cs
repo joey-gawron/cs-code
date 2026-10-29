@@ -76,6 +76,7 @@ public class TreeSitterBenchmarks
     // ---- inputs ----
 
     private static string? _corpus;
+    private static string[]? _files;
 
     /// <summary>Real C#: this repository's own sources, concatenated (≈ 3 MB), repeated to the size wanted.</summary>
     private static string CSharp(long bytes)
@@ -83,13 +84,17 @@ public class TreeSitterBenchmarks
         _corpus ??= string.Concat(Directory.EnumerateFiles(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src")), "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains("/obj/", StringComparison.Ordinal) && !f.Contains("/bin/", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal)
-            .Select(File.ReadAllText));
-        var sb = new StringBuilder((int)Math.Min(bytes + _corpus.Length, int.MaxValue / 2));
-        while (sb.Length < bytes) sb.Append(_corpus.AsSpan(0, (int)Math.Min(_corpus.Length, bytes - sb.Length)));
-        // end on a line boundary so the repetition does not split a token
-        var text = sb.ToString();
-        var cut = text.LastIndexOf('\n');
-        return cut > 0 ? text[..(cut + 1)] : text;
+            .Select(f => File.ReadAllText(f) + "\n" + "\u0000"));
+        // whole files only (a file cut in half would leave an unterminated construct that the parser recovers from at great cost)
+        _files ??= _corpus.Split("\u0000");
+        var sb = new StringBuilder((int)Math.Min(bytes + 512 * 1024, int.MaxValue / 2));
+        while (sb.Length < bytes)
+            foreach (var f in _files)
+            {
+                if (sb.Length + f.Length > bytes && sb.Length > 0) return sb.ToString();
+                sb.Append(f);
+            }
+        return sb.ToString();
     }
 
     private static string Mb(long bytes) => $"{bytes / (1024.0 * 1024.0):0.#} MB";
@@ -116,9 +121,9 @@ public class TreeSitterBenchmarks
         var size = megabytes * 1024L * 1024L;
         var text = CSharp(size);
         var input = new StringInput(text);
-        var scenario = $"B1 whole document, {Mb(text.Length * 2L)} UTF-16 ({megabytes} MB of C#, {input.LineCount} lines)";
+        var scenario = $"B1 whole document, {megabytes} MB of C# ({text.Length / 1024 / 1024.0:0.#} M chars, {input.LineCount} lines)";
 
-        // tree-sitter: parse (one call, no slicing), then highlight everything, then one incremental edit
+        // tree-sitter: parse (one call, no slicing), viewport highlights at three places, incremental edits at three places
         using var registry = NewRegistry();
         TsRuntime.TrimNativeHeap();
         var nativeBefore = TsRuntime.AllocatedBytes;
@@ -130,28 +135,42 @@ public class TreeSitterBenchmarks
             var parse = sw.Elapsed;
             Record(scenario, "tree-sitter", "full parse", parse.TotalMilliseconds, "ms");
             Record(scenario, "tree-sitter", "parse throughput", text.Length / 1024.0 / 1024.0 / parse.TotalSeconds, "M chars/s");
+            Record(scenario, "tree-sitter", "tree has ERROR nodes (1 = yes)", doc.RootHasError ? 1 : 0, "flag");
             if (TsRuntime.AllocationsTracked) Record(scenario, "tree-sitter", "tree native bytes (counted)", (TsRuntime.AllocatedBytes - nativeBefore) / 1024.0 / 1024.0, "MB");
             Record(scenario, "tree-sitter", "tree native bytes (C heap delta)", (TsRuntime.ProcessNativeHeapBytes() - heapBefore) / 1024.0 / 1024.0, "MB");
             Record(scenario, "tree-sitter", "tree bytes estimate (nodes x 48)", doc.EstimatedTreeBytes / 1024.0 / 1024.0, "MB");
 
             var stacks = new TestStacks();
             var paint = new PaintBuffer();
-            sw.Restart();
-            var limit = megabytes >= 100 ? Math.Min(input.LineCount, 200_000) : input.LineCount; // 100 MB: highlight the first 200k lines, scale
-            for (var line = 0; line < limit; line += 2000)
-                doc.Highlight(input, input.LineStart(line), input.LineStart(Math.Min(limit, line + 2000)) - 1, stacks, paint);
-            var perLine = sw.Elapsed.TotalMilliseconds / limit;
-            Record(scenario, "tree-sitter", "highlight (query + paint) per 1000 lines", perLine * 1000, "ms");
+            doc.Highlight(input, 0, input.LineStart(60), stacks, paint); // warm-up (first query execution, symbol-name cache)
+            foreach (var at in new[] { 0.05, 0.5, 0.95 })
+            {
+                var first = (int)(input.LineCount * at);
+                sw.Restart();
+                doc.Highlight(input, input.LineStart(first), input.LineStart(Math.Min(input.LineCount - 1, first + 60)), stacks, paint);
+                Record(scenario, "tree-sitter", $"highlight a 60-line viewport at {at:P0} of the document", sw.Elapsed.TotalMilliseconds, "ms");
+            }
 
-            // one keystroke in the middle: edit + incremental reparse
-            var at = text.Length / 2;
-            var lineOfEdit = input.LineOfOffset(at);
-            var col = at - input.LineStart(lineOfEdit);
-            var edited = text.Insert(at, "x");
-            doc.ApplyEdit(new TextEditInfo(at, at, at + 1, lineOfEdit, col, lineOfEdit, col, lineOfEdit, col + 1));
-            sw.Restart();
-            doc.Parse(new StringInput(edited), long.MaxValue);
-            Record(scenario, "tree-sitter", "incremental reparse after 1 char (incl. new line index)", sw.Elapsed.TotalMilliseconds, "ms");
+            // one keystroke inside an identifier at three places: edit + incremental reparse (the new text's line index is built outside the timing)
+            var current = text;
+            var times = new List<double>();
+            foreach (var at in new[] { 0.25, 0.5, 0.75 })
+            {
+                var offset = (int)(current.Length * at);
+                while (offset < current.Length - 1 && !(char.IsAsciiLetter(current[offset]) && char.IsAsciiLetter(current[offset - 1]))) offset++;
+                var before = new StringInput(current);
+                var line = before.LineOfOffset(offset);
+                var col = offset - before.LineStart(line);
+                current = current.Insert(offset, "x");
+                var after = new StringInput(current);
+                doc.ApplyEdit(new TextEditInfo(offset, offset, offset + 1, line, col, line, col, line, col + 1));
+                sw.Restart();
+                doc.Parse(after, long.MaxValue);
+                times.Add(sw.Elapsed.TotalMilliseconds);
+            }
+            times.Sort();
+            Record(scenario, "tree-sitter", "incremental reparse after 1 char (median of 3)", times[1], "ms");
+            Record(scenario, "tree-sitter", "incremental reparse after 1 char (max of 3)", times[2], "ms");
         }
         TsRuntime.TrimNativeHeap();
         if (TsRuntime.AllocationsTracked) Record(scenario, "tree-sitter", "native bytes after dispose (counted)", (TsRuntime.AllocatedBytes - nativeBefore) / 1024.0 / 1024.0, "MB");
@@ -168,9 +187,10 @@ public class TreeSitterBenchmarks
         IStateStack? state = null;
         var batch = new List<int[]>(1000);
         var pairs = new List<int>();
-        var cap = TimeSpan.FromSeconds(megabytes >= 100 ? 90 : 600);
+        var cap = TimeSpan.FromSeconds(megabytes >= 100 ? 60 : 600);
         var clock = Stopwatch.StartNew();
         var done = 0;
+        var batchStart = 0;
         for (var line = 0; line < input.LineCount && clock.Elapsed < cap; line++)
         {
             var start = input.LineStart(line);
@@ -191,21 +211,69 @@ public class TreeSitterBenchmarks
             batch.Add(pairs.ToArray());
             if (batch.Count == 1000)
             {
-                store.Publish(1, line - 999, batch, [], chain: false);
+                store.Publish(1, batchStart, batch, [], chain: false);
                 batch.Clear();
+                batchStart = line + 1;
             }
             done++;
         }
+        if (batch.Count > 0) store.Publish(1, batchStart, batch, [], chain: false);
         var elapsed = clock.Elapsed;
         var fraction = done / (double)input.LineCount;
         Record(scenario, "TextMate", done == input.LineCount ? "full tokenise" : $"full tokenise (extrapolated from {fraction:P0} in {elapsed.TotalSeconds:0} s)", elapsed.TotalMilliseconds / fraction, "ms");
         Record(scenario, "TextMate", "tokenise throughput", text.Length * fraction / 1024.0 / 1024.0 / elapsed.TotalSeconds, "M chars/s");
-        Record(scenario, "TextMate", "LineTokenStore estimate (tokenised part, scaled)", (store.EstimatedBytes + interner.EstimatedBytes) / fraction / 1024.0 / 1024.0, "MB");
-        GC.KeepAlive(batch);
+        Record(scenario, "TextMate", "LineTokenStore estimate (scaled to the whole document)", (store.EstimatedBytes + interner.EstimatedBytes) / fraction / 1024.0 / 1024.0, "MB");
         var managedAfter = GC.GetTotalMemory(true);
-        Record(scenario, "TextMate", "token store managed delta (scaled)", (managedAfter - managedBefore) / fraction / 1024.0 / 1024.0, "MB");
+        Record(scenario, "TextMate", "token store managed delta (scaled to the whole document)", (managedAfter - managedBefore) / fraction / 1024.0 / 1024.0, "MB");
         GC.KeepAlive(store);
         Assert.True(done > 0);
+    }
+
+    // ---- B1b: per-language throughput (1 MB of each evaluated language: its sample repeated) ----
+
+    public static TheoryData<string> Languages => [.. TreeSitterSamples.All.Select(s => s.Name)];
+
+    [Theory]
+    [MemberData(nameof(Languages))]
+    public void B1b_per_language_parse_and_tokenise_throughput(string language)
+    {
+        RequireBench();
+        var sample = TreeSitterSamples.All.Single(s => s.Name == language);
+        var bundle = RequireGrammar(sample.Grammar);
+        var sb = new StringBuilder();
+        while (sb.Length < 1024 * 1024) sb.Append(sample.Text).Append('\n');
+        var text = sb.ToString();
+        var input = new StringInput(text);
+        var scenario = $"B1b 1 MB of {language} (sample repeated, {input.LineCount} lines)";
+
+        using var registry = NewRegistry();
+        using (var doc = new SyntaxDocument(registry, bundle))
+        {
+            var sw = Stopwatch.StartNew();
+            doc.Parse(input, long.MaxValue);
+            Record(scenario, "tree-sitter", "full parse", sw.Elapsed.TotalMilliseconds, "ms");
+            var stacks = new TestStacks();
+            var paint = new PaintBuffer();
+            sw.Restart();
+            for (var line = 0; line < input.LineCount; line += 2000)
+                doc.Highlight(input, input.LineStart(line), input.LineStart(Math.Min(input.LineCount - 1, line + 2000)), stacks, paint);
+            Record(scenario, "tree-sitter", "highlight everything (incl. injections)", sw.Elapsed.TotalMilliseconds, "ms");
+            Record(scenario, "tree-sitter", "tree bytes estimate", doc.EstimatedTreeBytes / 1024.0 / 1024.0, "MB");
+        }
+
+        var languageId = language switch { "tsx" => "typescriptreact", var l => l };
+        using var host = TestHost.Create();
+        var grammar = new GrammarService(host.Services).GrammarForLanguage(languageId);
+        Assert.NotNull(grammar);
+        IStateStack? state = null;
+        var clock = Stopwatch.StartNew();
+        for (var line = 0; line < input.LineCount; line++)
+        {
+            var start = input.LineStart(line);
+            var end = line + 1 < input.LineCount ? input.LineStart(line + 1) : text.Length;
+            state = grammar!.TokenizeLine(text[start..end].TrimEnd('\r', '\n'), state, TimeSpan.FromSeconds(1)).RuleStack;
+        }
+        Record(scenario, "TextMate", "full tokenise", clock.Elapsed.TotalMilliseconds, "ms");
     }
 
     // ---- B2/B3: in the editor: open → coloured viewport, and keystroke → re-coloured viewport ----
@@ -245,7 +313,8 @@ public class TreeSitterBenchmarks
         view.Controller.SetSelection(CsCode.Core.Text.TextRange.At(10, 0));
         var latencies = new List<double>();
         var keystrokeCost = new List<double>();
-        for (var i = 0; i < 150; i++)
+        var count = megabytes >= 10 ? 60 : 150;
+        for (var i = 0; i < count; i++)
         {
             var t0 = Stopwatch.GetTimestamp();
             Type(view, i % 10 == 9 ? " " : "a");
@@ -302,11 +371,9 @@ public class TreeSitterBenchmarks
             var (_, v, _) = await host.OpenAsync(text.Replace("namespace", "namespace /*" + i + "*/", StringComparison.Ordinal), $"Doc{i}.cs", 900, 600);
             views.Add(v);
         }
+        // both engines end up with tokens for every line of a 2,000-line document (it is inside the 3,000-line read-ahead): compare like with like
         foreach (var v in views)
-            await ViewHost.WaitFor(() => v.Tokens?.ViewportReady is not null && (v.Tokens.TreeSitter is null || !v.Tokens.TreeSitter.Syntax.IsParsing), "tokens", 120_000);
-        await Task.Delay(600); // read-ahead after the quiet period
-        await ViewHost.WaitFor(() => views.All(v => v.Tokens!.IsQuiet), "quiet", 60_000);
-        await Task.Delay(800);
+            await ViewHost.WaitFor(() => v.Tokens is { } t && t.Store.HasTokens(0, v.Document.LineCount - 1) && (t.TreeSitter is null || !t.TreeSitter.Syntax.IsParsing), "every line tokenised", 300_000);
         ViewHost.Pump();
         FullGc();
         var scenario = $"B4 memory per open document ({count} × {text.Length / 1024} K chars of C#, one view each)";
