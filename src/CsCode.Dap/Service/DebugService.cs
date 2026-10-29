@@ -49,6 +49,9 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private readonly Emitter<object?> _outputCleared = new();
 
     private IDebugSession[] _sessions = [];
+    // Sessions that ended and are still being released (adapter killed, private socket deleted): DisposeAsync waits for them, so an app that
+    // exits right after its shutdown leaves no adapter socket behind. Guarded by _gate; each removes itself when done.
+    private readonly List<Task> _endingSessions = new();
     private IDebugSession? _active;
     private int _state = (int)DebugState.Inactive;
     private DebugStopLocation? _stopLocation;
@@ -434,13 +437,23 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         _sessionTerminated.Fire(session);
 
         // Release the session (and kill its adapter) on the lane without blocking the event that told us it ended.
-        _ = DisposeSessionAsync(session);
+        TrackEnding(DisposeSessionAsync(session));
         // Its child sessions live on its adapter (js-debug's children are connections to the server the parent owns): they end with it.
         foreach (var child in Sessions.Where(s => ReferenceEquals(s.Parent, session)).ToArray()) _ = StopQuietlyAsync(child, CancellationToken.None);
         if (group is { StopAll: true } && group.Members.Count > 0)
             foreach (var sibling in group.Members.ToArray()) _ = sibling.StopAsync();
         if (hooks.PostDebugTask is { Length: > 0 } post && session.Parent is null)
             _ = RunPostTaskAsync(post, hooks.Folder);
+    }
+
+    private void TrackEnding(Task disposal)
+    {
+        lock (_gate) _endingSessions.Add(disposal);
+        _ = disposal.ContinueWith(static (t, state) =>
+        {
+            var self = (DebugService)state!;
+            lock (self._gate) self._endingSessions.Remove(t);
+        }, this, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     private async Task DisposeSessionAsync(DebugSession session)
@@ -628,6 +641,12 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         {
             try { await s.DisposeAsync(); } catch (Exception ex) { _logger.LogDebug(ex, "Disposing session"); }
         }
+        // The sessions StopAllAsync ended are released in the background (see OnSessionTerminated): wait for them too (bounded), or the app
+        // could exit before their adapter servers' sockets are deleted.
+        Task[] ending;
+        lock (_gate) ending = [.. _endingSessions];
+        try { await Task.WhenAll(ending).WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false); }
+        catch (TimeoutException) { _logger.LogDebug("Sessions still being released after 10 s at shutdown"); }
         _subs.Dispose();
         _contributionTokens.Dispose();
         lock (_gate)

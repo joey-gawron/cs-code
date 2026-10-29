@@ -759,6 +759,11 @@ public class RealJsDebugTests
         var sw = Stopwatch.StartNew();
         await rig.Service.DisposeAsync(); // app shutdown
         Note($"debug service disposed while stopped in {sw.ElapsedMilliseconds} ms");
+        // The app may exit right after its shutdown: the server's socket directory must already be gone, not deleted a moment later.
+        string[] sockets;
+        lock (rig.SocketDirectories) sockets = [.. rig.SocketDirectories];
+        Assert.NotEmpty(sockets);
+        Assert.All(sockets, dir => Assert.False(Directory.Exists(dir), $"{dir} is deleted when DisposeAsync returns"));
         await rig.AssertNothingLeftRunningAsync();
     }
 

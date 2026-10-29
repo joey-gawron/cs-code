@@ -233,6 +233,33 @@ public class PrivateSocketTests
         Assert.False(Directory.Exists(socket.Directory));
     }
 
+    /// <summary>
+    /// The app may exit right after the debug service's shutdown: sessions that the shutdown's Stop ended are released in the background
+    /// (adapter killed, private socket deleted), and DisposeAsync must not return before that is done. A scripted stdio adapter that is slow to
+    /// exit (it lingers 3 s; the transport kills it after its 500 ms grace) makes the release take that long, deterministically.
+    /// </summary>
+    [Fact]
+    public async Task Shutting_the_debug_service_down_returns_only_after_ended_sessions_released_their_adapters()
+    {
+        var python = ProcessAdapterTests.Python();
+        Assert.SkipUnless(python is not null && OperatingSystem.IsLinux(), "needs python3 (a scripted stdio adapter) and Linux /proc");
+        await using var h = new ServiceHarness();
+        var script = h.Dir.WriteFile("adapter.py", ProcessAdapterTests.Script);
+        using var registration = h.Service.RegisterAdapterFactory("lingering", new ExecutableFactory(new DebugAdapterExecutable(python!, ["-I", "-u", script], null, h.Dir.Path)));
+        var session = (CsCode.Dap.Session.DebugSession)await h.StartAsync(ServiceHarness.Config("lingering", "lingering", "launch",
+            new Dictionary<string, object?> { ["mode"] = "linger" }, h.Dir.Uri));
+        var adapter = session.AdapterProcessId!.Value;
+        Assert.True(ProcessTable.IsAlive(adapter));
+
+        await h.Service.DisposeAsync(); // app shutdown: Stop ends the session, its release runs in the background
+        Assert.False(ProcessTable.IsAlive(adapter), "the ended session's adapter was released before DisposeAsync returned");
+    }
+
+    private sealed class ExecutableFactory(DebugAdapterExecutable descriptor) : IDebugAdapterFactory
+    {
+        public ValueTask<DebugAdapterDescriptor?> CreateDescriptorAsync(DebugConfiguration configuration, CancellationToken ct) => ValueTask.FromResult<DebugAdapterDescriptor?>(descriptor);
+    }
+
     [Fact]
     public void A_root_too_long_for_a_socket_path_falls_back_to_tmp()
     {

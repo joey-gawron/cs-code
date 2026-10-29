@@ -19,7 +19,8 @@ namespace CsCode.Dap.Tests;
 [Collection(SerialCollection.Name)]
 public class ProcessAdapterTests : IDisposable
 {
-    private const string Script = """
+    /// <summary>The scripted adapter (modes from the launch arguments: crash, ignore, chatty, linger — slow to exit once told to go).</summary>
+    internal const string Script = """
         import sys, json, os, time
 
         def read():
@@ -55,6 +56,8 @@ public class ProcessAdapterTests : IDisposable
         while True:
             r = read()
             if r is None:
+                if mode == 'linger':
+                    time.sleep(3)
                 break
             c = r['command']
             if c == 'initialize':
@@ -83,6 +86,8 @@ public class ProcessAdapterTests : IDisposable
                 if mode == 'ignore':
                     continue
                 resp(r)
+                if mode == 'linger':
+                    time.sleep(3)
                 break
             else:
                 resp(r)
@@ -93,7 +98,7 @@ public class ProcessAdapterTests : IDisposable
     private DebugLane? _lane;
     private readonly CsCode.Dap.Breakpoints.BreakpointManager _breakpoints = new();
 
-    private static string? Python() =>
+    internal static string? Python() =>
         (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Select(d => Path.Combine(d, "python3")).FirstOrDefault(File.Exists);
 

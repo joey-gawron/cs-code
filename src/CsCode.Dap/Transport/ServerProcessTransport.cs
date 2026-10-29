@@ -288,9 +288,9 @@ public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
         await _connection.CloseAsync(TimeSpan.Zero).ConfigureAwait(false);
         Interlocked.Exchange(ref _killedByUs, 1);
         KillTree(_process);
+        _socket?.Delete(); // at once, not after the server's exit: unlinking a socket a dying server holds is fine
         if (crashed) await ReapOrphansAsync(_marker, _sessionId).ConfigureAwait(false);
         await WaitForExitAsync(_process).ConfigureAwait(false);
-        _socket?.Delete();
         try { await _pumps.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch (TimeoutException) { }
         _completion.TrySetResult();
     }
