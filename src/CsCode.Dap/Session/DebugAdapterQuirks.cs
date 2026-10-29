@@ -73,4 +73,10 @@ public class DebugAdapterQuirks
 
     /// <summary>The most <see cref="TrailingOutputQuietPeriod"/> may delay the end of a session.</summary>
     public virtual TimeSpan TrailingOutputLimit => TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// The adapter runs a <c>noDebug</c> launch (Start Without Debugging, Ctrl+F5) under the debugger anyway (GDB ignores the flag): the session
+    /// then sends it no breakpoints and no exception filters, so the program runs to its end as it would without a debugger.
+    /// </summary>
+    public virtual bool IgnoresNoDebug => false;
 }

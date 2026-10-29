@@ -168,6 +168,49 @@ public class RealGdbRustTests
         await rig.AssertNothingLeftRunningAsync();
     }
 
+    [Fact]
+    public async Task A_breakpoint_added_while_stopped_is_verified_and_hit()
+    {
+        await using var rig = await RealGdbRig.CreateAsync();
+        rig.PanicStops(false);
+        var loop = rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
+        await rig.StartAsync();
+        await rig.WaitForStopAsync(1);
+        var call = rig.H.Breakpoints.Add(rig.MainUri, InMain("call"));
+        await SessionHarness.Eventually(() => rig.H.Breakpoints.GetStatus(call.Id) is { Verified: true }, 10_000, "the new breakpoint is verified");
+        Assert.True(rig.H.Breakpoints.GetStatus(loop.Id) is { Verified: true });
+        rig.H.Breakpoints.Remove(loop.Id);
+        await Task.Delay(300, Ct);
+        await ContinueAsync(rig);
+        AssertAt(await rig.WaitForStopAsync(2), "main.rs", InMain("call"));
+        await rig.Service.StopAllAsync(Ct);
+        await rig.WaitForEndAsync();
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
+    /// <summary>
+    /// rustc gives a <c>println!</c> line two statement entries (formatting, then the print) and GDB 18 puts a breakpoint location on each, so a
+    /// breakpoint there stops twice per pass, at two addresses of the same line. Adapter (compiler + GDB) behaviour, recorded.
+    /// </summary>
+    [Fact]
+    public async Task A_breakpoint_on_a_println_line_stops_twice_per_pass()
+    {
+        await using var rig = await RealGdbRig.CreateAsync();
+        rig.PanicStops(false);
+        rig.H.Breakpoints.Add(rig.MainUri, InMain("print"));
+        await rig.StartAsync();
+        var first = await rig.WaitForStopAsync(1);
+        var i1 = await ValueOfAsync(rig, "i");
+        await ContinueAsync(rig);
+        var second = await rig.WaitForStopAsync(2);
+        var i2 = await ValueOfAsync(rig, "i");
+        Note($"println! line: stop 1 at line {first.Line + 1} with i={i1}, stop 2 at line {second.Line + 1} with i={i2}");
+        Assert.Equal((InMain("print"), InMain("print"), 0, 0), (first.Line, second.Line, i1, i2));
+        await rig.Service.StopAllAsync(Ct);
+        await rig.WaitForEndAsync();
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
     /// <summary>
     /// A function breakpoint is "pending" while GDB has no symbols (the program loads at launch, after configurationDone); its verdict arrives
     /// later by event. GDB resolves Rust paths (<c>sample::util::add</c>), not a bare <c>add</c>, through DAP.
@@ -229,6 +272,20 @@ public class RealGdbRustTests
         Note($"uncaught panic: exit code {rig.Terminated.Single().ExitCode}");
         Assert.Equal(101, rig.Terminated.Single().ExitCode);
         Assert.Contains("boom at the bottom", rig.OutputText, StringComparison.Ordinal);
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
+    /// <summary>Start Without Debugging (Ctrl+F5): GDB ignores <c>noDebug</c>, so the session sends it no breakpoints and no panic filter.</summary>
+    [Fact]
+    public async Task Start_without_debugging_runs_the_program_to_its_end_past_breakpoints_and_panics()
+    {
+        await using var rig = await RealGdbRig.CreateAsync(); // "Rust panics" on, a breakpoint in the loop
+        rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
+        await rig.StartAsync(rig.Config() with { NoDebug = true });
+        await rig.WaitForEndAsync();
+        Assert.Equal(0, rig.StopCount);
+        Assert.Contains("done hello world", rig.OutputText, StringComparison.Ordinal);
+        Assert.Equal(0, rig.Terminated.Single().ExitCode);
         await rig.AssertNothingLeftRunningAsync();
     }
 

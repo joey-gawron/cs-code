@@ -181,6 +181,31 @@ public class GdbQuirksTests
         Assert.Null(h.Breakpoints.GetStatus(fn.Id)!.ActualLine); // the function's line is not a "moved" line
     }
 
+    /// <summary>GDB ignores <c>noDebug</c>: Start Without Debugging (Ctrl+F5) would stop at breakpoints and panics, so none are sent.</summary>
+    [Fact]
+    public async Task Start_without_debugging_sends_gdb_no_breakpoints_and_no_panic_filter()
+    {
+        await using var h = Harness();
+        h.Breakpoints.Add(new Uri(h.Dir.Combine("main.rs")), 3);
+        h.Breakpoints.AddFunction("sample::util::add");
+        await h.StartAsync(Config(h) with { NoDebug = true });
+        await h.AdapterFor(0).WaitForRequestAsync("configurationDone");
+        Assert.True(h.AdapterFor(0).RequestsOf("launch")[0].Arguments.GetProperty("noDebug").GetBoolean());
+        Assert.Equal(0, h.AdapterFor(0).CountOf("setBreakpoints") + h.AdapterFor(0).CountOf("setFunctionBreakpoints") + h.AdapterFor(0).CountOf("setExceptionBreakpoints"));
+        h.Breakpoints.Add(new Uri(h.Dir.Combine("main.rs")), 9); // a breakpoint added while it runs is not sent either
+        await Task.Delay(300, Ct);
+        Assert.Equal(0, h.AdapterFor(0).CountOf("setBreakpoints"));
+    }
+
+    [Fact]
+    public async Task A_debugged_launch_still_sends_its_breakpoints()
+    {
+        await using var h = Harness();
+        h.Breakpoints.Add(new Uri(h.Dir.Combine("main.rs")), 3);
+        await h.StartAsync(Config(h));
+        await h.AdapterFor(0).WaitForRequestAsync("setBreakpoints");
+    }
+
     // ------------------------------------------------------------------ Rust panics
 
     [Fact]

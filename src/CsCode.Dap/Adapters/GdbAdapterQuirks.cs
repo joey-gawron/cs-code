@@ -56,6 +56,9 @@ public sealed partial class GdbAdapterQuirks : DebugAdapterQuirks
 
     public override TimeSpan TrailingOutputQuietPeriod => TimeSpan.FromMilliseconds(150);
 
+    /// <summary>GDB's <c>launch</c> takes no <c>noDebug</c>: Ctrl+F5 would stop at breakpoints and panics.</summary>
+    public override bool IgnoresNoDebug => true;
+
     // ------------------------------------------------------------------ Debug Console
 
     public override ReplRequest MapReplInput(string input)

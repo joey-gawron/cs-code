@@ -308,7 +308,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
 
         _sync = new BreakpointSync(this, _o.Breakpoints, _lane, _logger, _settings.BreakpointDebounce);
         MergeExceptionFilters();
-        await _sync.SendAllAsync(ct);
+        // Start Without Debugging on an adapter that debugs anyway (GDB): no breakpoints, no exception filters — nothing may stop the program.
+        if (!(_o.Configuration.NoDebug && _quirks.IgnoresNoDebug)) await _sync.SendAllAsync(ct);
 
         if (_dapCaps.SupportsConfigurationDoneRequest == true)
             await RequestAsync("configurationDone", null, ct, _settings.LaunchTimeout);
