@@ -110,7 +110,7 @@ public sealed partial class VimEngine
         string pat, rep;
         SubFlags flags;
         var idx = 0;
-        if (args.Length > 0 && !char.IsLetterOrDigit(args[0]) && args[0] is not ('"' or '|' or '\\' or ' ' or '&' or '#' or '-' or '+' or '.' or ','))
+        if (args.Length > 0 && !char.IsLetterOrDigit(args[0]) && args[0] is not ('"' or '|' or '\\' or ' ' or '\t'))
         {
             var delim = args[0];
             var (p, restA) = SplitUnescaped(args[1..], delim);
@@ -124,8 +124,8 @@ public sealed partial class VimEngine
                 restB = rb ?? "";
             }
             if (pat.Length == 0) pat = mem.Pattern;
-            else if (delim != '/' || true) pat = UnescapeDelimiter(pat, delim);
-            if (pat.Length == 0) { ExError("E35: No previous regular expression"); return false; }
+            else pat = UnescapeDelimiter(pat, delim);
+            if (pat.Length == 0) { ExError("E476: Invalid command"); return false; }
             // `~` and `&` inside the replacement refer to the previous replacement / the match
             rep = ExpandTildeInReplacement(rep, mem.SubReplacement);
             mem.SubReplacement = rep;
@@ -142,7 +142,7 @@ public sealed partial class VimEngine
         else
         {
             // :s [flags] [count] repeats the last substitute with the same pattern and replacement
-            if (mem.SubPattern.Length == 0 && mem.Pattern.Length == 0) { ExError("E35: No previous regular expression"); return false; }
+            if (mem.SubPattern.Length == 0) { ExError("E33: No previous substitute regular expression"); return false; }
             var fl = args.TrimStart();
             var fi = 0;
             flags = ParseSubFlags(fl, _lastSubFlags, ref fi, allowAmp: true);
@@ -164,7 +164,7 @@ public sealed partial class VimEngine
     private bool ExSubstituteRepeat(ExCmd c)
     {
         var mem = _s.Search;
-        if (mem.SubPattern.Length == 0 && mem.Pattern.Length == 0) { ExError("E35: No previous regular expression"); return false; }
+        if (mem.SubPattern.Length == 0) { ExError("E33: No previous substitute regular expression"); return false; }
         var fl = c.Args.TrimStart();
         var fi = 0;
         var keep = c.Name == "&&";
@@ -286,7 +286,8 @@ public sealed partial class VimEngine
         catch (VimRegexException ex) { ExError(ex.Message); return false; }
         if (pat is null) { ExError(VimRegexMessage(pattern)); return false; }
         var global = flags.Global ^ O.GDefault;
-        var work = SubstituteWork(pat, rep, flags, global, l1, l2);
+        var ask = flags.Confirm && !flags.CountOnly && !_globalBusy && _nest == 0;
+        var work = ask ? SubstituteAskWork(pat, rep, flags, global, l1, l2) : SubstituteWork(pat, rep, flags, global, l1, l2);
         if (_nest > 0 || _globalBusy) { DrainEnumerator(work); return _subResultOk; }
         StartWork(work);
         // run the first slice right away so small substitutions finish inside the key that started them
@@ -306,141 +307,154 @@ public sealed partial class VimEngine
         while (e.MoveNext()) { }
     }
 
+    private bool _awaitKey;
+    private int _confirmKey;
+
+    /// <summary>Position of an offset in the search snapshot with one virtual newline after the last line.</summary>
+    private TextPosition PosOfOffsetV(int offset, int textLength) => offset > textLength ? new TextPosition(LineCount, 0) : PosOfOffset(offset);
+
+    /// <summary>Waits (cooperatively) for the next key and answers a ":s///c" prompt: y n a q l Esc, or 0 for keys that are not an answer.</summary>
+    private IEnumerator<int> AskConfirm(string prompt)
+    {
+        Message(prompt, VimMessageKind.Info);
+        while (true)
+        {
+            _confirmKey = 0;
+            _awaitKey = true;
+            yield return 0;
+            var k = _confirmKey;
+            if (k is 'y' or 'n' or 'a' or 'q' or 'l' or Keys.Esc or 3) { _confirmKey = k; yield break; }
+        }
+    }
+
+    /// <summary>Finds the next match of <paramref name="pat"/> that starts in line <paramref name="firstLnum"/> at or after <paramref name="col"/>; multi-line patterns see one virtual newline after the last line.</summary>
+    private (TextPosition S, TextPosition E, Match M)? FindSubMatch(VimPattern pat, int firstLnum, string cur, int col)
+    {
+        if (!pat.Multiline)
+        {
+            var mm = pat.Regex.Match(cur, Math.Min(col, cur.Length));
+            if (!mm.Success) return null;
+            var (s0, e0) = GroupSpan(mm);
+            return (new TextPosition(firstLnum, s0), new TextPosition(firstLnum, Math.Min(e0, cur.Length)), mm);
+        }
+        EnsureSnapshot();
+        var m = pat.Regex.Match(_snapText! + "\n", _snapStarts![firstLnum] + col);
+        if (!m.Success) return null;
+        var (s, e) = GroupSpan(m);
+        var textLength = _snapText!.Length;
+        var sp = PosOfOffsetV(s, textLength);
+        if (sp.Line != firstLnum) return null;     // the match does not start in this line
+        return (sp, PosOfOffsetV(e, textLength), m);
+    }
+
+    private string ExpandSubMatch(VimPattern pat, string rep, Match m, TextPosition sp)
+    {
+        var (s0, e0) = GroupSpan(m);
+        var src = pat.Multiline ? _snapText! + "\n" : L(sp.Line);
+        return ExpandReplacement(rep, m, src, s0, e0, src.Substring(Math.Min(s0, src.Length), Math.Max(0, Math.Min(e0, src.Length) - Math.Min(s0, src.Length))));
+    }
+
     private IEnumerator<int> SubstituteWork(VimPattern pat, string rep, SubFlags flags, bool global, int l1, int l2)
     {
+        // A port of the loop of do_sub: per starting line the new text is built piece by piece; a match that spans line breaks
+        // continues in the line where it ended. Nothing is written to the buffer until all lines are done (one batched edit).
         _subResultOk = false;
         var edits = new List<LineEdit>();
         var subs = 0;
         var linesChanged = 0;
-        var lastChangedLine = -1;
+        var matchedLines = 0;
+        var gotMatch = false;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var origCursor = new TextPosition(_line, _col);
-        var firstLineWithMatch = -1;
-        var matchedLines = 0;
-        var confirmAll = false;
-        if (flags.Confirm) { Message("[:s///c] confirmation is not interactive in this engine: substituting all matches", VimMessageKind.Warning); confirmAll = true; }
-        _ = confirmAll;
-        if (!pat.Multiline)
+        var deltaBefore = 0;       // lines added by the substitutions of earlier line groups
+        var lastGroupLine = -1;    // new line number of the group with the last substitution
+        var lastGroupBreaks = 0;
+        var lnum = l1;
+        var line2 = Math.Min(l2, LastLine);
+
+        while (lnum <= line2)
         {
-            for (var l = l1; l <= l2 && l <= LastLine; l++)
+            var cur = L(lnum);
+            var f = FindSubMatch(pat, lnum, cur, 0);
+            if (f is null) { lnum++; if ((lnum & 63) == 0 && sw.ElapsedMilliseconds >= 2) { sw.Restart(); yield return 0; } continue; }
+            var subFirst = lnum;
+            var matchcol = 0;
+            var prevMatchcol = -1;
+            var copycol = 0;
+            StringBuilder? sbNew = null;
+            var skipMatch = false;
+            var doAllHere = global;
+            var nsubsHere = 0;
+            while (true)
             {
-                var text = L(l);
-                StringBuilder? sb = null;
-                var at = 0;
-                var copy = 0;
-                var count = 0;
-                while (at <= text.Length)
+                var (sp, ep, m) = f!.Value;
+                var doAgain = false;
+                if (!gotMatch && !_globalBusy && !flags.CountOnly) SetPcmark();
+                gotMatch = true;
+                var nmatch = ep.Line - subFirst + 1;
+                if (ep.Line > LastLine)
                 {
-                    var m = pat.Regex.Match(text, at);
-                    if (!m.Success) break;
-                    var (s, e) = GroupSpan(m);
+                    // the match included the line break of the last line: it goes no further than the end of the buffer
+                    ep = new TextPosition(LastLine, L(LastLine).Length);
+                    nmatch = LastLine - subFirst + 1;
+                    skipMatch = true;
+                }
+                // 1. an empty match right after the previous match does not count (except the first one)
+                if (matchcol == prevMatchcol && ep.Line == subFirst && matchcol == ep.Character)
+                {
+                    if (matchcol >= cur.Length) skipMatch = true;
+                    else matchcol += VimText.CharLen(cur, matchcol);
+                }
+                else
+                {
+                    matchcol = ep.Character;
+                    prevMatchcol = matchcol;
+                    // 3. substitute
                     string expansion;
-                    try { expansion = ExpandReplacement(rep, m, text, s, e, text.Substring(m.Index, m.Length)); }
+                    try { expansion = ExpandSubMatch(pat, rep, m, sp); }
                     catch (VimRegexException ex) { ExError(ex.Message); yield break; }
                     if (!flags.CountOnly)
                     {
-                        sb ??= new StringBuilder(text.Length + 16);
-                        sb.Append(text, copy, Math.Max(0, s - copy));
-                        sb.Append(expansion);
+                        sbNew ??= new StringBuilder(cur.Length + 16);
+                        sbNew.Append(cur, copycol, Math.Max(0, sp.Character - copycol));
+                        sbNew.Append(expansion);
                     }
-                    copy = e;
-                    count++;
-                    if (!global) break;
-                    if (e >= text.Length && m.Length == 0) break;
-                    if (e == m.Index && m.Length == 0 || e == s && e == at)
+                    copycol = ep.Character;
+                    subs++;
+                    nsubsHere++;
+                    if (nmatch > 1)
                     {
-                        // empty match: keep one character and move on
-                        if (e >= text.Length) break;
-                        var cl = VimText.CharLen(text, e);
-                        if (!flags.CountOnly && sb is not null) sb.Append(text, e, cl);
-                        copy = e + cl;
-                        at = copy;
-                    }
-                    else at = Math.Max(e, m.Index + (m.Length == 0 ? 1 : 0));
-                    if (at > text.Length) break;
-                }
-                if (count > 0)
-                {
-                    subs += count;
-                    matchedLines++;
-                    if (firstLineWithMatch < 0) firstLineWithMatch = l;
-                    if (!flags.CountOnly)
-                    {
-                        sb!.Append(text, Math.Min(copy, text.Length), text.Length - Math.Min(copy, text.Length));
-                        var result = sb.ToString();
-                        var parts = result.Split(LineBreakMark);
-                        edits.Add(new LineEdit(l, 1, parts));
-                        linesChanged++;
-                        lastChangedLine = l;
+                        subFirst += nmatch - 1;
+                        cur = L(subFirst);
+                        doAgain = subFirst <= line2;
+                        if (!doAgain) doAllHere = false;
                     }
                 }
-                if ((l & 63) == 0 && sw.ElapsedMilliseconds >= 2) { sw.Restart(); yield return 0; }
+                // 4. next match in this line
+                var lastone = skipMatch || !(doAllHere || doAgain) || (matchcol >= cur.Length && nmatch <= 1 && !pat.Multiline);
+                if (lastone) break;
+                f = FindSubMatch(pat, subFirst, cur, matchcol);
+                if (f is null) break;
             }
-        }
-        else
-        {
-            EnsureSnapshot();
-            var snap = _snapText!;
-            var regionStartOff = _snapStarts![l1];
-            var lastLine = Math.Min(l2, LastLine);
-            var regionEndOff = _snapStarts[lastLine] + L(lastLine).Length;
-            var sbAll = new StringBuilder();
-            var copy = regionStartOff;
-            var at = regionStartOff;
-            var limit = regionEndOff;
-            var endOfRegion = regionEndOff;
-            while (at <= limit)
+            if (nsubsHere > 0 && !flags.CountOnly)
             {
-                var m = pat.Regex.Match(snap, at);
-                if (!m.Success) break;
-                var (s, e) = GroupSpan(m);
-                if (s > limit) break;
-                var pos = PosOfOffset(s);
-                if (pos.Line > l2) break;
-                string expansion;
-                try { expansion = ExpandReplacement(rep, m, snap, s, e, snap.Substring(m.Index, m.Length)); }
-                catch (VimRegexException ex) { ExError(ex.Message); yield break; }
-                if (!flags.CountOnly)
-                {
-                    sbAll.Append(snap, copy, Math.Max(0, s - copy));
-                    sbAll.Append(expansion.Replace('\n', LineBreakMark) is var x && false ? x : expansion);
-                }
-                copy = Math.Max(copy, e);
-                subs++;
-                var endPos = PosOfOffset(Math.Min(e, snap.Length));
-                endOfRegion = Math.Max(endOfRegion, _snapStarts![endPos.Line] + L(endPos.Line).Length);
-                if (matchedLines == 0 || pos.Line != firstLineWithMatch) { matchedLines++; if (firstLineWithMatch < 0) firstLineWithMatch = pos.Line; }
-                lastChangedLine = Math.Max(lastChangedLine, endPos.Line);
-                if (!global)
-                {
-                    // only the first match per line: continue at the next line boundary after this match
-                    var nextLineStart = endPos.Line + 1 < LineCount ? _snapStarts[endPos.Line + 1] : int.MaxValue;
-                    if (e >= snap.Length || nextLineStart == int.MaxValue) { at = int.MaxValue; break; }
-                    // text between the match end and the next line start is copied unchanged
-                    at = Math.Max(nextLineStart, e);
-                    if (!flags.CountOnly) { sbAll.Append(snap, copy, Math.Max(0, at - copy)); copy = at; }
-                    if (at > limit) break;
-                    continue;
-                }
-                if (e == s) { if (e >= snap.Length) break; at = e + 1; if (!flags.CountOnly) { sbAll.Append(snap, copy, at - copy); copy = at; } }
-                else at = e;
-                if (sw.ElapsedMilliseconds >= 2) { sw.Restart(); yield return 0; }
+                var tail = copycol < cur.Length ? cur.Substring(copycol) : "";
+                var result = (sbNew?.ToString() ?? "") + tail;
+                var parts = result.Split(LineBreakMark);
+                edits.Add(new LineEdit(lnum, subFirst - lnum + 1, parts));
+                linesChanged++;
+                lastGroupLine = lnum + deltaBefore;
+                lastGroupBreaks = parts.Length - 1;
+                deltaBefore += parts.Length - (subFirst - lnum + 1);
             }
-            if (subs > 0 && !flags.CountOnly)
-            {
-                sbAll.Append(snap, Math.Min(copy, endOfRegion), Math.Max(0, endOfRegion - Math.Min(copy, endOfRegion)));
-                var first = PosOfOffset(regionStartOff).Line;
-                var lastOld = PosOfOffset(endOfRegion).Line;
-                var parts = sbAll.ToString().Split(LineBreakMark).SelectMany(p => p.Split('\n')).ToArray();
-                edits.Add(new LineEdit(first, lastOld - first + 1, parts));
-                linesChanged = edits.Sum(e => e.OldCount);
-                lastChangedLine = first + parts.Length - 1;
-            }
+            if (nsubsHere > 0) matchedLines++;
+            lnum = subFirst + 1;
+            if ((lnum & 63) == 0 && sw.ElapsedMilliseconds >= 2) { sw.Restart(); yield return 0; }
         }
 
         if (subs == 0)
         {
-            if (!flags.NoError)
+            if (!gotMatch && !flags.NoError)
             {
                 if (_globalBusy) { _globalNoMatch = true; }
                 else ExError($"E486: Pattern not found: {_s.Search.Pattern}");
@@ -455,15 +469,119 @@ public sealed partial class VimEngine
             yield break;
         }
         if (_globalBusy) _globalSubs += subs;
+        // like do_sub, the undo entry records the cursor at the start of the first substituted line
+        _line = Math.Clamp(edits[0].Line, 0, LastLine);
+        _col = 0;
         ApplyLineBatch(edits);
         var delta = edits.Sum(e => e.NewLines.Length - e.OldCount);
-        var lastSubLine = Math.Clamp(edits[^1].Line + edits[^1].NewLines.Length - 1, 0, LastLine);
         _bs.OpStart = new TextPosition(l1, 0);
         _bs.OpEnd = new TextPosition(Math.Clamp(l2 + delta, 0, LastLine), 0);
-        _line = lastSubLine;
+        _line = Math.Clamp(lastGroupLine + lastGroupBreaks, 0, LastLine);
         Beginline(BL.White | BL.Fix);
         if (subs > O.Report && !_globalBusy) Message($"{subs} substitution{(subs == 1 ? "" : "s")} on {linesChanged} line{(linesChanged == 1 ? "" : "s")}");
-        _ = lastChangedLine;
+        yield return 0;
+    }
+
+    /// <summary>":s///c": the same loop, but on the live buffer so every answered prompt shows its result; the next key answers each prompt.</summary>
+    private IEnumerator<int> SubstituteAskWork(VimPattern pat, string rep, SubFlags flags, bool global, int l1, int l2)
+    {
+        _subResultOk = false;
+        var subs = 0;
+        var gotMatch = false;
+        var doAll = false;
+        var quit = false;
+        var line2 = Math.Min(l2, LastLine);
+        var lnum = l1;
+        var lastLine = -1;
+        var cleared = false;     // 'a' or 'l' answered: the command ends like one without confirmation
+        var savedLastChange = _bs.LastChange;
+        while (lnum <= line2 && !quit)
+        {
+            var matchcol = 0;
+            var prevMatchcol = -1;
+            var skipMatch = false;
+            while (!quit)
+            {
+                var cur = L(lnum);
+                var f = FindSubMatch(pat, lnum, cur, matchcol);
+                if (f is null) break;
+                var (sp, ep, m) = f.Value;
+                if (!gotMatch) SetPcmark();
+                gotMatch = true;
+                var nmatch = ep.Line - lnum + 1;
+                if (ep.Line > LastLine)
+                {
+                    ep = new TextPosition(LastLine, L(LastLine).Length);
+                    nmatch = LastLine - lnum + 1;
+                    skipMatch = true;
+                }
+                if (matchcol == prevMatchcol && ep.Line == lnum && matchcol == ep.Character)
+                {
+                    if (matchcol >= cur.Length) skipMatch = true; else matchcol += VimText.CharLen(cur, matchcol);
+                    if (skipMatch || !global) break;
+                    continue;
+                }
+                string expansion;
+                try { expansion = ExpandSubMatch(pat, rep, m, sp); }
+                catch (VimRegexException ex) { ExError(ex.Message); yield break; }
+                var doThis = true;
+                if (!doAll)
+                {
+                    _line = sp.Line; _col = Math.Min(sp.Character, L(sp.Line).Length);
+                    _setCurswant = true;
+                    var ev = AskConfirm($"replace with {expansion.Replace(LineBreakMark, '\r')} (y/n/a/q/l/^E/^Y)?");
+                    while (ev.MoveNext()) yield return 0;
+                    switch (_confirmKey)
+                    {
+                        case 'y': break;
+                        case 'l': quit = true; cleared = true; break;
+                        case 'a': doAll = true; cleared = true; break;
+                        case 'n': doThis = false; break;
+                        default: quit = true; doThis = false; break;
+                    }
+                }
+                if (doThis)
+                {
+                    var newText = expansion.Replace(LineBreakMark, '\n');
+                    var breaks = 0;
+                    foreach (var ch in newText) if (ch == '\n') breaks++;
+                    ReplaceRange(sp, ep, newText);
+                    _bs.LastChange = savedLastChange;   // '. is only set when the command is done
+                    subs++;
+                    lastLine = lnum;
+                    line2 += breaks - (nmatch - 1);
+                    var lastSeg = newText.Contains('\n') ? newText.Substring(newText.LastIndexOf('\n') + 1) : newText;
+                    lnum += breaks;
+                    matchcol = (breaks > 0 ? 0 : sp.Character) + lastSeg.Length;
+                    prevMatchcol = matchcol;
+                    if (!global && nmatch <= 1) break;
+                }
+                else
+                {
+                    if (nmatch > 1) { matchcol = L(lnum).Length; skipMatch = true; }
+                    else { matchcol = ep.Character; prevMatchcol = matchcol; }
+                    if (!global || skipMatch) break;
+                }
+                if (matchcol >= L(lnum).Length && nmatch <= 1 && !pat.Multiline) break;
+            }
+            lnum++;
+        }
+        if (subs == 0)
+        {
+            if (!gotMatch && !flags.NoError) ExError($"E486: Pattern not found: {_s.Search.Pattern}");
+            yield break;
+        }
+        _subResultOk = true;
+        _bs.OpStart = new TextPosition(l1, 0);
+        _bs.OpEnd = new TextPosition(Math.Clamp(line2, 0, LastLine), 0);
+        _bs.LastChange = new TextPosition(Math.Clamp(lastLine, 0, LastLine), 0);
+        if (cleared || doAll)
+        {
+            _line = Math.Clamp(lastLine, 0, LastLine);
+            Beginline(BL.White | BL.Fix);
+        }
+        else CheckCursor();
+        if (subs > O.Report) Message($"{subs} substitution{(subs == 1 ? "" : "s")}");
         yield return 0;
     }
 
@@ -478,13 +596,13 @@ public sealed partial class VimEngine
     private bool ExGlobal(ExCmd c, bool invert)
     {
         var a = c.Args;
-        if (a.Length == 0) { ExError("E35: No previous regular expression"); return false; }
+        if (a.Length == 0) { ExError("E148: Regular expression missing from global"); return false; }
         var delim = a[0];
         if (char.IsLetterOrDigit(delim) || delim is '"' or '|' or '\\') { ExError("E146: Regular expressions can't be delimited by letters"); return false; }
         var (pat, cmdText) = SplitUnescaped(a[1..], delim);
         if (pat.Length == 0) pat = _s.Search.Pattern;
         else pat = UnescapeDelimiter(pat, delim);
-        if (pat.Length == 0) { ExError("E35: No previous regular expression"); return false; }
+        if (pat.Length == 0) { ExError("E476: Invalid command"); return false; }
         var cmd = (cmdText ?? "").Trim();
         if (cmd.Length == 0) cmd = "p";
         _s.Search.Pattern = pat;
@@ -492,6 +610,14 @@ public sealed partial class VimEngine
         _s.Search.HighlightActive = true;
         var p = CompilePattern(pat);
         if (p is null) return false;
+        if (_globalBusy)
+        {
+            // a :global inside a :global only looks at the current line
+            var here = new List<Hit>();
+            MatchesInLine(p, _line, here);
+            if ((here.Count > 0) != invert) ExecuteExLine(cmd);
+            return true;
+        }
         var l1 = c.HasRange ? c.Line1 : 0;
         var l2 = c.HasRange ? c.Line2 : LastLine;
         var work = GlobalWork(p, pat, cmd, invert, l1, l2);
@@ -557,6 +683,7 @@ public sealed partial class VimEngine
     private void GlobalDeleteBatch(List<int> marked)
     {
         if (!CanModify()) return;
+        var lastMarked = marked[^1];   // the list is adjusted while lines are deleted
         // register effects of deleting each line in turn: unnamed/"1.."9 end up with the last lines deleted
         var oap = _oap;
         var runs = new List<(int Start, int Count)>();
@@ -575,16 +702,31 @@ public sealed partial class VimEngine
             oap.LineCount = 1;
             YankForDelete(oap);
         }
-        // delete bottom-to-top as ONE undo step; every run is a separate undo entry
+        // delete bottom-to-top as ONE undo step (every run is a separate undo entry) and ONE host edit
         var total = marked.Count;
-        var all = total >= LineCount;
+        _bs.GlobalLines = null;   // nothing else runs: no need to keep the list of marked lines in step
+        var lineCount = LineCount;
+        var all = total >= lineCount;
+        for (var i = runs.Count - 1; i >= 0; i--) SaveUndo(runs[i].Start, runs[i].Count, all && i == 0 ? 1 : 0, saveULine: false);
+        var edits = new VimEdit[runs.Count];
+        for (var i = 0; i < runs.Count; i++)
+        {
+            var (start, count) = runs[i];
+            if (all) edits[i] = new VimEdit(new TextPosition(0, 0), new TextPosition(lineCount - 1, L(lineCount - 1).Length), "");
+            else if (start + count < lineCount) edits[i] = new VimEdit(new TextPosition(start, 0), new TextPosition(start + count, 0), "");
+            else edits[i] = new VimEdit(new TextPosition(start - 1, L(start - 1).Length), new TextPosition(lineCount - 1, L(lineCount - 1).Length), "");
+        }
+        _buf.ApplyEdits(edits);
+        _bs.KnownVersion = _buf.Version;
         for (var i = runs.Count - 1; i >= 0; i--)
         {
             var (start, count) = runs[i];
-            if (all && i == 0) { DeleteLines(start, count); }
-            else DeleteLines(start, count);
+            if (all) _bs.MarkAdjust(0, int.MaxValue / 2, 0, 0, delete: true);
+            else _bs.MarkAdjust(start, start + count - 1, 0, -count, delete: true);
         }
-        _line = Math.Min(runs[0].Start, LastLine);
+        _line = Math.Clamp(lastMarked - (total - 1), 0, LastLine);
+        _bs.OpStart = _bs.OpEnd = new TextPosition(_line, 0);
+        _bs.LastChange = new TextPosition(_line, 0);
         Beginline(BL.White | BL.Fix);
         if (total > O.Report) Message($"{total} fewer lines");
     }
@@ -660,7 +802,7 @@ public sealed partial class VimEngine
 
     private bool ExLet(string args)
     {
-        var m = Regex.Match(args, @"^\s*(?<lhs>@.|&[A-Za-z]+|\$[A-Za-z_]+|[A-Za-z_:][A-Za-z0-9_:.]*)\s*(?<op>\.=|\+=|-=|=)\s*(?<rhs>.*)$", RegexOptions.Singleline);
+        var m = Regex.Match(args, @"^\s*(?<lhs>@.|&([lg]:)?[A-Za-z]+|\$[A-Za-z_]+|[A-Za-z_:][A-Za-z0-9_:.]*)\s*(?<op>\.=|\+=|-=|=)\s*(?<rhs>.*)$", RegexOptions.Singleline);
         if (!m.Success)
         {
             if (args.Trim().Length == 0) return true;
@@ -682,7 +824,7 @@ public sealed partial class VimEngine
                 var cur = _s.Registers.ForRead(r == '"' ? 0 : r);
                 val = (cur is null ? "" : string.Join('\n', cur.Lines)) + val;
             }
-            var target = _s.Registers.ForWrite(char.ToLowerInvariant(r) == r ? r : r, out var append);
+            var target = _s.Registers.ForWrite(r, out var append, updatePrevious: false);
             if (target is null) return true;
             // a value ending in a newline becomes a linewise register
             var type = val.EndsWith('\n') ? VimRegisterType.Line : VimRegisterType.Character;
@@ -693,8 +835,9 @@ public sealed partial class VimEngine
         }
         if (lhs[0] == '&')
         {
-            var def = VimOptions.Find(lhs[1..]);
-            if (def is null) { ExError($"E518: Unknown option: {lhs[1..]}"); return false; }
+            var optName = lhs.Length > 3 && lhs[2] == ':' ? lhs[3..] : lhs[1..];
+            var def = VimOptions.Find(optName);
+            if (def is null) { ExError($"E518: Unknown option: {optName}"); return false; }
             return SetOptionFromValue(def, val);
         }
         var name = lhs.StartsWith("g:", StringComparison.Ordinal) ? lhs[2..] : lhs;
@@ -915,30 +1058,32 @@ public sealed partial class VimEngine
         return true;
     }
 
-    /// <summary>Runs a vimrc-style script: errors are reported (message line) but never abort loading.</summary>
-    public void LoadScript(string text, string origin)
+    /// <summary>Runs a vimrc-style script. Errors are reported on the message line and returned ("line 3: E492: ..."), but never abort loading.</summary>
+    public IReadOnlyList<string> LoadScript(string text, string origin)
     {
+        var errors = new List<string>();
         var old = _loadingOrigin;
         _loadingOrigin = origin;
         try
         {
             var lines = text.Replace("\r\n", "\n").Split('\n');
-            var sb = new StringBuilder();
             for (var i = 0; i < lines.Length; i++)
             {
+                var lineNumber = i + 1;
                 var line = lines[i];
                 // a following line starting with a backslash continues this one
                 while (i + 1 < lines.Length && lines[i + 1].TrimStart().StartsWith('\\')) { line += lines[i + 1].TrimStart()[1..]; i++; }
                 var t = line.Trim();
                 if (t.Length == 0 || t[0] == '"') continue;
                 var before = _exErrors;
+                LastError = null;
                 ExecuteExLine(t);
                 _macroAborted = false;
-                if (_exErrors != before) { }
+                if (_exErrors != before) errors.Add($"line {lineNumber}: {LastError ?? "error"}");
             }
-            _ = sb;
         }
         finally { _loadingOrigin = old; }
+        return errors;
     }
 
     // ------------------------------------------------------------------------------------------------------------

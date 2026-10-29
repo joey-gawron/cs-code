@@ -53,6 +53,8 @@ public interface IVimHost
     int GetDisplayRows(int line) => 1;
     /// <summary>Width in cells of one display row (0 = no wrapping); used by gj/gk/g0/g$/gm.</summary>
     int WrapWidth => 0;
+    /// <summary>Width of the editor window in cells (for gm).</summary>
+    int WindowWidth => WrapWidth > 0 ? WrapWidth : 80;
 
     // ---------------------------------------------------------------- folds
 

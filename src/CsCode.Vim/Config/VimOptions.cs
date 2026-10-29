@@ -22,7 +22,7 @@ public sealed class VimOptions
     public bool ExpandTab, AutoIndent, SmartIndent, SmartTab, ShiftRound, JoinSpaces, StartOfLine = true, TildeOp, Hidden = true;
     public int TabStop = 8, ShiftWidth = 8, SoftTabStop, TextWidth, UndoLevels = 1000, Report = 2;
     public string IsKeyword = KeywordSet.Default, MatchPairs = "(:),{:},[:]", NrFormats = "bin,hex", Backspace = "indent,eol,start",
-        WhichWrap = "b,s", Selection = "inclusive", VirtualEdit = "", FormatOptions = "tcq", Clipboard = "", CpOptions = "aABceFs", Comments = "", Whichwrap2 = "";
+        WhichWrap = "b,s", Selection = "inclusive", VirtualEdit = "", FormatOptions = "tcq", Clipboard = "", CpOptions = "aABceFs", Comments = "";
     // ---- timing
     public bool Timeout = true, TTimeout = true;
     public int TimeoutLen = 1000, TTimeoutLen = 100;

@@ -52,10 +52,46 @@ public sealed partial class VimEngine
         if (c.SurroundTag is not null) { foreach (var ch in c.SurroundTag) keys.Add(ch); keys.Add('>'); }
     }
 
+    private void SetRedoSurround(Cmd c)
+    {
+        var r = new RedoRecord { Reg = 0, Count = c.Count0 };
+        r.Keys.Add(c.Op == OpType.SurroundDelete ? 'd' : 'c');
+        r.Keys.Add('s');
+        r.Keys.Add(c.NChar);
+        if (c.Op == OpType.SurroundChange) r.Keys.Add(c.NChar2);
+        AddSurroundTagKeys(r.Keys, c);
+        _redo = r;
+        _redoBuilding = null;
+    }
+
+    private static void AddSurroundTagKeys(List<int> keys, Cmd c)
+    {
+        if (c.SurroundTag is null) return;
+        foreach (var ch in c.SurroundTag) keys.Add(ch);
+        keys.Add('>');
+    }
+
     private void RecordRedoForCommand(Cmd c, OpArgs oap, int count0)
     {
         if (oap.Op is OpType.Yank or OpType.Fold) return;
         var r = new RedoRecord { Reg = c.Reg, Count = count0 };
+        if (c.Op == OpType.SurroundAdd)
+        {
+            r.Keys.Add('y'); r.Keys.Add('s');
+            if (c.Doubled) r.Keys.Add('s');
+            else
+            {
+                var sm = c.M;
+                r.Keys.Add(sm.Key);
+                if (sm.Key2 != 0) r.Keys.Add(sm.Key2);
+                if (sm.NChar != 0) r.Keys.Add(sm.NChar);
+            }
+            r.Keys.Add(c.NChar);
+            AddSurroundTagKeys(r.Keys, c);
+            _redo = r;
+            _redoBuilding = null;
+            return;
+        }
         // operator keys, then motion keys
         r.Keys.Add(c.Key);
         if (c.Key2 != 0) r.Keys.Add(c.Key2);
@@ -116,9 +152,16 @@ public sealed partial class VimEngine
     {
         if (_opCmdForSearch is not null) { }
         if (c.Visual && c.Op != OpType.None) { ApplyVisualOperator(c); return; }
+        if (c.Op is OpType.SurroundDelete or OpType.SurroundChange)
+        {
+            SetRedoSurround(c);
+            if (c.Op == OpType.SurroundDelete) SurroundDeleteCommand(c); else SurroundChangeCommand(c);
+            CheckPcmark();
+            FinishCommand();
+            return;
+        }
         if (c.Op != OpType.None)
         {
-            if (c.Op == OpType.None) return;
             ExecOperatorMotion(c);
             CheckPcmark();
             FinishCommand();
@@ -190,7 +233,7 @@ public sealed partial class VimEngine
                 SetRedoPlain(c);
                 StartInsert('R', count1, restart: false);
                 return;
-            case 'i' or 'a' or 'I' or 'A' or 'o' or 'O':
+            case 'i' or 'a' or 'I' or 'A' or 'o' or 'O' when !(VisualActive && k is 'i' or 'a'):
                 if (!CanModify()) return;
                 SetRedoPlain(c);
                 InsertCommand(c);
@@ -215,7 +258,8 @@ public sealed partial class VimEngine
                 RepeatLast(count0);
                 return;
             case '&':
-                if (_s.Search.SubPattern.Length == 0 && _s.Search.LastExCommand.Length == 0) { Error("E35: No previous regular expression"); return; }
+                if (_s.Search.SubPattern.Length == 0 && _s.Search.LastExCommand.Length == 0) { Error("E33: No previous substitute regular expression"); return; }
+                _s.Registers.LastCommandLine = "s";
                 ExecuteExLine("s");
                 return;
             case 'v' or 'V' or 22:
@@ -229,6 +273,10 @@ public sealed partial class VimEngine
                 return;
             case '@':
                 ExecuteRegisterMacro(c.NChar, count1);
+                return;
+            case 'Q':
+                if (_lastRecorded == '\0') { Error("E354: Invalid register name: '^@'"); return; }
+                ExecuteRegisterMacro(_lastRecorded, count1);
                 return;
             case 'q':
                 RecordCommand(c.NChar);
@@ -294,7 +342,7 @@ public sealed partial class VimEngine
             if (c.Key is 'a' or 'i') ok = RunTextObject(c, count0, oap);
             else ok = RunMotion(c, count0, oap);
             if (_searchPendingOp || _cmdline is not null) return;
-            if (!ok) { _line = before.Line; _col = before.Character; Beep(); return; }
+            if (!ok) { Beep(); CheckCursor(); return; }
             CheckPcmark();
             if (!VisualActive) CheckCursor();
             return;
@@ -330,10 +378,14 @@ public sealed partial class VimEngine
         while (n < count && i < s.Length) { i += VimText.CharLen(s, i); n++; }
         var swapped = SwapChars(OpType.Tilde, s, start, i);
         if (swapped != s) SetLine(_line, swapped, start);
-        _bs.OpStart = new TextPosition(_line, start);
-        _bs.OpEnd = new TextPosition(_line, Math.Max(start, i - 1));
         _col = i >= s.Length ? VimText.PrevCharStart(s, s.Length) : i;
         _setCurswant = true;
+        if (swapped != s)
+        {
+            NoteChange(_line, start);
+            _bs.OpStart = new TextPosition(_line, start);
+            _bs.OpEnd = new TextPosition(_line, _col > 0 ? VimText.PrevCharStart(CurLine, _col) : 0);
+        }
     }
 
     private void ReplaceCharCommand(Cmd c)
@@ -342,36 +394,35 @@ public sealed partial class VimEngine
         var s = CurLine;
         var count = c.Count1;
         var ch = c.NChar2 != 0 ? c.NChar2 : c.NChar;
-        if (ch == Keys.CR && false) { }
         // count characters must exist
         var i = _col;
         var n = 0;
         while (n < count && i < s.Length) { i += VimText.CharLen(s, i); n++; }
         if (n < count) { Beep(); return; }
         SetRedoPlain(c);
-        _bs.Undo.Synced = _bs.Undo.Synced;
-        if (ch is Keys.CR or Keys.NL)
+        if (c.NChar2 == 0 && ch is Keys.CR or Keys.NL)
         {
-            // replace count chars with ONE line break (and no replacement char)
-            ReplaceRange(new TextPosition(_line, _col), new TextPosition(_line, i), "\n");
-            var newLine = _line + 1;
-            if (O.AutoIndent) { }
-            _line = newLine;
-            _col = 0;
-            CheckCursor();
-            _bs.OpStart = new TextPosition(_line - 1, 0);
-            _bs.OpEnd = new TextPosition(_line, 0);
-            _setCurswant = true;
+            // Strange Vi behaviour kept by Vim: the characters are deleted and ONE line break is inserted, as if by R<CR><Esc>.
+            DeleteInLine(_line, _col, i - _col);
+            _redoBuilding = null;
+            StartInsert('r', 1, restart: false);
+            _insert!.Typed.Add(Keys.CR);
+            InsertNewlineRaw();
+            InsertEscape(false);
+            _s.Registers.LastInserted = "\n";
             return;
         }
-        var rep = ch == 0 ? "" : char.ConvertFromUtf32(ch);
+        var rep = ch == 0 ? "" : Keys.SafeString(ch);
         var text = count == 1 ? rep : VimText.Repeat(rep, count);
         var start = _col;
         ReplaceInLine(_line, start, i - start, text);
         // cursor on the last replaced char
-        _col = start + text.Length - (text.Length > 0 ? VimText.CharLen(text, VimText.PrevCharStart(text, text.Length)) : 0);
+        var lastLen = text.Length > 0 ? VimText.CharLen(text, VimText.PrevCharStart(text, text.Length)) : 0;
+        _col = start + text.Length - lastLen;
+        NoteChange(_line, _col);
         _bs.OpStart = new TextPosition(_line, start);
         _bs.OpEnd = new TextPosition(_line, _col);
+        _s.Registers.LastInserted = Keys.Encode(ch);
         _setCurswant = true;
     }
 
@@ -419,6 +470,8 @@ public sealed partial class VimEngine
         _didAutoIndent = indent.Length > 0;
         _aiCol = indent.Length;
         StartInsert(below ? 'o' : 'O', count, restart: false);
+        _insert!.Start = new TextPosition(_line, 0);
+        _insert.StartOrig = new TextPosition(_line, _col);
     }
 
     private void JoinCommand(Cmd c, bool insertSpace)
@@ -539,7 +592,7 @@ public sealed partial class VimEngine
     {
         var cp = CharAtCursor();
         if (cp == 0) return "NUL";
-        return $"<{char.ConvertFromUtf32(cp)}> {cp}, Hex {cp:x2}, Oct {Convert.ToString(cp, 8)}";
+        return $"<{Keys.SafeString(cp)}> {cp}, Hex {cp:x2}, Oct {Convert.ToString(cp, 8)}";
     }
 
     private bool ExecBracketCommand(Cmd c)
@@ -574,7 +627,6 @@ public sealed partial class VimEngine
         }
         _bs.ChangeListIdx = idx;
         var p = list[idx];
-        SetPcmark();
         _line = Math.Min(p.Line, LastLine);
         _col = p.Character;
         CheckCursor();
@@ -585,9 +637,9 @@ public sealed partial class VimEngine
     {
         var cur = _bs.Undo.Current.Seq;
         var target = cur + delta;
-        if (target < 0) { Message("Already at oldest change"); Beep(); return; }
-        if (target > _bs.Undo.LastSeq) { Message("Already at newest change"); Beep(); return; }
-        UndoToSeq(target);
+        if (cur == 0 && delta < 0) { Message("Already at oldest change"); Beep(); return; }
+        if (cur == _bs.Undo.LastSeq && delta > 0) { Message("Already at newest change"); Beep(); return; }
+        UndoToSeq(Math.Clamp(target, 0, _bs.Undo.LastSeq));
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -608,7 +660,6 @@ public sealed partial class VimEngine
         CleanupJumplist();
         if (_jumps.Count == 0) { Beep(); return; }
         var idx = _jumpIdx - count;
-        if (idx < 0 || idx >= _jumps.Count && _jumpIdx >= _jumps.Count && false) { Beep(); return; }
         if (idx < 0) { Beep(); return; }
         if (_jumpIdx == _jumps.Count)
         {

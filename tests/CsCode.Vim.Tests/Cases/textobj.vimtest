@@ -1,0 +1,623 @@
+# text objects
+=== textobj-001
+> foo ‸bar baz
+keys: diw
+< foo ‸ baz
+
+=== textobj-002
+> foo b‸ar baz
+keys: daw
+< foo ‸baz
+
+=== textobj-003
+> foo bar‸
+keys: daw
+< fo‸o
+
+=== textobj-004
+> foo ‸bar baz
+keys: d2aw
+< fo‸o
+
+=== textobj-005
+> foo ‸bar baz qux
+keys: d2iw
+< foo ‸baz qux
+
+=== textobj-006
+> foo ‸bar.baz
+keys: diw
+< foo ‸.baz
+
+=== textobj-007
+> foo ‸bar.baz
+keys: diW
+< foo‸ ⏎
+
+=== textobj-008
+> foo ‸bar.baz
+keys: daW
+< fo‸o
+
+=== textobj-009
+> foo ‸  bar
+keys: diw
+< foo‸bar
+
+=== textobj-010
+> foo ‸  bar
+keys: daw
+< fo‸o
+
+=== textobj-011
+> foo bar  ‸ baz
+keys: daw
+< foo ba‸r
+
+=== textobj-012
+> ‸foo bar
+keys: daw
+< ‸bar
+
+=== textobj-013
+> foo ‸bar
+> baz
+keys: daw
+< fo‸o
+< baz
+
+=== textobj-014
+> foo bar‸
+> baz
+keys: daw
+< fo‸o
+< baz
+
+=== textobj-015
+>   ‸foo
+keys: daw
+<  ‸ ⏎
+
+=== textobj-016
+> ‸foo
+keys: diw
+< ‸
+
+=== textobj-017
+> ‸foo bar
+keys: yiwP
+< fo‸ofoo bar
+
+=== textobj-018
+> foo ‸bar baz
+keys: ciwX<Esc>
+< foo ‸X baz
+
+=== textobj-019
+> foo ‸bar baz
+keys: caw X<Esc>
+< foo  ‸Xbaz
+
+=== textobj-020
+> foo (a‸b c) bar
+keys: di(
+< foo (‸) bar
+
+=== textobj-021
+> foo (a‸b c) bar
+keys: da(
+< foo ‸ bar
+
+=== textobj-022
+> foo (a‸b c) bar
+keys: dib
+< foo (‸) bar
+
+=== textobj-023
+> foo (a‸b c) bar
+keys: dab
+< foo ‸ bar
+
+=== textobj-024
+> foo (a‸b c) bar
+keys: di)
+< foo (‸) bar
+
+=== textobj-025
+> foo ‸(ab c) bar
+keys: di(
+< foo (‸) bar
+
+=== textobj-026
+> foo (ab c‸) bar
+keys: di(
+< foo (‸) bar
+
+=== textobj-027
+> foo (a (b‸ c) d)
+keys: di(
+< foo (a (‸) d)
+
+=== textobj-028
+> foo (a (b‸ c) d)
+keys: d2i(
+< foo (‸)
+
+=== textobj-029
+> foo (a (b‸ c) d)
+keys: da(
+< foo (a ‸ d)
+
+=== textobj-030
+> foo (a (b‸ c) d)
+keys: d2a(
+< foo‸ ⏎
+
+=== textobj-031
+> foo ‸bar
+keys: di(
+< foo ‸bar
+
+=== textobj-032
+> foo [a‸b] bar
+keys: di[
+< foo [‸] bar
+
+=== textobj-033
+> foo [a‸b] bar
+keys: da[
+< foo ‸ bar
+
+=== textobj-034
+> foo {a‸b} bar
+keys: di{
+< foo {‸} bar
+
+=== textobj-035
+> foo {a‸b} bar
+keys: da{
+< foo ‸ bar
+
+=== textobj-036
+> foo {a‸b} bar
+keys: diB
+< foo {‸} bar
+
+=== textobj-037
+> foo {a‸b} bar
+keys: daB
+< foo ‸ bar
+
+=== textobj-038
+> foo <a‸b> bar
+keys: di<
+< foo <‸> bar
+
+=== textobj-039
+> foo <a‸b> bar
+keys: da>
+< foo ‸ bar
+
+=== textobj-040
+> f(
+>   a‸,
+>   b
+> )
+keys: di(
+< f(
+< ‸)
+
+=== textobj-041
+> f(
+>   a‸,
+>   b
+> )
+keys: da(
+< ‸f
+
+=== textobj-042
+> if (x) {
+>   a‸;
+>   b;
+> }
+keys: di{
+< if (x) {
+< ‸}
+
+=== textobj-043
+> if (x) {
+>   a‸;
+>   b;
+> }
+keys: da{
+< if (x)‸ ⏎
+
+=== textobj-044
+> if (x) {
+>   a‸;
+>   b;
+> }
+keys: ci{X<Esc>
+< if (x) {
+< ‸X
+< }
+
+=== textobj-045
+> x "fo‸o bar" y
+keys: di"
+< x "‸" y
+
+=== textobj-046
+> x "fo‸o bar" y
+keys: da"
+< x ‸y
+
+=== textobj-047
+> x ‸"foo bar" y
+keys: di"
+< x "‸" y
+
+=== textobj-048
+> x "foo bar‸" y
+keys: di"
+< x "‸" y
+
+=== textobj-049
+> x "foo bar"‸ y
+keys: di"
+< x "foo bar"‸ y
+
+=== textobj-050
+> x "a" ‸y "b"
+keys: di"
+< x "a"‸"b"
+
+=== textobj-051
+> x 'fo‸o' y
+keys: di'
+< x '‸' y
+
+=== textobj-052
+> x 'fo‸o' y
+keys: da'
+< x ‸y
+
+=== textobj-053
+> x `fo‸o` y
+keys: di`
+< x `‸` y
+
+=== textobj-054
+> x "fo‸o" y
+keys: yi"P
+< x "fo‸ofoo" y
+
+=== textobj-055
+> x "a\\"b‸c" y
+keys: di"
+< x "‸" y
+
+=== textobj-056
+> x ‸y
+keys: di"
+< x ‸y
+
+=== textobj-057
+> x "foo"   ‸ y
+keys: da"
+< x "foo"   ‸ y
+
+=== textobj-058
+> ‸Hello world. Foo bar. Baz.
+keys: dis
+< ‸ Foo bar. Baz.
+
+=== textobj-059
+> Hello wor‸ld. Foo bar. Baz.
+keys: dis
+< ‸ Foo bar. Baz.
+
+=== textobj-060
+> Hello wor‸ld. Foo bar. Baz.
+keys: das
+< ‸Foo bar. Baz.
+
+=== textobj-061
+> Hello world. Foo ba‸r. Baz.
+keys: das
+< Hello world. ‸Baz.
+
+=== textobj-062
+> Hello world. Foo ba‸r. Baz.
+keys: dis
+< Hello world. ‸ Baz.
+
+=== textobj-063
+> Hello world. Foo bar. Ba‸z.
+keys: das
+< Hello world. Foo bar‸.
+
+=== textobj-064
+> Hello world. Foo ba‸r. Baz.
+keys: d2is
+< Hello world. ‸Baz.
+
+=== textobj-065
+> Hello world. Foo ba‸r. Baz.
+keys: d2as
+< Hello world‸.
+
+=== textobj-066
+> a
+> b
+> ‸c
+>
+> d
+> e
+keys: dip
+< ‸
+< d
+< e
+
+=== textobj-067
+> a
+> b
+> ‸c
+>
+> d
+> e
+keys: dap
+< ‸d
+< e
+
+=== textobj-068
+> a
+> b
+> c
+> ‸
+> d
+> e
+keys: dip
+< a
+< b
+< c
+< ‸d
+< e
+
+=== textobj-069
+> a
+> b
+> c
+> ‸
+> d
+> e
+keys: dap
+< a
+< b
+< ‸c
+
+=== textobj-070
+> ‸a
+> b
+>
+> c
+keys: yipP
+< ‸a
+< b
+< a
+< b
+< 
+< c
+
+=== textobj-071
+> a
+> b
+> ‸c
+>
+> d
+> e
+keys: d2ap
+< ‸
+
+=== textobj-072
+> a
+> b
+> ‸c
+>
+> d
+> e
+keys: d2ip
+< ‸d
+< e
+
+=== textobj-073
+> ‸a
+> b
+keys: dap
+< ‸
+
+=== textobj-074
+> x
+>
+> ‸a
+> b
+keys: dap
+< ‸x
+
+=== textobj-075
+> <a><b>f‸oo</b></a>
+keys: dit
+< <a><b>‸</b></a>
+
+=== textobj-076
+> <a><b>f‸oo</b></a>
+keys: dat
+< <a>‸</a>
+
+=== textobj-077
+> <a><b>f‸oo</b></a>
+keys: d2it
+< <a>‸</a>
+
+=== textobj-078
+> <a><b>f‸oo</b></a>
+keys: d2at
+< ‸
+
+=== textobj-079
+> <a href="x">f‸oo</a>
+keys: dit
+< <a href="x">‸</a>
+
+=== textobj-080
+> <a href="x">f‸oo</a>
+keys: dat
+< ‸
+
+=== textobj-081
+> <div>
+>   <p>te‸xt</p>
+> </div>
+keys: dit
+< <div>
+<   <p>‸</p>
+< </div>
+
+=== textobj-083
+> <a>x</a> ‸<b>y</b>
+keys: dit
+< <a>x</a> <b>‸</b>
+
+=== textobj-084
+> <a><br/>f‸oo</a>
+keys: dit
+< <a>‸</a>
+
+=== textobj-085
+> foo ‸bar
+keys: vawd
+< fo‸o
+
+=== textobj-086
+> foo ‸bar baz
+keys: viwd
+< foo ‸ baz
+
+=== textobj-087
+> foo ‸bar baz
+keys: viwiwd
+< foo ‸baz
+
+=== textobj-088
+> foo ‸bar baz qux
+keys: vawawd
+< foo ‸qux
+
+=== textobj-089
+> foo (a‸b)
+keys: vi(d
+< foo (‸)
+
+=== textobj-090
+> foo (a‸b)
+keys: va(d
+< foo‸ ⏎
+
+=== textobj-091
+> foo ((a‸b))
+keys: vi(i(d
+< foo (‸)
+
+=== textobj-092
+> foo ((a‸b))
+keys: vi(a(d
+< foo (‸)
+
+=== textobj-093
+> x "a‸b" y
+keys: vi"d
+< x "‸" y
+
+=== textobj-094
+> x "a‸b" y
+keys: vi"i"d
+< x ‸ y
+
+=== textobj-095
+> x "a‸b" y
+keys: va"d
+< x ‸y
+
+=== textobj-096
+> a
+> b
+> ‸c
+>
+> d
+keys: vipd
+< ‸
+< d
+
+=== textobj-097
+> a
+> b
+> ‸c
+>
+> d
+keys: vipipd
+< ‸d
+
+=== textobj-098
+> a
+> b
+> ‸c
+>
+> d
+keys: vapd
+< ‸d
+
+=== textobj-099
+> foo ‸bar. Baz.
+keys: visd
+< ‸ Baz.
+
+=== textobj-100
+> foo ‸bar. Baz.
+keys: vasd
+< ‸Baz.
+
+=== textobj-101
+> <a>f‸oo</a>
+keys: vitd
+< <a>‸</a>
+
+=== textobj-102
+> <a>f‸oo</a>
+keys: vatd
+< ‸
+
+=== textobj-103
+> foo ‸bar baz
+keys: yiwwviwp
+< foo bar ba‸r
+
+=== textobj-104
+> ‸foo bar
+keys: wdiw
+< foo‸ ⏎
+
+=== textobj-105
+> foo ‸bar
+keys: wdaw
+< fo‸o
+
+=== textobj-106
+> ‸a b c d
+keys: d3aw
+< ‸d
+
+=== textobj-107
+> a ‸b c d
+keys: d3iw
+< a ‸ d
+

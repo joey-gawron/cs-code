@@ -1,0 +1,178 @@
+# join
+=== join-001
+> ‸foo
+> bar
+keys: J
+< foo‸ bar
+
+=== join-002
+> ‸foo
+>   bar
+keys: J
+< foo‸ bar
+
+=== join-003
+> ‸foo ⏎
+> bar
+keys: J
+< foo ‸bar
+
+=== join-004
+> ‸foo
+>  bar
+keys: J
+< foo‸ bar
+
+=== join-005
+> ‸foo
+> bar
+> baz
+keys: 3J
+< foo bar‸ baz
+
+=== join-006
+> ‸foo
+> bar
+> baz
+keys: 2J
+< foo‸ bar
+< baz
+
+=== join-007
+> ‸foo
+> bar
+> baz
+keys: 9J
+< foo bar‸ baz
+
+=== join-008
+> foo
+> ‸bar
+keys: J
+< foo
+< ‸bar
+
+=== join-009
+> ‸foo
+> )
+keys: J
+< foo‸)
+
+=== join-010
+> ‸foo
+>
+> bar
+keys: J
+< fo‸o
+< bar
+
+=== join-011
+> ‸foo
+>
+> bar
+keys: 3J
+< foo‸ bar
+
+=== join-012
+> ‸foo
+> bar
+keys: gJ
+< foo‸bar
+
+=== join-013
+> ‸foo
+>   bar
+keys: gJ
+< foo‸  bar
+
+=== join-014
+> ‸foo
+> bar
+> baz
+keys: 3gJ
+< foobar‸baz
+
+=== join-015
+> ‸foo.
+> bar
+keys: J
+< foo.‸ bar
+
+=== join-016
+set: joinspaces
+> ‸foo.
+> bar
+keys: J
+< foo.‸  bar
+
+=== join-017
+set: joinspaces
+> ‸foo!
+> bar
+keys: J
+< foo!‸  bar
+
+=== join-018
+> ‸foo
+> bar
+keys: JJ
+< foo‸ bar
+
+=== join-019
+> ‸a
+> b
+> c
+> d
+keys: JJ
+< a b‸ c
+< d
+
+=== join-020
+> ‸a
+> b
+> c
+> d
+keys: J.
+< a b‸ c
+< d
+
+=== join-021
+> ‸a
+> b
+> c
+> d
+keys: J..
+< a b c‸ d
+
+=== join-022
+> ‸foo\t⏎
+> bar
+keys: J
+< foo\t‸bar
+
+=== join-023
+> ‸foo
+> \tbar
+keys: J
+< foo‸ bar
+
+=== join-024
+> ‸foo
+> bar
+keys: Ju
+< ‸foo
+< bar
+
+=== join-025
+> ‸a
+> b
+keys: Jx
+< a‸b
+
+=== join-026
+> ‸a
+> b
+> c
+keys: Vjj:j<CR>
+< ‸a b c
+

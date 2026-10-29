@@ -7,6 +7,7 @@ namespace CsCode.Vim;
 public sealed partial class VimEngine
 {
     private char _recReg;
+    private char _lastRecorded;
     private readonly StringBuilder _recBuf = new();
     private int _recLastCmdLen;
     private bool _macroAborted;
@@ -29,12 +30,25 @@ public sealed partial class VimEngine
     private void RecordTyped(int rawKey)
     {
         _macroKeys = 0;
+        _macroAborted = false;
         _macroStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         if (_recReg == 0) return;
         var before = _recBuf.Length;
         Keys.Encode(_recBuf, rawKey & ~NoRemapFlag);
         _recLastCmdLen = _recBuf.Length - before;
+        if (_recBuf.Length > MaxRecordingChars)
+        {
+            // a forgotten q must not grow without bound: the recording is dropped
+            _recReg = '\0';
+            _recBuf.Clear();
+            _recordingChanged.Fire(null);
+            Host.OnRecordingChanged(null);
+            Message("Recording stopped: the macro is too long", VimMessageKind.Warning);
+        }
     }
+
+    /// <summary>A macro recording that grows beyond this many characters is dropped.</summary>
+    public const int MaxRecordingChars = 1_000_000;
 
     /// <summary>Called for each stuffed key: enforces the runaway guard.</summary>
     private bool CheckMacroBudget()
@@ -63,6 +77,7 @@ public sealed partial class VimEngine
             // when stopped via Ctrl-O q from Insert mode, drop the Ctrl-O as well
             if (_restartEdit && text.EndsWith('\u000f')) text = text[..^1];
             var name = _recReg;
+            _lastRecorded = name;
             _recReg = '\0';
             _recBuf.Clear();
             StoreMacro(name, text);
@@ -80,7 +95,7 @@ public sealed partial class VimEngine
 
     private void StoreMacro(char name, string text)
     {
-        var target = _s.Registers.ForWrite(name, out var append);
+        var target = _s.Registers.ForWrite(name, out var append, updatePrevious: false);
         if (target is null) return;
         var lines = text.Split('\n');
         RegisterFile.Store(target, lines, VimRegisterType.Character, 0, append);
@@ -115,7 +130,7 @@ public sealed partial class VimEngine
             for (var i = 0; i < count && !_macroAborted; i++) ExecuteExLine(_s.Registers.LastCommandLine);
             return;
         }
-        if (reg is '%' or '#' || !RegisterFile.IsValidName(reg) || reg == '_') { Error($"E354: Invalid register name: '{char.ConvertFromUtf32(reg)}'"); return; }
+        if (reg is '%' or '#' || !RegisterFile.IsValidName(reg) || reg == '_') { Error($"E354: Invalid register name: '{Keys.SafeString(reg)}'"); return; }
         Register? r;
         if (reg == '.') r = _s.Registers.ForRead('.');
         else r = _s.Registers.ForRead(reg == '"' ? 0 : reg, () => Host.ReadClipboard());

@@ -1,0 +1,282 @@
+# Cases where CsCode.Vim intentionally or knowingly differs from Neovim 0.12. Format: <file>:<case> | reason
+# A case listed here is still run through nvim and reported, but does not fail the differential suite.
+visual:visual-042 | '> after a linewise Visual change keeps its line in nvim; the engine moves it up like for a delete
+
+# Neovim sets the ' (previous context) mark after some :s commands and not after others; the engine never does.
+block:block-078 | ' mark after :s
+insert:insert-089 | ' mark after :s
+insert:insert-111 | ' mark after :s
+marks:marks-106 | ' mark after :s
+marks:marks-107 | ' mark after :s
+marks:marks-108 | ' mark after :s
+marks:marks-109 | ' mark after :s
+registers:registers-056 | ' mark after :s
+registers:registers-057 | ' mark after :s
+registers:registers-058 | ' mark after :s
+registers:registers-059 | ' mark after :s
+registers:registers-060 | ' mark after :s
+registers:registers-061 | ' mark after :s
+visual:visual-026 | ' mark after :s
+visual:visual-046 | ' mark after :s
+visual:visual-078 | ' mark after :s
+visual:visual-079 | ' mark after :s
+yank:yank-040 | ' mark after :s
+# Error message differs at the ends of the change list (the cursor behaviour is identical).
+marks:marks-129 | E19 vs E662 at the start of the change list
+marks:marks-132 | E19 vs E663 at the end of the change list
+marks:marks-135 | E662 vs E663 at the ends of the change list
+# '^ and ' after undoing line-count-changing changes depend on Vim's per-entry mark_adjust order.
+undo:undo-048 | ' mark after undoing :m
+insert:insert-149 | '^ after undoing a multi-line insert
+insert:insert-150 | '^ after undoing a multi-line insert
+insert:insert-151 | '^ after undoing a multi-line insert
+undo:undo-024 | '^ after undoing a multi-line insert
+undo:undo-025 | '^ after undoing a multi-line insert
+undo:undo-026 | '^ after undoing a multi-line insert
+
+# Long tail found by the macro/search/ex/substitute/mapping groups (explained, not fixed)
+mappings:mappings-146 | VJ with `vnoremap J :m '>+1<CR>gv=gv`: cursor after gv= differs (the `=` operator keeps the Visual end differently)
+mappings:mappings-147 | jVK with `vnoremap K :m '<-2<CR>gv=gv`: cursor after gv= differs
+mappings:mappings-148 | VJ with `vnoremap J :m '>+1<CR>gv`: cursor after gv differs (marks '< '> are not restored by undo/move like Vim's)
+mappings:mappings-149 | jVK with `vnoremap K :m '<-2<CR>gv`: cursor after gv differs
+mappings:mappings-111 | typed f; followed by a mapping ;; : Vim drops the pending mapping when the f argument fails, the engine runs it
+mappings:mappings-263 | the key that stops a recording is typed while it is a prefix of a mapping (nnoremap qa qb): the recorded text then keeps that key
+mappings:mappings-277 | :g/pat/normal! Q: Q (repeat the last recorded register) with no recording errors differently inside :g
+mappings:mappings-307 | Q in Visual mode: Vim leaves Visual mode, the engine keeps it
+mappings:mappings-020 | @: repeated after a mapped :s runs the mapping's command line again in Vim's order
+mappings:mappings-187 | dot-repeat of an insert whose keys were expanded by a mapping that ends in <Left>
+ex:ex-387 | cursor after undoing :g/pat/m0 (Vim reports the last changed line of the undo entries, the engine the first)
+ex:ex-388 | cursor after undoing :g/^/m0
+ex:ex-398 | '. after :g/pat/normal Ax (the change position of later lines is not recorded as the last change)
+ex:ex-459 | '< '> are not restored by undo (Vim stores the Visual area in the undo header)
+macros:macros-163 | register text of a macro that contains Ctrl-W typed in Insert mode is put back differently (K_SPECIAL byte sequences)
+macros:macros-165 | register text with a carriage return from a recorded <CR> is split differently when put
+substitute:substitute-105 | cursor column after :%s/\n// joined the whole buffer (Vim ends inside the joined line)
+
+
+# Found by the live differential run over the macro/search/ex/substitute/mapping groups (marks, auxiliary registers and error codes); categories in docs/VIM.md
+ex:ex-024 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-060 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-090 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-091 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-092 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-115 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-212 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-213 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-214 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-226 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-227 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-228 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-229 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-230 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-231 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-232 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-233 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-234 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-235 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-236 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-237 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-238 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-239 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-240 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-241 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-242 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-243 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-244 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-245 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-246 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-247 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-248 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-249 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-250 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-251 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-252 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-253 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-254 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-257 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-258 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-259 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-261 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-265 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-266 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-279 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-289 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-292 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-312 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-338 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-342 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-378 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-379 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-380 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-381 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-392 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-393 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-397 | error code differs
+ex:ex-399 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-400 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-401 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-402 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-408 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-409 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-419 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-423 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-424 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-425 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-426 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-427 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-428 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-429 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-431 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-452 | Visual marks '< '> after a deleted or moved range
+ex:ex-462 | Visual marks '< '> after a deleted or moved range
+ex:ex-463 | Visual marks '< '> after a deleted or moved range
+ex:ex-464 | Visual marks '< '> after a deleted or moved range
+ex:ex-465 | Visual marks '< '> after a deleted or moved range
+ex:ex-467 | Visual marks '< '> after a deleted or moved range
+ex:ex-468 | Visual marks '< '> after a deleted or moved range
+ex:ex-469 | Visual marks '< '> after a deleted or moved range
+ex:ex-470 | Visual marks '< '> after a deleted or moved range
+ex:ex-471 | Visual marks '< '> after a deleted or moved range
+ex:ex-472 | Visual marks '< '> after a deleted or moved range
+ex:ex-476 | Visual marks '< '> after a deleted or moved range
+ex:ex-492 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+ex:ex-545 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-546 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-555 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-557 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-564 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-565 | previous-context mark (') rules for ex commands, :g and undo
+ex:ex-566 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-029 | error code differs
+macros:macros-043 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-044 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-046 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-047 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-048 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-049 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-063 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-064 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-065 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-066 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-067 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-068 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-069 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-070 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-071 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-072 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-073 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-075 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-076 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-077 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-079 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-152 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+macros:macros-156 | '. register after an insert interrupted by a cursor key
+macros:macros-164 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+macros:macros-245 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-252 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-253 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-254 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-277 | Visual marks '< '> after a deleted or moved range
+macros:macros-278 | Visual marks '< '> after a deleted or moved range
+macros:macros-279 | Visual marks '< '> after a deleted or moved range
+macros:macros-280 | Visual marks '< '> after a deleted or moved range
+macros:macros-281 | Visual marks '< '> after a deleted or moved range
+macros:macros-282 | Visual marks '< '> after a deleted or moved range
+macros:macros-283 | Visual marks '< '> after a deleted or moved range
+macros:macros-284 | Visual marks '< '> after a deleted or moved range
+macros:macros-285 | Visual marks '< '> after a deleted or moved range
+macros:macros-309 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-310 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-311 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-312 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-313 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-314 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-315 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-316 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-317 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-318 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-319 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-323 | previous-context mark (') rules for ex commands, :g and undo
+macros:macros-325 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-015 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-016 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-017 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-018 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-019 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-021 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-022 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-108 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-150 | Visual marks '< '> after a deleted or moved range
+mappings:mappings-153 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-154 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-158 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+mappings:mappings-164 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+mappings:mappings-176 | '. register after an insert interrupted by a cursor key
+mappings:mappings-177 | '. register after an insert interrupted by a cursor key
+mappings:mappings-178 | '. register after an insert interrupted by a cursor key
+mappings:mappings-179 | '. register after an insert interrupted by a cursor key
+mappings:mappings-180 | '. register after an insert interrupted by a cursor key
+mappings:mappings-183 | '. register after an insert interrupted by a cursor key
+mappings:mappings-184 | '. register after an insert interrupted by a cursor key
+mappings:mappings-185 | '. register after an insert interrupted by a cursor key
+mappings:mappings-188 | '. register after an insert interrupted by a cursor key
+mappings:mappings-189 | '. register after an insert interrupted by a cursor key
+mappings:mappings-190 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+mappings:mappings-193 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+mappings:mappings-200 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+mappings:mappings-243 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-244 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-245 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-246 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-247 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-262 | nvim_input adds an internal key code after f, to the recording (oracle artifact)
+mappings:mappings-314 | previous-context mark (') rules for ex commands, :g and undo
+mappings:mappings-318 | previous-context mark (') rules for ex commands, :g and undo
+marks:marks-111 | previous-context mark (') rules for ex commands, :g and undo
+search:search-159 | error code differs
+search:search-224 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+search:search-270 | Visual marks '< '> after a deleted or moved range
+search:search-271 | Visual marks '< '> after a deleted or moved range
+search:search-272 | Visual marks '< '> after a deleted or moved range
+search:search-273 | Visual marks '< '> after a deleted or moved range
+search:search-274 | Visual marks '< '> after a deleted or moved range
+search:search-275 | Visual marks '< '> after a deleted or moved range
+search:search-276 | Visual marks '< '> after a deleted or moved range
+search:search-277 | Visual marks '< '> after a deleted or moved range
+search:search-278 | Visual marks '< '> after a deleted or moved range
+search:search-279 | Visual marks '< '> after a deleted or moved range
+search:search-280 | Visual marks '< '> after a deleted or moved range
+search:search-281 | Visual marks '< '> after a deleted or moved range
+search:search-282 | Visual marks '< '> after a deleted or moved range
+search:search-286 | Visual marks '< '> after a deleted or moved range
+search:search-287 | Visual marks '< '> after a deleted or moved range
+search:search-288 | Visual marks '< '> after a deleted or moved range
+search:search-300 | Visual marks '< '> after a deleted or moved range
+search:search-303 | Visual marks '< '> after a deleted or moved range
+search:search-304 | Visual marks '< '> after a deleted or moved range
+search:search-305 | Visual marks '< '> after a deleted or moved range
+search:search-331 | previous-context mark (') rules for ex commands, :g and undo
+search:search-332 | previous-context mark (') rules for ex commands, :g and undo
+search:search-333 | previous-context mark (') rules for ex commands, :g and undo
+search:search-334 | previous-context mark (') rules for ex commands, :g and undo
+search:search-339 | previous-context mark (') rules for ex commands, :g and undo
+search:search-340 | previous-context mark (') rules for ex commands, :g and undo
+search:search-347 | error code differs
+substitute:substitute-058 | previous-context mark (') rules for ex commands, :g and undo
+substitute:substitute-059 | previous-context mark (') rules for ex commands, :g and undo
+substitute:substitute-061 | previous-context mark (') rules for ex commands, :g and undo
+substitute:substitute-068 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+substitute:substitute-069 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+substitute:substitute-070 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+substitute:substitute-115 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+substitute:substitute-116 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+substitute:substitute-117 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+substitute:substitute-120 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+substitute:substitute-121 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+substitute:substitute-126 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+substitute:substitute-127 | '[ '] '. after :g/:v/:m/:t/:normal and undo
+substitute:substitute-134 | previous-context mark (') rules for ex commands, :g and undo
+substitute:substitute-135 | previous-context mark (') rules for ex commands, :g and undo
+substitute:substitute-137 | previous-context mark (') rules for ex commands, :g and undo
+substitute:substitute-150 | previous-context mark (') rules for ex commands, :g and undo
+substitute:substitute-184 | previous-context mark (') rules for ex commands, :g and undo

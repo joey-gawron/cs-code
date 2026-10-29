@@ -1,0 +1,193 @@
+# shift operators
+=== shift-001
+> ‸foo
+keys: >>
+< \t‸foo
+
+=== shift-002
+> ‸foo
+keys: 2>>
+< ‸foo
+
+=== shift-003
+> ‸foo
+> bar
+> baz
+keys: 2>>
+< \t‸foo
+< \tbar
+< baz
+
+=== shift-004
+> ‸foo
+> bar
+> baz
+keys: >j
+< \t‸foo
+< \tbar
+< baz
+
+=== shift-005
+> ‸foo
+> bar
+> baz
+keys: >G
+< \t‸foo
+< \tbar
+< \tbaz
+
+=== shift-006
+> \tfoo‸
+keys: <<
+< ‸foo
+
+=== shift-007
+>         foo‸
+keys: <<
+< ‸foo
+
+=== shift-008
+>   foo‸
+keys: <<
+< ‸foo
+
+=== shift-009
+> ‸foo
+keys: >>>>
+< \t\t‸foo
+
+=== shift-010
+> ‸foo
+keys: >>. 
+< \t\tf‸oo
+
+=== shift-011
+> ‸foo
+keys: >>..
+< \t\t\t‸foo
+
+=== shift-012
+> ‸foo
+> bar
+keys: >>j.
+< \tfoo
+< \t‸bar
+
+=== shift-013
+set: sw=4
+> ‸foo
+keys: >> 
+<     f‸oo
+
+=== shift-014
+set: sw=4 et
+> ‸foo
+keys: >>
+<     ‸foo
+
+=== shift-015
+set: sw=2 et
+> ‸foo
+keys: 3>>
+< ‸foo
+
+=== shift-016
+set: sw=4 et
+>       ‸foo
+keys: <<
+<   ‸foo
+
+=== shift-017
+set: sw=4
+>       ‸foo
+keys: <<
+<   ‸foo
+
+=== shift-018
+set: sw=4 sr
+>    ‸foo
+keys: >>
+<     ‸foo
+
+=== shift-019
+set: sw=4 sr et
+>    ‸foo
+keys: <<
+< ‸foo
+
+=== shift-020
+> ‸foo
+>
+> bar
+keys: >G
+< \t‸foo
+< 
+< \tbar
+
+=== shift-021
+set: sw=2 et
+> ‸foo
+>
+> bar
+keys: >G
+<   ‸foo
+< 
+<   bar
+
+=== shift-022
+set: sw=4
+> ‸  foo
+> bar
+keys: >j
+<       ‸foo
+<     bar
+
+=== shift-023
+> ‸foo
+keys: >ip
+< \t‸foo
+
+=== shift-024
+> ‸foo
+> bar
+>
+> baz
+keys: >ip
+< \t‸foo
+< \tbar
+< 
+< baz
+
+=== shift-025
+> ‸foo
+> bar
+>
+> baz
+keys: >ap
+< \t‸foo
+< \tbar
+< 
+< baz
+
+=== shift-026
+> ‸foo
+> #bar
+keys: >j
+< \t‸foo
+< \t#bar
+
+=== shift-027
+> ‸foo
+keys: >>u
+< ‸foo
+
+=== shift-028
+> ‸foo
+keys: >>u<C-r>
+< ‸\tfoo
+
+=== shift-029
+> ‸foo bar
+keys: >w
+< \t‸foo bar
+

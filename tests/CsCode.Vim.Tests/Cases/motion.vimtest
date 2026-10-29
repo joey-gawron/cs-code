@@ -1,0 +1,917 @@
+# cursor motions
+=== motion-001
+> ‸foo bar baz
+keys: w
+< foo ‸bar baz
+
+=== motion-002
+> ‸foo bar baz
+keys: 2w
+< foo bar ‸baz
+
+=== motion-003
+> ‸foo bar baz
+keys: 5w
+< foo bar ba‸z
+
+=== motion-004
+> foo ‸bar baz
+keys: b
+< ‸foo bar baz
+
+=== motion-005
+> foo bar ‸baz
+keys: 2b
+< ‸foo bar baz
+
+=== motion-006
+> ‸foo bar baz
+keys: e
+< fo‸o bar baz
+
+=== motion-007
+> ‸foo bar baz
+keys: 3e
+< foo bar ba‸z
+
+=== motion-008
+> foo bar‸ baz
+keys: ge
+< foo ba‸r baz
+
+=== motion-009
+> foo bar baz‸
+keys: 2ge
+< fo‸o bar baz
+
+=== motion-010
+> ‸foo.bar baz
+keys: w
+< foo‸.bar baz
+
+=== motion-011
+> ‸foo.bar baz
+keys: W
+< foo.bar ‸baz
+
+=== motion-012
+> foo.bar ‸baz
+keys: B
+< ‸foo.bar baz
+
+=== motion-013
+> ‸foo.bar baz
+keys: E
+< foo.ba‸r baz
+
+=== motion-014
+> ‸foo
+> bar
+> baz
+keys: w
+< foo
+< ‸bar
+< baz
+
+=== motion-015
+> ‸foo
+>
+> bar
+keys: w
+< foo
+< ‸
+< bar
+
+=== motion-016
+> ‸foo
+>
+> bar
+keys: 2w
+< foo
+< 
+< ‸bar
+
+=== motion-017
+> foo
+>
+> ‸bar
+keys: b
+< foo
+< ‸
+< bar
+
+=== motion-018
+> foo
+>
+> ‸bar
+keys: 2b
+< ‸foo
+< 
+< bar
+
+=== motion-019
+> foo  bar ‸ baz
+keys: w
+< foo  bar  ‸baz
+
+=== motion-020
+>   ‸ foo bar
+keys: 0
+< ‸   foo bar
+
+=== motion-021
+>   foo ‸bar
+keys: ^
+<   ‸foo bar
+
+=== motion-022
+> foo bar‸ ⏎
+keys: $
+< foo bar‸ ⏎
+
+=== motion-023
+> fo‸o
+> bar baz
+keys: 2$
+< foo
+< bar ba‸z
+
+=== motion-024
+> foo bar  ⏎
+>   ‸baz
+keys: g_
+< foo bar  ⏎
+<   ba‸z
+
+=== motion-025
+> foo bar   ‸:: g_
+keys: 
+< foo bar   ‸:: g_
+
+=== motion-026
+> abcdefghij‸
+keys: 5|
+< abcd‸efghij
+
+=== motion-027
+> ‸abcdefghij
+keys: 5|
+< abcd‸efghij
+
+=== motion-028
+> ‸abcdefghij
+keys: 20|
+< abcdefghi‸j
+
+=== motion-029
+> ‸\tabc
+keys: l
+< \t‸abc
+
+=== motion-030
+> a\tb‸
+keys: 5|
+< a‸\tb
+
+=== motion-031
+> ‸foo bar foo baz
+keys: fo
+< f‸oo bar foo baz
+
+=== motion-032
+> ‸foo bar foo baz
+keys: 2fo
+< fo‸o bar foo baz
+
+=== motion-033
+> ‸foo bar foo baz
+keys: tb
+< foo‸ bar foo baz
+
+=== motion-034
+> ‸foo bar foo baz
+keys: fo;
+< fo‸o bar foo baz
+
+=== motion-035
+> ‸foo bar foo baz
+keys: fo;,
+< f‸oo bar foo baz
+
+=== motion-036
+> ‸foo bar foo baz
+keys: tr;
+< foo b‸ar foo baz
+
+=== motion-037
+> foo bar foo baz‸
+keys: Fb
+< foo bar foo ‸baz
+
+=== motion-038
+> foo bar foo baz‸
+keys: Tb
+< foo bar foo b‸az
+
+=== motion-039
+> foo bar foo baz‸
+keys: Fb;
+< foo ‸bar foo baz
+
+=== motion-040
+> ‸foo bar
+keys: fz
+< ‸foo bar
+
+=== motion-041
+> ‸foo (bar [baz] qux)
+keys: %
+< foo (bar [baz] qux‸)
+
+=== motion-042
+> foo (bar [baz‸] qux)
+keys: %
+< foo (bar ‸[baz] qux)
+
+=== motion-043
+> foo (bar [baz] qux‸)
+keys: %
+< foo ‸(bar [baz] qux)
+
+=== motion-044
+> ‸{ a { b } c }
+keys: %
+< { a { b } c ‸}
+
+=== motion-045
+> ‸x = "(" + (1)
+keys: f(%
+< x = "‸(" + (1)
+
+=== motion-046
+> ‸/* c */ x
+keys: %
+< /* c *‸/ x
+
+=== motion-047
+> ‸l1
+> l2
+> l3
+> l4
+> l5
+> l6
+> l7
+> l8
+> l9
+> l10
+keys: 50%
+< l1
+< l2
+< l3
+< l4
+< ‸l5
+< l6
+< l7
+< l8
+< l9
+< l10
+
+=== motion-048
+> ‸l1
+> l2
+> l3
+> l4
+> l5
+> l6
+> l7
+> l8
+> l9
+> l10
+keys: 10%
+< ‸l1
+< l2
+< l3
+< l4
+< l5
+< l6
+< l7
+< l8
+< l9
+< l10
+
+=== motion-049
+> ‸a
+> b
+> c
+keys: j
+< a
+< ‸b
+< c
+
+=== motion-050
+> ‸a
+> b
+> c
+keys: 5j
+< a
+< b
+< ‸c
+
+=== motion-051
+> a
+> b
+> ‸c
+keys: k
+< a
+< ‸b
+< c
+
+=== motion-052
+> a
+> b
+> ‸c
+keys: 5k
+< ‸a
+< b
+< c
+
+=== motion-053
+> a
+> b
+> ‸c
+keys: j
+< a
+< b
+< ‸c
+
+=== motion-054
+> ‸a
+> b
+> c
+keys: k
+< ‸a
+< b
+< c
+
+=== motion-055
+> abcdef
+> ab
+> abcdef
+keys: 5ljj
+< abcdef
+< ab
+< abcde‸f
+
+=== motion-056
+> abcdef
+> ab
+> abcdef
+keys: $jj
+< abcdef
+< ab
+< abcde‸f
+
+=== motion-057
+> abc
+>   def
+>   ghi
+keys: +
+< abc
+<   ‸def
+<   ghi
+
+=== motion-058
+> abc
+>   def
+>   ghi
+keys: 2+
+< abc
+<   def
+<   ‸ghi
+
+=== motion-059
+> ‸abc
+>   def
+>   ghi
+keys: <CR>
+< abc
+<   ‸def
+<   ghi
+
+=== motion-060
+> abc
+>   def
+> ‸  ghi
+keys: -
+< abc
+<   ‸def
+<   ghi
+
+=== motion-061
+> ‸abc
+>   def
+>   ghi
+keys: 2_
+< abc
+<   ‸def
+<   ghi
+
+=== motion-062
+> ‸a
+> b
+> c
+> d
+keys: G
+< a
+< b
+< c
+< ‸d
+
+=== motion-063
+> a
+> b
+> c
+> ‸d
+keys: gg
+< ‸a
+< b
+< c
+< d
+
+=== motion-064
+> ‸a
+> b
+> c
+> d
+keys: 3G
+< a
+< b
+< ‸c
+< d
+
+=== motion-065
+> ‸a
+> b
+> c
+> d
+keys: 2gg
+< a
+< ‸b
+< c
+< d
+
+=== motion-066
+> ‸a
+> b
+> c
+> d
+keys: 9G
+< a
+< b
+< c
+< ‸d
+
+=== motion-067
+>   a
+>   b
+>   ‸c
+keys: gg
+<   ‸a
+<   b
+<   c
+
+=== motion-068
+> ‸Hello. World! Foo? Bar
+keys: )
+< Hello. ‸World! Foo? Bar
+
+=== motion-069
+> ‸Hello. World! Foo? Bar
+keys: 2)
+< Hello. World! ‸Foo? Bar
+
+=== motion-070
+> Hello. World! Foo? ‸Bar
+keys: (
+< Hello. World! ‸Foo? Bar
+
+=== motion-071
+> Hello. World! Foo? ‸Bar
+keys: 2(
+< Hello. ‸World! Foo? Bar
+
+=== motion-072
+> ‸a
+> b
+>
+> c
+> d
+>
+> e
+keys: }
+< a
+< b
+< ‸
+< c
+< d
+< 
+< e
+
+=== motion-073
+> ‸a
+> b
+>
+> c
+> d
+>
+> e
+keys: 2}
+< a
+< b
+< 
+< c
+< d
+< ‸
+< e
+
+=== motion-074
+> a
+> b
+>
+> c
+> d
+>
+> ‸e
+keys: {
+< a
+< b
+< 
+< c
+< d
+< ‸
+< e
+
+=== motion-075
+> a
+> b
+>
+> c
+> d
+>
+> ‸e
+keys: 2{
+< a
+< b
+< ‸
+< c
+< d
+< 
+< e
+
+=== motion-076
+> ‸a
+> b
+>
+> c
+keys: }
+< a
+< b
+< ‸
+< c
+
+=== motion-077
+> ‸one two
+> three
+keys: j0
+< one two
+< ‸three
+
+=== motion-078
+> one‸ two
+keys: h
+< on‸e two
+
+=== motion-079
+> one two
+keys: 3h
+< ‸one two
+
+=== motion-080
+> ‸one two
+keys: 3l
+< one‸ two
+
+=== motion-081
+> ‸one two
+keys: 99l
+< one tw‸o
+
+=== motion-082
+> o‸ne
+> two
+keys: <BS>
+< ‸one
+< two
+
+=== motion-083
+> one‸
+> two
+keys: <Space>
+< one
+< ‸two
+
+=== motion-084
+> ‸foo
+> bar
+keys: ll<Space>
+< foo
+< ‸bar
+
+=== motion-085
+> ‸foo bar
+keys: *
+< ‸foo bar
+
+=== motion-086
+> foo ‸bar foo
+keys: *
+< foo ‸bar foo
+
+=== motion-087
+> foo bar ‸foo
+keys: #
+< ‸foo bar foo
+
+=== motion-088
+> ‸foo bar foo foo
+keys: 2*
+< foo bar foo ‸foo
+
+=== motion-089
+> ‸foo.bar foo.bar
+keys: g*
+< foo.bar ‸foo.bar
+
+=== motion-090
+> ‸a1 a1x a1
+keys: *
+< a1 a1x ‸a1
+
+=== motion-091
+> ‸foo bar
+keys: wmajb`a
+< foo ‸bar
+
+=== motion-092
+> ‸foo bar
+> baz
+keys: wmajb'a
+< ‸foo bar
+< baz
+
+=== motion-093
+> foo ‸bar
+> baz qux
+keys: majj`a
+< foo ‸bar
+< baz qux
+
+=== motion-094
+> ‸foo bar baz
+keys: wwmx0`x
+< foo bar ‸baz
+
+=== motion-095
+> ‸foo
+keys: ``
+< ‸foo
+
+=== motion-096
+> ‸a
+> b
+> c
+keys: Gggjj''
+< a
+< b
+< ‸c
+
+=== motion-097
+> ‸a
+> b
+> c
+> d
+keys: Gk``
+< ‸a
+< b
+< c
+< d
+
+=== motion-098
+> ‸a b c
+keys: gE
+< ‸a b c
+
+=== motion-099
+> ‸foo
+> bar
+keys: gj
+< foo
+< ‸bar
+
+=== motion-100
+> ‸foo bar
+keys: wgm
+< foo ba‸r
+
+=== motion-101
+> ‸foo bar baz
+keys: wgM
+< foo b‸ar baz
+
+=== motion-102
+> ‸abc
+> def
+> ghi
+keys: ]]
+< abc
+< def
+< ‸ghi
+
+=== motion-103
+> ‸a
+> {
+> b
+> }
+> c
+keys: ]]
+< a
+< ‸{
+< b
+< }
+< c
+
+=== motion-104
+> a
+> {
+> b
+> }
+> ‸c
+keys: [[
+< a
+< ‸{
+< b
+< }
+< c
+
+=== motion-105
+> ‸a
+> {
+> b
+> }
+> c
+keys: ][
+< a
+< {
+< b
+< ‸}
+< c
+
+=== motion-106
+> if (a) {
+>   b‸;
+> }
+keys: [{
+< if (a) ‸{
+<   b;
+< }
+
+=== motion-107
+> f(a, (b‸, c))
+keys: [(
+< f(a, ‸(b, c))
+
+=== motion-108
+> f(a, (b‸, c))
+keys: ])
+< f(a, (b, c‸))
+
+=== motion-109
+> x = [1, 2‸, 3]
+keys: [(
+< x = [1, 2‸, 3]
+
+=== motion-110
+> ‸one two three
+keys: wwb
+< one ‸two three
+
+=== motion-111
+> ‸one two three
+keys: $b
+< one two ‸three
+
+=== motion-112
+> one two thre‸e
+keys: e
+< one two thre‸e
+
+=== motion-113
+> one two ‸three
+keys: e
+< one two thre‸e
+
+=== motion-114
+> ‸一二三 abc
+keys: w
+< 一二三 ‸abc
+
+=== motion-115
+> ‸é à ü
+keys: w
+< é ‸à ü
+
+=== motion-116
+> ‸foo\tbar baz
+keys: w
+< foo\t‸bar baz
+
+=== motion-117
+> ‸foo  ⏎
+keys: w
+< foo ‸ ⏎
+
+=== motion-118
+> ‸
+keys: w
+< ‸
+
+=== motion-119
+> ‸
+>
+>
+keys: w
+< 
+< ‸
+< 
+
+=== motion-120
+> ‸a
+keys: e
+< ‸a
+
+=== motion-121
+> ‸ab cd
+keys: e
+< a‸b cd
+
+=== motion-122
+> a‸b cd
+keys: e
+< ab c‸d
+
+=== motion-123
+> ab‸ cd
+keys: e
+< ab c‸d
+
+=== motion-124
+> ‸foo
+> bar baz
+keys: 3w
+< foo
+< bar ba‸z
+
+=== motion-125
+> ‸foo
+> bar baz
+keys: 4w
+< foo
+< bar ba‸z
+
+=== motion-126
+> ‸foo
+> bar baz
+keys: 9w
+< foo
+< bar ba‸z
+
+=== motion-127
+> one-two‸ three
+keys: b
+< one-‸two three
+
+=== motion-128
+> one-two‸ three
+keys: B
+< ‸one-two three
+
+=== motion-129
+> one‸ two
+keys: 9b
+< ‸one two
+
+=== motion-130
+> ‸one
+keys: 9e
+< on‸e
+

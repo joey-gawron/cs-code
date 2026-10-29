@@ -29,7 +29,7 @@ public sealed partial class VimEngine
                 return ($"<{t}>", $"</{name}>");
             }
             default:
-                return (char.ConvertFromUtf32(ch), char.ConvertFromUtf32(ch));
+                return (Keys.SafeString(ch), Keys.SafeString(ch));
         }
     }
 
@@ -44,18 +44,7 @@ public sealed partial class VimEngine
         if (!Next(out var nw)) return NeedMoreArg(true);
         if (nw == Keys.Esc) return ParseResult.Cancelled;
         c.NChar2 = nw;
-        if (nw is '<' or 't')
-        {
-            var sb = new StringBuilder();
-            while (true)
-            {
-                if (!Next(out var tk)) return NeedMoreArg(true);
-                if (tk == Keys.Esc) return ParseResult.Cancelled;
-                if (tk is '>' or Keys.CR) break;
-                sb.Append(char.ConvertFromUtf32(tk));
-            }
-            c.SurroundTag = sb.ToString();
-        }
+        if (nw is '<' or 't' && !ReadSurroundTag(c)) return _tagCancelled ? ParseResult.Cancelled : NeedMoreArg(true);
         return ParseResult.Complete;
     }
 
@@ -65,6 +54,20 @@ public sealed partial class VimEngine
         var (open, close) = SurroundPair(c.NChar, c.SurroundTag);
         var start = oap.Start;
         var end = oap.End;
+        if (oap.IsVisual && oap.Type == MType.Line)
+        {
+            // linewise Visual: the delimiters go on their own lines above and below (indent of the first line)
+            var indent = L(start.Line).Substring(0, VimText.FirstNonBlank(L(start.Line)));
+            ReplaceRange(new TextPosition(end.Line, L(end.Line).Length), new TextPosition(end.Line, L(end.Line).Length), "\n" + indent + close.TrimStart());
+            ReplaceRange(new TextPosition(start.Line, 0), new TextPosition(start.Line, 0), indent + open.TrimEnd() + "\n");
+            _line = start.Line;
+            _col = 0;
+            Beginline(BL.White | BL.Fix);
+            _bs.OpStart = new TextPosition(start.Line, 0);
+            _bs.OpEnd = new TextPosition(end.Line + 2, 0);
+            CheckCursor();
+            return;
+        }
         TextPosition endExcl;
         if (oap.Type == MType.Line)
         {
@@ -72,14 +75,63 @@ public sealed partial class VimEngine
             endExcl = new TextPosition(end.Line, L(end.Line).Length);
         }
         else endExcl = oap.Inclusive ? new TextPosition(end.Line, Math.Min(L(end.Line).Length, end.Character + (end.Character < L(end.Line).Length ? VimText.CharLen(L(end.Line), end.Character) : 0))) : end;
+        if (endExcl < start) endExcl = start;
         // insert the closing text first so the start position stays valid
         ReplaceRange(endExcl, endExcl, close);
         ReplaceRange(start, start, open);
         _line = start.Line;
         _col = start.Character;
         _bs.OpStart = start;
-        _bs.OpEnd = new TextPosition(endExcl.Line, endExcl.Character + open.Length * (start.Line == endExcl.Line ? 1 : 0) + close.Length - 1);
+        _bs.OpEnd = new TextPosition(endExcl.Line, endExcl.Character + (start.Line == endExcl.Line ? open.Length : 0) + close.Length - 1);
         CheckCursor();
+    }
+
+    /// <summary>The innermost <paramref name="open"/>/<paramref name="close"/> pair enclosing the cursor (the cursor may be on either delimiter).</summary>
+    private bool FindBracketPair(char open, char close, out TextPosition openPos, out TextPosition closePos)
+    {
+        openPos = closePos = default;
+        var line = _line;
+        var col = _col;
+        var found = false;
+        if (CharAt(line, col) == open) { openPos = new TextPosition(line, col); found = true; }
+        else
+        {
+            var depth = 0;
+            var l = line;
+            var i = col - 1;
+            while (!found && l >= 0)
+            {
+                var s = L(l);
+                if (i >= s.Length) i = s.Length - 1;
+                for (; i >= 0; i--)
+                {
+                    var ch = s[i];
+                    if (ch == close) depth++;
+                    else if (ch == open) { if (depth == 0) { openPos = new TextPosition(l, i); found = true; break; } depth--; }
+                }
+                l--;
+                if (l >= 0) i = L(l).Length - 1;
+            }
+        }
+        if (!found) return false;
+        {
+            var depth = 0;
+            var l = openPos.Line;
+            var i = openPos.Character + 1;
+            while (l < LineCount)
+            {
+                var s = L(l);
+                for (; i < s.Length; i++)
+                {
+                    var ch = s[i];
+                    if (ch == open) depth++;
+                    else if (ch == close) { if (depth == 0) { closePos = new TextPosition(l, i); return true; } depth--; }
+                }
+                l++;
+                i = 0;
+            }
+        }
+        return false;
     }
 
     /// <summary>Finds the surrounding delimiter pair of <paramref name="ch"/> around the cursor. Returns (openPos, openLen, closePos, closeLen).</summary>
@@ -87,35 +139,12 @@ public sealed partial class VimEngine
     {
         openPos = closePos = default;
         openLen = closeLen = 1;
-        var cur = new TextPosition(_line, _col);
         switch (ch)
         {
-            case '(' or ')' or 'b' or '{' or '}' or 'B' or '[' or ']' or 'r' or '<' or '>' or 'a':
-            {
-                char open, close;
-                if (ch is '(' or ')' or 'b') { open = '('; close = ')'; }
-                else if (ch is '{' or '}' or 'B') { open = '{'; close = '}'; }
-                else if (ch is '[' or ']' or 'r') { open = '['; close = ']'; }
-                else { open = '<'; close = '>'; }
-                var l = _line; var c = _col;
-                var save = cur;
-                if (CharAt(l, c) == open) c += 1;
-                var o = FindMatchLimit(open, false, new TextPosition(l, c), unmatched: true);
-                if (CharAt(save.Line, save.Character) == open) o = save;
-                if (o is null) return false;
-                var cl = FindMatchLimit(close, true, new TextPosition(o!.Value.Line, o.Value.Character + 1), unmatched: true);
-                if (CharAt(save.Line, save.Character) == close && o is not null)
-                {
-                    // cursor on the closing char
-                    var o2 = FindMatchLimit(open, false, save, unmatched: true);
-                    if (o2 is null) return false;
-                    o = o2;
-                    cl = save;
-                }
-                if (cl is null) return false;
-                openPos = o!.Value; closePos = cl.Value;
-                return true;
-            }
+            case '(' or ')' or 'b': return FindBracketPair('(', ')', out openPos, out closePos);
+            case '{' or '}' or 'B': return FindBracketPair('{', '}', out openPos, out closePos);
+            case '[' or ']' or 'r': return FindBracketPair('[', ']', out openPos, out closePos);
+            case '<' or '>' or 'a': return FindBracketPair('<', '>', out openPos, out closePos);
             case 't':
             {
                 var oap = new OpArgs();
@@ -141,24 +170,22 @@ public sealed partial class VimEngine
             }
             default:
             {
+                // a quote-like pair on the cursor line: quotes pair up from the start of the line; the cursor picks the pair it is in,
+                // or the next pair after it (like the i" text object)
                 var q = (char)ch;
                 var s = CurLine;
-                // quote pair on this line around (or after) the cursor
-                var before = _col;
-                var left = -1;
-                for (var i = Math.Min(_col, s.Length - 1); i >= 0; i--) if (s[i] == q && (i == 0 || s[i - 1] != '\\')) { left = i; break; }
-                if (left < 0) return false;
-                var right = -1;
-                for (var i = left + 1; i < s.Length; i++) if (s[i] == q && s[i - 1] != '\\') { right = i; break; }
-                if (right < 0 || right < before && false) return false;
-                if (right < _col)
+                var quotes = new List<int>();
+                for (var i = 0; i < s.Length; i++) if (s[i] == q && (i == 0 || s[i - 1] != '\\')) quotes.Add(i);
+                for (var k = 0; k + 1 < quotes.Count; k += 2)
                 {
-                    // the cursor is past this pair: find the next pair containing it
-                    return false;
+                    if (_col <= quotes[k + 1])
+                    {
+                        openPos = new TextPosition(_line, quotes[k]);
+                        closePos = new TextPosition(_line, quotes[k + 1]);
+                        return true;
+                    }
                 }
-                openPos = new TextPosition(_line, left);
-                closePos = new TextPosition(_line, right);
-                return true;
+                return false;
             }
         }
     }
@@ -218,25 +245,27 @@ public sealed partial class VimEngine
     // commentary
     // ------------------------------------------------------------------------------------------------------------
 
-    private void CommentOperator(OpArgs oap)
+    private void CommentOperator(OpArgs oap, bool block)
     {
         if (!CanModify()) return;
         var first = oap.Start.Line;
         var last = oap.End.Line;
-        ToggleComment(first, last);
+        var col = ToggleComment(first, last, block, oap.Start.Line == first ? oap.Start.Character : 0);
         _line = first;
-        if (oap.IsVisual || true) Beginline(BL.Sol | BL.Fix);
+        _col = col;
+        _setCurswant = true;
         _bs.OpStart = new TextPosition(first, 0);
         _bs.OpEnd = new TextPosition(last, 0);
         CheckCursor();
     }
 
-    private void ToggleComment(int first, int last)
+    /// <summary>Toggles comments on the lines; returns where the cursor column of the first line ends up (it follows its text).</summary>
+    private int ToggleComment(int first, int last, bool block, int cursorCol)
     {
         var tokens = Host.GetCommentTokens();
-        var line = tokens.Line;
+        var line = block && !string.IsNullOrEmpty(tokens.BlockOpen) && !string.IsNullOrEmpty(tokens.BlockClose) ? null : tokens.Line;
         string? bo = null, bc = null;
-        if (string.IsNullOrEmpty(line)) { bo = tokens.BlockOpen; bc = tokens.BlockClose; if (string.IsNullOrEmpty(bo) || string.IsNullOrEmpty(bc)) { Error("E-comment: no comment syntax for this language"); return; } }
+        if (string.IsNullOrEmpty(line)) { bo = tokens.BlockOpen; bc = tokens.BlockClose; if (string.IsNullOrEmpty(bo) || string.IsNullOrEmpty(bc)) { Error("E-comment: no comment syntax for this language"); return cursorCol; } }
         var allCommented = true;
         var any = false;
         var minIndent = int.MaxValue;
@@ -250,7 +279,8 @@ public sealed partial class VimEngine
             if (line is { Length: > 0 }) { if (!t.StartsWith(line, StringComparison.Ordinal)) allCommented = false; }
             else if (!(t.StartsWith(bo!, StringComparison.Ordinal) && t.TrimEnd().EndsWith(bc!, StringComparison.Ordinal))) allCommented = false;
         }
-        if (!any) return;
+        if (!any) return cursorCol;
+        var newCol = cursorCol;
         for (var l = first; l <= last; l++)
         {
             var s = L(l);
@@ -260,27 +290,26 @@ public sealed partial class VimEngine
             {
                 var ind = s.Length - s.TrimStart(' ', '\t').Length;
                 var body = s.Substring(ind);
-                if (line is { Length: > 0 })
+                var tokenLen = line is { Length: > 0 } ? line.Length : bo!.Length;
+                body = body.Substring(tokenLen);
+                if (body.StartsWith(' ')) { body = body.Substring(1); tokenLen++; }
+                if (line is not { Length: > 0 })
                 {
-                    body = body.Substring(line.Length);
-                    if (body.StartsWith(' ')) body = body.Substring(1);
-                }
-                else
-                {
-                    body = body.Substring(bo!.Length);
-                    if (body.StartsWith(' ')) body = body.Substring(1);
                     body = body.TrimEnd();
                     body = body.Substring(0, body.Length - bc!.Length);
                     if (body.EndsWith(' ')) body = body.Substring(0, body.Length - 1);
                 }
                 neu = s.Substring(0, ind) + body;
+                if (l == first) newCol = cursorCol >= ind + tokenLen ? cursorCol - tokenLen : cursorCol > ind ? ind : cursorCol;
             }
             else
             {
                 if (line is { Length: > 0 }) neu = s.Substring(0, minIndent) + line + " " + s.Substring(minIndent);
                 else neu = s.Substring(0, minIndent) + bo + " " + s.Substring(minIndent) + " " + bc;
+                if (l == first && cursorCol >= minIndent) newCol = cursorCol + (line is { Length: > 0 } ? line.Length : bo!.Length) + 1;
             }
             SetLine(l, neu);
         }
+        return newCol;
     }
 }

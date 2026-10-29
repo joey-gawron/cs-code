@@ -51,12 +51,19 @@ public sealed partial class VimEngine
         _col = col;
     }
 
-    private int CurVcol() => VimText.VcolOf(CurLine, _col, O.TabStop);
+    /// <summary>Virtual column of the cursor: on a TAB in Normal mode the cursor sits on the tab's last cell (Vim's getvcol "cursor" column).</summary>
+    private int CurVcol()
+    {
+        var s = CurLine;
+        if (_col < s.Length && s[_col] == '\t' && !O.List && _mode is not (VimMode.Insert or VimMode.Replace)
+            && !(VisualActive && new TextPosition(_line, _col) < _visualStart)) return VimText.VcolEndOf(s, _col, O.TabStop);
+        return VimText.VcolOf(s, _col, O.TabStop);
+    }
 
     private void UpdateCurswant()
     {
         if (!_setCurswant) return;
-        _curswant = VimText.VcolOf(CurLine, _col, O.TabStop);
+        _curswant = CurVcol();
         _setCurswant = false;
     }
 
@@ -102,7 +109,8 @@ public sealed partial class VimEngine
     {
         var u = _bs.Undo;
         if (!u.Synced) return;
-        u.NewHeader(new TextPosition(_line, _col), _bs.Marks, Now(), Math.Max(1, O.UndoLevels));
+        var header = u.NewHeader(new TextPosition(_line, _col), _bs.Marks, Now(), Math.Max(1, O.UndoLevels));
+        header.VisualStart = _bs.VisualStart; header.VisualEnd = _bs.VisualEnd; header.VisualMode = _bs.VisualMode; header.VisualCurswant = _bs.VisualCurswant;
         _bs.NewChange = true;
     }
 
@@ -140,7 +148,7 @@ public sealed partial class VimEngine
 
     private void NoteChange(int line, int col)
     {
-        _bs.AddChange(new TextPosition(Math.Clamp(line, 0, LastLine), Math.Max(0, col)), O.TextWidth);
+        _bs.AddChange(new TextPosition(Math.Max(0, line), Math.Max(0, col)), O.TextWidth);
     }
 
     private void HostEdit(in VimEdit edit)
@@ -184,12 +192,12 @@ public sealed partial class VimEngine
         return i;
     }
 
-    private void InsertInLine(int l, int col, string text)
+    private void InsertInLine(int l, int col, string text, bool note = true)
     {
         if (text.Length == 0) return;
         SaveUndo(l, 1, 1);
         HostEdit(new VimEdit(new TextPosition(l, col), new TextPosition(l, col), text));
-        NoteChange(l, col);
+        if (note) NoteChange(l, col);
     }
 
     private void DeleteInLine(int l, int col, int len)
@@ -234,7 +242,7 @@ public sealed partial class VimEngine
             _bs.MarkAdjust(0, int.MaxValue / 2, 0, 0, delete: true);
         }
         else _bs.MarkAdjust(first, first + count - 1, 0, -count, delete: true);
-        NoteChange(Math.Min(first, LastLine), 0);
+        NoteChange(first, 0);
     }
 
     private void RawDeleteLines(int first, int count)
@@ -256,18 +264,26 @@ public sealed partial class VimEngine
         SaveUndo(start.Line, oldLines, newLines);
         HostEdit(new VimEdit(start, end, text));
         var delta = newLines - oldLines;
+        // where the text that followed the replaced range starts now
+        var lastNew = text.LastIndexOf('\n');
+        var tailStartCol = lastNew < 0 ? start.Character + text.Length : text.Length - lastNew - 1;
         if (delta != 0)
         {
             if (delta < 0)
             {
                 // marks in fully removed middle lines vanish; marks on the old last line follow the joined text
                 if (end.Line - 1 >= start.Line + 1) _bs.MarkAdjust(start.Line + 1, end.Line - 1, 0, 0, delete: true);
-                _bs.MarkAdjust(end.Line, end.Line, start.Line + newLines - 1 - end.Line, delta, delete: false);
+                _bs.MarkColAdjust(end.Line, 0, start.Line + newLines - 1 - end.Line, tailStartCol);
+                _bs.MarkAdjust(end.Line + 1, int.MaxValue / 2, delta, 0, delete: false);
             }
-            else _bs.MarkAdjust(start.Line + 1, int.MaxValue / 2, delta, 0, delete: false);
+            else
+            {
+                _bs.MarkAdjust(end.Line + 1, int.MaxValue / 2, delta, 0, delete: false);
+                _bs.MarkColAdjust(end.Line, end.Character, start.Line + newLines - 1 - end.Line, tailStartCol - end.Character);
+            }
         }
         _ = endLineText;
-        NoteChange(start.Line, start.Character);
+        NoteChange(delta < 0 ? start.Line + 1 : start.Line, delta < 0 ? 0 : start.Character);
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -296,6 +312,7 @@ public sealed partial class VimEngine
     private void ApplyUndoHeader(UndoHeader h, bool undo, out int oldCountSum, out int newCountSum)
     {
         var savedMarks = (TextPosition?[])_bs.Marks.Clone();
+        var savedVisual = (_bs.VisualStart, _bs.VisualEnd, _bs.VisualMode, _bs.VisualCurswant);
         var opStart = new TextPosition(LastLine, 0);
         var opEnd = new TextPosition(-1, 0);
         var curLnum = _line + 1;
@@ -345,6 +362,7 @@ public sealed partial class VimEngine
             if (top < opStart.Line) opStart = new TextPosition(top, 0);
             if (newsize == 0 && top > opEnd.Line) opEnd = new TextPosition(top, 0);
             else if (top + newsize - 1 > opEnd.Line) opEnd = new TextPosition(top + newsize - 1, 0);
+            NoteChange(undo ? top : Math.Max(top, top + newsize - 1), 0);
             newCountSum += newsize;
             oldCountSum += oldsize;
             e.Old = replaced;
@@ -364,6 +382,13 @@ public sealed partial class VimEngine
             }
         }
 
+        // the Visual area comes back as it was before the change; the current one is kept for the opposite direction
+        if (h.VisualStart is not null)
+        {
+            _bs.VisualStart = h.VisualStart; _bs.VisualEnd = h.VisualEnd; _bs.VisualMode = h.VisualMode; _bs.VisualCurswant = h.VisualCurswant;
+            h.VisualStart = savedVisual.VisualStart; h.VisualEnd = savedVisual.VisualEnd; h.VisualMode = savedVisual.VisualMode; h.VisualCurswant = savedVisual.VisualCurswant;
+        }
+
         if (h.Cursor.Line + 2 == curLnum && curLnum > 1) curLnum--;
         _line = curLnum - 1;
         _col = curCol;
@@ -377,8 +402,6 @@ public sealed partial class VimEngine
             _col = 0;
         }
         _setCurswant = true;
-        _bs.ULineNr = -1;
-        _bs.ULineText = null;
         CheckCursor();
         _bs.KnownVersion = _buf.Version;
     }
@@ -395,6 +418,7 @@ public sealed partial class VimEngine
                 Message("Already at oldest change");
                 return;
             }
+            if (n == 0) SetPcmark();
             var h = tree.Current;
             ApplyUndoHeader(h, undo: true, out var oc, out var nc);
             h.Parent!.Preferred = h;
@@ -447,6 +471,7 @@ public sealed partial class VimEngine
         var ancestors = new HashSet<UndoHeader>(path);
         var oc = 0;
         var nc = 0;
+        if (target != tree.Current) SetPcmark();
         while (!ancestors.Contains(tree.Current))
         {
             var h = tree.Current;
@@ -457,6 +482,7 @@ public sealed partial class VimEngine
         }
         var down = new List<UndoHeader>();
         for (var t = target; t != tree.Current; t = t!.Parent) down.Add(t!);
+        if (down.Count > 0 || !ancestors.Contains(tree.Current) || tree.Current != target) { }
         down.Reverse();
         foreach (var h in down)
         {
@@ -503,25 +529,23 @@ public sealed partial class VimEngine
 
     private readonly List<Jump> _jumps = [];
     private int _jumpIdx;
-    private TextPosition? _pcmark;
-    private TextPosition? _prevPcmark;
     private bool _noJumpList;
 
     /// <summary>Vim's setpcmark: remember the position before a jump.</summary>
     private void SetPcmark()
     {
         if (_noJumpList) return;
-        _prevPcmark = _pcmark;
-        _pcmark = new TextPosition(_line, _col);
+        _bs.PrevPcMark = _bs.PcMark;
+        _bs.PcMark = new TextPosition(_line, _col);
         if (_jumps.Count >= BufferState.JumpListSize) _jumps.RemoveAt(0);
-        _jumps.Add(new Jump { Buf = _bs, Pos = _pcmark.Value });
+        _jumps.Add(new Jump { Buf = _bs, Pos = _bs.PcMark.Value });
         _jumpIdx = _jumps.Count;
     }
 
     private void CheckPcmark()
     {
-        if (_prevPcmark is { } prev && (_pcmark is null || _pcmark == new TextPosition(_line, _col))) _pcmark = prev;
-        _prevPcmark = null;
+        if (_bs.PrevPcMark is { } prev && (_bs.PcMark is null || _bs.PcMark == new TextPosition(_line, _col))) _bs.PcMark = prev;
+        _bs.PrevPcMark = null;
     }
 
     private void SetMark(char c, TextPosition pos)
@@ -542,7 +566,7 @@ public sealed partial class VimEngine
         {
             >= 'a' and <= 'z' => _bs.Marks[c - 'a'],
             >= 'A' and <= 'Z' => _s.GlobalMarks.TryGetValue((char)c, out var g) && (g.Uri is null || g.Uri == _buf.Uri) ? g.Pos : null,
-            '\'' or '`' => _pcmark,
+            '\'' or '`' => _bs.PcMark,
             '[' => _bs.OpStart,
             ']' => _bs.OpEnd,
             '<' => _bs.VisualStart is { } vs && _bs.VisualEnd is { } ve ? (vs <= ve ? vs : ve) : _bs.VisualStart,

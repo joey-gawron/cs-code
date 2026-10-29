@@ -1,0 +1,145 @@
+# replace
+=== replace-001
+> ‸foo
+keys: rx
+< ‸xoo
+
+=== replace-002
+> ‸foo
+keys: 2rx
+< x‸xo
+
+=== replace-003
+> ‸foo
+keys: 3rx
+< xx‸x
+
+=== replace-004
+> ‸foo
+keys: 4rx
+< ‸foo
+
+=== replace-005
+> f‸oo
+keys: 2rx
+< fx‸x
+
+=== replace-006
+> ‸foo
+keys: r<CR>
+< 
+< ‸oo
+
+=== replace-007
+> ‸foo
+keys: 2r<CR>
+< 
+< ‸o
+
+=== replace-008
+> f‸oo
+keys: r<CR>
+< f
+< ‸o
+
+=== replace-009
+> ‸foo
+keys: rxl.
+< x‸xo
+
+=== replace-010
+> ‸foo
+keys: rx..
+< ‸xoo
+
+=== replace-011
+> ‸foo
+keys: 2rxl.
+< xx‸o
+
+=== replace-012
+> ‸foo bar
+keys: rx$.
+< xoo ba‸x
+
+=== replace-013
+> ‸foo
+keys: r<Esc>
+< ‸foo
+
+=== replace-014
+> ‸
+keys: rx
+< ‸
+
+=== replace-015
+> ‸foo\tbar
+keys: rx
+< ‸xoo\tbar
+
+=== replace-016
+> ‸foo
+keys: Rab<Esc>
+< a‸bo
+
+=== replace-017
+> ‸foo
+keys: Rabcd<Esc>
+< abc‸d
+
+=== replace-018
+> f‸oo
+keys: Rabc<Esc>
+< fab‸c
+
+=== replace-019
+> ‸foo
+keys: Rab<BS><Esc>
+< ‸aoo
+
+=== replace-020
+> ‸foo
+keys: Rab<BS><BS><BS><Esc>
+< ‸foo
+
+=== replace-021
+> ‸foo
+keys: Rab<CR>cd<Esc>
+< ab
+< c‸d
+
+=== replace-022
+> ‸foo
+keys: 2Rab<Esc>
+< aba‸b
+
+=== replace-023
+> ‸foo bar
+keys: Rx<Esc>w.
+< xoo ‸xar
+
+=== replace-024
+> ‸foo
+keys: Rab<Esc>u
+< ‸foo
+
+=== replace-025
+> ‸foo
+keys: R<Esc>
+< ‸foo
+
+=== replace-026
+> ‸a b
+keys: rXlrY
+< X‸Yb
+
+=== replace-027
+> ‸é
+keys: rx
+< ‸x
+
+=== replace-028
+> ‸x
+keys: ré
+< ‸é
+
