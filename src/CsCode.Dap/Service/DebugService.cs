@@ -1,0 +1,593 @@
+using System.Text.Json.Nodes;
+using CsCode.Core.Contributions;
+using CsCode.Core.Debugging;
+using CsCode.Core.Lifecycle;
+using CsCode.Core.Platform;
+using CsCode.Core.Tasks;
+using CsCode.Dap.Adapters;
+using CsCode.Dap.Client;
+using CsCode.Dap.Configuration;
+using CsCode.Dap.Breakpoints;
+using CsCode.Dap.Session;
+using CsCode.Dap.Transport;
+using Microsoft.Extensions.Logging;
+
+namespace CsCode.Dap.Service;
+
+/// <summary>
+/// Everything the debug UI binds to. Sessions, stop location, state and the Debug Console history are mutated on the Debug lane
+/// (session events arrive there) and published as immutable snapshots, so any thread — in particular the UI thread — can read them
+/// without locks or waiting. <see cref="StartAsync"/> and friends only enqueue. Events fire on the lane: subscribers must be cheap and
+/// marshal themselves (the shell's UiDispatcher does).
+/// </summary>
+public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDebugOutputHistory, IDebugSourceContentProvider, IAsyncDisposable
+{
+    public const int MaxHistoryLines = 5_000;
+    private const int MaxHistoryChars = 4 * 1024 * 1024;
+
+    private readonly DebugLane _lane;
+    private readonly DapPlatform _p;
+    private readonly BreakpointManager _breakpoints;
+    private readonly DebugConfigurationService _configurations;
+    private readonly ITaskService _tasks;
+    private readonly ILogger _logger;
+    private readonly DisposableStore _subs = new();
+    private readonly object _gate = new();
+
+    private readonly Dictionary<string, List<IDebugAdapterFactory>> _factories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<IDebugConfigurationProvider>> _providers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, BuiltinDebugAdapter> _builtins = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<IDebugSession, SessionHooks> _hooks = new();
+    private readonly Dictionary<IDebugSession, CompoundGroup> _compounds = new();
+
+    private readonly Emitter<IDebugSession> _sessionStarted = new(), _sessionTerminated = new();
+    private readonly Emitter<IDebugSession?> _activeChanged = new();
+    private readonly Emitter<DebugState> _stateChanged = new();
+    private readonly Emitter<DebugStopLocation?> _stopLocationChanged = new();
+    private readonly Emitter<DebugOutputEventArgs> _output = new();
+    private readonly Emitter<object?> _outputCleared = new();
+
+    private IDebugSession[] _sessions = [];
+    private IDebugSession? _active;
+    private int _state = (int)DebugState.Inactive;
+    private DebugStopLocation? _stopLocation;
+    private int _focusedFrameId = -1;
+    private WatchExpression[] _watches = [];
+    private DebuggerType[] _debuggerTypes = [];
+    private long _stopEpoch;
+    private int _sessionCounter;
+    private int _disposed;
+    private (string SessionId, int ThreadId, IReadOnlyList<DebugStackFrame> Frames)? _frameCache;
+
+    private readonly LinkedList<(DebugOutputEventArgs Event, int Lines, int Chars)> _history = new();
+    private int _historyLines, _historyChars;
+
+    private sealed record SessionHooks(IDisposable Subscriptions, string? PostDebugTask, Uri? Folder);
+    private sealed class CompoundGroup(bool stopAll) { public bool StopAll { get; } = stopAll; public List<IDebugSession> Members { get; } = new(); }
+
+    public DebugService(DebugLane lane, DapPlatform platform, BreakpointManager breakpoints, DebugConfigurationService configurations, ITaskService tasks, IEnumerable<BuiltinDebugAdapter>? builtins = null)
+    {
+        _lane = lane;
+        _p = platform;
+        _breakpoints = breakpoints;
+        _configurations = configurations;
+        _tasks = tasks;
+        _logger = platform.Logger("CsCode.Dap.Service");
+
+        foreach (var b in builtins ?? [])
+        {
+            _builtins[b.Type] = b;
+            Add(_factories, b.Type, b.Factory);
+            if (b.Provider is not null)
+            {
+                Add(_providers, b.Type, b.Provider);
+                _subs.Add(_configurations.AddProvider(b.Type, b.Provider));
+            }
+        }
+        RebuildDebuggerTypes();
+        InitializeContributions();
+        _subs.Add(breakpoints.Changed.Subscribe(_ => UpdateContextKeys()));
+        RegisterCommands();
+        UpdateContextKeys();
+    }
+
+    // ------------------------------------------------------------------ snapshots (any thread)
+
+    public IReadOnlyList<IDebugSession> Sessions => Volatile.Read(ref _sessions);
+    public DebugState State => (DebugState)Volatile.Read(ref _state);
+    public DebugStopLocation? StopLocation => Volatile.Read(ref _stopLocation);
+    public IBreakpointManager Breakpoints => _breakpoints;
+    public IDebugConfigurationService Configurations => _configurations;
+    public IReadOnlyList<DebuggerType> DebuggerTypes => Volatile.Read(ref _debuggerTypes);
+    public IReadOnlyList<WatchExpression> Watches => Volatile.Read(ref _watches);
+    public int? FocusedFrameId => Volatile.Read(ref _focusedFrameId) is var f && f >= 0 ? f : null;
+
+    public IEventSource<IDebugSession> SessionStarted => _sessionStarted;
+    public IEventSource<IDebugSession> SessionTerminated => _sessionTerminated;
+    public IEventSource<IDebugSession?> ActiveSessionChanged => _activeChanged;
+    public IEventSource<DebugState> StateChanged => _stateChanged;
+    public IEventSource<DebugStopLocation?> StopLocationChanged => _stopLocationChanged;
+    public IEventSource<DebugOutputEventArgs> Output => _output;
+    public IEventSource<object?> OutputCleared => _outputCleared;
+
+    public IDebugSession? ActiveSession
+    {
+        get { lock (_gate) return _active; }
+        set
+        {
+            lock (_gate)
+            {
+                if (ReferenceEquals(_active, value)) return;
+                if (value is not null && !_sessions.Contains(value)) return; // only live sessions can be focused
+                _active = value;
+            }
+            _activeChanged.Fire(value);
+            Volatile.Write(ref _focusedFrameId, -1);
+            RecomputeState();
+            UpdateContextKeys();
+            if (value is DebugSession { State: DebugSessionState.Stopped } s) _lane.Post(() => _ = RefreshStopLocationAsync(s, s.FocusedThreadId, "focus"));
+            else SetStopLocation(null);
+        }
+    }
+
+    private static void Add<T>(Dictionary<string, List<T>> map, string key, T item)
+    {
+        if (!map.TryGetValue(key, out var list)) map[key] = list = new();
+        list.Add(item);
+    }
+
+    // ------------------------------------------------------------------ registration
+
+    public IDisposable RegisterAdapterFactory(string debugType, IDebugAdapterFactory factory)
+    {
+        lock (_gate) Add(_factories, debugType, factory);
+        _lane.Post(() => { RebuildDebuggerTypes(); UpdateContextKeys(); });
+        return Disposable.Create(() =>
+        {
+            lock (_gate) { if (_factories.TryGetValue(debugType, out var l)) l.Remove(factory); }
+            _lane.Post(() => { RebuildDebuggerTypes(); UpdateContextKeys(); });
+        });
+    }
+
+    public IDisposable RegisterConfigurationProvider(string debugType, IDebugConfigurationProvider provider)
+    {
+        lock (_gate) Add(_providers, debugType, provider);
+        var forwarded = _configurations.AddProvider(debugType, provider);
+        return Disposable.Create(() =>
+        {
+            lock (_gate) { if (_providers.TryGetValue(debugType, out var l)) l.Remove(provider); }
+            forwarded.Dispose();
+        });
+    }
+
+    // ------------------------------------------------------------------ starting
+
+    public ValueTask<IDebugSession?> StartAsync(DebugConfiguration configuration, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        return new ValueTask<IDebugSession?>(_lane.RunAsync(() => StartCoreAsync(configuration, null, ct), ct));
+    }
+
+    private async Task<IDebugSession?> StartCoreAsync(DebugConfiguration configuration, DebugSession? parent, CancellationToken ct, CompoundGroup? group = null)
+    {
+        if (string.Equals(configuration.Type, LaunchJson.CompoundType, StringComparison.Ordinal))
+            return await StartCompoundAsync(configuration, ct);
+
+        // 1. ${variables}
+        DebugConfiguration? resolved;
+        try { resolved = await _configurations.ResolveVariablesAsync(configuration, ct); }
+        catch (VariableResolutionException ex) { await ReportAsync($"Cannot start '{configuration.Name}': {ex.Message}"); return null; }
+        catch (OperationCanceledException) { return null; } // an ${input:…} prompt was dismissed
+
+        // 2. configuration providers (fill in / validate; null aborts)
+        var folder = resolved.WorkspaceFolder ?? _p.PrimaryFolder;
+        IDebugConfigurationProvider[] providers;
+        lock (_gate) providers = _providers.TryGetValue(resolved.Type, out var pl) ? [.. pl] : [];
+        foreach (var provider in providers)
+        {
+            resolved = await provider.ResolveAsync(folder, resolved, ct);
+            if (resolved is null) return null;
+        }
+
+        // 3. preLaunchTask
+        if (resolved.PreLaunchTask is { Length: > 0 } pre && !await RunTaskGateAsync(pre, "preLaunchTask", folder, ct)) return null;
+
+        // 4. adapter
+        DebugAdapterDescriptor? descriptor;
+        try { descriptor = await CreateDescriptorAsync(resolved, ct); }
+        catch (DebugSessionStartException ex) { await ReportAsync(ex.Message); return null; }
+        if (descriptor is null)
+        {
+            await ReportAsync($"No debug adapter is available for type '{resolved.Type}'. Install one and register it in the 'cscode.debuggers' setting.");
+            return null;
+        }
+
+        // 5. session
+        var id = "s" + Interlocked.Increment(ref _sessionCounter);
+        var final = resolved;
+        var session = new DebugSession(new DebugSessionOptions(id, final,
+            tct => DapTransportFactory.OpenAsync(descriptor, _logger, TimeSpan.FromSeconds(15), tct),
+            _breakpoints, _lane)
+        {
+            Parent = parent,
+            Logger = _p.Logger("CsCode.Dap.Session"),
+            Memory = _p.Memory,
+            Settings = SettingsFor(final),
+            StartChild = StartChildAsync,
+        });
+        Attach(session, final.PostDebugTask, folder, group);
+        try
+        {
+            await session.StartAsync(ct);
+        }
+        catch (DebugSessionStartException ex)
+        {
+            await ReportAsync(ex.Message);
+            return null;
+        }
+        catch (OperationCanceledException) { return null; }
+        return session;
+    }
+
+    private DebugSessionSettings SettingsFor(DebugConfiguration config)
+    {
+        var timeout = _p.Configuration?.Get<double?>("cscode.debug.requestTimeoutSeconds");
+        return timeout is > 0 ? new DebugSessionSettings { RequestTimeout = TimeSpan.FromSeconds(timeout.Value) } : new DebugSessionSettings();
+    }
+
+    private async Task<DebugAdapterDescriptor?> CreateDescriptorAsync(DebugConfiguration config, CancellationToken ct)
+    {
+        // VS Code's dev convenience: a running adapter server given in the configuration itself.
+        if (config.Properties.TryGetValue("debugServer", out var ds) && ds.ValueKind == System.Text.Json.JsonValueKind.Number && ds.TryGetInt32(out var port))
+            return new DebugAdapterServer("127.0.0.1", port);
+
+        IDebugAdapterFactory[] factories;
+        lock (_gate) factories = _factories.TryGetValue(config.Type, out var l) ? [.. l.AsEnumerable().Reverse()] : []; // latest registration wins
+        foreach (var f in factories)
+            if (await f.CreateDescriptorAsync(config, ct) is { } d) return d;
+        return await ContributedFactory.CreateDescriptorAsync(config, ct);
+    }
+
+    private async Task<bool> RunTaskGateAsync(string task, string kind, Uri? folder, CancellationToken ct)
+    {
+        var result = await _tasks.RunAsync(task, folder, ct);
+        if (result.Succeeded) return true;
+        if (result.Cancelled) return false;
+        var why = result.Error ?? $"terminated with exit code {result.ExitCode}";
+        if (_p.Window is not { } window) return false;
+        var choice = await window.ShowMessageAsync(MessageSeverity.Error, $"The {kind} '{task}' {(result.Error is null ? why : "failed: " + why)}.",
+            [new MessageAction("Debug Anyway"), new MessageAction("Abort", IsCloseAffordance: true)], ct);
+        return choice == "Debug Anyway";
+    }
+
+    private async Task<IDebugSession?> StartChildAsync(DebugSession parent, string request, JsonObject configuration, CancellationToken ct)
+    {
+        var config = DebugConfiguration.FromJson(System.Text.Json.JsonSerializer.SerializeToElement(configuration), parent.Configuration.WorkspaceFolder);
+        _compounds.TryGetValue(parent, out var group);
+        // The child is a session of its own with Parent set; the adapter factory for the (inherited) type creates its connection.
+        return await StartCoreAsync(config with { PreLaunchTask = null }, parent, ct, group);
+    }
+
+    private async Task<IDebugSession?> StartCompoundAsync(DebugConfiguration compound, CancellationToken ct)
+    {
+        var folder = compound.WorkspaceFolder ?? _p.PrimaryFolder;
+        var all = await _configurations.GetLaunchConfigurationsAsync(folder, ct);
+        var members = new List<DebugConfiguration>();
+        foreach (var name in LaunchJson.CompoundMembers(compound))
+        {
+            var found = all.FirstOrDefault(c => c.Name == name && c.Type != LaunchJson.CompoundType);
+            if (found is null) { await ReportAsync($"The compound '{compound.Name}' refers to the unknown configuration '{name}'."); return null; }
+            members.Add(found);
+        }
+        if (compound.PreLaunchTask is { Length: > 0 } pre && !await RunTaskGateAsync(pre, "preLaunchTask", folder, ct)) return null;
+
+        var group = new CompoundGroup(LaunchJson.CompoundStopsAll(compound));
+        // VS Code starts compound members concurrently.
+        var started = await Task.WhenAll(members.Select(m => StartCoreAsync(m, null, ct, group)));
+        return started.FirstOrDefault(s => s is not null);
+    }
+
+    private Task ReportAsync(string message)
+    {
+        _logger.LogWarning("{Message}", message);
+        return _p.Window is { } w ? w.ShowMessageAsync(MessageSeverity.Error, message, null, CancellationToken.None).AsTask() : Task.CompletedTask;
+    }
+
+    // ------------------------------------------------------------------ session wiring
+
+    private void Attach(DebugSession session, string? postDebugTask, Uri? folder, CompoundGroup? group)
+    {
+        var subs = new DisposableStore();
+        subs.Add(session.Stopped.Subscribe(e => OnSessionStopped(session, e)));
+        subs.Add(session.Continued.Subscribe(e => OnSessionContinued(session, e)));
+        subs.Add(session.StateChanged.Subscribe(_ => { RecomputeState(); UpdateContextKeys(); }));
+        subs.Add(session.Output.Subscribe(OnSessionOutput));
+        subs.Add(session.Terminated.Subscribe(_ => OnSessionTerminated(session)));
+        lock (_gate)
+        {
+            _hooks[session] = new SessionHooks(subs, postDebugTask, folder);
+            _sessions = [.. _sessions, session];
+            if (group is not null) { group.Members.Add(session); _compounds[session] = group; }
+        }
+        ActiveSession = session; // a new session takes the focus
+        RebuildAfterSessionChange();
+        _sessionStarted.Fire(session);
+    }
+
+    private void OnSessionStopped(DebugSession session, DebugStoppedEventArgs e)
+    {
+        var epoch = Interlocked.Increment(ref _stopEpoch);
+        lock (_gate) _frameCache = null;
+        ActiveSession = session; // a stop brings that session to the front (like VS Code)
+        RecomputeState();
+        UpdateContextKeys();
+        _ = RefreshStopLocationAsync(session, e.ThreadId ?? session.FocusedThreadId, e.Reason, epoch);
+    }
+
+    private void OnSessionContinued(DebugSession session, DebugContinuedEventArgs e)
+    {
+        Interlocked.Increment(ref _stopEpoch); // any in-flight stack fetch for the previous stop is now stale
+        lock (_gate) _frameCache = null;
+        if (ReferenceEquals(ActiveSession, session) && session.State != DebugSessionState.Stopped) SetStopLocation(null);
+        RecomputeState();
+        UpdateContextKeys();
+    }
+
+    private void OnSessionOutput(DebugOutputEventArgs e)
+    {
+        var text = e.Output;
+        var lines = Math.Max(1, text.Count(c => c == '\n'));
+        lock (_gate)
+        {
+            _history.AddLast((e, lines, text.Length));
+            _historyLines += lines;
+            _historyChars += text.Length;
+            while ((_historyLines > MaxHistoryLines || _historyChars > MaxHistoryChars) && _history.Count > 1)
+            {
+                var first = _history.First!.Value;
+                _history.RemoveFirst();
+                _historyLines -= first.Lines;
+                _historyChars -= first.Chars;
+            }
+            if (_history.Count == 1 && (_historyLines > MaxHistoryLines || _historyChars > MaxHistoryChars))
+            {
+                // One giant batch: keep only its tail.
+                var only = _history.First!.Value;
+                var tail = TailLines(only.Event.Output, MaxHistoryLines, MaxHistoryChars);
+                _history.Clear();
+                var trimmed = only.Event with { Output = tail };
+                _history.AddLast((trimmed, Math.Max(1, tail.Count(c => c == '\n')), tail.Length));
+                _historyLines = _history.First!.Value.Lines;
+                _historyChars = tail.Length;
+            }
+        }
+        _output.Fire(e);
+    }
+
+    private static string TailLines(string text, int maxLines, int maxChars)
+    {
+        if (text.Length > maxChars) text = text[^maxChars..];
+        var count = 0;
+        for (var i = text.Length - 1; i >= 0; i--)
+            if (text[i] == '\n' && ++count > maxLines) return text[(i + 1)..];
+        return text;
+    }
+
+    private void OnSessionTerminated(DebugSession session)
+    {
+        SessionHooks? hooks;
+        CompoundGroup? group;
+        bool wasActive;
+        lock (_gate)
+        {
+            if (!_hooks.Remove(session, out hooks)) return; // already handled
+            _sessions = [.. _sessions.Where(s => !ReferenceEquals(s, session))];
+            wasActive = ReferenceEquals(_active, session);
+            _compounds.Remove(session, out group);
+            group?.Members.Remove(session);
+            if (_frameCache?.SessionId == session.Id) _frameCache = null;
+        }
+        hooks.Subscriptions.Dispose();
+        if (wasActive)
+        {
+            IDebugSession? next;
+            lock (_gate) { next = _sessions.LastOrDefault(); _active = next; }
+            _activeChanged.Fire(next);
+            Interlocked.Increment(ref _stopEpoch);
+            SetStopLocation(null);
+            if (next is DebugSession { State: DebugSessionState.Stopped } stopped) _ = RefreshStopLocationAsync(stopped, stopped.FocusedThreadId, "focus");
+        }
+        RebuildAfterSessionChange();
+        _sessionTerminated.Fire(session);
+
+        // Release the session (and kill its adapter) on the lane without blocking the event that told us it ended.
+        _ = DisposeSessionAsync(session);
+        if (group is { StopAll: true } && group.Members.Count > 0)
+            foreach (var sibling in group.Members.ToArray()) _ = sibling.StopAsync();
+        if (hooks.PostDebugTask is { Length: > 0 } post && session.Parent is null)
+            _ = RunPostTaskAsync(post, hooks.Folder);
+    }
+
+    private async Task DisposeSessionAsync(DebugSession session)
+    {
+        try { await session.DisposeAsync(); }
+        catch (Exception ex) { _logger.LogDebug(ex, "Disposing session {Session}", session.Id); }
+    }
+
+    private async Task RunPostTaskAsync(string task, Uri? folder)
+    {
+        try
+        {
+            var r = await _tasks.RunAsync(task, folder, CancellationToken.None);
+            if (!r.Succeeded && !r.Cancelled) await ReportAsync($"The postDebugTask '{task}' {(r.Error ?? $"terminated with exit code {r.ExitCode}")}.");
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "postDebugTask failed"); }
+    }
+
+    // ------------------------------------------------------------------ stop location
+
+    private async Task RefreshStopLocationAsync(DebugSession session, int? threadId, string reason, long? epoch = null)
+    {
+        epoch ??= Interlocked.Read(ref _stopEpoch);
+        try
+        {
+            var tid = threadId ?? (await session.GetThreadsAsync()).FirstOrDefault()?.Id;
+            if (tid is not { } t) return;
+            var frames = await session.GetStackTraceAsync(t, 0, 20);
+            if (Interlocked.Read(ref _stopEpoch) != epoch || session.State != DebugSessionState.Stopped) return; // resumed or stopped again meanwhile
+            lock (_gate) _frameCache = (session.Id, t, frames);
+            if (frames.Count == 0) { SetStopLocation(null); return; }
+            // Prefer the first frame we can show (adapters may start with runtime frames that have no source).
+            var frame = frames.FirstOrDefault(f => session.ResolveSourceUri(f.Source) is not null) ?? frames[0];
+            Volatile.Write(ref _focusedFrameId, frame.Id);
+            if (ReferenceEquals(ActiveSession, session)) SetStopLocation(ToLocation(session, t, frame, reason));
+        }
+        catch (Exception ex) when (ex is DebugHandleInvalidatedException or InvalidOperationException or IOException or TimeoutException or ObjectDisposedException)
+        {
+            _logger.LogDebug(ex, "Could not determine the stop location");
+        }
+    }
+
+    private static DebugStopLocation ToLocation(DebugSession session, int threadId, DebugStackFrame frame, string reason) =>
+        new(session, threadId, frame.Id, session.ResolveSourceUri(frame.Source), frame.Line, frame.Column, reason);
+
+    public ValueTask SetFocusedFrameAsync(string sessionId, int threadId, int frameId, CancellationToken ct = default) =>
+        new(_lane.RunAsync(async () =>
+        {
+            var session = Sessions.OfType<DebugSession>().FirstOrDefault(s => s.Id == sessionId);
+            if (session is null || session.State != DebugSessionState.Stopped) return 0;
+            (string SessionId, int ThreadId, IReadOnlyList<DebugStackFrame> Frames)? cache;
+            lock (_gate) cache = _frameCache;
+            var frames = cache is { } c && c.SessionId == sessionId && c.ThreadId == threadId ? c.Frames : await session.GetStackTraceAsync(threadId, 0, 50, ct);
+            var frame = frames.FirstOrDefault(f => f.Id == frameId);
+            if (frame is null) return 0;
+            Volatile.Write(ref _focusedFrameId, frameId);
+            if (ReferenceEquals(ActiveSession, session)) SetStopLocation(ToLocation(session, threadId, frame, "frame"));
+            return 0;
+        }, ct));
+
+    private void SetStopLocation(DebugStopLocation? location)
+    {
+        var previous = Interlocked.Exchange(ref _stopLocation, location);
+        if (Equals(previous, location)) return;
+        _stopLocationChanged.Fire(location);
+    }
+
+    // ------------------------------------------------------------------ state, context keys
+
+    private void RecomputeState()
+    {
+        DebugState next;
+        lock (_gate)
+        {
+            var live = _sessions.Where(s => s.State != DebugSessionState.Terminated).ToArray();
+            var basis = _active is { State: not DebugSessionState.Terminated } a ? a : live.LastOrDefault();
+            next = basis is null ? DebugState.Inactive : basis.State switch
+            {
+                DebugSessionState.Initializing => DebugState.Initializing,
+                DebugSessionState.Running => DebugState.Running,
+                DebugSessionState.Stopped => DebugState.Stopped,
+                _ => DebugState.Inactive,
+            };
+        }
+        if (Interlocked.Exchange(ref _state, (int)next) != (int)next) _stateChanged.Fire(next);
+    }
+
+    private void RebuildAfterSessionChange()
+    {
+        RecomputeState();
+        UpdateContextKeys();
+    }
+
+    private void UpdateContextKeys()
+    {
+        if (_p.ContextKeys is not { } keys || Volatile.Read(ref _disposed) != 0) return;
+        var state = State;
+        var active = ActiveSession;
+        keys.Set("debugState", state.ToString().ToLowerInvariant());
+        keys.Set("inDebugMode", state != DebugState.Inactive);
+        keys.Set("debugType", active?.Configuration.Type ?? "");
+        keys.Set("debuggerAvailable", DebuggerTypes.Count > 0);
+        keys.Set("focusedSessionIsAttach", active?.Configuration.IsAttach ?? false);
+        keys.Set("breakpointsExist", _breakpoints.Any);
+    }
+
+    // ------------------------------------------------------------------ watches
+
+    public WatchExpression AddWatch(string expression)
+    {
+        var w = new WatchExpression(expression);
+        lock (_gate) _watches = [.. _watches, w];
+        return w;
+    }
+
+    public void RemoveWatch(WatchExpression watch)
+    {
+        lock (_gate) _watches = [.. _watches.Where(w => !ReferenceEquals(w, watch))];
+    }
+
+    // ------------------------------------------------------------------ debug console history
+
+    public IReadOnlyList<DebugOutputEventArgs> GetOutputHistory()
+    {
+        lock (_gate) return [.. _history.Select(h => h.Event)];
+    }
+
+    public void ClearOutputHistory()
+    {
+        lock (_gate)
+        {
+            _history.Clear();
+            _historyLines = _historyChars = 0;
+        }
+        _outputCleared.Fire(null);
+    }
+
+    // ------------------------------------------------------------------ virtual sources
+
+    public async ValueTask<string?> GetSourceContentAsync(Uri debugUri, CancellationToken ct = default)
+    {
+        if (!DebugSourceUri.TryParse(debugUri, out var sessionId, out var reference, out _)) return null;
+        var session = Sessions.OfType<DebugSession>().FirstOrDefault(s => s.Id == sessionId);
+        return session is null ? null : await session.GetSourceContentAsync(reference, ct);
+    }
+
+    // ------------------------------------------------------------------ stopping / disposal
+
+    public ValueTask StopAllAsync(CancellationToken ct = default) =>
+        new(_lane.RunAsync(async () =>
+        {
+            await Task.WhenAll(Sessions.Select(s => StopQuietlyAsync(s, ct)));
+            return 0;
+        }, CancellationToken.None));
+
+    private static async Task StopQuietlyAsync(IDebugSession session, CancellationToken ct)
+    {
+        try { await session.StopAsync(ct); }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or OperationCanceledException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        try { await StopAllAsync(); } catch (ObjectDisposedException) { }
+        foreach (var s in Sessions.OfType<DebugSession>().ToArray())
+        {
+            try { await s.DisposeAsync(); } catch (Exception ex) { _logger.LogDebug(ex, "Disposing session"); }
+        }
+        _subs.Dispose();
+        _contributionTokens.Dispose();
+        lock (_gate)
+        {
+            foreach (var h in _hooks.Values) h.Subscriptions.Dispose();
+            _hooks.Clear();
+            _sessions = [];
+            _compounds.Clear();
+            _history.Clear();
+            _historyLines = _historyChars = 0;
+            _frameCache = null;
+        }
+        _sessionStarted.Clear(); _sessionTerminated.Clear(); _activeChanged.Clear(); _stateChanged.Clear();
+        _stopLocationChanged.Clear(); _output.Clear(); _outputCleared.Clear();
+    }
+}

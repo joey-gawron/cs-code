@@ -66,15 +66,15 @@ internal sealed class DebuggeeLauncher : IDisposable
             _processes.Add(process);
         }
         try { process.StandardInput.Close(); } catch (Exception ex) when (ex is IOException or InvalidOperationException) { }
-        var stdout = new BoundedPump(_lane, "stdout", _output);
-        var stderr = new BoundedPump(_lane, "stderr", _output);
+        var stdout = new BoundedTextPump(_lane, text => _output("stdout", text));
+        var stderr = new BoundedTextPump(_lane, text => _output("stderr", text));
         _ = PumpAsync(process, process.StandardOutput, stdout);
         _ = PumpAsync(process, process.StandardError, stderr);
         _ = WatchExitAsync(process);
         return new DapRunInTerminalResponse { ProcessId = process.Id, ShellProcessId = process.Id };
     }
 
-    private async Task PumpAsync(Process process, StreamReader reader, BoundedPump pump)
+    private async Task PumpAsync(Process process, StreamReader reader, BoundedTextPump pump)
     {
         var buf = new char[4096];
         try
@@ -129,45 +129,5 @@ internal sealed class DebuggeeLauncher : IDisposable
     {
         lock (_gate) _disposed = true;
         KillAll();
-    }
-
-    /// <summary>
-    /// Thread-safe, bounded hand-off from a pipe reader to the lane: text accumulates under a lock (oldest dropped past the cap)
-    /// and AT MOST ONE flush is ever queued on the lane, however fast the debuggee prints.
-    /// </summary>
-    private sealed class BoundedPump(DebugLane lane, string category, Action<string, string> output)
-    {
-        private const int MaxPending = 512 * 1024;
-        private readonly object _gate = new();
-        private readonly StringBuilder _pending = new();
-        private bool _flushQueued;
-
-        public void Append(ReadOnlySpan<char> text)
-        {
-            bool post;
-            lock (_gate)
-            {
-                _pending.Append(text);
-                if (_pending.Length > MaxPending) _pending.Remove(0, _pending.Length - MaxPending / 2);
-                post = !_flushQueued;
-                _flushQueued = true;
-            }
-            if (post) lane.Post(Flush);
-        }
-
-        public void Complete() => lane.Post(Flush);
-
-        private void Flush()
-        {
-            string text;
-            lock (_gate)
-            {
-                _flushQueued = false;
-                if (_pending.Length == 0) return;
-                text = _pending.ToString();
-                _pending.Clear();
-            }
-            output(category, text);
-        }
     }
 }
