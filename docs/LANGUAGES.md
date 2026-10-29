@@ -85,7 +85,9 @@ SQL, …) run one server for all workspace folders. `${workspaceFolder}` (the ro
 * Typing behaviour inherited from the editor: a `decreaseIndentPattern` keyword dedents as soon as it is typed (as in VS Code), so a line that
   starts with an identifier such as `endpoint` (Elixir, Erlang, OCaml, Scala `end`) is pulled back too; the Nix configuration therefore dedents
   on brackets only (`in` is how `inherit` starts). A closer the editor auto-inserts (`(` → `()`) does not re-check the line, which is why
-  CMake's rule matches `endif` without its parenthesis.
+  CMake's rule matches `endif` without its parenthesis. The editor steps over only the single-character closers it inserted, so CsCode's own
+  configurations auto-close no multi-character string delimiters (`"""…"""` in Kotlin, Scala, TOML, Elixir and GraphQL, `'''…'''` in TOML,
+  `''…''` in Nix): a typed closing delimiter would otherwise be doubled. They are typed in full; `/**` → ` */` behaves as in TypeScript.
 * GNU assembler sources (`.s`) and NASM/MASM sources (`.asm`, `.nasm`) are separate languages because their comment characters conflict;
   `.tfvars` is `terraform-vars`, the id terraform-ls expects.
 

@@ -1,5 +1,6 @@
 // CsCode built-in language configuration for toml (VS Code language-configuration.json format).
 // Source: TOML 1.0 (https://toml.io/en/v1.0.0): # comments, [tables], inline { } and [ ] arrays, basic "…"/"""…""" and literal '…' strings.
+// """…""" and '''…''' are not auto-closed: the editor steps over only the single-character closers it inserted, so typing the closing delimiter would double it.
 {
 	"comments": {
 		"lineComment": "#"
@@ -22,22 +23,6 @@
 		{
 			"open": "[",
 			"close": "]"
-		},
-		{
-			"open": "\"\"\"",
-			"close": "\"\"\"",
-			"notIn": [
-				"string",
-				"comment"
-			]
-		},
-		{
-			"open": "'''",
-			"close": "'''",
-			"notIn": [
-				"string",
-				"comment"
-			]
 		},
 		{
 			"open": "\"",

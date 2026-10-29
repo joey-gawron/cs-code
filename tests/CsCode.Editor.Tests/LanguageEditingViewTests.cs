@@ -61,7 +61,7 @@ public class LanguageEditingViewTests
     }
 
     [AvaloniaFact]
-    public async Task Nix_comments_with_a_hash_indents_after_let_and_pairs_indented_strings()
+    public async Task Nix_comments_with_a_hash_indents_after_let_and_types_indented_strings_as_typed()
     {
         using var host = ViewHost.Create();
         var view = await OpenAsync(host, "default.nix", "", "nix");
@@ -69,7 +69,7 @@ public class LanguageEditingViewTests
         view.TextArea.PerformTextInput("\n");
         Assert.Equal("let\n    ", Text(view));
         Type(view, "src = ''");
-        Assert.Equal("let\n    src = ''''", Text(view));
+        Assert.Equal("let\n    src = ''", Text(view));
 
         view.Controller.SetSelection(TextRange.At(0, 0));
         await CommentLineAsync(host);
@@ -170,6 +170,105 @@ public class LanguageEditingViewTests
         Type(tf, "resource \"a\" \"b\" {");
         tf.TextArea.PerformTextInput("\n");
         Assert.Equal("resource \"a\" \"b\" {\n    \n}", Text(tf));
+    }
+
+    // ---- a wider sample: the same behaviours across the new configurations ---------------------------------------------------------------
+
+    /// <summary>Strings typed one character at a time, closers included, end up exactly as typed: auto-closing only ever saves keystrokes.</summary>
+    [AvaloniaTheory]
+    [InlineData("A.kt", "kotlin", "val s = \"\"\"abc\"\"\"")]  // raw string
+    [InlineData("A.kt", "kotlin", "val s = \"a $b\"")]
+    [InlineData("A.kt", "kotlin", "// it's a 'quote'")]
+    [InlineData("A.scala", "scala", "val s = \"\"\"abc\"\"\"")]
+    [InlineData("a.toml", "toml", "s = \"\"\"abc\"\"\"")]        // multi-line basic string
+    [InlineData("a.toml", "toml", "s = '''abc'''")]              // multi-line literal string
+    [InlineData("a.toml", "toml", "s = \"a b\"")]
+    [InlineData("a.toml", "toml", "p = 'C:\\x'")]
+    [InlineData("default.nix", "nix", "s = ''abc''")]             // indented string
+    [InlineData("default.nix", "nix", "s = \"abc\"")]
+    [InlineData("a.ex", "elixir", "@doc \"\"\"abc\"\"\"")]       // heredoc
+    [InlineData("schema.graphql", "graphql", "\"\"\"Doc\"\"\" type A")] // block string description
+    [InlineData("a.zig", "zig", "const c = 'a';")]
+    [InlineData("a.erl", "erlang", "X = 'atom', Y = \"s\".")]
+    [InlineData("a.proto", "protobuf", "import \"a.proto\";")]
+    public async Task Typing_a_string_character_by_character_gives_exactly_what_was_typed(string file, string lang, string typed)
+    {
+        using var host = ViewHost.Create();
+        var view = await OpenAsync(host, file, "", lang);
+        Type(view, typed);
+        Assert.Equal(typed, Text(view));
+    }
+
+    [AvaloniaFact]
+    public async Task Kotlin_and_Scala_doc_comments_type_exactly_like_TypeScript()
+    {
+        // The /** → " */" pair is VS Code's (Java, TypeScript, C#): whatever the editor does with it there, it does the same for KDoc / Scaladoc.
+        using var host = ViewHost.Create();
+        var ts = await OpenAsync(host, "a.ts", "", "typescript");
+        Type(ts, "/** x */");
+        foreach (var (file, lang) in new[] { ("A.kt", "kotlin"), ("A.scala", "scala") })
+        {
+            var view = await OpenAsync(host, file, "", lang);
+            Type(view, "/** x */");
+            Assert.Equal(Text(ts), Text(view));
+        }
+    }
+
+    [AvaloniaTheory]
+    [InlineData("A.kt", "kotlin", "(", "(foo)")]
+    [InlineData("a.zig", "zig", "[", "[foo]")]
+    [InlineData("a.toml", "toml", "\"", "\"foo\"")]
+    [InlineData("default.nix", "nix", "{", "{foo}")]
+    [InlineData("A.hs", "haskell", "`", "`foo`")] // infix application
+    [InlineData("a.ex", "elixir", "[", "[foo]")]
+    [InlineData("a.ml", "ocaml", "\"", "\"foo\"")]
+    [InlineData("a.rst", "restructuredtext", "*", "*foo*")] // emphasis
+    public async Task Typing_an_opener_over_a_selection_surrounds_it(string file, string lang, string typed, string expected)
+    {
+        using var host = ViewHost.Create();
+        var view = await OpenAsync(host, file, "foo", lang);
+        view.Controller.SetSelection(TextRange.FromLines(0, 0, 0, 3));
+        Type(view, typed);
+        Assert.Equal(expected, Text(view));
+    }
+
+    [AvaloniaTheory]
+    [InlineData("A.kt", "kotlin", "fun f() {\n    val a = 1\n}", "// fun f() {\n//     val a = 1\n// }")]
+    [InlineData("a.zig", "zig", "fn f() void {\n    return;\n}", "// fn f() void {\n//     return;\n// }")]
+    [InlineData("default.nix", "nix", "{\n  a = 1;\n}", "# {\n#   a = 1;\n# }")]
+    [InlineData("A.hs", "haskell", "main = do\n  pure ()", "-- main = do\n--   pure ()")]
+    [InlineData("a.erl", "erlang", "f() ->\n    ok.", "% f() ->\n%     ok.")]
+    [InlineData("a.proto", "protobuf", "message A {\n  int32 x = 1;\n}", "// message A {\n//   int32 x = 1;\n// }")]
+    public async Task Toggle_comment_over_several_lines_round_trips(string file, string lang, string text, string commented)
+    {
+        using var host = ViewHost.Create();
+        var view = await OpenAsync(host, file, text, lang);
+        var lines = text.Split('\n');
+        view.Controller.SetSelection(TextRange.FromLines(0, 0, lines.Length - 1, lines[^1].Length));
+        await CommentLineAsync(host);
+        Assert.Equal(commented, Text(view));
+        await CommentLineAsync(host);
+        Assert.Equal(text, Text(view));
+    }
+
+    [AvaloniaTheory]
+    [InlineData("A.kt", "kotlin", "fun f() {", "fun f() {\n    \n}")]
+    [InlineData("a.toml", "toml", "deps = [", "deps = [\n    \n]")]
+    [InlineData("default.nix", "nix", "{", "{\n    \n}")]
+    [InlineData("A.hs", "haskell", "f = (", "f = (\n    \n)")]
+    [InlineData("a.ex", "elixir", "%{", "%{\n    \n}")]
+    [InlineData("a.ml", "ocaml", "let r = {", "let r = {\n    \n}")]
+    [InlineData("a.ml", "ocaml", "let f x =", "let f x =\n    ")]
+    [InlineData("A.hs", "haskell", "f x = case x of", "f x = case x of\n    ")]
+    [InlineData("a.ex", "elixir", "case x do", "case x do\n    ")]
+    [InlineData("A.scala", "scala", "def f =", "def f =\n    ")] // Scala 3 braceless body
+    public async Task Enter_after_an_opener_indents_the_new_line(string file, string lang, string typed, string afterEnter)
+    {
+        using var host = ViewHost.Create();
+        var view = await OpenAsync(host, file, "", lang);
+        Type(view, typed);
+        view.TextArea.PerformTextInput("\n");
+        Assert.Equal(afterEnter, Text(view));
     }
 
     [AvaloniaFact]

@@ -1,5 +1,6 @@
 // CsCode built-in language configuration for kotlin (VS Code language-configuration.json format).
 // Source: Kotlin language specification (comments, string templates, raw """ strings, KDoc /** */); layout follows VS Code's Java/TypeScript configurations.
+// """…""" is not auto-closed: the editor steps over only the single-character closers it inserted, so typing the closing delimiter would double it.
 {
 	"comments": {
 		"lineComment": "//",
@@ -34,14 +35,6 @@
 		{
 			"open": "(",
 			"close": ")"
-		},
-		{
-			"open": "\"\"\"",
-			"close": "\"\"\"",
-			"notIn": [
-				"string",
-				"comment"
-			]
 		},
 		{
 			"open": "\"",

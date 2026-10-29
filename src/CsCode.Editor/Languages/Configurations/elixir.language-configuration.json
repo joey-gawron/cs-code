@@ -1,5 +1,6 @@
 // CsCode built-in language configuration for elixir (VS Code language-configuration.json format).
 // Source: Elixir syntax reference: # comments, do/end blocks, fn/->, <<>> binaries; indentation rules after ElixirLS' VS Code configuration.
+// """…""" is not auto-closed: the editor steps over only the single-character closers it inserted, so typing the closing delimiter would double it.
 {
 	"comments": {
 		"lineComment": "#"
@@ -34,14 +35,6 @@
 		{
 			"open": "(",
 			"close": ")"
-		},
-		{
-			"open": "\"\"\"",
-			"close": "\"\"\"",
-			"notIn": [
-				"string",
-				"comment"
-			]
 		},
 		{
 			"open": "\"",

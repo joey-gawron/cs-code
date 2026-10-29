@@ -1,5 +1,6 @@
 // CsCode built-in language configuration for graphql (VS Code language-configuration.json format).
 // Source: GraphQL specification (October 2021): # comments, "…" and """…""" block strings, $variables and @directives.
+// """…""" is not auto-closed: the editor steps over only the single-character closers it inserted, so typing the closing delimiter would double it.
 {
 	"comments": {
 		"lineComment": "#"
@@ -30,14 +31,6 @@
 		{
 			"open": "(",
 			"close": ")"
-		},
-		{
-			"open": "\"\"\"",
-			"close": "\"\"\"",
-			"notIn": [
-				"string",
-				"comment"
-			]
 		},
 		{
 			"open": "\"",

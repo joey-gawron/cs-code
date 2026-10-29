@@ -1,5 +1,6 @@
 // CsCode built-in language configuration for scala (VS Code language-configuration.json format).
 // Source: Scala 2/3 reference (comments, """ strings, Scaladoc /** */, Scala 3 braceless blocks after =, =>, :, then, do, else, yield, with, end markers).
+// """…""" is not auto-closed: the editor steps over only the single-character closers it inserted, so typing the closing delimiter would double it.
 {
 	"comments": {
 		"lineComment": "//",
@@ -34,14 +35,6 @@
 		{
 			"open": "(",
 			"close": ")"
-		},
-		{
-			"open": "\"\"\"",
-			"close": "\"\"\"",
-			"notIn": [
-				"string",
-				"comment"
-			]
 		},
 		{
 			"open": "\"",

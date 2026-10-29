@@ -271,12 +271,11 @@ public sealed class LanguageConfigurationTests : IDisposable
 
     [Theory]
     [InlineData("toml", "\"", "name = ", "\"")]
-    [InlineData("toml", "\"", "name = \"\"", "\"\"\"")]       // the third quote of a multi-line basic string
+    [InlineData("toml", "'", "path = ", "'")]                  // literal string
     [InlineData("toml", "[", "", "]")]
     [InlineData("kotlin", "*", "/*", " */")]                   // KDoc
-    [InlineData("kotlin", "\"", "val s = \"\"", "\"\"\"")]
-    [InlineData("nix", "'", "src = '", "''")]                  // indented string
-    [InlineData("graphql", "\"", "  \"\"", "\"\"\"")]           // block string (descriptions)
+    [InlineData("scala", "*", "/*", " */")]                    // Scaladoc
+    [InlineData("graphql", "\"", "  ", "\"")]
     [InlineData("elixir", "\"", "IO.puts ", "\"")]
     [InlineData("zig", "(", "foo", ")")]
     [InlineData("csv", "\"", "a,", "\"")]
@@ -293,9 +292,22 @@ public sealed class LanguageConfigurationTests : IDisposable
     [InlineData("haskell", "'", "f ")]   // primes and character literals: never auto-closed
     [InlineData("ocaml", "'", "type ")]  // 'a type variables
     [InlineData("nix", "'", "x = ")]     // a lone ' is not a Nix string
+    [InlineData("nix", "'", "src = '")]  // nor is the second ' of an indented string: ''…'' is typed in full (no multi-character closers)
     [InlineData("toml", "\"", "s = \"abc ")]
     public void Quotes_that_are_not_string_openers_in_the_language_are_left_alone(string lang, string typed, string before) =>
         Assert.Equal(AutoCloseKind.None, Decide(lang, typed, before, kind: before.Count(c => c == '"') % 2 == 1 ? TokenKind.String : TokenKind.Other).Kind);
+
+    [Fact]
+    public void No_own_configuration_auto_closes_a_multi_character_quote_delimiter()
+    {
+        // The editor steps over only the single-character closers it inserted: an auto-closed """ (or ''…'') would be doubled when the user
+        // types the closing delimiter, so """…""" strings and Nix indented strings are typed in full (LanguageEditingViewTests types them).
+        var own = BuiltinLanguageSupport.Languages.Where(l => l.Configuration == LanguageConfigurationOrigin.CsCode).ToArray();
+        Assert.True(own.Length >= 20, $"only {own.Length} languages with CsCode's own configuration");
+        foreach (var l in own)
+            Assert.All(_languages.GetConfiguration(l.Id).AutoClosingPairs, p =>
+                Assert.False(p.Open.Length > 1 && p.Open.All(c => c is '"' or '\'' or '`'), $"{l.Id}: auto-closes {p.Open}…{p.Close}"));
+    }
 
     // ---- folding markers ----------------------------------------------------------------------------------------------------------------
 
