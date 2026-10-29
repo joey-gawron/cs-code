@@ -66,6 +66,7 @@ public sealed class EditorPalette
     public required IBrush SuggestSelected { get; init; }
     public required IBrush SuggestSelectedForeground { get; init; }
     public required IBrush SuggestHighlight { get; init; }
+    public required IBrush SuggestFocusHighlight { get; init; }
     public required IBrush DescriptionForeground { get; init; }
     public required IBrush CodeBlockBackground { get; init; }
     public required IBrush InlayForeground { get; init; }
@@ -122,6 +123,7 @@ public sealed class EditorPalette
             SuggestSelected = B("editorSuggestWidget.selectedBackground"),
             SuggestSelectedForeground = B("editorSuggestWidget.selectedForeground"),
             SuggestHighlight = B("editorSuggestWidget.highlightForeground"),
+            SuggestFocusHighlight = B("editorSuggestWidget.focusHighlightForeground"),
             DescriptionForeground = B("descriptionForeground"),
             CodeBlockBackground = B("textCodeBlock.background"),
             InlayForeground = B("editorInlayHint.foreground"),

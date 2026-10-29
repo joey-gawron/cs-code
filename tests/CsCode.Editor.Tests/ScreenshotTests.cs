@@ -65,7 +65,7 @@ public class ScreenshotTests
     {
         var debug = new FakeDebugService();
         var host = ViewHost.Create(s => s.AddSingleton<IDebugService>(debug));
-        host.Config.Set("workbench.colorTheme", theme);
+        await host.Factory.Themes.SetCurrentAsync(theme);
         host.Factory.Services.Features.Register<ICompletionProvider>(DocumentSelector.All, FakeCompletionProvider.Of(
         [
             new CompletionItem { Label = "WriteLine", Kind = CompletionItemKind.Method, Detail = "void Console.WriteLine(string value)", Documentation = MarkupContent.Markdown("Writes the specified string value, followed by the current line terminator, to the **standard output** stream.") },
@@ -92,8 +92,8 @@ public class ScreenshotTests
     private sealed record EditorDocumentHolder(CsCode.Editor.Documents.EditorDocument Doc);
 
     [AvaloniaTheory]
-    [InlineData("dark", "Dark+")]
-    [InlineData("light", "Light+")]
+    [InlineData("dark", "vscode.dark-plus")]
+    [InlineData("light", "vscode.light-plus")]
     public async Task The_main_editor_with_squiggles_breakpoints_stop_line_fold_and_highlights(string name, string theme)
     {
         var (host, debug, holder, view, window) = await Prepare(theme);
@@ -102,23 +102,24 @@ public class ScreenshotTests
         // diagnostics of every severity, a hint with "unnecessary" fading
         view.Services.Diagnostics.Set(doc.Uri, "demo",
         [
-            new Diagnostic(TextRange.FromLines(10, 12, 10, 20), "Cannot convert type", DiagnosticSeverity.Error, "CS0029", "csharp"),
-            new Diagnostic(TextRange.FromLines(14, 20, 14, 23), "Variable 'arg' is assigned but never used", DiagnosticSeverity.Warning, "CS0219", "csharp"),
-            new Diagnostic(TextRange.FromLines(15, 15, 15, 22), "Method can be made static", DiagnosticSeverity.Information, "IDE0290", "csharp"),
+            new Diagnostic(TextRange.FromLines(10, 38, 10, 49), "Cannot implicitly convert type 'int' to 'string'", DiagnosticSeverity.Error, "CS0029", "csharp"),
+            new Diagnostic(TextRange.FromLines(12, 25, 12, 28), "Variable 'arg' is declared but never used", DiagnosticSeverity.Warning, "CS0168", "csharp"),
+            new Diagnostic(TextRange.FromLines(16, 19, 16, 26), "Method can be made static", DiagnosticSeverity.Information, "IDE0290", "csharp"),
             new Diagnostic(TextRange.FromLines(0, 0, 0, 13), "Using directive is unnecessary", DiagnosticSeverity.Hint, "IDE0005", "csharp", [DiagnosticTag.Unnecessary]),
         ]);
         // breakpoints: a plain one, a conditional one, an unverified one; the debugger is stopped at line 11
-        debug.Manager.Add(doc.Uri, 9);
-        debug.Manager.Add(doc.Uri, 10, condition: "args.Length > 2");
-        var unverified = debug.Manager.Add(doc.Uri, 14);
+        debug.Manager.Add(doc.Uri, 10);
+        debug.Manager.Add(doc.Uri, 11, condition: "args.Length > 2");
+        var unverified = debug.Manager.Add(doc.Uri, 16);
         debug.Manager.ReportStatus(new DebugBreakpointStatus(new FakeDebugSession(), unverified.Id, false, null, "No executable code at this line"));
         debug.Stop(doc.Uri, 10);
         // fold the foreach body, put the caret on a bracket and on an identifier used several times
         var folding = view.Feature<FoldingFeature>()!;
         await ViewHost.WaitFor(() => folding.RangeCount > 3, "fold ranges");
-        view.Controller.SetSelection(TextRange.At(12, 8)); // the '{' of the foreach
+        view.Controller.SetSelection(TextRange.At(13, 12)); // the '{' of the foreach body
         folding.Fold();
-        view.Controller.SetSelection(TextRange.At(10, 21)); // inside `message` (used twice)
+        Assert.NotEmpty(folding.FoldedStartLines);
+        view.Controller.SetSelection(TextRange.At(10, 19)); // inside `message` (used twice)
         await ViewHost.WaitFor(() => view.Feature<DiagnosticsFeature>()!.Count == 4, "diagnostics");
         await ViewHost.WaitFor(() => view.Feature<HighlightFeature>()!.Ranges.Count > 1, "occurrence highlights");
         await ViewHost.WaitFor(() => view.Feature<BracketFeature>()!.Depths is not null, "bracket depth map");
@@ -132,8 +133,8 @@ public class ScreenshotTests
     }
 
     [AvaloniaTheory]
-    [InlineData("dark", "Dark+")]
-    [InlineData("light", "Light+")]
+    [InlineData("dark", "vscode.dark-plus")]
+    [InlineData("light", "vscode.light-plus")]
     public async Task The_completion_popup(string name, string theme)
     {
         var (host, _, _, view, window) = await Prepare(theme);
@@ -152,8 +153,8 @@ public class ScreenshotTests
     }
 
     [AvaloniaTheory]
-    [InlineData("dark", "Dark+")]
-    [InlineData("light", "Light+")]
+    [InlineData("dark", "vscode.dark-plus")]
+    [InlineData("light", "vscode.light-plus")]
     public async Task The_hover_and_signature_help_popups(string name, string theme)
     {
         var (host, _, holder, view, window) = await Prepare(theme);

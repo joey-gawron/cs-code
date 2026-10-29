@@ -155,7 +155,7 @@ public static class DefaultColors
         Def("editorGhostText.foreground", "#FFFFFF56", "#00000056");
         Def("editorSuggestWidget.selectedBackground", "#04395E", "#0060C0", "#04395E", "#0060C0");
         Def("editorSuggestWidget.highlightForeground", "#18A3FF", "#0066BF", "#18A3FF", "#0066BF");
-        Alias("editorSuggestWidget.focusHighlightForeground", "editorSuggestWidget.highlightForeground");
+        Def("editorSuggestWidget.focusHighlightForeground", "#18A3FF", "#BBE7FF", "#18A3FF", "#BBE7FF");
         Def("editorSuggestWidget.selectedForeground", "#FFFFFF", "#FFFFFF");
 
         // ---- editor widgets (hover, suggest, find, peek) ----

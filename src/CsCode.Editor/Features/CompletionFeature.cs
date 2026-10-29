@@ -8,6 +8,7 @@ using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using AvaloniaEdit.Document;
 using CsCode.Core.Languages;
 using CsCode.Core.Lifecycle;
@@ -362,6 +363,8 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
 
     private void OnListSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
+        RecolorMatches(e.RemovedItems, selected: false);
+        RecolorMatches(e.AddedItems, selected: true);
         var s = _session;
         if (s is null || s.Closed || _list.SelectedIndex < 0) return;
         s.Selected = _list.SelectedIndex;
@@ -374,6 +377,22 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
         {
             if (!t.IsCanceled) _ = ResolveAsync(s, entry);
         }, TaskScheduler.Default);
+    }
+
+    /// <summary>The matched characters of the (de)selected rows switch between the normal and the focus highlight colour.</summary>
+    private void RecolorMatches(System.Collections.IList items, bool selected)
+    {
+        var p = _v.Palette;
+        foreach (var item in items.OfType<FilteredCompletion>())
+        {
+            if (_list.ContainerFromItem(item) is not Control container) continue;
+            foreach (var grid in container.GetVisualDescendants().OfType<Grid>())
+            {
+                if (grid.Tag is not List<Run> runs) continue;
+                foreach (var r in runs) r.Foreground = selected ? p.SuggestFocusHighlight : p.SuggestHighlight;
+                break;
+            }
+        }
     }
 
     private async Task ResolveAsync(Session s, CompletionEntry entry)
@@ -571,14 +590,18 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
         var highlight = f.Positions.ToHashSet();
         var run = new System.Text.StringBuilder();
         var runHighlighted = false;
+        var matchRuns = new List<Run>();
+        var rowSelected = _session is { } cur && cur.Filtered.Count > cur.Selected && ReferenceEquals(cur.Filtered[cur.Selected], f);
         void FlushRun()
         {
             if (run.Length == 0) return;
             var r = new Run(run.ToString());
             if (runHighlighted)
             {
-                r.Foreground = p.SuggestHighlight;
+                // on the selected row the highlight must contrast with the selection colour (blue on blue is invisible): VS Code's "focus highlight"
+                r.Foreground = rowSelected ? p.SuggestFocusHighlight : p.SuggestHighlight;
                 r.FontWeight = FontWeight.Bold;
+                matchRuns.Add(r);
             }
             if (item.Deprecated) r.TextDecorations = Avalonia.Media.TextDecorations.Strikethrough;
             label.Inlines!.Add(r);
@@ -595,6 +618,7 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
             run.Append(text[i]);
         }
         FlushRun();
+        grid.Tag = matchRuns;
         Grid.SetColumn(label, 1);
         grid.Children.Add(label);
         var detail = item.LabelDetail ?? item.LabelDescription ?? (item.Detail is { Length: <= 40 } d ? d : null);
