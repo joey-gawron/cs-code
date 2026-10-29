@@ -44,6 +44,8 @@ public class TreeSitterQualityTests
         var errors = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
         host.Factory.Worker.OnError = errors.Enqueue;
         await host.Factory.Themes.SetCurrentAsync("vscode.dark-plus");
+        // rainbow brackets are an editor feature on top of either engine: off, so the two halves differ only by the engine
+        host.Config.Set(CsCode.Core.Platform.SettingKeys.EditorBracketPairColorization, false);
         var (doc, view, window) = await host.OpenAsync(sample.Text, sample.FileName, 820, 760);
         var lines = doc.LineCount;
 

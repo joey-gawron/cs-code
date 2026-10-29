@@ -75,18 +75,32 @@ public class TreeSitterBenchmarks
 
     // ---- inputs ----
 
-    private static string? _corpus;
     private static string[]? _files;
 
-    /// <summary>Real C#: this repository's own sources, concatenated (≈ 3 MB), repeated to the size wanted.</summary>
+    /// <summary>
+    /// Real C#: this repository's own sources (about 4.5 MB), whole files only, repeated to the size wanted. Files the C# grammar cannot parse are
+    /// left out (one today: a list pattern with a slice designation, <c>['f', .. var n]</c>); their effect is measured on its own in B1c.
+    /// </summary>
     private static string CSharp(long bytes)
     {
-        _corpus ??= string.Concat(Directory.EnumerateFiles(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src")), "*.cs", SearchOption.AllDirectories)
-            .Where(f => !f.Contains("/obj/", StringComparison.Ordinal) && !f.Contains("/bin/", StringComparison.Ordinal))
-            .Order(StringComparer.Ordinal)
-            .Select(f => File.ReadAllText(f) + "\n" + "\u0000"));
+        if (_files is null)
+        {
+            var bundle = RequireGrammar("c_sharp");
+            using var registry = NewRegistry();
+            var kept = new List<string>();
+            foreach (var file in Directory.EnumerateFiles(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src")), "*.cs", SearchOption.AllDirectories)
+                .Where(f => !f.Contains("/obj/", StringComparison.Ordinal) && !f.Contains("/bin/", StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal))
+            {
+                var text = File.ReadAllText(file) + "\n";
+                using var doc = new SyntaxDocument(registry, bundle);
+                doc.Parse(new StringInput(text), long.MaxValue);
+                if (!doc.RootHasError) kept.Add(text);
+                else DroppedFiles.Add(Path.GetFileName(file));
+            }
+            _files = [.. kept];
+        }
         // whole files only (a file cut in half would leave an unterminated construct that the parser recovers from at great cost)
-        _files ??= _corpus.Split("\u0000");
         var sb = new StringBuilder((int)Math.Min(bytes + 512 * 1024, int.MaxValue / 2));
         while (sb.Length < bytes)
             foreach (var f in _files)
@@ -96,6 +110,8 @@ public class TreeSitterBenchmarks
             }
         return sb.ToString();
     }
+
+    private static readonly List<string> DroppedFiles = new();
 
     private static string Mb(long bytes) => $"{bytes / (1024.0 * 1024.0):0.#} MB";
 
@@ -121,7 +137,7 @@ public class TreeSitterBenchmarks
         var size = megabytes * 1024L * 1024L;
         var text = CSharp(size);
         var input = new StringInput(text);
-        var scenario = $"B1 whole document, {megabytes} MB of C# ({text.Length / 1024 / 1024.0:0.#} M chars, {input.LineCount} lines)";
+        var scenario = $"B1 whole document, {megabytes} MB of C# ({text.Length / 1024 / 1024.0:0.#} M chars, {input.LineCount} lines; repo files the grammar cannot parse left out: {string.Join(", ", DroppedFiles)})";
 
         // tree-sitter: parse (one call, no slicing), viewport highlights at three places, incremental edits at three places
         using var registry = NewRegistry();
@@ -227,6 +243,58 @@ public class TreeSitterBenchmarks
         Record(scenario, "TextMate", "token store managed delta (scaled to the whole document)", (managedAfter - managedBefore) / fraction / 1024.0 / 1024.0, "MB");
         GC.KeepAlive(store);
         Assert.True(done > 0);
+    }
+
+    // ---- B1c: error recovery ----
+
+    /// <summary>A construct the C# grammar (v0.23.5) does not parse: a list pattern with a slice designation (valid C# 11).</summary>
+    private const string Unparsable = """
+        namespace N;
+
+        public static class K
+        {
+            public static string F(string s) => s switch
+            {
+                ['f', .. var n] when int.TryParse(n, out _) => "F" + n,
+                _ => s,
+            };
+        }
+
+        """;
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void B1c_one_unparsable_construct_and_incremental_reparsing(bool withUnparsable)
+    {
+        RequireBench();
+        var bundle = RequireGrammar("c_sharp");
+        var body = string.Concat(Enumerable.Range(0, 20_000).Select(i => $"public class C{i} {{ int F{i}(int a) {{ return a * {i}; }} }}\n"));
+        var text = (withUnparsable ? Unparsable : "namespace N;\n\n") + body;
+        var scenario = $"B1c 1.2 MB of simple C#, {(withUnparsable ? "WITH" : "without")} one unparsable list pattern at the top";
+        using var registry = NewRegistry();
+        using var doc = new SyntaxDocument(registry, bundle);
+        var sw = Stopwatch.StartNew();
+        doc.Parse(new StringInput(text), long.MaxValue);
+        Record(scenario, "tree-sitter", "full parse", sw.Elapsed.TotalMilliseconds, "ms");
+        Record(scenario, "tree-sitter", "tree has ERROR nodes (1 = yes)", doc.RootHasError ? 1 : 0, "flag");
+        var times = new List<double>();
+        foreach (var at in new[] { 0.25, 0.5, 0.75 })
+        {
+            var offset = text.IndexOf(" F", (int)(text.Length * at), StringComparison.Ordinal) + 2;
+            var before = new StringInput(text);
+            var line = before.LineOfOffset(offset);
+            var col = offset - before.LineStart(line);
+            text = text.Insert(offset, "x");
+            var after = new StringInput(text);
+            doc.ApplyEdit(new TextEditInfo(offset, offset, offset + 1, line, col, line, col, line, col + 1));
+            sw.Restart();
+            doc.Parse(after, long.MaxValue);
+            times.Add(sw.Elapsed.TotalMilliseconds);
+        }
+        times.Sort();
+        Record(scenario, "tree-sitter", "incremental reparse after 1 char (median of 3)", times[1], "ms");
+        Assert.Equal(withUnparsable, doc.RootHasError);
     }
 
     // ---- B1b: per-language throughput (1 MB of each evaluated language: its sample repeated) ----
