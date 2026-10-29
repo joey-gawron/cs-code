@@ -62,11 +62,11 @@ public sealed partial class DebugSession
         var args = delayed
             ? new DapStackTraceArguments { ThreadId = threadId, StartFrame = startFrame, Levels = take }
             : new DapStackTraceArguments { ThreadId = threadId };
-        var gen = _handles.Generation;
+        var gen = _handles.FrameGeneration;
         var resp = DapJson.Deserialize<DapStackTraceResponse>(await RequestAsync("stackTrace", args, ct)) ?? new DapStackTraceResponse();
         IEnumerable<DapStackFrame> frames = delayed ? resp.StackFrames : resp.StackFrames.Skip(startFrame);
         var mapped = frames.Take(take).Select(f => DapMapping.ToCore(f, _positions)).ToArray();
-        if (gen == _handles.Generation) foreach (var f in mapped) _handles.RegisterFrame(f);
+        if (gen == _handles.FrameGeneration) foreach (var f in mapped) _handles.RegisterFrame(f);
         return mapped;
     }
 

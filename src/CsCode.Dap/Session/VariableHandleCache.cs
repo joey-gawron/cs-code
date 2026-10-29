@@ -78,18 +78,32 @@ internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int m
     private readonly BoundedLru<int, IReadOnlyList<DebugScope>> _scopes = new(2_000, v => v.Count);
     private bool _overflowed, _framesOverflowed;
 
+    /// <summary>Changes whenever variable data dies (every invalidation): a response requested under an older generation is stale.</summary>
     public long Generation { get; private set; }
+    /// <summary>Changes only when frame ids die (resume, new stop, an invalidation of stacks), not when only variables were invalidated.</summary>
+    public long FrameGeneration { get; private set; }
     public int TrackedHandles => _handles.Count;
     public int CachedPages => _pages.Count;
 
     public void Invalidate()
     {
+        FrameGeneration++;
+        _frames.Clear();
+        _framesOverflowed = false;
+        InvalidateVariables();
+    }
+
+    /// <summary>
+    /// Variable data only (DAP <c>invalidated</c> with area <c>variables</c>): every variablesReference, cached page and scope list dies, while
+    /// the stack frames of this stop stay valid (the spec invalidates them only for <c>stacks</c>/<c>all</c>).
+    /// </summary>
+    public void InvalidateVariables()
+    {
         Generation++;
         _handles.Clear();
-        _frames.Clear();
         _pages.Clear();
         _scopes.Clear();
-        _overflowed = _framesOverflowed = false;
+        _overflowed = false;
     }
 
     /// <summary>Only the cached pages (e.g. after setVariable changed a value); handles stay valid.</summary>

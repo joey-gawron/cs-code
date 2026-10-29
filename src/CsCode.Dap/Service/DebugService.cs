@@ -308,6 +308,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         var subs = new DisposableStore();
         subs.Add(session.Stopped.Subscribe(e => OnSessionStopped(session, e)));
         subs.Add(session.Continued.Subscribe(e => OnSessionContinued(session, e)));
+        subs.Add(session.Invalidated.Subscribe(_ => OnSessionInvalidated(session)));
         subs.Add(session.StateChanged.Subscribe(_ => { RecomputeState(); UpdateContextKeys(); }));
         subs.Add(session.Output.Subscribe(OnSessionOutput));
         subs.Add(session.Terminated.Subscribe(_ => OnSessionTerminated(session)));
@@ -342,6 +343,28 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         RecomputeState();
         UpdateContextKeys();
     }
+
+    /// <summary>
+    /// The adapter dropped (part of) the data of the current stop. Whatever was read through the stop location must be read again, so a
+    /// fresh location is published even when it is identical — and it must point at a frame that is still valid: after an invalidation of
+    /// stacks the old FrameId is dead, so the stack is fetched again (re-registering the frames) and the location follows it.
+    /// Posted, so it runs after every subscriber has seen the <c>invalidated</c> event (the panels' trackers start a new epoch on it and
+    /// then wait for this location).
+    /// </summary>
+    private void OnSessionInvalidated(DebugSession session) => _lane.Post(() =>
+    {
+        if (session.State != DebugSessionState.Stopped || !ReferenceEquals(ActiveSession, session)) return;
+        var location = StopLocation;
+        if (location is not null && ReferenceEquals(location.Session, session) && session.IsFrameValid(location.FrameId))
+        {
+            SetStopLocation(location, force: true); // only variables (or threads) were invalidated: same frame, data to be re-read
+            return;
+        }
+        var epoch = Interlocked.Increment(ref _stopEpoch); // a stack fetch still in flight would publish a dead frame
+        Volatile.Write(ref _focusedFrameId, -1);
+        SetStopLocation(null); // never leave a dead FrameId published while the stack is fetched again
+        _ = RefreshStopLocationAsync(session, location?.ThreadId ?? session.FocusedThreadId, location?.Reason ?? "invalidated", epoch);
+    });
 
     private void OnSessionOutput(DebugOutputEventArgs e)
     {
@@ -502,10 +525,11 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private static DebugHandleInvalidatedException StaleFrame() =>
         new("The stack frame is no longer valid: the debuggee has resumed or stopped again since it was obtained.");
 
-    private void SetStopLocation(DebugStopLocation? location)
+    /// <param name="force">Fire even when the location is unchanged: the data read through it went stale (adapter <c>invalidated</c>).</param>
+    private void SetStopLocation(DebugStopLocation? location, bool force = false)
     {
         var previous = Interlocked.Exchange(ref _stopLocation, location);
-        if (Equals(previous, location)) return;
+        if (Equals(previous, location) && !force) return;
         _stopLocationChanged.Fire(location);
     }
 
