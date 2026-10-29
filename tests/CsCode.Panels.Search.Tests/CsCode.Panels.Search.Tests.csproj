@@ -1,5 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- Preview/ is a separate, opt-in app (its own csproj), not part of this test assembly. -->
+  <ItemGroup>
+    <Compile Remove="Preview/**" />
+    <EmbeddedResource Remove="Preview/**" />
+    <None Remove="Preview/**" />
+    <AvaloniaXaml Remove="Preview/**" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
