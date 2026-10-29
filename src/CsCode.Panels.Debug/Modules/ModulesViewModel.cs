@@ -13,8 +13,11 @@ public sealed record ModuleRow(string Name, string? Path, string? Version, bool?
 }
 
 /// <summary>
-/// Modules window. The debug contracts carry no module events, so the list is read with the DAP <c>modules</c> request through
-/// <c>CustomRequestAsync</c> (when the adapter answers it): on every stop, and on demand. Bounded to <see cref="MaxModules"/> rows.
+/// Modules window, refreshed on every stop and on demand; bounded to <see cref="MaxModules"/> rows. A session that implements
+/// <see cref="IDebugSessionModules"/> (the DAP module's does) supplies the list it keeps from the adapter's <c>module</c> events, sending the
+/// <c>modules</c> request only when the adapter advertises it: most adapters, netcoredbg included, do not implement that request. Any other
+/// session is asked with the raw DAP request through <c>CustomRequestAsync</c>; one that refused it is not asked again on every stop (Refresh
+/// still retries).
 /// </summary>
 public sealed class ModulesViewModel : ObservableObject, IDisposable
 {
@@ -28,6 +31,8 @@ public sealed class ModulesViewModel : ObservableObject, IDisposable
     private DebugFocus _focus;
     private string? _status = "Not debugging";
     private ModuleRow? _selected;
+    // The last session that refused the raw `modules` request (weakly: the window must not keep an ended session alive).
+    private WeakReference<IDebugSession>? _refused;
     private int _disposed;
 
     public ModulesViewModel(DebugPanelServices services)
@@ -73,25 +78,38 @@ public sealed class ModulesViewModel : ObservableObject, IDisposable
         old.Dispose();
     }
 
-    public Task RefreshAsync() => _focus.Session is { } session ? LoadAsync(session) : Task.CompletedTask;
+    public Task RefreshAsync() => _focus.Session is { } session ? LoadAsync(session, userAsked: true) : Task.CompletedTask;
 
-    internal async Task LoadAsync(IDebugSession session)
+    internal async Task LoadAsync(IDebugSession session, bool userAsked = false)
     {
+        if (session is not IDebugSessionModules && !userAsked && _refused is not null && _refused.TryGetTarget(out var refused) && ReferenceEquals(refused, session))
+            return; // it said no at an earlier stop: keep that message instead of sending a request it will fail again on every stop
         Cancel();
         var generation = Volatile.Read(ref _generation);
         var ct = _cts.Token;
         try
         {
-            var args = JsonSerializer.SerializeToElement(new { startModule = 0, moduleCount = MaxModules });
-            var body = await _s.Ui.OnUi(session.CustomRequestAsync("modules", args, ct), ct);
+            List<ModuleRow> rows;
+            if (session is IDebugSessionModules modules)
+            {
+                var list = await _s.Ui.OnUi(modules.GetModulesAsync(ct), ct);
+                rows = [.. list.Take(MaxModules).Select(m => new ModuleRow(m.Name is { Length: > 0 } name ? name : "(unnamed)", m.Path, m.Version, m.IsUserCode, m.SymbolStatus))];
+            }
+            else
+            {
+                var args = JsonSerializer.SerializeToElement(new { startModule = 0, moduleCount = MaxModules });
+                var body = await _s.Ui.OnUi(session.CustomRequestAsync("modules", args, ct), ct);
+                rows = body is { ValueKind: JsonValueKind.Object } json ? Parse(json) : [];
+                _refused = null;
+            }
             if (generation != Volatile.Read(ref _generation) || IsDisposed) return;
-            var rows = body is { ValueKind: JsonValueKind.Object } json ? Parse(json) : [];
             Rows.ReplaceAll(rows);
             StatusText = rows.Count == 0 ? "The debug adapter did not report any modules." : null;
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            if (session is not IDebugSessionModules) _refused = new WeakReference<IDebugSession>(session);
             if (generation == Volatile.Read(ref _generation) && !IsDisposed && Rows.Count == 0)
                 StatusText = ex is NotSupportedException ? "The debug adapter does not support the modules request." : "Cannot read the modules: " + ex.Message;
         }

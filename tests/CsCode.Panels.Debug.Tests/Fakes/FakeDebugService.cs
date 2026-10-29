@@ -187,6 +187,11 @@ public sealed class FakeDebugService : IDebugService, IDebugFrameFocus, IDebugOu
         {
             _sessions.Remove(session);
             if (ReferenceEquals(_active, session)) _active = _sessions.LastOrDefault();
+            // Like DebugService.ArchiveHistory: the ended session's output stays in the history as copies that keep its label (and share the
+            // Output text) but no longer reference the session.
+            var ended = new FakeDebugSession(session.Id, session.Name);
+            for (var i = 0; i < _history.Count; i++)
+                if (ReferenceEquals(_history[i].Session, session)) _history[i] = _history[i] with { Session = ended };
         }
         SessionTerminatedEmitter.Fire(session);
         ActiveSessionChangedEmitter.Fire(ActiveSession);
@@ -224,11 +229,18 @@ public sealed class FakeDebugService : IDebugService, IDebugFrameFocus, IDebugOu
         SetStopLocation(new DebugStopLocation(session, threadId, frame.Id, frame.Source?.ToUri(), frame.Line, frame.Column, reason));
     }
 
+    /// <summary>
+    /// Models the real DebugService, which looks the frame up in a short per-stop cache and silently ignores frames it does not find:
+    /// only the first N frames of a thread can be focused (null = all).
+    /// </summary>
+    public int? FocusableFrameLimit { get; set; }
+
     public ValueTask SetFocusedFrameAsync(string sessionId, int threadId, int frameId, CancellationToken ct = default)
     {
         FocusCalls.Add((sessionId, threadId, frameId));
         var session = Sessions.OfType<FakeDebugSession>().FirstOrDefault(s => s.Id == sessionId);
-        var frame = session?.Frames.GetValueOrDefault(threadId)?.FirstOrDefault(f => f.Id == frameId);
+        var frames = session?.Frames.GetValueOrDefault(threadId)?.Take(FocusableFrameLimit ?? int.MaxValue);
+        var frame = frames?.FirstOrDefault(f => f.Id == frameId);
         if (session is not null && frame is not null)
             SetStopLocation(new DebugStopLocation(session, threadId, frameId, frame.Source?.ToUri(), frame.Line, frame.Column, "frame"));
         return ValueTask.CompletedTask;

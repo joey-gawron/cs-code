@@ -101,6 +101,39 @@ public class VariablesTests
     }
 
     [AvaloniaFact]
+    public async Task Collapsing_a_node_while_its_children_wait_to_be_inserted_keeps_them_out_and_re_expanding_shows_them_once()
+    {
+        // Regression (debug-ct-1): a full page (100 + "more" row) is inserted in a Background-priority chunk whose position used to be
+        // computed before the yield; a collapse in between left the rows under the collapsed node and re-expanding inserted them again.
+        var ui = new GatedUiDispatcher();
+        using var rig = new PanelRig(ui: ui);
+        rig.Session.Variables[2000] = Enumerable.Range(0, 1000).Select(i => new DebugVariable($"[{i}]", i.ToString(), "int")).ToList();
+        rig.Session.Variables[1200][2] = new DebugVariable("arr", "int[1000]", "int[]", 2000, "arr", null, 1000);
+        using var vm = await StoppedLocals(rig);
+        var arr = vm.Tree.Rows.Single(r => r.Name == "arr");
+
+        ui.HoldBackground = true;
+        var expanding = vm.Tree.ExpandAsync(arr);
+        await PanelRig.Eventually(() => ui.HeldCount == 1, what: "node creation queued");
+        ui.ReleaseAll();
+        await PanelRig.Eventually(() => ui.HeldCount == 1 && arr.ChildrenLoaded, what: "row insert queued");
+        vm.Tree.Collapse(arr); // the user collapses after the answer arrived, before the rows went in
+        ui.HoldBackground = false;
+        ui.ReleaseAll();
+        await expanding;
+        await Task.Delay(50);
+        Assert.Equal("x,s,arr", Names(vm.Tree));
+        Assert.False(arr.IsExpanded);
+
+        await vm.Tree.ExpandAsync(arr);
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count >= 3 + 100 + 1, what: "re-expanded");
+        await Task.Delay(50);
+        Assert.Equal(3 + 100 + 1, vm.Tree.Rows.Count);
+        Assert.Equal(100, vm.Tree.Rows.Count(r => r.Depth == 1 && r.Kind == VariableRowKind.Variable));
+        Assert.Equal(VariableRowKind.More, vm.Tree.Rows[^1].Kind);
+    }
+
+    [AvaloniaFact]
     public async Task An_adapter_that_ignores_paging_cannot_make_the_tree_grow_beyond_its_cap()
     {
         using var rig = new PanelRig();
@@ -303,6 +336,46 @@ public class VariablesTests
         rig.StopAt(2); // Main at line 24 (0-based)
         await PanelRig.Eventually(() => vm.Tree.Rows.Count > 0, what: "autos");
         Assert.Equal("s,o", Names(vm.Tree)); // x is not mentioned on lines 23-24
+    }
+
+    [AvaloniaFact]
+    public async Task Autos_highlight_what_the_last_step_changed_although_the_line_filter_shows_another_subset()
+    {
+        // Regression (debug-ct-5): the baseline used to be keyed by the names Autos happened to show, which change with the line. Stepping
+        // from [x, y] to [x, z] found no baseline (x not red), and revisiting a line compared with an older stop (spurious red).
+        using var rig = new PanelRig();
+        var uri = new Uri("file:///work/Program.cs");
+        var lines = Enumerable.Range(0, 30).Select(i => "// line " + i).ToArray();
+        lines[9] = "var y = 5;";
+        lines[10] = "x = x + 1;";
+        lines[11] = "z = x * 2;";
+        using var registration = rig.Documents.Register(new CsCode.Core.Text.InMemoryTextDocument(uri, "csharp", string.Join('\n', lines)));
+        void Locals(int x, int y, int z) => rig.Session.Variables[1200] = [new DebugVariable("x", x.ToString(), "int"), new DebugVariable("y", y.ToString(), "int"), new DebugVariable("z", z.ToString(), "int")];
+        void At(int line) => rig.Session.Frames[1][2] = rig.Session.Frames[1][2] with { Line = line };
+        using var vm = new AutosViewModel(rig.Services);
+
+        Locals(0, 5, 0);
+        At(10);
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => Names(vm.Tree) == "x,y", what: "autos at line 10");
+
+        rig.Resume();
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count == 0);
+        Locals(1, 6, 0); // the step changed x (shown) and y (not shown on the new lines)
+        At(11);
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => Names(vm.Tree) == "x,z", what: "autos at line 11");
+        Assert.True(vm.Tree.Rows.Single(r => r.Name == "x").IsChanged);
+        Assert.False(vm.Tree.Rows.Single(r => r.Name == "z").IsChanged);
+
+        rig.Resume();
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count == 0);
+        Locals(2, 6, 0); // back at line 10 (a loop): y did not change since the PREVIOUS stop
+        At(10);
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => Names(vm.Tree) == "x,y", what: "autos at line 10 again");
+        Assert.True(vm.Tree.Rows.Single(r => r.Name == "x").IsChanged);
+        Assert.False(vm.Tree.Rows.Single(r => r.Name == "y").IsChanged);
     }
 
     [AvaloniaFact]

@@ -77,15 +77,17 @@ public sealed class AutosToolWindow(DebugPanelsRuntime runtime) : DebugToolWindo
 
 public sealed class WatchToolWindow(DebugPanelsRuntime runtime) : DebugToolWindow(runtime)
 {
-    public override string Id => "debug.watch";
+    public const string ViewId = "debug.watch";
+    public override string Id => ViewId;
     public override string Title => "Watch 1";
     public override string? IconKey => "watch";
     public override string? ToggleCommandId => "workbench.debug.action.toggleWatch";
     protected override Control Create(DebugPanelServices services, DebugPanelsRuntime runtime)
     {
         var vm = new WatchViewModel(services);
-        runtime.SetActiveWatch(vm);
-        return new VariablesPanelView(vm, vm.Tree, onDispose: () => runtime.SetActiveWatch(null));
+        var view = new VariablesPanelView(vm, vm.Tree, onDispose: () => runtime.ClearActiveWatch(vm));
+        runtime.SetActiveWatch(vm, view);
+        return view;
     }
 }
 

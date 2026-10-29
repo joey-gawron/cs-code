@@ -41,7 +41,8 @@ public sealed partial class AutosViewModel : FrameVariablesViewModel
         var referenced = ReferencedIdentifiers();
         var shown = referenced is null ? [] : candidates.Where(c => referenced.Contains(c.Variable.Name)).ToList();
         if (shown.Count == 0) shown = candidates.Where(c => !IsThisOrStatics(c.Variable.Name)).ToList();
-        await Tree.ShowRootsAsync(token, shown);
+        // The unfiltered list keys the change highlighting: the subset changes from line to line, the frame does not.
+        await Tree.ShowRootsAsync(token, shown, candidates.ConvertAll(c => c.Variable));
     }
 
     internal static bool IsThisOrStatics(string name) =>

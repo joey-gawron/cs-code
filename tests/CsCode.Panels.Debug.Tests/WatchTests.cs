@@ -54,6 +54,95 @@ public class WatchTests
         Assert.Equal(["live"], rig.Debug.Watches.Select(w => w.Expression));
     }
 
+    private static List<string>? SavedWatches(PanelRig rig, Uri folder)
+    {
+        var current = rig.State.Workspace;
+        rig.State.Workspace = folder.AbsoluteUri;
+        try { return rig.State.Get<List<string>>(WatchStore.StateKey, StorageScope.Workspace); }
+        finally { rig.State.Workspace = current; }
+    }
+
+    private static void SaveWatches(PanelRig rig, Uri folder, params string[] expressions)
+    {
+        var current = rig.State.Workspace;
+        rig.State.Workspace = folder.AbsoluteUri;
+        rig.State.Set(WatchStore.StateKey, expressions.ToList(), StorageScope.Workspace);
+        rig.State.Workspace = current;
+    }
+
+    private static string[] WatchNames(WatchViewModel vm) => [.. vm.Tree.Rows.Where(r => r.Kind == VariableRowKind.Watch).Select(r => r.Name)];
+
+    [AvaloniaFact]
+    public async Task Opening_another_folder_shows_that_folders_watches_and_never_overwrites_its_saved_list()
+    {
+        // Regression (debug-ct-4 / dbgp-persist-1): the list was loaded once per app lifetime, so after Open Folder B the Watch window kept
+        // A's expressions and the first edit wrote them into B's workspace state, losing B's own list.
+        using var rig = new PanelRig(withSession: false);
+        var a = new Uri("file:///work/a/");
+        var b = new Uri("file:///work/b/");
+        SaveWatches(rig, a, "a1", "a2");
+        SaveWatches(rig, b, "b1");
+        await rig.Workspace.OpenFolderAsync(a);
+        using var vm = new WatchViewModel(rig.Services);
+        Assert.Equal(["a1", "a2"], WatchNames(vm));
+
+        await rig.Workspace.OpenFolderAsync(b);
+        await PanelRig.Eventually(() => WatchNames(vm).SequenceEqual(["b1"]), what: "B's watches shown");
+        Assert.Equal(["b1"], rig.Debug.Watches.Select(w => w.Expression));
+
+        await AddAsync(vm, "x");
+        await PanelRig.Eventually(() => rig.Debug.Watches.Count == 2, what: "added");
+        Assert.Equal(["b1", "x"], SavedWatches(rig, b));
+        Assert.Equal(["a1", "a2"], SavedWatches(rig, a)); // A's list is untouched
+
+        await rig.Workspace.OpenFolderAsync(a); // and back
+        await PanelRig.Eventually(() => WatchNames(vm).SequenceEqual(["a1", "a2"]), what: "A's watches shown again");
+    }
+
+    [AvaloniaFact]
+    public async Task Adding_a_watch_from_locals_before_the_watch_window_was_ever_opened_keeps_the_folders_saved_watches()
+    {
+        // Regression (debug-ct-4 / dbgp-persist-1, "never save before the load"): only the Watch window loaded the saved list. An edit made
+        // elsewhere first (Locals' "Add Watch") saved the service's list over it, and the later load saw a non-empty service and skipped it.
+        using var rig = new PanelRig();
+        var a = new Uri("file:///work/a/");
+        SaveWatches(rig, a, "a1", "a2");
+        await rig.Workspace.OpenFolderAsync(a);
+        using var locals = new LocalsViewModel(rig.Services);
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => locals.Tree.Rows.Any(r => r.Name == "x"), what: "locals");
+
+        locals.Tree.AddToWatch(locals.Tree.Rows.Single(r => r.Name == "x"));
+        Assert.Equal(["a1", "a2", "x"], rig.Debug.Watches.Select(w => w.Expression));
+        Assert.Equal(["a1", "a2", "x"], SavedWatches(rig, a));
+        using var vm = new WatchViewModel(rig.Services);
+        Assert.Equal(["a1", "a2", "x"], WatchNames(vm));
+    }
+
+    [AvaloniaFact]
+    public async Task A_folder_without_saved_watches_starts_empty_and_adding_a_second_root_keeps_the_list()
+    {
+        using var rig = new PanelRig(withSession: false);
+        var a = new Uri("file:///work/a/");
+        SaveWatches(rig, a, "a1");
+        await rig.Workspace.OpenFolderAsync(a);
+        using var vm = new WatchViewModel(rig.Services);
+        var a1 = rig.Debug.Watches.Single();
+
+        await rig.Workspace.AddFolderAsync(new Uri("file:///work/lib/")); // same primary folder, same workspace state
+        await Task.Delay(50);
+        Assert.Same(a1, rig.Debug.Watches.Single());
+
+        await rig.Workspace.OpenFolderAsync(new Uri("file:///work/new/"));
+        await PanelRig.Eventually(() => WatchNames(vm).Length == 0, what: "nothing carried over");
+        Assert.Empty(rig.Debug.Watches);
+        Assert.Equal(["a1"], SavedWatches(rig, a));
+
+        Assert.Equal(1, rig.Workspace.SubscriberCount); // the app-lifetime store, released with the services
+        rig.Services.Dispose();
+        Assert.Equal(0, rig.Workspace.SubscriberCount);
+    }
+
     [AvaloniaFact]
     public async Task Expressions_are_evaluated_in_the_focused_frame_with_context_watch_on_every_stop()
     {
@@ -193,6 +282,40 @@ public class WatchTests
 
         vm.MoveTo(Watch(vm, "b"), Watch(vm, "c"));
         await PanelRig.Eventually(() => rig.Debug.Watches.Select(w => w.Expression).SequenceEqual(["b", "c", "a"]));
+    }
+
+    [AvaloniaFact]
+    public async Task Two_expanded_watches_re_expanded_concurrently_keep_their_children_under_the_right_parent()
+    {
+        // Regression (debug-ct-1): every watch is re-evaluated and re-expanded concurrently after a stop. Each full page is inserted in a
+        // Background chunk whose position used to be computed before the yield, so b's children landed inside a's list.
+        var ui = new GatedUiDispatcher();
+        using var rig = new PanelRig(ui: ui);
+        rig.Session.Evaluator = (e, _, _) => new DebugEvaluateResult("int[1000]", "int[]", e == "a" ? 5000 : 6000, null, 1000);
+        rig.Session.Variables[5000] = Enumerable.Range(0, 1000).Select(i => new DebugVariable($"[{i}]", "1" + i, "int")).ToList();
+        rig.Session.Variables[6000] = Enumerable.Range(0, 1000).Select(i => new DebugVariable($"[{i}]", "2" + i, "int")).ToList();
+        rig.Debug.AddWatch("a");
+        rig.Debug.AddWatch("b");
+        using var vm = new WatchViewModel(rig.Services);
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => Watch(vm, "a").HasChildren && Watch(vm, "b").HasChildren, what: "evaluated");
+        await vm.Tree.ExpandAsync(Watch(vm, "a"));
+        await vm.Tree.ExpandAsync(Watch(vm, "b"));
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count == 2 * 102 + 1, what: "both expanded");
+        string Layout() => string.Join("|", vm.Tree.Rows.Select(r => $"{r.Depth}:{r.Name}={r.FullValue}"));
+        var expected = Layout();
+
+        rig.Resume();
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count == 3, what: "children dropped on resume");
+        ui.HoldBackground = true;
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => ui.HeldCount == 2, what: "both re-expansions created their nodes");
+        ui.ReleaseAll();
+        await PanelRig.Eventually(() => ui.HeldCount == 2, what: "both row inserts queued");
+        ui.HoldBackground = false;
+        ui.ReleaseAll();
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count == 2 * 102 + 1, what: "both re-expanded");
+        Assert.Equal(expected, Layout());
     }
 
     [AvaloniaFact]

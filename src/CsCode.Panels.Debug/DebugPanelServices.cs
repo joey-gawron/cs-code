@@ -21,7 +21,8 @@ public sealed class DebugPanelServices(
     ICommandService? commands = null,
     IContextKeyService? contextKeys = null,
     IStateStorage? state = null,
-    IDocumentManager? documents = null)
+    IDocumentManager? documents = null,
+    IWorkspaceService? workspace = null) : IDisposable
 {
     public IDebugService Debug { get; } = debug;
     public IUiDispatcher Ui { get; } = ui;
@@ -33,11 +34,21 @@ public sealed class DebugPanelServices(
     public IContextKeyService? ContextKeys { get; } = contextKeys;
     public IStateStorage? State { get; } = state;
     public IDocumentManager? Documents { get; } = documents;
+    public IWorkspaceService? Workspace { get; } = workspace;
 
     public IBreakpointManager Breakpoints => Debug.Breakpoints;
 
-    /// <summary>The watch list shared by every Watch window (persisted per workspace).</summary>
-    public Variables.WatchStore Watches { get; } = new(debug, state);
+    /// <summary>Re-reads the stack after an adapter <c>invalidated</c> event, once for all panels (see <see cref="Infrastructure.DebugFocusTracker"/>).</summary>
+    public Infrastructure.FrameRevalidator FrameRevalidation { get; } = new(frameFocus ?? debug as IDebugFrameFocus);
+
+    /// <summary>The watch list shared by every Watch window (persisted per workspace, reloaded when another folder is opened).</summary>
+    public Variables.WatchStore Watches { get; } = new(debug, state, workspace);
+
+    /// <summary>The Debug Console's REPL history and transcript, which outlive the console window's view-model.</summary>
+    public Console.ReplState Repl { get; } = new(state);
+
+    /// <summary>Releases the app-lifetime subscriptions (the owner, <see cref="ToolWindows.DebugPanelsRuntime"/>, calls it at shutdown).</summary>
+    public void Dispose() => Watches.Dispose();
 
     /// <summary>Resolves the services from DI; null when there is no <see cref="IDebugService"/> (the panels then show a placeholder).</summary>
     public static DebugPanelServices? TryCreate(IServiceProvider services)
@@ -54,6 +65,7 @@ public sealed class DebugPanelServices(
             services.GetService<ICommandService>(),
             services.GetService<IContextKeyService>(),
             services.GetService<IStateStorage>(),
-            services.GetService<IDocumentManager>());
+            services.GetService<IDocumentManager>(),
+            services.GetService<IWorkspaceService>());
     }
 }

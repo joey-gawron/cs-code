@@ -163,6 +163,12 @@ public sealed class VariableNodeViewModel : ObservableObject
     internal IReadOnlyList<VariableNodeViewModel> Children => _children;
     internal VariableNodeViewModel? MoreRow { get; set; }
 
+    /// <summary>
+    /// Changes whenever the rows below this node are taken out of the list (collapse, error, dropped handles) or a new insert of them is queued:
+    /// a chunked insert that is still waiting for its UI turn sees the change and drops itself instead of inserting rows nobody wants any more.
+    /// </summary>
+    internal int RowsVersion { get; set; }
+
     /// <summary>Variables requested from the adapter so far (the start of the next page).</summary>
     internal int NextStart { get; set; }
     internal int LoadedCount => _children.Count;
@@ -245,6 +251,7 @@ public sealed class VariableNodeViewModel : ObservableObject
     internal void DropHandles()
     {
         _children.Clear();
+        RowsVersion++;
         MoreRow = null;
         ChildrenLoaded = false;
         NextStart = 0;

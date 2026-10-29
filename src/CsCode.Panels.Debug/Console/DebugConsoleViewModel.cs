@@ -33,8 +33,10 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
     private readonly Queue<ConsoleLine> _pending = new();
     private readonly object _pendingGate = new();
     private readonly string _applyKey = "debug.console.apply." + Guid.NewGuid().ToString("N");
-    private readonly ReplHistory _history = new();
+    private readonly ReplHistory _history;
     private readonly CancellationTokenSource _lifetime = new();
+    // The newest program output event seen: a REPL line is recorded after it, so a later console shows it in the same place.
+    private DebugOutputEventArgs? _lastOutput;
     private CancellationTokenSource? _completionCts;
     private string _filter = "";
     private string _input = "";
@@ -55,14 +57,24 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
         Lines.CollectionChanged += (_, _) => OnPropertyChanged(nameof(LineCount));
         ClearCommand = new UiCommand(Clear);
         SubmitCommand = new UiCommand(SubmitAsync, onError: ex => Append(ConsoleLineKind.ResultError, ex.Message));
+        // The REPL's history and transcript outlive this view-model (the shell disposes it whenever the window is hidden).
+        _history = services.Repl.History;
+        _history.Reset();
 
         // Subscribe first, then read the history: events in both are recognised by reference and shown once.
-        _subs.Add(services.Debug.Output.Subscribe(_pump.Enqueue));
+        _subs.Add(services.Debug.Output.Subscribe(e =>
+        {
+            Volatile.Write(ref _lastOutput, e);
+            _pump.Enqueue(e);
+        }));
+        IReadOnlyList<DebugOutputEventArgs> seed = [];
         if (services.OutputHistory is { } history)
         {
             _subs.Add(history.OutputCleared.Subscribe(_ => _ui.Post(ApplyCleared)));
-            _pump.SetSeed(history.GetOutputHistory());
+            seed = history.GetOutputHistory();
+            if (seed.Count > 0) Interlocked.CompareExchange(ref _lastOutput, seed[^1], null);
         }
+        _pump.SetSeed(seed, services.Repl.Transcript());
     }
 
     /// <summary>The visible lines (≤ <see cref="MaxLines"/>), oldest first.</summary>
@@ -175,10 +187,11 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
         if (Lines.Count > MaxLines) Lines.RemoveRange(0, Lines.Count - MaxLines);
     }
 
-    /// <summary>Appends a line made here (the echo of an entered expression, a result or an error).</summary>
+    /// <summary>Appends a line made here (the echo of an entered expression, a result or an error); it is also kept for the next console.</summary>
     private void Append(ConsoleLineKind kind, string text)
     {
         var line = new ConsoleLine(_pump.NextSequence(), kind, text.Length > ConsoleOutputPump.MaxLineChars ? text[..ConsoleOutputPump.MaxLineChars] + "…" : text);
+        _s.Repl.Record(kind, line.Text, Volatile.Read(ref _lastOutput));
         _buffer.Append([line]);
         if (Accepts(line)) EnqueueForUi([line]);
     }
@@ -223,6 +236,8 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
     private void ApplyCleared()
     {
         if (IsDisposed) return;
+        _s.Repl.ClearTranscript();
+        Volatile.Write(ref _lastOutput, null);
         _buffer.Clear();
         lock (_pendingGate) { _pending.Clear(); _droppedPending = 0; }
         _appliedSequence = _pump.NextSequence();
@@ -240,7 +255,7 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
         var text = _input.Trim();
         if (text.Length == 0) return;
         CloseCompletions();
-        _history.Add(text);
+        _s.Repl.AddHistory(text);
         Input = "";
         Append(ConsoleLineKind.Input, "> " + text.Replace("\r\n", "\n").Replace("\n", "\n  "));
 

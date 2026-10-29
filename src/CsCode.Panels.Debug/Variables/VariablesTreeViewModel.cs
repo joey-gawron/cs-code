@@ -280,9 +280,16 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
 
     private void TrackValue(VariableNodeViewModel node, string value)
     {
-        var tracked = value.Length > MaxTrackedValueChars ? value[..MaxTrackedValueChars] : value;
-        if (_current.Count < MaxTrackedValues) _current[node.Path] = tracked;
+        var tracked = Remember(node.Path, value);
         if (_compare && _previous!.TryGetValue(node.Path, out var old) && !string.Equals(old, tracked, StringComparison.Ordinal)) node.IsChanged = true;
+    }
+
+    /// <summary>Records what <paramref name="path"/> shows at this stop (the next stop's baseline); returns the (bounded) text kept.</summary>
+    private string Remember(string path, string value)
+    {
+        var tracked = value.Length > MaxTrackedValueChars ? value[..MaxTrackedValueChars] : value;
+        if (_current.Count < MaxTrackedValues) _current[path] = tracked;
+        return tracked;
     }
 
     /// <summary>Records a (re-)evaluated child value for change detection (Watch children use it).</summary>
@@ -335,13 +342,21 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     private bool _hasSeenScopes;
 
     /// <summary>Shows an already known flat list of variables as the roots (Autos: filtered locals).</summary>
-    public async Task ShowRootsAsync(LoadToken token, IReadOnlyList<(DebugVariable Variable, int ParentReference)> roots)
+    /// <param name="frameVariables">
+    /// The frame's full variable list when <paramref name="roots"/> is a filtered subset of it (Autos shows what the current and previous line
+    /// use). It, not the subset, is the frame's shape that keys the change baseline, and all of its values are remembered: otherwise every
+    /// step to a line that mentions other names would start without a baseline (nothing red), and a revisited line would be compared with
+    /// whichever older stop last showed the same subset.
+    /// </param>
+    public async Task ShowRootsAsync(LoadToken token, IReadOnlyList<(DebugVariable Variable, int ParentReference)> roots, IReadOnlyList<DebugVariable>? frameVariables = null)
     {
         if (!IsLive(token.Generation)) return;
         var holder = NewNode(VariableRowKind.Scope, null, "", "", token.Generation);
         holder.Depth = -1;
         _holder = holder;
-        ApplySignature(roots.Select(r => r.Variable.Name));
+        ApplySignature(frameVariables is null ? roots.Select(r => r.Variable.Name) : frameVariables.Select(v => v.Name));
+        if (frameVariables is not null)
+            foreach (var v in frameVariables) Remember(v.Name, v.Value); // a root's path is its name
         var nodes = new List<VariableNodeViewModel>(roots.Count);
         foreach (var (variable, parentRef) in roots) nodes.Add(CreateVariableNode(variable, holder, parentRef, token.Generation));
         holder.AddChildren(nodes);
@@ -379,6 +394,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     {
         if (!node.IsExpanded) return;
         node.IsExpanded = false;
+        node.RowsVersion++; // a page of this node still waiting to be inserted must not appear under it now
         RememberExpanded(node.Path, false);
         var index = Rows.IndexOf(node);
         if (index < 0) return;
@@ -387,6 +403,8 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         if (count > 0)
         {
             if (SelectedRow is { } sel && sel != node && IsInRange(sel, index + 1, count)) SelectedRow = node;
+            // Likewise for expanded descendants: re-expanding this node re-inserts their loaded rows itself.
+            for (var i = index + 1; i <= index + count; i++) Rows[i].RowsVersion++;
             Rows.RemoveRange(index + 1, count);
         }
         // Error/message rows are one-shot: re-expanding retries the load.
@@ -487,64 +505,59 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         foreach (var child in created) FlattenInto(rows, child);
         if (newMore is not null) rows.Add(newMore);
 
-        int at;
-        if (oldMore is not null && Rows.IndexOf(oldMore) is var moreIndex and >= 0)
-        {
-            Rows.RemoveAt(moreIndex);
-            at = moreIndex;
-        }
-        else if (node.Depth < 0) at = Rows.Count; // the hidden root's children live at the top level
-        else
-        {
-            var parentIndex = Rows.IndexOf(node);
-            if (parentIndex < 0) return; // the node is not visible (a collapsed ancestor): its rows appear when the ancestor expands
-            if (!node.IsExpanded) return;
-            at = parentIndex + 1;
-        }
-        await InsertRowsAsync(at, rows, generation);
+        // The pager row is always the last row of the node's block, so the next page goes where it was.
+        if (oldMore is not null && Rows.IndexOf(oldMore) is var moreIndex and >= 0) Rows.RemoveAt(moreIndex);
+        await InsertChildRowsAsync(node, rows, generation);
     }
 
-    private async Task InsertVisibleChildrenAsync(VariableNodeViewModel node, long generation)
+    private Task InsertVisibleChildrenAsync(VariableNodeViewModel node, long generation)
     {
-        var index = Rows.IndexOf(node);
-        if (index < 0) return;
         var rows = new List<VariableNodeViewModel>();
         FlattenInto(rows, node, includeSelf: false);
-        await InsertRowsAsync(index + 1, rows, generation);
+        return InsertChildRowsAsync(node, rows, generation);
+    }
+
+    /// <summary>
+    /// Where the visible rows below <paramref name="parent"/> end right now (where more of its rows go), or -1 when its rows must not be shown:
+    /// the node was collapsed, or is not in the list because an ancestor is collapsed (its rows appear when that ancestor expands).
+    /// </summary>
+    private int ChildRowsEnd(VariableNodeViewModel parent)
+    {
+        if (parent.Depth < 0) return Rows.Count; // the hidden root's children are the top level
+        if (!parent.IsExpanded) return -1;
+        var index = Rows.IndexOf(parent);
+        if (index < 0) return -1;
+        var end = index + 1;
+        while (end < Rows.Count && Rows[end].Depth > parent.Depth) end++;
+        return end;
     }
 
     /// <summary>Rows per list notification. A virtualising list handles an Add of a few hundred rows in well under a frame; ten thousand is not.</summary>
     private const int RowChunk = 100;
 
     /// <summary>
-    /// Inserts <paramref name="rows"/> at <paramref name="at"/>. Small lists go in with one notification; a big one (an adapter that ignored paging)
-    /// is inserted in chunks of <see cref="RowChunk"/> across UI turns (≤ 4 ms per turn) so the list control never has to absorb thousands of
-    /// rows in one frame. Each chunk is placed after the previously inserted one, so a collapse in between simply stops the rest.
+    /// Inserts <paramref name="rows"/> (descendants of <paramref name="parent"/>) at the end of the parent's block. Small lists go in at once
+    /// with one notification; a bigger one (a full page plus its pager row, or an adapter that ignored paging) is inserted in chunks of
+    /// <see cref="RowChunk"/> across UI turns (≤ 4 ms per turn) so the list control never has to absorb thousands of rows in one frame.
+    /// The position is resolved when a chunk actually goes in, never before the yield: in between, other loads (Watch re-expands every root at
+    /// once after a stop) can shift the parent and the user can collapse it. A collapse (or any newer insert for the same parent) drops the rest.
     /// </summary>
-    private async Task InsertRowsAsync(int at, List<VariableNodeViewModel> rows, long generation)
+    private async Task InsertChildRowsAsync(VariableNodeViewModel parent, List<VariableNodeViewModel> rows, long generation)
     {
+        var version = ++parent.RowsVersion;
         if (rows.Count <= RowChunk)
         {
-            Rows.InsertRange(at, rows);
+            if (ChildRowsEnd(parent) is var at and >= 0) Rows.InsertRange(at, rows);
             return;
         }
         VariableNodeViewModel? last = null;
-        var first = true;
+        var dropped = false;
         await _ui.PostBatched(rows.Chunk(RowChunk).ToList(), chunk =>
         {
-            if (!IsLive(generation)) return;
-            int index;
-            if (first)
-            {
-                first = false;
-                index = Math.Min(at, Rows.Count);
-            }
-            else
-            {
-                var lastIndex = last is null ? -1 : Rows.IndexOf(last);
-                if (lastIndex < 0) return; // what was inserted so far went away (collapsed / invalidated): drop the rest
-                index = lastIndex + 1;
-            }
+            if (dropped || !IsLive(generation) || parent.RowsVersion != version) { dropped = true; return; }
+            // Each chunk follows the previous one; the first goes to the end of the parent's (current) block.
+            var index = last is null ? ChildRowsEnd(parent) : Rows.IndexOf(last) is var lastIndex and >= 0 ? lastIndex + 1 : -1;
+            if (index < 0) { dropped = true; return; } // the parent (or what was inserted so far) left the list
             Rows.InsertRange(index, chunk);
             last = chunk[^1];
         }, 4, UiPriority.Background);

@@ -162,6 +162,69 @@ public class ExceptionAndModulesTests
     }
 
     [AvaloniaFact]
+    public async Task The_modules_window_shows_the_modules_the_session_collected_without_sending_the_modules_request()
+    {
+        // Regression (dbgp-int-4): the window sent the raw `modules` request on every stop, which netcoredbg (and most adapters) do not
+        // implement, so it showed an error while the session already held every module the adapter reported with `module` events.
+        var session = new FakeModulesDebugSession();
+        session.WithDefaultScript();
+        session.ModuleList.Add(new DebugModule("1", "Sample.dll", "/work/out/Sample.dll", "1.0.0.0", true, "Symbols loaded."));
+        session.ModuleList.Add(new DebugModule("2", "System.Private.CoreLib.dll", "/usr/share/dotnet/System.Private.CoreLib.dll", "10.0.12", false, "Skipped loading symbols."));
+        var requests = new List<string>();
+        session.CustomHandler = (command, _) =>
+        {
+            lock (requests) requests.Add(command);
+            throw new InvalidOperationException("Unknown command: " + command);
+        };
+        using var rig = new PanelRig(session: session);
+        using var vm = new ModulesViewModel(rig.Services);
+        rig.StopAt(0);
+        await PanelRig.Eventually(() => vm.Rows.Count == 2 || vm.StatusText != "Not debugging", what: "modules loaded");
+        Assert.Null(vm.StatusText);
+        Assert.Equal(["Sample.dll", "System.Private.CoreLib.dll"], vm.Rows.Select(r => r.Name));
+        Assert.Equal("Yes", vm.Rows[0].UserCode);
+        Assert.Equal("10.0.12", vm.Rows[1].Version);
+
+        session.ModuleList.Add(new DebugModule("3", "", "/work/out/Lib.dll")); // loaded while running: shown at the next stop
+        rig.Resume();
+        rig.StopAt(0);
+        await PanelRig.Eventually(() => vm.Rows.Count == 3, what: "the module reported in between");
+        Assert.Equal("(unnamed)", vm.Rows[2].Name);
+        Assert.True(session.ModulesCalls >= 2);
+        lock (requests) Assert.DoesNotContain("modules", requests);
+    }
+
+    [AvaloniaFact]
+    public async Task A_session_whose_adapter_refused_the_modules_request_is_not_asked_again_at_every_stop()
+    {
+        // A session that does not expose its modules is asked with the raw request; one refusal is enough (Refresh still retries).
+        using var rig = new PanelRig();
+        var asked = 0;
+        rig.Session.CustomHandler = (command, _) =>
+        {
+            if (command != "modules") return null;
+            Interlocked.Increment(ref asked);
+            throw new InvalidOperationException("Unknown command: modules");
+        };
+        using var vm = new ModulesViewModel(rig.Services);
+        rig.StopAt(0);
+        await PanelRig.Eventually(() => vm.StatusText?.StartsWith("Cannot read the modules", StringComparison.Ordinal) == true, what: "refused");
+
+        rig.Resume();
+        rig.StopAt(1);
+        rig.Resume();
+        rig.StopAt(0);
+        await Task.Delay(300);
+        Assert.Equal(1, Volatile.Read(ref asked));
+        Assert.StartsWith("Cannot read the modules", vm.StatusText);
+
+        rig.Session.CustomHandler = (command, _) => command == "modules" ? Json(ModulesJson) : null;
+        await vm.RefreshCommand.ExecuteAsync();
+        Assert.Equal(2, vm.Rows.Count);
+        Assert.Null(vm.StatusText);
+    }
+
+    [AvaloniaFact]
     public async Task Exception_and_modules_windows_render()
     {
         TestTheme.Apply(VsThemes.Dark);

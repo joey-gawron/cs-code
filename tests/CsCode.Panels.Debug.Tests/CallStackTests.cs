@@ -158,6 +158,32 @@ public class CallStackTests
         await PanelRig.Eventually(() => vm.StatusText == "Running…");
         vm.Dispose();
     }
+
+    [AvaloniaFact]
+    public async Task A_frame_the_debug_service_could_not_focus_is_not_marked_current_and_the_user_is_told()
+    {
+        // Regression (debug-ct-2 / dbgp-int-2): the real service only finds frames in a 20-frame cache and silently ignores the others, while
+        // the panel shows 50 per page. The panel used to move the arrow and open the source anyway, so Locals/Watch/REPL showed another frame.
+        using var rig = new PanelRig();
+        rig.Session.Frames[1] = Enumerable.Range(0, 30).Select(i => new DebugStackFrame(500 + i, "Frame" + i, new DebugSource("a.cs", "/work/a.cs"), i, 0)).ToList();
+        rig.Debug.FocusableFrameLimit = 20;
+        using var vm = await StoppedStack(rig);
+        await PanelRig.Eventually(() => vm.Rows[0].IsCurrent, what: "arrow on the top frame");
+        Assert.Equal(30, vm.Rows.Count);
+
+        await vm.ActivateAsync(vm.Rows[25], takeFocus: true);
+        Assert.Equal(("s1", 1, 525), Assert.Single(rig.Debug.FocusCalls));
+        Assert.Equal(500, rig.Debug.FocusedFrameId); // the service did not move
+        Assert.False(vm.Rows[25].IsCurrent);
+        Assert.True(vm.Rows[0].IsCurrent);
+        Assert.Empty(rig.Navigation.Opened); // no source of a frame the variables windows do not show
+        Assert.Contains(rig.Window.StatusMessages, m => m.Contains("Frame25", StringComparison.Ordinal));
+
+        await vm.ActivateAsync(vm.Rows[19], takeFocus: false); // inside the cache: works as before
+        Assert.True(vm.Rows[19].IsCurrent);
+        Assert.False(vm.Rows[0].IsCurrent);
+        Assert.Single(rig.Navigation.Opened);
+    }
 }
 
 public class ThreadsTests
@@ -198,6 +224,25 @@ public class ThreadsTests
         Assert.True(vm.Rows[1].IsCurrent);
         Assert.Equal(new Uri("file:///work/w.cs"), rig.Navigation.Opened.Single().Uri);
         await PanelRig.Eventually(() => vm.Rows[1].IsCurrent && !vm.Rows[0].IsCurrent);
+    }
+
+    [AvaloniaFact]
+    public async Task Switching_to_a_thread_whose_frame_the_debug_service_could_not_focus_keeps_the_current_thread()
+    {
+        using var rig = new PanelRig();
+        rig.Session.Threads.Add(new DebugThread(2, "Worker"));
+        rig.Session.Frames[2] = [new DebugStackFrame(300, "Worker.Run()", new DebugSource("w.cs", "/work/w.cs"), 4, 0)];
+        using var vm = new ThreadsViewModel(rig.Services);
+        rig.StopAt(0);
+        await PanelRig.Eventually(() => vm.Rows.Count == 2 && vm.Rows[1].Location.Length > 0 && vm.Rows[0].IsCurrent);
+        rig.Debug.FocusableFrameLimit = 0; // the service ignores the request
+
+        await vm.SwitchToAsync(vm.Rows[1]);
+        Assert.Equal(("s1", 2, 300), rig.Debug.FocusCalls.Single());
+        Assert.False(vm.Rows[1].IsCurrent);
+        Assert.True(vm.Rows[0].IsCurrent);
+        Assert.Empty(rig.Navigation.Opened);
+        Assert.Contains(rig.Window.StatusMessages, m => m.Contains("Worker", StringComparison.Ordinal));
     }
 
     [AvaloniaFact]
