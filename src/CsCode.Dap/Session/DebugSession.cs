@@ -457,10 +457,12 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         try
         {
             var quiet = _quirks.TrailingOutputQuietPeriod;
-            var deadline = Stopwatch.GetTimestamp() + (long)(_quirks.TrailingOutputLimit.TotalSeconds * Stopwatch.Frequency);
+            var terminatedAt = Stopwatch.GetTimestamp();
+            var deadline = terminatedAt + (long)(_quirks.TrailingOutputLimit.TotalSeconds * Stopwatch.Frequency);
             while (!_terminatedFired && Stopwatch.GetTimestamp() < deadline)
             {
-                var since = Stopwatch.GetElapsedTime(Volatile.Read(ref _lastOutputTimestamp));
+                // quiet since the later of the last output and `terminated` (a program's only line may still be on its way)
+                var since = Stopwatch.GetElapsedTime(Math.Max(Volatile.Read(ref _lastOutputTimestamp), terminatedAt));
                 if (since >= quiet) break;
                 await Task.Delay(quiet - since);
             }

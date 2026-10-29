@@ -151,7 +151,7 @@ public sealed partial class DebugSession
                     var result = await EvaluateOnceAsync(request.Expression, frameId, request.Context, ct);
                     return result with { Result = _quirks.MapReplResult(request, result.Result) };
                 }
-                catch (DapRequestException) when (request.Fallback is { } fallback)
+                catch (DapRequestException ex) when (request.Fallback is { } fallback && (request.FallbackWhen?.Invoke(ex.Message) ?? true))
                 {
                     request = fallback;
                 }

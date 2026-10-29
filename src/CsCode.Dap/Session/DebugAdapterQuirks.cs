@@ -14,8 +14,11 @@ public sealed record SyntheticExceptionFilter(string Filter, string Label, strin
 /// <summary>How a hit condition the user typed reaches the adapter: <see cref="Wire"/> to send, or why it cannot be expressed.</summary>
 public readonly record struct HitConditionMapping(string? Wire, string? Unsupported);
 
-/// <summary>One Debug Console input as an <c>evaluate</c> request, with a second form to try when the adapter rejects the first.</summary>
-public sealed record ReplRequest(string Expression, string Context, ReplRequest? Fallback = null);
+/// <summary>
+/// One Debug Console input as an <c>evaluate</c> request, with a second form to try when the adapter rejects the first with an error
+/// <see cref="FallbackWhen"/> accepts (any error when it is null).
+/// </summary>
+public sealed record ReplRequest(string Expression, string Context, ReplRequest? Fallback = null, Func<string, bool>? FallbackWhen = null);
 
 /// <summary>
 /// A Debug Console completion request rewritten for the adapter: the text and (0-based) column to send, and how each answer maps back onto

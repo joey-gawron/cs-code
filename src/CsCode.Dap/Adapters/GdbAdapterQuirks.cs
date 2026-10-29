@@ -64,7 +64,13 @@ public sealed partial class GdbAdapterQuirks : DebugAdapterQuirks
         foreach (var prefix in CommandPrefixes)
             if (text.StartsWith(prefix, StringComparison.Ordinal)) return new ReplRequest(text[prefix.Length..].TrimStart(), "repl");
         var first = FirstWord(text);
-        return new ReplRequest(text, "watch", first is not null && CommandWords.Contains(first) ? new ReplRequest(text, "repl") : null);
+        if (first is null || !CommandWords.Contains(first)) return new ReplRequest(text, "watch");
+        // Retried as a command only when it is no expression at all ("p x", "info locals": a syntax error), or is just a command word that
+        // names no variable ("bt"): "x + 1" with an undefined x keeps its own error instead of running GDB's x (examine memory) command.
+        var single = first.Length == text.Length && first.Length > 1;
+        return new ReplRequest(text, "watch", new ReplRequest(text, "repl"),
+            error => error.StartsWith("A syntax error in expression", StringComparison.Ordinal)
+                || (single && error.TrimEnd('.') == $"No symbol '{first}' in current context"));
     }
 
     private static string? FirstWord(string text)
@@ -128,7 +134,7 @@ public sealed partial class GdbAdapterQuirks : DebugAdapterQuirks
     // ------------------------------------------------------------------ panics
 
     // Rust 1.73+: "thread 'main' panicked at src/util.rs:15:9:\nboom\n" (1.88+ adds the thread id: "thread 'main' (1234) panicked at …").
-    [GeneratedRegex(@"thread '(?<thread>[^'\n]*)'(?: \(\d+\))? panicked at (?<location>[^\n]+?):\r?\n(?<message>[\s\S]*?)(?=\r?\nnote: |\r?\n\r?\n|\r?\n?\z)", RegexOptions.CultureInvariant, 1000)]
+    [GeneratedRegex(@"thread '(?<thread>[^'\n]*)'(?: \(\d+\))? panicked at (?<location>[^\n]+?):\r?\n(?<message>[\s\S]*?)(?=\r?\nnote: |\r?\nthread '|\r?\n\r?\n|\r?\n?\z)", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex ModernPanic();
 
     // Rust before 1.73: "thread 'main' panicked at 'boom', src/util.rs:15:9"
