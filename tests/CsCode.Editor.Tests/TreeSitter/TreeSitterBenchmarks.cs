@@ -199,7 +199,6 @@ public class TreeSitterBenchmarks
         var store = new LineTokenStore();
         store.Reset(input.LineCount, 1);
         FullGc();
-        var managedBefore = GC.GetTotalMemory(true);
         IStateStack? state = null;
         var batch = new List<int[]>(1000);
         var pairs = new List<int>();
@@ -239,8 +238,6 @@ public class TreeSitterBenchmarks
         Record(scenario, "TextMate", done == input.LineCount ? "full tokenise" : $"full tokenise (extrapolated from {fraction:P0} in {elapsed.TotalSeconds:0} s)", elapsed.TotalMilliseconds / fraction, "ms");
         Record(scenario, "TextMate", "tokenise throughput", text.Length * fraction / 1024.0 / 1024.0 / elapsed.TotalSeconds, "M chars/s");
         Record(scenario, "TextMate", "LineTokenStore estimate (scaled to the whole document)", (store.EstimatedBytes + interner.EstimatedBytes) / fraction / 1024.0 / 1024.0, "MB");
-        var managedAfter = GC.GetTotalMemory(true);
-        Record(scenario, "TextMate", "token store managed delta (scaled to the whole document)", (managedAfter - managedBefore) / fraction / 1024.0 / 1024.0, "MB");
         GC.KeepAlive(store);
         Assert.True(done > 0);
     }
@@ -352,6 +349,10 @@ public class TreeSitterBenchmarks
         host.Config.Set(SettingKeys.EditorLargeFileOptimizationsLimit, 200L * 1024 * 1024);
         host.Config.Set(TreeSitterService.SettingKey, treeSitter);
         var scenario = $"B2/B3 editor, {megabytes} MB C# ({text.Count(c => c == '\n')} lines)";
+
+        // warm-up: the first window of the process pays for Avalonia/Skia/font start-up and JIT; keep that out of the numbers
+        var (warmDoc, warm, _) = await host.OpenAsync(TreeSitterViewTests.CSharp, "Warm.cs", 600, 300);
+        await ViewHost.WaitFor(() => warm.Tokens?.ViewportReady is { } w && w.Version == warmDoc.Version, "warm-up coloured", 120_000);
 
         var sw = Stopwatch.StartNew();
         var (doc, view, _) = await host.OpenAsync(text, $"Bench{megabytes}.cs", 1000, 700);

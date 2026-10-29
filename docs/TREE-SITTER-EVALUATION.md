@@ -23,8 +23,8 @@ Contents: [1 Recommendation](#1-recommendation) · [2 The prototype](#2-the-prot
 
 | Option | Verdict | Why |
 |---|---|---|
-| **Switch** (tree-sitter for everything, drop TextMate) | **No** | Grammars exist for ~50 of CsCode's languages, not all; a native grammar per language per platform must be built, licence-checked and shipped (§8); first colours of a big file wait for a whole-document parse (§4: 1 MB of C# ≈ 2 s here, TextMate colours the viewport in milliseconds); C#'s grammar is the slowest one measured, C# is the editor's main language, and **one valid C# 11 construct the grammar does not know (`['f', .. var n]`, used in this repository) turns the rest of the file into an error region: parsing becomes 7× slower and every keystroke re-parses the whole file** (§4 B1c). |
-| **Hybrid** (tree-sitter where a grammar is installed and enabled, TextMate otherwise) | **Yes — staged** | Same token rows, same themes, same features: the prototype proves the engines are interchangeable per document with zero per-theme work (§6). Tree-sitter colours structure TextMate's regexes cannot see (types, properties, namespaces, calls — closer to what VS Code shows with semantic tokens), handles injections well (Markdown fences, HTML script/style, §3), parses 1 MB 5–35× faster than TextMate tokenises it (§4 B1b), and grammars + queries for **all 17 languages CsCode cannot colour today** are on this machine and compile with the prototype (test `Grammars_for_the_languages_TextMate_cannot_highlight_load_and_compile`). |
+| **Switch** (tree-sitter for everything, drop TextMate) | **No** | A native grammar per language per platform must be built, licence-checked and shipped for every language (§8); first colours of a big file wait for a whole-document parse (§4: 1 MB of C# ≈ 2 s here, TextMate colours the viewport in milliseconds); C#'s grammar is the slowest one measured, C# is the editor's main language, and **one valid C# 11 construct the grammar does not know (`['f', .. var n]`, used in this repository) turns the rest of the file into an error region: on 116 K characters the parse becomes 46× slower and a keystroke's reparse 1,000× slower (5 ms → 5 s)** (§4 B1c). |
+| **Hybrid** (tree-sitter where a grammar is installed and enabled, TextMate otherwise) | **Yes — staged** | Same token rows, same themes, same features: the prototype proves the engines are interchangeable per document with zero per-theme work (§6). Tree-sitter colours structure TextMate's regexes cannot see (types, properties, namespaces, calls — closer to what VS Code shows with semantic tokens), handles injections well (Markdown fences, HTML script/style, §3), parses and highlights a whole 1 MB file 3–17× faster than TextMate tokenises it (§4 B1b), and grammars + queries for **all 17 languages CsCode cannot colour today** are on this machine and compile with the prototype (test `Grammars_for_the_languages_TextMate_cannot_highlight_load_and_compile`). |
 | **Stay** (TextMate only) | No | Leaves the 17 languages uncoloured unless third-party TextMate grammars are downloaded (one licence check per file), and leaves the structural features in §7 to language servers. |
 
 Staging proposal (each step needs the user's go-ahead):
@@ -37,11 +37,15 @@ Staging proposal (each step needs the user's go-ahead):
 
 **The finding that matters most for C#:** tree-sitter's robustness depends on the grammar keeping up with the language. The C# grammar
 (v0.23.5, the newest on this machine) cannot parse one file of this repository (a C# 11 list pattern with a slice designation,
-`['f', .. var n] when …`, in `KeyboardShortcutsViewModel.cs`). The whole file becomes one ERROR region (colours there degrade), and — measured
-in plain C as well, so it is the library, not the binding — with that construct at the top of 1.2 MB of otherwise simple C# the full parse takes
-7× longer and an incremental reparse after one keystroke goes from ~25 ms to ~8 s, because nothing after the error is reusable. TextMate
-degrades locally (one wrong colour) on syntax it does not know. For a fast-moving language this is the strongest argument to keep TextMate
-(plus the language server's semantic tokens) as C#'s engine.
+`['f', .. var n] when …`, in `KeyboardShortcutsViewModel.cs`). Everything after it becomes one ERROR region (colours there degrade), and
+error recovery explodes (B1c, through this engine): with that 10-line construct at the top of 116 K characters of otherwise trivial C#
+the first parse takes 7.6 s instead of 0.16 s and a reparse after one keystroke 5.1 s instead of 5 ms (nothing after the error is reusable);
+in front of 1.2 MB the first parse took **9.3 minutes** (an uncapped run; capped runs stop at 120 s) instead of 1.9 s. Plain C against the
+same library shows the same (1.1 MB: 9 s instead of 1.3 s, keystroke reparse 7.8 s instead of 23 ms), so it is the grammar/library, not the
+binding. TextMate degrades locally (one
+wrong colour) on syntax it does not know. The prototype therefore hands a document to TextMate when it has parsed for 5 s of worker time
+without producing a tree (`TreeSitterHighlighter.MaxParseTimeWithoutTree`, tested), but for a fast-moving language this is the strongest
+argument to keep TextMate (plus the language server's semantic tokens) as C#'s engine.
 
 ## 2. The prototype
 
@@ -232,7 +236,10 @@ third-party native supply chain. If one is adopted later, use it only for its na
 
 ## 12. Prototype limits (honest list)
 
-* **First colours wait for the whole first parse** (§4). No TextMate hand-off while the first parse runs.
+* **First colours wait for the whole first parse** (§4). No TextMate hand-off while the first parse runs; the only fallback is the 5 s
+  give-up guard (a document that parses that long without a tree is handed to TextMate for good, until the setting or language changes).
+* **Grammar coverage:** syntax a grammar does not know can make parsing pathological (§1, B1c); the guard bounds the cost, it does not fix
+  the colours. Memory trimming (`IMemoryTrimmable` aggressive level) does not drop trees of documents that still have a view.
 * **Combined injections** (`injection.combined`, e.g. several `<html_block>`s in Markdown parsed as one document) are parsed per visible range,
   not across the whole document; injected trees are re-parsed (not incrementally) after each edit, only for injection sites in the range
   being highlighted. A very large `<script>` re-parses on each keystroke inside it.
