@@ -55,7 +55,8 @@ IDebugService / IDebugSession events (any thread)
   An adapter `invalidated` event starts a new epoch (panels reload) and makes the session forget its frame ids while the service may still
   publish the old location: the tracker then accepts the location only after **one** `stackTrace` request (`Infrastructure/FrameRevalidator`,
   shared by every panel) re-registered the ids; when the adapter renumbered its frames, the frame at the same position is focused (and
-  `IDebugFrameFocus` is asked to follow), never a dead id.
+  `IDebugFrameFocus` is asked to follow), never a dead id. That live frame is kept for its epoch only (dropped at the next stop, resume,
+  invalidation or session change), so the runtime's app-lifetime tracker does not keep an ended session reachable.
 * `Infrastructure/UiAsync.OnUi` — never captures a `SynchronizationContext` (so view-models behave the same under a test dispatcher) and a
   cancelled token unblocks the await **even if the adapter ignores it**: a hung adapter cannot keep a closed panel alive.
 * `Variables/VariablesTreeViewModel` — the engine behind Locals/Autos/Watch (and reusable for editor hover pins).
@@ -129,6 +130,9 @@ contract cannot update a function breakpoint, so its checkbox is read-only.
 * The shell disposes the console's view-model whenever the window is hidden (also at the end of every session), so the REPL's history and
   transcript live in the app-lifetime `Console/ReplState`: the history is also persisted in `IStateStorage` (`debug.replHistory`, application
   scope), and the transcript (≤ 1,000 lines) is replayed by a new console with each line after the output event it followed. Clear empties it.
+  At the end of a session the debug service replaces that session's history entries with copies that no longer reference it
+  (`ArchiveHistory`), so a line's anchor (`OutputAnchor` in `Console/ReplState.cs`, weak) matches the event itself or, failing that, the copy that shares its
+  `Output` string instance (every DAP output batch has its own); a line whose event left the history goes after the line entered before it.
 
 ### Exception Helper, Modules (SHOULD)
 
@@ -160,8 +164,8 @@ real Skia headless platform.
 
 | Suite | What it proves |
 |---|---|
-| `VariablesTests`, `WatchTests`, `CallStackTests`, `BreakpointsTests`, `ConsoleTests`, `ExceptionAndModulesTests` | view-model behaviour against fake `IDebugService`/`IDebugSession` (lazy expansion, paging, chunked inserts racing collapse/re-expansion, change highlighting incl. Autos, handle invalidation, edits, watch persistence and folder switches, frame focus incl. a declined focus, breakpoint states, console bounding/history/completions, REPL state across console views, exception helper, modules) |
-| `InvalidationTests` | adapter `invalidated`: Locals/Watch reload in a live frame, renumbered frames, one shared stack request |
+| `VariablesTests`, `WatchTests`, `CallStackTests`, `BreakpointsTests`, `ConsoleTests`, `ExceptionAndModulesTests` | view-model behaviour against fake `IDebugService`/`IDebugSession` (lazy expansion, paging, chunked inserts racing collapse/re-expansion, change highlighting incl. Autos, handle invalidation, edits, watch persistence and folder switches, frame focus incl. a declined focus, breakpoint states, console bounding/history/completions, REPL state across console views and across a session end, exception helper, modules) |
+| `InvalidationTests` | adapter `invalidated`: Locals/Watch reload in a live frame, renumbered frames, one shared stack request, no ended session kept by a tracker that outlives it |
 | `RuntimeTests` | `debug.addToWatch` with the Watch tab hidden / on screen / brought forward, and the Ctrl+Alt+W contribution |
 | `InteractionTests` | real views in a headless window: keyboard model, inline editors, drag-reorder, context routing |
 | `ScreenshotTests` | renders every window in the VS Dark/Light/Blue themes → `.scratch/screenshots/debug-*.png` (git-ignored) |
