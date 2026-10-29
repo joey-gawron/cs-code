@@ -16,20 +16,29 @@ what was fixed (each with a regression test that fails without the fix), and wha
 * **Adapter**: built-in debug types `pwa-node` and `node` (the legacy alias; the provider rewrites it to `pwa-node`, the only node type the
   standalone server knows), breakpoint languages `typescript`, `javascript`, `typescriptreact`, `javascriptreact`
   (`src/CsCode.Dap/Adapters/JsDebugAdapterFactory.cs`).
-* **Server process**: `node <js-debug>/src/dapDebugServer.js 0 127.0.0.1` started through the new `DebugAdapterServerProcess` descriptor
+* **Server process**: `node <js-debug>/src/dapDebugServer.js <socket path>` started through the `DebugAdapterServerProcess` descriptor
   (`src/CsCode.Dap/Transport/ServerProcessTransport.cs`): `nice -n 10` (below normal; the debuggees it spawns inherit it), stdin closed, stdout/stderr
-  drained into bounded tails, the line `Debug server listening at 127.0.0.1:<port>` read with a timeout (30 s; a server that exits first fails at
-  once with its own stderr), then a TCP connection. The process is tracked (`IMemoryMonitor.TrackChildProcess` through the session's
-  `AdapterProcessId`) and owned by the parent session's transport.
+  drained into bounded tails, the line `Debug server listening at <socket path>` read with a timeout (30 s; a server that exits first fails at
+  once with its own stderr), then a connection to the socket (`UnixDomainSocketEndPoint`). The process is tracked
+  (`IMemoryMonitor.TrackChildProcess` through the session's `AdapterProcessId`) and owned by the parent session's transport.
+* **Private socket, no TCP port** (`src/CsCode.Dap/Transport/PrivateSocket.cs`): the server listens on `dap.sock` in a fresh directory only the
+  user can enter — mode 0700, named `cscode-jsdebug-<pid>-<start time>-<random>`, under `$XDG_RUNTIME_DIR` when set (`/run/user/<uid>`, itself
+  private), else the temp directory (`/tmp` when the path would be too long for a socket). `dapDebugServer.js` listens on any argument that is not
+  a number as a path (its usage line: `[port|socket path=8123] [host=localhost]`). So no other local process — another user on a shared machine
+  included — can connect to the adapter and have it launch programs as the user, which the earlier `127.0.0.1:<port>` allowed (code review,
+  reproduced). The directory is deleted when the session's transport closes, whatever ended it (stop, the program's exit, a crash of the server,
+  the debug service's shutdown, a synchronous container dispose), and when the start fails; the directories of a CsCode that was killed outright
+  (creator pid gone, or reused by another process) are removed at the next js-debug start. Windows: a named pipe
+  `\\.\pipe\cscode-jsdebug-<random>` through the existing pipe transport (written, not exercised here).
 * **Child sessions**: js-debug answers `launch` and then asks for the program's session with `startDebugging` (request `launch`, configuration
-  `{type, name, __pendingTargetId}`). `DebugService` starts it as a child session that opens **its own TCP connection to the same server**
-  (`DebugSession.AdapterEndpoint`; the factory is not asked again — it would start another server that does not know the pending target).
-  Breakpoints, threads, stops and variables live in the child; the parent only orchestrates.
+  `{type, name, __pendingTargetId}`). `DebugService` starts it as a child session that opens **its own connection to the same socket**
+  (`DebugSession.AdapterEndpoint`, a `DebugAdapterNamedPipe`; the factory is not asked again — it would start another server that does not know
+  the pending target). Breakpoints, threads, stops and variables live in the child; the parent only orchestrates.
 * **Lifetime**: the server and every child connection end with the session — stop (Shift+F5), stop of the child alone, restart, debuggee exit,
   adapter crash, app shutdown (`DebugService.DisposeAsync`), and a container disposed synchronously (`DebugService.Dispose`, e.g. a test host:
   it kills every adapter process tree and `runInTerminal` debuggee **at once**, because the asynchronous shutdown runs on the debug lane, which the
   same container dispose ends right after). Closing the parent's transport kills the server's **process tree** (the debuggees it launched, and
-  their children). Processes that **left** the tree are left alone on a normal close — a program may detach a browser (`xdg-open`) or a daemon on
+  their children) and deletes its socket directory. Processes that **left** the tree are left alone on a normal close — a program may detach a browser (`xdg-open`) or a daemon on
   purpose, and VS Code leaves those running too. Only when the server **died on its own** (crash, external kill) are its orphans reaped: the
   processes carrying its environment marker (`CSCODE_DAP_ADAPTER=<guid>`, which the server passes on to everything it launches) that are still
   in the server's session (a process that detached into a session of its own, `setsid` / Node's `detached: true`, is spared). Like js-debug's
@@ -61,7 +70,20 @@ what was fixed (each with a regression test that fails without the fix), and wha
   `outDir: out`, `rootDir: src` writes `out/main.js` + `out/main.js.map` with `"sources": ["../src/main.ts"], "sourceRoot": ""`; js-debug resolves
   these maps, binds `.ts` breakpoints and reports `.ts` frames. The generated JavaScript has different line numbers than the TypeScript (class
   fields, split try/catch), so the tests prove the mapping. Offline there is no `@types/node`; the sample declares the little of `process` it uses.
-* **Node.js** v20.19.2 runs both js-debug and the debuggee.
+* **Node.js** v24.21.0 (`/usr/bin/node`) runs both js-debug and the debuggee. The machine's system update replaced v20.19.2 with it on
+  2026-10-29 (11:04–11:14); the earlier rounds' evidence was taken on v20.19.2, and **every real js-debug test was run again on v24.21.0**
+  (three runs in a row; the numbers below are from those runs unless a row says otherwise).
+
+### Node 20 vs Node 24 (what changed for the debugger)
+
+* **TDZ locals are hidden.** V8 in Node 24 no longer lists a `let`/`const` before its declaration ran (Node 20 listed it as `undefined`): in
+  `add`, Locals show `a`, `b`, `this` before `const sum = a + b` and `sum` only after it. The variable names of a frame now change between two
+  stops of the same function, which switched change highlighting off for the whole frame (the frame was recognised by its names): `sum` was no
+  longer red after the step. **Fixed** — the frame is recognised by its function (row "Change highlighting after a step").
+* **Node internals frames are named `<anonymous>`.** The skipped `<node_internals>` frames that were `Module._compile`, `Module.load`, … are
+  `<anonymous>` (plus `wrapModuleLoad`, `executeUserEntryPoint`) in Node 24's stacks; they fold into `[External Code]` the same way.
+* **Floods are faster.** The 1,000,000-line program finishes sooner (batched `process.stdout.write`: ~1.0 s instead of ~1.3–1.4 s; one
+  `console.log` per line: ~28–33 s instead of ~39–42 s), so the Debug Console receives the same output in less time.
 
 ### The matrix
 
@@ -75,7 +97,7 @@ Tests: **D** = `tests/CsCode.Dap.Tests/RealJsDebugTests.cs` (real `DebugService`
 
 | Row | Status | Evidence | Test |
 |---|---|---|---|
-| Launch + clean exit, nothing left running | **works** | Parent `launch` → `startDebugging` → child connection to the same port; the program prints and exits; both sessions end; the js-debug server pid and every process carrying its marker are gone (checked after every real test). Soak: 10 runs → 20 sessions collected after forced GCs, 11 servers gone, threads 21 → 21/22. | D `Launch_stops_at_a_ts_breakpoint_in_the_child_session_and_exits_cleanly`, `Ten_real_sessions_…` |
+| Launch + clean exit, nothing left running | **works** | Parent `launch` → `startDebugging` → child connection to the same socket; the program prints and exits; both sessions end; the js-debug server pid and every process carrying its marker are gone (checked after every real test). Soak: 10 runs → 20 sessions collected after forced GCs, 11 servers gone, threads 21 → 21/22. | D `Launch_stops_at_a_ts_breakpoint_in_the_child_session_and_exits_cleanly`, `Ten_real_sessions_…` |
 | Line breakpoints in `.ts` (source maps) | **works** (after the `__workspaceFolder` quirk is handled) | `setBreakpoints` on `src/main.ts` answers `verified: false, "breakpoint.provisionalBreakpoint"`, then a `breakpoint` event `changed, verified: true, line 51` once the map is loaded; the stop is reported at `src/main.ts:51`. A second file (`util.ts`) binds too. | D, P, A |
 | Breakpoint added while stopped | **was broken → fixed** | Stopped at `main.ts:51`, a breakpoint added at `main.ts:58`: both sessions get the file's list again. The orchestrating parent answers every breakpoint `verified: false, "Unbound breakpoint"`; the child answers `verified: true` (line 51 unchanged, so not re-reported, and the new one at 58). Before: the newest verdict won, so the Breakpoints window showed `main.ts : 51` as "Unbound breakpoint" (hollow glyph) although the program still stopped there (integrator, real display). Now a session that verified a breakpoint wins over sessions that did not (VS Code's rule); continuing stops at 51 again with the verdict verified. | D `Adding_a_breakpoint_while_stopped_keeps_the_other_breakpoints_of_the_file_verified`, fix test below |
 | Moved line (breakpoint on a comment line) | **works** | Requested line 43 → stopped at 44; verdict moved to line 44; Breakpoints window: `main.ts : 43 Moved note='moved to line 44'`. | D `A_breakpoint_on_a_line_without_code_…`, P |
@@ -92,16 +114,17 @@ Tests: **D** = `tests/CsCode.Dap.Tests/RealJsDebugTests.cs` (real `DebugService`
 | Detached processes | **was broken → fixed** | A program that detaches a process on purpose (`spawn("sleep", ["600"], {detached: true}).unref()`, how `open`/`xdg-open` start a browser) and ends normally: the detached process keeps running. Before: every session end SIGKILLed every process that inherited the adapter's marker, so a browser the program opened died with the session (code review). | D `A_process_the_program_detached_on_purpose_…`, fix tests below |
 | Synchronous dispose (test host, container) | **was broken → fixed** | `RealAppHost` disposed while stopped at a breakpoint (no Shift+F5, no AppShutdown): the server and the program are gone ~350–450 ms later (`DebugService.Dispose` with the debug lane blocked: ~300–320 ms). Before: `DebugService.Dispose` only started the asynchronous shutdown, which runs on the debug lane that the same container dispose ends; the server (never exits by itself) survived — two servers from failed test runs were found running an hour later. | A `Disposing_the_host_while_stopped_…`, D `Disposing_the_debug_service_synchronously_…` |
 | Adapter crash | **works** | Killing the js-debug server (SIGKILL) while stopped: both sessions end ("The debug adapter closed the connection."), the orphaned `node ./out/main.js` is reaped through the marker; a process the program had detached into its own session keeps running. | D `An_adapter_crash_…` (2) |
+| Private socket, no TCP port | **was a gap → fixed** | The server was started on `127.0.0.1:<port>`: any local process could connect and have it launch programs (code review, reproduced). Now `node dapDebugServer.js /run/user/1000/cscode-jsdebug-<pid>-<start>-<random>/dap.sock`: the server holds **no TCP listener** (its `/proc/<pid>/fd` sockets against `/proc/<pid>/net/tcp`/`tcp6`: none), listens on that path (`/proc/<pid>/net/unix`), the directory is mode `700`, owner uid 1000 (the user); the program's session connects to the same path; the directory is gone after every kind of end (the socket check every real test makes: stop, child stop, program exit, restart, crash, service shutdown — at once when `DisposeAsync` returns — synchronous dispose, the real app's Shift+F5 and host dispose); a stale directory of a killed CsCode (dead pid) is removed at the next start. The **program** still has a TCP listener: Node's inspector, which js-debug's bootloader opens in the debuggee (`tcp 0100007F:…`; known gaps). | D `Js_debug_listens_on_a_private_unix_socket_…`, `Shutting_the_debug_service_down_…`, rig check; `PrivateSocketTests`; A (2) |
 | Call stack: source-mapped `.ts` frames | **works** | `add@src/util.ts:2`, `work@src/main.ts:12`, `main@src/main.ts:54`, `<anonymous>@src/main.ts:62`. js-debug names sources relative to the workspace, so the Call Stack shows `src/main.ts : 12`. | D, P, A |
 | Call stack: async frames | **was partial → fixed** | js-debug inserts a frame `await` (`presentationHint: label`, no source) between `work` and `main`. Before: with *Show External Code* off it was folded into `[External Code]`, hiding where the asynchronous part starts. Now it stays visible (greyed) and is not a frame one can switch to. Selecting the async parent `main` shows js-debug's own message in Locals: "Variables not available in async stacks" (adapter limitation). | P, fix test below |
-| Call stack: skipped Node internals | **was partial → fixed** (twice) | `skipFiles: ["<node_internals>/**"]` frames come with `presentationHint: "deemphasize"` on the frame and its source (`<node_internals>/internal/modules/cjs/loader`, a `sourceReference`). First: shown as normal frames, never folded. Then greyed, but folded only with *Show External Code* off — which is not the default, so the real app listed `Module._compile`, `Module.load`, … `executeUserEntryPoint` one by one (integrator, real display). Now a run of two or more frames the adapter skips folds into one `[External Code]` row by default (6 frames), as VS Code collapses them; clicking the row shows them, greyed, until the next stop. | P, fix test below |
+| Call stack: skipped Node internals | **was partial → fixed** (twice) | `skipFiles: ["<node_internals>/**"]` frames come with `presentationHint: "deemphasize"` on the frame and its source (`<node_internals>/internal/modules/cjs/loader`, a `sourceReference`). First: shown as normal frames, never folded. Then greyed, but folded only with *Show External Code* off — which is not the default, so the real app listed `Module._compile`, `Module.load`, … `executeUserEntryPoint` one by one (integrator, real display). Now a run of two or more frames the adapter skips folds into one `[External Code]` row by default, as VS Code collapses them; clicking the row shows them, greyed, until the next stop. Node.js 20: 6 frames (`Module._compile` …); **Node.js 24**: 7 frames, most named `<anonymous>` (`<anonymous>@<node_internals>/internal/modules/cjs/loader : 1929`, … `wrapModuleLoad`, `executeUserEntryPoint`, `<anonymous>@…/run_main_module : 33`), folded the same way. | P, fix test below |
 | Locals: objects, classes, nested | **works** | `p = Point {x: 3, y: 4}`, `nested = {name: 'outer', inner: {…}}`, expandable; scopes `Local: main` (hint `locals`) and `Closure` (hint `arguments`) shown as groups; `Global` is not shown (Locals shows the scopes hinted locals/arguments); inside a `for` body a `Block` scope comes first. | D, P |
 | Locals: strings | **was broken → fixed** | js-debug quotes strings itself (`'hello'`); the panels quoted again: `"'hello'"`. Now shown as `'hello'`. | P, fix test below |
 | Locals: Map / Set | **works** | `Map(2) {size: 2, a => 1, b => 2}`, entries `0={"a" => 1}`, `1={"b" => 2}`, `size=2`, `[[Prototype]]=Map`; `Set(3) {size: 3, 1, 2, 3}`. | D, P |
 | Locals: getters | **was partial → fixed** | js-debug sends getters as `presentationHint.lazy` with the getter's source as value (`ƒ length() { return Math.sqrt(… }`) and type `function`; expanding returns the value. Before: the source text was shown as the value. Now `(…)`, no type (was `function`, the accessor's type — integrator); Enter/double-click runs the getter and shows `5`/`7` and its type `number` in place (`DebugVariable.IsLazy`). A getter that **throws**: js-debug answers with the getter function's own properties (`arguments`, `caller`, `length`, `name='get boom'`…) and no error; was shown as `ƒ ()` (the first of them), now "The debugger did not compute a value: the getter may have thrown an exception." At the next stop an evaluated getter is a placeholder again and is not marked changed (it was compared with its computed value). | D, P `Locals_page_a_ten_thousand_element_array_…`, fix tests below |
 | Locals: arrays > 100 items, paging | **was broken → fixed** (twice) | `big`: `(250) [0, 2, 4, …]`, `indexedVariables: 250`, `namedVariables: 1`. js-debug ignores `start` without a `filter` (a request for 100..199 answers 0..99), so the pager stopped after the first 100 elements (the duplicate-guard saw page 0 again). Now pages use `filter: "indexed"` (new `IDebugSessionVariablePaging`): `length`, `[[Prototype]]` and all 250 elements in order (js-debug appends a second `[[Prototype]]` to the last indexed page; names are de-duplicated). `huge` with **10,000** elements: after 100 pages all 10,000 (`9999=29997`) and no notice; was 9,998 elements and "Showing the first 10,000 of 10,000 items" (the named `length`/`[[Prototype]]` counted against the 10,000 cap — evidence review). Longer arrays show their first 10,000 elements and "Showing the first 10,000 of 10,050 items". | D, P `Locals_page_a_ten_thousand_element_array_…`, fix tests below |
-| Change highlighting after a step | **was broken → fixed** | After stepping over `const sum = a + b`, js-debug adds a `Return value` pseudo-variable; the frame "shape" changed, so nothing was compared and `sum` (undefined → 52) was not red. Pseudo-variables (names with whitespace) no longer count. | P, fix test below |
-| Autos | **works** (documented approximation) | In `add`: `a=100 | b=1 | sum=undefined` (Locals minus `this`). | P |
+| Change highlighting after a step | **was broken → fixed** (twice) | After stepping over `const sum = a + b`, js-debug adds a `Return value` pseudo-variable; the frame "shape" (its variable names) changed, so nothing was compared and `sum` (undefined → 52) was not red; pseudo-variables then no longer counted. **Node.js 24** does not list `sum` before the step at all (TDZ): before `a=100 \| b=1 \| this=undefined`, after `a=100 \| b=1 \| Return value=101 \| sum=101 \| this=undefined` — the names changed again and `sum` was not red (RealJsDebugPanelsTests:261 failed). Now a frame is recognised by its function (session, thread, frame name and source; one `stackTrace` per stop location shared by Locals and Autos), so variables that appear or disappear do not switch the comparison off; `sum` is red as a **new** local (`sum=101*`), `a` is not; a block scope coming and going changes nothing for the others. | P, fix tests below |
+| Autos | **works** (documented approximation) | In `add`: `a=100 \| b=1` (Locals minus `this`; Node.js 20 also listed `sum=undefined`, Node.js 24 lists `sum` only once assigned). | P |
 | Watch | **works** | `a + b = 101` in `add`; `x` → error. Error text was `'evaluate' failed: Uncaught ReferenceError: x is not defined` → now js-debug's own message. | P, fix test below |
 | Set variable | **works** | `setVariable` on the `Local` scope: `x = 100`, the REPL then sees 101, and the program continues with it (`add(100, 1)`); also through the Locals inline editor. | D, P |
 | Debug Console: REPL + completions | **works** | `x * 2 → 102`, `[...m.keys()].join() → 'a,b'`; completions for `s.toUpp` → `toUpperCase`, for `Ma` → `Map`, `Math`. Errors show js-debug's message (with its stack, e.g. "Uncaught ReferenceError ReferenceError: nope is not defined at eval (repl:1:1)"). | D, P |
@@ -156,6 +179,16 @@ plus the real-adapter tests named in the matrix. Each was shown to fail with its
 | Panels | A lazy value shows no type until evaluated (was `function`) | `A_lazy_getter_shows_no_type_until_it_is_evaluated_…` |
 | Editor | The lightbulb moves out of the way of the breakpoint glyph / stop arrow | `DebugGateAndRevealTests.The_lightbulb_is_never_drawn_over_a_breakpoint_glyph` |
 
+Third round — what the final review of the second round left, and the move to Node.js 24. Regression tests:
+`tests/CsCode.Panels.Debug.Tests/ChangeHighlightTests.cs`, `tests/CsCode.Dap.Tests/PrivateSocketTests.cs`, plus the real-adapter tests named.
+Each was shown to fail with its fix reverted (temporarily, in the source).
+
+| Module | Fix | Regression test |
+|---|---|---|
+| Panels | Change highlighting recognises a frame by its **function** (session, thread, frame name and source, from one `stackTrace` request per stop location that Locals and Autos share), not by its variable names: variables that appear or disappear between two stops keep the others compared, a variable that appeared is marked changed (Visual Studio shows new locals red), a block scope coming and going changes nothing for the others. Node.js 24 hides `const sum` until it is assigned, so the names changed and `sum` was not red after the step. Without the frame's identity (stack unreadable) the names key it as before. | `ChangeHighlightTests`: `Variables_that_appear_or_disappear_…`, `A_block_scope_that_comes_and_goes_…`, `Locals_and_autos_share_one_stack_request_…` (fail without it), `Without_the_frames_identity_…`, `A_caller_frame_is_not_given_the_identity_of_an_earlier_stops_caller_…` (the location keys the shared request only for its own frame); `VariablesTests.Stepping_into_another_function_…` now steps into a real other function with a reused frame id; P `The_panels_show_a_typescript_session_…` |
+| Dap | js-debug listens on a **private Unix socket** (`dap.sock` in a fresh 0700 directory under `$XDG_RUNTIME_DIR`, else the temp directory), never on a loopback TCP port; child sessions connect to the same path; the directory is deleted at every session end and after a failed start; directories of a killed CsCode are removed at the next start; a named pipe on Windows | `PrivateSocketTests` (the deletion at close, after a crash, by `KillNow` and after a failed start, and the stale cleanup: each fails without its part); `JsDebugFactoryTests.It_starts_dapDebugServer_on_node_on_a_private_socket_…`; D `Js_debug_listens_on_a_private_unix_socket_…` and the socket-directory check of every real test (crash, stop, shutdown, synchronous dispose, restart…); App `F5_builds_with_tsc_…`, `Disposing_the_host_…` |
+| Dap | The debug service's shutdown (`DisposeAsync`) waits (bounded, 10 s) for the sessions its Stop ended to release their adapters — the server killed, its socket directory deleted — instead of returning while that ran in the background (an app exiting right after could leave a socket directory; the full Dap run's rig found one); the transport deletes the directory right after killing the server, not after its exit | `PrivateSocketTests.Shutting_the_debug_service_down_returns_only_after_ended_sessions_released_their_adapters` (a lingering stdio adapter: fails without the wait); D `Shutting_the_debug_service_down_while_stopped_…` (the directory gone when `DisposeAsync` returns) |
+
 ### js-debug quirks the client handles (adapter behaviour, v1.140.0)
 
 * **`__workspaceFolder` is required for source maps.** The standalone server applies `resolveSourceMapLocations: ["${workspaceFolder}/**",
@@ -184,11 +217,11 @@ plus the real-adapter tests named in the matrix. Each was shown to fail with its
   need it set `outputCapture: "std"` or `console: "integratedTerminal"` (which now means exactly that, in the Debug Console).
 * Debug-lane stalls of ~100–160 ms during output floods (32 frames per yield, whatever their size); the UI budget is unaffected, but other
   sessions on the lane can wait that long. A byte-based yield would bound it.
-* **The js-debug server's TCP port is not authenticated** (code review, reproduced): while a session runs, any local process — another OS user
-  on a shared machine included — can connect to `127.0.0.1:<port>` and have the server launch a program as the user (`dapDebugServer.js` boots a
-  new session for every connection). The server also accepts a socket path instead of a port; listening on a Unix socket in a `0700` directory
-  (children would connect to the same path through `PipeTransport`) would limit access to the user. **Not done**: this round's brief pins the
-  invocation of the untrusted adapter to `node dapDebugServer.js <port> 127.0.0.1`; switching needs that approval.
+* **The program's own Node.js inspector listens on a loopback TCP port.** js-debug's server no longer opens a TCP port (it listens on the
+  private socket), but to debug the program its bootloader opens Node's inspector **inside the debuggee** on a random `127.0.0.1` port (seen in
+  the test: `debuggee pid … (/usr/bin/node ./out/main.js): TCP listeners [tcp 0100007F:…]`), as VS Code's js-debug does. A local process that
+  finds that port can read the WebSocket address from `/json/list` and attach to the program while it is debugged. Not changed (js-debug's
+  bootloader decides it). js-debug's own IPC sockets (`/tmp/node-cdp.<pid>-….sock`) are Unix sockets created with the user's umask.
 * Stop kills the program's whole process tree, including a process it detached that is still its child (js-debug's own tree kill does the
   same); one that already left the tree survives.
 * `pwa-chrome` / browser debugging is out of scope; the factory handles `pwa-node`/`node` only.
@@ -196,7 +229,8 @@ plus the real-adapter tests named in the matrix. Each was shown to fail with its
   it, and so do the app's shutdown paths (graceful: the debug service's `DisposeAsync`; synchronous container dispose: `DebugService.Dispose`
   kills it at once — this was the root cause of the two servers that failing real-composition test runs left behind, and the test's
   `finally` workaround is gone; abrupt: `ChildProcessTracker.KillSurvivorsNow`, which knows the server through `IMemoryMonitor.TrackChildProcess`).
-  If CsCode itself is killed (SIGKILL, crash) during a session, the server and its debuggee survive.
+  If CsCode itself is killed (SIGKILL, crash) during a session, the server and its debuggee survive; its socket directory stays until the next
+  js-debug start removes it (the orphaned server can then no longer be reached).
 
 ### Running the suites
 
