@@ -89,6 +89,19 @@ public sealed class ProgressRecordingWindow(RecordingWindowService inner) : IWin
     }
 }
 
+/// <summary>TestAppPaths with the tools directory pointed at the repo's .scratch/tools (where tools/fetch-lsp-tools.sh installs real servers).</summary>
+public sealed class ToolsAppPaths(IAppPaths inner, string toolsDir) : IAppPaths
+{
+    public string UserDataDir => inner.UserDataDir;
+    public string ExtensionsDir => inner.ExtensionsDir;
+    public string LogsDir => inner.LogsDir;
+    public string CacheDir => inner.CacheDir;
+    public string GlobalStorageDir => inner.GlobalStorageDir;
+    public string ToolsDir { get; } = toolsDir;
+    public string InstallDir => inner.InstallDir;
+    public string? WorkspaceStorageDir(Uri? workspaceFolder) => inner.WorkspaceStorageDir(workspaceFolder);
+}
+
 /// <summary>Memory monitor double: records tracked child processes and registered trimmables; lets a test trigger the over-budget callback.</summary>
 public sealed class FakeMemoryMonitor : CsCode.Core.Diagnostics.IMemoryMonitor
 {
@@ -135,8 +148,21 @@ public sealed class LspTestEnv : IAsyncDisposable
 
     public FakeMemoryMonitor? Memory { get; }
 
-    public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false, bool memoryMonitor = false, IDiagnosticService? diagnostics = null, IOutputService? output = null)
+    /// <summary>The repository root (found by walking up to CsCode.slnx) and its git-ignored tool directory.</summary>
+    public static string RepoRoot { get; } = FindRepoRoot();
+    public static string ToolsDir => Path.Combine(RepoRoot, ".scratch", "tools");
+
+    private static string FindRepoRoot()
     {
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "CsCode.slnx"))) return d.FullName;
+        return AppContext.BaseDirectory;
+    }
+
+    /// <param name="realServers">Use the real child-process connection factory, the built-in definitions and the repo's tool directory (integration tests).</param>
+    public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false, bool memoryMonitor = false, IDiagnosticService? diagnostics = null, IOutputService? output = null, bool realServers = false)
+    {
+        if (realServers) builtins = true;
         Memory = memoryMonitor ? new FakeMemoryMonitor() : null;
         if (diagnostics is not null) Diagnostics = diagnostics;
         if (output is not null) Output = output;
@@ -160,8 +186,8 @@ public sealed class LspTestEnv : IAsyncDisposable
             Navigation = Navigation,
             Watcher = Workspace,
             Commands = Commands,
-            Paths = Paths,
-            Connections = Connections,
+            Paths = realServers ? new ToolsAppPaths(Paths, ToolsDir) : Paths,
+            Connections = realServers ? null : Connections, // null: the manager uses the real DefaultLspConnectionFactory
             Memory = Memory,
         };
         Manager = new LanguageServerManager(services);
@@ -229,6 +255,18 @@ public sealed class LspTestEnv : IAsyncDisposable
             await Task.Delay(10, TestContext.Current.CancellationToken);
         }
         Assert.Fail("Timed out waiting for: " + what + "\n" + Dump());
+        return null!;
+    }
+
+    public async Task<T> WaitForAsync<T>(Func<T?> probe, Func<string> describe, TimeSpan? timeout = null) where T : class
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TestHelpers.DefaultTimeout);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (probe() is { } v) return v;
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+        Assert.Fail("Timed out waiting for: " + describe());
         return null!;
     }
 
