@@ -16,8 +16,17 @@ public sealed partial class ThreadsView : UserControl, IDisposable
         InitializeComponent();
         var rows = this.FindControl<ListBox>("Rows")!;
         rows.DoubleTapped += OnDoubleTapped;
-        rows.AddHandler(KeyDownEvent, OnKeyDown);
+        rows.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         rows.ContextRequested += OnContextRequested;
+        _focusKeeper = new ListFocusKeeper(rows);
+    }
+
+    private readonly ListFocusKeeper _focusKeeper;
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        _focusKeeper.Attach(DataContext);
     }
 
     private ThreadsViewModel? Model => DataContext as ThreadsViewModel;
@@ -50,5 +59,9 @@ public sealed partial class ThreadsView : UserControl, IDisposable
         e.Handled = true;
     }
 
-    public void Dispose() => (DataContext as IDisposable)?.Dispose();
+    public void Dispose()
+    {
+        _focusKeeper.Dispose();
+        (DataContext as IDisposable)?.Dispose();
+    }
 }

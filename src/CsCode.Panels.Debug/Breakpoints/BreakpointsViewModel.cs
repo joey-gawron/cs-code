@@ -5,6 +5,7 @@ using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Panels.Debug.Infrastructure;
+using CsCode.Ui.Collections;
 
 namespace CsCode.Panels.Debug.Breakpoints;
 
@@ -43,19 +44,19 @@ public sealed class BreakpointRow : ObservableObject
     public BreakpointRowKind Kind { get; }
     public string Id { get; }
     /// <summary><c>Program.cs : 12</c>, a function name, an exception filter label or a section title.</summary>
-    public string Label { get; }
+    public string Label { get; private set; }
     /// <summary>Folder of the file (dimmed after the label); empty for non-source rows.</summary>
     public string Detail { get; internal init; } = "";
-    public SourceBreakpoint? Source { get; internal init; }
-    public FunctionBreakpoint? Function { get; internal init; }
-    public ExceptionFilterSetting? Filter { get; internal init; }
-    public string? Condition { get; internal init; }
-    public string? HitCondition { get; internal init; }
-    public string? LogMessage { get; internal init; }
-    public BreakpointVerification Verification { get; internal init; }
-    public string? StatusMessage { get; internal init; }
+    public SourceBreakpoint? Source { get; internal set; }
+    public FunctionBreakpoint? Function { get; internal set; }
+    public ExceptionFilterSetting? Filter { get; internal set; }
+    public string? Condition { get; internal set; }
+    public string? HitCondition { get; internal set; }
+    public string? LogMessage { get; internal set; }
+    public BreakpointVerification Verification { get; internal set; }
+    public string? StatusMessage { get; internal set; }
     /// <summary>1-based line the adapter bound the breakpoint to when it moved it.</summary>
-    public int? MovedToLine { get; internal init; }
+    public int? MovedToLine { get; internal set; }
 
     public bool IsFailed => Verification == BreakpointVerification.Failed;
     public bool IsHeader => Kind == BreakpointRowKind.Header;
@@ -132,6 +133,26 @@ public sealed class BreakpointRow : ObservableObject
 
     public Thickness Indent => new(IsHeader ? 0 : 6, 0, 0, 0);
 
+    /// <summary>
+    /// Takes over everything from a freshly built row for the same breakpoint, keeping this instance: the list control keeps its container,
+    /// selection and keyboard focus when only a status, badge or checkbox changed.
+    /// </summary>
+    internal void UpdateFrom(BreakpointRow other)
+    {
+        Label = other.Label;
+        Source = other.Source;
+        Function = other.Function;
+        Filter = other.Filter;
+        Condition = other.Condition;
+        HitCondition = other.HitCondition;
+        LogMessage = other.LogMessage;
+        Verification = other.Verification;
+        StatusMessage = other.StatusMessage;
+        MovedToLine = other.MovedToLine;
+        SetEnabledSilently(other._isEnabled);
+        OnPropertyChanged(string.Empty);
+    }
+
     /// <summary>Sets the checkbox from the model without echoing the change back to it.</summary>
     internal void SetEnabledSilently(bool value)
     {
@@ -149,8 +170,11 @@ public sealed class BreakpointRow : ObservableObject
 /// persists them and mirrors them to the debug sessions; this model only re-reads its snapshots when <see cref="IBreakpointManager.Changed"/>
 /// fires (coalesced), so it never holds state of its own to go stale.
 /// </summary>
-public sealed class BreakpointsViewModel : ObservableObject, IDisposable
+public sealed class BreakpointsViewModel : ObservableObject, IDisposable, IRowsReplacedNotifier
 {
+    public event Action? RowsReplacing;
+    public event Action? RowsReplaced;
+
     /// <summary>Above this many breakpoints the row list is built on the thread pool instead of the UI thread (the snapshots are immutable).</summary>
     private const int OffThreadThreshold = 200;
 
@@ -179,7 +203,7 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable
         AddFunctionCommand = new UiCommand(AddFunctionAsync, onError: ReportError);
     }
 
-    public RangeObservableCollection<BreakpointRow> Rows { get; } = new();
+    public BulkObservableCollection<BreakpointRow> Rows { get; } = new();
     public BreakpointRow? SelectedRow { get => _selected; set => SetProperty(ref _selected, value); }
     public bool IsEmpty => Rows.Count == 0;
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
@@ -214,9 +238,17 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable
         }
         else rows = BuildRows(source, functions, filters);
 
+        if (Rows.Count == rows.Count && Rows.Zip(rows).All(p => p.First.Id == p.Second.Id && p.First.Kind == p.Second.Kind))
+        {
+            // Same breakpoints in the same order (a status arrived, a checkbox flipped): update in place so focus and selection stay put.
+            for (var i = 0; i < rows.Count; i++) Rows[i].UpdateFrom(rows[i]);
+            return;
+        }
         var keep = SelectedRow?.Id;
+        RowsReplacing?.Invoke();
         Rows.ReplaceAll(rows);
         if (keep is not null) SelectedRow = rows.FirstOrDefault(r => r.Id == keep && !r.IsHeader);
+        RowsReplaced?.Invoke();
     }
 
     private List<BreakpointRow> BuildRows(IReadOnlyList<SourceBreakpoint> source, IReadOnlyList<FunctionBreakpoint> functions, IReadOnlyList<ExceptionFilterSetting> filters)
@@ -358,6 +390,8 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _subs.Dispose();
         _selected = null;
-        Rows.Reset();
+        RowsReplacing = null;
+        RowsReplaced = null;
+        Rows.Clear();
     }
 }

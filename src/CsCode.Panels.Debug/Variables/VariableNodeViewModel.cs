@@ -146,6 +146,11 @@ public sealed class VariableNodeViewModel : ObservableObject
         return Task.CompletedTask;
     }
 
+    private bool _isDropTarget;
+
+    /// <summary>A watch is being dragged over this row: a line is drawn above it where the watch would land.</summary>
+    public bool IsDropTarget { get => _isDropTarget; internal set => SetProperty(ref _isDropTarget, value); }
+
     public bool IsMore => Kind == VariableRowKind.More;
     public bool IsNewWatch => Kind == VariableRowKind.NewWatch;
     public bool IsDataRow => Kind is VariableRowKind.Variable or VariableRowKind.Watch or VariableRowKind.Scope;

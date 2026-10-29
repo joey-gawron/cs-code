@@ -19,9 +19,18 @@ public sealed partial class CallStackView : UserControl, IDisposable
         InitializeComponent();
         var rows = this.FindControl<ListBox>("Rows")!;
         rows.AddHandler(PointerReleasedEvent, OnRowsPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
-        rows.AddHandler(KeyDownEvent, OnRowsKeyDown);
+        rows.AddHandler(KeyDownEvent, OnRowsKeyDown, RoutingStrategies.Tunnel); // before the list's own arrow/Enter/Space handling
         rows.DoubleTapped += OnRowsDoubleTapped;
         rows.ContextRequested += OnContextRequested;
+        _focusKeeper = new ListFocusKeeper(rows);
+    }
+
+    private readonly ListFocusKeeper _focusKeeper;
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        _focusKeeper.Attach(DataContext);
     }
 
     private CallStackViewModel? Model => DataContext as CallStackViewModel;
@@ -53,6 +62,19 @@ public sealed partial class CallStackView : UserControl, IDisposable
                 case Key.Enter:
                     e.Handled = true;
                     await model.ActivateAsync(row, takeFocus: true);
+                    break;
+                case Key.Right when row is { Kind: CallStackRowKind.Thread, IsExpanded: false }:
+                case Key.Left when row is { Kind: CallStackRowKind.Thread, IsExpanded: true }:
+                    e.Handled = true;
+                    await model.ActivateAsync(row, takeFocus: false); // toggles the thread
+                    break;
+                case Key.Left when row.Kind is CallStackRowKind.Frame or CallStackRowKind.ExternalCode or CallStackRowKind.More:
+                    if (model.Rows.LastOrDefault(r => r.Kind == CallStackRowKind.Thread && r.ThreadId == row.ThreadId) is { } owner)
+                    {
+                        e.Handled = true;
+                        model.SelectedRow = owner;
+                        this.FindControl<ListBox>("Rows")!.ScrollIntoView(owner);
+                    }
                     break;
                 case Key.C when (e.KeyModifiers & KeyModifiers.Control) != 0:
                     e.Handled = true;
@@ -87,6 +109,7 @@ public sealed partial class CallStackView : UserControl, IDisposable
 
     public void Dispose()
     {
+        _focusKeeper.Dispose();
         (DataContext as IDisposable)?.Dispose();
     }
 }

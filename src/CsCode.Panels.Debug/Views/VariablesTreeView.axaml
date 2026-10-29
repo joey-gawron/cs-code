@@ -60,8 +60,8 @@
             <Grid Grid.Column="1" ClipToBounds="True" IsVisible="{Binding ShowColumns}">
               <TextBlock Classes="cell" Text="{Binding DisplayValue}" IsVisible="{Binding ShowValueText}"
                          Classes.changed="{Binding IsChanged}" Classes.error="{Binding IsError}" Classes.stale="{Binding IsStale}" />
-              <StackPanel IsVisible="{Binding IsEditingValue}">
-                <TextBox Classes="inline" Text="{Binding EditText}" views:EditorFocus.FocusWhenVisible="True" LostFocus="OnEditorLostFocus">
+              <StackPanel>
+                <TextBox Classes="inline" Text="{Binding EditText}" IsVisible="{Binding IsEditingValue}" views:EditorFocus.FocusWhenVisible="True" LostFocus="OnEditorLostFocus">
                   <TextBox.KeyBindings>
                     <KeyBinding Gesture="Enter" Command="{Binding CommitEditCommand}" />
                     <KeyBinding Gesture="Escape" Command="{Binding CancelEditCommand}" />
@@ -72,6 +72,10 @@
             </Grid>
 
             <TextBlock Grid.Column="2" Classes="cell dim" Text="{Binding Type}" IsVisible="{Binding ShowColumns}" ClipToBounds="True" />
+
+            <!-- Where a dragged watch will land. -->
+            <Border Grid.ColumnSpan="3" Height="2" VerticalAlignment="Top" IsHitTestVisible="False" IsVisible="{Binding IsDropTarget}"
+                    Background="{DynamicResource vsc:focusBorder}" />
           </Grid>
         </DataTemplate>
       </ListBox.ItemTemplate>

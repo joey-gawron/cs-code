@@ -3,6 +3,7 @@ using CsCode.Core.Debugging;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Text;
 using CsCode.Panels.Debug.Infrastructure;
+using CsCode.Ui.Collections;
 
 namespace CsCode.Panels.Debug.Threads;
 
@@ -20,12 +21,20 @@ public sealed class ThreadRow : ObservableObject
     }
 
     public int Id { get; }
-    public string Name { get; }
+    public string Name { get; private set; }
     public string Location { get => _location; internal set => SetProperty(ref _location, value); }
     public bool IsStopped { get => _isStopped; internal set { if (SetProperty(ref _isStopped, value)) OnPropertyChanged(nameof(State)); } }
     public string State => _isStopped ? "Stopped" : "Running";
     public bool IsCurrent { get => _isCurrent; internal set => SetProperty(ref _isCurrent, value); }
     internal DebugStackFrame? TopFrame { get; set; }
+
+    /// <summary>Takes over a freshly listed thread with the same id, keeping this row (and with it the list's selection and focus).</summary>
+    internal void UpdateFrom(ThreadRow other)
+    {
+        Name = other.Name;
+        IsStopped = other.IsStopped;
+        OnPropertyChanged(nameof(Name));
+    }
 }
 
 /// <summary>
@@ -33,8 +42,11 @@ public sealed class ThreadRow : ObservableObject
 /// frame (through <see cref="IDebugFrameFocus"/>), which re-scopes Call Stack, Locals, Autos and Watch. Freezing/thawing threads is not
 /// offered: the debug contracts have no such operation.
 /// </summary>
-public sealed class ThreadsViewModel : ObservableObject, IDisposable
+public sealed class ThreadsViewModel : ObservableObject, IDisposable, IRowsReplacedNotifier
 {
+    public event Action? RowsReplacing;
+    public event Action? RowsReplaced;
+
     public const int MaxThreads = 500;
     private const int MaxLocationLookups = 100;
 
@@ -59,7 +71,7 @@ public sealed class ThreadsViewModel : ObservableObject, IDisposable
         _tracker.Start();
     }
 
-    public RangeObservableCollection<ThreadRow> Rows { get; } = new();
+    public BulkObservableCollection<ThreadRow> Rows { get; } = new();
     public ThreadRow? SelectedRow { get => _selected; set => SetProperty(ref _selected, value); }
     public string? StatusText { get => _status; private set { if (SetProperty(ref _status, value)) OnPropertyChanged(nameof(ShowStatus)); } }
     public bool ShowStatus => Rows.Count == 0 && !string.IsNullOrEmpty(_status);
@@ -115,7 +127,7 @@ public sealed class ThreadsViewModel : ObservableObject, IDisposable
         _session = null;
         _loadedEpoch = -1;
         SelectedRow = null;
-        Rows.Reset();
+        Rows.Clear();
         StatusText = status;
     }
 
@@ -142,9 +154,19 @@ public sealed class ThreadsViewModel : ObservableObject, IDisposable
             if (!IsLive(generation)) return;
             var stopped = focus.IsStopped;
             var rows = threads.Take(MaxThreads).Select(t => new ThreadRow(t) { IsStopped = stopped }).ToList();
-            var keep = SelectedRow?.Id;
-            Rows.ReplaceAll(rows);
-            if (keep is { } id) SelectedRow = rows.FirstOrDefault(r => r.Id == id);
+            if (Rows.Count == rows.Count && Rows.Zip(rows).All(p => p.First.Id == p.Second.Id))
+            {
+                for (var i = 0; i < rows.Count; i++) Rows[i].UpdateFrom(rows[i]);
+                rows = [.. Rows];
+            }
+            else
+            {
+                var keep = SelectedRow?.Id;
+                RowsReplacing?.Invoke();
+                Rows.ReplaceAll(rows);
+                if (keep is { } id) SelectedRow = rows.FirstOrDefault(r => r.Id == id);
+                RowsReplaced?.Invoke();
+            }
             StatusText = rows.Count == 0 ? "No threads" : null;
             MarkCurrent(focus.ThreadId ?? session.FocusedThreadId);
             if (stopped) await LoadLocationsAsync(session, rows, generation, ct);
@@ -226,7 +248,9 @@ public sealed class ThreadsViewModel : ObservableObject, IDisposable
         _cts.Dispose();
         _session = null;
         _selected = null;
-        Rows.Reset();
+        RowsReplacing = null;
+        RowsReplaced = null;
+        Rows.Clear();
         _focus = default;
     }
 }

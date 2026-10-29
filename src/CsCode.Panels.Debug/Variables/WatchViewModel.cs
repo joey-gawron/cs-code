@@ -33,6 +33,7 @@ public sealed class WatchViewModel : ObservableObject, IDisposable
         Tree.DeleteRequested = Remove;
         Tree.MoveRequested = Move;
         Tree.DeleteAllRequested = RemoveAll;
+        Tree.ReorderRequested = MoveTo;
         _newRow = Tree.NewNode(VariableRowKind.NewWatch, null, "", "watch:", Tree.Generation);
         services.Watches.EnsureLoaded();
         SyncRows();
@@ -205,9 +206,11 @@ public sealed class WatchViewModel : ObservableObject, IDisposable
     /// <summary>Drag-and-drop reorder: puts <paramref name="node"/> where <paramref name="target"/> is.</summary>
     public void MoveTo(VariableNodeViewModel node, VariableNodeViewModel target)
     {
-        if (node.Kind != VariableRowKind.Watch || node.Watch is not { } w || target.Kind != VariableRowKind.Watch || target.Watch is not { } t) return;
+        if (node.Kind != VariableRowKind.Watch || node.Watch is not { } w || ReferenceEquals(node, target)) return;
         var items = _s.Watches.Items.ToList();
-        var to = items.FindIndex(x => ReferenceEquals(x, t));
+        // Dropping on the empty "add" row means "to the end".
+        var to = target.Kind == VariableRowKind.NewWatch ? items.Count - 1
+            : target.Kind == VariableRowKind.Watch && target.Watch is { } t ? items.FindIndex(x => ReferenceEquals(x, t)) : -1;
         if (to >= 0) _s.Watches.Move(w, to);
     }
 

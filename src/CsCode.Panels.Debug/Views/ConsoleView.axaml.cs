@@ -23,7 +23,7 @@ public sealed partial class ConsoleView : UserControl, IDisposable
         var input = this.FindControl<TextBox>("Input")!;
         input.AddHandler(KeyDownEvent, OnInputKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         var lines = this.FindControl<ListBox>("Lines")!;
-        lines.AddHandler(KeyDownEvent, OnLinesKeyDown);
+        lines.AddHandler(KeyDownEvent, OnLinesKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         this.FindControl<ListBox>("Completions")!.DoubleTapped += (_, _) =>
         {
             if (_model?.SelectedCompletion is { } c) Accept(c);

@@ -19,8 +19,17 @@ public sealed partial class BreakpointsView : UserControl, IDisposable
         InitializeComponent();
         var rows = this.FindControl<ListBox>("Rows")!;
         rows.DoubleTapped += OnDoubleTapped;
-        rows.AddHandler(KeyDownEvent, OnKeyDown);
+        rows.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         rows.ContextRequested += OnContextRequested;
+        _focusKeeper = new ListFocusKeeper(rows);
+    }
+
+    private readonly ListFocusKeeper _focusKeeper;
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        _focusKeeper.Attach(DataContext);
     }
 
     private BreakpointsViewModel? Model => DataContext as BreakpointsViewModel;
@@ -87,5 +96,9 @@ public sealed partial class BreakpointsView : UserControl, IDisposable
         e.Handled = true;
     }
 
-    public void Dispose() => (DataContext as IDisposable)?.Dispose();
+    public void Dispose()
+    {
+        _focusKeeper.Dispose();
+        (DataContext as IDisposable)?.Dispose();
+    }
 }

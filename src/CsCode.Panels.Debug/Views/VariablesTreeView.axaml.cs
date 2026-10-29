@@ -19,9 +19,67 @@ public sealed partial class VariablesTreeView : UserControl
     {
         InitializeComponent();
         var rows = this.FindControl<ListBox>("Rows")!;
-        rows.AddHandler(KeyDownEvent, OnRowsKeyDown);
+        rows.AddHandler(KeyDownEvent, OnRowsKeyDown, RoutingStrategies.Tunnel); // before the list's own arrow/Enter/Space handling
         rows.DoubleTapped += OnRowsDoubleTapped;
         rows.ContextRequested += OnContextRequested;
+        // Drag and drop to reorder watches: handled by hand (pointer capture) so it works the same on every platform and in headless tests.
+        rows.AddHandler(PointerPressedEvent, OnRowsPointerPressed, RoutingStrategies.Tunnel);
+        rows.AddHandler(PointerMovedEvent, OnRowsPointerMoved, RoutingStrategies.Tunnel);
+        rows.AddHandler(PointerReleasedEvent, OnRowsPointerReleased, RoutingStrategies.Tunnel);
+        rows.AddHandler(PointerCaptureLostEvent, OnRowsPointerCaptureLost, RoutingStrategies.Tunnel);
+    }
+
+    private const double DragThreshold = 6;
+    private VariableNodeViewModel? _dragRow, _dropTarget;
+    private Point _dragStart;
+    private bool _dragging;
+
+    private void OnRowsPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        EndDrag(apply: false);
+        if (Tree?.ReorderRequested is null || !e.GetCurrentPoint(RowsList).Properties.IsLeftButtonPressed) return;
+        if (e.Source is Visual v && (v.FindAncestorOfType<TextBox>(includeSelf: true) is not null || v.FindAncestorOfType<Button>(includeSelf: true) is not null)) return;
+        if (RowOf(e.Source) is { Kind: VariableRowKind.Watch } row)
+        {
+            _dragRow = row;
+            _dragStart = e.GetPosition(RowsList);
+        }
+    }
+
+    private void OnRowsPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_dragRow is null) return;
+        var position = e.GetPosition(RowsList);
+        if (!_dragging)
+        {
+            if (Math.Abs(position.Y - _dragStart.Y) < DragThreshold && Math.Abs(position.X - _dragStart.X) < DragThreshold) return;
+            _dragging = true;
+            e.Pointer.Capture(RowsList);
+        }
+        var over = RowsList.GetVisualAt(position) is { } hit ? RowOf(hit) : null;
+        var target = over is { Kind: VariableRowKind.Watch or VariableRowKind.NewWatch } && !ReferenceEquals(over, _dragRow) ? over : null;
+        if (ReferenceEquals(target, _dropTarget)) return;
+        if (_dropTarget is not null) _dropTarget.IsDropTarget = false;
+        _dropTarget = target;
+        if (target is not null) target.IsDropTarget = true;
+    }
+
+    private void OnRowsPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (_dragging) e.Pointer.Capture(null);
+        EndDrag(apply: _dragging);
+    }
+
+    private void OnRowsPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e) => EndDrag(apply: false);
+
+    private void EndDrag(bool apply)
+    {
+        var row = _dragRow;
+        var target = _dropTarget;
+        if (target is not null) target.IsDropTarget = false;
+        _dragRow = _dropTarget = null;
+        _dragging = false;
+        if (apply && row is not null && target is not null) Tree?.ReorderRequested?.Invoke(row, target);
     }
 
     private VariablesTreeViewModel? Tree => DataContext as VariablesTreeViewModel;
@@ -103,11 +161,14 @@ public sealed partial class VariablesTreeView : UserControl
         }
     }
 
+    /// <summary>Moves the selection AND the keyboard focus to a row (arrow keys move focus from the focused item, not from the selection).</summary>
     private void Select(VariablesTreeViewModel tree, int index)
     {
         if (index < 0 || index >= tree.Rows.Count) return;
-        tree.SelectedRow = tree.Rows[index];
-        RowsList.ScrollIntoView(tree.Rows[index]);
+        var row = tree.Rows[index];
+        tree.SelectedRow = row;
+        RowsList.ScrollIntoView(row);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => (RowsList.ContainerFromItem(row) as Control)?.Focus(), Avalonia.Threading.DispatcherPriority.Input);
     }
 
     private async void OnRowsDoubleTapped(object? sender, TappedEventArgs e)

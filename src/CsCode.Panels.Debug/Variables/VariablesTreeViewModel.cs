@@ -106,6 +106,9 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     /// <summary>Alt+Up/Down and "Move Up/Down" on a row: moves it by the given number of positions (Watch only).</summary>
     public Action<VariableNodeViewModel, int>? MoveRequested { get; set; }
 
+    /// <summary>A watch row was dropped on another row (drag and drop): move the first onto the position of the second (Watch only).</summary>
+    public Action<VariableNodeViewModel, VariableNodeViewModel>? ReorderRequested { get; set; }
+
     /// <summary>"Delete All Watches" (Watch only).</summary>
     public Action? DeleteAllRequested { get; set; }
 
@@ -463,7 +466,8 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     {
         if (ignoredPaging) return null;
         var total = node.KnownChildCount;
-        var loadedAll = total is { } t ? node.NextStart >= t : pageCount < PageSize;
+        // A short page is the end, whatever the adapter announced (named + indexed counts are not always exact), so the pager never loops.
+        var loadedAll = pageCount < PageSize || (total is { } t && node.NextStart >= t);
         if (loadedAll && !capped) return null;
         if (node.LoadedCount >= MaxLoadedPerNode)
         {
@@ -714,6 +718,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         _baselineOrder.Clear();
         RefreshRequested = null;
         ExpressionCommitted = null;
+        ReorderRequested = null;
         DeleteRequested = null;
         MoveRequested = null;
         DeleteAllRequested = null;

@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CsCode.Core.Debugging;
 using CsCode.Core.Text;
 using CsCode.Panels.Debug.Infrastructure;
+using CsCode.Ui.Collections;
 
 namespace CsCode.Panels.Debug.CallStack;
 
@@ -44,6 +45,18 @@ public sealed class CallStackRow : ObservableObject
 
     public bool IsExpanded { get => _isExpanded; internal set { if (SetProperty(ref _isExpanded, value)) OnPropertyChanged(nameof(ChevronKind)); } }
 
+    /// <summary>Takes over the volatile state of a freshly built row for the same frame/thread, keeping this instance (selection and focus stay put).</summary>
+    internal void UpdateFrom(CallStackRow other)
+    {
+        IsCurrent = other._isCurrent;
+        IsExpanded = other._isExpanded;
+        OnPropertyChanged(nameof(ArrowKind));
+        OnPropertyChanged(nameof(ShowArrow));
+    }
+
+    internal bool IsSameItem(CallStackRow other) =>
+        Kind == other.Kind && ThreadId == other.ThreadId && Frame?.Id == other.Frame?.Id && Text == other.Text && Depth == other.Depth && IsTopFrame == other.IsTopFrame;
+
     public bool IsThread => Kind == CallStackRowKind.Thread;
     public bool IsFrame => Kind == CallStackRowKind.Frame;
     public bool IsPager => Kind is CallStackRowKind.More or CallStackRowKind.Message;
@@ -66,8 +79,11 @@ public sealed class CallStackRow : ObservableObject
 /// source through <see cref="INavigationService"/>. Frames without source (runtime frames) or hinted <c>subtle</c>/<c>label</c> are
 /// greyed, and can be folded into one "[External Code]" row.
 /// </summary>
-public sealed class CallStackViewModel : ObservableObject, IDisposable
+public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsReplacedNotifier
 {
+    public event Action? RowsReplacing;
+    public event Action? RowsReplaced;
+
     public const int PageSize = 50;
     public const int MaxThreads = 500;
     public const int MaxFramesPerThread = 5_000;
@@ -106,7 +122,7 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable
         _tracker.Start();
     }
 
-    public RangeObservableCollection<CallStackRow> Rows { get; } = new();
+    public BulkObservableCollection<CallStackRow> Rows { get; } = new();
 
     public CallStackRow? SelectedRow { get => _selected; set => SetProperty(ref _selected, value); }
 
@@ -157,7 +173,7 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable
         _currentThread = -1;
         _threads.Clear();
         SelectedRow = null;
-        Rows.Reset();
+        Rows.Clear();
         StatusText = status;
     }
 
@@ -182,7 +198,7 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable
         _loadedEpoch = focus.Epoch;
         _threads.Clear();
         SelectedRow = null;
-        Rows.Reset();
+        Rows.Clear();
         StatusText = "Loading…";
         try
         {
@@ -281,9 +297,19 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable
             }
             AddFrameRows(rows, t, depth);
         }
+        if (Rows.Count == rows.Count && Rows.Zip(rows).All(p => p.First.IsSameItem(p.Second)))
+        {
+            // Same frames in the same order (the arrow moved): update in place so the list keeps its selection and focus.
+            for (var i = 0; i < rows.Count; i++) Rows[i].UpdateFrom(rows[i]);
+            return;
+        }
+        var keepKind = SelectedRow?.Kind;
+        RowsReplacing?.Invoke();
         Rows.ReplaceAll(rows);
-        if (keepFrame is { } id) SelectedRow = rows.FirstOrDefault(r => r.Frame?.Id == id && r.ThreadId == keepThread);
+        if (keepKind is { } kind)
+            SelectedRow = rows.FirstOrDefault(r => r.Kind == kind && r.ThreadId == keepThread && r.Frame?.Id == keepFrame);
         OnPropertyChanged(nameof(ShowStatus));
+        RowsReplaced?.Invoke();
     }
 
     private void AddFrameRows(List<CallStackRow> rows, ThreadModel t, int depth)
@@ -408,7 +434,9 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable
         _threads.Clear();
         _session = null;
         _selected = null;
-        Rows.Reset();
+        RowsReplacing = null;
+        RowsReplaced = null;
+        Rows.Clear();
         _focus = default;
     }
 }
