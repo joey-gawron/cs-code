@@ -18,7 +18,7 @@ namespace CsCode.Panels.Debug.Tests;
 public class JsDebugPanelFixTests
 {
     /// <summary>Answers like js-debug: <c>start</c> is ignored unless a filter is given; the filters page through indexed / list named children.</summary>
-    private sealed class JsLikeSession : FakeDebugSession, IDebugSessionVariablePaging
+    internal sealed class JsLikeSession : FakeDebugSession, IDebugSessionVariablePaging
     {
         public List<(int Reference, string? Filter, int? Start, int? Count)> FilteredRequests { get; } = new();
 
@@ -62,7 +62,10 @@ public class JsDebugPanelFixTests
         ];
         using var vm = new CallStackViewModel(rig.Services);
         rig.StopAt(0);
-        await PanelRig.Eventually(() => vm.Rows.Count == 6, what: "frames");
+        await PanelRig.Eventually(() => vm.Rows.Count == 5, what: "frames");
+        // the skipped internals fold by default (JsDebugReviewFixTests); shown, they are greyed
+        Assert.Equal(["add", "work", "await", "main", "[External Code]"], vm.Rows.Select(r => r.Text));
+        await vm.ActivateAsync(vm.Rows[^1], takeFocus: false);
         Assert.Equal([false, false, true, false, true, true], vm.Rows.Select(r => r.IsExternal)); // greyed
 
         vm.ShowExternalCode = false;

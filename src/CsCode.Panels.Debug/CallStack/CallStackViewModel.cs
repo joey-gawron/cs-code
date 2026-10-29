@@ -35,6 +35,8 @@ public sealed class CallStackRow : ObservableObject
     /// <summary>The stopped location: the first frame of the thread execution stopped in (shows the yellow arrow, whatever frame is picked).</summary>
     public bool IsTopFrame { get; internal init; }
     public int HiddenFrames { get; internal init; }
+    /// <summary>The frames an "[External Code]" row stands for (activating the row shows them).</summary>
+    internal IReadOnlyList<int> HiddenFrameIds { get; init; } = [];
 
     /// <summary>The frame the Locals/Autos/Watch windows and the editor's stop marker currently follow.</summary>
     public bool IsCurrent
@@ -55,7 +57,8 @@ public sealed class CallStackRow : ObservableObject
     }
 
     internal bool IsSameItem(CallStackRow other) =>
-        Kind == other.Kind && ThreadId == other.ThreadId && Frame?.Id == other.Frame?.Id && Text == other.Text && Depth == other.Depth && IsTopFrame == other.IsTopFrame;
+        Kind == other.Kind && ThreadId == other.ThreadId && Frame?.Id == other.Frame?.Id && Text == other.Text && Depth == other.Depth && IsTopFrame == other.IsTopFrame
+        && HiddenFrames == other.HiddenFrames;
 
     public bool IsThread => Kind == CallStackRowKind.Thread;
     public bool IsFrame => Kind == CallStackRowKind.Frame;
@@ -67,7 +70,12 @@ public sealed class CallStackRow : ObservableObject
     public Thickness Indent => new(Depth * 16, 0, 0, 0);
     public FontWeight TextWeight => Kind == CallStackRowKind.Thread ? FontWeight.SemiBold : FontWeight.Normal;
     public FontStyle TextStyle => Kind is CallStackRowKind.More or CallStackRowKind.ExternalCode ? FontStyle.Italic : FontStyle.Normal;
-    public string Tooltip => Kind == CallStackRowKind.Frame ? (Location.Length > 0 ? $"{Text}\n{Location}" : Text) : Text;
+    public string Tooltip => Kind switch
+    {
+        CallStackRowKind.Frame => Location.Length > 0 ? $"{Text}\n{Location}" : Text,
+        CallStackRowKind.ExternalCode => HiddenFrames == 1 ? "1 frame is hidden. Click to show it." : $"{HiddenFrames} frames are hidden. Click to show them.",
+        _ => Text,
+    };
 
     public override string ToString() => Text;
 }
@@ -77,7 +85,10 @@ public sealed class CallStackRow : ObservableObject
 /// frames below them. Long stacks are paged (<see cref="PageSize"/> frames per request, a "load more" row for the rest). Picking a frame
 /// goes through <see cref="IDebugFrameFocus"/> (which moves the editor's stop marker and re-scopes Locals/Autos/Watch) and opens the
 /// source through <see cref="INavigationService"/>. Frames without source (runtime frames) or hinted <c>subtle</c>/<c>label</c> are
-/// greyed, and can be folded into one "[External Code]" row.
+/// greyed, and can be folded into one "[External Code]" row ("Show External Code" off).
+/// <para>Frames the ADAPTER skips (hint <c>deemphasize</c>: js-debug's <c>skipFiles</c>, e.g. <c>&lt;node_internals&gt;/**</c>) are folded
+/// even with "Show External Code" on, as VS Code does: a run of two or more becomes one "[External Code]" row. Activating any "[External
+/// Code]" row shows the frames it stands for (greyed) until the next stop.</para>
 /// </summary>
 public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsReplacedNotifier
 {
@@ -97,6 +108,8 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
         public int NextStart { get; set; }
         public bool HasMore { get; set; }
         public bool Loading { get; set; }
+        /// <summary>Folded frames the user asked to see (by activating their "[External Code]" row); forgotten at the next stop.</summary>
+        public HashSet<int> Revealed { get; } = new();
     }
 
     private readonly DebugPanelServices _s;
@@ -130,11 +143,19 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
     public string? StatusText { get => _status; private set { if (SetProperty(ref _status, value)) OnPropertyChanged(nameof(ShowStatus)); } }
     public bool ShowStatus => Rows.Count == 0 && !string.IsNullOrEmpty(_status);
 
-    /// <summary>Show runtime/library frames (greyed) instead of folding them into "[External Code]".</summary>
+    /// <summary>
+    /// Show runtime/library frames (greyed) instead of folding them into "[External Code]". Frames the adapter skips are folded either way
+    /// (see the class remarks); switching this forgets which folded frames the user revealed.
+    /// </summary>
     public bool ShowExternalCode
     {
         get => _showExternal;
-        set { if (SetProperty(ref _showExternal, value)) Rebuild(); }
+        set
+        {
+            if (!SetProperty(ref _showExternal, value)) return;
+            foreach (var t in _threads) t.Revealed.Clear();
+            Rebuild();
+        }
     }
 
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
@@ -274,7 +295,13 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
     /// its source, which DAP defines for sources only.
     /// </summary>
     internal static bool IsExternalFrame(DebugStackFrame f) =>
-        f.PresentationHint is "subtle" or "label" or "deemphasize" || f.Source?.PresentationHint == "deemphasize" || !HasSource(f);
+        f.PresentationHint is "subtle" or "label" || IsSkippedFrame(f) || !HasSource(f);
+
+    /// <summary>
+    /// A frame the adapter itself de-emphasises because the configuration skips it (js-debug: <c>skipFiles</c>, hint <c>deemphasize</c> on the
+    /// frame and on its source). Runs of these fold by default, whatever "Show External Code" says (VS Code collapses them too).
+    /// </summary>
+    internal static bool IsSkippedFrame(DebugStackFrame f) => f.PresentationHint == "deemphasize" || f.Source?.PresentationHint == "deemphasize";
 
     /// <summary>
     /// A separator such as js-debug's <c>await</c> between the frames of an async call stack (DAP hint <c>label</c>): greyed but never folded
@@ -326,28 +353,51 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
 
     private void AddFrameRows(List<CallStackRow> rows, ThreadModel t, int depth)
     {
-        var hidden = 0;
-        void FlushHidden()
+        var frames = t.Frames;
+        for (var i = 0; i < frames.Count;)
         {
-            if (hidden == 0) return;
-            rows.Add(new CallStackRow(CallStackRowKind.ExternalCode, depth, "[External Code]") { ThreadId = t.Thread.Id, IsExternal = true, HiddenFrames = hidden });
-            hidden = 0;
-        }
-        for (var i = 0; i < t.Frames.Count; i++)
-        {
-            var f = t.Frames[i];
-            var external = IsExternalFrame(f);
-            var isCurrent = f.Id == _currentFrame && t.Thread.Id == _currentThread;
-            if (external && !_showExternal && !isCurrent && !IsLabelFrame(f)) { hidden++; continue; }
-            FlushHidden();
-            rows.Add(new CallStackRow(CallStackRowKind.Frame, depth, f.Name)
+            // A run of frames that may be folded: external code when "Show External Code" is off, frames the adapter skips in any case.
+            var end = i;
+            while (end < frames.Count && Foldable(t, frames[end])) end++;
+            var run = end - i;
+            if (run > 0 && (!_showExternal || run >= 2))
             {
-                Frame = f, ThreadId = t.Thread.Id, IsExternal = external, IsTopFrame = i == 0 && t.Thread.Id == _currentThread, Location = LocationOf(f), Module = f.ModuleId,
-                IsCurrent = isCurrent,
-            });
+                var ids = new int[run];
+                for (var k = 0; k < run; k++) ids[k] = frames[i + k].Id;
+                rows.Add(new CallStackRow(CallStackRowKind.ExternalCode, depth, "[External Code]") { ThreadId = t.Thread.Id, IsExternal = true, HiddenFrames = run, HiddenFrameIds = ids });
+                i = end;
+                continue;
+            }
+            var stop = Math.Max(end, i + 1);
+            for (; i < stop; i++) rows.Add(FrameRow(t, i, depth));
         }
-        FlushHidden();
         if (t.HasMore) rows.Add(new CallStackRow(CallStackRowKind.More, depth, "… load more frames") { ThreadId = t.Thread.Id });
+    }
+
+    /// <summary>Whether a frame may disappear into an "[External Code]" row: never the current frame, a separator or a frame the user revealed.</summary>
+    private bool Foldable(ThreadModel t, DebugStackFrame f)
+    {
+        if (IsLabelFrame(f) || t.Revealed.Contains(f.Id) || (f.Id == _currentFrame && t.Thread.Id == _currentThread)) return false;
+        return _showExternal ? IsSkippedFrame(f) : IsExternalFrame(f);
+    }
+
+    private CallStackRow FrameRow(ThreadModel t, int index, int depth)
+    {
+        var f = t.Frames[index];
+        return new CallStackRow(CallStackRowKind.Frame, depth, f.Name)
+        {
+            Frame = f, ThreadId = t.Thread.Id, IsExternal = IsExternalFrame(f), IsTopFrame = index == 0 && t.Thread.Id == _currentThread, Location = LocationOf(f),
+            Module = f.ModuleId, IsCurrent = f.Id == _currentFrame && t.Thread.Id == _currentThread,
+        };
+    }
+
+    /// <summary>Shows the frames an "[External Code]" row stands for (greyed) and selects the first of them.</summary>
+    private void Reveal(CallStackRow row)
+    {
+        if (_threads.FirstOrDefault(t => t.Thread.Id == row.ThreadId) is not { } model || row.HiddenFrameIds.Count == 0) return;
+        foreach (var id in row.HiddenFrameIds) model.Revealed.Add(id);
+        Rebuild();
+        SelectedRow = Rows.FirstOrDefault(r => r.Kind == CallStackRowKind.Frame && r.ThreadId == row.ThreadId && r.Frame?.Id == row.HiddenFrameIds[0]) ?? SelectedRow;
     }
 
     // ------------------------------------------------------------------ activation
@@ -370,6 +420,9 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
                     break;
                 case CallStackRowKind.More:
                     await LoadMoreAsync(row.ThreadId);
+                    break;
+                case CallStackRowKind.ExternalCode:
+                    Reveal(row);
                     break;
                 case CallStackRowKind.Frame when row.Frame is { } frame && !IsLabelFrame(frame):
                     var pick = ++_picks;

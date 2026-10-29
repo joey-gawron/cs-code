@@ -445,6 +445,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         {
             IReadOnlyList<DebugVariable> page;
             int paged;                // how many of `page` count towards the next `start`
+            int unpaged = 0;          // the first `unpaged` of `page` are named children fetched once: not elements, not capped
             string? firstPaged;       // name of the first of those (recognises an adapter that ignored `start`)
             int? total = node.KnownChildCount;
             if (node.IndexedVariables is > 0 && session is IDebugSessionVariablePaging filtered)
@@ -468,6 +469,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
                     named = [.. named.Where(v => !indexedNames.Contains(v.Name))]; // an adapter that ignored the filter must not duplicate rows
                 }
                 page = named.Count == 0 ? indexed : [.. named, .. indexed];
+                unpaged = named.Count;
                 paged = indexed.Count;
                 firstPaged = indexed.Count > 0 ? indexed[0].Name : null;
                 total = node.IndexedVariables;
@@ -484,8 +486,9 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
 
             // An adapter that ignores paging answers "start = N" with page 0 again: recognise it and stop instead of duplicating rows.
             var ignoredPaging = loadMore && paged > 0 && node.FirstChildName is not null && firstPaged == node.FirstChildName && start > 0;
-            var room = Math.Max(0, MaxLoadedPerNode - node.LoadedCount);
-            var take = ignoredPaging ? 0 : Math.Min(page.Count, room);
+            // The cap counts the paged children only: an array's named children (length, [[Prototype]]) must not cost it its last elements.
+            var room = Math.Max(0, MaxLoadedPerNode - node.PagedCount);
+            var take = ignoredPaging ? 0 : unpaged + Math.Min(page.Count - unpaged, room);
 
             var created = new List<VariableNodeViewModel>(take);
             if (take <= InlineCreateLimit)
@@ -504,6 +507,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
             node.NextStart = start + (ignoredPaging ? 0 : paged);
             var oldMore = node.MoreRow;
             node.AddChildren(created);
+            if (take > 0) node.UnpagedCount += unpaged;
             node.ChildrenLoaded = true;
 
             var more = BuildMoreRow(node, paged, total, ignoredPaging, take < page.Count && !ignoredPaging, generation);
@@ -528,11 +532,11 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         // A short page is the end, whatever the adapter announced (named + indexed counts are not always exact), so the pager never loops.
         var loadedAll = pageCount < PageSize || (total is { } t && node.NextStart >= t);
         if (loadedAll && !capped) return null;
-        if (node.LoadedCount >= MaxLoadedPerNode)
+        if (node.PagedCount >= MaxLoadedPerNode)
         {
             var notice = NewNode(VariableRowKind.Message, node, total is { } n
-                ? $"Showing the first {node.LoadedCount:N0} of {n:N0} items"
-                : $"Showing the first {node.LoadedCount:N0} items", node.Path + "/…cap", generation);
+                ? $"Showing the first {node.PagedCount:N0} of {n:N0} items"
+                : $"Showing the first {node.PagedCount:N0} items", node.Path + "/…cap", generation);
             return notice;
         }
         var remaining = total is { } all ? all - node.NextStart : (int?)null;
@@ -661,9 +665,17 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>The text a lazy row shows when the adapter did not compute a value (js-debug: the getter threw).</summary>
+    public const string LazyFailedText = "The debugger did not compute a value: the getter may have thrown an exception.";
+
     /// <summary>
     /// Computes a lazy value (js-debug's getters: DAP <c>presentationHint.lazy</c>): its only child IS the value, so the row takes it over in
     /// place, as VS Code does. Running a getter has side effects in the debuggee, which is why it waits for the user.
+    /// <para>Anything but exactly one child means there is no value (VS Code then leaves the row alone): js-debug v1.140.0 answers a getter that
+    /// THROWS with the getter function's own properties (arguments, caller, length, name…) and no error, so the first of those must not be
+    /// shown as the value. The row says the getter may have thrown instead.</para>
+    /// <para>Change highlighting keeps comparing the placeholder (the getter's source, the same at every stop): the computed value is not
+    /// remembered, so the next stop, where the row is a placeholder again, does not mark it changed.</para>
     /// </summary>
     public async Task ResolveLazyAsync(VariableNodeViewModel node)
     {
@@ -676,9 +688,8 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         {
             var children = await _ui.OnUi(session.GetVariablesAsync(node.VariablesReference, null, null, ct), ct);
             if (!IsLive(generation) || !node.IsLazy) return;
-            if (children.Count == 0) { node.SetError("The debugger returned no value."); return; }
+            if (children.Count != 1) { node.SetError(LazyFailedText); return; }
             node.ResolveLazy(children[0]);
-            TrackValue(node, node.FullValue);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
