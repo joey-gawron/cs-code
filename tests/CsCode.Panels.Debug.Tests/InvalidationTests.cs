@@ -40,7 +40,10 @@ public class InvalidationTests
         var evaluations = rig.Session.EvaluateCalls;
 
         rig.Session.Invalidate();
-        await PanelRig.Eventually(() => rig.Session.ScopeCalls > scopeCalls && locals.Tree.StatusText != "Loading…", timeoutMs: 3_000, what: "locals reloaded");
+        // The reload's rows, not just its status: between the scopes and the variables answer the status is already cleared while the rows
+        // are not in yet (waiting for the status alone raced with that, also before the change-highlighting work). A frame the session
+        // refuses ("Not available") never gets rows, so this still fails then.
+        await PanelRig.Eventually(() => rig.Session.ScopeCalls > scopeCalls && Names(locals.Tree) == "x,s,o", timeoutMs: 3_000, what: "locals reloaded");
         Assert.Equal("x,s,o", Names(locals.Tree));
         Assert.Null(locals.Tree.ErrorText);
         await PanelRig.Eventually(() => rig.Session.EvaluateCalls > evaluations && watch.Tree.Rows[0].HasValue, what: "watch re-evaluated");
@@ -61,7 +64,7 @@ public class InvalidationTests
         var scopeCalls = rig.Session.ScopeCalls;
 
         rig.Session.Invalidate(renumberFrames: true); // Main() is now frame 1102
-        await PanelRig.Eventually(() => rig.Session.ScopeCalls > scopeCalls && locals.Tree.StatusText != "Loading…", timeoutMs: 3_000, what: "locals reloaded");
+        await PanelRig.Eventually(() => rig.Session.ScopeCalls > scopeCalls && Names(locals.Tree) == "x,s,o", timeoutMs: 3_000, what: "locals reloaded");
         Assert.Equal("x,s,o", Names(locals.Tree));
         await PanelRig.Eventually(() => watch.Tree.Rows[0].FullValue == "x + 1@1102", what: "watch evaluated in the live frame");
         Assert.Contains(rig.Debug.FocusCalls, c => c.FrameId == 1102); // the service was asked to follow

@@ -175,6 +175,12 @@ public sealed class NetCoreDbgInstaller
         }
     }
 
+    /// <summary>
+    /// Extracts a .tar.gz under <paramref name="destination"/> and nowhere else. Entry names are checked lexically (<see cref="SafeDestination"/>),
+    /// and links cannot be used to escape: a symlink's target must be relative and must not contain a <c>..</c> segment (a chain such as
+    /// <c>y -&gt; .</c>, <c>x -&gt; y/..</c> is lexically inside yet resolves outside), and no entry is ever written through a symlink — neither a
+    /// directory on its way nor the entry's own path.
+    /// </summary>
     public static void ExtractTarGz(Stream archive, string destination)
     {
         using var gz = new GZipStream(archive, CompressionMode.Decompress);
@@ -184,6 +190,7 @@ public sealed class NetCoreDbgInstaller
         {
             if (entry.EntryType is TarEntryType.GlobalExtendedAttributes or TarEntryType.ExtendedAttributes) continue;
             var path = SafeDestination(destination, entry.Name);
+            RefuseWritesThroughLinks(rootFull, path, entry.Name);
             switch (entry.EntryType)
             {
                 case TarEntryType.Directory:
@@ -198,7 +205,8 @@ public sealed class NetCoreDbgInstaller
                 {
                     var linkTarget = entry.LinkName ?? throw new UnsafeArchiveException($"Symlink '{entry.Name}' has no target.");
                     var resolved = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, linkTarget));
-                    if (Path.IsPathRooted(linkTarget) || (resolved != rootFull && !resolved.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
+                    if (Path.IsPathRooted(linkTarget) || linkTarget.Replace('\\', '/').Split('/').Contains("..")
+                        || (resolved != rootFull && !resolved.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
                         throw new UnsafeArchiveException($"Symlink '{entry.Name}' points outside the destination ('{linkTarget}').");
                     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                     File.CreateSymbolicLink(path, linkTarget);
@@ -214,6 +222,16 @@ public sealed class NetCoreDbgInstaller
                 default:
                     break; // devices, fifos…: never create them
             }
+        }
+    }
+
+    /// <summary>Throws when <paramref name="path"/> or any directory between <paramref name="rootFull"/> and it is an existing symlink.</summary>
+    private static void RefuseWritesThroughLinks(string rootFull, string path, string entryName)
+    {
+        for (var current = path; current.Length > rootFull.Length && current.StartsWith(rootFull, StringComparison.Ordinal); current = Path.GetDirectoryName(current) ?? "")
+        {
+            if (new FileInfo(current).LinkTarget is not null) // dangling links included
+                throw new UnsafeArchiveException($"Archive entry '{entryName}' would be written through the link '{Path.GetRelativePath(rootFull, current)}'.");
         }
     }
 

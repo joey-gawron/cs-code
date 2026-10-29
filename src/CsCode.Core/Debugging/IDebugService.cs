@@ -136,7 +136,10 @@ public interface IBreakpointManager
     void RemoveFunction(string id);
     void SetExceptionFilters(IReadOnlyList<ExceptionFilterSetting> filters);
 
-    /// <summary>Latest adapter verdict for a breakpoint (verified/moved line/failed); null if no session reported yet.</summary>
+    /// <summary>
+    /// Latest adapter verdict for a breakpoint (verified/moved line/failed); null if no session reported yet. With several sessions, one that
+    /// verified the breakpoint wins over newer verdicts of sessions that did not (a multi-session adapter's orchestrating session never binds it).
+    /// </summary>
     DebugBreakpointStatus? GetStatus(string breakpointId);
     void ReportStatus(DebugBreakpointStatus status);
     void ClearStatuses(string? sessionId = null);

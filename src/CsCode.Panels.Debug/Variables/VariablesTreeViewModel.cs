@@ -35,18 +35,21 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     private readonly DebugPanelServices _s;
     private readonly IUiDispatcher _ui;
     private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
-    // Change highlighting. A frame's "shape" (its first root names) keys the values it showed: _epochSnapshots holds what each shape showed
-    // earlier in THIS stop (the user may switch frames), _baselines what each shape showed at the most recent EARLIER stop. Only
-    // _baselines is ever compared with, so switching frames back and forth never turns a stop's own values into the baseline.
+    // Change highlighting. What a frame showed is kept under the frame's KEY: the function it is in (session, thread, frame name and source:
+    // FrameIdentityLookup), or, when that is unknown, its first root names (the frame's "shape"). _epochSnapshots holds what each frame showed
+    // earlier in THIS stop (the user may switch frames), _baselines what each showed at the most recent EARLIER stop. Only _baselines is ever
+    // compared with, so switching frames back and forth never turns a stop's own values into the baseline.
     private const int MaxBaselineShapes = 8;
     private const int MaxTrackedValueChars = 1_024;
-    private Dictionary<string, string> _current = new(StringComparer.Ordinal);
-    private Dictionary<string, string>? _previous;
-    private readonly Dictionary<string, Dictionary<string, string>> _epochSnapshots = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Dictionary<string, string>> _baselines = new(StringComparer.Ordinal);
+    private Snapshot _current = new();
+    private Snapshot? _previous;
+    private readonly Dictionary<string, Snapshot> _epochSnapshots = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Snapshot> _baselines = new(StringComparer.Ordinal);
     private readonly Queue<string> _baselineOrder = new();
     private string? _currentSignature;
     private bool _compare;
+    private Task<string?>? _frameIdentity;
+    private string? _frameKey;
     private long _loadedEpoch = -1;
     private CancellationTokenSource _cts = new();
     private long _generation;
@@ -123,7 +126,11 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
 
     /// <summary>Starts a new load for <paramref name="session"/>: cancels whatever is in flight and clears the rows.</summary>
     /// <param name="epoch">The stop this load belongs to; a new epoch turns the values currently shown into the baseline for change highlighting.</param>
-    public LoadToken BeginLoad(IDebugSession session, long epoch)
+    /// <param name="frameIdentity">
+    /// Which function the frame is in (<see cref="Infrastructure.FrameIdentityLookup"/>; a null answer or none: unknown). It keys the change
+    /// baseline, so variables that appear or disappear between two stops of one frame do not switch off the comparison for the others.
+    /// </param>
+    public LoadToken BeginLoad(IDebugSession session, long epoch, Task<string?>? frameIdentity = null)
     {
         CancelPending();
         if (_loadedEpoch != epoch) PromoteEpoch();
@@ -132,6 +139,8 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         _currentSignature = null;
         _previous = null;
         _compare = false;
+        _frameIdentity = frameIdentity;
+        _frameKey = null;
         _session = session;
         _holder = null;
         ErrorText = null;
@@ -140,28 +149,52 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// The "shape" of a frame is its first root names: values are only compared with the previous stop's when the shapes match, so stepping
-    /// into another function does not paint its (unrelated) locals red.
+    /// Keys the values of the frame being loaded. Known identity: the frame's function, so a step within it is compared with the previous stop
+    /// whatever variables appeared or disappeared (a variable that appears counts as changed), and a step into another function is not
+    /// compared at all. Unknown identity (the stack could not be read): the frame's "shape", its first root names, as before — a step that adds
+    /// or removes a name then looks like another frame and nothing is highlighted.
     /// </summary>
-    private void ApplySignature(IEnumerable<string> rootNames)
+    private void ApplySignature(IEnumerable<string> rootNames) =>
+        UseSignature(_frameKey is { } key ? "\u0001frame\n" + key : string.Join('\n', rootNames.Take(40)));
+
+    /// <summary>
+    /// The shape of a frame from its variables (when its identity is unknown). Pseudo-variables an adapter shows only after some steps are left
+    /// out — js-debug inserts "Return value" after a step completes a call. Program variables never contain whitespace; such pseudo-variables do.
+    /// </summary>
+    private void ApplyVariablesSignature(IEnumerable<string> rootNames) => ApplySignature(rootNames.Where(n => !n.Any(char.IsWhiteSpace)));
+
+    /// <summary>A frame-level pseudo-variable (js-debug's "Return value"): never highlighted for appearing, it is not a program variable.</summary>
+    private static bool IsPseudoVariable(VariableNodeViewModel node) => node.Parent is null or { Kind: VariableRowKind.Scope } && node.Name.Any(char.IsWhiteSpace);
+
+    /// <summary>
+    /// Waits for the frame's identity (asked alongside the scopes, so normally already there) before any value is compared. False when this
+    /// load is no longer the current one.
+    /// </summary>
+    private async Task<bool> ResolveFrameIdentityAsync(LoadToken token)
     {
-        UseSignature(string.Join('\n', rootNames.Take(40)));
+        if (_frameIdentity is not { } identity) return true;
+        string? key;
+        try { key = await _ui.OnUi(new ValueTask<string?>(identity), token.Cancellation); }
+        catch (OperationCanceledException) { return false; }
+        if (!IsLive(token.Generation)) return false;
+        _frameKey = key;
+        return true;
     }
 
     private void UseSignature(string signature)
     {
         _currentSignature = signature;
         _previous = _baselines.GetValueOrDefault(signature);
-        _compare = _previous is { Count: > 0 };
+        _compare = _previous is { IsEmpty: false };
     }
 
-    /// <summary>The frame being left (another one was picked at the same stop) keeps what it showed, under its shape.</summary>
+    /// <summary>The frame being left (another one was picked at the same stop) keeps what it showed, under its key.</summary>
     private void StashCurrent()
     {
-        if (_currentSignature is not null && _current.Count > 0)
+        if (_currentSignature is not null && !_current.IsEmpty)
         {
             _epochSnapshots[_currentSignature] = _current;
-            _current = new Dictionary<string, string>(StringComparer.Ordinal);
+            _current = new Snapshot();
         }
         else _current.Clear();
     }
@@ -190,6 +223,8 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         }
         else StashCurrent();
         _loadedEpoch = epoch;
+        _frameIdentity = null;
+        _frameKey = null;
         UseSignature(signature);
         _session = session;
         ErrorText = null;
@@ -281,15 +316,69 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     private void TrackValue(VariableNodeViewModel node, string value)
     {
         var tracked = Remember(node.Path, value);
-        if (_compare && _previous!.TryGetValue(node.Path, out var old) && !string.Equals(old, tracked, StringComparison.Ordinal)) node.IsChanged = true;
+        if (!_compare) return;
+        if (_previous!.Values.TryGetValue(node.Path, out var old))
+        {
+            if (!string.Equals(old, tracked, StringComparison.Ordinal)) node.IsChanged = true;
+        }
+        else if (Appeared(node)) node.IsChanged = true; // new since the previous stop of this frame: Visual Studio shows a new local in red too
+    }
+
+    /// <summary>
+    /// Whether <paramref name="node"/> was not there at the previous stop of this frame although the list it belongs to was shown completely
+    /// then (every child remembered), or it is inside a scope or variable that appeared itself. A child of a node that was collapsed, or whose
+    /// list was paged, is not "new": it was merely not loaded.
+    /// </summary>
+    private bool Appeared(VariableNodeViewModel node)
+    {
+        if (node.Path.Length == 0 || IsPseudoVariable(node) || _previous!.Values.ContainsKey(node.Path)) return false;
+        var parent = node.Parent;
+        if (_previous.Complete.Contains(parent?.Path ?? "")) return true;
+        return parent is not null && Appeared(parent);
     }
 
     /// <summary>Records what <paramref name="path"/> shows at this stop (the next stop's baseline); returns the (bounded) text kept.</summary>
     private string Remember(string path, string value)
     {
         var tracked = value.Length > MaxTrackedValueChars ? value[..MaxTrackedValueChars] : value;
-        if (_current.Count < MaxTrackedValues) _current[path] = tracked;
+        if (_current.Values.Count < MaxTrackedValues) _current.Values[path] = tracked;
         return tracked;
+    }
+
+    /// <summary>
+    /// Every child of <paramref name="path"/> is remembered (its list was not paged or capped, and the tracking bound was not reached), so at
+    /// the next stop a child that is not among them has appeared.
+    /// </summary>
+    private void MarkComplete(string path)
+    {
+        if (_current.Values.Count < MaxTrackedValues && _current.Complete.Count < MaxTrackedValues) _current.Complete.Add(path);
+    }
+
+    /// <summary>The scopes of the frame, listed completely ("" holds them): a scope missing at the previous stop (a block entered since) appeared.</summary>
+    private void RememberScopes(IReadOnlyList<DebugScope> scopes)
+    {
+        foreach (var scope in scopes) Remember(ScopePath(scope), "");
+        MarkComplete("");
+    }
+
+    /// <summary>
+    /// A scope's path, whether it is shown as a group (several scopes) or its variables are the roots (one scope): the paths of its variables
+    /// stay the same when a block scope comes or goes, so they are still compared (and their expansion remembered).
+    /// </summary>
+    private static string ScopePath(DebugScope scope) => "scope:" + scope.Name;
+
+    /// <summary>What a frame showed at one stop: values by path, and the containers whose children were all remembered.</summary>
+    private sealed class Snapshot
+    {
+        public Dictionary<string, string> Values { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> Complete { get; } = new(StringComparer.Ordinal);
+        public bool IsEmpty => Values.Count == 0 && Complete.Count == 0;
+
+        public void Clear()
+        {
+            Values.Clear();
+            Complete.Clear();
+        }
     }
 
     /// <summary>Records a (re-)evaluated child value for change detection (Watch children use it).</summary>
@@ -311,23 +400,30 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     {
         if (!IsLive(token.Generation)) return;
         if (scopes.Count == 0) { StatusText = "No variables"; return; }
+        if (!await ResolveFrameIdentityAsync(token)) return;
         StatusText = null;
-        var holder = NewNode(VariableRowKind.Scope, null, "", "", token.Generation);
-        holder.Depth = -1;
-        _holder = holder;
+        RememberScopes(scopes);
         if (scopes.Count == 1)
         {
+            // The scope's variables are the roots (no group row); the holder stands for the scope, so their paths are the same as in a group.
             var scope = scopes[0];
-            holder.SetValue("", null, scope.VariablesReference, scope.NamedVariables, scope.IndexedVariables);
-            await LoadChildrenAsync(holder, loadMore: false);
+            var single = NewNode(VariableRowKind.Scope, null, "", ScopePath(scope), token.Generation);
+            single.Depth = -1;
+            _holder = single;
+            if (_frameKey is not null) ApplySignature([]); // else the variables' names key it, once they are loaded
+            single.SetValue("", null, scope.VariablesReference, scope.NamedVariables, scope.IndexedVariables);
+            await LoadChildrenAsync(single, loadMore: false);
             if (IsLive(token.Generation) && Rows.Count == 0) StatusText = "No variables";
             return;
         }
+        var holder = NewNode(VariableRowKind.Scope, null, "", "", token.Generation);
+        holder.Depth = -1;
+        _holder = holder;
         ApplySignature(scopes.Select(sc => sc.Name));
         var groups = new List<VariableNodeViewModel>(scopes.Count);
         foreach (var scope in scopes)
         {
-            var group = NewNode(VariableRowKind.Scope, holder, scope.Name, "scope:" + scope.Name, token.Generation);
+            var group = NewNode(VariableRowKind.Scope, holder, scope.Name, ScopePath(scope), token.Generation);
             group.SetValue("", null, scope.VariablesReference, scope.NamedVariables, scope.IndexedVariables);
             if (!_expanded.Contains(group.Path) && !_hasSeenScopes) RememberExpanded(group.Path, true);
             groups.Add(group);
@@ -351,12 +447,16 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     public async Task ShowRootsAsync(LoadToken token, IReadOnlyList<(DebugVariable Variable, int ParentReference)> roots, IReadOnlyList<DebugVariable>? frameVariables = null)
     {
         if (!IsLive(token.Generation)) return;
+        if (!await ResolveFrameIdentityAsync(token)) return;
         var holder = NewNode(VariableRowKind.Scope, null, "", "", token.Generation);
         holder.Depth = -1;
         _holder = holder;
-        ApplySignature(frameVariables is null ? roots.Select(r => r.Variable.Name) : frameVariables.Select(v => v.Name));
+        ApplyVariablesSignature(frameVariables is null ? roots.Select(r => r.Variable.Name) : frameVariables.Select(v => v.Name));
         if (frameVariables is not null)
+        {
             foreach (var v in frameVariables) Remember(v.Name, v.Value); // a root's path is its name
+            MarkComplete(""); // the whole list: a variable missing from it at the next stop has appeared there
+        }
         var nodes = new List<VariableNodeViewModel>(roots.Count);
         foreach (var (variable, parentRef) in roots) nodes.Add(CreateVariableNode(variable, holder, parentRef, token.Generation));
         holder.AddChildren(nodes);
@@ -377,6 +477,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
 
     public async Task ExpandAsync(VariableNodeViewModel node)
     {
+        if (node.IsLazy) { await ResolveLazyAsync(node); return; }
         if (IsDisposed || !node.HasChildren || node.Kind == VariableRowKind.More) return;
         if (node.Generation != Generation && node.Kind != VariableRowKind.Watch) return; // a node of a previous stop: its handle is dead
         if (node.IsExpanded && (node.ChildrenLoaded || node.IsLoading)) return;
@@ -435,15 +536,52 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         node.IsLoading = true;
         try
         {
-            var page = await _ui.OnUi(session.GetVariablesAsync(node.VariablesReference, start, PageSize, ct), ct);
-            if (!IsLive(generation)) return;
+            IReadOnlyList<DebugVariable> page;
+            int paged;                // how many of `page` count towards the next `start`
+            int unpaged = 0;          // the first `unpaged` of `page` are named children fetched once: not elements, not capped
+            string? firstPaged;       // name of the first of those (recognises an adapter that ignored `start`)
+            int? total = node.KnownChildCount;
+            if (node.IndexedVariables is > 0 && session is IDebugSessionVariablePaging filtered)
+            {
+                // DAP pages through the INDEXED children (start/count apply to the filtered set; js-debug ignores `start` without a filter);
+                // the named ones (an array's length, its prototype) come once, before the first page.
+                var indexed = await _ui.OnUi(filtered.GetVariablesAsync(node.VariablesReference, "indexed", start, PageSize, ct), ct);
+                if (!IsLive(generation)) return;
+                if (start > 0 && indexed.Count > 0)
+                {
+                    // js-debug v1.140.0 appends a named child ([[Prototype]]) to the last indexed page: never show a name twice under one node.
+                    var shown = node.Children.Select(c => c.Name).ToHashSet(StringComparer.Ordinal);
+                    if (indexed.Any(v => shown.Contains(v.Name))) indexed = [.. indexed.Where(v => !shown.Contains(v.Name))];
+                }
+                IReadOnlyList<DebugVariable> named = [];
+                if (start == 0 && node.NamedVariables is not 0)
+                {
+                    named = await _ui.OnUi(filtered.GetVariablesAsync(node.VariablesReference, "named", null, null, ct), ct);
+                    if (!IsLive(generation)) return;
+                    var indexedNames = indexed.Select(v => v.Name).ToHashSet(StringComparer.Ordinal);
+                    named = [.. named.Where(v => !indexedNames.Contains(v.Name))]; // an adapter that ignored the filter must not duplicate rows
+                }
+                page = named.Count == 0 ? indexed : [.. named, .. indexed];
+                unpaged = named.Count;
+                paged = indexed.Count;
+                firstPaged = indexed.Count > 0 ? indexed[0].Name : null;
+                total = node.IndexedVariables;
+            }
+            else
+            {
+                page = await _ui.OnUi(session.GetVariablesAsync(node.VariablesReference, start, PageSize, ct), ct);
+                if (!IsLive(generation)) return;
+                paged = page.Count;
+                firstPaged = page.Count > 0 ? page[0].Name : null;
+            }
 
-            if (node.Depth < 0 && start == 0 && _currentSignature is null) ApplySignature(page.Take(40).Select(v => v.Name));
+            if (node.Depth < 0 && start == 0 && _currentSignature is null) ApplyVariablesSignature(page.Select(v => v.Name));
 
             // An adapter that ignores paging answers "start = N" with page 0 again: recognise it and stop instead of duplicating rows.
-            var ignoredPaging = loadMore && page.Count > 0 && node.FirstChildName is not null && page[0].Name == node.FirstChildName && start > 0;
-            var room = Math.Max(0, MaxLoadedPerNode - node.LoadedCount);
-            var take = ignoredPaging ? 0 : Math.Min(page.Count, room);
+            var ignoredPaging = loadMore && paged > 0 && node.FirstChildName is not null && firstPaged == node.FirstChildName && start > 0;
+            // The cap counts the paged children only: an array's named children (length, [[Prototype]]) must not cost it its last elements.
+            var room = Math.Max(0, MaxLoadedPerNode - node.PagedCount);
+            var take = ignoredPaging ? 0 : unpaged + Math.Min(page.Count - unpaged, room);
 
             var created = new List<VariableNodeViewModel>(take);
             if (take <= InlineCreateLimit)
@@ -458,14 +596,16 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
                 if (!IsLive(generation)) return;
             }
 
-            if (node.FirstChildName is null && page.Count > 0) node.FirstChildName = page[0].Name;
-            node.NextStart = start + (ignoredPaging ? 0 : page.Count);
+            if (node.FirstChildName is null && firstPaged is not null) node.FirstChildName = firstPaged;
+            node.NextStart = start + (ignoredPaging ? 0 : paged);
             var oldMore = node.MoreRow;
             node.AddChildren(created);
+            if (take > 0) node.UnpagedCount += unpaged;
             node.ChildrenLoaded = true;
 
-            var more = BuildMoreRow(node, page.Count, ignoredPaging, take < page.Count && !ignoredPaging, generation);
+            var more = BuildMoreRow(node, paged, total, ignoredPaging, take < page.Count && !ignoredPaging, generation);
             node.MoreRow = more;
+            if (more is null && !ignoredPaging) MarkComplete(node.Path);
             await ApplyRowsAsync(node, created, oldMore, more, generation);
             await RestoreExpansionAsync(created, generation);
         }
@@ -480,18 +620,17 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         }
     }
 
-    private VariableNodeViewModel? BuildMoreRow(VariableNodeViewModel node, int pageCount, bool ignoredPaging, bool capped, long generation)
+    private VariableNodeViewModel? BuildMoreRow(VariableNodeViewModel node, int pageCount, int? total, bool ignoredPaging, bool capped, long generation)
     {
         if (ignoredPaging) return null;
-        var total = node.KnownChildCount;
         // A short page is the end, whatever the adapter announced (named + indexed counts are not always exact), so the pager never loops.
         var loadedAll = pageCount < PageSize || (total is { } t && node.NextStart >= t);
         if (loadedAll && !capped) return null;
-        if (node.LoadedCount >= MaxLoadedPerNode)
+        if (node.PagedCount >= MaxLoadedPerNode)
         {
             var notice = NewNode(VariableRowKind.Message, node, total is { } n
-                ? $"Showing the first {node.LoadedCount:N0} of {n:N0} items"
-                : $"Showing the first {node.LoadedCount:N0} items", node.Path + "/…cap", generation);
+                ? $"Showing the first {node.PagedCount:N0} of {n:N0} items"
+                : $"Showing the first {node.PagedCount:N0} items", node.Path + "/…cap", generation);
             return notice;
         }
         var remaining = total is { } all ? all - node.NextStart : (int?)null;
@@ -614,9 +753,44 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
             case VariableRowKind.NewWatch: BeginEditExpression(node); break;
             case VariableRowKind.Message: break;
             default:
-                if (node.HasChildren) await ToggleAsync(node);
+                if (node.IsLazy) await ResolveLazyAsync(node);
+                else if (node.HasChildren) await ToggleAsync(node);
                 break;
         }
+    }
+
+    /// <summary>The text a lazy row shows when the adapter did not compute a value (js-debug: the getter threw).</summary>
+    public const string LazyFailedText = "The debugger did not compute a value: the getter may have thrown an exception.";
+
+    /// <summary>
+    /// Computes a lazy value (js-debug's getters: DAP <c>presentationHint.lazy</c>): its only child IS the value, so the row takes it over in
+    /// place, as VS Code does. Running a getter has side effects in the debuggee, which is why it waits for the user.
+    /// <para>Anything but exactly one child means there is no value (VS Code then leaves the row alone): js-debug v1.140.0 answers a getter that
+    /// THROWS with the getter function's own properties (arguments, caller, length, name…) and no error, so the first of those must not be
+    /// shown as the value. The row says the getter may have thrown instead.</para>
+    /// <para>Change highlighting keeps comparing the placeholder (the getter's source, the same at every stop): the computed value is not
+    /// remembered, so the next stop, where the row is a placeholder again, does not mark it changed.</para>
+    /// </summary>
+    public async Task ResolveLazyAsync(VariableNodeViewModel node)
+    {
+        var session = _session;
+        var generation = Generation;
+        if (session is null || IsDisposed || !node.IsLazy || node.IsLoading || node.Generation != generation) return;
+        var ct = _cts.Token;
+        node.IsLoading = true;
+        try
+        {
+            var children = await _ui.OnUi(session.GetVariablesAsync(node.VariablesReference, null, null, ct), ct);
+            if (!IsLive(generation) || !node.IsLazy) return;
+            if (children.Count != 1) { node.SetError(LazyFailedText); return; }
+            node.ResolveLazy(children[0]);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (IsLive(generation)) node.SetError(ex.Message);
+        }
+        finally { node.IsLoading = false; }
     }
 
     /// <summary>The row that holds <paramref name="node"/> in the list, or its nearest visible ancestor (for Left-arrow navigation).</summary>
@@ -726,6 +900,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         _expanded.Clear();
         _previous = null;
         _current.Clear();
+        _frameIdentity = null;
         _epochSnapshots.Clear();
         _baselines.Clear();
         _baselineOrder.Clear();

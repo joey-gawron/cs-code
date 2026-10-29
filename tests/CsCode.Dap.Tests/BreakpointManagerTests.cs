@@ -227,8 +227,8 @@ public class BreakpointManagerTests
         m.ReportStatus(new DebugBreakpointStatus(s1, bp.Id, true, 5, null));
         Assert.Equal(5, m.GetStatus(bp.Id)!.ActualLine);
         Assert.Equal([A], events[^1].AffectedUris); // gutter refresh
-        m.ReportStatus(new DebugBreakpointStatus(s2, bp.Id, false, null, "no code here"));
-        Assert.Equal("no code here", m.GetStatus(bp.Id)!.Message); // latest verdict wins
+        m.ReportStatus(new DebugBreakpointStatus(s2, bp.Id, true, 6, null));
+        Assert.Equal(6, m.GetStatus(bp.Id)!.ActualLine); // latest verdict wins (a verified one beats an unverified one: JsDebugReviewFixTests)
         m.ClearStatuses("s2"); // s2 ends: s1's earlier verdict becomes the visible one again
         Assert.Equal(5, m.GetStatus(bp.Id)!.ActualLine);
         m.ClearStatuses("s1");
@@ -359,7 +359,7 @@ public class BreakpointManagerTests
         Assert.True(m.Any);
     }
 
-    private sealed class FakeSessionRef(string sessionId) : IDebugSession
+    internal sealed class FakeSessionRef(string sessionId) : IDebugSession
     {
         public string Id { get; } = sessionId;
         public string Name => Id;

@@ -230,19 +230,25 @@ public sealed class FakeDebugService : IDebugService, IDebugFrameFocus, IDebugOu
     }
 
     /// <summary>
-    /// Models the real DebugService, which looks the frame up in a short per-stop cache and silently ignores frames it does not find:
-    /// only the first N frames of a thread can be focused (null = all).
+    /// Only the first N frames of a thread can be focused (null = all): the others are frames the service no longer knows (an older stop, a
+    /// renumbering <c>invalidated</c>), for which the real DebugService throws.
     /// </summary>
     public int? FocusableFrameLimit { get; set; }
 
+    /// <summary>
+    /// Like the real DebugService (IDebugFrameFocus contract): focuses a frame of the current stop, and THROWS — never returns as if focus had
+    /// moved — when the session is unknown or the frame is not one it can focus (the real one throws DebugHandleInvalidatedException, an
+    /// InvalidOperationException, for a dead frame and InvalidOperationException for an ended session).
+    /// </summary>
     public ValueTask SetFocusedFrameAsync(string sessionId, int threadId, int frameId, CancellationToken ct = default)
     {
         FocusCalls.Add((sessionId, threadId, frameId));
-        var session = Sessions.OfType<FakeDebugSession>().FirstOrDefault(s => s.Id == sessionId);
-        var frames = session?.Frames.GetValueOrDefault(threadId)?.Take(FocusableFrameLimit ?? int.MaxValue);
-        var frame = frames?.FirstOrDefault(f => f.Id == frameId);
-        if (session is not null && frame is not null)
-            SetStopLocation(new DebugStopLocation(session, threadId, frameId, frame.Source?.ToUri(), frame.Line, frame.Column, "frame"));
+        var session = Sessions.OfType<FakeDebugSession>().FirstOrDefault(s => s.Id == sessionId)
+            ?? throw new InvalidOperationException($"The debug session '{sessionId}' has ended.");
+        var frames = session.Frames.GetValueOrDefault(threadId)?.Take(FocusableFrameLimit ?? int.MaxValue);
+        var frame = frames?.FirstOrDefault(f => f.Id == frameId)
+            ?? throw new InvalidOperationException("The stack frame is no longer valid: the debuggee has resumed or stopped again since it was obtained.");
+        SetStopLocation(new DebugStopLocation(session, threadId, frameId, frame.Source?.ToUri(), frame.Line, frame.Column, "frame"));
         return ValueTask.CompletedTask;
     }
 

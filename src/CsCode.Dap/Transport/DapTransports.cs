@@ -25,6 +25,13 @@ public interface IDapTransport : IAsyncDisposable
     ValueTask CloseAsync(TimeSpan grace);
 }
 
+/// <summary>A transport that owns an adapter process and can end it synchronously (a container disposed synchronously cannot wait for async shutdown).</summary>
+public interface IKillableTransport
+{
+    /// <summary>Kills the adapter's process tree now, without waiting for it; never throws. The async close still runs later.</summary>
+    void KillNow();
+}
+
 public static class DapTransportFactory
 {
     /// <summary>Opens the transport a descriptor describes. Executables are started at normal priority; TCP retries until <paramref name="connectTimeout"/>.</summary>
@@ -34,12 +41,26 @@ public static class DapTransportFactory
             DebugAdapterExecutable exe => ProcessTransport.Start(exe, logger),
             DebugAdapterServer server => await TcpTransport.ConnectAsync(server.Host, server.Port, connectTimeout, ct).ConfigureAwait(false),
             DebugAdapterNamedPipe pipe => await PipeTransport.ConnectAsync(pipe.Path, connectTimeout, ct).ConfigureAwait(false),
+            DebugAdapterServerProcess server => await ServerProcessTransport.StartAsync(server, logger, ct).ConfigureAwait(false),
             _ => throw new NotSupportedException($"Unknown debug adapter descriptor {descriptor.GetType().Name}"),
         };
+
+    /// <summary>
+    /// How to reach the adapter SERVER a transport is connected to — its private socket / named pipe (<see cref="DebugAdapterNamedPipe"/>) or
+    /// its TCP port (<see cref="DebugAdapterServer"/>) — else null (a stdio adapter). A child session of the same debug type (or one carrying
+    /// js-debug's <c>__pendingTargetId</c>) connects to the same server; see DebugService.
+    /// </summary>
+    public static DebugAdapterDescriptor? EndpointOf(IDapTransport transport) => transport switch
+    {
+        ServerProcessTransport s => s.Endpoint,
+        TcpTransport t => new DebugAdapterServer(t.Host, t.Port),
+        PipeTransport p => new DebugAdapterNamedPipe(p.Path),
+        _ => null,
+    };
 }
 
 /// <summary>Adapter as a child process talking DAP over stdin/stdout. The process tree is killed on close: no zombies.</summary>
-public sealed class ProcessTransport : IDapTransport
+public sealed class ProcessTransport : IDapTransport, IKillableTransport
 {
     private const int StderrTailBytes = 16 * 1024;
     private readonly Process _process;
@@ -154,6 +175,8 @@ public sealed class ProcessTransport : IDapTransport
         }
     }
 
+    public void KillNow() => KillTree();
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
@@ -173,11 +196,13 @@ public sealed class TcpTransport : IDapTransport
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _disposed;
 
-    private TcpTransport(TcpClient client, string description)
+    private TcpTransport(TcpClient client, string host, int port)
     {
         _client = client;
         _stream = client.GetStream();
-        Description = description;
+        Host = host;
+        Port = port;
+        Description = $"tcp://{host}:{port}";
     }
 
     public Stream Input => _stream;
@@ -186,6 +211,8 @@ public sealed class TcpTransport : IDapTransport
     public int? ProcessId => null;
     public string Description { get; }
     public string StandardErrorTail => "";
+    public string Host { get; }
+    public int Port { get; }
 
     public static async ValueTask<TcpTransport> ConnectAsync(string host, int port, TimeSpan timeout, CancellationToken ct)
     {
@@ -198,7 +225,7 @@ public sealed class TcpTransport : IDapTransport
             try
             {
                 await client.ConnectAsync(host, port, deadline.Token).ConfigureAwait(false);
-                return new TcpTransport(client, $"tcp://{host}:{port}");
+                return new TcpTransport(client, host, port);
             }
             catch (Exception ex) when (ex is SocketException or IOException)
             {
@@ -242,12 +269,16 @@ public sealed class PipeTransport : IDapTransport
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _disposed;
 
-    private PipeTransport(IDisposable owner, Stream stream, string description)
+    private PipeTransport(IDisposable owner, Stream stream, string path, string description)
     {
         _owner = owner;
         _stream = stream;
+        Path = path;
         Description = description;
     }
+
+    /// <summary>The socket path (Unix) or pipe path (<c>\\.\pipe\name</c>, Windows) this transport connected to.</summary>
+    public string Path { get; }
 
     public Stream Input => _stream;
     public Stream Output => _stream;
@@ -273,7 +304,7 @@ public sealed class PipeTransport : IDapTransport
                 pipe.Dispose();
                 throw;
             }
-            return new PipeTransport(pipe, pipe, $"pipe:{path}");
+            return new PipeTransport(pipe, pipe, path, $"pipe:{path}");
         }
 
         while (true)
@@ -282,7 +313,7 @@ public sealed class PipeTransport : IDapTransport
             try
             {
                 await socket.ConnectAsync(new UnixDomainSocketEndPoint(path), deadline.Token).ConfigureAwait(false);
-                return new PipeTransport(socket, new NetworkStream(socket, ownsSocket: false), $"unix:{path}");
+                return new PipeTransport(socket, new NetworkStream(socket, ownsSocket: false), path, $"unix:{path}");
             }
             catch (SocketException) when (!deadline.IsCancellationRequested)
             {

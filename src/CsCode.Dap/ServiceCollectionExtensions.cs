@@ -44,6 +44,9 @@ public static class ServiceCollectionExtensions
             var factory = sp.GetRequiredService<NetCoreDbgAdapterFactory>();
             return new BuiltinDebugAdapter("coreclr", ".NET (netcoredbg)", ["csharp", "fsharp", "vb"], factory, factory);
         });
+        services.AddSingleton<JsDebugAdapterFactory>(sp => new JsDebugAdapterFactory(sp.GetRequiredService<DapPlatform>()));
+        foreach (var adapter in JsDebugAdapters())
+            services.AddSingleton<BuiltinDebugAdapter>(sp => adapter(sp.GetRequiredService<JsDebugAdapterFactory>()));
 
         services.AddSingleton<DebugService>(sp => new DebugService(
             sp.GetRequiredService<DebugLane>(), sp.GetRequiredService<DapPlatform>(), sp.GetRequiredService<BreakpointManager>(),
@@ -52,6 +55,17 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IDebugFrameFocus>(sp => sp.GetRequiredService<DebugService>());
         services.AddSingleton<IDebugOutputHistory>(sp => sp.GetRequiredService<DebugService>());
         services.AddSingleton<IDebugSourceContentProvider>(sp => sp.GetRequiredService<DebugService>());
+        services.AddSingleton<IDebugKnownCapabilities>(sp => sp.GetRequiredService<DebugService>());
         return services;
     }
+
+    /// <summary>
+    /// js-debug's two debug types: <c>pwa-node</c> (what VS Code writes today) and its legacy alias <c>node</c>, which the provider rewrites to
+    /// <c>pwa-node</c> (the standalone server only knows the pwa-* types). Both share one factory and one provider.
+    /// </summary>
+    public static IEnumerable<Func<JsDebugAdapterFactory, BuiltinDebugAdapter>> JsDebugAdapters() =>
+    [
+        f => new BuiltinDebugAdapter(JsDebugAdapterFactory.PrimaryType, "Node.js / TypeScript (js-debug)", JsDebugAdapterFactory.Languages, f, f),
+        f => new BuiltinDebugAdapter("node", "Node.js (legacy 'node' type, js-debug)", JsDebugAdapterFactory.Languages, f, f),
+    ];
 }

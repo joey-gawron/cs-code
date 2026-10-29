@@ -3,6 +3,7 @@ using Avalonia.VisualTree;
 using CsCode.Core.Contributions;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
+using CsCode.Core.Text;
 using CsCode.Panels.Debug.Infrastructure;
 using CsCode.Panels.Debug.Variables;
 using Microsoft.Extensions.DependencyInjection;
@@ -58,6 +59,7 @@ public sealed class DebugPanelsRuntime : IDisposable
                 {
                     _subs.Add(_services);
                     StartExceptionKey(_services);
+                    StartStopReveal(_services);
                 }
             }
             return _services;
@@ -72,6 +74,33 @@ public sealed class DebugPanelsRuntime : IDisposable
         _exceptionKey = tracker;
         _subs.Add(tracker);
         tracker.Start();
+    }
+
+    /// <summary>
+    /// Shows where the debugger stopped, as Visual Studio and VS Code do: when the stop location is in a document that is not the active editor
+    /// (a breakpoint or a step into another file, a file not open at all), it is opened — preview tab, keyboard focus left where it is — at the
+    /// stop line; the editor then marks and reveals the line itself. A frame the user picked in the Call Stack (reason <c>frame</c>) is opened by
+    /// the Call Stack window. Coalesced: during a burst of steps only the latest location is opened.
+    /// </summary>
+    private void StartStopReveal(DebugPanelServices services)
+    {
+        if (services.Navigation is not { } navigation) return;
+        _subs.Add(services.Debug.StopLocationChanged.Subscribe(location =>
+        {
+            if (location is not { Uri: { } uri } || location.Reason == "frame") return;
+            services.Ui.PostCoalesced("debug.revealStop", () =>
+            {
+                if (!ReferenceEquals(services.Debug.StopLocation, location)) return; // superseded by a newer stop, or the debuggee resumed
+                if (navigation.ActiveDocument?.Uri is { } active && active == uri) return; // already in front: the editor reveals the line
+                _ = OpenAsync(navigation, uri, location);
+            });
+        }));
+    }
+
+    private static async Task OpenAsync(INavigationService navigation, Uri uri, CsCode.Core.Debugging.DebugStopLocation location)
+    {
+        try { await navigation.OpenAsync(uri, TextRange.At(Math.Max(0, location.Line), Math.Max(0, location.Column)), preview: true, preserveFocus: true); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or NotSupportedException) { /* a source the editor cannot open: the Call Stack still shows it */ }
     }
 
     /// <summary>The Watch window's view-model and view, while it exists (the command starts its "add" row instead of prompting).</summary>

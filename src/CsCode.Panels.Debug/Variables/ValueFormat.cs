@@ -45,7 +45,10 @@ public static partial class ValueFormat
         return SingleLine(text, MaxDisplayChars);
     }
 
-    private static bool LooksQuoted(string s) => s.Length >= 2 && (s[0] is '"' or '\'' or '@' or '$' or 'L' or 'u' or 'U' or 'R') && s.Contains('"');
+    private static bool LooksQuoted(string s) => s.Length >= 2 &&
+        ((s[0] is '"' or '\'' or '@' or '$' or 'L' or 'u' or 'U' or 'R') && s.Contains('"')
+         // js-debug (and Python) show strings in single quotes, cut long ones off with an ellipsis: 'hello', 'a long te…'
+         || s[0] == '\'' && s[^1] is '\'' or '…');
 
     private static bool LooksLikeNull(string s) => s is "null" or "nullptr" or "None" or "<null>" or "0x0000000000000000" or "0x0";
 

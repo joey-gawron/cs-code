@@ -171,12 +171,17 @@ public class VariablesTests
     [AvaloniaFact]
     public async Task Stepping_into_another_function_does_not_paint_unrelated_locals_red()
     {
+        // The step lands in another function whose locals share a name (x) with the caller's. Like netcoredbg, the adapter numbers frames by
+        // depth, so the callee's frame has the id the caller's had: only the frame's function tells them apart.
         using var rig = new PanelRig();
-        using var vm = await StoppedLocals(rig);
+        var program = new DebugSource("Program.cs", "/work/Program.cs");
+        rig.Session.Frames[1] = [new DebugStackFrame(102, "Sample.Program.Main()", program, 24, 0)];
+        using var vm = await StoppedLocals(rig, frameIndex: 0);
         rig.Resume();
         await PanelRig.Eventually(() => vm.Tree.Rows.Count == 0);
-        rig.Session.Variables[1200] = [new DebugVariable("x", "7", "int"), new DebugVariable("t", "9", "int")]; // a different frame shape
-        rig.StopAt(2);
+        rig.Session.Frames[1] = [new DebugStackFrame(102, "Sample.Program.Scale(int x)", program, 31, 0), new DebugStackFrame(103, "Sample.Program.Main()", program, 25, 0)];
+        rig.Session.Variables[1200] = [new DebugVariable("x", "7", "int"), new DebugVariable("t", "9", "int")];
+        rig.StopAt(0);
         await PanelRig.Eventually(() => vm.Tree.Rows.Count == 2);
         Assert.All(vm.Tree.Rows, r => Assert.False(r.IsChanged));
     }

@@ -133,7 +133,8 @@ public sealed class ServiceHarness : IAsyncDisposable
     public DebugService Service { get; }
     public FixedPortAdapterFactory FakeFactory { get; }
 
-    public ServiceHarness(DebugLane? lane = null, INavigationService? navigation = null, bool withPlatform = true, Action<TcpFakeAdapterHost>? configureHost = null)
+    public ServiceHarness(DebugLane? lane = null, INavigationService? navigation = null, bool withPlatform = true, Action<TcpFakeAdapterHost>? configureHost = null,
+        Func<DapPlatform, IEnumerable<BuiltinDebugAdapter>>? moreBuiltins = null)
     {
         Lane = lane ?? new DebugLane("svc-lane");
         configureHost?.Invoke(Host);
@@ -151,7 +152,7 @@ public sealed class ServiceHarness : IAsyncDisposable
         FakeFactory = new FixedPortAdapterFactory(Host.Port);
         var netcore = new NetCoreDbgAdapterFactory(Platform);
         Service = new DebugService(Lane, Platform, Breakpoints, Configurations, Tasks,
-            [new BuiltinDebugAdapter("coreclr", ".NET (netcoredbg)", ["csharp", "fsharp", "vb"], netcore, netcore)]);
+            [new BuiltinDebugAdapter("coreclr", ".NET (netcoredbg)", ["csharp", "fsharp", "vb"], netcore, netcore), .. moreBuiltins?.Invoke(Platform) ?? []]);
         Service.RegisterAdapterFactory("fake", FakeFactory);
     }
 

@@ -46,7 +46,11 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
         _d.Add(debug.StopLocationChanged.Subscribe(loc => view.Post(() => ShowStop(loc))));
         _d.Add(debug.StateChanged.Subscribe(_ => view.Post(() => ShowStop(debug.StopLocation))));
         _d.Add(view.Document.Changed.Subscribe(OnDocumentChanged));
-        _d.Add(view.Controller.StopLineChanged.Subscribe(_ => _margin.InvalidateVisual()));
+        _d.Add(view.Controller.StopLineChanged.Subscribe(_ =>
+        {
+            _margin.InvalidateVisual();
+            _v.Feature<CodeActionFeature>()?.OnGutterChanged();
+        }));
         _d.Add(Disposable.Create(() => view.TextArea.LeftMargins.Remove(_margin)));
         ShowStop(debug.StopLocation);
     }
@@ -73,11 +77,15 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
     internal SourceBreakpoint? BreakpointAt(int line) => _byLine.GetValueOrDefault(line);
     internal IReadOnlyCollection<SourceBreakpoint> Breakpoints => _byLine.Values;
 
+    /// <summary>Whether the glyph margin draws something on <paramref name="line"/> (a breakpoint or the stop arrow): the lightbulb goes elsewhere.</summary>
+    internal bool HasGlyph(int line) => _byLine.ContainsKey(line) || _v.Controller.StopLine == line;
+
     private void Refresh()
     {
         if (_disposed) return;
         _byLine = IsFileDocument ? _debug.Breakpoints.GetForUri(_v.Document.Uri).GroupBy(b => b.Line).ToDictionary(g => g.Key, g => g.First()) : new();
         _margin.InvalidateVisual();
+        _v.Feature<CodeActionFeature>()?.OnGutterChanged();
     }
 
     private void ShowStop(DebugStopLocation? location)
@@ -126,6 +134,7 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
     internal async Task EditHitCountAsync(int line)
     {
         var existing = BreakpointAt(line);
+        if (existing?.HitCondition is null && DebugCapabilityGate.HitCountUnsupported(_debug) is { } why) { await TellAsync(why).ConfigureAwait(true); return; }
         var text = await Ask("Edit Hit Count", "Break when the hit count satisfies this expression, for example '> 5' or '% 2 == 0'", existing?.HitCondition).ConfigureAwait(true);
         if (text is null) return;
         var hit = string.IsNullOrWhiteSpace(text) ? null : text;
@@ -136,6 +145,7 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
     internal async Task EditLogMessageAsync(int line)
     {
         var existing = BreakpointAt(line);
+        if (existing?.LogMessage is null && DebugCapabilityGate.LogPointUnsupported(_debug) is { } why) { await TellAsync(why).ConfigureAwait(true); return; }
         var text = await Ask("Edit Log Message", "Message to log when the breakpoint is hit; {expression} is interpolated. The program does not stop.", existing?.LogMessage).ConfigureAwait(true);
         if (text is null) return;
         var message = string.IsNullOrWhiteSpace(text) ? null : text;
@@ -159,6 +169,11 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
         return window is null ? null : await window.ShowInputBoxAsync(new InputBoxOptions(Title: title, Prompt: prompt, Value: value)).ConfigureAwait(true);
     }
 
+    private async ValueTask TellAsync(string message)
+    {
+        if (_v.Services.Window is { } window) await window.ShowMessageAsync(MessageSeverity.Info, message).ConfigureAwait(true);
+    }
+
     /// <summary>Tooltip for the glyph of a breakpoint: what it does and what the adapter said about it.</summary>
     internal string? Describe(int line)
     {
@@ -178,26 +193,45 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
         return string.Join("\n", parts);
     }
 
-    internal void ShowContextMenu(int line, Control anchor)
+    internal void ShowContextMenu(int line, Control anchor) => BuildContextMenu(line).Open(anchor);
+
+    /// <summary>
+    /// The glyph margin's menu. Hit counts and logpoints are offered only when the active debug adapter supports them (netcoredbg has neither,
+    /// js-debug both; known from the running session, else from the last session of the selected configuration's type, else assumed): an
+    /// unsupported entry is disabled and says why. One the breakpoint already has can still be edited (cleared).
+    /// </summary>
+    internal ContextMenu BuildContextMenu(int line)
     {
         var existing = BreakpointAt(line);
         var menu = new ContextMenu();
-        MenuItem Item(string header, Action run) { var m = new MenuItem { Header = header }; m.Click += (_, _) => run(); return m; }
+        MenuItem Item(string header, Action run, string? unsupported = null)
+        {
+            var m = new MenuItem { Header = unsupported is null ? header : header + " (not supported)", IsEnabled = unsupported is null };
+            if (unsupported is not null)
+            {
+                ToolTip.SetTip(m, unsupported);
+                ToolTip.SetShowOnDisabled(m, true);
+            }
+            m.Click += (_, _) => run();
+            return m;
+        }
+        var noHitCount = DebugCapabilityGate.HitCountUnsupported(_debug);
+        var noLogPoint = DebugCapabilityGate.LogPointUnsupported(_debug);
         if (existing is null)
         {
             menu.Items.Add(Item("Add Breakpoint", () => Toggle(line)));
             menu.Items.Add(Item("Add Conditional Breakpoint…", () => _ = EditConditionAsync(line)));
-            menu.Items.Add(Item("Add Logpoint…", () => _ = EditLogMessageAsync(line)));
+            menu.Items.Add(Item("Add Logpoint…", () => _ = EditLogMessageAsync(line), noLogPoint));
         }
         else
         {
             menu.Items.Add(Item("Remove Breakpoint", () => Remove(line)));
             menu.Items.Add(Item(existing.Enabled ? "Disable Breakpoint" : "Enable Breakpoint", () => SetEnabled(line, !existing.Enabled)));
             menu.Items.Add(Item("Edit Condition…", () => _ = EditConditionAsync(line)));
-            menu.Items.Add(Item("Edit Hit Count…", () => _ = EditHitCountAsync(line)));
-            menu.Items.Add(Item("Edit Log Message…", () => _ = EditLogMessageAsync(line)));
+            menu.Items.Add(Item("Edit Hit Count…", () => _ = EditHitCountAsync(line), existing.HitCondition is null ? noHitCount : null));
+            menu.Items.Add(Item("Edit Log Message…", () => _ = EditLogMessageAsync(line), existing.LogMessage is null ? noLogPoint : null));
         }
-        menu.Open(anchor);
+        return menu;
     }
 
     // ---- the glyph margin ----

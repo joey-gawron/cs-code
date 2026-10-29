@@ -19,7 +19,7 @@ namespace CsCode.Dap.Session;
 /// synchronously) and the volatile properties may be read from any thread. Events fire on the lane — subscribers must be cheap.
 /// Protocol order (spec): initialize → launch/attach → (adapter sends `initialized`) → breakpoints → configurationDone → running.
 /// </summary>
-public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, IBreakpointSyncHost
+public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, IDebugSessionVariablePaging, IBreakpointSyncHost
 {
     private readonly DebugSessionOptions _o;
     private readonly DebugSessionSettings _settings;
@@ -113,6 +113,26 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     public long? DebuggeeProcessId { get; private set; }
     public string? DebuggeeProcessName { get; private set; }
     public int? AdapterProcessId => _client?.Transport.ProcessId;
+    /// <summary>
+    /// How to reach the adapter server this session is connected to (its private socket / named pipe, or a TCP port; null for a stdio adapter);
+    /// its child sessions connect there.
+    /// </summary>
+    public DebugAdapterDescriptor? AdapterEndpoint => _client?.Transport is { } t ? DapTransportFactory.EndpointOf(t) : null;
+    /// <summary>Environment marker carried by an adapter server this session started and by everything it spawned (null otherwise).</summary>
+    public string? AdapterProcessMarker => (_client?.Transport as ServerProcessTransport)?.Marker;
+    /// <summary>The private directory of the socket of an adapter server this session started (null otherwise); deleted with the session.</summary>
+    public string? AdapterSocketDirectory => (_client?.Transport as ServerProcessTransport)?.SocketDirectory;
+
+    /// <summary>
+    /// Kills the adapter process this session owns (with its tree: the debuggees an adapter server launched) and the debuggees it spawned for
+    /// <c>runInTerminal</c>, synchronously and from any thread. For a container disposed synchronously (DebugService.Dispose), where the
+    /// graceful async shutdown may never get to run before the process exits.
+    /// </summary>
+    internal void KillProcessesNow()
+    {
+        _debuggees.KillAll();
+        if (Volatile.Read(ref _client)?.Transport is IKillableTransport transport) transport.KillNow();
+    }
     public IReadOnlyList<int> SpawnedDebuggeeProcessIds => _debuggees.LiveProcessIds;
     public IReadOnlyList<DebugModuleInfo> Modules { get { lock (_modules) return [.. _modules.Values]; } }
     public long DroppedOutputChars => _output.DroppedChars;

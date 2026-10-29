@@ -20,7 +20,7 @@ namespace CsCode.Dap.Service;
 /// without locks or waiting. <see cref="StartAsync"/> and friends only enqueue. Events fire on the lane: subscribers must be cheap and
 /// marshal themselves (the shell's UiDispatcher does).
 /// </summary>
-public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDebugOutputHistory, IDebugSourceContentProvider, IAsyncDisposable, IDisposable
+public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDebugOutputHistory, IDebugSourceContentProvider, IDebugKnownCapabilities, IAsyncDisposable, IDisposable
 {
     public const int MaxHistoryLines = 5_000;
     private const int MaxHistoryChars = 4 * 1024 * 1024;
@@ -39,6 +39,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private readonly Dictionary<string, BuiltinDebugAdapter> _builtins = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<IDebugSession, SessionHooks> _hooks = new();
     private readonly Dictionary<IDebugSession, CompoundGroup> _compounds = new();
+    private readonly Dictionary<string, DebugCapabilities> _knownCapabilities = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Emitter<IDebugSession> _sessionStarted = new(), _sessionTerminated = new();
     private readonly Emitter<IDebugSession?> _activeChanged = new();
@@ -48,6 +49,9 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private readonly Emitter<object?> _outputCleared = new();
 
     private IDebugSession[] _sessions = [];
+    // Sessions that ended and are still being released (adapter killed, private socket deleted): DisposeAsync waits for them, so an app that
+    // exits right after its shutdown leaves no adapter socket behind. Guarded by _gate; each removes itself when done.
+    private readonly List<Task> _endingSessions = new();
     private IDebugSession? _active;
     private int _state = (int)DebugState.Inactive;
     private DebugStopLocation? _stopLocation;
@@ -58,8 +62,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private int _sessionCounter;
     private int _disposed;
 
-    private readonly LinkedList<(DebugOutputEventArgs Event, int Lines, int Chars)> _history = new();
-    private int _historyLines, _historyChars;
+    private readonly OutputHistory _history = new(MaxHistoryLines, MaxHistoryChars);
 
     private sealed record SessionHooks(IDisposable Subscriptions, string? PostDebugTask, Uri? Folder);
     private sealed class CompoundGroup(bool stopAll) { public bool StopAll { get; } = stopAll; public List<IDebugSession> Members { get; } = new(); }
@@ -191,10 +194,16 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         // 3. preLaunchTask
         if (resolved.PreLaunchTask is { Length: > 0 } pre && !await RunTaskGateAsync(pre, "preLaunchTask", folder, ct)) return null;
 
-        // 4. adapter
+        // 4. adapter. A child of a session connected to an adapter SERVER opens its own connection to that same server: js-debug runs the
+        // launched program as a child session (`startDebugging`) on the server the parent started, and only that server knows the pending target.
+        // A child of ANOTHER debug type (without js-debug's pending target) belongs to that type's adapter: its factory creates it.
         DebugAdapterDescriptor? descriptor;
-        try { descriptor = await CreateDescriptorAsync(resolved, ct); }
-        catch (DebugSessionStartException ex) { await ReportAsync(ex.Message); return null; }
+        if (parent?.AdapterEndpoint is { } endpoint && SharesParentAdapter(parent, resolved)) descriptor = endpoint;
+        else
+        {
+            try { descriptor = await CreateDescriptorAsync(resolved, ct); }
+            catch (DebugSessionStartException ex) { await ReportAsync(ex.Message); return null; }
+        }
         if (descriptor is null)
         {
             await ReportAsync($"No debug adapter is available for type '{resolved.Type}'. Install one and register it in the 'cscode.debuggers' setting.");
@@ -214,7 +223,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             Settings = SettingsFor(final),
             StartChild = StartChildAsync,
         });
-        Attach(session, final.PostDebugTask, folder, group);
+        Attach(session, final.PostDebugTask, folder, group, configuration.Type);
         try
         {
             await session.StartAsync(ct);
@@ -227,6 +236,14 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         catch (OperationCanceledException) { return null; }
         return session;
     }
+
+    /// <summary>
+    /// Whether a child session goes to its parent's adapter server: when it asks for a target only that server holds (js-debug's
+    /// <c>__pendingTargetId</c>), or is of the parent's own debug type.
+    /// </summary>
+    private static bool SharesParentAdapter(DebugSession parent, DebugConfiguration child) =>
+        child.Properties.ContainsKey(JsDebugAdapterFactory.PendingTargetKey)
+        || string.Equals(child.Type, parent.Configuration.Type, StringComparison.OrdinalIgnoreCase);
 
     private DebugSessionSettings SettingsFor(DebugConfiguration config)
     {
@@ -303,13 +320,25 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
 
     // ------------------------------------------------------------------ session wiring
 
-    private void Attach(DebugSession session, string? postDebugTask, Uri? folder, CompoundGroup? group)
+    /// <param name="requestedType">The type the configuration asked for, before a provider resolved it (launch.json "node" → js-debug's
+    /// "pwa-node"): the last-known capabilities are recorded under both, since the UI looks them up by the selected configuration's type.</param>
+    private void Attach(DebugSession session, string? postDebugTask, Uri? folder, CompoundGroup? group, string requestedType)
     {
         var subs = new DisposableStore();
         subs.Add(session.Stopped.Subscribe(e => OnSessionStopped(session, e)));
         subs.Add(session.Continued.Subscribe(e => OnSessionContinued(session, e)));
         subs.Add(session.Invalidated.Subscribe(_ => OnSessionInvalidated(session)));
-        subs.Add(session.StateChanged.Subscribe(_ => { RecomputeState(); UpdateContextKeys(); }));
+        subs.Add(session.StateChanged.Subscribe(state =>
+        {
+            if (state is DebugSessionState.Running or DebugSessionState.Stopped)
+                lock (_gate)
+                {
+                    _knownCapabilities[session.Configuration.Type] = session.Capabilities;
+                    if (requestedType.Length > 0) _knownCapabilities[requestedType] = session.Capabilities;
+                }
+            RecomputeState();
+            UpdateContextKeys();
+        }));
         subs.Add(session.Output.Subscribe(OnSessionOutput));
         subs.Add(session.Terminated.Subscribe(_ => OnSessionTerminated(session)));
         lock (_gate)
@@ -369,32 +398,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
 
     private void OnSessionOutput(DebugOutputEventArgs e)
     {
-        var text = e.Output;
-        var lines = Math.Max(1, text.Count(c => c == '\n'));
-        lock (_gate)
-        {
-            _history.AddLast((e, lines, text.Length));
-            _historyLines += lines;
-            _historyChars += text.Length;
-            while ((_historyLines > MaxHistoryLines || _historyChars > MaxHistoryChars) && _history.Count > 1)
-            {
-                var first = _history.First!.Value;
-                _history.RemoveFirst();
-                _historyLines -= first.Lines;
-                _historyChars -= first.Chars;
-            }
-            if (_history.Count == 1 && (_historyLines > MaxHistoryLines || _historyChars > MaxHistoryChars))
-            {
-                // One giant batch: keep only its tail.
-                var only = _history.First!.Value;
-                var tail = TailLines(only.Event.Output, MaxHistoryLines, MaxHistoryChars);
-                _history.Clear();
-                var trimmed = only.Event with { Output = tail };
-                _history.AddLast((trimmed, Math.Max(1, tail.Count(c => c == '\n')), tail.Length));
-                _historyLines = _history.First!.Value.Lines;
-                _historyChars = tail.Length;
-            }
-        }
+        lock (_gate) _history.Add(e); // keeps the NEWEST lines up to the budget, cutting the oldest event's head in place (OutputHistory)
         _output.Fire(e);
     }
 
@@ -402,19 +406,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private void ArchiveHistory(DebugSession session)
     {
         var ended = new EndedSession(session.Id, session.Name, session.Configuration);
-        lock (_gate)
-            for (var node = _history.First; node is not null; node = node.Next)
-                if (ReferenceEquals(node.Value.Event.Session, session))
-                    node.Value = (node.Value.Event with { Session = ended }, node.Value.Lines, node.Value.Chars);
-    }
-
-    private static string TailLines(string text, int maxLines, int maxChars)
-    {
-        if (text.Length > maxChars) text = text[^maxChars..];
-        var count = 0;
-        for (var i = text.Length - 1; i >= 0; i--)
-            if (text[i] == '\n' && ++count > maxLines) return text[(i + 1)..];
-        return text;
+        lock (_gate) _history.Relabel(session, ended);
     }
 
     private void OnSessionTerminated(DebugSession session)
@@ -445,11 +437,23 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         _sessionTerminated.Fire(session);
 
         // Release the session (and kill its adapter) on the lane without blocking the event that told us it ended.
-        _ = DisposeSessionAsync(session);
+        TrackEnding(DisposeSessionAsync(session));
+        // Its child sessions live on its adapter (js-debug's children are connections to the server the parent owns): they end with it.
+        foreach (var child in Sessions.Where(s => ReferenceEquals(s.Parent, session)).ToArray()) _ = StopQuietlyAsync(child, CancellationToken.None);
         if (group is { StopAll: true } && group.Members.Count > 0)
             foreach (var sibling in group.Members.ToArray()) _ = sibling.StopAsync();
         if (hooks.PostDebugTask is { Length: > 0 } post && session.Parent is null)
             _ = RunPostTaskAsync(post, hooks.Folder);
+    }
+
+    private void TrackEnding(Task disposal)
+    {
+        lock (_gate) _endingSessions.Add(disposal);
+        _ = disposal.ContinueWith(static (t, state) =>
+        {
+            var self = (DebugService)state!;
+            lock (self._gate) self._endingSessions.Remove(t);
+        }, this, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     private async Task DisposeSessionAsync(DebugSession session)
@@ -573,6 +577,11 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         keys.Set("breakpointsExist", _breakpoints.Any);
     }
 
+    public DebugCapabilities? GetKnownCapabilities(string debugType)
+    {
+        lock (_gate) return _knownCapabilities.GetValueOrDefault(debugType);
+    }
+
     // ------------------------------------------------------------------ watches
 
     public WatchExpression AddWatch(string expression)
@@ -591,16 +600,12 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
 
     public IReadOnlyList<DebugOutputEventArgs> GetOutputHistory()
     {
-        lock (_gate) return [.. _history.Select(h => h.Event)];
+        lock (_gate) return _history.Snapshot();
     }
 
     public void ClearOutputHistory()
     {
-        lock (_gate)
-        {
-            _history.Clear();
-            _historyLines = _historyChars = 0;
-        }
+        lock (_gate) _history.Clear();
         _outputCleared.Fire(null);
     }
 
@@ -636,6 +641,12 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         {
             try { await s.DisposeAsync(); } catch (Exception ex) { _logger.LogDebug(ex, "Disposing session"); }
         }
+        // The sessions StopAllAsync ended are released in the background (see OnSessionTerminated): wait for them too (bounded), or the app
+        // could exit before their adapter servers' sockets are deleted.
+        Task[] ending;
+        lock (_gate) ending = [.. _endingSessions];
+        try { await Task.WhenAll(ending).WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false); }
+        catch (TimeoutException) { _logger.LogDebug("Sessions still being released after 10 s at shutdown"); }
         _subs.Dispose();
         _contributionTokens.Dispose();
         lock (_gate)
@@ -645,19 +656,28 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             _sessions = [];
             _compounds.Clear();
             _history.Clear();
-            _historyLines = _historyChars = 0;
         }
         _sessionStarted.Clear(); _sessionTerminated.Clear(); _activeChanged.Clear(); _stateChanged.Clear();
         _stopLocationChanged.Clear(); _output.Clear(); _outputCleared.Clear();
     }
 
     /// <summary>
-    /// For a container disposed synchronously (the shell disposes its container on the UI thread after awaiting the graceful shutdown):
-    /// starts <see cref="DisposeAsync"/> and returns without waiting for adapters, so the caller never blocks. A no-op after <see cref="DisposeAsync"/>.
+    /// For a container disposed synchronously (the shell disposes its container on the UI thread after awaiting the graceful shutdown, so
+    /// normally no session is left): starts <see cref="DisposeAsync"/> without waiting for it, and kills every adapter process and debuggee
+    /// still running RIGHT NOW. The async shutdown may never get to run — the process can exit first (a test host after a failed assertion did,
+    /// and left js-debug servers running: they never exit by themselves). Killing is synchronous but does not wait for the processes.
+    /// A no-op after <see cref="DisposeAsync"/>.
     /// </summary>
     public void Dispose()
     {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        var live = Sessions.OfType<DebugSession>().ToArray();
         var pending = DisposeAsync();
+        foreach (var session in live)
+        {
+            try { session.KillProcessesNow(); }
+            catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { _logger.LogDebug(ex, "Killing the processes of {Session}", session.Id); }
+        }
         if (!pending.IsCompleted)
             _ = pending.AsTask().ContinueWith(t => _logger.LogDebug(t.Exception, "Disposing the debug service"), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }

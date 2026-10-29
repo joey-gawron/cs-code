@@ -21,8 +21,12 @@ public sealed record DebugAdapterClientOptions
     public int YieldEveryFrames { get; init; } = 32;
 }
 
-/// <summary>The adapter answered a request with <c>success:false</c>.</summary>
-public sealed class DapRequestException(string command, string message, DapMessage? error = null) : Exception($"'{command}' failed: {message}")
+/// <summary>
+/// The adapter answered a request with <c>success:false</c>. <see cref="Exception.Message"/> is the adapter's own message (what the Watch, the
+/// REPL and Locals show the user, as VS Code does: "Uncaught ReferenceError: x is not defined", not "'evaluate' failed: …"); the request is
+/// <see cref="Command"/>.
+/// </summary>
+public sealed class DapRequestException(string command, string message, DapMessage? error = null) : Exception(message)
 {
     public string Command { get; } = command;
     public string AdapterMessage { get; } = message;

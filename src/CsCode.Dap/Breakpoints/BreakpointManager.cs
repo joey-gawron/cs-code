@@ -221,12 +221,25 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable, ID
 
     // ------------------------------------------------------------------ adapter verdicts
 
+    /// <summary>
+    /// The verdict shown for a breakpoint: when several sessions report one (js-debug's orchestrating parent session and the program's child
+    /// session both get every file's breakpoints), a session that VERIFIED it wins over sessions that did not, newest first; otherwise the
+    /// newest verdict. VS Code merges the same way. (Newest-only let the parent's "Unbound breakpoint", re-sent when another breakpoint was
+    /// added to the file, hide the child's unchanged verdict, which is not re-reported because it did not change.)
+    /// </summary>
     public DebugBreakpointStatus? GetStatus(string breakpointId)
     {
         lock (_gate)
-            return _statuses.TryGetValue(breakpointId, out var perSession) && perSession.Count > 0
-                ? perSession.Values.MaxBy(v => v.Seq).Status
-                : null;
+        {
+            if (!_statuses.TryGetValue(breakpointId, out var perSession) || perSession.Count == 0) return null;
+            (long Seq, DebugBreakpointStatus Status)? newest = null, newestVerified = null;
+            foreach (var entry in perSession.Values)
+            {
+                if (newest is not { } n || entry.Seq > n.Seq) newest = entry;
+                if (entry.Status.Verified && (newestVerified is not { } v || entry.Seq > v.Seq)) newestVerified = entry;
+            }
+            return (newestVerified ?? newest)!.Value.Status;
+        }
     }
 
     public void ReportStatus(DebugBreakpointStatus status)

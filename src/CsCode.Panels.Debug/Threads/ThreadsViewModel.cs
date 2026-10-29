@@ -224,7 +224,13 @@ public sealed class ThreadsViewModel : ObservableObject, IDisposable, IRowsRepla
             var pick = ++_picks;
             if (_s.FrameFocus is { } focus)
             {
-                await _s.Ui.OnUi(focus.SetFocusedFrameAsync(session.Id, row.Id, frame.Id, ct), ct);
+                try { await _s.Ui.OnUi(focus.SetFocusedFrameAsync(session.Id, row.Id, frame.Id, ct), ct); }
+                catch (InvalidOperationException ex) // the service throws for a frame it cannot focus
+                {
+                    if (IsLive(generation) && pick == _picks)
+                        _s.Window?.SetStatusBarMessage($"Could not switch to the thread '{row.Name}': {ex.Message}", TimeSpan.FromSeconds(4));
+                    return;
+                }
                 if (!IsLive(generation) || pick != _picks) return;
                 // The service may decline silently; the variables windows follow it, so only a thread it really switched to is marked.
                 if (focus.FocusedFrameId != frame.Id)

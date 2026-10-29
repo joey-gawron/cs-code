@@ -21,7 +21,7 @@ public sealed partial class DebugService
         Reg(KnownCommands.DebugStart, "Start Debugging", async _ => { await StartSelectedAsync(noDebug: false); return null; });
         Reg(KnownCommands.DebugRun, "Start Without Debugging", async _ => { await StartSelectedAsync(noDebug: true); return null; });
         Reg(KnownCommands.DebugStop, "Stop Debugging", async _ => { await StopAllAsync(); return null; });
-        Reg(KnownCommands.DebugRestart, "Restart", async _ => { if (ActiveSession is { } s) await s.RestartAsync(); return null; });
+        Reg(KnownCommands.DebugRestart, "Restart", async _ => { if (ActiveSession is { } s) await RootOf(s).RestartAsync(); return null; });
         Reg(KnownCommands.DebugContinue, "Continue", async _ => { if (ActiveSession is { State: DebugSessionState.Stopped } s) await s.ContinueAsync(); return null; });
         Reg(KnownCommands.DebugPause, "Pause", async _ => { if (ActiveSession is { State: DebugSessionState.Running } s) await s.PauseAsync(); return null; });
         Reg(KnownCommands.DebugStepOver, "Step Over", async _ => { if (ActiveSession is { State: DebugSessionState.Stopped } s) await s.StepOverAsync(); return null; });
@@ -33,6 +33,18 @@ public sealed partial class DebugService
             return ValueTask.FromResult<object?>(null);
         });
         Reg(PickProcessCommand, "Pick Process to Attach To", async inv => await PickProcessAsync(inv.Cancellation));
+    }
+
+    /// <summary>
+    /// The session a user-level Restart applies to: the top of the active session's tree. A child session (js-debug's program, started by the
+    /// adapter through <c>startDebugging</c>) cannot be relaunched on its own — js-debug v1.140.0 closes a child's connection on <c>restart</c>
+    /// — while restarting the parent relaunches the program, which comes back as a new child.
+    /// </summary>
+    internal static IDebugSession RootOf(IDebugSession session)
+    {
+        var root = session;
+        for (var depth = 0; root.Parent is { State: not DebugSessionState.Terminated } parent && depth < 16; depth++) root = parent;
+        return root;
     }
 
     /// <summary>Starts the toolbar's selected launch configuration (first one if none selected); offers to create launch.json when there is none.</summary>

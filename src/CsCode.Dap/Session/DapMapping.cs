@@ -60,7 +60,10 @@ internal static class DapMapping
         new(s.Name, s.VariablesReference, s.Expensive, s.NamedVariables, s.IndexedVariables, s.PresentationHint);
 
     public static DebugVariable ToCore(DapVariable v) =>
-        new(v.Name, v.Value, v.Type, v.VariablesReference, v.EvaluateName, v.NamedVariables, v.IndexedVariables, v.MemoryReference);
+        new(v.Name, v.Value, v.Type, v.VariablesReference, v.EvaluateName, v.NamedVariables, v.IndexedVariables, v.MemoryReference)
+        {
+            IsLazy = v.PresentationHint?.Lazy == true && v.VariablesReference > 0,
+        };
 
     public static DebugEvaluateResult ToCore(DapEvaluateResponse r) =>
         new(r.Result, r.Type, r.VariablesReference, r.NamedVariables, r.IndexedVariables, r.MemoryReference);

@@ -90,7 +90,8 @@ public static class LaunchJson
             foreach (var (k, v) in c.Properties) o[k] = VariableResolver.ToNode(v);
             array.Add(o);
         }
-        var body = array.ToJsonString(new JsonSerializerOptions { WriteIndented = true, IndentSize = 4 });
+        // A file people read and edit, not HTML: keep "<node_internals>/**" (js-debug's skipFiles) as written instead of "<node_internals>/**".
+        var body = array.ToJsonString(new JsonSerializerOptions { WriteIndented = true, IndentSize = 4, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         var indented = string.Join("\n    ", body.Split('\n').Select(l => l.TrimEnd('\r')));
         return
             "{\n" +

@@ -74,7 +74,11 @@ public sealed class VariableNodeViewModel : ObservableObject
 
     public string FullValue => _fullValue;
     public string DisplayValue { get => _displayValue; private set => SetProperty(ref _displayValue, value); }
-    public string? Type { get => _type; private set => SetProperty(ref _type, value); }
+    /// <summary>
+    /// The value's type; none while the value is lazy: js-debug types a getter's placeholder <c>function</c> (the accessor), which is not the
+    /// type of the value the getter returns. Once evaluated, the row shows the result's type.
+    /// </summary>
+    public string? Type { get => _isLazy ? null : _type; private set => SetProperty(ref _type, value); }
     public int VariablesReference { get => _variablesReference; private set { if (SetProperty(ref _variablesReference, value)) OnPropertyChanged(nameof(HasChildren)); } }
     public int? NamedVariables { get; private set; }
     public int? IndexedVariables { get; private set; }
@@ -93,7 +97,16 @@ public sealed class VariableNodeViewModel : ObservableObject
     /// <summary>Session generation the node's handle belongs to; a node from an older generation is dead.</summary>
     internal long Generation { get; set; }
 
-    public bool HasChildren => (Kind is VariableRowKind.Variable or VariableRowKind.Watch or VariableRowKind.Scope) && (_variablesReference > 0 || _children.Count > 0);
+    public bool HasChildren => !_isLazy && (Kind is VariableRowKind.Variable or VariableRowKind.Watch or VariableRowKind.Scope) && (_variablesReference > 0 || _children.Count > 0);
+
+    private bool _isLazy;
+
+    /// <summary>
+    /// A value the adapter computes only on request (DAP <c>presentationHint.lazy</c>: js-debug's getters). Shown as <see cref="LazyText"/>
+    /// until activated; then the getter runs and the row shows its result (<see cref="VariablesTreeViewModel.ResolveLazyAsync"/>).
+    /// </summary>
+    public bool IsLazy => _isLazy;
+    public const string LazyText = "(…)";
 
     public bool IsExpanded { get => _isExpanded; internal set { if (SetProperty(ref _isExpanded, value)) OnPropertyChanged(nameof(ChevronKind)); } }
 
@@ -172,6 +185,13 @@ public sealed class VariableNodeViewModel : ObservableObject
     /// <summary>Variables requested from the adapter so far (the start of the next page).</summary>
     internal int NextStart { get; set; }
     internal int LoadedCount => _children.Count;
+    /// <summary>
+    /// Children loaded besides the paged ones (an array's <c>length</c> and prototype, fetched once with the <c>named</c> filter): they do not count
+    /// toward <see cref="VariablesTreeViewModel.MaxLoadedPerNode"/>, which caps the elements, and are not "items" of the cap notice.
+    /// </summary>
+    internal int UnpagedCount { get; set; }
+    /// <summary>The paged children loaded so far (the elements of an array).</summary>
+    internal int PagedCount => _children.Count - UnpagedCount;
     internal string? FirstChildName { get; set; }
 
     /// <summary>Total children the adapter announced (named + indexed), or null when it did not say.</summary>
@@ -183,19 +203,24 @@ public sealed class VariableNodeViewModel : ObservableObject
         set { if (SetProperty(ref _formatOverride, value)) Refresh(); }
     }
 
-    public bool CanViewAsNumber => ValueFormat.IsIntegerType(_type) && IsDataRow && !IsError;
+    public bool CanViewAsNumber => !_isLazy && ValueFormat.IsIntegerType(_type) && IsDataRow && !IsError;
 
     public string Tooltip => _isError ? (_errorMessage ?? _fullValue)
+        : _isLazy ? "Press Enter or double-click to evaluate (runs the getter in the debuggee)"
         : IsDataRow ? (_type is { Length: > 0 } ? $"{_fullValue}\n({_type})" : _fullValue) : string.Empty;
 
     internal void AddChildren(IEnumerable<VariableNodeViewModel> children) => _children.AddRange(children);
-    internal void ClearChildren() => _children.Clear();
+    internal void ClearChildren()
+    {
+        _children.Clear();
+        UnpagedCount = 0;
+    }
 
     /// <summary>Re-renders <see cref="DisplayValue"/> (the tree's radix changed, or the value did).</summary>
     internal void Refresh()
     {
         if (!IsDataRow || _isError) return;
-        DisplayValue = ValueFormat.Display(_fullValue, _type, _formatOverride ?? Tree.NumberFormat);
+        DisplayValue = _isLazy ? LazyText : ValueFormat.Display(_fullValue, _type, _formatOverride ?? Tree.NumberFormat);
         OnPropertyChanged(nameof(Tooltip));
         OnPropertyChanged(nameof(CanViewAsNumber));
     }
@@ -204,7 +229,18 @@ public sealed class VariableNodeViewModel : ObservableObject
     {
         EvaluateName = v.EvaluateName;
         MemoryReference = v.MemoryReference;
+        _isLazy = v.IsLazy;
         SetValue(v.Value, v.Type, v.VariablesReference, v.NamedVariables, v.IndexedVariables);
+        OnPropertyChanged(nameof(IsLazy));
+    }
+
+    /// <summary>The getter ran: the row now shows its result (which may itself have children).</summary>
+    internal void ResolveLazy(DebugVariable value)
+    {
+        _isLazy = false;
+        SetValue(value.Value, value.Type, value.VariablesReference, value.NamedVariables, value.IndexedVariables);
+        OnPropertyChanged(nameof(IsLazy));
+        OnPropertyChanged(nameof(Tooltip));
     }
 
     internal void SetFrom(DebugEvaluateResult r)
@@ -250,7 +286,7 @@ public sealed class VariableNodeViewModel : ObservableObject
     /// <summary>Forgets everything that depends on a live debuggee (the handle died when it resumed).</summary>
     internal void DropHandles()
     {
-        _children.Clear();
+        ClearChildren();
         RowsVersion++;
         MoreRow = null;
         ChildrenLoaded = false;

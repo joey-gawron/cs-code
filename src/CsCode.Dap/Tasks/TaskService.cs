@@ -15,9 +15,11 @@ namespace CsCode.Dap.Tasks;
 /// Minimum-viable <c>tasks.json</c> runner (<c>.cscode/</c> then <c>.vscode/</c>): <c>shell</c> and <c>process</c> tasks, <c>command</c>,
 /// <c>args</c>, <c>options.cwd/env</c>, <c>dependsOn</c> (+ <c>dependsOrder</c> sequence/parallel), <c>group</c>, platform blocks, the same
 /// <c>${…}</c> substitution as launch.json. Output streams (batched, bounded) to the "Tasks" output channel; success = exit code 0;
-/// cancelling kills the whole process tree. Problem matchers are accepted and ignored.
+/// cancelling kills the whole process tree. Problem matchers are accepted and ignored. Task processes (a preLaunchTask's <c>tsc</c>,
+/// <c>cargo build</c>…) are reported to <see cref="CsCode.Core.Diagnostics.IMemoryMonitor.TrackChildProcess"/>, and <see cref="Dispose"/> (app
+/// shutdown) kills every task still running, with its process tree.
 /// </summary>
-public sealed class TaskService : ITaskService
+public sealed class TaskService : ITaskService, IDisposable
 {
     public const string ChannelName = "Tasks";
     private static readonly string[] Locations = [".cscode/tasks.json", ".vscode/tasks.json"];
@@ -26,6 +28,37 @@ public sealed class TaskService : ITaskService
     private readonly DebugLane _lane;
     private readonly DapPlatform _p;
     private readonly ILogger _logger;
+    private readonly HashSet<Process> _running = new();
+    private int _disposed;
+
+    /// <summary>Pids of the task processes running right now (diagnostics and tests).</summary>
+    public IReadOnlyList<int> RunningProcessIds
+    {
+        get
+        {
+            lock (_running)
+            {
+                var pids = new List<int>(_running.Count);
+                foreach (var p in _running)
+                {
+                    try { pids.Add(p.Id); } catch (InvalidOperationException) { }
+                }
+                return pids;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Kills every task still running (whole process trees) and refuses new ones. Non-blocking: signals only, no waiting, so the container can
+    /// dispose it on the UI thread at shutdown.
+    /// </summary>
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        Process[] running;
+        lock (_running) running = [.. _running];
+        foreach (var p in running) KillTree(p);
+    }
 
     public TaskService(DebugLane lane, DapPlatform platform)
     {
@@ -127,6 +160,7 @@ public sealed class TaskService : ITaskService
 
     private async Task<TaskResult> RunCoreAsync(string label, Uri? folder, CancellationToken ct)
     {
+        if (Volatile.Read(ref _disposed) != 0) return new TaskResult(label, -1, Error: "The task runner has shut down.");
         TasksFile file;
         try { file = await LoadAsync(folder, ct); }
         catch (InvalidOperationException ex) { return new TaskResult(label, -1, Error: ex.Message); }
@@ -234,7 +268,11 @@ public sealed class TaskService : ITaskService
             return new TaskResult(task.Label, -1, Error: $"Could not start '{command}': {ex.Message}");
         }
 
-        using (process)
+        using var owned = process;
+        lock (_running) _running.Add(process);
+        using var tracked = _p.Memory?.TrackChildProcess($"task ({task.Label})", process.Id);
+        if (Volatile.Read(ref _disposed) != 0) KillTree(process); // shut down while it was starting
+        try
         {
             try { process.StandardInput.Close(); } catch (Exception ex) when (ex is IOException or InvalidOperationException) { }
             var pumps = new List<BoundedTextPump>();
@@ -259,8 +297,13 @@ public sealed class TaskService : ITaskService
             }
             catch (TimeoutException) { /* a grandchild keeps the pipes open: the task itself has finished */ }
 
+            if (Volatile.Read(ref _disposed) != 0) return new TaskResult(task.Label, -1, Cancelled: true); // killed by the shutdown
             channel?.AppendLine($"> Task '{task.Label}' finished with exit code {process.ExitCode}.");
             return new TaskResult(task.Label, process.ExitCode);
+        }
+        finally
+        {
+            lock (_running) _running.Remove(process);
         }
     }
 

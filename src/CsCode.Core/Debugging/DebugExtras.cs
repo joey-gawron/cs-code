@@ -8,7 +8,12 @@ namespace CsCode.Core.Debugging;
 /// <summary>The call stack frame the UI selected (Call Stack panel / hover), which scopes evaluate/locals and moves the stop marker.</summary>
 public interface IDebugFrameFocus
 {
-    /// <summary>Selects a frame of a stopped session; updates <see cref="IDebugService.StopLocation"/> (and fires its event).</summary>
+    /// <summary>
+    /// Selects a frame of a stopped session; updates <see cref="IDebugService.StopLocation"/> (and fires its event). It never returns as if focus
+    /// had moved when it did not: it THROWS <see cref="InvalidOperationException"/> when the frame is no longer valid (the debuggee resumed or
+    /// stopped again, or an <c>invalidated</c> event renumbered the frames — CsCode.Dap throws its subtype DebugHandleInvalidatedException) and
+    /// when the session has ended or is no longer the focused one. Callers show the reason and leave their selection where it was.
+    /// </summary>
     ValueTask SetFocusedFrameAsync(string sessionId, int threadId, int frameId, CancellationToken ct = default);
     /// <summary>Frame currently selected for the active session (null when running/none).</summary>
     int? FocusedFrameId { get; }

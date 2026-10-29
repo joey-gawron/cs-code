@@ -4,12 +4,13 @@
 Samsung **netcoredbg** (MIT). No Avalonia, no Newtonsoft, no extension host: the protocol layer is hand-written on `System.Text.Json`,
 and customisation is native and file based (`launch.json`, `tasks.json`, the `cscode.debuggers` setting).
 
-> **Status in one paragraph.** Everything in the brief's MUST list is implemented and covered by **455 passing tests against scripted
-> in-process fake adapters, real child processes (`/bin/sh`, `python3`) and real TCP/unix sockets**, plus the SHOULD items listed below.
-> The **real netcoredbg end-to-end suite (`Category=RealAdapter`, 8 tests including the 10-session soak) passes against netcoredbg
-> 3.2.0-1092** on Linux x64 (integration run; no adapter or debuggee process is left behind). It was not executed by the module's original
-> author (the permission system refused to run the downloaded binary then). Run it with
-> `tools/fetch-netcoredbg.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter`.
+> **Status in one paragraph.** Everything in the brief's MUST list is implemented and covered by **514 passing tests against scripted
+> in-process fake adapters, real child processes (`/bin/sh`, `python3`, `node`) and real TCP/unix sockets**, plus the SHOULD items listed below.
+> The **real-adapter suites (`Category=RealAdapter`, 42 tests) pass**: netcoredbg 3.2.0-1092 (8 tests including the 10-session soak) and
+> **js-debug v1.140.0 for Node.js/TypeScript** on Node.js 24.21.0 (34 tests: the whole TypeScript evaluation matrix of
+> [DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md), the private socket, a 10-session soak), on Linux x64, three runs in a row, no adapter,
+> debuggee, task process or socket directory left behind. Run them with
+> `tools/fetch-netcoredbg.sh && tools/fetch-js-debug.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter`.
 > See [Real-adapter tests](#real-adapter-tests-netcoredbg).
 
 ## Layout
@@ -17,15 +18,16 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
 | Path | What |
 |---|---|
 | `Protocol/DapModels.cs` | Hand-written DAP models (`Dap*` records, init-only, nullable, string unions) + `DapJson` options. Unknown fields/enum values never break parsing. |
-| `Transport/` | `DapFrameReader/Writer` (Content-Length framing, size-capped), `ProcessTransport` (stdio), `TcpTransport`, `PipeTransport` (named pipe / unix socket). |
+| `Transport/` | `DapFrameReader/Writer` (Content-Length framing, size-capped), `ProcessTransport` (stdio), `TcpTransport`, `PipeTransport` (named pipe / unix socket), `ServerProcessTransport` (an adapter that runs as a server process: start it, read its listening line, connect to its private socket — or a TCP port it printed — own the process tree and the socket), `PrivateSocket` (a Unix domain socket in a fresh 0700 directory under `$XDG_RUNTIME_DIR` or the temp directory, a named pipe on Windows; stale directories of a killed CsCode removed). |
 | `Client/DebugLane.cs`, `Client/DebugAdapterClient.cs` | The Debug lane and the DAP client (own `seq`, request/response correlation, typed event emitters, reverse requests, timeouts, cancellation). |
 | `Session/` | `DebugSession : IDebugSession` (+ `BreakpointSync`, `OutputBatcher`, `VariableHandleCache`, `DebuggeeLauncher`). |
 | `Breakpoints/BreakpointManager.cs` | `IBreakpointManager` (source of truth, persisted per workspace). |
 | `Service/` | `DebugService : IDebugService` (+ `IDebugFrameFocus`, `IDebugOutputHistory`, `IDebugSourceContentProvider`), commands, `cscode.debuggers` contributions. |
 | `Configuration/` | `DebugConfigurationService`, `LaunchJson`, `VariableResolver`, `DapPlatform` (optional Core services bundle). |
 | `Tasks/TaskService.cs` | Minimal `tasks.json` runner (`ITaskService`). |
-| `Adapters/` | `NetCoreDbgAdapterFactory`, `NetCoreDbgInstaller`. |
+| `Adapters/` | `NetCoreDbgAdapterFactory`, `NetCoreDbgInstaller`, `JsDebugAdapterFactory`, `JsDebugInstaller` (Node.js/TypeScript). |
 | `tools/fetch-netcoredbg.sh` | Fetches netcoredbg into `.scratch/tools/netcoredbg/` (SHA-256 verified, safe extraction). |
+| `tools/fetch-js-debug.sh` | Fetches the pinned js-debug v1.140.0 into `.scratch/tools/js-debug/v1.140.0/` (pinned SHA-256; `JSDEBUG_ARCHIVE=` installs from a local archive without downloading). |
 
 ## Threading and isolation (binding rules, verified by tests)
 
@@ -42,15 +44,30 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
 * **Floods.** `output` is coalesced by `OutputBatcher` into ≤ one event per category per 16 ms window with a **bounded, drop-oldest** pending
   buffer (128 K chars, with a "[debug output flooded: N characters dropped]" marker). The reader yields to the rest of the lane every
   32 frames, so one flooding adapter cannot starve other sessions. Debuggee output spawned by `runInTerminal` goes through a bounded pump with
-  at most one queued flush. The Debug Console history is a ring of ≤ 5,000 lines (≤ 4 MB).
+  at most one queued flush. The Debug Console history (`Service/OutputHistory`) keeps the newest ≤ 5,000 lines (≤ 4 MB): whole old events go
+  while they fit in the excess, otherwise the oldest event's head is cut by an **offset** (no copy), so a big batch followed by thousands of
+  one-line events costs O(line) per event under the service lock.
 * **Hostile payloads.** Frames larger than `MaxFrameBytes` (16 MB per session; 32 MB default for the raw client) are *skipped without
   buffering* (a short prefix is kept to fail the right request); variable pages are capped at 10,000 items even if the adapter ignores `count`;
   stack pages at 1,000 frames; module/loaded-source lists at 2,000.
 * **Hung adapters.** Every request has a timeout (default 10 s; `launch`/`attach`/`configurationDone` 60 s; setting
   `cscode.debug.requestTimeoutSeconds`). A timeout fails that request with `DapRequestTimeoutException`, sets `DebugSession.IsUnresponsive`
   (+ `UnresponsiveChanged`), and any later answer/event from the adapter clears it. Nothing ever blocks a caller.
-* **Child processes** start at normal priority, are killed as a *tree* on close/timeout/dispose, and are tracked (`IMemoryMonitor.TrackChildProcess`
-  when available).
+* **Child processes** are killed as a *tree* on close/timeout/dispose and are tracked (`IMemoryMonitor.TrackChildProcess` when available). Stdio
+  adapters (netcoredbg) start at normal priority; adapter **servers** (`DebugAdapterServerProcess`, js-debug) start under `nice -n 10`
+  (PriorityClass BelowNormal on Windows), which the debuggees they launch inherit. Task processes (`tasks.json`, a preLaunchTask's `tsc`) are tracked
+  too, and `TaskService.Dispose` (app shutdown) kills any task still running. A server transport kills the server's tree on close; processes
+  that left the tree survive a normal close (a program's detached browser or daemon) and are reaped only after the server died on its own (its
+  environment marker, same session only). `DebugService.Dispose` — a container disposed synchronously — kills every adapter tree and
+  `runInTerminal` debuggee at once (`IKillableTransport`): its asynchronous shutdown runs on the debug lane, which the same dispose ends.
+* **Adapter servers listen privately.** A `DebugAdapterServerProcess` with `PrivateSocket` (js-debug) gets a fresh directory only this user can
+  enter (mode 0700, `<prefix>-<pid>-<start time>-<random>` under `$XDG_RUNTIME_DIR`, else the temp directory; `/tmp` when that path would be too
+  long for `sun_path`) and the socket path `…/dap.sock` in place of the argument `${cscode:socketPath}`; the session connects with
+  `UnixDomainSocketEndPoint`, child sessions to the same path. No TCP port is opened, so no other local process (another user included) can
+  reach the adapter and have it launch programs. The directory is deleted whenever the transport closes (stop, program exit, server crash,
+  shutdown, `KillNow` of a synchronous dispose) and when the start fails; directories whose creator is gone (pid not running, or running with
+  another start time) are removed at the next start. Windows: a named pipe `\\.\pipe\<prefix>-<random>` through `PipeTransport` (written, not
+  exercised here).
 
 ### Measured (this machine, Debug build, `dotnet test`; reproduce with `CSCODE_DAP_TEST_METRICS=<file>`)
 
@@ -77,7 +94,14 @@ The tests that read process-wide counters or latency budgets run in a non-parall
 * The whole resolved launch object goes to the adapter untouched (plus `noDebug`; `__restart` on adapter-requested restarts).
 * Reverse requests: `runInTerminal` (the debuggee is spawned by the session — kinds `integrated` and `external` alike, there is no terminal UI yet —
   with stdout/stderr wired to the Debug Console, stdin closed, `env` entries with `null` removing variables, returns `processId`) and
-  `startDebugging` (asks `DebugService` for a child session, `Parent` set, type inherited).
+  `startDebugging` (asks `DebugService` for a child session, `Parent` set, type inherited). A child of a session connected to an adapter **server**
+  (`DebugAdapterServerProcess` on its private socket, `debugServer` over TCP, a named pipe) opens its own connection to that same server
+  (`DebugSession.AdapterEndpoint`, a `DebugAdapterNamedPipe` or `DebugAdapterServer` descriptor) instead of asking
+  the factory again — js-debug's pending target exists only there — when it carries `__pendingTargetId` or is of the parent's type; a child of
+  another type is created by its own type's factory. Children are stopped when their parent ends; the Restart command restarts the
+  top session of the focused one (js-debug closes a child's connection on `restart`).
+* A failed request (`success: false`) throws `DapRequestException` whose `Message` is the adapter's own text (what Watch/REPL/Locals show); the
+  request is `Command`.
 * Events handled: `stopped` (all-threads, `hitBreakpointIds`, duplicate suppression, `exceptionInfo` fetch), `continued`, `thread`, `output`
   (categories; `telemetry` dropped; source/line mapped to 0-based), `breakpoint`, `terminated` (incl. `restart`), `exited`, `invalidated`,
   `capabilities` (merged), `loadedSource`, `module`, `process`, `progressStart/Update/End`, `memory` (parsed, ignored).
@@ -122,11 +146,13 @@ whole lines inserted at column 0), the first surviving line after the deleted ra
 `[fromLine + delta, fromLine)`, vanished: their breakpoints are removed (the editor removes them itself first; the manager does it too, so a moved
 breakpoint never lands on top of another). `BreakpointEditCompositionTests` (tests/CsCode.App.Tests) drives real edits in a real editor view into the
 real manager. Adapter verdicts (`ReportStatus`) are kept
-**per breakpoint per session**, so one session ending never erases another live session's verdict.
+**per breakpoint per session**, so one session ending never erases another live session's verdict. `GetStatus` shows the newest verdict of a
+session that **verified** the breakpoint, else the newest verdict (VS Code's rule): js-debug's orchestrating parent session answers every
+`setBreakpoints` with "Unbound breakpoint", which must not hide the child's verdict.
 
 Each live session mirrors the manager (`BreakpointSync`): per-file replace-all `setBreakpoints` (an empty list clears a file), debounced 50 ms,
 only kinds the adapter supports (conditions/hit conditions/logpoints the adapter lacks are **not sent** — they would stop where the user said
-they must not — and are reported unverified with the reason), exception filters taken from the adapter's `exceptionBreakpointFilters`
+they must not — and are reported unverified with the reason; so are function breakpoints when the adapter has none, e.g. js-debug), exception filters taken from the adapter's `exceptionBreakpointFilters`
 (defaults applied once, user choices kept; conditions via `filterOptions`), content-based de-duplication (so adapter status updates cannot
 re-trigger sends), per-session adapter-id → breakpoint-id map for `breakpoint` events. An adapter that **errors** on a source (unknown file) does
 not abort the session: those breakpoints show unverified with the adapter's message.
@@ -160,11 +186,20 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   `IWindowService.ShowMessageAsync` + `WithProgressAsync`. `NetCoreDbgInstaller` resolves the latest release from the GitHub API, downloads
   the platform asset (linux-amd64/arm64, osx-arm64, win64), **verifies its SHA-256 against the digest GitHub publishes for the asset** (refuses on
   mismatch; warns and relies on archive integrity if GitHub publishes none), extracts through a zip-slip-safe extractor (rejects `..`, absolute
-  paths, drive letters, symlinks/hardlinks leaving the destination; never creates devices/fifos), `chmod +x`, atomically replaces the old install.
+  paths, drive letters, symlinks/hardlinks leaving the destination, symlink targets with a `..` segment — a `y -> .`, `x -> y/..` chain is
+  lexically inside yet resolves outside — and any entry that would be written through a symlink; never creates devices/fifos), `chmod +x`,
+  atomically replaces the old install.
   Concurrent starts trigger one offer and one download.
 * The provider fills in `cwd` when missing, converts a textual `processId` (from `${command:pickProcess}`) to the number netcoredbg expects, and
   produces the initial **launch** (`program: ${workspaceFolder}/bin/Debug/<tfm>/<Project>.dll`, `preLaunchTask: build`, `stopAtEntry`, `console`,
   `cwd`) and **attach** (`processId: ${command:pickProcess}`) configurations; project name and target framework come from the folder's `.csproj`.
+* Built-in `pwa-node` (and the legacy alias `node`, rewritten to `pwa-node`) → Microsoft's **js-debug** standalone server
+  (`node dapDebugServer.js <private socket path>`, a `DebugAdapterServerProcess` with `PrivateSocket`; see "Adapter servers listen privately"):
+  the parent session orchestrates and the program runs in the child session
+  js-debug asks for with `startDebugging`. Lookup: `cscode.debug.jsDebugPath` → `CSCODE_JSDEBUG` → `{ToolsDir}/js-debug/v1.140.0/js-debug`, else
+  the user is **offered** the pinned download (`JsDebugInstaller`, SHA-256 checked). Node.js: `cscode.debug.nodePath` → PATH. The provider sets
+  `__workspaceFolder` (without it js-debug resolves no source maps) and offers TypeScript (tsc build task), Node and attach templates. Breakpoint
+  languages typescript, javascript, typescriptreact, javascriptreact. Evaluation and quirks: [docs/DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md).
 * `${command:pickProcess}` is a built-in command (`pickProcess`) listing processes through `IWindowService.ShowQuickPickAsync` (enumeration runs
   off the caller thread; never lists the editor itself).
 * **User adapters, no extensions:** the `cscode.debuggers` setting (array of `{type, label, program, runtime, args, languages, windows/linux/osx,
@@ -179,17 +214,21 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   `workbench.action.debug.start|run|stop|restart|continue|pause|stepOver|stepInto|stepOut`, `editor.debug.action.toggleBreakpoint`, plus `pickProcess`.
 * Context keys (only if `IContextKeyService` resolves): `debugState` (`inactive|initializing|running|stopped`), `inDebugMode`, `debugType`,
   `debuggerAvailable`, `focusedSessionIsAttach`, `breakpointsExist`.
-* Settings registered with `IConfigurationService`: `cscode.debuggers`, `cscode.debug.netcoredbgPath`, `cscode.debug.requestTimeoutSeconds`.
+* Settings registered with `IConfigurationService`: `cscode.debuggers`, `cscode.debug.netcoredbgPath`, `cscode.debug.jsDebugPath`,
+  `cscode.debug.nodePath`, `cscode.debug.requestTimeoutSeconds`.
 
 ## Integration notes
 
 * `services.AddCsCodeDap()` registers a shared `DebugLane`, `BreakpointManager`/`IBreakpointManager`, `ITaskService`, `IDebugConfigurationService`,
-  `IDebugService` (and the same instance as `IDebugFrameFocus`, `IDebugOutputHistory`, `IDebugSourceContentProvider`) and the built-in
-  netcoredbg adapter. Every Core platform service it can use is **optional** (`DapPlatform.From(sp)` uses `GetService`).
+  `IDebugService` (and the same instance as `IDebugFrameFocus`, `IDebugOutputHistory`, `IDebugSourceContentProvider`, `IDebugKnownCapabilities`)
+  and the built-in adapters (netcoredbg for `coreclr`; js-debug for `pwa-node` and `node`). Every Core platform service it can use is **optional** (`DapPlatform.From(sp)` uses `GetService`).
   **Resolve `IDebugService` once at startup**: its constructor registers the commands, `${command:pickProcess}` and the context keys.
 * Additive Core files: `Core/Tasks/ITaskService.cs`; `Core/Debugging/DebugExtras.cs` (`IDebugFrameFocus`, `IDebugOutputHistory`,
-  `IDebugSourceContentProvider`, `IDebugSessionHealth`, `IActiveSelectionProvider`, `DebugSourceUri`). They are *new interfaces* rather than new
-  members of `IDebugService`, so existing implementers and fakes are not broken.
+  `IDebugSourceContentProvider`, `IDebugSessionHealth`, `IActiveSelectionProvider`, `DebugSourceUri`); `Core/Debugging/DebugKnownCapabilities.cs`
+  (`IDebugKnownCapabilities` — DebugService remembers each type's last capabilities — and `DebugCapabilityGate`, which the breakpoint editors use
+  to offer hit counts/logpoints only when supported); `Core/Debugging/DebugSessionPaging.cs` (`IDebugSessionVariablePaging`, filtered paging);
+  `DebugVariable.IsLazy` (DAP `presentationHint.lazy`). They are *new interfaces/members* rather than changed signatures, so existing implementers
+  and fakes are not broken.
 * Editor ↔ debugger: the editor calls `IBreakpointManager.ApplyLineShift` on edits and reads `IDebugService.StopLocation`; frame selection goes
   through `IDebugFrameFocus.SetFocusedFrameAsync`; `debug:/<session>/<ref>/<name>` documents are read-only virtual sources
   (`IDebugSourceContentProvider`). Ended sessions are replaced by a lightweight `EndedSession` in the console history so 5,000 retained lines
@@ -203,16 +242,24 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 * `serverReadyAction` (open a URL when an output pattern appears) is not implemented; the connect-retry loop of `TcpTransport` covers "wait for the port".
 * `${selectedText}` needs the shell's `IActiveSelectionProvider`; `INavigationService` exposes only the caret.
 * `runInTerminal` has no terminal UI: debuggee stdin is closed (EOF) and output is plain text in the Debug Console. A `console: "externalTerminal"` window is not opened.
+  js-debug terminal launches do not use it at all (they run in the console with `outputCapture: "std"`, or every `console.log` would show twice).
+* js-debug's server listens on a private Unix socket, but the program's own Node.js inspector, which js-debug's bootloader opens inside the
+  debuggee, listens on a random loopback TCP port while it is debugged (as in VS Code; see docs/DEBUGGING-RUST-TS.md, known gaps).
+* A socket directory survives only a CsCode that was killed outright (`kill -9`, a crash): it is removed the next time a js-debug session
+  starts, not at app start.
 * Shell tasks quote arguments POSIX-style; VS Code's `quoting` options and `isBackground` task readiness are not implemented. Auto-detected
   task providers (npm, tsc…) are out of scope (no extensions).
-* A flood beyond the 128 K-chars/16 ms window drops the *oldest* text by design; the console shows a dropped-characters marker.
+* A flood beyond the 128 K-chars/16 ms window drops the *oldest* text by design; the console shows a dropped-characters marker. The history
+  for late subscribers keeps the newest 5,000 lines (the oldest batch is cut, not dropped whole).
+* js-debug: function breakpoints are unsupported by the adapter; async parent frames have no variables; see docs/DEBUGGING-RUST-TS.md.
 * Single-thread-only resumes fire `Continued` once locally and may fire a second (duplicate) event if the adapter also sends `continued`.
-* Windows named pipes (`DebugAdapterNamedPipe`) and the Windows/macOS netcoredbg builds are implemented but only exercised on Linux here.
+* Windows named pipes (`DebugAdapterNamedPipe`, js-debug's private endpoint on Windows) and the Windows/macOS netcoredbg builds are implemented
+  but only exercised on Linux here.
 
 ## Tests (`tests/CsCode.Dap.Tests`, xUnit v3)
 
 ```
-dotnet test tests/CsCode.Dap.Tests --filter "Category!=RealAdapter"     # 455 tests: fakes, real processes/sockets, threading, leaks
+dotnet test tests/CsCode.Dap.Tests --filter "Category!=RealAdapter"     # 514 tests: fakes, real processes/sockets, threading, leaks
 dotnet test tests/CsCode.Dap.Tests --filter Category=RealTools          # SDK build of the sample project only (never starts netcoredbg)
 tools/fetch-netcoredbg.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter   # the real netcoredbg end-to-end suite
 ```
@@ -240,3 +287,20 @@ exception filter + `exceptionInfo`; and 10 start/stop cycles with PID, thread an
 before the `initialize` response, `initialized` before the `launch` response, frame ids starting at 0, `continued` before the response to a step,
 `exited` then `terminated`.
 `RealAdapterSampleTests` (trait `RealTools`) verifies the sample builds and its line markers resolve, without starting netcoredbg.
+
+### Real-adapter tests (js-debug)
+
+`RealJsDebugTests` (trait `Category=RealAdapter`, serial) compile a two-file TypeScript sample with the real tsc and run the whole evaluation matrix
+of docs/DEBUGGING-RUST-TS.md through `DebugService`: launch/exit, `.ts` breakpoints and moved lines, conditional/hit-count/logpoints, function
+breakpoints (unsupported), caught/uncaught exceptions, steps across files and awaits, pause, restart, stop (all, child only), adapter crash,
+shutdown, async/source-mapped/skipped frames, values (classes, getters, Map/Set, paged arrays), set variable, REPL and completions, output
+categories and capture modes, attach to `node --inspect`, a 1M-line flood, the TypeScript template end to end, the private socket (no TCP
+listener in the server, the 0700 directory, a stale directory of a killed CsCode removed), and a 10-session soak (sessions collected, no
+server/debuggee left, threads back to baseline). Each test checks that no js-debug server, no process carrying its marker and no socket
+directory is left. They skip with an explicit reason when `node`, `tsc` or js-debug (`tools/fetch-js-debug.sh` / `CSCODE_JSDEBUG`) is missing.
+`JsDebugFactoryTests`, `JsDebugInstallerTests` (the pinned digest against the local archive and a corrupted copy, the fetch script with fake
+`curl`/`wget` that fail if called), `ServerProcessTransportTests` and `AdapterServerProcessLifetimeTests` (shell stand-ins: listening line, early
+exit, timeout, `nice` 10, tree kill on close, detached/orphaned processes on a normal close and after a crash, synchronous dispose with a busy lane)
+and `PrivateSocketTests` (a Node.js stand-in on the socket: the 0700 directory, the path handed to the server, no TCP listener, the directory
+gone after close, crash, `KillNow` and a failed start; stale directories removed but not a live CsCode's, links or look-alikes; the
+`sun_path` fallback; `$XDG_RUNTIME_DIR`) need no download. `JsDebugWaveFixTests` and `JsDebugReviewFixTests` hold the regression tests of the fixes.
