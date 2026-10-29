@@ -65,13 +65,13 @@ internal sealed class DebuggeeLauncher : IDisposable
             if (_disposed) { SafeKill(process); process.Dispose(); throw new ObjectDisposedException(nameof(DebuggeeLauncher)); }
             _processes.Add(process);
         }
+        var pid = process.Id; // read FIRST: a short-lived debuggee may be reaped (and its Process object disposed) any moment now
         try { process.StandardInput.Close(); } catch (Exception ex) when (ex is IOException or InvalidOperationException) { }
         var stdout = new BoundedTextPump(_lane, text => _output("stdout", text));
         var stderr = new BoundedTextPump(_lane, text => _output("stderr", text));
-        _ = PumpAsync(process, process.StandardOutput, stdout);
-        _ = PumpAsync(process, process.StandardError, stderr);
-        _ = WatchExitAsync(process);
-        return new DapRunInTerminalResponse { ProcessId = process.Id, ShellProcessId = process.Id };
+        var pumps = Task.WhenAll(PumpAsync(process, process.StandardOutput, stdout), PumpAsync(process, process.StandardError, stderr));
+        _ = WatchExitAsync(process, pumps);
+        return new DapRunInTerminalResponse { ProcessId = pid, ShellProcessId = pid };
     }
 
     private async Task PumpAsync(Process process, StreamReader reader, BoundedTextPump pump)
@@ -93,10 +93,15 @@ internal sealed class DebuggeeLauncher : IDisposable
         finally { pump.Complete(); }
     }
 
-    private async Task WatchExitAsync(Process process)
+    /// <summary>Disposes the Process only after its output has been fully drained (never truncate a fast program's output).</summary>
+    private async Task WatchExitAsync(Process process, Task pumps)
     {
-        try { await process.WaitForExitAsync().ConfigureAwait(false); }
-        catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException) { }
+        try
+        {
+            await process.WaitForExitAsync().ConfigureAwait(false);
+            await pumps.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); // a grandchild holding the pipes open must not pin us
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException or TimeoutException) { }
         lock (_gate)
         {
             if (_processes.Remove(process)) process.Dispose();

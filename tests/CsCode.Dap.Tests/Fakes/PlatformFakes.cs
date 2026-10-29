@@ -73,20 +73,32 @@ public sealed class LocalFileSystem : IFileSystem
 public sealed class FakeFileWatcher : IFileWatcher
 {
     private readonly object _gate = new();
-    private readonly List<Action<IReadOnlyList<FileChange>>> _handlers = new();
+    private readonly List<(Uri Root, bool Recursive, Action<IReadOnlyList<FileChange>> Handler)> _handlers = new();
     public int ActiveWatches { get { lock (_gate) return _handlers.Count; } }
 
     public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges)
     {
-        lock (_gate) _handlers.Add(onChanges);
-        return Disposable.Create(() => { lock (_gate) _handlers.Remove(onChanges); });
+        var entry = (root, recursive, onChanges);
+        lock (_gate) _handlers.Add(entry);
+        return Disposable.Create(() => { lock (_gate) _handlers.Remove(entry); });
     }
 
+    /// <summary>Like an OS watcher: each watch only sees changes below ITS root (direct children unless recursive).</summary>
     public void Raise(params FileChange[] changes)
     {
-        Action<IReadOnlyList<FileChange>>[] hs;
+        (Uri Root, bool Recursive, Action<IReadOnlyList<FileChange>> Handler)[] hs;
         lock (_gate) hs = [.. _handlers];
-        foreach (var h in hs) h(changes);
+        foreach (var (root, recursive, handler) in hs)
+        {
+            var rootPath = root.LocalPath.TrimEnd('/');
+            var mine = changes.Where(c =>
+            {
+                var p = c.Uri.LocalPath.TrimEnd('/');
+                var parent = Path.GetDirectoryName(p)?.TrimEnd('/');
+                return recursive ? p.StartsWith(rootPath + "/", StringComparison.Ordinal) : parent == rootPath;
+            }).ToArray();
+            if (mine.Length > 0) handler(mine);
+        }
     }
 }
 
