@@ -125,7 +125,15 @@ public sealed class WorkspaceService : IWorkspaceService, IDisposable
         if (previous.SequenceEqual(next)) return;
 
         // Dependents first (settings, state), then publish: a FoldersChanged subscriber must already see the new workspace's values.
-        foreach (var b in _bound) await b.OnWorkspaceFoldersChangedAsync(next, ct).ConfigureAwait(false);
+        foreach (var b in _bound)
+        {
+            try { await b.OnWorkspaceFoldersChangedAsync(next, ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // One dependent failing (an unreadable settings file, a full disk) must not leave the workspace half-switched or unopenable.
+                _log.LogError(ex, "{Service} failed to follow the workspace change; continuing", b.GetType().Name);
+            }
+        }
         Volatile.Write(ref _folders, next);
 
         var added = next.Except(previous).ToArray();

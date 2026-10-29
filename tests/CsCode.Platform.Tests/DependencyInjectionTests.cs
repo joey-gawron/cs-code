@@ -20,7 +20,7 @@ public sealed class DiFixture : IDisposable
     public TempDirectory Temp { get; } = new("cscode-di-");
     public AppPaths Paths { get; }
     public ServiceCollection Services { get; } = new();
-    private ServiceProvider? _provider;
+    private readonly Lazy<ServiceProvider> _provider;
 
     public DiFixture()
     {
@@ -29,15 +29,20 @@ public sealed class DiFixture : IDisposable
         Paths = new AppPaths(k => k == "CSCODE_HOME" ? Temp.Combine("home") : null, HostOs.Linux, "/home/test");
         Services.AddSingleton<IAppPaths>(Paths);
         Services.AddSingleton(Paths);
+        // Thread-safe on purpose: a test resolves from many threads at once, and two racing first accesses must not build two containers.
+        _provider = new Lazy<ServiceProvider>(() => Services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = false, ValidateScopes = true }),
+            LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
-    public ServiceProvider Provider => _provider ??= Services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = false, ValidateScopes = true });
+    public ServiceProvider Provider => _provider.Value;
 
     public T Get<T>() where T : notnull => Provider.GetRequiredService<T>();
 
-    public void Dispose() { _provider?.Dispose(); Temp.Dispose(); }
+    public void Dispose() { if (_provider.IsValueCreated) _provider.Value.Dispose(); Temp.Dispose(); }
 }
 
+/// <summary>Runs alone: the shutdown test counts process-wide inotify fds, which any parallel test using a real watcher would disturb.</summary>
+[Collection("Watchers")]
 public class DependencyInjectionTests : IDisposable
 {
     private readonly DiFixture _f = new();
