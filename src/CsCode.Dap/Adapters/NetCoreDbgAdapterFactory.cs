@@ -35,6 +35,9 @@ public sealed class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDebugConfi
         _logger = platform.Logger("CsCode.Dap.NetCoreDbg");
     }
 
+    /// <summary>PATH lookup seam (tests must not mutate the process-wide PATH while other tests spawn children).</summary>
+    internal Func<string?> PathVariable { get; init; } = () => Environment.GetEnvironmentVariable("PATH");
+
     public static string ExecutableName => OperatingSystem.IsWindows() ? "netcoredbg.exe" : "netcoredbg";
 
     // ------------------------------------------------------------------ adapter
@@ -57,7 +60,7 @@ public sealed class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDebugConfi
             var tool = Path.Combine(paths.ToolsDir, "netcoredbg", ExecutableName);
             if (File.Exists(tool)) return tool;
         }
-        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        foreach (var dir in (PathVariable() ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             try
             {
