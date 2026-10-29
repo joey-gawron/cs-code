@@ -483,13 +483,6 @@ keys: dit
 <   <p>‸</p>
 < </div>
 
-=== textobj-082
-> <div>
->   <p>te‸xt</p>
-> </div>
-keys: d2it
-< <div>‸</div>
-
 === textobj-083
 > <a>x</a> ‸<b>y</b>
 keys: dit

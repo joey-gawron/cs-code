@@ -251,12 +251,12 @@ keys: ia<Esc>ib<Esc>uu<C-r><C-r>
 === insert-042
 > ‸foo
 keys: ia<Esc>ib<Esc>uuU
-< ‸
+< ‸foo
 
 === insert-043
 > ‸foo bar
 keys: xxxU
-< ‸
+< ‸foo bar
 
 === insert-044
 > ‸foo bar
@@ -266,7 +266,7 @@ keys: xxxUU
 === insert-045
 > foo ‸bar
 keys: xxxuU
-< ‸
+< foo ‸bar
 
 === insert-046
 > ‸foo
