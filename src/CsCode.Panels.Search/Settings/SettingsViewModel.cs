@@ -99,8 +99,8 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Two-way friendly flags for the scope tabs.</summary>
-    public bool IsUserScope { get => _scope == SettingsScope.User; set { if (value) SelectedScope = SettingsScope.User; } }
-    public bool IsWorkspaceScope { get => _scope == SettingsScope.Workspace; set { if (value) SelectedScope = SettingsScope.Workspace; } }
+    public bool IsUserScope { get => _scope == SettingsScope.User; set { if (value) SelectedScope = SettingsScope.User; else OnPropertyChanged(nameof(IsUserScope)); } }
+    public bool IsWorkspaceScope { get => _scope == SettingsScope.Workspace; set { if (value) SelectedScope = SettingsScope.Workspace; else OnPropertyChanged(nameof(IsWorkspaceScope)); } }
 
     private ConfigurationTarget Target => _scope == SettingsScope.Workspace ? ConfigurationTarget.Workspace : ConfigurationTarget.User;
 
@@ -111,7 +111,10 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     {
         _all.Clear();
         var props = _s.Configuration?.Properties ?? [];
-        foreach (var p in props.GroupBy(p => p.Key).Select(g => g.Last()).OrderBy(p => p.Key, StringComparer.Ordinal))
+        foreach (var p in props.GroupBy(p => p.Key).Select(g => g.Last())
+                     .OrderBy(p => SettingsCategories.Of(p.Key).Top, StringComparer.OrdinalIgnoreCase)
+                     .ThenBy(p => SettingsCategories.Of(p.Key).Sub ?? "", StringComparer.OrdinalIgnoreCase)
+                     .ThenBy(p => p.Key, StringComparer.Ordinal))
             _all.Add(SettingItemViewModel.Create(this, p));
         BuildCategories();
         foreach (var item in _all) LoadItem(item, null);
@@ -224,6 +227,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
 
     public void ApplyFilter()
     {
+        if (_disposed) return;
         var text = SearchText.Trim();
         var modifiedOnly = false;
         if (text.Contains("@modified", StringComparison.OrdinalIgnoreCase))

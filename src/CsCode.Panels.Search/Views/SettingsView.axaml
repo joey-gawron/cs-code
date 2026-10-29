@@ -15,28 +15,31 @@
       <Setter Property="CornerRadius" Value="2" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
-      <Setter Property="Foreground" Value="{DynamicResource vsc:icon.foreground}" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:icon.foreground'}" />
     </Style>
     <Style Selector="Button.tool:pointerover /template/ ContentPresenter">
-      <Setter Property="Background" Value="{DynamicResource vsc:toolbar.hoverBackground}" />
+      <Setter Property="Background" Value="{DynamicResource ResourceKey='vsc:toolbar.hoverBackground'}" />
     </Style>
     <Style Selector="TextBlock.dim">
-      <Setter Property="Foreground" Value="{DynamicResource vsc:descriptionForeground}" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:descriptionForeground'}" />
     </Style>
-    <Style Selector="RadioButton.tab">
-      <Setter Property="Padding" Value="12,4" />
+    <Style Selector="ToggleButton.tab">
+      <Setter Property="Padding" Value="14,5" />
       <Setter Property="Margin" Value="0" />
       <Setter Property="CornerRadius" Value="0" />
       <Setter Property="BorderThickness" Value="0,0,0,2" />
       <Setter Property="BorderBrush" Value="Transparent" />
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="{DynamicResource vsc:panelTitle.inactiveForeground}" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:panelTitle.inactiveForeground'}" />
     </Style>
-    <Style Selector="RadioButton.tab:checked">
-      <Setter Property="Foreground" Value="{DynamicResource vsc:panelTitle.activeForeground}" />
+    <Style Selector="ToggleButton.tab:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:panelTitle.activeForeground'}" />
     </Style>
-    <Style Selector="RadioButton.tab:checked /template/ Border#RootBorder">
-      <Setter Property="BorderBrush" Value="{DynamicResource vsc:panelTitle.activeBorder}" />
+    <Style Selector="ToggleButton.tab:checked /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:panelTitle.activeForeground'}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ResourceKey='vsc:panelTitle.activeBorder'}" />
     </Style>
     <Style Selector="ListBoxItem.setting">
       <Setter Property="Padding" Value="0" />
@@ -52,7 +55,7 @@
     <DataTemplate DataType="s:BoolSettingViewModel">
       <CheckBox IsChecked="{Binding Value, Mode=TwoWay}" Content="{Binding Description}" Margin="0,2,0,0">
         <CheckBox.ContentTemplate>
-          <DataTemplate x:DataType="x:String"><TextBlock Text="{Binding}" TextWrapping="Wrap" Foreground="{DynamicResource vsc:descriptionForeground}" /></DataTemplate>
+          <DataTemplate x:DataType="x:String"><TextBlock Text="{Binding}" TextWrapping="Wrap" Foreground="{DynamicResource ResourceKey='vsc:descriptionForeground'}" /></DataTemplate>
         </CheckBox.ContentTemplate>
       </CheckBox>
     </DataTemplate>
@@ -77,15 +80,15 @@
       <StackPanel Spacing="2">
         <TextBlock Text="{Binding Summary}" Classes="dim" FontStyle="Italic" TextTrimming="CharacterEllipsis" />
         <Button Classes="link" Command="{Binding EditInJsonCommand}" Padding="0" Background="Transparent" BorderThickness="0" HorizontalAlignment="Left" AutomationProperties.Name="Edit in settings.json">
-          <TextBlock Text="Edit in settings.json" TextDecorations="Underline" Foreground="{DynamicResource vsc:textLink.foreground}" />
+          <TextBlock Text="Edit in settings.json" TextDecorations="Underline" Foreground="{DynamicResource ResourceKey='vsc:textLink.foreground'}" />
         </Button>
       </StackPanel>
     </DataTemplate>
   </UserControl.DataTemplates>
 
-  <Grid ColumnDefinitions="230,*" Background="{DynamicResource vsc:editor.background}" TextElement.Foreground="{DynamicResource vsc:foreground}">
+  <Grid ColumnDefinitions="230,*" Background="{DynamicResource ResourceKey='vsc:editor.background'}" TextElement.FontFamily="{DynamicResource ResourceKey='ui:FontFamily'}" TextElement.FontSize="{DynamicResource ResourceKey='ui:FontSize'}" TextElement.Foreground="{DynamicResource ResourceKey='vsc:foreground'}">
     <!-- Category tree -->
-    <Border Grid.Column="0" Background="{DynamicResource vsc:sideBar.background}" BorderBrush="{DynamicResource vsc:sideBar.border}" BorderThickness="0,0,1,0">
+    <Border Grid.Column="0" Background="{DynamicResource ResourceKey='vsc:sideBar.background'}" BorderBrush="{DynamicResource ResourceKey='vsc:sideBar.border'}" BorderThickness="0,0,1,0">
       <ListBox ItemsSource="{Binding Categories}" SelectedItem="{Binding SelectedCategory, Mode=TwoWay}" Background="Transparent" BorderThickness="0" Margin="0,8,0,0"
                AutomationProperties.Name="Setting categories">
         <ListBox.ItemContainerTheme>
@@ -115,8 +118,8 @@
         </Button>
       </Grid>
       <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="20,0,20,0">
-        <RadioButton Classes="tab" GroupName="scope" IsChecked="{Binding IsUserScope, Mode=TwoWay}" Content="User" />
-        <RadioButton Classes="tab" GroupName="scope" IsChecked="{Binding IsWorkspaceScope, Mode=TwoWay}" IsEnabled="{Binding IsWorkspaceAvailable}" Content="Workspace" />
+        <ToggleButton Classes="tab" IsChecked="{Binding IsUserScope, Mode=TwoWay}" Content="User" />
+        <ToggleButton Classes="tab" IsChecked="{Binding IsWorkspaceScope, Mode=TwoWay}" IsEnabled="{Binding IsWorkspaceAvailable}" Content="Workspace" />
       </StackPanel>
       <ListBox Grid.Row="2" x:Name="SettingsList" ItemsSource="{Binding Items}" Background="Transparent" BorderThickness="0" Margin="0,6,0,0" SelectionMode="Single"
                AutomationProperties.Name="Settings">
@@ -130,7 +133,7 @@
           <DataTemplate x:DataType="s:SettingItemViewModel">
             <Grid ColumnDefinitions="3,*" Margin="0,0,0,2">
               <!-- the "modified" marker -->
-              <Border Grid.Column="0" Margin="0,4" Background="{DynamicResource vsc:focusBorder}" IsVisible="{Binding IsModified}" />
+              <Border Grid.Column="0" Margin="0,4" Background="{DynamicResource ResourceKey='vsc:focusBorder'}" IsVisible="{Binding IsModified}" />
               <StackPanel Grid.Column="1" Margin="17,8,20,10" Spacing="4">
                 <Grid ColumnDefinitions="*,Auto">
                   <StackPanel Orientation="Horizontal" Spacing="8">
@@ -143,7 +146,7 @@
                 <TextBlock Text="{Binding Description}" Classes="dim" TextWrapping="Wrap" MaxWidth="720" HorizontalAlignment="Left"
                            IsVisible="{Binding Kind, Converter={x:Static v:SettingsView.NotBooleanConverter}}" />
                 <ContentControl Content="{Binding}" />
-                <TextBlock Text="{Binding Error}" IsVisible="{Binding HasError}" Foreground="{DynamicResource vsc:errorForeground}" FontSize="11" />
+                <TextBlock Text="{Binding Error}" IsVisible="{Binding HasError}" Foreground="{DynamicResource ResourceKey='vsc:errorForeground'}" FontSize="11" />
               </StackPanel>
             </Grid>
           </DataTemplate>

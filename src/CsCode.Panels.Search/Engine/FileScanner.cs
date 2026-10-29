@@ -22,7 +22,7 @@ internal readonly record struct ScanResult(ScanStatus Status, List<SearchMatch>?
 internal sealed class FileScanner : IDisposable
 {
     private const int SniffBytes = 8192;
-    private const int LeadContext = 40;
+    private const int LeadContext = 25; // characters of context kept before a match that starts late in its line (keeps it visible in a narrow pane)
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
@@ -391,7 +391,7 @@ internal sealed class FileScanner : IDisposable
         while (lead < idx && char.IsWhiteSpace(line[lead])) lead++; // never trim into the match
         int start = lead, end = line.Length;
         bool clipLeft = false, clipRight = false;
-        if (line.Length > _limits.LongLineThreshold || end - start > _previewMax)
+        if (line.Length > _limits.LongLineThreshold || end - start > _previewMax || idx - lead > LeadContext)
         {
             start = Math.Max(lead, idx - LeadContext);
             clipLeft = start > lead;

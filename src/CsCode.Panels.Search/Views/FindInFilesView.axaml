@@ -17,13 +17,13 @@
       <Setter Property="CornerRadius" Value="2" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
-      <Setter Property="Foreground" Value="{DynamicResource vsc:icon.foreground}" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:icon.foreground'}" />
     </Style>
     <Style Selector="Button.tool:pointerover /template/ ContentPresenter">
-      <Setter Property="Background" Value="{DynamicResource vsc:toolbar.hoverBackground}" />
+      <Setter Property="Background" Value="{DynamicResource ResourceKey='vsc:toolbar.hoverBackground'}" />
     </Style>
     <Style Selector="Button.tool:pressed /template/ ContentPresenter">
-      <Setter Property="Background" Value="{DynamicResource vsc:toolbar.activeBackground}" />
+      <Setter Property="Background" Value="{DynamicResource ResourceKey='vsc:toolbar.activeBackground'}" />
     </Style>
     <Style Selector="Button.tool:disabled">
       <Setter Property="Opacity" Value="0.4" />
@@ -40,17 +40,17 @@
       <Setter Property="CornerRadius" Value="2" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
-      <Setter Property="Foreground" Value="{DynamicResource vsc:icon.foreground}" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:icon.foreground'}" />
     </Style>
     <Style Selector="ToggleButton.opt:pointerover /template/ ContentPresenter">
-      <Setter Property="Background" Value="{DynamicResource vsc:toolbar.hoverBackground}" />
+      <Setter Property="Background" Value="{DynamicResource ResourceKey='vsc:toolbar.hoverBackground'}" />
     </Style>
     <Style Selector="ToggleButton.opt:checked /template/ ContentPresenter">
-      <Setter Property="Background" Value="{DynamicResource vsc:inputOption.activeBackground}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource vsc:inputOption.activeBorder}" />
+      <Setter Property="Background" Value="{DynamicResource ResourceKey='vsc:inputOption.activeBackground'}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ResourceKey='vsc:inputOption.activeBorder'}" />
     </Style>
     <Style Selector="TextBlock.dim">
-      <Setter Property="Foreground" Value="{DynamicResource vsc:descriptionForeground}" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:descriptionForeground'}" />
     </Style>
     <Style Selector="TextBox.field">
       <Setter Property="MinHeight" Value="24" />
@@ -73,12 +73,12 @@
     </Style>
   </UserControl.Styles>
 
-  <Grid RowDefinitions="Auto,Auto,Auto,*" Background="{DynamicResource vsc:sideBar.background}" TextElement.Foreground="{DynamicResource vsc:foreground}">
+  <Grid RowDefinitions="Auto,Auto,Auto,*" Background="{DynamicResource ResourceKey='vsc:sideBar.background'}" TextElement.FontFamily="{DynamicResource ResourceKey='ui:FontFamily'}" TextElement.FontSize="{DynamicResource ResourceKey='ui:FontSize'}" TextElement.Foreground="{DynamicResource ResourceKey='vsc:foreground'}">
 
     <!-- Title bar with the search toolbar -->
     <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="10,6,6,2">
       <TextBlock Grid.Column="0" Text="FIND IN FILES" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"
-                 Foreground="{DynamicResource vsc:sideBarTitle.foreground}" />
+                 Foreground="{DynamicResource ResourceKey='vsc:sideBarTitle.foreground'}" />
       <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2">
         <Button Classes="tool" Command="{Binding SearchCommand}" ToolTip.Tip="Refresh (re-run the search)" AutomationProperties.Name="Refresh"><ic:Icon Kind="refresh" Size="16" /></Button>
         <Button Classes="tool" Command="{Binding CancelCommand}" ToolTip.Tip="Cancel search (Esc)" AutomationProperties.Name="Cancel search"><ic:Icon Kind="search-stop" Size="16" /></Button>
@@ -122,36 +122,36 @@
           <TextBox x:Name="IncludeBox" Classes="field" Text="{Binding Include, Mode=TwoWay}" PlaceholderText="e.g. *.cs, src/**" AutomationProperties.Name="Files to include" />
           <TextBlock Text="files to exclude" Classes="dim" FontSize="11" Margin="0,3,0,0" />
           <TextBox x:Name="ExcludeBox" Classes="field" Text="{Binding Exclude, Mode=TwoWay}" PlaceholderText="e.g. **/bin/**, **/obj/**" AutomationProperties.Name="Files to exclude" />
-          <CheckBox IsChecked="{Binding UseExcludeSettings, Mode=TwoWay}" Content="Use exclude settings" MinHeight="22" Margin="0,3,0,0" FontSize="12" />
-          <CheckBox IsChecked="{Binding UseIgnoreFiles, Mode=TwoWay}" Content="Use ignore files (.gitignore)" MinHeight="22" FontSize="12" />
-          <CheckBox IsChecked="{Binding OpenEditorsOnly, Mode=TwoWay}" Content="Search only in open editors" MinHeight="22" FontSize="12" />
+          <CheckBox IsChecked="{Binding UseExcludeSettings, Mode=TwoWay}" Content="Use exclude settings" MinHeight="18" Padding="6,0,0,0" Margin="0,4,0,0" FontSize="12" />
+          <CheckBox IsChecked="{Binding UseIgnoreFiles, Mode=TwoWay}" Content="Use ignore files (.gitignore)" MinHeight="18" Padding="6,0,0,0" FontSize="12" />
+          <CheckBox IsChecked="{Binding OpenEditorsOnly, Mode=TwoWay}" Content="Search only in open editors" MinHeight="18" Padding="6,0,0,0" FontSize="12" />
         </StackPanel>
       </Grid>
     </StackPanel>
 
     <!-- Summary / progress -->
-    <Border Grid.Row="2" BorderBrush="{DynamicResource vsc:sideBarSectionHeader.border}" BorderThickness="0,1,0,0"
-            Background="{DynamicResource vsc:sideBarSectionHeader.background}" Padding="10,3">
+    <Border Grid.Row="2" BorderBrush="{DynamicResource ResourceKey='vsc:sideBarSectionHeader.border'}" BorderThickness="0,1,0,0"
+            Background="{DynamicResource ResourceKey='vsc:sideBarSectionHeader.background'}" Padding="10,3">
       <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
         <TextBlock x:Name="SummaryText" Grid.Column="0" Text="{Binding Summary}" TextTrimming="CharacterEllipsis" FontSize="11"
-                   Foreground="{DynamicResource vsc:sideBarSectionHeader.foreground}" ToolTip.Tip="{Binding Summary}" />
+                   Foreground="{DynamicResource ResourceKey='vsc:sideBarSectionHeader.foreground'}" ToolTip.Tip="{Binding Summary}" />
         <TextBlock Grid.Column="1" Text="{Binding ProgressText}" Classes="dim" FontSize="11" Margin="8,0,0,0" IsVisible="{Binding IsSearching}" />
         <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" IsIndeterminate="True" Height="2" MinHeight="2" Margin="0,3,0,0" IsVisible="{Binding IsSearching}"
-                     Foreground="{DynamicResource vsc:progressBar.background}" />
+                     Foreground="{DynamicResource ResourceKey='vsc:progressBar.background'}" />
         <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding ErrorMessage}" TextWrapping="Wrap" FontSize="11" Margin="0,3,0,0"
-                   Foreground="{DynamicResource vsc:errorForeground}" IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                   Foreground="{DynamicResource ResourceKey='vsc:errorForeground'}" IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
       </Grid>
     </Border>
 
     <!-- Results: a flat, virtualised list (file rows and match rows) -->
     <ListBox Grid.Row="3" x:Name="ResultsList" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
-             Background="Transparent" BorderThickness="0" Padding="0" SelectionMode="Single" AutomationProperties.Name="Search results">
+             Background="Transparent" BorderThickness="0" Padding="0" SelectionMode="Single" Focusable="True" AutomationProperties.Name="Search results">
       <ListBox.DataTemplates>
         <DataTemplate DataType="vm:FileRow">
           <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" Margin="4,0,6,0" MinHeight="22" DoubleTapped="OnFileDoubleTapped" ContextRequested="OnRowContext" Background="Transparent">
             <ic:Icon Grid.Column="0" Kind="{Binding IsExpanded, Converter={x:Static v:FindInFilesView.ChevronConverter}}" Size="14" VerticalAlignment="Center" Margin="0,0,2,0"
-                     Foreground="{DynamicResource vsc:icon.foreground}" />
-            <ic:Icon Grid.Column="1" Kind="file" Size="14" VerticalAlignment="Center" Margin="0,0,5,0" Foreground="{DynamicResource vsc:icon.foreground}" />
+                     Foreground="{DynamicResource ResourceKey='vsc:icon.foreground'}" />
+            <ic:Icon Grid.Column="1" Kind="file" Size="14" VerticalAlignment="Center" Margin="0,0,5,0" Foreground="{DynamicResource ResourceKey='vsc:icon.foreground'}" />
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
               <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
               <TextBlock Text="{Binding Directory}" Classes="dim" FontSize="11" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
@@ -160,8 +160,8 @@
               <Button Classes="tool" Width="20" Height="20" Click="OnReplaceFileClick" ToolTip.Tip="Replace All in this file" AutomationProperties.Name="Replace in file"><ic:Icon Kind="replace-all" Size="14" /></Button>
               <Button Classes="tool" Width="20" Height="20" Click="OnDismissClick" ToolTip.Tip="Dismiss (Del)" AutomationProperties.Name="Dismiss"><ic:Icon Kind="close" Size="14" /></Button>
             </StackPanel>
-            <Border Grid.Column="4" Margin="6,0,0,0" CornerRadius="9" MinWidth="18" Height="16" Padding="5,0" VerticalAlignment="Center" Background="{DynamicResource vsc:badge.background}">
-              <TextBlock Text="{Binding MatchCount}" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource vsc:badge.foreground}" />
+            <Border Grid.Column="4" Margin="6,0,0,0" CornerRadius="9" MinWidth="18" Height="16" Padding="5,0" VerticalAlignment="Center" Background="{DynamicResource ResourceKey='vsc:badge.background'}">
+              <TextBlock Text="{Binding MatchCount}" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource ResourceKey='vsc:badge.foreground'}" />
             </Border>
           </Grid>
         </DataTemplate>
@@ -170,7 +170,7 @@
             <TextBlock Grid.Column="0" Text="{Binding LineNumber}" Classes="dim" FontSize="11" Width="34" TextAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0" />
             <v:MatchPreviewText Grid.Column="1" Preview="{Binding Preview}" MatchStart="{Binding PreviewMatchStart}" MatchLength="{Binding PreviewMatchLength}"
                                 MatchedText="{Binding MatchedText}" Previews="{Binding Previews}" VerticalAlignment="Center"
-                                FontFamily="{DynamicResource ui:CodeFontFamily}" FontSize="12" />
+                                FontFamily="{DynamicResource ResourceKey='ui:CodeFontFamily'}" FontSize="12" />
             <StackPanel Grid.Column="2" Classes="actions" Orientation="Horizontal" Spacing="1" VerticalAlignment="Center">
               <Button Classes="tool" Width="20" Height="20" Click="OnReplaceMatchClick" ToolTip.Tip="Replace" AutomationProperties.Name="Replace match"><ic:Icon Kind="replace" Size="14" /></Button>
               <Button Classes="tool" Width="20" Height="20" Click="OnDismissClick" ToolTip.Tip="Dismiss (Del)" AutomationProperties.Name="Dismiss"><ic:Icon Kind="close" Size="14" /></Button>

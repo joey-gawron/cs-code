@@ -13,7 +13,11 @@ namespace CsCode.Panels.Search.Settings;
 /// <summary>One line of the shortcuts table.</summary>
 /// <param name="Command">Command id (or "-id" for a binding that removes a default one).</param>
 /// <param name="Title">The command's palette title when known, else the id.</param>
-public sealed record ShortcutRow(string Command, string Title, string Keys, string When, string Source, bool IsRemoval);
+public sealed record ShortcutRow(string Command, string Title, string Keys, string When, string Source, bool IsRemoval)
+{
+    /// <summary>False when the table had no friendlier title than the id (the id is then shown once).</summary>
+    public bool HasTitle => Title != Command.TrimStart('-');
+}
 
 /// <summary>Formats key chords for display ("Ctrl+K, Ctrl+C").</summary>
 public static class KeyLabel

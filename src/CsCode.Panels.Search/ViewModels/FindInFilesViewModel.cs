@@ -62,7 +62,7 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
 
     private string _query = "", _replaceText = "", _include = "", _exclude = "";
     private bool _matchCase, _wholeWord, _isRegex, _preserveCase, _openEditorsOnly, _useExcludeSettings = true, _useIgnoreFiles = true;
-    private bool _replaceVisible, _detailsVisible = true, _isSearching, _isStale, _inSelection;
+    private bool _replaceVisible, _detailsVisible, _isSearching, _isStale, _inSelection;
     private string _summary = "", _errorMessage = "", _progressText = "";
     private ResultRow? _selected;
     private bool _truncated;
@@ -125,7 +125,7 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
     public bool ReplaceVisible
     {
         get => _replaceVisible;
-        set { if (SetProperty(ref _replaceVisible, value)) { RefreshReplacePreview(); OnPropertyChanged(nameof(CanReplace)); } }
+        set { if (SetProperty(ref _replaceVisible, value)) { RefreshReplacePreview(); OnPropertyChanged(nameof(CanReplace)); (ReplaceAllCommand as AsyncRelayCommand)?.NotifyCanExecuteChanged(); } }
     }
 
     public bool DetailsVisible { get => _detailsVisible; set => SetProperty(ref _detailsVisible, value); }
@@ -687,6 +687,7 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
         Rows.Clear();
         _files.Clear();
         _order.Clear();
+        _totalMatches = 0;
         _focus.Clear();
         _previews.Set(null);
         SelectedRow = null;
