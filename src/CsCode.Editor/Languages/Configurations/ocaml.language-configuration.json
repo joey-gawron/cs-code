@@ -1,0 +1,69 @@
+// CsCode built-in language configuration for ocaml (VS Code language-configuration.json format).
+// Source: OCaml manual: (* *) comments only, primes in identifiers ('), 'a type variables (no auto-closed single quote), begin/struct/sig/object ... end.
+{
+	"comments": {
+		"blockComment": [
+			"(*",
+			"*)"
+		]
+	},
+	"brackets": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		],
+		[
+			"\"",
+			"\""
+		]
+	],
+	"wordPattern": "(-?\\d*\\.\\d\\w*)|([A-Za-z_][\\w']*)",
+	"indentationRules": {
+		"increaseIndentPattern": "^.*(\\b(begin|struct|sig|object|do|then|else|try)|=|->|\\(|\\{|\\[|\\[\\|)\\s*(\\(\\*.*\\*\\))?\\s*$",
+		"decreaseIndentPattern": "^\\s*(\\b(end|done)\\b|[\\)\\}\\]]|\\|\\])"
+	}
+}

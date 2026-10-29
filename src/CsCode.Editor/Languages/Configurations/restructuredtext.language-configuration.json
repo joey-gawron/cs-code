@@ -1,0 +1,88 @@
+// CsCode built-in language configuration for restructuredtext (VS Code language-configuration.json format).
+// Source: reStructuredText specification: '.. ' starts a comment, indentation delimits blocks (off-side folding), `…` roles and literals.
+{
+	"comments": {
+		"lineComment": ".."
+	},
+	"brackets": [
+		[
+			"(",
+			")"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"{",
+			"}"
+		],
+		[
+			"<",
+			">"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "`",
+			"close": "`",
+			"notIn": [
+				"string"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"(",
+			")"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"{",
+			"}"
+		],
+		[
+			"<",
+			">"
+		],
+		[
+			"`",
+			"`"
+		],
+		[
+			"*",
+			"*"
+		],
+		[
+			"_",
+			"_"
+		],
+		[
+			"\"",
+			"\""
+		],
+		[
+			"'",
+			"'"
+		]
+	],
+	"folding": {
+		"offSide": true
+	},
+	"wordPattern": "[\\p{L}\\p{N}_'\\-]+"
+}

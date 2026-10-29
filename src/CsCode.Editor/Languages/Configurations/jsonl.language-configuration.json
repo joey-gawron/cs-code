@@ -1,0 +1,45 @@
+// CsCode built-in language configuration for jsonl (VS Code language-configuration.json format).
+// Source: JSON Lines (https://jsonlines.org): one JSON value per line, no comments.
+{
+	"brackets": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"\"",
+			"\""
+		]
+	]
+}

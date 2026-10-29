@@ -1,0 +1,149 @@
+// CsCode built-in language configuration for kotlin (VS Code language-configuration.json format).
+// Source: Kotlin language specification (comments, string templates, raw """ strings, KDoc /** */); layout follows VS Code's Java/TypeScript configurations.
+{
+	"comments": {
+		"lineComment": "//",
+		"blockComment": [
+			"/*",
+			"*/"
+		]
+	},
+	"brackets": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "\"\"\"",
+			"close": "\"\"\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string"
+			]
+		},
+		{
+			"open": "'",
+			"close": "'",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		},
+		{
+			"open": "/**",
+			"close": " */",
+			"notIn": [
+				"string"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		],
+		[
+			"\"",
+			"\""
+		],
+		[
+			"'",
+			"'"
+		],
+		[
+			"<",
+			">"
+		],
+		[
+			"`",
+			"`"
+		]
+	],
+	"folding": {
+		"markers": {
+			"start": "^\\s*//\\s*(?:(?:#?region\\b)|(?:<editor-fold\\b))",
+			"end": "^\\s*//\\s*(?:(?:#?endregion\\b)|(?:</editor-fold>))"
+		}
+	},
+	"wordPattern": "(-?\\d*\\.\\d\\w*)|([^\\`\\~\\!\\@\\#\\%\\^\\&\\*\\(\\)\\-\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\?\\s]+)",
+	"indentationRules": {
+		"increaseIndentPattern": "^((?!//).)*(\\{([^}\\\"'`/]*|(\\t|[ ])*//.*)|\\([^)\\\"'`/]*|\\[[^\\]\\\"'`/]*)$",
+		"decreaseIndentPattern": "^((?!.*?/\\*).*\\*/)?\\s*[\\}\\]\\)].*$"
+	},
+	"onEnterRules": [
+		{
+			"beforeText": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$",
+			"afterText": "^\\s*\\*/$",
+			"action": {
+				"indent": "indentOutdent",
+				"appendText": " * "
+			}
+		},
+		{
+			"beforeText": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$",
+			"action": {
+				"indent": "none",
+				"appendText": " * "
+			}
+		},
+		{
+			"beforeText": "^(\\t|[ ])*[ ]\\*([ ]([^\\*]|\\*(?!/))*)?$",
+			"previousLineText": "(?=^(\\s*(/\\*\\*|\\*)).*)(?=(?!(\\s*\\*/)))",
+			"action": {
+				"indent": "none",
+				"appendText": "* "
+			}
+		},
+		{
+			"beforeText": "^(\\t|[ ])*[ ]\\*/\\s*$",
+			"action": {
+				"indent": "none",
+				"removeText": 1
+			}
+		},
+		{
+			"beforeText": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$",
+			"action": {
+				"indent": "none",
+				"removeText": 1
+			}
+		}
+	]
+}

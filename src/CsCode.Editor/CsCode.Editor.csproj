@@ -23,6 +23,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Language configurations for the languages VS Code ships none for (docs/LANGUAGES.md). -->
+    <EmbeddedResource Include="Languages/Configurations/*.language-configuration.json" LogicalName="CsCode.Editor.Languages.Configurations.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="CsCode.Editor.Tests" />
     <InternalsVisibleTo Include="CsCode.MemoryTests" />
   </ItemGroup>

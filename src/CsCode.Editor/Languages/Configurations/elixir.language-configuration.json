@@ -1,0 +1,96 @@
+// CsCode built-in language configuration for elixir (VS Code language-configuration.json format).
+// Source: Elixir syntax reference: # comments, do/end blocks, fn/->, <<>> binaries; indentation rules after ElixirLS' VS Code configuration.
+{
+	"comments": {
+		"lineComment": "#"
+	},
+	"brackets": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		],
+		[
+			"<<",
+			">>"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "\"\"\"",
+			"close": "\"\"\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		},
+		{
+			"open": "'",
+			"close": "'",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		],
+		[
+			"\"",
+			"\""
+		],
+		[
+			"'",
+			"'"
+		]
+	],
+	"folding": {
+		"markers": {
+			"start": "^\\s*#\\s*region\\b",
+			"end": "^\\s*#\\s*endregion\\b"
+		}
+	},
+	"wordPattern": "(-?\\d*\\.\\d\\w*)|([@:]?[A-Za-z_][\\w]*[?!]?)",
+	"indentationRules": {
+		"increaseIndentPattern": "^\\s*(after|else|catch|rescue|fn|[^#]*(\\bdo|<-|->|\\{|\\[|=))\\s*$",
+		"decreaseIndentPattern": "^\\s*((\\}|\\])\\s*$|(after|else|catch|rescue|end)\\b)"
+	}
+}

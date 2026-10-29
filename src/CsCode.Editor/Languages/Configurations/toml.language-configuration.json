@@ -1,0 +1,88 @@
+// CsCode built-in language configuration for toml (VS Code language-configuration.json format).
+// Source: TOML 1.0 (https://toml.io/en/v1.0.0): # comments, [tables], inline { } and [ ] arrays, basic "…"/"""…""" and literal '…' strings.
+{
+	"comments": {
+		"lineComment": "#"
+	},
+	"brackets": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "\"\"\"",
+			"close": "\"\"\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		},
+		{
+			"open": "'''",
+			"close": "'''",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		},
+		{
+			"open": "'",
+			"close": "'",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"\"",
+			"\""
+		],
+		[
+			"'",
+			"'"
+		]
+	],
+	"folding": {
+		"markers": {
+			"start": "^\\s*#\\s*region\\b",
+			"end": "^\\s*#\\s*endregion\\b"
+		}
+	},
+	"wordPattern": "[A-Za-z0-9_\\-]+",
+	"indentationRules": {
+		"increaseIndentPattern": "^.*(\\{[^}]*|\\[[^\\]]*)$",
+		"decreaseIndentPattern": "^\\s*[\\}\\]]"
+	}
+}

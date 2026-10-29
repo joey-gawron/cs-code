@@ -1,0 +1,97 @@
+// CsCode built-in language configuration for erlang (VS Code language-configuration.json format).
+// Source: Erlang reference manual: % comments, clauses after ->, forms end with '.', begin/case/if/receive/try ... end blocks, <<>> binaries.
+{
+	"comments": {
+		"lineComment": "%"
+	},
+	"brackets": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		],
+		[
+			"<<",
+			">>"
+		]
+	],
+	"autoClosingPairs": [
+		{
+			"open": "{",
+			"close": "}"
+		},
+		{
+			"open": "[",
+			"close": "]"
+		},
+		{
+			"open": "(",
+			"close": ")"
+		},
+		{
+			"open": "\"",
+			"close": "\"",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		},
+		{
+			"open": "'",
+			"close": "'",
+			"notIn": [
+				"string",
+				"comment"
+			]
+		}
+	],
+	"surroundingPairs": [
+		[
+			"{",
+			"}"
+		],
+		[
+			"[",
+			"]"
+		],
+		[
+			"(",
+			")"
+		],
+		[
+			"\"",
+			"\""
+		],
+		[
+			"'",
+			"'"
+		]
+	],
+	"folding": {
+		"markers": {
+			"start": "^\\s*%+\\s*#?region\\b",
+			"end": "^\\s*%+\\s*#?endregion\\b"
+		}
+	},
+	"wordPattern": "(-?\\d*\\.\\d\\w*)|([A-Za-z_][\\w@]*)",
+	"indentationRules": {
+		"increaseIndentPattern": "^[^%]*(->|\\b(of|begin|after|receive|try|catch|if|maybe)|[\\(\\{\\[]|<<)\\s*(%.*)?$",
+		"decreaseIndentPattern": "^\\s*(\\b(end|after|catch)\\b|[\\)\\}\\]]|>>)"
+	},
+	"onEnterRules": [
+		{
+			"beforeText": "^\\s+[^%]*\\.\\s*(%.*)?$",
+			"action": {
+				"indent": "none",
+				"removeText": 1000
+			}
+		}
+	]
+}
