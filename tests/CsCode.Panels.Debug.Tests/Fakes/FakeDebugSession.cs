@@ -75,6 +75,39 @@ public sealed class FakeDebugSession : IDebugSession
     /// <summary>A hostile adapter that ignores <c>start</c>/<c>count</c> and always answers with everything.</summary>
     public bool IgnorePaging { get; set; }
 
+    /// <summary>
+    /// Frame ids behave like in CsCode.Dap's DebugSession: only ids a <c>stackTrace</c> returned since the last stop/invalidation are valid
+    /// (scopes/evaluate with any other id fail as stale). A stop registers the stopped thread's frames (the debug service fetches them to
+    /// publish the stop location); <see cref="Invalidate"/> forgets all of them. Off by default.
+    /// </summary>
+    public bool TrackFrameIds { get; set; }
+    private readonly HashSet<int> _liveFrames = new();
+
+    /// <summary>The adapter sent <c>invalidated</c>: frame ids are forgotten (and, for adapters without stable ids, renumbered).</summary>
+    public void Invalidate(bool renumberFrames = false)
+    {
+        lock (_gate)
+        {
+            _liveFrames.Clear();
+            if (renumberFrames)
+                foreach (var frames in Frames.Values)
+                    for (var i = 0; i < frames.Count; i++)
+                    {
+                        var renumbered = frames[i] with { Id = frames[i].Id + 1000 };
+                        if (Scopes.TryGetValue(frames[i].Id, out var scopes)) Scopes[renumbered.Id] = scopes;
+                        frames[i] = renumbered;
+                    }
+        }
+        InvalidatedEmitter.Fire(this);
+    }
+
+    private void RequireLiveFrame(int frameId)
+    {
+        if (!TrackFrameIds) return;
+        lock (_gate)
+            if (!_liveFrames.Contains(frameId)) throw new InvalidOperationException("The stack frame is no longer valid: the debuggee has resumed since it was obtained.");
+    }
+
     // ------------------------------------------------------------------ counters
 
     private int _threadCalls, _stackCalls, _scopeCalls, _variableCalls, _evaluateCalls, _setCalls, _completionCalls, _resumeCalls;
@@ -104,6 +137,8 @@ public sealed class FakeDebugSession : IDebugSession
         {
             _stopGeneration++;
             State = DebugSessionState.Stopped;
+            _liveFrames.Clear();
+            if (Frames.TryGetValue(threadId, out var stopped)) foreach (var f in stopped) _liveFrames.Add(f.Id);
         }
         FocusedThreadId = threadId;
         StateEmitter.Fire(DebugSessionState.Stopped);
@@ -200,13 +235,24 @@ public sealed class FakeDebugSession : IDebugSession
     {
         Interlocked.Increment(ref _stackCalls);
         return RunAsync<IReadOnlyList<DebugStackFrame>>(() =>
-            Frames.TryGetValue(threadId, out var all) ? [.. all.Skip(startFrame).Take(levels <= 0 ? int.MaxValue : levels)] : [], ct);
+        {
+            lock (_gate)
+            {
+                IReadOnlyList<DebugStackFrame> page = Frames.TryGetValue(threadId, out var all) ? [.. all.Skip(startFrame).Take(levels <= 0 ? int.MaxValue : levels)] : [];
+                foreach (var f in page) _liveFrames.Add(f.Id);
+                return page;
+            }
+        }, ct);
     }
 
     public ValueTask<IReadOnlyList<DebugScope>> GetScopesAsync(int frameId, CancellationToken ct = default)
     {
         Interlocked.Increment(ref _scopeCalls);
-        return RunAsync<IReadOnlyList<DebugScope>>(() => Scopes.TryGetValue(frameId, out var s) ? [.. s] : [], ct);
+        return RunAsync<IReadOnlyList<DebugScope>>(() =>
+        {
+            RequireLiveFrame(frameId);
+            return Scopes.TryGetValue(frameId, out var s) ? [.. s] : [];
+        }, ct);
     }
 
     public ValueTask<IReadOnlyList<DebugVariable>> GetVariablesAsync(int variablesReference, int? start = null, int? count = null, CancellationToken ct = default)
@@ -227,7 +273,11 @@ public sealed class FakeDebugSession : IDebugSession
     {
         Interlocked.Increment(ref _evaluateCalls);
         lock (EvaluateRequests) EvaluateRequests.Add((expression, frameId, context));
-        return RunAsync(() => Evaluator(expression, frameId, context), ct, needsStopped: frameId is not null);
+        return RunAsync(() =>
+        {
+            if (frameId is { } f) RequireLiveFrame(f);
+            return Evaluator(expression, frameId, context);
+        }, ct, needsStopped: frameId is not null);
     }
 
     public ValueTask<DebugVariable> SetVariableAsync(int variablesReference, string name, string value, CancellationToken ct = default)

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CsCode.Core.Debugging;
 using CsCode.Core.Lifecycle;
 
@@ -41,6 +42,13 @@ public sealed class DebugFocusTracker : IDisposable
     private DebugFocus _last;
     private bool _delivered;
     private Timer? _graceTimer;
+    // `invalidated` handling: the epoch the latest invalidation produced (no stop/continue since), when it was seen, which epoch's
+    // revalidation was started, and the live frame that replaces a location whose frame id died (adapters that renumber frames).
+    private long _invalidatedEpoch = -1;
+    private long _invalidatedAt;
+    private long _revalidatedEpoch = -1;
+    private (long Epoch, DebugStopLocation Location, int FrameId)? _liveFrame;
+    private readonly CancellationTokenSource _lifetime = new();
     private int _disposed;
 
     public DebugFocusTracker(DebugPanelServices services, Action<DebugFocus> onChanged)
@@ -99,7 +107,7 @@ public sealed class DebugFocusTracker : IDisposable
                     lock (_gate) _stop = null;
                     Bump();
                 }));
-                fresh.Add(session.Invalidated.Subscribe(_ => Bump()));
+                fresh.Add(session.Invalidated.Subscribe(_ => OnInvalidated()));
                 fresh.Add(session.StateChanged.Subscribe(_ => Schedule()));
                 fresh.Add(session.Terminated.Subscribe(_ => Schedule()));
             }
@@ -111,6 +119,21 @@ public sealed class DebugFocusTracker : IDisposable
     private void Bump()
     {
         Interlocked.Increment(ref _epoch);
+        Schedule();
+    }
+
+    /// <summary>
+    /// The adapter asked for a refresh (DAP <c>invalidated</c>): values may have changed (a new epoch, so panels reload) and the session forgot
+    /// its frame ids, while the stop location keeps the old one. The location is accepted again only once the stack was re-read (see
+    /// <see cref="Revalidate"/>), not after the grace period, which would hand the panels a dead frame id.
+    /// </summary>
+    private void OnInvalidated()
+    {
+        lock (_gate)
+        {
+            _invalidatedEpoch = Interlocked.Increment(ref _epoch);
+            _invalidatedAt = Stopwatch.GetTimestamp();
+        }
         Schedule();
     }
 
@@ -132,19 +155,70 @@ public sealed class DebugFocusTracker : IDisposable
         var fresh = locationMatches && Volatile.Read(ref _locationEpoch) >= epoch;
         var pending = stopped && !fresh;
 
-        if (pending && locationMatches) ArmGraceTimer(epoch);
+        if (pending && locationMatches)
+        {
+            if (Volatile.Read(ref _invalidatedEpoch) == epoch) Revalidate(epoch, location!);
+            else ArmGraceTimer(epoch);
+        }
 
         (string Reason, string? Description, int? ThreadId)? stop;
-        lock (_gate) stop = stopped ? _stop : null;
+        int? frameId = fresh ? location!.FrameId : null;
+        lock (_gate)
+        {
+            stop = stopped ? _stop : null;
+            if (fresh && _liveFrame is { } live && live.Epoch == epoch && ReferenceEquals(live.Location, location)) frameId = live.FrameId;
+        }
         var focus = new DebugFocus(
             session, state,
             fresh ? location!.ThreadId : stopped ? session!.FocusedThreadId : null,
-            fresh ? location!.FrameId : null,
+            frameId,
             epoch, pending, stop?.Reason, stop?.Description, stop?.ThreadId);
         if (_delivered && focus == _last) return;
         _last = focus;
         _delivered = true;
         _onChanged(focus);
+    }
+
+    /// <summary>Re-reads the stack once per invalidation (shared with the other panels), then accepts the location with a frame id that is live.</summary>
+    private void Revalidate(long epoch, DebugStopLocation location)
+    {
+        long seenAt;
+        lock (_gate)
+        {
+            if (_revalidatedEpoch == epoch) return;
+            _revalidatedEpoch = epoch;
+            seenAt = _invalidatedAt;
+        }
+        _ = RevalidateAsync(epoch, location, seenAt);
+    }
+
+    private async Task RevalidateAsync(long epoch, DebugStopLocation location, long seenAt)
+    {
+        int? live;
+        try
+        {
+            // Through OnUi with the tracker's lifetime: a hung adapter cannot keep a disposed panel's tracker reachable.
+            live = await _s.Ui.OnUi(new ValueTask<int?>(_s.FrameRevalidation.GetLiveFrameAsync(location, seenAt)), _lifetime.Token);
+        }
+        catch (OperationCanceledException) { return; }
+        if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _epoch) != epoch) return;
+        // The stack was re-read, so the location's frame id is registered again, or replaced by the frame that is live now. When it could not
+        // be read at all (live == null), the location is accepted as before and the panels report whatever the adapter answers.
+        lock (_gate) _liveFrame = live is { } id && id != location.FrameId ? (epoch, location, id) : null;
+        AcceptLocation(epoch);
+        Schedule();
+    }
+
+    /// <summary>Marks the location as current for <paramref name="epoch"/> (never moving the mark back, so a newer stop's location stays fresh).</summary>
+    private void AcceptLocation(long epoch)
+    {
+        var seen = Volatile.Read(ref _locationEpoch);
+        while (seen < epoch)
+        {
+            var was = Interlocked.CompareExchange(ref _locationEpoch, epoch, seen);
+            if (was == seen) return;
+            seen = was;
+        }
     }
 
     private void ArmGraceTimer(long epoch)
@@ -175,9 +249,13 @@ public sealed class DebugFocusTracker : IDisposable
             _sessionSubs = null;
             _graceTimer = null;
             _bound = null;
+            _liveFrame = null;
         }
         timer?.Dispose();
         sessionSubs?.Dispose();
         _subs.Dispose();
+        try { _lifetime.Cancel(); }
+        catch (AggregateException) { }
+        _lifetime.Dispose();
     }
 }

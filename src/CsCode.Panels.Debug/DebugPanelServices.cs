@@ -36,6 +36,9 @@ public sealed class DebugPanelServices(
 
     public IBreakpointManager Breakpoints => Debug.Breakpoints;
 
+    /// <summary>Re-reads the stack after an adapter <c>invalidated</c> event, once for all panels (see <see cref="Infrastructure.DebugFocusTracker"/>).</summary>
+    public Infrastructure.FrameRevalidator FrameRevalidation { get; } = new(frameFocus ?? debug as IDebugFrameFocus);
+
     /// <summary>The watch list shared by every Watch window (persisted per workspace).</summary>
     public Variables.WatchStore Watches { get; } = new(debug, state);
 
