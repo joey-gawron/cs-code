@@ -261,8 +261,10 @@ auto-hide/peek animations, taskbar jump list, high-contrast theme, `--diff`, too
 `reloadWindow` only refreshes menus. Find in Files is the Search panel's tool window (`CsCode.Panels.Search`); Find Results hosts the references delivered by `cscode.references.show`. Explorer filter searches loaded nodes only.
 
 Known issues: (1) **Combined hostile storm p99 is ~19 ms, not < 16 ms** (each source alone meets it; max is within 50 ms). (2) **Dock.Avalonia 12.1.0.13 keeps closed (presented) dockables reachable** (verified with a bare `DockControl` and a plain template, independent of this shell);
-the shell therefore releases everything a tab pinned (editor document, view, controller, subscriptions) and presents a thin host that it empties. Even so, in the live-host test some tabs closed early in a long run were observed to remain reachable (which ones varied between runs; I did not find the owner);
-the test asserts the steady state (everything from tab 120 on is released, heap flat). Worth a memory-profiler pass with the real editor during integration.
+the shell therefore releases everything a tab pinned (editor document, view, controller, subscriptions) and presents a thin host that it empties. The owner that kept some closed tabs' views and documents
+reachable in the live-host test (run to run) was found during integration: the `DockControl`'s `ControlRecycling` cache (Dock.Controls.Recycling) keeps the content of every dockable it presented, keyed by the
+dockable, and never evicts; an emptied host whose child left while the host was already detached still lists the child's composition visual, so the view and its document stayed reachable.
+`MainWindow` now evicts a document tab from that cache when it closes (`RealAppDockCacheTests`); the 300-tab test still asserts the steady state (from tab 120 on, heap flat), and now passes consistently.
 (3) The editor contract has no "release view" call, so views are expected to implement `IDisposable` for deterministic cleanup; the shell calls it.
 
 ## Integration notes
