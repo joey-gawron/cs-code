@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../../src/CsCode.Platform/CsCode.Platform.csproj" />
+    <ProjectReference Include="../../src/CsCode.Extensions/CsCode.Extensions.csproj" />
+  </ItemGroup>
+
+</Project>

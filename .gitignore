@@ -1,0 +1,28 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+*.DotSettings.user
+TestResults/
+BenchmarkDotNet.Artifacts/
+*.nupkg
+artifacts/
+
+## Node (extension host dev deps / fixtures)
+node_modules/
+.npm/
+
+## Profiling / dumps / screenshots produced by local runs
+*.nettrace
+*.gcdump
+*.dmp
+*.speedscope.json
+/artifacts-local/
+.scratch/
+
+## OS
+.DS_Store
+Thumbs.db
