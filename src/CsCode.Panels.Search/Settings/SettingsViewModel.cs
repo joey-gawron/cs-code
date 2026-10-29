@@ -260,10 +260,13 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
             var ok = true;
             foreach (var w in words)
             {
-                var s = FuzzyMatcher.Score(w, haystack);
+                // Substring anywhere (the description included) is a hit; the fuzzy fallback only looks at title and key, because a
+                // subsequence match across a whole description matches nearly everything.
+                int s;
+                if (item.Key.Contains(w, StringComparison.OrdinalIgnoreCase) || item.Title.Contains(w, StringComparison.OrdinalIgnoreCase)) s = 140;
+                else if (haystack.Contains(w, StringComparison.OrdinalIgnoreCase)) s = 60;
+                else s = FuzzyMatcher.Score(w, item.Title + " " + item.Key);
                 if (s < 0) { ok = false; break; }
-                // A direct hit on the key or title beats a stray subsequence in the description.
-                if (item.Key.Contains(w, StringComparison.OrdinalIgnoreCase) || item.Title.Contains(w, StringComparison.OrdinalIgnoreCase)) s += 40;
                 total += s;
             }
             if (ok) scored.Add((item, total));

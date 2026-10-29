@@ -28,6 +28,9 @@
     <Style Selector="Button.tool:disabled">
       <Setter Property="Opacity" Value="0.4" />
     </Style>
+    <Style Selector="Button.tool:disabled /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
     <!-- The Aa / ab / .* toggles that sit inside the query box. -->
     <Style Selector="ToggleButton.opt">
       <Setter Property="Width" Value="22" />
