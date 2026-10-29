@@ -21,6 +21,8 @@ namespace CsCode.Editor;
 public sealed class EditorServices : IDisposable
 {
     private readonly DedicatedLane _ownedIoLane;
+    private readonly Lazy<INavigationService?> _navigation;
+    private readonly Lazy<IDebugService?> _debug;
 
     internal EditorServices(IServiceProvider? sp, IUiThread ui, DedicatedLane? io = null)
     {
@@ -41,9 +43,11 @@ public sealed class EditorServices : IDisposable
         Contributions = Opt<IContributionRegistry>() ?? new ContributionRegistry();
         Commands = Opt<ICommandService>();
         ContextKeys = Opt<IContextKeyService>();
-        Navigation = Opt<INavigationService>();
+        // Resolved on first use, not here: the shell's navigation service needs the document well, which needs the editor view factory,
+        // which needs this object; the debug service needs navigation. Resolving them eagerly is a DI cycle that never finishes.
+        _navigation = new Lazy<INavigationService?>(Opt<INavigationService>);
         Memory = Opt<IMemoryMonitor>();
-        Debug = Opt<IDebugService>();
+        _debug = new Lazy<IDebugService?>(Opt<IDebugService>);
         AppPaths = Opt<IAppPaths>();
         EditorConfig = Opt<IEditorConfigSource>() ?? new EditorConfigResolver(FileSystem);
         LoggerFactory = Opt<ILoggerFactory>() ?? NullLoggerFactory.Instance;
@@ -63,9 +67,9 @@ public sealed class EditorServices : IDisposable
     public IContributionRegistry Contributions { get; }
     public ICommandService? Commands { get; }
     public IContextKeyService? ContextKeys { get; }
-    public INavigationService? Navigation { get; }
+    public INavigationService? Navigation => _navigation.Value;
     public IMemoryMonitor? Memory { get; }
-    public IDebugService? Debug { get; }
+    public IDebugService? Debug => _debug.Value;
     public IAppPaths? AppPaths { get; }
     public IEditorConfigSource EditorConfig { get; }
     public ILoggerFactory LoggerFactory { get; }
