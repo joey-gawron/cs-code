@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Developer tool (not part of CsCode.slnx): run the same keys through real Neovim and through CsCode.Vim and diff the result.
+       Usage: dotnet run with the project path tools/vim/VimLab, then the text and the keys as two arguments. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <DefineConstants>$(DefineConstants);ENGINE</DefineConstants>
+    <NoWarn>$(NoWarn);CA1861;CA1707</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../tests/CsCode.Vim.Tests/Oracle/*.cs" LinkBase="Oracle" />
+    <Compile Include="../../../tests/CsCode.Vim.Tests/Harness/EngineRunner.cs" LinkBase="Harness" Condition="Exists('../../../tests/CsCode.Vim.Tests/Harness/EngineRunner.cs')" />
+    <ProjectReference Include="../../../src/CsCode.Vim/CsCode.Vim.csproj" />
+    <ProjectReference Include="../../../src/CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../../../tests/CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
+  </ItemGroup>
+
+</Project>
