@@ -156,7 +156,8 @@ public class DebugServiceStartTests
     {
         await using var h = new ServiceHarness();
         Assert.Contains(h.Service.DebuggerTypes, t => t.Type == "coreclr" && t.Languages.Contains("csharp"));
-        Assert.Contains(h.Service.DebuggerTypes, t => t.Type == "fake");
+        // RegisterAdapterFactory only enqueues: the snapshot is rebuilt on the Debug lane (on a loaded machine, after this line runs).
+        await SessionHarness.Eventually(() => h.Service.DebuggerTypes.Any(t => t.Type == "fake"), what: "the registered type is published");
     }
 
     private sealed class AmendingProvider : IDebugConfigurationProvider
