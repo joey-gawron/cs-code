@@ -415,6 +415,41 @@ public class RealJsDebugTests
     }
 
     [Fact]
+    public async Task Set_variable_after_expanding_objects_and_running_a_getter_reaches_the_program()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        rig.H.Breakpoints.Add(rig.MainUri, InMain("call"));
+        await rig.StartAsync();
+        await rig.WaitForStopAsync(1);
+        var (frames, session) = await rig.TopFramesAsync();
+        var top = frames[0].Id;
+        var scopes = await session.GetScopesAsync(top, Ct);
+        var local = scopes.First(s => s.PresentationHint == "locals");
+        var vars = await session.GetVariablesAsync(local.VariablesReference, ct: Ct);
+        var steps = new List<string>();
+        async Task<string> X() => (await session.EvaluateAsync("x", top, "repl", Ct)).Result;
+        var p = vars.Single(v => v.Name == "p");
+        var pChildren = await session.GetVariablesAsync(p.VariablesReference, ct: Ct);
+        steps.Add("after expanding p: x=" + await X());
+        var getter = pChildren.Single(v => v.Name == "length");
+        await session.GetVariablesAsync(getter.VariablesReference, ct: Ct); // runs the getter
+        steps.Add("after the getter: x=" + await X());
+        var big = vars.Single(v => v.Name == "big");
+        await session.GetVariablesAsync(big.VariablesReference, "indexed", 100, 100, Ct);
+        steps.Add("after paging big: x=" + await X());
+        await session.CompletionsAsync(top, "s.toUpp", 7, Ct);
+        steps.Add("after completions: x=" + await X());
+        try { await session.EvaluateAsync("nope.nope", top, "repl", Ct); } catch (Exception) { }
+        steps.Add("after a failing evaluation: x=" + await X());
+        var set = await session.SetVariableAsync(local.VariablesReference, "x", "100", Ct);
+        steps.Add($"setVariable answered {set.Value}: x=" + await X());
+        Note("set variable after other requests: " + string.Join(" → ", steps));
+        Assert.Equal("100", await X());
+        await rig.Service.StopAllAsync(Ct);
+        await rig.WaitForEndAsync();
+    }
+
+    [Fact]
     public async Task Program_stdout_and_stderr_reach_the_debug_console_with_their_categories()
     {
         await using var rig = await RealJsDebugRig.CreateAsync();

@@ -110,6 +110,7 @@ public class RealJsDebugPanelsTests
         var callStack = app.View<CallStackViewModel>("debug.callstack");
         var locals = app.View<FrameVariablesViewModel>("debug.locals").Tree;
         var watch = app.View<WatchViewModel>("debug.watch").Tree;
+        var autos = app.View<FrameVariablesViewModel>("debug.autos").Tree;
         var threads = app.View<ThreadsViewModel>("debug.threads");
         var console = app.View<DebugConsoleViewModel>("debug.console");
         var stops = 0;
@@ -181,6 +182,18 @@ public class RealJsDebugPanelsTests
             await console.SubmitAsync();
             await PanelRig.Eventually(() => console.Lines.Any(l => l.Kind == ConsoleLineKind.ResultError), 20_000, "REPL error");
             Note("REPL error line: " + console.Lines.Last(l => l.Kind == ConsoleLineKind.ResultError).Text);
+
+            // ============ set a variable from Locals (inline edit → setVariable): the program continues with the new value
+            VariableNodeViewModel LocalX() => locals.Rows.First(r => r.Name == "x" && r.Parent?.Kind == VariableRowKind.Scope); // not p.x
+            var xRow = LocalX();
+            Assert.True(locals.CanEditValue(xRow));
+            locals.BeginEditValue(xRow);
+            xRow.EditText = "100";
+            await locals.CommitEditAsync(xRow);
+            Assert.Equal("100", LocalX().DisplayValue);
+            console.Input = "x + 1";
+            await console.SubmitAsync();
+            await PanelRig.Eventually(() => console.Lines.Any(l => l.Kind == ConsoleLineKind.Result && l.Text == "101"), 20_000, "REPL sees the new value");
             await debug.StopLocation!.Session.ContinueAsync();
 
             // ============ stop 3: in add() (util.ts), reached from the async work() — the async stack and the skipped node internals
@@ -208,9 +221,11 @@ public class RealJsDebugPanelsTests
 
             await PanelRig.Eventually(() => locals.Rows.Any(r => r.Name == "a"), 20_000, "locals of add");
             Note("locals in add: " + Rows(locals));
-            Assert.Equal("51", locals.Rows.First(r => r.Name == "a").DisplayValue);
-            await PanelRig.Eventually(() => watch.Rows.Any(r => r.Name == "a + b" && r.DisplayValue == "52") && watch.Rows.Any(r => r.Name == "x" && r.IsError), 20_000, "watch");
+            Assert.Equal("100", locals.Rows.First(r => r.Name == "a").DisplayValue); // x was set to 100 at the previous stop
+            await PanelRig.Eventually(() => watch.Rows.Any(r => r.Name == "a + b" && r.DisplayValue == "101") && watch.Rows.Any(r => r.Name == "x" && r.IsError), 20_000, "watch");
             Note("watch in add: " + Rows(watch));
+            await PanelRig.Eventually(() => autos.Rows.Any(r => r.Name == "a"), 20_000, "autos");
+            Note("autos in add: " + Rows(autos));
             await PanelRig.Eventually(() => threads.Rows.Count >= 1, 20_000, "threads");
             Note("threads: " + string.Join(" | ", threads.Rows.Select(r => $"{r.Id} {r.Name} {r.State} {r.Location}")));
 
@@ -225,7 +240,7 @@ public class RealJsDebugPanelsTests
             // ============ step over in add(): sum changes and is highlighted
             var before = stops;
             await debug.StopLocation!.Session.StepOverAsync();
-            await PanelRig.Eventually(() => stops > before && locals.Rows.Any(r => r.Name == "sum" && r.DisplayValue == "52"), 30_000, "sum assigned");
+            await PanelRig.Eventually(() => stops > before && locals.Rows.Any(r => r.Name == "sum" && r.DisplayValue == "101"), 30_000, "sum assigned");
             Note("locals after step: " + Rows(locals));
             Assert.True(locals.Rows.First(r => r.Name == "sum").IsChanged);
             Assert.False(locals.Rows.First(r => r.Name == "a").IsChanged);
@@ -234,7 +249,7 @@ public class RealJsDebugPanelsTests
             await debug.StopLocation!.Session.ContinueAsync();
             await PanelRig.Eventually(() => debug.State == DebugState.Inactive, 40_000, "session ended");
             await PanelRig.Eventually(() => console.Lines.Any(l => l.Text.StartsWith("done hello", StringComparison.Ordinal)), 20_000, "final output");
-            Assert.Equal(ConsoleLineKind.Error, console.Lines.Single(l => l.Text == "err 52").Kind);
+            Assert.Equal(ConsoleLineKind.Error, console.Lines.Single(l => l.Text == "err 101").Kind);
             await PanelRig.Eventually(() => locals.Rows.Count == 0 && callStack.Rows.Count == 0, 10_000, "panels cleared");
         }
         finally
