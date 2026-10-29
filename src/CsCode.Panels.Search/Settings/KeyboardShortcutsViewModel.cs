@@ -106,8 +106,9 @@ public sealed class KeyboardShortcutsViewModel : ObservableObject, IDisposable
             var ok = true;
             foreach (var w in words)
             {
-                // Keys like "ctrl+k" are matched against the label ("Ctrl+K") case-insensitively and as a plain substring first.
-                var s = hay.Contains(w, StringComparison.OrdinalIgnoreCase) ? 100 : FuzzyMatcher.Score(w, hay);
+                // Substring in any column first (so "ctrl+k" finds the label "Ctrl+K, Ctrl+C"); the fuzzy fallback only looks at the command title,
+                // because a subsequence match across keys, when-clauses and ids matches almost everything.
+                var s = hay.Contains(w, StringComparison.OrdinalIgnoreCase) ? 100 : FuzzyMatcher.Score(w, r.Title);
                 if (s < 0) { ok = false; break; }
                 total += s;
             }

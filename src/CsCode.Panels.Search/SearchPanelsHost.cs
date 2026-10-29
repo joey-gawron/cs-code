@@ -147,7 +147,7 @@ public sealed class SearchPanelsHost : IDisposable
         string? include = null;
         if (arg is not null && Uri.TryCreate(arg, UriKind.Absolute, out var uri))
         {
-            var rel = new RootSet(_services.Value.Workspace.Folders).ToRelative(uri).TrimStart('/');
+            var rel = new RootSet(_services.Value.Workspace.Folders).ToRelative(uri).Trim('/');
             include = rel.Length == 0 ? "" : "./" + rel;
         }
         var request = new FindRequest { Include = include, TriggerSearch = false };

@@ -148,7 +148,8 @@ public class ReplaceTests : IDisposable
         Assert.Equal(1, doc.ApplyEditsCalls);               // ONE ApplyEdits call = ONE undo unit (Core contract)
         Assert.Equal(versionBefore + 1, doc.Version);
         Assert.Equal("bar\nbar bar\nxx bar", doc.GetText());
-        Assert.Equal(new ReplaceResult(1, 4, [], false), result with { Problems = [] });
+        Assert.Equal((1, 4, false), (result.FilesChanged, result.Replacements, result.Cancelled));
+        Assert.Equal([_h.UriOf("a.txt")], result.ChangedFiles);
     }
 
     [Fact]
