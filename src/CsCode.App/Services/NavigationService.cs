@@ -1,0 +1,226 @@
+using System.Text;
+using CsCode.App.Docking;
+using CsCode.App.Notifications;
+using CsCode.Core.Languages;
+using CsCode.Core.Lifecycle;
+using CsCode.Core.Platform;
+using CsCode.Core.Text;
+using CsCode.Ui.Threading;
+
+namespace CsCode.App.Services;
+
+/// <summary>
+/// <see cref="INavigationService"/> over the document well. Callable from any thread (the synchronous cost on the caller is a single
+/// dispatcher post); the active document / caret are published through volatile snapshots so non-UI readers never touch the UI thread.
+/// <see cref="ApplyWorkspaceEditAsync"/> edits open documents in-editor as ONE undo group each, edits closed files on disk through
+/// <see cref="IFileSystem"/> (read, apply, write, off the UI thread), performs create/rename/delete resource operations and asks for
+/// confirmation when an edit spans several files.
+/// </summary>
+public sealed class NavigationService : INavigationService, IDisposable
+{
+    public const string ConfirmMultiFileSetting = "cscode.shell.confirmMultiFileEdits";
+
+    private readonly DocumentWell _well;
+    private readonly IUiDispatcher _ui;
+    private readonly IFileSystem? _fs;
+    private readonly IDocumentManager? _documents;
+    private readonly IModalDialogs _dialogs;
+    private readonly IWindowService? _windows;
+    private readonly IConfigurationService? _config;
+    private readonly DisposableStore _subs = new();
+    private readonly Emitter<IEditorDocument?> _activeChanged = new();
+    private IDisposable? _caretSub, _viewSub;
+    private volatile IEditorDocument? _activeDoc;
+    private volatile object? _activeCaret; // boxed TextPosition
+    private volatile IReadOnlyList<IEditorDocument> _open = [];
+
+    public NavigationService(DocumentWell well, IUiDispatcher ui, IModalDialogs dialogs, IFileSystem? fileSystem = null, IDocumentManager? documents = null,
+        IWindowService? windows = null, IConfigurationService? config = null)
+    {
+        _well = well;
+        _ui = ui;
+        _dialogs = dialogs;
+        _fs = fileSystem;
+        _documents = documents;
+        _windows = windows;
+        _config = config;
+        _subs.Add(well.ActiveChanged.Subscribe(OnActive));
+        _subs.Add(well.TabsChanged.Subscribe(_ => _open = well.EditorTabs.Select(t => t.Doc).ToArray()));
+    }
+
+    public IEditorDocument? ActiveDocument => _activeDoc;
+    public TextPosition? ActiveCaret => _activeCaret is TextPosition p ? p : null;
+    public IEventSource<IEditorDocument?> ActiveDocumentChanged => _activeChanged;
+    public IReadOnlyList<IEditorDocument> OpenDocuments => _open;
+
+    private void OnActive(ShellDocument? tab)
+    {
+        _caretSub?.Dispose();
+        _viewSub?.Dispose();
+        _caretSub = _viewSub = null;
+        var editor = tab as EditorTab;
+        _activeDoc = editor?.Doc;
+        _activeCaret = null;
+        if (editor is not null)
+        {
+            // The view (and with it the controller) may not exist yet: attach the caret listener when it appears.
+            if (editor.Controller is { } c) AttachCaret(c);
+            else _viewSub = editor.ViewCreated.Subscribe(t => { if (t.Controller is { } cc) AttachCaret(cc); });
+        }
+        _activeChanged.Fire(_activeDoc);
+    }
+
+    private void AttachCaret(Editor.IEditorViewController c)
+    {
+        _caretSub?.Dispose();
+        _activeCaret = c.Caret;
+        _caretSub = c.CaretChanged.Subscribe(p => _activeCaret = p);
+    }
+
+    public async ValueTask<IEditorDocument?> OpenAsync(Uri uri, TextRange? selection = null, bool preview = false, bool preserveFocus = false, CancellationToken ct = default)
+    {
+        var tab = await await _ui.InvokeAsync(() => _well.OpenAsync(uri, preview, preserveFocus, ct).AsTask()).ConfigureAwait(false);
+        if (selection is { } sel)
+            await _ui.InvokeAsync(() =>
+            {
+                if (tab.Controller is { } c) c.SetSelection(sel, reveal: true);
+                else tab.PendingReveal = sel; // applied when the view is created
+            }).ConfigureAwait(false);
+        return tab.Doc;
+    }
+
+    // ------------------------------------------------------------------ workspace edits
+
+    public async ValueTask<bool> ApplyWorkspaceEditAsync(WorkspaceEdit edit, string? label = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(edit);
+        if (edit.IsEmpty) return true;
+
+        var files = new HashSet<Uri>(edit.Changes.Keys);
+        foreach (var op in edit.ResourceOperations ?? [])
+            files.Add(op switch { CreateFileOperation c => c.Uri, RenameFileOperation r => r.OldUri, DeleteFileOperation d => d.Uri, _ => throw new NotSupportedException(op.GetType().Name) });
+
+        if (files.Count > 1 && (_config?.Get(ConfirmMultiFileSetting, true) ?? true))
+        {
+            var answer = await await _ui.InvokeAsync(() => _dialogs.ShowAsync(
+                label ?? "Apply changes",
+                $"{label ?? "This change"} will modify {files.Count} files. Apply it?", ["Apply", "Cancel"], 0)).ConfigureAwait(false);
+            if (answer != "Apply") return false;
+        }
+
+        try
+        {
+            foreach (var op in edit.ResourceOperations ?? [])
+                await ApplyResourceOperationAsync(op, ct).ConfigureAwait(false);
+
+            foreach (var (uri, edits) in edit.Changes)
+            {
+                ct.ThrowIfCancellationRequested();
+                var open = await _ui.InvokeAsync(() => FindOpen(uri)).ConfigureAwait(false);
+                if (open is not null)
+                {
+                    // Documents are edited on the UI thread (the buffer is not thread-safe); ApplyEdits is one undo unit.
+                    if (!await _ui.InvokeAsync(() => open.ApplyEdits(edits)).ConfigureAwait(false))
+                        return await FailAsync($"Could not apply the edits to {uri}").ConfigureAwait(false);
+                }
+                else if (!await EditClosedFileAsync(uri, edits, ct).ConfigureAwait(false))
+                    return false;
+            }
+            return true;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            return await FailAsync("Workspace edit failed: " + ex.Message).ConfigureAwait(false);
+        }
+    }
+
+    private IEditorDocument? FindOpen(Uri uri) => (_documents?.Get(uri) as IEditorDocument) ?? _well.Find(uri)?.Doc;
+
+    private async ValueTask<bool> FailAsync(string message)
+    {
+        if (_windows is not null) await _windows.ShowMessageAsync(MessageSeverity.Error, message).ConfigureAwait(false);
+        return false;
+    }
+
+    private async ValueTask<bool> EditClosedFileAsync(Uri uri, IReadOnlyList<TextEdit> edits, CancellationToken ct)
+    {
+        if (_fs is null) return await FailAsync($"Cannot edit {uri}: no file system available").ConfigureAwait(false);
+        var bytes = await _fs.ReadFileAsync(uri, ct).ConfigureAwait(false);
+        // Edit on the calling worker, never on the UI thread.
+        var (text, encoding) = Decode(bytes);
+        var doc = new InMemoryTextDocument(uri, "plaintext", text);
+        if (!doc.ApplyEdits(edits)) return await FailAsync($"Could not apply the edits to {uri}").ConfigureAwait(false);
+        var updated = doc.GetText();
+        var body = encoding.GetBytes(updated);
+        var preamble = encoding.GetPreamble();
+        var result = new byte[preamble.Length + body.Length];
+        preamble.CopyTo(result, 0);
+        body.CopyTo(result, preamble.Length);
+        await _fs.WriteFileAsync(uri, result, createParents: false, ct).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>BOM-aware decode that refuses invalid UTF-8 rather than silently corrupting a file.</summary>
+    internal static (string Text, Encoding Encoding) Decode(byte[] bytes)
+    {
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            return (new UTF8Encoding(true, true).GetString(bytes, 3, bytes.Length - 3), new UTF8Encoding(true));
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+            return (Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2), new UnicodeEncoding(false, true));
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+            return (Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2), new UnicodeEncoding(true, true));
+        return (new UTF8Encoding(false, true).GetString(bytes), new UTF8Encoding(false));
+    }
+
+    private async ValueTask ApplyResourceOperationAsync(ResourceOperation op, CancellationToken ct)
+    {
+        if (_fs is null) throw new InvalidOperationException("No file system available for resource operations");
+        switch (op)
+        {
+            case CreateFileOperation c:
+            {
+                var exists = await _fs.StatAsync(c.Uri, ct).ConfigureAwait(false) is not null;
+                if (exists && c.IgnoreIfExists) return;
+                if (exists && !c.Overwrite) throw new IOException($"{c.Uri} already exists");
+                await _fs.WriteFileAsync(c.Uri, ReadOnlyMemory<byte>.Empty, createParents: true, ct).ConfigureAwait(false);
+                break;
+            }
+            case RenameFileOperation r:
+            {
+                if (await _fs.StatAsync(r.NewUri, ct).ConfigureAwait(false) is not null)
+                {
+                    if (r.IgnoreIfExists) return;
+                    if (!r.Overwrite) throw new IOException($"{r.NewUri} already exists");
+                }
+                // An open tab for the old uri follows the rename: close it (it is saved or the user was warned) and reopen at the new uri.
+                var wasOpen = await _ui.InvokeAsync(() => _well.Find(r.OldUri) is not null).ConfigureAwait(false);
+                if (wasOpen)
+                    await await _ui.InvokeAsync(async () => await _well.CloseAsync(_well.Find(r.OldUri)!, prompt: true).ConfigureAwait(true)).ConfigureAwait(false);
+                await _fs.RenameAsync(r.OldUri, r.NewUri, r.Overwrite, ct).ConfigureAwait(false);
+                if (wasOpen) await OpenAsync(r.NewUri, ct: ct).ConfigureAwait(false);
+                break;
+            }
+            case DeleteFileOperation d:
+            {
+                if (await _fs.StatAsync(d.Uri, ct).ConfigureAwait(false) is null)
+                {
+                    if (d.IgnoreIfNotExists) return;
+                    throw new FileNotFoundException(d.Uri.ToString());
+                }
+                var open = await _ui.InvokeAsync(() => _well.Find(d.Uri)).ConfigureAwait(false);
+                if (open is not null) await await _ui.InvokeAsync(async () => await _well.CloseAsync(open, prompt: false).ConfigureAwait(true)).ConfigureAwait(false);
+                await _fs.DeleteAsync(d.Uri, d.Recursive, useTrash: true, ct).ConfigureAwait(false);
+                break;
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        _caretSub?.Dispose();
+        _viewSub?.Dispose();
+        _subs.Dispose();
+        _activeChanged.Clear();
+    }
+}

@@ -12,8 +12,13 @@
   <ItemGroup>
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Dock.Avalonia" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <!-- Banned-API rule (UI thread must never block): see BannedSymbols.txt. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <AdditionalFiles Include="BannedSymbols.txt" />
+    <InternalsVisibleTo Include="CsCode.App.Tests" />
   </ItemGroup>
 
 </Project>

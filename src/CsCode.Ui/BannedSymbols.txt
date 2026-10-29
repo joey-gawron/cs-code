@@ -1,0 +1,38 @@
+# The UI thread is sacred (docs/ARCHITECTURE.md section 6): nothing in CsCode.Ui / CsCode.App may block it.
+# Use async APIs; do heavy or blocking work on a worker and marshal only the small result through IUiDispatcher.
+# Genuine background-thread exceptions need a narrowly scoped, commented #pragma warning disable RS0030.
+
+M:System.Threading.Tasks.Task.Wait();Do not block on a Task: await it
+M:System.Threading.Tasks.Task.Wait(System.Int32);Do not block on a Task: await it
+M:System.Threading.Tasks.Task.Wait(System.TimeSpan);Do not block on a Task: await it
+M:System.Threading.Tasks.Task.Wait(System.Threading.CancellationToken);Do not block on a Task: await it
+M:System.Threading.Tasks.Task.Wait(System.Int32,System.Threading.CancellationToken);Do not block on a Task: await it
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[]);Do not block on Tasks: await Task.WhenAll
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[]);Do not block on Tasks: await Task.WhenAny
+P:System.Threading.Tasks.Task`1.Result;Do not block on a Task: await it
+M:System.Runtime.CompilerServices.TaskAwaiter.GetResult();Do not block on a Task: await it
+M:System.Runtime.CompilerServices.TaskAwaiter`1.GetResult();Do not block on a Task: await it
+M:System.Runtime.CompilerServices.ConfiguredTaskAwaitable.ConfiguredTaskAwaiter.GetResult();Do not block on a Task: await it
+M:System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1.ConfiguredTaskAwaiter.GetResult();Do not block on a Task: await it
+M:System.Runtime.CompilerServices.ValueTaskAwaiter.GetResult();Do not block on a ValueTask: await it
+M:System.Runtime.CompilerServices.ValueTaskAwaiter`1.GetResult();Do not block on a ValueTask: await it
+P:System.Threading.Tasks.ValueTask`1.Result;Do not block on a ValueTask: await it
+M:System.Threading.Thread.Sleep(System.Int32);Do not sleep: await Task.Delay or schedule
+M:System.Threading.Thread.Sleep(System.TimeSpan);Do not sleep: await Task.Delay or schedule
+M:System.IO.File.ReadAllText(System.String);Sync file I/O: use IFileSystem or the *Async overload off the UI thread
+M:System.IO.File.ReadAllText(System.String,System.Text.Encoding);Sync file I/O: use IFileSystem or the *Async overload off the UI thread
+M:System.IO.File.ReadAllLines(System.String);Sync file I/O: use IFileSystem or the *Async overload off the UI thread
+M:System.IO.File.ReadAllBytes(System.String);Sync file I/O: use IFileSystem or the *Async overload off the UI thread
+M:System.IO.File.WriteAllText(System.String,System.String);Sync file I/O: use IFileSystem or the *Async overload off the UI thread
+M:System.IO.File.WriteAllText(System.String,System.String,System.Text.Encoding);Sync file I/O: use IFileSystem or the *Async overload off the UI thread
+M:System.IO.File.WriteAllLines(System.String,System.Collections.Generic.IEnumerable{System.String});Sync file I/O: use IFileSystem or the *Async overload off the UI thread
+M:System.IO.File.WriteAllBytes(System.String,System.Byte[]);Sync file I/O: use IFileSystem or the *Async overload off the UI thread
+M:System.IO.File.AppendAllText(System.String,System.String);Sync file I/O: use IFileSystem or the *Async overload off the UI thread
+M:System.IO.File.OpenRead(System.String);Sync file I/O: use IFileSystem or the *Async overload off the UI thread
+M:System.IO.File.OpenWrite(System.String);Sync file I/O: use IFileSystem or the *Async overload off the UI thread
+M:System.IO.Directory.GetFiles(System.String);Sync directory scan: use IFileSystem.ReadDirectoryAsync
+M:System.IO.Directory.GetFiles(System.String,System.String,System.IO.SearchOption);Sync directory scan: use IFileSystem.ReadDirectoryAsync
+M:System.IO.Directory.GetDirectories(System.String);Sync directory scan: use IFileSystem.ReadDirectoryAsync
+M:System.IO.Directory.EnumerateFiles(System.String);Sync directory scan: use IFileSystem.ReadDirectoryAsync
+M:System.IO.Directory.EnumerateFileSystemEntries(System.String);Sync directory scan: use IFileSystem.ReadDirectoryAsync
+M:System.Net.Http.HttpClient.Send(System.Net.Http.HttpRequestMessage);Sync network I/O

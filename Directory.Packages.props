@@ -44,7 +44,7 @@
     <PackageVersion Include="Dock.Model" Version="12.1.0.13" />
     <PackageVersion Include="Dock.Model.Mvvm" Version="12.1.0.13" />
     <PackageVersion Include="Dock.Avalonia.Themes.Fluent" Version="12.1.0.13" />
-    <!-- Editor: banned-API rule (no sync-over-async / sync I/O on the UI thread) -->
+    <!-- Editor + Shell: banned-API rule (no sync-over-async / sync I/O on the UI thread) -->
     <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
   </ItemGroup>
 
