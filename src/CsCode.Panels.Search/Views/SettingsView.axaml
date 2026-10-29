@@ -1,0 +1,157 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:s="using:CsCode.Panels.Search.Settings"
+             xmlns:ic="using:CsCode.Ui.Icons"
+             xmlns:v="using:CsCode.Panels.Search.Views"
+             x:Class="CsCode.Panels.Search.Views.SettingsView"
+             x:DataType="s:SettingsViewModel">
+  <UserControl.Styles>
+    <Style Selector="Button.tool">
+      <Setter Property="Width" Value="24" />
+      <Setter Property="Height" Value="24" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="2" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:icon.foreground'}" />
+    </Style>
+    <Style Selector="Button.tool:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource ResourceKey='vsc:toolbar.hoverBackground'}" />
+    </Style>
+    <Style Selector="TextBlock.dim">
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:descriptionForeground'}" />
+    </Style>
+    <Style Selector="ToggleButton.tab">
+      <Setter Property="Padding" Value="14,5" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="BorderThickness" Value="0,0,0,2" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:panelTitle.inactiveForeground'}" />
+    </Style>
+    <Style Selector="ToggleButton.tab:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:panelTitle.activeForeground'}" />
+    </Style>
+    <Style Selector="ToggleButton.tab:checked /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:panelTitle.activeForeground'}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ResourceKey='vsc:panelTitle.activeBorder'}" />
+    </Style>
+    <Style Selector="ListBoxItem.setting">
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ListBoxItem.category">
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="MinHeight" Value="24" />
+    </Style>
+  </UserControl.Styles>
+
+  <UserControl.DataTemplates>
+    <DataTemplate DataType="s:BoolSettingViewModel">
+      <CheckBox IsChecked="{Binding Value, Mode=TwoWay}" Content="{Binding Description}" Margin="0,2,0,0">
+        <CheckBox.ContentTemplate>
+          <DataTemplate x:DataType="x:String"><TextBlock Text="{Binding}" TextWrapping="Wrap" Foreground="{DynamicResource ResourceKey='vsc:descriptionForeground'}" /></DataTemplate>
+        </CheckBox.ContentTemplate>
+      </CheckBox>
+    </DataTemplate>
+    <DataTemplate DataType="s:NumberSettingViewModel">
+      <TextBox Text="{Binding Text, Mode=TwoWay}" Width="200" HorizontalAlignment="Left" MinHeight="24" Padding="6,2" />
+    </DataTemplate>
+    <DataTemplate DataType="s:StringSettingViewModel">
+      <TextBox Text="{Binding Value, Mode=TwoWay}" Width="420" HorizontalAlignment="Left" MinHeight="24" Padding="6,2" />
+    </DataTemplate>
+    <DataTemplate DataType="s:EnumSettingViewModel">
+      <StackPanel Spacing="3">
+        <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding Selected, Mode=TwoWay}" MinWidth="240" MinHeight="24" Padding="6,2">
+          <ComboBox.ItemTemplate>
+            <DataTemplate x:DataType="s:EnumChoice"><TextBlock Text="{Binding Label}" /></DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+        <TextBlock Text="{Binding Selected.Description}" Classes="dim" FontSize="11" TextWrapping="Wrap"
+                   IsVisible="{Binding Selected.Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate DataType="s:ComplexSettingViewModel">
+      <StackPanel Spacing="2">
+        <TextBlock Text="{Binding Summary}" Classes="dim" FontStyle="Italic" TextTrimming="CharacterEllipsis" />
+        <Button Classes="link" Command="{Binding EditInJsonCommand}" Padding="0" Background="Transparent" BorderThickness="0" HorizontalAlignment="Left" AutomationProperties.Name="Edit in settings.json">
+          <TextBlock Text="Edit in settings.json" TextDecorations="Underline" Foreground="{DynamicResource ResourceKey='vsc:textLink.foreground'}" />
+        </Button>
+      </StackPanel>
+    </DataTemplate>
+  </UserControl.DataTemplates>
+
+  <Grid ColumnDefinitions="230,*" Background="{DynamicResource ResourceKey='vsc:editor.background'}" TextElement.FontFamily="{DynamicResource ResourceKey='ui:FontFamily'}" TextElement.FontSize="{DynamicResource ResourceKey='ui:FontSize'}" TextElement.Foreground="{DynamicResource ResourceKey='vsc:foreground'}">
+    <!-- Category tree -->
+    <Border Grid.Column="0" Background="{DynamicResource ResourceKey='vsc:sideBar.background'}" BorderBrush="{DynamicResource ResourceKey='vsc:sideBar.border'}" BorderThickness="0,0,1,0">
+      <ListBox ItemsSource="{Binding Categories}" SelectedItem="{Binding SelectedCategory, Mode=TwoWay}" Background="Transparent" BorderThickness="0" Margin="0,8,0,0"
+               AutomationProperties.Name="Setting categories">
+        <ListBox.ItemContainerTheme>
+          <ControlTheme x:DataType="ListBoxItem" TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="24" />
+          </ControlTheme>
+        </ListBox.ItemContainerTheme>
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="s:CategoryNode">
+            <Grid ColumnDefinitions="*,Auto" Margin="{Binding Level, Converter={x:Static v:SettingsView.IndentConverter}}">
+              <TextBlock Text="{Binding Title}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+              <TextBlock Grid.Column="1" Text="{Binding Count}" Classes="dim" FontSize="11" VerticalAlignment="Center" Margin="6,0,10,0" />
+            </Grid>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Border>
+
+    <!-- Settings list -->
+    <Grid Grid.Column="1" RowDefinitions="Auto,Auto,*">
+      <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="20,14,20,6">
+        <TextBox x:Name="SearchBox" Text="{Binding SearchText, Mode=TwoWay}" PlaceholderText="Search settings  (@modified shows changed ones)" MinHeight="26" Padding="8,3"
+                 AutomationProperties.Name="Search settings" />
+        <Button Grid.Column="1" Classes="tool" Command="{Binding OpenJsonCommand}" Margin="6,0,0,0" Width="28" Height="26" ToolTip.Tip="Open Settings (JSON)" AutomationProperties.Name="Open settings.json">
+          <ic:Icon Kind="json" Size="16" />
+        </Button>
+      </Grid>
+      <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="20,0,20,0">
+        <ToggleButton Classes="tab" IsChecked="{Binding IsUserScope, Mode=TwoWay}" Content="User" />
+        <ToggleButton Classes="tab" IsChecked="{Binding IsWorkspaceScope, Mode=TwoWay}" IsEnabled="{Binding IsWorkspaceAvailable}" Content="Workspace" />
+      </StackPanel>
+      <ListBox Grid.Row="2" x:Name="SettingsList" ItemsSource="{Binding Items}" Background="Transparent" BorderThickness="0" Margin="0,6,0,0" SelectionMode="Single"
+               AutomationProperties.Name="Settings">
+        <ListBox.ItemContainerTheme>
+          <ControlTheme x:DataType="ListBoxItem" TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+          </ControlTheme>
+        </ListBox.ItemContainerTheme>
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="s:SettingItemViewModel">
+            <Grid ColumnDefinitions="3,*" Margin="0,0,0,2">
+              <!-- the "modified" marker -->
+              <Border Grid.Column="0" Margin="0,4" Background="{DynamicResource ResourceKey='vsc:focusBorder'}" IsVisible="{Binding IsModified}" />
+              <StackPanel Grid.Column="1" Margin="17,8,20,10" Spacing="4">
+                <Grid ColumnDefinitions="*,Auto">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13" />
+                    <TextBlock Text="{Binding AlsoModifiedIn, StringFormat='(also modified in {0})'}" Classes="dim" FontSize="11" VerticalAlignment="Center"
+                               IsVisible="{Binding AlsoModifiedIn, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                  </StackPanel>
+                  <Button Grid.Column="1" Classes="tool" Click="OnGearClick" ToolTip.Tip="More actions" AutomationProperties.Name="Setting actions"><ic:Icon Kind="settings-gear" Size="14" /></Button>
+                </Grid>
+                <TextBlock Text="{Binding Description}" Classes="dim" TextWrapping="Wrap" MaxWidth="720" HorizontalAlignment="Left"
+                           IsVisible="{Binding Kind, Converter={x:Static v:SettingsView.NotBooleanConverter}}" />
+                <ContentControl Content="{Binding}" />
+                <TextBlock Text="{Binding Error}" IsVisible="{Binding HasError}" Foreground="{DynamicResource ResourceKey='vsc:errorForeground'}" FontSize="11" />
+              </StackPanel>
+            </Grid>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Grid>
+  </Grid>
+</UserControl>

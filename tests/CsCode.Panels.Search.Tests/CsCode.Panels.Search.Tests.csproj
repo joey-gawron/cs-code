@@ -1,5 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- Preview/ is a separate, opt-in app (its own csproj), not part of this test assembly. -->
+  <ItemGroup>
+    <Compile Remove="Preview/**" />
+    <EmbeddedResource Remove="Preview/**" />
+    <None Remove="Preview/**" />
+    <AvaloniaXaml Remove="Preview/**" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
@@ -15,6 +23,8 @@
     <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
     <ProjectReference Include="../../src/CsCode.Ui/CsCode.Ui.csproj" />
     <ProjectReference Include="../../src/CsCode.Panels.Search/CsCode.Panels.Search.csproj" />
+    <!-- Real Platform pieces (LocalFileSystem, ConfigurationService) for the integration tests; referenced from the TEST project only. -->
+    <ProjectReference Include="../../src/CsCode.Platform/CsCode.Platform.csproj" />
   </ItemGroup>
 
 </Project>

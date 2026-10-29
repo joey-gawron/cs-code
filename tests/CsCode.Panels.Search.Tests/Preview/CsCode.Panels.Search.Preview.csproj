@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Opt-in developer preview of the Search / Settings / Keyboard Shortcuts panels in a REAL window (X11/Win32/macOS), wired to the real
+    Platform pieces (LocalFileSystem, ConfigurationService, CommandService, KeybindingService). Not part of CsCode.slnx and not a test.
+      Run it with: dotnet run, project tests/CsCode.Panels.Search.Tests/Preview, optionally followed by the argument folder DIR (double dash prefix)
+    Without a folder argument it creates a throw-away sample workspace; with one, edits (Replace) are refused so nothing on disk is changed.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../../../src/CsCode.Ui/CsCode.Ui.csproj" />
+    <ProjectReference Include="../../../src/CsCode.Panels.Search/CsCode.Panels.Search.csproj" />
+    <ProjectReference Include="../../../src/CsCode.Platform/CsCode.Platform.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+</Project>

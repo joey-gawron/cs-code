@@ -1,0 +1,53 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:s="using:CsCode.Panels.Search.Settings"
+             xmlns:ic="using:CsCode.Ui.Icons"
+             x:Class="CsCode.Panels.Search.Views.KeyboardShortcutsView"
+             x:DataType="s:KeyboardShortcutsViewModel">
+  <UserControl.Styles>
+    <Style Selector="TextBlock.dim">
+      <Setter Property="Foreground" Value="{DynamicResource ResourceKey='vsc:descriptionForeground'}" />
+    </Style>
+    <Style Selector="ListBoxItem">
+      <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style Selector="TextBlock.cell">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+  </UserControl.Styles>
+  <Grid RowDefinitions="Auto,Auto,*" Background="{DynamicResource ResourceKey='vsc:editor.background'}" TextElement.FontFamily="{DynamicResource ResourceKey='ui:FontFamily'}" TextElement.FontSize="{DynamicResource ResourceKey='ui:FontSize'}" TextElement.Foreground="{DynamicResource ResourceKey='vsc:foreground'}">
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="20,14,20,8">
+      <TextBox Text="{Binding Filter, Mode=TwoWay}" PlaceholderText="Type to search in keybindings (command, key, when)" MinHeight="26" Padding="8,3" AutomationProperties.Name="Search keybindings" />
+      <Button Grid.Column="1" Command="{Binding OpenJsonCommand}" Margin="8,0,0,0" Padding="10,3" MinHeight="26" ToolTip.Tip="Open Keyboard Shortcuts (JSON)" AutomationProperties.Name="Open keybindings.json">
+        <StackPanel Orientation="Horizontal" Spacing="6"><ic:Icon Kind="json" Size="14" /><TextBlock Text="keybindings.json" /></StackPanel>
+      </Button>
+    </Grid>
+    <!-- column headers (same proportions as the rows) -->
+    <Border Grid.Row="1" Margin="20,0,20,0" Padding="8,4" Background="{DynamicResource ResourceKey='vsc:sideBarSectionHeader.background'}" BorderBrush="{DynamicResource ResourceKey='vsc:sideBarSectionHeader.border'}" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="2*,1.2*,1.6*,80" TextElement.FontWeight="SemiBold" TextElement.FontSize="11">
+        <TextBlock Grid.Column="0" Text="Command" />
+        <TextBlock Grid.Column="1" Text="Keybinding" />
+        <TextBlock Grid.Column="2" Text="When" />
+        <TextBlock Grid.Column="3" Text="Source" />
+      </Grid>
+    </Border>
+    <ListBox Grid.Row="2" ItemsSource="{Binding Rows}" Background="Transparent" BorderThickness="0" Margin="20,0,20,8" AutomationProperties.Name="Keyboard shortcuts">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="s:ShortcutRow">
+          <Grid ColumnDefinitions="2*,1.2*,1.6*,80" Margin="8,0" MinHeight="24">
+            <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,2,8,2">
+              <TextBlock Text="{Binding Title}" Classes="cell" />
+              <TextBlock Text="{Binding Command}" Classes="cell dim" FontSize="10" IsVisible="{Binding HasTitle}" />
+            </StackPanel>
+            <Border Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center" Padding="6,1" CornerRadius="3" Margin="0,0,8,0" Background="{DynamicResource ResourceKey='vsc:badge.background'}">
+              <TextBlock Text="{Binding Keys}" FontSize="11" Foreground="{DynamicResource ResourceKey='vsc:badge.foreground'}" />
+            </Border>
+            <TextBlock Grid.Column="2" Text="{Binding When}" Classes="cell dim" Margin="0,0,8,0" />
+            <TextBlock Grid.Column="3" Text="{Binding Source}" Classes="cell dim" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+  </Grid>
+</UserControl>
