@@ -1,0 +1,206 @@
+# CsCode.Lsp — native LSP 3.17 client
+
+`CsCode.Lsp` is a complete, memory-lean language-server client. Any stdio (or TCP / named-pipe / unix-socket) language server works by
+adding a `LanguageServerDefinition`. There is **no extension system** in CsCode: servers are configured with built-in definitions plus the
+`cscode.languageServers` setting, nothing else.
+
+It implements `ILanguageServerManager`, registers one provider per feature interface into `ILanguageFeatureRegistry`, publishes diagnostics
+into `IDiagnosticService`, and depends on Core interfaces only (no Avalonia, no UI thread assumptions, no static state), so the same code can later
+run inside the headless `CsCode.Server`.
+
+```
+ IDocumentManager events ─► LanguageServerManager ──routes by (definition, root)──► ServerSlot ──supervises──► LanguageClient (one session)
+                                  │                                                   restart/backoff/Faulted       │ JsonRpc (StreamJsonRpc)
+                                  │                                                                                │ FeatureTable → providers → ILanguageFeatureRegistry
+   cscode.languageServers ────────┘                                                                                │ DocumentSync / diagnostics / progress / ...
+                                                                       LanguageWorkQueue ("Language lane": dedicated BelowNormal threads) ◄┘
+```
+
+## 1. Protocol types (`CsCode.Lsp.Protocol`)
+
+Approach: **generated, committed C#** from the official `metaModel.json` (3.17) by `tools/lspgen/lspgen.py` (`python3 tools/lspgen/lspgen.py`;
+downloads the model into `.scratch/lspgen/` when missing; `--check` reports staleness). Output: `src/CsCode.Lsp/Protocol/Generated/*.g.cs`
+(~11k lines, 324 structures, 37 enums, every non-proposed request/notification). Hand-written support is `OneOf.cs` and `LspJson.cs`.
+
+* **System.Text.Json only**, one `LspJson.Options` (null-omitting, explicit property names). No Newtonsoft.
+* Structures are `sealed record`s; `extends`/`mixins` are **flattened** into each record. Optional members are nullable and omitted when null;
+  *required-but-nullable* members (`processId`, `rootUri`…) are always written. Missing required members deserialize tolerantly (no `required`
+  keyword): real servers are sloppy.
+* **Unions** are `OneOf<…>` (2–4 arms). The converter picks the arm by JSON token kind (no parsing needed in the common case) and, when several
+  arms share a token kind (`TextEdit | InsertReplaceEdit`, `DocumentSymbol[] | SymbolInformation[]`, `Command | CodeAction`), by each arm's generated
+  `MatchesShape` (required members *including nested required members*, string-literal discriminators such as `kind:"create"`).
+  Unions of inline literal shapes (`TextDocumentFilter`, `TextDocumentContentChangeEvent`…) are merged into one all-optional record.
+* **Enums**: integer enums are C# enums (unknown numbers pass through); string enums are open `readonly record struct`s (unknown values round-trip).
+* `LSPAny` = `JsonElement`; URIs stay `string` on the wire and become `System.Uri` in the mappers; `uinteger[]` is `uint[]` (semantic-token data is
+  zero-copy into Core's `IReadOnlyList<uint>`).
+* `LspRequests.*` / `LspNotifications.*` are typed descriptors (`LspRequest<TParams,TResult>`), `LspMethods.*` are the method names,
+  `LspRegistrationOptionTypes.ByMethod` maps methods to registration-option types.
+
+Tests: `ProtocolRoundTripTests` (spec shapes, unions, optional/null handling, unknown enum values), `BoundedStructuresTests` (framing guard, caches, encodings).
+
+## 2. Transport and processes
+
+* StreamJsonRpc `JsonRpc` + `HeaderDelimitedMessageHandler` + `SystemTextJsonFormatter`. **Findings that shaped the design** (measured, see tests):
+  StreamJsonRpc sends `$/cancelRequest` on cancellation but completes the local task *only when the server answers*, so every wait is bounded with
+  `Task.WaitAsync(token)`; it throws `RemoteMethodNotFoundException` (a sibling of `RemoteInvocationException`) for unknown methods; send order is
+  preserved (40,000 notifications, single and multi-threaded under a lock).
+* Endpoints (`LanguageServerDefinition.Command`): a program (resolved on `PATH`, then `{ToolsDir}/lsp/**`, i.e. `node_modules/.bin`, `<tool>/bin`),
+  `tcp://host:port` / `socket://host:port` (retries ~3 s), `pipe://name` (named pipe), `unix:///path` (unix domain socket).
+* Child processes (`ProcessConnection`): started **without a shell**, env + cwd from the definition, stderr drained on its own task into a bounded
+  64-line ring and the bounded server log, below-normal priority, whole tree killed on dispose. Every child gets an environment marker
+  (`CSCODE_LSP_SESSION`); on Linux a kill also finds **re-parented descendants** (server `kill -9`ed, grandchild orphaned) by scanning `/proc/*/environ`
+  for that marker and waits (≤ 2 s) until they are really gone. Only processes carrying our own marker are ever killed.
+* Per-message size guard (`FramingGuardStream`, `cscode.lsp.maxMessageBytes`, default 64 MB): a header announcing more drops the connection (the
+  session is then restarted by the normal crash path). Parsing rents ~9× a message's size from shared pools, so this bounds a hostile payload.
+
+## 3. Threading and isolation (binding rules, all tested)
+
+*"LSP must never slow down editing or the GUI."* This project has no Avalonia reference and never assumes a UI thread.
+
+| Rule | Implementation | Verified by |
+|---|---|---|
+| Callers pay only an enqueue | every provider method → `LanguageClient.DocRequestAsync` → `LanguageWorkQueue.RunAsync` (allocate + enqueue); version/selector checks are field reads | `ThreadingTests.Every_provider_method_costs_the_caller_under_100_microseconds…` (25 provider methods, throwing `SynchronizationContext`, lane and server saturated); hostile suite asserts p99 < 1 ms per call |
+| Typing never waits | `OnChanged` = append under a tiny lock + one enqueue per burst; no text copies, no serialisation, no wait on the lane lock | `Typing_costs_the_editing_thread_almost_nothing…` (< 50 µs overhead per keystroke while the lane is stuck) |
+| Dedicated lane | `LanguageWorkQueue`: N threads (`cscode.lsp.workerThreads`, default 2), `BelowNormal` + per-thread `nice` on Linux, **not** the thread pool; delegates run on a lane thread until their first real await and re-enter with `ctx.ResumeOnLane()` | `LanguageWorkQueueTests`, `Document_text_is_only_ever_read_on_lane_threads…`, `Diagnostics_are_decoded_and_published_on_lane_threads` |
+| Priorities | strict `Interactive` > `Background` > `Idle` (see the table in `LanePriority`) | `Strict_priority…` |
+| Latest wins per (document, feature) | a newer item cancels an older one before it is sent, or via `$/cancelRequest` if in flight; didChange bursts coalesce into one message | `Latest_request_wins…`, `A_burst_of_edits_coalesces…` |
+| Stale results dropped | document version captured at call time; checked before sending and again after the response | `A_response_for_an_older_document_version_is_dropped` |
+| Bounded everything | hard queue cap (shed Idle → Background → oldest Interactive), pending-change cap (→ full resync), bounded mailboxes (diagnostics 512 files, log 2048 lines, progress 1024), capped results (`maxCompletionItems`, `maxReferences`, `maxWorkspaceSymbols`, `maxSemanticTokens`, 2000 diagnostics/file) | `A_flood_of_requests_cannot_grow_the_queue…`, `The_reader_never_blocks_on_a_stuck_consumer…` |
+| Backpressure | optional work (`ShouldShed`) is skipped *without enqueueing* when the lane is backed up; the reader loop never blocks (handlers only enqueue) | `Background_features_are_skipped_without_enqueueing…` |
+| Timeouts | Interactive 3 s, Background 30 s (`interactiveTimeoutMs`, `backgroundTimeoutMs`) → `null` + non-blocking status message | `A_slow_server_yields_null_at_the_timeout…` |
+| Circuit breaker | 5 consecutive timeouts (`breakerThreshold`) → state `Unresponsive` (Core enum member added), requests answered `null` immediately, one probe per interval (active read-only probe loop), automatic recovery | `Consecutive_timeouts_mark_the_server_Unresponsive…` |
+| OS-level isolation | servers start at below-normal priority via the `nice` binary (grandchildren inherit it; a post-start `setpriority` would race their creation) / `PriorityClass` on Windows; `cscode.lsp.processPriority`; RSS tracked via `IMemoryMonitor.TrackChildProcess` with restart over `RestartAboveBytes`; **optional CPU cap** `cscode.lsp.cpuQuotaPercent` via a transient `systemd-run --user --scope -p CPUQuota=N%` (probed once; falls back with a log line) | `Cpu_burning_children_run_at_low_priority…`, `The_optional_cpu_quota…` (checks `cpu.max`), `Server_runs_below_normal_priority_including_its_tsserver_child` |
+| In-flight work dies with its document | per-document version token cancelled (on the lane) whenever the text changes | `Editing_the_document_cancels_its_in_flight_requests` |
+
+One honest deviation: StreamJsonRpc's reader loop runs on the thread pool; it only frames and `JsonDocument.Parse`s. All typed (de)serialisation, mapping,
+coalescing and result handling run on the lane, and the reader never waits for the lane.
+
+### Hostile-server suite (`tests/CsCode.Lsp.Tests/Hostile/`)
+A node peer (`hostile-server.js`) runs as a **real child process** next to a healthy fake server and misbehaves: CPU-burning children, answers after 5 s,
+100 MB of `logMessage`/`publishDiagnostics` flood, 100 MB of stderr, 50k-item completion + 1M-token semantic result, never answers, crash loop (with orphaned
+grandchildren), oversized message. Each asserts: caller-side cost < 1 ms, bounded memory/queue, the healthy server unaffected, breaker/restart behaviour,
+and that nothing (process, thread, orphan) is left behind.
+
+## 4. Session lifecycle (`LanguageClient`) and supervision (`ServerSlot`)
+
+`initialize` (honest capabilities, built by `ClientCapabilitiesFactory`; `workspaceFolders`, `initializationOptions`, `trace`) → `initialized` → Running →
+`shutdown` + `exit` (bounded by `shutdownTimeoutMs`) → kill of the process tree. A `Starting→Running` transition is atomic, so a connection lost during
+start-up can never leave a dead session marked Running.
+
+`ServerSlot` = "server X for root Y": owns the documents that belong to it (a restarted session re-opens them), the restart policy (**at most
+`maxRestarts` (5) crashes per `restartWindowSeconds` (180 s)** with exponential backoff `restartBackoffMs`, then `Faulted` + `LastError` and **one**
+`IWindowService` message with a "Restart" action), the "binary not found" state (`Stopped` + one friendly message with an install hint, never retried
+automatically) and the user-stop rule (a stopped server is not auto-started by new documents until `StartAsync`).
+
+## 5. Document synchronisation
+
+`didOpen/didChange/didSave/willSave/willSaveWaitUntil/didClose` from `IDocumentManager` events, only for documents matching the definition's selector
+and ≤ `maxDocumentBytes` (10 MB). Honours `None/Full/Incremental` (and the detailed `TextDocumentSyncOptions`, static or dynamic).
+
+* Incremental changes are built straight from `TextDocumentChangedEventArgs` (spans of the edit, never the document); runs of typing merge into one change.
+* Versions are `ITextDocument.Version`, monotonic. A request flushes the document's pending changes **under the same per-document lock that initiates
+  the send**, so the server never sees a request before the text it refers to.
+* Safety nets: a full-text resync (with duplicate suppression: edits already inside the sent text are not sent again) happens after a pending-change
+  overflow, when sync was `None`/disabled and is turned on dynamically, for non-UTF-16 servers, or if text could not be read consistently.
+* Language-id change = close + open (or just close if the selector no longer matches). Edits racing `didOpen` are folded into the opened text.
+* **Contract for the editor:** every text change must fire `ITextDocument.Changed` (a reload without an event is invisible to the server; re-register
+  the document instead).
+* `willSave*`: the shell calls `IWillSaveParticipant.OnWillSaveAsync` (resolve `IEnumerable<IWillSaveParticipant>` from DI) before saving; a hung server can
+  delay a save by at most 1.5 s.
+
+### Position encoding
+Default **UTF-16** (identity: ~2 ns, never touches line text). `cscode.lsp.positionEncoding = "auto"` offers `utf-8, utf-16, utf-32`; a server that
+picks another encoding gets converted positions for open documents and full-text `didChange` (incremental ranges can't be converted after the fact).
+Measured (Release, 80-char line, ns per conversion): UTF-16 2; UTF-8/UTF-32 on ASCII ~5 after the vectorised ASCII fast path (190 before), on mixed
+text 85–145 — plus a line-text fetch from the document. Decision: UTF-16 by default, `auto` is opt-in. Limit: ranges in *closed* files keep the
+server's columns.
+
+## 6. Capability matrix
+
+Providers are registered **per feature interface**, only while the server advertises the capability (statically at `initialize` or dynamically).
+
+| Feature | Status | Notes |
+|---|---|---|
+| completion (+resolve, trigger chars, `isIncomplete`, snippets, `textEdit`/`insertReplaceEdit` (insert range), additionalTextEdits, commit chars, label details, item defaults) | implemented | capped at `maxCompletionItems` (then `IsIncomplete`); resolve echoes the original item (weak side table, no explicit cache) |
+| hover, signatureHelp (+retrigger, label offsets) | implemented | |
+| definition / declaration / typeDefinition / implementation | implemented | `Location`, `Location[]`, `LocationLink[]` |
+| references, documentHighlight | implemented | references capped at `maxReferences` |
+| documentSymbol (hierarchical + flat fallback), workspaceSymbol | implemented / partial | `workspaceSymbol/resolve` is not called: range-less results map to an empty range |
+| codeAction (+resolve, `isPreferred`, kinds, disabled) | implemented | diagnostics round-trip with their server-private `data` |
+| rename (+prepareRename) | implemented / partial | `defaultBehavior:true` → empty range (the editor picks the word) |
+| formatting / rangeFormatting / onTypeFormatting | implemented | |
+| foldingRange, selectionRange | implemented | |
+| semanticTokens full + **delta** + **range** | implemented | `ISemanticTokensProvider` (+ additive `ISemanticTokensRangeProvider`); previous result cached (bounded, `IMemoryTrimmable`); capped at `maxSemanticTokens` |
+| inlayHint | implemented / partial | `inlayHint/resolve` is not exposed (Core has no resolve hook) |
+| codeLens (+resolve) | implemented | |
+| documentColor | implemented / partial | `colorPresentation` not implemented |
+| linkedEditingRange, callHierarchy, typeHierarchy | implemented (no UI yet) | additive Core interfaces |
+| `workspace/executeCommand` bridge | implemented | `executeCommandProvider.commands` registered into `ICommandService` (optional dependency) |
+| diagnostics: `publishDiagnostics` (version-checked), pull (`textDocument/diagnostic`, `workspace/diagnostic`) | implemented | cleared on close (push-only servers) and on stop/crash |
+| `willRenameFiles` / `didRenameFiles` / `didCreateFiles` / `didDeleteFiles` | implemented | `IFileOperationParticipant`, filters honoured |
+| documentLink, moniker, inlineValue, `willCreateFiles`/`willDeleteFiles`, notebook documents, proposed features (inline completion…) | not implemented | out of scope |
+| partial results / client-initiated `workDoneToken` | not implemented | the client never sends partial-result tokens |
+
+Server → client: `window/logMessage`, `$/logTrace`, `window/showMessage` (rate-limited, 5 per 10 s), `window/showMessageRequest`, `window/showDocument`,
+`window/workDoneProgress/create` + `$/progress` (coalesced → `IWindowService.WithProgressAsync`, cancel → `window/workDoneProgress/cancel`),
+`workspace/configuration` (definition `Settings` first, then `IConfigurationService`), `workspace/didChangeConfiguration` push, `workspace/workspaceFolders`
+(+ change notifications for definitions without root markers), `workspace/applyEdit`, `client/registerCapability`/`unregisterCapability` (every feature above
+plus `didChange`/`didSave`/`didOpen`/`didClose`/`willSave*`, watched files, executeCommand, diagnostics, file operations), `workspace/*/refresh`
+(a refresh re-registers the provider so consumers re-query), `telemetry/event` (ignored). Unknown requests answer `MethodNotFound`.
+
+## 7. Manager
+
+* **Definitions**: built-ins (`BuiltinLanguageServers`: typescript-language-server, csharp-ls, pyright-langserver, clangd, rust-analyzer, gopls,
+  vscode-json/html/css-language-server, bash-language-server, yaml-language-server, lua-language-server — with `RootMarkers` and install hints),
+  `AddDefinition` (returns a removal token), and the **`cscode.languageServers`** override, a JSON object keyed by id:
+  `command, args, env, selector, initializationOptions, settings, rootMarkers, autoStart, workingDirectory, restartAboveBytes, enabled` (an unknown id with
+  `command` + `selector` defines a new server). Changing launch properties restarts a running server; selector-only changes don't.
+* **One server per (definition, workspace root)**: root = nearest ancestor containing a marker (names or globs like `*.sln`), never leaving the workspace
+  folder that contains the file; fallback = that folder, then the file's directory. Definitions *without* markers get one server serving all workspace folders
+  (multi-root aware, `didChangeWorkspaceFolders`). Root probing is file-system I/O, so routing runs on the lane, never on the thread that fired the document event.
+* `Start/Stop/Restart/StopAll`, `ServersChanged`; `Dispose`/`DisposeAsync` stops everything (including stops already in flight) and kills the process trees.
+* Lazy start on the first matching opened document when `AutoStart`.
+
+## 8. Settings
+
+| Key | Default | |
+|---|---|---|
+| `cscode.languageServers` | – | definition overrides (above) |
+| `cscode.lsp.maxDocumentBytes` | 10485760 | larger documents are not synced |
+| `cscode.lsp.maxMessageBytes` | 67108864 | larger server messages drop the connection |
+| `cscode.lsp.trace` | `off` | `off` \| `messages` \| `verbose` (into the server's Output channel `"<DisplayName> (LSP)"`, bounded) |
+| `cscode.lsp.workerThreads` | 2 | lane threads (applies to the next manager) |
+| `cscode.lsp.processPriority` | `belowNormal` | `belowNormal` \| `normal` \| `idle` |
+| `cscode.lsp.cpuQuotaPercent` | 0 | Linux CPU cap per server tree (systemd user scope) |
+| `cscode.lsp.maxCompletionItems` / `maxReferences` / `maxWorkspaceSymbols` / `maxSemanticTokens` | 5000 / 10000 / 5000 / 250000 | result caps |
+| `cscode.lsp.interactiveTimeoutMs` / `backgroundTimeoutMs` / `initializeTimeoutMs` / `shutdownTimeoutMs` | 3000 / 30000 / 60000 / 3000 | |
+| `cscode.lsp.positionEncoding` | `utf-16` | `auto` to negotiate utf-8/utf-32 |
+| `cscode.lsp.queueCapacity`, `breakerThreshold`, `breakerProbeMs`, `maxRestarts`, `restartWindowSeconds`, `restartBackoffMs` | 4096, 5, 5000, 5, 180, [500,1000,2000,4000,8000] | |
+
+## 9. Core changes made by this module (all additive)
+* `Core/Languages/LanguageServers.cs`: `LanguageServerState.Unresponsive` appended to the enum. **A `switch` expression over the enum without a
+  discard arm in other modules will need a case.**
+* New file `Core/Languages/AdditionalLanguageProviders.cs`: `ISemanticTokensRangeProvider`, `ILinkedEditingRangeProvider` (+`LinkedEditingRanges`),
+  `ICallHierarchyProvider`, `ITypeHierarchyProvider` (+`HierarchyItem`, call records), `IWillSaveParticipant` (+`DocumentSaveReason`), `IFileOperationParticipant`.
+
+## 10. Memory discipline
+Every `Subscribe`/`Register` lives in a `DisposableStore`/token owned by the session; per-document state is released on close; providers/clients are
+collectable after stop (`LeakAndSoakTests`: weak references after dispose, 2,000-document churn flat on threads/fds/memory, 30× start/stop). Caches are
+bounded (semantic-token delta base: 32 documents / 32 MB, `IMemoryTrimmable` when an `IMemoryMonitor` exists; completion/code-action/lens originals are
+weak side tables). The idle lane thread holds no result between items. Known transient: while a multi-megabyte message is parsed, System.Text.Json /
+StreamJsonRpc keep rented `ArrayPool` buffers (~9× the message) that the runtime trims on its own schedule; `maxMessageBytes` caps the size of any one message.
+
+## 11. Tests and how to run them
+```
+dotnet test tests/CsCode.Lsp.Tests          # everything (parallelisation is disabled on purpose: timing/thread assertions need a quiet process)
+tools/fetch-lsp-tools.sh                    # installs typescript-language-server + typescript into .scratch/tools/lsp (idempotent, local, git-ignored)
+tools/fetch-lsp-tools.sh --with-csharp      # additionally csharp-ls (dotnet tool)
+python3 tools/lspgen/lspgen.py              # regenerate the protocol types
+```
+Real-server tests (`RealTypeScriptServerTests`) and the hostile suite SKIP with an explicit reason when `node`/the tools are missing. The fake-server tests use an
+independent in-proc peer (`Harness/FakeLspServer`: own framing over `System.IO.Pipelines`, document mirror applying real LSP change semantics).
+
+## 12. Known limits
+`inlayHint/resolve` and `workspaceSymbol/resolve` are not exposed; non-UTF-16 encodings don't convert ranges in closed files; `colorPresentation`,
+`documentLink`, notebooks and proposed features are absent; `Dispose()` (sync) blocks up to 15 s — prefer `DisposeAsync` off the UI thread; the manager starts
+observing documents when `ILanguageServerManager` is first resolved (resolve it at startup).
