@@ -1,0 +1,32 @@
+# Module brief — Debugger with Rust and TypeScript (evaluate, then fix) — **wave 3** (after the integration fixes are merged)
+
+**User request (2026-10-29):** "For the next wave after all these fixes can you see how well the debugger feature works with rust and typescript."
+
+**Owns (when launched):** additive changes in `src/CsCode.Dap/**` (built-in adapter factories, installers, adapter quirks), fixes in `src/CsCode.Panels.Debug/**` and the editor's debug features where the evaluation finds defects, `tests/CsCode.Dap.Tests/**` (new `Category=RealAdapter` suites), `tools/fetch-js-debug.sh` and (if approved) `tools/fetch-codelldb.sh`, `docs/DEBUGGING-RUST-TS.md`. Read `docs/briefs/00-common.md` first — rules, threading and memory sections apply. **No extension system**: adapters are built-in factories plus the file-based `cscode.debuggers` setting.
+
+## What is already there (verify, don't rebuild)
+* DAP client with stdio, TCP (`debugServer`) and pipe transports; reverse requests `runInTerminal` (no terminal UI yet: output goes to the Debug Console) and `startDebugging` (child sessions); user adapters through `cscode.debuggers`; breakpoint languages come from each debugger's `languages` (docs/DAP.md).
+* Built-in adapter today: .NET via netcoredbg (`NetCoreDbgAdapterFactory` + `NetCoreDbgInstaller`, asks before downloading).
+
+## Toolchain on this machine (checked 2026-10-29)
+* **Rust:** cargo + rustc 1.98.1, rust-analyzer. **GDB 16.3** (`/usr/bin/gdb`) — speaks DAP natively (`gdb -i=dap`), no download. No lldb / lldb-dap / CodeLLDB installed.
+* **TypeScript:** Node 20.19.2, `tsc` (`/usr/local/bin/tsc`). The JavaScript debug adapter is **not** usable from VS Code's bundled js-debug (it needs the VS Code extension host); the standalone DAP server is a separate artifact: `js-debug-dap-v<version>.tar.gz` from github.com/microsoft/vscode-js-debug releases (MIT) — run as `node dapDebugServer.js <port> [host]`, it listens on TCP and spawns **child sessions via `startDebugging`**.
+* Optional for Rust: **CodeLLDB** standalone adapter (github.com/vadimcn/codelldb releases, MIT; the VS Code default for Rust, better Rust value formatting) — needs a download; `lldb-dap` from a Nix `lldb` package is an alternative. Downloads only with the user's go-ahead (asked at launch time).
+
+## MUST
+1. **Rust via GDB (no download):** built-in debugger type (e.g. `gdb`/`rust-gdb`) launching `gdb -i=dap` (BelowNormal priority, tracked child process), Rust pretty-printers loaded (`$(rustc --print sysroot)/lib/rustlib/etc/gdb_load_rust_pretty_printers.py` when present), `cargo build` pre-launch task template, initial launch configurations for a cargo binary and for a cargo test binary; breakpoint language `rust`.
+2. **TypeScript/JavaScript via js-debug:** built-in adapter factory for `pwa-node`/`node` that starts the standalone `dapDebugServer.js` on a free loopback port (or a socket the adapter prints) and connects over TCP, handles `startDebugging` child sessions on the same server (the parent session only orchestrates; the child is where breakpoints hit), source-mapped breakpoints in `.ts` (`tsc --sourceMap` / `outFiles`), `skipFiles` for `<node_internals>/**`; installer like `NetCoreDbgInstaller` (asks the user before downloading; `tools/fetch-js-debug.sh` for tests/dev); breakpoint languages `typescript`, `javascript`.
+3. **Evaluation matrix** — run every row against the real adapters, through the real `DebugService` and the Debug panels' view-models (as the panels' real-adapter test does), and record works / partial / broken with evidence in `docs/DEBUGGING-RUST-TS.md`:
+   launch + clean exit (no leftover adapter/debuggee/child processes), line breakpoints verified (and moved-line handling), conditional, hit-count, logpoint, function breakpoints, exception/panic breakpoints (Rust `rust_panic`; JS caught/uncaught), step over/into/out, pause, restart, stop, call stack (Rust frames incl. generics/closures; TS async call stacks + source-mapped frames + skipped internals), Locals/Autos/Watch value formatting (Rust `String`, `&str`, `Vec`, `HashMap`, `Option`/`Result`, enums, structs, `Box`/`Rc`; TS objects, classes, `Map`/`Set`, getters, arrays > 100 items with paging), set variable, Debug Console REPL evaluate + completions, stdout/stderr in the console, multiple threads (Rust `std::thread`), attach to a running process (Rust via pid; Node via `--inspect`), debug-console flood (a program printing 1M lines) stays responsive.
+   Sample programs live in test temp dirs (a cargo project; a TypeScript project compiled by `tsc`), built by the tests.
+4. **Fix what the matrix finds** in the owning module (Dap, Debug panels, editor debug features), each with a regression test; anything not fixable (adapter limitation) is documented with the adapter's own behaviour as evidence.
+5. **Real-adapter test suites** (`Category=RealAdapter`, skip with an explicit reason when gdb/node/js-debug/CodeLLDB is missing), including a 10-session leak/soak per adapter.
+
+## SHOULD
+CodeLLDB as a second Rust adapter (if the download is approved) with the same matrix, and a recommendation of which to default to; `lldb-dap` if a Nix `lldb` is available; Chrome/Edge (`pwa-chrome`) launch is out of scope unless trivial.
+
+## Threading & isolation (binding)
+Adapters run as below-normal-priority child processes on the Debug lane (ARCHITECTURE §6); js-debug's multiple TCP connections (parent + children) must not add UI-thread work proportional to traffic; the existing hostile tests' budgets apply (dispatcher p99 < 16 ms, max < 50 ms).
+
+## Done when
+`docs/DEBUGGING-RUST-TS.md` has the full matrix for GDB-Rust and js-debug-TypeScript (and CodeLLDB if approved) with evidence, MUST 1–2 work in the real app (integrator screenshots a Rust and a TypeScript debug session on the real window), every fixable defect fixed with tests, real-adapter suites green, committed without attribution trailers.

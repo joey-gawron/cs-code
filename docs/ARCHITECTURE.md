@@ -147,4 +147,4 @@ workspace-scoped singletons and per-process isolation matches §6.
 
 ## 12. Roadmap
 
-Wave 1 (building): Platform, LSP, DAP, Editor, Shell+Ui, Vim engine (Profiling parked — merged later). Wave 2a (building): Debug panels, Search/Settings panels. Then: integration (real composition, first real-window run). Wave 3: **background mode + saved sessions**, Vim↔editor adapter, general macros, remote editing (R1–R2, then R3–R4), terminal. Later: memory profiling/soak (parked module), hostile-load responsiveness suite on the integrated app, adversarial review, polish, packaging.
+Wave 1 (building): Platform, LSP, DAP, Editor, Shell+Ui, Vim engine (Profiling parked — merged later). Wave 2a (building): Debug panels, Search/Settings panels. Then: integration (real composition, first real-window run). Wave 3: **background mode + saved sessions**, **debugger with Rust and TypeScript** (evaluate + fix, `docs/briefs/debugger-rust-typescript.md`), Vim↔editor adapter, general macros, remote editing (R1–R2, then R3–R4), terminal. Later: memory profiling/soak (parked module), hostile-load responsiveness suite on the integrated app, adversarial review, polish, packaging.
