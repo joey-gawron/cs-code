@@ -77,7 +77,7 @@ public sealed class AutosToolWindow(DebugPanelsRuntime runtime) : DebugToolWindo
 
 public sealed class WatchToolWindow(DebugPanelsRuntime runtime) : DebugToolWindow(runtime)
 {
-    public override string Id => "debug.watch";
+    public override string Id => DebugPanelsRuntime.WatchViewId;
     public override string Title => "Watch 1";
     public override string? IconKey => "watch";
     public override string? ToggleCommandId => "workbench.debug.action.toggleWatch";

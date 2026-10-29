@@ -145,8 +145,9 @@ public sealed class MenuModel : IDisposable
                 return recents.Select((u, i) => CreateDynamic(new MenuNode($"_{i + 1} {Describe(u)}", ShellMenus.OpenRecent, Argument: u.ToString()))).ToArray();
             }
             case "toolWindows":
+                // Document views (Settings, Keyboard Shortcuts) are not tool windows: the Tools menu opens them.
                 return _toolWindows()
-                    .Where(t => t.ToggleCommandId is not null)
+                    .Where(t => t.ToggleCommandId is not null && t.DefaultLocation != ToolWindowLocation.Document)
                     .OrderBy(t => t.DefaultLocation).ThenBy(t => t.Title, StringComparer.Ordinal)
                     .Select(t => CreateDynamic(new MenuNode(t.Title, t.ToggleCommandId, IconKey: t.IconKey, Argument: null, CheckWhen: null))
                         .WithChecked(_isToolVisible(t.Id)))

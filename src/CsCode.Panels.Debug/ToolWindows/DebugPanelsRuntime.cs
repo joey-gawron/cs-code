@@ -83,8 +83,13 @@ public sealed class DebugPanelsRuntime : IDisposable
         if (string.IsNullOrWhiteSpace(expression)) return null;
         services.Watches.EnsureLoaded();
         services.Watches.Add(expression);
+        // Visual Studio brings the Watch window up on Add Watch; the shell's view activator shows (and creates) it even when it was hidden.
+        if (_provider.GetService<IViewActivator>() is { } views) await views.ShowViewAsync(WatchViewId);
         return null;
     }
+
+    /// <summary>Id of the Watch tool window (<see cref="WatchToolWindow"/>).</summary>
+    internal const string WatchViewId = "debug.watch";
 
     public void Dispose() => _subs.Dispose();
 }

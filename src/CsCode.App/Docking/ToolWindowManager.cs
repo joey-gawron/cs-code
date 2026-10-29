@@ -9,12 +9,15 @@ namespace CsCode.App.Docking;
 /// <summary>
 /// Places every registered <see cref="IToolWindow"/> into the Dock layout, shows/hides/toggles them and keeps the memory contract:
 /// a tool's view (and view-model) is created on first show and disposed when the tool is hidden.
+/// <see cref="ToolWindowLocation.Document"/> windows (Settings, Keyboard Shortcuts) are not tool windows here: they never enter a tool well and
+/// are opened on demand as document tabs (<see cref="DocumentViews"/>, routed by <see cref="ShellViewActivator"/>).
 /// </summary>
 public sealed class ToolWindowManager : IDisposable
 {
     private readonly ShellDockFactory _factory;
     private readonly IServiceProvider _services;
     private readonly Dictionary<string, ToolTab> _tools = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IToolWindow> _documentViews = new(StringComparer.Ordinal);
     private readonly Emitter<(string Id, bool Visible)> _visibilityChanged = new();
     private readonly DisposableStore _subs = new();
 
@@ -22,7 +25,9 @@ public sealed class ToolWindowManager : IDisposable
     {
         _factory = factory;
         _services = services;
-        var ordered = specs.OrderBy(s => s.Id, StringComparer.Ordinal).ToArray();
+        var all = specs.OrderBy(s => s.Id, StringComparer.Ordinal).ToArray();
+        foreach (var spec in all.Where(s => s.DefaultLocation == ToolWindowLocation.Document)) _documentViews[spec.Id] = spec;
+        var ordered = all.Where(s => s.DefaultLocation != ToolWindowLocation.Document).ToArray();
         if (factory.Root is null) factory.IncludeLeftTools = ordered.Any(s => s.DefaultLocation == ToolWindowLocation.Left);
         factory.EnsureLayout();
         foreach (var spec in ordered)
@@ -45,7 +50,12 @@ public sealed class ToolWindowManager : IDisposable
     public IReadOnlyCollection<ToolTab> Tools => _tools.Values;
     public IEventSource<(string Id, bool Visible)> VisibilityChanged => _visibilityChanged;
 
+    /// <summary>Registered windows that open as document tabs instead of docking in a tool well.</summary>
+    public IReadOnlyCollection<IToolWindow> DocumentViews => _documentViews.Values;
+
     public ToolTab? Get(string id) => _tools.GetValueOrDefault(id);
+
+    public IToolWindow? GetDocumentView(string id) => _documentViews.GetValueOrDefault(id);
 
     private IDock DockFor(ToolWindowLocation location) => location switch
     {

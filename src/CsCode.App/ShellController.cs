@@ -33,6 +33,13 @@ public sealed class ShellController : IDisposable
 {
     public const string UiStallSetting = "cscode.diagnostics.uiStallLogMs";
 
+    /// <summary>
+    /// The tool windows of the default (and reset) layout, like Visual Studio's: Explorer on the right, Output and Error List at the bottom. Every
+    /// other tool window starts hidden (Find Results, Find in Files, Modules...) unless its <see cref="IToolWindow.AutoShowWhen"/> holds, so a
+    /// module that contributes a window never changes the default layout by accident.
+    /// </summary>
+    public static readonly IReadOnlyList<string> DefaultLayoutTools = ["explorer", "output", "errorlist"];
+
     private readonly IServiceProvider _sp;
     private readonly IUiDispatcher _ui;
     private readonly DisposableStore _disposables = new();
@@ -86,7 +93,7 @@ public sealed class ShellController : IDisposable
         ContextKeys = new ContextKeyTracker(keys, well, _ui, quick, workspace, debug);
         _disposables.Add(ContextKeys);
 
-        Layout = new LayoutPersistence(Factory, Tools, well, _ui, state, ["findresults"]);
+        Layout = new LayoutPersistence(Factory, Tools, well, _ui, state, Tools.Tools.Select(t => t.Spec.Id).Except(DefaultLayoutTools));
 
         var specs = _sp.GetServices<IToolWindow>().ToArray();
         _disposables.Add(ShellCommands.Register(new ShellCommandContext(
@@ -94,7 +101,7 @@ public sealed class ShellController : IDisposable
             _sp.GetRequiredService<FindResultsViewModel>(), _sp.GetRequiredService<NotificationCenter>(), chrome,
             ResetLayoutAsync, RefreshExplorerAsync, specs,
             () => new WelcomeView(commands, workspace, state), () => new KeyboardReferenceView(_sp.GetService<IKeybindingService>(), commands),
-            _sp.GetService<ILanguageService>())));
+            _sp.GetService<ILanguageService>(), _sp.GetService<ShellViewActivator>())));
 
         Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window);
         _disposables.Add(Keyboard);

@@ -40,7 +40,8 @@ public sealed record ShellCommandContext(
     IEnumerable<IToolWindow> ToolWindows,
     Func<Avalonia.Controls.Control> CreateWelcome,
     Func<Avalonia.Controls.Control> CreateKeyboardReference,
-    CsCode.Core.Languages.ILanguageService? LanguageService = null);
+    CsCode.Core.Languages.ILanguageService? LanguageService = null,
+    ShellViewActivator? Views = null);
 
 /// <summary>
 /// Registers every command the shell owns (tabs, files, palette modes, window layout, theme picker, Find Results, tool-window toggles).
@@ -128,11 +129,14 @@ public static class ShellCommands
         Run("workbench.action.openSettingsJson", "Open Settings (JSON)", "Preferences", () => OpenSettingsFile(c));
         Run(KnownCommands.SelectTheme, "Color Theme", "Preferences", () => PickThemeAsync(c));
 
-        // ---- tool windows
+        // ---- tool windows (and document views such as Settings, when their module did not register its own command)
         foreach (var tool in c.ToolWindows)
         {
             var id = tool.Id;
-            if (tool.ToggleCommandId is { } toggle && !c.Commands.Has(toggle))
+            if (tool.ToggleCommandId is not { } toggle || c.Commands.Has(toggle)) continue;
+            if (tool.DefaultLocation == ToolWindowLocation.Document)
+                Run(toggle, "Open " + tool.Title, "View", () => { c.Views?.Show(id); return Task.CompletedTask; });
+            else
                 Run(toggle, "Toggle " + tool.Title, "View", () => { c.Tools.Toggle(id); return Task.CompletedTask; });
         }
         Run(ShowErrorList, "Show Error List", "View", () => { c.Tools.Show("errorlist"); return Task.CompletedTask; });
