@@ -11,15 +11,19 @@ command palette, notifications, themes. It is the composition root of CsCode. Th
 ## Architecture
 
 ```
-Program -> App.axaml.cs -> AppServices.Build(args, configure) -> MainWindow(provider)
+Program -> App.axaml.cs -> AppSession -> AppStartup.BuildServicesAsync (pool thread) -> MainWindow(provider) (UI thread)
                                    |                                |
-              AddCsCodeCore/Platform/Lsp/Dap/Editor/Profiling       +-- ShellController.Initialize()  (before first frame, no I/O)
-              + AddCsCodeShell (shell services, singletons)         +-- ShellController.StartDeferredAsync()  (after first frame)
+              AppServices.Build:                                    +-- ShellController.Initialize()  (before first frame, no I/O)
+              AddCsCodeCore/Platform/Lsp/Dap/Editor/Profiling       +-- ShellController.StartDeferredAsync()  (after first frame)
+              + AddCsCodeShell (shell services, singletons)
               + configure?.Invoke(services)   <- dev host / tests replace anything here
+              main window closed -> AppShutdown.RunAsync (bounded) -> lifetime.Shutdown
 ```
 
 * **`AppServices.Build`** registers the real modules and the shell services. There are no silent fallbacks: if a module that the shell needs
   is not registered, resolution fails and the shell shows the crash window with the log path (it never exits silently).
+* **Process lifecycle** (`Startup/`, see below): the container is built and the file-reading Platform services are constructed off the UI thread; the
+  exit is an orderly, bounded shutdown owned by `AppSession`.
 * **`ShellController`** wires everything that is not pure view: theme registration and `ThemeApplier`, the palette, every shell command,
   keyboard pipeline, context-key tracker, menus, status items, tool-window auto-show, layout persistence, the UI stall watchdog.
 * **First paint**: the window shows with the chrome and an empty dock; layout restore, command-line targets, theme from settings and the
@@ -38,6 +42,34 @@ Program -> App.axaml.cs -> AppServices.Build(args, configure) -> MainWindow(prov
 | `INavigationService` | `NavigationService` | open/preview/reveal, `ApplyWorkspaceEditAsync` (open docs: one undo group each; closed files: read, edit, write via `IFileSystem` off the UI thread; create/rename/delete; confirmation for multi-file edits, setting `cscode.shell.confirmMultiFileEdits`) |
 | `IToolWindow` host | `ToolWindowManager` | views created on first show, **disposed when hidden** |
 | `IColorThemeService` consumer | `ThemeApplier` | the three VS2022 themes are registered into the module's `IColorThemeService` |
+
+### Process lifecycle (`src/CsCode.App/Startup`)
+
+* **Start-up.** `Program.Main` sets `GCSettings.LatencyMode = SustainedLowLatency` (no blocking gen-2 collections while typing; the editor's figures
+  were measured in this mode) and installs the crash handler. `App` hands the desktop lifetime to an `AppSession`, which builds the container on a pool
+  thread while Avalonia finishes starting (`AppStartup.BuildServicesAsync`) and constructs there the services whose constructors read files synchronously
+  (`ConfigurationService`, `StateStorage`, `KeybindingService`, plus the file logger and the workspace service; docs/PLATFORM.md). The main window is then
+  created on the UI thread. A failure anywhere in this path shows the crash window (exit code 1).
+* **Exit.** The session takes the exit over (`ShutdownMode.OnExplicitShutdown`): when the main window has closed (after its own Save prompts and layout
+  save), `AppShutdown.RunAsync` runs on the UI thread before the dispatcher stops, bounded by `App.ShutdownDeadline` (default **5 s**):
+  1. flush `IStateStorage` (what the user did up to now is on disk before anything can hang);
+  2. dispose, in parallel and off the UI thread, the services that own sessions and child processes: `ILanguageServerManager` (shutdown/exit to every
+     server, then their process trees are killed), `IDebugService` (sessions terminated), `IBreakpointManager` (persists on dispose),
+     `IDebugConfigurationService`;
+  3. flush state again (`StateStorage.DisposeAsync`: what step 2 persisted), with at least 0.75 s even if step 2 used up the deadline;
+  4. **kill tracked child processes that are still running**: modules report their language servers and debug adapters through
+     `IMemoryMonitor.TrackChildProcess`; the shell wraps the registered monitor (`ShellMemoryMonitor`, a stand-in that tracks children and lists
+     trimmables but samples nothing while CsCode.Profiling registers none) and `ChildProcessTracker` kills the survivors' process trees. Only reported
+     pids are killed (a browser started through `xdg-open` is a child too), and only while the pid still has the reported start time (pid reuse);
+  5. dispose the container synchronously on the UI thread (UI singletons must be disposed on their thread; an async container dispose would continue on
+     a pool thread). The module singletons of step 2 are no-ops by then, so nothing here waits for a server.
+
+  If the lifetime is ended some other way (`Shutdown` called directly), `AppShutdown.RunAbrupt` kills the tracked children and flushes state
+  synchronously. Not covered: processes started by `ITaskService` are not reported through `TrackChildProcess` (Dap module), so a task that is still
+  running at the exit is not killed by the shell.
+* **Crash logs** go to `IAppPaths.LogsDir` (`$XDG_STATE_HOME/cscode/logs`, `%LOCALAPPDATA%\CsCode\Logs`, `~/Library/Logs/CsCode`, `$CSCODE_HOME/logs`),
+  next to the rolling `cscode.log`; `CrashHandler.DefaultLogDirectory` asks Platform's pure `AppPaths` because the handler starts before the container.
+  The handler is also registered in the container, so the main window reports deferred-startup and closing failures through it.
 
 ## Design system (`CsCode.Ui`)
 

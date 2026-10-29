@@ -4,9 +4,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
-using CsCode.App.Notifications;
 using CsCode.App.Startup;
-using CsCode.Core.Platform;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CsCode.App;
@@ -19,7 +17,12 @@ public sealed class App : Application
     /// <summary>The crash handler for this process (set by <c>Program</c>; created lazily for hosts that do not use <c>Program</c>).</summary>
     public static CrashHandler Crash { get; set; } = new(CrashHandler.DefaultLogDirectory());
 
-    public IServiceProvider? Services { get; private set; }
+    /// <summary>Overall bound of the graceful part of the exit (language servers, debug sessions, state flush); see <see cref="AppShutdown"/>.</summary>
+    public static TimeSpan ShutdownDeadline { get; set; } = AppShutdown.DefaultDeadline;
+
+    private AppSession? _session;
+
+    public IServiceProvider? Services => _session?.Services;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -32,29 +35,19 @@ public sealed class App : Application
                 Crash.Report(e.Exception, fatal: false, source: "UI");
                 e.Handled = true; // keep running: the user is told and the log is written
             };
-            try
-            {
-                Services = AppServices.Build(desktop.Args ?? [], ConfigureServices);
-                Crash.Reported += (summary, path, fatal) => NotifyCrash(summary, path);
-                desktop.MainWindow = new MainWindow(Services);
-            }
-            catch (Exception ex)
-            {
-                // Startup failure (e.g. a module that the shell needs is not registered): never a silent exit.
-                var log = Crash.Report(ex, fatal: true, source: "Startup");
-                desktop.MainWindow = new CrashWindow(CrashHandler.Summarize(ex), log);
-            }
+            Start(new AvaloniaDesktopHost(desktop));
         }
         base.OnFrameworkInitializationCompleted();
     }
 
-    private void NotifyCrash(string summary, string path) => Dispatcher.UIThread.Post(async () =>
+    /// <summary>Starts a run of the app on <paramref name="desktop"/> (see <see cref="AppSession"/>). Internal so tests can drive it with their own host.</summary>
+    internal AppSession Start(IDesktopHost desktop)
     {
-        if (Services?.GetService<IWindowService>() is not { } window) return;
-        var choice = await window.ShowMessageAsync(MessageSeverity.Error, $"An unexpected error occurred: {summary}\nDetails were written to {path}",
-            [new MessageAction("Copy Log Path"), new MessageAction("Dismiss", IsCloseAffordance: true)]);
-        if (choice == "Copy Log Path") await window.CopyToClipboardAsync(path);
-    });
+        var session = new AppSession(desktop, Crash, ConfigureServices, ShutdownDeadline);
+        _session = session;
+        session.Start();
+        return session;
+    }
 }
 
 /// <summary>Minimal window shown when startup itself failed, so the user always learns what happened and where the log is.</summary>

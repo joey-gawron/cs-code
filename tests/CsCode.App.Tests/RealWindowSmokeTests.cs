@@ -75,6 +75,9 @@ public class RealWindowSmokeTests
                 try
                 {
                     var app = (App)Application.Current!;
+                    // The services are built off the UI thread and the main window opens when they are ready.
+                    for (var i = 0; i < 600 && lifetime.MainWindow is not MainWindow; i++) await Task.Delay(50);
+                    if (lifetime.MainWindow is not MainWindow) throw new InvalidOperationException("the main window did not open");
                     var services = app.Services ?? throw new InvalidOperationException("the shell did not build its services");
                     var nav = (Core.Platform.INavigationService)services.GetService(typeof(Core.Platform.INavigationService))!;
                     await host.WorkspaceService.OpenFolderAsync(host.Workspace.Uri);
@@ -84,7 +87,7 @@ public class RealWindowSmokeTests
                     var frame = new RenderTargetBitmap(new PixelSize((int)window.Bounds.Width, (int)window.Bounds.Height));
                     frame.Render(window);
                     frame.Save(shot, new PngBitmapEncoderOptions());
-                    if (window is MainWindow main) main.CloseWithoutPrompt();
+                    if (window is MainWindow main) main.CloseWithoutPrompt(); // the app's orderly shutdown then ends the lifetime
                 }
                 catch (Exception ex) { failure = ex; lifetime.Shutdown(1); }
             }, DispatcherPriority.Background))

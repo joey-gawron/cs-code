@@ -7,6 +7,7 @@ using CsCode.App.Startup;
 using CsCode.App.ToolWindows;
 using CsCode.App.ToolWindows.FindResults;
 using CsCode.Core;
+using CsCode.Core.Diagnostics;
 using CsCode.Core.Platform;
 using CsCode.Dap;
 using CsCode.Editor;
@@ -49,7 +50,31 @@ public static class AppServices
         services.AddCsCodeDebugPanels();
         services.AddCsCodeSearchPanels();
         configure?.Invoke(services); // dev/test host: replace anything above
+        AddChildProcessTracking(services); // last: wraps whichever memory monitor ended up registered
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+    }
+
+    /// <summary>
+    /// Modules report their child processes through <see cref="IMemoryMonitor.TrackChildProcess"/>; the shell wraps the registered monitor (or stands in
+    /// for it while CsCode.Profiling registers none) so the exit path knows which processes to kill if their owner does not stop them in time.
+    /// </summary>
+    private static void AddChildProcessTracking(IServiceCollection services)
+    {
+        services.TryAddSingleton<ChildProcessTracker>();
+        var registered = services.LastOrDefault(d => d.ServiceType == typeof(IMemoryMonitor) && !d.IsKeyedService);
+        if (registered is not null) services.Remove(registered);
+        services.AddSingleton<IMemoryMonitor>(sp =>
+        {
+            var (inner, owned) = registered switch
+            {
+                null => (null, false),
+                { ImplementationInstance: IMemoryMonitor instance } => (instance, false), // the container never disposes instances either
+                { ImplementationFactory: { } factory } => ((IMemoryMonitor)factory(sp), true),
+                { ImplementationType: { } type } => ((IMemoryMonitor)ActivatorUtilities.CreateInstance(sp, type), true),
+                _ => ((IMemoryMonitor?)null, false),
+            };
+            return new ShellMemoryMonitor(inner, owned, sp.GetRequiredService<ChildProcessTracker>());
+        });
     }
 
     /// <summary>Registers the shell's own services (all singletons; the shell has one window).</summary>
