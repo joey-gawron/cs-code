@@ -66,7 +66,8 @@ public sealed class DocumentWell : IDisposable
     /// <summary>Raised after tabs were added, removed or reordered.</summary>
     public IEventSource<object?> TabsChanged => _tabsChanged;
 
-    public IReadOnlyList<ShellDocument> Tabs => _factory.DocumentGroups().SelectMany(g => g.VisibleDockables!.OfType<ShellDocument>()).ToArray();
+    // A tab that was disposed is closed even if Dock has not finished removing it yet (DockableClosed fires mid-removal).
+    public IReadOnlyList<ShellDocument> Tabs => _factory.DocumentGroups().SelectMany(g => g.VisibleDockables!.OfType<ShellDocument>()).Where(t => !t.IsDisposed).ToArray();
     public IReadOnlyList<EditorTab> EditorTabs => Tabs.OfType<EditorTab>().ToArray();
     /// <summary>Most recently used first (Ctrl+Tab order).</summary>
     public IReadOnlyList<ShellDocument> MruOrder => _mru.ToArray();
