@@ -339,6 +339,46 @@ public class VariablesTests
     }
 
     [AvaloniaFact]
+    public async Task Autos_highlight_what_the_last_step_changed_although_the_line_filter_shows_another_subset()
+    {
+        // Regression (debug-ct-5): the baseline used to be keyed by the names Autos happened to show, which change with the line. Stepping
+        // from [x, y] to [x, z] found no baseline (x not red), and revisiting a line compared with an older stop (spurious red).
+        using var rig = new PanelRig();
+        var uri = new Uri("file:///work/Program.cs");
+        var lines = Enumerable.Range(0, 30).Select(i => "// line " + i).ToArray();
+        lines[9] = "var y = 5;";
+        lines[10] = "x = x + 1;";
+        lines[11] = "z = x * 2;";
+        using var registration = rig.Documents.Register(new CsCode.Core.Text.InMemoryTextDocument(uri, "csharp", string.Join('\n', lines)));
+        void Locals(int x, int y, int z) => rig.Session.Variables[1200] = [new DebugVariable("x", x.ToString(), "int"), new DebugVariable("y", y.ToString(), "int"), new DebugVariable("z", z.ToString(), "int")];
+        void At(int line) => rig.Session.Frames[1][2] = rig.Session.Frames[1][2] with { Line = line };
+        using var vm = new AutosViewModel(rig.Services);
+
+        Locals(0, 5, 0);
+        At(10);
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => Names(vm.Tree) == "x,y", what: "autos at line 10");
+
+        rig.Resume();
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count == 0);
+        Locals(1, 6, 0); // the step changed x (shown) and y (not shown on the new lines)
+        At(11);
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => Names(vm.Tree) == "x,z", what: "autos at line 11");
+        Assert.True(vm.Tree.Rows.Single(r => r.Name == "x").IsChanged);
+        Assert.False(vm.Tree.Rows.Single(r => r.Name == "z").IsChanged);
+
+        rig.Resume();
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count == 0);
+        Locals(2, 6, 0); // back at line 10 (a loop): y did not change since the PREVIOUS stop
+        At(10);
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => Names(vm.Tree) == "x,y", what: "autos at line 10 again");
+        Assert.True(vm.Tree.Rows.Single(r => r.Name == "x").IsChanged);
+        Assert.False(vm.Tree.Rows.Single(r => r.Name == "y").IsChanged);
+    }
+
+    [AvaloniaFact]
     public async Task Autos_without_source_show_the_locals_minus_this_and_statics()
     {
         using var rig = new PanelRig();

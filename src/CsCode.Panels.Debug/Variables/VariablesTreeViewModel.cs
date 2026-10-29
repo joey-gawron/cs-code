@@ -280,9 +280,16 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
 
     private void TrackValue(VariableNodeViewModel node, string value)
     {
-        var tracked = value.Length > MaxTrackedValueChars ? value[..MaxTrackedValueChars] : value;
-        if (_current.Count < MaxTrackedValues) _current[node.Path] = tracked;
+        var tracked = Remember(node.Path, value);
         if (_compare && _previous!.TryGetValue(node.Path, out var old) && !string.Equals(old, tracked, StringComparison.Ordinal)) node.IsChanged = true;
+    }
+
+    /// <summary>Records what <paramref name="path"/> shows at this stop (the next stop's baseline); returns the (bounded) text kept.</summary>
+    private string Remember(string path, string value)
+    {
+        var tracked = value.Length > MaxTrackedValueChars ? value[..MaxTrackedValueChars] : value;
+        if (_current.Count < MaxTrackedValues) _current[path] = tracked;
+        return tracked;
     }
 
     /// <summary>Records a (re-)evaluated child value for change detection (Watch children use it).</summary>
@@ -335,13 +342,21 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     private bool _hasSeenScopes;
 
     /// <summary>Shows an already known flat list of variables as the roots (Autos: filtered locals).</summary>
-    public async Task ShowRootsAsync(LoadToken token, IReadOnlyList<(DebugVariable Variable, int ParentReference)> roots)
+    /// <param name="frameVariables">
+    /// The frame's full variable list when <paramref name="roots"/> is a filtered subset of it (Autos shows what the current and previous line
+    /// use). It, not the subset, is the frame's shape that keys the change baseline, and all of its values are remembered: otherwise every
+    /// step to a line that mentions other names would start without a baseline (nothing red), and a revisited line would be compared with
+    /// whichever older stop last showed the same subset.
+    /// </param>
+    public async Task ShowRootsAsync(LoadToken token, IReadOnlyList<(DebugVariable Variable, int ParentReference)> roots, IReadOnlyList<DebugVariable>? frameVariables = null)
     {
         if (!IsLive(token.Generation)) return;
         var holder = NewNode(VariableRowKind.Scope, null, "", "", token.Generation);
         holder.Depth = -1;
         _holder = holder;
-        ApplySignature(roots.Select(r => r.Variable.Name));
+        ApplySignature(frameVariables is null ? roots.Select(r => r.Variable.Name) : frameVariables.Select(v => v.Name));
+        if (frameVariables is not null)
+            foreach (var v in frameVariables) Remember(v.Name, v.Value); // a root's path is its name
         var nodes = new List<VariableNodeViewModel>(roots.Count);
         foreach (var (variable, parentRef) in roots) nodes.Add(CreateVariableNode(variable, holder, parentRef, token.Generation));
         holder.AddChildren(nodes);
