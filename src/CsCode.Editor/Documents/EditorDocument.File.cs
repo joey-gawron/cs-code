@@ -29,6 +29,9 @@ public sealed partial class EditorDocument
     private Func<Uri, string?, string>? _detectLanguage;
     private readonly Emitter<(Uri Old, Uri New)> _uriChanged = new();
 
+    /// <summary>The .editorconfig facts resolved for this file when it was opened/saved (indent style/size etc.).</summary>
+    internal EditorConfigProperties EditorConfigProperties => _editorConfig;
+
     public string EncodingName => _encoding.Name;
     public string EndOfLine => _eol;
 

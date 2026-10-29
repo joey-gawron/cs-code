@@ -39,6 +39,7 @@ internal sealed class TokenizationSession : IDisposable
     private bool _redrawPosted;
     private volatile bool _disposed;
     private volatile bool _hasGrammar;
+    private int _views;
 
     public TokenizationSession(TokenizationManager owner, EditorDocument doc)
     {
@@ -48,7 +49,7 @@ internal sealed class TokenizationSession : IDisposable
         Store.Reset(doc.LineCount, doc.Version);
         _subscriptions.Add(doc.Changed.Subscribe(OnDocumentChanged));
         _subscriptions.Add(doc.LanguageIdChanged.Subscribe(_ => Restart()));
-        Schedule(WorkPriority.Visible);
+        // No work is scheduled until a view attaches (AttachView): nothing is tokenised for a document nobody sees.
     }
 
     internal LineTokenStore Store { get; }
@@ -81,6 +82,24 @@ internal sealed class TokenizationSession : IDisposable
     }
 
     internal void RestartFromManager() => Restart();
+
+    /// <summary>
+    /// A view started showing this document. Tokenisation only works while at least one view exists (nothing is tokenised for a document
+    /// nobody sees); when the last view goes away the token memory is released and rebuilt on demand.
+    /// </summary>
+    public void AttachView()
+    {
+        if (Interlocked.Increment(ref _views) == 1) Schedule(WorkPriority.Visible);
+    }
+
+    public void DetachView()
+    {
+        if (Interlocked.Decrement(ref _views) <= 0)
+        {
+            Interlocked.Exchange(ref _views, 0);
+            Store.Trim(aggressive: true, 0, 0);
+        }
+    }
 
     private void Restart()
     {
@@ -117,7 +136,7 @@ internal sealed class TokenizationSession : IDisposable
 
     private void Schedule(WorkPriority priority)
     {
-        if (_disposed) return;
+        if (_disposed || Volatile.Read(ref _views) <= 0) return;
         _owner.Worker.Post(priority, this, _ => RunSlice());
     }
 
