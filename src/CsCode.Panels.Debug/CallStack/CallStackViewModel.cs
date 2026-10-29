@@ -112,6 +112,7 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
     private bool _showExternal = true;
     private string? _status = "Not debugging";
     private CallStackRow? _selected;
+    private int _picks;
     private int _disposed;
 
     public CallStackViewModel(DebugPanelServices services)
@@ -360,7 +361,19 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
                     await LoadMoreAsync(row.ThreadId);
                     break;
                 case CallStackRowKind.Frame when row.Frame is { } frame:
-                    if (_s.FrameFocus is { } focus) await _s.Ui.OnUi(focus.SetFocusedFrameAsync(session.Id, row.ThreadId, frame.Id, _cts.Token), _cts.Token);
+                    var pick = ++_picks;
+                    if (_s.FrameFocus is { } focus)
+                    {
+                        await _s.Ui.OnUi(focus.SetFocusedFrameAsync(session.Id, row.ThreadId, frame.Id, _cts.Token), _cts.Token);
+                        if (!IsLive(generation) || pick != _picks) return; // a newer pick (or stop) owns the arrow now
+                        // The service may decline without an error (the real one only knows the frames it fetched for this stop). Only a frame
+                        // it really focused gets the arrow and opens its source: Locals/Autos/Watch and the REPL follow the service, not this row.
+                        if (focus.FocusedFrameId != frame.Id)
+                        {
+                            _s.Window?.SetStatusBarMessage($"Could not switch to the frame '{frame.Name}': the debugger did not select it.", TimeSpan.FromSeconds(4));
+                            return;
+                        }
+                    }
                     if (!IsLive(generation)) return;
                     _currentFrame = frame.Id;
                     _currentThread = row.ThreadId;

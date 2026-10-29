@@ -224,11 +224,18 @@ public sealed class FakeDebugService : IDebugService, IDebugFrameFocus, IDebugOu
         SetStopLocation(new DebugStopLocation(session, threadId, frame.Id, frame.Source?.ToUri(), frame.Line, frame.Column, reason));
     }
 
+    /// <summary>
+    /// Models the real DebugService, which looks the frame up in a short per-stop cache and silently ignores frames it does not find:
+    /// only the first N frames of a thread can be focused (null = all).
+    /// </summary>
+    public int? FocusableFrameLimit { get; set; }
+
     public ValueTask SetFocusedFrameAsync(string sessionId, int threadId, int frameId, CancellationToken ct = default)
     {
         FocusCalls.Add((sessionId, threadId, frameId));
         var session = Sessions.OfType<FakeDebugSession>().FirstOrDefault(s => s.Id == sessionId);
-        var frame = session?.Frames.GetValueOrDefault(threadId)?.FirstOrDefault(f => f.Id == frameId);
+        var frames = session?.Frames.GetValueOrDefault(threadId)?.Take(FocusableFrameLimit ?? int.MaxValue);
+        var frame = frames?.FirstOrDefault(f => f.Id == frameId);
         if (session is not null && frame is not null)
             SetStopLocation(new DebugStopLocation(session, threadId, frameId, frame.Source?.ToUri(), frame.Line, frame.Column, "frame"));
         return ValueTask.CompletedTask;

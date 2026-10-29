@@ -61,6 +61,7 @@ public sealed class ThreadsViewModel : ObservableObject, IDisposable, IRowsRepla
     private DebugFocus _focus;
     private string? _status = "Not debugging";
     private ThreadRow? _selected;
+    private int _picks;
     private int _disposed;
 
     public ThreadsViewModel(DebugPanelServices services)
@@ -220,7 +221,18 @@ public sealed class ThreadsViewModel : ObservableObject, IDisposable, IRowsRepla
                 if (!IsLive(generation) || frames.Count == 0) return;
                 frame = row.TopFrame = frames[0];
             }
-            if (_s.FrameFocus is { } focus) await _s.Ui.OnUi(focus.SetFocusedFrameAsync(session.Id, row.Id, frame.Id, ct), ct);
+            var pick = ++_picks;
+            if (_s.FrameFocus is { } focus)
+            {
+                await _s.Ui.OnUi(focus.SetFocusedFrameAsync(session.Id, row.Id, frame.Id, ct), ct);
+                if (!IsLive(generation) || pick != _picks) return;
+                // The service may decline silently; the variables windows follow it, so only a thread it really switched to is marked.
+                if (focus.FocusedFrameId != frame.Id)
+                {
+                    _s.Window?.SetStatusBarMessage($"Could not switch to the thread '{row.Name}': the debugger did not select its frame.", TimeSpan.FromSeconds(4));
+                    return;
+                }
+            }
             if (!IsLive(generation)) return;
             MarkCurrent(row.Id);
             if (openSource && _s.Navigation is { } navigation && frame.Source is { } source)
