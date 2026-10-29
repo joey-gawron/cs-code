@@ -8,10 +8,10 @@ namespace CsCode.Lsp.Runtime;
 
 public enum ProcessPriority { BelowNormal, Normal, Idle }
 
-/// <summary>Everything needed to reach one language server. <see cref="ResolvedCommand"/> is null for socket/pipe endpoints.</summary>
+/// <summary>Everything needed to reach one language server. The factory resolves <c>Definition.Command</c> (PATH, then <c>{ToolsDir}/lsp/**</c>).</summary>
 public sealed record LspLaunchRequest(
     LanguageServerDefinition Definition,
-    string? ResolvedCommand,
+    string? ToolsDir,
     string? WorkingDirectory,
     ProcessPriority Priority = ProcessPriority.BelowNormal,
     Action<string>? OnStderrLine = null);
@@ -73,7 +73,11 @@ public sealed class DefaultLspConnectionFactory : ILspConnectionFactory
         switch (ep.Kind)
         {
             case LspEndpointKind.Process:
-                return ProcessConnection.Start(request);
+            {
+                var resolved = ToolResolver.Resolve(request.Definition.Command, request.ToolsDir, request.WorkingDirectory, request.Definition.Env)
+                    ?? throw new ServerNotFoundException(request.Definition.Command);
+                return ProcessConnection.Start(request, resolved);
+            }
             case LspEndpointKind.Tcp:
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
@@ -195,10 +199,9 @@ internal sealed class ProcessConnection : ILspConnection
         }
     }
 
-    public static ProcessConnection Start(LspLaunchRequest request)
+    public static ProcessConnection Start(LspLaunchRequest request, string command)
     {
         var def = request.Definition;
-        var command = request.ResolvedCommand ?? throw new ServerNotFoundException(def.Command);
         var marker = Guid.NewGuid().ToString("N");
 
         var psi = new ProcessStartInfo

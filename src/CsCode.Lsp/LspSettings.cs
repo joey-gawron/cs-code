@@ -1,0 +1,120 @@
+using System.Text.Json;
+using CsCode.Core.Platform;
+using CsCode.Lsp.Runtime;
+
+namespace CsCode.Lsp;
+
+public enum LspTraceMode { Off, Messages, Verbose }
+
+/// <summary>Setting keys owned by CsCode.Lsp (all under <c>cscode.lsp.*</c>, plus the user-overridable <c>cscode.languageServers</c>).</summary>
+public static class LspSettingKeys
+{
+    public const string LanguageServers = "cscode.languageServers";
+    public const string MaxDocumentBytes = "cscode.lsp.maxDocumentBytes";
+    public const string Trace = "cscode.lsp.trace";
+    public const string WorkerThreads = "cscode.lsp.workerThreads";
+    public const string ProcessPriority = "cscode.lsp.processPriority";
+    public const string MaxCompletionItems = "cscode.lsp.maxCompletionItems";
+    public const string MaxReferences = "cscode.lsp.maxReferences";
+    public const string MaxWorkspaceSymbols = "cscode.lsp.maxWorkspaceSymbols";
+    public const string MaxSemanticTokens = "cscode.lsp.maxSemanticTokens";
+    public const string InteractiveTimeoutMs = "cscode.lsp.interactiveTimeoutMs";
+    public const string BackgroundTimeoutMs = "cscode.lsp.backgroundTimeoutMs";
+    public const string InitializeTimeoutMs = "cscode.lsp.initializeTimeoutMs";
+    public const string PositionEncoding = "cscode.lsp.positionEncoding";
+    public const string QueueCapacity = "cscode.lsp.queueCapacity";
+    public const string BreakerThreshold = "cscode.lsp.breakerThreshold";
+    public const string BreakerProbeMs = "cscode.lsp.breakerProbeMs";
+    public const string MaxRestarts = "cscode.lsp.maxRestarts";
+    public const string RestartWindowSeconds = "cscode.lsp.restartWindowSeconds";
+    public const string RestartBackoffMs = "cscode.lsp.restartBackoffMs";
+    public const string ShutdownTimeoutMs = "cscode.lsp.shutdownTimeoutMs";
+}
+
+/// <summary>Immutable snapshot of every tunable; re-read when configuration changes. Defaults are the documented ones.</summary>
+internal sealed record LspSettings
+{
+    public long MaxDocumentBytes { get; init; } = 10 * 1024 * 1024;
+    public LspTraceMode Trace { get; init; } = LspTraceMode.Off;
+    public int WorkerThreads { get; init; } = 2;
+    public ProcessPriority Priority { get; init; } = ProcessPriority.BelowNormal;
+    public int MaxCompletionItems { get; init; } = 5_000;
+    public int MaxReferences { get; init; } = 10_000;
+    public int MaxWorkspaceSymbols { get; init; } = 5_000;
+    public int MaxSemanticTokens { get; init; } = 250_000;
+    public TimeSpan InteractiveTimeout { get; init; } = TimeSpan.FromSeconds(3);
+    public TimeSpan BackgroundTimeout { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan InitializeTimeout { get; init; } = TimeSpan.FromSeconds(60);
+    public TimeSpan ShutdownTimeout { get; init; } = TimeSpan.FromSeconds(3);
+    public bool AutoPositionEncoding { get; init; }
+    public int QueueCapacity { get; init; } = 4096;
+    public int BreakerThreshold { get; init; } = 5;
+    public TimeSpan BreakerProbeInterval { get; init; } = TimeSpan.FromSeconds(5);
+    public int MaxRestarts { get; init; } = 5;
+    public TimeSpan RestartWindow { get; init; } = TimeSpan.FromMinutes(3);
+    public TimeSpan[] RestartBackoff { get; init; } = [TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8)];
+
+    public static LspSettings Read(IConfigurationService? cfg)
+    {
+        if (cfg is null) return new LspSettings();
+        var d = new LspSettings();
+        return d with
+        {
+            MaxDocumentBytes = Math.Max(1024, cfg.Get(LspSettingKeys.MaxDocumentBytes, d.MaxDocumentBytes)),
+            Trace = ParseTrace(cfg.Get<string>(LspSettingKeys.Trace)),
+            WorkerThreads = Math.Clamp(cfg.Get(LspSettingKeys.WorkerThreads, d.WorkerThreads), 1, 8),
+            Priority = ParsePriority(cfg.Get<string>(LspSettingKeys.ProcessPriority)),
+            MaxCompletionItems = Math.Max(10, cfg.Get(LspSettingKeys.MaxCompletionItems, d.MaxCompletionItems)),
+            MaxReferences = Math.Max(10, cfg.Get(LspSettingKeys.MaxReferences, d.MaxReferences)),
+            MaxWorkspaceSymbols = Math.Max(10, cfg.Get(LspSettingKeys.MaxWorkspaceSymbols, d.MaxWorkspaceSymbols)),
+            MaxSemanticTokens = Math.Max(100, cfg.Get(LspSettingKeys.MaxSemanticTokens, d.MaxSemanticTokens)),
+            InteractiveTimeout = TimeSpan.FromMilliseconds(Math.Max(10, cfg.Get(LspSettingKeys.InteractiveTimeoutMs, (int)d.InteractiveTimeout.TotalMilliseconds))),
+            BackgroundTimeout = TimeSpan.FromMilliseconds(Math.Max(10, cfg.Get(LspSettingKeys.BackgroundTimeoutMs, (int)d.BackgroundTimeout.TotalMilliseconds))),
+            InitializeTimeout = TimeSpan.FromMilliseconds(Math.Max(100, cfg.Get(LspSettingKeys.InitializeTimeoutMs, (int)d.InitializeTimeout.TotalMilliseconds))),
+            ShutdownTimeout = TimeSpan.FromMilliseconds(Math.Max(10, cfg.Get(LspSettingKeys.ShutdownTimeoutMs, (int)d.ShutdownTimeout.TotalMilliseconds))),
+            AutoPositionEncoding = string.Equals(cfg.Get<string>(LspSettingKeys.PositionEncoding), "auto", StringComparison.OrdinalIgnoreCase),
+            QueueCapacity = Math.Clamp(cfg.Get(LspSettingKeys.QueueCapacity, d.QueueCapacity), 16, 100_000),
+            BreakerThreshold = Math.Max(1, cfg.Get(LspSettingKeys.BreakerThreshold, d.BreakerThreshold)),
+            BreakerProbeInterval = TimeSpan.FromMilliseconds(Math.Max(10, cfg.Get(LspSettingKeys.BreakerProbeMs, (int)d.BreakerProbeInterval.TotalMilliseconds))),
+            MaxRestarts = Math.Max(0, cfg.Get(LspSettingKeys.MaxRestarts, d.MaxRestarts)),
+            RestartWindow = TimeSpan.FromSeconds(Math.Max(1, cfg.Get(LspSettingKeys.RestartWindowSeconds, (int)d.RestartWindow.TotalSeconds))),
+            RestartBackoff = cfg.Get<int[]>(LspSettingKeys.RestartBackoffMs) is { Length: > 0 } ms
+                ? ms.Select(m => TimeSpan.FromMilliseconds(Math.Max(0, m))).ToArray()
+                : d.RestartBackoff,
+        };
+    }
+
+    private static LspTraceMode ParseTrace(string? s) => s?.ToLowerInvariant() switch
+    {
+        "messages" => LspTraceMode.Messages,
+        "verbose" => LspTraceMode.Verbose,
+        _ => LspTraceMode.Off,
+    };
+
+    private static ProcessPriority ParsePriority(string? s) => s?.ToLowerInvariant() switch
+    {
+        "normal" => ProcessPriority.Normal,
+        "idle" => ProcessPriority.Idle,
+        _ => ProcessPriority.BelowNormal,
+    };
+
+    /// <summary>Configuration properties (defaults + descriptions) registered so the settings UI can show them.</summary>
+    public static IEnumerable<ConfigurationProperty> Properties()
+    {
+        static JsonElement J<T>(T v) => JsonSerializer.SerializeToElement(v);
+        var d = new LspSettings();
+        yield return new(LspSettingKeys.MaxDocumentBytes, J(d.MaxDocumentBytes), "Documents larger than this many bytes are not sent to language servers.");
+        yield return new(LspSettingKeys.Trace, J("off"), "Language-server protocol tracing into the server's Output channel: off | messages | verbose.");
+        yield return new(LspSettingKeys.WorkerThreads, J(d.WorkerThreads), "Dedicated (below-normal priority) threads of the language lane. Applies to servers started after the change.");
+        yield return new(LspSettingKeys.ProcessPriority, J("belowNormal"), "OS priority of language-server child processes: belowNormal | normal | idle.");
+        yield return new(LspSettingKeys.MaxCompletionItems, J(d.MaxCompletionItems), "Completion lists are capped to this many items (the list is then marked incomplete).");
+        yield return new(LspSettingKeys.MaxReferences, J(d.MaxReferences), "Maximum references returned by Find References.");
+        yield return new(LspSettingKeys.MaxWorkspaceSymbols, J(d.MaxWorkspaceSymbols), "Maximum workspace symbols returned per query.");
+        yield return new(LspSettingKeys.MaxSemanticTokens, J(d.MaxSemanticTokens), "Maximum semantic tokens delivered per document (the rest is dropped).");
+        yield return new(LspSettingKeys.InteractiveTimeoutMs, J(3000), "Timeout for interactive requests (completion, hover, definition...).");
+        yield return new(LspSettingKeys.BackgroundTimeoutMs, J(30000), "Timeout for background requests (semantic tokens, inlay hints, pull diagnostics...).");
+        yield return new(LspSettingKeys.InitializeTimeoutMs, J(60000), "Timeout for the initialize handshake.");
+        yield return new(LspSettingKeys.PositionEncoding, J("utf-16"), "utf-16 (default, zero-cost) or auto (negotiate utf-8/utf-32 when the server supports it).");
+        yield return new(LspSettingKeys.LanguageServers, null, "Language server definitions keyed by id: { command, args, env, selector, initializationOptions, settings, enabled, rootMarkers }.");
+    }
+}
