@@ -148,6 +148,13 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         UseSignature(string.Join('\n', rootNames.Take(40)));
     }
 
+    /// <summary>
+    /// The shape of a frame from its variables. Pseudo-variables an adapter shows only after some steps are left out — js-debug inserts
+    /// "Return value" after a step completes a call — or a step within one function would look like a different frame and nothing would be
+    /// highlighted as changed. Program variables never contain whitespace; such pseudo-variables do.
+    /// </summary>
+    private void ApplyVariablesSignature(IEnumerable<string> rootNames) => ApplySignature(rootNames.Where(n => !n.Any(char.IsWhiteSpace)));
+
     private void UseSignature(string signature)
     {
         _currentSignature = signature;
@@ -354,7 +361,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         var holder = NewNode(VariableRowKind.Scope, null, "", "", token.Generation);
         holder.Depth = -1;
         _holder = holder;
-        ApplySignature(frameVariables is null ? roots.Select(r => r.Variable.Name) : frameVariables.Select(v => v.Name));
+        ApplyVariablesSignature(frameVariables is null ? roots.Select(r => r.Variable.Name) : frameVariables.Select(v => v.Name));
         if (frameVariables is not null)
             foreach (var v in frameVariables) Remember(v.Name, v.Value); // a root's path is its name
         var nodes = new List<VariableNodeViewModel>(roots.Count);
@@ -377,6 +384,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
 
     public async Task ExpandAsync(VariableNodeViewModel node)
     {
+        if (node.IsLazy) { await ResolveLazyAsync(node); return; }
         if (IsDisposed || !node.HasChildren || node.Kind == VariableRowKind.More) return;
         if (node.Generation != Generation && node.Kind != VariableRowKind.Watch) return; // a node of a previous stop: its handle is dead
         if (node.IsExpanded && (node.ChildrenLoaded || node.IsLoading)) return;
@@ -435,13 +443,47 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         node.IsLoading = true;
         try
         {
-            var page = await _ui.OnUi(session.GetVariablesAsync(node.VariablesReference, start, PageSize, ct), ct);
-            if (!IsLive(generation)) return;
+            IReadOnlyList<DebugVariable> page;
+            int paged;                // how many of `page` count towards the next `start`
+            string? firstPaged;       // name of the first of those (recognises an adapter that ignored `start`)
+            int? total = node.KnownChildCount;
+            if (node.IndexedVariables is > 0 && session is IDebugSessionVariablePaging filtered)
+            {
+                // DAP pages through the INDEXED children (start/count apply to the filtered set; js-debug ignores `start` without a filter);
+                // the named ones (an array's length, its prototype) come once, before the first page.
+                var indexed = await _ui.OnUi(filtered.GetVariablesAsync(node.VariablesReference, "indexed", start, PageSize, ct), ct);
+                if (!IsLive(generation)) return;
+                if (start > 0 && indexed.Count > 0)
+                {
+                    // js-debug v1.140.0 appends a named child ([[Prototype]]) to the last indexed page: never show a name twice under one node.
+                    var shown = node.Children.Select(c => c.Name).ToHashSet(StringComparer.Ordinal);
+                    if (indexed.Any(v => shown.Contains(v.Name))) indexed = [.. indexed.Where(v => !shown.Contains(v.Name))];
+                }
+                IReadOnlyList<DebugVariable> named = [];
+                if (start == 0 && node.NamedVariables is not 0)
+                {
+                    named = await _ui.OnUi(filtered.GetVariablesAsync(node.VariablesReference, "named", null, null, ct), ct);
+                    if (!IsLive(generation)) return;
+                    var indexedNames = indexed.Select(v => v.Name).ToHashSet(StringComparer.Ordinal);
+                    named = [.. named.Where(v => !indexedNames.Contains(v.Name))]; // an adapter that ignored the filter must not duplicate rows
+                }
+                page = named.Count == 0 ? indexed : [.. named, .. indexed];
+                paged = indexed.Count;
+                firstPaged = indexed.Count > 0 ? indexed[0].Name : null;
+                total = node.IndexedVariables;
+            }
+            else
+            {
+                page = await _ui.OnUi(session.GetVariablesAsync(node.VariablesReference, start, PageSize, ct), ct);
+                if (!IsLive(generation)) return;
+                paged = page.Count;
+                firstPaged = page.Count > 0 ? page[0].Name : null;
+            }
 
-            if (node.Depth < 0 && start == 0 && _currentSignature is null) ApplySignature(page.Take(40).Select(v => v.Name));
+            if (node.Depth < 0 && start == 0 && _currentSignature is null) ApplyVariablesSignature(page.Select(v => v.Name));
 
             // An adapter that ignores paging answers "start = N" with page 0 again: recognise it and stop instead of duplicating rows.
-            var ignoredPaging = loadMore && page.Count > 0 && node.FirstChildName is not null && page[0].Name == node.FirstChildName && start > 0;
+            var ignoredPaging = loadMore && paged > 0 && node.FirstChildName is not null && firstPaged == node.FirstChildName && start > 0;
             var room = Math.Max(0, MaxLoadedPerNode - node.LoadedCount);
             var take = ignoredPaging ? 0 : Math.Min(page.Count, room);
 
@@ -458,13 +500,13 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
                 if (!IsLive(generation)) return;
             }
 
-            if (node.FirstChildName is null && page.Count > 0) node.FirstChildName = page[0].Name;
-            node.NextStart = start + (ignoredPaging ? 0 : page.Count);
+            if (node.FirstChildName is null && firstPaged is not null) node.FirstChildName = firstPaged;
+            node.NextStart = start + (ignoredPaging ? 0 : paged);
             var oldMore = node.MoreRow;
             node.AddChildren(created);
             node.ChildrenLoaded = true;
 
-            var more = BuildMoreRow(node, page.Count, ignoredPaging, take < page.Count && !ignoredPaging, generation);
+            var more = BuildMoreRow(node, paged, total, ignoredPaging, take < page.Count && !ignoredPaging, generation);
             node.MoreRow = more;
             await ApplyRowsAsync(node, created, oldMore, more, generation);
             await RestoreExpansionAsync(created, generation);
@@ -480,10 +522,9 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         }
     }
 
-    private VariableNodeViewModel? BuildMoreRow(VariableNodeViewModel node, int pageCount, bool ignoredPaging, bool capped, long generation)
+    private VariableNodeViewModel? BuildMoreRow(VariableNodeViewModel node, int pageCount, int? total, bool ignoredPaging, bool capped, long generation)
     {
         if (ignoredPaging) return null;
-        var total = node.KnownChildCount;
         // A short page is the end, whatever the adapter announced (named + indexed counts are not always exact), so the pager never loops.
         var loadedAll = pageCount < PageSize || (total is { } t && node.NextStart >= t);
         if (loadedAll && !capped) return null;
@@ -614,9 +655,37 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
             case VariableRowKind.NewWatch: BeginEditExpression(node); break;
             case VariableRowKind.Message: break;
             default:
-                if (node.HasChildren) await ToggleAsync(node);
+                if (node.IsLazy) await ResolveLazyAsync(node);
+                else if (node.HasChildren) await ToggleAsync(node);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Computes a lazy value (js-debug's getters: DAP <c>presentationHint.lazy</c>): its only child IS the value, so the row takes it over in
+    /// place, as VS Code does. Running a getter has side effects in the debuggee, which is why it waits for the user.
+    /// </summary>
+    public async Task ResolveLazyAsync(VariableNodeViewModel node)
+    {
+        var session = _session;
+        var generation = Generation;
+        if (session is null || IsDisposed || !node.IsLazy || node.IsLoading || node.Generation != generation) return;
+        var ct = _cts.Token;
+        node.IsLoading = true;
+        try
+        {
+            var children = await _ui.OnUi(session.GetVariablesAsync(node.VariablesReference, null, null, ct), ct);
+            if (!IsLive(generation) || !node.IsLazy) return;
+            if (children.Count == 0) { node.SetError("The debugger returned no value."); return; }
+            node.ResolveLazy(children[0]);
+            TrackValue(node, node.FullValue);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (IsLive(generation)) node.SetError(ex.Message);
+        }
+        finally { node.IsLoading = false; }
     }
 
     /// <summary>The row that holds <paramref name="node"/> in the list, or its nearest visible ancestor (for Left-arrow navigation).</summary>

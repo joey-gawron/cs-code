@@ -51,7 +51,14 @@ public sealed record DebugStackFrame(int Id, string Name, DebugSource? Source, i
 
 public sealed record DebugScope(string Name, int VariablesReference, bool Expensive, int? NamedVariables = null, int? IndexedVariables = null, string? PresentationHint = null);
 
-public sealed record DebugVariable(string Name, string Value, string? Type = null, int VariablesReference = 0, string? EvaluateName = null, int? NamedVariables = null, int? IndexedVariables = null, string? MemoryReference = null);
+public sealed record DebugVariable(string Name, string Value, string? Type = null, int VariablesReference = 0, string? EvaluateName = null, int? NamedVariables = null, int? IndexedVariables = null, string? MemoryReference = null)
+{
+    /// <summary>
+    /// DAP <c>presentationHint.lazy</c>: <see cref="Value"/> is only a placeholder (js-debug shows a getter's source) and the real value is the
+    /// single child of <see cref="VariablesReference"/>, computed — the getter runs in the debuggee — only when asked for. Additive member.
+    /// </summary>
+    public bool IsLazy { get; init; }
+}
 
 public sealed record DebugEvaluateResult(string Result, string? Type = null, int VariablesReference = 0, int? NamedVariables = null, int? IndexedVariables = null, string? MemoryReference = null);
 

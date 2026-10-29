@@ -255,7 +255,7 @@ public class FakeDebugSession : IDebugSession
         }, ct);
     }
 
-    public ValueTask<IReadOnlyList<DebugVariable>> GetVariablesAsync(int variablesReference, int? start = null, int? count = null, CancellationToken ct = default)
+    public virtual ValueTask<IReadOnlyList<DebugVariable>> GetVariablesAsync(int variablesReference, int? start = null, int? count = null, CancellationToken ct = default)
     {
         Interlocked.Increment(ref _variableCalls);
         lock (VariableRequests) VariableRequests.Add((variablesReference, start, count));

@@ -19,7 +19,7 @@ namespace CsCode.Dap.Session;
 /// synchronously) and the volatile properties may be read from any thread. Events fire on the lane — subscribers must be cheap.
 /// Protocol order (spec): initialize → launch/attach → (adapter sends `initialized`) → breakpoints → configurationDone → running.
 /// </summary>
-public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, IBreakpointSyncHost
+public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, IDebugSessionVariablePaging, IBreakpointSyncHost
 {
     private readonly DebugSessionOptions _o;
     private readonly DebugSessionSettings _settings;

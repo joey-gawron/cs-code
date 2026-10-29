@@ -186,6 +186,16 @@ public sealed record DapVariable
     public int? IndexedVariables { get; init; }
     public string? MemoryReference { get; init; }
     public string? EvaluateName { get; init; }
+    public DapVariablePresentationHint? PresentationHint { get; init; }
+}
+
+/// <summary>DAP <c>VariablePresentationHint</c>. <c>lazy</c>: the value is computed (a getter runs) only when the client asks for its children.</summary>
+public sealed record DapVariablePresentationHint
+{
+    public string? Kind { get; init; }
+    public List<string>? Attributes { get; init; }
+    public string? Visibility { get; init; }
+    public bool? Lazy { get; init; }
 }
 
 public sealed record DapCompletionItem

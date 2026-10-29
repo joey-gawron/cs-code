@@ -11,7 +11,13 @@ public sealed class TestWindowService : IWindowService
     public List<InputBoxOptions?> InputPrompts { get; } = new();
     public Queue<string?> InputResponses { get; } = new();
 
-    public ValueTask<string?> ShowMessageAsync(MessageSeverity severity, string message, IReadOnlyList<MessageAction>? actions = null, CancellationToken ct = default) => ValueTask.FromResult<string?>(null);
+    public List<string> Messages { get; } = new();
+
+    public ValueTask<string?> ShowMessageAsync(MessageSeverity severity, string message, IReadOnlyList<MessageAction>? actions = null, CancellationToken ct = default)
+    {
+        lock (Messages) Messages.Add(message);
+        return ValueTask.FromResult<string?>(null);
+    }
     public ValueTask<QuickPickItem?> ShowQuickPickAsync(IReadOnlyList<QuickPickItem> items, QuickPickOptions? options = null, CancellationToken ct = default) => ValueTask.FromResult<QuickPickItem?>(null);
     public ValueTask<IReadOnlyList<QuickPickItem>?> ShowQuickPickManyAsync(IReadOnlyList<QuickPickItem> items, QuickPickOptions? options = null, CancellationToken ct = default) => ValueTask.FromResult<IReadOnlyList<QuickPickItem>?>(null);
 

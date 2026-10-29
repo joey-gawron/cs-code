@@ -268,8 +268,19 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
 
     private static bool HasSource(DebugStackFrame f) => f.Source is { } s && (!string.IsNullOrEmpty(s.Path) || s.SourceReference is > 0);
 
+    /// <summary>
+    /// Greyed (and folded into "[External Code]" when that is off): runtime frames without source, frames hinted <c>subtle</c>, and frames the
+    /// adapter de-emphasises — js-debug marks the Node internals it skips (<c>skipFiles</c>) with the hint <c>deemphasize</c> on the frame and on
+    /// its source, which DAP defines for sources only.
+    /// </summary>
     internal static bool IsExternalFrame(DebugStackFrame f) =>
-        f.PresentationHint is "subtle" or "label" || !HasSource(f);
+        f.PresentationHint is "subtle" or "label" or "deemphasize" || f.Source?.PresentationHint == "deemphasize" || !HasSource(f);
+
+    /// <summary>
+    /// A separator such as js-debug's <c>await</c> between the frames of an async call stack (DAP hint <c>label</c>): greyed but never folded
+    /// away — it is where the asynchronous part of the stack starts — and not a frame one can switch to.
+    /// </summary>
+    internal static bool IsLabelFrame(DebugStackFrame f) => f.PresentationHint == "label";
 
     internal static string LocationOf(DebugStackFrame f)
     {
@@ -327,7 +338,7 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
             var f = t.Frames[i];
             var external = IsExternalFrame(f);
             var isCurrent = f.Id == _currentFrame && t.Thread.Id == _currentThread;
-            if (external && !_showExternal && !isCurrent) { hidden++; continue; }
+            if (external && !_showExternal && !isCurrent && !IsLabelFrame(f)) { hidden++; continue; }
             FlushHidden();
             rows.Add(new CallStackRow(CallStackRowKind.Frame, depth, f.Name)
             {
@@ -360,11 +371,18 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
                 case CallStackRowKind.More:
                     await LoadMoreAsync(row.ThreadId);
                     break;
-                case CallStackRowKind.Frame when row.Frame is { } frame:
+                case CallStackRowKind.Frame when row.Frame is { } frame && !IsLabelFrame(frame):
                     var pick = ++_picks;
                     if (_s.FrameFocus is { } focus)
                     {
-                        await _s.Ui.OnUi(focus.SetFocusedFrameAsync(session.Id, row.ThreadId, frame.Id, _cts.Token), _cts.Token);
+                        // The service THROWS for a frame it cannot focus (no longer valid, ended or unfocused session): say which frame.
+                        try { await _s.Ui.OnUi(focus.SetFocusedFrameAsync(session.Id, row.ThreadId, frame.Id, _cts.Token), _cts.Token); }
+                        catch (InvalidOperationException ex)
+                        {
+                            if (IsLive(generation) && pick == _picks)
+                                _s.Window?.SetStatusBarMessage($"Could not switch to the frame '{frame.Name}': {ex.Message}", TimeSpan.FromSeconds(4));
+                            return;
+                        }
                         if (!IsLive(generation) || pick != _picks) return; // a newer pick (or stop) owns the arrow now
                         // The service may decline without an error (the real one only knows the frames it fetched for this stop). Only a frame
                         // it really focused gets the arrow and opens its source: Locals/Autos/Watch and the REPL follow the service, not this row.

@@ -80,8 +80,9 @@ public sealed partial class BreakpointsView : UserControl, IDisposable
                 menu.Items.Add(new MenuItem { Header = "Condition…", Command = new UiCommand(() => model.EditConditionAsync(row)) });
             if (row.Kind == BreakpointRowKind.Source)
             {
-                menu.Items.Add(new MenuItem { Header = "Hit Count…", Command = new UiCommand(() => model.EditHitCountAsync(row)) });
-                menu.Items.Add(new MenuItem { Header = "Log Message…", Command = new UiCommand(() => model.EditLogMessageAsync(row)) });
+                // Offered only when the active adapter supports them (netcoredbg: neither); an existing one can still be edited away.
+                menu.Items.Add(Gated("Hit Count…", row.HitCondition is null ? model.HitCountUnsupported : null, () => model.EditHitCountAsync(row)));
+                menu.Items.Add(Gated("Log Message…", row.LogMessage is null ? model.LogMessageUnsupported : null, () => model.EditLogMessageAsync(row)));
             }
             if (row.CanToggle)
                 menu.Items.Add(new MenuItem { Header = row.IsEnabled ? "Disable" : "Enable", InputGesture = KeyGesture.Parse("Space"), Command = new UiCommand(() => model.ToggleEnabled(row)) });
@@ -94,6 +95,18 @@ public sealed partial class BreakpointsView : UserControl, IDisposable
         menu.Items.Add(new MenuItem { Header = "Delete All Breakpoints", Command = model.DeleteAllCommand });
         menu.Open(this.FindControl<ListBox>("Rows")!);
         e.Handled = true;
+    }
+
+    /// <summary>A menu entry that is disabled, with the reason in its header and tooltip, when the debug adapter cannot do it.</summary>
+    internal static MenuItem Gated(string header, string? unsupported, Func<Task> run)
+    {
+        var item = new MenuItem { Header = unsupported is null ? header : header + " (not supported)", Command = new UiCommand(run), IsEnabled = unsupported is null };
+        if (unsupported is not null)
+        {
+            ToolTip.SetTip(item, unsupported);
+            ToolTip.SetShowOnDisabled(item, true);
+        }
+        return item;
     }
 
     public void Dispose()

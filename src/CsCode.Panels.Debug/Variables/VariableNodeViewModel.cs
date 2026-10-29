@@ -93,7 +93,16 @@ public sealed class VariableNodeViewModel : ObservableObject
     /// <summary>Session generation the node's handle belongs to; a node from an older generation is dead.</summary>
     internal long Generation { get; set; }
 
-    public bool HasChildren => (Kind is VariableRowKind.Variable or VariableRowKind.Watch or VariableRowKind.Scope) && (_variablesReference > 0 || _children.Count > 0);
+    public bool HasChildren => !_isLazy && (Kind is VariableRowKind.Variable or VariableRowKind.Watch or VariableRowKind.Scope) && (_variablesReference > 0 || _children.Count > 0);
+
+    private bool _isLazy;
+
+    /// <summary>
+    /// A value the adapter computes only on request (DAP <c>presentationHint.lazy</c>: js-debug's getters). Shown as <see cref="LazyText"/>
+    /// until activated; then the getter runs and the row shows its result (<see cref="VariablesTreeViewModel.ResolveLazyAsync"/>).
+    /// </summary>
+    public bool IsLazy => _isLazy;
+    public const string LazyText = "(…)";
 
     public bool IsExpanded { get => _isExpanded; internal set { if (SetProperty(ref _isExpanded, value)) OnPropertyChanged(nameof(ChevronKind)); } }
 
@@ -186,6 +195,7 @@ public sealed class VariableNodeViewModel : ObservableObject
     public bool CanViewAsNumber => ValueFormat.IsIntegerType(_type) && IsDataRow && !IsError;
 
     public string Tooltip => _isError ? (_errorMessage ?? _fullValue)
+        : _isLazy ? "Press Enter or double-click to evaluate (runs the getter in the debuggee)"
         : IsDataRow ? (_type is { Length: > 0 } ? $"{_fullValue}\n({_type})" : _fullValue) : string.Empty;
 
     internal void AddChildren(IEnumerable<VariableNodeViewModel> children) => _children.AddRange(children);
@@ -195,7 +205,7 @@ public sealed class VariableNodeViewModel : ObservableObject
     internal void Refresh()
     {
         if (!IsDataRow || _isError) return;
-        DisplayValue = ValueFormat.Display(_fullValue, _type, _formatOverride ?? Tree.NumberFormat);
+        DisplayValue = _isLazy ? LazyText : ValueFormat.Display(_fullValue, _type, _formatOverride ?? Tree.NumberFormat);
         OnPropertyChanged(nameof(Tooltip));
         OnPropertyChanged(nameof(CanViewAsNumber));
     }
@@ -204,7 +214,18 @@ public sealed class VariableNodeViewModel : ObservableObject
     {
         EvaluateName = v.EvaluateName;
         MemoryReference = v.MemoryReference;
+        _isLazy = v.IsLazy;
         SetValue(v.Value, v.Type, v.VariablesReference, v.NamedVariables, v.IndexedVariables);
+        OnPropertyChanged(nameof(IsLazy));
+    }
+
+    /// <summary>The getter ran: the row now shows its result (which may itself have children).</summary>
+    internal void ResolveLazy(DebugVariable value)
+    {
+        _isLazy = false;
+        SetValue(value.Value, value.Type, value.VariablesReference, value.NamedVariables, value.IndexedVariables);
+        OnPropertyChanged(nameof(IsLazy));
+        OnPropertyChanged(nameof(Tooltip));
     }
 
     internal void SetFrom(DebugEvaluateResult r)

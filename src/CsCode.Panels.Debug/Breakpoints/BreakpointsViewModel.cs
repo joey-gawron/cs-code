@@ -362,9 +362,19 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable, IRowsR
         }
     }
 
+    /// <summary>
+    /// Why the active debug adapter cannot take a hit count, or null when it can or nobody knows yet (no session has run: then the session reports
+    /// an unsupported kind itself). netcoredbg has no hit-count breakpoints and no logpoints; js-debug has both.
+    /// </summary>
+    public string? HitCountUnsupported => DebugCapabilityGate.HitCountUnsupported(_s.Debug);
+
+    /// <summary>Why the active debug adapter cannot take a logpoint, or null (see <see cref="HitCountUnsupported"/>).</summary>
+    public string? LogMessageUnsupported => DebugCapabilityGate.LogPointUnsupported(_s.Debug);
+
     public async Task EditHitCountAsync(BreakpointRow row)
     {
         if (_s.Window is not { } window || row.Source is not { } bp) return;
+        if (HitCountUnsupported is { } why && bp.HitCondition is null) { await window.ShowMessageAsync(MessageSeverity.Info, why); return; }
         var text = await window.ShowInputBoxAsync(new InputBoxOptions(Title: "Hit count", Prompt: "Break when the hit count satisfies this (for example 5, >5, %3); empty for none", Value: bp.HitCondition ?? ""));
         if (text is not null) _manager.Update(bp with { HitCondition = string.IsNullOrWhiteSpace(text) ? null : text.Trim() });
     }
@@ -372,6 +382,7 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable, IRowsR
     public async Task EditLogMessageAsync(BreakpointRow row)
     {
         if (_s.Window is not { } window || row.Source is not { } bp) return;
+        if (LogMessageUnsupported is { } why && bp.LogMessage is null) { await window.ShowMessageAsync(MessageSeverity.Info, why); return; }
         var text = await window.ShowInputBoxAsync(new InputBoxOptions(Title: "Log message", Prompt: "Log this message instead of breaking ({expression} is evaluated); empty for none", Value: bp.LogMessage ?? ""));
         if (text is not null) _manager.Update(bp with { LogMessage = string.IsNullOrWhiteSpace(text) ? null : text });
     }
