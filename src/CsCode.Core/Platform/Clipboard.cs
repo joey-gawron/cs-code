@@ -25,6 +25,12 @@ public enum ClipboardTextShape
 public sealed record ClipboardText(string Text, ClipboardTextShape Shape = ClipboardTextShape.Normal, IReadOnlyList<string>? Pieces = null, string? Html = null)
 {
     public static ClipboardText Plain(string text) => new(text);
+
+    /// <summary>
+    /// Visual width (tabs expanded) of the indentation of the line the copy started on, when an editor copied it: a multi-line paste keeps the
+    /// copied lines' indentation relative to that line. Null for text from elsewhere (the paste then infers it from the text).
+    /// </summary>
+    public int? SourceIndent { get; init; }
 }
 
 /// <summary>Which X11-style selection to address. <see cref="Primary"/> exists on Linux/X11 (select to copy, middle-click to paste) only.</summary>
@@ -95,6 +101,7 @@ public static class ClipboardTextExtensions
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(eol);
+        if (eol == "\n" && text.AsSpan().IndexOf('\r') < 0) return text; // the common case, vectorised: a 10 MB paste costs ~1 ms here
         var needs = false;
         for (var i = 0; i < text.Length && !needs; i++)
         {

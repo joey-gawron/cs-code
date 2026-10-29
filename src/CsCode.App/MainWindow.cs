@@ -106,6 +106,7 @@ public sealed class MainWindow : Window, IWindowChrome
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
         AddHandler(GotFocusEvent, OnGotFocus, RoutingStrategies.Bubble | RoutingStrategies.Tunnel);
+        _disposables.Add(_shell.ContextMenus.Attach(this));
         Closing += OnClosing;
         Opened += OnOpened;
 
@@ -190,6 +191,7 @@ public sealed class MainWindow : Window, IWindowChrome
     {
         var area = ShellFocus.Classify(e.Source as Visual);
         if (area != _shell.ContextKeys.Focus) _shell.ContextKeys.SetFocus(area);
+        _shell.Clipboard.NoteFocus(e.Source as Visual);
     }
 
     // ------------------------------------------------------------------ MRU switcher

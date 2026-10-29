@@ -152,6 +152,21 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
 
     // ---- rename ----
 
+    public async Task<bool> CanRenameAsync(CancellationToken ct)
+    {
+        if (_disposed || _v.Document.IsReadOnly) return false;
+        var doc = _v.Document;
+        var providers = _v.Services.Features.GetProviders<IRenameProvider>(doc);
+        if (providers.Count == 0) return false;
+        var offset = _v.Editor.CaretOffset;
+        var position = doc.PositionAt(offset);
+        var word = FeatureSupport.WordAt(_v.Editor.Document, offset);
+        var prepared = await FeatureSupport.CallAsync(_v, c => providers[0].PrepareRenameAsync(doc, position, c), ct, TimeSpan.FromSeconds(2)).ConfigureAwait(true);
+        if (_disposed || ct.IsCancellationRequested) return false;
+        // Same rule as RenameAsync: a range from the server, else a word under the caret.
+        return prepared is not null ? !prepared.Range.IsEmpty || word.End > word.Start : word.End > word.Start;
+    }
+
     public async Task RenameAsync()
     {
         if (_disposed || _v.Document.IsReadOnly) return;

@@ -73,6 +73,24 @@ public interface IEditorViewController
 
     /// <summary>True while this view (or one of its popups) has keyboard focus.</summary>
     bool IsFocused { get; }
+
+    // ---- additive members (clipboard and context menus; defaults keep other implementations compiling) ----
+
+    /// <summary>Whether Cut / Copy / Paste can act now (a selection, or the whole-line mode; a writable document).</summary>
+    bool CanCut => false;
+    bool CanCopy => false;
+    bool CanPaste => false;
+
+    /// <summary>Visual Studio's Cut / Copy / Paste on this view (the Edit menu runs these when the editor has focus).</summary>
+    Task CutAsync() => Task.CompletedTask;
+    Task CopyAsync() => Task.CompletedTask;
+    Task PasteAsync() => Task.CompletedTask;
+
+    /// <summary>The caret's rectangle in the view's coordinates: where a keyboard-opened context menu goes.</summary>
+    Avalonia.Rect GetCaretBounds() => default;
+
+    /// <summary>Brings the context keys of the view's right-click menu up to date (the host calls it right before building that menu).</summary>
+    void PrepareContextMenu() { }
 }
 
 /// <summary>Everything needed to recreate a destroyed view. Positions are 0-based lines/UTF-16 columns so they survive edits made while no view existed.</summary>

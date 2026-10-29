@@ -76,6 +76,9 @@ public sealed class ExplorerView : UserControl, IDisposable
         vm.Rows.CollectionChanged += OnRowsChanged;
     }
 
+    /// <summary>The view's model (Reveal in Explorer from a document tab).</summary>
+    internal ExplorerViewModel Model => _vm;
+
     private void OnVmChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(ExplorerViewModel.Selected) && _vm.Selected is { } s) Dispatcher.UIThread.Post(() => _list.ScrollIntoView(s), DispatcherPriority.Background);
