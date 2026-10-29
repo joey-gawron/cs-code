@@ -44,5 +44,7 @@ public static class BuiltInSettings
         P(SettingKeys.MemoryBudgetMb, 0, "Soft memory budget in MB (0 = unlimited). Above it caches are trimmed.", """{"type":"integer","minimum":0}"""),
         P(SettingKeys.MemoryTrimOnIdle, true, "Trim re-creatable caches when the application is idle.", """{"type":"boolean"}"""),
         P(KeymapKey, "visualstudio", "The default keybinding set.", """{"type":"string","enum":["visualstudio","vscode"]}"""),
+        P("search.useIgnoreFiles", true, "Honour .gitignore files when searching files in the workspace.", """{"type":"boolean"}"""),
+        P("search.followSymlinks", true, "Follow symbolic links to directories while searching (link cycles are detected).", """{"type":"boolean"}"""),
     ];
 }

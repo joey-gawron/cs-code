@@ -239,6 +239,11 @@ public sealed class Collector
         WaitFor(s => s.Any(c => c.Kind == kind && Name(c) == name), $"{kind} {name}", ct);
 }
 
+/// <summary>Runs alone: the handle-accounting tests count process-wide inotify fds, and the timing tests are sensitive to CPU contention.</summary>
+[CollectionDefinition("Watchers", DisableParallelization = true)]
+public sealed class WatchersCollection;
+
+[Collection("Watchers")]
 public class FileWatcherTests : IDisposable
 {
     private readonly WatchFixture _f = new();
