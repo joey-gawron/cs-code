@@ -605,6 +605,17 @@ public sealed partial class VimEngine : IDisposable
     {
         while (_mapBuf.Count > 0)
         {
+            if (_argPending || _noMap > 0)
+            {
+                // the command now waits for an argument character: the next key is not mapped (as it would not be had it come later)
+                var arg = _mapBuf[0];
+                var argTyped = _mapTyped[0];
+                MapBufRemoveFirst();
+                StopMapTimer();
+                Feed(arg, argTyped);
+                if (_host is null) return;
+                continue;
+            }
             var mode = CurrentMapMode();
             var (exact, longer) = _s.Mappings.Lookup(mode, CollectionsMarshal.AsSpan(_mapBuf));
             if (exact is not null && (!longer || exact.NoWait || timedOut))

@@ -185,7 +185,9 @@ public sealed partial class VimEngine
                 if (c.Key2 == 'g' || c.Key2 == 7) { if (!Next(out var k3)) return ParseResult.NeedMore; c.NChar = k3; }
                 return ParseResult.Complete;
             }
-            if (!Next(out var key2)) return ParseResult.NeedMore;
+            // Vim reads the second key of g z Z [ ] without mappings (normal.c: no_mapping for the command character): "nmap gi ..."
+            // must not turn "ggi" into "g" + "gi" once the first g has been taken as a command
+            if (!Next(out var key2)) return NeedMoreArg(true);
             c.Key2 = key2;
             if (key2 == Keys.Esc) return ParseResult.Cancelled;
             if (!PrefixValid(k, key2)) return ParseResult.Invalid;
