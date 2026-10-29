@@ -56,9 +56,9 @@ public sealed record TokenColorRule(IReadOnlyList<string> Scopes, string? Foregr
 
 /// <summary>
 /// One palette namespace for the whole app: VS Code workbench color keys ("editor.background", "sideBar.background",
-/// "statusBar.background", "list.activeSelectionBackground", "tab.activeBackground", …). Extension themes provide
+/// "statusBar.background", "list.activeSelectionBackground", "tab.activeBackground", …). VS Code theme JSON files provide
 /// these natively; the shell maps them onto Avalonia resources. Built-in "Visual Studio 2022 Blue/Dark/Light" themes
-/// are expressed in the same keys so every theme (built-in or extension) flows through one pipeline.
+/// are expressed in the same keys so every theme (built-in or a user's theme file) flows through one pipeline.
 /// </summary>
 public sealed record ColorTheme(
     string Id,
@@ -66,8 +66,7 @@ public sealed record ColorTheme(
     ThemeKind Kind,
     IReadOnlyDictionary<string, Rgba> Colors,
     IReadOnlyList<TokenColorRule> TokenColors,
-    IReadOnlyDictionary<string, TokenColorRule>? SemanticTokenColors = null,
-    string? ExtensionId = null)
+    IReadOnlyDictionary<string, TokenColorRule>? SemanticTokenColors = null)
 {
     public bool TryGetColor(string key, out Rgba color) => Colors.TryGetValue(key, out color);
 }
@@ -76,7 +75,7 @@ public interface IColorThemeService
 {
     ColorTheme Current { get; }
     IReadOnlyList<ColorTheme> Available { get; }
-    /// <summary>Adds a theme (built-in VS2022 themes are registered by the shell; extension themes via contributions).</summary>
+    /// <summary>Adds a theme (built-in VS2022 themes are registered by the shell; user theme files by the editor).</summary>
     IDisposable Register(ColorTheme theme);
     ValueTask SetCurrentAsync(string themeId, CancellationToken ct = default);
     /// <summary>Resolved color with the documented VS Code fallback chain (e.g. tab.inactiveBackground → editorGroupHeader.tabsBackground).</summary>

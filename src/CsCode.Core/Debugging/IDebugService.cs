@@ -59,7 +59,7 @@ public interface IDebugConfigurationProvider
         ValueTask.FromResult<IReadOnlyList<DebugConfiguration>>([]);
 }
 
-public sealed record DebuggerType(string Type, string Label, IReadOnlyList<string> Languages, string? ExtensionId);
+public sealed record DebuggerType(string Type, string Label, IReadOnlyList<string> Languages);
 
 /// <summary>launch.json (JSONC, .cscode/ then .vscode/) loading, compounds, variable substitution.</summary>
 public interface IDebugConfigurationService

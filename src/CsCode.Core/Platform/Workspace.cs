@@ -10,7 +10,7 @@ public sealed record DirectoryEntry(string Name, FileType Type);
 public enum FileChangeKind { Created = 1, Changed = 2, Deleted = 3 }
 public sealed record FileChange(Uri Uri, FileChangeKind Kind);
 
-/// <summary>Scheme-aware file system. `file` is always provided by Platform; extensions may add schemes later.</summary>
+/// <summary>Scheme-aware file system. `file` is always provided by Platform; other schemes (remote `ssh:`) come from the modules that own them.</summary>
 public interface IFileSystem
 {
     ValueTask<FileStat?> StatAsync(Uri uri, CancellationToken ct = default);
@@ -23,7 +23,10 @@ public interface IFileSystem
     ValueTask CopyAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default);
 }
 
-/// <summary>Recursive, debounced, exclude-aware watcher (honours files.watcherExclude). Disposing stops OS watches.</summary>
+/// <summary>
+/// Recursive, debounced, exclude-aware watcher (honours files.watcherExclude). Disposing stops OS watches. A root that does not exist yet,
+/// or is deleted later, is not an error: the watch waits for the directory to (re)appear and then reports what is inside it as created.
+/// </summary>
 public interface IFileWatcher
 {
     IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges);
@@ -62,12 +65,11 @@ public enum StorageScope { Application = 0, Workspace = 1 }
 public interface IAppPaths
 {
     string UserDataDir { get; }
-    string ExtensionsDir { get; }
     string LogsDir { get; }
     string CacheDir { get; }
     string GlobalStorageDir { get; }
     string ToolsDir { get; }
     string? WorkspaceStorageDir(Uri? workspaceFolder);
-    /// <summary>Directory containing bundled assets (extension host JS, built-in grammars/themes), next to the executable.</summary>
+    /// <summary>Directory containing bundled assets (built-in grammars/themes), next to the executable.</summary>
     string InstallDir { get; }
 }

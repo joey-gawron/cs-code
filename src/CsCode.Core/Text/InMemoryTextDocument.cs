@@ -5,7 +5,7 @@ namespace CsCode.Core.Text;
 
 /// <summary>
 /// Simple, correct, UI-free <see cref="ITextDocument"/> (string + line-start index). Intended for tests, fakes and
-/// small non-editor buffers (e.g. extension-host virtual documents); the real editor uses a rope-backed document.
+/// small non-editor buffers (e.g. read-only virtual documents); the real editor uses a rope-backed document.
 /// Lines are terminated by \n, \r\n or \r.
 /// </summary>
 public sealed class InMemoryTextDocument : ITextDocument

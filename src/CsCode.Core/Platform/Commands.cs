@@ -5,7 +5,7 @@ namespace CsCode.Core.Platform;
 
 /// <summary>
 /// Global command table (same model as vscode.commands). Commands are string ids with JSON-friendly arguments so
-/// they can be invoked from keybindings, menus, the command palette, LSP code actions and JS extensions alike.
+/// they can be invoked from keybindings, menus, the command palette, LSP code actions and macros alike.
 /// </summary>
 public interface ICommandService
 {
@@ -35,7 +35,7 @@ public sealed record CommandInvocation(string Id, IReadOnlyList<object?> Args, C
     }
 }
 
-/// <summary>Palette/menu metadata. Registered either with the handler or from an extension's `contributes.commands`.</summary>
+/// <summary>Palette/menu metadata, registered together with the handler.</summary>
 public sealed record CommandMetadata(string Id, string? Title = null, string? Category = null, string? Icon = null, string? Enablement = null);
 
 public static class CoreJson
@@ -80,8 +80,6 @@ public static class KnownCommands
     public const string ToggleTerminal = "workbench.action.terminal.toggleTerminal";
     public const string OpenSettings = "workbench.action.openSettings";
     public const string SelectTheme = "workbench.action.selectTheme";
-    public const string InstallExtension = "workbench.extensions.installExtension";
-    public const string ShowExtensions = "workbench.view.extensions";
     public const string ReloadWindow = "workbench.action.reloadWindow";
     public const string Quit = "workbench.action.quit";
 }

@@ -160,21 +160,32 @@ public sealed class IoLane : IDisposable
         public abstract void Cancel();
     }
 
+    // An item lets go of its delegate once it has run (or was cancelled): a lane thread may keep the last item it ran in a stack slot until it
+    // runs the next one (Debug builds keep every local of the endless loop alive), and that must not keep the caller's closure — a disposed
+    // subscription's callback, a document — reachable.
     private sealed class PostItem(Action work, Action<Exception>? onError) : WorkItem
     {
+        private Action? _work = work;
+        private Action<Exception>? _onError = onError;
+
         public override CancellationToken Token => CancellationToken.None;
-        public override void Cancel() { }
+        public override void Cancel() { _work = null; _onError = null; }
         public override void Execute()
         {
-            try { work(); }
-            catch (Exception ex) { try { onError?.Invoke(ex); } catch { /* swallow */ } }
+            var w = _work;
+            var e = _onError;
+            _work = null;
+            _onError = null;
+            if (w is null) return;
+            try { w(); }
+            catch (Exception ex) { try { e?.Invoke(ex); } catch { /* swallow */ } }
         }
     }
 
     private sealed class WorkItem<T> : WorkItem
     {
         private readonly TaskCompletionSource<T> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly Func<CancellationToken, T> _work;
+        private Func<CancellationToken, T>? _work;
         private readonly CancellationToken _ct;
         private CancellationTokenRegistration _reg;
 
@@ -189,15 +200,21 @@ public sealed class IoLane : IDisposable
         public Task<T> Task => _tcs.Task;
         public override CancellationToken Token => _ct;
 
-        public override void Cancel() => _tcs.TrySetCanceled(_ct.IsCancellationRequested ? _ct : new CancellationToken(true));
+        public override void Cancel()
+        {
+            _work = null;
+            _tcs.TrySetCanceled(_ct.IsCancellationRequested ? _ct : new CancellationToken(true));
+        }
 
         public override void Execute()
         {
+            var work = _work;
+            _work = null;
             try
             {
-                if (_tcs.Task.IsCompleted) return; // cancelled while queued
+                if (_tcs.Task.IsCompleted || work is null) return; // cancelled while queued
                 _ct.ThrowIfCancellationRequested();
-                _tcs.TrySetResult(_work(_ct));
+                _tcs.TrySetResult(work(_ct));
             }
             catch (OperationCanceledException oce)
             {

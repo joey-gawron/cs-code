@@ -14,8 +14,8 @@ public enum MemoryTrimLevel
 }
 
 /// <summary>
-/// Implemented by anything that holds re-creatable memory (editor caches, syntax-token state, LSP result caches, the
-/// extension-host process…). Registered with <see cref="IMemoryMonitor"/>; the monitor calls <see cref="Trim"/> from a
+/// Implemented by anything that holds re-creatable memory (editor caches, syntax-token state, LSP result caches, remote
+/// directory/content caches…). Registered with <see cref="IMemoryMonitor"/>; the monitor calls <see cref="Trim"/> from a
 /// background thread, so implementations must be thread-safe and must never block the UI.
 /// </summary>
 public interface IMemoryTrimmable
@@ -52,6 +52,6 @@ public interface IMemoryMonitor
     IReadOnlyList<IMemoryTrimmable> Trimmables { get; }
     /// <summary>Runs all trimmables at the level, then compacts the GC heap and returns pages to the OS.</summary>
     ValueTask TrimNowAsync(MemoryTrimLevel level, CancellationToken ct = default);
-    /// <summary>Registers an external child process (extension host, language server, debug adapter) so its RSS is accounted for and capped.</summary>
+    /// <summary>Registers an external child process (language server, debug adapter…) so its RSS is accounted for and capped.</summary>
     IDisposable TrackChildProcess(string name, int pid, long? restartAboveBytes = null, Func<ValueTask>? onOverBudget = null);
 }

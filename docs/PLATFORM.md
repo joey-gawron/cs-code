@@ -69,6 +69,8 @@ Mechanics worth knowing:
 * `IoLane` work items are short, synchronous leaf operations that check cancellation between 64 KB chunks and **never wait for another lane item**;
   the queue is bounded (a full queue delays the returned task, never the caller). Long jobs are sliced: the workspace walk is a set of ≤ 3 ms
   "pump" items that re-enqueue themselves and **park** (hold no thread, queue nothing) when the consumer is slow.
+  An item drops its delegate once it has run or was cancelled: an idle lane thread may still hold the last item it ran (Debug builds keep the loop's locals alive), and that must not keep
+  the caller's closure — a disposed watch's callback — reachable (it made `LeakAssert` tests flaky).
 * We deliberately do **not** use `FileStream`'s async API: on Unix .NET implements it by queueing blocking calls on the shared thread pool, which is the
   starvation the lane exists to prevent. Blocking on our own lane threads is safe because they are ours.
 * `System.Threading.Timer` is used only to *schedule*; its pool callback does nothing but post a work item to the lane.
@@ -80,8 +82,7 @@ Mechanics worth knowing:
 
 ## File locations
 
-`AppPaths` is pure: computing a path never touches the disk. `IAppPaths.ExtensionsDir` exists only because the Core interface still declares it
-(CsCode has no extension system); it is never created or read.
+`AppPaths` is pure: computing a path never touches the disk.
 
 | | Linux (XDG) | Windows | macOS |
 |---|---|---|---|
@@ -109,7 +110,7 @@ Layers, lowest to highest: **registered defaults → user `settings.json` → wo
   (An *unregistered* object setting is expanded by dots — register such settings via `RegisterProperties`.)
 * **Reads**: `Get<T>(key, default)` / `GetRaw(key)` / section reads (`GetRaw("editor")` returns the merged object). A registered default beats the caller's fallback; a value of the
   wrong type yields the fallback (never throws). Primitive reads allocate nothing after the first read of a key.
-* **Live reload**: the settings directories are watched; a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
+* **Live reload**: the settings directories are watched — the workspace's `.cscode/` and `.vscode/` also when they are created after the folder was opened; a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
   setting reports itself). Rewriting a file with the same values (different comments/order) fires nothing, nor does the echo of our own write.
 * **`UpdateAsync` edits the file in place** with a small JSONC-aware minimal-edit writer: only the value span is replaced; a new key is inserted before the closing brace using the file's
   indentation (tab/spaces), EOL (LF/CRLF), comma style (a trailing-comma file stays one) and single-line/multi-line shape; flat dotted keys, nested objects and mixes are found; `null` removes the key
@@ -192,12 +193,29 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
 
 `FileWatcher`: one `FileSystemWatcher` per (root, recursive), **shared** by every subscription on that root (each OS watcher costs an inotify instance — the default limit is 128 per user) and disposed with the last one.
 `Watch()` and disposal return immediately (the tree walk that arms inotify happens on the lane; `FileWatchHandle.Ready` completes when armed — events before that are not reported).
+* **Roots that do not exist yet** (`.cscode/` / `.vscode/` of a folder opened without them — the settings service and DAP's `launch.json` watch both watch them) are not an error:
+  the watch waits through a non-recursive watch on the nearest existing ancestor (shared like any other, so usually the folder's own — no extra inotify instance), arms when the directory appears
+  and reports what is already inside as created; `Ready` completes once the wait is armed. Before this, the watch failed (`Cannot watch '…': it is not a directory`) and stayed in the shared
+  table dead, so every later subscriber of that directory — the settings service re-watching when `.cscode` appeared — joined a watch that never fired: settings created after opening a folder
+  were ignored until a restart.
+* **Roots that go away**: an OS watch dies silently with its directory (no error on Linux; one on a moved directory keeps reporting it under the old path). A root is re-checked when a watched parent
+  reports it deleted, renamed or (re-)created, after deletions below it, and when another subscriber joins it: a deleted root goes back to waiting, a re-created one is re-armed on the new directory
+  (announcing its content). Not detected: a root replaced — or an empty one removed — while nothing watches its parent and nobody re-watches it.
+* **Roots that keep going away**: on Linux a `FileSystemWatcher` whose directory was deleted can never be released — its reader thread blocks on an inotify instance with no watch left, and
+  `Dispose` only removes watches (measured on .NET 10: +1 inotify fd and +1 thread per watcher disposed after its directory was deleted; none when disposed before, or after a move).
+  Re-arming a fresh one after every deletion would cost one instance per `rm -rf` of a build output or `git checkout` that removes `.vscode/` — the per-user limit is often 128, shared
+  with every other program. So a path that has lost `FileWatcher.MaxOsWatchLosses` (2) OS watches with its directory — counted per path, also when a module drops its watch after the
+  directory went and watches the path again — is **polled** from then on (every 2 s, logged once at Information). Polling follows the path: a missing root is an empty snapshot, so
+  deletions and re-creations are reported like any other change at no OS cost. Two, not one, because the same creation reported late by a second watched parent looks like a
+  replacement. Identity checks cannot replace the counting: on ext4 a directory re-created at once reuses the deleted one's inode number and usually its 4 ms birth-time tick.
 * Excludes (`files.watcherExclude` unless an explicit list is passed; `[]` = none) are matched on root-relative paths and drop events before they cost memory. *The OS still watches excluded directories — `FileSystemWatcher` cannot skip them.*
 * Debounce 75 ms after the last event, never later than 500 ms after the burst began; batches ≤ 1000 changes, delivered on lane threads, never concurrently per subscription; a throwing callback keeps receiving.
 * Coalescing: Created+Changed → Created · Created+Deleted → nothing · Changed+Deleted → Deleted · Deleted+Created → Changed · Renamed → Deleted+Created; events below a deleted directory are dropped;
   more than 100,000 distinct paths in one window collapse to a single `Changed(root)` "rescan" event.
 * When a **directory appears**, the watcher lists it and announces what is already inside (`FileSystemWatcher` misses children created before its own watch is armed — `mkdir -p a/b/c` reports only `a`).
 * **OS watch limit exhausted** (at arming or later): that root degrades to a polling watcher (every 2 s, ≤ 50,000 entries, default excludes pruned) and logs one warning per root.
+  A failure is matched to the OS watch that reported it: a late report from a watch a re-check already replaced is ignored, and one that arrives while the watch is still being armed
+  degrades it once it is in place. The polling watcher takes its baseline when it is armed, so a change right after `Ready` is reported.
 * Queue overflow reports a `Changed(root)` so consumers rescan.
 
 ## Workspace, search and fuzzy matching
@@ -253,9 +271,8 @@ Stated plainly — what is **not** done or **not verified**:
 * Events carry no ordering guarantee between different services.
 * The Windows recycle bin and macOS trash do not write "put back" metadata.
 
-Extension-system remnants outside this module (Core/other owners; removing them is not an additive change, so they are only reported): `IAppPaths.ExtensionsDir`, `KnownCommands.InstallExtension` / `ShowExtensions`,
-`ConfigurationProperty.ExtensionId`, `ColorTheme.ExtensionId`, "extension host" wording in Core doc comments, the "VS Code extension compatibility (Open VSX)" line in `README.md`, and the empty
-`EXTENSIONS (module: Extensions)` section in `Directory.Packages.props`. Platform implements none of it (`ExtensionsDir` returns an unused path that is never created).
+There is no extension system (ARCHITECTURE §1). Its last remnants (`IAppPaths.ExtensionsDir`, the extension command ids, the `ExtensionId` members of Core records, extension-host wording)
+were removed at integration; `NoExtensionSystemTests` keeps them from coming back.
 
 ## Tests
 
@@ -266,7 +283,10 @@ dotnet test tests/CsCode.Platform.Tests -c Release   # also asserts the strict 5
 (On a Nix-provided `dotnet` for the Avalonia projects, `source tools/nix-dev-env.sh` first; the Platform tests need none of its library paths.)
 Suites: when-clause (~200 cases) and context keys · JSONC parser/editor golden files + a random-edit model test · configuration (layering, reload, update, echo suppression, malformed recovery) ·
 keybindings (chords, timeouts via a manual clock, precedence/negatives/platforms, presets, user file, contributions) · local file system (atomicity stress, fault injection, symlinks, trash, cancellation via chunk hooks) ·
-file watcher (real `FileSystemWatcher` + inotify fd accounting, coalescing, excludes, polling fallback by fault injection) · workspace/gitignore/walker · fuzzy matcher (oracle + benchmark) · state, logging, editorconfig, language scopes · DI container.
+file watcher (real `FileSystemWatcher` + inotify fd accounting, coalescing, excludes, polling fallback by fault injection, roots created/deleted/replaced/moved after watching, ten
+delete/re-create cycles costing ≤ 2 inotify instances, stale and early failure reports, a root back before its dead watch is replaced) · workspace/gitignore/walker · fuzzy matcher (oracle + benchmark) · state, logging, editorconfig, language scopes · DI container (incl. workspace settings
+created after opening a folder while another module watches the missing directories). The same scenarios through the real app composition (settings + DAP `launch.json`; `.vscode/` deleted and
+re-created five times, ≤ 2 inotify instances lost) are in `tests/CsCode.App.Tests/WorkspaceSettingsWatchTests.cs`.
 Conventions: a test needing an unavailable feature **skips with a reason** (`Assert.SkipWhen/SkipUnless`: Windows-only, root, non-Linux fd counting); no test touches `~/.cscode`, `~/.config/cscode`, `~/.vscode*` or `~/.ssh`, mutates the process environment,
 or kills processes by name — every test uses a unique temp directory and `AppPaths(getEnv: …)`. The watcher and perf tests run in non-parallel collections because they count process-wide handles / measure time.
 Every lifecycle-bearing type has a `LeakAssert.NotRetained` test; every API that does background work has a "does not block the caller" test against a saturated `IoLane`; the hot paths have 1M-call allocation tests.

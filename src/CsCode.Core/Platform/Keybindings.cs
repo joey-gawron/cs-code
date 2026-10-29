@@ -18,7 +18,7 @@ public readonly record struct KeyStroke(string Key, bool Ctrl = false, bool Shif
 public enum KeyBindingSource { Default = 0, User = 1 }
 
 /// <param name="Chord">One stroke, or several for chords such as "ctrl+k ctrl+c".</param>
-/// <param name="IsNegative">A user/extension entry of the form {"command":"-foo"} that removes a default binding.</param>
+/// <param name="IsNegative">A user (or contributed) entry of the form {"command":"-foo"} that removes a default binding.</param>
 public sealed record KeyBinding(string Command, IReadOnlyList<KeyStroke> Chord, string? When, JsonElement? Args, KeyBindingSource Source, bool IsNegative = false);
 
 public enum KeyResolution
@@ -52,7 +52,7 @@ public interface IKeybindingService
     string ActivePreset { get; }
     ValueTask SetPresetAsync(string preset, CancellationToken ct = default);
 
-    /// <summary>Fires after user keybindings.json, an extension contribution or the preset changes.</summary>
+    /// <summary>Fires after user keybindings.json, a keybinding contribution or the preset changes.</summary>
     IEventSource<object?> Changed { get; }
 }
 

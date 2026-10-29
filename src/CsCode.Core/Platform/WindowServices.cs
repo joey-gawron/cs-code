@@ -23,7 +23,7 @@ public interface IProgressReporter
 }
 
 /// <summary>
-/// UI interactions needed by non-UI modules (LSP window/showMessage, DAP prompts, extension `vscode.window.*`).
+/// UI interactions needed by non-UI modules (LSP window/showMessage, DAP prompts…).
 /// Implemented by CsCode.App. All calls are thread-safe and marshal to the UI thread.
 /// </summary>
 public interface IWindowService
@@ -34,7 +34,7 @@ public interface IWindowService
     ValueTask<string?> ShowInputBoxAsync(InputBoxOptions? options = null, CancellationToken ct = default);
     ValueTask<IReadOnlyList<Uri>?> ShowOpenDialogAsync(OpenDialogOptions options, CancellationToken ct = default);
     ValueTask<Uri?> ShowSaveDialogAsync(SaveDialogOptions options, CancellationToken ct = default);
-    /// <summary>Runs work with a notification-area progress indicator (extension `window.withProgress`, LSP workDoneProgress).</summary>
+    /// <summary>Runs work with a notification-area progress indicator (e.g. LSP workDoneProgress).</summary>
     Task<T> WithProgressAsync<T>(string title, bool cancellable, Func<IProgressReporter, CancellationToken, Task<T>> work);
     /// <summary>Transient status-bar text; dispose to clear early.</summary>
     IDisposable SetStatusBarMessage(string text, TimeSpan? timeout = null);

@@ -24,7 +24,7 @@ public sealed record LanguageConfiguration
 public sealed record AutoClosingPair(string Open, string Close, IReadOnlyList<string>? NotIn = null);
 public sealed record OnEnterRule(string BeforeText, string? AfterText, string Action /* none|indent|outdent|indentOutdent */, string? AppendText = null, int RemoveText = 0);
 
-public sealed record LanguageInfo(string Id, string DisplayName, IReadOnlyList<string> Extensions, IReadOnlyList<string> Filenames, string? ExtensionId);
+public sealed record LanguageInfo(string Id, string DisplayName, IReadOnlyList<string> Extensions, IReadOnlyList<string> Filenames);
 
 /// <summary>
 /// Maps files to language ids and exposes language configuration. Backed by IContributionRegistry (+ built-ins).
@@ -33,7 +33,7 @@ public sealed record LanguageInfo(string Id, string DisplayName, IReadOnlyList<s
 public interface ILanguageService
 {
     IReadOnlyList<LanguageInfo> Languages { get; }
-    /// <summary>Detects by filename pattern, extension, then first-line regex. Returns "plaintext" when unknown.</summary>
+    /// <summary>Detects by filename pattern, file extension, then first-line regex. Returns "plaintext" when unknown.</summary>
     string DetectLanguageId(Uri uri, string? firstLine = null);
     LanguageInfo? Get(string languageId);
     LanguageConfiguration GetConfiguration(string languageId);
