@@ -101,6 +101,38 @@ public class FindInFilesViewTests
     }
 
     [AvaloniaFact]
+    public async Task Row_replace_actions_and_ctrl_alt_enter_exist_only_with_the_replace_ui()
+    {
+        var (f, vm, view, window) = await OpenAsync("IUserRepository");     // one file: a replace there asks no confirmation
+        using (f)
+        {
+            Button? Visible(string name) => view.Descendants<Button>()
+                .FirstOrDefault(b => b.GetValue(Avalonia.Automation.AutomationProperties.NameProperty) == name && b.IsEffectivelyVisible);
+            vm.SelectedRow = vm.Rows.OfType<FileRow>().Single();                // a selected row shows its actions
+            UiSupport.Pump();
+            Assert.NotNull(Visible("Dismiss"));
+            Assert.Null(Visible("Replace in file"));                            // plain Find: no one-click "delete every match"
+            vm.SelectedRow = vm.Rows.OfType<MatchRow>().First();
+            UiSupport.Pump();
+            Assert.Null(Visible("Replace match"));
+
+            view.FindControl<TextBox>("QueryBox")!.Focus();
+            window.KeyPress(Key.Enter, RawInputModifiers.Control | RawInputModifiers.Alt, PhysicalKey.Enter, null);
+            await Task.Delay(300, TestContext.Current.CancellationToken);
+            UiSupport.Pump();
+            Assert.Empty(f.Navigation.AppliedEdits);
+
+            vm.ReplaceVisible = true;
+            UiSupport.Pump();
+            Assert.NotNull(Visible("Replace match"));
+            vm.SelectedRow = vm.Rows.OfType<FileRow>().Single();
+            UiSupport.Pump();
+            Assert.NotNull(Visible("Replace in file"));
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public async Task Toggle_buttons_two_way_bind_to_the_view_model()
     {
         var (f, vm, view, window) = await OpenAsync(query: null);

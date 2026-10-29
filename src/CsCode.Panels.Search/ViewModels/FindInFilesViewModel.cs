@@ -55,6 +55,7 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
     private DisposableStore? _sessionSubs;
     private TaskCompletionSource _searchDone = NewDone(completed: true);
     private SearchQuery? _lastQuery;
+    private ReplacePreviewPattern? _previewPattern;
     private SelectionScope? _selectionScope;
     private RootSet _roots;
     private int _run, _drainScheduled, _totalMatches;
@@ -231,14 +232,16 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
         Summary = "Searching…";
         ProgressText = "";
         _searchDone = NewDone(completed: false);
-        var session = _s.Engine.Start(query);
-        _session = session;
         var subs = new DisposableStore();
         _sessionSubs = subs;
-        // Engine threads: only enqueue and post; nothing here touches the UI objects.
-        subs.Add(session.Batches.Subscribe(b => OnBatch(run, b)));
-        subs.Add(session.Progress.Subscribe(p => _s.Ui.PostCoalesced(_countsKey + ".p", () => { if (run == _run) ShowProgress(p); }, UiPriority.Background)));
-        subs.Add(session.Completed.Subscribe(c => _s.Ui.Post(() => OnCompleted(run, c), UiPriority.Background)));
+        // Subscribed before the session runs (an invalid regex completes on the coordinator at once, before Start could return, and a late
+        // subscriber would never hear of it: the panel would stay "Searching…"). Engine threads: only enqueue and post here.
+        _session = _s.Engine.Start(query, session =>
+        {
+            subs.Add(session.Batches.Subscribe(b => OnBatch(run, b)));
+            subs.Add(session.Progress.Subscribe(p => _s.Ui.PostCoalesced(_countsKey + ".p", () => { if (run == _run) ShowProgress(p); }, UiPriority.Background)));
+            subs.Add(session.Completed.Subscribe(c => _s.Ui.Post(() => OnCompleted(run, c), UiPriority.Background)));
+        });
     }
 
     public void Cancel()
@@ -430,6 +433,7 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
     public void Clear()
     {
         StopSession();
+        _lastQuery = null; // no results left: the replace preview follows the form again
         ResetResults();
         IsSearching = false;
         Summary = "";
@@ -506,6 +510,33 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
         _totalMatches -= matches.Count;
     }
 
+    /// <summary>
+    /// Removes many files and matches with ONE rebuild of the flat list. Removing them one by one (as <see cref="Dismiss"/> does for a single
+    /// row) costs an IndexOf over every row, a list shift and a reset notification per file: for thousands of files (Exclude This Folder on a
+    /// big folder, Replace All) that is far beyond the 4 ms budget of a UI callback. A file all of whose matches go is removed with them.
+    /// </summary>
+    private void RemoveInBulk(IReadOnlyCollection<FileRow> files, IReadOnlyDictionary<FileRow, HashSet<MatchRow>>? matches)
+    {
+        if (files.Count == 0 && (matches is null || matches.Count == 0)) return;
+        var removed = new HashSet<FileRow>(files);
+        foreach (var (file, gone) in matches ?? new Dictionary<FileRow, HashSet<MatchRow>>())
+        {
+            if (gone.Count == 0 || removed.Contains(file)) continue;
+            if (gone.Count >= file.Matches.Count) { removed.Add(file); continue; }
+            _totalMatches -= file.Matches.RemoveAll(gone.Contains);
+            file.MatchCount = file.Matches.Count;
+        }
+        foreach (var f in removed)
+        {
+            _totalMatches -= f.Matches.Count;
+            _files.Remove(f.Uri);
+        }
+        if (removed.Count > 0) _order.RemoveAll(removed.Contains);
+        var keep = SelectedRow;
+        Rows.ReplaceAll(Flatten(_order));
+        SelectedRow = keep is not null && Rows.Contains(keep) ? keep : null;
+    }
+
     private void UpdateSummaryAfterEdit()
     {
         if (IsSearching) return;
@@ -568,13 +599,18 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
 
     private void RefreshReplacePreview()
     {
-        if (!ReplaceVisible || string.IsNullOrEmpty(Query))
+        // The preview shows what Replace will write, so it follows the query that produced the results (Replace uses that one), not the
+        // form, whose toggles or pattern may have been edited since without searching again.
+        var query = _lastQuery ?? BuildQuery();
+        if (!ReplaceVisible || string.IsNullOrEmpty(query.Pattern))
         {
             _previews.Set(null);
             return;
         }
+        // Compiled once per query: a keystroke in the replace box only builds a new closure.
+        if (_previewPattern is null || _previewPattern.Query != query) _previewPattern = ReplaceService.CreatePreviewPattern(query);
         // An empty replacement is a valid "delete the matches", so the preview is active as soon as the replace box is open.
-        _previews.Set(ReplaceService.CreatePreviewer(BuildQuery(), new ReplaceOptions(ReplaceText, PreserveCase)));
+        _previews.Set(ReplaceService.CreatePreviewer(_previewPattern, new ReplaceOptions(ReplaceText, PreserveCase)));
     }
 
     public Task ReplaceAllAsync() => ReplaceAsync(_order.Select(f => new ReplaceTarget(f.Uri, f.Matches.Select(m => m.Match.Range).ToArray())).ToList());
@@ -587,63 +623,81 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
 
     private async Task ReplaceAsync(IReadOnlyList<ReplaceTarget> targets)
     {
-        if (IsReplacing || _s.Navigation is null || targets.Count == 0 || (_lastQuery ?? BuildQuery()) is not { } query) return;
-        IsReplacing = true;
-        OnPropertyChanged(nameof(IsReplacing));
-        OnPropertyChanged(nameof(CanReplace));
+        // Replacing needs the replace UI: in plain Find the replacement is "" (hidden), so a stray click on a row's icon or Ctrl+Alt+Enter
+        // would delete every match of a file without a prompt, on disk and without undo for a closed file. The view hides those actions too.
+        if (!ReplaceVisible || IsReplacing || _s.Navigation is null || targets.Count == 0 || (_lastQuery ?? BuildQuery()) is not { } query) return;
+        SetReplacing(true);
+        (MessageSeverity Severity, string Text)? report;
         try
         {
-            var options = new ReplaceOptions(ReplaceText, PreserveCase);
-            var plan = await _s.Replace.PlanAsync(query, targets, options);
-            if (plan.ReplacementCount == 0)
-            {
-                await ReportAsync(MessageSeverity.Info, plan.Skipped.Count > 0
-                    ? "Nothing was replaced: " + string.Join("; ", plan.Skipped.Select(x => x.Reason).Distinct())
-                    : "There is nothing to replace.");
-                return;
-            }
-
-            // One confirmation for a multi-file replace (the files are then applied one by one, so the shell does not ask again).
-            if (plan.FileCount > 1 && _s.Windows is not null)
-            {
-                var text = ReplaceText.Length == 0 ? "nothing (delete them)" : $"'{ReplaceText}'";
-                var choice = await _s.Windows.ShowMessageAsync(MessageSeverity.Warning,
-                    $"Replace {plan.ReplacementCount:N0} occurrences across {plan.FileCount:N0} files with {text}?",
-                    [new MessageAction("Replace"), new MessageAction("Cancel", true)]);
-                if (choice != "Replace") return;
-            }
-
-            var result = await _s.Replace.ApplyAsync(plan, _s.Navigation, "Replace in Files");
-            ApplyReplaceResult(plan, result);
-            var msg = $"Replaced {result.Replacements:N0} occurrence{(result.Replacements == 1 ? "" : "s")} across {result.FilesChanged:N0} file{(result.FilesChanged == 1 ? "" : "s")}";
-            _s.Windows?.SetStatusBarMessage(msg, TimeSpan.FromSeconds(6));
-            Summary = msg;
-            if (result.Problems.Count > 0)
-                await ReportAsync(MessageSeverity.Warning, "Some replacements were skipped:\n" + string.Join("\n", result.Problems.Take(10)) + (result.Problems.Count > 10 ? $"\n…and {result.Problems.Count - 10} more" : ""));
+            report = await ReplaceCoreAsync(query, targets, _s.Navigation);
         }
         finally
         {
-            IsReplacing = false;
-            OnPropertyChanged(nameof(IsReplacing));
-            OnPropertyChanged(nameof(CanReplace));
+            SetReplacing(false);
         }
+        // Shown, never awaited: a notification without actions resolves only when the shell demotes it (8-20 s later) or never (pushed off the
+        // toast stack), and Replace must not stay locked that long.
+        if (report is { } r && _s.Windows is { } windows) _ = windows.ShowMessageAsync(r.Severity, r.Text).AsTask();
     }
 
-    private ValueTask ReportAsync(MessageSeverity severity, string message) =>
-        _s.Windows is null ? ValueTask.CompletedTask : new ValueTask(_s.Windows.ShowMessageAsync(severity, message).AsTask());
+    /// <summary>Plans, confirms (multi-file only) and applies; returns the message to show afterwards, if any.</summary>
+    private async Task<(MessageSeverity Severity, string Text)?> ReplaceCoreAsync(SearchQuery query, IReadOnlyList<ReplaceTarget> targets, INavigationService navigation)
+    {
+        var options = new ReplaceOptions(ReplaceText, PreserveCase);
+        var plan = await _s.Replace.PlanAsync(query, targets, options);
+        if (plan.ReplacementCount == 0)
+        {
+            return (MessageSeverity.Info, plan.Skipped.Count > 0
+                ? "Nothing was replaced: " + string.Join("; ", plan.Skipped.Select(x => x.Reason).Distinct())
+                : "There is nothing to replace.");
+        }
 
-    /// <summary>Takes the replaced matches out of the tree; files that still have matches shift under the edit, so those are re-searched.</summary>
+        // One confirmation for a multi-file replace (the files are then applied one by one, so the shell does not ask again). It is a toast
+        // that may be answered much later; ApplyAsync therefore re-checks every file against the text it was planned from right before
+        // editing it, and skips (and reports) a file that changed meanwhile.
+        if (plan.FileCount > 1 && _s.Windows is not null)
+        {
+            var text = ReplaceText.Length == 0 ? "nothing (delete them)" : $"'{ReplaceText}'";
+            var choice = await _s.Windows.ShowMessageAsync(MessageSeverity.Warning,
+                $"Replace {plan.ReplacementCount:N0} occurrences across {plan.FileCount:N0} files with {text}?",
+                [new MessageAction("Replace"), new MessageAction("Cancel", true)]);
+            if (choice != "Replace") return null;
+        }
+
+        var result = await _s.Replace.ApplyAsync(plan, navigation, "Replace in Files");
+        ApplyReplaceResult(plan, result);
+        var msg = $"Replaced {result.Replacements:N0} occurrence{(result.Replacements == 1 ? "" : "s")} across {result.FilesChanged:N0} file{(result.FilesChanged == 1 ? "" : "s")}";
+        _s.Windows?.SetStatusBarMessage(msg, TimeSpan.FromSeconds(6));
+        Summary = msg;
+        return result.Problems.Count == 0 ? null
+            : (MessageSeverity.Warning, "Some replacements were skipped:\n" + string.Join("\n", result.Problems.Take(10)) + (result.Problems.Count > 10 ? $"\n…and {result.Problems.Count - 10} more" : ""));
+    }
+
+    private void SetReplacing(bool value)
+    {
+        IsReplacing = value;
+        OnPropertyChanged(nameof(IsReplacing));
+        OnPropertyChanged(nameof(CanReplace));
+        (ReplaceAllCommand as AsyncRelayCommand)?.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Takes the replaced matches out of the tree (in one rebuild); files that still have matches shift under the edit, so those are re-searched.</summary>
     private void ApplyReplaceResult(ReplacePlan plan, ReplaceResult result)
     {
+        var planned = new Dictionary<Uri, FileReplacePlan>(plan.Files.Count);
+        foreach (var p in plan.Files) planned.TryAdd(p.Uri, p);
+        var gone = new Dictionary<FileRow, HashSet<MatchRow>>();
         var rerun = false;
         foreach (var uri in result.ChangedFiles ?? [])
         {
-            if (!_files.TryGetValue(uri, out var row)) continue;
-            var replaced = plan.Files.First(p => p.Uri == uri).Items.Select(i => i.Range).ToHashSet();
-            var gone = row.Matches.Where(m => replaced.Contains(m.Match.Range)).ToList();
-            if (gone.Count < row.Matches.Count) rerun = true;
-            RemoveMatches(row, gone);
+            if (!_files.TryGetValue(uri, out var row) || !planned.TryGetValue(uri, out var filePlan)) continue;
+            var replaced = filePlan.Items.Select(i => i.Range).ToHashSet();
+            var matches = row.Matches.Where(m => replaced.Contains(m.Match.Range)).ToHashSet();
+            if (matches.Count < row.Matches.Count) rerun = true;
+            gone[row] = matches;
         }
+        RemoveInBulk([], gone);
         PublishCounts();
         if (rerun && CanSearch) Start();
     }
@@ -663,7 +717,7 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
         if (string.IsNullOrEmpty(file.Directory)) return;
         var glob = "./" + file.Directory;
         Exclude = string.IsNullOrWhiteSpace(Exclude) ? glob : Exclude.TrimEnd().TrimEnd(',') + ", " + glob;
-        foreach (var f in _order.Where(f => f.Directory == file.Directory || f.Directory.StartsWith(file.Directory + "/", StringComparison.Ordinal)).ToList()) RemoveFile(f);
+        RemoveInBulk(_order.Where(f => f.Directory == file.Directory || f.Directory.StartsWith(file.Directory + "/", StringComparison.Ordinal)).ToList(), null);
         PublishCounts();
         UpdateSummaryAfterEdit();
     }

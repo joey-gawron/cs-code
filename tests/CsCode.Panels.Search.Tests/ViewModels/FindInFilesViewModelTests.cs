@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Panels.Search.Engine;
+using CsCode.Panels.Search.Tests.Engine;
 using CsCode.Panels.Search.ViewModels;
 using Xunit;
 
@@ -508,6 +510,158 @@ public class FindInFilesViewModelTests : IDisposable
         vm.ReplaceVisible = true; vm.ReplaceText = "$2 at $1";
         Assert.Equal("example at user", vm.Previews.Preview("user@example"));
         await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task Replace_actions_do_nothing_while_the_replace_ui_is_hidden()
+    {
+        // Plain Find: the replace row is collapsed and ReplaceText is "" — a stray click on a row's replace icon must not delete the matches.
+        _f.Harness.Write("a.txt", "needle one\nneedle two");
+        _f.Harness.Write("b.txt", "needle");
+        var a = Open("a.txt", "needle one\nneedle two");
+        using var vm = _f.NewFind();
+        await _f.SearchAsync(vm, "needle");
+        Assert.False(vm.ReplaceVisible);
+        var fileRow = vm.Rows.OfType<FileRow>().Single(f => f.Name == "a.txt");
+        var matchRow = fileRow.Matches[0];
+        _f.Windows.MessageActionResponses.Enqueue("Replace");
+        await vm.ReplaceMatchAsync(matchRow);
+        await vm.ReplaceFileAsync(fileRow);
+        await vm.ReplaceAllAsync();
+        Assert.Equal("needle one\nneedle two", a.GetText());
+        Assert.Equal(0, a.ApplyEditsCalls);
+        Assert.Empty(_f.Navigation.AppliedEdits);
+        Assert.Equal(3, vm.TotalMatches);
+    }
+
+    [Fact]
+    public async Task Files_that_change_while_the_confirmation_is_pending_are_skipped_not_corrupted()
+    {
+        _f.Harness.Write("a.txt", "foo\n");
+        var b = _f.Harness.Write("b.txt", "x\nfoo\n");
+        var windows = new ScriptedWindowService();
+        windows.ResolveToasts();
+        var nav = new DiskApplyingNavigation(_f.Harness.Documents);
+        using var vm = new FindInFilesViewModel(_f.With(windows, nav));
+        await _f.SearchAsync(vm, "foo");
+        vm.ReplaceVisible = true;
+        vm.ReplaceText = "bar";
+        // The confirmation is a toast that can wait indefinitely; meanwhile a `git pull` inserts a line above b.txt's match.
+        windows.OnConfirm = async () =>
+        {
+            await File.WriteAllTextAsync(b, "inserted\nx\nfoo\n", TestContext.Current.CancellationToken);
+            return "Replace";
+        };
+        await vm.ReplaceAllAsync().WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.Equal("bar\n", await File.ReadAllTextAsync(_f.Harness.Dir.Combine("a.txt"), TestContext.Current.CancellationToken));
+        Assert.Equal("inserted\nx\nfoo\n", await File.ReadAllTextAsync(b, TestContext.Current.CancellationToken));   // untouched, not "inserted\nbar\nfoo\n"
+        Assert.Contains(windows.Messages, m => m.Severity == MessageSeverity.Warning && m.Message.Contains("b.txt") && m.Message.Contains("changed"));
+    }
+
+    [Fact]
+    public async Task Replace_never_waits_for_an_informational_toast_to_go_away()
+    {
+        _f.Harness.Write("a.txt", "foo");
+        _f.Harness.Write("b.txt", "foo");
+        var windows = new ScriptedWindowService();   // toasts without actions never resolve (pushed off the stack)
+        using var vm = new FindInFilesViewModel(_f.With(windows));
+        await _f.SearchAsync(vm, "foo");
+        vm.ReplaceVisible = true;
+        vm.ReplaceText = "bar";
+        await File.WriteAllTextAsync(_f.Harness.Dir.Combine("a.txt"), "changed", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(_f.Harness.Dir.Combine("b.txt"), "changed", TestContext.Current.CancellationToken);
+        await vm.ReplaceAllAsync().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);   // "Nothing was replaced" is shown, not awaited
+        Assert.Contains(windows.Messages, m => m.Message.StartsWith("Nothing was replaced", StringComparison.Ordinal));
+        Assert.False(vm.IsReplacing);
+        Assert.True(vm.CanReplace);
+    }
+
+    [Fact]
+    public async Task Replace_never_waits_for_the_skipped_files_warning_to_go_away()
+    {
+        _f.Harness.Write("a.txt", "foo");
+        _f.Harness.Write("b.txt", "foo");
+        _f.Harness.Write("c.txt", "foo");
+        var windows = new ScriptedWindowService { OnConfirm = () => Task.FromResult<string?>("Replace") };
+        using var vm = new FindInFilesViewModel(_f.With(windows));
+        await _f.SearchAsync(vm, "foo");
+        vm.ReplaceVisible = true;
+        vm.ReplaceText = "bar";
+        await File.WriteAllTextAsync(_f.Harness.Dir.Combine("c.txt"), "changed", TestContext.Current.CancellationToken);
+        await vm.ReplaceAllAsync().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Contains(windows.Messages, m => m.Severity == MessageSeverity.Warning && m.Message.StartsWith("Some replacements were skipped", StringComparison.Ordinal));
+        Assert.False(vm.IsReplacing);
+    }
+
+    [Fact]
+    public async Task The_replace_preview_shows_what_will_be_written_even_after_the_toggles_change()
+    {
+        _f.Harness.Write("a.cs", "var s = new UserService();");
+        var doc = Open("a.cs", "var s = new UserService();");
+        using var vm = _f.NewFind();
+        vm.IsRegex = true;
+        await _f.SearchAsync(vm, @"(\w+)Service");
+        vm.IsRegex = false;                      // toggled after the search, which is not re-run
+        vm.ReplaceVisible = true;
+        vm.ReplaceText = "$1Manager";
+        var match = vm.Rows.OfType<MatchRow>().Single();
+        Assert.Equal("UserManager", vm.Previews.Preview(match.MatchedText));
+        await vm.ReplaceAllAsync();
+        Assert.Equal("var s = new UserManager();", doc.GetText());   // and that is what was written
+    }
+
+    [Fact]
+    public async Task The_replace_preview_never_runs_a_backtracking_regex_per_row()
+    {
+        // The lookahead forces the backtracking engine; the matched text lacks the ';' so a re-match backtracks until the timeout.
+        _f.Harness.Write("a.txt", "alpha beta gamma delta epsilon zeta eta theta iota kappa;");
+        using var vm = _f.NewFind();
+        vm.IsRegex = true;
+        await _f.SearchAsync(vm, @"(\w+\s?)+(?=;)");
+        var match = vm.Rows.OfType<MatchRow>().Single();
+        vm.ReplaceVisible = true;
+        var sw = Stopwatch.StartNew();
+        for (var i = 0; i < 4; i++)
+        {
+            vm.ReplaceText = "[$1]" + i;                      // a keystroke
+            Assert.NotNull(vm.Previews.Preview(match.MatchedText));   // what a realised row does on the UI thread
+        }
+        Assert.True(sw.Elapsed < TimeSpan.FromMilliseconds(100), $"4 keystrokes x 1 row cost {sw.Elapsed.TotalMilliseconds:F0} ms on the UI thread");
+    }
+
+    [Fact]
+    public async Task Excluding_a_big_folder_rebuilds_the_list_once_not_once_per_file()
+    {
+        for (var i = 0; i < 300; i++) _f.Harness.Write($"vendor/lib{i:000}.txt", "needle\nneedle");
+        _f.Harness.Write("src/app.txt", "needle");
+        using var vm = _f.NewFind();
+        await _f.SearchAsync(vm, "needle");
+        var changes = 0;
+        vm.Rows.CollectionChanged += (_, _) => changes++;
+        vm.ExcludeFolderOf(vm.Rows.OfType<FileRow>().First(f => f.Directory == "vendor"));
+        Assert.Equal(1, changes);
+        Assert.Equal(["app.txt"], vm.Rows.OfType<FileRow>().Select(f => f.Name));
+        Assert.Equal(2, vm.Rows.Count);
+        Assert.Equal(1, vm.TotalMatches);
+        Assert.Equal(1, vm.TotalFiles);
+    }
+
+    [Fact]
+    public async Task Replace_all_across_many_files_takes_the_rows_out_in_one_rebuild()
+    {
+        for (var i = 0; i < 200; i++) _f.Harness.Write($"f{i:000}.txt", "needle\nneedle");
+        using var vm = _f.NewFind();
+        await _f.SearchAsync(vm, "needle");
+        vm.ReplaceVisible = true;
+        vm.ReplaceText = "x";
+        _f.Windows.MessageActionResponses.Enqueue("Replace");
+        var changes = 0;
+        vm.Rows.CollectionChanged += (_, _) => changes++;
+        await vm.ReplaceAllAsync();
+        Assert.Equal(200, _f.Navigation.AppliedEdits.Count);
+        Assert.Empty(vm.Rows);
+        Assert.Equal(0, vm.TotalMatches);
+        Assert.True(changes <= 1, $"{changes} collection notifications");
     }
 
     // ------------------------------------------------------------------------------------ lifetime
