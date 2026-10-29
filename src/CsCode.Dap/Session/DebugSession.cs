@@ -42,6 +42,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private readonly Emitter<bool> _unresponsiveChanged = new();
     private readonly Emitter<DebugProgressEventArgs> _progress = new();
     private readonly Emitter<DebugExceptionInfo?> _exceptionInfo = new();
+    private readonly Emitter<DebugLoadedSourceEventArgs> _loadedSource = new();
+    private readonly Dictionary<string, DebugSource> _loadedSources = new();
 
     private int _state = (int)DebugSessionState.Initializing;
     private volatile DebugCapabilities _caps = new();
@@ -103,6 +105,9 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     public IEventSource<bool> UnresponsiveChanged => _unresponsiveChanged;
     public IEventSource<DebugProgressEventArgs> Progress => _progress;
     public IEventSource<DebugExceptionInfo?> ExceptionInfoChanged => _exceptionInfo;
+    /// <summary>Adapter <c>loadedSource</c> events (new/changed/removed); the current set is <see cref="LoadedSources"/> (bounded).</summary>
+    public IEventSource<DebugLoadedSourceEventArgs> LoadedSourceChanged => _loadedSource;
+    public IReadOnlyList<DebugSource> LoadedSources { get { lock (_loadedSources) return [.. _loadedSources.Values]; } }
     public DebugExceptionInfo? LastException { get; private set; }
     public int? ExitCode => _exitCode;
     public long? DebuggeeProcessId { get; private set; }
@@ -186,6 +191,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         subs.Add(client.Output.Subscribe(OnOutput));
         subs.Add(client.Breakpoint.Subscribe(e => { MarkAlive(); _sync?.OnAdapterBreakpointEvent(e); }));
         subs.Add(client.Module.Subscribe(OnModule));
+        subs.Add(client.LoadedSource.Subscribe(OnLoadedSource));
         subs.Add(client.Process.Subscribe(OnProcess));
         subs.Add(client.CapabilitiesChanged.Subscribe(OnCapabilitiesEvent));
         subs.Add(client.ProgressStart.Subscribe(e => _progress.Fire(new DebugProgressEventArgs("start", e.ProgressId, e.Title, e.Message, e.Percentage))));
@@ -534,6 +540,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
                 _handles.Invalidate();
                 _completions.Clear();
                 lock (_modules) _modules.Clear();
+                lock (_loadedSources) _loadedSources.Clear();
                 _debuggees.Dispose();
                 return 0;
             });
@@ -541,7 +548,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         catch (ObjectDisposedException) { /* lane already gone (app shutdown): nothing left to release but emitters */ }
         _o.Breakpoints.ClearStatuses(Id);
         _stopped.Clear(); _continued.Clear(); _outputEvent.Clear(); _threadChanged.Clear(); _stateChanged.Clear(); _terminated.Clear();
-        _breakpointStatus.Clear(); _invalidated.Clear(); _unresponsiveChanged.Clear(); _progress.Clear(); _exceptionInfo.Clear();
+        _breakpointStatus.Clear(); _invalidated.Clear(); _unresponsiveChanged.Clear(); _progress.Clear(); _exceptionInfo.Clear(); _loadedSource.Clear();
         _disposed.TrySetResult();
     }
 }

@@ -58,4 +58,6 @@ public sealed record DebugExceptionInfo(string ExceptionId, string? Description,
 
 public sealed record DebugProgressEventArgs(string Kind, string ProgressId, string? Title, string? Message, double? Percentage);
 
+public sealed record DebugLoadedSourceEventArgs(string Reason, DebugSource Source);
+
 public sealed record DebugModuleInfo(string Id, string Name, string? Path, string? Version, bool? IsUserCode, string? SymbolStatus);

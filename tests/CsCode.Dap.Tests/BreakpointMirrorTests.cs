@@ -176,6 +176,39 @@ public class BreakpointMirrorTests
     }
 
     [Fact]
+    public async Task An_adapter_that_rejects_a_source_does_not_abort_the_session_and_the_breakpoints_show_the_reason()
+    {
+        var h = new SessionHarness();
+        h.Adapter.On("setBreakpoints", _ => throw new FakeAdapterError("source file not found"));
+        h.Adapter.On("setFunctionBreakpoints", _ => throw new FakeAdapterError("no symbols"));
+        var bp = h.Breakpoints.Add(A, 4);
+        var fn = h.Breakpoints.AddFunction("Missing.Method");
+        h.Create(Cfg.Make());
+        await using var _ = h;
+        await h.Session.StartAsync(Ct); // does NOT throw
+        Assert.Equal(DebugSessionState.Running, h.Session.State);
+        var s = h.Breakpoints.GetStatus(bp.Id)!;
+        Assert.False(s.Verified);
+        Assert.Equal("source file not found", s.Message);
+        Assert.Equal("no symbols", h.Breakpoints.GetStatus(fn.Id)!.Message);
+        // and a later edit of the same file is retried (content changed)
+        h.Adapter.On("setBreakpoints", _ => new DapBreakpointsResponse { Breakpoints = [new DapBreakpoint { Verified = true }, new DapBreakpoint { Verified = true }] });
+        h.Breakpoints.Add(A, 9);
+        await SessionHarness.Eventually(() => h.Breakpoints.GetStatus(bp.Id)!.Verified);
+    }
+
+    [Fact]
+    public async Task Rejected_exception_filters_do_not_abort_the_session_either()
+    {
+        var h = new SessionHarness();
+        h.Adapter.On("setExceptionBreakpoints", _ => throw new FakeAdapterError("unsupported filter"));
+        h.Create(Cfg.Make());
+        await using var _ = h;
+        await h.Session.StartAsync(Ct);
+        Assert.Equal(DebugSessionState.Running, h.Session.State);
+    }
+
+    [Fact]
     public async Task Breakpoint_events_update_the_status_of_the_mapped_breakpoint()
     {
         await using var h = await SessionHarness.StartAsync(a => a.On("setBreakpoints", _ => new DapBreakpointsResponse { Breakpoints = [new DapBreakpoint { Id = 77, Verified = false, Message = "pending" }] }));

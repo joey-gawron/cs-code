@@ -238,8 +238,17 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private async Task<DebugAdapterDescriptor?> CreateDescriptorAsync(DebugConfiguration config, CancellationToken ct)
     {
         // VS Code's dev convenience: a running adapter server given in the configuration itself.
-        if (config.Properties.TryGetValue("debugServer", out var ds) && ds.ValueKind == System.Text.Json.JsonValueKind.Number && ds.TryGetInt32(out var port))
-            return new DebugAdapterServer("127.0.0.1", port);
+        // (`"debugServer": 4711`, or `"host:4711"` for a remote/attach-style adapter server.)
+        if (config.Properties.TryGetValue("debugServer", out var ds))
+        {
+            if (ds.ValueKind == System.Text.Json.JsonValueKind.Number && ds.TryGetInt32(out var port)) return new DebugAdapterServer("127.0.0.1", port);
+            if (ds.ValueKind == System.Text.Json.JsonValueKind.String && ds.GetString() is { } text)
+            {
+                var colon = text.LastIndexOf(':');
+                if (colon > 0 && int.TryParse(text[(colon + 1)..], out var hostPort)) return new DebugAdapterServer(text[..colon], hostPort);
+                if (int.TryParse(text, out var onlyPort)) return new DebugAdapterServer("127.0.0.1", onlyPort);
+            }
+        }
 
         IDebugAdapterFactory[] factories;
         lock (_gate) factories = _factories.TryGetValue(config.Type, out var l) ? [.. l.AsEnumerable().Reverse()] : []; // latest registration wins

@@ -132,6 +132,16 @@ public class DebugServiceStartTests
     }
 
     [Fact]
+    public async Task A_host_colon_port_debugServer_connects_to_that_host()
+    {
+        await using var h = new ServiceHarness();
+        var cfg = ServiceHarness.Config(type: "no-factory-for-this", extra: new Dictionary<string, object?> { ["debugServer"] = $"127.0.0.1:{h.Host.Port}" }, folder: h.Dir.Uri);
+        Assert.NotNull(await h.Service.StartAsync(cfg, Ct));
+        var bare = ServiceHarness.Config(type: "no-factory-for-this", extra: new Dictionary<string, object?> { ["debugServer"] = h.Host.Port.ToString() }, folder: h.Dir.Uri);
+        Assert.NotNull(await h.Service.StartAsync(bare, Ct));
+    }
+
+    [Fact]
     public async Task Start_returns_immediately_to_the_caller()
     {
         await using var h = new ServiceHarness(configureHost: host => host.Configure = (a, _) => a.DelayAllResponses(200));
@@ -298,7 +308,8 @@ public class DebugServiceSessionTests
         await h.AdapterFor(0).SendTerminatedAsync();
         await SessionHarness.Eventually(() => h.Service.Sessions.Count == 0);
         Assert.Equal(DebugState.Inactive, h.Service.State);
-        await Assert.ThrowsAsync<ObjectDisposedException>(async () => await s.GetThreadsAsync(Ct)).WaitAsync(TimeSpan.FromSeconds(5), Ct);
+        await s.Disposed.WaitAsync(TimeSpan.FromSeconds(10), Ct); // the service releases ended sessions in the background
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () => await s.GetThreadsAsync(Ct));
     }
 
     [Fact]
