@@ -85,6 +85,17 @@ public class JsDebugWaveFixTests
     }
 
     [Fact]
+    public async Task A_failed_evaluation_carries_just_the_adapters_message_for_the_watch_and_the_repl()
+    {
+        await using var h = new ServiceHarness(configureHost: host => host.Configure = (a, _) =>
+            a.On("evaluate", _ => throw new FakeAdapterError("Uncaught ReferenceError: x is not defined")));
+        var session = await h.StartAsync();
+        var ex = await Assert.ThrowsAsync<CsCode.Dap.Client.DapRequestException>(async () => await session.EvaluateAsync("x", null, "watch", Ct));
+        Assert.Equal("Uncaught ReferenceError: x is not defined", ex.Message); // was "'evaluate' failed: Uncaught ReferenceError: …"
+        Assert.Equal("evaluate", ex.Command);
+    }
+
+    [Fact]
     public async Task A_generated_launch_json_keeps_skipFiles_patterns_readable()
     {
         var factory = new CsCode.Dap.Adapters.JsDebugAdapterFactory(new CsCode.Dap.Configuration.DapPlatform());

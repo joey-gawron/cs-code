@@ -231,7 +231,7 @@ public class RealJsDebugPanelsTests
 
             // the async parent frame (main, below the await label) can be selected, but js-debug has no variables for async frames
             await callStack.ActivateAsync(callStack.Rows.First(r => r.Text == "main"), takeFocus: false);
-            await PanelRig.Eventually(() => locals.StatusText is { Length: > 0 } && locals.Rows.Count == 0, 20_000, "async frame: no variables");
+            await PanelRig.Eventually(() => locals.StatusText?.Contains("not available in async stacks", StringComparison.Ordinal) == true && locals.Rows.Count == 0, 20_000, "async frame: the adapter has no variables for it");
             Note("Locals for the async main() frame: " + locals.StatusText);
             Assert.Contains(app.Navigation.Opened, o => o.Uri == app.MainUri && o.Selection is { } sel && sel.Start.Line == JsDebugSample.MainLine("call"));
             await callStack.ActivateAsync(callStack.Rows.First(r => r.Text == "add"), takeFocus: false);
