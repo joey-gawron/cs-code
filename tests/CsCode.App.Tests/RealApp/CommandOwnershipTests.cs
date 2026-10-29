@@ -22,11 +22,12 @@ public class RealAppCommandOwnershipTests
 {
     private sealed class RecordingCommands(ICommandService inner) : ICommandService
     {
-        public List<string> Registrations { get; } = new();
+        /// <summary>Every registration in order, with the module (assembly) whose code the handler is.</summary>
+        public List<(string Id, string Module)> Registrations { get; } = new();
 
         public IDisposable Register(string id, Func<CommandInvocation, ValueTask<object?>> handler, CommandMetadata? metadata = null)
         {
-            lock (Registrations) Registrations.Add(id);
+            lock (Registrations) Registrations.Add((id, handler.Method.DeclaringType?.Assembly.GetName().Name ?? "?"));
             return inner.Register(id, handler, metadata);
         }
 
@@ -35,6 +36,8 @@ public class RealAppCommandOwnershipTests
         public ValueTask<object?> ExecuteAsync(string id, params object?[] args) => inner.ExecuteAsync(id, args);
         public IEventSource<string> Registered => inner.Registered;
     }
+
+    private static string Module(Type type) => type.Assembly.GetName().Name!;
 
     /// <summary>Wraps the real (Platform) command service so every registration of every module is recorded.</summary>
     private static void RecordCommands(IServiceCollection services, Action<RecordingCommands> created)
@@ -60,10 +63,18 @@ public class RealAppCommandOwnershipTests
         await host.Get<INavigationService>().OpenAsync(new Uri(host.Files.Combine("a.txt")));
         await DevScene.SettleAsync(20);
 
-        var duplicated = recorded!.Registrations.GroupBy(id => id).Where(g => g.Count() > 1).Select(g => g.Key).OrderBy(x => x, StringComparer.Ordinal);
+        var duplicated = recorded!.Registrations.GroupBy(r => r.Id).Where(g => g.Count() > 1).Select(g => g.Key).OrderBy(x => x, StringComparer.Ordinal);
         // Intended: the editor registers standalone fallbacks that the shell (Go to Line) and Dap (Toggle Breakpoint) shadow. The Settings
         // commands belong to the Settings panel alone (the shell's openSettings used to shadow it, so the Settings editor could never open).
         Assert.Equal([KnownCommands.DebugToggleBreakpoint, "workbench.action.gotoLine"], duplicated);
+
+        // Who registered them, in order (the last one runs). The behaviour checks below cannot tell the two Toggle Breakpoint handlers apart
+        // (both toggle at the caret), so the owner is asserted by the module whose handler it is.
+        string[] RegisteredBy(string id) => recorded.Registrations.Where(r => r.Id == id).Select(r => r.Module).ToArray();
+        var editor = Module(typeof(CsCode.Editor.View.EditorViewFactory));
+        Assert.Equal([editor, Module(typeof(CsCode.Dap.Service.DebugService))], RegisteredBy(KnownCommands.DebugToggleBreakpoint));
+        Assert.Equal([editor, Module(typeof(ShellController))], RegisteredBy("workbench.action.gotoLine"));
+        Assert.Equal([Module(typeof(SearchPanelsHost))], RegisteredBy(KnownCommands.OpenSettings));
 
         // The effective handlers are the owners' ones.
         var palette = await host.OpenPaletteAsync("workbench.action.gotoLine");
