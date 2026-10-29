@@ -359,7 +359,7 @@ public sealed class FakeConnectionFactory : ILspConnectionFactory
 
     public async ValueTask<ILspConnection> ConnectAsync(LspLaunchRequest request, CancellationToken ct)
     {
-        lock (Requests) Requests.Add(request);
+        lock (Requests) Requests.Add(request with { OnStderrLine = null }); // keep the record, not the callback (it would retain the client)
         if (ConnectDelay > TimeSpan.Zero) await Task.Delay(ConnectDelay, ct).ConfigureAwait(false);
         if (Interlocked.Decrement(ref _failures) >= 0) throw new ServerNotFoundException(request.Definition.Command);
         Interlocked.Exchange(ref _failures, 0);

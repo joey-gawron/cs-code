@@ -164,8 +164,9 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         try
         {
             var cwd = RootUri is { IsFile: true } r ? r.LocalPath : WorkspaceFolders.FirstOrDefault(f => f.IsFile)?.LocalPath ?? Definition.WorkingDirectory;
+            var log = _log; // capture the log only: a callback held by the transport must not keep the whole client alive
             var connection = await _ctx.Connections.ConnectAsync(
-                new LspLaunchRequest(Definition, _ctx.Services.Paths?.ToolsDir, Definition.WorkingDirectory ?? cwd, settings.Priority, line => _log.Add(line)), ct).ConfigureAwait(false);
+                new LspLaunchRequest(Definition, _ctx.Services.Paths?.ToolsDir, Definition.WorkingDirectory ?? cwd, settings.Priority, line => log.Add(line)), ct).ConfigureAwait(false);
             _connection = connection;
 
             var formatter = new SystemTextJsonFormatter();
