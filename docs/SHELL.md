@@ -49,7 +49,10 @@ Program -> App.axaml.cs -> AppSession -> AppStartup.BuildServicesAsync (pool thr
   were measured in this mode) and installs the crash handler. `App` hands the desktop lifetime to an `AppSession`, which builds the container on a pool
   thread while Avalonia finishes starting (`AppStartup.BuildServicesAsync`) and constructs there the services whose constructors read files synchronously
   (`ConfigurationService`, `StateStorage`, `KeybindingService`, plus the file logger and the workspace service; docs/PLATFORM.md). The main window is then
-  created on the UI thread. A failure anywhere in this path shows the crash window (exit code 1).
+  created and shown on the UI thread. A failure anywhere in this path, `Window.Show` included (a windowing or GL error), writes a fatal crash log and
+  shows the crash window instead (a main window that failed while opening is closed without prompts); the run ends with exit code 1 when it is closed.
+  If not even the crash window can be shown, the session prints the summary and the log path to stderr, shuts the services down and ends with exit
+  code 1: with the exit taken over (below), a lost exception here would otherwise leave the process running without a window.
 * **Exit.** The session takes the exit over (`ShutdownMode.OnExplicitShutdown`): when the main window has closed (after its own Save prompts and layout
   save), `AppShutdown.RunAsync` runs on the UI thread before the dispatcher stops, bounded by `App.ShutdownDeadline` (default **5 s**):
   1. flush `IStateStorage` (what the user did up to now is on disk before anything can hang);

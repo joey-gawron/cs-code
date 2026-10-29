@@ -2,9 +2,11 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime;
 using System.Text.Json;
+using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using CsCode.App.Startup;
+using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.Core.Debugging;
 using CsCode.Core.Diagnostics;
@@ -200,6 +202,92 @@ public class LifecycleTests
         main.Close();
         await run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
     }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_main_window_that_fails_while_opening_is_replaced_by_the_crash_window_and_the_run_exits_with_code_1()
+    {
+        using var env = new RealAppHome();
+        await using var run = new RealAppRun(env);
+        Window? failed = null;
+        var failedClosed = false;
+        // A failure inside Window.Show (as a windowing-system or GL error would raise): the real main window throws while it opens.
+        using var refuse = FailWhileOpening(run, w =>
+        {
+            if (w is not MainWindow) return false;
+            failed = w;
+            w.Closed += (_, _) => failedClosed = true;
+            return true;
+        });
+
+        Assert.True(await DevHost.WaitFor(() => run.Session.Window is CrashWindow, 60_000), $"no crash window; the session shows {run.Session.Window?.GetType().Name ?? "nothing"}");
+        var crash = (CrashWindow)run.Session.Window!;
+        Assert.Contains(crash.GetLogicalDescendantTexts(), t => t.Contains(RefusedMessage, StringComparison.Ordinal));
+        Assert.Same(crash, run.Lifetime.MainWindow);
+        Assert.True(crash.IsVisible);
+        Assert.NotNull(failed);
+        Assert.True(failedClosed, "the main window that failed to open is still open next to the crash window");
+        Assert.Contains(FatalCrashLogs(env), log => log.Contains(RefusedMessage, StringComparison.Ordinal));
+        Assert.False(run.Session.Ended.IsCompleted); // the run lasts until the user has read the crash window
+
+        crash.Close();
+        var report = await run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(1, run.Lifetime.ShutdownExitCode);
+        Assert.NotNull(report); // the services that were already running were shut down in order
+        Assert.Null(run.Session.Services);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task When_no_window_can_be_shown_the_run_reports_on_stderr_and_exits_with_code_1_instead_of_running_without_a_window()
+    {
+        using var env = new RealAppHome();
+        var stderr = new StringWriter();
+        var previousError = Console.Error;
+        Console.SetError(stderr);
+        try
+        {
+            await using var run = new RealAppRun(env);
+            using var refuse = FailWhileOpening(run, _ => true); // neither the main window nor the crash window can be shown
+
+            var report = await run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(60)); // with the exit taken over, nothing else would end the process
+            Assert.Equal(1, run.Lifetime.ShutdownExitCode);
+            Assert.NotNull(report);
+            Assert.Null(run.Session.Services);
+            Assert.Contains(FatalCrashLogs(env), log => log.Contains(RefusedMessage, StringComparison.Ordinal));
+            Assert.Contains("CsCode could not start", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains(RefusedMessage, stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally { Console.SetError(previousError); }
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_startup_failure_shows_the_crash_window_and_the_run_exits_with_code_1_when_it_closes()
+    {
+        using var env = new RealAppHome();
+        // A module the shell needs fails while the services are built off the UI thread.
+        await using var run = new RealAppRun(env, s => s.AddSingleton<IWorkspaceService>(_ => throw new InvalidOperationException("workspace module is broken")));
+
+        Assert.True(await DevHost.WaitFor(() => run.Session.Window is not null, 60_000));
+        var crash = Assert.IsType<CrashWindow>(run.Session.Window);
+        Assert.Contains(crash.GetLogicalDescendantTexts(), t => t.Contains("workspace module is broken", StringComparison.Ordinal));
+        Assert.Contains(FatalCrashLogs(env), log => log.Contains("workspace module is broken", StringComparison.Ordinal));
+
+        crash.Close();
+        await run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(1, run.Lifetime.ShutdownExitCode);
+    }
+
+    private const string RefusedMessage = "the windowing system refused the window";
+
+    /// <summary>Makes the windows of <paramref name="run"/> that <paramref name="refuse"/> picks throw from inside <see cref="Window.Show()"/> (while
+    /// they raise Opened). Scoped to the run: only the window the session is presenting is affected.</summary>
+    private static IDisposable FailWhileOpening(RealAppRun run, Func<Window, bool> refuse) =>
+        Window.WindowOpenedEvent.AddClassHandler<Window>((w, _) =>
+        {
+            if (ReferenceEquals(w, run.Lifetime.MainWindow) && refuse(w)) throw new InvalidOperationException(RefusedMessage);
+        });
+
+    private static string[] FatalCrashLogs(RealAppHome env) =>
+        Directory.GetFiles(env.CrashLogs.Path, "crash-*.log").Select(File.ReadAllText).Where(t => t.Contains("FATAL", StringComparison.Ordinal)).ToArray();
 
     [Fact]
     public void The_process_runs_with_sustained_low_latency_garbage_collection()

@@ -83,26 +83,55 @@ public sealed class AppSession
         Dispatcher.UIThread.Post(() => _ = OpenWindowAsync(services));
     }
 
+    /// <summary>
+    /// Never faults (its task is discarded): whatever fails on the way to the first window, the user gets the crash window, or, when not even that can
+    /// be shown, a fatal crash log, a line on stderr and exit code 1. With <see cref="ShutdownMode.OnExplicitShutdown"/> nothing else would end the
+    /// process, so a lost exception here would leave it running without a window.
+    /// </summary>
     private async Task OpenWindowAsync(Task<ServiceProvider> pending)
     {
-        Window window;
+        Exception failure;
         try
         {
             _container = await pending.ConfigureAwait(true);
-            _crash.Reported += OnCrashReported;
-            window = new MainWindow(_container);
+            Present(new MainWindow(_container));
+            _crash.Reported += OnCrashReported; // from now on failures are shown in the main window
+            return;
+        }
+        catch (Exception ex) { failure = ex; }
+
+        // Startup failure (a module the shell needs is not registered, the windowing system refused the window, ...): never a silent exit, never a hang.
+        _exitCode = 1;
+        var log = _crash.Report(failure, fatal: true, source: "Startup");
+        DiscardFailedMainWindow();
+        try
+        {
+            Present(new CrashWindow(CrashHandler.Summarize(failure), log));
+            return; // the run ends when the user closes it
         }
         catch (Exception ex)
         {
-            // Startup failure (e.g. a module that the shell needs is not registered): never a silent exit.
-            var log = _crash.Report(ex, fatal: true, source: "Startup");
-            window = new CrashWindow(CrashHandler.Summarize(ex), log);
-            _exitCode = 1;
+            _crash.Report(ex, fatal: true, source: "Startup");
+            Console.Error.WriteLine($"CsCode could not start: {CrashHandler.Summarize(failure)}\nLog: {log ?? "(not written)"}");
         }
-        window.Closed += (_, _) => _ = ShutdownAsync();
+        await ShutdownAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>Makes <paramref name="window"/> the session's window; the run ends when it closes (only once it was shown).</summary>
+    private void Present(Window window)
+    {
         Window = window;
         _desktop.MainWindow = window;
         window.Show();
+        window.Closed += (_, _) => _ = ShutdownAsync();
+    }
+
+    /// <summary>A main window that failed while opening is closed (no prompts: nothing was edited yet) so only the crash window remains.</summary>
+    private void DiscardFailedMainWindow()
+    {
+        if (Window is not MainWindow failed) return;
+        try { failed.CloseWithoutPrompt(); }
+        catch (Exception ex) { _crash.Report(ex, fatal: false, source: "Startup"); }
     }
 
     private async Task ShutdownAsync()
