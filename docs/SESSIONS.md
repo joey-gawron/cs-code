@@ -133,7 +133,9 @@ Hot exit never writes the user's files. With `off` (or `onExit` for a window clo
 * After `cscode.background.idleServerTimeoutMinutes` (15; 0 = never) the running language servers are stopped and restarted when the window is
   shown again; a running debug session keeps them (and keeps the process from being evicted).
 * Before showing again, the active tab of each group gets its view back, so the first frame shows the editors.
-* No periodic work while hidden: two one-shot timers, nothing else (measured ≈0 % CPU, below).
+* No periodic work while hidden: two one-shot timers, nothing else. The UI stall watchdog (Debug builds, or `cscode.diagnostics.uiStallLogMs`),
+  which polls the dispatcher every 20 ms, is stopped while hidden and in a waiting spare (`ShellController.SetHidden`). Measured: < 1 % CPU over
+  30 s for a hidden, trimmed session (the test asserts it; what remains is the runtime's tiered JIT finishing).
 * At most `cscode.background.maxResidentSessions` (3) sessions stay resident: beyond it the least recently shown hidden session persists and
   exits (checked by the launcher after each open and by a session when it is hidden).
 
@@ -184,22 +186,25 @@ UI thread captures immutable snapshots (document text only for documents whose v
 session (documents load asynchronously; editor views are created lazily — the active tab's first). A wedged or crashed process never blocks
 the launcher (300 ms handshake).
 
-## Latency (invocation → painted, measured by the real-process tests and `CSCODE_SESSION_TRACE`)
+## Latency (invocation → painted)
 
-Measured 2026-10-29 on this machine (22 cores, other agents building: load average 6–21), headless platform, from `Process.Start` of the
-launcher to its exit (the launcher exits when the window reported a painted frame):
+Measured 2026-10-29 on this machine (22 cores) while several other agents were building (load average 6–24), from `Process.Start` of the
+launcher to its exit (the launcher exits when the window reported a painted frame: a captured frame on the headless platform, two animation
+frames on a real one):
 
-| Path | Release build | Debug build (tests) | Budget |
-|---|---|---|---|
-| `cscode --version` (runtime start-up floor) | 45–90 ms | 115–125 ms | — |
-| Resident session, hidden → shown | 148 ms at load ≈ 6.6; 210–310 ms at load 12–21 | 250–390 ms | < 150 ms |
-| Via the warm spare (claim + restore + first frame) | ~1.0 s (load ≈ 7) | 1.4–4 s | < 500 ms |
-| Cold start (no spare) | ~1.6–2.3 s | 3–8 s | report |
+| Path | Release, headless, load ≈ 7 | Release, real X11 (private Xvfb), load ≈ 23 | Debug (the test suite), load 12–24 | Budget |
+|---|---|---|---|---|
+| `cscode --version` (runtime start-up floor) | 45–90 ms | — | 115–125 ms | — |
+| Resident session, hidden → shown | **148 ms** (213–310 ms at load 12–21) | 417–568 ms | 250 ms – 1.4 s | < 150 ms |
+| Via the warm spare (claim + restore + first frame) | ~1.0 s | 1.3 s | 1.4–5 s | < 500 ms |
+| Cold start (no spare) | 1.6–2.3 s | 2.4 s (spare claimed while still warming) | 3–8 s | report |
 
-Where the time goes (trace, Release, load ≈ 7): launcher process start → `Main` ≈ 50 ms; settings + paths ≈ 60 ms; discovery (hello to each
-process) ≈ 40–80 ms; show round trip ≈ 5–10 ms (the window was already rendered). For the spare: claim + restore ≈ 50–80 ms, first `Show`
-≈ 110–250 ms, **first composition frame 0.7–1.4 s** (JIT of the compositor and the first render of the whole window). The resident budget is met
-only with a Release build on a quiet machine; the warm-spare budget is not met (see "Known gaps").
+Where the time goes (`CSCODE_SESSION_TRACE`, Release, load ≈ 7): launcher process start → `Main` ≈ 50 ms; paths and settings ≈ 60 ms;
+discovery (one `hello` per process) ≈ 40–80 ms; the show round trip of a shown window ≈ 5–10 ms, of a hidden one 20–60 ms on X11 (100–400 ms on
+the headless platform, whose captured frame is a full software render). For the spare: claim + restore ≈ 50–80 ms, first `Show` 110–330 ms,
+**first composition frame 0.5–1.4 s** (JIT of the compositor and the first render of the whole window). So the resident budget holds only for a
+Release build on a quiet machine, and the warm-spare budget is missed (see "Known gaps"). A real-window run on a private Xvfb (`:137`) showed the
+restored window (file at the saved position, title `A — ws`, the session in the status bar) after hide/show cycles through the CLI.
 
 Set `CSCODE_SESSION_TRACE=/path/file` to get a per-phase timeline from the launcher and every CsCode process.
 
@@ -227,8 +232,15 @@ bash .scratch/notes/with-nix-env.sh dotnet test tests/CsCode.App.Tests --filter 
   window shown once, which a spare at login must not do on a real desktop). The resident budget (150 ms) holds only for a Release build on a
   quiet machine; the launcher is a fresh .NET process (≈50 ms runtime start before `Main`), and ReadyToRun/Native AOT would need packages that are
   not in the offline cache.
-* The tray icon and the real-X11 path were not exercised on a real display in the automated tests (headless platform only).
+* The automated tests use the headless platform. The real-X11 path (show/hide, animation-frame paint wait, bounds) was exercised by hand on a
+  private Xvfb with screenshots, not by a test; the tray icon was not exercised at all (no StatusNotifier host on Xvfb).
 * Only the primary workspace folder is restored (`IWorkspaceService` has no multi-root add in Core).
-* The Welcome page does not list saved sessions yet (Shell's `StartPages.cs`); use *Open Session…* or `cscode --list-sessions`.
+* The Welcome page does not list saved sessions yet (Shell's `StartPages.cs`), and Quick Launch has no `session:` mode; use *Switch Session…*
+  (Ctrl+Alt+S, also in the command palette), *Open Session…* or `cscode --list-sessions`.
+* Hot-exit restore reopens the file and replaces its text with one edit (no `IEditorViewFactory.OpenDocumentFromBackupAsync` was added): the
+  restored text is dirty as it should be, and one Undo goes back to the disk version.
+* Idle language-server stop/restart is wired to `ILanguageServerManager.StopAsync/StartAsync` but no test ran it with a real server.
+* `--background` with `restoreOnLogin` and the launcher's `--quit NAME` are tested against in-process fake processes only.
+* `--quit` of a spare that is still building its window waits until the window exists (seconds under load) before it exits.
 * Windows (named pipes, Run key) and macOS (LOCAL_PEERCRED, LaunchAgent) code paths compile but are untested.
 * Untitled buffers come back at the end of their group's tabs (their original position is not kept).
