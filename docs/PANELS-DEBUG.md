@@ -145,6 +145,17 @@ real Skia headless platform.
 | `ResponsivenessTests` | dispatcher heartbeat (p99 < 16 ms, max < 50 ms) under the hostile scenarios; `.scratch/responsiveness.log` has the measured numbers |
 | `LeakTests` | show/hide ×100 across 20 sessions: nothing reachable, no subscriptions left on service/sessions/breakpoint manager |
 
+## Trying it by hand
+
+`src/CsCode.Panels.Debug/Demo` is a developer-only project (not in `CsCode.slnx`, excluded from the library's compile) that opens the panels in a
+real window and debugs a tiny C# program with the real DAP module and netcoredbg:
+
+```bash
+tools/fetch-netcoredbg.sh
+dotnet run --project src/CsCode.Panels.Debug/Demo            # press Start (breakpoint is set in Add())
+dotnet run --project src/CsCode.Panels.Debug/Demo -- --start # start the session immediately
+```
+
 ## Known limits
 
 * Autos is an approximation (see above); Threads cannot freeze/thaw; function-breakpoint checkboxes are read-only; Modules/Exception use

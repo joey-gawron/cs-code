@@ -172,6 +172,8 @@ internal sealed class DemoWindow : Window
         CsCode.Panels.Debug.ServiceCollectionExtensions.AddCsCodeDebugPanels(services);
         _provider = services.BuildServiceProvider();
         _debug = _provider.GetRequiredService<IDebugService>();
+        _debug.AddWatch("x + 1");
+        _debug.AddWatch("a + b");
         _window.StatusChanged += text => AvaloniaUiDispatcher.Instance.Post(() => _status.Text = text);
         _window.Clipboard = async text => { if (TopLevel.GetTopLevel(this)?.Clipboard is { } c) await Avalonia.Input.Platform.ClipboardExtensions.SetTextAsync(c, text); };
 
@@ -273,11 +275,9 @@ internal sealed class DemoWindow : Window
             _dll = Path.Combine(_dir, "out", "Sample.dll");
             var line = Program.Split('\n').ToList().FindIndex(l => l.Contains("// @add", StringComparison.Ordinal));
             _debug.Breakpoints.Toggle(new Uri(_source), line);
-            _debug.AddWatch("x + 1");
-            _debug.AddWatch("a + b");
-            _status.Text = FindNetCoreDbg() is null
-                ? "netcoredbg not found: run tools/fetch-netcoredbg.sh, then restart this demo."
-                : "Ready. A breakpoint is set in Add(); press Start.";
+            if (FindNetCoreDbg() is null) _status.Text = "netcoredbg not found: run tools/fetch-netcoredbg.sh, then restart this demo.";
+            else if (Environment.GetCommandLineArgs().Contains("--start")) await StartAsync();
+            else _status.Text = "Ready. A breakpoint is set in Add(); press Start (or run the demo with --start).";
         }
         catch (Exception ex) { _status.Text = "Preparing the sample failed: " + ex.Message; }
     }
