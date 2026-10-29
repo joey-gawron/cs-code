@@ -269,4 +269,16 @@ public class HostIntegrationTests
         engine.TypeKeysOneByOne("<Esc>u");
         Assert.True(engine.CanRedo);
     }
+
+    [Fact]
+    public void A_caret_the_user_moved_is_moved_back_by_a_motion_to_where_the_engine_last_put_it()
+    {
+        var host = new InMemoryVimHost("foo bar baz");
+        var engine = new VimEngine(host, new VimSession());
+        engine.TypeKeysOneByOne("0");           // the engine put the caret at 0:0
+        host.Caret = new TextPosition(0, 4);    // a mouse click
+        engine.TypeKeysOneByOne("b");           // back to 0:0: the host's caret must follow although the engine sent 0:0 before
+        Assert.Equal(new TextPosition(0, 0), engine.Cursor);
+        Assert.Equal(new TextPosition(0, 0), host.Caret);
+    }
 }

@@ -322,6 +322,8 @@ public sealed partial class VimEngine : IDisposable
             _col = hc.Character;
             _setCurswant = true;
             CheckCursor();
+            // the host's caret is where the user put it: a command that moves back to where we last were must still move the host's caret
+            _sentCaret = hc;
         }
     }
 
