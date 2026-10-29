@@ -108,6 +108,13 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
 
     internal EditorVimBuffer? BufferOf(EditorDocument document) => _buffers.GetValueOrDefault(document);
 
+    /// <summary>Longest dispatcher callback that ran an engine's sliced work, and how many ran (diagnostics, tests).</summary>
+    public double LongestSliceMs { get; set; }
+    public int SliceCount { get; set; }
+
+    /// <summary>The Vim state of a view (tests).</summary>
+    internal VimView? ViewOf(Control view) => view is CodeEditorControl c ? _views.GetValueOrDefault(c) : null;
+
     /// <summary>Keys waiting for a clipboard read (tests).</summary>
     internal int HeldKeyCount => _held.Count;
 
@@ -404,11 +411,15 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         {
             v.PumpScheduled = false;
             if (v.IsDisposed || !v.Engine.HasPendingWork) return;
+            var start = System.Diagnostics.Stopwatch.GetTimestamp();
             Run(v, () =>
             {
                 v.Engine.RunPendingWork(SliceBudget);
                 return VimKeyResult.Handled;
             });
+            var ms = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            if (ms > LongestSliceMs) LongestSliceMs = ms;
+            SliceCount++;
         }, UiPriority.Background);
     }
 

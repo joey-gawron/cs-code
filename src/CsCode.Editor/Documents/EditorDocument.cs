@@ -250,6 +250,15 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
         public void Redo() => callback(true);
     }
 
+    /// <summary>
+    /// Begins an atomic change group (UI thread): the changes until the matching <see cref="EndAtomic"/> raise ONE <see cref="Changed"/> event and
+    /// publish one snapshot, so features react once to a burst of edits (a Vim command editing many lines). Lines read back meanwhile are current
+    /// on the UI thread; other threads see the snapshot from before the group. Must not be open while undoing or redoing.
+    /// </summary>
+    public void BeginAtomic() => _text.BeginUpdate();
+
+    public void EndAtomic() => _text.EndUpdate();
+
     /// <summary>Runs <paramref name="action"/> as one atomic change group (one event, one undo unit).</summary>
     public void RunAtomic(Action action)
     {

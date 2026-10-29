@@ -55,21 +55,21 @@ public sealed class VimApp : IAsyncDisposable
     }
 
     /// <summary>Waits for the active editor's view and engine and gives it keyboard focus.</summary>
-    public async Task FocusAsync()
+    public async Task FocusAsync(int settleRounds = 3)
     {
         if (!await RealAppHost.WaitFor(() => Well.ActiveEditor?.LiveView is CodeEditorControl c && Vim.EngineOf(c) is not null && c.IsVisible))
             throw new TimeoutException("the editor (with its Vim engine) did not appear");
         View.Modal.Controller.Focus();
         if (!await RealAppHost.WaitFor(() => View.Modal.Controller.IsFocused)) throw new TimeoutException("the editor did not take focus");
-        await DevScene.SettleAsync(3);
+        await DevScene.SettleAsync(settleRounds);
     }
 
     /// <summary>Opens another file in a new tab and focuses its editor.</summary>
-    public async Task<EditorTab> OpenAsync(string fileName, string text)
+    public async Task<EditorTab> OpenAsync(string fileName, string text, int settleRounds = 3)
     {
         Host.Files.WriteFile(fileName, text);
         var tab = await Well.OpenAsync(new Uri(Host.Files.Combine(fileName)));
-        await FocusAsync();
+        await FocusAsync(settleRounds);
         return tab;
     }
 
@@ -96,6 +96,27 @@ public sealed class VimApp : IAsyncDisposable
     {
         Keys(notation);
         await DevScene.SettleAsync(settleRounds);
+    }
+
+    /// <summary>
+    /// One character as a keyboard sends it (key press, text input, key release) without running posted jobs or rendering afterwards: the time
+    /// this takes is what the keystroke costs the UI thread.
+    /// </summary>
+    public void TypeCharOnly(char c) => Char(c);
+
+    /// <summary>
+    /// Raises a key press (and, for a character, its text input) directly on the focused element: the event goes through every handler of
+    /// the window and the editor exactly as from a keyboard, and nothing else runs (the headless helpers also run queued jobs and render).
+    /// Returns the milliseconds the handlers took.
+    /// </summary>
+    public double RaiseKey(Key key, KeyModifiers modifiers = KeyModifiers.None, string? text = null)
+    {
+        var target = Host.Window.FocusManager?.GetFocusedElement() as Avalonia.Interactivity.Interactive ?? throw new InvalidOperationException("nothing has focus");
+        var start = System.Diagnostics.Stopwatch.GetTimestamp();
+        target.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = modifiers, Source = target });
+        if (text is not null) target.RaiseEvent(new TextInputEventArgs { RoutedEvent = InputElement.TextInputEvent, Text = text, Source = target });
+        target.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyUpEvent, Key = key, KeyModifiers = modifiers, Source = target });
+        return System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
     }
 
     /// <summary>An IME (or any text-input-only) commit: text input without key presses.</summary>

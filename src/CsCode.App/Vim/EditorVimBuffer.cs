@@ -36,6 +36,7 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
     private readonly string?[] _cache = new string?[CacheSize];
     private readonly int[] _cacheLine = new int[CacheSize];
     private int _cacheVersion = -1;
+    private int _changes = 1;
     private readonly DisposableStore _subscriptions = new();
     private readonly List<VimExternalChange> _external = [];
     private long _externalChars;
@@ -70,14 +71,15 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
     public string Name => _doc.Uri.IsFile ? Path.GetFileName(_doc.Uri.LocalPath) : _doc.Uri.ToString();
     public Uri? Uri => _doc.Uri;
     public string LanguageId => _doc.LanguageId;
-    public int Version => _doc.Version;
+    /// <summary>Bumps on every primitive change, also inside an atomic group (where the document's own version moves only at its end).</summary>
+    public int Version => _changes;
     public int LineCount => _doc.LineCount;
     public string EndOfLine => _doc.EndOfLine;
     public bool IsReadOnly => _doc.IsReadOnly;
 
     public string GetLine(int line)
     {
-        var v = _doc.Version;
+        var v = _changes;
         if (v != _cacheVersion)
         {
             Array.Clear(_cache);
@@ -99,6 +101,7 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
     {
         if (_doc.IsReadOnly) return false;
         EnsureGroup();
+        EnsureAtomic();
         _selfDepth++;
         try { return _doc.ApplyEdits([new TextEdit(new TextRange(edit.Start, edit.End), ToDocText(edit.Text))]); }
         finally { _selfDepth--; }
@@ -111,6 +114,7 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
         var list = new TextEdit[edits.Length];
         for (var i = 0; i < edits.Length; i++) list[i] = new TextEdit(new TextRange(edits[i].Start, edits[i].End), ToDocText(edits[i].Text));
         EnsureGroup();
+        EnsureAtomic();
         _selfDepth++;
         try { return _doc.ApplyEdits(list); }
         finally { _selfDepth--; }
@@ -127,7 +131,31 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
 
     public void EndEditGroup()
     {
-        if (_pumpDepth > 0 && --_pumpDepth == 0 && _groupOpen) CloseGroup();
+        if (_pumpDepth > 0 && --_pumpDepth == 0)
+        {
+            EndAtomic();
+            if (_groupOpen) CloseGroup();
+        }
+    }
+
+    private bool _atomic;
+
+    /// <summary>
+    /// The engine's own edits of one key (or one slice of a long command) form one atomic change of the document: the editor's features react
+    /// once, not once per line (":g/pat/s//" over thousands of lines). Never around the typing path, whose features read the text as typed.
+    /// </summary>
+    private void EnsureAtomic()
+    {
+        if (_atomic || _pumpDepth == 0 || _typingDepth > 0 || _disposed) return;
+        _atomic = true;
+        _doc.BeginAtomic();
+    }
+
+    private void EndAtomic()
+    {
+        if (!_atomic) return;
+        _atomic = false;
+        _doc.EndAtomic();
     }
 
     /// <summary>
@@ -136,6 +164,7 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
     /// </summary>
     public TypingScope BeginTyping()
     {
+        EndAtomic(); // the typing path's features (completion, signature help) read the text as typed
         EnsureGroup();
         _typingDepth++;
         return new TypingScope(this);
@@ -155,6 +184,7 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
     public void BeginEditorKey()
     {
         if (_editorKey || _disposed) return;
+        EndAtomic();
         _editorKey = true;
         _pumpDepth++;
         _typingDepth++;
@@ -196,6 +226,7 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
 
     private void CloseGroup()
     {
+        EndAtomic(); // the atomic change lives inside the undo group
         var label = _groupLabel;
         if (_groupChanged && !_groupContinued && label >= 0)
         {
@@ -219,6 +250,7 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
     public bool UndoRedoStep(int seq, bool redo)
     {
         if (_engine is not { } e || _disposed) return false;
+        EndAtomic();
         if (_groupOpen) CloseGroup(); // the editor cannot undo while a group is open
         var label = Label(e.UndoHistoryGeneration, seq);
         var groups = Ledger.GroupsOnTop(label, redo);
@@ -261,6 +293,7 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
     private void OnBeforeChange(TextContentChange change)
     {
         if (_disposed) return;
+        unchecked { _changes++; } // invalidates the line cache for reads after this change
         if (_groupOpen) _groupChanged = true;
         if (_selfDepth > 0) return; // the engine's own edit or a host undo: it knows
         if (!_groupOpen) Ledger.Foreign();
@@ -332,6 +365,7 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
     public void Dispose()
     {
         if (_disposed) return;
+        EndAtomic();
         if (_groupOpen) CloseGroup();
         _disposed = true;
         _subscriptions.Dispose();
