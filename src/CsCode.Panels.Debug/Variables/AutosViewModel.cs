@@ -31,16 +31,20 @@ public sealed partial class AutosViewModel : FrameVariablesViewModel
         var scopes = await Services.Ui.OnUi(session.GetScopesAsync(focus.FrameId!.Value, ct), ct);
         if (token.Generation != Tree.Generation) return;
         var candidates = new List<(DebugVariable Variable, int ParentReference)>();
+        var returned = new List<(DebugVariable Variable, int ParentReference)>();
         foreach (var scope in ScopeSelector.ForLocals(scopes))
         {
             var page = await Services.Ui.OnUi(session.GetVariablesAsync(scope.VariablesReference, 0, MaxCandidates, ct), ct);
             if (token.Generation != Tree.Generation) return;
-            foreach (var v in page.Take(MaxCandidates)) candidates.Add((v, scope.VariablesReference));
+            foreach (var v in page.Take(MaxCandidates)) (ScopeSelector.IsReturnValue(scope) ? returned : candidates).Add((v, scope.VariablesReference));
         }
 
         var referenced = ReferencedIdentifiers();
         var shown = referenced is null ? [] : candidates.Where(c => referenced.Contains(c.Variable.Name)).ToList();
         if (shown.Count == 0) shown = candidates.Where(c => !IsThisOrStatics(c.Variable.Name)).ToList();
+        // What the function just stepped out of returned is shown first, whatever the line mentions (Visual Studio's "… returned").
+        shown = [.. returned, .. shown];
+        candidates = [.. returned, .. candidates];
         // The unfiltered list keys the change highlighting: the subset changes from line to line, the frame does not.
         await Tree.ShowRootsAsync(token, shown, candidates.ConvertAll(c => c.Variable));
     }
