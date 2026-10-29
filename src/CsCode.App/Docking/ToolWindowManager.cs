@@ -22,12 +22,15 @@ public sealed class ToolWindowManager : IDisposable
     {
         _factory = factory;
         _services = services;
-        foreach (var spec in specs.OrderBy(s => s.Id, StringComparer.Ordinal))
+        var ordered = specs.OrderBy(s => s.Id, StringComparer.Ordinal).ToArray();
+        if (factory.Root is null) factory.IncludeLeftTools = ordered.Any(s => s.DefaultLocation == ToolWindowLocation.Left);
+        factory.EnsureLayout();
+        foreach (var spec in ordered)
         {
             var tab = new ToolTab(spec, services);
             _tools[spec.Id] = tab;
             var dock = DockFor(spec.DefaultLocation);
-            dock.VisibleDockables!.Add(tab);
+            factory.AddDockable(dock, tab);
             if (dock.ActiveDockable is null) dock.ActiveDockable = tab;
         }
         factory.DockableHidden += OnHidden;
@@ -46,7 +49,7 @@ public sealed class ToolWindowManager : IDisposable
 
     private IDock DockFor(ToolWindowLocation location) => location switch
     {
-        ToolWindowLocation.Left => _factory.LeftTools,
+        ToolWindowLocation.Left when _factory.IncludeLeftTools => _factory.LeftTools,
         ToolWindowLocation.Bottom => _factory.BottomTools,
         _ => _factory.RightTools,
     };

@@ -14,10 +14,22 @@ namespace CsCode.App.Docking;
 public sealed class ShellDockFactory : Factory
 {
     public IRootDock? Root { get; private set; }
+
+    /// <summary>Whether the layout has a left tool well. Must be set before <see cref="EnsureLayout"/>.</summary>
+    public bool IncludeLeftTools { get; set; } = true;
     public ToolDock LeftTools { get; } = new() { Id = "dock.left", Title = "Left", Alignment = Alignment.Left, Proportion = 0.22, CanCloseLastDockable = true };
     public ToolDock RightTools { get; } = new() { Id = "dock.right", Title = "Right", Alignment = Alignment.Right, Proportion = 0.24, CanCloseLastDockable = true };
     public ToolDock BottomTools { get; } = new() { Id = "dock.bottom", Title = "Bottom", Alignment = Alignment.Bottom, Proportion = 0.28, CanCloseLastDockable = true };
     public DocumentDock PrimaryDocuments { get; } = new() { Id = "docs.primary", Title = "Documents", CanCreateDocument = false, CanCloseLastDockable = true };
+
+    /// <summary>Creates and initialises the layout exactly once (the tool manager and the window both need it; order must not matter).</summary>
+    public IRootDock EnsureLayout()
+    {
+        if (Root is not null) return Root;
+        var layout = CreateLayout();
+        InitLayout(layout);
+        return layout;
+    }
 
     public override IRootDock CreateLayout()
     {
@@ -42,17 +54,11 @@ public sealed class ShellDockFactory : Factory
                 new ProportionalDockSplitter { Id = "split.bottom" },
                 BottomTools),
         };
-        var main = new ProportionalDock
-        {
-            Id = "layout.main",
-            Orientation = Orientation.Horizontal,
-            VisibleDockables = CreateList<IDockable>(
-                LeftTools,
-                new ProportionalDockSplitter { Id = "split.left" },
-                center,
-                new ProportionalDockSplitter { Id = "split.right" },
-                RightTools),
-        };
+        // An empty well would still reserve its proportion of the width, so the left well only exists when some tool window wants it.
+        var children = IncludeLeftTools
+            ? CreateList<IDockable>(LeftTools, new ProportionalDockSplitter { Id = "split.left" }, center, new ProportionalDockSplitter { Id = "split.right" }, RightTools)
+            : CreateList<IDockable>(center, new ProportionalDockSplitter { Id = "split.right" }, RightTools);
+        var main = new ProportionalDock { Id = "layout.main", Orientation = Orientation.Horizontal, VisibleDockables = children };
         var root = CreateRootDock();
         root.Id = "root";
         root.IsCollapsable = false;

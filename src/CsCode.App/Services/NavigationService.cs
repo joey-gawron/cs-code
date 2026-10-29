@@ -29,6 +29,7 @@ public sealed class NavigationService : INavigationService, IDisposable
     private readonly IConfigurationService? _config;
     private readonly DisposableStore _subs = new();
     private readonly Emitter<IEditorDocument?> _activeChanged = new();
+    private readonly Emitter<TextPosition?> _caretChanged = new();
     private IDisposable? _caretSub, _viewSub;
     private volatile IEditorDocument? _activeDoc;
     private volatile object? _activeCaret; // boxed TextPosition
@@ -51,6 +52,8 @@ public sealed class NavigationService : INavigationService, IDisposable
     public IEditorDocument? ActiveDocument => _activeDoc;
     public TextPosition? ActiveCaret => _activeCaret is TextPosition p ? p : null;
     public IEventSource<IEditorDocument?> ActiveDocumentChanged => _activeChanged;
+    /// <summary>Fires (UI thread) whenever the active editor's caret moves or the active editor changes (null = no editor). Shell-internal.</summary>
+    public IEventSource<TextPosition?> ActiveCaretChanged => _caretChanged;
     public IReadOnlyList<IEditorDocument> OpenDocuments => _open;
 
     private void OnActive(ShellDocument? tab)
@@ -61,6 +64,7 @@ public sealed class NavigationService : INavigationService, IDisposable
         var editor = tab as EditorTab;
         _activeDoc = editor?.Doc;
         _activeCaret = null;
+        _caretChanged.Fire(null);
         if (editor is not null)
         {
             // The view (and with it the controller) may not exist yet: attach the caret listener when it appears.
@@ -74,7 +78,8 @@ public sealed class NavigationService : INavigationService, IDisposable
     {
         _caretSub?.Dispose();
         _activeCaret = c.Caret;
-        _caretSub = c.CaretChanged.Subscribe(p => _activeCaret = p);
+        _caretChanged.Fire(c.Caret);
+        _caretSub = c.CaretChanged.Subscribe(p => { _activeCaret = p; _caretChanged.Fire(p); });
     }
 
     public async ValueTask<IEditorDocument?> OpenAsync(Uri uri, TextRange? selection = null, bool preview = false, bool preserveFocus = false, CancellationToken ct = default)
@@ -222,5 +227,6 @@ public sealed class NavigationService : INavigationService, IDisposable
         _viewSub?.Dispose();
         _subs.Dispose();
         _activeChanged.Clear();
+        _caretChanged.Clear();
     }
 }

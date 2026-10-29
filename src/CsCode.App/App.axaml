@@ -3,8 +3,29 @@
              xmlns:dock="clr-namespace:Dock.Avalonia.Themes.Fluent;assembly=Dock.Avalonia.Themes.Fluent"
              x:Class="CsCode.App.App"
              RequestedThemeVariant="Dark">
+  <!--
+    FluentTheme supplies control templates; ThemeApplier retargets it (and Dock) at the active workbench theme and publishes the vsc: brushes.
+    VsTheme.axaml (CsCode.Ui) adds the VS2022 density, flat shapes and shared text roles on top.
+  -->
   <Application.Styles>
     <FluentTheme />
     <dock:DockFluentTheme />
+    <StyleInclude Source="avares://CsCode.Ui/Styles/VsTheme.axaml" />
+    <Style Selector="Button.statusitem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource vsc:statusBarItem.hoverBackground}" />
+      <Setter Property="Foreground" Value="{DynamicResource vsc:statusBar.foreground}" />
+    </Style>
+    <Style Selector="Button.statusitem">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:statusBar.foreground}" />
+    </Style>
+    <Style Selector="Button.captionbutton:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource vsc:toolbar.hoverBackground}" />
+    </Style>
+    <Style Selector="Button.captionclose:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#E81123" />
+    </Style>
+    <Style Selector="Button.captionbutton, Button.captionclose">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:titleBar.activeForeground}" />
+    </Style>
   </Application.Styles>
 </Application>

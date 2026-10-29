@@ -24,7 +24,7 @@ public sealed class ThemeApplier : IDisposable
         ("DockBorderStrongBrush", "panel.border"), ("DockBorderSubtleBrush", "panel.border"), ("DockSeparatorBrush", "panel.border"),
         ("DockChromeButtonDangerHoverBrush", "inputValidation.errorBorder"), ("DockChromeButtonForegroundBrush", "icon.foreground"),
         ("DockChromeButtonHoverBackgroundBrush", "toolbar.hoverBackground"), ("DockChromeButtonPressedBackgroundBrush", "toolbar.activeBackground"),
-        ("DockChromeGripBrush", "descriptionForeground"), ("DockDocumentContentBorderBrush", "editorGroup.border"),
+        ("DockDocumentContentBorderBrush", "editorGroup.border"),
         ("DockDocumentTabClosePointerOverForegroundBrush", "tab.activeForeground"), ("DockDocumentTabCloseSelectedForegroundBrush", "tab.activeForeground"),
         ("DockDocumentTabPointerOverForegroundBrush", "tab.hoverForeground"), ("DockDocumentTabSelectedForegroundBrush", "tab.activeForeground"),
         ("DockDocumentTabStripBackgroundBrush", "editorGroupHeader.tabsBackground"), ("DockDocumentTabStripMaskBrush", "editorGroupHeader.tabsBackground"),
@@ -32,7 +32,7 @@ public sealed class ThemeApplier : IDisposable
         ("DockSplitterDragBrush", "focusBorder"), ("DockSplitterHoverBrush", "sash.hoverBorder"), ("DockSplitterIdleBrush", "editorGroupHeader.tabsBackground"),
         ("DockSurfaceEditorBrush", "editor.background"), ("DockSurfaceHeaderActiveBrush", "tab.activeBackground"), ("DockSurfaceHeaderBrush", "sideBarSectionHeader.background"),
         ("DockSurfacePanelBrush", "panel.background"), ("DockSurfaceSidebarBrush", "sideBar.background"), ("DockSurfaceWorkbenchBrush", "editorGroupHeader.tabsBackground"),
-        ("DockTabActiveBackgroundBrush", "tab.activeBackground"), ("DockTabActiveForegroundBrush", "tab.activeForeground"), ("DockTabActiveIndicatorBrush", "tab.activeBorderTop"),
+        ("DockTabActiveBackgroundBrush", "tab.activeBackground"), ("DockTabActiveForegroundBrush", "tab.activeForeground"),
         ("DockTabBackgroundBrush", "tab.inactiveBackground"), ("DockTabCloseHoverBackgroundBrush", "toolbar.hoverBackground"), ("DockTabForegroundBrush", "tab.inactiveForeground"),
         ("DockTabHoverBackgroundBrush", "tab.hoverBackground"), ("DockTabSelectedForegroundBrush", "tab.activeForeground"), ("DockTargetIndicatorBrush", "focusBorder"),
         ("DockThemeAccentBrush", "focusBorder"), ("DockThemeBackgroundBrush", "sideBar.background"), ("DockThemeBorderLowBrush", "panel.border"),
@@ -40,7 +40,7 @@ public sealed class ThemeApplier : IDisposable
         ("DockWindowChromeBackgroundBrush", "titleBar.activeBackground"), ("DockWindowChromeBorderBrush", "panel.border"),
         ("DockWindowChromeForegroundBrush", "titleBar.activeForeground"), ("DockWindowChromeTitleBarBackgroundBrush", "titleBar.activeBackground"),
         ("DockApplicationAccentBrushHigh", "statusBar.background"), ("DockApplicationAccentBrushMed", "toolbar.hoverBackground"),
-        ("DockApplicationAccentBrushLow", "list.hoverBackground"), ("DockApplicationAccentBrushIndicator", "tab.activeBorderTop"),
+        ("DockApplicationAccentBrushLow", "list.hoverBackground"),
     ];
 
     private readonly Application _app;
@@ -137,6 +137,11 @@ public sealed class ThemeApplier : IDisposable
 
         var variant = p.Kind is ThemeKind.Light or ThemeKind.HighContrastLight ? ThemeVariant.Light : ThemeVariant.Dark;
         if (_app.RequestedThemeVariant != variant) _app.RequestedThemeVariant = variant;
+        // Visual Studio draws no drag grip in tool captions and marks the active document tab with a TOP accent bar (MainWindow styles),
+        // not with the bottom indicator line Dock draws by default.
+        resources["DockChromeGripBrush"] = Brushes.Transparent;
+        resources["DockTabActiveIndicatorBrush"] = Brushes.Transparent;
+        resources["DockApplicationAccentBrushIndicator"] = Brushes.Transparent;
         FluentBridge.Apply(_app, _brushes, id => _brushes[id].Color, variant);
         _appliedThemeId = p.ThemeId;
         ApplyCount++;

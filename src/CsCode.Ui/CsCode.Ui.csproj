@@ -2,7 +2,7 @@
 
   <!-- VS2022 design system: theme applier, control styles, icons, shared controls, tool-window contract. Owned by the Shell module. -->
   <PropertyGroup>
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
   <ItemGroup>

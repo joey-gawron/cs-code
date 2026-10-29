@@ -1,6 +1,0 @@
-<Window xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="CsCode.App.MainWindow"
-        Title="CsCode" Width="1280" Height="800">
-  <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Text="CsCode scaffold" />
-</Window>

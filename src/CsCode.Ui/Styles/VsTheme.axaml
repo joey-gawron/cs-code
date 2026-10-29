@@ -1,0 +1,124 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:CsCode.Ui.Controls;assembly=CsCode.Ui">
+
+  <!--
+    VS2022 look layered on top of FluentTheme (which supplies the control templates and is retargeted at the workbench palette by
+    ThemeApplier/FluentBridge). Everything here references the live vsc: brushes and ui: tokens, so a theme switch repaints in place.
+  -->
+
+  <Style Selector="Window">
+    <Setter Property="Background" Value="{DynamicResource vsc:editor.background}" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:foreground}" />
+    <Setter Property="FontFamily" Value="{DynamicResource ui:FontFamily}" />
+    <Setter Property="FontSize" Value="{DynamicResource ui:FontSize}" />
+  </Style>
+  <Style Selector="UserControl">
+    <Setter Property="Foreground" Value="{DynamicResource vsc:foreground}" />
+  </Style>
+  <Style Selector="TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource ui:FontFamily}" />
+  </Style>
+
+  <!-- Dense, flat controls. Buttons are NOT restyled globally: Dock's chrome buttons are Buttons too and must keep their own metrics. -->
+  <Style Selector="Button.flat">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="4,2" />
+    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="CornerRadius" Value="2" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:foreground}" />
+  </Style>
+  <Style Selector="Button.flat:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource vsc:toolbar.hoverBackground}" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:foreground}" />
+  </Style>
+  <Style Selector="Button.flat:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource vsc:toolbar.activeBackground}" />
+  </Style>
+  <Style Selector="Button.flat:disabled">
+    <Setter Property="Opacity" Value="0.4" />
+  </Style>
+  <Style Selector="Button.accent">
+    <Setter Property="Background" Value="{DynamicResource vsc:button.background}" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:button.foreground}" />
+  </Style>
+  <Style Selector="Button.accent:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource vsc:button.hoverBackground}" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:button.foreground}" />
+  </Style>
+
+  <Style Selector="TextBox">
+    <Setter Property="MinHeight" Value="22" />
+    <Setter Property="Padding" Value="5,2" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="CornerRadius" Value="0" />
+    <Setter Property="SelectionBrush" Value="{DynamicResource vsc:editor.selectionBackground}" />
+    <Setter Property="CaretBrush" Value="{DynamicResource vsc:editorCursor.foreground}" />
+  </Style>
+
+  <Style Selector="ListBox">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="0" />
+  </Style>
+  <Style Selector="ListBoxItem">
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="CornerRadius" Value="0" />
+  </Style>
+
+  <Style Selector="ToolTip">
+    <Setter Property="Background" Value="{DynamicResource vsc:editorHoverWidget.background}" />
+    <Setter Property="Foreground" Value="{DynamicResource vsc:editorHoverWidget.foreground}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource vsc:editorHoverWidget.border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="0" />
+    <Setter Property="Padding" Value="6,3" />
+    <Setter Property="FontSize" Value="12" />
+  </Style>
+
+  <!-- Menus: flat, no rounded flyout, compact rows. -->
+  <Style Selector="MenuItem">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="CornerRadius" Value="0" />
+  </Style>
+  <Style Selector="ContextMenu">
+    <Setter Property="CornerRadius" Value="0" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Padding" Value="0,2" />
+  </Style>
+  <Style Selector="MenuFlyoutPresenter">
+    <Setter Property="CornerRadius" Value="0" />
+  </Style>
+
+  <Style Selector="ScrollViewer">
+    <Setter Property="Background" Value="Transparent" />
+  </Style>
+
+  <Style Selector="ProgressBar">
+    <Setter Property="MinHeight" Value="3" />
+  </Style>
+
+  <!-- Shared text roles. -->
+  <Style Selector="TextBlock.subtle">
+    <Setter Property="Foreground" Value="{DynamicResource vsc:descriptionForeground}" />
+  </Style>
+  <Style Selector="TextBlock.title">
+    <Setter Property="FontSize" Value="{DynamicResource ui:FontSizeTitle}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="TextBlock.link">
+    <Setter Property="Foreground" Value="{DynamicResource vsc:textLink.foreground}" />
+    <Setter Property="Cursor" Value="Hand" />
+  </Style>
+  <Style Selector="TextBlock.link:pointerover">
+    <Setter Property="TextDecorations" Value="Underline" />
+  </Style>
+
+  <!-- Dock: VS tab strip and tool-window chrome (colours come from the Dock* brush keys that ThemeApplier maps). -->
+  <Style Selector="DocumentTabStrip">
+    <Setter Property="Background" Value="{DynamicResource vsc:editorGroupHeader.tabsBackground}" />
+  </Style>
+</Styles>
