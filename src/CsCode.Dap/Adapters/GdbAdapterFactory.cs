@@ -74,7 +74,7 @@ public sealed class GdbAdapterFactory : IDebugAdapterFactory, IDebugConfiguratio
         var gdb = Locate() ?? throw new DebugSessionStartException(
             "GDB was not found. Install it (GDB 14 or newer speaks the Debug Adapter Protocol: 'gdb -i=dap'), put 'gdb' on PATH, or set 'cscode.debug.gdbPath'.");
         var folder = configuration.WorkspaceFolder ?? _p.PrimaryFolder;
-        var cwd = folder is { IsFile: true } f && Directory.Exists(f.LocalPath) ? f.LocalPath : null;
+        var cwd = folder is { IsFile: true } f && Directory.Exists(f.LocalPath) ? DapPlatform.NormalizeDir(f.LocalPath) : null;
 
         var args = new List<string>(UserArguments()) { "-q" };
         void Early(string command) { args.Add("-iex"); args.Add(command); }
