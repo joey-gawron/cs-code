@@ -50,7 +50,8 @@ public sealed class RemoteOptions
     {
         var self = Environment.ProcessPath ?? "cscode";
         var name = Path.GetFileNameWithoutExtension(self);
-        if (string.Equals(name, "dotnet", StringComparison.OrdinalIgnoreCase) && System.Reflection.Assembly.GetEntryAssembly()?.Location is { Length: > 0 } entry)
+        // under `dotnet app.dll`, argv[0] is the app's dll (Assembly.Location is empty in single-file builds, so it is not used)
+        if (string.Equals(name, "dotnet", StringComparison.OrdinalIgnoreCase) && Environment.GetCommandLineArgs() is [{ Length: > 0 } entry, ..] && entry.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             return [self, entry];
         return [self];
     }
