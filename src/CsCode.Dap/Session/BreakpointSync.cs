@@ -14,6 +14,8 @@ internal interface IBreakpointSyncHost
     DapPositions Positions { get; }
     DapCapabilities Capabilities { get; }
     bool IsLive { get; }
+    /// <summary>The adapter's quirks (hit-condition translation, client-side exception filters).</summary>
+    DebugAdapterQuirks Quirks { get; }
     Task<JsonElement> RequestAsync(string command, object? arguments, CancellationToken ct);
     void BreakpointStatusChanged(DebugBreakpointStatus status);
 }
@@ -37,6 +39,11 @@ internal sealed class BreakpointSync : IDisposable
     private readonly Dictionary<Uri, string> _sentSignatures = new();
     private readonly Dictionary<Uri, int[]> _adapterIdsByFile = new();
     private readonly Dictionary<int, string> _breakpointIdByAdapterId = new();
+    // Function breakpoints' adapter ids (in _breakpointIdByAdapterId too, so their `breakpoint` events update the verdict: GDB answers a
+    // function breakpoint set before the program is loaded "pending" and verifies it later by event).
+    private int[] _functionAdapterIds = [];
+    // Adapter ids of the function breakpoints that implement client-side exception filters (DebugAdapterQuirks.SyntheticExceptionFilters).
+    private readonly Dictionary<int, SyntheticExceptionFilter> _syntheticByAdapterId = new();
     private readonly CancellationTokenSource _cts = new();
     private bool _pendingFunctionsOrFilters, _flushScheduled, _flushRunning, _active, _disposed;
     private string? _sentFunctions, _sentFilters;
@@ -53,6 +60,15 @@ internal sealed class BreakpointSync : IDisposable
 
     public int RequestsSent => Volatile.Read(ref _requestsSent);
     public int TrackedAdapterIds => _breakpointIdByAdapterId.Count;
+
+    /// <summary>Lane only. The client-side exception filter whose breakpoint the adapter reports among <paramref name="hitBreakpointIds"/>.</summary>
+    public SyntheticExceptionFilter? SyntheticFilterHit(IReadOnlyList<int>? hitBreakpointIds)
+    {
+        if (hitBreakpointIds is null) return null;
+        foreach (var id in hitBreakpointIds)
+            if (_syntheticByAdapterId.TryGetValue(id, out var filter)) return filter;
+        return null;
+    }
 
     // ------------------------------------------------------------------ initial sync (between `initialized` and `configurationDone`)
 
@@ -130,12 +146,18 @@ internal sealed class BreakpointSync : IDisposable
                 Report(new DebugBreakpointStatus(_host.Session, bp.Id, false, null, $"This debug adapter does not support {unsupported}."));
                 continue;
             }
+            var hit = MapHitCondition(bp.HitCondition);
+            if (hit.Unsupported is { } why)
+            {
+                Report(new DebugBreakpointStatus(_host.Session, bp.Id, false, null, why));
+                continue;
+            }
             sent.Add((bp, new DapSourceBreakpoint
             {
                 Line = pos.ToWireLine(bp.Line),
                 Column = bp.Column is { } c ? pos.ToWireColumn(c) : null,
                 Condition = bp.Condition is { Length: > 0 } cond ? cond : null,
-                HitCondition = bp.HitCondition is { Length: > 0 } hit ? hit : null,
+                HitCondition = hit.Wire,
                 LogMessage = bp.LogMessage is { Length: > 0 } log ? log : null,
             }));
         }
@@ -181,28 +203,46 @@ internal sealed class BreakpointSync : IDisposable
         _adapterIdsByFile[uri] = [.. ids];
     }
 
+    private HitConditionMapping MapHitCondition(string? hitCondition) =>
+        hitCondition is { Length: > 0 } hit ? _host.Quirks.MapHitCondition(hit) : new HitConditionMapping(null, null);
+
     private async Task SendFunctionsAsync(CancellationToken ct, bool force)
     {
-        var fns = _manager.FunctionBreakpoints.Where(f => f.Enabled).ToList();
-        var signature = string.Join('|', fns.Select(f => $"{f.Name}:{f.Condition}:{f.HitCondition}"));
-        if (!force && (_sentFunctions ?? "") == signature) return;
+        var all = _manager.FunctionBreakpoints.Where(f => f.Enabled).ToList();
+        // Client-side exception filters the user enabled travel as function breakpoints, after the user's own.
+        var synthetic = _host.Quirks.SyntheticExceptionFilters is { Count: > 0 } offered
+            ? offered.Where(o => _manager.ExceptionFilters.Any(f => f.Filter == o.Filter && f.Enabled)).ToList()
+            : [];
+        var signature = string.Join('|', all.Select(f => $"{f.Name}:{f.Condition}:{f.HitCondition}")) + "#" + string.Join('|', synthetic.Select(f => f.FunctionName));
+        if (!force && (_sentFunctions ?? "#") == signature) return;
         if (_host.Capabilities.SupportsFunctionBreakpoints != true)
         {
             // Nothing is sent (js-debug v1.140.0 advertises no function breakpoints), but the user must see why the breakpoint never hits,
             // as for the source breakpoint kinds an adapter lacks. The signature keeps the verdict's own Changed event from looping back here.
             _sentFunctions = signature;
-            foreach (var f in fns) Report(new DebugBreakpointStatus(_host.Session, f.Id, false, null, "This debug adapter does not support function breakpoints."));
+            foreach (var f in all) Report(new DebugBreakpointStatus(_host.Session, f.Id, false, null, "This debug adapter does not support function breakpoints."));
             return;
         }
-        var args = new DapSetFunctionBreakpointsArguments
+        var fns = new List<FunctionBreakpoint>();
+        var wire = new List<DapFunctionBreakpoint>();
+        foreach (var f in all)
         {
-            Breakpoints = [.. fns.Select(f => new DapFunctionBreakpoint
+            var hit = _host.Capabilities.SupportsHitConditionalBreakpoints == true ? MapHitCondition(f.HitCondition) : new HitConditionMapping(null, null);
+            if (hit.Unsupported is { } why)
+            {
+                Report(new DebugBreakpointStatus(_host.Session, f.Id, false, null, why));
+                continue;
+            }
+            fns.Add(f);
+            wire.Add(new DapFunctionBreakpoint
             {
                 Name = f.Name,
                 Condition = f.Condition is { Length: > 0 } && _host.Capabilities.SupportsConditionalBreakpoints == true ? f.Condition : null,
-                HitCondition = f.HitCondition is { Length: > 0 } && _host.Capabilities.SupportsHitConditionalBreakpoints == true ? f.HitCondition : null,
-            })],
-        };
+                HitCondition = hit.Wire,
+            });
+        }
+        wire.AddRange(synthetic.Select(s => new DapFunctionBreakpoint { Name = s.FunctionName }));
+        var args = new DapSetFunctionBreakpointsArguments { Breakpoints = wire };
         Interlocked.Increment(ref _requestsSent);
         JsonElement body;
         try { body = await _host.RequestAsync("setFunctionBreakpoints", args, ct); }
@@ -213,9 +253,22 @@ internal sealed class BreakpointSync : IDisposable
             return;
         }
         _sentFunctions = signature;
+        foreach (var id in _functionAdapterIds) _breakpointIdByAdapterId.Remove(id);
+        _syntheticByAdapterId.Clear();
         var response = DapJson.Deserialize<DapBreakpointsResponse>(body)?.Breakpoints ?? [];
+        var ids = new List<int>();
         for (var i = 0; i < fns.Count && i < response.Count; i++)
+        {
+            if (response[i].Id is { } adapterId)
+            {
+                _breakpointIdByAdapterId[adapterId] = fns[i].Id;
+                ids.Add(adapterId);
+            }
             Report(new DebugBreakpointStatus(_host.Session, fns[i].Id, response[i].Verified, null, response[i].Message));
+        }
+        for (var i = 0; i < synthetic.Count && fns.Count + i < response.Count; i++)
+            if (response[fns.Count + i].Id is { } adapterId) _syntheticByAdapterId[adapterId] = synthetic[i];
+        _functionAdapterIds = [.. ids];
     }
 
     private async Task SendExceptionFiltersAsync(CancellationToken ct)
@@ -249,7 +302,9 @@ internal sealed class BreakpointSync : IDisposable
         if (e.Breakpoint.Id is not { } adapterId || !_breakpointIdByAdapterId.TryGetValue(adapterId, out var ourId)) return;
         if (e.Reason == "removed") { _breakpointIdByAdapterId.Remove(adapterId); return; }
         var pos = _host.Positions;
-        Report(new DebugBreakpointStatus(_host.Session, ourId, e.Breakpoint.Verified, e.Breakpoint.Line is { } l ? pos.ToCoreLine(l) : null, e.Breakpoint.Message));
+        // A function breakpoint's "line" is where the function is (GDB reports it): not a moved line of a source breakpoint.
+        var line = Array.IndexOf(_functionAdapterIds, adapterId) >= 0 ? null : e.Breakpoint.Line is { } l ? pos.ToCoreLine(l) : (int?)null;
+        Report(new DebugBreakpointStatus(_host.Session, ourId, e.Breakpoint.Verified, line, e.Breakpoint.Message));
     }
 
     private void Report(DebugBreakpointStatus status)
@@ -274,6 +329,8 @@ internal sealed class BreakpointSync : IDisposable
         _sentSignatures.Clear();
         _adapterIdsByFile.Clear();
         _breakpointIdByAdapterId.Clear();
+        _syntheticByAdapterId.Clear();
+        _functionAdapterIds = [];
         _manager.ClearStatuses(_host.Session.Id);
     }
 }

@@ -12,6 +12,7 @@ namespace CsCode.Dap.Session;
 public sealed partial class DebugSession
 {
     private const int MaxModules = 2_000;
+    private const int RecentOutputChars = 8 * 1024;
     /// <summary>Several `stopped` events for one stop (one per thread) collapse into one if they follow each other this closely.</summary>
     private static readonly long DuplicateStopWindowTicks = Stopwatch.Frequency / 10; // 100 ms
 
@@ -35,12 +36,55 @@ public sealed partial class DebugSession
         if (e.ThreadId is { } threadId) Volatile.Write(ref _focusedThread, threadId);
         LastException = null;
 
+        // A stop at the breakpoint of a client-side exception filter (GDB: "Rust panics") is reported as the exception it stands for.
+        var reason = e.Reason;
+        var description = e.Description;
+        var text = e.Text;
+        _syntheticStop = e.Reason == "breakpoint" ? _sync?.SyntheticFilterHit(e.HitBreakpointIds) : null;
+        if (_syntheticStop is { } filter)
+        {
+            reason = "exception";
+            description = "Paused on exception: " + filter.Label;
+            text = _quirks.DescribeSyntheticStop(filter, RecentOutput)?.Description;
+        }
+
         _output.Flush(); // output printed before the stop must reach the console before the stop does
         SetState(DebugSessionState.Stopped);
-        _stopped.Fire(new DebugStoppedEventArgs(this, e.Reason, e.ThreadId, e.AllThreadsStopped == true, e.Description, e.Text, e.HitBreakpointIds));
+        _stopped.Fire(new DebugStoppedEventArgs(this, reason, e.ThreadId, e.AllThreadsStopped == true, description, text, e.HitBreakpointIds));
 
-        if (e.Reason == "exception" && _caps.SupportsExceptionInfo && e.ThreadId is { } tid)
+        if (_syntheticStop is { } synthetic) _ = DescribeSyntheticStopAsync(synthetic, _stopCounter);
+        else if (reason == "exception" && _caps.SupportsExceptionInfo && e.ThreadId is { } tid)
             _ = FetchExceptionInfoAsync(tid);
+    }
+
+    /// <summary>
+    /// The exception a client-side filter's stop stands for (a Rust panic's message), from the program's output. The panic prints its message
+    /// before it reaches the breakpoint, but the adapter may deliver that output just after the stop: waits for it a little (bounded).
+    /// </summary>
+    private async Task DescribeSyntheticStopAsync(SyntheticExceptionFilter filter, long stop)
+    {
+        var deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 2; // 500 ms
+        DebugExceptionInfo? info;
+        while ((info = _quirks.DescribeSyntheticStop(filter, RecentOutput)) is null && Stopwatch.GetTimestamp() < deadline)
+        {
+            await Task.Delay(25);
+            if (_stopCounter != stop || State != DebugSessionState.Stopped) return;
+        }
+        if (_stopCounter != stop || State != DebugSessionState.Stopped) return;
+        info ??= new DebugExceptionInfo(filter.Filter, filter.Label, "always", null, filter.Label, null);
+        LastException = info;
+        _syntheticException = info;
+        _exceptionInfo.Fire(info);
+    }
+
+    /// <summary>The program's latest output (bounded), kept only for adapters with client-side exception filters; cleared on resume.</summary>
+    private string RecentOutput => _recentOutput?.ToString() ?? "";
+
+    private void RememberOutput(string text)
+    {
+        if (_recentOutput is not { } recent) return;
+        recent.Append(text);
+        if (recent.Length > RecentOutputChars) recent.Remove(0, recent.Length - RecentOutputChars);
     }
 
     private async Task FetchExceptionInfoAsync(int threadId)
@@ -75,6 +119,9 @@ public sealed partial class DebugSession
         _handles.Invalidate();
         _completions.Clear();
         LastException = null;
+        _syntheticStop = null;
+        _syntheticException = null;
+        _recentOutput?.Clear(); // a panic message printed from now on belongs to the next stop
         if (allThreads) SetState(DebugSessionState.Running);
         _continued.Fire(new DebugContinuedEventArgs(this, threadId, allThreads));
     }
@@ -94,8 +141,17 @@ public sealed partial class DebugSession
     private void OnOutput(DapOutputEvent e)
     {
         MarkAlive();
+        Volatile.Write(ref _lastOutputTimestamp, Stopwatch.GetTimestamp());
         var line = e.Line is { } l ? _positions.ToCoreLine(l) : (int?)null;
-        _output.Add(string.IsNullOrEmpty(e.Category) ? "console" : e.Category, e.Output, DapMapping.ToCore(e.Source), line);
+        var category = string.IsNullOrEmpty(e.Category) ? "console" : e.Category;
+        var text = e.Output;
+        if (!ReferenceEquals(_quirks, DebugAdapterQuirks.None))
+        {
+            category = _quirks.MapOutputCategory(category, text);
+            text = _quirks.MapOutputText(category, text);
+            RememberOutput(text);
+        }
+        _output.Add(category, text, DapMapping.ToCore(e.Source), line);
     }
 
     private void OnProcess(DapProcessEvent e)
