@@ -38,12 +38,16 @@ public sealed class ProcessLanguageHost : ILanguageServerManager, IWillSaveParti
     {
         _log = sp.GetService<ILoggerFactory>()?.CreateLogger("CsCode.Remote.LanguageHost") ?? NullLogger.Instance;
         var paths = sp.GetService<IAppPaths>();
-        var assembly = LocalServer.FindServerAssembly(options.LocalServerAssembly)
-                       ?? throw new FileNotFoundException("cscode-server.dll was not found next to the program; cscode.languageHost = process needs it");
-        var dataDir = options.LocalServerDataDir ?? Path.Combine(paths?.GlobalStorageDir ?? Path.GetTempPath(), "language-host");
-        var launch = LocalServer.Launch(assembly, dataDir, options.ServerMarker, environment: options.LocalServerEnvironment);
         var output = sp.GetService<IOutputService>();
-        _client = new RemoteClient("local language host", () => new LoopbackTransport(launch), UriMapper.Identity, "process", options.Reconnect ?? new ReconnectPolicy(5),
+        // Resolved per connection attempt, inside the client's connect (off the thread that resolved this service: no disk access there).
+        IRemoteTransport Transport()
+        {
+            var assembly = LocalServer.FindServerAssembly(options.LocalServerAssembly)
+                           ?? throw new RemoteBootstrapException("cscode-server.dll was not found next to the program; cscode.languageHost = process needs it");
+            var dataDir = options.LocalServerDataDir ?? Path.Combine(paths?.GlobalStorageDir ?? Path.GetTempPath(), "language-host");
+            return new LoopbackTransport(LocalServer.Launch(assembly, dataDir, options.ServerMarker, environment: options.LocalServerEnvironment));
+        }
+        _client = new RemoteClient("local language host", Transport, UriMapper.Identity, "process", options.Reconnect ?? new ReconnectPolicy(5),
             options.Time, _log, line => output?.GetOrCreate("Language Host").AppendLine(line)) { CallTimeout = options.CallTimeout };
         _save = new RemoteSaveParticipant(() => _client.Session);
 

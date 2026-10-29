@@ -247,11 +247,25 @@ public sealed class WorkspaceService : IWorkspaceService, IDisposable
         {
             var provider = _searchProviders.Value.FirstOrDefault(p => string.Equals(p.Scheme, folder.Scheme, StringComparison.OrdinalIgnoreCase));
             if (provider is null) continue; // nobody serves this scheme: nothing to find
-            await foreach (var uri in provider.FindFilesAsync(folder, options with { MaxResults = remaining == int.MaxValue ? 0 : remaining }, ct).ConfigureAwait(false))
+            // A folder that cannot be searched now (a remote host that is disconnected) yields nothing; the other folders still do.
+            var e = provider.FindFilesAsync(folder, options with { MaxResults = remaining == int.MaxValue ? 0 : remaining }, ct).GetAsyncEnumerator(ct);
+            try
             {
-                yield return uri;
-                if (--remaining == 0) yield break;
+                while (true)
+                {
+                    bool more;
+                    try { more = await e.MoveNextAsync().ConfigureAwait(false); }
+                    catch (IOException ex)
+                    {
+                        _log.LogWarning("Cannot search {Folder}: {Error}", folder, ex.Message);
+                        break;
+                    }
+                    if (!more) break;
+                    yield return e.Current;
+                    if (--remaining == 0) yield break;
+                }
             }
+            finally { await e.DisposeAsync().ConfigureAwait(false); }
         }
     }
 

@@ -109,6 +109,37 @@ public class RouterTests
         Assert.Single(found); // maxResults spans providers
     }
 
+    [Fact]
+    public async Task A_folder_that_cannot_be_searched_now_yields_nothing_instead_of_failing_the_search()
+    {
+        using var lane = new IoLane("t", 2);
+        var broken = new BrokenSearch();
+        using var dir = new TempDirectory();
+        dir.WriteFile("local.txt", "x");
+        var mem = new MemoryProvider("mem");
+        var fs = new FileSystemRouter(new LocalFileSystem(lane), () => [mem]);
+        using var ws = new WorkspaceService(fs, new FileWatcherRouter(new RecordingLocalWatcher(), () => [mem]), new NullState(), new TestConfigurationService(), lane, null,
+            new PlatformOptions(), null, () => [broken]);
+        await ws.OpenFolderAsync(dir.Uri, Ct);
+        await ws.AddFolderAsync(new Uri("mem://x/"), Ct);
+        var found = new List<Uri>();
+        await foreach (var u in ws.FindFilesAsync(null, 0, Ct)) found.Add(u);
+        Assert.Equal(["local.txt"], found.Select(u => Path.GetFileName(u.LocalPath))); // the local folder still answers
+    }
+
+    private sealed class BrokenSearch : IFileSearchProvider
+    {
+        public string Scheme => "mem";
+        public async IAsyncEnumerable<Uri> FindFilesAsync(Uri folder, FileSearchOptions options, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.Yield();
+            throw new IOException("Not connected to x");
+#pragma warning disable CS0162 // an async iterator needs a yield to be one
+            yield break;
+#pragma warning restore CS0162
+        }
+    }
+
     private sealed class NullState : IStateStorage
     {
         public T? Get<T>(string key, StorageScope scope = StorageScope.Application) => default;

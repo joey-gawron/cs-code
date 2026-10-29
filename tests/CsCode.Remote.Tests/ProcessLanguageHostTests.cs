@@ -24,7 +24,7 @@ public class ProcessLanguageHostTests
         public readonly string Marker = "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
         public readonly ServiceProvider Services;
 
-        public Host(string mode)
+        public Host(string mode, string? serverAssembly = null)
         {
             var launchEnv = TestEnv.ServerLaunch(_data.Path, Marker).Environment;
             var sc = new ServiceCollection();
@@ -39,7 +39,7 @@ public class ProcessLanguageHostTests
             sc.AddSingleton<ICommandService, TestCommandService>();
             sc.AddSingleton(new RemoteOptions
             {
-                LanguageHostMode = mode, LocalServerAssembly = TestEnv.ServerAssembly, LocalServerDataDir = _data.Path, ServerMarker = Marker,
+                LanguageHostMode = mode, LocalServerAssembly = serverAssembly ?? TestEnv.ServerAssembly, LocalServerDataDir = _data.Path, ServerMarker = Marker,
                 LocalServerEnvironment = launchEnv,
             });
             sc.AddCsCodeRemote();
@@ -67,6 +67,16 @@ public class ProcessLanguageHostTests
         Assert.DoesNotContain(host.Services.GetServices<IFileOperationParticipant>(), p => p.GetType().Name == "LanguageServerManager");
         await plh.WaitConnectedAsync(Ct).WaitAsync(TimeSpan.FromSeconds(60), Ct);
         Assert.NotEmpty(TestEnv.ProcessesWithMarker(host.Marker)); // the child runs
+    }
+
+    [Fact]
+    public async Task A_missing_server_build_degrades_to_no_language_features_instead_of_failing_startup()
+    {
+        await using var host = new Host("process", serverAssembly: "/nonexistent/cscode-server.dll");
+        var plh = Assert.IsType<ProcessLanguageHost>(host.Services.GetRequiredService<ILanguageServerManager>()); // resolving never throws
+        await TestEnv.WaitUntilAsync(() => plh.Client.Status.State == Core.Remote.RemoteConnectionState.Failed, TimeSpan.FromSeconds(10), "failed status");
+        Assert.Contains("cscode-server.dll was not found", plh.Client.Status.Message);
+        Assert.Empty(plh.Servers);
     }
 
     [Fact]
