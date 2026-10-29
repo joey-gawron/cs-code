@@ -165,6 +165,12 @@ public sealed partial class VimEngine
             case 'd' or 'y' or 'c': return false;
             case 'X' or 'D': return VisualOp(c, OpType.Delete, linewise: _mode != VimMode.VisualBlock, dollar: _mode == VimMode.VisualBlock && k == 'D');
             case 's': return VisualOp(c, OpType.Change);
+            case 'S' when _s.Plugins.Surround:
+            {
+                var sc = new Cmd { Key = c.Key, NChar = c.NChar, Count0 = c.Count0, Reg = c.Reg, Op = OpType.SurroundAdd, Visual = true, SurroundTag = c.SurroundTag };
+                ApplyVisualOperator(sc);
+                return true;
+            }
             case 'S' or 'R': return VisualOp(c, OpType.Change, linewise: _mode != VimMode.VisualBlock);
             case 'C': return VisualOp(c, OpType.Change, linewise: _mode != VimMode.VisualBlock, dollar: _mode == VimMode.VisualBlock);
             case 'Y': return VisualOp(c, OpType.Yank, linewise: _mode != VimMode.VisualBlock);
@@ -294,6 +300,7 @@ public sealed partial class VimEngine
             if (c.Key2 != 0) r.Keys.Add(c.Key2);
             if (c.NChar != 0) r.Keys.Add(c.NChar);
             if (c.NChar2 != 0) r.Keys.Add(c.NChar2);
+            AddSurroundTagKeys(r.Keys, c);
             _redo = r;
             _redoBuilding = r;
         }

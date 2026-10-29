@@ -1,0 +1,563 @@
+# vim-surround and vim-commentary emulations. nvim -u NONE has no plugins, so these cases are hand-written (nodiff).
+=== plugins-001 nodiff
+> ‸hello world
+keys: ysiw)
+< ‸(hello) world
+
+=== plugins-002 nodiff
+> ‸hello world
+keys: ysiw(
+< ‸( hello ) world
+
+=== plugins-003 nodiff
+> ‸hello world
+keys: ysiw"
+< ‸"hello" world
+
+=== plugins-004 nodiff
+> ‸hello world
+keys: ysiw]
+< ‸[hello] world
+
+=== plugins-005 nodiff
+> ‸hello world
+keys: ysiw[
+< ‸[ hello ] world
+
+=== plugins-006 nodiff
+> ‸hello world
+keys: ysiw}
+< ‸{hello} world
+
+=== plugins-007 nodiff
+> ‸hello world
+keys: ysiw{
+< ‸{ hello } world
+
+=== plugins-008 nodiff
+> ‸hello world
+keys: ysiwb
+< ‸(hello) world
+
+=== plugins-009 nodiff
+> ‸hello world
+keys: ysiw<em>
+< ‸<em>hello</em> world
+
+=== plugins-010 nodiff
+> ‸hello world
+keys: ysiwtp class="x">
+< ‸<p class="x">hello</p> world
+
+=== plugins-011 nodiff
+> ‸hello world
+keys: ysw)
+< ‸(hello )world
+
+=== plugins-012 nodiff
+> ‸hello world
+keys: ys$)
+< ‸(hello world)
+
+=== plugins-013 nodiff
+> ‸hello world
+keys: yss)
+< ‸(hello world)
+
+=== plugins-014 nodiff
+>     ‸hello world
+keys: yss)
+<     ‸(hello world)
+
+=== plugins-015 nodiff
+> hello ‸world
+keys: ys0)
+< ‸(hello )world
+
+=== plugins-016 nodiff
+> ‸foo bar baz
+keys: ys2w'
+< ‸'foo bar 'baz
+
+=== plugins-017 nodiff
+> ‸foo bar baz
+keys: 2ysw'
+< ‸'foo bar 'baz
+
+=== plugins-018 nodiff
+> ‸foo bar
+> baz qux
+keys: ysj)
+< ‸(foo bar
+< baz qux)
+
+=== plugins-019 nodiff
+> ‸foo bar
+> baz qux
+> third
+keys: ysap)
+< ‸(foo bar
+< baz qux
+< third)
+
+=== plugins-020 nodiff
+> foo ‸bar baz
+keys: ysiw)www.
+< foo (bar) ‸(baz)
+
+=== plugins-021 nodiff
+> ‸hello world
+keys: ysiw)u
+< ‸hello world
+
+=== plugins-022 nodiff
+> ‸hello world
+keys: ysfo)
+< ‸(hello) world
+
+=== plugins-023 nodiff
+> ‸hello world
+keys: ysfz)
+< ‸hello world
+
+=== plugins-024 nodiff
+> a ‸b c
+keys: ysiw<Esc>
+< a ‸b c
+
+=== plugins-025 nodiff
+> a ‸b c
+keys: ysiw<Esc>x
+< a ‸ c
+
+=== plugins-026 nodiff
+> a ‸b c
+keys: ys<Esc>x
+< a ‸ c
+
+=== plugins-030 nodiff
+> ‸(hello) world
+keys: ds)
+< ‸hello world
+
+=== plugins-031 nodiff
+> (he‸llo) world
+keys: ds)
+< ‸hello world
+
+=== plugins-032 nodiff
+> (hello‸) world
+keys: ds)
+< ‸hello world
+
+=== plugins-033 nodiff
+> ( he‸llo ) world
+keys: ds(
+< ‸hello world
+
+=== plugins-034 nodiff
+> ( he‸llo ) world
+keys: ds)
+< ‸ hello  world
+
+=== plugins-035 nodiff
+> ((a‸b)) c
+keys: ds)
+< (‸ab) c
+
+=== plugins-036 nodiff
+> a ((b ‸c) d) e
+keys: ds)
+< a (‸b c d) e
+
+=== plugins-037 nodiff
+> a ((b c) ‸d) e
+keys: ds)
+< a ‸(b c) d e
+
+=== plugins-038 nodiff
+> a ‸b
+keys: ds)
+< a ‸b
+
+=== plugins-039 nodiff
+> say "he‸llo" now
+keys: ds"
+< say ‸hello now
+
+=== plugins-040 nodiff
+> ‸say "hello" now
+keys: ds"
+< say ‸hello now
+
+=== plugins-041 nodiff
+> say "hello" no‸w
+keys: ds"
+< say "hello" no‸w
+
+=== plugins-042 nodiff
+> 'a' 'b‸c' 'd'
+keys: ds'
+< 'a' ‸bc 'd'
+
+=== plugins-043 nodiff
+> x = [a, ‸b]
+keys: ds]
+< x = ‸a, b
+
+=== plugins-044 nodiff
+> x = {a, ‸b}
+keys: dsB
+< x = ‸a, b
+
+=== plugins-045 nodiff
+> a <b‸> c
+keys: ds>
+< a ‸b c
+
+=== plugins-046 nodiff
+> <p>he‸llo</p> world
+keys: dst
+< ‸hello world
+
+=== plugins-047 nodiff
+> <div><p>he‸llo</p></div>
+keys: dst
+< <div>‸hello</div>
+
+=== plugins-048 nodiff
+> (a)
+> (b‸)
+keys: ds)k.
+< ‸a
+< b
+
+=== plugins-049 nodiff
+> (a‸) (b)
+keys: ds)w.
+< a ‸b
+
+=== plugins-050 nodiff
+> (a
+> ‸b
+> c)
+keys: ds)
+< ‸a
+< b
+< c
+
+=== plugins-051 nodiff
+> (a‸b) c
+keys: ds)u
+< (a‸b) c
+
+=== plugins-060 nodiff
+> (he‸llo) world
+keys: cs)]
+< ‸[hello] world
+
+=== plugins-061 nodiff
+> (he‸llo) world
+keys: cs)[
+< ‸[ hello ] world
+
+=== plugins-062 nodiff
+> ( he‸llo ) world
+keys: cs([
+< ‸[ hello ] world
+
+=== plugins-063 nodiff
+> ( he‸llo ) world
+keys: cs()
+< ‸(hello) world
+
+=== plugins-064 nodiff
+> "he‸llo" world
+keys: cs"'
+< ‸'hello' world
+
+=== plugins-065 nodiff
+> "he‸llo" world
+keys: cs")
+< ‸(hello) world
+
+=== plugins-066 nodiff
+> "he‸llo" world
+keys: cs"<q>
+< ‸<q>hello</q> world
+
+=== plugins-067 nodiff
+> "he‸llo" world
+keys: cs"tspan id="a">
+< ‸<span id="a">hello</span> world
+
+=== plugins-068 nodiff
+> <p>he‸llo</p> world
+keys: cst<div>
+< ‸<div>hello</div> world
+
+=== plugins-069 nodiff
+> <p>he‸llo</p> world
+keys: cst"
+< ‸"hello" world
+
+=== plugins-070 nodiff
+> [a‸] [b]
+keys: cs]}www.
+< {a} ‸{b}
+
+=== plugins-071 nodiff
+> "a‸" "b"
+keys: cs"'www.
+< 'a' ‸'b'
+
+=== plugins-072 nodiff
+> a ‸b
+keys: cs)]
+< a ‸b
+
+=== plugins-073 nodiff
+> (a‸b)
+keys: cs)]u
+< (a‸b)
+
+=== plugins-074 nodiff
+> (a‸b)
+keys: cs)<Esc>
+< (a‸b)
+
+=== plugins-075 nodiff
+> (a‸b)
+keys: cs<Esc>
+< (a‸b)
+
+=== plugins-080 nodiff
+> ‸hello world
+keys: viwS)
+< ‸(hello) world
+
+=== plugins-081 nodiff
+> ‸hello world
+keys: viwS(
+< ‸( hello ) world
+
+=== plugins-082 nodiff
+> ‸hello world
+keys: viwS"
+< ‸"hello" world
+
+=== plugins-083 nodiff
+> ‸hello world
+keys: viwS<b>
+< ‸<b>hello</b> world
+
+=== plugins-084 nodiff
+> ‸hello world
+keys: veS'
+< ‸'hello' world
+
+=== plugins-085 nodiff
+> ‸hello
+> world
+keys: VS(
+< ‸(
+< hello
+< )
+< world
+
+=== plugins-086 nodiff
+>   ‸hello
+>   world
+keys: VjS)
+<   ‸(
+<   hello
+<   world
+<   )
+
+=== plugins-087 nodiff
+> ‸foo bar
+keys: viwS)www.
+< (foo) ‸(bar)
+
+=== plugins-088 nodiff
+> ‸hello world
+keys: viwS<Esc>
+mode: v
+< hell‸o world
+
+=== plugins-089 nodiff
+> ‸hello world
+keys: wviwS)
+< hello ‸(world)
+
+=== plugins-090 nodiff
+> ab‸cd
+keys: vlS*
+< ab‸*cd*
+
+# commentary
+=== plugins-110 nodiff
+> ‸foo
+> bar
+keys: gcc
+< // ‸foo
+< bar
+
+=== plugins-111 nodiff
+> // ‸foo
+> bar
+keys: gcc
+< ‸foo
+< bar
+
+=== plugins-112 nodiff
+>     ‸foo
+>     bar
+keys: gcc
+<     // ‸foo
+<     bar
+
+=== plugins-113 nodiff
+> ‸foo
+> bar
+> baz
+keys: gcj
+< // ‸foo
+< // bar
+< baz
+
+=== plugins-114 nodiff
+> ‸foo
+> bar
+> baz
+keys: 3gcc
+< // ‸foo
+< // bar
+< // baz
+
+=== plugins-115 nodiff
+> ‸foo
+> bar
+>
+> baz
+keys: gcap
+< // ‸foo
+< // bar
+<
+< baz
+
+=== plugins-116 nodiff
+> ‸foo
+> // bar
+keys: gcj
+< // ‸foo
+< // // bar
+
+=== plugins-117 nodiff
+> // ‸foo
+> // bar
+keys: gcj
+< ‸foo
+< bar
+
+=== plugins-118 nodiff
+> ‸foo
+>
+> bar
+keys: gcG
+< // ‸foo
+<
+< // bar
+
+=== plugins-119 nodiff
+> ‸foo
+> bar
+keys: Vjgc
+< // ‸foo
+< // bar
+
+=== plugins-120 nodiff
+> ‸foo
+> bar
+keys: vjgc
+< // ‸foo
+< // bar
+
+=== plugins-121 nodiff
+> ‸foo
+> bar
+keys: gccj.
+< // foo
+< // ‸bar
+
+=== plugins-122 nodiff
+> ‸foo
+keys: gccu
+< ‸foo
+
+=== plugins-123 nodiff
+> ‸foo
+> bar
+keys: gccgcc
+< ‸foo
+< bar
+
+=== plugins-124 nodiff
+> ‸foo
+> bar
+keys: gcgc
+< // ‸foo
+< bar
+
+=== plugins-125 nodiff
+> ‸foo
+>     bar
+> baz
+keys: gc2j
+< // ‸foo
+< //     bar
+< // baz
+
+=== plugins-126 nodiff
+>   ‸foo
+> bar
+keys: gcj
+< //   ‸foo
+< // bar
+
+=== plugins-127 nodiff
+> ‸foo
+> bar
+keys: gCC
+< /* ‸foo */
+< bar
+
+=== plugins-128 nodiff
+> /* ‸foo */
+> bar
+keys: gCC
+< ‸foo
+< bar
+
+=== plugins-129 nodiff
+> ‸foo
+keys: gcc:s/foo/bar<CR>
+< ‸// bar
+
+=== plugins-130 nodiff
+> a
+> ‸b
+> c
+keys: gcgg
+< // ‸a
+< // b
+< c
+
+=== plugins-131 nodiff
+> a
+> ‸b
+> c
+keys: gck
+< // ‸a
+< // b
+< c

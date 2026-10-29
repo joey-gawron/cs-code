@@ -174,7 +174,7 @@ public sealed partial class VimEngine
                 OpAddSubtract(oap, op == OpType.NrAdd ? count1 : -count1);
                 break;
             case OpType.Comment:
-                CommentOperator(oap);
+                CommentOperator(oap, c.Key == 'g' && c.Key2 == 'C');
                 break;
             case OpType.SurroundAdd:
                 SurroundAddOperator(c, oap);

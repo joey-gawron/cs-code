@@ -52,10 +52,46 @@ public sealed partial class VimEngine
         if (c.SurroundTag is not null) { foreach (var ch in c.SurroundTag) keys.Add(ch); keys.Add('>'); }
     }
 
+    private void SetRedoSurround(Cmd c)
+    {
+        var r = new RedoRecord { Reg = 0, Count = c.Count0 };
+        r.Keys.Add(c.Op == OpType.SurroundDelete ? 'd' : 'c');
+        r.Keys.Add('s');
+        r.Keys.Add(c.NChar);
+        if (c.Op == OpType.SurroundChange) r.Keys.Add(c.NChar2);
+        AddSurroundTagKeys(r.Keys, c);
+        _redo = r;
+        _redoBuilding = null;
+    }
+
+    private static void AddSurroundTagKeys(List<int> keys, Cmd c)
+    {
+        if (c.SurroundTag is null) return;
+        foreach (var ch in c.SurroundTag) keys.Add(ch);
+        keys.Add('>');
+    }
+
     private void RecordRedoForCommand(Cmd c, OpArgs oap, int count0)
     {
         if (oap.Op is OpType.Yank or OpType.Fold) return;
         var r = new RedoRecord { Reg = c.Reg, Count = count0 };
+        if (c.Op == OpType.SurroundAdd)
+        {
+            r.Keys.Add('y'); r.Keys.Add('s');
+            if (c.Doubled) r.Keys.Add('s');
+            else
+            {
+                var sm = c.M;
+                r.Keys.Add(sm.Key);
+                if (sm.Key2 != 0) r.Keys.Add(sm.Key2);
+                if (sm.NChar != 0) r.Keys.Add(sm.NChar);
+            }
+            r.Keys.Add(c.NChar);
+            AddSurroundTagKeys(r.Keys, c);
+            _redo = r;
+            _redoBuilding = null;
+            return;
+        }
         // operator keys, then motion keys
         r.Keys.Add(c.Key);
         if (c.Key2 != 0) r.Keys.Add(c.Key2);
@@ -116,9 +152,16 @@ public sealed partial class VimEngine
     {
         if (_opCmdForSearch is not null) { }
         if (c.Visual && c.Op != OpType.None) { ApplyVisualOperator(c); return; }
+        if (c.Op is OpType.SurroundDelete or OpType.SurroundChange)
+        {
+            SetRedoSurround(c);
+            if (c.Op == OpType.SurroundDelete) SurroundDeleteCommand(c); else SurroundChangeCommand(c);
+            CheckPcmark();
+            FinishCommand();
+            return;
+        }
         if (c.Op != OpType.None)
         {
-            if (c.Op == OpType.None) return;
             ExecOperatorMotion(c);
             CheckPcmark();
             FinishCommand();

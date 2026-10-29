@@ -196,7 +196,7 @@ public sealed partial class VimEngine
             if (!Next(out var n)) return NeedMoreArg(true);
             if (n == Keys.Esc) return ParseResult.Cancelled;
             c.NChar = n;
-            if (!ReadLiteralArg(c, k)) return ParseResult.NeedMore;
+            if (!ReadLiteralArg(c, k)) return NeedMoreArg(true);
         }
 
         // operator? then its motion
@@ -207,12 +207,17 @@ public sealed partial class VimEngine
             if (c.Visual) return ParseResult.Complete;
             return ParseMotionPart(c);
         }
-        // surround / commentary commands that are not plain operators
-        return ParseSpecial(c);
+        return ParseResult.Complete;
     }
 
     private bool ReadLiteralArg(Cmd c, int k)
     {
+        if (k == 'S')
+        {
+            // visual S{char}: a tag surround reads `<tag>`
+            if (c.NChar is '<' or 't') return ReadSurroundTag(c);
+            return true;
+        }
         // r<C-v>x / r<C-k>ab: gather the literal / digraph characters
         if (k != 'r') return true;
         if (c.NChar is 22 or 17)
@@ -266,11 +271,12 @@ public sealed partial class VimEngine
             case 'r' or 'm' or '@': return !opActive;
             case 'q': return !opActive && _recReg == 0 && !c.Visual || (!opActive && _recReg == 0 && c.Visual);
             case 'a' or 'i': return opActive || c.Visual;
+            case 'S': return c.Visual && !opActive && _s.Plugins.Surround;
             default: return false;
         }
     }
 
-    private static OpType OperatorOf(Cmd c)
+    private OpType OperatorOf(Cmd c)
     {
         switch (c.Key)
         {
@@ -285,7 +291,7 @@ public sealed partial class VimEngine
                 return c.Key2 switch
                 {
                     '~' => OpType.Tilde, 'u' => OpType.Lower, 'U' => OpType.Upper, '?' => OpType.Rot13, 'q' => OpType.Format,
-                    'w' => OpType.FormatKeep, '@' => OpType.Function, 'c' or 'C' => OpType.Comment, _ => OpType.None,
+                    'w' => OpType.FormatKeep, '@' => OpType.Function, 'c' or 'C' when _s.Plugins.Commentary => OpType.Comment, _ => OpType.None,
                 };
             case 'z': return c.Key2 == 'f' ? OpType.Fold : OpType.None;
         }
@@ -311,10 +317,11 @@ public sealed partial class VimEngine
         }
 
         // surround: ys / ds / cs
-        if (_s.Plugins.Surround && m.Key == 's' && c.Op == OpType.Yank && c.Key == 'y')
+        if (_s.Plugins.Surround && m.Key == 's' && c.Key is 'y' or 'd' or 'c' && c.Key2 == 0)
         {
-            c.Op = OpType.SurroundAdd;
-            return ParseSurroundAddMotion(c);
+            if (c.Key == 'y') { c.Op = OpType.SurroundAdd; return ParseSurroundAddMotion(c); }
+            c.Op = c.Key == 'd' ? OpType.SurroundDelete : OpType.SurroundChange;
+            return ParseSurroundDeleteChange(c);
         }
 
         // doubled operator (dd, yy, g~~, g~g~ ...)
@@ -372,14 +379,6 @@ public sealed partial class VimEngine
         return false;
     }
 
-    private ParseResult ParseSpecial(Cmd c)
-    {
-        var k = c.Key;
-        // ds{char} / cs{old}{new} (surround) — only when the plugin is on
-        if (_s.Plugins.Surround && !c.Visual) { }
-        return ParseResult.Complete;
-    }
-
     private ParseResult ParseSurroundAddMotion(Cmd c)
     {
         var m = c.M;
@@ -393,6 +392,7 @@ public sealed partial class VimEngine
             m.Key = k;
             break;
         }
+        if (m.Key is '/' or '?') return ParseResult.Invalid;
         if (m.Key == 's')
         {
             // yss
@@ -408,19 +408,25 @@ public sealed partial class VimEngine
         if (!Next(out var ch)) return NeedMoreArg(true);
         c.NChar = ch;
         if (ch == Keys.Esc) return ParseResult.Cancelled;
-        if (ch is '<' or 't')
-        {
-            // collect up to and including '>' (or Enter for 't' form)
-            var sb = new StringBuilder();
-            while (true)
-            {
-                if (!Next(out var tk)) return NeedMoreArg(true);
-                if (tk == Keys.Esc) return ParseResult.Cancelled;
-                if (tk is '>' or Keys.CR) break;
-                sb.Append(char.ConvertFromUtf32(tk));
-            }
-            c.SurroundTag = sb.ToString();
-        }
+        if (ch is '<' or 't' && !ReadSurroundTag(c)) return _tagCancelled ? ParseResult.Cancelled : NeedMoreArg(true);
         return ParseResult.Complete;
+    }
+
+    private bool _tagCancelled;
+
+    /// <summary>Reads the tag text of a `&lt;tag&gt;` surround (up to '&gt;' or Enter) into <see cref="Cmd.SurroundTag"/>; false when more keys are needed or Esc cancelled.</summary>
+    private bool ReadSurroundTag(Cmd c)
+    {
+        _tagCancelled = false;
+        var sb = new StringBuilder();
+        while (true)
+        {
+            if (!Next(out var tk)) return false;
+            if (tk == Keys.Esc) { _tagCancelled = true; return false; }
+            if (tk is '>' or Keys.CR) break;
+            sb.Append(char.ConvertFromUtf32(tk));
+        }
+        c.SurroundTag = sb.ToString();
+        return true;
     }
 }

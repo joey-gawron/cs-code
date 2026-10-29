@@ -184,7 +184,7 @@ public static class Keys
         }
         int code;
         if (NameToCode.TryGetValue(s, out code)) { }
-        else if (s.Length == 1 || (s.Length == 2 && char.IsHighSurrogate(s[0]))) code = char.ConvertToUtf32(s, 0);
+        else if (mods != 0 && (s.Length == 1 || (s.Length == 2 && char.IsHighSurrogate(s[0])))) code = char.ConvertToUtf32(s, 0);
         else return false;
 
         if (mods == 0) { output.Add(code); return true; }
