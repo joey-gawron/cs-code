@@ -136,6 +136,15 @@ dispatcher latency p99 ≤ 16 ms / max ≤ 50 ms, typing latency p99 ≤ 20 ms, 
 * Each module owns specific directories (see its brief). Don't edit another module's files; Core changes are additive only and called out in the report.
 * Never read or use `~/.ssh/*` keys, agents or the real known_hosts (tests generate throwaway material in temp dirs).
 
-## 11. Roadmap
+## 11. Background mode & saved sessions (wave 3, see `docs/briefs/background-sessions.md`)
 
-Wave 1 (building): Platform, LSP, DAP, Editor, Shell+Ui, Profiling, Vim engine. Wave 2: debug/search/settings/terminal panels, Vim↔editor adapter, general macros, remote editing (R1–R2, then R3–R4), integration + hostile-load responsiveness suite + soak. Wave 3: adversarial review, polish, packaging.
+CsCode can stay resident: **one process per session** (plus a pre-started *warm spare*), coordinated by the `cscode` launcher over
+per-user local IPC (Unix sockets in `$XDG_RUNTIME_DIR/cscode`, named pipes on Windows). Closing a window hides it; `cscode --session NAME`
+re-shows it in < 150 ms with documents, undo, layout, view state and language servers intact. Sessions (folders, editors, view state, layout,
+hot-exit backups of unsaved buffers) persist to `{UserDataDir}/sessions`. Hidden sessions trim memory, stop idle language servers and idle at
+~0 % CPU; the number of resident sessions is capped (LRU eviction). Chosen over multi-window-per-process because Core services are
+workspace-scoped singletons and per-process isolation matches §6.
+
+## 12. Roadmap
+
+Wave 1 (building): Platform, LSP, DAP, Editor, Shell+Ui, Vim engine (Profiling parked — merged later). Wave 2a (building): Debug panels, Search/Settings panels. Then: integration (real composition, first real-window run). Wave 3: **background mode + saved sessions**, Vim↔editor adapter, general macros, remote editing (R1–R2, then R3–R4), terminal. Later: memory profiling/soak (parked module), hostile-load responsiveness suite on the integrated app, adversarial review, polish, packaging.
