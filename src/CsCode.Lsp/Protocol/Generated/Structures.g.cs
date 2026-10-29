@@ -36,7 +36,7 @@ public sealed record AnnotatedTextEdit
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
         && e.TryGetProperty("newText", out var p_newText) && p_newText.ValueKind == JsonValueKind.String
         && e.TryGetProperty("annotationId", out var p_annotationId) && p_annotationId.ValueKind == JsonValueKind.String;
 }
@@ -63,7 +63,7 @@ public sealed record ApplyWorkspaceEditParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("edit", out var p_edit) && p_edit.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("edit", out var p_edit) && p_edit.ValueKind == JsonValueKind.Object && WorkspaceEdit.MatchesShape(p_edit);
 }
 
 /// <summary>
@@ -177,7 +177,7 @@ public sealed record CallHierarchyIncomingCall
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("from", out var p_from) && p_from.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("from", out var p_from) && p_from.ValueKind == JsonValueKind.Object && CallHierarchyItem.MatchesShape(p_from)
         && e.TryGetProperty("fromRanges", out var p_fromRanges) && p_fromRanges.ValueKind == JsonValueKind.Array;
 }
 
@@ -205,7 +205,7 @@ public sealed record CallHierarchyIncomingCallsParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("item", out var p_item) && p_item.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("item", out var p_item) && p_item.ValueKind == JsonValueKind.Object && CallHierarchyItem.MatchesShape(p_item);
 }
 
 /// <summary>
@@ -270,8 +270,8 @@ public sealed record CallHierarchyItem
         && e.TryGetProperty("name", out var p_name) && p_name.ValueKind == JsonValueKind.String
         && e.TryGetProperty("kind", out var p_kind) && p_kind.ValueKind == JsonValueKind.Number
         && e.TryGetProperty("uri", out var p_uri) && p_uri.ValueKind == JsonValueKind.String
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("selectionRange", out var p_selectionRange) && p_selectionRange.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
+        && e.TryGetProperty("selectionRange", out var p_selectionRange) && p_selectionRange.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_selectionRange);
 }
 
 /// <summary>
@@ -309,7 +309,7 @@ public sealed record CallHierarchyOutgoingCall
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("to", out var p_to) && p_to.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("to", out var p_to) && p_to.ValueKind == JsonValueKind.Object && CallHierarchyItem.MatchesShape(p_to)
         && e.TryGetProperty("fromRanges", out var p_fromRanges) && p_fromRanges.ValueKind == JsonValueKind.Array;
 }
 
@@ -337,7 +337,7 @@ public sealed record CallHierarchyOutgoingCallsParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("item", out var p_item) && p_item.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("item", out var p_item) && p_item.ValueKind == JsonValueKind.Object && CallHierarchyItem.MatchesShape(p_item);
 }
 
 /// <summary>
@@ -366,8 +366,8 @@ public sealed record CallHierarchyPrepareParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 /// <summary>
@@ -715,9 +715,9 @@ public sealed record CodeActionParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("context", out var p_context) && p_context.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
+        && e.TryGetProperty("context", out var p_context) && p_context.ValueKind == JsonValueKind.Object && CodeActionContext.MatchesShape(p_context);
 }
 
 /// <summary>
@@ -800,7 +800,7 @@ public sealed record CodeLens
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range);
 }
 
 /// <summary>
@@ -865,7 +865,7 @@ public sealed record CodeLensParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument);
 }
 
 /// <summary>
@@ -971,8 +971,8 @@ public sealed record ColorInformation
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("color", out var p_color) && p_color.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
+        && e.TryGetProperty("color", out var p_color) && p_color.ValueKind == JsonValueKind.Object && Color.MatchesShape(p_color);
 }
 
 public sealed record ColorPresentation
@@ -1045,9 +1045,9 @@ public sealed record ColorPresentationParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("color", out var p_color) && p_color.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("color", out var p_color) && p_color.ValueKind == JsonValueKind.Object && Color.MatchesShape(p_color)
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range);
 }
 
 /// <summary>
@@ -1448,8 +1448,8 @@ public sealed record CompletionParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 /// <summary>
@@ -1679,8 +1679,8 @@ public sealed record DeclarationParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 public sealed record DeclarationRegistrationOptions
@@ -1777,8 +1777,8 @@ public sealed record DefinitionParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 /// <summary>
@@ -1948,7 +1948,7 @@ public sealed record Diagnostic
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
         && e.TryGetProperty("message", out var p_message) && p_message.ValueKind == JsonValueKind.String;
 }
 
@@ -2088,7 +2088,7 @@ public sealed record DiagnosticRelatedInformation
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("location", out var p_location) && p_location.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("location", out var p_location) && p_location.ValueKind == JsonValueKind.Object && Location.MatchesShape(p_location)
         && e.TryGetProperty("message", out var p_message) && p_message.ValueKind == JsonValueKind.String;
 }
 
@@ -2186,8 +2186,8 @@ public sealed record DidChangeNotebookDocumentParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("notebookDocument", out var p_notebookDocument) && p_notebookDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("change", out var p_change) && p_change.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("notebookDocument", out var p_notebookDocument) && p_notebookDocument.ValueKind == JsonValueKind.Object && VersionedNotebookDocumentIdentifier.MatchesShape(p_notebookDocument)
+        && e.TryGetProperty("change", out var p_change) && p_change.ValueKind == JsonValueKind.Object && NotebookDocumentChangeEvent.MatchesShape(p_change);
 }
 
 /// <summary>
@@ -2216,7 +2216,7 @@ public sealed record DidChangeTextDocumentParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && VersionedTextDocumentIdentifier.MatchesShape(p_textDocument)
         && e.TryGetProperty("contentChanges", out var p_contentChanges) && p_contentChanges.ValueKind == JsonValueKind.Array;
 }
 
@@ -2290,7 +2290,7 @@ public sealed record DidChangeWorkspaceFoldersParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("event", out var p_event) && p_event.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("event", out var p_event) && p_event.ValueKind == JsonValueKind.Object && WorkspaceFoldersChangeEvent.MatchesShape(p_event);
 }
 
 /// <summary>
@@ -2314,7 +2314,7 @@ public sealed record DidCloseNotebookDocumentParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("notebookDocument", out var p_notebookDocument) && p_notebookDocument.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("notebookDocument", out var p_notebookDocument) && p_notebookDocument.ValueKind == JsonValueKind.Object && NotebookDocumentIdentifier.MatchesShape(p_notebookDocument)
         && e.TryGetProperty("cellTextDocuments", out var p_cellTextDocuments) && p_cellTextDocuments.ValueKind == JsonValueKind.Array;
 }
 
@@ -2332,7 +2332,7 @@ public sealed record DidCloseTextDocumentParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument);
 }
 
 /// <summary>
@@ -2356,7 +2356,7 @@ public sealed record DidOpenNotebookDocumentParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("notebookDocument", out var p_notebookDocument) && p_notebookDocument.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("notebookDocument", out var p_notebookDocument) && p_notebookDocument.ValueKind == JsonValueKind.Object && NotebookDocument.MatchesShape(p_notebookDocument)
         && e.TryGetProperty("cellTextDocuments", out var p_cellTextDocuments) && p_cellTextDocuments.ValueKind == JsonValueKind.Array;
 }
 
@@ -2374,7 +2374,7 @@ public sealed record DidOpenTextDocumentParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentItem.MatchesShape(p_textDocument);
 }
 
 /// <summary>
@@ -2391,7 +2391,7 @@ public sealed record DidSaveNotebookDocumentParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("notebookDocument", out var p_notebookDocument) && p_notebookDocument.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("notebookDocument", out var p_notebookDocument) && p_notebookDocument.ValueKind == JsonValueKind.Object && NotebookDocumentIdentifier.MatchesShape(p_notebookDocument);
 }
 
 /// <summary>
@@ -2415,7 +2415,7 @@ public sealed record DidSaveTextDocumentParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument);
 }
 
 public sealed record DocumentColorClientCapabilities
@@ -2470,7 +2470,7 @@ public sealed record DocumentColorParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument);
 }
 
 public sealed record DocumentColorRegistrationOptions
@@ -2538,7 +2538,7 @@ public sealed record DocumentDiagnosticParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument);
 }
 
 /// <summary>
@@ -2610,8 +2610,8 @@ public sealed record DocumentFormattingParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("options", out var p_options) && p_options.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("options", out var p_options) && p_options.ValueKind == JsonValueKind.Object && FormattingOptions.MatchesShape(p_options);
 }
 
 /// <summary>
@@ -2658,7 +2658,7 @@ public sealed record DocumentHighlight
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range);
 }
 
 /// <summary>
@@ -2723,8 +2723,8 @@ public sealed record DocumentHighlightParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 /// <summary>
@@ -2783,7 +2783,7 @@ public sealed record DocumentLink
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range);
 }
 
 /// <summary>
@@ -2854,7 +2854,7 @@ public sealed record DocumentLinkParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument);
 }
 
 /// <summary>
@@ -2961,10 +2961,10 @@ public sealed record DocumentOnTypeFormattingParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position)
         && e.TryGetProperty("ch", out var p_ch) && p_ch.ValueKind == JsonValueKind.String
-        && e.TryGetProperty("options", out var p_options) && p_options.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("options", out var p_options) && p_options.ValueKind == JsonValueKind.Object && FormattingOptions.MatchesShape(p_options);
 }
 
 /// <summary>
@@ -3072,9 +3072,9 @@ public sealed record DocumentRangeFormattingParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("options", out var p_options) && p_options.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
+        && e.TryGetProperty("options", out var p_options) && p_options.ValueKind == JsonValueKind.Object && FormattingOptions.MatchesShape(p_options);
 }
 
 /// <summary>
@@ -3170,8 +3170,8 @@ public sealed record DocumentSymbol
         e.ValueKind == JsonValueKind.Object
         && e.TryGetProperty("name", out var p_name) && p_name.ValueKind == JsonValueKind.String
         && e.TryGetProperty("kind", out var p_kind) && p_kind.ValueKind == JsonValueKind.Number
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("selectionRange", out var p_selectionRange) && p_selectionRange.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
+        && e.TryGetProperty("selectionRange", out var p_selectionRange) && p_selectionRange.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_selectionRange);
 }
 
 /// <summary>
@@ -3265,7 +3265,7 @@ public sealed record DocumentSymbolParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument);
 }
 
 /// <summary>
@@ -3536,7 +3536,7 @@ public sealed record FileOperationFilter
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("pattern", out var p_pattern) && p_pattern.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("pattern", out var p_pattern) && p_pattern.ValueKind == JsonValueKind.Object && FileOperationPattern.MatchesShape(p_pattern);
 }
 
 /// <summary>
@@ -3836,7 +3836,7 @@ public sealed record FoldingRangeParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument);
 }
 
 public sealed record FoldingRangeRegistrationOptions
@@ -4062,8 +4062,8 @@ public sealed record HoverParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 /// <summary>
@@ -4152,8 +4152,8 @@ public sealed record ImplementationParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 public sealed record ImplementationRegistrationOptions
@@ -4278,7 +4278,7 @@ public sealed record InitializeParams
         e.ValueKind == JsonValueKind.Object
         && e.TryGetProperty("processId", out var p_processId) && p_processId.ValueKind == JsonValueKind.Number
         && e.TryGetProperty("rootUri", out var p_rootUri) && p_rootUri.ValueKind == JsonValueKind.String
-        && e.TryGetProperty("capabilities", out var p_capabilities) && p_capabilities.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("capabilities", out var p_capabilities) && p_capabilities.ValueKind == JsonValueKind.Object && ClientCapabilities.MatchesShape(p_capabilities);
 }
 
 /// <summary>
@@ -4301,7 +4301,7 @@ public sealed record InitializeResult
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("capabilities", out var p_capabilities) && p_capabilities.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("capabilities", out var p_capabilities) && p_capabilities.ValueKind == JsonValueKind.Object && ServerCapabilities.MatchesShape(p_capabilities);
 }
 
 public sealed record InitializedParams
@@ -4370,7 +4370,7 @@ public sealed record InlayHint
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position)
         && e.TryGetProperty("label", out _);
 }
 
@@ -4482,8 +4482,8 @@ public sealed record InlayHintParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range);
 }
 
 /// <summary>
@@ -4577,7 +4577,7 @@ public sealed record InlineValueContext
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
         && e.TryGetProperty("frameId", out var p_frameId) && p_frameId.ValueKind == JsonValueKind.Number
-        && e.TryGetProperty("stoppedLocation", out var p_stoppedLocation) && p_stoppedLocation.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("stoppedLocation", out var p_stoppedLocation) && p_stoppedLocation.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_stoppedLocation);
 }
 
 /// <summary>
@@ -4603,7 +4603,7 @@ public sealed record InlineValueEvaluatableExpression
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range);
 }
 
 /// <summary>
@@ -4652,9 +4652,9 @@ public sealed record InlineValueParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("context", out var p_context) && p_context.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
+        && e.TryGetProperty("context", out var p_context) && p_context.ValueKind == JsonValueKind.Object && InlineValueContext.MatchesShape(p_context);
 }
 
 /// <summary>
@@ -4706,7 +4706,7 @@ public sealed record InlineValueText
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
         && e.TryGetProperty("text", out var p_text) && p_text.ValueKind == JsonValueKind.String;
 }
 
@@ -4739,7 +4739,7 @@ public sealed record InlineValueVariableLookup
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
         && e.TryGetProperty("caseSensitiveLookup", out var p_caseSensitiveLookup) && (p_caseSensitiveLookup.ValueKind == JsonValueKind.True || p_caseSensitiveLookup.ValueKind == JsonValueKind.False);
 }
 
@@ -4787,8 +4787,8 @@ public sealed record InsertReplaceEdit
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
         && e.TryGetProperty("newText", out var p_newText) && p_newText.ValueKind == JsonValueKind.String
-        && e.TryGetProperty("insert", out var p_insert) && p_insert.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("replace", out var p_replace) && p_replace.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("insert", out var p_insert) && p_insert.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_insert)
+        && e.TryGetProperty("replace", out var p_replace) && p_replace.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_replace);
 }
 
 /// <summary>
@@ -4842,8 +4842,8 @@ public sealed record LinkedEditingRangeParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 public sealed record LinkedEditingRangeRegistrationOptions
@@ -4914,7 +4914,7 @@ public sealed record Location
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
         && e.TryGetProperty("uri", out var p_uri) && p_uri.ValueKind == JsonValueKind.String
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range);
 }
 
 /// <summary>
@@ -4954,8 +4954,8 @@ public sealed record LocationLink
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
         && e.TryGetProperty("targetUri", out var p_targetUri) && p_targetUri.ValueKind == JsonValueKind.String
-        && e.TryGetProperty("targetRange", out var p_targetRange) && p_targetRange.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("targetSelectionRange", out var p_targetSelectionRange) && p_targetSelectionRange.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("targetRange", out var p_targetRange) && p_targetRange.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_targetRange)
+        && e.TryGetProperty("targetSelectionRange", out var p_targetSelectionRange) && p_targetSelectionRange.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_targetSelectionRange);
 }
 
 /// <summary>
@@ -5161,8 +5161,8 @@ public sealed record MonikerParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 public sealed record MonikerRegistrationOptions
@@ -5362,7 +5362,7 @@ public sealed record NotebookDocumentClientCapabilities
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("synchronization", out var p_synchronization) && p_synchronization.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("synchronization", out var p_synchronization) && p_synchronization.ValueKind == JsonValueKind.Object && NotebookDocumentSyncClientCapabilities.MatchesShape(p_synchronization);
 }
 
 /// <summary>
@@ -5599,8 +5599,8 @@ public sealed record PrepareRenameParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 /// <summary>
@@ -5743,8 +5743,8 @@ public sealed record Range
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("start", out var p_start) && p_start.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("end", out var p_end) && p_end.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("start", out var p_start) && p_start.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_start)
+        && e.TryGetProperty("end", out var p_end) && p_end.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_end);
 }
 
 /// <summary>
@@ -5830,9 +5830,9 @@ public sealed record ReferenceParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("context", out var p_context) && p_context.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position)
+        && e.TryGetProperty("context", out var p_context) && p_context.ValueKind == JsonValueKind.Object && ReferenceContext.MatchesShape(p_context);
 }
 
 /// <summary>
@@ -6202,8 +6202,8 @@ public sealed record RenameParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position)
         && e.TryGetProperty("newName", out var p_newName) && p_newName.ValueKind == JsonValueKind.String;
 }
 
@@ -6295,7 +6295,7 @@ public sealed record SelectionRange
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range);
 }
 
 public sealed record SelectionRangeClientCapabilities
@@ -6356,7 +6356,7 @@ public sealed record SelectionRangeParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
         && e.TryGetProperty("positions", out var p_positions) && p_positions.ValueKind == JsonValueKind.Array;
 }
 
@@ -6490,7 +6490,7 @@ public sealed record SemanticTokensClientCapabilities
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("requests", out var p_requests) && p_requests.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("requests", out var p_requests) && p_requests.ValueKind == JsonValueKind.Object && SemanticTokensClientCapabilitiesRequests.MatchesShape(p_requests)
         && e.TryGetProperty("tokenTypes", out var p_tokenTypes) && p_tokenTypes.ValueKind == JsonValueKind.Array
         && e.TryGetProperty("tokenModifiers", out var p_tokenModifiers) && p_tokenModifiers.ValueKind == JsonValueKind.Array
         && e.TryGetProperty("formats", out var p_formats) && p_formats.ValueKind == JsonValueKind.Array;
@@ -6550,7 +6550,7 @@ public sealed record SemanticTokensDeltaParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
         && e.TryGetProperty("previousResultId", out var p_previousResultId) && p_previousResultId.ValueKind == JsonValueKind.String;
 }
 
@@ -6652,7 +6652,7 @@ public sealed record SemanticTokensOptions
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("legend", out var p_legend) && p_legend.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("legend", out var p_legend) && p_legend.ValueKind == JsonValueKind.Object && SemanticTokensLegend.MatchesShape(p_legend);
 }
 
 /// <summary>
@@ -6682,7 +6682,7 @@ public sealed record SemanticTokensParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument);
 }
 
 /// <summary>
@@ -6732,8 +6732,8 @@ public sealed record SemanticTokensRangeParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range);
 }
 
 /// <summary>
@@ -6782,7 +6782,7 @@ public sealed record SemanticTokensRegistrationOptions
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
         && e.TryGetProperty("documentSelector", out var p_documentSelector) && p_documentSelector.ValueKind == JsonValueKind.Array
-        && e.TryGetProperty("legend", out var p_legend) && p_legend.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("legend", out var p_legend) && p_legend.ValueKind == JsonValueKind.Object && SemanticTokensLegend.MatchesShape(p_legend);
 }
 
 /// <summary>
@@ -7357,8 +7357,8 @@ public sealed record SignatureHelpParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 /// <summary>
@@ -7506,7 +7506,7 @@ public sealed record SymbolInformation
         e.ValueKind == JsonValueKind.Object
         && e.TryGetProperty("name", out var p_name) && p_name.ValueKind == JsonValueKind.String
         && e.TryGetProperty("kind", out var p_kind) && p_kind.ValueKind == JsonValueKind.Number
-        && e.TryGetProperty("location", out var p_location) && p_location.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("location", out var p_location) && p_location.ValueKind == JsonValueKind.Object && Location.MatchesShape(p_location);
 }
 
 /// <summary>
@@ -7755,7 +7755,7 @@ public sealed record TextDocumentEdit
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && OptionalVersionedTextDocumentIdentifier.MatchesShape(p_textDocument)
         && e.TryGetProperty("edits", out var p_edits) && p_edits.ValueKind == JsonValueKind.Array;
 }
 
@@ -7837,8 +7837,8 @@ public sealed record TextDocumentPositionParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 /// <summary>
@@ -7982,7 +7982,7 @@ public sealed record TextEdit
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
         && e.TryGetProperty("newText", out var p_newText) && p_newText.ValueKind == JsonValueKind.String;
 }
 
@@ -8050,8 +8050,8 @@ public sealed record TypeDefinitionParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 public sealed record TypeDefinitionRegistrationOptions
@@ -8163,8 +8163,8 @@ public sealed record TypeHierarchyItem
         && e.TryGetProperty("name", out var p_name) && p_name.ValueKind == JsonValueKind.String
         && e.TryGetProperty("kind", out var p_kind) && p_kind.ValueKind == JsonValueKind.Number
         && e.TryGetProperty("uri", out var p_uri) && p_uri.ValueKind == JsonValueKind.String
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("selectionRange", out var p_selectionRange) && p_selectionRange.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
+        && e.TryGetProperty("selectionRange", out var p_selectionRange) && p_selectionRange.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_selectionRange);
 }
 
 /// <summary>
@@ -8206,8 +8206,8 @@ public sealed record TypeHierarchyPrepareParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
+        && e.TryGetProperty("position", out var p_position) && p_position.ValueKind == JsonValueKind.Object && Position.MatchesShape(p_position);
 }
 
 /// <summary>
@@ -8263,7 +8263,7 @@ public sealed record TypeHierarchySubtypesParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("item", out var p_item) && p_item.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("item", out var p_item) && p_item.ValueKind == JsonValueKind.Object && TypeHierarchyItem.MatchesShape(p_item);
 }
 
 /// <summary>
@@ -8290,7 +8290,7 @@ public sealed record TypeHierarchySupertypesParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("item", out var p_item) && p_item.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("item", out var p_item) && p_item.ValueKind == JsonValueKind.Object && TypeHierarchyItem.MatchesShape(p_item);
 }
 
 /// <summary>
@@ -8426,7 +8426,7 @@ public sealed record WillSaveTextDocumentParams
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("textDocument", out var p_textDocument) && p_textDocument.ValueKind == JsonValueKind.Object && TextDocumentIdentifier.MatchesShape(p_textDocument)
         && e.TryGetProperty("reason", out var p_reason) && p_reason.ValueKind == JsonValueKind.Number;
 }
 
@@ -9258,7 +9258,7 @@ public sealed record _InitializeParams
         e.ValueKind == JsonValueKind.Object
         && e.TryGetProperty("processId", out var p_processId) && p_processId.ValueKind == JsonValueKind.Number
         && e.TryGetProperty("rootUri", out var p_rootUri) && p_rootUri.ValueKind == JsonValueKind.String
-        && e.TryGetProperty("capabilities", out var p_capabilities) && p_capabilities.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("capabilities", out var p_capabilities) && p_capabilities.ValueKind == JsonValueKind.Object && ClientCapabilities.MatchesShape(p_capabilities);
 }
 
 public sealed record PrepareRenameResultOption2
@@ -9272,7 +9272,7 @@ public sealed record PrepareRenameResultOption2
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("range", out var p_range) && p_range.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_range)
         && e.TryGetProperty("placeholder", out var p_placeholder) && p_placeholder.ValueKind == JsonValueKind.String;
 }
 
@@ -9347,7 +9347,7 @@ public sealed record CodeActionClientCapabilitiesCodeActionLiteralSupport
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("codeActionKind", out var p_codeActionKind) && p_codeActionKind.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("codeActionKind", out var p_codeActionKind) && p_codeActionKind.ValueKind == JsonValueKind.Object && CodeActionClientCapabilitiesCodeActionLiteralSupportCodeActionKind.MatchesShape(p_codeActionKind);
 }
 
 public sealed record CodeActionClientCapabilitiesResolveSupport
@@ -10104,8 +10104,8 @@ public sealed record CompletionListItemDefaultsEditRangeOption2
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("insert", out var p_insert) && p_insert.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("replace", out var p_replace) && p_replace.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("insert", out var p_insert) && p_insert.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_insert)
+        && e.TryGetProperty("replace", out var p_replace) && p_replace.ValueKind == JsonValueKind.Object && Range.MatchesShape(p_replace);
 }
 
 public sealed record NotebookDocumentChangeEventCellsStructure
@@ -10131,7 +10131,7 @@ public sealed record NotebookDocumentChangeEventCellsStructure
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("array", out var p_array) && p_array.ValueKind == JsonValueKind.Object;
+        && e.TryGetProperty("array", out var p_array) && p_array.ValueKind == JsonValueKind.Object && NotebookCellArrayChange.MatchesShape(p_array);
 }
 
 public sealed record NotebookDocumentChangeEventCellsTextContentItem
@@ -10145,7 +10145,7 @@ public sealed record NotebookDocumentChangeEventCellsTextContentItem
     /// <summary>Structural check used when a union has several object-shaped arms.</summary>
     public static bool MatchesShape(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object
-        && e.TryGetProperty("document", out var p_document) && p_document.ValueKind == JsonValueKind.Object
+        && e.TryGetProperty("document", out var p_document) && p_document.ValueKind == JsonValueKind.Object && VersionedTextDocumentIdentifier.MatchesShape(p_document)
         && e.TryGetProperty("changes", out var p_changes) && p_changes.ValueKind == JsonValueKind.Array;
 }
 
