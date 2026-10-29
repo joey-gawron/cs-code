@@ -366,7 +366,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         RememberExpanded(node.Path, true);
         if (node.ChildrenLoaded)
         {
-            InsertVisibleChildren(node);
+            await InsertVisibleChildrenAsync(node, Generation);
             return;
         }
         await LoadChildrenAsync(node, loadMore: false);
@@ -445,7 +445,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
 
             var more = BuildMoreRow(node, page.Count, ignoredPaging, take < page.Count && !ignoredPaging, generation);
             node.MoreRow = more;
-            ApplyRows(node, created, oldMore, more);
+            await ApplyRowsAsync(node, created, oldMore, more, generation);
             await RestoreExpansionAsync(created, generation);
         }
         catch (OperationCanceledException) { }
@@ -477,7 +477,7 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         return NewNode(VariableRowKind.More, node, text, node.Path + "/…more", generation);
     }
 
-    private void ApplyRows(VariableNodeViewModel node, IReadOnlyList<VariableNodeViewModel> created, VariableNodeViewModel? oldMore, VariableNodeViewModel? newMore)
+    private async Task ApplyRowsAsync(VariableNodeViewModel node, IReadOnlyList<VariableNodeViewModel> created, VariableNodeViewModel? oldMore, VariableNodeViewModel? newMore, long generation)
     {
         var rows = new List<VariableNodeViewModel>(created.Count + 1);
         foreach (var child in created) FlattenInto(rows, child);
@@ -497,16 +497,53 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
             if (!node.IsExpanded) return;
             at = parentIndex + 1;
         }
-        Rows.InsertRange(at, rows);
+        await InsertRowsAsync(at, rows, generation);
     }
 
-    private void InsertVisibleChildren(VariableNodeViewModel node)
+    private async Task InsertVisibleChildrenAsync(VariableNodeViewModel node, long generation)
     {
         var index = Rows.IndexOf(node);
         if (index < 0) return;
         var rows = new List<VariableNodeViewModel>();
         FlattenInto(rows, node, includeSelf: false);
-        Rows.InsertRange(index + 1, rows);
+        await InsertRowsAsync(index + 1, rows, generation);
+    }
+
+    /// <summary>Rows per list notification. A virtualising list handles an Add of a few hundred rows in well under a frame; ten thousand is not.</summary>
+    private const int RowChunk = 100;
+
+    /// <summary>
+    /// Inserts <paramref name="rows"/> at <paramref name="at"/>. Small lists go in with one notification; a big one (an adapter that ignored paging)
+    /// is inserted in chunks of <see cref="RowChunk"/> across UI turns (≤ 4 ms per turn) so the list control never has to absorb thousands of
+    /// rows in one frame. Each chunk is placed after the previously inserted one, so a collapse in between simply stops the rest.
+    /// </summary>
+    private async Task InsertRowsAsync(int at, List<VariableNodeViewModel> rows, long generation)
+    {
+        if (rows.Count <= RowChunk)
+        {
+            Rows.InsertRange(at, rows);
+            return;
+        }
+        VariableNodeViewModel? last = null;
+        var first = true;
+        await _ui.PostBatched(rows.Chunk(RowChunk).ToList(), chunk =>
+        {
+            if (!IsLive(generation)) return;
+            int index;
+            if (first)
+            {
+                first = false;
+                index = Math.Min(at, Rows.Count);
+            }
+            else
+            {
+                var lastIndex = last is null ? -1 : Rows.IndexOf(last);
+                if (lastIndex < 0) return; // what was inserted so far went away (collapsed / invalidated): drop the rest
+                index = lastIndex + 1;
+            }
+            Rows.InsertRange(index, chunk);
+            last = chunk[^1];
+        }, 4, UiPriority.Background);
     }
 
     /// <summary>Appends <paramref name="node"/> and, when expanded and loaded, its descendants (depth first) plus its pager row.</summary>

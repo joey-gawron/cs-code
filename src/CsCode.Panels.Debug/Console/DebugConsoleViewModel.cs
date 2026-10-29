@@ -20,7 +20,10 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
     public const int MaxLines = ConsoleBuffer.DefaultCapacity;
     public const int MaxCompletions = 100;
     private const double SliceMs = 4;
-    private const int MaxLinesPerSlice = 1_000;
+    /// <summary>Lines moved into the list per UI callback: small enough that one callback (list notification + container updates) stays ~1-2 ms.</summary>
+    private const int MaxLinesPerSlice = 150;
+    /// <summary>Lines waiting for the UI. A console can show 5,000 lines; if the UI is behind by more than this, older waiting lines are dropped (and said so).</summary>
+    private const int MaxPendingLines = 2_000;
 
     private readonly DebugPanelServices _s;
     private readonly IUiDispatcher _ui;
@@ -113,7 +116,7 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
         lock (_pendingGate)
         {
             foreach (var l in lines) _pending.Enqueue(l);
-            while (_pending.Count > MaxLines)
+            while (_pending.Count > MaxPendingLines)
             {
                 _pending.Dequeue();
                 _droppedPending++;
