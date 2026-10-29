@@ -56,9 +56,24 @@ internal sealed class RealGdbRig : IAsyncDisposable
             });
             s.Terminated.Subscribe(e => { lock (rig.Terminated) rig.Terminated.Add(e); });
         });
-        h.Service.Output.Subscribe(e => { lock (rig.Output) rig.Output.Add(e); });
+        h.Service.Output.Subscribe(e =>
+        {
+            lock (rig.Output)
+            {
+                Interlocked.Increment(ref rig._outputEvents);
+                rig.Output.Add(e);
+                // a flood test keeps only the newest events, so the heap it measures is the debugger's, not this list's
+                if (rig.OutputLimit is { } limit && rig.Output.Count > limit) rig.Output.RemoveRange(0, rig.Output.Count - limit);
+            }
+        });
         return rig;
     }
+
+    private int _outputEvents;
+    /// <summary>Output events delivered so far (also those <see cref="OutputLimit"/> dropped from <see cref="Output"/>).</summary>
+    public int OutputEvents => Volatile.Read(ref _outputEvents);
+    /// <summary>Keep only the newest this many output events (null: all).</summary>
+    public int? OutputLimit { get; set; }
 
     /// <summary>Turns the "Rust panics" exception filter (on by default) off or on before a session merges the filters (the choice is kept).</summary>
     public void PanicStops(bool enabled) =>

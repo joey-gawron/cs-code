@@ -714,6 +714,7 @@ public class RealGdbRustTests
     public async Task A_million_line_flood_ends_with_its_last_line_and_bounded_memory()
     {
         await using var rig = await RealGdbRig.CreateAsync();
+        rig.OutputLimit = 50; // the newest batches only: the heap measured is the debugger's
         GC.Collect();
         var heapBefore = GC.GetTotalMemory(true);
         var started = Stopwatch.GetTimestamp();
@@ -722,9 +723,8 @@ public class RealGdbRustTests
         var seconds = Stopwatch.GetElapsedTime(started).TotalSeconds;
         GC.Collect();
         var heapAfter = GC.GetTotalMemory(true);
-        var events = rig.OutputSnapshot.Count;
         var history = rig.Service.GetOutputHistory();
-        Note($"1M-line flood: {seconds:0.0} s, {events} output batches delivered, {session.DroppedOutputChars:N0} chars dropped by design, history {history.Sum(h => h.Output.Count(c => c == '\n'))} lines, heap {heapBefore / 1024 / 1024} -> {heapAfter / 1024 / 1024} MB");
+        Note($"1M-line flood: {seconds:0.0} s, {rig.OutputEvents} output batches delivered, {session.DroppedOutputChars:N0} chars dropped by design, history {history.Sum(h => h.Output.Count(c => c == '\n'))} lines, heap {heapBefore / 1024 / 1024.0:0.0} -> {heapAfter / 1024 / 1024.0:0.0} MB");
         Assert.EndsWith("flood done\n", rig.OutputOf("stdout"), StringComparison.Ordinal);
         Assert.Contains(history, h => h.Output.Contains("flood done", StringComparison.Ordinal));
         Assert.InRange(heapAfter - heapBefore, long.MinValue, 64L * 1024 * 1024);
