@@ -228,13 +228,16 @@ public class ShellIntegrationTests
     {
         using var host = await StartAsync();
         var tools = Svc<ToolWindowManager>(host);
-        Assert.Equal(1, ((FakeFileWatcher)host.WorkspaceService.Watcher).ActiveWatches);
+        var watcher = (FakeFileWatcher)host.WorkspaceService.Watcher;
+        // Other modules watch too (e.g. the debugger's launch.json); only the explorer's own watch must come and go with its view.
+        var withExplorer = watcher.ActiveWatches;
+        Assert.True(withExplorer >= 1, "the explorer watches the workspace");
         tools.Hide("explorer");
-        Assert.Equal(0, ((FakeFileWatcher)host.WorkspaceService.Watcher).ActiveWatches);
+        Assert.True(watcher.ActiveWatches == withExplorer - 1, "still watched: " + string.Join(", ", watcher.ActiveRoots));
         Assert.Null(tools.Get("explorer")!.LiveView);
         tools.Show("explorer");
-        await DevHost.WaitFor(() => ((FakeFileWatcher)host.WorkspaceService.Watcher).ActiveWatches == 1);
-        Assert.Equal(1, ((FakeFileWatcher)host.WorkspaceService.Watcher).ActiveWatches);
+        await DevHost.WaitFor(() => watcher.ActiveWatches == withExplorer);
+        Assert.Equal(withExplorer, watcher.ActiveWatches);
     }
 
     [AvaloniaFact]

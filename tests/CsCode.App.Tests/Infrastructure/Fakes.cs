@@ -256,6 +256,7 @@ public sealed class FakeFileWatcher : IFileWatcher
 {
     private readonly List<(Uri Root, Action<IReadOnlyList<FileChange>> Handler)> _watches = new();
     public int ActiveWatches { get { lock (_watches) return _watches.Count; } }
+    public IReadOnlyList<Uri> ActiveRoots { get { lock (_watches) return _watches.Select(w => w.Root).ToArray(); } }
 
     public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges)
     {
