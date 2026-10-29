@@ -29,6 +29,15 @@ public interface IEditorViewFactory
 
     /// <summary>Releases the document (unregisters from IDocumentManager, drops caches). Call when the last tab closes.</summary>
     ValueTask CloseDocumentAsync(IEditorDocument document);
+
+    // ---- additive members (Editor module) ----
+
+    /// <summary>
+    /// Destroys a view returned by <see cref="CreateView"/>: unhooks every handler, renderer, transformer and margin it added so
+    /// that nothing keeps the view alive. Capture <see cref="IEditorViewController.GetViewState"/> first when the view will be recreated
+    /// (inactive tabs: destroy the view, keep the document, recreate from the saved state — that is what keeps memory flat).
+    /// </summary>
+    void DisposeView(Control view);
 }
 
 /// <summary>Imperative handle on one editor view (menu/command/navigation code drives the editor through this).</summary>
@@ -50,4 +59,31 @@ public interface IEditorViewController
     void SetDebugStopLine(int? line);
     IEventSource<TextPosition> CaretChanged { get; }
     IEventSource<IReadOnlyList<TextRange>> SelectionChanged { get; }
+
+    // ---- additive members (Editor module) ----
+
+    /// <summary>Scroll position, caret, selection and folded regions: enough to recreate this view later exactly as it was.</summary>
+    EditorViewState GetViewState();
+
+    /// <summary>Restores state captured by <see cref="GetViewState"/> (clamped to the current document; safe after the document changed).</summary>
+    void RestoreViewState(EditorViewState state);
+
+    /// <summary>Symbol path (outermost first) containing the caret, from IDocumentSymbolProvider; empty when unavailable. Never blocks.</summary>
+    ValueTask<IReadOnlyList<string>> GetBreadcrumbsAsync(CancellationToken ct = default);
+
+    /// <summary>True while this view (or one of its popups) has keyboard focus.</summary>
+    bool IsFocused { get; }
+}
+
+/// <summary>Everything needed to recreate a destroyed view. Positions are 0-based lines/UTF-16 columns so they survive edits made while no view existed.</summary>
+public sealed record EditorViewState(
+    TextPosition Caret,
+    TextPosition SelectionStart,
+    TextPosition SelectionEnd,
+    double VerticalOffset,
+    double HorizontalOffset,
+    IReadOnlyList<int> FoldedStartLines,
+    int DocumentVersion)
+{
+    public static readonly EditorViewState Initial = new(TextPosition.Zero, TextPosition.Zero, TextPosition.Zero, 0, 0, [], 0);
 }

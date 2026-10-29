@@ -1,5 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <!-- xUnit1051 asks every optional CancellationToken to be TestContext.Current.CancellationToken. The pure functions under test take a
+         token only to be cancellable (default = none), and several tests pass a token explicitly on purpose; the rule adds noise there. -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />

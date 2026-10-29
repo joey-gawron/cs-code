@@ -47,6 +47,11 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
         }
     }
 
+    /// <summary>True when a grammar exists for the language (a user contribution or a built-in): otherwise there is nothing to tokenise with.</summary>
+    internal bool HasGrammar(string languageId) =>
+        Services.Contributions.Of<GrammarContribution>().Items.Any(c => c.Value.LanguageId == languageId)
+        || Languages.BuiltinLanguages.Catalog.ScopeForLanguage(languageId) is not null;
+
     internal TokenizationSession CreateSession(EditorDocument document)
     {
         var session = new TokenizationSession(this, document);
