@@ -15,6 +15,13 @@ internal delegate IWatchBackend BackendFactory(string root, bool recursive, RawS
 /// <summary>One <see cref="FileSystemWatcher"/> for a whole tree. NOTE: each instance consumes one inotify instance on Linux, which is why <see cref="FileWatcher"/> shares one per root.</summary>
 internal sealed class FswBackend : IWatchBackend
 {
+    /// <summary>
+    /// On Linux a FileSystemWatcher whose directory was deleted can never be released: its reader thread blocks on an inotify instance with no
+    /// watch left, and Dispose only removes watches — so the instance and the thread stay until the process exits (measured on .NET 10:
+    /// +1 inotify fd and +1 thread per watcher disposed after its directory was deleted, none when disposed before, or after a move).
+    /// </summary>
+    public static bool LeaksWhenItsRootIsDeleted => OperatingSystem.IsLinux();
+
     private readonly FileSystemWatcher _fsw;
 
     public FswBackend(string root, bool recursive, RawSink sink, Action<Exception> onFatal)
@@ -51,9 +58,11 @@ internal sealed class FswBackend : IWatchBackend
 }
 
 /// <summary>
-/// Coarse fallback when the OS watch limit is exhausted: compare snapshots of (mtime, size) every <c>interval</c>. Cheap enough for the
-/// directories that matter, bounded for the ones that do not (<see cref="MaxEntries"/>); prunes the default watcher excludes so
-/// node_modules/.git/bin/obj never get walked. Runs on the IO lane in single work items and never blocks a caller.
+/// Coarse fallback when the OS watch limit is exhausted, or for a root that keeps losing its OS watch: compare snapshots of (mtime, size)
+/// every <c>interval</c>. Cheap enough for the directories that matter, bounded for the ones that do not (<see cref="MaxEntries"/>); prunes
+/// the default watcher excludes so node_modules/.git/bin/obj never get walked. It follows the path: a root that is missing is an empty
+/// snapshot, so its deletion and re-creation are reported like any other change. Construct it on the IO lane — it takes its baseline there,
+/// so everything after construction is reported; the periodic scans run on the IO lane in single work items and never block a caller.
 /// </summary>
 internal sealed class PollingBackend : IWatchBackend
 {
@@ -81,7 +90,9 @@ internal sealed class PollingBackend : IWatchBackend
         _interval = interval;
         _isPruned = isPruned;
         _log = log;
-        _timer = new Timer(static s => ((PollingBackend)s!).OnTick(), this, TimeSpan.Zero, interval);
+        // The baseline now, not in the first tick: a change made right after the watch is armed must not end up in the baseline.
+        _previous = Snapshot();
+        _timer = new Timer(static s => ((PollingBackend)s!).OnTick(), this, interval, interval);
     }
 
     // Timer callbacks run on the shared pool: only hand the work to the lane (and never let two scans overlap).
@@ -95,15 +106,21 @@ internal sealed class PollingBackend : IWatchBackend
         }, ex => _log.LogDebug(ex, "Polling scan of {Root} failed", _root));
     }
 
-    private void Scan()
+    private Dictionary<string, (long Ticks, long Length, bool IsDir)> Snapshot()
     {
         var current = new Dictionary<string, (long, long, bool)>(StringComparer.Ordinal);
         Walk(_root, current);
+        return current;
+    }
+
+    private void Scan()
+    {
+        var current = Snapshot();
         if (_disposed) return;
 
         var previous = _previous;
         _previous = current;
-        if (previous is null) return; // first scan = baseline
+        if (previous is null) return; // no baseline (cannot happen after construction; kept as a guard)
 
         foreach (var (path, now) in current)
         {
@@ -118,21 +135,26 @@ internal sealed class PollingBackend : IWatchBackend
     {
         var options = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = true, RecurseSubdirectories = false };
         var subdirs = new List<string>();
-        var entries = new FileSystemEnumerable<(string Path, long Ticks, long Length, bool IsDir, bool Link)>(dir,
-            static (ref FileSystemEntry e) => (e.ToFullPath(), e.LastWriteTimeUtc.UtcTicks, e.IsDirectory ? 0 : e.Length, e.IsDirectory, (e.Attributes & FileAttributes.ReparsePoint) != 0), options);
-
-        foreach (var e in entries)
+        try
         {
-            if (_disposed) return;
-            if (into.Count >= MaxEntries)
+            var entries = new FileSystemEnumerable<(string Path, long Ticks, long Length, bool IsDir, bool Link)>(dir,
+                static (ref FileSystemEntry e) => (e.ToFullPath(), e.LastWriteTimeUtc.UtcTicks, e.IsDirectory ? 0 : e.Length, e.IsDirectory, (e.Attributes & FileAttributes.ReparsePoint) != 0), options);
+
+            foreach (var e in entries)
             {
-                if (!_capWarned) { _capWarned = true; _log.LogWarning("Polling watch of {Root} stops at {Max} entries; later changes may be missed. Raise the OS inotify limit for real-time watching.", _root, MaxEntries); }
-                return;
+                if (_disposed) return;
+                if (into.Count >= MaxEntries)
+                {
+                    if (!_capWarned) { _capWarned = true; _log.LogWarning("Polling watch of {Root} stops at {Max} entries; later changes may be missed. Raise the OS inotify limit for real-time watching.", _root, MaxEntries); }
+                    return;
+                }
+                if (e.IsDir && _isPruned(e.Path)) continue;
+                into[e.Path] = (e.Ticks, e.Length, e.IsDir);
+                if (e.IsDir && _recursive && !e.Link) subdirs.Add(e.Path);
             }
-            if (e.IsDir && _isPruned(e.Path)) continue;
-            into[e.Path] = (e.Ticks, e.Length, e.IsDir);
-            if (e.IsDir && _recursive && !e.Link) subdirs.Add(e.Path);
         }
+        // Deleted (or replaced by a file) since it was listed — the root itself included: what is not there is reported as deleted.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         foreach (var sub in subdirs) Walk(sub, into);
     }
 

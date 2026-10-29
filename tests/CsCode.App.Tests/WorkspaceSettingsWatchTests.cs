@@ -38,6 +38,67 @@ public class WorkspaceSettingsWatchTests
         }
     }
 
+    /// <summary>
+    /// <c>.vscode/</c> removed and brought back again and again (branch switches, a clean that removes it): every time it must apply again,
+    /// and the watches lost with each deleted directory must not use up the user's inotify instances — on Linux a FileSystemWatcher whose
+    /// directory was deleted keeps its instance and a thread until the process exits, so the path is polled after
+    /// <see cref="CsCode.Platform.Watching.FileWatcher.MaxOsWatchLosses"/> such losses instead of costing one instance per cycle.
+    /// </summary>
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_settings_directory_deleted_and_created_again_keeps_applying_and_costs_at_most_two_inotify_instances()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fd");
+        await Task.Yield();
+        using var home = new TempDirectory("cscode-wswatch-");
+        var previousHome = Environment.GetEnvironmentVariable("CSCODE_HOME");
+        Environment.SetEnvironmentVariable("CSCODE_HOME", home.Path); // never the user's real config/state directories
+        try
+        {
+            const int Cycles = 5;
+            var baseline = InotifyFds();
+            await using (var sp = AppServices.Build([]))
+            {
+                var root = home.Combine("project");
+                var vscode = Path.Combine(root, ".vscode");
+                Directory.CreateDirectory(vscode);
+                File.WriteAllText(Path.Combine(vscode, "settings.json"), """{ "editor.tabSize": 10 }""");
+                var (workspace, config) = await Task.Run(() => (sp.GetRequiredService<IWorkspaceService>(), sp.GetRequiredService<IConfigurationService>()));
+                await workspace.OpenFolderAsync(new Uri(root.TrimEnd('/') + "/"));
+                await WaitUntil(() => Task.FromResult(config.Get<int>(SettingKeys.EditorTabSize) == 10), "the initial .vscode/settings.json to apply");
+
+                for (var i = 1; i <= Cycles; i++)
+                {
+                    var before = config.Get<int>(SettingKeys.EditorTabSize);
+                    Directory.Delete(vscode, recursive: true);
+                    await WaitUntil(() => Task.FromResult(config.Get<int>(SettingKeys.EditorTabSize) != before), $"the deletion of .vscode to apply (cycle {i})");
+                    Directory.CreateDirectory(vscode);
+                    await Task.Delay(600);
+                    File.WriteAllText(Path.Combine(vscode, "settings.json"), $$"""{ "editor.tabSize": {{10 + i}} }""");
+                    await WaitUntil(() => Task.FromResult(config.Get<int>(SettingKeys.EditorTabSize) == 10 + i), $"the re-created .vscode/settings.json to apply (cycle {i})");
+                }
+            }
+            // Container disposal released every watch: what is left is what can never be released.
+            var leaked = InotifyFds() - baseline;
+            for (var i = 0; i < 250 && leaked > CsCode.Platform.Watching.FileWatcher.MaxOsWatchLosses; i++) { await Task.Delay(20); leaked = InotifyFds() - baseline; }
+            Assert.True(leaked <= CsCode.Platform.Watching.FileWatcher.MaxOsWatchLosses, $"{leaked} inotify instances leaked over {Cycles} deletions of .vscode");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CSCODE_HOME", previousHome);
+        }
+    }
+
+    private static int InotifyFds()
+    {
+        var n = 0;
+        foreach (var fd in Directory.GetFiles("/proc/self/fd"))
+        {
+            try { if (new FileInfo(fd).LinkTarget?.Contains("inotify", StringComparison.Ordinal) == true) n++; }
+            catch (IOException) { }
+        }
+        return n;
+    }
+
     private static async Task CreateConfigurationDirectoriesAfterOpening(IServiceProvider sp, string root)
     {
         Directory.CreateDirectory(root);
