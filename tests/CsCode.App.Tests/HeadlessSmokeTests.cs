@@ -5,6 +5,8 @@ using CsCode.App.Tests.Hosting;
 using Xunit;
 
 [assembly: AvaloniaTestApplication(typeof(CsCode.App.Tests.TestAppBuilder))]
+// The responsiveness tests assert wall-clock latency budgets, so no other test may be burning CPU alongside them.
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
 
 namespace CsCode.App.Tests;
 

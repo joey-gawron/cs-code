@@ -79,22 +79,25 @@ public sealed class DevHost : IDisposable
     /// <summary>Builds the provider and the window (not shown). Must be called on the Avalonia UI thread.</summary>
     public DevHost Build()
     {
-        Services = AppServices.Build(Args, services =>
-        {
-            Replace<ICommandService>(services, Commands);
-            Replace<IContextKeyService>(services, Keys);
-            Replace<IConfigurationService>(services, Config);
-            Replace<IKeybindingService>(services, Bindings);
-            Replace<IWorkspaceService>(services, WorkspaceService);
-            Replace<IStateStorage>(services, State);
-            Replace<IColorThemeService>(services, Themes);
-            Replace<IEditorViewFactory>(services, Editors);
-            Replace<IDocumentManager>(services, Documents);
-            Replace<IDebugService>(services, Debug);
-            Configure?.Invoke(services);
-        });
+        Services = AppServices.Build(Args, ApplyTo);
         Window = new MainWindow(Services);
         return this;
+    }
+
+    /// <summary>Replaces the module services with this host's fakes (also used as <c>App.ConfigureServices</c> for a real, non-headless window).</summary>
+    public void ApplyTo(IServiceCollection services)
+    {
+        Replace<ICommandService>(services, Commands);
+        Replace<IContextKeyService>(services, Keys);
+        Replace<IConfigurationService>(services, Config);
+        Replace<IKeybindingService>(services, Bindings);
+        Replace<IWorkspaceService>(services, WorkspaceService);
+        Replace<IStateStorage>(services, State);
+        Replace<IColorThemeService>(services, Themes);
+        Replace<IEditorViewFactory>(services, Editors);
+        Replace<IDocumentManager>(services, Documents);
+        Replace<IDebugService>(services, Debug);
+        Configure?.Invoke(services);
     }
 
     private static void Replace<T>(IServiceCollection services, T instance) where T : class

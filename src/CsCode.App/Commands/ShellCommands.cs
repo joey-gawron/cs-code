@@ -39,7 +39,8 @@ public sealed record ShellCommandContext(
     Func<Task> RefreshExplorer,
     IEnumerable<IToolWindow> ToolWindows,
     Func<Avalonia.Controls.Control> CreateWelcome,
-    Func<Avalonia.Controls.Control> CreateKeyboardReference);
+    Func<Avalonia.Controls.Control> CreateKeyboardReference,
+    CsCode.Core.Languages.ILanguageService? LanguageService = null);
 
 /// <summary>
 /// Registers every command the shell owns (tabs, files, palette modes, window layout, theme picker, Find Results, tool-window toggles).
@@ -135,6 +136,16 @@ public static class ShellCommands
                 Run(toggle, "Toggle " + tool.Title, "View", () => { c.Tools.Toggle(id); return Task.CompletedTask; });
         }
         Run(ShowErrorList, "Show Error List", "View", () => { c.Tools.Show("errorlist"); return Task.CompletedTask; });
+
+        // Status-bar language picker.
+        Run(ChangeLanguageMode, "Change Language Mode", "Editor", async () =>
+        {
+            if (c.Well.ActiveEditor is not { } tab || c.LanguageService is null) return;
+            var items = c.LanguageService.Languages.OrderBy(l => l.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .Select(l => new QuickPickItem(l.DisplayName, l.Id, Picked: l.Id == tab.Doc.LanguageId, Tag: l.Id)).ToArray();
+            var picked = await c.Window.ShowQuickPickAsync(items, new QuickPickOptions(Title: "Select Language Mode", Placeholder: "Select the language of the current file")).ConfigureAwait(true);
+            if (picked?.Tag is string id) tab.Doc.SetLanguageId(id);
+        });
 
         // ---- Find Results (the editor's Find References delivers many hits through this command)
         Hidden(ReferencesShow, inv =>

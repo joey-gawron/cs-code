@@ -90,7 +90,7 @@ public sealed class KeyboardReferenceView : UserControl
             .Select(b => new Row(b.Command, titles.GetValueOrDefault(b.Command, b.Command), string.Join(", ", b.Chord.Select(s => s.ToString())), b.When, b.Source.ToString()))
             .OrderBy(r => r.Title, StringComparer.OrdinalIgnoreCase).ToList();
 
-        var list = new ListBox { ItemsSource = rows, ItemTemplate = new FuncDataTemplate<Row>((r, _) => RowFor(r), supportsRecycling: true) };
+        var list = new ListBox { ItemsSource = rows, ItemTemplate = new FuncDataTemplate<Row>((r, _) => r is null ? new Panel() : RowFor(r), supportsRecycling: true) };
         var filter = new FilterBox { Watermark = "Search keybindings", Margin = new Thickness(12, 8), Width = 360, HorizontalAlignment = HorizontalAlignment.Left };
         filter.GetObservable(FilterBox.TextProperty).Subscribe(new TextObserver(t =>
             list.ItemsSource = string.IsNullOrWhiteSpace(t) ? rows : rows.Where(r => r.Title.Contains(t, StringComparison.OrdinalIgnoreCase) || r.Keys.Contains(t, StringComparison.OrdinalIgnoreCase) || r.Command.Contains(t, StringComparison.OrdinalIgnoreCase)).ToList()));

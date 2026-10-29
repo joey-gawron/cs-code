@@ -32,7 +32,7 @@ public sealed class OutputView : UserControl, IDisposable
         bar.Children.Add(combo);
         bar.Children.Add(ViewHelpers.IconButton("clear-all", "Clear Output", vm.Clear));
 
-        _list = new ListBox { ItemsSource = vm.Lines, ItemTemplate = new FuncDataTemplate<string>((s, _) => Line(s), supportsRecycling: true) };
+        _list = new ListBox { ItemsSource = vm.Lines, ItemTemplate = new FuncDataTemplate<string>((s, _) => s is null ? new Panel() : Line(s), supportsRecycling: true) };
         vm.Lines.CollectionChanged += OnLinesChanged;
 
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*"), Background = ThemeBrushes.Get("panel.background") };
