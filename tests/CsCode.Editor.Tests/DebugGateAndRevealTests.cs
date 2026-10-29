@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using CsCode.Core.Debugging;
@@ -136,5 +137,45 @@ public class DebugGateAndRevealTests
         debug.Stop(doc.Uri, 200);
         ViewHost.Pump();
         await ViewHost.WaitFor(() => view.TextView.VerticalOffset > 100, "a new stop is revealed");
+    }
+
+    /// <summary>
+    /// Integrator finding on a real display: the code-action lightbulb was drawn over the breakpoint glyph of the caret line. It now moves into
+    /// the line's indentation, or to a free gutter line next to it, and comes back when the glyph goes.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task The_lightbulb_is_never_drawn_over_a_breakpoint_glyph()
+    {
+        var (debug, host) = DebugHost();
+        using var _ = host;
+        var (doc, view, _) = await host.OpenAsync("function f() {\n        return total;\n}\nconst x = 1;\nconst y = 2;\n", "a.ts");
+        host.Factory.Services.Features.Register<CsCode.Core.Languages.ICodeActionProvider>(DocumentSelector.All,
+            new CsCode.Editor.Tests.Support.FakeCodeActionProvider((d, _, _, _) => Task.FromResult<IReadOnlyList<CsCode.Core.Languages.CodeAction>?>(
+                [new CsCode.Core.Languages.CodeAction("Fix it", "quickfix")])));
+        var bulb = view.Feature<CodeActionFeature>()!;
+        var feature = view.Feature<DebugFeature>()!;
+        var margin = view.TextArea.LeftMargins.OfType<Control>().First();
+        Assert.Same(margin, view.TextArea.LeftMargins[0]); // the glyph margin is leftmost
+        double GlyphRight() => margin.TranslatePoint(new Point(margin.Bounds.Width, 0), view.Overlay)!.Value.X;
+        double LineTop(int line) => OverlayPopup.AnchorFor(view, new TextPosition(line, 0)).Top.Y;
+
+        // no breakpoint: in the gutter of the caret line, as before
+        view.Controller.SetSelection(TextRange.At(1, 10));
+        await ViewHost.WaitFor(() => bulb.BulbVisible, "lightbulb on the indented line");
+        Assert.True(bulb.BulbBounds.Left < GlyphRight(), $"in the gutter: {bulb.BulbBounds}");
+
+        // a breakpoint on that line (F9 while the bulb shows): the bulb moves into the line's indentation, off the glyph
+        debug.Manager.Add(doc.Uri, 1);
+        await ViewHost.WaitFor(() => feature.BreakpointAt(1) is not null && bulb.BulbBounds.Left >= GlyphRight(), "the bulb left the glyph's spot");
+        Assert.True(bulb.BulbBounds.Right <= OverlayPopup.AnchorFor(view, new TextPosition(1, 8)).Top.X + 0.5, $"inside the indentation: {bulb.BulbBounds}");
+        Assert.InRange(bulb.BulbBounds.Top, LineTop(1) - 1, LineTop(1) + 4);
+
+        // a breakpoint on a line without indentation: the bulb goes to the gutter of a free neighbouring line
+        debug.Manager.Add(doc.Uri, 3);
+        view.Controller.SetSelection(TextRange.At(3, 2));
+        await ViewHost.WaitFor(() => bulb.BulbVisible && feature.BreakpointAt(3) is not null, "lightbulb on the unindented line");
+        await ViewHost.WaitFor(() => Math.Abs(bulb.BulbBounds.Top - LineTop(3)) > 4, "moved to another line");
+        Assert.True(bulb.BulbBounds.Left < GlyphRight(), $"in the gutter: {bulb.BulbBounds}");
+        Assert.InRange(bulb.BulbBounds.Top, LineTop(2) - 1, LineTop(2) + 4); // the line above ("}") has no glyph
     }
 }

@@ -59,6 +59,8 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
     }
 
     internal bool BulbVisible => _bulb.IsVisible;
+    /// <summary>Where the lightbulb is, in the editor's overlay coordinates (tests).</summary>
+    internal Rect BulbBounds => new(Canvas.GetLeft(_bulb), Canvas.GetTop(_bulb), _bulb.Width, _bulb.Height);
 
     public void OnThemeChanged() => ApplyTheme();
 
@@ -103,12 +105,42 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
         PositionBulb(caretLine);
     }
 
+    /// <summary>
+    /// The lightbulb sits in the gutter of the caret line — unless the breakpoint glyph margin draws something there (a breakpoint, the
+    /// debugger's stop arrow), which it must not cover. Then it goes where VS Code puts it: into the line's indentation when that is wide
+    /// enough, otherwise into the gutter of the line above (or below) when that one is free. Only when all of those are taken does it share
+    /// the glyph's spot.
+    /// </summary>
     private void PositionBulb(int line)
     {
         var (top, bottom) = OverlayPopup.AnchorFor(_v, new TextPosition(line, 0));
-        Canvas.SetLeft(_bulb, 2);
-        Canvas.SetTop(_bulb, top.Y + Math.Max(0, (bottom.Y - top.Y - _bulb.Height) / 2));
+        var x = 2.0;
+        var y = top.Y + Math.Max(0, (bottom.Y - top.Y - _bulb.Height) / 2);
+        if (_v.Feature<DebugFeature>() is { } debug && debug.HasGlyph(line))
+        {
+            var text = _v.Document.GetLineText(line);
+            var indent = text.Length - text.TrimStart(' ', '\t').Length;
+            var first = OverlayPopup.AnchorFor(_v, new TextPosition(line, indent)).Top;
+            var lines = _v.Document.LineCount;
+            if (indent > 0 && first.X - top.X >= _bulb.Width + 2) x = top.X + 1;
+            else if ((Adjacent(line - 1) ?? Adjacent(line + 1)) is { } other) y = other;
+
+            double? Adjacent(int candidate)
+            {
+                if (candidate < 0 || candidate >= lines || debug.HasGlyph(candidate)) return null;
+                var (t, b) = OverlayPopup.AnchorFor(_v, new TextPosition(candidate, 0));
+                return t.Y + Math.Max(0, (b.Y - t.Y - _bulb.Height) / 2);
+            }
+        }
+        Canvas.SetLeft(_bulb, x);
+        Canvas.SetTop(_bulb, y);
         _bulb.IsVisible = top.Y >= -1 && bottom.Y <= _v.Overlay.Bounds.Height + 1;
+    }
+
+    /// <summary>A breakpoint or the stop arrow appeared or went away in the gutter: a visible lightbulb moves out of (or back into) its way.</summary>
+    internal void OnGutterChanged()
+    {
+        if (_bulb.IsVisible && !_disposed) PositionBulb(_v.Controller.Caret.Line);
     }
 
     private void OnScrolled(object? sender, EventArgs e)

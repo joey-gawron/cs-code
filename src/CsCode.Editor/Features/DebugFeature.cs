@@ -46,7 +46,11 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
         _d.Add(debug.StopLocationChanged.Subscribe(loc => view.Post(() => ShowStop(loc))));
         _d.Add(debug.StateChanged.Subscribe(_ => view.Post(() => ShowStop(debug.StopLocation))));
         _d.Add(view.Document.Changed.Subscribe(OnDocumentChanged));
-        _d.Add(view.Controller.StopLineChanged.Subscribe(_ => _margin.InvalidateVisual()));
+        _d.Add(view.Controller.StopLineChanged.Subscribe(_ =>
+        {
+            _margin.InvalidateVisual();
+            _v.Feature<CodeActionFeature>()?.OnGutterChanged();
+        }));
         _d.Add(Disposable.Create(() => view.TextArea.LeftMargins.Remove(_margin)));
         ShowStop(debug.StopLocation);
     }
@@ -73,11 +77,15 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
     internal SourceBreakpoint? BreakpointAt(int line) => _byLine.GetValueOrDefault(line);
     internal IReadOnlyCollection<SourceBreakpoint> Breakpoints => _byLine.Values;
 
+    /// <summary>Whether the glyph margin draws something on <paramref name="line"/> (a breakpoint or the stop arrow): the lightbulb goes elsewhere.</summary>
+    internal bool HasGlyph(int line) => _byLine.ContainsKey(line) || _v.Controller.StopLine == line;
+
     private void Refresh()
     {
         if (_disposed) return;
         _byLine = IsFileDocument ? _debug.Breakpoints.GetForUri(_v.Document.Uri).GroupBy(b => b.Line).ToDictionary(g => g.Key, g => g.First()) : new();
         _margin.InvalidateVisual();
+        _v.Feature<CodeActionFeature>()?.OnGutterChanged();
     }
 
     private void ShowStop(DebugStopLocation? location)
