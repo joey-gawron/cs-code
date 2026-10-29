@@ -345,21 +345,22 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     }
 
     /// <summary>
-    /// The adapter dropped (part of) the data of the current stop. Whatever was read through the stop location must be read again, so a
-    /// fresh location is published even when it is identical — and it must point at a frame that is still valid: after an invalidation of
-    /// stacks the old FrameId is dead, so the stack is fetched again (re-registering the frames) and the location follows it.
-    /// Posted, so it runs after every subscriber has seen the <c>invalidated</c> event (the panels' trackers start a new epoch on it and
-    /// then wait for this location).
+    /// The adapter dropped (part of) the data of the current stop. The published stop location must keep pointing at a frame that is still
+    /// valid. After an invalidation of stacks the old FrameId is dead, so the stack is fetched again (re-registering the frames) and the
+    /// location follows it, like a new stop (VS Code re-runs the stop as well).
+    /// When only variables or threads were invalidated, the frame survives and the location is unchanged, so nothing is announced:
+    /// <see cref="StopLocationChanged"/> means "the stop location moved", and the editor reveals the stop line on it, so re-announcing the
+    /// same location would scroll every view of the stop file back to that line. Data views re-read through their own subscription to
+    /// <see cref="IDebugSession.Invalidated"/> (the panels' focus tracker starts a new epoch on it and accepts the unchanged location).
+    /// Posted, so it runs after every subscriber has seen the <c>invalidated</c> event.
     /// </summary>
     private void OnSessionInvalidated(DebugSession session) => _lane.Post(() =>
     {
         if (session.State != DebugSessionState.Stopped || !ReferenceEquals(ActiveSession, session)) return;
         var location = StopLocation;
         if (location is not null && ReferenceEquals(location.Session, session) && session.IsFrameValid(location.FrameId))
-        {
-            SetStopLocation(location, force: true); // only variables (or threads) were invalidated: same frame, data to be re-read
-            return;
-        }
+            return; // only variables (or threads) were invalidated: same frame, same location
+
         var epoch = Interlocked.Increment(ref _stopEpoch); // a stack fetch still in flight would publish a dead frame
         Volatile.Write(ref _focusedFrameId, -1);
         SetStopLocation(null); // never leave a dead FrameId published while the stack is fetched again
@@ -526,11 +527,10 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private static DebugHandleInvalidatedException StaleFrame() =>
         new("The stack frame is no longer valid: the debuggee has resumed or stopped again since it was obtained.");
 
-    /// <param name="force">Fire even when the location is unchanged: the data read through it went stale (adapter <c>invalidated</c>).</param>
-    private void SetStopLocation(DebugStopLocation? location, bool force = false)
+    private void SetStopLocation(DebugStopLocation? location)
     {
         var previous = Interlocked.Exchange(ref _stopLocation, location);
-        if (Equals(previous, location) && !force) return;
+        if (Equals(previous, location)) return;
         _stopLocationChanged.Fire(location);
     }
 

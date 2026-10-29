@@ -596,27 +596,47 @@ public class DebugServiceStopLocationTests
         Assert.NotEmpty(await session.GetScopesAsync(before.FrameId, Ct)); // the frame id is live again, not "Not available"
     }
 
-    [Fact]
-    public async Task After_invalidated_variables_the_focused_frame_stays_and_is_announced_after_every_invalidated_subscriber()
+    /// <summary>
+    /// StopLocationChanged means "the stop moved": the editor re-centers every view of the stop file on it. An invalidation that leaves the
+    /// focused frame alive must therefore not announce the (identical) location again, or a user reading code elsewhere in that file is
+    /// scrolled back to the stop line. The data panels re-read through their own Invalidated subscription.
+    /// </summary>
+    [Theory]
+    [InlineData("variables")]
+    [InlineData("threads")]
+    [InlineData("variables,threads")]
+    public async Task After_an_invalidation_that_keeps_the_frames_the_focused_frame_stays_and_the_unchanged_location_is_not_announced_again(string areaList)
     {
+        var areas = areaList.Split(',');
         await using var h = new ServiceHarness();
         var session = await h.StartAsync();
         await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
         await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
         await ((IDebugFrameFocus)h.Service).SetFocusedFrameAsync(session.Id, 1, 101, Ct); // the user picked the caller
+        var before = h.Service.StopLocation!;
         var scopes = await session.GetScopesAsync(101, Ct);
-        var order = new List<string>();
-        // Subscribed after the service, like the panels' focus trackers: they start a new epoch on `invalidated` and then wait for the location.
-        session.Invalidated.Subscribe(_ => { lock (order) order.Add("invalidated"); });
-        h.Service.StopLocationChanged.Subscribe(l => { lock (order) order.Add("location " + l?.FrameId); });
+        var stackTraces = h.AdapterFor(0).CountOf("stackTrace");
+        var announced = new List<DebugStopLocation?>();
+        h.Service.StopLocationChanged.Subscribe(l => { lock (announced) announced.Add(l); });
+        // Subscribed after the service, whose handler is posted to the lane from its own subscription: a lane item posted from here runs
+        // after that handler, so awaiting it means the service has finished reacting to the event.
+        var handled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        session.Invalidated.Subscribe(_ => h.Lane.Post(() => handled.TrySetResult()));
 
-        await h.AdapterFor(0).SendEventAsync("invalidated", new DapInvalidatedEvent { Areas = ["variables"] });
+        await h.AdapterFor(0).SendEventAsync("invalidated", new DapInvalidatedEvent { Areas = [.. areas] });
+        await handled.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await Task.Delay(100, Ct); // nothing (e.g. a re-fetch of the stack) may announce it late either
 
-        await SessionHarness.Eventually(() => { lock (order) return order.Count == 2; }, what: "location published again");
-        lock (order) Assert.Equal(["invalidated", "location 101"], order);
+        lock (announced) Assert.Empty(announced);
+        Assert.Equal(before, h.Service.StopLocation);
         Assert.Equal(101, h.Service.FocusedFrameId);
-        await Assert.ThrowsAsync<DebugHandleInvalidatedException>(async () => await session.GetVariablesAsync(scopes[0].VariablesReference, ct: Ct));
-        Assert.NotEmpty(await session.GetScopesAsync(101, Ct));
+        Assert.Equal(stackTraces, h.AdapterFor(0).CountOf("stackTrace"));
+        // Checked before scopes are read again: the fake adapter hands out the same reference numbers, which would make it live again.
+        if (areas.Contains("variables"))
+            await Assert.ThrowsAsync<DebugHandleInvalidatedException>(async () => await session.GetVariablesAsync(scopes[0].VariablesReference, ct: Ct));
+        else
+            Assert.NotNull(await session.GetVariablesAsync(scopes[0].VariablesReference, ct: Ct));
+        Assert.NotEmpty(await session.GetScopesAsync(101, Ct)); // what Locals reads with the unchanged location
     }
 
     [Fact]

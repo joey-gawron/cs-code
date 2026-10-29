@@ -90,10 +90,14 @@ The tests that read process-wide counters or latency budgets run in a non-parall
   Call Stack window paged without asking the adapter again; it **throws** (`DebugHandleInvalidatedException` for a dead frame or a running
   session, `InvalidOperationException` for an ended or no-longer-focused session) instead of returning as if focus had moved.
 * **`invalidated` while stopped.** Areas `stacks`/`all` (or none) drop everything including frame ids; `variables` drops only variable data
-  (references, pages, scopes), so the frames of the stop and the user's focused frame survive; `threads` alone drops nothing. Then
-  `DebugService` publishes the stop location again — after every `Invalidated` subscriber has run, so the panels' trackers see the new epoch
-  first: the same location (event fired even though it is equal) when its frame is still valid, otherwise it clears the location, fetches
-  the stack again (re-registering the frames) and publishes a location on a live frame. A dead `FrameId` is never left published.
+  (references, pages, scopes), so the frames of the stop and the user's focused frame survive; `threads` alone drops nothing. Then, after
+  every `Invalidated` subscriber has run, `DebugService` checks the published stop location. If its frame is still valid (`variables` or
+  `threads` only), the location is unchanged and **no `StopLocationChanged` fires**: that event means "the stop moved" and the editor
+  reveals (re-centers on) the stop line for it, so re-announcing an identical location would scroll the user's view back. Data views
+  re-read through their own `IDebugSession.Invalidated` subscription (the panels' focus tracker starts a new epoch on it and accepts the
+  unchanged location after its grace period). Otherwise (`stacks`/`all`) it clears the location, fetches the stack again (re-registering
+  the frames) and publishes a location on a live frame, like a new stop (VS Code re-runs the stop for these areas too, revealing the line).
+  A dead `FrameId` is never left published.
 * Termination: graceful (`terminate` if supported and the session is a launch, else `disconnect{terminateDebuggee}` / detach for attach),
   waits `StopTimeout` (5 s), then hard kill of the adapter process tree. After `terminated` the client sends a courtesy `disconnect`.
   `RestartAsync` uses the adapter's `restart` request when advertised, otherwise stops silently and re-runs the whole handshake with the same
