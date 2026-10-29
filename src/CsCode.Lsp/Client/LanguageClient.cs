@@ -119,7 +119,39 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         else _log.Add("[client] server responsive again");
         if (IsOperational) SetState(h == ServerHealth.Unresponsive ? LanguageServerState.Unresponsive : LanguageServerState.Running);
         _observer.OnHealthChanged(this, h);
+        if (h == ServerHealth.Unresponsive) _ = ProbeLoopAsync();
     }
+
+    /// <summary>
+    /// While Unresponsive, one cheap read-only request per probe interval keeps asking whether the server has recovered, so the state clears by
+    /// itself (the breaker lets exactly one request through per interval). Without a suitable read-only capability the next user request is the probe.
+    /// </summary>
+    private async Task ProbeLoopAsync()
+    {
+        try
+        {
+            while (_breaker.Health == ServerHealth.Unresponsive && Volatile.Read(ref _tornDown) == 0)
+            {
+                await Task.Delay(_ctx.Settings().BreakerProbeInterval + TimeSpan.FromMilliseconds(25), _lifetime.Token).ConfigureAwait(false);
+                if (_breaker.Health != ServerHealth.Unresponsive) return;
+                var sd = _docs.Values.FirstOrDefault(d => d.OpenOnServer);
+                if (sd is not null && _features.EntriesOf(ProviderKind.Hover).Count > 0)
+                    await SendAsync(P.LspMethods.TextDocumentHover, new P.HoverParams { TextDocument = new P.TextDocumentIdentifier { Uri = sd.UriString }, Position = new P.Position() },
+                        LanePriority.Interactive, _lifetime.Token, sd).ConfigureAwait(false);
+                else if (sd is not null && _features.EntriesOf(ProviderKind.DocumentSymbol).Count > 0)
+                    await SendAsync(P.LspMethods.TextDocumentDocumentSymbol, new P.DocumentSymbolParams { TextDocument = new P.TextDocumentIdentifier { Uri = sd.UriString } },
+                        LanePriority.Interactive, _lifetime.Token, sd).ConfigureAwait(false);
+                else if (_features.EntriesOf(ProviderKind.WorkspaceSymbol).Count > 0)
+                    await SendAsync(P.LspMethods.WorkspaceSymbol, new P.WorkspaceSymbolParams { Query = "" }, LanePriority.Interactive, _lifetime.Token).ConfigureAwait(false);
+                else return;
+            }
+        }
+        catch (OperationCanceledException) { /* session ended */ }
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException or IOException) { }
+    }
+
+    /// <summary>Documents waiting in the diagnostics mailbox and how many were dropped because it was full (diagnostics/tests).</summary>
+    internal (int Pending, long Dropped) DiagnosticsBacklog => (_diagMailbox.Count, _diagMailbox.Dropped);
 
     // =================================================================================================================
     // Lifecycle
@@ -288,7 +320,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
                 NotifyRaw(P.LspMethods.Exit, null);
                 await _connection!.Closed.WaitAsync(timeout, ct).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or RemoteInvocationException or ConnectionLostException or ObjectDisposedException or InvalidOperationException)
+            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or RemoteRpcException or ConnectionLostException or ObjectDisposedException or InvalidOperationException)
             {
                 _log.Add("[client] graceful shutdown did not complete (" + ex.GetType().Name + "); killing");
             }
@@ -425,17 +457,19 @@ internal sealed partial class LanguageClient : IAsyncDisposable
                 }
                 return null; // timeout, or the session is ending
             }
-            catch (RemoteInvocationException ex)
+            catch (RemoteRpcException ex)
             {
-                if (ex.ErrorCode == ContentModified && attempt < contentModifiedRetries)
+                // RemoteInvocationException (an error response) and RemoteMethodNotFoundException are siblings under RemoteRpcException.
+                var code = ex is RemoteInvocationException ri ? ri.ErrorCode : ex is RemoteMethodNotFoundException ? -32601 : 0;
+                if (code == ContentModified && attempt < contentModifiedRetries)
                 {
                     attempt++;
                     await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), ct).ConfigureAwait(false);
                     continue; // spec: the server's state moved on; retry against the current document state
                 }
-                if (ex.ErrorCode is ContentModified or ServerCancelled or RequestCancelled) return null;
+                if (code is ContentModified or ServerCancelled or RequestCancelled) return null;
                 _breaker.RecordSuccess(); // the server answered (with an error): it is alive
-                _log.Add($"[client] {method} failed: {ex.Message} (code {ex.ErrorCode})");
+                _log.Add($"[client] {method} failed: {ex.Message} (code {code})");
                 return null;
             }
             catch (Exception ex) when (ex is ConnectionLostException or ObjectDisposedException or IOException or InvalidOperationException)

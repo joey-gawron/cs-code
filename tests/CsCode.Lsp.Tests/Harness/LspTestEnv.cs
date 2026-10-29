@@ -89,6 +89,27 @@ public sealed class ProgressRecordingWindow(RecordingWindowService inner) : IWin
     }
 }
 
+/// <summary>Memory monitor double: records tracked child processes and registered trimmables; lets a test trigger the over-budget callback.</summary>
+public sealed class FakeMemoryMonitor : CsCode.Core.Diagnostics.IMemoryMonitor
+{
+    public List<(string Name, int Pid, long? Limit, Func<ValueTask>? OnOverBudget)> Tracked { get; } = new();
+    public List<CsCode.Core.Diagnostics.IMemoryTrimmable> Registered { get; } = new();
+    public int DisposedTracking;
+
+    public CsCode.Core.Diagnostics.MemorySnapshot Current => default!;
+    public long BudgetBytes => 0;
+    public IEventSource<CsCode.Core.Diagnostics.MemorySnapshot> Sampled { get; } = new Emitter<CsCode.Core.Diagnostics.MemorySnapshot>();
+    public IReadOnlyList<CsCode.Core.Diagnostics.IMemoryTrimmable> Trimmables { get { lock (Registered) return Registered.ToArray(); } }
+    public IDisposable Register(CsCode.Core.Diagnostics.IMemoryTrimmable trimmable) { lock (Registered) Registered.Add(trimmable); return Disposable.Create(() => { lock (Registered) Registered.Remove(trimmable); }); }
+    public ValueTask TrimNowAsync(CsCode.Core.Diagnostics.MemoryTrimLevel level, CancellationToken ct = default) => ValueTask.CompletedTask;
+
+    public IDisposable TrackChildProcess(string name, int pid, long? restartAboveBytes = null, Func<ValueTask>? onOverBudget = null)
+    {
+        lock (Tracked) Tracked.Add((name, pid, restartAboveBytes, onOverBudget));
+        return Disposable.Create(() => Interlocked.Increment(ref DisposedTracking));
+    }
+}
+
 /// <summary>Everything a LSP test needs: Core services, test doubles, a fake connection factory and the real manager.</summary>
 public sealed class LspTestEnv : IAsyncDisposable
 {
@@ -97,11 +118,11 @@ public sealed class LspTestEnv : IAsyncDisposable
 
     public DocumentManager Documents { get; } = new();
     public LanguageFeatureRegistry Registry { get; } = new();
-    public DiagnosticService Diagnostics { get; } = new();
+    public IDiagnosticService Diagnostics { get; } = new DiagnosticService();
     public TestConfigurationService Config { get; } = new();
     public RecordingWindowService Window { get; } = new();
     public ProgressRecordingWindow ProgressWindow { get; }
-    public InMemoryOutputService Output { get; } = new();
+    public IOutputService Output { get; } = new InMemoryOutputService();
     public TestCommandService Commands { get; } = new();
     public TestAppPaths Paths { get; } = new();
     public FakeWorkspace Workspace { get; } = new();
@@ -112,8 +133,13 @@ public sealed class LspTestEnv : IAsyncDisposable
 
     public string Root => Dir.Path;
 
-    public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false)
+    public FakeMemoryMonitor? Memory { get; }
+
+    public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false, bool memoryMonitor = false, IDiagnosticService? diagnostics = null, IOutputService? output = null)
     {
+        Memory = memoryMonitor ? new FakeMemoryMonitor() : null;
+        if (diagnostics is not null) Diagnostics = diagnostics;
+        if (output is not null) Output = output;
         Navigation = new RecordingNavigationService(Documents);
         ProgressWindow = new ProgressRecordingWindow(Window);
         // Snappy defaults for tests; individual tests override before creating the manager when they need real budgets.
@@ -136,6 +162,7 @@ public sealed class LspTestEnv : IAsyncDisposable
             Commands = Commands,
             Paths = Paths,
             Connections = Connections,
+            Memory = Memory,
         };
         Manager = new LanguageServerManager(services);
     }
@@ -211,7 +238,7 @@ public sealed class LspTestEnv : IAsyncDisposable
         var sb = new System.Text.StringBuilder();
         foreach (var s in Manager.Servers) sb.AppendLine($"server {s.Id} state={s.State} err={s.LastError} pid={s.ProcessId} root={s.RootUri}");
         sb.AppendLine($"connections={Connections.ConnectCount} requests={Connections.Requests.Count}");
-        foreach (var n in Output.ChannelNames) sb.AppendLine($"--- {n}\n{Output.Text(n)}");
+        if (Output is InMemoryOutputService mem) foreach (var n in mem.ChannelNames) sb.AppendLine($"--- {n}\n{mem.Text(n)}");
         foreach (var m in Window.Messages.ToArray()) sb.AppendLine($"message[{m.Severity}] {m.Message}");
         return sb.ToString();
     }

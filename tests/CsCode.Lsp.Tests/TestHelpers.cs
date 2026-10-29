@@ -20,6 +20,10 @@ public static class TestHelpers
     public static Task Within(this ValueTask task, TimeSpan? timeout = null) =>
         task.AsTask().WaitAsync(timeout ?? DefaultTimeout, TestContext.Current.CancellationToken);
 
+    /// <summary>Text of an output channel (empty if it was never created).</summary>
+    public static string Text(this CsCode.Core.Platform.IOutputService output, string channel) =>
+        output.ChannelNames.Contains(channel) ? output.GetOrCreate(channel).GetText() : "";
+
     /// <summary>RunAsync bound to the xUnit test cancellation token.</summary>
     public static ValueTask<T?> Run<T>(this LanguageWorkQueue q, LanePriority priority, WorkKey key, Func<WorkContext, ValueTask<T?>> work) =>
         q.RunAsync(priority, key, work, TestContext.Current.CancellationToken);
