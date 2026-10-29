@@ -2,52 +2,134 @@
 
 `CsCode.Vim` is a Vim engine for the CsCode editor: modal editing, operators x motions x text objects, registers, marks, dot-repeat, a Vim
 undo tree, search, Ex commands, mappings and macros. It is verified against real Neovim (v0.12.5 was used) with a differential test suite.
-It depends only on `CsCode.Core` (no Avalonia). The Editor/Shell adapter that connects it to the real editor is a later step; this module
-ships the engine, the host abstraction and a headless host that every test uses.
+It depends only on `CsCode.Core` (no Avalonia). The shell's Vim adapter (`src/CsCode.App/Vim`, [Integration](#integration-the-adapter-in-the-shell))
+connects it to every editor view of the real application, where it is **on by default**.
 
 * Source: `src/CsCode.Vim` — `Engine/` (the `VimEngine` partial class), `Abstractions/` (`IVimHost`, `IVimBuffer`), `Hosting/` (headless host,
   `LineVimBuffer`, timers), `Config/` (options, session, settings), `Registers/`, `Search/` (Vim regex -> .NET), `Editing/` (marks, undo tree).
-* Tests: `tests/CsCode.Vim.Tests` (xUnit v3). Lab tool: `tools/vim/lab.sh`.
+* Adapter: `src/CsCode.App/Vim` (`VimIntegration`, `EditorVimHost`, `EditorVimBuffer`, `VimKeyPolicy`, `VimShellActions`, `VimClipboard`) over the
+  editor's `EditorModalSurface` (`src/CsCode.Editor/View`).
+* Tests: `tests/CsCode.Vim.Tests` (xUnit v3) for the engine; `tests/CsCode.App.Tests/RealApp/Vim` and `VimKeyPolicyTests` for the adapter in the
+  real application. Lab tool: `tools/vim/lab.sh`.
 
-## Integration guide for the Editor/Shell adapter
+## Using Vim in CsCode
+
+Vim keys work in every editor as soon as CsCode starts. The status bar shows the mode on the left (`-- NORMAL --`, `-- INSERT --`,
+`-- VISUAL BLOCK --`, `recording @q`), the keys of a command being typed (`2d`), the `:` `/` `?` command line with its cursor, and Vim's messages
+and errors (until the next key; several lines, like `:reg`, go to the **Output › Vim** channel). The caret is a block in Normal and Visual mode, a
+bar in Insert mode and an underline in Replace and Operator-pending mode.
+
+* **Turning it off**: the command **Toggle Vim Mode** (`vim.toggle`, also the *Vim* item at the right of the status bar) switches it for the
+  session; the setting `"vim.enable": false` switches it off for good (`vim.enabled` is the older spelling and works too). Off means the plain
+  editor at once: its caret, its keys and no Vim status items; on again creates engines for the open editors.
+* **Ctrl keys.** In Normal, Visual and Operator-pending mode Vim owns `Ctrl-D U F B E Y R O I V W A X N P [` and `Esc` (as VSCodeVim does), so
+  Visual Studio's bindings of those keys (Ctrl+D duplicate line, Ctrl+F find, Ctrl+O open, Ctrl+W close, Ctrl+N new, Ctrl+P quick open...) do
+  not run there. In Insert mode Vim takes `Esc Ctrl-[ Ctrl-W U H T D R O N` and leaves `Ctrl+V` (paste), `Ctrl+A`, `Ctrl+X`, `Ctrl+C`, `Ctrl+F`
+  and **`Ctrl+P` (Quick Open)** to the editor; with the completion list open `Ctrl-N`/`Ctrl-P` move through it. The command line takes every
+  Ctrl+letter except `Ctrl+S`/`Ctrl+Q`. Everywhere the application keeps `Ctrl+Shift+…` chords (`Ctrl+Shift+P` the palette), `Alt+…` (menus),
+  F-keys (debugging, F12...), `Ctrl+S`, `Ctrl+Z` (which is Vim's `u`, see below), `Ctrl+K`/`Ctrl+M` chords, `Ctrl+Space`, `Ctrl+Tab`.
+  Decision on Ctrl+P: it is Vim's (`k`) in Normal/Visual mode as the brief's list says, and Quick Open in Insert mode (outside the completion
+  list), where Vim's own `Ctrl-P` is the least used; `Ctrl+Q` (the palette, plain text = go to file) works everywhere.
+* **`vim.handleKeys`** (VSCodeVim format) gives any key to the editor or to Vim: `"vim.handleKeys": { "<C-d>": false, "<C-p>": false, "<C-c>": true }`.
+  `false` = the application/editor handles it, `true` = Vim does (also for keys Vim does not take by default, like `<C-c>` or `<A-j>`).
+* **Insert mode** types through the editor, so IntelliSense, auto-closing brackets, snippets, signature help and language-aware Enter work as
+  without Vim. While the completion list is open `Tab`, `Enter`, the arrows and `PageUp/Down` belong to it and the first `Esc` closes it (the second
+  leaves Insert mode); in a snippet `Tab`/`Shift+Tab` move between placeholders and `Esc` ends the snippet and Insert mode together.
+* **Undo**: `u`/`Ctrl-R` and the editor's Undo/Redo (Ctrl+Z, Ctrl+Y, menu, toolbar) are the same thing: one Vim change is one undo step everywhere,
+  and undoing back to the saved text clears the dirty marker. A change made before Vim was switched on is undone by the editor itself.
+* **Your vimrc**: `~/.vimrc` is **not** read (it may use plugins and commands this engine does not have). CsCode reads its own
+  `{UserDataDir}/vimrc` if it exists; `"vim.vimrc.path": "~/.vimrc"` (VSCodeVim's setting) opts into another file, `"vim.vimrc.enable": false`
+  turns vimrc loading off. Errors are listed, never fatal.
+* **Language keys**: `gd` definition, `gD` declaration, `gi` implementation (nvim-lspconfig's convention, replacing Vim's own `gi`), `gr` references,
+  `K`/`gh` hover, `]d`/`[d` next/previous problem, `g.` quick fix; a vimrc or settings binding of the same keys wins.
+* **Mouse**: a selection made with the mouse becomes Visual mode; a click in Visual mode ends it.
+
+## Integration: the adapter in the shell
+
+**Placement.** ARCHITECTURE §2 lets feature modules reference Core only, the editor reference Core + Avalonia/AvaloniaEdit only, and makes
+`CsCode.App` the one project that references everything. The adapter needs both the engine and the editor, so it lives in `CsCode.App/Vim`; the
+editor offers a Vim-agnostic hook surface (`EditorModalSurface`, `CodeEditorControl.Modal`) and the engine its host abstraction (`IVimHost`,
+`IVimBuffer`). `AppServices.Build` calls `AddCsCodeVim()`; `ShellController.Initialize` creates `VimIntegration` (only when the composition has
+the Vim module and the real editor) right after the keyboard pipeline.
+
+**Lifecycle.** One `VimEngine` per editor view, created when the view is created (`EditorViewFactory.ViewOpened`) and disposed with it
+(`ViewClosing`, raised first thing in `DisposeView`, while the view is intact; a view destroyed by something its own engine started is torn down
+when the engine call returns). One `EditorVimBuffer` per open document, shared by its views, so the undo tree, marks and jump list survive the
+shell destroying and recreating inactive tabs' views; it is released when the document closes. The `VimSession` (registers, search, mappings,
+macros, options) is the module's singleton; named registers persist in `IStateStorage` across restarts (`vim.persistRegisters`).
+
+**Keys.** `MainWindow`'s tunnelling `KeyDown` and `TextInput` handlers offer every event to `IShellKeyInterceptor` (the adapter) before the
+keyboard pipeline. Only events whose source is a Vim view's text area are considered, never while the shell is in the middle of a chord.
+Characters (and IME commits) arrive as **text input** and go to `HandleText`, so keyboard layouts and input methods are respected; key presses
+(special keys, Ctrl/Alt chords) go to `HandleKey` when `VimKeyPolicy` gives them to Vim. A key the engine passes through continues to the key
+bindings and the editor. When Vim takes a key press the editor never sees it, and a control character some platforms send as text after
+Enter/Tab/Backspace is swallowed with it.
+
+**Insert mode through the editor.** `IVimHost.InsertTypedText` types each character the user typed through `TextArea.PerformTextInput` (auto-close,
+completion/signature triggers, snippets, Enter with the language's indentation); the buffer reports what the editor changed, with the lines it
+replaced, and the engine adopts it into the insert (undo, `.` register, change list). Replays (dot-repeat, macros, mapping expansions, counts,
+`Ctrl-R`) insert the recorded text exactly, as in Vim — a dot-repeat therefore does not auto-close a bracket the original typing auto-closed.
+Keys left to the editor in Insert mode (accepting a completion, a paste) change the document inside the insert's undo group.
+
+**Undo.** `EditorVimBuffer` opens one editor undo group per Vim change (lazily at the first change of a key, continuing the previous group while
+the change continues the same Vim step, e.g. an Insert session) and puts a marker in it that reports the step when the editor undoes or redoes the
+group. `u`/`Ctrl-R` ask `CanUndoRedoStep`: when the editor's history holds exactly that step on top, the editor undoes it (history, caret and dirty
+marker stay in step); otherwise (a foreign change in between, a step that resumed after one, undo-tree branches like `g-`) the engine applies the
+step as edits. The marker identity check and the engine's text check after a host undo (`SpliceOverlay.Matches`) make a wrong picture of the
+history cost only that fallback. The editor's Undo/Redo commands run `u`/`Ctrl-R` (`<C-o>u` in Insert mode). Changes made outside any key (a
+formatter, a workspace edit) become undo steps of their own (or join an Insert session). One key's (or one slice's) edits are one atomic
+document change, so the editor's features react once, not once per line.
+
+**What `IVimHost` maps to:**
+
+| `IVimHost` | Real editor / shell |
+|---|---|
+| `Buffer`, `GetCaret`/`SetCaret`, `SetSelection` | `EditorVimBuffer` over `EditorDocument`; the editor caret; stream, whole-line and rectangular (`RectangleSelection`) selections; the caret goes into view |
+| `OnModeChanged` | caret shape (`EditorModalSurface.CaretShape`: block / bar / underline / outline drawn on the caret layer) and the `vim.mode` status item |
+| `OnShowCommand`, `OnRecordingChanged`, `OnMessage`, `OnCommandLineChanged` | status items `vim.showcmd`, `vim.mode` ("recording @q"), `vim.cmdline` (command line with its cursor, VSCodeVim-style, or the last message; `:s///c` prompts there); multi-line messages also go to Output › Vim |
+| `OnSearchHighlight`, `OnYankHighlight` | match highlight in every view's visible lines (regex with a timeout, capped); a 250 ms flash |
+| `GetViewport`, `SetTopLine`, `GetDisplayRows`, `WrapWidth`, `WindowWidth` | the text view's scroll position, line height and wrapping |
+| `TryGetClosedFold`, `FoldCommand` | the editor's folding regions (`zo zc za zO zC zR zM`; `zf zd zE zj zk` are not supported: the editor computes its regions) |
+| `ReadClipboard`, `WriteClipboard` | the system CLIPBOARD for both `+` and `*` (read asynchronously into a cache: on window activation, editor focus, and after `"+`/`"*`, when the following keys wait — at most 500 ms — for the read). The Linux PRIMARY selection is not used |
+| `PerformAction` | the document well, after the key (`VimShellActions`, table below) |
+| `ExecuteCommand` | `ICommandService`, after the key, fire and forget; after a navigation the cursor goes to the start of the target in Normal mode |
+| `GetCommentTokens`, `FormatLines`, `RequestCompletion` | the language configuration's comment tokens; the language server's range formatter (asynchronous: the result is a change of its own; without one the engine re-indents); the editor's IntelliSense (`Ctrl-N/P`) |
+| `Timer` | `ThreadingVimTimer` posting to the UI dispatcher (`timeoutlen`) |
+| `RunPendingWork` | Background-priority dispatcher callbacks of 3 ms engine time while `HasPendingWork` |
+
+**Windows and buffers** (a Vim window is an editor group, a buffer an editor tab): `:w` saves through the shell (will-save participants, format
+on save), `:w {file}` writes a copy, `:wa`, `:wq`/`:x`; `:q` closes the editor tab — with the shell's Save / Don't Save / Cancel prompt when it is
+dirty — and **never the application, also on the last editor** (CsCode is a workbench; File > Exit closes it); `:q!` closes without asking,
+`:qa[!]` closes every editor; `:e {file}` (relative to the current file's folder), `:e!` reloads, `:enew`, `:sav {file}`; `:bn :bp :b N :b name
+:bd[!] :b#`; `:ls` is a quick pick of the buffers (picking switches); `:sp :vsp [file] :new :vnew` split into a new group below / to the right,
+`:only` closes the other groups' editors, `:close`; `Ctrl-W h j k l` move to the group in that direction, `w W p t b` cycle, `s v n` split, `c q`
+close, `o` only. Resizing and moving windows (`Ctrl-W = _ | + - < > H J K L x r`) are not supported (groups are arranged by dragging).
+
+**Engine API used by hosts** (all optional, see `IVimHost`/`IVimBuffer`): `InsertTypedText`, `TryTakeExternalChanges` (`VimExternalChange`),
+`CanUndoRedoStep`/`UndoRedoStep`; queries `UndoSequence`, `NextChangeUndoSequence`, `IsUndoStepOpen`, `IsApplyingUndo`, `CanUndo`, `CanRedo`,
+`UndoHistoryGeneration`; `SelectVisual` (a mouse selection). For any other host the minimal contract still holds:
 
 ```csharp
 services.AddCsCodeVim();                         // needs IConfigurationService and ICommandService; uses IStateStorage/IAppPaths/IOutputService if present
 var vim = provider.GetRequiredService<IVimService>();   // resolving it registers vim.* settings and commands, loads the vimrc and saved registers
 var engine = vim.CreateEngine(myHost);           // one engine per editor view; the caller disposes it
+VimKeyResult r = engine.HandleKey(keyStroke);    // or HandleKey(int) / HandleText(string) for IME / typed text; PassThrough = the editor's key
 ```
 
-Per key event the adapter calls
+`IVimHost` mandatory members: `Buffer`, `GetCaret`, `SetCaret`, `Timer`; everything else has a harmless default. `InMemoryVimHost` implements all
+of it over an `InMemoryTextDocument` (or any `IVimBuffer`) and records what the engine told it. `LineVimBuffer` is a fast `List<string>` buffer.
+Engines of one `VimSession` share options, registers, mappings, search memory and the plugin switches; undo history, marks and the jump list are
+per buffer. Events: `ModeChanged`, `MessageChanged`, `RecordingChanged`, `SearchChanged`, `PendingWorkChanged`. State: `Mode`, `PendingKeys`,
+`Cursor`, `IsRecording`, `LastMessage`, `LastError`. `Reset()` abandons any pending command and returns to Normal mode; `Detach()` releases host
+and buffer; `Dispose()` does both.
 
-```csharp
-VimKeyResult r = engine.HandleKey(keyStroke);    // or HandleKey(int) / HandleText(string) for IME / typed text
-if (r == VimKeyResult.PassThrough) { /* let the editor handle the key */ }
-```
-
-and after anything else that makes the engine work for a while (see Threading) it keeps calling `engine.RunPendingWork(TimeSpan.FromMilliseconds(3))`
-from a dispatcher tick while `engine.HasPendingWork` (or when `engine.PendingWorkChanged` fires `true`).
-
-`IVimHost` is deliberately small. Mandatory: `Buffer`, `GetCaret`, `SetCaret`, `Timer`. Everything else has a harmless default:
-
-| Area | Members |
-|---|---|
-| buffer and caret | `Buffer` (`IVimBuffer`: line-oriented reads, `ApplyEdit`/`ApplyEdits` as one change, optional `Changed` event), `GetCaret`/`SetCaret(position, insertLike)`, `SetSelection(VimSelection)` (char/line/**block** selections) |
-| feedback | `OnModeChanged(mode, VimModeInfo{CursorShape,Label,SubLabel})`, `OnMessage`, `OnShowCommand`, `OnRecordingChanged`, `OnCommandLineChanged` (the host draws the `:` `/` `?` prompt), `OnSearchHighlight`, `OnYankHighlight` |
-| viewport | `GetViewport`, `SetTopLine` (scrolling, `zt zz zb`, `Ctrl-D/U/F/B/E/Y`), `GetDisplayRows`, `WrapWidth`, `WindowWidth` (`gj gk g0 g$ gm`) |
-| folds | `TryGetClosedFold`, `FoldCommand` |
-| clipboard | `ReadClipboard`, `WriteClipboard` (registers `+` `*`, `vim.useSystemClipboard`) |
-| windows/buffers | `PerformAction(VimEditorAction, args)` for `:w :q :e :bn :sp :vsp Ctrl-W...`; return false when unsupported |
-| app commands | `ExecuteCommand(id, args)` — fire and forget (`gd` -> `editor.action.revealDefinition`, `gr`, `K` ...) |
-| language | `GetCommentTokens` (surround/commentary), `FormatLines` (`=`, `gq`), `RequestCompletion` (`Ctrl-N/P/X`) |
-| time | `Timer` (`IVimTimer`): used only for `timeoutlen`; `ManualVimTimer` for tests, `ThreadingVimTimer(post)` for real time |
-
-`InMemoryVimHost` implements all of it over an `InMemoryTextDocument` (or any `IVimBuffer`) and records what the engine told it.
-`LineVimBuffer` is a fast `List<string>` buffer. Engines of one `VimSession` share options, registers, mappings, search memory and the
-plugin switches; undo history, marks and the jump list are per buffer.
-
-Events: `ModeChanged`, `MessageChanged`, `RecordingChanged`, `SearchChanged`, `PendingWorkChanged`. State: `Mode`, `PendingKeys`, `Cursor`,
-`IsRecording`, `LastMessage`, `LastError`. `Reset()` abandons any pending command (and pending work) and returns to Normal mode;
-`Detach()` releases host and buffer; `Dispose()` does both.
+**Adapter tests** (`tests/CsCode.App.Tests/RealApp/Vim`, the real composition, real key events into the real window): editing matrix (motions
+with counts, operators and text objects, Visual char/line/block with block insert/append, `.`, `u`/`Ctrl-R` against the editor's Undo/Redo and the
+dirty marker, registers and `+`/`*`, `/ n N` with highlights, `:s///c`, macros incl. recursive, mode labels/showcmd/caret shapes, IME text, scrolling
+and folds), shell (`:w :e :b :ls :q :q!`, language keys through a fake provider, on/off live, Ctrl-key ownership and app chords, `vim.handleKeys`),
+IntelliSense and snippets in Insert mode, mouse selection, a cross-check of 72 table cases (four per group of eighteen) against the headless engine
+and the Neovim-blessed expectations, a 300-editor open/edit/close retention test, view eviction with history kept, registers across restarts and
+`vim.vimrc.path`, typing latency on vs off and `:g` over 20k lines in slices.
 
 ## Threading and isolation (ARCHITECTURE section 6)
 
@@ -72,26 +154,28 @@ Events: `ModeChanged`, `MessageChanged`, `RecordingChanged`, `SearchChanged`, `P
 
 | Setting | Default | Notes |
 |---|---|---|
-| `vim.enabled` | `false` | master switch; `vim.toggle/enable/disable` change it for the session |
+| `vim.enable` | `true` | master switch (`vim.enabled` is the older spelling: Vim is off when either is false); `vim.toggle/enable/disable` change it for the session |
 | `vim.useSystemClipboard` | `false` | unnamed register uses the host clipboard |
 | `vim.leader` | `"\\"` | `<leader>` in bindings (vimrc: `let mapleader=`) |
 | `vim.hlsearch` / `incsearch` / `ignorecase` / `smartcase` / `wrapscan` | `false/true/true/true/true` | VSCodeVim's defaults; plain Vim defaults apply when no settings service is used |
 | `vim.startInInsertMode` | `false` | new engines start in Insert mode |
 | `vim.timeout` | `1000` | `timeoutlen` in ms (a boolean turns `timeout` on/off) |
-| `vim.handleKeys` | `{}` | `{"<C-c>": false}` passes that key to the editor |
+| `vim.handleKeys` | `{}` | `{"<C-c>": false}` passes that key to the editor, `true` gives it to Vim (see [Using Vim](#using-vim-in-cscode)) |
 | `vim.{normal,insert,visual,operatorPending,commandLine}ModeKeyBindings` and `...NonRecursive` | `[]` | `{"before": ["j","j"], "after": ["<Esc>"], "commands": [{"command": "...", "args": []}]}`; a command starting with `:` is an Ex command |
 | `vim.cursorStylePerMode.{normal,insert,replace,visual,visualline,visualblock,operatorpending,commandline}` | block/line/underline/... | `block line underline block-outline line-thin underline-thin` |
 | `vim.autoSwitchInputMethod` | `{}` | accepted, ignored |
 | `vim.persistRegisters` | `true` | registers `a`-`z` (and so macros) are stored in `IStateStorage` under `vim.registers` |
 | `vim.maxRegisterChars` | `8000000` | register size cap |
-| `vim.vimrc.enable` / `vim.vimrc.path` | `true` / `""` | default file: `{UserDataDir}/vimrc` |
+| `vim.vimrc.enable` / `vim.vimrc.path` | `true` / `""` | default file: `{UserDataDir}/vimrc` (CsCode's own); `~/.vimrc` is read only when named here |
 | `vim.surround` `vim.commentary` `vim.sneak` `vim.easymotion` `vim.camelCaseMotion` `vim.argumentObjects` `vim.replaceWithRegister` `vim.highlightedyank` `vim.targets` | `true true false false false false false true false` | boolean or `{"enable": bool}`. Only surround and commentary are implemented; the others are parsed and stored for later |
 
 Changing a setting touches only what it names (a runtime `:set scrolloff=7` survives an unrelated settings change). Bindings from settings are
 replaced as a group; bindings from the vimrc are replaced when it is reloaded. The vimrc supports the Ex subset below (`set`, the `map` family, `let`,
 `source`, comments, `\` continuation lines); errors are collected (`IVimService.VimrcErrors`: `line 5: E492: ...`) and never fatal.
 
-Commands: `vim.toggle`, `vim.enable`, `vim.disable`, `vim.showCheatSheet` (writes the "Vim Cheat Sheet" output channel).
+Commands: `vim.toggle` (*Toggle Vim Mode*), `vim.enable`, `vim.disable`, `vim.showCheatSheet` (writes the "Vim Cheat Sheet" output channel).
+The adapter also syncs `tabstop`/`shiftwidth`/`expandtab` from the editor's tab settings when a view takes the keys (a `:set ts` lasts until
+then) and turns `autoindent` on before the vimrc is applied.
 
 ## What is supported
 
@@ -158,4 +242,11 @@ performance and memory budgets, threading and leak tests.
 * A few single-batch operations on 100k+ lines are not sliced and take longer than 50 ms in an unoptimised build: `:%normal ...` (~170 ms), `gU`/`>`/`J`/`gq` over the whole buffer (60-100 ms).
   `:g` with commands that move many lines (`:g/a/m0` on 100k lines) is quadratic in the line moves (it is bounded in memory but slow, seconds).
 * `:s///c` shows the result of every answer but the cursor/`.`-mark bookkeeping after `a`/`l` is only verified for the cases in the suite.
-* No `IVimHost` adapter exists yet (Editor/Shell step); `vim.enabled` defaults to false until the shell flips it.
+* **Split windows**: `:sp :vsp :new Ctrl-W s/v` call the shell's editor split, which currently throws inside Dock.Avalonia (the document well's
+  data template for editor tabs also matches the close-button presenters of Dock's tab strip, which then take an inactive tab's view host;
+  View > Split Editor Right fails the same way without Vim). `Ctrl-W h/j/k/l/w` work between groups once they exist. The adapter's split test is
+  skipped with this reason.
+* `:w {file}` writes the copy as UTF-8; a dot-repeat or macro replays typed text without the editor's auto-closing (see Integration).
+* A selection made with the keyboard by the editor itself (Shift+arrows when `vim.handleKeys` gives them to the editor) does not start Visual mode.
+* Engine slices are 3 ms of engine time; the editor's reaction to the atomic change of a slice comes on top (measured up to ~15 ms on a heavily
+  loaded machine for a slice of `:g` over 20k lines).

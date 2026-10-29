@@ -14,7 +14,7 @@ command palette, notifications, themes. It is the composition root of CsCode. Th
 Program -> App.axaml.cs -> AppSession -> AppStartup.BuildServicesAsync (pool thread) -> MainWindow(provider) (UI thread)
                                    |                                |
               AppServices.Build:                                    +-- ShellController.Initialize()  (before first frame, no I/O)
-              AddCsCodeCore/Platform/Lsp/Dap/Editor/Profiling       +-- ShellController.StartDeferredAsync()  (after first frame)
+              AddCsCodeCore/Platform/Lsp/Dap/Editor/Vim/Profiling   +-- ShellController.StartDeferredAsync()  (after first frame)
               + AddCsCodeShell (shell services, singletons)
               + configure?.Invoke(services)   <- dev host / tests replace anything here
               main window closed -> AppShutdown.RunAsync (bounded) -> lifetime.Shutdown
@@ -258,7 +258,11 @@ Contributed items (`IContributionRegistry.Of<MenuContribution>()`) feed the **Ex
 
 **Keyboard.** A tunnelling window handler maps key events to `KeyStroke` (VS Code names) and asks `IKeybindingService.Resolve`: matched binding runs the command asynchronously (never blocks the key),
 a chord prefix is swallowed and the status bar shows "(Ctrl+K) was pressed. Waiting for second key of chord...", unbound keys pass through to the focused control (typing is untouched),
-Esc or a 5 s timeout abandons a chord. A binding whose command **no module registered** (`ICommandService.Has`) counts as absent: the presets bind ids of modules that may not be composed
+Esc or a 5 s timeout abandons a chord. **Vim comes first in editors**: the window's tunnelling `KeyDown` and `TextInput` handlers offer every event
+to the `IShellKeyInterceptor` (the Vim adapter, `src/CsCode.App/Vim`, docs/VIM.md "Integration") before the pipeline; it takes only events of a
+focused editor with Vim on, never the second key of a pending chord, and decides key presses with `VimKeyPolicy` (Vim owns its Ctrl keys and Esc in
+Normal/Visual mode; `Ctrl+Shift+…`, `Alt+…`, F-keys, `Ctrl+S` and the other application keys keep working; `vim.handleKeys` overrides per key).
+What it passes through reaches the pipeline and the editor as before. A binding whose command **no module registered** (`ICommandService.Has`) counts as absent: the presets bind ids of modules that may not be composed
 (F3 `editor.action.nextMatchFindAction`, Ctrl+] `jumpToBracket`, Alt+F12 `peekDefinition`, Ctrl+\` terminal...), so a registered lower-precedence binding of the same keys runs instead, else the key
 reaches the focused control (F3 gets to the editor's own find); a chord prefix whose every continuation is unregistered is not a chord. Context keys (`ContextKeyTracker`): `editorTextFocus`, `editorHasSelection`, `editorReadonly`, `editorLangId`, `resourceExtname`, `resourceFilename`,
 `resourceScheme`, `explorerViewletFocus`, `listFocus`, `panelFocus`, `inputFocus`, `terminalFocus`, `inDebugMode`, `debugState`, `isMac/isLinux/isWindows`, `workspaceFolderCount`, `hasOpenEditors`,
@@ -305,7 +309,9 @@ reveal active file, `files.exclude`, watcher batches applied by diffing only the
 **Output** (channel dropdown, clear, shows the most recent 5,000 lines of a channel; the ring keeps 2 MB). **Find Results** (target of `cscode.references.show`; preview lines read lazily).
 
 **Status bar items owned by the shell:** Ln/Col, indent, encoding, EOL, language mode (picker), diagnostics counts (computed off-thread), memory (with UI stall counters in its tooltip), debug state, language-server status, notification bell.
-Other modules (Vim mode, remote indicator) register their own through `IStatusBarService`; text may use `$(icon-name)`.
+Other modules (Vim mode, remote indicator) register their own through `IStatusBarService`; text may use `$(icon-name)`. The Vim adapter's items:
+`vim.mode` (`-- INSERT --`, `recording @q`), `vim.cmdline` (the `:` `/` `?` command line with its cursor, or Vim's last message), `vim.showcmd`
+(pending keys), all leftmost, and `vim.toggle` on the right (*Vim* / *Vim: Off*, runs Toggle Vim Mode); all but the toggle disappear when Vim is off.
 
 ### Commands registered by the shell
 

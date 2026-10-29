@@ -25,6 +25,18 @@ dedicated I/O thread, `FswFileWatcher`, `InMemoryConfiguration`, `EditorConfigRe
 Contract additions (additive only — no existing member was renamed or removed): `IEditorViewFactory.DisposeView`; `IEditorViewController.GetViewState`,
 `RestoreViewState`, `GetBreadcrumbsAsync`, `IsFocused`; the `EditorViewState` record. **No change was made to CsCode.Core.**
 
+**Modal editing surface (for the shell's Vim adapter).** `CodeEditorControl.Modal` (`EditorModalSurface`, created on first use, disposed with the
+view) is a Vim-free hook surface: the typing path (`TypeText` = `TextArea.PerformTextInput`), `CaretShape` (block / underline / outline / thin
+shapes drawn on the caret layer while the native caret is transparent), stream / whole-line / rectangular selections, viewport queries and
+`ScrollToTopLine`, folds by line (`TryGetClosedFold`, `Fold`), the state of the completion list, parameter hints and snippet session (and moving
+or closing them), a search-pattern highlight over the visible lines and a flash highlight, comment tokens, range formatting. Between `Attach` and
+`Detach` the editor's Undo/Redo (controller, so menus, toolbar and key bindings) are offered to the layer first, and typing never continues an
+undo group the layer closed. `EditorDocument` adds `BeforeChange` (each change's range before the buffer mutates, so the replaced lines can be
+read), `BeginUndoGroup`/`EndUndoGroup`/`AddUndoMarker` (one undo step per Vim change, with a marker reporting undo/redo of the group) and
+`BeginAtomic`/`EndAtomic` (one change event for a burst of edits); `EditorViewFactory` raises `ViewOpened`/`ViewClosing` (the latter first thing in
+`DisposeView`). Key routing is the shell's: the window offers editor keys to Vim before the key bindings (docs/SHELL.md, "Keyboard"), and keys Vim
+passes through reach the editor unchanged.
+
 What the shell must know:
 
 * **Destroy and recreate views of inactive tabs** with `GetViewState()` → `DisposeView(view)` → later `CreateView` + `RestoreViewState(state)`. The view owns nothing
@@ -165,7 +177,8 @@ Debug build, shared 22-core Linux machine; ranges are the spread of repeated run
 `cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB).
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
-`sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.startFindReplace`, `workbench.action.gotoLine`, `editor.action.triggerSuggest`, `triggerParameterHints`, `quickFix`, `organizeImports`, `revealDefinition`, `goToDeclaration`, `goToTypeDefinition`,
+`sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.showHover` (at the caret),
+`editor.action.marker.next`/`marker.prev` (next / previous problem, wrapping; the caret goes there and the hover shows it), `editor.action.startFindReplace`, `workbench.action.gotoLine`, `editor.action.triggerSuggest`, `triggerParameterHints`, `quickFix`, `organizeImports`, `revealDefinition`, `goToDeclaration`, `goToTypeDefinition`,
 `goToImplementation`, `goToReferences`, `rename`, `formatDocument`, `formatSelection`, `editor.fold`, `foldRecursively`, `unfold`, `unfoldRecursively`, `toggleFold`, `foldAll`, `unfoldAll`, `editor.action.insertSnippet`, `editor.debug.action.toggleBreakpoint`.
 
 **Large-file mode**: above `cscode.editor.largeFileThresholdBytes` (default 5 MB) or with a line longer than 20,000 characters the document's language is forced to `plaintext`, and its views get no tokenisation, folding, squiggles, bracket matching or any other language feature (just text); files over 200 MB are refused with a clear `FileTooLargeException` message.
