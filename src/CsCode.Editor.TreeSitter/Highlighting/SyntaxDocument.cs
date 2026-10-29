@@ -430,12 +430,13 @@ public sealed unsafe class SyntaxDocument : IDisposable
             AddRange(site, ns, ne);
             return;
         }
-        // everything of the node except its children (all of them, named or not, as tree-sitter-highlight does)
+        // everything of the node except its NAMED children (Neovim's rule, which its injection queries are written for; tree-sitter-highlight
+        // also cuts out anonymous children, which would leave nothing of e.g. Markdown's (inline) nodes)
         var from = ns;
-        var count = TsApi.ts_node_child_count(node);
+        var count = TsApi.ts_node_named_child_count(node);
         for (uint i = 0; i < count; i++)
         {
-            var child = TsApi.ts_node_child(node, i);
+            var child = TsApi.ts_node_named_child(node, i);
             var cs = (int)(TsApi.ts_node_start_byte(child) / 2);
             var ce = (int)(TsApi.ts_node_end_byte(child) / 2);
             if (cs > from) AddRange(site, from, Math.Min(cs, ne));
