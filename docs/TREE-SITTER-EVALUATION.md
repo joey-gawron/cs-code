@@ -10,7 +10,7 @@ language server (§7). Nothing switches without the user's OK; the default stays
 
 Everything below was measured on this machine with what is installed (libtree-sitter 0.26.11, the grammar packages and nvim-treesitter's
 queries in the Nix store, read-only). **All performance numbers are PROVISIONAL**: they were taken while five other agents loaded the 22-core
-machine (1-minute load average 9–33, recorded next to every number in the raw results). `tools/bench-treesitter.sh` repeats the whole set in
+machine (1-minute load average 5–34, recorded next to every number in the raw results and in the tables). `tools/bench-treesitter.sh` repeats the whole set in
 one command; the integrator should re-run it on a quiet machine and replace the tables in §4.
 
 Contents: [1 Recommendation](#1-recommendation) · [2 The prototype](#2-the-prototype) · [3 Quality](#3-quality) ·
@@ -23,7 +23,7 @@ Contents: [1 Recommendation](#1-recommendation) · [2 The prototype](#2-the-prot
 
 | Option | Verdict | Why |
 |---|---|---|
-| **Switch** (tree-sitter for everything, drop TextMate) | **No** | A native grammar per language per platform must be built, licence-checked and shipped for every language (§8); first colours of a big file wait for a whole-document parse (§4: 1 MB of C# ≈ 2 s here, TextMate colours the viewport in milliseconds); C#'s grammar is the slowest one measured, C# is the editor's main language, and **one valid C# 11 construct the grammar does not know (`['f', .. var n]`, used in this repository) turns the rest of the file into an error region: on 116 K characters the parse becomes 46× slower and a keystroke's reparse 1,000× slower (5 ms → 5 s)** (§4 B1c). |
+| **Switch** (tree-sitter for everything, drop TextMate) | **No** | A native grammar per language per platform must be built, licence-checked and shipped for every language (§8); first colours of a big file wait for a whole-document parse (§4 B2: 0.7 s for 1 MB of C#, 5 s for 10 MB, where TextMate colours the viewport in 0.2–0.5 s); C#'s grammar is the slowest one measured, C# is the editor's main language, and **one valid C# 11 construct the grammar does not know (`['f', .. var n]`, used in this repository) turns the rest of the file into an error region: on 116 K characters the parse becomes 46× slower and a keystroke's reparse 1,000× slower (5 ms → 5 s)** (§4 B1c). |
 | **Hybrid** (tree-sitter where a grammar is installed and enabled, TextMate otherwise) | **Yes — staged** | Same token rows, same themes, same features: the prototype proves the engines are interchangeable per document with zero per-theme work (§6). Tree-sitter colours structure TextMate's regexes cannot see (types, properties, namespaces, calls — closer to what VS Code shows with semantic tokens), handles injections well (Markdown fences, HTML script/style, §3), parses and highlights a whole 1 MB file 3–17× faster than TextMate tokenises it (§4 B1b), and grammars + queries for **all 17 languages CsCode cannot colour today** are on this machine and compile with the prototype (test `Grammars_for_the_languages_TextMate_cannot_highlight_load_and_compile`). |
 | **Stay** (TextMate only) | No | Leaves the 17 languages uncoloured unless third-party TextMate grammars are downloaded (one licence check per file), and leaves the structural features in §7 to language servers. |
 
@@ -102,27 +102,97 @@ each language's VS Code TextMate grammar and can be tuned further.
 
 ## 4. Performance and memory
 
-**PROVISIONAL — loaded machine (22 cores, load average 9–33 from five other agents; the value at each measurement is in the raw file).**
+**PROVISIONAL — loaded machine (22 cores, load average 5–34 from five other agents; the value at each measurement is in the raw files).**
 Release build, `tools/bench-treesitter.sh`, raw results: `.scratch/bench/treesitter-<run>.md`. TextMate here is TextMateSharp 2.0.3 with
 Oniguruma, exactly as the editor runs it; tree-sitter is libtree-sitter 0.26.11 with the nvim-treesitter-pinned grammars and queries.
 
-BENCH-TABLES
+Raw files of the runs used here (all `.scratch/bench/`, git-ignored): `treesitter-20261029-155236.md` (B1b, B4 timing),
+`-161844` (B1c), `-162128` (B1), `-164459` (B2/B3), `-164127` (B4 memory), `-164321` (B5 memory), `-163922` (B5 timing, tree-sitter).
+
+**B1 — whole document, real C# (this repository's sources, files the grammar cannot parse left out), outside the editor.**
+
+| | 1 MB | 10 MB | 100 MB |
+|---|---:|---:|---:|
+| tree-sitter full parse | 0.59 s | 14.2 s | 134 s |
+| tree-sitter highlight one 60-line viewport (at 5 % / 50 % / 95 %) | 1.6 / 1.5 / 2.2 ms | 5.6 / 30 / 4.3 ms | 3.5 / 1.8 / 2.5 ms |
+| tree-sitter incremental reparse after one keystroke (median of 3) | 4.7 ms | 98 ms | 0.9 s |
+| tree-sitter tree, C-heap delta (≈ bytes per character) | 39 MB (39) | 356 MB (36) | 3.5 GB (35) |
+| TextMate tokenise everything | 12.4 s | 88 s | ≈ 25 min (extrapolated from 4 % in 60 s) |
+| TextMate `LineTokenStore` for everything (≈ bytes per character) | 2.7 MB (2.7) | 25 MB (2.5) | ≈ 1.7 GB |
+| load average during the row | 11–13 | 12–23 | 26–34 |
+
+**B1b — 1 MB of each evaluated language (its sample repeated): tree-sitter parse + highlight everything vs TextMate tokenise everything.**
+
+| language | tree-sitter parse | tree-sitter highlight all (incl. injections) | TextMate tokenise all | TextMate / tree-sitter |
+|---|---:|---:|---:|---:|
+| C# | 1.41 s | 1.24 s | 29.4 s | 11× |
+| TypeScript | 0.43 s | 0.89 s | 16.9 s | 13× |
+| TSX | 0.80 s | 2.88 s | 25.7 s | 7× |
+| Rust | 0.48 s | 0.96 s | 8.8 s | 6× |
+| Python | 0.52 s | 0.98 s | 19.3 s | 13× |
+| Markdown (+ inline, fences) | 1.59 s | 3.02 s | 12.5 s | 2.7× |
+| C++ | 0.82 s | 0.86 s | 27.8 s | 17× |
+| HTML (+ JS/CSS) | 0.16 s | 1.81 s | 11.5 s | 6× |
+
+(load average 13–27 during these rows.)
+
+**B1c — one construct the C# grammar does not parse** (a C# 11 list pattern `['f', .. var n]` at the top of trivial C#; each parse capped at 120 s).
+
+| | 115 K characters | 1.2 M characters |
+|---|---:|---:|
+| full parse, without the construct | 0.16 s | 1.9 s |
+| full parse, WITH it | 7.6 s (46×) | > 120 s (capped; an uncapped run took 557 s) |
+| reparse after one keystroke, without | 5 ms | 83 ms |
+| reparse after one keystroke, WITH it | 5.1 s (1,000×) | — |
+
+**B2/B3 — in the editor** (real views, headless; a warm-up document first; for 10 MB the large-file and long-line limits and the give-up
+guard are lifted, which the product does not do).
+
+| | 1 MB TextMate | 1 MB tree-sitter | 10 MB TextMate | 10 MB tree-sitter |
+|---|---:|---:|---:|---:|
+| open → view laid out | 161 ms | 212 ms | 526 ms | 683 ms |
+| open → **first coloured viewport** | **161 ms** | **733 ms** | **527 ms** | **5.1 s** |
+| keystroke → viewport re-coloured on the worker, p50 / p99 | 19 / 75 ms | **8.7 / 12.6 ms** | 144 / 185 ms | 162 / 194 ms |
+| keystroke handling on the UI thread, p50 / p99 (AvaloniaEdit's own cost dominates) | 1.2 / 4.4 ms | 1.8 / 8.4 ms | 5.9 / 33 ms | 6.5 / 35 ms |
+| editor-worker jobs over 10 ms during the scenario / longest job | 43 / 98 ms | 14 / 38 ms | 82 / 50 ms | 132 / 76 ms |
+| `LineTokenStore` (viewport + read-ahead) | 0.70 MB | 0.91 MB | 6.4 MB | 6.6 MB |
+| syntax tree (native, B1 C-heap figure) | — | ≈ 39 MB | — | ≈ 356 MB |
+
+(load average 5.4–6.4 during this run — the quietest of the session.)
+
+**B4 — memory per open document** (20 documents × 99 K characters of C#, one view each, every line tokenised by both engines).
+
+| per document | TextMate | tree-sitter |
+|---|---:|---:|
+| managed heap (incl. the AvaloniaEdit view and, for TextMate, its rule-stack checkpoints) | 7.4 MB | 3.2 MB |
+| tree-sitter native (counted by the allocator) | — | 3.5 MB |
+| `LineTokenStore` | 317 KB | 241 KB |
+| total | ≈ 7.4 MB | ≈ 6.7 MB |
+
+**B5 — soak:** 300 documents (the 8 samples, 6–20 K characters), each opened with a view, 5 keystrokes, the view destroyed, all closed at the
+end: tree-sitter native memory peaked at 0.6 MB (trees are released with their last view) and ended 0.4 MB above the start (the per-language
+injection parsers and query cursors the registry keeps); every session was closed (asserted). Managed deltas are dominated by which engine
+ran first in the process (grammar caches, JIT): not comparable between engines here. 300 documents took 23 s (tree-sitter) and 37 s
+(TextMate) with allocation tracking on.
 
 **Reading the numbers**
 
-* **Whole-document work:** tree-sitter parses + highlights a whole file far faster than TextMate tokenises it (B1b: 5–35×). TextMate never
-  does whole-document work up front: it colours the viewport first and reads ahead in the background, which is why its *first paint* is
-  instant. Tree-sitter must parse the whole document before the first colour (C#: ~2 s per MB here; ~0.3–0.7 s per MB for Rust, TSX,
-  TypeScript, Python, Markdown, C++, HTML). For files up to a few hundred KB that is invisible; for a 1 MB C# file it is two seconds of plain text.
-  A production engine should keep TextMate (or the previous tokens) on screen until the first parse completes.
-* **Typing:** the UI thread does the same for both engines (record the edit, return). Keystroke → re-coloured viewport on the worker is the
-  incremental parse + one viewport query; for C# it is in the tens of milliseconds on 1 MB under this load, TextMate's checkpointed
-  re-tokenisation is cheaper per keystroke. Both are off the UI thread and below the user-visible threshold; neither touches the dispatcher budget.
-* **Memory:** a syntax tree costs native memory proportional to the whole document (≈ 12–20 bytes per source character for these grammars),
-  where TextMate's token store holds only what has been tokenised (viewport + read-ahead). Per open 100 KB document tree-sitter costs ~1.2 MB
-  of native memory more; trees are released with the last view (tested) and rebuilt by a full parse when the document is shown again.
-* **Large files:** both engines are off in large-file mode (> 5 MB) today. The 10 MB rows (threshold raised for the benchmark) show tree-sitter
-  could *not* lift that limit for C# (first parse tens of seconds), but would for faster grammars only with a "TextMate first, tree-sitter later" hand-off.
+* **Whole-document work:** tree-sitter parses and highlights a whole file 3–17× faster than TextMate tokenises it (B1b; TextMateSharp with
+  Oniguruma manages only ~0.05–0.1 M characters/s here). But TextMate never does whole-document work up front: it colours the viewport
+  first and reads ahead in the background, so its **first paint is immediate**, while tree-sitter must parse the whole document before the
+  first colour: 0.7 s for 1 MB of C#, 5 s for 10 MB (B2). Below a few hundred KB (almost every real file) the difference is invisible; above,
+  a production engine should keep TextMate's colours (or the previous tokens) on screen until the first parse completes.
+* **Typing:** the UI thread does the same for both engines (record the edit, return); its cost is AvaloniaEdit's. Keystroke → re-coloured
+  viewport on the worker is the incremental parse + one viewport query: **faster than TextMate at 1 MB** (p50 8.7 ms vs 19 ms, p99 12.6 vs
+  75 ms) and equal at 10 MB (~160–190 ms for both). Both stay off the UI thread; neither touches the dispatcher budget.
+* **Memory:** a syntax tree costs native memory for the whole document, ≈ 35–39 bytes per source character (B1), where TextMate's token store
+  is ≈ 2.5 bytes per character but only for what has been tokenised. Per open 100 K-character document the totals are similar (B4: TextMate
+  7.4 MB managed — its rule-stack checkpoints are big; tree-sitter 3.2 MB managed + 3.5 MB native). Trees are released with the last view
+  (tested; B5 peaked at 0.6 MB of native memory over 300 documents) and rebuilt by a full parse when the document is shown again.
+* **Large files:** both engines are off in large-file mode (> 5 MB, or a line over 20,000 characters) today. With the limits lifted, 10 MB
+  of C# takes 5 s (quiet machine) to 14 s (loaded) before tree-sitter shows a colour and the tree holds ~350 MB; 100 MB takes over two
+  minutes and 3.5 GB. Tree-sitter does not make the large-file mode unnecessary.
+* **Robustness:** B1c — syntax the grammar does not know can make parsing pathological; the prototype bounds it (5 s give-up guard).
 
 ## 5. Threading
 
