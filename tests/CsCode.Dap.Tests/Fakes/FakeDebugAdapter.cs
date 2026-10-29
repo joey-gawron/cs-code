@@ -110,6 +110,7 @@ public sealed class FakeDebugAdapter : IAsyncDisposable
     private readonly List<FakeRequest> _received = new();
     private readonly Dictionary<string, Func<FakeRequest, Task<object?>>> _handlers = new(StringComparer.Ordinal);
     private readonly HashSet<string> _stalled = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Func<Task>> _after = new(StringComparer.Ordinal);
     private readonly Dictionary<int, TaskCompletionSource<JsonElement>> _reverseResponses = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _cts = new();
@@ -166,6 +167,8 @@ public sealed class FakeDebugAdapter : IAsyncDisposable
 
     public void On(string command, Func<FakeRequest, object?> handler) => _handlers[command] = r => Task.FromResult(handler(r));
     public void OnAsync(string command, Func<FakeRequest, Task<object?>> handler) => _handlers[command] = handler;
+    /// <summary>Runs right after the response to <paramref name="command"/> is on the wire (events that must FOLLOW a response).</summary>
+    public void AfterResponse(string command, Func<Task> action) => _after[command] = action;
     public void Stall(string command) { lock (_gate) _stalled.Add(command); }
     public void Unstall(string command) { lock (_gate) _stalled.Remove(command); }
     public void DelayAllResponses(int milliseconds) => Volatile.Write(ref _pendingResponseDelayMs, milliseconds);
@@ -350,6 +353,7 @@ public sealed class FakeDebugAdapter : IAsyncDisposable
 
     private async Task AfterResponseAsync(FakeRequest req)
     {
+        if (_after.TryGetValue(req.Command, out var hook)) await hook();
         switch (req.Command)
         {
             case "initialize" when InitializedAfterInitialize && !NeverSendInitialized:
