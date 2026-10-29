@@ -132,6 +132,9 @@ public sealed unsafe class SyntaxDocument : IDisposable
 
     public int LastParseSlices { get; private set; }
 
+    /// <summary>Halted parses that were thrown away because the text changed under them (stale parses cancelled, not finished).</summary>
+    public int AbandonedParses { get; private set; }
+
     /// <summary>Approximate native bytes held by the tree (tree-sitter has no exact per-tree accounting: node count × 48 B, calibrated in the benchmark).</summary>
     public long EstimatedTreeBytes => _tree == IntPtr.Zero ? 0 : TsApi.ts_node_descendant_count(TsApi.ts_tree_root_node(_tree)) * 48L;
 
@@ -671,6 +674,7 @@ public sealed unsafe class SyntaxDocument : IDisposable
     private void AbandonParse()
     {
         if (!_parsing) return;
+        AbandonedParses++;
         TsApi.ts_parser_reset(_parser);
         FreeInput();
         _parsing = false;

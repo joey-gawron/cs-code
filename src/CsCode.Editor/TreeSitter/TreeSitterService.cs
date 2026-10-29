@@ -49,6 +49,9 @@ internal sealed class TreeSitterService : IDisposable
     public bool IsEnabledFor(string languageId) =>
         TreeSitterLanguages.GrammarFor(languageId) is not null && _services.Config.GetOr(SettingKey, languageId, false);
 
+    /// <summary>Tests: where grammars are looked up (set before the first document uses tree-sitter). Default: the user's folder, the environment, the Nix store.</summary>
+    internal GrammarLocator? LocatorOverride { get; set; }
+
     /// <summary>Worker only. The registry (created, and the runtime loaded, on first use).</summary>
     public GrammarRegistry Registry
     {
@@ -57,7 +60,7 @@ internal sealed class TreeSitterService : IDisposable
             if (_registry is not null) return _registry;
             var userDir = _services.AppPaths?.UserDataDir is { } d ? Path.Combine(d, "tree-sitter") : null;
             TsRuntime.Load(userDir is null ? null : [userDir, Path.Combine(userDir, "lib")]);
-            var locator = new GrammarLocator(GrammarLocator.DefaultRoots(userDir is null ? null : Path.Combine(userDir, "grammars")));
+            var locator = LocatorOverride ?? new GrammarLocator(GrammarLocator.DefaultRoots(userDir is null ? null : Path.Combine(userDir, "grammars")));
             return _registry = new GrammarRegistry(locator, TreeSitterLanguages.RootScopeFor);
         }
     }

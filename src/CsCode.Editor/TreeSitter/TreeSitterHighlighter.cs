@@ -98,6 +98,9 @@ internal sealed class TreeSitterHighlighter : IDisposable
     public TimeSpan LastHighlightTime { get; private set; }
     public int CompletedParses { get; private set; }
 
+    /// <summary>The managed thread that ran the last slice (tests prove it is the editor worker, never the UI thread).</summary>
+    public int LastSliceThreadId { get; private set; }
+
     /// <summary>Worker only. Null (and the reason logged once by the service) when tree-sitter cannot handle the language here.</summary>
     public static TreeSitterHighlighter? TryCreate(TreeSitterService service, string languageId, int generation)
     {
@@ -119,6 +122,7 @@ internal sealed class TreeSitterHighlighter : IDisposable
     public void RunSlice(TokenizationSession session)
     {
         if (_disposed) return;
+        LastSliceThreadId = Environment.CurrentManagedThreadId;
         var store = session.Store;
         var snap = session.Document.Snapshot();
         if (store.Version != snap.Version || store.LineCount != snap.LineCount) return; // the UI's Changed handler schedules the next slice
