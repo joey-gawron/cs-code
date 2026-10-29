@@ -178,6 +178,25 @@ public sealed class SessionProcessHarness : IDisposable
         return ticks / 100.0; // USER_HZ
     }
 
+    /// <summary>CPU seconds and name of each thread of a process (Linux), to tell what a process that should be idle is doing.</summary>
+    public static IReadOnlyDictionary<int, (string Name, double Seconds)> ThreadCpu(int pid)
+    {
+        var result = new Dictionary<int, (string, double)>();
+        foreach (var dir in Directory.EnumerateDirectories($"/proc/{pid}/task"))
+        {
+            try
+            {
+                var tid = int.Parse(Path.GetFileName(dir), System.Globalization.CultureInfo.InvariantCulture);
+                var stat = File.ReadAllText(Path.Combine(dir, "stat"));
+                var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+                var ticks = long.Parse(fields[11], System.Globalization.CultureInfo.InvariantCulture) + long.Parse(fields[12], System.Globalization.CultureInfo.InvariantCulture);
+                result[tid] = (File.ReadAllText(Path.Combine(dir, "comm")).Trim(), ticks / 100.0);
+            }
+            catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException) { }
+        }
+        return result;
+    }
+
     public void KillProcessesOfThisHome()
     {
         foreach (var pid in ProcessesOfThisHome())

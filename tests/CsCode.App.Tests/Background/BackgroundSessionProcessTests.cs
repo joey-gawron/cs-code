@@ -245,10 +245,14 @@ public class BackgroundSessionProcessTests
         await Task.Delay(2000); // let the trim's own work finish
 
         var before = SessionProcessHarness.CpuSeconds(pid);
+        var threadsBefore = SessionProcessHarness.ThreadCpu(pid);
         await Task.Delay(TimeSpan.FromSeconds(30));
         var used = SessionProcessHarness.CpuSeconds(pid) - before;
+        var threadsAfter = SessionProcessHarness.ThreadCpu(pid);
+        var busiest = threadsAfter.Select(t => (t.Key, Seconds: t.Value.Seconds - (threadsBefore.TryGetValue(t.Key, out var b) ? b.Seconds : 0), t.Value.Name))
+            .Where(t => t.Seconds > 0).OrderByDescending(t => t.Seconds).Take(8).Select(t => $"{t.Name} ({t.Key}): {t.Seconds:0.00} s");
         TestContext.Current.SendDiagnosticMessage($"hidden session CPU over 30 s: {used:0.00} s ({used / 30 * 100:0.00} %)");
-        Assert.True(used / 30 < 0.01, $"a hidden session used {used:0.00} s of CPU in 30 s ({used / 30 * 100:0.0} %)");
+        Assert.True(used / 30 < 0.01, $"a hidden session used {used:0.00} s of CPU in 30 s ({used / 30 * 100:0.0} %); threads: {string.Join("; ", busiest)}");
     }
 
     [Fact]
