@@ -242,7 +242,9 @@ public class BackgroundSessionProcessTests
         var pid = Owner(h, "Idle").Pid;
         h.Must(pid, new IpcMessage { Type = IpcVerbs.Hide });
         Assert.True(await SessionProcessHarness.WaitUntilAsync(() => h.Inspect(pid).Trims >= 1, 20_000));
-        await Task.Delay(2000); // let the trim's own work finish
+        // Idle means steady state: let the trim's own work and the runtime's background JIT of what just ran (tier-1 recompiles on short-lived
+        // threads, which the per-thread report below cannot see once they exited) finish first; under machine load that takes seconds.
+        await Task.Delay(10_000);
 
         var before = SessionProcessHarness.CpuSeconds(pid);
         var threadsBefore = SessionProcessHarness.ThreadCpu(pid);
