@@ -85,15 +85,20 @@ internal sealed partial class LanguageClient
         if (!_ctx.Queue.Post(LanePriority.Background, DrainDiagnostics, exempt: true)) Volatile.Write(ref _diagScheduled, 0);
     }
 
+    // Single consumer: _diagScheduled stays set while a drain runs, so two lane threads can never apply batches out of order
+    // (an older value overwriting a newer one). Producers that arrive meanwhile are picked up by the re-check at the end.
     private void DrainDiagnostics()
     {
-        Volatile.Write(ref _diagScheduled, 0);
-        foreach (var (_, json) in _diagMailbox.Drain(64))
+        try
         {
-            if (Volatile.Read(ref _tornDown) != 0) return;
-            try { ProcessPublish(json); }
-            catch (Exception ex) when (ex is JsonException or InvalidOperationException) { _log.Add("[client] bad publishDiagnostics: " + ex.Message); }
+            foreach (var (_, json) in _diagMailbox.Drain(64))
+            {
+                if (Volatile.Read(ref _tornDown) != 0) return;
+                try { ProcessPublish(json); }
+                catch (Exception ex) when (ex is JsonException or InvalidOperationException) { _log.Add("[client] bad publishDiagnostics: " + ex.Message); }
+            }
         }
+        finally { Volatile.Write(ref _diagScheduled, 0); }
         if (_diagMailbox.HasItems) ScheduleDiagnosticsDrain();
     }
 
@@ -234,7 +239,14 @@ internal sealed partial class LanguageClient
 
     private void DrainProgress()
     {
-        Volatile.Write(ref _progressScheduled, 0);
+        try { DrainProgressCore(); }
+        finally { Volatile.Write(ref _progressScheduled, 0); } // single consumer: begin/report/end must never be applied out of order
+        if (_progressQueue.HasItems && Interlocked.Exchange(ref _progressScheduled, 1) == 0 && !_ctx.Queue.Post(LanePriority.Idle, DrainProgress, exempt: true))
+            Volatile.Write(ref _progressScheduled, 0);
+    }
+
+    private void DrainProgressCore()
+    {
         var batch = _progressQueue.Drain(512);
         var lastReport = new Dictionary<string, int>();
         for (var i = 0; i < batch.Count; i++)
@@ -253,7 +265,6 @@ internal sealed partial class LanguageClient
                     break;
             }
         }
-        if (_progressQueue.HasItems && Interlocked.Exchange(ref _progressScheduled, 1) == 0) _ctx.Queue.Post(LanePriority.Idle, DrainProgress, exempt: true);
     }
 
     private void BeginProgress(string token, JsonElement value)

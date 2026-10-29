@@ -1,0 +1,7089 @@
+# ex: ranges, :d :y :pu :m :t :j :> :< :undo :k :mark, :g/:v, :normal, :let, :set, error codes
+=== ex-001
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-002
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2d<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-003
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3d<CR>
+< one
+< ‸four
+< five
+
+=== ex-004
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%d<CR>
+< ‸
+
+=== ex-005
+> ‸one
+> two
+> three
+> four
+> five
+keys: :$d<CR>
+< one
+< two
+< three
+< ‸four
+
+=== ex-006
+> ‸one
+> two
+> three
+> four
+> five
+keys: :.,+1d<CR>
+< ‸three
+< four
+< five
+
+=== ex-007
+> ‸one
+> two
+> three
+> four
+> five
+keys: :.,$d<CR>
+< ‸
+
+=== ex-008
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,3d<CR>p
+< four
+< ‸one
+< two
+< three
+< five
+
+=== ex-009
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3d x<CR>"xp
+< one
+< four
+< ‸two
+< three
+< five
+
+=== ex-010
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d x<CR>"xp
+< two
+< ‸one
+< three
+< four
+< five
+
+=== ex-011
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d X<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-012
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2d<CR>u
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-013
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2d<CR>u<C-r>
+< one
+< ‸three
+< four
+< five
+
+=== ex-014
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3d<CR>.
+< one
+< ‸four
+< five
+
+=== ex-015
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3d<CR>j.
+< one
+< four
+< ‸five
+
+=== ex-016
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2;+1d<CR>
+< one
+< ‸four
+< five
+
+=== ex-018
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,+1d<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-019
+> ‸one
+> two
+> three
+> four
+> five
+keys: :/three/d<CR>
+< one
+< two
+< ‸four
+< five
+
+=== ex-020
+> ‸one
+> two
+> three
+> four
+> five
+keys: :/three/,/five/d<CR>
+< one
+< ‸two
+
+=== ex-021
+> ‸one
+> two
+> three
+> four
+> five
+keys: :/three/;+1d<CR>
+< one
+< two
+< ‸five
+
+=== ex-022
+> ‸one
+> two
+> three
+> four
+> five
+keys: :?two?d<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-023
+> ‸one
+> two
+> three
+> four
+> five
+keys: G:?two?d<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-024
+> ‸one
+> two
+> three
+> four
+> five
+keys: G:?two?,.d<CR>
+< ‸one
+
+=== ex-025
+> ‸one
+> two
+> three
+> four
+> five
+keys: :/t/d<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-026
+> ‸one
+> two
+> three
+> four
+> five
+keys: :/t/;/t/d<CR>
+< one
+< ‸four
+< five
+
+=== ex-027
+> ‸one
+> two
+> three
+> four
+> five
+keys: :/t/,/t/d<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-028
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,/four/d<CR>
+< one
+< ‸five
+
+=== ex-029
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2d 2<CR>
+< one
+< ‸four
+< five
+
+=== ex-030
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2d3<CR>
+< one
+< ‸five
+
+=== ex-031
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d 2<CR>
+< ‸three
+< four
+< five
+
+=== ex-032
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d 9<CR>
+< ‸
+
+=== ex-033
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3d 2<CR>
+< one
+< two
+< ‸five
+
+=== ex-034
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d _<CR>p
+< ‸three
+< four
+< five
+
+=== ex-035
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d_<CR>p
+< ‸two
+< three
+< four
+< five
+
+=== ex-036
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d a<CR>:d b<CR>"ap"bp
+< three
+< one
+< ‸two
+< four
+< five
+
+=== ex-037
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y<CR>P
+< ‸two
+< three
+< one
+< two
+< three
+< four
+< five
+
+=== ex-038
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y<CR>Gp
+< one
+< two
+< three
+< four
+< five
+< ‸two
+< three
+
+=== ex-039
+> ‸one
+> two
+> three
+> four
+> five
+keys: :y<CR>P
+< ‸one
+< one
+< two
+< three
+< four
+< five
+
+=== ex-040
+> ‸one
+> two
+> three
+> four
+> five
+keys: :$y<CR>P
+< ‸five
+< one
+< two
+< three
+< four
+< five
+
+=== ex-041
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%y<CR>P
+< ‸one
+< two
+< three
+< four
+< five
+< one
+< two
+< three
+< four
+< five
+
+=== ex-042
+> ‸one
+> two
+> three
+> four
+> five
+keys: :y a<CR>"aP
+< ‸one
+< one
+< two
+< three
+< four
+< five
+
+=== ex-043
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2y A<CR>:3y A<CR>"aP
+< ‸two
+< three
+< one
+< two
+< three
+< four
+< five
+
+=== ex-044
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y x<CR>G"xp
+< one
+< two
+< three
+< four
+< five
+< ‸two
+< three
+
+=== ex-045
+> ‸one
+> two
+> three
+> four
+> five
+keys: :y 2<CR>P
+< ‸one
+< two
+< one
+< two
+< three
+< four
+< five
+
+=== ex-046
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2y 3<CR>P
+< ‸two
+< three
+< four
+< one
+< two
+< three
+< four
+< five
+
+=== ex-047
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y<CR>:0pu<CR>
+< two
+< ‸three
+< one
+< two
+< three
+< four
+< five
+
+=== ex-048
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y<CR>:$pu<CR>
+< one
+< two
+< three
+< four
+< five
+< two
+< ‸three
+
+=== ex-049
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y<CR>:pu<CR>
+< one
+< two
+< ‸three
+< two
+< three
+< four
+< five
+
+=== ex-050
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y<CR>:pu!<CR>
+< two
+< ‸three
+< one
+< two
+< three
+< four
+< five
+
+=== ex-051
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y<CR>:3pu<CR>
+< one
+< two
+< three
+< two
+< ‸three
+< four
+< five
+
+=== ex-052
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y<CR>:3pu!<CR>
+< one
+< two
+< two
+< ‸three
+< three
+< four
+< five
+
+=== ex-053
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y<CR>:0pu!<CR>
+< two
+< ‸three
+< one
+< two
+< three
+< four
+< five
+
+=== ex-054
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2y<CR>:pu<CR>:pu<CR>
+< one
+< two
+< ‸two
+< two
+< three
+< four
+< five
+
+=== ex-055
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2y a<CR>:4pu a<CR>
+< one
+< two
+< three
+< four
+< ‸two
+< five
+
+=== ex-056
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2y a<CR>:4pu! a<CR>
+< one
+< two
+< three
+< ‸two
+< four
+< five
+
+=== ex-057
+> ‸one
+> two
+> three
+> four
+> five
+keys: :pu a<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-058
+> ‸one
+> two
+> three
+> four
+> five
+keys: :pu<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-059
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2y a<CR>:pu a<CR>u
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-060
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2y a<CR>:pu a<CR>u<C-r>
+< ‸one
+< two
+< two
+< three
+< four
+< five
+
+=== ex-061
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2y a<CR>:pu a<CR>.
+< one
+< ‸two
+< two
+< three
+< four
+< five
+
+=== ex-062
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2y<CR>:pu<CR>`[
+< one
+< ‸two
+< two
+< three
+< four
+< five
+
+=== ex-063
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2y<CR>:pu<CR>`]
+< one
+< tw‸o
+< two
+< three
+< four
+< five
+
+=== ex-064
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2y<CR>:pu<CR>'.
+< one
+< ‸two
+< two
+< three
+< four
+< five
+
+=== ex-065
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y<CR>:pu<CR>`[
+< one
+< ‸two
+< three
+< two
+< three
+< four
+< five
+
+=== ex-066
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3y<CR>:pu<CR>`]
+< one
+< two
+< thre‸e
+< two
+< three
+< four
+< five
+
+=== ex-067
+> ‸one
+> two
+> three
+> four
+> five
+keys: :m0<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-068
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2m0<CR>
+< ‸two
+< one
+< three
+< four
+< five
+
+=== ex-069
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3m0<CR>
+< two
+< ‸three
+< one
+< four
+< five
+
+=== ex-070
+> ‸one
+> two
+> three
+> four
+> five
+keys: :m$<CR>
+< two
+< three
+< four
+< five
+< ‸one
+
+=== ex-071
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2m$<CR>
+< one
+< three
+< four
+< five
+< ‸two
+
+=== ex-072
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3m$<CR>
+< one
+< four
+< five
+< two
+< ‸three
+
+=== ex-073
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2m4<CR>
+< one
+< three
+< four
+< ‸two
+< five
+
+=== ex-074
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3m4<CR>
+< one
+< four
+< two
+< ‸three
+< five
+
+=== ex-075
+> ‸one
+> two
+> three
+> four
+> five
+keys: :4m1<CR>
+< one
+< ‸four
+< two
+< three
+< five
+
+=== ex-076
+> ‸one
+> two
+> three
+> four
+> five
+keys: :4,5m1<CR>
+< one
+< four
+< ‸five
+< two
+< three
+
+=== ex-077
+> ‸one
+> two
+> three
+> four
+> five
+keys: :4,5m0<CR>
+< four
+< ‸five
+< one
+< two
+< three
+
+=== ex-078
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,4m3<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-079
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,4m2<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-080
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,4m4<CR>
+< one
+< two
+< three
+< ‸four
+< five
+
+=== ex-081
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,4m5<CR>
+< one
+< five
+< two
+< three
+< ‸four
+
+=== ex-082
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2m1<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-083
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2m2<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-084
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2m.<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-085
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2m+1<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-086
+> ‸one
+> two
+> three
+> four
+> five
+keys: :m+1<CR>
+< two
+< ‸one
+< three
+< four
+< five
+
+=== ex-087
+> ‸one
+> two
+> three
+> four
+> five
+keys: :m+<CR>
+< two
+< ‸one
+< three
+< four
+< five
+
+=== ex-088
+> ‸one
+> two
+> three
+> four
+> five
+keys: :m-2<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-089
+> ‸one
+> two
+> three
+> four
+> five
+keys: :$m-2<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-090
+> ‸one
+> two
+> three
+> four
+> five
+keys: :$m0<CR>u
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-091
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3m4<CR>u
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-092
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3m4<CR>u<C-r>
+< ‸one
+< four
+< two
+< three
+< five
+
+=== ex-093
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3m4<CR>``
+< one
+< four
+< two
+< ‸three
+< five
+
+=== ex-094
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3m4<CR>'[
+< one
+< four
+< ‸two
+< three
+< five
+
+=== ex-095
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3m4<CR>']
+< one
+< four
+< two
+< ‸three
+< five
+
+=== ex-096
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3m4<CR>'.
+< one
+< ‸four
+< two
+< three
+< five
+
+=== ex-097
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2m4<CR>'.
+< one
+< ‸three
+< four
+< two
+< five
+
+=== ex-098
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2m4<CR>`.
+< one
+< ‸three
+< four
+< two
+< five
+
+=== ex-099
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2m4<CR>``
+< one
+< three
+< four
+< ‸two
+< five
+
+=== ex-100
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2m4<CR>'[
+< one
+< three
+< four
+< ‸two
+< five
+
+=== ex-101
+> ‸one
+> two
+> three
+> four
+> five
+keys: :m10<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-102
+> ‸one
+> two
+> three
+> four
+> five
+keys: :t.<CR>
+< one
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-103
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2t.<CR>
+< one
+< ‸two
+< two
+< three
+< four
+< five
+
+=== ex-104
+> ‸one
+> two
+> three
+> four
+> five
+keys: :t0<CR>
+< ‸one
+< one
+< two
+< three
+< four
+< five
+
+=== ex-105
+> ‸one
+> two
+> three
+> four
+> five
+keys: :t$<CR>
+< one
+< two
+< three
+< four
+< five
+< ‸one
+
+=== ex-106
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3t$<CR>
+< one
+< two
+< three
+< four
+< five
+< two
+< ‸three
+
+=== ex-107
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3t0<CR>
+< two
+< ‸three
+< one
+< two
+< three
+< four
+< five
+
+=== ex-108
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3t.<CR>
+< one
+< two
+< ‸three
+< two
+< three
+< four
+< five
+
+=== ex-109
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3t2<CR>
+< one
+< two
+< two
+< ‸three
+< three
+< four
+< five
+
+=== ex-110
+> ‸one
+> two
+> three
+> four
+> five
+keys: :co 1<CR>
+< one
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-111
+> ‸one
+> two
+> three
+> four
+> five
+keys: :co$<CR>
+< one
+< two
+< three
+< four
+< five
+< ‸one
+
+=== ex-112
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2co0<CR>
+< ‸two
+< one
+< two
+< three
+< four
+< five
+
+=== ex-113
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3co4<CR>
+< one
+< two
+< three
+< four
+< two
+< ‸three
+< five
+
+=== ex-114
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2t.<CR>u
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-115
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3t$<CR>u<C-r>
+< one
+< two
+< three
+< four
+< five
+< ‸two
+< three
+
+=== ex-116
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3t$<CR>`[
+< one
+< two
+< three
+< four
+< five
+< ‸two
+< three
+
+=== ex-117
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3t$<CR>`]
+< one
+< two
+< three
+< four
+< five
+< two
+< ‸three
+
+=== ex-118
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3t$<CR>'[
+< one
+< two
+< three
+< four
+< five
+< ‸two
+< three
+
+=== ex-119
+> ‸one
+> two
+> three
+> four
+> five
+keys: :t.<CR>``
+< one
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-120
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%t$<CR>
+< one
+< two
+< three
+< four
+< five
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-121
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%t0<CR>
+< one
+< two
+< three
+< four
+< ‸five
+< one
+< two
+< three
+< four
+< five
+
+=== ex-122
+> ‸one
+> two
+> three
+> four
+> five
+keys: :g/o/t.<CR>
+< one
+< one
+< two
+< two
+< three
+< four
+< ‸four
+< five
+
+=== ex-123
+> ‸one
+> two
+> three
+> four
+> five
+keys: :g/o/t$<CR>
+< one
+< two
+< three
+< four
+< five
+< one
+< two
+< ‸four
+
+=== ex-124
+> ‸one
+> two
+> three
+> four
+> five
+keys: :g/o/t0<CR>
+< ‸four
+< two
+< one
+< one
+< two
+< three
+< four
+< five
+
+=== ex-125
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3t4<CR>.
+< one
+< two
+< three
+< four
+< two
+< ‸three
+< five
+
+=== ex-126
+> ‸one
+> two
+> three
+> four
+> five
+keys: :t.<CR>.
+< one
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-127
+> ‸one
+> two
+> three
+> four
+> five
+keys: :t.<CR>@:
+< one
+< one
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-128
+> ‸one
+> two
+> three
+> four
+> five
+keys: :t.<CR>@:@@
+< one
+< one
+< one
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-129
+> ‸one
+> two
+> three
+> four
+> five
+keys: :j<CR>
+< ‸one two
+< three
+< four
+< five
+
+=== ex-130
+> ‸one
+> two
+> three
+> four
+> five
+keys: :j!<CR>
+< ‸onetwo
+< three
+< four
+< five
+
+=== ex-131
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2j<CR>
+< one
+< ‸two three
+< four
+< five
+
+=== ex-132
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,4j<CR>
+< one
+< ‸two three four
+< five
+
+=== ex-133
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,4j!<CR>
+< one
+< ‸twothreefour
+< five
+
+=== ex-134
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%j<CR>
+< ‸one two three four five
+
+=== ex-135
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%j!<CR>
+< ‸onetwothreefourfive
+
+=== ex-136
+> ‸one
+> two
+> three
+> four
+> five
+keys: :j 3<CR>
+< ‸one two three
+< four
+< five
+
+=== ex-137
+> ‸one
+> two
+> three
+> four
+> five
+keys: :j3<CR>
+< ‸one two three
+< four
+< five
+
+=== ex-138
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2j 3<CR>
+< one
+< ‸two three four
+< five
+
+=== ex-139
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2j 3<CR>
+< one
+< ‸two three four
+< five
+
+=== ex-140
+> ‸one
+> two
+> three
+> four
+> five
+keys: :j<CR>u
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-141
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%j<CR>u
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-142
+> ‸one
+> two
+> three
+> four
+> five
+keys: :j<CR>.
+< ‸one two
+< three
+< four
+< five
+
+=== ex-143
+> ‸one
+> two
+> three
+> four
+> five
+keys: :j<CR>..
+< ‸one two
+< three
+< four
+< five
+
+=== ex-144
+> ‸one
+> two
+> three
+> four
+> five
+keys: :$j<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-145
+> ‸one
+> two
+> three
+> four
+> five
+keys: :4j<CR>
+< one
+< two
+< three
+< ‸four five
+
+=== ex-146
+> ‸one
+> two
+> three
+> four
+> five
+keys: :5j<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-147
+> ‸one
+> two
+> three
+> four
+> five
+keys: :5,5j<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-148
+> ‸one
+> two
+> three
+> four
+> five
+keys: :4,5j<CR>
+< one
+< two
+< three
+< ‸four five
+
+=== ex-149
+> ‸one
+> two
+> three
+> four
+> five
+keys: :j<CR>`[
+< one‸ two
+< three
+< four
+< five
+
+=== ex-150
+> ‸one
+> two
+> three
+> four
+> five
+keys: :j<CR>`]
+< one tw‸o
+< three
+< four
+< five
+
+=== ex-151
+> ‸one
+> two
+> three
+> four
+> five
+keys: :j<CR>'[
+< ‸one two
+< three
+< four
+< five
+
+=== ex-152
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%j<CR>`[
+< one‸ two three four five
+
+=== ex-153
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%j<CR>`]
+< one two three four fiv‸e
+
+=== ex-154
+> ‸one
+> two
+> three
+> four
+> five
+keys: :j!<CR>`[
+< one‸two
+< three
+< four
+< five
+
+=== ex-155
+> ‸one
+> two
+> three
+> four
+> five
+keys: :><CR>
+< \t‸one
+< two
+< three
+< four
+< five
+
+=== ex-156
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2><CR>
+< one
+< \t‸two
+< three
+< four
+< five
+
+=== ex-157
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3><CR>
+< one
+< \ttwo
+< \t‸three
+< four
+< five
+
+=== ex-158
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%><CR>
+< \tone
+< \ttwo
+< \tthree
+< \tfour
+< \t‸five
+
+=== ex-159
+> ‸one
+> two
+> three
+> four
+> five
+keys: :>><CR>
+< \t\t‸one
+< two
+< three
+< four
+< five
+
+=== ex-160
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3>><CR>
+< one
+< \t\ttwo
+< \t\t‸three
+< four
+< five
+
+=== ex-161
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3>>><CR>
+< one
+< \t\t\ttwo
+< \t\t\t‸three
+< four
+< five
+
+=== ex-162
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%>>><CR>
+< \t\t\tone
+< \t\t\ttwo
+< \t\t\tthree
+< \t\t\tfour
+< \t\t\t‸five
+
+=== ex-163
+> ‸one
+> two
+> three
+> four
+> five
+keys: :><CR>:<<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-164
+> ‸one
+> two
+> three
+> four
+> five
+keys: :><CR>:><CR>:<<CR>
+< \t‸one
+< two
+< three
+< four
+< five
+
+=== ex-165
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2><CR>u
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-166
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3><CR>.
+< one
+< \ttwo
+< \t‸three
+< four
+< five
+
+=== ex-167
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3><CR>j.
+< one
+< \ttwo
+< \tthree
+< fou‸r
+< five
+
+=== ex-168
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3><CR>`[
+< one
+< ‸\ttwo
+< \tthree
+< four
+< five
+
+=== ex-169
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3><CR>`]
+< one
+< \ttwo
+< \tthre‸e
+< four
+< five
+
+=== ex-170
+> ‸one
+> two
+> three
+> four
+> five
+keys: :><CR>``
+< ‸\tone
+< two
+< three
+< four
+< five
+
+=== ex-171
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%><CR>'[
+< \t‸one
+< \ttwo
+< \tthree
+< \tfour
+< \tfive
+
+=== ex-172
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%><CR>']
+< \tone
+< \ttwo
+< \tthree
+< \tfour
+< \t‸five
+
+=== ex-173
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%<<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-174
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1<CR>:>><CR>
+< \t\t‸one
+< two
+< three
+< four
+< five
+
+=== ex-175
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3> 2<CR>
+< one
+< two
+< \tthree
+< \t‸four
+< five
+
+=== ex-176
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3>2<CR>
+< one
+< two
+< \tthree
+< \t‸four
+< five
+
+=== ex-177
+> ‸one
+> two
+> three
+> four
+> five
+keys: :> 3<CR>
+< \tone
+< \ttwo
+< \t‸three
+< four
+< five
+
+=== ex-178
+> ‸one
+> two
+> three
+> four
+> five
+keys: :undo<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-179
+> ‸one
+> two
+> three
+> four
+> five
+keys: :u<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-180
+> ‸one
+> two
+> three
+> four
+> five
+keys: :redo<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-181
+> ‸one
+> two
+> three
+> four
+> five
+keys: :red<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-182
+> ‸one
+> two
+> three
+> four
+> five
+keys: x:undo<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-183
+> ‸one
+> two
+> three
+> four
+> five
+keys: x:u<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-184
+> ‸one
+> two
+> three
+> four
+> five
+keys: xx:u<CR>
+< ‸ne
+< two
+< three
+< four
+< five
+
+=== ex-185
+> ‸one
+> two
+> three
+> four
+> five
+keys: xx:undo 1<CR>
+< ‸ne
+< two
+< three
+< four
+< five
+
+=== ex-186
+> ‸one
+> two
+> three
+> four
+> five
+keys: xx:undo 0<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-187
+> ‸one
+> two
+> three
+> four
+> five
+keys: xx:undo 2<CR>
+< ‸e
+< two
+< three
+< four
+< five
+
+=== ex-188
+> ‸one
+> two
+> three
+> four
+> five
+keys: xx:undo 3<CR>
+< ‸e
+< two
+< three
+< four
+< five
+
+=== ex-189
+> ‸one
+> two
+> three
+> four
+> five
+keys: xxu:redo<CR>
+< ‸e
+< two
+< three
+< four
+< five
+
+=== ex-190
+> ‸one
+> two
+> three
+> four
+> five
+keys: xxu:red<CR>
+< ‸e
+< two
+< three
+< four
+< five
+
+=== ex-191
+> ‸one
+> two
+> three
+> four
+> five
+keys: xxuu:redo<CR>
+< ‸ne
+< two
+< three
+< four
+< five
+
+=== ex-192
+> ‸one
+> two
+> three
+> four
+> five
+keys: xxuu:redo<CR>:redo<CR>
+< ‸e
+< two
+< three
+< four
+< five
+
+=== ex-193
+> ‸one
+> two
+> three
+> four
+> five
+keys: xxuu:u<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-194
+> ‸one
+> two
+> three
+> four
+> five
+keys: x:undo 0<CR>:redo<CR>
+< ‸ne
+< two
+< three
+< four
+< five
+
+=== ex-195
+> ‸one
+> two
+> three
+> four
+> five
+keys: xxx:undo 1<CR>
+< ‸ne
+< two
+< three
+< four
+< five
+
+=== ex-196
+> ‸one
+> two
+> three
+> four
+> five
+keys: xxx:undo 1<CR>:undo 3<CR>
+< ‸
+< two
+< three
+< four
+< five
+
+=== ex-197
+> ‸one
+> two
+> three
+> four
+> five
+keys: xxxuu:undo 3<CR>
+< ‸
+< two
+< three
+< four
+< five
+
+=== ex-198
+> ‸one
+> two
+> three
+> four
+> five
+keys: xxxuu:undo 3<CR>u
+< ‸e
+< two
+< three
+< four
+< five
+
+=== ex-199
+> ‸one
+> two
+> three
+> four
+> five
+keys: xxxuxx:undo 2<CR>
+< ‸e
+< two
+< three
+< four
+< five
+
+=== ex-200
+> ‸one
+> two
+> three
+> four
+> five
+keys: xxxuxx:undo 4<CR>
+< ‸
+< two
+< three
+< four
+< five
+
+=== ex-201
+> ‸one
+> two
+> three
+> four
+> five
+keys: :k a<CR>'a
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-202
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2k a<CR>'a
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-203
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2ka<CR>'a
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-204
+> ‸one
+> two
+> three
+> four
+> five
+keys: :mark a<CR>'a
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-205
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>`a
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-206
+> ‸one
+> two
+> three
+> four
+> five
+keys: :3mark b<CR>:2mark a<CR>'b
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-207
+> ‸one
+> two
+> three
+> four
+> five
+keys: :3mark b<CR>:'b,$d<CR>
+< one
+< ‸two
+
+=== ex-208
+> ‸one
+> two
+> three
+> four
+> five
+keys: :3mark b<CR>:1,'bd<CR>
+< ‸four
+< five
+
+=== ex-209
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:3mark b<CR>:'a,'bd<CR>
+< one
+< ‸four
+< five
+
+=== ex-210
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:3mark b<CR>:'a,'bj<CR>
+< one
+< ‸two three
+< four
+< five
+
+=== ex-211
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:3mark b<CR>:'a;'b+1d<CR>
+< one
+< ‸five
+
+=== ex-212
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:'a<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-213
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:'a+1<CR>
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-214
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:'a-1<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-215
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:'ad<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-216
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:'ad<CR>'a
+< one
+< ‸three
+< four
+< five
+
+=== ex-217
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>dd'a
+< ‸two
+< three
+< four
+< five
+
+=== ex-218
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>ggdd'a
+< ‸two
+< three
+< four
+< five
+
+=== ex-219
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>ggdd:'ad<CR>
+< ‸three
+< four
+< five
+
+=== ex-220
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:delmarks a<CR>'a
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-221
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:delm a<CR>:'ad<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-222
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:delm!<CR>'a
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-223
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:3mark b<CR>:delm a-b<CR>'b
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-224
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:3mark b<CR>:delm a b<CR>'b
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-225
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2mark a<CR>:3mark b<CR>:delm a<CR>'b
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-226
+> ‸one
+> two
+> three
+> four
+> five
+keys: :3<CR>
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-227
+> ‸one
+> two
+> three
+> four
+> five
+keys: :$<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-228
+> ‸one
+> two
+> three
+> four
+> five
+keys: :+2<CR>
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-229
+> ‸one
+> two
+> three
+> four
+> five
+keys: :+<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-230
+> ‸one
+> two
+> three
+> four
+> five
+keys: :++<CR>
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-231
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2<CR>:-1<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-232
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2<CR>:-<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-233
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2<CR>:--<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-234
+> ‸one
+> two
+> three
+> four
+> five
+keys: :.+1<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-235
+> ‸one
+> two
+> three
+> four
+> five
+keys: :.-1<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-236
+> ‸one
+> two
+> three
+> four
+> five
+keys: :$-1<CR>
+< one
+< two
+< three
+< ‸four
+< five
+
+=== ex-237
+> ‸one
+> two
+> three
+> four
+> five
+keys: :$-2<CR>
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-238
+> ‸one
+> two
+> three
+> four
+> five
+keys: :/three/<CR>
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-239
+> ‸one
+> two
+> three
+> four
+> five
+keys: :/three/+1<CR>
+< one
+< two
+< three
+< ‸four
+< five
+
+=== ex-240
+> ‸one
+> two
+> three
+> four
+> five
+keys: :/three/-1<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-241
+> ‸one
+> two
+> three
+> four
+> five
+keys: :?two?<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-242
+> ‸one
+> two
+> three
+> four
+> five
+keys: G:?two?<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-243
+> ‸one
+> two
+> three
+> four
+> five
+keys: G:?two?+1<CR>
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-244
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2;/four/<CR>
+< one
+< two
+< three
+< ‸four
+< five
+
+=== ex-245
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3<CR>
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-246
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2;+1<CR>
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-247
+> ‸one
+> two
+> three
+> four
+> five
+keys: :0<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-248
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-249
+> ‸one
+> two
+> three
+> four
+> five
+keys: :5<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-250
+> ‸one
+> two
+> three
+> four
+> five
+keys: :6<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-251
+> ‸one
+> two
+> three
+> four
+> five
+keys: :100<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-252
+> ‸one
+> two
+> three
+> four
+> five
+keys: :$+1<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-253
+> ‸one
+> two
+> three
+> four
+> five
+keys: :-1<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-254
+> ‸one
+> two
+> three
+> four
+> five
+keys: :+10<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-255
+> ‸one
+> two
+> three
+> four
+> five
+keys: :'<<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-256
+> ‸one
+> two
+> three
+> four
+> five
+keys: :'a<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-257
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-258
+> ‸one
+> two
+> three
+> four
+> five
+keys: :.<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-259
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2<CR>:.<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-261
+> ‸one
+> two
+> three
+> four
+> five
+keys: :3<CR>`a
+< one
+< two
+< ‸three
+< four
+< five
+
+=== ex-262
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d<CR>:d<CR>:d<CR>
+< ‸four
+< five
+
+=== ex-263
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d<CR>@:
+< ‸three
+< four
+< five
+
+=== ex-264
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d<CR>@:@@
+< ‸four
+< five
+
+=== ex-265
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2d<CR>@:
+< one
+< ‸four
+< five
+
+=== ex-266
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2d<CR>j@:
+< one
+< ‸four
+< five
+
+=== ex-267
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d<CR>2@:
+< ‸four
+< five
+
+=== ex-268
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d<CR>3@:
+< ‸five
+
+=== ex-269
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d<CR>9@:
+< ‸
+
+=== ex-270
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d<CR>5@:
+< ‸
+
+=== ex-271
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%d<CR>u
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-272
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%d<CR>uu
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-273
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%d<CR>u<C-r>
+< ‸
+
+=== ex-274
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%d<CR>u<C-r>u
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-275
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>:undo<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-276
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>:undo<CR>:redo<CR>
+< ‸three
+< four
+< five
+
+=== ex-277
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>:undo 0<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-278
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>:earlier 1<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-279
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>:earlier 1<CR>:later 1<CR>
+< ‸three
+< four
+< five
+
+=== ex-280
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>:earlier 1f<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-281
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>:earlier 10s<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-282
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>x:earlier 10s<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-283
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>x:earlier 2<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-284
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>x:earlier 5<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-285
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>x:earlier 1<CR>:later 5<CR>
+< ‸hree
+< four
+< five
+
+=== ex-286
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>xg-
+< ‸three
+< four
+< five
+
+=== ex-287
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>xg-g-
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-288
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>xg-g-g-
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-289
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>xg-g-g+
+< ‸three
+< four
+< five
+
+=== ex-290
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>xug-
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-291
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>xug-g-
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-292
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1,2d<CR>xug-g+
+< ‸three
+< four
+< five
+
+=== ex-293
+> ‸one
+> two
+> three
+> four
+> five
+keys: :foo<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-294
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2foo<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-295
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%foo<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-296
+> ‸one
+> two
+> three
+> four
+> five
+keys: :100d<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-297
+> ‸one
+> two
+> three
+> four
+> five
+keys: :100,200d<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-298
+> ‸one
+> two
+> three
+> four
+> five
+keys: :0d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-299
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,100d<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-300
+> ‸one
+> two
+> three
+> four
+> five
+keys: :/zzz/d<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-301
+> ‸one
+> two
+> three
+> four
+> five
+keys: :?zzz?d<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-302
+> ‸one
+> two
+> three
+> four
+> five
+keys: :'zd<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-303
+> ‸one
+> two
+> three
+> four
+> five
+keys: :'<d<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-304
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,'zd<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-305
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d<CR>:foo<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-306
+> ‸one
+> two
+> three
+> four
+> five
+keys: :s<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-307
+> ‸one
+> two
+> three
+> four
+> five
+keys: :s/<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-308
+> ‸one
+> two
+> three
+> four
+> five
+keys: :s//x/<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-309
+> ‸one
+> two
+> three
+> four
+> five
+keys: :g<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-310
+> ‸one
+> two
+> three
+> four
+> five
+keys: :g/<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-311
+> ‸one
+> two
+> three
+> four
+> five
+keys: :g/zzz/d<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-312
+> ‸one
+> two
+> three
+> four
+> five
+keys: :v/o/d<CR>
+< one
+< two
+< ‸four
+
+=== ex-313
+> ‸one
+> two
+> three
+> four
+> five
+keys: :normal<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-314
+> ‸one
+> two
+> three
+> four
+> five
+keys: :normal x<CR>
+< ‸ne
+< two
+< three
+< four
+< five
+
+=== ex-315
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2normal x<CR>
+< one
+< ‸wo
+< three
+< four
+< five
+
+=== ex-316
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%normal x<CR>
+< ne
+< wo
+< hree
+< our
+< ‸ive
+
+=== ex-317
+> ‸one
+> two
+> three
+> four
+> five
+keys: :put z<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-318
+> ‸one
+> two
+> three
+> four
+> five
+keys: :put<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-319
+> ‸one
+> two
+> three
+> four
+> five
+keys: :pu 9<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-320
+> ‸one
+> two
+> three
+> four
+> five
+keys: :y q<CR>:pu q<CR>
+< one
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-321
+> ‸one
+> two
+> three
+> four
+> five
+keys: :registers<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-322
+> ‸one
+> two
+> three
+> four
+> five
+keys: :marks<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-323
+> ‸one
+> two
+> three
+> four
+> five
+keys: :jumps<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-324
+> ‸one
+> two
+> three
+> four
+> five
+keys: :changes<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-325
+> ‸one
+> two
+> three
+> four
+> five
+keys: :noh<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-326
+> ‸one
+> two
+> three
+> four
+> five
+keys: :nohlsearch<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-327
+> ‸one
+> two
+> three
+> four
+> five
+keys: :set sw?<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-328
+> ‸one
+> two
+> three
+> four
+> five
+keys: :set nosuch<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-329
+> ‸one
+> two
+> three
+> four
+> five
+keys: :set sw=abc<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-330
+> ‸one
+> two
+> three
+> four
+> five
+keys: :set sw=4 sw?<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-331
+> ‸one
+> two
+> three
+> four
+> five
+keys: :set foo=bar<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-332
+> ‸one
+> two
+> three
+> four
+> five
+keys: :set ts=4<CR>:set ts?<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-333
+> ‸one
+> two
+> three
+> four
+> five
+keys: :set invnu<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-334
+> ‸one
+> two
+> three
+> four
+> five
+keys: :set nu!<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-335
+> ‸one
+> two
+> three
+> four
+> five
+keys: :set nu&<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-336
+> ‸one
+> two
+> three
+> four
+> five
+keys: :set sw&<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-337
+> ‸one
+> two
+> three
+> four
+> five
+keys: :set all&<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-338
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>
+< bar 2
+< ‸bar 4
+
+=== ex-339
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g!/foo/d<CR>
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-340
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :v/foo/d<CR>
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-341
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/bar/d<CR>
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-342
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/o/d<CR>
+< bar 2
+< ‸bar 4
+
+=== ex-343
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/[0-9]/d<CR>
+< ‸
+
+=== ex-344
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/\d/s/foo/X/<CR>
+< X 1
+< bar 2
+< X 3
+< bar 4
+< ‸X 5
+
+=== ex-345
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/s/\d/N/<CR>
+< foo N
+< bar 2
+< foo N
+< bar 4
+< ‸foo N
+
+=== ex-346
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal dd<CR>
+< bar 2
+< ‸bar 4
+
+=== ex-347
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal Ax<CR>
+< foo 1x
+< bar 2
+< foo 3x
+< bar 4
+< foo 5‸x
+
+=== ex-348
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal 0x<CR>
+< oo 1
+< bar 2
+< oo 3
+< bar 4
+< ‸oo 5
+
+=== ex-349
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal J<CR>
+< foo 1 bar 2
+< foo 3 bar 4
+< ‸foo 5
+
+=== ex-350
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/j<CR>
+< foo 1 bar 2
+< foo 3 bar 4
+< ‸foo 5
+
+=== ex-351
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/m0<CR>
+< ‸foo 5
+< foo 3
+< foo 1
+< bar 2
+< bar 4
+
+=== ex-352
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/m$<CR>
+< bar 2
+< bar 4
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-353
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/^/m0<CR>
+< ‸foo 5
+< bar 4
+< foo 3
+< bar 2
+< foo 1
+
+=== ex-354
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/^/t.<CR>
+< foo 1
+< foo 1
+< bar 2
+< bar 2
+< foo 3
+< foo 3
+< bar 4
+< bar 4
+< foo 5
+< ‸foo 5
+
+=== ex-355
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/t.<CR>
+< foo 1
+< foo 1
+< bar 2
+< foo 3
+< foo 3
+< bar 4
+< foo 5
+< ‸foo 5
+
+=== ex-356
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/t$<CR>
+< foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-357
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/y A<CR>:$pu a<CR>
+< foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-358
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/y A<CR>G"ap
+< foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+< ‸foo 1
+< foo 3
+< foo 5
+
+=== ex-359
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :let @a=''<CR>:g/foo/y A<CR>G"ap
+< foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+< ‸
+< foo 1
+< foo 3
+< foo 5
+
+=== ex-360
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/+1d<CR>
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-361
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/-1d<CR>
+< foo 3
+< ‸foo 5
+
+=== ex-362
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/.,+1d<CR>
+< ‸foo 5
+
+=== ex-363
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/.,+1j<CR>
+< foo 1 bar 2
+< foo 3 bar 4
+< ‸foo 5
+
+=== ex-364
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/,+1j<CR>
+< foo 1 bar 2
+< foo 3 bar 4
+< ‸foo 5
+
+=== ex-365
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/.+1d<CR>
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-366
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/.-1d<CR>
+< foo 3
+< ‸foo 5
+
+=== ex-367
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d|d<CR>
+< ‸
+
+=== ex-368
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/s/foo/X/|s/X/Y/<CR>
+< Y 1
+< bar 2
+< Y 3
+< bar 4
+< ‸Y 5
+
+=== ex-369
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/>><CR>
+< \t\tfoo 1
+< bar 2
+< \t\tfoo 3
+< bar 4
+< \t\t‸foo 5
+
+=== ex-370
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/><CR>
+< \tfoo 1
+< bar 2
+< \tfoo 3
+< bar 4
+< \t‸foo 5
+
+=== ex-371
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/<<CR>
+< foo 1
+< bar 2
+< foo 3
+< bar 4
+< ‸foo 5
+
+=== ex-372
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/norm ix<CR>
+< xfoo 1
+< bar 2
+< xfoo 3
+< bar 4
+< ‸xfoo 5
+
+=== ex-373
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/norm ix<Esc><CR>
+< foo 1
+< ‸bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-374
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :1,3g/foo/d<CR>
+< bar 2
+< ‸bar 4
+< foo 5
+
+=== ex-375
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :2,4g/foo/d<CR>
+< foo 1
+< bar 2
+< ‸bar 4
+< foo 5
+
+=== ex-376
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :2,4g!/foo/d<CR>
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-377
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :2,4v/foo/d<CR>
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-378
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :.,$g/foo/d<CR>
+< bar 2
+< ‸bar 4
+
+=== ex-379
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :%g/foo/d<CR>
+< bar 2
+< ‸bar 4
+
+=== ex-380
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>u
+< ‸foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-381
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>uu
+< ‸foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-382
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>u<C-r>
+< ‸bar 2
+< bar 4
+
+=== ex-383
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/s/o/0/g<CR>u
+< ‸foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-384
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal dd<CR>u
+< ‸foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-385
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal Ax<CR>u
+< foo ‸1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-386
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal Ax<CR>uu
+< foo ‸1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-387
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/m0<CR>u
+< foo 1
+< bar 2
+< ‸foo 3
+< bar 4
+< foo 5
+
+=== ex-388
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/^/m0<CR>u
+< foo 1
+< ‸bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-389
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/^/m0<CR>`[
+< ‸foo 5
+< bar 4
+< foo 3
+< bar 2
+< foo 1
+
+=== ex-390
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/^/m0<CR>`]
+< ‸foo 5
+< bar 4
+< foo 3
+< bar 2
+< foo 1
+
+=== ex-391
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/^/m0<CR>''
+< foo 5
+< bar 4
+< foo 3
+< bar 2
+< ‸foo 1
+
+=== ex-392
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>''
+< bar 2
+< ‸bar 4
+
+=== ex-393
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>``
+< bar 2
+< ‸bar 4
+
+=== ex-394
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/s/o/0/<CR>``
+< ‸f0o 1
+< bar 2
+< f0o 3
+< bar 4
+< f0o 5
+
+=== ex-395
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/s/o/0/<CR>''
+< ‸f0o 1
+< bar 2
+< f0o 3
+< bar 4
+< f0o 5
+
+=== ex-396
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/s/o/0/<CR>`.
+< f0o 1
+< bar 2
+< f0o 3
+< bar 4
+< ‸f0o 5
+
+=== ex-397
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>`.
+< bar 2
+< ‸bar 4
+
+=== ex-398
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal Ax<CR>`.
+< foo 1x
+< bar 2
+< foo 3x
+< bar 4
+< foo 5‸x
+
+=== ex-399
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal Ax<CR>`[
+< foo 1x
+< bar 2
+< foo 3x
+< bar 4
+< foo 5‸x
+
+=== ex-400
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal Ax<CR>`]
+< foo 1x
+< bar 2
+< foo 3x
+< bar 4
+< foo 5‸x
+
+=== ex-401
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal Ax<CR>''
+< ‸foo 1x
+< bar 2
+< foo 3x
+< bar 4
+< foo 5x
+
+=== ex-402
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal Ax<CR>``
+< ‸foo 1x
+< bar 2
+< foo 3x
+< bar 4
+< foo 5x
+
+=== ex-403
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo\|bar/d<CR>
+< ‸
+
+=== ex-404
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/\(foo\|bar\) [24]/d<CR>
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-405
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/\v(foo|bar) [24]/d<CR>
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-406
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/g/1/d<CR>
+< bar 2
+< foo 3
+< bar 4
+< ‸foo 5
+
+=== ex-407
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/v/1/d<CR>
+< foo 1
+< bar 2
+< ‸bar 4
+
+=== ex-408
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g#foo#d<CR>
+< bar 2
+< ‸bar 4
+
+=== ex-409
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g+foo+d<CR>
+< bar 2
+< ‸bar 4
+
+=== ex-410
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/
+< ‸foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+mode: c
+
+=== ex-411
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/<CR>
+< foo 1
+< bar 2
+< foo 3
+< bar 4
+< ‸foo 5
+
+=== ex-412
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/p<CR>
+< foo 1
+< bar 2
+< foo 3
+< bar 4
+< ‸foo 5
+
+=== ex-413
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/#<CR>
+< foo 1
+< bar 2
+< foo 3
+< bar 4
+< ‸foo 5
+
+=== ex-414
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/nu<CR>
+< foo 1
+< bar 2
+< foo 3
+< bar 4
+< ‸foo 5
+
+=== ex-415
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/l<CR>
+< foo 1
+< bar 2
+< foo 3
+< bar 4
+< ‸foo 5
+
+=== ex-416
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal! ix<CR>
+< xfoo 1
+< bar 2
+< xfoo 3
+< bar 4
+< ‸xfoo 5
+
+=== ex-417
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/normal! ix<Esc>x<CR>
+< oo 1
+< ‸bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-418
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g//d<CR>
+< ‸foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-419
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: /foo<CR>:g//d<CR>
+< bar 2
+< ‸bar 4
+
+=== ex-420
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: /foo<CR>:g!//d<CR>
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-421
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: /foo<CR>:v//d<CR>
+< foo 1
+< foo 3
+< ‸foo 5
+
+=== ex-422
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>:g/bar/d<CR>
+< ‸
+
+=== ex-423
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>:g/foo/d<CR>
+< bar 2
+< ‸bar 4
+
+=== ex-424
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>:g/foo/d<CR>:g/foo/d<CR>
+< bar 2
+< ‸bar 4
+
+=== ex-425
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>:g/foo/d<CR>:g/foo/d<CR>u
+< ‸foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-426
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>:g/foo/d<CR>:g/foo/d<CR>uu
+< ‸foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-427
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>:g/foo/d<CR>:g/foo/d<CR>uuu
+< ‸foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-428
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/d<CR>:g/foo/d<CR>:g/foo/d<CR>uuuu
+< ‸foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-429
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/s/o/0/g<CR>:g/0/s/f/F/<CR>
+< F00 1
+< bar 2
+< F00 3
+< bar 4
+< ‸F00 5
+
+=== ex-430
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/s/o/0/g<CR>:g/0/s/f/F/<CR>u
+< ‸f00 1
+< bar 2
+< f00 3
+< bar 4
+< f00 5
+
+=== ex-431
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/foo/s/o/0/g<CR>:g/0/s/f/F/<CR>uu
+< ‸foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo 5
+
+=== ex-432
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/o/s/o/0/<CR>
+< f0o 1
+< bar 2
+< f0o 3
+< bar 4
+< ‸f0o 5
+
+=== ex-433
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/o/s//0/<CR>
+< f0o 1
+< bar 2
+< f0o 3
+< bar 4
+< ‸f0o 5
+
+=== ex-434
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/o/s//0/g<CR>
+< f00 1
+< bar 2
+< f00 3
+< bar 4
+< ‸f00 5
+
+=== ex-435
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/o/s/\(.\)\(.\)/\2\1/<CR>
+< ofo 1
+< bar 2
+< ofo 3
+< bar 4
+< ‸ofo 5
+
+=== ex-436
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/\d/normal $x<CR>
+< foo ⏎
+< bar ⏎
+< foo ⏎
+< bar ⏎
+< foo‸ ⏎
+
+=== ex-437
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/\d/normal $~<CR>
+< foo 1
+< bar 2
+< foo 3
+< bar 4
+< foo ‸5
+
+=== ex-442
+> ‸foo 1
+> bar 2
+> foo 3
+> bar 4
+> foo 5
+keys: :g/\d/exe 'normal Ax'<CR>
+< foo 1x
+< bar 2x
+< foo 3x
+< bar 4x
+< foo 5‸x
+
+=== ex-443
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:d<CR>
+< ‸three
+< four
+< five
+
+=== ex-444
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:y<CR>P
+< ‸one
+< two
+< one
+< two
+< three
+< four
+< five
+
+=== ex-445
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:m$<CR>
+< three
+< four
+< five
+< one
+< ‸two
+
+=== ex-446
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:t.<CR>
+< one
+< one
+< ‸two
+< two
+< three
+< four
+< five
+
+=== ex-447
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:j<CR>
+< ‸one two
+< three
+< four
+< five
+
+=== ex-448
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:><CR>
+< \tone
+< \t‸two
+< three
+< four
+< five
+
+=== ex-449
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:<<CR>
+< one
+< ‸two
+< three
+< four
+< five
+
+=== ex-450
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:normal Ax<CR>
+< onex
+< two‸x
+< three
+< four
+< five
+
+=== ex-451
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:g/o/d<CR>
+< ‸three
+< four
+< five
+
+=== ex-452
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:g/two/d<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-453
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:v/two/d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-454
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:s/o/0/<CR>
+< 0ne
+< ‸tw0
+< three
+< four
+< five
+
+=== ex-455
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:s/o/0/<CR>gv
+< 0ne
+< ‸tw0
+< three
+< four
+< five
+mode: V
+
+=== ex-456
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:d<CR>gv
+< ‸three
+< four
+< five
+mode: V
+
+=== ex-457
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:d<CR>u
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-458
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:d<CR>u<C-r>
+< ‸three
+< four
+< five
+
+=== ex-459
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:d<CR>u:'<,'>d<CR>
+< ‸three
+< four
+< five
+
+=== ex-460
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj<Esc>:'<,'>d<CR>
+< ‸three
+< four
+< five
+
+=== ex-461
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj<Esc>:'<d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-462
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj<Esc>:'>d<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-463
+> ‸one
+> two
+> three
+> four
+> five
+keys: jVj<Esc>gg:'<,'>d<CR>
+< one
+< ‸four
+< five
+
+=== ex-464
+> ‸one
+> two
+> three
+> four
+> five
+keys: jVj<Esc>gg:'<d<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-465
+> ‸one
+> two
+> three
+> four
+> five
+keys: jvj<Esc>gg:'<,'>d<CR>
+< one
+< ‸four
+< five
+
+=== ex-466
+> ‸one
+> two
+> three
+> four
+> five
+keys: jvj<Esc>:'<,'>j<CR>
+< one
+< ‸two three
+< four
+< five
+
+=== ex-467
+> ‸one
+> two
+> three
+> four
+> five
+keys: j<C-v>j<Esc>:'<,'>d<CR>
+< one
+< ‸four
+< five
+
+=== ex-468
+> ‸one
+> two
+> three
+> four
+> five
+keys: jvj:d<CR>
+< one
+< ‸four
+< five
+
+=== ex-469
+> ‸one
+> two
+> three
+> four
+> five
+keys: j<C-v>j:d<CR>
+< one
+< ‸four
+< five
+
+=== ex-470
+> ‸one
+> two
+> three
+> four
+> five
+keys: jVjd
+< one
+< ‸four
+< five
+
+=== ex-471
+> ‸one
+> two
+> three
+> four
+> five
+keys: jVj:normal dd<CR>
+< one
+< three
+< ‸five
+
+=== ex-472
+> ‸one
+> two
+> three
+> four
+> five
+keys: jVj:normal! dd<CR>
+< one
+< three
+< ‸five
+
+=== ex-473
+> ‸one
+> two
+> three
+> four
+> five
+keys: jVj:normal x<CR>
+< one
+< wo
+< ‸hree
+< four
+< five
+
+=== ex-474
+> ‸one
+> two
+> three
+> four
+> five
+keys: jVjj:normal x<CR>
+< one
+< wo
+< hree
+< ‸our
+< five
+
+=== ex-475
+> ‸one
+> two
+> three
+> four
+> five
+keys: 2Vj:d<CR>
+< ‸four
+< five
+
+=== ex-476
+> ‸one
+> two
+> three
+> four
+> five
+keys: 2jVj:d<CR>
+< one
+< two
+< ‸five
+
+=== ex-477
+> ‸one
+> two
+> three
+> four
+> five
+keys: vj:<C-u>d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-478
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:<C-u>d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-479
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:<C-u>'<,'>d<CR>
+< ‸three
+< four
+< five
+
+=== ex-480
+> ‸one
+> two
+> three
+> four
+> five
+keys: Vj:<C-u>'<d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-481
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a='x'<CR>"ap
+< o‸xne
+< two
+< three
+< four
+< five
+
+=== ex-482
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a='x'<CR>:let @b=@a<CR>"bp
+< o‸xne
+< two
+< three
+< four
+< five
+
+=== ex-483
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a='x'<CR>:let @A='y'<CR>"ap
+< ox‸yne
+< two
+< three
+< four
+< five
+
+=== ex-484
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a='x'<CR>:let @a.='y'<CR>"ap
+< ox‸yne
+< two
+< three
+< four
+< five
+
+=== ex-485
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @"='x'<CR>p
+< o‸xne
+< two
+< three
+< four
+< five
+
+=== ex-486
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @/='o'<CR>n
+< one
+< tw‸o
+< three
+< four
+< five
+
+=== ex-487
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @/='o'<CR>:%s//0/g<CR>
+< 0ne
+< tw0
+< three
+< ‸f0ur
+< five
+
+=== ex-488
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a="x\ny"<CR>"ap
+< o‸x
+< yne
+< two
+< three
+< four
+< five
+
+=== ex-489
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a="x\n"<CR>"ap
+< one
+< ‸x
+< two
+< three
+< four
+< five
+
+=== ex-490
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a="x\n"<CR>"aP
+< ‸x
+< one
+< two
+< three
+< four
+< five
+
+=== ex-491
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a="x\ny\n"<CR>"ap
+< one
+< ‸x
+< y
+< two
+< three
+< four
+< five
+
+=== ex-492
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a='x'<CR>"ap:undo<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-493
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @-='x'<CR>"-p
+< o‸xne
+< two
+< three
+< four
+< five
+
+=== ex-494
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @0='x'<CR>"0p
+< o‸xne
+< two
+< three
+< four
+< five
+
+=== ex-495
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @1='x'<CR>"1p
+< o‸xne
+< two
+< three
+< four
+< five
+
+=== ex-496
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @_='x'<CR>"_p
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-497
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @.='x'<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-498
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @:='x'<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-499
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @%='x'<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-500
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @z=''<CR>"zp
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-501
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a=1<CR>"ap
+< o‸1ne
+< two
+< three
+< four
+< five
+
+=== ex-502
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a='a'.'b'<CR>"ap
+< oa‸bne
+< two
+< three
+< four
+< five
+
+=== ex-503
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a=@"<CR>"ap
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-504
+> ‸one
+> two
+> three
+> four
+> five
+keys: yy:let @a=@"<CR>"ap
+< one
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-505
+> ‸one
+> two
+> three
+> four
+> five
+keys: yw:let @a=@0<CR>"ap
+< oon‸ene
+< two
+< three
+< four
+< five
+
+=== ex-506
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let @a=@/<CR>"ap
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-507
+> ‸one
+> two
+> three
+> four
+> five
+keys: /two<CR>:let @a=@/<CR>"ap
+< one
+< ttw‸owo
+< three
+< four
+< five
+
+=== ex-508
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let g:x=1<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-509
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let x=1<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-510
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let &sw=4<CR>>>
+<     ‸one
+< two
+< three
+< four
+< five
+
+=== ex-511
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let &l:sw=4<CR>>>
+<     ‸one
+< two
+< three
+< four
+< five
+
+=== ex-512
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let &ts=4<CR>>>
+< \t\t‸one
+< two
+< three
+< four
+< five
+
+=== ex-513
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let &et=1<CR>>>
+<         ‸one
+< two
+< three
+< four
+< five
+
+=== ex-514
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let &sw=2<CR>:set sw?<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-515
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let mapleader=','<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-516
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let mapleader=','<CR>:nnoremap <leader>d dd<CR>,d
+< ‸one
+< two
+< three
+< four
+< five
+mode: no
+
+=== ex-517
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let mapleader=" "<CR>:nnoremap <leader>d dd<CR> d
+< o‸ne
+< two
+< three
+< four
+< five
+mode: no
+
+=== ex-518
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let mapleader=','<CR>:nnoremap <leader>d dd<CR>\d
+< ‸two
+< three
+< four
+< five
+
+=== ex-519
+> ‸one
+> two
+> three
+> four
+> five
+keys: :nnoremap <leader>d dd<CR>\d
+< ‸two
+< three
+< four
+< five
+
+=== ex-520
+> ‸one
+> two
+> three
+> four
+> five
+keys: :nnoremap <leader>d dd<CR>,d
+< ‸one
+< two
+< three
+< four
+< five
+mode: no
+
+=== ex-521
+> ‸one
+> two
+> three
+> four
+> five
+keys: :let maplocalleader=','<CR>:nnoremap <localleader>d dd<CR>,d
+< ‸one
+< two
+< three
+< four
+< five
+mode: no
+
+=== ex-522
+> ‸one
+> two
+> three
+> four
+> five
+keys: :echo 'hi'<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-523
+> ‸one
+> two
+> three
+> four
+> five
+keys: :echo 1+1<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-524
+> ‸one
+> two
+> three
+> four
+> five
+keys: :echo "a" . "b"<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-525
+> ‸one
+> two
+> three
+> four
+> five
+keys: :echo @a<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-526
+> ‸one
+> two
+> three
+> four
+> five
+keys: :echo @"<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-527
+> ‸one
+> two
+> three
+> four
+> five
+keys: :echom 'hi'<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-528
+> ‸one
+> two
+> three
+> four
+> five
+keys: :silent d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-529
+> ‸one
+> two
+> three
+> four
+> five
+keys: :silent! d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-530
+> ‸one
+> two
+> three
+> four
+> five
+keys: :silent! foo<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-531
+> ‸one
+> two
+> three
+> four
+> five
+keys: :silent foo<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-532
+> ‸one
+> two
+> three
+> four
+> five
+keys: :silent! normal x<CR>
+< ‸ne
+< two
+< three
+< four
+< five
+
+=== ex-533
+> ‸one
+> two
+> three
+> four
+> five
+keys: :exe 'normal x'<CR>
+< ‸ne
+< two
+< three
+< four
+< five
+
+=== ex-534
+> ‸one
+> two
+> three
+> four
+> five
+keys: :exe 'normal' 'x'<CR>
+< ‸ne
+< two
+< three
+< four
+< five
+
+=== ex-535
+> ‸one
+> two
+> three
+> four
+> five
+keys: :exe "normal Ax"<CR>
+< one‸x
+< two
+< three
+< four
+< five
+
+=== ex-536
+> ‸one
+> two
+> three
+> four
+> five
+keys: :exe 'normal Ax' | exe 'normal Ay'<CR>
+< onex‸y
+< two
+< three
+< four
+< five
+
+=== ex-537
+> ‸one
+> two
+> three
+> four
+> five
+keys: :exe 'd'<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-538
+> ‸one
+> two
+> three
+> four
+> five
+keys: :exe '2d'<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-539
+> ‸one
+> two
+> three
+> four
+> five
+keys: :exe "2d"<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-540
+> ‸one
+> two
+> three
+> four
+> five
+keys: :execute 'normal dd'<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-541
+> ‸one
+> two
+> three
+> four
+> five
+keys: :normal dd|normal dd<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-542
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d|d<CR>
+< ‸three
+< four
+< five
+
+=== ex-543
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d|d|d<CR>
+< ‸four
+< five
+
+=== ex-544
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d|d|d|d|d|d<CR>
+< ‸
+
+=== ex-545
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2d|d<CR>
+< one
+< ‸four
+< five
+
+=== ex-546
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2d|2d<CR>
+< one
+< ‸four
+< five
+
+=== ex-547
+> ‸one
+> two
+> three
+> four
+> five
+keys: :1d|1d<CR>
+< ‸three
+< four
+< five
+
+=== ex-548
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d|foo<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-549
+> ‸one
+> two
+> three
+> four
+> five
+keys: :foo|d<CR>
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-550
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d | d<CR>
+< ‸three
+< four
+< five
+
+=== ex-551
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d |d<CR>
+< ‸three
+< four
+< five
+
+=== ex-552
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d| d<CR>
+< ‸three
+< four
+< five
+
+=== ex-553
+> ‸one
+> two
+> three
+> four
+> five
+keys: :s/o/0/|d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-554
+> ‸one
+> two
+> three
+> four
+> five
+keys: :s/o/0/ | d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-555
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%s/o/0/|d<CR>
+< 0ne
+< tw0
+< three
+< ‸five
+
+=== ex-556
+> ‸one
+> two
+> three
+> four
+> five
+keys: :%s/o/0/|2d<CR>
+< 0ne
+< ‸three
+< f0ur
+< five
+
+=== ex-557
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2,3s/o/0/|d<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-558
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d|s/o/0/<CR>
+< ‸tw0
+< three
+< four
+< five
+
+=== ex-559
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d|s/o/0/<CR>u
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-560
+> ‸one
+> two
+> three
+> four
+> five
+keys: :d|s/o/0/<CR>uu
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-561
+> ‸one
+> two
+> three
+> four
+> five
+keys: :g/o/d|d<CR>
+< ‸three
+
+=== ex-562
+> ‸one
+> two
+> three
+> four
+> five
+keys: :g/o/d|d<CR>u
+< ‸one
+< two
+< three
+< four
+< five
+
+=== ex-563
+> ‸one
+> two
+> three
+> four
+> five
+keys: :g/e/s/e/E/|s/E/e/<CR>
+< one
+< two
+< three
+< four
+< ‸five
+
+=== ex-564
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2|d<CR>
+< one
+< ‸three
+< four
+< five
+
+=== ex-565
+> ‸one
+> two
+> three
+> four
+> five
+keys: :2|3|d<CR>
+< one
+< two
+< ‸four
+< five
+
+=== ex-566
+> ‸one
+> two
+> three
+> four
+> five
+keys: :$|d<CR>
+< one
+< two
+< three
+< ‸four
+
+=== ex-567
+> ‸one
+> two
+> three
+> four
+> five
+keys: :.|d<CR>
+< ‸two
+< three
+< four
+< five
+
+=== ex-568
+> ‸one
+> two
+> three
+> four
+> five
+keys: :'a|d<CR>
+< ‸one
+< two
+< three
+< four
+< five

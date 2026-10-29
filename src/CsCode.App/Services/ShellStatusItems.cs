@@ -47,8 +47,9 @@ public sealed class ShellStatusItems : IDisposable
         if (languages is not null) _subs.Add(languages.LanguagesChanged.Subscribe(_ => UpdateEditorItems()));
         if (diagnostics is not null)
         {
-            _subs.Add(diagnostics.Changed.Subscribe(_ => _ui.PostCoalesced("status.diagnostics", UpdateDiagnostics)));
-            UpdateDiagnostics();
+            // Counting walks the whole diagnostic store under its lock: never on the UI thread (see ScheduleDiagnostics).
+            _subs.Add(diagnostics.Changed.Subscribe(_ => ScheduleDiagnostics()));
+            ScheduleDiagnostics();
         }
         if (debug is not null)
         {
@@ -95,11 +96,32 @@ public sealed class ShellStatusItems : IDisposable
         Put(new StatusBarItemModel("editor.language", language, "Select Language Mode", Commands.ShellCommands.ChangeLanguageMode, StatusBarAlignment.Right, 60));
     }
 
-    private void UpdateDiagnostics()
+    private int _diagState; // 0 idle, 1 scheduled/running, 2 changed while running
+    private volatile bool _disposed;
+
+    /// <summary>At most one worker pass at a time and at most ~10 per second; only the finished counts reach the UI thread.</summary>
+    private void ScheduleDiagnostics()
     {
-        if (_diagnostics is null) return;
-        var (e, w, _, _) = _diagnostics.Counts;
-        Put(new StatusBarItemModel("diagnostics", $"$(error) {e}  $(warning) {w}", "Problems: click to open the Error List", Commands.ShellCommands.ShowErrorList, StatusBarAlignment.Left, 50));
+        if (_diagnostics is null || _disposed) return;
+        if (Interlocked.CompareExchange(ref _diagState, 1, 0) != 0) { Volatile.Write(ref _diagState, 2); return; }
+        _ = Task.Run(async () =>
+        {
+            do
+            {
+                Volatile.Write(ref _diagState, 1);
+                await Task.Delay(100).ConfigureAwait(false);
+                if (_disposed) break;
+                var (e, w, _, _) = _diagnostics.Counts;
+                _ui.PostCoalesced("status.diagnostics", () => PutDiagnostics(e, w));
+            }
+            while (Interlocked.CompareExchange(ref _diagState, 0, 1) == 2);
+        });
+    }
+
+    private void PutDiagnostics(int errors, int warnings)
+    {
+        if (_disposed) return;
+        Put(new StatusBarItemModel("diagnostics", $"$(error) {errors}  $(warning) {warnings}", "Problems: click to open the Error List", Commands.ShellCommands.ShowErrorList, StatusBarAlignment.Left, 50));
     }
 
     private void UpdateDebug(DebugState state)
@@ -139,6 +161,7 @@ public sealed class ShellStatusItems : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _notifications.PropertyChanged -= OnNotificationsChanged;
         _subs.Dispose();
         foreach (var i in _items.Values) i.Dispose();

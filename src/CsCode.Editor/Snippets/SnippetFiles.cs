@@ -150,44 +150,61 @@ public sealed class SnippetService : IDisposable
 }
 
 /// <summary>
-/// Offers every snippet of the document's language to the completion popup (kind Snippet, insert format Snippet), keyed on the
-/// snippet's prefix; the popup's own fuzzy filter narrows the list by what has been typed. Registered with the language-feature
-/// registry like any other provider, so it is merged with language-server results by the same code.
+/// Offers every snippet of the document's language to the completion popup (kind Snippet, insert format Snippet), keyed on the snippet's
+/// prefix; the popup's own fuzzy filter narrows the list by what has been typed. When the text before the caret is the start of a snippet
+/// prefix that contains non-word characters (<c>#reg</c> → <c>#region</c>), the item carries a <see cref="TextEdit"/> covering exactly that
+/// typed text, so accepting it does not leave the stray <c>#</c> behind. Registered with the language-feature registry like any other
+/// provider, so it is merged with language-server results by the same code.
 /// </summary>
 public sealed class SnippetCompletionProvider(SnippetService snippets) : ICompletionProvider
 {
-    private readonly object _gate = new();
-    private readonly Dictionary<string, (IReadOnlyList<SnippetDefinition> Source, CompletionList Items)> _cache = new();
-
     public IReadOnlyList<string> TriggerCharacters => [];
 
     public ValueTask<CompletionList?> ProvideCompletionAsync(ITextDocument document, TextPosition position, CompletionContext context, CancellationToken ct)
     {
         var defs = snippets.GetSnippets(document.LanguageId);
         if (defs.Count == 0) return ValueTask.FromResult<CompletionList?>(null);
-        lock (_gate)
-        {
-            // Rebuilt only when the underlying snippet list instance changes (snapshots are immutable).
-            if (_cache.TryGetValue(document.LanguageId, out var hit) && ReferenceEquals(hit.Source, defs)) return ValueTask.FromResult<CompletionList?>(hit.Items);
-            var items = new List<CompletionItem>(defs.Count);
-            foreach (var d in defs)
-                foreach (var prefix in d.Prefixes)
-                    items.Add(new CompletionItem
-                    {
-                        Label = prefix,
-                        LabelDescription = d.Name == prefix ? null : d.Name,
-                        Kind = CompletionItemKind.Snippet,
-                        Detail = d.Description ?? d.Name,
-                        Documentation = MarkupContent.Markdown("```\n" + d.Body + "\n```"),
-                        InsertText = d.Body,
-                        InsertTextFormat = InsertTextFormat.Snippet,
-                        FilterText = prefix,
-                        SortText = prefix,
-                    });
-            var list = new CompletionList(items);
-            if (_cache.Count > 64) _cache.Clear(); // bounded: a handful of languages are open at any time
-            _cache[document.LanguageId] = (defs, list);
-            return ValueTask.FromResult<CompletionList?>(list);
-        }
+
+        var line = document.GetLineText(position.Line);
+        var before = line[..Math.Min(position.Character, line.Length)];
+        var items = new List<CompletionItem>(defs.Count);
+        foreach (var d in defs)
+            foreach (var prefix in d.Prefixes)
+            {
+                var typed = TypedPrefixLength(before, prefix);
+                items.Add(new CompletionItem
+                {
+                    Label = prefix,
+                    LabelDescription = d.Name == prefix ? null : d.Name,
+                    Kind = CompletionItemKind.Snippet,
+                    Detail = d.Description ?? d.Name,
+                    Documentation = MarkupContent.Markdown("```\n" + d.Body + "\n```"),
+                    InsertText = d.Body,
+                    InsertTextFormat = InsertTextFormat.Snippet,
+                    FilterText = prefix,
+                    SortText = prefix,
+                    // only needed when the typed text reaches beyond the "word" (a non-word character belongs to the prefix)
+                    TextEdit = typed > 0 && HasNonWordChar(prefix, typed)
+                        ? new TextEdit(TextRange.FromLines(position.Line, before.Length - typed, position.Line, before.Length), d.Body)
+                        : null,
+                });
+            }
+        return ValueTask.FromResult<CompletionList?>(new CompletionList(items));
+    }
+
+    /// <summary>How many characters just before the caret are the beginning of <paramref name="prefix"/> (longest such, case-insensitive; 0 = none).</summary>
+    internal static int TypedPrefixLength(string before, string prefix)
+    {
+        var max = Math.Min(Math.Min(before.Length, prefix.Length), 64);
+        for (var k = max; k >= 1; k--)
+            if (string.Compare(before, before.Length - k, prefix, 0, k, StringComparison.OrdinalIgnoreCase) == 0) return k;
+        return 0;
+    }
+
+    private static bool HasNonWordChar(string prefix, int length)
+    {
+        for (var i = 0; i < length; i++)
+            if (!(char.IsLetterOrDigit(prefix[i]) || prefix[i] == '_')) return true;
+        return false;
     }
 }

@@ -57,7 +57,7 @@ public sealed class RegisterFile
     private Register? _previous;
 
     /// <summary>The last text typed in Insert mode (register '.'), stored in key-encoded form.</summary>
-    public string LastInserted { get; set; } = "";
+    public string? LastInserted { get; set; }
     public string LastCommandLine { get; set; } = "";
     public string LastSearch { get; set; } = "";
     public Func<string?>? CurrentFileName { get; set; }
@@ -67,8 +67,6 @@ public sealed class RegisterFile
     public static bool IsValidName(int c) =>
         c is '"' or '-' or '_' or '.' or ':' or '/' or '%' or '#' or '+' or '*' or '=' || (c is >= '0' and <= '9') ||
         (c is >= 'a' and <= 'z') || (c is >= 'A' and <= 'Z');
-
-    public static bool IsWritable(int c) => IsValidName(c) && c is not ('.' or ':' or '/' or '%' or '#') || c == '/';
 
     private static int Index(int name) => name switch
     {
@@ -85,7 +83,7 @@ public sealed class RegisterFile
         switch (name)
         {
             case 0 or '"': return _previous ?? _regs[0];
-            case '.': return LastInserted.Length == 0 ? null : Register.FromText(LastInserted, VimRegisterType.Character);
+            case '.': return LastInserted is null ? null : Register.FromText(LastInserted, VimRegisterType.Character);
             case ':': return LastCommandLine.Length == 0 ? null : Register.FromText(LastCommandLine, VimRegisterType.Character);
             case '/': return LastSearch.Length == 0 ? null : Register.FromText(LastSearch, VimRegisterType.Character);
             case '%': return CurrentFileName?.Invoke() is { } f ? Register.FromText(f, VimRegisterType.Character) : null;
@@ -105,12 +103,12 @@ public sealed class RegisterFile
     /// Register to WRITE for <paramref name="name"/>; remembers it as the target of the unnamed register.
     /// <paramref name="append"/> is true for A-Z. Returns null for the black hole.
     /// </summary>
-    public Register? ForWrite(int name, out bool append)
+    public Register? ForWrite(int name, out bool append, bool updatePrevious = true)
     {
         append = name is >= 'A' and <= 'Z';
         if (name == '_') return null;
         var r = name is 0 or '"' or '+' or '*' ? _regs[0] : _regs[Index(name)];
-        _previous = r;
+        if (updatePrevious) _previous = r;
         return r;
     }
 
@@ -135,13 +133,13 @@ public sealed class RegisterFile
     }
 
     /// <summary>1 -> 2 -> ... -> 9 ring shift done before a multi-line delete lands in register 1.</summary>
-    public Register ShiftDeleteRegisters()
+    public Register ShiftDeleteRegisters(bool keepPrevious = false)
     {
         var nine = _regs[9];
         for (var n = 9; n > 1; n--) _regs[n] = _regs[n - 1];
         _regs[1] = nine;
         nine.Set([], VimRegisterType.Character);
-        _previous = _regs[1];
+        if (!keepPrevious) _previous = _regs[1];
         return _regs[1];
     }
 
@@ -211,7 +209,7 @@ public sealed class RegisterFile
         for (var i = 0; i <= 9; i++) Row(i.ToString(), _regs[i]);
         for (var c = 'a'; c <= 'z'; c++) Row(c.ToString(), _regs[Index(c)]);
         Row("-", _regs[Small]);
-        if (LastInserted.Length > 0) Row(".", Register.FromText(LastInserted, VimRegisterType.Character));
+        if (!string.IsNullOrEmpty(LastInserted)) Row(".", Register.FromText(LastInserted, VimRegisterType.Character));
         if (LastCommandLine.Length > 0) Row(":", Register.FromText(LastCommandLine, VimRegisterType.Character));
         if (LastSearch.Length > 0) Row("/", Register.FromText(LastSearch, VimRegisterType.Character));
         return sb.ToString();

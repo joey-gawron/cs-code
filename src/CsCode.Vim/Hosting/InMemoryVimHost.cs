@@ -53,6 +53,7 @@ public sealed class InMemoryVimHost : IVimHost
     public int TopLine { get; set; }
     public int WindowHeight { get; set; } = 22;
     public int WrapWidth { get; set; }
+    public int WindowWidth { get; set; } = 80;
     public VimCommentTokens CommentTokens { get; set; } = new("//", "/*", "*/");
     public Func<int, int, bool>? Formatter { get; set; }
     public List<(int Start, int End)> ClosedFolds { get; } = [];

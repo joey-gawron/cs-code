@@ -77,7 +77,7 @@ public static class EngineRunner
                 if (a is null && b is null) continue;
                 if (k is "/" or ":" or ".")
                 {
-                    if (a is null || b is null || !a.Lines.AsSpan().SequenceEqual(b.Lines)) d.AppendLine($"reg {k}: nvim={a?.ToString() ?? "-"} mine={b?.ToString() ?? "-"}");
+                    if (a is null || b is null || string.Join("\n", a.Lines) != string.Join("\n", b.Lines)) d.AppendLine($"reg {k}: nvim={a?.ToString() ?? "-"} mine={b?.ToString() ?? "-"}");
                     continue;
                 }
                 if (a is null || !a.Same(b)) d.AppendLine($"reg {k}: nvim={a?.ToString() ?? "-"} mine={b?.ToString() ?? "-"}");

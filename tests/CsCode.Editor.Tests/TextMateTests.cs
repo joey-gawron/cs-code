@@ -33,6 +33,7 @@ public sealed class TextMateTests : IDisposable
     {
         var doc = new EditorDocument(new Uri($"file:///t/{Guid.NewGuid():N}.txt"), language, EditorDocument.CreateBuffer(text, _ui), _ui);
         var session = _manager.CreateSession(doc);
+        session.AttachView();
         if (expectTokens) WaitValid(session, doc.LineCount);
         else Settle();
         return (doc, session);
@@ -205,6 +206,7 @@ public sealed class TextMateTests : IDisposable
     {
         var doc = new EditorDocument(new Uri("file:///t/n.cs"), "csharp", EditorDocument.CreateBuffer(string.Join("\n", Enumerable.Repeat("int a = 1;", 200)), _ui), _ui);
         var s = _manager.CreateSession(doc);
+        s.AttachView();
         var notes = new List<(int, int, int)>();
         s.TokensChanged.Subscribe(e => notes.Add((e.First, e.Last, Environment.CurrentManagedThreadId)));
         WaitValid(s, 200);
@@ -226,7 +228,8 @@ public sealed class TextMateTests : IDisposable
         var callerThread = Environment.CurrentManagedThreadId;
         var doc = new EditorDocument(new Uri("file:///t/w.cs"), "csharp", EditorDocument.CreateBuffer(string.Join("\n", Enumerable.Repeat("class A { int B() { return 1; } }", 300)), _ui), _ui);
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var s = _manager.CreateSession(doc); // must only enqueue
+        var s = _manager.CreateSession(doc);
+        s.AttachView(); // must only enqueue
         Assert.True(sw.ElapsedMilliseconds < 50, $"creating a session blocked the caller for {sw.ElapsedMilliseconds} ms");
         WaitValid(s, 300);
         Assert.NotEqual(callerThread, _worker.Thread.ManagedThreadId);

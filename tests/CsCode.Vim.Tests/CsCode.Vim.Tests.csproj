@@ -13,4 +13,9 @@
     <ProjectReference Include="../../src/CsCode.Vim/CsCode.Vim.csproj" />
   </ItemGroup>
 
+  <!-- Table-driven cases (.vimtest) are copied next to the test assembly. -->
+  <ItemGroup>
+    <None Include="Cases/**/*" LinkBase="Cases" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -23,7 +23,7 @@ public sealed class FindResultsView : UserControl
         title.Margin = new Thickness(8, 4);
         title.Bind(TextBlock.TextProperty, new Binding(nameof(FindResultsViewModel.Title)));
 
-        var list = new ListBox { ItemsSource = vm.Rows, ItemTemplate = new FuncDataTemplate<FindResultRow>((r, _) => RowFor(r), supportsRecycling: false), SelectionMode = SelectionMode.Single };
+        var list = new ListBox { ItemsSource = vm.Rows, ItemTemplate = new FuncDataTemplate<FindResultRow>((r, _) => r is null ? new Panel() : RowFor(r), supportsRecycling: false), SelectionMode = SelectionMode.Single };
         list.DoubleTapped += async (_, _) => { if (list.SelectedItem is FindResultRow r) await vm.OpenAsync(r).ConfigureAwait(true); };
         list.KeyDown += async (_, e) => { if (e.Key == Key.Enter && list.SelectedItem is FindResultRow r) { e.Handled = true; await vm.OpenAsync(r).ConfigureAwait(true); } };
 

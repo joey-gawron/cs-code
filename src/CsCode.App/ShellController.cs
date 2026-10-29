@@ -31,13 +31,15 @@ namespace CsCode.App;
 /// </summary>
 public sealed class ShellController : IDisposable
 {
+    public const string UiStallSetting = "cscode.diagnostics.uiStallLogMs";
+
     private readonly IServiceProvider _sp;
     private readonly IUiDispatcher _ui;
     private readonly DisposableStore _disposables = new();
     private readonly TimeProvider _time;
     private ITimer? _saveTimer;
     private readonly HashSet<string> _autoShown = new(StringComparer.Ordinal);
-    private bool _started, _restoring;
+    private bool _started, _restoring, _disposed;
 
     public ShellController(IServiceProvider sp, IUiDispatcher ui)
     {
@@ -91,7 +93,8 @@ public sealed class ShellController : IDisposable
             commands, well, Tools, Palette, window, _sp.GetRequiredService<IModalDialogs>(), nav, workspace, config, themes, _sp.GetService<IKeybindingService>(),
             _sp.GetRequiredService<FindResultsViewModel>(), _sp.GetRequiredService<NotificationCenter>(), chrome,
             ResetLayoutAsync, RefreshExplorerAsync, specs,
-            () => new WelcomeView(commands, workspace, state), () => new KeyboardReferenceView(_sp.GetService<IKeybindingService>(), commands))));
+            () => new WelcomeView(commands, workspace, state), () => new KeyboardReferenceView(_sp.GetService<IKeybindingService>(), commands),
+            _sp.GetService<ILanguageService>())));
 
         Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window);
         _disposables.Add(Keyboard);
@@ -106,6 +109,28 @@ public sealed class ShellController : IDisposable
 
         // Tool windows that declare AutoShowWhen (debug panes) follow their context key.
         _disposables.Add(keys.Changed.Subscribe(_ => _ui.PostCoalesced("tools.autoshow", EvaluateAutoShow)));
+
+        // The shell's own settings are declared so they show up in schema-driven settings UIs.
+        if (config is not null)
+            _disposables.Add(config.RegisterProperties(
+            [
+                new ConfigurationProperty(DocumentWell.LiveViewsSetting, System.Text.Json.JsonSerializer.SerializeToElement(DocumentWell.DefaultLiveViews), "How many editor views stay alive besides the active tab of each group; older ones are disposed and recreated on demand."),
+                new ConfigurationProperty(NavigationService.ConfirmMultiFileSetting, System.Text.Json.JsonSerializer.SerializeToElement(true), "Ask for confirmation before applying a workspace edit (rename, refactor) that spans several files."),
+                new ConfigurationProperty(UiStallSetting, System.Text.Json.JsonSerializer.SerializeToElement(0), "Log a diagnostic when the UI thread has not pumped for this many milliseconds (0 = off; Debug builds default to 100)."),
+            ]));
+
+        // UI stall watchdog: Debug builds, or whenever the setting is > 0.
+        var stallMs = config?.Get(UiStallSetting, 0) ?? 0;
+#if DEBUG
+        if (stallMs <= 0) stallMs = 100;
+#endif
+        if (stallMs > 0 && _sp.GetService<IOutputService>() is { } outputService)
+        {
+            var channel = outputService.GetOrCreate("CsCode UI Diagnostics");
+            var dog = new UiStallWatchdog(_ui, channel.AppendLine, stallMs);
+            dog.Start();
+            _disposables.Add(dog);
+        }
 
         // Re-creatable memory held by the design system joins the memory-pressure policy.
         if (_sp.GetService<IMemoryMonitor>() is { } monitor) _disposables.Add(monitor.Register(new IconCacheTrimmable()));
@@ -159,6 +184,7 @@ public sealed class ShellController : IDisposable
 
     private async Task ApplyConfiguredThemeAsync()
     {
+        if (_disposed) return;
         var themes = _sp.GetRequiredService<IColorThemeService>();
         var id = _sp.GetService<IConfigurationService>()?.Get<string>(SettingKeys.WorkbenchColorTheme);
         if (id is not null && themes.Current.Id != id && themes.Available.Any(t => t.Id == id)) await themes.SetCurrentAsync(id).ConfigureAwait(true);
@@ -192,6 +218,7 @@ public sealed class ShellController : IDisposable
 
     private void EvaluateAutoShow()
     {
+        if (_disposed) return; // a coalesced post can outlive the window during shutdown
         var keys = _sp.GetRequiredService<IContextKeyService>();
         foreach (var tool in _sp.GetServices<IToolWindow>().Where(t => t.AutoShowWhen is not null))
         {
@@ -215,7 +242,7 @@ public sealed class ShellController : IDisposable
     {
         if (_restoring) return;
         _saveTimer?.Dispose();
-        _saveTimer = _time.CreateTimer(_ => _ui.Post(() => Layout.Save()), null, TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
+        _saveTimer = _time.CreateTimer(_ => _ui.Post(() => { if (!_disposed) Layout.Save(); }), null, TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>Saves the layout immediately (window closing).</summary>
@@ -228,6 +255,7 @@ public sealed class ShellController : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _saveTimer?.Dispose();
         _disposables.Dispose();
     }

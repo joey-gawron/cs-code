@@ -1,0 +1,1088 @@
+# marks and jumps
+=== marks-001
+> foo ‸bar
+keys: majj`a
+< foo ‸bar
+
+=== marks-002
+> foo ‸bar
+> baz
+keys: majj`a
+< foo ‸bar
+< baz
+
+=== marks-003
+> foo ‸bar
+> baz
+keys: majj'a
+< ‸foo bar
+< baz
+
+=== marks-004
+> foo ‸bar
+>   baz
+keys: majj'a
+< ‸foo bar
+<   baz
+
+=== marks-005
+> foo ‸bar
+>   baz
+keys: majj'a
+< ‸foo bar
+<   baz
+
+=== marks-006
+> ‸a
+> b
+> c
+keys: majjd'a
+< ‸
+
+=== marks-007
+> ‸a
+> b
+> c
+keys: jmakd'a
+< ‸c
+
+=== marks-008
+> ‸a
+> b
+> c
+keys: jmaggd'a
+< ‸c
+
+=== marks-009
+> ‸a
+> b
+> c
+keys: jmaGd'a
+< ‸a
+
+=== marks-010
+> ‸a
+> b
+> c
+keys: jmaGd`a
+< a
+< ‸c
+
+=== marks-011
+> ‸foo bar baz
+keys: wmaed`a
+< foo ‸r baz
+
+=== marks-012
+> ‸foo bar baz
+keys: wmaed`a
+< foo ‸r baz
+
+=== marks-013
+> foo ‸bar baz
+keys: mad`a
+< foo ‸bar baz
+
+=== marks-014
+> foo ‸bar baz
+keys: mad$`a
+< foo‸ ⏎
+
+=== marks-015
+> ‸foo bar baz
+keys: wma0y`a$p
+< foo bar bazfoo‸ ⏎
+
+=== marks-016
+> ‸foo bar baz
+keys: ma$d`a
+< ‸z
+
+=== marks-017
+> ‸foo bar
+keys: ma:s/o/0/<CR>`a
+< ‸f0o bar
+
+=== marks-018
+> ‸a
+> b
+> c
+keys: jmaggdd`a
+< ‸b
+< c
+
+=== marks-019
+> ‸a
+> b
+> c
+keys: jmaggddj`a
+< ‸b
+< c
+
+=== marks-020
+> ‸a
+> b
+> c
+keys: jmaddgg'a
+< ‸a
+< c
+
+=== marks-021
+> ‸a
+> b
+> c
+keys: jmaddgg`a
+< ‸a
+< c
+
+=== marks-022
+> ‸a
+> b
+> c
+keys: jmakddj'a
+< ‸b
+< c
+
+=== marks-023
+> ‸a
+> b
+> c
+keys: jmaOx<Esc>'a
+< a
+< x
+< ‸b
+< c
+
+=== marks-024
+> ‸a
+> b
+> c
+keys: jmaox<Esc>'a
+< a
+< ‸b
+< x
+< c
+
+=== marks-025
+> ‸a
+> b
+> c
+keys: jmaggOx<Esc>'a
+< x
+< a
+< ‸b
+< c
+
+=== marks-026
+> ‸a
+> b
+> c
+keys: jmaggox<Esc>'a
+< a
+< x
+< ‸b
+< c
+
+=== marks-027
+> ‸a
+> b
+> c
+keys: jmaggyyP'a
+< a
+< a
+< ‸b
+< c
+
+=== marks-028
+> ‸a
+> b
+> c
+keys: jmaggyyjp'a
+< a
+< ‸b
+< a
+< c
+
+=== marks-029
+> ‸a
+> b
+> c
+keys: jmaGyyp'a
+< a
+< ‸b
+< c
+< c
+
+=== marks-030
+> ‸ab cd ef
+keys: wmaggi<CR><Esc>`a
+< ‸
+< ab cd ef
+
+=== marks-031
+> ‸ab cd ef
+keys: wmaggi<CR><Esc>'a
+< ‸
+< ab cd ef
+
+=== marks-032
+> ‸ab cd ef
+keys: wmai<CR><Esc>`a
+< ab‸ ⏎
+< cd ef
+
+=== marks-033
+> ‸ab cd ef
+keys: wmaA<CR>x<Esc>`a
+< ab ‸cd ef
+< x
+
+=== marks-034
+> ‸abc def
+keys: wmaJ`a
+< abc ‸def
+
+=== marks-035
+> ‸abc
+> def
+> ghi
+keys: jmaggJ`a
+< abc ‸def
+< ghi
+
+=== marks-036
+> ‸abc
+> def
+> ghi
+keys: jmaggJ'a
+< ‸abc def
+< ghi
+
+=== marks-037
+> ‸abc
+> def
+> ghi
+keys: jmakJ`a
+< abc ‸def
+< ghi
+
+=== marks-038
+> ‸abc
+> def
+> ghi
+keys: jwmaggJ`a
+< abc def
+< ‸ghi
+
+=== marks-039
+> ‸a
+> b
+> c
+keys: jmajmbgg'a'b
+< a
+< b
+< ‸c
+
+=== marks-040
+> ‸a
+> b
+> c
+keys: jmaggjjmb'a'b
+< a
+< b
+< ‸c
+
+=== marks-041
+> ‸a
+> b
+> c
+keys: jmaGmb'a``
+< a
+< b
+< ‸c
+
+=== marks-042
+> ‸a
+> b
+> c
+keys: jmaG'a``
+< a
+< b
+< ‸c
+
+=== marks-043
+> ‸a
+> b
+> c
+keys: jmaG'a'a
+< a
+< ‸b
+< c
+
+=== marks-044
+> ‸a
+> b
+> c
+keys: jmaG`a``
+< a
+< b
+< ‸c
+
+=== marks-046
+> ‸a
+> b
+> c
+keys: G``
+< ‸a
+< b
+< c
+
+=== marks-047
+> ‸a
+> b
+> c
+keys: Ggg``
+< a
+< b
+< ‸c
+
+=== marks-048
+> ‸a
+> b
+> c
+keys: Ggg''
+< a
+< b
+< ‸c
+
+=== marks-050
+> ‸a
+> b
+> c
+keys: Ggg''``
+< ‸a
+< b
+< c
+
+=== marks-051
+> ‸a
+> b
+> c
+> d
+keys: Gggj''
+< a
+< b
+< c
+< ‸d
+
+=== marks-052
+> ‸a
+> b
+> c
+> d
+keys: 3Gj``
+< ‸a
+< b
+< c
+< d
+
+=== marks-053
+> ‸a
+> b
+> c
+> d
+keys: 3GG<C-o>
+< a
+< b
+< ‸c
+< d
+
+=== marks-054
+> ‸a
+> b
+> c
+> d
+keys: 3GG<C-o><C-o>
+< ‸a
+< b
+< c
+< d
+
+=== marks-055
+> ‸a
+> b
+> c
+> d
+keys: 3GG<C-o><C-o><Tab>
+< a
+< b
+< ‸c
+< d
+
+=== marks-056
+> ‸a
+> b
+> c
+> d
+keys: 3GG<C-o><C-o><C-i><C-i>
+< a
+< b
+< c
+< ‸d
+
+=== marks-057
+> ‸a
+> b
+> c
+> d
+keys: 3GG<C-o><C-o><C-o>
+< ‸a
+< b
+< c
+< d
+
+=== marks-058
+> ‸a
+> b
+> c
+> d
+keys: 3GG<C-o>2<C-i>
+< a
+< b
+< ‸c
+< d
+
+=== marks-059
+> ‸a
+> b
+> c
+> d
+keys: 3GG2<C-o>
+< ‸a
+< b
+< c
+< d
+
+=== marks-060
+> ‸a
+> b
+> c
+> d
+keys: 3GGgg<C-o>
+< a
+< b
+< c
+< ‸d
+
+=== marks-061
+> ‸a
+> b
+> c
+> d
+keys: 3GGgg<C-o><C-o>
+< a
+< b
+< ‸c
+< d
+
+=== marks-062
+> ‸a
+> b
+> c
+> d
+keys: 3GGgg<C-o><C-o><C-o>
+< a
+< b
+< ‸c
+< d
+
+=== marks-063
+> ‸a b
+> c d
+keys: /d<CR><C-o>
+< ‸a b
+< c d
+
+=== marks-064
+> ‸a b
+> c d
+keys: /d<CR>/b<CR><C-o>
+< a b
+< c ‸d
+
+=== marks-065
+> ‸a b
+> c d
+keys: /d<CR>/b<CR><C-o><C-o>
+< a b
+< c ‸d
+
+=== marks-066
+> ‸a b
+> c d
+keys: /d<CR>/b<CR><C-o><C-o><C-i>
+< a ‸b
+< c d
+
+=== marks-067
+> ‸a
+> b
+> c
+keys: x:2<CR><C-o>
+< ‸
+< b
+< c
+
+=== marks-069
+> ‸abc
+keys: ix<Esc>gg``
+< ‸xabc
+
+=== marks-070
+> ‸foo bar
+keys: ihello<Esc>`^
+< hello‸foo bar
+
+=== marks-071
+> ‸foo bar
+keys: wihello<Esc>0`^
+< foo hello‸bar
+
+=== marks-072
+> ‸foo bar
+keys: ahello<Esc>0`^
+< fhello‸oo bar
+
+=== marks-073
+> ‸foo bar
+keys: wihello<Esc>0gi<Esc>
+< foo hell‸obar
+
+=== marks-074
+> ‸foo bar
+keys: wihello<Esc>0gix<Esc>
+< foo hello‸xbar
+
+=== marks-075
+> ‸foo bar
+keys: wxx0`.
+< foo ‸r
+
+=== marks-076
+> ‸foo bar
+keys: wxx0`[
+< foo ‸r
+
+=== marks-077
+> ‸foo bar
+keys: wxx0`]
+< foo ‸r
+
+=== marks-078
+> ‸foo bar
+keys: wdw0`[
+< foo‸ ⏎
+
+=== marks-079
+> ‸foo bar
+keys: wdw0`]
+< foo‸ ⏎
+
+=== marks-080
+> ‸foo bar
+keys: wyw0`[
+< foo ‸bar
+
+=== marks-081
+> ‸foo bar
+keys: wyw0`]
+< foo ba‸r
+
+=== marks-082
+> ‸foo bar baz
+keys: wywgg`]
+< foo bar‸ baz
+
+=== marks-083
+> ‸foo bar baz
+keys: wywgg`[
+< foo ‸bar baz
+
+=== marks-084
+> ‸foo bar baz
+keys: wyiwgg`]
+< foo ba‸r baz
+
+=== marks-085
+> ‸foo bar baz
+keys: yyp`[
+< foo bar baz
+< ‸foo bar baz
+
+=== marks-086
+> ‸foo bar baz
+keys: yyp`]
+< foo bar baz
+< foo bar ba‸z
+
+=== marks-087
+> ‸foo
+> bar
+keys: yyjp`[
+< foo
+< bar
+< ‸foo
+
+=== marks-088
+> ‸foo
+> bar
+keys: yyjp`]
+< foo
+< bar
+< fo‸o
+
+=== marks-089
+> ‸foo
+> bar
+keys: yyjp'[
+< foo
+< bar
+< ‸foo
+
+=== marks-090
+> ‸foo
+> bar
+keys: yjp`]
+< foo
+< foo
+< ba‸r
+< bar
+
+=== marks-091
+> ‸foo
+> bar
+keys: yjP`]
+< foo
+< ba‸r
+< foo
+< bar
+
+=== marks-092
+> ‸foo
+> bar
+keys: ddp`[
+< bar
+< ‸foo
+
+=== marks-093
+> ‸foo
+> bar
+keys: ddp`]
+< bar
+< fo‸o
+
+=== marks-094
+> ‸foo bar
+keys: wp
+< foo ‸bar
+
+=== marks-095
+> ‸foo bar
+keys: xp`[
+< o‸fo bar
+
+=== marks-096
+> ‸foo bar
+keys: xp`]
+< o‸fo bar
+
+=== marks-097
+> ‸foo bar
+keys: wihi<Esc>gg`[
+< foo ‸hibar
+
+=== marks-098
+> ‸foo bar
+keys: wihi<Esc>gg`]
+< foo hi‸bar
+
+=== marks-099
+> ‸foo bar
+keys: wohi<Esc>gg`[
+< foo bar
+< ‸hi
+
+=== marks-100
+> ‸foo bar
+keys: wohi<Esc>gg`]
+< foo bar
+< h‸i
+
+=== marks-101
+> ‸foo bar
+keys: wcwhi<Esc>gg`[
+< foo ‸hi
+
+=== marks-102
+> ‸foo bar
+keys: wcwhi<Esc>gg`]
+< foo h‸i
+
+=== marks-103
+> ‸foo bar
+keys: wvey`<
+< foo ‸bar
+
+=== marks-104
+> ‸foo bar
+keys: wvey`>
+< foo ba‸r
+
+=== marks-105
+> ‸foo bar
+keys: wvey`<`>
+< foo ba‸r
+
+=== marks-106
+> ‸foo bar
+keys: vey:'<,'>s/o/0/<CR>
+< ‸f0o bar
+
+=== marks-107
+> ‸foo bar
+> baz
+keys: vjy:'<,'>s/a/X/<CR>
+< foo bXr
+< ‸bXz
+
+=== marks-108
+> ‸foo bar
+> baz
+keys: vjy:'<s/a/X/<CR>
+< ‸foo bXr
+< baz
+
+=== marks-109
+> ‸foo bar
+> baz
+keys: vjy:'>s/a/X/<CR>
+< foo bar
+< ‸bXz
+
+=== marks-110
+> ‸a
+> b
+> c
+keys: jmaGmb:'a,'bd<CR>
+< ‸a
+
+=== marks-111
+> ‸a
+> b
+> c
+keys: jmaGmb:'a,'bs/$/!/<CR>
+< a
+< b!
+< ‸c!
+
+=== marks-112
+> ‸a
+> b
+> c
+keys: :2ka<CR>'a
+< a
+< ‸b
+< c
+
+=== marks-113
+> ‸a
+> b
+> c
+keys: :2mark a<CR>'a
+< a
+< ‸b
+< c
+
+=== marks-114
+> ‸a
+> b
+> c
+keys: :2k a<CR>'a
+< a
+< ‸b
+< c
+
+=== marks-115
+> ‸a
+> b
+> c
+keys: jma:delmarks a<CR>'a
+< a
+< ‸b
+< c
+
+=== marks-116
+> ‸a
+> b
+> c
+keys: jma:delm!<CR>'a
+< a
+< ‸b
+< c
+
+=== marks-117
+> ‸a
+> b
+> c
+keys: jmajmb:delm a-b<CR>'a
+< a
+< b
+< ‸c
+
+=== marks-118
+> ‸a
+> b
+> c
+keys: jmajmb:delm a-b<CR>'b
+< a
+< b
+< ‸c
+
+=== marks-119
+> ‸a
+> b
+> c
+keys: 'a
+< ‸a
+< b
+< c
+
+=== marks-120
+> ‸a
+> b
+> c
+keys: `a
+< ‸a
+< b
+< c
+
+=== marks-121
+> ‸a
+> b
+> c
+keys: ma:marks<CR>
+< ‸a
+< b
+< c
+
+=== marks-122
+> ‸a
+> b
+> c
+keys: :jumps<CR>
+< ‸a
+< b
+< c
+
+=== marks-123
+> ‸a
+> b
+> c
+keys: jmA'A
+< a
+< ‸b
+< c
+
+=== marks-124
+> ‸a
+> b
+> c
+keys: jmAgg'A
+< a
+< ‸b
+< c
+
+=== marks-125
+> ‸a
+> b
+> c
+keys: jmAgg`A
+< a
+< ‸b
+< c
+
+=== marks-126
+> ‸a b c
+keys: wmAgg`A
+< a ‸b c
+
+=== marks-127
+> ‸a
+> b
+> c
+keys: x:changes<CR>
+< ‸
+< b
+< c
+
+=== marks-128
+> ‸a b c d
+keys: xwxwxg;
+<   ‸ d
+
+=== marks-129
+> ‸a b c d
+keys: xwxwxg;g;
+<   ‸ d
+
+=== marks-130
+> ‸a b c d
+keys: xwxwxg;g;g;
+<   ‸ d
+
+=== marks-131
+> ‸a b c d
+keys: xwxwxg;g;g;g;
+<   ‸ d
+
+=== marks-132
+> ‸a b c d
+keys: xwxwxg;g;g,
+<   ‸ d
+
+=== marks-133
+> ‸a b c d
+keys: xwxwxg;g;g,g,
+<   ‸ d
+
+=== marks-134
+> ‸a b c d
+keys: xwxwxg;g;g,g,g,
+<   ‸ d
+
+=== marks-135
+> ‸a b c d
+keys: xwxwxg;g;g;g;g,
+<   ‸ d
+
+=== marks-136
+> ‸a
+> b
+> c
+> d
+keys: xjxjxg;
+< 
+< 
+< ‸
+< d
+
+=== marks-137
+> ‸a
+> b
+> c
+> d
+keys: xjxjxg;g;
+< 
+< ‸
+< 
+< d
+
+=== marks-138
+> ‸a
+> b
+> c
+> d
+keys: xjxjxg;g;g;
+< ‸
+< 
+< 
+< d
+
+=== marks-139
+> ‸a
+> b
+> c
+> d
+keys: xjxjxg;g;g;g;
+< ‸
+< 
+< 
+< d
+
+=== marks-140
+> ‸a
+> b
+> c
+> d
+keys: xjxjxg;g;g,
+< 
+< 
+< ‸
+< d
+
+=== marks-141
+> ‸a
+> b
+> c
+> d
+keys: xjxjxgg2g;
+< 
+< ‸
+< 
+< d
+
+=== marks-142
+> ‸a
+> b
+> c
+> d
+keys: xjxjxgg3g;
+< ‸
+< 
+< 
+< d
+
+=== marks-143
+> ‸a
+> b
+> c
+> d
+keys: xjxjxGg;
+< 
+< 
+< ‸
+< d
+
+=== marks-144
+> ‸a
+> b
+> c
+> d
+keys: g;
+< ‸a
+< b
+< c
+< d
+
+=== marks-145
+> ‸a
+> b
+> c
+> d
+keys: g,
+< ‸a
+< b
+< c
+< d
+
+=== marks-146
+> ‸a
+> b
+> c
+> d
+keys: xjxjxg;ix<Esc>g;
+< 
+< 
+< ‸x
+< d
+

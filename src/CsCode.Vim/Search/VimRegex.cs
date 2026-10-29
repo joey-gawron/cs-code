@@ -289,7 +289,7 @@ public static class VimRegex
                 // postfix multis
                 atom = ParseMulti(atom);
                 sb.Append(atom);
-                atStart = startAnchor && false;
+                atStart = false;
                 if (t.Kind == T.UCmd && t.C == 'n') atStart = true;
                 if (t.Kind == T.Cmd && t.C == 'n') atStart = true;
             }
@@ -376,15 +376,15 @@ public static class VimRegex
             switch (t.Kind)
             {
                 case T.Lit: return Lit(t.C);
-                case T.Coll: Multiline |= t.Nl; return Collection(t.Raw, t.Nl);
+                case T.Coll: Multiline |= t.Nl; return WidenNegated(Collection(t.Raw, t.Nl));
                 case T.Brace: throw new VimRegexException(t.C == '@' ? "E64: \\@ follows nothing" : "E64: \\{ follows nothing");
                 case T.Pct: return Pct(t);
-                case T.UCmd: return UnderscoreCmd(t.C);
-                case T.Cmd: return Command(t.C);
+                case T.UCmd: return WidenNegated(UnderscoreCmd(t.C));
+                case T.Cmd: return WidenNegated(Command(t.C));
                 case T.Op:
                     switch (t.C)
                     {
-                        case '.': return "[^\\n]";
+                        case '.': return WidenNegated("[^\\n]");
                         case '^':
                             if (atStart || _p == 1) { startAnchor = true; return "^"; }
                             return "\\^";
@@ -393,7 +393,9 @@ public static class VimRegex
                             var atEnd = _p >= toks.Count || toks[_p] is { Kind: T.Op, C: '|' or ')' or '&' } || toks[_p] is { Kind: T.Cmd, C: 'n' };
                             return atEnd ? "$" : "\\$";
                         }
-                        case '~': return Regex.Escape(lastSubstitute);
+                        case '~':
+                            if (lastSubstitute.Length == 0) throw new VimRegexException("E33: No previous substitute regular expression");
+                            return Regex.Escape(lastSubstitute);
                         case '*' or '+' or '?': return t.C == '*' && atStart ? "\\*" : throw new VimRegexException($"E64: {(t.C == '?' ? "\\=" : "\\" + t.C)} follows nothing");
                         case '<': return "\\b(?=\\w)";
                         case '>': return "\\b(?<=\\w)";
@@ -428,7 +430,7 @@ public static class VimRegex
 
         private static string Lit(int cp)
         {
-            if (cp > 0xFFFF) return Regex.Escape(char.ConvertFromUtf32(cp));
+            if (cp > 0xFFFF) return Regex.Escape(Keys.SafeString(cp));
             return cp switch
             {
                 '\n' => "\\n",
@@ -520,6 +522,12 @@ public static class VimRegex
             throw new VimRegexException("E63: Invalid use of \\_");
         }
 
+        /// <summary>.NET matches UTF-16 code units; Vim matches characters. A class that can match "anything but ..." must take a surrogate pair as one character.</summary>
+        private static string WidenNegated(string cls) =>
+            cls.StartsWith("[^", StringComparison.Ordinal) && !cls.Contains('|') && cls.EndsWith(']')
+                ? "(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|" + cls + ")"
+                : cls;
+
         private string Pct(Tok t)
         {
             if (t.C == '[')
@@ -535,8 +543,8 @@ public static class VimRegex
             }
             switch (t.Raw)
             {
-                case "^": return "\\A";
-                case "$": return "\\z";
+                case "^": Multiline = true; return "\\A";
+                case "$": Multiline = true; return "\\z";
             }
             throw new VimRegexException($"E-vimregex: \\%{t.Raw} is not supported (position atoms)");
         }
@@ -582,7 +590,7 @@ public static class VimRegex
                             var s = i;
                             while (i < raw.Length && i - s < max && Uri.IsHexDigit(raw[i]) && (radix == 16 || raw[i] < '0' + radix)) i++;
                             if (i == s) { sb.Append("\\\\").Append(e); continue; }
-                            sb.Append(Regex.Escape(char.ConvertFromUtf32(Convert.ToInt32(raw.Substring(s, i - s), radix))));
+                            sb.Append(Regex.Escape(Keys.SafeString(Convert.ToInt32(raw.Substring(s, i - s), radix))));
                             continue;
                         }
                     }

@@ -93,11 +93,38 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
 
     // ---- lifecycle ---------------------------------------------------------------------------------------------
 
-    public async Task StartAsync(bool user = true, CancellationToken ct = default)
+    // Public lifecycle calls hop to the Language lane first: process creation / teardown is blocking work that must never run on the thread
+    // that called us (the shell may well be on the UI thread). The caller pays one enqueue.
+    public Task StartAsync(bool user = true, CancellationToken ct = default) => OnLaneAsync(() => StartInnerAsync(user, ct));
+    public Task StopAsync(CancellationToken ct = default) => OnLaneAsync(() => StopInnerAsync(ct));
+    public Task RestartAsync(CancellationToken ct = default) => OnLaneAsync(() => RestartInnerAsync(ct));
+
+    private Task OnLaneAsync(Func<Task> work)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Run()
+        {
+            try
+            {
+                work().ContinueWith(static (t, state) =>
+                {
+                    var source = (TaskCompletionSource)state!;
+                    if (t.IsFaulted) source.TrySetException(t.Exception!.InnerExceptions);
+                    else if (t.IsCanceled) source.TrySetCanceled();
+                    else source.TrySetResult();
+                }, tcs, TaskScheduler.Default);
+            }
+            catch (Exception ex) { tcs.TrySetException(ex); }
+        }
+        if (!ctx.Queue.Post(LanePriority.Interactive, Run, exempt: true)) ThreadPool.UnsafeQueueUserWorkItem(static r => r(), (Action)Run, preferLocal: false); // queue already disposed
+        return tcs.Task;
+    }
+
+    private async Task StartInnerAsync(bool user, CancellationToken ct)
     {
         if (user)
         {
-            lock (_gate) { _userStopped = false; _autoStartTried = true; }
+            lock (_gate) { _userStopped = false; _autoStartTried = true; _crashes.Clear(); _faultMessageShown = false; _notFoundShown = false; }
             CancelRestartTimer(); // an explicit start supersedes a pending automatic restart (but an automatic restart must not cancel itself)
         }
         await _lifecycle.WaitAsync(ct).ConfigureAwait(false);
@@ -156,7 +183,7 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
         catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { }
     }
 
-    public async Task StopAsync(CancellationToken ct = default)
+    private async Task StopInnerAsync(CancellationToken ct)
     {
         lock (_gate) _userStopped = true;
         CancelRestartTimer();
@@ -183,7 +210,7 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
         finally { SetState(LanguageServerState.Stopped, keepError: true); }
     }
 
-    public async Task RestartAsync(CancellationToken ct = default)
+    private async Task RestartInnerAsync(CancellationToken ct)
     {
         CancelRestartTimer();
         await _lifecycle.WaitAsync(ct).ConfigureAwait(false);

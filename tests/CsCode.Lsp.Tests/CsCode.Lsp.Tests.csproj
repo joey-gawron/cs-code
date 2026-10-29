@@ -8,6 +8,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- the hostile peer (a node script) is started as a real child process by the hostile-load suite -->
+    <None Include="Hostile/*.js" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
     <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
     <ProjectReference Include="../../src/CsCode.Lsp/CsCode.Lsp.csproj" />

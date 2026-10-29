@@ -1,0 +1,251 @@
+# change operator
+=== change-001
+> ‸foo bar baz
+keys: cwX<Esc>
+< ‸X bar baz
+
+=== change-002
+> foo ‸bar baz
+keys: cwX<Esc>
+< foo ‸X baz
+
+=== change-003
+> foo ba‸r baz
+keys: cwX<Esc>
+< foo ba‸X baz
+
+=== change-004
+> foo bar‸ baz
+keys: cwX<Esc>
+< foo bar‸Xbaz
+
+=== change-005
+> foo ‸bar baz
+keys: 2cwX<Esc>
+< foo ‸X
+
+=== change-006
+> foo ‸bar baz
+keys: cWX<Esc>
+< foo ‸X baz
+
+=== change-007
+> foo ‸bar.baz
+keys: cWX<Esc>
+< foo ‸X
+
+=== change-008
+> foo ‸bar.baz
+keys: cwX<Esc>
+< foo ‸X.baz
+
+=== change-009
+> foo ‸  bar
+keys: cwX<Esc>
+< foo ‸Xbar
+
+=== change-010
+> foo‸   bar
+keys: cwX<Esc>
+< foo‸Xbar
+
+=== change-011
+> foo ‸bar
+keys: cwX<Esc>
+< foo ‸X
+
+=== change-012
+> ‸foo bar baz
+keys: ceX<Esc>
+< ‸X bar baz
+
+=== change-013
+> foo ‸bar baz
+keys: c$X<Esc>
+< foo ‸X
+
+=== change-014
+> foo ‸bar baz
+keys: C-X<Esc>
+< foo -‸X
+
+=== change-015
+> foo ‸bar baz
+> next
+keys: 2C-<Esc>
+< foo ‸-
+
+=== change-016
+> foo ‸bar baz
+keys: c0X<Esc>
+< ‸Xbar baz
+
+=== change-017
+>   foo ‸bar
+keys: c^X<Esc>
+<   ‸Xbar
+
+=== change-018
+> foo ‸bar baz
+keys: ccX<Esc>
+< ‸X
+
+=== change-019
+>   foo ‸bar baz
+keys: ccX<Esc>
+< ‸X
+
+=== change-020
+> a
+> ‸b
+> c
+keys: 2ccX<Esc>
+< a
+< ‸X
+
+=== change-021
+> foo ‸bar baz
+keys: Sx<Esc>
+< ‸x
+
+=== change-022
+> foo ‸bar baz
+keys: sx<Esc>
+< foo ‸xar baz
+
+=== change-023
+> foo ‸bar baz
+keys: 3sx<Esc>
+< foo ‸x baz
+
+=== change-024
+> foo ‸bar baz
+keys: s<Esc>
+< foo‸ ar baz
+
+=== change-025
+> foo bar‸
+keys: sX<Esc>
+< foo ba‸X
+
+=== change-026
+> foo ‸bar baz
+keys: cfaX<Esc>
+< foo ‸Xr baz
+
+=== change-027
+> foo ‸bar baz
+keys: ctaX<Esc>
+< foo ‸Xar baz
+
+=== change-028
+> foo ‸bar baz
+keys: c2wX<Esc>
+< foo ‸X
+
+=== change-029
+> foo ‸bar baz
+> next
+keys: cjX<Esc>
+< ‸X
+
+=== change-030
+> a
+> ‸b
+> c
+keys: ckX<Esc>
+< ‸X
+< c
+
+=== change-031
+> ‸foo bar
+keys: cwX<Esc>.
+< ‸X bar
+
+=== change-032
+> ‸foo bar baz
+keys: cwX<Esc>w.
+< X ‸X baz
+
+=== change-033
+> ‸foo bar baz
+keys: cwX<Esc>w.w.
+< X X ‸X
+
+=== change-034
+> ‸a b c
+keys: cwX<Esc>2w.
+< X b ‸X
+
+=== change-035
+> ‸foo bar
+keys: cwab<Esc>
+< a‸b bar
+
+=== change-036
+> ‸foo bar
+keys: cw<Esc>
+< ‸ bar
+
+=== change-037
+> ‸foo
+> bar
+keys: cwX<Esc>j.
+< X
+< ‸X
+
+=== change-038
+> ‸  indented
+keys: ccX<Esc>
+< ‸X
+
+=== change-039
+> ‸foo
+keys: c$X<Esc>
+< ‸X
+
+=== change-040
+> fo‸o
+keys: c$X<Esc>
+< fo‸X
+
+=== change-041
+> ‸foo bar
+keys: ci(X<Esc>
+< ‸foo bar
+
+=== change-042
+> f(‸a, b)
+keys: ci(X<Esc>
+< f(‸X)
+
+=== change-043
+> f(a, b‸)
+keys: ca(X<Esc>
+< f‸X
+
+=== change-044
+> ‸"foo bar"
+keys: ci"X<Esc>
+< "‸X"
+
+=== change-045
+> x "fo‸o" y
+keys: ci"X<Esc>
+< x "‸X" y
+
+=== change-046
+> x "fo‸o" y
+keys: ca"X<Esc>
+< x ‸Xy
+
+=== change-047
+> ‸foo bar baz
+keys: cwX<Esc>u
+< ‸foo bar baz
+
+=== change-048
+> ‸foo bar baz
+keys: cwX<Esc>u<C-r>
+< ‸X bar baz
+

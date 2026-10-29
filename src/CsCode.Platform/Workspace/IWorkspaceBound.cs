@@ -5,7 +5,7 @@ namespace CsCode.Platform.Workspace;
 /// <see cref="WorkspaceService"/> pushes folder changes to them; this inverts the dependency so that configuration and state do not need
 /// the workspace service (which itself needs configuration for <c>files.exclude</c>).
 /// </summary>
-internal interface IWorkspaceBound
+public interface IWorkspaceBound
 {
     /// <summary>Called (off the UI thread) before <c>IWorkspaceService.FoldersChanged</c> is raised, so subscribers already see the new data.</summary>
     ValueTask OnWorkspaceFoldersChangedAsync(IReadOnlyList<Uri> folders, CancellationToken ct);

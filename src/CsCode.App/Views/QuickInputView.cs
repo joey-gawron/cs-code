@@ -51,7 +51,7 @@ public sealed class QuickInputView : Grid
         _validation.Bind(TextBlock.TextProperty, new Binding(nameof(QuickInputViewModel.Validation)));
         _validation.Bind(IsVisibleProperty, new Binding(nameof(QuickInputViewModel.Validation)) { Converter = new Avalonia.Data.Converters.FuncValueConverter<string?, bool>(s => !string.IsNullOrEmpty(s)) });
 
-        _list = new ListBox { ItemsSource = vm.Items, MaxHeight = 360, ItemTemplate = new FuncDataTemplate<QuickPickEntry>((e, _) => RowFor(e), supportsRecycling: false), Focusable = false };
+        _list = new ListBox { ItemsSource = vm.Items, MaxHeight = 360, ItemTemplate = new FuncDataTemplate<QuickPickEntry>((e, _) => e is null ? new Panel() : RowFor(e), supportsRecycling: false), Focusable = false };
         _list.Bind(Avalonia.Controls.Primitives.SelectingItemsControl.SelectedIndexProperty, new Binding(nameof(QuickInputViewModel.SelectedIndex)) { Mode = BindingMode.TwoWay });
         _list.Tapped += (_, e) =>
         {

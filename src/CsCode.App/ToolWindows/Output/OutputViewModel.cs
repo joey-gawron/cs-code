@@ -57,7 +57,7 @@ public sealed class OutputViewModel : ObservableObject, IDisposable
         Lines.Clear();
         if (name is null) return;
         _channel = _output.GetOrCreate(name);
-        var existing = _channel.GetText();
+        var existing = Tail(_channel.GetText(), InitialLines);
         if (existing.Length > 0) AppendText(existing);
         _channelSub = _channel.Appended.Subscribe(t =>
         {
@@ -66,9 +66,27 @@ public sealed class OutputViewModel : ObservableObject, IDisposable
         });
     }
 
+    /// <summary>Lines shown when a channel is first attached: the recent tail only. Splitting the whole retained 2 MB on the UI thread every time
+    /// the panel opens would blow the per-callback budget; the full text stays in the channel ring.</summary>
+    public const int InitialLines = 5_000;
+
+    /// <summary>The last <paramref name="lines"/> lines of <paramref name="text"/> (found by scanning backwards; no full split).</summary>
+    internal static string Tail(string text, int lines)
+    {
+        var count = 0;
+        for (var i = text.Length - 1; i >= 0; i--)
+        {
+            if (text[i] != '\n' || i == text.Length - 1) continue;
+            if (++count == lines) return text[(i + 1)..];
+        }
+        return text;
+    }
+
     /// <summary>Splits text into lines and appends them in one bulk change; a trailing partial line is completed by the next batch.</summary>
     internal void AppendText(string text)
     {
+        // A flood can deliver far more text in one batch than the view can ever show; keep only the tail so one UI turn never splits megabytes.
+        if (text.Length > 200_000) { text = Tail(text, MaxLines / 4); _partialLine = false; }
         var fresh = new List<string>();
         var start = 0;
         var first = true;

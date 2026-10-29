@@ -79,7 +79,9 @@ public sealed class FakeLspServer : ILspConnection
     // ---- ILspConnection ----
     public Stream Input => _toServer.Writer.AsStream();
     public Stream Output => _toClient.Reader.AsStream();
-    public int? ProcessId => null;
+    /// <summary>Pretend this server runs as a child process with this pid (for memory-tracking tests).</summary>
+    public int? PidOverride { get; set; }
+    public int? ProcessId => PidOverride;
     public Task Closed => _closed.Task;
     public string? ExitDescription => _crashed != 0 ? "fake server crashed" : null;
     public ValueTask KillAsync() { Crash(); return ValueTask.CompletedTask; }
@@ -355,9 +357,15 @@ public sealed class FakeConnectionFactory : ILspConnectionFactory
     /// <summary>The next <paramref name="count"/> connection attempts throw ServerNotFoundException.</summary>
     public void FailNext(int count = 1) => Interlocked.Exchange(ref _failures, count);
 
+    /// <summary>Blocks the connecting thread synchronously (what Process.Start does), to prove callers never run that code themselves.</summary>
+    public TimeSpan SyncBlock { get; set; }
+    public List<string?> ConnectThreads { get; } = new();
+
     public async ValueTask<ILspConnection> ConnectAsync(LspLaunchRequest request, CancellationToken ct)
     {
-        lock (Requests) Requests.Add(request);
+        lock (ConnectThreads) ConnectThreads.Add(Thread.CurrentThread.Name);
+        if (SyncBlock > TimeSpan.Zero) Thread.Sleep(SyncBlock);
+        lock (Requests) Requests.Add(request with { OnStderrLine = null }); // keep the record, not the callback (it would retain the client)
         if (ConnectDelay > TimeSpan.Zero) await Task.Delay(ConnectDelay, ct).ConfigureAwait(false);
         if (Interlocked.Decrement(ref _failures) >= 0) throw new ServerNotFoundException(request.Definition.Command);
         Interlocked.Exchange(ref _failures, 0);

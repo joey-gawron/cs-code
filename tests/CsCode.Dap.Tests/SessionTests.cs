@@ -415,6 +415,40 @@ public class SessionExecutionTests
     }
 
     [Fact]
+    public async Task Loaded_sources_are_tracked_announced_and_removed()
+    {
+        await using var h = await SessionHarness.StartAsync();
+        var seen = new List<DebugLoadedSourceEventArgs>();
+        h.Session.LoadedSourceChanged.Subscribe(e => { lock (seen) seen.Add(e); });
+        await h.Adapter.SendEventAsync("loadedSource", new DapLoadedSourceEvent { Reason = "new", Source = new DapSource { Name = "a.cs", Path = "/w/a.cs" } });
+        await h.Adapter.SendEventAsync("loadedSource", new DapLoadedSourceEvent { Reason = "new", Source = new DapSource { Name = "gen.cs", SourceReference = 4 } });
+        await SessionHarness.Eventually(() => h.Session.LoadedSources.Count == 2);
+        Assert.Contains(h.Session.LoadedSources, s => s.Path == "/w/a.cs");
+        Assert.Contains(h.Session.LoadedSources, s => s.SourceReference == 4);
+        await h.Adapter.SendEventAsync("loadedSource", new DapLoadedSourceEvent { Reason = "removed", Source = new DapSource { Name = "a.cs", Path = "/w/a.cs" } });
+        await SessionHarness.Eventually(() => h.Session.LoadedSources.Count == 1);
+        lock (seen) Assert.Equal(["new", "new", "removed"], seen.Select(e => e.Reason));
+    }
+
+    [Fact]
+    public async Task Loaded_sources_and_modules_can_also_be_requested_when_the_adapter_supports_it()
+    {
+        await using var h = await SessionHarness.StartAsync(a =>
+        {
+            a.Capabilities["supportsLoadedSourcesRequest"] = true;
+            a.Capabilities["supportsModulesRequest"] = true;
+        });
+        var sources = await h.Session.GetLoadedSourcesAsync(Ct);
+        Assert.Equal("/work/Program.cs", Assert.Single(sources).Path);
+        var modules = await h.Session.GetModulesAsync(Ct);
+        Assert.Equal("app.dll", Assert.Single(modules).Name);
+
+        await using var none = await SessionHarness.StartAsync();
+        Assert.Empty(await none.Session.GetLoadedSourcesAsync(Ct)); // not advertised: no request is sent
+        Assert.Equal(0, none.Adapter.CountOf("loadedSources"));
+    }
+
+    [Fact]
     public async Task Process_event_records_the_debuggee_pid()
     {
         await using var h = await SessionHarness.StartAsync();

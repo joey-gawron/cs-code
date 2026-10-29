@@ -83,16 +83,29 @@ public sealed class ThemeApplier : IDisposable
     private void OnThemeChanged(ColorTheme theme)
     {
         var version = Interlocked.Increment(ref _version);
-        // Heavy part (fallback resolution) off the UI thread; stale preparations are dropped by version.
+        // Heavy part (fallback resolution) off the UI thread. Preparations may finish out of order, so the newest one wins a single slot
+        // and the coalesced UI post applies whatever the slot holds (a stale preparation can never overwrite a newer one).
         _ = Task.Run(() =>
         {
             var prepared = Prepare(theme);
+            lock (_slotGate)
+            {
+                if (version <= _slotVersion) return; // a newer theme was already prepared
+                _slot = prepared;
+                _slotVersion = version;
+            }
             _ui.PostCoalesced("theme.apply", () =>
             {
-                if (version == Volatile.Read(ref _version)) Apply(prepared);
+                Prepared? next;
+                lock (_slotGate) { next = _slot; _slot = null; }
+                if (next is not null) Apply(next);
             });
         });
     }
+
+    private readonly object _slotGate = new();
+    private Prepared? _slot;
+    private int _slotVersion;
 
     private sealed record Prepared(string ThemeId, ThemeKind Kind, Color[] Colors);
 
@@ -114,9 +127,14 @@ public sealed class ThemeApplier : IDisposable
 
     private static Color ToColor(Rgba c) => Color.FromArgb(c.A, c.R, c.G, c.B);
 
+    /// <summary>Per-phase milliseconds of the most recent apply (brushes, dock keys, fluent bridge, variant), for budget diagnostics.</summary>
+    public string LastTimings { get; private set; } = "";
+
     private void Apply(Prepared p)
     {
         _ui.AssertUiThread();
+        var t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        double Ms(long from) => (System.Diagnostics.Stopwatch.GetTimestamp() - from) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         var ids = WorkbenchColors.All;
         var resources = _app.Resources;
         for (var i = 0; i < ids.Count; i++)
@@ -131,21 +149,31 @@ public sealed class ThemeApplier : IDisposable
                 brush.Color = p.Colors[i];
             }
         }
-        foreach (var (key, id) in DockBridge)
-            if (!resources.ContainsKey(key) || !ReferenceEquals(resources[key], _brushes[id]))
-                resources[key] = _brushes[id];
-
+        var t1 = Ms(t0);
+        // Every assignment into the application resource dictionary makes ALL controls re-resolve their dynamic resources, so the structural
+        // entries (Dock keys, tokens, bridge keys) are published exactly once: the brushes behind them are mutated in place afterwards.
+        if (!_structureApplied)
+        {
+            foreach (var (key, id) in DockBridge) resources[key] = _brushes[id];
+            // Visual Studio draws no drag grip in tool captions and marks the active document tab with a TOP accent bar (MainWindow styles),
+            // not with the bottom indicator line Dock draws by default.
+            resources["DockChromeGripBrush"] = Brushes.Transparent;
+            resources["DockTabActiveIndicatorBrush"] = Brushes.Transparent;
+            resources["DockApplicationAccentBrushIndicator"] = Brushes.Transparent;
+            FluentBridge.PublishStructure(_app, _brushes);
+            _structureApplied = true;
+        }
+        var t2 = Ms(t0);
         var variant = p.Kind is ThemeKind.Light or ThemeKind.HighContrastLight ? ThemeVariant.Light : ThemeVariant.Dark;
         if (_app.RequestedThemeVariant != variant) _app.RequestedThemeVariant = variant;
-        // Visual Studio draws no drag grip in tool captions and marks the active document tab with a TOP accent bar (MainWindow styles),
-        // not with the bottom indicator line Dock draws by default.
-        resources["DockChromeGripBrush"] = Brushes.Transparent;
-        resources["DockTabActiveIndicatorBrush"] = Brushes.Transparent;
-        resources["DockApplicationAccentBrushIndicator"] = Brushes.Transparent;
-        FluentBridge.Apply(_app, _brushes, id => _brushes[id].Color, variant);
+        var t3 = Ms(t0);
+        FluentBridge.UpdatePalette(_app, id => _brushes[id].Color, variant);
         _appliedThemeId = p.ThemeId;
         ApplyCount++;
+        LastTimings = $"brushes={t1:F1} structure={t2 - t1:F1} variant={t3 - t2:F1} palette={Ms(t0) - t3:F1} total={Ms(t0):F1} ms";
     }
+
+    private bool _structureApplied;
 
     /// <summary>The live brush for a colour id (null before the first apply or for an unknown id). Lets code-behind use theme colours.</summary>
     public IBrush? GetBrush(string colorId) => _brushes.GetValueOrDefault(colorId);

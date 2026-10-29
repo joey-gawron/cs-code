@@ -14,7 +14,9 @@ public sealed record LspLaunchRequest(
     string? ToolsDir,
     string? WorkingDirectory,
     ProcessPriority Priority = ProcessPriority.BelowNormal,
-    Action<string>? OnStderrLine = null);
+    Action<string>? OnStderrLine = null,
+    /// <summary>Linux only: cap the server (and everything it spawns) to this percentage of one CPU via a transient systemd scope; 0 = no cap.</summary>
+    int CpuQuotaPercent = 0);
 
 /// <summary>A live byte transport to a server (child-process stdio, TCP socket, named pipe / unix socket, or an in-proc pipe in tests).</summary>
 public interface ILspConnection : IAsyncDisposable
@@ -67,6 +69,39 @@ internal enum LspEndpointKind { Process, Tcp, Pipe, Unix }
 /// <summary>Default factory: spawns child processes (no shell) or connects to TCP / pipe / unix-socket endpoints.</summary>
 public sealed class DefaultLspConnectionFactory : ILspConnectionFactory
 {
+    private Task<string?>? _systemdProbe;
+
+    /// <summary>
+    /// Path of a usable <c>systemd-run</c> (probed ONCE by actually creating a user scope), or null when the host cannot cap CPU this way
+    /// (no systemd, no user session bus, not Linux). The result is per factory instance, not static; a benign race may probe twice.
+    /// </summary>
+    private Task<string?> SystemdRunAsync() => _systemdProbe ??= ProbeSystemdAsync();
+
+    private static async Task<string?> ProbeSystemdAsync()
+    {
+        if (!OperatingSystem.IsLinux()) return null;
+        var path = ToolResolver.FindOnPath("systemd-run", null);
+        if (path is null) return null;
+        try
+        {
+            var psi = new ProcessStartInfo(path) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+            foreach (var a in new[] { "--user", "--scope", "--quiet", "--", "true" }) psi.ArgumentList.Add(a);
+            using var probe = Process.Start(psi)!;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
+            {
+                await probe.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                return probe.ExitCode == 0 ? path : null;
+            }
+            catch (OperationCanceledException)
+            {
+                try { probe.Kill(); } catch (InvalidOperationException) { }
+                return null;
+            }
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { return null; }
+    }
+
     public async ValueTask<ILspConnection> ConnectAsync(LspLaunchRequest request, CancellationToken ct)
     {
         var ep = LspEndpoint.Parse(request.Definition.Command);
@@ -76,7 +111,10 @@ public sealed class DefaultLspConnectionFactory : ILspConnectionFactory
             {
                 var resolved = ToolResolver.Resolve(request.Definition.Command, request.ToolsDir, request.WorkingDirectory, request.Definition.Env)
                     ?? throw new ServerNotFoundException(request.Definition.Command);
-                return ProcessConnection.Start(request, resolved);
+                var systemdRun = request.CpuQuotaPercent > 0 ? await SystemdRunAsync().ConfigureAwait(false) : null;
+                if (request.CpuQuotaPercent > 0 && systemdRun is null)
+                    request.OnStderrLine?.Invoke("[client] cscode.lsp.cpuQuotaPercent is set but systemd-run (user scopes) is not usable here; starting without a CPU cap");
+                return ProcessConnection.Start(request, resolved, systemdRun);
             }
             case LspEndpointKind.Tcp:
             {
@@ -199,7 +237,7 @@ internal sealed class ProcessConnection : ILspConnection
         }
     }
 
-    public static ProcessConnection Start(LspLaunchRequest request, string command)
+    public static ProcessConnection Start(LspLaunchRequest request, string command, string? systemdRun = null)
     {
         var def = request.Definition;
         var marker = Guid.NewGuid().ToString("N");
@@ -217,14 +255,17 @@ internal sealed class ProcessConnection : ILspConnection
 
         var nice = request.Priority switch { ProcessPriority.BelowNormal => 10, ProcessPriority.Idle => 19, _ => 0 };
         var niceBinary = nice > 0 && !OperatingSystem.IsWindows() ? FindNiceBinary() : null;
+
+        // Launch line, outermost first: [systemd-run --user --scope -p CPUQuota=N% --] [nice -n N] command args...  (no shell anywhere;
+        // each wrapper execs its successor, so Process.Id is the server's own pid and grandchildren inherit both the scope and the priority)
+        var launch = new List<string>();
+        if (systemdRun is not null && request.CpuQuotaPercent > 0)
+            launch.AddRange([systemdRun, "--user", "--scope", "--quiet", "-p", $"CPUQuota={request.CpuQuotaPercent.ToString(System.Globalization.CultureInfo.InvariantCulture)}%", "--"]);
         if (niceBinary is not null)
-        {
-            psi.FileName = niceBinary;
-            psi.ArgumentList.Add("-n");
-            psi.ArgumentList.Add(nice.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            psi.ArgumentList.Add(command);
-        }
-        else psi.FileName = command;
+            launch.AddRange([niceBinary, "-n", nice.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+        launch.Add(command);
+        psi.FileName = launch[0];
+        foreach (var a in launch.Skip(1)) psi.ArgumentList.Add(a);
         foreach (var a in def.Args) psi.ArgumentList.Add(a);
 
         if (def.Env is not null)
@@ -305,9 +346,11 @@ internal sealed class ProcessConnection : ILspConnection
             if (!_process.HasExited) _process.Kill(entireProcessTree: true);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { /* already gone */ }
-        ProcessReaper.KillMarked(_marker);
+        var killed = ProcessReaper.KillMarked(_marker);
         try { await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); }
         catch (Exception ex) when (ex is TimeoutException or InvalidOperationException) { }
+        // SIGKILL is asynchronous: when we return, nothing the server started may still be running.
+        await ProcessReaper.WaitUntilGoneAsync(killed, TimeSpan.FromSeconds(2)).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -325,13 +368,16 @@ internal sealed class ProcessConnection : ILspConnection
 /// <summary>Finds and kills processes carrying our session marker in their environment (Linux /proc). Only ever kills processes we spawned.</summary>
 internal static class ProcessReaper
 {
-    public static void KillMarked(string marker)
+    /// <summary>Kills every process carrying the marker and returns their pids.</summary>
+    public static List<int> KillMarked(string marker)
     {
-        if (!OperatingSystem.IsLinux()) return;
+        var killed = new List<int>();
+        if (!OperatingSystem.IsLinux()) return killed;
         var needle = Encoding.UTF8.GetBytes($"{ProcessConnection.MarkerVariable}={marker}");
         foreach (var pid in FindMarked(needle))
         {
             if (pid == Environment.ProcessId) continue;
+            killed.Add(pid);
             try
             {
                 using var p = Process.GetProcessById(pid);
@@ -339,6 +385,21 @@ internal static class ProcessReaper
             }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { /* exited meanwhile */ }
         }
+        return killed;
+    }
+
+    /// <summary>Waits (bounded) until the processes have really disappeared (a zombie awaiting its reaper counts as gone).</summary>
+    public static async Task WaitUntilGoneAsync(IReadOnlyCollection<int> pids, TimeSpan timeout)
+    {
+        if (pids.Count == 0 || !OperatingSystem.IsLinux()) return;
+        var deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
+        while (pids.Any(IsAlive) && Stopwatch.GetTimestamp() < deadline) await Task.Delay(10).ConfigureAwait(false);
+    }
+
+    private static bool IsAlive(int pid)
+    {
+        try { return !File.ReadAllText($"/proc/{pid}/stat").Contains(") Z ", StringComparison.Ordinal); }
+        catch (IOException) { return false; }
     }
 
     internal static List<int> FindMarked(byte[] needle)
