@@ -1,0 +1,183 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:CsCode.Panels.Search.ViewModels"
+             xmlns:ic="using:CsCode.Ui.Icons"
+             xmlns:v="using:CsCode.Panels.Search.Views"
+             x:Class="CsCode.Panels.Search.Views.FindInFilesView"
+             x:DataType="vm:FindInFilesViewModel"
+             Focusable="True">
+  <UserControl.Styles>
+    <!-- Small flat icon button used in the toolbar and on result rows. -->
+    <Style Selector="Button.tool">
+      <Setter Property="Width" Value="24" />
+      <Setter Property="Height" Value="24" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="2" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Foreground" Value="{DynamicResource vsc:icon.foreground}" />
+    </Style>
+    <Style Selector="Button.tool:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource vsc:toolbar.hoverBackground}" />
+    </Style>
+    <Style Selector="Button.tool:pressed /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource vsc:toolbar.activeBackground}" />
+    </Style>
+    <Style Selector="Button.tool:disabled">
+      <Setter Property="Opacity" Value="0.4" />
+    </Style>
+    <!-- The Aa / ab / .* toggles that sit inside the query box. -->
+    <Style Selector="ToggleButton.opt">
+      <Setter Property="Width" Value="22" />
+      <Setter Property="Height" Value="22" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="1,0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="CornerRadius" Value="2" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Foreground" Value="{DynamicResource vsc:icon.foreground}" />
+    </Style>
+    <Style Selector="ToggleButton.opt:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource vsc:toolbar.hoverBackground}" />
+    </Style>
+    <Style Selector="ToggleButton.opt:checked /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource vsc:inputOption.activeBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource vsc:inputOption.activeBorder}" />
+    </Style>
+    <Style Selector="TextBlock.dim">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:descriptionForeground}" />
+    </Style>
+    <Style Selector="TextBox.field">
+      <Setter Property="MinHeight" Value="24" />
+      <Setter Property="Padding" Value="6,2" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <!-- Row actions appear on hover or when the row is selected. -->
+    <Style Selector="StackPanel.actions">
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="ListBoxItem:pointerover StackPanel.actions">
+      <Setter Property="IsVisible" Value="True" />
+    </Style>
+    <Style Selector="ListBoxItem:selected StackPanel.actions">
+      <Setter Property="IsVisible" Value="True" />
+    </Style>
+    <Style Selector="ListBoxItem">
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="MinHeight" Value="22" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,Auto,Auto,*" Background="{DynamicResource vsc:sideBar.background}" TextElement.Foreground="{DynamicResource vsc:foreground}">
+
+    <!-- Title bar with the search toolbar -->
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="10,6,6,2">
+      <TextBlock Grid.Column="0" Text="FIND IN FILES" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"
+                 Foreground="{DynamicResource vsc:sideBarTitle.foreground}" />
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2">
+        <Button Classes="tool" Command="{Binding SearchCommand}" ToolTip.Tip="Refresh (re-run the search)" AutomationProperties.Name="Refresh"><ic:Icon Kind="refresh" Size="16" /></Button>
+        <Button Classes="tool" Command="{Binding CancelCommand}" ToolTip.Tip="Cancel search (Esc)" AutomationProperties.Name="Cancel search"><ic:Icon Kind="search-stop" Size="16" /></Button>
+        <Button Classes="tool" Command="{Binding ClearCommand}" ToolTip.Tip="Clear search results" AutomationProperties.Name="Clear results"><ic:Icon Kind="clear-all" Size="16" /></Button>
+        <Button Classes="tool" Command="{Binding ToggleCollapseCommand}" ToolTip.Tip="Collapse or expand all results" AutomationProperties.Name="Collapse all"><ic:Icon Kind="collapse-all" Size="16" /></Button>
+      </StackPanel>
+    </Grid>
+
+    <!-- Query form -->
+    <StackPanel Grid.Row="1" Margin="8,2,8,6" Spacing="4">
+      <Grid ColumnDefinitions="Auto,*">
+        <ToggleButton Grid.Column="0" Classes="opt" Width="18" Height="44" Margin="0,0,3,0" VerticalAlignment="Top"
+                      IsChecked="{Binding ReplaceVisible, Mode=TwoWay}" ToolTip.Tip="Toggle Replace (Ctrl+Shift+H)" AutomationProperties.Name="Toggle replace">
+          <ic:Icon Kind="chevron-right" Size="14" />
+        </ToggleButton>
+        <StackPanel Grid.Column="1" Spacing="4">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBox Grid.ColumnSpan="2" x:Name="QueryBox" Classes="field" Text="{Binding Query, Mode=TwoWay}" PlaceholderText="Search" Padding="6,2,92,2"
+                     AutomationProperties.Name="Search" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,3,0" VerticalAlignment="Center">
+              <ToggleButton Classes="opt" IsChecked="{Binding MatchCase, Mode=TwoWay}" ToolTip.Tip="Match Case (Alt+C)" AutomationProperties.Name="Match case"><ic:Icon Kind="case-sensitive" Size="16" /></ToggleButton>
+              <ToggleButton Classes="opt" IsChecked="{Binding WholeWord, Mode=TwoWay}" ToolTip.Tip="Match Whole Word (Alt+W)" AutomationProperties.Name="Match whole word"><ic:Icon Kind="whole-word" Size="16" /></ToggleButton>
+              <ToggleButton Classes="opt" IsChecked="{Binding IsRegex, Mode=TwoWay}" ToolTip.Tip="Use Regular Expression (Alt+R)" AutomationProperties.Name="Use regular expression"><ic:Icon Kind="regex" Size="16" /></ToggleButton>
+            </StackPanel>
+          </Grid>
+          <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding ReplaceVisible}">
+            <TextBox Grid.ColumnSpan="2" x:Name="ReplaceBox" Classes="field" Text="{Binding ReplaceText, Mode=TwoWay}" PlaceholderText="Replace" Padding="6,2,60,2"
+                     AutomationProperties.Name="Replace" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,3,0" VerticalAlignment="Center">
+              <ToggleButton Classes="opt" IsChecked="{Binding PreserveCase, Mode=TwoWay}" ToolTip.Tip="Preserve Case (Alt+P)" AutomationProperties.Name="Preserve case"><TextBlock Text="AB" FontSize="11" FontWeight="SemiBold" /></ToggleButton>
+              <Button Classes="tool" Command="{Binding ReplaceAllCommand}" ToolTip.Tip="Replace All (Ctrl+Alt+Enter)" AutomationProperties.Name="Replace all"><ic:Icon Kind="replace-all" Size="16" /></Button>
+            </StackPanel>
+          </Grid>
+        </StackPanel>
+      </Grid>
+
+      <Grid ColumnDefinitions="Auto,*" Margin="21,0,0,0">
+        <Button Grid.Column="0" Classes="tool" Width="22" Height="18" Command="{Binding ToggleDetailsCommand}" VerticalAlignment="Top" ToolTip.Tip="Toggle Search Details" AutomationProperties.Name="Toggle search details"><ic:Icon Kind="ellipsis" Size="14" /></Button>
+        <StackPanel Grid.Column="1" Spacing="3" IsVisible="{Binding DetailsVisible}" Margin="4,0,0,0">
+          <TextBlock Text="files to include" Classes="dim" FontSize="11" />
+          <TextBox x:Name="IncludeBox" Classes="field" Text="{Binding Include, Mode=TwoWay}" PlaceholderText="e.g. *.cs, src/**" AutomationProperties.Name="Files to include" />
+          <TextBlock Text="files to exclude" Classes="dim" FontSize="11" Margin="0,3,0,0" />
+          <TextBox x:Name="ExcludeBox" Classes="field" Text="{Binding Exclude, Mode=TwoWay}" PlaceholderText="e.g. **/bin/**, **/obj/**" AutomationProperties.Name="Files to exclude" />
+          <CheckBox IsChecked="{Binding UseExcludeSettings, Mode=TwoWay}" Content="Use exclude settings" MinHeight="22" Margin="0,3,0,0" FontSize="12" />
+          <CheckBox IsChecked="{Binding UseIgnoreFiles, Mode=TwoWay}" Content="Use ignore files (.gitignore)" MinHeight="22" FontSize="12" />
+          <CheckBox IsChecked="{Binding OpenEditorsOnly, Mode=TwoWay}" Content="Search only in open editors" MinHeight="22" FontSize="12" />
+        </StackPanel>
+      </Grid>
+    </StackPanel>
+
+    <!-- Summary / progress -->
+    <Border Grid.Row="2" BorderBrush="{DynamicResource vsc:sideBarSectionHeader.border}" BorderThickness="0,1,0,0"
+            Background="{DynamicResource vsc:sideBarSectionHeader.background}" Padding="10,3">
+      <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+        <TextBlock x:Name="SummaryText" Grid.Column="0" Text="{Binding Summary}" TextTrimming="CharacterEllipsis" FontSize="11"
+                   Foreground="{DynamicResource vsc:sideBarSectionHeader.foreground}" ToolTip.Tip="{Binding Summary}" />
+        <TextBlock Grid.Column="1" Text="{Binding ProgressText}" Classes="dim" FontSize="11" Margin="8,0,0,0" IsVisible="{Binding IsSearching}" />
+        <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" IsIndeterminate="True" Height="2" MinHeight="2" Margin="0,3,0,0" IsVisible="{Binding IsSearching}"
+                     Foreground="{DynamicResource vsc:progressBar.background}" />
+        <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding ErrorMessage}" TextWrapping="Wrap" FontSize="11" Margin="0,3,0,0"
+                   Foreground="{DynamicResource vsc:errorForeground}" IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+      </Grid>
+    </Border>
+
+    <!-- Results: a flat, virtualised list (file rows and match rows) -->
+    <ListBox Grid.Row="3" x:Name="ResultsList" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+             Background="Transparent" BorderThickness="0" Padding="0" SelectionMode="Single" AutomationProperties.Name="Search results">
+      <ListBox.DataTemplates>
+        <DataTemplate DataType="vm:FileRow">
+          <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" Margin="4,0,6,0" MinHeight="22" DoubleTapped="OnFileDoubleTapped" ContextRequested="OnRowContext" Background="Transparent">
+            <ic:Icon Grid.Column="0" Kind="{Binding IsExpanded, Converter={x:Static v:FindInFilesView.ChevronConverter}}" Size="14" VerticalAlignment="Center" Margin="0,0,2,0"
+                     Foreground="{DynamicResource vsc:icon.foreground}" />
+            <ic:Icon Grid.Column="1" Kind="file" Size="14" VerticalAlignment="Center" Margin="0,0,5,0" Foreground="{DynamicResource vsc:icon.foreground}" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+              <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+              <TextBlock Text="{Binding Directory}" Classes="dim" FontSize="11" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Grid.Column="3" Classes="actions" Orientation="Horizontal" Spacing="1" VerticalAlignment="Center">
+              <Button Classes="tool" Width="20" Height="20" Click="OnReplaceFileClick" ToolTip.Tip="Replace All in this file" AutomationProperties.Name="Replace in file"><ic:Icon Kind="replace-all" Size="14" /></Button>
+              <Button Classes="tool" Width="20" Height="20" Click="OnDismissClick" ToolTip.Tip="Dismiss (Del)" AutomationProperties.Name="Dismiss"><ic:Icon Kind="close" Size="14" /></Button>
+            </StackPanel>
+            <Border Grid.Column="4" Margin="6,0,0,0" CornerRadius="9" MinWidth="18" Height="16" Padding="5,0" VerticalAlignment="Center" Background="{DynamicResource vsc:badge.background}">
+              <TextBlock Text="{Binding MatchCount}" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource vsc:badge.foreground}" />
+            </Border>
+          </Grid>
+        </DataTemplate>
+        <DataTemplate DataType="vm:MatchRow">
+          <Grid ColumnDefinitions="Auto,*,Auto" Margin="26,0,6,0" MinHeight="22" DoubleTapped="OnMatchDoubleTapped" ContextRequested="OnRowContext" Background="Transparent">
+            <TextBlock Grid.Column="0" Text="{Binding LineNumber}" Classes="dim" FontSize="11" Width="34" TextAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <v:MatchPreviewText Grid.Column="1" Preview="{Binding Preview}" MatchStart="{Binding PreviewMatchStart}" MatchLength="{Binding PreviewMatchLength}"
+                                MatchedText="{Binding MatchedText}" Previews="{Binding Previews}" VerticalAlignment="Center"
+                                FontFamily="{DynamicResource ui:CodeFontFamily}" FontSize="12" />
+            <StackPanel Grid.Column="2" Classes="actions" Orientation="Horizontal" Spacing="1" VerticalAlignment="Center">
+              <Button Classes="tool" Width="20" Height="20" Click="OnReplaceMatchClick" ToolTip.Tip="Replace" AutomationProperties.Name="Replace match"><ic:Icon Kind="replace" Size="14" /></Button>
+              <Button Classes="tool" Width="20" Height="20" Click="OnDismissClick" ToolTip.Tip="Dismiss (Del)" AutomationProperties.Name="Dismiss"><ic:Icon Kind="close" Size="14" /></Button>
+            </StackPanel>
+          </Grid>
+        </DataTemplate>
+      </ListBox.DataTemplates>
+    </ListBox>
+  </Grid>
+</UserControl>

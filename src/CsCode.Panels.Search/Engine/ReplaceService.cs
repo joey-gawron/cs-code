@@ -27,7 +27,7 @@ public sealed record ReplacePlan(IReadOnlyList<FileReplacePlan> Files, IReadOnly
     public WorkspaceEdit ToWorkspaceEdit() => new(Files.ToDictionary(f => f.Uri, f => f.Edits));
 }
 
-public sealed record ReplaceResult(int FilesChanged, int Replacements, IReadOnlyList<string> Problems, bool Cancelled);
+public sealed record ReplaceResult(int FilesChanged, int Replacements, IReadOnlyList<string> Problems, bool Cancelled, IReadOnlyList<Uri>? ChangedFiles = null);
 
 /// <summary>
 /// Replace in files. The search results only remember positions, so the plan is made by searching each file AGAIN right before the
@@ -88,9 +88,10 @@ public sealed class ReplaceService : IDisposable
     {
         var problems = plan.Skipped.Select(s => $"{DisplayName(s.Uri)}: {s.Reason}").ToList();
         int files = 0, replaced = 0, done = 0;
+        var changed = new List<Uri>();
         foreach (var file in plan.Files)
         {
-            if (ct.IsCancellationRequested) return new ReplaceResult(files, replaced, problems, true);
+            if (ct.IsCancellationRequested) return new ReplaceResult(files, replaced, problems, true, changed);
             progress?.Report(++done);
             if (file.Version is { } v && _documents?.Get(file.Uri) is { } doc && doc.Version != v)
             {
@@ -104,16 +105,17 @@ public sealed class ReplaceService : IDisposable
                 {
                     files++;
                     replaced += file.Edits.Count;
+                    changed.Add(file.Uri);
                 }
                 else problems.Add($"{DisplayName(file.Uri)}: the edit could not be applied");
             }
-            catch (OperationCanceledException) { return new ReplaceResult(files, replaced, problems, true); }
+            catch (OperationCanceledException) { return new ReplaceResult(files, replaced, problems, true, changed); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
                 problems.Add($"{DisplayName(file.Uri)}: {ex.Message}");
             }
         }
-        return new ReplaceResult(files, replaced, problems, false);
+        return new ReplaceResult(files, replaced, problems, false, changed);
     }
 
     private static string DisplayName(Uri uri) => uri.IsFile ? uri.LocalPath : uri.ToString();
@@ -284,23 +286,33 @@ public sealed class ReplaceService : IDisposable
     // ------------------------------------------------------------------------------------------------ strings
 
     /// <summary>The replacement as it will be written for one matched text (used for the live preview in the results tree).</summary>
-    public static string PreviewReplacement(SearchQuery query, string matchedText, ReplaceOptions options)
+    public static string PreviewReplacement(SearchQuery query, string matchedText, ReplaceOptions options) =>
+        CreatePreviewer(query, options)(matchedText);
+
+    /// <summary>
+    /// A reusable "matched text to replacement" function for the results tree, built once per query/replacement (compiling the regex
+    /// per row would be far too slow). It sees only the clipped matched text, so for patterns that depend on context (lookarounds,
+    /// anchors) the preview is an approximation; the real replacement is always computed from the file when applying.
+    /// </summary>
+    public static Func<string, string> CreatePreviewer(SearchQuery query, ReplaceOptions options)
     {
-        string result = options.ReplaceText;
+        var expanded = query.IsRegex ? ExpandEscapes(options.ReplaceText) : options.ReplaceText;
+        Regex? rx = null;
         if (query.IsRegex)
         {
-            try
-            {
-                var rx = RegexMatcher.Create(query.Pattern, query.MatchCase, query.WholeWord, false, TimeSpan.FromMilliseconds(250)).Regex!;
-                if (rx.Match(matchedText) is { Success: true } m) result = m.Result(ExpandEscapes(options.ReplaceText));
-                else result = ExpandEscapes(options.ReplaceText);
-            }
-            catch (Exception ex) when (ex is SearchPatternException or RegexMatchTimeoutException or ArgumentException)
-            {
-                result = ExpandEscapes(options.ReplaceText);
-            }
+            try { rx = RegexMatcher.Create(query.Pattern, query.MatchCase, query.WholeWord, false, TimeSpan.FromMilliseconds(250)).Regex; }
+            catch (Exception ex) when (ex is SearchPatternException or ArgumentException) { rx = null; }
         }
-        return options.PreserveCase ? PreserveCase(matchedText, result) : result;
+        return matched =>
+        {
+            var result = expanded;
+            if (rx is not null)
+            {
+                try { if (rx.Match(matched) is { Success: true } m) result = m.Result(expanded); }
+                catch (RegexMatchTimeoutException) { /* keep the unexpanded text */ }
+            }
+            return options.PreserveCase ? PreserveCase(matched, result) : result;
+        };
     }
 
     /// <summary>Turns the replace-box escapes <c>\n</c>, <c>\t</c> and <c>\\</c> into characters; the backslash of anything else is kept.</summary>
