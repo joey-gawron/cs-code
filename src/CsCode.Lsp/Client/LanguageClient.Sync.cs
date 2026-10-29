@@ -236,14 +236,28 @@ internal sealed partial class LanguageClient
         if ((changes is null || changes.Count == 0) && !forceFull) return;
 
         var kind = SyncKindFor(sd);
-        if (kind == P.TextDocumentSyncKind.None) return;
+        if (kind == P.TextDocumentSyncKind.None)
+        {
+            // The server does not want changes (now). Remember that its copy went stale so that enabling sync later
+            // (dynamic registration) starts with the full text instead of ranges against text the server never saw.
+            lock (sd.PendingGate) sd.ForceFull = true;
+            return;
+        }
 
         P.DidChangeTextDocumentParams p;
         if (kind == P.TextDocumentSyncKind.Full || forceFull || !Mapper.Encoder.IsIdentity)
         {
             // Full sync: also the safe path for non-UTF-16 servers (incremental ranges would need the pre-change line text).
             var (text, v, stable) = ReadConsistent(sd.Document);
-            if (!stable) lock (sd.PendingGate) sd.ForceFull = true;
+            lock (sd.PendingGate)
+            {
+                // The text we are about to send already contains every edit up to version v, including edits whose change events have
+                // not reached OnChanged yet (the document mutates before it notifies). Anything at or below v must NOT be sent again.
+                if (v > sd.LastSeenVersion) sd.LastSeenVersion = v;
+                if (sd.PendingVersion <= v) sd.Pending = null;      // everything accumulated is inside the text
+                else sd.ForceFull = true;                           // mixed old/new: resend the text rather than risk a duplicate
+                if (!stable) sd.ForceFull = true;
+            }
             if (v <= sd.ServerVersion && !forceFull && kind != P.TextDocumentSyncKind.Full) return;
             sd.ServerVersion = v;
             p = new P.DidChangeTextDocumentParams

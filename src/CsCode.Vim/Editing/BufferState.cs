@@ -17,6 +17,10 @@ internal sealed class UndoHeader
     public readonly List<UndoEntry> Entries = [];
     public TextPosition Cursor;
     public TextPosition?[]? NamedMarks;
+    /// <summary>The Visual area ('&lt; '&gt;) at the time of the change; undo and redo swap it with the current one (uh_visual).</summary>
+    public TextPosition? VisualStart, VisualEnd;
+    public VimMode VisualMode;
+    public int VisualCurswant;
     public long TimeTicks;
     public UndoHeader? Parent;
     public readonly List<UndoHeader> Children = [];
@@ -71,7 +75,7 @@ internal sealed class UndoTree
             // oldest header on the path
             var oldest = Current;
             while (oldest.Parent!.Parent is not null) oldest = oldest.Parent;
-            SavedChars -= SubtreeChars(Root) - SubtreeChars(oldest);
+            SavedChars -= oldest.SavedChars;   // its entries are dropped: it becomes the baseline
             oldest.Entries.Clear();
             oldest.SavedChars = 0;
             oldest.Parent = null;
@@ -120,6 +124,7 @@ internal sealed class BufferState
     public TextPosition? VisualStart, VisualEnd;     // '< '>
     public VimMode VisualMode = VimMode.Visual;
     public int VisualCurswant;
+    public TextPosition? PcMark, PrevPcMark;         // '  (previous context mark)
     public TextPosition? LastChange;                // '.
     public TextPosition? LastInsert;                // '^
     public TextPosition? LastCursor;                // '"
@@ -164,7 +169,7 @@ internal sealed class BufferState
     }
 
     /// <summary>Vim's mark_adjust: lines [line1, line2] moved by <paramref name="amount"/> (or were deleted when <paramref name="delete"/>), later lines by <paramref name="amountAfter"/>.</summary>
-    public void MarkAdjust(int line1, int line2, int amount, int amountAfter, bool delete)
+    public void MarkAdjust(int line1, int line2, int amount, int amountAfter, bool delete, bool adjustGlobal = true)
     {
         TextPosition? Adj(TextPosition? p, bool nodel)
         {
@@ -180,9 +185,10 @@ internal sealed class BufferState
         for (var i = 0; i < Marks.Length; i++) Marks[i] = Adj(Marks[i], false);
         OpStart = Adj(OpStart, true); OpEnd = Adj(OpEnd, true);
         VisualStart = Adj(VisualStart, true); VisualEnd = Adj(VisualEnd, true);
-        LastChange = Adj(LastChange, true); LastInsert = Adj(LastInsert, true); LastCursor = Adj(LastCursor, true);
+        LastChange = Adj(LastChange, false); LastInsert = Adj(LastInsert, false); LastCursor = Adj(LastCursor, false);
+        PcMark = Adj(PcMark, false); PrevPcMark = Adj(PrevPcMark, false);
         for (var i = 0; i < ChangeList.Count; i++) ChangeList[i] = Adj(ChangeList[i], true)!.Value;
-        if (GlobalLines is { } gl)
+        if (adjustGlobal && GlobalLines is { } gl)
             for (var i = 0; i < gl.Count; i++)
             {
                 var l = gl[i];
@@ -194,13 +200,27 @@ internal sealed class BufferState
         else if (ULineNr >= 0 && ULineNr > line2 && amountAfter != 0) ULineNr += amountAfter;
     }
 
+    /// <summary>Vim's mark_col_adjust: marks on <paramref name="line"/> at or after <paramref name="minCol"/> move to another line/column (lines joined or split).</summary>
+    public void MarkColAdjust(int line, int minCol, int lineAmount, int colAmount)
+    {
+        TextPosition? Adj(TextPosition? p)
+        {
+            if (p is { } q && q.Line == line && q.Character >= minCol) return new TextPosition(q.Line + lineAmount, Math.Max(0, q.Character + colAmount));
+            return p;
+        }
+        for (var i = 0; i < Marks.Length; i++) Marks[i] = Adj(Marks[i]);
+        OpStart = Adj(OpStart); OpEnd = Adj(OpEnd); VisualStart = Adj(VisualStart); VisualEnd = Adj(VisualEnd);
+        LastChange = Adj(LastChange); LastInsert = Adj(LastInsert); LastCursor = Adj(LastCursor); PcMark = Adj(PcMark); PrevPcMark = Adj(PrevPcMark);
+        for (var i = 0; i < ChangeList.Count; i++) ChangeList[i] = Adj(ChangeList[i])!.Value;
+    }
+
     /// <summary>Clamps every mark to a buffer of <paramref name="lineCount"/> lines (after a foreign edit we cannot track precisely).</summary>
     public void ClampMarks(int lineCount)
     {
         TextPosition? C(TextPosition? p) => p is { } q && q.Line >= lineCount ? null : p;
         for (var i = 0; i < Marks.Length; i++) Marks[i] = C(Marks[i]);
         OpStart = C(OpStart); OpEnd = C(OpEnd); VisualStart = C(VisualStart); VisualEnd = C(VisualEnd);
-        LastChange = C(LastChange); LastInsert = C(LastInsert); LastCursor = C(LastCursor);
+        LastChange = C(LastChange); LastInsert = C(LastInsert); LastCursor = C(LastCursor); PcMark = C(PcMark); PrevPcMark = C(PrevPcMark);
         ChangeList.RemoveAll(p => p.Line >= lineCount);
         ChangeListIdx = Math.Min(ChangeListIdx, ChangeList.Count);
         if (ULineNr >= lineCount) { ULineNr = -1; ULineText = null; }

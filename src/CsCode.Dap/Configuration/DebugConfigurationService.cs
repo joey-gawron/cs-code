@@ -25,7 +25,7 @@ internal sealed record PersistedSelection(string Name, string? Folder);
 /// (persisted per workspace); VS Code variable substitution; initial-file generation. File I/O goes through the workspace
 /// <see cref="IFileSystem"/> (so it also works for remote workspaces) and all work is hopped to the Debug lane first.
 /// </summary>
-public sealed class DebugConfigurationService : IDebugConfigurationService, IAsyncDisposable
+public sealed class DebugConfigurationService : IDebugConfigurationService, IAsyncDisposable, IDisposable
 {
     private const string SelectionKey = "debug.selectedConfiguration";
     private static readonly string[] LaunchLocations = [".cscode/launch.json", ".vscode/launch.json"];
@@ -154,15 +154,26 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
     private void EnsureSelection(IReadOnlyList<DebugConfiguration> configs)
     {
         var current = Volatile.Read(ref _selected);
-        if (current is not null && configs.Any(c => c.Name == current.Name && c.WorkspaceFolder == current.WorkspaceFolder)) return;
+        if (current is not null && configs.FirstOrDefault(c => c.Name == current.Name && c.WorkspaceFolder == current.WorkspaceFolder) is { } fresh)
+        {
+            // Same entry, but launch.json may have been edited since it was selected: adopt the new object so a start never uses stale properties.
+            if (SameContent(current, fresh)) return;
+            Interlocked.Exchange(ref _selected, fresh);
+            _selectedChanged.Fire(fresh);
+            return;
+        }
         DebugConfiguration? next = null;
         if (_p.State?.Get<PersistedSelection>(SelectionKey, StorageScope.Workspace) is { } saved)
             next = configs.FirstOrDefault(c => c.Name == saved.Name && (saved.Folder is null || c.WorkspaceFolder?.ToString() == saved.Folder));
         next ??= configs.FirstOrDefault();
-        if (Equals(next, current)) return;
+        if (ReferenceEquals(next, current)) return;
         Interlocked.Exchange(ref _selected, next);
         _selectedChanged.Fire(next);
     }
+
+    private static bool SameContent(DebugConfiguration a, DebugConfiguration b) =>
+        a.Type == b.Type && a.Request == b.Request && a.Properties.Count == b.Properties.Count &&
+        a.Properties.All(kv => b.Properties.TryGetValue(kv.Key, out var other) && other.GetRawText() == kv.Value.GetRawText());
 
     private void PersistSelection(DebugConfiguration? value)
     {
@@ -290,9 +301,9 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
         return new Uri(baseText + relative);
     }
 
-    public ValueTask DisposeAsync()
+    public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return ValueTask.CompletedTask;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _subs.Dispose();
         foreach (var w in _watches) w.Dispose();
         _watches.Clear();
@@ -300,6 +311,11 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
         _providers.Clear();
         _selectedChanged.Clear();
         _configurationsChanged.Clear();
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Dispose();
         return ValueTask.CompletedTask;
     }
 }

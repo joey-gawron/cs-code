@@ -17,6 +17,15 @@ public sealed class UiDispatchStats
     public long Stalls => Interlocked.Read(ref _stalls);
     /// <summary><c>ui.longestDispatchMs</c>: longest single dispatcher callback seen, in milliseconds.</summary>
     public double LongestDispatchMs => Interlocked.Read(ref _longestTicks) * 1000.0 / Stopwatch.Frequency;
+    /// <summary>Which callback produced <see cref="LongestDispatchMs"/> (method name of the posted closure), for diagnosing stalls.</summary>
+    public string? LongestDispatchName => Volatile.Read(ref _longestName);
+    private string? _longestName;
+    internal string? CoalescedKey;
+    internal void NoteLongest(long ticks, Action action)
+    {
+        if (ticks < Interlocked.Read(ref _longestTicks)) return;
+        Volatile.Write(ref _longestName, CoalescedKey is { } k ? "coalesced:" + k : action.Method.DeclaringType?.FullName + "." + action.Method.Name);
+    }
     /// <summary>Posts that were superseded by a newer post with the same coalescing key.</summary>
     public long CoalescedDropped => Interlocked.Read(ref _coalescedDropped);
 
@@ -141,6 +150,7 @@ public abstract class UiDispatcherBase : IUiDispatcher
             // Order matters: clear Pending first so a post racing with this run schedules a fresh runner.
             Volatile.Write(ref slot.Pending, 0);
             var latest = Interlocked.Exchange(ref slot.Latest, null);
+            Stats.CoalescedKey = key; // so a slow coalesced callback is attributed to its key, not to this wrapper (cleared by Run)
             latest?.Invoke();
             if (Volatile.Read(ref slot.Latest) is null && Volatile.Read(ref slot.Pending) == 0)
                 _slots.TryRemove(new KeyValuePair<string, Slot>(key, slot)); // keep the key table bounded
@@ -188,7 +198,10 @@ public abstract class UiDispatcherBase : IUiDispatcher
         try { action(); }
         finally
         {
-            Stats.OnExecuted(Stopwatch.GetTimestamp() - start);
+            var elapsed = Stopwatch.GetTimestamp() - start;
+            Stats.NoteLongest(elapsed, action);
+            Stats.CoalescedKey = null;
+            Stats.OnExecuted(elapsed);
             Volatile.Write(ref _current, null);
         }
     }

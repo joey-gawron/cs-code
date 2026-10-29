@@ -1,0 +1,369 @@
+# yank/put and case
+=== yank-001
+> ‸foo bar baz
+keys: yw$p
+< foo bar bazfoo‸ ⏎
+
+=== yank-002
+> ‸foo bar baz
+keys: yw$P
+< foo bar bafoo‸ z
+
+=== yank-003
+> ‸foo bar baz
+keys: ywwP
+< foo foo‸ bar baz
+
+=== yank-004
+> ‸foo bar baz
+keys: y$P
+< foo bar ba‸zfoo bar baz
+
+=== yank-005
+> foo ‸bar baz
+keys: y0$p
+< foo bar bazfoo‸ ⏎
+
+=== yank-006
+> ‸foo
+> bar
+keys: yyp
+< foo
+< ‸foo
+< bar
+
+=== yank-007
+> ‸foo
+> bar
+keys: yyP
+< ‸foo
+< foo
+< bar
+
+=== yank-008
+> ‸foo
+> bar
+keys: yyjp
+< foo
+< bar
+< ‸foo
+
+=== yank-009
+> ‸foo
+> bar
+keys: 2yyG$p
+< foo
+< bar
+< ‸foo
+< bar
+
+=== yank-010
+> ‸foo
+> bar
+> baz
+keys: yjGp
+< foo
+< bar
+< baz
+< ‸foo
+< bar
+
+=== yank-011
+> ‸foo
+> bar
+> baz
+keys: Yjp
+< foo
+< bar
+< ‸foo
+< baz
+
+=== yank-012
+> ‸foo
+> bar
+> baz
+keys: yG
+< ‸foo
+< bar
+< baz
+
+=== yank-013
+> ‸foo bar
+keys: yiw$p
+< foo barfo‸o
+
+=== yank-014
+> ‸foo bar
+keys: yiwwP
+< foo fo‸obar
+
+=== yank-015
+> ‸foo bar
+keys: yawP
+< foo‸ foo bar
+
+=== yank-016
+> ‸foo bar
+keys: 3p
+< ‸foo bar
+
+=== yank-017
+> ‸foo bar
+keys: ywP
+< foo‸ foo bar
+
+=== yank-018
+> ‸foo bar
+keys: yw3P
+< foo foo foo‸ foo bar
+
+=== yank-019
+> ‸foo bar
+keys: yw3p
+< ffoo foo foo‸ oo bar
+
+=== yank-020
+> ‸foo
+> bar
+keys: yy3p
+< foo
+< ‸foo
+< foo
+< foo
+< bar
+
+=== yank-021
+> ‸foo
+> bar
+keys: yy3P
+< ‸foo
+< foo
+< foo
+< foo
+< bar
+
+=== yank-022
+> ‸foo bar
+keys: "ayw"ap
+< ffoo‸ oo bar
+
+=== yank-023
+> ‸foo bar
+keys: "ayw"Ayw"ap
+< ffoo foo‸ oo bar
+
+=== yank-024
+> ‸foo bar
+> baz
+keys: "ayy"Ayw"ap
+< foo bar
+< ‸foo bar
+< foo ⏎
+< baz
+
+=== yank-025
+> ‸foo bar
+keys: "ayw"byyw"ap
+< foo bfoo‸ ar
+
+=== yank-026
+> ‸foo bar
+keys: "_dw$p
+< ba‸r
+
+=== yank-027
+> ‸foo bar baz
+keys: yawdwP
+< foo‸ bar baz
+
+=== yank-028
+> ‸foo bar baz
+keys: dwP
+< foo‸ bar baz
+
+=== yank-029
+> ‸foo bar baz
+keys: dwp
+< bfoo‸ ar baz
+
+=== yank-030
+> ‸foo bar baz
+keys: xp
+< o‸fo bar baz
+
+=== yank-031
+> ‸foo bar baz
+keys: ddp
+< 
+< ‸foo bar baz
+
+=== yank-032
+> ‸a
+> b
+> c
+keys: ddp
+< b
+< ‸a
+< c
+
+=== yank-033
+> ‸a
+> b
+> c
+keys: ddjp
+< b
+< c
+< ‸a
+
+=== yank-034
+> a
+> ‸b
+> c
+keys: ddP
+< a
+< ‸b
+< c
+
+=== yank-035
+> ‸foo bar
+keys: yw0"0P
+< foo‸ foo bar
+
+=== yank-036
+> ‸foo bar
+keys: dwwyw"-P
+< bafoo‸ r
+
+=== yank-037
+> ‸a
+> b
+> c
+> d
+keys: dddddd"1p"2p"3p
+< d
+< c
+< b
+< ‸a
+
+=== yank-038
+> ‸a
+> b
+> c
+> d
+keys: dd."1p
+< c
+< ‸b
+< d
+
+=== yank-039
+> ‸foo bar baz
+keys: yyp"0p
+< foo bar baz
+< foo bar baz
+< ‸foo bar baz
+
+=== yank-040
+> foo ‸bar
+keys: yw:s/bar/X/<CR>P
+< ba‸rfoo X
+
+=== yank-041
+> ‸foo bar
+keys: gUiw
+< ‸FOO bar
+
+=== yank-042
+> ‸foo bar
+keys: gUU
+< ‸FOO BAR
+
+=== yank-043
+> ‸Foo Bar
+keys: guu
+< ‸foo bar
+
+=== yank-044
+> ‸Foo Bar
+keys: g~~
+< ‸fOO bAR
+
+=== yank-045
+> ‸Foo Bar
+keys: g~w
+< ‸fOO Bar
+
+=== yank-046
+> ‸Foo Bar
+keys: g~$
+< ‸fOO bAR
+
+=== yank-047
+> ‸Foo Bar
+keys: g?w
+< ‸Sbb Bar
+
+=== yank-048
+> ‸Foo Bar
+keys: g??
+< ‸Sbb One
+
+=== yank-049
+> ‸foo bar
+keys: ~
+< F‸oo bar
+
+=== yank-050
+> ‸foo bar
+keys: 3~
+< FOO‸ bar
+
+=== yank-051
+> ‸foo bar
+keys: ~~~
+< FOO‸ bar
+
+=== yank-052
+> foo ba‸r
+keys: ~
+< foo ba‸R
+
+=== yank-053
+> foo ba‸r
+keys: 5~
+< foo ba‸R
+
+=== yank-054
+> ‸Foo
+keys: ~~~~
+< fO‸o
+
+=== yank-055
+> ‸foo
+keys: gUl
+< ‸Foo
+
+=== yank-056
+> ‸foo
+keys: g~g~
+< ‸FOO
+
+=== yank-057
+> ‸foo bar
+keys: gUw.
+< ‸FOO bar
+
+=== yank-058
+> ‸foo bar baz
+keys: gUw.w.
+< FOO ‸BAR baz
+
+=== yank-059
+> ‸strasse
+keys: gUU
+< ‸STRASSE
+
+=== yank-060
+> ‸Ünï
+keys: guu
+< ‸ünï
+

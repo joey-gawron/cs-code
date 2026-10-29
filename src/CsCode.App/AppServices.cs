@@ -11,6 +11,8 @@ using CsCode.Core.Platform;
 using CsCode.Dap;
 using CsCode.Editor;
 using CsCode.Lsp;
+using CsCode.Panels.Debug;
+using CsCode.Panels.Search;
 using CsCode.Platform;
 using CsCode.Profiling;
 using CsCode.Ui;
@@ -26,8 +28,8 @@ public sealed class WindowHolder
 }
 
 /// <summary>
-/// The composition root. <see cref="Build"/> registers the real modules (<c>AddCsCodeCore/Platform/Lsp/Dap/Editor/Profiling</c>) and the shell
-/// services, then lets the caller replace any registration (dev host, tests) through <c>configure</c>. There are deliberately no silent
+/// The composition root. <see cref="Build"/> registers the real modules (<c>AddCsCodeCore/Platform/Lsp/Dap/Editor/Profiling</c>), the shell
+/// services and the Debug and Search/Settings panels, then lets the caller replace any registration (dev host, tests) through <c>configure</c>. There are deliberately no silent
 /// fallbacks here: a missing module registration surfaces as a resolution failure when the shell needs it.
 /// </summary>
 public static class AppServices
@@ -43,6 +45,8 @@ public static class AppServices
         services.AddCsCodeEditor();
         services.AddCsCodeProfiling();
         services.AddCsCodeShell(args);
+        services.AddCsCodeDebugPanels();
+        services.AddCsCodeSearchPanels();
         configure?.Invoke(services); // dev/test host: replace anything above
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
     }

@@ -20,11 +20,26 @@ public class ShellDocument : Document, IDisposable
 
     public Control EnsureView() => _view ??= CreateView();
 
+    private Border? _host;
+
+    /// <summary>
+    /// What Dock presents: a thin host holding the real view. Dock.Avalonia 12.1 keeps presented content reachable after a tab closes, so the shell
+    /// presents a host and empties it on dispose; the heavy view (and the document behind it) is then released no matter what Dock retains.
+    /// </summary>
+    public Control EnsureHost()
+    {
+        _host ??= new Border();
+        var view = EnsureView();
+        if (!ReferenceEquals(_host.Child, view)) _host.Child = view;
+        return _host;
+    }
+
     protected virtual Control CreateView() => ViewFactory?.Invoke() ?? new TextBlock { Text = Title };
 
     /// <summary>Drops the live view (memory policy / tab close). Safe to call repeatedly; the view is recreated on next presentation.</summary>
     public virtual void DisposeView()
     {
+        if (_host is not null) _host.Child = null;
         if (_view is null) return;
         (_view as IDisposable)?.Dispose();
         _view = null;
@@ -39,6 +54,7 @@ public class ShellDocument : Document, IDisposable
     {
         IsDisposed = true;
         DisposeView();
+        _host = null;
     }
 }
 
@@ -49,9 +65,12 @@ public sealed class EditorTab : ShellDocument
     private readonly DisposableStore _subs = new();
     private bool _isPreview, _isPinned;
 
+    private IEditorDocument? _doc;
+
     public EditorTab(IEditorDocument document, IEditorViewFactory editors)
     {
-        Doc = document;
+        _doc = document;
+        Uri = document.Uri;
         _editors = editors;
         Id = "doc:" + document.Uri;
         Title = TitleFor(document.Uri);
@@ -59,14 +78,26 @@ public sealed class EditorTab : ShellDocument
         IsModified = document.IsDirty;
         _subs.Add(document.DirtyChanged.Subscribe(_ =>
         {
-            IsModified = Doc.IsDirty;
-            if (Doc.IsDirty) IsPreview = false; // editing a preview tab makes it permanent (VS Code behaviour)
+            if (_doc is not { } d) return;
+            IsModified = d.IsDirty;
+            if (d.IsDirty) IsPreview = false; // editing a preview tab makes it permanent (VS Code behaviour)
+            _dirtyStateChanged.Fire(this);
         }));
     }
 
-    public IEditorDocument Doc { get; }
-    public Uri Uri => Doc.Uri;
-    public bool IsDirty => Doc.IsDirty;
+    private readonly Emitter<EditorTab> _dirtyStateChanged = new();
+
+    /// <summary>Fires after the document's dirty flag changed (window title, status).</summary>
+    public IEventSource<EditorTab> DirtyStateChanged => _dirtyStateChanged;
+
+    /// <summary>Disposables owned by whoever manages the tab (the document well); disposed with the tab.</summary>
+    public DisposableStore Owned { get; } = new();
+
+    /// <summary>The document behind this tab. Released on dispose: Dock.Avalonia 12.1 keeps closed dockables reachable after their content was
+    /// presented (verified in isolation with a bare DockControl), so a closed tab must not pin its editor document or view.</summary>
+    public IEditorDocument Doc => _doc ?? throw new ObjectDisposedException(nameof(EditorTab));
+    public Uri Uri { get; }
+    public bool IsDirty => _doc?.IsDirty ?? false;
 
     /// <summary>A preview tab (italic) is replaced by the next preview open; editing or double-click promotes it.</summary>
     public bool IsPreview
@@ -126,7 +157,11 @@ public sealed class EditorTab : ShellDocument
     {
         base.Dispose();
         _viewCreated.Clear();
+        _dirtyStateChanged.Clear();
+        Owned.Dispose();
         _subs.Dispose();
+        _doc = null;
+        SavedViewState = null;
     }
 
     public static string TitleFor(Uri uri)
@@ -159,8 +194,20 @@ public sealed class ToolTab : Tool, IDisposable
 
     public Control EnsureView() => _view ??= Spec.CreateView(_services);
 
+    private Border? _host;
+
+    /// <summary>The thin host Dock presents (see <see cref="ShellDocument.EnsureHost"/>).</summary>
+    public Control EnsureHost()
+    {
+        _host ??= new Border();
+        var view = EnsureView();
+        if (!ReferenceEquals(_host.Child, view)) _host.Child = view;
+        return _host;
+    }
+
     public void DisposeView()
     {
+        if (_host is not null) _host.Child = null;
         if (_view is null) return;
         (_view as IDisposable)?.Dispose();
         (_view.DataContext as IDisposable)?.Dispose();
@@ -168,5 +215,9 @@ public sealed class ToolTab : Tool, IDisposable
         _view = null;
     }
 
-    public void Dispose() => DisposeView();
+    public void Dispose()
+    {
+        DisposeView();
+        _host = null;
+    }
 }

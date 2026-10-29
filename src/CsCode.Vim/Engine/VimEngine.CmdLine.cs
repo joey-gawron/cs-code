@@ -64,8 +64,13 @@ public sealed partial class VimEngine
 
     private void StartExFromVisual()
     {
-        // leave Visual mode (setting '< '>) and pre-fill the range
+        // leave Visual mode (setting '< '>) and pre-fill the range; the cursor goes to the start of the area
+        var a = _visualStart;
+        var b = new TextPosition(_line, _col);
         EndVisualKeepRestart();
+        var lo = a < b ? a : b;
+        _line = lo.Line; _col = lo.Character;
+        CheckCursor();
         OpenCommandLine(':', "'<,'>", 1, null, default, VimMode.Normal);
     }
 
@@ -98,6 +103,7 @@ public sealed partial class VimEngine
         CheckCursor();
         PublishCommandLine();
         UpdateSearchHighlight(incremental: false);
+        if (_restartEdit && _insert is not null && _mode == VimMode.Normal) ResumeInsert();
     }
 
     private void CmdLineKey(int k)
@@ -108,13 +114,12 @@ public sealed partial class VimEngine
         if (c.Literal == 1)
         {
             c.Literal = 0; _noMap--;
-            if (k is >= 0 and < 0x110000) { t.Insert(c.Cursor, char.ConvertFromUtf32(k)); c.Cursor += k > 0xFFFF ? 2 : 1; }
+            if (k is >= 0 and < 0x110000) { t.Insert(c.Cursor, Keys.SafeString(k)); c.Cursor += k > 0xFFFF ? 2 : 1; }
             PublishCommandLine();
             return;
         }
         if (c.Literal == 2)
         {
-            if (k is 18 or 15 or 16 or 23 && false) { }
             c.Literal = 0; _noMap--;
             var text = RegisterTextForCmdline(k);
             if (text is not null) { t.Insert(c.Cursor, text); c.Cursor += text.Length; }
@@ -180,7 +185,7 @@ public sealed partial class VimEngine
             case Keys.Tab:
                 break;
             default:
-                if (Keys.IsChar(k) && k >= 32) { var s = char.ConvertFromUtf32(k); t.Insert(c.Cursor, s); c.Cursor += s.Length; }
+                if (Keys.IsChar(k) && k >= 32) { var s = Keys.SafeString(k); t.Insert(c.Cursor, s); c.Cursor += s.Length; }
                 else if (Keys.IsChar(k) && k < 32) { }
                 break;
         }
@@ -254,8 +259,9 @@ public sealed partial class VimEngine
         {
             AddHistory(_exHistory, text);
             if (_mode is VimMode.Visual or VimMode.VisualLine or VimMode.VisualBlock) EndVisual();
-            _s.Registers.LastCommandLine = text;
             if (text.Trim().Length > 0) ExecuteExLine(text);
+            // the last command line is remembered when the command has finished (a ':s///c' prompt keeps it running)
+            if (_awaitKey) _deferredLastCmd = text; else _s.Registers.LastCommandLine = text;
             if (_mode == VimMode.Normal) CheckCursor();
             if (_restartEdit && _insert is not null && _mode == VimMode.Normal) ResumeInsert();
             return;

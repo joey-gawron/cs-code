@@ -56,7 +56,8 @@ public sealed class FakeDebugService : IDebugService
     public IDebugSession? ActiveSession { get; set; }
     public DebugState State { get; private set; }
     public DebugStopLocation? StopLocation { get; private set; }
-    public IBreakpointManager Breakpoints => throw new NotSupportedException();
+    // The composed Debug panels read breakpoints; a real in-memory manager (no storage) is the simplest faithful double.
+    public IBreakpointManager Breakpoints { get; } = new CsCode.Dap.Breakpoints.BreakpointManager();
     public IDebugConfigurationService Configurations => Config;
     public FakeDebugConfigurations Config { get; } = new();
     public IReadOnlyList<DebuggerType> DebuggerTypes => [];

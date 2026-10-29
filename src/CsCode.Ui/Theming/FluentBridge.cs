@@ -46,7 +46,6 @@ internal static class FluentBridge
         ("TextControlForeground", "input.foreground"), ("TextControlForegroundPointerOver", "input.foreground"), ("TextControlForegroundFocused", "input.foreground"),
         ("TextControlBorderBrush", "input.border"), ("TextControlBorderBrushPointerOver", "input.border"), ("TextControlBorderBrushFocused", "focusBorder"),
         ("TextControlPlaceholderForeground", "input.placeholderForeground"), ("TextControlPlaceholderForegroundPointerOver", "input.placeholderForeground"), ("TextControlPlaceholderForegroundFocused", "input.placeholderForeground"),
-        ("TextControlSelectionHighlightColor", "selection.background"),
         // Combo boxes.
         ("ComboBoxBackground", "dropdown.background"), ("ComboBoxBackgroundPointerOver", "dropdown.background"), ("ComboBoxBackgroundPressed", "dropdown.background"),
         ("ComboBoxForeground", "dropdown.foreground"), ("ComboBoxForegroundPointerOver", "dropdown.foreground"),
@@ -71,39 +70,49 @@ internal static class FluentBridge
         ("FlyoutPresenterBackground", "editorWidget.background"), ("FlyoutBorderThemeBrush", "editorWidget.border"),
     ];
 
-    internal static void Apply(Application app, IReadOnlyDictionary<string, SolidColorBrush> brushes, Func<string, Color> color, ThemeVariant variant)
+    /// <summary>Publishes the theme-independent resource entries once (brush keys shared with the live vsc: brushes, shape tokens).</summary>
+    internal static void PublishStructure(Application app, IReadOnlyDictionary<string, SolidColorBrush> brushes)
     {
         var resources = app.Resources;
         foreach (var (key, id) in BrushMap)
-            if (brushes.TryGetValue(id, out var b) && (!resources.TryGetResource(key, null, out var cur) || !ReferenceEquals(cur, b)))
-                resources[key] = id == "selection.background" ? b.Color : b;
-
+            if (brushes.TryGetValue(id, out var b))
+                resources[key] = b;
+        // Selection highlight is a Color resource in Fluent; it follows the default (dark) selection colour and is refreshed by UpdatePalette.
         // Shape tokens: VS is flat and dense.
         resources["ControlCornerRadius"] = new CornerRadius(2);
         resources["OverlayCornerRadius"] = new CornerRadius(2);
         resources["ControlContentThemeFontSize"] = 12.0;
         resources["ScrollBarSize"] = 12.0;
+    }
 
+    /// <summary>Retargets the Fluent palette of the active variant at the workbench colours. Mutates in place and only what changed.</summary>
+    internal static void UpdatePalette(Application app, Func<string, Color> color, ThemeVariant variant)
+    {
         var fluent = app.Styles.OfType<FluentTheme>().FirstOrDefault();
         if (fluent is null) return;
         var bg = color("editor.background");
         var fg = color("foreground");
         Color A(Color c, byte a) => Color.FromArgb(a, c.R, c.G, c.B);
-        var palette = new ColorPaletteResources
-        {
-            Accent = color("focusBorder"),
-            RegionColor = bg,
-            AltHigh = bg, AltMediumHigh = A(bg, 0xCC), AltMedium = A(bg, 0x99), AltMediumLow = A(bg, 0x66), AltLow = A(bg, 0x33),
-            BaseHigh = fg, BaseMediumHigh = Mix(fg, bg, 0.15), BaseMedium = color("descriptionForeground"), BaseMediumLow = Mix(fg, bg, 0.55), BaseLow = color("input.border"),
-            ChromeLow = color("panel.background"), ChromeMediumLow = color("titleBar.activeBackground"), ChromeMedium = color("menu.background"), ChromeHigh = color("panel.border"),
-            ChromeAltLow = Mix(fg, bg, 0.2), ChromeGray = color("descriptionForeground"),
-            ChromeDisabledLow = color("disabledForeground"), ChromeDisabledHigh = color("input.border"),
-            ChromeBlackLow = A(Colors.Black, 0x33), ChromeBlackMediumLow = A(Colors.Black, 0x66), ChromeBlackMedium = A(Colors.Black, 0x99), ChromeBlackHigh = Colors.Black,
-            ChromeWhite = Colors.White,
-            ListLow = color("list.hoverBackground"), ListMedium = color("list.inactiveSelectionBackground"),
-            ErrorText = color("errorForeground"),
-        };
-        fluent.Palettes[variant] = palette;
+        // One palette object per variant, mutated in place: assigning an unchanged value is a no-op, so a theme switch touches only what differs
+        // (replacing the whole palette would invalidate every resource derived from it).
+        var created = !fluent.Palettes.TryGetValue(variant, out var palette);
+        palette ??= new ColorPaletteResources();
+        palette.Accent = color("focusBorder");
+        palette.RegionColor = bg;
+        palette.AltHigh = bg; palette.AltMediumHigh = A(bg, 0xCC); palette.AltMedium = A(bg, 0x99); palette.AltMediumLow = A(bg, 0x66); palette.AltLow = A(bg, 0x33);
+        palette.BaseHigh = fg; palette.BaseMediumHigh = Mix(fg, bg, 0.15); palette.BaseMedium = color("descriptionForeground"); palette.BaseMediumLow = Mix(fg, bg, 0.55); palette.BaseLow = color("input.border");
+        palette.ChromeLow = color("panel.background"); palette.ChromeMediumLow = color("titleBar.activeBackground"); palette.ChromeMedium = color("menu.background"); palette.ChromeHigh = color("panel.border");
+        palette.ChromeAltLow = Mix(fg, bg, 0.2); palette.ChromeGray = color("descriptionForeground");
+        palette.ChromeDisabledLow = color("disabledForeground"); palette.ChromeDisabledHigh = color("input.border");
+        palette.ChromeBlackLow = A(Colors.Black, 0x33); palette.ChromeBlackMediumLow = A(Colors.Black, 0x66); palette.ChromeBlackMedium = A(Colors.Black, 0x99); palette.ChromeBlackHigh = Colors.Black;
+        palette.ChromeWhite = Colors.White;
+        palette.ListLow = color("list.hoverBackground"); palette.ListMedium = color("list.inactiveSelectionBackground");
+        palette.ErrorText = color("errorForeground");
+        if (created) fluent.Palettes[variant] = palette;
+
+        var selection = color("selection.background");
+        if (!app.Resources.TryGetResource("TextControlSelectionHighlightColor", null, out var current) || current is not Color c || c != selection)
+            app.Resources["TextControlSelectionHighlightColor"] = selection;
     }
 
     private static Color Mix(Color a, Color b, double t) => Color.FromArgb(

@@ -171,6 +171,16 @@ internal sealed class ExcludeMatcher
         return false;
     }
 
+    /// <summary>For callers that already have the root-relative path (the workspace walker).</summary>
+    public bool IsExcludedRelative(string rel)
+    {
+        if (_patterns.Length == 0 || rel.Length == 0) return false;
+        var asDir = rel + "/";
+        foreach (var p in _patterns)
+            if (Glob.IsMatch(p, rel) || Glob.IsMatch(p, asDir)) return true;
+        return false;
+    }
+
     private string Relative(string full)
     {
         if (full.Length >= _root.Length && full.StartsWith(_root, StringComparison.Ordinal))

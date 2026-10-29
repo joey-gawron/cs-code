@@ -1,0 +1,716 @@
+# visual char/line
+=== visual-001
+> ‸foo bar
+keys: vld
+< ‸o bar
+
+=== visual-002
+> ‸foo bar
+keys: vey$p
+< foo barfo‸o
+
+=== visual-003
+> ‸foo bar baz
+keys: vwwd
+< ‸az
+
+=== visual-004
+> ‸foo bar baz
+keys: ve<Esc>
+< fo‸o bar baz
+
+=== visual-005
+> ‸foo bar
+keys: v$d
+< ‸
+
+=== visual-006
+> ‸foo
+> bar
+keys: v$d
+< ‸bar
+
+=== visual-007
+> ‸foo
+> bar
+keys: vjd
+< ‸ar
+
+=== visual-008
+> foo
+> ‸bar
+keys: vkd
+< ‸ar
+
+=== visual-009
+> ‸foo
+> bar
+> baz
+keys: vjjd
+< ‸az
+
+=== visual-010
+> ‸foo bar
+keys: vc-<Esc>
+< ‸-oo bar
+
+=== visual-011
+> ‸foo bar
+keys: vey
+< ‸foo bar
+
+=== visual-012
+> ‸foo bar
+keys: vexp
+<  fo‸obar
+
+=== visual-013
+> ‸foo bar
+keys: v~
+< ‸Foo bar
+
+=== visual-014
+> ‸foo bar
+keys: veU
+< ‸FOO bar
+
+=== visual-015
+> ‸FOO bar
+keys: veu
+< ‸foo bar
+
+=== visual-016
+> ‸foo bar
+keys: ve>
+< \t‸foo bar
+
+=== visual-017
+> ‸foo bar
+keys: vlr-
+< ‸--o bar
+
+=== visual-018
+> ‸foo bar
+keys: vjd
+< ‸oo bar
+
+=== visual-019
+> ‸foo bar baz
+keys: ved.
+< ‸r baz
+
+=== visual-020
+> ‸foo bar baz
+keys: vlldw.
+<  ‸ baz
+
+=== visual-021
+> ‸abc def
+keys: vlo<Esc>
+< ‸abc def
+
+=== visual-022
+> ‸abc def
+keys: vllohd
+< ‸ def
+
+=== visual-023
+> ‸abc def
+keys: wvlohd
+< abc‸f
+
+=== visual-024
+> ‸abc def ghi
+keys: vwo$d
+< abc‸ ⏎
+
+=== visual-025
+> ‸foo
+keys: vo<Esc>
+< ‸foo
+
+=== visual-026
+> ‸foo bar
+keys: vly:s/foo/X/<CR>
+< ‸X bar
+
+=== visual-027
+> ‸foo bar baz
+keys: wvey0P
+< ba‸rfoo bar baz
+
+=== visual-028
+> ‸foo bar baz
+keys: wveyP
+< foo ba‸rbar baz
+
+=== visual-029
+> ‸foo bar
+keys: vev
+< fo‸o bar
+
+=== visual-030
+> ‸foo bar
+keys: vV<Esc>
+< ‸foo bar
+
+=== visual-031
+> ‸foo bar
+> baz
+keys: vVd
+< ‸baz
+
+=== visual-032
+> ‸foo bar
+> baz
+keys: Vd
+< ‸baz
+
+=== visual-033
+> ‸foo bar
+> baz
+keys: Vjd
+< ‸
+
+=== visual-034
+> ‸foo bar
+> baz
+keys: Vy$p
+< foo bar
+< ‸foo bar
+< baz
+
+=== visual-035
+> ‸foo
+> bar
+> baz
+keys: Vjd
+< ‸baz
+
+=== visual-036
+> foo
+> ‸bar
+> baz
+keys: Vkd
+< ‸baz
+
+=== visual-037
+> ‸foo
+> bar
+> baz
+keys: Vjjd
+< ‸
+
+=== visual-038
+> ‸foo
+> bar
+> baz
+keys: Vj>
+< \t‸foo
+< \tbar
+< baz
+
+=== visual-039
+> ‸foo
+> bar
+> baz
+keys: Vj<
+< ‸foo
+< bar
+< baz
+
+=== visual-040
+> ‸foo
+> bar
+> baz
+keys: VjJ
+< foo‸ bar
+< baz
+
+=== visual-041
+> ‸foo
+> bar
+> baz
+keys: VjjgJ
+< foobar‸baz
+
+=== visual-042
+> ‸foo
+> bar
+> baz
+keys: Vjc-<Esc>
+< ‸-
+< baz
+
+=== visual-043
+> ‸foo
+> bar
+> baz
+keys: Vjy
+< ‸foo
+< bar
+< baz
+
+=== visual-044
+> ‸foo
+> bar
+> baz
+keys: VjyGp
+< foo
+< bar
+< baz
+< ‸foo
+< bar
+
+=== visual-045
+> ‸foo
+> bar
+> baz
+keys: Vjy:<C-u>s/a/b/<CR>
+< ‸foo
+< bar
+< baz
+
+=== visual-046
+> ‸foo
+> bar
+> baz
+keys: Vj:s/o/0/<CR>
+< ‸f0o
+< bar
+< baz
+
+=== visual-047
+> ‸foo
+> bar
+> baz
+keys: Vj~
+< ‸FOO
+< BAR
+< baz
+
+=== visual-048
+> ‸foo
+> bar
+> baz
+keys: VjU
+< ‸FOO
+< BAR
+< baz
+
+=== visual-049
+> ‸Foo
+> Bar
+> baz
+keys: Vju
+< ‸foo
+< bar
+< baz
+
+=== visual-050
+> ‸foo
+> bar
+keys: V<Esc>
+< ‸foo
+< bar
+
+=== visual-051
+> ‸foo
+> bar
+keys: Vo<Esc>
+< ‸foo
+< bar
+
+=== visual-052
+> ‸foo
+> bar
+> baz
+keys: Vjo<Esc>
+< ‸foo
+< bar
+< baz
+
+=== visual-053
+> ‸foo
+> bar
+> baz
+keys: Vjd.
+< ‸
+
+=== visual-054
+> ‸foo
+> bar
+> baz
+> qux
+keys: Vjd.
+< ‸
+
+=== visual-055
+> ‸a
+> b
+> c
+> d
+> e
+keys: Vjd.
+< ‸e
+
+=== visual-056
+> ‸foo
+> bar
+> baz
+keys: Vjp
+< ‸baz
+
+=== visual-057
+> ‸foo
+> bar
+keys: yyjVp
+< foo
+< ‸foo
+
+=== visual-058
+> ‸foo bar
+> baz
+keys: yiwjVp
+< foo bar
+< ‸foo
+
+=== visual-059
+> ‸foo bar
+keys: yiwwviwp
+< foo fo‸o
+
+=== visual-060
+> ‸foo bar
+keys: yiwwviwp"0P
+< foo fofo‸oo
+
+=== visual-061
+> ‸foo bar
+keys: yiwwviwP
+< foo fo‸o
+
+=== visual-062
+> ‸foo bar
+keys: yiwwviwPp
+< foo foofo‸o
+
+=== visual-063
+> ‸foo
+> bar
+keys: yiwjviwp
+< foo
+< fo‸o
+
+=== visual-064
+> ‸foo
+> bar
+keys: yyjviwp
+< foo
+< 
+< ‸foo
+< 
+
+=== visual-065
+> ‸foo
+> bar
+keys: yyjvep
+< foo
+< 
+< ‸foo
+< 
+
+=== visual-066
+> ‸foo
+> bar
+> baz
+keys: yyjVjp
+< foo
+< ‸foo
+
+=== visual-067
+> ‸foo bar
+> baz
+keys: gvd
+< ‸foo bar
+< baz
+mode: no
+
+=== visual-068
+> ‸foo bar
+> baz
+keys: vey<Esc>gvd
+< ‸ bar
+< baz
+
+=== visual-069
+> ‸foo bar
+> baz
+keys: vey<Esc>jgvd
+< ‸ bar
+< baz
+
+=== visual-070
+> ‸foo bar baz
+keys: vey<Esc>wgvygvd
+< ‸ bar baz
+
+=== visual-071
+> ‸foo bar baz
+keys: vwy<Esc>$gvo<Esc>
+< ‸foo bar baz
+
+=== visual-072
+> ‸foo bar
+keys: vey<Esc>`<
+< ‸foo bar
+
+=== visual-073
+> ‸foo bar
+keys: vey<Esc>`>
+< fo‸o bar
+
+=== visual-074
+> ‸foo bar
+keys: wvey<Esc>gg`<
+< foo ‸bar
+
+=== visual-075
+> ‸foo
+> bar
+> baz
+keys: Vjy<Esc>G'<
+< ‸foo
+< bar
+< baz
+
+=== visual-076
+> ‸foo
+> bar
+> baz
+keys: Vjy<Esc>G'>
+< foo
+< ‸bar
+< baz
+
+=== visual-077
+> ‸foo
+> bar
+> baz
+keys: Vjy<Esc>G`>
+< foo
+< ba‸r
+< baz
+
+=== visual-078
+> ‸foo bar
+keys: v:s/o/0/<CR>
+< ‸f0o bar
+
+=== visual-079
+> ‸foo
+> bar
+> baz
+keys: vj:s/o/0/<CR>
+< ‸f0o
+< bar
+< baz
+
+=== visual-080
+> ‸foo
+> bar
+> baz
+keys: vj:d<CR>
+< ‸baz
+
+=== visual-081
+> ‸a b c
+keys: v3ld
+< ‸c
+
+=== visual-082
+> ‸a b c
+keys: v2ed
+< ‸
+
+=== visual-083
+> ‸foo bar
+keys: vee<Esc>
+< foo ba‸r
+
+=== visual-084
+> ‸foo bar
+keys: vb<Esc>
+< ‸foo bar
+
+=== visual-085
+> foo ‸bar
+keys: vbd
+< ‸ar
+
+=== visual-086
+> ‸foo bar
+keys: v/bar<CR>d
+< ‸ar
+
+=== visual-087
+> ‸foo bar bar
+keys: v/bar<CR>d
+< ‸ar bar
+
+=== visual-088
+> ‸foo bar bar
+keys: vn<Esc>
+< ‸foo bar bar
+
+=== visual-089
+> ‸foo bar
+keys: v%d
+< ‸oo bar
+
+=== visual-090
+> ‸(foo) bar
+keys: v%d
+< ‸ bar
+
+=== visual-091
+> ‸foo (bar)
+keys: f(v%d
+< foo‸ ⏎
+
+=== visual-092
+> ‸foo bar
+keys: vi<Esc>
+< ‸foo bar
+mode: v
+
+=== visual-093
+> ‸foo bar
+keys: vawy
+< ‸foo bar
+
+=== visual-094
+> ‸a
+> b
+> c
+keys: vjjy`>
+< a
+< b
+< ‸c
+
+=== visual-095
+> ‸abc
+keys: vlld
+< ‸
+
+=== visual-096
+> ‸abc
+keys: vllld
+< ‸
+
+=== visual-097
+> abc‸
+keys: vhd
+< ‸a
+
+=== visual-098
+> ‸ab
+> cd
+keys: vjhd
+< ‸d
+
+=== visual-099
+> a‸b
+> cd
+keys: vjd
+< ‸a
+
+=== visual-100
+> ab
+> ‸cd
+keys: vkd
+< ‸d
+
+=== visual-101
+> ‸ab cd
+keys: vwd
+< ‸d
+
+=== visual-102
+> ‸ab cd
+keys: wvbd
+< ‸d
+
+=== visual-103
+> ‸foo
+keys: vU
+< ‸Foo
+
+=== visual-104
+> ‸foo
+keys: vu
+< ‸foo
+
+=== visual-105
+> ‸fOo
+keys: v~
+< ‸FOo
+
+=== visual-106
+> ‸fOo
+keys: v~~
+< f‸Oo
+
+=== visual-107
+> ‸abc
+keys: v<Esc>
+< ‸abc
+
+=== visual-108
+> ‸abc
+keys: vv
+< ‸abc
+
+=== visual-109
+> ‸abc
+keys: vVv
+< ‸abc
+mode: v
+
+=== visual-110
+> ‸abc
+keys: vj
+< ‸abc
+mode: v
+
+=== visual-111
+> ‸a
+> b
+keys: vjv
+< a
+< ‸b
+
+=== visual-112
+> ‸foo bar
+keys: v$y$p
+< foo barfoo ba‸r
+
+=== visual-113
+> ‸foo bar
+keys: v$hy$p
+< foo barfoo ba‸r
+
+=== visual-114
+> ‸foo
+>   bar
+keys: vjy
+< ‸foo
+<   bar
+
+=== visual-115
+> ‸foo
+>   bar
+keys: wvjy
+< foo
+<   ‸bar
+

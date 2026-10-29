@@ -20,7 +20,7 @@ namespace CsCode.Dap.Service;
 /// without locks or waiting. <see cref="StartAsync"/> and friends only enqueue. Events fire on the lane: subscribers must be cheap and
 /// marshal themselves (the shell's UiDispatcher does).
 /// </summary>
-public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDebugOutputHistory, IDebugSourceContentProvider, IAsyncDisposable
+public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDebugOutputHistory, IDebugSourceContentProvider, IAsyncDisposable, IDisposable
 {
     public const int MaxHistoryLines = 5_000;
     private const int MaxHistoryChars = 4 * 1024 * 1024;
@@ -238,8 +238,17 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     private async Task<DebugAdapterDescriptor?> CreateDescriptorAsync(DebugConfiguration config, CancellationToken ct)
     {
         // VS Code's dev convenience: a running adapter server given in the configuration itself.
-        if (config.Properties.TryGetValue("debugServer", out var ds) && ds.ValueKind == System.Text.Json.JsonValueKind.Number && ds.TryGetInt32(out var port))
-            return new DebugAdapterServer("127.0.0.1", port);
+        // (`"debugServer": 4711`, or `"host:4711"` for a remote/attach-style adapter server.)
+        if (config.Properties.TryGetValue("debugServer", out var ds))
+        {
+            if (ds.ValueKind == System.Text.Json.JsonValueKind.Number && ds.TryGetInt32(out var port)) return new DebugAdapterServer("127.0.0.1", port);
+            if (ds.ValueKind == System.Text.Json.JsonValueKind.String && ds.GetString() is { } text)
+            {
+                var colon = text.LastIndexOf(':');
+                if (colon > 0 && int.TryParse(text[(colon + 1)..], out var hostPort)) return new DebugAdapterServer(text[..colon], hostPort);
+                if (int.TryParse(text, out var onlyPort)) return new DebugAdapterServer("127.0.0.1", onlyPort);
+            }
+        }
 
         IDebugAdapterFactory[] factories;
         lock (_gate) factories = _factories.TryGetValue(config.Type, out var l) ? [.. l.AsEnumerable().Reverse()] : []; // latest registration wins
@@ -600,5 +609,16 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         }
         _sessionStarted.Clear(); _sessionTerminated.Clear(); _activeChanged.Clear(); _stateChanged.Clear();
         _stopLocationChanged.Clear(); _output.Clear(); _outputCleared.Clear();
+    }
+
+    /// <summary>
+    /// For a container disposed synchronously (the shell disposes its container on the UI thread after awaiting the graceful shutdown):
+    /// starts <see cref="DisposeAsync"/> and returns without waiting for adapters, so the caller never blocks. A no-op after <see cref="DisposeAsync"/>.
+    /// </summary>
+    public void Dispose()
+    {
+        var pending = DisposeAsync();
+        if (!pending.IsCompleted)
+            _ = pending.AsTask().ContinueWith(t => _logger.LogDebug(t.Exception, "Disposing the debug service"), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 }

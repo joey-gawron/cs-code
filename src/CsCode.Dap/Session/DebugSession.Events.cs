@@ -117,6 +117,20 @@ public sealed partial class DebugSession
         }
     }
 
+    private void OnLoadedSource(DapLoadedSourceEvent e)
+    {
+        MarkAlive();
+        var source = DapMapping.ToCore(e.Source);
+        if (source is null) return;
+        var key = source.Path ?? (source.SourceReference is { } r ? "ref:" + r : source.Name ?? "");
+        lock (_loadedSources)
+        {
+            if (e.Reason == "removed") _loadedSources.Remove(key);
+            else if (_loadedSources.Count < MaxModules || _loadedSources.ContainsKey(key)) _loadedSources[key] = source; // bounded
+        }
+        _loadedSource.Fire(new DebugLoadedSourceEventArgs(e.Reason, source));
+    }
+
     private void OnCapabilitiesEvent(DapCapabilitiesEvent e)
     {
         MarkAlive();

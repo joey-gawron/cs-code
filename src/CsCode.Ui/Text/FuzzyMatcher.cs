@@ -69,7 +69,7 @@ public static class FuzzyMatcher
         }
         score += inName * 2;                  // matches inside the file name outweigh directory matches
         score -= Math.Min(20, start / 2);     // late starts rank lower
-        score -= Math.Min(20, t.Length / 8);  // shorter candidates rank higher
+        score -= Math.Min(30, t.Length / 3);  // shorter candidates rank higher (also the tie-break between equal matches)
         return Math.Max(0, score);
     }
 

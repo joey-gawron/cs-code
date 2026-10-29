@@ -469,6 +469,18 @@ public class NetCoreDbgFactoryTests
     }
 
     [Fact]
+    public async Task A_textual_attach_pid_from_pickProcess_is_sent_to_netcoredbg_as_a_number()
+    {
+        var f = Make();
+        var attach = DebugConfiguration.FromJson(JsonSerializer.SerializeToElement(new { type = "coreclr", request = "attach", name = "n", processId = "4242" }));
+        var resolved = (await f.ResolveAsync(null, attach, Ct))!;
+        Assert.Equal(JsonValueKind.Number, resolved.Properties["processId"].ValueKind);
+        Assert.Equal(4242, resolved.Properties["processId"].GetInt32());
+        var odd = DebugConfiguration.FromJson(JsonSerializer.SerializeToElement(new { type = "coreclr", request = "attach", name = "n", processId = "not-a-pid" }));
+        Assert.Equal("not-a-pid", (await f.ResolveAsync(null, odd, Ct))!.GetString("processId")); // left for the adapter to reject
+    }
+
+    [Fact]
     public async Task Initial_configurations_follow_the_vscode_template_for_the_projects_dll()
     {
         using var dir = new TempDirectory();

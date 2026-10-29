@@ -83,7 +83,7 @@ public sealed class LanguageWorkQueue : IDisposable
 
     private sealed class Job<T> : Item
     {
-        private readonly Func<WorkContext, ValueTask<T?>> _work;
+        private Func<WorkContext, ValueTask<T?>>? _work; // released as soon as it has been started (the closure may capture documents / big inputs)
         private readonly TaskCompletionSource<T?> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly CancellationToken _callerToken;
         private CancellationTokenRegistration _callerReg;
@@ -118,9 +118,11 @@ public sealed class LanguageWorkQueue : IDisposable
         {
             if (Volatile.Read(ref _completed) != 0) { _callerReg.Dispose(); Queue?.Completed(this); Cts?.Dispose(); return; } // caller cancelled while queued
             ValueTask<T?> vt;
+            var work = _work!;
+            _work = null;
             try
             {
-                vt = _work(new WorkContext(queue, Priority, Cts?.Token ?? CancellationToken.None));
+                vt = work(new WorkContext(queue, Priority, Cts?.Token ?? CancellationToken.None));
             }
             catch (OperationCanceledException) { Finish(default, canceled: true); return; }
             catch (Exception ex) { Fail(ex); return; }
@@ -158,6 +160,7 @@ public sealed class LanguageWorkQueue : IDisposable
 
         public override void Drop(DropReason reason)
         {
+            _work = null;
             _callerReg.Dispose();
             if (Interlocked.Exchange(ref _completed, 1) == 0)
             {
@@ -390,21 +393,27 @@ public sealed class LanguageWorkQueue : IDisposable
     {
         t_current = this;
         NativePriority.TryLowerCurrentThread(linuxNice);
-        while (true)
+        while (WaitAndRunOne()) { }
+    }
+
+    // One item per call, so no item (and no result it holds — a 50k-item completion list, a million semantic tokens) stays reachable from
+    // this thread's stack while it idles in Monitor.Wait.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool WaitAndRunOne()
+    {
+        Item? item;
+        lock (_gate)
         {
-            Item? item;
-            lock (_gate)
+            while ((item = Dequeue()) is null)
             {
-                while ((item = Dequeue()) is null)
-                {
-                    if (_disposed) return;
-                    Monitor.Wait(_gate);
-                }
+                if (_disposed) return false;
+                Monitor.Wait(_gate);
             }
-            Interlocked.Increment(ref _executed);
-            try { item.Execute(this); }
-            catch (Exception ex) { OnUnhandled?.Invoke(ex); }
         }
+        Interlocked.Increment(ref _executed);
+        try { item.Execute(this); }
+        catch (Exception ex) { OnUnhandled?.Invoke(ex); }
+        return true;
     }
 
     public void Dispose()

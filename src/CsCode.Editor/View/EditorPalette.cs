@@ -66,11 +66,13 @@ public sealed class EditorPalette
     public required IBrush SuggestSelected { get; init; }
     public required IBrush SuggestSelectedForeground { get; init; }
     public required IBrush SuggestHighlight { get; init; }
+    public required IBrush SuggestFocusHighlight { get; init; }
     public required IBrush DescriptionForeground { get; init; }
     public required IBrush CodeBlockBackground { get; init; }
     public required IBrush InlayForeground { get; init; }
     public required IBrush InlayBackground { get; init; }
     public required IBrush CodeLens { get; init; }
+    public required IBrush LightBulb { get; init; }
     public required IBrush Gutter { get; init; }
     public required IBrush FoldingControl { get; init; }
     public required IBrush Overview { get; init; }
@@ -121,11 +123,13 @@ public sealed class EditorPalette
             SuggestSelected = B("editorSuggestWidget.selectedBackground"),
             SuggestSelectedForeground = B("editorSuggestWidget.selectedForeground"),
             SuggestHighlight = B("editorSuggestWidget.highlightForeground"),
+            SuggestFocusHighlight = B("editorSuggestWidget.focusHighlightForeground"),
             DescriptionForeground = B("descriptionForeground"),
             CodeBlockBackground = B("textCodeBlock.background"),
             InlayForeground = B("editorInlayHint.foreground"),
             InlayBackground = B("editorInlayHint.background"),
             CodeLens = B("editorCodeLens.foreground"),
+            LightBulb = B("editorLightBulb.foreground"),
             Gutter = B("editorGutter.background"),
             FoldingControl = B("editorGutter.foldingControlForeground"),
             Overview = B("editorOverviewRuler.border"),

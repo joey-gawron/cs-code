@@ -15,6 +15,7 @@ public sealed partial class VimEngine
         oap.ResetForMotion(c.Op, c.Reg);
         oap.Start = new TextPosition(_line, _col);
         var startCursor = oap.Start;
+        oap.CursorStart = startCursor;
         var count0 = EffCount(c, c.M);
         bool ok;
         if (c.Doubled)
@@ -38,8 +39,8 @@ public sealed partial class VimEngine
         }
         if (!ok)
         {
-            _line = startCursor.Line; _col = startCursor.Character;
             Beep();
+            CheckCursor();
             return;
         }
         oap.Force = c.Force;
@@ -131,13 +132,14 @@ public sealed partial class VimEngine
                 if (oap.Empty) { SaveUndo(_line, 1, 1); CheckCursor(); break; }
                 OpDelete(oap);
                 CheckCursor();
+                if (oap.Type == MType.Char) _setCurswant = true;
                 break;
             case OpType.Yank:
-                if (!oap.IsVisual && false) { }
                 OpYank(oap, deleting: false);
-                if (!oap.IsVisual || true) { _line = oap.Start.Line; _col = oap.Start.Character; if (oap.Type == MType.Line && !oap.IsVisual) { } }
-                if (oap.IsVisual && oap.Type == MType.Line) { }
+                _line = oap.Start.Line;
+                _col = oap.Start.Character;
                 CheckCursor();
+                _setCurswant = true;
                 break;
             case OpType.Change:
                 OpChange(oap);
@@ -149,6 +151,7 @@ public sealed partial class VimEngine
             case OpType.Tilde or OpType.Upper or OpType.Lower or OpType.Rot13:
                 OpTilde(oap);
                 CheckCursor();
+                _setCurswant = true;
                 break;
             case OpType.Indent:
                 OpReindent(oap);
@@ -174,7 +177,7 @@ public sealed partial class VimEngine
                 OpAddSubtract(oap, op == OpType.NrAdd ? count1 : -count1);
                 break;
             case OpType.Comment:
-                CommentOperator(oap);
+                CommentOperator(oap, c.Key == 'g' && c.Key2 == 'C');
                 break;
             case OpType.SurroundAdd:
                 SurroundAddOperator(c, oap);
@@ -248,7 +251,7 @@ public sealed partial class VimEngine
         {
             var reg = oap.Reg;
             if (reg == 0 && _s.UseSystemClipboard) reg = '*';
-            if (!RegisterFile.IsValidName(reg) || reg is '.' or ':' or '%' or '#' or '=') { Beep(); return false; }
+            if (reg != 0 && (!RegisterFile.IsValidName(reg) || reg is '.' or ':' or '%' or '#' or '=')) { Beep(); return false; }
             target = _s.Registers.ForWrite(reg, out append);
             if (target is null) return true;
             regForClipboard = reg;
@@ -269,16 +272,19 @@ public sealed partial class VimEngine
             return false;
         }
         RegisterFile.Store(target!, lines, type, width, append);
+        if (regForClipboard is { } named && named < 128 && char.IsAsciiLetter((char)named)) NotifyNamedRegisterChange();
         var start = oap.Start;
         var end = oap.End;
         if (!deleting)
         {
             _bs.OpStart = start;
-            _bs.OpEnd = type == VimRegisterType.Line ? new TextPosition(end.Line, int.MaxValue / 2) : end;
+            var yEnd = end;
+            if (!oap.Inclusive && !oap.BlockMode && type == VimRegisterType.Character) { var yl = end.Line; var yc = end.Character; Dec(ref yl, ref yc); yEnd = new TextPosition(yl, yc); }
+            _bs.OpEnd = type == VimRegisterType.Line ? new TextPosition(end.Line, 1 << 30) : yEnd;
             if (type == VimRegisterType.Line) _bs.OpStart = new TextPosition(start.Line, 0);
             if (_s.Plugins.HighlightedYank) Host.OnYankHighlight(start, end, type == VimRegisterType.Line);
         }
-        if (regForClipboard is { } rc && IsClipboardReg(rc) || (deleting && regForClipboard is null && false))
+        if (regForClipboard is { } rc && IsClipboardReg(rc))
             SyncClipboardFrom(target!);
         var n = oap.LineCount;
         if (!deleting && n > O.Report) Message($"{n} lines yanked");
@@ -291,15 +297,17 @@ public sealed partial class VimEngine
     {
         if (oap.Reg == '_') return;
         var reg = oap.Reg == 0 && _s.UseSystemClipboard ? '*' : oap.Reg;
+        var appended = false;
         if (reg != 0)
         {
             if (!RegisterFile.IsValidName(reg) || reg is '.' or ':' or '%' or '#' or '=') { Beep(); return; }
             var t = _s.Registers.ForWrite(reg, out var append);
+            appended = append;
             if (t is not null) OpYank(oap, deleting: true, t, append, reg);
         }
         if (oap.Type == MType.Line || oap.LineCount > 1 || oap.UseRegOne)
         {
-            var one = _s.Registers.ShiftDeleteRegisters();
+            var one = _s.Registers.ShiftDeleteRegisters(keepPrevious: appended);
             OpYank(oap, deleting: true, one, false, null);
         }
         if ((reg == 0 || (O.UnnamedClip && reg == '*') || (O.UnnamedPlusClip && reg == '+')) && oap.Type != MType.Line && oap.LineCount == 1)
@@ -316,7 +324,8 @@ public sealed partial class VimEngine
 
     private bool OpDelete(OpArgs oap)
     {
-        if (LineCount == 1 && L(0).Length == 0 && oap.Type == MType.Line && false) return true;
+        // nothing to delete in an empty buffer: registers stay untouched
+        if (LineCount == 1 && L(0).Length == 0) return true;
         if (!CanModify()) return false;
         if (oap.Type == MType.Char && !oap.IsVisual && !oap.BlockMode && oap.LineCount > 1 && oap.Force == 0 && oap.Op == OpType.Delete)
         {
@@ -389,11 +398,8 @@ public sealed partial class VimEngine
                 CheckCursor();
             }
         }
-        if (oap.Op == OpType.Delete || true)
-        {
-            _bs.OpEnd = start;
-            _bs.OpStart = start;
-        }
+        _bs.OpEnd = start;
+        _bs.OpStart = start;
         return true;
     }
 
@@ -471,13 +477,14 @@ public sealed partial class VimEngine
             var s = L(l);
             if (s.Length == 0) continue;
             if (oap.BlockMode) ShiftBlockLine(oap, l, amount);
-            else if (s[0] != '#' || true) ShiftLine(l, oap.Op == OpType.ShiftLeft, O.ShiftRound, amount);
+            else ShiftLine(l, oap.Op == OpType.ShiftLeft, O.ShiftRound, amount);
         }
         if (oap.BlockMode) { _line = first; _col = oap.Start.Character == 0 ? blockCol : blockCol; }
         else if (cursTop) { _line = first; Beginline(BL.Sol | BL.Fix); }
         else _line = last;
         var n = last - first + 1;
         if (n > O.Report) Message($"{n} lines {(oap.Op == OpType.ShiftLeft ? "<" : ">")}ed {amount} time{(amount == 1 ? "" : "s")}");
+        NoteChange(first, 0);
         var endLen = L(last).Length;
         _bs.OpStart = new TextPosition(first, oap.Start.Character);
         _bs.OpStart = oap.Start;
@@ -503,8 +510,8 @@ public sealed partial class VimEngine
             {
                 var n = op switch
                 {
-                    OpType.Upper => char.ToUpperInvariant(ch),
-                    OpType.Lower => char.ToLowerInvariant(ch),
+                    OpType.Upper => ch == '\u00df' ? '\u1e9e' : char.ToUpperInvariant(ch),
+                    OpType.Lower => ch == '\u1e9e' ? '\u00df' : char.ToLowerInvariant(ch),
                     OpType.Rot13 => Rot13(ch),
                     _ => char.IsUpper(ch) ? char.ToLowerInvariant(ch) : char.IsLower(ch) ? char.ToUpperInvariant(ch) : ch,
                 };
@@ -562,9 +569,16 @@ public sealed partial class VimEngine
                 if (n != s) { SetLine(l, n, sc); anyChange = true; }
             }
         }
-        _ = anyChange;
-        _bs.OpStart = oap.Start;
-        _bs.OpEnd = oap.End;
+        if (anyChange) NoteChange(oap.Start.Line, oap.Type == MType.Line ? 0 : oap.Start.Character);
+        if (oap.BlockMode) { _bs.OpStart = oap.Start; _bs.OpEnd = oap.End; }
+        else if (oap.Type == MType.Line) { _bs.OpStart = new TextPosition(oap.Start.Line, 0); _bs.OpEnd = new TextPosition(oap.End.Line, Math.Max(0, L(oap.End.Line).Length - 1)); }
+        else
+        {
+            var eEnd = oap.End;
+            if (!oap.Inclusive) { var el2 = eEnd.Line; var ec2 = eEnd.Character; Dec(ref el2, ref ec2); eEnd = new TextPosition(el2, ec2); }
+            _bs.OpStart = oap.Start;
+            _bs.OpEnd = eEnd;
+        }
         if (oap.LineCount > O.Report) Message($"{oap.LineCount} lines changed");
     }
 
@@ -601,7 +615,8 @@ public sealed partial class VimEngine
 
     private void OpFormat(OpArgs oap, bool keepCursor)
     {
-        var saved = new TextPosition(_line, _col);
+        // gw keeps the cursor where it was before the operator (moved along with the text it sits in)
+        var saved = oap.CursorStart;
         var first = oap.Start.Line;
         var last = oap.End.Line;
         var tw = O.TextWidth > 0 ? O.TextWidth : 79;
@@ -617,8 +632,30 @@ public sealed partial class VimEngine
             var indentStr = L(pStart).Substring(0, VimText.FirstNonBlank(L(pStart)));
             var contIndent = O.AutoIndent ? indentStr : "";
             var words = new List<string>();
-            for (var i = pStart; i <= pEnd; i++) words.AddRange(L(i).Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries));
+            var savedWord = -1;
+            var savedInWord = 0;
+            for (var i = pStart; i <= pEnd; i++)
+            {
+                var text = L(i);
+                var p = 0;
+                while (p < text.Length)
+                {
+                    while (p < text.Length && text[p] is ' ' or '\t') p++;
+                    if (p >= text.Length) break;
+                    var q = p;
+                    while (q < text.Length && text[q] is not (' ' or '\t')) q++;
+                    if (keepCursor && savedWord < 0 && saved.Line == i && saved.Character < q)
+                    {
+                        // the cursor is in this word, or in the blanks before it (then it goes to the start of the word)
+                        savedWord = words.Count;
+                        savedInWord = Math.Max(0, saved.Character - p);
+                    }
+                    words.Add(text.Substring(p, q - p));
+                    p = q;
+                }
+            }
             var outLines = new List<string>();
+            var wordPos = new List<(int Line, int Col)>();
             var cur = new StringBuilder(indentStr);
             var curHasWord = false;
             var curWidth = VimText.DisplayWidth(indentStr, O.TabStop);
@@ -633,6 +670,7 @@ public sealed partial class VimEngine
                     curHasWord = false;
                 }
                 if (curHasWord) { cur.Append(' '); curWidth++; }
+                wordPos.Add((outLines.Count, cur.Length));
                 cur.Append(w);
                 curWidth += ww;
                 curHasWord = true;
@@ -646,6 +684,11 @@ public sealed partial class VimEngine
                 ReplaceRange(new TextPosition(pStart, 0), new TextPosition(pEnd, L(pEnd).Length), string.Join('\n', outLines));
                 offset += outLines.Count - oldCount;
             }
+            if (keepCursor)
+            {
+                if (savedWord >= 0) saved = new TextPosition(pStart + wordPos[savedWord].Line, wordPos[savedWord].Col + savedInWord);
+                else if (saved.Line > pEnd) saved = new TextPosition(saved.Line + outLines.Count - oldCount, saved.Character);
+            }
             lastFormatted = pStart + outLines.Count - 1;
             l = pStart + outLines.Count;
         }
@@ -654,13 +697,15 @@ public sealed partial class VimEngine
             _line = Math.Min(saved.Line, LastLine);
             _col = saved.Character;
             CheckCursor();
+            _setCurswant = true;
         }
         else
         {
             _line = Math.Min(oap.EndAdjusted && lastFormatted < LastLine ? lastFormatted + 1 : lastFormatted, LastLine);
             Beginline(BL.White | BL.Fix);
         }
-        _bs.OpStart = new TextPosition(first, 0);
+        // '[ keeps the column the operator was typed at when the formatted area starts on that line (nvim: gww)
+        _bs.OpStart = !oap.IsVisual && oap.CursorStart.Line == first ? new TextPosition(first, oap.CursorStart.Character) : oap.Start;
         _bs.OpEnd = new TextPosition(Math.Min(lastFormatted, LastLine), 0);
     }
 
@@ -712,8 +757,22 @@ public sealed partial class VimEngine
         }
         var newText = sb.ToString();
         var lastLen = L(first + count - 1).Length;
+        {
+            var offset = 0;
+            for (var t = 0; t < count; t++)
+            {
+                offset += spaces[t];
+                if (t > 0)
+                {
+                    var removed = L(first + t).Length - L(first + t).TrimStart(' ', '\t').Length;
+                    if (!insertSpace) removed = 0;
+                    _bs.MarkColAdjust(first + t, 0, -t, offset - removed);
+                }
+                offset += parts[t].Length;
+            }
+        }
         ReplaceRange(new TextPosition(first, 0), new TextPosition(first + count - 1, lastLen), newText);
-        // marks on joined lines follow the text (mark_col_adjust)
+        NoteChange(first + 1, 0);
         _bs.OpEnd = new TextPosition(first, Math.Max(0, sum));
         _line = first;
         _col = O.CpoHas('q') ? currsize : col;
@@ -731,6 +790,9 @@ public sealed partial class VimEngine
 
     private bool DoPut(int regname, bool forward, int count, PutFlags flags, Register? fake = null)
     {
+        // '[ and '] default to the cursor, even when the put fails (Vim sets them before looking at the register)
+        _bs.OpStart = new TextPosition(_line, _col);
+        _bs.OpEnd = new TextPosition(_line, _col);
         Register? reg = fake;
         if (reg is null)
         {
@@ -739,26 +801,44 @@ public sealed partial class VimEngine
             if (name == '.')
             {
                 // the last inserted text is put as typed
-                var text = Keys.Decode(_s.Registers.LastInserted);
+                var text = Keys.Decode(_s.Registers.LastInserted ?? "");
                 reg = Register.FromText(new string(text.Where(k => k is >= 32 or '\t' or '\n').Select(k => (char)(k & 0xFFFF)).ToArray()), VimRegisterType.Character);
             }
             else reg = _s.Registers.ForRead(name, () => Host.ReadClipboard());
         }
         if (reg is null || reg.IsEmpty)
         {
-            Error($"E353: Nothing in register {(regname == 0 ? "\"" : ((char)regname).ToString())}");
+            Error(regname switch
+            {
+                '.' => "E29: No inserted text yet",
+                ':' => "E30: No previous command line",
+                '/' => "E35: No previous regular expression",
+                '%' => "E32: No file name",
+                '#' => "E23: No alternate file",
+                _ => $"E353: Nothing in register {(regname == 0 ? "\"" : Keys.SafeString(regname))}",
+            });
             return false;
         }
         if (!CanModify()) return false;
+        if (regname == '.' && fake is null)
+        {
+            // the inserted text is "put" by typing it: a (or i) + text + Esc
+            var typed = Keys.Decode(_s.Registers.LastInserted ?? "");
+            var stuffKeys = new List<int> { forward ? 'a' : 'i' };
+            for (var i = 0; i < Math.Max(1, count); i++) stuffKeys.AddRange(typed);
+            stuffKeys.Add(Keys.Esc);
+            if ((flags & PutFlags.CursEnd) != 0) stuffKeys.Add('l');
+            _stuff.PushFront(stuffKeys.ToArray());
+            return true;
+        }
         var type = reg.Type;
         var yarr = reg.Lines;
         var ysize = yarr.Length;
         if ((flags & PutFlags.Line) != 0) type = VimRegisterType.Line;
+        // putting an empty one-line charwise register inserts nothing and leaves the cursor alone
+        if (type == VimRegisterType.Character && ysize == 1 && yarr[0].Length == 0) return true;
         var dir = forward;
         var nrLines = 0;
-        var curLine = _line;
-        _bs.OpStart = new TextPosition(_line, _col);
-        _bs.OpEnd = new TextPosition(_line, _col);
 
         if (type == VimRegisterType.Line)
         {
@@ -779,8 +859,6 @@ public sealed partial class VimEngine
                 _line = _bs.VisualEnd?.Line ?? _line;
                 dir = true;
             }
-            _bs.OpStart = new TextPosition(_line, _col);
-            _bs.OpEnd = new TextPosition(_line, _col);
         }
 
         if (type == VimRegisterType.Block)
@@ -790,109 +868,98 @@ public sealed partial class VimEngine
             return true;
         }
 
-        var col = _col;
-        var lnum = _line;
         if (type == VimRegisterType.Line)
         {
-            if (dir) lnum++;
-            _line = dir ? lnum - 1 : lnum;
-            _bs.OpStart = new TextPosition(_line, _col);
-        }
-        else
-        {
-            var yanklen0 = yarr[0].Length;
-            if (dir && CharAtCursor() != 0)
-            {
-                var bl = VimText.CharLen(CurLine, _col);
-                col += bl;
-                if (yanklen0 > 0 || ysize > 1) { _col += bl; _bs.OpEnd = new TextPosition(_bs.OpEnd!.Value.Line, _bs.OpEnd.Value.Character + bl); }
-            }
-            _bs.OpStart = new TextPosition(_line, _col);
-        }
-        if (type == VimRegisterType.Line && !dir) lnum--;
-        var newCursor = new TextPosition(_line, _col);
-        var lastLen = yarr[^1].Length;
-
-        if (type == VimRegisterType.Character && ysize == 1)
-        {
-            var yanklen = yarr[0].Length;
-            if (count > 0 && yanklen > 0)
-            {
-                var totlen = count * yanklen;
-                var oldp = L(lnum);
-                var ins = count == 1 ? yarr[0] : VimText.Repeat(yarr[0], count);
-                InsertInLine(lnum, Math.Min(col, oldp.Length), ins);
-                var lastCharStart = Math.Min(col, oldp.Length) + totlen - VimText.CharLen(ins, VimText.PrevCharStart(ins, ins.Length));
-                if (lnum == _line) _col += totlen - 1;
-                _bs.OpEnd = new TextPosition(lnum == _line ? _line : lnum, 0);
-                var firstByteOff = totlen - 1 - (lastCharStart - Math.Min(col, oldp.Length));
-                _bs.OpEnd = new TextPosition(lnum, _col - Math.Max(0, firstByteOff - (_col - (col + totlen - 1))) + 0);
-                if (totlen > 0 && (_restartEdit || (flags & PutFlags.CursEnd) != 0)) _col += 1;
-                else _col -= firstByteOff > 0 ? firstByteOff : 0;
-                _bs.OpEnd = new TextPosition(lnum, Math.Max(0, Math.Min(col + totlen - 1, L(lnum).Length - 1) - Math.Max(0, firstByteOff - 0) + firstByteOff));
-                _bs.OpEnd = new TextPosition(lnum, col + totlen - (lastCharStart >= 0 ? VimText.CharLen(ins, VimText.PrevCharStart(ins, ins.Length)) : 1));
-            }
-        }
-        else
-        {
-            var inserted = new List<string>();
+            var after = dir ? _line : _line - 1;   // append after this line index (-1 = above the first line)
+            var first = after + 1;
             for (var cnt = 1; cnt <= count; cnt++)
             {
-                if (type == VimRegisterType.Character)
-                {
-                    // split the current line at the insert position: first line + y[0], y[last] + rest
-                    var s = L(newCursor.Line);
-                    var col1 = Math.Min(col, s.Length);
-                    var rest = s.Substring(col1);
-                    var lines = new List<string>(ysize) { s.Substring(0, col1) + yarr[0] };
-                    for (var i = 1; i < ysize - 1; i++) lines.Add(yarr[i]);
-                    lines.Add(yarr[ysize - 1] + rest);
-                    ReplaceRange(new TextPosition(newCursor.Line, 0), new TextPosition(newCursor.Line, s.Length), string.Join('\n', lines));
-                    nrLines += ysize - 1;
-                    lnum = newCursor.Line + ysize - 1;
-                    _line = newCursor.Line;
-                }
-                else
-                {
-                    InsertLines(lnum + 1, yarr);
-                    lnum += ysize;
-                    nrLines += ysize;
-                    if ((flags & PutFlags.FixIndent) != 0) FixPutIndent(lnum - ysize + 1, ysize);
-                }
+                InsertLines(after + 1 + (cnt - 1) * ysize, yarr);
+                nrLines += ysize;
             }
-            var newLnum = type == VimRegisterType.Character ? newCursor.Line + ysize - 1 : lnum;
-            var len = yarr[^1].Length;
-            var endCol = type == VimRegisterType.Character ? len : len;
-            _bs.OpEnd = new TextPosition(newLnum, endCol > 1 ? endCol - 1 : 0);
-            if (type == VimRegisterType.Line) _bs.OpEnd = new TextPosition(newLnum, endCol > 1 ? VimText.PrevCharStart(yarr[^1], yarr[^1].Length) : 0);
+            var lastLine = first + count * ysize - 1;
+            if ((flags & PutFlags.FixIndent) != 0)
+                for (var cnt = 0; cnt < count; cnt++) FixPutIndent(first + cnt * ysize, ysize);
+            var lastText = L(lastLine);
+            _bs.OpStart = new TextPosition(first, 0);
+            _bs.OpEnd = new TextPosition(lastLine, lastText.Length > 1 ? VimText.PrevCharStart(lastText, lastText.Length) : 0);
+            NoteChange(first, 0);
             if ((flags & PutFlags.CursLine) != 0)
             {
-                _line = lnum;
+                _line = lastLine;
                 Beginline(BL.White | BL.Fix);
             }
             else if ((flags & PutFlags.CursEnd) != 0)
             {
-                if (type == VimRegisterType.Line)
-                {
-                    _line = lnum >= LastLine ? LastLine : lnum + 1;
-                    _col = 0;
-                }
-                else
-                {
-                    _line = newLnum;
-                    _col = endCol;
-                    _bs.OpEnd = new TextPosition(newLnum, endCol > 1 ? endCol - 1 : _col);
-                }
-            }
-            else if (type == VimRegisterType.Line)
-            {
+                _line = lastLine >= LastLine ? LastLine : lastLine + 1;
                 _col = 0;
-                if (dir) _line++;
+            }
+            else
+            {
+                _line = first;
+                _col = 0;
                 Beginline(BL.White | BL.Fix);
             }
-            else { _line = newCursor.Line; _col = newCursor.Character; }
+            if (nrLines > O.Report) Message($"{nrLines} more lines");
+            _setCurswant = true;
+            return true;
         }
-        _ = curLine; _ = lastLen;
+
+        // ---- characterwise
+        var col = _col;
+        var lnum = _line;
+        if (dir && CharAtCursor() != 0)
+        {
+            var bl = VimText.CharLen(CurLine, _col);
+            col += bl;
+        }
+        col = Math.Min(col, CurLine.Length);
+        var startPos = new TextPosition(lnum, col);
+        if (ysize == 1)
+        {
+            var yanklen = yarr[0].Length;
+            if (count > 0 && yanklen > 0)
+            {
+                var ins = count == 1 ? yarr[0] : VimText.Repeat(yarr[0], count);
+                InsertInLine(lnum, col, ins);
+                var lastCharStart = col + ins.Length - VimText.CharLen(ins, VimText.PrevCharStart(ins, ins.Length));
+                _bs.OpStart = startPos;
+                _bs.OpEnd = new TextPosition(lnum, lastCharStart);
+                _line = lnum;
+                _col = (flags & PutFlags.CursEnd) != 0 || _restartEdit ? col + ins.Length : lastCharStart;
+            }
+            else
+            {
+                _line = lnum;
+                _col = col;
+            }
+        }
+        else
+        {
+            for (var cnt = 1; cnt <= count; cnt++)
+            {
+                var s = L(lnum);
+                var col1 = Math.Min(col, s.Length);
+                var rest = s.Substring(col1);
+                var lines = new List<string>(ysize) { s.Substring(0, col1) + yarr[0] };
+                for (var i = 1; i < ysize - 1; i++) lines.Add(yarr[i]);
+                lines.Add(yarr[ysize - 1] + rest);
+                ReplaceRange(new TextPosition(lnum, 0), new TextPosition(lnum, s.Length), string.Join('\n', lines));
+                nrLines += ysize - 1;
+            }
+            var newLnum = lnum + count * (ysize - 1);
+            var len = yarr[^1].Length;
+            _bs.OpStart = startPos;
+            _bs.OpEnd = new TextPosition(newLnum, len > 1 ? len - 1 : 0);
+            NoteChange(lnum, col);
+            if ((flags & PutFlags.CursEnd) != 0)
+            {
+                _line = newLnum;
+                _col = len;
+                _bs.OpEnd = new TextPosition(newLnum, len > 1 ? len - 1 : len);
+            }
+            else { _line = lnum; _col = col; }
+        }
         if (nrLines > O.Report) Message($"{nrLines} more lines");
         _setCurswant = true;
         var len2 = CurLine.Length;

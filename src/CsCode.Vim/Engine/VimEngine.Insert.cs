@@ -8,6 +8,7 @@ internal sealed class InsertState
     public int Cmd;
     public int Count;
     public TextPosition Start;
+    public TextPosition StartOrig;
     public readonly List<int> Typed = new(32);
     public readonly Stack<(int Line, int Col, string? Original)> ReplaceStack = new();
     public bool Replaying;
@@ -30,7 +31,7 @@ public sealed partial class VimEngine
 
     private void StartInsert(int cmdchar, int count, bool restart)
     {
-        _insert = new InsertState { Cmd = cmdchar, Count = Math.Max(1, count), Start = new TextPosition(_line, _col) };
+        _insert = new InsertState { Cmd = cmdchar, Count = Math.Max(1, count), Start = new TextPosition(_line, _col), StartOrig = new TextPosition(_line, _col) };
         var replace = cmdchar == 'R';
         SetMode(replace ? VimMode.Replace : VimMode.Insert);
         _arrowUsed = false;
@@ -66,7 +67,7 @@ public sealed partial class VimEngine
         if (_ctrlBackslash)
         {
             _ctrlBackslash = false;
-            if (k is 14 or 7) { InsertEscape(ctrlC: false, noMove: k == 14 || true, toNormal: true); return; }
+            if (k is 14 or 7) { InsertEscape(ctrlC: false, noMove: true, toNormal: true); return; }
             if (k == 15) { InsertCtrlO(); return; }
         }
 
@@ -99,15 +100,18 @@ public sealed partial class VimEngine
                 InsertShift(k == 20);
                 return;
             case 22 or 17:
+                _literalMark = st.Typed.Count - 1;
                 _insertLiteral = 1;
                 _litAccum = 0; _litCount = 0; _litKind = 0;
                 _noMap++;
                 return;
             case 11:
+                _literalMark = st.Typed.Count - 1;
                 _insertLiteral = 2;
                 _noMap++;
                 return;
             case 18:
+                _literalMark = st.Typed.Count - 1;
                 _insertLiteral = 4;
                 _regInsertKind = 0;
                 _noMap++;
@@ -116,12 +120,15 @@ public sealed partial class VimEngine
                 InsertCtrlO();
                 return;
             case 1:
+                UnrecordLastKey();
                 InsertLastInserted(stop: false);
                 return;
             case 0:
+                UnrecordLastKey();
                 InsertLastInserted(stop: true);
                 return;
             case 5 or 25:
+                _literalMark = st.Typed.Count - 1;
                 InsertCopyFromAdjacent(k == 5 ? 1 : -1);
                 return;
             case 14 or 16:
@@ -131,6 +138,7 @@ public sealed partial class VimEngine
                 Host.RequestCompletion(VimCompletionKind.Keyword);
                 return;
             case 7:
+                UnrecordLastKey();
                 _ctrlG = true;
                 return;
             case 28:
@@ -207,7 +215,7 @@ public sealed partial class VimEngine
                 if (!st.Replaying) st.Typed.Add(k);
                 _insertLiteral = 0;
                 _noMap--;
-                if (k == Keys.Esc) return;
+                if (k == Keys.Esc) { FinishLiteral([]); return; }
                 InsertLiteralChar(Digraphs.Lookup(_digraphFirst, k));
                 return;
             case 4: // Ctrl-R
@@ -220,7 +228,21 @@ public sealed partial class VimEngine
         }
     }
 
+    private bool _insertBatch;
     private bool _litStarted;
+
+    /// <summary>Vim inserts runs of typed-ahead printable characters in ONE call, so '. keeps the column of the first one.</summary>
+    private int[]? _batchKeys;
+    private int _batchIdx;
+
+    private bool NextKeyIsPlainChar()
+    {
+        int k;
+        if (_batchKeys is not null) k = _batchIdx + 1 < _batchKeys.Length ? _batchKeys[_batchIdx + 1] : -1;
+        else k = _stuff.Count > 0 ? _stuff.Peek() : _typed.Count > 0 ? _typed.Peek() : -1;
+        k &= ~NoRemapFlag;
+        return k >= 32 && k < 127;
+    }
     private int _litMax;
 
     private static int HexVal(int k, int radix)
@@ -229,23 +251,48 @@ public sealed partial class VimEngine
         return v >= 0 && v < radix ? v : -1;
     }
 
+    private int _literalMark = -1;
+
+    /// <summary>Replace the keys typed since the literal-insert command started by the character(s) it produced.</summary>
+    private void FinishLiteral(IEnumerable<int> produced)
+    {
+        var st = _insert;
+        if (st is { Replaying: false } && _literalMark >= 0 && _literalMark <= st.Typed.Count)
+        {
+            st.Typed.RemoveRange(_literalMark, st.Typed.Count - _literalMark);
+            st.Typed.AddRange(produced);
+        }
+        _literalMark = -1;
+    }
+
     private void InsertLiteralChar(int cp)
     {
         if (cp == 0) cp = 10; // a literal NUL is stored as NL, like Vim
+        FinishLiteral([22, cp]);
         InsertTypedRaw(cp);
+        _insertBatch = false;
     }
 
     private void InsertRegister(int name, int kind)
     {
-        if (name == Keys.Esc) return;
+        if (name == Keys.Esc) { FinishLiteral([]); return; }
         var reg = _s.Registers.ForRead(name == 0 ? '"' : name, () => Host.ReadClipboard());
-        if (reg is null || reg.IsEmpty) { Beep(); return; }
+        if (reg is null || reg.IsEmpty) { FinishLiteral([]); Beep(); return; }
         var text = reg.ToText();
+        var produced = new List<int>();
+        foreach (var cp in CodePoints(text)) produced.Add(cp == '\n' ? Keys.NL : cp);
+        FinishLiteral(produced);
         // Ctrl-R inserts as if typed (autoindent/textwidth apply); Ctrl-R Ctrl-R inserts literally
         foreach (var part in SplitLinesKeep(text, out _))
         {
-            if (part.Newline) InsertNewlineRaw(); else foreach (var cp in CodePoints(part.Text)) InsertTypedRaw(cp);
+            if (part.Newline) { InsertNewlineRaw(); continue; }
+            var cps = CodePoints(part.Text).ToArray();
+            _insertBatch = false;
+            _batchKeys = cps;
+            for (_batchIdx = 0; _batchIdx < cps.Length; _batchIdx++) InsertTypedRaw(cps[_batchIdx]);
+            _batchKeys = null;
         }
+        _insertBatch = false;
     }
 
     private static IEnumerable<(string Text, bool Newline)> SplitLinesKeep(string text, out bool endsWithNl)
@@ -291,6 +338,7 @@ public sealed partial class VimEngine
     private void InsertTypedRaw(int cp)
     {
         if (!CanModify()) { return; }
+        if (cp == 10) cp = 0;   // a line feed typed with Ctrl-V is stored as NUL (a line cannot contain a newline)
         var s = CurLine;
         var text = CharStrings.Get(cp);
         if (cp is not (' ' or '\t')) _didAutoIndent = false;
@@ -303,8 +351,9 @@ public sealed partial class VimEngine
         else
         {
             if (_mode == VimMode.Replace) _insert!.ReplaceStack.Push((_line, _col, null));
-            InsertInLine(_line, _col, text);
+            InsertInLine(_line, _col, text, note: !_insertBatch);
         }
+        _insertBatch = _mode == VimMode.Insert && NextKeyIsPlainChar();
         _col += text.Length;
         _setCurswant = true;
         if (O.TextWidth > 0 && cp is not (' ' or '\t') && O.FoHas('t')) AutoWrap();
@@ -349,11 +398,11 @@ public sealed partial class VimEngine
         if (_arrowUsed) StopArrow();
         var sts = O.Sts;
         var s = CurLine;
-        if (!O.ExpandTab && sts == 0 && !O.SmartTab) { InsertTypedRaw('\t'); return; }
+        if (!O.ExpandTab && sts == 0 && !O.SmartTab) { InsertTypedRaw('\t'); _insertBatch = false; return; }
         var ts = sts > 0 ? sts : (O.SmartTab && VimText.FirstNonBlank(s) >= _col ? O.Sw : O.TabStop);
         var vcol = VimText.VcolOf(s, _col, O.TabStop);
         var want = ts - vcol % ts;
-        if (O.ExpandTab) { for (var i = 0; i < want; i++) InsertTypedRaw(' '); return; }
+        if (O.ExpandTab) { for (var i = 0; i < want; i++) InsertTypedRaw(' '); _insertBatch = false; return; }
         // noexpandtab with softtabstop: use tabs where possible
         var target = vcol + want;
         // remove spaces before the cursor that can be merged, then insert tabs+spaces up to the target column
@@ -370,6 +419,7 @@ public sealed partial class VimEngine
         sb.Append(' ', target - v);
         if (sb.Length > 0 && start < _col) { ReplaceInLine(_line, start, _col - start, sb.ToString()); _col = start + sb.Length; }
         else foreach (var ch in sb.ToString()) InsertTypedRaw(ch);
+        _insertBatch = false;
     }
 
     private void InsertShift(bool indent)
@@ -409,11 +459,18 @@ public sealed partial class VimEngine
         else if (_didAutoIndent && VimText.IsBlank(head)) head = "";
         if (_mode == VimMode.Replace && _insert is { } ins) ins.ReplaceStack.Push((_line, col, null));
         ReplaceRange(new TextPosition(_line, 0), new TextPosition(_line, s.Length), head + "\n" + indent + rest);
+        NoteChange(_line, col);
         _line++;
         _col = indent.Length;
         _didAutoIndent = indent.Length > 0;
         _aiCol = indent.Length;
         _setCurswant = true;
+    }
+
+    private void UnrecordLastKey()
+    {
+        var st = _insert;
+        if (st is { Replaying: false } && st.Typed.Count > 0) st.Typed.RemoveAt(st.Typed.Count - 1);
     }
 
     private void InsertBackspace(int mode)
@@ -423,7 +480,7 @@ public sealed partial class VimEngine
         var bs = O.Backspace;
         bool Can(string what) => bs == "2" || bs == "3" || OptionsHas(bs, what) || (bs == "1" && what is "indent" or "eol");
         var s = CurLine;
-        if (_line == 0 && _col == 0) { Beep(); return; }
+        if (_line == 0 && _col == 0) { Beep(); UnrecordLastKey(); return; }
 
         if (_col == 0)
         {
@@ -443,13 +500,15 @@ public sealed partial class VimEngine
                 return;
             }
             var pl = L(_line - 1).Length;
+            if (st.Start.Line == _line) st.Start = new TextPosition(_line - 1, pl);
+            if (st.StartOrig.Line == _line) st.StartOrig = new TextPosition(_line - 1, pl);
             ReplaceRange(new TextPosition(_line - 1, pl), new TextPosition(_line, 0), "");
             _line--;
             _col = pl;
             _didAutoIndent = false;
             return;
         }
-        var startBefore = st.Start.Line == _line && _col <= st.Start.Character && !Can("start");
+        var startBefore = st.StartOrig.Line == _line && _col <= st.StartOrig.Character && !Can("start");
         if (startBefore) { Beep(); return; }
 
         if (_mode == VimMode.Replace)
@@ -476,7 +535,7 @@ public sealed partial class VimEngine
             var fnb = VimText.FirstNonBlank(s);
             if (fnb < _col) mincol = fnb;
         }
-        if (mode == 2 && st.Start.Line == _line && st.Start.Character < _col && !OptionsHas(bs, "nostop") && st.Start.Character >= mincol) mincol = Math.Max(mincol, st.Start.Character);
+        if (mode == 2 && st.StartOrig.Line == _line && st.StartOrig.Character < _col && !OptionsHas(bs, "nostop") && st.StartOrig.Character >= mincol) mincol = Math.Max(mincol, st.StartOrig.Character);
         int from;
         if (mode == 0)
         {
@@ -509,7 +568,7 @@ public sealed partial class VimEngine
                 }
                 else if (isSpace || kw != cls) break;
                 i = p;
-                if (st.Start.Line == _line && !OptionsHas(bs, "nostop") && i == st.Start.Character && i < _col && i > mincol) { break; }
+                if (st.StartOrig.Line == _line && !OptionsHas(bs, "nostop") && i == st.StartOrig.Character && i < _col && i > mincol) { break; }
             }
             from = i;
             if (from > _col) from = _col;
@@ -521,8 +580,10 @@ public sealed partial class VimEngine
         }
         from = Math.Max(0, Math.Min(from, _col));
         if (from == _col) from = VimText.PrevCharStart(s, _col);
+        if (mode != 0 && st.Start.Line == _line) st.Start = new TextPosition(_line, _col);
         DeleteInLine(_line, from, _col - from);
         _col = from;
+        if (st.StartOrig.Line == _line && _col < st.StartOrig.Character) st.StartOrig = new TextPosition(_line, _col);
         _didAutoIndent = false;
     }
 
@@ -593,14 +654,12 @@ public sealed partial class VimEngine
     private void InsertLastInserted(bool stop)
     {
         var last = _s.Registers.LastInserted;
-        if (last.Length == 0) return;
-        var keys = Keys.Decode(last);
-        var st = _insert!;
-        foreach (var kk in keys)
-        {
-            if (kk == Keys.Esc) continue;
-            InsertKeyReplay(kk);
-        }
+        if (string.IsNullOrEmpty(last)) return;
+        var keys = Keys.Decode(last).Where(kk => kk != Keys.Esc).ToArray();
+        _insertBatch = false;
+        _batchKeys = keys;
+        for (_batchIdx = 0; _batchIdx < keys.Length; _batchIdx++) InsertKeyReplay(keys[_batchIdx]);
+        _batchKeys = null;
         if (stop) InsertEscape(false);
     }
 
@@ -617,12 +676,14 @@ public sealed partial class VimEngine
     private void InsertCopyFromAdjacent(int dir)
     {
         var tgt = _line + dir;
-        if (tgt < 0 || tgt > LastLine) { Beep(); return; }
+        if (tgt < 0 || tgt > LastLine) { FinishLiteral([]); Beep(); return; }
         var other = L(tgt);
         var vcol = VimText.VcolOf(CurLine, _col, O.TabStop);
         var idx = VimText.IndexOfVcol(other, vcol, O.TabStop, lastIfBeyond: false);
-        if (idx >= other.Length) { Beep(); return; }
-        InsertTypedRaw(VimText.CodePointAt(other, idx));
+        if (idx >= other.Length) { FinishLiteral([]); Beep(); return; }
+        var cp = VimText.CodePointAt(other, idx);
+        FinishLiteral([cp]);
+        InsertTypedRaw(cp);
     }
 
     private void InsertCtrlO()
@@ -678,7 +739,10 @@ public sealed partial class VimEngine
                 for (var i = 1; i < count; i++)
                 {
                     if (st.Cmd is 'o' or 'O') InsertNewlineRaw();
-                    foreach (var k in typed) InsertKey(k);
+                    _insertBatch = false;
+                    _batchKeys = typed;
+                    for (_batchIdx = 0; _batchIdx < typed.Length; _batchIdx++) InsertKey(typed[_batchIdx]);
+                    _batchKeys = null;
                 }
             }
             finally { st.Replaying = wasRep; }
@@ -692,13 +756,13 @@ public sealed partial class VimEngine
         }
         var end = new TextPosition(_line, _col);
         _bs.LastInsert = end;
-        _bs.OpStart = st.Start < end ? st.Start : end;
+        _bs.OpStart = st.Start;
         _bs.OpEnd = end;
         // remember the typed text for ". and Ctrl-A
         if (!ctrlC || st.Typed.Count > 0)
         {
             var sbk = new StringBuilder();
-            foreach (var k in st.Typed) Keys.Encode(sbk, k);
+            foreach (var k in st.Typed) Keys.Encode(sbk, k == Keys.CR ? Keys.NL : k);
             _s.Registers.LastInserted = sbk.ToString();
         }
         // complete the change being recorded for `.`
@@ -708,6 +772,7 @@ public sealed partial class VimEngine
             rb.Keys.Add(Keys.Esc);
         }
         _redoBuilding = null;
+        var blockIns = _blockInsert;
         _insert = null;
         var wasRestart = _restartEdit;
         _restartEdit = false;
@@ -717,6 +782,7 @@ public sealed partial class VimEngine
         if (!noMove && _col > 0) _col = VimText.PrevCharStart(CurLine, Math.Min(_col, CurLine.Length));
         _setCurswant = true;
         CheckCursor();
+        if (blockIns is not null) FinishBlockInsert(end, 0);
         _ = wasRestart; _ = toNormal;
     }
 }

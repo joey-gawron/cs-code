@@ -17,6 +17,8 @@
     <ProjectReference Include="../CsCode.Editor/CsCode.Editor.csproj" />
     <ProjectReference Include="../CsCode.Ui/CsCode.Ui.csproj" />
     <ProjectReference Include="../CsCode.Profiling/CsCode.Profiling.csproj" />
+    <ProjectReference Include="../CsCode.Panels.Debug/CsCode.Panels.Debug.csproj" />
+    <ProjectReference Include="../CsCode.Panels.Search/CsCode.Panels.Search.csproj" />
   </ItemGroup>
 
   <ItemGroup>

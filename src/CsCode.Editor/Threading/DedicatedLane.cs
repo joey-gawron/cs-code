@@ -51,12 +51,21 @@ public sealed class DedicatedLane : TaskScheduler, IDisposable
     {
         try
         {
-            foreach (var task in _queue.GetConsumingEnumerable()) TryExecuteTask(task);
+            // (not foreach over GetConsumingEnumerable: its enumerator keeps the LAST task — and so its result, e.g. a freshly loaded document —
+            //  referenced while the thread waits for the next one)
+            while (_queue.TryTake(out var task, Timeout.Infinite))
+            {
+                ExecuteOne(task);
+                task = null;
+            }
         }
         catch (OperationCanceledException)
         {
         }
     }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void ExecuteOne(Task task) => TryExecuteTask(task);
 
     public void Dispose() => _queue.CompleteAdding();
 }

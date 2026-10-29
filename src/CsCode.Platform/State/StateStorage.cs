@@ -250,7 +250,11 @@ public sealed class StateStorage : IStateStorage, IWorkspaceBound, IAsyncDisposa
         // Save what the old workspace had, then swap in the new one (loaded off the UI thread) in one step.
         await FlushAsync().ConfigureAwait(false);
         var next = await _lane.RunAsync(_ => LoadScope(path), ct).ConfigureAwait(false);
-        lock (_gate) _workspace = next;
+        Scope old;
+        lock (_gate) { old = _workspace; _workspace = next; }
+
+        // A Set that landed on the old scope between the flush above and the swap must not be lost with the discarded object.
+        await _lane.RunAsync(_ => { lock (_flushGate) FlushScope(old); }, CancellationToken.None).ConfigureAwait(false);
     }
 
     // ---- lifetime ----------------------------------------------------------------------------------------------------------------

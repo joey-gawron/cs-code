@@ -1,0 +1,544 @@
+# registers
+=== registers-001
+> ‸foo bar
+keys: "ayw"ap
+< ffoo‸ oo bar
+
+=== registers-002
+> ‸foo bar
+keys: "ayw$"ap
+< foo barfoo‸ ⏎
+
+=== registers-003
+> ‸foo bar
+keys: "ayw$"aP
+< foo bafoo‸ r
+
+=== registers-004
+> ‸foo bar
+keys: "Ayw$"ap
+< foo barfoo‸ ⏎
+
+=== registers-005
+> ‸foo bar
+keys: "ayw"Ayw$"ap
+< foo barfoo foo‸ ⏎
+
+=== registers-006
+> ‸foo bar
+keys: "ayw"AywP
+< foo foo‸ foo bar
+
+=== registers-007
+> ‸foo bar
+keys: "ayw"Ayyp
+< foo bar
+< ‸foo ⏎
+< foo bar
+
+=== registers-008
+> ‸foo bar
+> baz
+keys: "ayy"Aywjp
+< foo bar
+< baz
+< ‸foo bar
+< foo ⏎
+
+=== registers-009
+> ‸foo bar
+> baz
+keys: "ayy"Ayjp
+< foo bar
+< ‸foo bar
+< foo bar
+< baz
+< baz
+
+=== registers-010
+> ‸foo bar
+> baz
+keys: "ayyj"Ayyp
+< foo bar
+< baz
+< ‸foo bar
+< baz
+
+=== registers-011
+> ‸foo bar
+keys: "byw"cywe"bp"cp
+< foofoo foo‸  bar
+
+=== registers-012
+> ‸foo bar
+keys: yw"_dwP
+< foo‸ bar
+
+=== registers-013
+> ‸foo bar
+keys: yw"_ddP
+< foo‸ ⏎
+
+=== registers-014
+> ‸foo bar
+keys: yy"_ddp
+< 
+< ‸foo bar
+
+=== registers-015
+> ‸foo bar baz
+keys: wywgg"0P
+< bar‸ foo bar baz
+
+=== registers-016
+> ‸foo bar baz
+keys: dw"-P
+< foo‸ bar baz
+
+=== registers-017
+> ‸foo bar baz
+keys: dwdw"-p
+< bbar‸ az
+
+=== registers-018
+> ‸foo bar baz
+keys: dwdw"-P"0P
+< bar‸ baz
+
+=== registers-019
+> ‸a
+> b
+> c
+keys: dd"1P
+< ‸a
+< b
+< c
+
+=== registers-020
+> ‸a
+> b
+> c
+keys: dddd"1p"2p
+< c
+< b
+< ‸a
+
+=== registers-021
+> ‸a
+> b
+> c
+keys: dddd"2p
+< c
+< ‸a
+
+=== registers-022
+> ‸a
+> b
+> c
+keys: yydd"0P
+< ‸a
+< b
+< c
+
+=== registers-023
+> ‸a
+> b
+> c
+keys: yyjddk"0P
+< ‸a
+< a
+< c
+
+=== registers-024
+> ‸a
+> b
+> c
+keys: dd"-p
+< ‸b
+< c
+
+=== registers-025
+> ‸foo bar
+keys: dw"1p
+< ‸bar
+
+=== registers-026
+> ‸foo bar
+> baz
+keys: d}"1P
+< ‸foo bar
+< baz
+< 
+
+=== registers-027
+> ‸foo (bar) baz
+keys: f(d%"1P
+< foo (bar‸) baz
+
+=== registers-028
+> ‸foo (bar) baz
+keys: f(d%"-P
+< foo (bar‸) baz
+
+=== registers-029
+> ‸foo bar baz
+keys: d/baz<CR>"1P
+< foo bar‸ baz
+
+=== registers-030
+> ‸foo bar baz
+keys: dw"1P
+< ‸bar baz
+
+=== registers-031
+> ‸a b
+> c d
+keys: d)"1P
+< ‸a b
+< c d
+< 
+
+=== registers-032
+> ‸a
+> b
+> c
+> d
+> e
+> f
+> g
+> h
+> i
+> j
+> k
+keys: dddddddddddddddddddd"9p
+< k
+< ‸b
+
+=== registers-033
+> ‸a
+> b
+> c
+> d
+> e
+> f
+> g
+> h
+> i
+> j
+> k
+keys: dddddddddddddddddddd"1p"2p
+< k
+< j
+< ‸i
+
+=== registers-034
+> ‸foo
+keys: "ayy"ap
+< foo
+< ‸foo
+
+=== registers-035
+> ‸foo
+keys: "ayy"aP
+< ‸foo
+< foo
+
+=== registers-036
+> ‸foo
+> bar
+keys: "ayyj"ap
+< foo
+< bar
+< ‸foo
+
+=== registers-037
+> ‸foo bar
+keys: "ayiwwviw"ap
+< foo fo‸o
+
+=== registers-038
+> ‸foo bar
+keys: "ayiwwviw"aP
+< foo fo‸o
+
+=== registers-039
+> ‸foo bar
+keys: "ayiwwviwp
+< foo fo‸o
+
+=== registers-040
+> ‸foo bar
+keys: yiwwviwp"-P
+< foo foba‸ro
+
+=== registers-041
+> ‸foo bar baz
+keys: yiwwviwwviwp
+< foo bar wp‸baz
+mode: i
+
+=== registers-042
+> ‸foo bar baz
+keys: yiwwviwwviwpbviwp
+< foo bar wpbviwp‸baz
+mode: i
+
+=== registers-043
+> ‸foo bar
+keys: yiwwviw"_dP
+< foofo‸o ⏎
+
+=== registers-044
+> ‸foo
+keys: :let @a='hello'<CR>"ap
+< fhell‸ooo
+
+=== registers-045
+> ‸foo
+keys: :let @a="hello"<CR>"ap
+< fhell‸ooo
+
+=== registers-046
+> ‸foo
+keys: :let @a="hello\n"<CR>"ap
+< foo
+< ‸hello
+
+=== registers-047
+> ‸foo
+keys: :let @a="a\nb"<CR>"ap
+< f‸a
+< boo
+
+=== registers-048
+> ‸foo
+keys: :let @a='a'<CR>:let @A='b'<CR>"ap
+< fa‸boo
+
+=== registers-049
+> ‸foo
+keys: :let @a='a'<CR>:let @a.='b'<CR>"ap
+< fa‸boo
+
+=== registers-050
+> ‸foo
+keys: :let @a='a'<CR>:let @b=@a . 'x'<CR>"bp
+< fa‸xoo
+
+=== registers-051
+> ‸foo
+keys: :let @"='x'<CR>p
+< f‸xoo
+
+=== registers-052
+> ‸foo
+keys: :let @/='fo'<CR>n
+< ‸foo
+
+=== registers-053
+> ‸foo
+keys: :let @/='o'<CR>"/P
+< ‸ofoo
+
+=== registers-054
+> ‸foo
+keys: /oo<CR>"/P
+< fo‸ooo
+
+=== registers-055
+> ‸foo bar
+keys: wmajb`a":p
+< foo ‸bar
+
+=== registers-056
+> ‸foo bar
+keys: :s/o/0/<CR>":p
+< fs/o/0‸/0o bar
+
+=== registers-057
+> ‸foo bar
+keys: :s/o/0/<CR>@:
+< ‸f00 bar
+
+=== registers-058
+> ‸foo foo foo
+keys: :s/o/0/<CR>@:@@
+< ‸f00 f0o foo
+
+=== registers-059
+> ‸foo foo foo
+keys: :s/o/0/<CR>j@:
+< ‸f00 foo foo
+
+=== registers-060
+> ‸a
+> a
+> a
+keys: :s/a/b/<CR>j@:j@@
+< b
+< b
+< ‸b
+
+=== registers-061
+> ‸a
+> a
+> a
+keys: :s/a/b/<CR>j&j&
+< b
+< b
+< ‸b
+
+=== registers-062
+> ‸foo
+keys: ihello<Esc>".p
+< hellohell‸ofoo
+
+=== registers-063
+> ‸foo
+keys: ihello<Esc>".P
+< hellhell‸oofoo
+
+=== registers-064
+> ‸foo
+keys: ihello<Esc>".3p
+< hellohellohellohell‸ofoo
+
+=== registers-065
+> ‸foo
+keys: ihello<CR>x<Esc>".p
+< hello
+< xhello
+< ‸xfoo
+
+=== registers-066
+> ‸foo
+keys: ihello<Esc>o<C-r>.<Esc>
+< hellofoo
+< hell‸o
+
+=== registers-067
+> ‸foo bar
+keys: "%p
+< ‸foo bar
+
+=== registers-068
+> ‸foo
+keys: :registers<CR>
+< ‸foo
+
+=== registers-069
+> ‸foo
+keys: "ayw:reg a<CR>
+< ‸foo
+
+=== registers-070
+> ‸foo bar
+keys: yw:display<CR>
+< ‸foo bar
+
+=== registers-071
+> ‸foo
+keys: "qp
+< ‸foo
+
+=== registers-072
+> ‸foo
+keys: "ap
+< ‸foo
+
+=== registers-073
+> ‸foo
+keys: "xp
+< ‸foo
+
+=== registers-075
+> ‸foo
+keys: "Ap
+< ‸foo
+
+=== registers-076
+> ‸foo
+keys: "_p
+< ‸foo
+
+=== registers-077
+> ‸foo
+keys: ""p
+< ‸foo
+
+=== registers-078
+> ‸foo
+keys: yw""P
+< fo‸ofoo
+
+=== registers-079
+> ‸foo bar
+keys: ""yw$p
+< foo barfoo‸ ⏎
+
+=== registers-080
+> ‸foo bar
+keys: ""dw$p
+< barfoo‸ ⏎
+
+=== registers-081
+> ‸foo
+keys: "ayy""p
+< foo
+< ‸foo
+
+=== registers-082
+> ‸foo
+keys: "yw
+< fo‸o
+
+=== registers-083
+> ‸foo bar
+keys: "ayw"ayw"Ayw"ap
+< ffoo foo‸ oo bar
+
+=== registers-084
+> ‸foo bar
+keys: "Zyw
+< ‸foo bar
+
+=== registers-085
+> ‸foo bar
+keys: "1yw$"1p
+< foo barfoo‸ ⏎
+
+=== registers-086
+> ‸foo bar
+keys: "0yw$"0p
+< foo barfoo‸ ⏎
+
+=== registers-087
+> ‸foo bar
+keys: "9yw$"9p
+< foo barfoo‸ ⏎
+
+=== registers-088
+> ‸foo bar
+keys: "-yw$"-p
+< foo barfoo‸ ⏎
+
+=== registers-089
+> ‸foo bar
+keys: "-yw$p
+< foo barfoo‸ ⏎
+
+=== registers-090
+> ‸a
+> b
+keys: "1yy"-p
+< ‸a
+< b
+
+=== registers-091
+> ‸a
+> b
+keys: "1yyj"1p
+< a
+< b
+< ‸a
+

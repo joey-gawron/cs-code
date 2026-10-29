@@ -1,0 +1,2715 @@
+# macros: recording, replay, counts, abort-on-error, append, register round trip, :normal @a
+=== macros-001
+> ‸one
+> two
+> three
+> four
+keys: qaA;<Esc>jq@a
+< one;
+< two;
+< thr‸ee
+< four
+
+=== macros-002
+> ‸one
+> two
+> three
+> four
+keys: qaA;<Esc>jq@a@@
+< one;
+< two;
+< three;
+< fou‸r
+
+=== macros-003
+> ‸one
+> two
+> three
+> four
+keys: qaA;<Esc>jq2@a
+< one;
+< two;
+< three;
+< fou‸r
+
+=== macros-004
+> ‸one
+> two
+> three
+> four
+keys: qaA;<Esc>jq3@a
+< one;
+< two;
+< three;
+< four‸;
+
+=== macros-005
+> ‸one
+> two
+> three
+> four
+keys: qaA;<Esc>jq10@a
+< one;
+< two;
+< three;
+< four‸;
+
+=== macros-006
+> ‸one
+> two
+> three
+> four
+keys: qaA;<Esc>jq3@au
+< one;
+< tw‸o
+< three
+< four
+
+=== macros-007
+> ‸foo bar baz
+> foo bar baz
+keys: qadwq@a
+< ‸baz
+< foo bar baz
+
+=== macros-008
+> ‸foo bar baz qux
+keys: qadwq2@a
+< ‸qux
+
+=== macros-009
+> ‸foo bar baz qux
+keys: qadwq@a@@
+< ‸qux
+
+=== macros-010
+> ‸foo bar baz qux
+keys: qadwq@a@@u
+< ‸baz qux
+
+=== macros-011
+> ‸a
+> b
+> c
+> d
+> e
+keys: qa0xjq2@a
+< 
+< 
+< 
+< ‸d
+< e
+
+=== macros-012
+> ‸a
+> b
+> c
+> d
+> e
+keys: qaxjq4@a
+< 
+< 
+< 
+< 
+< ‸
+
+=== macros-013
+> ‸a
+> b
+> c
+> d
+> e
+keys: qaxjq5@a
+< 
+< 
+< 
+< 
+< ‸
+
+=== macros-014
+> ‸a
+> b
+> c
+> d
+> e
+keys: qaxjq6@a
+< 
+< 
+< 
+< 
+< ‸
+
+=== macros-015
+> ‸a
+> b
+> c
+> d
+> e
+keys: qaxjq6@au
+< 
+< ‸b
+< c
+< d
+< e
+
+=== macros-016
+> ‸abc
+> abc
+> abc
+> abc
+keys: qa0xjq3@a
+< bc
+< bc
+< bc
+< ‸bc
+
+=== macros-017
+> ‸a
+> b
+> c
+> d
+> e
+keys: qaqqa0xj@aq@a
+< 
+< 
+< 
+< 
+< ‸
+
+=== macros-018
+> ‸abc
+> abc
+> abc
+keys: qaqqa0xj@aq@a
+< bc
+< bc
+< ‸bc
+
+=== macros-019
+> ‸abc
+> abc
+> abc
+> abc
+keys: qaqqa~j@aq@a
+< Abc
+< aBc
+< abC
+< ab‸C
+
+=== macros-020
+> ‸foo
+> bar
+keys: qaxq
+< ‸oo
+< bar
+
+=== macros-021
+> ‸foo
+> bar
+keys: qaxqqAjxq
+< oo
+< ‸ar
+
+=== macros-022
+> ‸abcdef
+keys: qaxqqAlxq@a
+< b‸e
+
+=== macros-023
+> ‸abcdef
+> ghijkl
+keys: qaxqqAlxq@aj@a
+< be
+< gi‸kl
+
+=== macros-024
+> ‸abcdef
+keys: qaxq"ap
+< b‸xcdef
+
+=== macros-025
+> ‸abcdef
+keys: qaxlq"ap
+< bcx‸ldef
+
+=== macros-026
+> ‸abcdef
+keys: qa<Right>xq"ap
+< ackr‸xdef
+
+=== macros-027
+> ‸one
+> two
+> three
+> four
+keys: qaA;<Esc>jq"ap
+< one;
+< twoA;‸j
+< three
+< four
+
+=== macros-028
+> ‸one
+> two
+> three
+> four
+keys: qaA;<Esc>jq"ap@a
+< one;
+< twoA;j;
+< thre‸e
+< four
+
+=== macros-029
+> ‸foo
+> bar
+keys: :let @a='ix<Esc>'<CR>@a
+< ‸foo
+< bar
+
+=== macros-030
+> ‸foo
+> bar
+keys: :let @a='dd'<CR>@a
+< ‸bar
+
+=== macros-031
+> ‸foo
+> bar
+> baz
+keys: :let @a='ddp'<CR>@a
+< bar
+< ‸foo
+< baz
+
+=== macros-032
+> ‸foo
+> bar
+> baz
+keys: :let @a='dd'<CR>2@a
+< ‸baz
+
+=== macros-033
+> ‸foo
+> bar
+keys: :let @a='x'<CR>:let @a.='x'<CR>@a
+< ‸o
+< bar
+
+=== macros-034
+> dw
+> foo bar
+keys: "ayyj@a
+< dw
+< ‸bar
+
+=== macros-035
+> ‸dw
+> foo bar
+keys: "ayyj@a
+< dw
+< ‸bar
+
+=== macros-036
+> ‸x
+> abcdef
+keys: "ayyj@a
+< x
+< ‸bcdef
+
+=== macros-037
+> ‸x
+> abcdef
+keys: "ay$j@a
+< x
+< ‸bcdef
+
+=== macros-038
+> ‸ix
+> abc
+keys: "ay$j@a
+< ix
+< x‸abc
+mode: i
+
+=== macros-039
+> ‸Ahi
+> abc
+keys: "ay$j@a
+< Ahi
+< abchi‸
+mode: i
+
+=== macros-040
+> ‸Ahi
+> abc
+keys: "ay$j@a
+< Ahi
+< abchi‸
+mode: i
+
+=== macros-041
+> ‸foo
+> bar
+> baz
+keys: qa:s/a/A/<CR>jq@a
+< foo
+< bAr
+< ‸baz
+
+=== macros-042
+> ‸foo
+> bar
+> baz
+keys: qa:s/o/O/<CR>jq@a
+< fOo
+< ‸bar
+< baz
+
+=== macros-043
+> ‸foo
+> bar
+> baz
+> baz
+keys: qa:s/a/A/<CR>jq@a@@
+< foo
+< bAr
+< bAz
+< ‸baz
+
+=== macros-044
+> ‸foo
+> bar
+> baz
+> baz
+keys: qa:s/a/A/<CR>jq3@a
+< foo
+< bAr
+< bAz
+< ‸bAz
+
+=== macros-045
+> ‸foo
+> bar
+keys: qa:s/a/A/<CR>q@:
+< ‸foo
+< bar
+
+=== macros-046
+> ‸foo
+> foo
+> foo
+keys: :s/o/0/<CR>j@:
+< f0o
+< ‸f0o
+< foo
+
+=== macros-047
+> ‸foo
+> foo
+> foo
+keys: :s/o/0/<CR>j@:j@@
+< f0o
+< f0o
+< ‸f0o
+
+=== macros-048
+> ‸foo
+> foo
+> foo
+keys: :s/o/0/<CR>j2@:
+< f0o
+< ‸f00
+< foo
+
+=== macros-049
+> ‸foo
+> foo
+> foo
+keys: :s/o/0/<CR>j@:@@
+< f0o
+< ‸f00
+< foo
+
+=== macros-050
+> ‸a
+> b
+keys: @@
+< ‸a
+< b
+
+=== macros-051
+> ‸a
+> b
+keys: @a
+< ‸a
+< b
+
+=== macros-052
+> ‸a
+> b
+keys: @:
+< ‸a
+< b
+
+=== macros-053
+> ‸a
+> b
+keys: qaq@a
+< ‸a
+< b
+
+=== macros-054
+> ‸a b c
+keys: qaq@ax
+< ‸ b c
+
+=== macros-055
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa/bar<CR>xq@a
+< foo ar
+< foo ‸ar
+< foo bar
+
+=== macros-056
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa/bar<CR>xq2@a
+< foo ar
+< foo ar
+< foo ‸ar
+
+=== macros-057
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa/bar<CR>xq5@a
+< foo ar
+< foo ar
+< foo ‸ar
+
+=== macros-058
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa/bar<CR>xq@a@@
+< foo ar
+< foo ar
+< foo ‸ar
+
+=== macros-059
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa/bar<CR>ciwX<Esc>q@a
+< foo X
+< foo ‸X
+< foo bar
+
+=== macros-060
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa?bar<CR>xq@a
+< foo bar
+< foo ‸ar
+< foo ar
+
+=== macros-061
+> ‸foo bar
+> foo bar
+> foo bar
+keys: jjqa?bar<CR>xq@a
+< foo ‸ar
+< foo ar
+< foo bar
+
+=== macros-062
+> ‸foo bar
+> foo bar
+> foo bar
+keys: jjqa?bar<CR>xq2@a
+< foo ar
+< foo ar
+< foo ‸ar
+
+=== macros-063
+> ‸a,b,c,d
+keys: qaf,xq@a
+< ab‸c,d
+
+=== macros-064
+> ‸a,b,c,d
+keys: qaf,xq2@a
+< abc‸d
+
+=== macros-065
+> ‸a,b,c,d
+keys: qaf,xq5@a
+< abc‸d
+
+=== macros-066
+> ‸a,b,c,d
+keys: qaf,xq3@a
+< abc‸d
+
+=== macros-067
+> ‸a,b,c,d
+keys: qaf,xq3@au
+< ab‸,c,d
+
+=== macros-068
+> ‸a,b,c
+> d,e,f
+keys: qaf,xq@a
+< ab‸c
+< d,e,f
+
+=== macros-069
+> ‸a,b,c
+> d,e,f
+keys: qaf,xjq@a
+< ab,c
+< d,e‸f
+
+=== macros-070
+> ‸a,b,c
+> d,e,f
+keys: qa0f,xjq@a
+< ab,c
+< d‸e,f
+
+=== macros-071
+> ‸a,b,c
+> d,e,f
+> g,h,i
+keys: qa0f,xjq2@a
+< ab,c
+< de,f
+< g‸h,i
+
+=== macros-072
+> ‸a,b,c
+> d,e,f
+> g,h,i
+keys: qa0f,;xjq2@a
+< a,bc
+< d,ef
+< g,h‸i
+
+=== macros-073
+> ‸a,b,c
+> d,e,f
+> g,h,i
+keys: qa0t,xjq2@a
+< ,b,c
+< ,e,f
+< ‸,h,i
+
+=== macros-074
+> ‸(a) (b) (c)
+keys: qaci(X<Esc>q@a
+< (‸X) (b) (c)
+
+=== macros-075
+> ‸(a) (b) (c)
+keys: qaf(ci(X<Esc>q@a
+< (a) (X) (‸X)
+
+=== macros-076
+> ‸(a) (b) (c)
+keys: qaf(ci(X<Esc>q2@a
+< (a) (X) (‸X)
+
+=== macros-077
+> ‸(a) (b) (c)
+keys: qaf(ci(X<Esc>l(q2@a
+< ‸(a) (X) (c)
+
+=== macros-078
+> ‸"a" "b" "c"
+keys: qaci"X<Esc>q@a
+< "‸X" "b" "c"
+
+=== macros-079
+> ‸"a" "b" "c"
+keys: qaf"ci"X<Esc>q@a
+< "‸X" "b" "c"
+
+=== macros-080
+> ‸foo bar baz
+keys: qadiwq@a
+< ‸bar baz
+
+=== macros-081
+> ‸foo bar baz
+keys: qadawq@a
+< ‸baz
+
+=== macros-082
+> ‸foo bar baz
+keys: qadawq2@a
+< ‸
+
+=== macros-083
+> ‸foo bar baz
+keys: qadawq3@a
+< ‸
+
+=== macros-084
+> ‸foo bar baz
+keys: qadawq4@a
+< ‸
+
+=== macros-085
+> ‸foo bar
+> baz qux
+keys: qadawq@a@@
+< ‸ qux
+
+=== macros-086
+> ‸foo bar
+> baz qux
+keys: qa3xq@a
+< ‸r
+< baz qux
+
+=== macros-087
+> ‸foo bar
+> baz qux
+keys: qa2dwq@a
+< ‸qux
+
+=== macros-088
+> ‸foo bar
+> baz qux
+keys: qa2dwq2@a
+< ‸
+
+=== macros-089
+> ‸foo bar baz qux quux
+keys: qa2dwq2@a
+< ‸
+
+=== macros-090
+> ‸foo
+> bar
+keys: qaIX<Esc>jq@a
+< Xfoo
+< ‸Xbar
+
+=== macros-091
+> ‸foo
+> bar
+> baz
+keys: qaIX<Esc>jq@a@@
+< Xfoo
+< Xbar
+< ‸Xbaz
+
+=== macros-092
+> ‸foo
+> bar
+> baz
+keys: qaIX<Esc>jq2@a
+< Xfoo
+< Xbar
+< ‸Xbaz
+
+=== macros-093
+> ‸foo
+> bar
+> baz
+keys: qaIX<Esc>jq2@au
+< Xfoo
+< ‸bar
+< baz
+
+=== macros-094
+> ‸foo
+> bar
+> baz
+keys: qaoX<Esc>q@a
+< foo
+< X
+< ‸X
+< bar
+< baz
+
+=== macros-095
+> ‸foo
+> bar
+> baz
+keys: qaoX<Esc>q2@a
+< foo
+< X
+< X
+< ‸X
+< bar
+< baz
+
+=== macros-096
+> ‸foo
+> bar
+> baz
+keys: qaoX<Esc>q2@au
+< foo
+< ‸X
+< bar
+< baz
+
+=== macros-097
+> ‸foo
+> bar
+> baz
+keys: qaOX<Esc>jq@a
+< X
+< X
+< ‸foo
+< bar
+< baz
+
+=== macros-098
+> ‸foo
+> bar
+keys: qa3ix<Esc>q@a
+< xxxx‸xxfoo
+< bar
+
+=== macros-099
+> ‸foo
+> bar
+keys: qa3ix<Esc>q2@a
+< xxxxxx‸xxxfoo
+< bar
+
+=== macros-100
+> ‸foo
+> bar
+keys: qaix<Esc>q3@a
+< ‸xxxxfoo
+< bar
+
+=== macros-101
+> ‸foo
+> bar
+keys: qaix<Esc>qj@a
+< xfoo
+< ‸xbar
+
+=== macros-102
+> ‸foo bar
+keys: qaxq.
+< ‸o bar
+
+=== macros-103
+> ‸foo bar
+keys: qaxqj.
+< ‸o bar
+
+=== macros-104
+> ‸foo bar
+keys: qa.q
+< ‸foo bar
+
+=== macros-105
+> ‸foo bar baz
+keys: xqa.q@a
+< ‸ bar baz
+
+=== macros-106
+> ‸foo bar baz
+keys: xqa.q@a@@
+< ‸bar baz
+
+=== macros-107
+> ‸foo bar baz
+keys: dwqa.q@a
+< ‸
+
+=== macros-108
+> ‸foo bar baz
+keys: qadwq.
+< ‸baz
+
+=== macros-109
+> ‸foo bar baz
+keys: qadwq@a.
+< ‸
+
+=== macros-110
+> ‸foo bar baz
+keys: qadwq@a@@.
+< ‸
+
+=== macros-111
+> ‸foo bar baz
+keys: qadwq2.
+< ‸
+
+=== macros-112
+> ‸foo
+> bar
+> baz
+keys: qaddq.
+< ‸baz
+
+=== macros-113
+> ‸foo
+> bar
+> baz
+keys: qaddq@a.
+< ‸
+
+=== macros-114
+> ‸foo
+> bar
+> baz
+keys: qaddq@au
+< ‸bar
+< baz
+
+=== macros-115
+> ‸foo
+> bar
+> baz
+keys: qaddq@auu
+< ‸foo
+< bar
+< baz
+
+=== macros-116
+> ‸foo
+> bar
+> baz
+keys: qaddq@aU
+< ‸baz
+
+=== macros-117
+> ‸foo
+> bar
+> baz
+keys: qaddq@a<C-r>
+< ‸baz
+
+=== macros-118
+> ‸foo
+> bar
+> baz
+keys: qaddq@auu<C-r>
+< ‸bar
+< baz
+
+=== macros-119
+> ‸foo
+> bar
+> baz
+keys: qaddpq@a
+< bar
+< baz
+< ‸foo
+
+=== macros-120
+> ‸foo
+> bar
+> baz
+keys: qaddpq2@a
+< bar
+< baz
+< ‸foo
+
+=== macros-121
+> ‸foo
+> bar
+> baz
+keys: qaYpq@a
+< foo
+< foo
+< ‸foo
+< bar
+< baz
+
+=== macros-122
+> ‸foo
+> bar
+> baz
+keys: qaYpq3@a
+< foo
+< foo
+< foo
+< foo
+< ‸foo
+< bar
+< baz
+
+=== macros-123
+> ‸foo
+> bar
+> baz
+keys: qayyjpq@a
+< foo
+< bar
+< foo
+< baz
+< ‸foo
+
+=== macros-124
+> ‸foo bar
+keys: qavey$pq@a
+< foo barfoo‸
+mode: v
+
+=== macros-125
+> ‸foo bar
+keys: qaviwUq@a
+< ‸FOO bar
+
+=== macros-126
+> ‸foo bar
+keys: qaviwUwq@a
+< FOO BA‸R
+
+=== macros-127
+> ‸foo bar baz
+keys: qaviwUwq@a
+< FOO BAR ‸baz
+
+=== macros-128
+> ‸foo bar baz
+keys: qaviwUwq2@a
+< FOO BAR BA‸Z
+
+=== macros-129
+> ‸foo bar baz qux
+keys: qaviwUwq3@a
+< FOO BAR BAZ QU‸X
+
+=== macros-130
+> ‸foo bar baz qux
+keys: qavjUq@a
+< ‸Foo bar baz qux
+mode: v
+
+=== macros-131
+> ‸foo
+> bar
+> baz
+> qux
+keys: qaVU<Esc>jq@a
+< FOO
+< BAR
+< ‸baz
+< qux
+
+=== macros-132
+> ‸foo
+> bar
+> baz
+> qux
+keys: qaVUjq@a
+< FOO
+< BAR
+< ‸baz
+< qux
+
+=== macros-133
+> ‸foo
+> bar
+> baz
+> qux
+keys: qaVUjq3@a
+< FOO
+< BAR
+< BAZ
+< ‸QUX
+
+=== macros-134
+> ‸foo
+> bar
+> baz
+> qux
+keys: qa<C-v>jIX<Esc>q@a
+< ‸XXfoo
+< XXbar
+< baz
+< qux
+
+=== macros-135
+> ‸foo
+> bar
+> baz
+> qux
+keys: qa<C-v>jIX<Esc>jjq@a
+< Xfoo
+< Xbar
+< Xbaz
+< ‸Xqux
+
+=== macros-136
+> ‸foo
+> bar
+> baz
+> qux
+keys: qa<C-v>j$AX<Esc>q@a
+< ‸fooXX
+< barXX
+< baz
+< qux
+
+=== macros-137
+> ‸foo
+> bar
+> baz
+> qux
+keys: qa<C-v>jlcX<Esc>q@a
+< ‸X
+< X
+< baz
+< qux
+
+=== macros-138
+> ‸foo
+> bar
+> baz
+> qux
+keys: qaJq@a
+< foo bar‸ baz
+< qux
+
+=== macros-139
+> ‸foo
+> bar
+> baz
+> qux
+keys: qaJq2@a
+< foo bar baz‸ qux
+
+=== macros-140
+> ‸foo
+> bar
+> baz
+> qux
+keys: qaJq9@a
+< foo bar baz‸ qux
+
+=== macros-141
+> ‸foo
+> bar
+> baz
+> qux
+keys: qa>>jq@a
+< \tfoo
+< \tbar
+< ba‸z
+< qux
+
+=== macros-142
+> ‸foo
+> bar
+> baz
+> qux
+keys: qa>>jq3@a
+< \tfoo
+< \tbar
+< \tbaz
+< \t‸qux
+
+=== macros-143
+> ‸foo
+> bar
+> baz
+> qux
+keys: qa>>jq5@a
+< \tfoo
+< \tbar
+< \tbaz
+< \t‸qux
+
+=== macros-144
+> ‸foo bar
+keys: qa~q@a
+< FO‸o bar
+
+=== macros-145
+> ‸foo bar
+keys: qa~q5@a
+< FOO BA‸r
+
+=== macros-146
+> ‸foo bar
+keys: qa~q20@a
+< FOO BA‸R
+
+=== macros-147
+> ‸foo bar
+keys: qa<C-a>q@a
+< ‸foo bar
+
+=== macros-148
+> ‸1
+> 2
+> 3
+keys: qa<C-a>jq@a
+< 2
+< 3
+< ‸3
+
+=== macros-149
+> ‸1
+> 2
+> 3
+keys: qa<C-a>jq2@a
+< 2
+< 3
+< ‸4
+
+=== macros-150
+> ‸1
+> 2
+> 3
+keys: qa5<C-a>jq@a
+< 6
+< 7
+< ‸3
+
+=== macros-151
+> ‸1
+> 2
+> 3
+keys: qa<C-a>jq5@a
+< 2
+< 3
+< ‸4
+
+=== macros-152
+> ‸x 1
+> x 2
+> x 3
+keys: qa<C-a>jq2@a
+< x 2
+< x 3
+< x ‸4
+
+=== macros-153
+> ‸x
+> x
+> x
+keys: qamaq'a
+< ‸x
+< x
+< x
+
+=== macros-154
+> ‸x
+> x
+> x
+keys: jqamaggq@a
+< ‸x
+< x
+< x
+
+=== macros-155
+> ‸foo
+> bar
+> baz
+keys: qaA<C-r>a<Esc>q
+< fo‸o
+< bar
+< baz
+
+=== macros-156
+> ‸foo
+> bar
+> baz
+keys: qaA<C-r>a<Esc>jq@a
+< foo
+< barAaj
+< ba‸z
+
+=== macros-157
+> ‸foo
+> bar
+> baz
+keys: qaA<C-v><Esc><Esc>jq
+< foo
+< ba‸r
+< baz
+
+=== macros-158
+> ‸foo
+> bar
+> baz
+keys: qaA<C-v><Esc><Esc>jq"ap
+< foo
+< barA‸j
+< baz
+
+=== macros-159
+> ‸foo
+> bar
+keys: qaA<BS>x<Esc>q"ap
+< foxAkbx‸
+< bar
+
+=== macros-160
+> ‸foo
+> bar
+keys: qaA<BS>x<Esc>q@a
+< fo‸x
+< bar
+
+=== macros-161
+> ‸foo
+> bar
+keys: qaA<Left>x<Esc>q"ap
+< foxAklx‸o
+< bar
+
+=== macros-162
+> ‸foo
+> bar
+keys: qaA<Left>x<Esc>jq@a
+< foxo
+< ba‸xr
+
+=== macros-163
+> ‸foo
+> bar
+keys: qaA<C-w>x<Esc>q"ap
+< xAüW‸x
+< bar
+
+=== macros-164
+> ‸foo
+> bar
+keys: qaA<C-w>x<Esc>jq@a
+< x
+< ‸x
+
+=== macros-165
+> ‸foo
+> bar
+keys: qaA<CR>x<Esc>q"ap
+< foo
+< xA
+x‸
+< bar
+
+=== macros-166
+> ‸foo
+> bar
+keys: qaA<Tab>x<Esc>q"ap
+< foo\txA\tx‸
+< bar
+
+=== macros-167
+> ‸foo
+> bar
+keys: qaA<Del>x<Esc>q"ap
+< fooxAkDx‸bar
+
+=== macros-168
+> ‸foo
+> bar
+keys: qa<Down>q"ap
+< foo
+< bk‸dar
+
+=== macros-169
+> ‸foo
+> bar
+keys: qa<Down>x<Up>q@a
+< ‸foo
+< r
+
+=== macros-170
+> ‸foo
+> bar
+> baz
+keys: qa<Down>x<Up>q@a
+< ‸foo
+< r
+< baz
+
+=== macros-171
+> ‸foo
+> bar
+> baz
+keys: qa<Down>xq@a
+< foo
+< ar
+< ‸az
+
+=== macros-172
+> ‸foo
+> bar
+> baz
+keys: qa<C-d>q"ap
+< foo
+< bar
+< b‸az
+
+=== macros-173
+> ‸foo
+> bar
+keys: q1xq@1
+< ‸o
+< bar
+
+=== macros-174
+> ‸foo bar
+keys: q1xq@1@@
+< ‸ bar
+
+=== macros-175
+> ‸foo bar
+keys: q9xq"9p
+< o‸xo bar
+
+=== macros-176
+> ‸foo bar
+keys: q9xq@9
+< ‸o bar
+
+=== macros-177
+> ‸foo bar
+keys: qAxq
+< ‸oo bar
+
+=== macros-178
+> ‸foo bar
+keys: qaxqqAxq
+< ‸o bar
+
+=== macros-179
+> ‸foo bar
+keys: qaxqqAxq"ap
+< ox‸x bar
+
+=== macros-180
+> ‸foo bar
+keys: qaxqqAxq@a
+< ‸bar
+
+=== macros-181
+> ‸foo bar
+keys: qaxqqbxq@a
+< ‸ bar
+
+=== macros-182
+> ‸foo bar
+keys: qaxqqbxq@b
+< ‸ bar
+
+=== macros-183
+> ‸foo bar
+keys: qaxqqbxq@a@b
+< ‸bar
+
+=== macros-184
+> ‸foo bar
+keys: qaxqqbxq@a@b@@
+< ‸ar
+
+=== macros-185
+> ‸foo bar
+keys: qaxqqbxq@b@a@@
+< ‸ar
+
+=== macros-186
+> ‸foo bar
+keys: qaxqq@aq
+< oq‸o bar
+mode: i
+
+=== macros-187
+> ‸foo bar
+keys: qaxq:normal @a<CR>
+< ‸o bar
+
+=== macros-188
+> ‸foo bar
+> baz qux
+keys: qaxq:normal @a<CR>
+< ‸o bar
+< baz qux
+
+=== macros-189
+> ‸foo bar
+> baz qux
+> abc
+keys: qaxq:%normal @a<CR>
+< o bar
+< az qux
+< ‸bc
+
+=== macros-190
+> ‸foo bar
+> baz qux
+> abc
+keys: qaxq:2,3normal @a<CR>
+< oo bar
+< az qux
+< ‸bc
+
+=== macros-191
+> ‸foo bar
+> baz qux
+> abc
+keys: qaxq:2normal @a<CR>
+< oo bar
+< ‸az qux
+< abc
+
+=== macros-192
+> ‸foo bar
+> baz qux
+> abc
+keys: qaxq:%norm @a<CR>
+< o bar
+< az qux
+< ‸bc
+
+=== macros-193
+> ‸foo bar
+> baz qux
+> abc
+keys: qaxq:%norm! @a<CR>
+< o bar
+< az qux
+< ‸bc
+
+=== macros-194
+> ‸foo bar
+> baz qux
+> abc
+keys: qaxq:%norm 2@a<CR>
+<  bar
+< z qux
+< ‸c
+
+=== macros-195
+> ‸foo bar
+> baz qux
+> abc
+keys: qadwq:%norm @a<CR>
+< 
+< qux
+< ‸
+
+=== macros-196
+> ‸foo bar
+> baz qux
+> abc
+keys: qaA!<Esc>q:%normal @a<CR>
+< foo bar!!
+< baz qux!
+< abc‸!
+
+=== macros-197
+> ‸foo bar
+> baz qux
+> abc
+keys: qaA!<Esc>q:2,3normal @a<CR>
+< foo bar!
+< baz qux!
+< abc‸!
+
+=== macros-198
+> ‸foo bar
+> baz qux
+> abc
+keys: qaA!<Esc>q:%normal 3@a<CR>
+< foo bar!!!!
+< baz qux!!!
+< abc!!‸!
+
+=== macros-199
+> ‸foo bar
+> baz qux
+> abc
+keys: qaA!<Esc>q:%normal @a<CR>u
+< foo bar‸!
+< baz qux
+< abc
+
+=== macros-200
+> ‸foo
+> bar
+> foo
+> bar
+keys: qaA!<Esc>q:g/foo/normal @a<CR>
+< foo!!
+< bar
+< foo‸!
+< bar
+
+=== macros-201
+> ‸foo
+> bar
+> foo
+> bar
+keys: qaA!<Esc>q:g/bar/normal @a<CR>
+< foo!
+< bar!
+< foo
+< bar‸!
+
+=== macros-202
+> ‸foo
+> bar
+> foo
+> bar
+keys: qaA!<Esc>q:v/foo/normal @a<CR>
+< foo!
+< bar!
+< foo
+< bar‸!
+
+=== macros-203
+> ‸foo
+> bar
+> foo
+> bar
+keys: qaddq:g/foo/normal @a<CR>
+< bar
+< ‸bar
+
+=== macros-204
+> ‸foo
+> bar
+> foo
+> bar
+keys: qadwq:g/foo/normal @a<CR>
+< 
+< bar
+< ‸
+< bar
+
+=== macros-205
+> ‸foo
+> bar
+> foo
+> bar
+keys: qaxq:g/foo/normal @a<CR>
+< oo
+< bar
+< ‸oo
+< bar
+
+=== macros-206
+> ‸foo
+> bar
+> foo
+> bar
+keys: qaxq:g/foo/normal 2@a<CR>
+< oo
+< bar
+< ‸o
+< bar
+
+=== macros-207
+> ‸foo
+> bar
+> foo
+> bar
+keys: qaA!<Esc>jq:g/foo/normal @a<CR>
+< foo!!
+< bar
+< foo!
+< ba‸r
+
+=== macros-208
+> ‸foo
+> bar
+> foo
+> bar
+keys: :g/foo/normal Ax<CR>
+< foox
+< bar
+< foo‸x
+< bar
+
+=== macros-209
+> ‸foo
+> bar
+> foo
+> bar
+keys: :g/foo/normal ddp<CR>
+< bar
+< foo
+< bar
+< ‸foo
+
+=== macros-210
+> ‸foo
+> bar
+> foo
+> bar
+keys: :g/foo/normal jdd<CR>
+< foo
+< ‸foo
+
+=== macros-211
+> ‸a
+> b
+> c
+> d
+keys: :normal jdd<CR>
+< a
+< ‸c
+< d
+
+=== macros-212
+> ‸a
+> b
+> c
+> d
+keys: :%normal Ax<CR>
+< ax
+< bx
+< cx
+< d‸x
+
+=== macros-213
+> ‸a
+> b
+> c
+> d
+keys: :%normal jx<CR>
+< a
+< 
+< 
+< ‸
+
+=== macros-214
+> ‸a
+> b
+> c
+> d
+keys: :%normal dd<CR>
+< ‸
+
+=== macros-215
+> ‸a
+> b
+> c
+> d
+keys: :2,3normal Ax<CR>
+< a
+< bx
+< c‸x
+< d
+
+=== macros-216
+> ‸a
+> b
+> c
+> d
+keys: :2,3normal Ax<Esc><CR>
+< a
+< ‸b
+< c
+< d
+
+=== macros-217
+> ‸a
+> b
+> c
+> d
+keys: :normal Ax<CR>
+< a‸x
+< b
+< c
+< d
+
+=== macros-218
+> ‸a
+> b
+> c
+> d
+keys: :normal 2Ax<CR>
+< ax‸x
+< b
+< c
+< d
+
+=== macros-219
+> ‸a
+> b
+> c
+> d
+keys: :normal! 2Ax<CR>
+< ax‸x
+< b
+< c
+< d
+
+=== macros-220
+> ‸a b
+> b
+> c
+> d
+keys: :normal wD<CR>
+< a‸ ⏎
+< b
+< c
+< d
+
+=== macros-221
+> ‸a b
+> b
+> c
+> d
+keys: :%normal wD<CR>
+< a ⏎
+< b
+< 
+< ‸
+
+=== macros-222
+> ‸a b
+> b c
+> c
+> d
+keys: :%normal wD<CR>
+< a ⏎
+< b ⏎
+< c
+< ‸
+
+=== macros-223
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal wD<CR>
+< a ⏎
+< b ⏎
+< c ⏎
+< ‸d
+
+=== macros-224
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal $x<CR>
+< a ⏎
+< b ⏎
+< c ⏎
+< ‸
+
+=== macros-225
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal 0x<CR>
+<  b
+<  c
+<  d
+< ‸
+
+=== macros-226
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal xp<CR>
+<  ab
+<  bc
+<  cd
+< ‸d
+
+=== macros-227
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal yyp<CR>
+< a b
+< a b
+< a b
+< a b
+< ‸a b
+< b c
+< c d
+< d
+
+=== macros-228
+> ‸a b
+> b c
+> c d
+> d
+keys: :2,3normal yyp<CR>
+< a b
+< b c
+< b c
+< ‸b c
+< c d
+< d
+
+=== macros-229
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal ix<CR>
+< xa b
+< xb c
+< xc d
+< ‸xd
+
+=== macros-230
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal ix<Esc>x<CR>
+<  b
+< ‸b c
+< c d
+< d
+
+=== macros-231
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal ixy<CR>
+< xya b
+< xyb c
+< xyc d
+< x‸yd
+
+=== macros-232
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal A<C-v><Esc>x<CR>
+< a ⏎
+< b ⏎
+< c ⏎
+< ‸
+
+=== macros-233
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal ix<C-v><Esc>x<CR>
+< a b
+< b c
+< c d
+< ‸d
+
+=== macros-234
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal ix<C-v><Esc>ly<CR>
+< xa b
+< xb c
+< xc d
+< x‸d
+
+=== macros-235
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal! ix<C-v><Esc>ly<CR>
+< xa b
+< xb c
+< xc d
+< x‸d
+
+=== macros-236
+> ‸a b
+> b c
+> c d
+> d
+keys: :%normal .<CR>
+< a b
+< b c
+< c d
+< ‸d
+
+=== macros-237
+> ‸a b
+> b c
+> c d
+> d
+keys: x:%normal .<CR>
+< b
+<  c
+<  d
+< ‸
+
+=== macros-238
+> ‸a b
+> b c
+> c d
+> d
+keys: x:2,3normal .<CR>
+<  b
+<  c
+< ‸ d
+< d
+
+=== macros-239
+> ‸a b
+> b c
+> c d
+> d
+keys: x:%normal .<CR>u
+< ‸ b
+< b c
+< c d
+< d
+
+=== macros-241
+> ‸a b
+> b c
+> c d
+> d
+keys: A!<Esc>:%normal .<CR>
+< a b!!
+< b c!
+< c d!
+< d‸!
+
+=== macros-242
+> ‸a b
+> b c
+> c d
+> d
+keys: A!<Esc>:2,3normal .<CR>
+< a b!
+< b c!
+< c d‸!
+< d
+
+=== macros-243
+> ‸a b
+> b c
+> c d
+> d
+keys: A!<Esc>:%normal .<CR>u
+< a b‸!
+< b c
+< c d
+< d
+
+=== macros-244
+> ‸a b
+> b c
+> c d
+> d
+keys: A!<Esc>:%normal .<CR>uu
+< a ‸b
+< b c
+< c d
+< d
+
+=== macros-245
+> ‸a b
+> b c
+> c d
+> d
+keys: A!<Esc>:%normal .<CR>uu<C-r>
+< a b‸!
+< b c
+< c d
+< d
+
+=== macros-246
+> ‸a b
+> b c
+> c d
+> d
+keys: qaA!<Esc>jq:%normal @a<CR>
+< a b!!
+< b c!
+< c d!
+< d‸!
+
+=== macros-247
+> ‸a b
+> b c
+> c d
+> d
+keys: qaA!<Esc>jq:%normal @a<CR>u
+< a b‸!
+< b c
+< c d
+< d
+
+=== macros-248
+> ‸a b
+> b c
+> c d
+> d
+keys: qaA!<Esc>jq:%normal 2@a<CR>
+< a b!!
+< b c!!
+< c d!!
+< d!‸!
+
+=== macros-249
+> ‸a b
+> b c
+> c d
+> d
+keys: qaA!<Esc>jq:%normal @@<CR>
+< a b!
+< b c
+< c d
+< ‸d
+
+=== macros-250
+> ‸a b
+> b c
+> c d
+> d
+keys: qaA!<Esc>jq@a:%normal @@<CR>
+< a b!!
+< b c!!
+< c d!
+< d‸!
+
+=== macros-251
+> ‸a b
+> b c
+> c d
+> d
+keys: qaA!<Esc>jq@a:2,3normal @@<CR>
+< a b!
+< b c!!
+< c d!
+< ‸d
+
+=== macros-252
+> ‸a
+> b
+> c
+keys: qq:s/$/;/<CR>jq@q
+< a;
+< b;
+< ‸c
+
+=== macros-253
+> ‸a
+> b
+> c
+keys: qq:s/$/;/<CR>jq2@q
+< a;
+< b;
+< ‸c;
+
+=== macros-254
+> ‸a
+> b
+> c
+keys: qq:s/$/;/<CR>jq3@q
+< a;
+< b;
+< ‸c;
+
+=== macros-255
+> ‸a
+> b
+> c
+keys: qq:s/$/;/<CR>jq@qu
+< a;
+< ‸b
+< c
+
+=== macros-256
+> ‸a
+> b
+> c
+keys: qq:s/$/;/<CR>jq2@qu
+< a;
+< ‸b
+< c
+
+=== macros-257
+> ‸a
+> b
+> c
+keys: qq:s/$/;/<CR>jq2@quu
+< ‸a
+< b
+< c
+
+=== macros-258
+> ‸a b
+> c d
+> e f
+keys: qq/ <CR>xq@q
+< ab
+< c‸d
+< e f
+
+=== macros-259
+> ‸a b
+> c d
+> e f
+keys: qq/ <CR>xq2@q
+< ab
+< cd
+< e‸f
+
+=== macros-260
+> ‸a b
+> c d
+> e f
+keys: qq/ <CR>xq3@q
+< ab
+< cd
+< e‸f
+
+=== macros-261
+> ‸a b
+> c d
+> e f
+keys: qq/ <CR>xq4@q
+< ab
+< cd
+< e‸f
+
+=== macros-262
+> ‸a b
+> c d
+> e f
+keys: qq/ <CR>xq5@q
+< ab
+< cd
+< e‸f
+
+=== macros-263
+> ‸a b
+> c d
+> e f
+keys: qq/ <CR>xq10@q
+< ab
+< cd
+< e‸f
+
+=== macros-264
+> ‸a b
+> c d
+> e f
+keys: qq*xq@q
+< ‸ ⏎
+< c d
+< e f
+
+=== macros-265
+> ‸foo bar foo
+> foo
+keys: qq*xq@q
+< foo bar ‸o
+< foo
+
+=== macros-266
+> ‸foo bar foo
+> foo
+keys: qq*xq2@q
+< foo bar‸ ⏎
+< foo
+
+=== macros-267
+> ‸foo bar foo
+> foo
+keys: qq*xq5@q
+< foo bar‸ ⏎
+< foo
+
+=== macros-268
+> ‸foo bar foo
+> foo
+keys: qq*dwq@q
+< foo bar‸ ⏎
+< foo
+
+=== macros-269
+> ‸foo bar foo
+> foo
+keys: qq#xq@q
+< foo bar foo
+< ‸o
+
+=== macros-270
+> ‸foo bar foo
+> foo
+keys: qqnxq@q
+< ‸oo bar foo
+< foo
+
+=== macros-271
+> ‸foo bar foo
+> foo
+keys: /foo<CR>qqnxq@q
+< ‸oo bar foo
+< oo
+
+=== macros-272
+> ‸foo bar foo
+> foo
+keys: /foo<CR>qqnxq2@q
+< oo bar ‸oo
+< oo
+
+=== macros-273
+> ‸foo bar foo
+> foo
+keys: /foo<CR>qqNxq@q
+< oo bar foo
+< ‸oo
+
+=== macros-274
+> ‸foo bar foo
+> foo
+keys: /foo<CR>qqNxq2@q
+< oo bar ‸oo
+< oo
+
+=== macros-275
+> ‸foo bar foo
+> foo foo
+keys: /foo<CR>qqnxq3@q
+< oo bar ‸oo
+< oo oo
+
+=== macros-276
+> ‸foo bar foo
+> foo foo
+keys: /foo<CR>qqdnq3@q
+< foo ‸b
+< foo foo
+
+=== macros-277
+> ‸foo bar foo
+> foo foo
+keys: /foo<CR>qqcgnX<Esc>q3@q
+< ‸X bar X
+< X X
+
+=== macros-278
+> ‸foo bar foo
+> foo foo
+keys: /foo<CR>qqcgnX<Esc>q@q
+< foo bar X
+< ‸X foo
+
+=== macros-279
+> ‸foo bar foo
+> foo foo
+keys: /foo<CR>cgnX<Esc>..
+< foo bar X
+< X ‸X
+
+=== macros-280
+> ‸foo bar foo
+> foo foo
+keys: /foo<CR>cgnX<Esc>...
+< ‸X bar X
+< X X
+
+=== macros-281
+> ‸foo bar foo
+> foo foo
+keys: /foo<CR>cgnX<Esc>3.
+< ‸X bar X
+< foo foo
+
+=== macros-282
+> ‸foo bar foo
+> foo foo
+keys: /foo<CR>dgn..
+< foo bar ⏎
+< ‸ ⏎
+
+=== macros-283
+> ‸foo bar foo
+> foo foo
+keys: /foo<CR>dgn.u
+< foo bar ⏎
+< ‸foo foo
+
+=== macros-284
+> ‸foo bar foo
+> foo foo
+keys: /foo<CR>dgn..u
+< foo bar ⏎
+<  ‸foo
+
+=== macros-285
+> ‸foo bar foo
+> foo foo
+keys: /foo<CR>dgn...u
+< ‸foo bar ⏎
+<  ⏎
+
+=== macros-286
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa/foo<CR>cwX<Esc>q@a
+< foo bar
+< X bar
+< ‸X bar
+
+=== macros-287
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa/foo<CR>cwX<Esc>q2@a
+< ‸X bar
+< X bar
+< X bar
+
+=== macros-288
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa/foo<CR>cwX<Esc>q3@a
+< ‸X bar
+< X bar
+< X bar
+
+=== macros-289
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa/foo<CR>cwX<Esc>q4@a
+< ‸X bar
+< X bar
+< X bar
+
+=== macros-290
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa0/foo<CR>cwX<Esc>q4@a
+< ‸X bar
+< X bar
+< X bar
+
+=== macros-291
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa/zzz<CR>xq@a
+< ‸oo bar
+< foo bar
+< foo bar
+
+=== macros-292
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa/zzz<CR>xq
+< ‸oo bar
+< foo bar
+< foo bar
+
+=== macros-293
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaxxq/zzz<CR>@a
+< ‸bar
+< foo bar
+< foo bar
+
+=== macros-294
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaxxq:s/zzz/y/<CR>@a
+< ‸bar
+< foo bar
+< foo bar
+
+=== macros-295
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaxjq@a
+< oo bar
+< oo bar
+< ‸foo bar
+
+=== macros-296
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaxjq5@a
+< oo bar
+< oo bar
+< ‸oo bar
+
+=== macros-297
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa:s/zzz/y/<CR>xq@a
+< ‸oo bar
+< foo bar
+< foo bar
+
+=== macros-298
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaj:s/zzz/y/<CR>xq@a
+< foo bar
+< oo bar
+< ‸foo bar
+
+=== macros-299
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaj:s/foo/y/<CR>xq@a
+< foo bar
+<  bar
+< ‸ bar
+
+=== macros-300
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaj:s/foo/y/<CR>xq3@a
+< foo bar
+<  bar
+< ‸ bar
+
+=== macros-301
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaj:s/foo/y/e<CR>xq3@a
+< foo bar
+<  bar
+< ‸ bar
+
+=== macros-302
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaj:s/zzz/y/e<CR>xq3@a
+< foo bar
+< oo bar
+< ‸oo bar
+
+=== macros-303
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaj:silent! s/zzz/y/<CR>xq3@a
+< foo bar
+< oo bar
+< ‸oo bar
+
+=== macros-304
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaj:silent s/zzz/y/<CR>xq3@a
+< foo bar
+< oo bar
+< ‸foo bar
+
+=== macros-305
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qaj:s/zzz/y/<CR>xq3@a
+< foo bar
+< oo bar
+< ‸foo bar
+
+=== macros-306
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa:echo 1<CR>xq@a
+< ‸o bar
+< foo bar
+< foo bar
+
+=== macros-307
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa:set sw=2<CR>>>q@a
+<     ‸foo bar
+< foo bar
+< foo bar
+
+=== macros-308
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa:set sw=2 et<CR>>>jq@a
+<   foo bar
+<   foo bar
+< fo‸o bar
+
+=== macros-309
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa:2<CR>xq@a
+< foo bar
+< ‸o bar
+< foo bar
+
+=== macros-310
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa:+1<CR>xq@a
+< foo bar
+< oo bar
+< ‸oo bar
+
+=== macros-311
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa:+1<CR>xq3@a
+< foo bar
+< oo bar
+< ‸ bar
+
+=== macros-312
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa:$<CR>xq@a
+< foo bar
+< foo bar
+< ‸o bar
+
+=== macros-313
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa:2d<CR>q@a
+< ‸foo bar
+
+=== macros-314
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa:2d<CR>q@a@a
+< ‸foo bar
+
+=== macros-315
+> ‸foo bar
+> foo bar
+> foo bar
+keys: qa:2d<CR>q2@a
+< ‸foo bar
+
+=== macros-316
+> ‸foo bar
+> foo bar
+> foo bar
+> foo bar
+keys: qa:2d<CR>q2@a
+< ‸foo bar
+
+=== macros-317
+> ‸foo bar
+> foo bar
+> foo bar
+> foo bar
+keys: qa:2d<CR>q3@a
+< ‸foo bar
+
+=== macros-318
+> ‸foo bar
+> foo bar
+> foo bar
+> foo bar
+keys: qa:2d<CR>q4@a
+< ‸foo bar
+
+=== macros-319
+> ‸foo bar
+> foo bar
+> foo bar
+> foo bar
+keys: qa:2d<CR>q5@a
+< ‸foo bar
+
+=== macros-320
+> ‸foo bar
+> foo bar
+> foo bar
+> foo bar
+keys: qa:2d<CR>q5@au
+< foo bar
+< ‸foo bar
+< foo bar
+
+=== macros-321
+> ‸foo bar
+> foo bar
+> foo bar
+> foo bar
+keys: qa:2d<CR>q5@auu
+< foo bar
+< ‸foo bar
+< foo bar
+< foo bar
+
+=== macros-322
+> ‸foo bar
+> foo bar
+> foo bar
+> foo bar
+keys: qa:1,2d<CR>q5@a
+< ‸
+
+=== macros-323
+> ‸foo bar
+> foo bar
+> foo bar
+> foo bar
+keys: qa:1,2d<CR>q5@a:undo 0<CR>
+< ‸foo bar
+< foo bar
+< foo bar
+< foo bar
+
+=== macros-324
+> ‸foo bar
+> foo bar
+> foo bar
+> foo bar
+keys: qa:1,2d<CR>q5@a:earlier 1<CR>
+< ‸foo bar
+< foo bar
+
+=== macros-325
+> ‸foo bar
+> foo bar
+> foo bar
+> foo bar
+keys: qa:1,2d<CR>q5@a:earlier 2<CR>
+< ‸foo bar
+< foo bar
+< foo bar
+< foo bar

@@ -178,19 +178,25 @@ public class DebugCommandTests
     public async Task PickProcess_lists_processes_and_returns_the_chosen_pid_as_text()
     {
         Assert.SkipUnless(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS(), "uses /bin/sh to create a recognisable process");
-        await using var h = new ServiceHarness();
         var psi = new ProcessStartInfo("/bin/sleep", "300") { UseShellExecute = false };
         using var sleeper = Process.Start(psi)!;
         try
         {
-            // choose the entry for our sleeper: find its index in the list the command will show
-            var list = DebugService.ListProcesses();
-            var idx = list.ToList().FindIndex(i => i.Tag is int pid && pid == sleeper.Id);
-            Assert.True(idx >= 0, "the sleeper must appear in the process list");
-            Assert.DoesNotContain(list, i => i.Tag is int pid && pid == Environment.ProcessId); // never offer to attach to ourselves
-            h.Window.QuickPickResponses.Enqueue(idx);
-            var result = await h.Commands.ExecuteAsync("pickProcess");
+            // The process table changes under us (other agents/tests), so the user's choice is made by pid, not by list position.
+            var picker = new PidPickingWindow(sleeper.Id);
+            var commands = new TestCommandService();
+            using var lane = new CsCode.Dap.Client.DebugLane("pick");
+            var platform = new DapPlatform { Commands = commands, Window = picker };
+            await using var breakpoints = new BreakpointManager();
+            var tasks = new CsCode.Dap.Tasks.TaskService(lane, platform);
+            await using var cfgs = new DebugConfigurationService(lane, platform);
+            await using var service = new DebugService(lane, platform, breakpoints, cfgs, tasks);
+
+            var result = await commands.ExecuteAsync("pickProcess");
             Assert.Equal(sleeper.Id.ToString(), result);
+            Assert.True(picker.Shown.Count > 0);
+            Assert.DoesNotContain(picker.Shown, i => i.Tag is int pid && pid == Environment.ProcessId); // never offer to attach to ourselves
+            Assert.Contains(picker.Shown, i => i.Label == "sleep" && i.Description == sleeper.Id.ToString());
         }
         finally { sleeper.Kill(); sleeper.WaitForExit(2000); }
     }
@@ -222,6 +228,28 @@ public class DebugCommandTests
         await SessionHarness.Eventually(() => h.Host.Adapters.Count == 1);
         // (process ids are re-listed by the command, so only the shape is asserted: a number)
         Assert.True(int.TryParse(h.AdapterFor(0).RequestsOf("attach")[0].Arguments.GetProperty("processId").GetString(), out _), expected);
+    }
+
+    /// <summary>A window whose quick pick chooses the item tagged with a given pid (everything else is a no-op).</summary>
+    private sealed class PidPickingWindow(int pid) : IWindowService
+    {
+        public List<QuickPickItem> Shown { get; } = new();
+
+        public ValueTask<QuickPickItem?> ShowQuickPickAsync(IReadOnlyList<QuickPickItem> items, QuickPickOptions? options = null, CancellationToken ct = default)
+        {
+            Shown.AddRange(items);
+            return ValueTask.FromResult(items.FirstOrDefault(i => i.Tag is int p && p == pid));
+        }
+
+        public ValueTask<string?> ShowMessageAsync(MessageSeverity severity, string message, IReadOnlyList<MessageAction>? actions = null, CancellationToken ct = default) => ValueTask.FromResult<string?>(null);
+        public ValueTask<IReadOnlyList<QuickPickItem>?> ShowQuickPickManyAsync(IReadOnlyList<QuickPickItem> items, QuickPickOptions? options = null, CancellationToken ct = default) => ValueTask.FromResult<IReadOnlyList<QuickPickItem>?>(null);
+        public ValueTask<string?> ShowInputBoxAsync(InputBoxOptions? options = null, CancellationToken ct = default) => ValueTask.FromResult<string?>(null);
+        public ValueTask<IReadOnlyList<Uri>?> ShowOpenDialogAsync(OpenDialogOptions options, CancellationToken ct = default) => ValueTask.FromResult<IReadOnlyList<Uri>?>(null);
+        public ValueTask<Uri?> ShowSaveDialogAsync(SaveDialogOptions options, CancellationToken ct = default) => ValueTask.FromResult<Uri?>(null);
+        public Task<T> WithProgressAsync<T>(string title, bool cancellable, Func<IProgressReporter, CancellationToken, Task<T>> work) => throw new NotSupportedException();
+        public IDisposable SetStatusBarMessage(string text, TimeSpan? timeout = null) => Disposable.Empty;
+        public ValueTask<bool> OpenExternalAsync(Uri uri) => ValueTask.FromResult(true);
+        public ValueTask CopyToClipboardAsync(string text) => ValueTask.CompletedTask;
     }
 
     private sealed class InMemoryEditorDoc(Uri uri) : IEditorDocument
@@ -279,6 +307,19 @@ public class UserDebuggerContributionTests
         var languages = h.Contributions.Of<BreakpointLanguageContribution>().Items.Select(i => i.Value.Language).ToArray();
         Assert.Contains("mylang", languages);
         Assert.Contains("csharp", languages); // built-in coreclr languages
+    }
+
+    [Fact]
+    public async Task The_modules_settings_are_registered_with_the_configuration_service()
+    {
+        await using var h = new ServiceHarness();
+        var keys = h.Settings.Properties.Select(p => p.Key).ToArray();
+        Assert.Contains(DebugService.DebuggersSetting, keys);
+        Assert.Contains(NetCoreDbgAdapterFactory.SettingPath, keys);
+        Assert.Contains("cscode.debug.requestTimeoutSeconds", keys);
+        Assert.All(h.Settings.Properties.Where(p => p.Key.StartsWith("cscode.debug")), p => Assert.False(string.IsNullOrEmpty(p.Description)));
+        await h.Service.DisposeAsync();
+        Assert.DoesNotContain(DebugService.DebuggersSetting, h.Settings.Properties.Select(p => p.Key)); // unregistered on dispose
     }
 
     [Fact]

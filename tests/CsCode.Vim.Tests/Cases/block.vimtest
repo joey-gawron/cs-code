@@ -1,0 +1,771 @@
+# visual block
+=== block-001
+> abc
+> def
+> ghi
+keys: ‸<C-v>jd
+< ‸bc
+< ef
+< ghi
+
+=== block-002
+> ‸abc
+> def
+> ghi
+keys: <C-v>jd
+< ‸bc
+< ef
+< ghi
+
+=== block-003
+> ‸abc
+> def
+> ghi
+keys: <C-v>jld
+< ‸c
+< f
+< ghi
+
+=== block-004
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjld
+< ‸c
+< f
+< i
+
+=== block-005
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjlld
+< ‸
+< 
+< 
+
+=== block-006
+> a‸bc
+> def
+> ghi
+keys: <C-v>jjd
+< a‸c
+< df
+< gi
+
+=== block-007
+> ‸abc
+> def
+> ghi
+keys: <C-v>jly
+< ‸abc
+< def
+< ghi
+
+=== block-008
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlyGp
+< abc
+< def
+< g‸abhi
+<  de
+
+=== block-009
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlyGP
+< abc
+< def
+< ‸abghi
+< de
+
+=== block-010
+> ‸abc
+> def
+> ghi
+keys: <C-v>jly$p
+< abc‸ab
+< defde
+< ghi
+
+=== block-011
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlyGo<Esc>p
+< abc
+< def
+< ghi
+< ‸ab
+< de
+
+=== block-012
+> ‸abc
+> def
+> ghi
+keys: <C-v>jIX<Esc>
+< ‸Xabc
+< Xdef
+< ghi
+
+=== block-013
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjIXY<Esc>
+< ‸XYabc
+< XYdef
+< XYghi
+
+=== block-014
+> ‸abc
+> def
+> ghi
+keys: <C-v>jAX<Esc>
+< ‸aXbc
+< dXef
+< ghi
+
+=== block-015
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlAX<Esc>
+< ‸abXc
+< deXf
+< ghi
+
+=== block-016
+> ‸abc
+> def
+> ghi
+keys: <C-v>jj$AX<Esc>
+< ‸abcX
+< defX
+< ghiX
+
+=== block-017
+> ‸abc
+> de
+> ghi
+keys: <C-v>jjlAX<Esc>
+< ‸abXc
+< deX
+< ghXi
+
+=== block-018
+> ‸abc
+> d
+> ghi
+keys: <C-v>jjllAX<Esc>
+< ‸abcX
+< d  X
+< ghiX
+
+=== block-019
+> ‸abc
+> d
+> ghi
+keys: <C-v>jjIX<Esc>
+< ‸Xabc
+< Xd
+< Xghi
+
+=== block-020
+> a‸bc
+> d
+> ghi
+keys: <C-v>jjIX<Esc>
+< a‸Xbc
+< dX
+< gXhi
+
+=== block-021
+> ab‸c
+> d
+> ghi
+keys: <C-v>jjIX<Esc>
+< ab‸Xc
+< d
+< ghXi
+
+=== block-022
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlcX<Esc>
+< ‸Xc
+< Xf
+< ghi
+
+=== block-023
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjcX<Esc>
+< ‸Xbc
+< Xef
+< Xhi
+
+=== block-024
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjlcXY<Esc>
+< X‸Yc
+< XYf
+< XYi
+
+=== block-025
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlrx
+< ‸xxc
+< xxf
+< ghi
+
+=== block-026
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjlrx
+< ‸xxc
+< xxf
+< xxi
+
+=== block-027
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlU
+< ‸ABc
+< DEf
+< ghi
+
+=== block-028
+> ‸abc
+> def
+> ghi
+keys: <C-v>jl~
+< ‸ABc
+< DEf
+< ghi
+
+=== block-029
+> ‸abc
+> def
+> ghi
+keys: <C-v>jj>
+< ‸\tabc
+< \tdef
+< \tghi
+
+=== block-030
+> ‸abc
+> def
+> ghi
+keys: <C-v>jl>
+< ‸\tabc
+< \tdef
+< ghi
+
+=== block-031
+> ‸abc
+> def
+> ghi
+keys: <C-v>jj2>
+< ‸\t\tabc
+< \t\tdef
+< \t\tghi
+
+=== block-032
+>   ‸abc
+>   def
+>   ghi
+keys: <C-v>jj<
+<   ‸abc
+<   def
+<   ghi
+
+=== block-033
+> ‸abc
+> def
+> ghi
+keys: <C-v>jJ
+< abc‸ def
+< ghi
+
+=== block-034
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjD
+< ‸
+< 
+< 
+
+=== block-035
+> a‸bc
+> def
+> ghi
+keys: <C-v>jjD
+< ‸a
+< d
+< g
+
+=== block-036
+> a‸bc
+> def
+> ghi
+keys: <C-v>jjC-<Esc>
+< a‸-
+< d-
+< g-
+
+=== block-037
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjX
+< ‸bc
+< ef
+< hi
+
+=== block-038
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjY
+< ‸abc
+< def
+< ghi
+
+=== block-039
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjYGp
+< abc
+< def
+< g‸ahi
+<  d
+<  g
+
+=== block-040
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjo<Esc>
+< ‸abc
+< def
+< ghi
+
+=== block-041
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjlO<Esc>
+< abc
+< def
+< ‸ghi
+
+=== block-042
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjlod
+< ‸c
+< f
+< i
+
+=== block-043
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjlOd
+< ‸c
+< f
+< i
+
+=== block-044
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlokd
+< ‸c
+< f
+< ghi
+
+=== block-045
+> ‸a\tb
+> abcdefghij
+> xyz
+keys: <C-v>jld
+< ‸      b
+< cdefghij
+< xyz
+
+=== block-046
+> a‸\tb
+> abcdefghij
+> xyz
+keys: <C-v>jld
+< ‸a
+< aj
+< xyz
+
+=== block-047
+> ‸abcdefghij
+> a\tb
+> xyz
+keys: <C-v>jld
+< ‸ij
+< b
+< xyz
+
+=== block-048
+> ‸abcdefghij
+> a\tb
+> xyz
+keys: l<C-v>jld
+< a‸j
+< a
+< xyz
+
+=== block-049
+> ‸abcdefghij
+> a\tb
+> xyz
+keys: <C-v>jlly
+< ‸abcdefghij
+< a\tb
+< xyz
+
+=== block-050
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlyj$p
+< abc
+< def‸ab
+< ghide
+
+=== block-051
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlyjp
+< abc
+< d‸abef
+< gdehi
+
+=== block-052
+> ‸abc
+> def
+keys: <C-v>jlyp
+< a‸abbc
+< ddeef
+
+=== block-053
+> ‸abc
+> def
+keys: <C-v>jlyP
+< ‸ababc
+< dedef
+
+=== block-054
+> ‸abc
+>
+keys: <C-v>jlyP
+< ‸aabc
+< 
+
+=== block-055
+> ‸ab
+> cd
+> ef
+keys: <C-v>jlyjjp
+< ab
+< cd
+< e‸abf
+<  cd
+
+=== block-056
+> ‸ab
+> cd
+> ef
+keys: <C-v>jlyG$p
+< ab
+< cd
+< ef‸ab
+<   cd
+
+=== block-057
+> ‸ab
+> cd
+> ef
+keys: <C-v>jlyGp
+< ab
+< cd
+< e‸abf
+<  cd
+
+=== block-058
+> ‸abc
+> def
+> ghi
+keys: <C-v>jd.
+< ‸c
+< f
+< ghi
+
+=== block-059
+> ‸abc
+> def
+> ghi
+keys: <C-v>jld.
+< ‸
+< 
+< ghi
+
+=== block-060
+> ‸abcd
+> efgh
+> ijkl
+keys: <C-v>jld.
+< ‸
+< 
+< ijkl
+
+=== block-061
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjlx
+< ‸c
+< f
+< i
+
+=== block-062
+> ‸abc
+> def
+> ghi
+keys: l<C-v>jjx
+< a‸c
+< df
+< gi
+
+=== block-063
+> ‸abc
+> def
+> ghi
+keys: <C-v>jj$d
+< ‸
+< 
+< 
+
+=== block-064
+> ‸abc
+> de
+> ghijk
+keys: <C-v>jj$d
+< ‸
+< 
+< 
+
+=== block-065
+> ‸abc
+> de
+> ghijk
+keys: <C-v>jj$y$p
+< abc‸abc
+< de de
+< ghighijkjk
+
+=== block-066
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlyP
+< ‸ababc
+< dedef
+< ghi
+
+=== block-067
+> ‸abc
+> def
+> ghi
+keys: <C-v>3j
+< abc
+< def
+< ‸ghi
+mode: ^V
+
+=== block-068
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlgv
+< abc
+< d‸ef
+< ghi
+mode: ^V
+
+=== block-069
+> ‸abc
+> def
+> ghi
+keys: <C-v>jl<Esc>gvd
+< ‸c
+< f
+< ghi
+
+=== block-070
+> ‸abc
+> def
+> ghi
+keys: <C-v>jl<Esc>jgvd
+< ‸c
+< f
+< ghi
+
+=== block-071
+> ‸abc
+> def
+> ghi
+keys: <C-v>jl<Esc>`>
+< abc
+< d‸ef
+< ghi
+
+=== block-072
+> ‸abc
+> def
+> ghi
+keys: <C-v>jl<Esc>`<
+< ‸abc
+< def
+< ghi
+
+=== block-073
+> ‸abc
+> def
+> ghi
+keys: <C-v>jjIX<Esc>.
+< ‸XXabc
+< XXdef
+< XXghi
+
+=== block-074
+> ‸abc
+> def
+> ghi
+> jkl
+keys: <C-v>jjIX<Esc>jj.
+< Xabc
+< Xdef
+< ‸XXghi
+< Xjkl
+
+=== block-075
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlc<Esc>
+< ‸c
+< f
+< ghi
+
+=== block-076
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlIab<Esc>u
+< ‸abc
+< def
+< ghi
+
+=== block-077
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlAab<Esc>u
+< ab‸c
+< def
+< ghi
+
+=== block-078
+> ‸abc
+> def
+keys: <C-v>jly:s/b/X/<CR>
+< ‸aXc
+< def
+
+=== block-079
+> ‸abcd
+> efgh
+keys: <C-v>jlyvp
+< ‸abbcd
+< efefgh
+
+=== block-080
+> ‸abcd
+> efgh
+keys: <C-v>jlyjvp
+< abcd
+< ‸abfgh
+< ef
+
+=== block-081
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlyjVp
+< abc
+< ‸ab
+< de
+< ghi
+
+=== block-082
+> ‸abc
+> def
+> ghi
+keys: <C-v>jlyjh<C-v>p
+< abc
+< ‸abef
+< deghi
+
+=== block-083
+> ‸abc
+> def
+> ghi
+keys: <C-v>jly<C-v>jp
+< ‸abbc
+< deef
+< ghi
+
+=== block-084
+> ‸abc
+> def
+keys: d<C-v>j
+< ‸bc
+< ef
+
+=== block-085
+> ‸abc
+> def
+keys: d<C-v>jl
+< b‸c
+< ef
+
+=== block-086
+> ‸abc
+> def
+keys: y<C-v>jlP
+< a‸abc
+< ddef
+
