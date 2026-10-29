@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using CsCode.Core.Languages;
@@ -15,8 +17,12 @@ public sealed record ReplaceTarget(Uri Uri, IReadOnlyList<TextRange>? Ranges = n
 
 public sealed record ReplaceItem(Uri Uri, TextRange Range, string OldText, string NewText);
 
-/// <summary>The edits for one file. <see cref="Version"/> is set when the file is an open document (the edit is only valid for that version).</summary>
-public sealed record FileReplacePlan(Uri Uri, IReadOnlyList<TextEdit> Edits, IReadOnlyList<ReplaceItem> Items, int? Version);
+/// <summary>
+/// The edits for one file. <see cref="Version"/> is set when the file was an open document (the edit is only valid for that version).
+/// <see cref="Fingerprint"/> identifies the text the edits were computed from; <see cref="ReplaceService.ApplyAsync"/> re-reads the file right
+/// before editing it and skips it when the text is no longer the same (null: only the version is checked).
+/// </summary>
+public sealed record FileReplacePlan(Uri Uri, IReadOnlyList<TextEdit> Edits, IReadOnlyList<ReplaceItem> Items, int? Version, string? Fingerprint = null);
 
 public sealed record ReplaceSkip(Uri Uri, string Reason);
 
@@ -30,25 +36,51 @@ public sealed record ReplacePlan(IReadOnlyList<FileReplacePlan> Files, IReadOnly
 public sealed record ReplaceResult(int FilesChanged, int Replacements, IReadOnlyList<string> Problems, bool Cancelled, IReadOnlyList<Uri>? ChangedFiles = null);
 
 /// <summary>
-/// Replace in files. The search results only remember positions, so the plan is made by searching each file AGAIN right before the
-/// edit (open documents from memory, closed files from disk) and replacing exactly the matches that are still there. A match that moved
-/// or vanished since the search is reported as skipped, never replaced blindly. The work runs on a dedicated thread; the caller only
-/// awaits. Files are applied one at a time through <see cref="INavigationService.ApplyWorkspaceEditAsync"/>, so an open document gets
-/// ONE undo step and closed files are edited on disk by the shell (which never sees a multi-file edit it would prompt for again).
+/// The compiled half of a replace preview: built once per searched query, so a keystroke in the replace box only builds a new closure.
+/// The regex is kept only when it runs on the linear-time <c>NonBacktracking</c> engine. Previews run on the UI thread once per realised
+/// row, and a pattern that needs the backtracking engine (lookarounds, backreferences) can spend its whole timeout re-matching the clipped
+/// matched text (a trailing <c>(?=;)</c> never matches there), so such a pattern's preview shows the template with its escapes expanded
+/// but its <c>$</c> groups not substituted. What is written is always computed from the file.
+/// </summary>
+public sealed class ReplacePreviewPattern
+{
+    internal ReplacePreviewPattern(SearchQuery query, Regex? regex)
+    {
+        Query = query;
+        Regex = regex;
+    }
+
+    public SearchQuery Query { get; }
+    internal Regex? Regex { get; }
+}
+
+/// <summary>
+/// Replace in files. The search results only remember positions, so the plan is made by searching each file AGAIN (open documents from
+/// memory, closed files from disk) and replacing exactly the matches that are still there. A match that moved or vanished since the
+/// search is reported as skipped, never replaced blindly. A plan can wait a long time before it is applied (the multi-file confirmation
+/// is a toast with no time limit), so each file is re-read once more right before its edit and skipped if its text is no longer the text
+/// the plan was made from. The work runs on a dedicated thread; the caller only awaits. Files are applied one at a time through
+/// <see cref="INavigationService.ApplyWorkspaceEditAsync"/>, so an open document gets ONE undo step and closed files are edited on disk by
+/// the shell (which never sees a multi-file edit it would prompt for again). Limits (file size, regex timeout) are the search's settings.
 /// </summary>
 public sealed class ReplaceService : IDisposable
 {
     private readonly IWorkspaceService _workspace;
     private readonly IDocumentManager? _documents;
-    private readonly SearchLimits _limits;
+    private readonly IConfigurationService? _config;
+    private readonly SearchLimits? _limits;
     private readonly DedicatedThreadScheduler _scheduler = new("cscode-search-replace");
 
-    public ReplaceService(IWorkspaceService workspace, IDocumentManager? documents = null, SearchLimits? limits = null)
+    /// <param name="limits">Fixed limits (tests); when null they are read from <paramref name="configuration"/> for every plan, like the search does.</param>
+    public ReplaceService(IWorkspaceService workspace, IDocumentManager? documents = null, SearchLimits? limits = null, IConfigurationService? configuration = null)
     {
         _workspace = workspace;
         _documents = documents;
-        _limits = limits ?? new SearchLimits();
+        _limits = limits;
+        _config = configuration;
     }
+
+    private SearchLimits Limits => _limits ?? SearchLimits.FromConfiguration(_config);
 
     /// <summary>Plans the replacement on the replace thread; the synchronous part on the caller is one enqueue.</summary>
     public Task<ReplacePlan> PlanAsync(SearchQuery query, IReadOnlyList<ReplaceTarget> targets, ReplaceOptions options, CancellationToken ct = default) =>
@@ -56,33 +88,51 @@ public sealed class ReplaceService : IDisposable
 
     private async Task<ReplacePlan> PlanCoreAsync(SearchQuery query, IReadOnlyList<ReplaceTarget> targets, ReplaceOptions options, CancellationToken ct)
     {
-        var matcher = TextMatcher.Create(query, _limits);
+        var limits = Limits;
+        TextMatcher matcher;
+        try { matcher = TextMatcher.Create(query, limits); }
+        catch (SearchPatternException ex) { return new ReplacePlan([], targets.Select(t => new ReplaceSkip(t.Uri, ex.Message)).ToArray()); }
+
         var files = new List<FileReplacePlan>();
         var skipped = new List<ReplaceSkip>();
         foreach (var target in targets)
         {
             ct.ThrowIfCancellationRequested();
-            var content = await ReadContentAsync(target.Uri, ct).ConfigureAwait(true);
-            if (content.Problem is not null) { skipped.Add(new ReplaceSkip(target.Uri, content.Problem)); continue; }
-
-            var items = FindReplacements(target.Uri, content.Text!, content.LineEnding, matcher, options);
-            if (target.Ranges is { } wanted)
+            try
             {
-                var set = new HashSet<TextRange>(wanted);
-                var found = items.Where(i => set.Contains(i.Range)).ToList();
-                var missing = set.Count - found.Count;
-                if (missing > 0) skipped.Add(new ReplaceSkip(target.Uri, missing == 1 ? "1 match changed since the search" : $"{missing} matches changed since the search"));
-                items = found;
+                var content = await ReadContentAsync(target.Uri, limits.MaxFileSizeBytes, ct).ConfigureAwait(true);
+                if (content.Problem is not null) { skipped.Add(new ReplaceSkip(target.Uri, content.Problem)); continue; }
+
+                var items = FindReplacements(target.Uri, content.Text!, content.LineEnding, matcher, options);
+                if (target.Ranges is { } wanted)
+                {
+                    var set = new HashSet<TextRange>(wanted);
+                    var found = items.Where(i => set.Contains(i.Range)).ToList();
+                    var missing = set.Count - found.Count;
+                    if (missing > 0) skipped.Add(new ReplaceSkip(target.Uri, missing == 1 ? "1 match changed since the search" : $"{missing} matches changed since the search"));
+                    items = found;
+                }
+                if (items.Count == 0) continue;
+                files.Add(new FileReplacePlan(target.Uri, items.Select(i => new TextEdit(i.Range, i.NewText)).ToArray(), items, content.Version, Fingerprint(content.Text!)));
             }
-            if (items.Count == 0) continue;
-            files.Add(new FileReplacePlan(target.Uri, items.Select(i => new TextEdit(i.Range, i.NewText)).ToArray(), items, content.Version));
+            catch (RegexMatchTimeoutException)
+            {
+                skipped.Add(new ReplaceSkip(target.Uri, "the regular expression timed out on this file"));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A bug or an exotic file must cost one file, never the whole replace (the fault would surface on the UI thread).
+                skipped.Add(new ReplaceSkip(target.Uri, ex.Message));
+            }
         }
         return new ReplacePlan(files, skipped);
     }
 
     /// <summary>
-    /// Applies a plan file by file. Returns what happened; never throws for a single bad file. An open document that changed since the
-    /// plan was made is skipped (its version no longer matches).
+    /// Applies a plan file by file. Returns what happened; never throws for a single bad file. Right before each file is edited it is read
+    /// again (open document or disk, whichever it is NOW) and skipped when its text is no longer the one the plan was made from: line/column
+    /// edits applied to other text would replace the wrong characters, irreversibly for a closed file. An open document is also skipped when
+    /// its version moves between that check and the edit.
     /// </summary>
     public async Task<ReplaceResult> ApplyAsync(ReplacePlan plan, INavigationService navigation, string? label = null, IProgress<int>? progress = null, CancellationToken ct = default)
     {
@@ -93,7 +143,19 @@ public sealed class ReplaceService : IDisposable
         {
             if (ct.IsCancellationRequested) return new ReplaceResult(files, replaced, problems, true, changed);
             progress?.Report(++done);
-            if (file.Version is { } v && _documents?.Get(file.Uri) is { } doc && doc.Version != v)
+            var expectedVersion = file.Version;
+            if (file.Fingerprint is not null)
+            {
+                string? problem;
+                try { (problem, expectedVersion) = await VerifyAsync(file, ct).ConfigureAwait(true); }
+                catch (OperationCanceledException) { return new ReplaceResult(files, replaced, problems, true, changed); }
+                if (problem is not null)
+                {
+                    problems.Add($"{DisplayName(file.Uri)}: {problem}");
+                    continue;
+                }
+            }
+            if (expectedVersion is { } v && _documents?.Get(file.Uri) is { } doc && doc.Version != v)
             {
                 problems.Add($"{DisplayName(file.Uri)}: the document changed since the search");
                 continue;
@@ -120,11 +182,59 @@ public sealed class ReplaceService : IDisposable
 
     private static string DisplayName(Uri uri) => uri.IsFile ? uri.LocalPath : uri.ToString();
 
+    /// <summary>Re-reads the file as it is now (on the replace thread) and compares it with the text the plan was made from.</summary>
+    private Task<(string? Problem, int? Version)> VerifyAsync(FileReplacePlan file, CancellationToken ct) =>
+        Task.Factory.StartNew(() => VerifyCoreAsync(file, ct), ct, TaskCreationOptions.DenyChildAttach, _scheduler).Unwrap();
+
+    private async Task<(string? Problem, int? Version)> VerifyCoreAsync(FileReplacePlan file, CancellationToken ct)
+    {
+        try
+        {
+            var content = await ReadContentAsync(file.Uri, Limits.MaxFileSizeBytes, ct).ConfigureAwait(true);
+            if (content.Problem is { } problem) return (problem, null);
+            // The text, not the version, decides: a document closed and reopened (or a closed file opened since) restarts its versions.
+            return Fingerprint(content.Text!) == file.Fingerprint ? (null, content.Version) : ("the file changed since the search", null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (ex.Message, null);
+        }
+    }
+
+    /// <summary>
+    /// Identifies a text (SHA-256). Line breaks are normalised first: the edits are line/column based, so text that differs only in its
+    /// line-ending style (an editor that normalises them when it opens the file) still gets exactly the right edits.
+    /// </summary>
+    internal static string Fingerprint(string text)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        if (!text.Contains('\r'))
+        {
+            hash.AppendData(MemoryMarshal.AsBytes(text.AsSpan()));
+            return Convert.ToHexString(hash.GetHashAndReset());
+        }
+        Span<char> buffer = stackalloc char[4096];
+        var n = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (c == '\r')
+            {
+                if (i + 1 < text.Length && text[i + 1] == '\n') continue;
+                c = '\n';
+            }
+            buffer[n++] = c;
+            if (n == buffer.Length) { hash.AppendData(MemoryMarshal.AsBytes(buffer)); n = 0; }
+        }
+        hash.AppendData(MemoryMarshal.AsBytes(buffer[..n]));
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
     // ------------------------------------------------------------------------------------------------ content
 
     private readonly record struct Content(string? Text, string? LineEnding, int? Version, string? Problem);
 
-    private async ValueTask<Content> ReadContentAsync(Uri uri, CancellationToken ct)
+    private async ValueTask<Content> ReadContentAsync(Uri uri, long maxFileSizeBytes, CancellationToken ct)
     {
         if (_documents?.Get(uri) is { } doc)
         {
@@ -137,10 +247,15 @@ public sealed class ReplaceService : IDisposable
         {
             var stat = await _workspace.FileSystem.StatAsync(uri, ct).ConfigureAwait(true);
             if (stat is null) return new Content(null, null, null, "the file no longer exists");
-            if (stat.Size > _limits.MaxFileSizeBytes) return new Content(null, null, null, "the file is too large");
+            if (stat.Size > maxFileSizeBytes) return new Content(null, null, null, "the file is too large");
             var bytes = await _workspace.FileSystem.ReadFileAsync(uri, ct).ConfigureAwait(true);
             if (!TryDecode(bytes, out var decoded)) return new Content(null, null, null, "the file is not valid UTF-8 or UTF-16 (replace is only supported for those)");
             return new Content(decoded, DetectLineEnding(decoded), null, null);
+        }
+        catch (NotSupportedException ex)
+        {
+            // Not a file the file system can read: a result that was searched from memory (an untitled buffer) whose editor has been closed.
+            return new Content(null, null, null, uri.IsFile ? ex.Message : "the document is no longer open");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -289,20 +404,33 @@ public sealed class ReplaceService : IDisposable
     public static string PreviewReplacement(SearchQuery query, string matchedText, ReplaceOptions options) =>
         CreatePreviewer(query, options)(matchedText);
 
-    /// <summary>
-    /// A reusable "matched text to replacement" function for the results tree, built once per query/replacement (compiling the regex
-    /// per row would be far too slow). It sees only the clipped matched text, so for patterns that depend on context (lookarounds,
-    /// anchors) the preview is an approximation; the real replacement is always computed from the file when applying.
-    /// </summary>
-    public static Func<string, string> CreatePreviewer(SearchQuery query, ReplaceOptions options)
+    /// <summary>Compiles the regex half of a replace preview once per searched query (see <see cref="ReplacePreviewPattern"/>).</summary>
+    public static ReplacePreviewPattern CreatePreviewPattern(SearchQuery query)
     {
-        var expanded = query.IsRegex ? ExpandEscapes(options.ReplaceText) : options.ReplaceText;
         Regex? rx = null;
         if (query.IsRegex)
         {
-            try { rx = RegexMatcher.Create(query.Pattern, query.MatchCase, query.WholeWord, false, TimeSpan.FromMilliseconds(250)).Regex; }
+            try
+            {
+                var matcher = RegexMatcher.Create(query.Pattern, query.MatchCase, query.WholeWord, false, TimeSpan.FromMilliseconds(250));
+                if (matcher.Kind == "regex-nonbacktracking") rx = matcher.Regex;
+            }
             catch (Exception ex) when (ex is SearchPatternException or ArgumentException) { rx = null; }
         }
+        return new ReplacePreviewPattern(query, rx);
+    }
+
+    /// <summary>
+    /// A reusable "matched text to replacement" function for the results tree (see <see cref="ReplacePreviewPattern"/>). It sees only the clipped
+    /// matched text, so for patterns that depend on context (anchors) the preview is an approximation; the real replacement is always
+    /// computed from the file when applying.
+    /// </summary>
+    public static Func<string, string> CreatePreviewer(SearchQuery query, ReplaceOptions options) => CreatePreviewer(CreatePreviewPattern(query), options);
+
+    public static Func<string, string> CreatePreviewer(ReplacePreviewPattern pattern, ReplaceOptions options)
+    {
+        var expanded = pattern.Query.IsRegex ? ExpandEscapes(options.ReplaceText) : options.ReplaceText;
+        var rx = pattern.Regex;
         return matched =>
         {
             var result = expanded;
