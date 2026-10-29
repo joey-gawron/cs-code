@@ -75,7 +75,7 @@ internal sealed class UndoTree
             // oldest header on the path
             var oldest = Current;
             while (oldest.Parent!.Parent is not null) oldest = oldest.Parent;
-            SavedChars -= SubtreeChars(Root) - SubtreeChars(oldest);
+            SavedChars -= oldest.SavedChars;   // its entries are dropped: it becomes the baseline
             oldest.Entries.Clear();
             oldest.SavedChars = 0;
             oldest.Parent = null;
@@ -169,7 +169,7 @@ internal sealed class BufferState
     }
 
     /// <summary>Vim's mark_adjust: lines [line1, line2] moved by <paramref name="amount"/> (or were deleted when <paramref name="delete"/>), later lines by <paramref name="amountAfter"/>.</summary>
-    public void MarkAdjust(int line1, int line2, int amount, int amountAfter, bool delete)
+    public void MarkAdjust(int line1, int line2, int amount, int amountAfter, bool delete, bool adjustGlobal = true)
     {
         TextPosition? Adj(TextPosition? p, bool nodel)
         {
@@ -188,7 +188,7 @@ internal sealed class BufferState
         LastChange = Adj(LastChange, false); LastInsert = Adj(LastInsert, false); LastCursor = Adj(LastCursor, false);
         PcMark = Adj(PcMark, false); PrevPcMark = Adj(PrevPcMark, false);
         for (var i = 0; i < ChangeList.Count; i++) ChangeList[i] = Adj(ChangeList[i], true)!.Value;
-        if (GlobalLines is { } gl)
+        if (adjustGlobal && GlobalLines is { } gl)
             for (var i = 0; i < gl.Count; i++)
             {
                 var l = gl[i];

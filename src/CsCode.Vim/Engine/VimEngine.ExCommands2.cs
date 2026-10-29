@@ -702,14 +702,27 @@ public sealed partial class VimEngine
             oap.LineCount = 1;
             YankForDelete(oap);
         }
-        // delete bottom-to-top as ONE undo step; every run is a separate undo entry
+        // delete bottom-to-top as ONE undo step (every run is a separate undo entry) and ONE host edit
         var total = marked.Count;
-        var all = total >= LineCount;
+        _bs.GlobalLines = null;   // nothing else runs: no need to keep the list of marked lines in step
+        var lineCount = LineCount;
+        var all = total >= lineCount;
+        for (var i = runs.Count - 1; i >= 0; i--) SaveUndo(runs[i].Start, runs[i].Count, all && i == 0 ? 1 : 0, saveULine: false);
+        var edits = new VimEdit[runs.Count];
+        for (var i = 0; i < runs.Count; i++)
+        {
+            var (start, count) = runs[i];
+            if (all) edits[i] = new VimEdit(new TextPosition(0, 0), new TextPosition(lineCount - 1, L(lineCount - 1).Length), "");
+            else if (start + count < lineCount) edits[i] = new VimEdit(new TextPosition(start, 0), new TextPosition(start + count, 0), "");
+            else edits[i] = new VimEdit(new TextPosition(start - 1, L(start - 1).Length), new TextPosition(lineCount - 1, L(lineCount - 1).Length), "");
+        }
+        _buf.ApplyEdits(edits);
+        _bs.KnownVersion = _buf.Version;
         for (var i = runs.Count - 1; i >= 0; i--)
         {
             var (start, count) = runs[i];
-            if (all && i == 0) { DeleteLines(start, count); }
-            else DeleteLines(start, count);
+            if (all) _bs.MarkAdjust(0, int.MaxValue / 2, 0, 0, delete: true);
+            else _bs.MarkAdjust(start, start + count - 1, 0, -count, delete: true);
         }
         _line = Math.Clamp(lastMarked - (total - 1), 0, LastLine);
         _bs.OpStart = _bs.OpEnd = new TextPosition(_line, 0);

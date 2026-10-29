@@ -36,7 +36,19 @@ public sealed partial class VimEngine
         var before = _recBuf.Length;
         Keys.Encode(_recBuf, rawKey & ~NoRemapFlag);
         _recLastCmdLen = _recBuf.Length - before;
+        if (_recBuf.Length > MaxRecordingChars)
+        {
+            // a forgotten q must not grow without bound: the recording is dropped
+            _recReg = '\0';
+            _recBuf.Clear();
+            _recordingChanged.Fire(null);
+            Host.OnRecordingChanged(null);
+            Message("Recording stopped: the macro is too long", VimMessageKind.Warning);
+        }
     }
+
+    /// <summary>A macro recording that grows beyond this many characters is dropped.</summary>
+    public const int MaxRecordingChars = 1_000_000;
 
     /// <summary>Called for each stuffed key: enforces the runaway guard.</summary>
     private bool CheckMacroBudget()

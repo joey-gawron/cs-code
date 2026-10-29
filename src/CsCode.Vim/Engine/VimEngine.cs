@@ -107,6 +107,11 @@ public sealed partial class VimEngine : IDisposable
     /// <summary>The keys typed so far of an incomplete command (for the status bar), e.g. "2d".</summary>
     public string PendingKeys => ShowCmdText();
 
+    /// <summary>Diagnostics for tests and tooling: how much history the engine holds (all of it is bounded).</summary>
+    public int JumpListCount => _jumps.Count;
+    public int ChangeListCount => _bs?.ChangeList.Count ?? 0;
+    public long UndoSavedChars => _bs?.Undo.SavedChars ?? 0;
+
     public bool IsRecording => _recReg != 0;
     public char? RecordingRegister => _recReg == 0 ? null : _recReg;
     public string? LastMessage { get; private set; }
@@ -407,7 +412,12 @@ public sealed partial class VimEngine : IDisposable
                         if (!StepWork(deadline)) break;
                         continue;
                     }
-                    if (_stuff.Count > 0) ProcessKey(_stuff.Dequeue(), typed: false);
+                    if (_stuff.Count > 0)
+                    {
+                        // runaway guard for macros and mappings (the budget error also flushes the stuffed keys)
+                        if (!CheckMacroBudget()) continue;
+                        ProcessKey(_stuff.Dequeue(), typed: false);
+                    }
                     else if (_typed.Count > 0) ProcessKey(_typed.Dequeue(), typed: true);
                     else break;
                     if ((++_opCounter & 31) == 0 && deadline != long.MaxValue && Stopwatch.GetTimestamp() > deadline && (_work is not null || _stuff.Count > 0 || _typed.Count > 0)) break;

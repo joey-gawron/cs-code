@@ -646,9 +646,16 @@ public sealed partial class VimEngine
     private void AdjustMarksForMove(int l1, int l2, int movedBy, int otherFrom, int otherTo, int otherBy)
     {
         var park = LineCount + 1_000_000;
-        _bs.MarkAdjust(l1, l2, park, 0, false);
-        _bs.MarkAdjust(otherFrom, otherTo, otherBy, 0, false);
-        _bs.MarkAdjust(l1 + park, l2 + park, movedBy - park, 0, false);
+        _bs.MarkAdjust(l1, l2, park, 0, false, adjustGlobal: false);
+        _bs.MarkAdjust(otherFrom, otherTo, otherBy, 0, false, adjustGlobal: false);
+        _bs.MarkAdjust(l1 + park, l2 + park, movedBy - park, 0, false, adjustGlobal: false);
+        if (_bs.GlobalLines is { } gl)
+            for (var i = 0; i < gl.Count; i++)
+            {
+                var l = gl[i];
+                if (l >= l1 && l <= l2) gl[i] = l + movedBy;
+                else if (l >= otherFrom && l <= otherTo) gl[i] = l + otherBy;
+            }
     }
 
     private void DoMove(int l1, int l2, int dest)
@@ -660,7 +667,9 @@ public sealed partial class VimEngine
         for (var i = 0; i < count; i++) lines[i] = L(l1 + i);
         // marks on the moved lines travel with them
         var moved = new List<(int idx, TextPosition?[] m)>();
-        SaveUndo(Math.Min(l1, dest + 1), Math.Abs(dest - l1) + count + (dest > l2 ? 0 : 0), Math.Abs(dest - l1) + count);
+        // two small undo entries (the removed and the inserted lines), bottom one first
+        if (dest > l2) { SaveUndo(dest + 1, 0, count, saveULine: false); SaveUndo(l1, count, 0, saveULine: false); }
+        else { SaveUndo(l1, count, 0, saveULine: false); SaveUndo(dest + 1, 0, count, saveULine: false); }
         if (dest > l2)
         {
             InsertLinesRaw(dest + 1, lines);
