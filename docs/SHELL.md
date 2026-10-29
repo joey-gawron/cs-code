@@ -36,7 +36,9 @@ Program -> App.axaml.cs -> AppServices.Build(args, configure) -> MainWindow(prov
 | `IStatusBarService` | `StatusBarService` | thread safe, `Changed` coalesced to one per UI turn |
 | `IOutputService` | `OutputService` | 2 MB ring per channel, appends batched (one flush per UI turn, never a post per line) |
 | `INavigationService` | `NavigationService` | open/preview/reveal, `ApplyWorkspaceEditAsync` (open docs: one undo group each; closed files: read, edit, write via `IFileSystem` off the UI thread; create/rename/delete; confirmation for multi-file edits, setting `cscode.shell.confirmMultiFileEdits`) |
-| `IToolWindow` host | `ToolWindowManager` | views created on first show, **disposed when hidden** |
+| `IToolWindow` host | `ToolWindowManager` | views created on first show, **disposed when hidden**; `ToolWindowLocation.Document` windows are not docked (see Layout) |
+| `IViewActivator` | `ShellViewActivator` | panels' "show view X" (Find in Files, Settings, Keyboard Shortcuts, Watch): a tool window is shown in its well, a document-location window opens or re-activates its singleton document tab; any thread |
+| `IActiveSelectionProvider` | `ActiveSelectionProvider` | primary selection of the active editor (`${selectedText}` for Dap, the Find in Files seed); the UI thread publishes a (document, range) snapshot, readers on any thread take the text on demand |
 | `IColorThemeService` consumer | `ThemeApplier` | the three VS2022 themes are registered into the module's `IColorThemeService` |
 
 ## Design system (`CsCode.Ui`)
@@ -72,7 +74,9 @@ DataGrid) still have Fluent's shape with VS colours. Hand-built VS controls: `St
 
 **Dock theme.** Dock.Avalonia's Fluent theme is retargeted through its `Dock*Brush` keys (see `ThemeApplier.DockBridge`). VS specifics: the active document tab carries a **top accent bar**
 (style in `MainWindow`), preview tabs are italic (`EditorTab.PreviewFontStyle`), Dock's drag grip and bottom indicator are suppressed, an empty tool well takes no space,
-tool windows have caption bars with the Dock dropdown (Dock / Float / Auto Hide / Hide), pin and close.
+tool windows have caption bars with the Dock dropdown (Dock / Float / Auto Hide / Hide), pin and close. Closing a tool window (its X or its tab's Close) **hides** it, like
+Visual Studio (`ShellDockFactory.HideToolsOnClose`): its view is disposed and its command, key, View menu entry or Reset Window Layout shows it again where it was. A tool that
+Dock removes from the layout some other way gets the same treatment (`ToolWindowManager.Restore` docks it in its last, else its default, well). Documents are still removed on close.
 
 ### `vsc:` colour keys panel authors may rely on
 
@@ -141,7 +145,9 @@ Contributed items (`IContributionRegistry.Of<MenuContribution>()`) feed the **Ex
 
 **Keyboard.** A tunnelling window handler maps key events to `KeyStroke` (VS Code names) and asks `IKeybindingService.Resolve`: matched binding runs the command asynchronously (never blocks the key),
 a chord prefix is swallowed and the status bar shows "(Ctrl+K) was pressed. Waiting for second key of chord...", unbound keys pass through to the focused control (typing is untouched),
-Esc or a 5 s timeout abandons a chord. Context keys (`ContextKeyTracker`): `editorTextFocus`, `editorHasSelection`, `editorReadonly`, `editorLangId`, `resourceExtname`, `resourceFilename`,
+Esc or a 5 s timeout abandons a chord. A binding whose command **no module registered** (`ICommandService.Has`) counts as absent: the presets bind ids of modules that may not be composed
+(F3 `editor.action.nextMatchFindAction`, Ctrl+] `jumpToBracket`, Alt+F12 `peekDefinition`, Ctrl+\` terminal...), so a registered lower-precedence binding of the same keys runs instead, else the key
+reaches the focused control (F3 gets to the editor's own find); a chord prefix whose every continuation is unregistered is not a chord. Context keys (`ContextKeyTracker`): `editorTextFocus`, `editorHasSelection`, `editorReadonly`, `editorLangId`, `resourceExtname`, `resourceFilename`,
 `resourceScheme`, `explorerViewletFocus`, `listFocus`, `panelFocus`, `inputFocus`, `terminalFocus`, `inDebugMode`, `debugState`, `isMac/isLinux/isWindows`, `workspaceFolderCount`, `hasOpenEditors`,
 `activeEditorIsDirty`, `quickInputVisible`. Focus areas come from the `ShellFocus.Area` attached property on view roots.
 
@@ -152,8 +158,11 @@ others are disposed and recreated from saved caret/selection. Dock presents a th
 
 **Layout.** `LayoutPersistence`: tool placement, visibility, splitter proportions, open files with pin/preview, active file; versioned JSON, workspace scope first then global default,
 tolerant of corrupt/future data; saved (debounced) on change and on exit; `View > Appearance > Reset Window Layout`. There is no left tool well unless a tool window asks for one.
+The default (and reset) layout shows exactly `ShellController.DefaultLayoutTools`: Explorer (right), Output and Error List (bottom). Every other tool window, whichever module contributes it
+(Find Results, Find in Files, Modules...), starts hidden unless its `AutoShowWhen` holds, and a tool that a saved layout does not mention (its module was added later) gets that default too.
+`ToolWindowLocation.Document` windows (Settings, Keyboard Shortcuts) never enter a tool well: they open on demand as singleton document tabs (through `IViewActivator`) and are not restored at startup.
 
-**Palette / Quick Launch** (`PaletteSource`): plain = go to file (fuzzy over a trimmable, bounded workspace index, ranked on a worker, top 100), `>` commands (title, category, keybinding badge, recent first, `Enablement` honoured),
+**Palette / Quick Launch** (`PaletteSource`; the title bar box reads "Search (Ctrl+Q)", with the palette's real shortcut, and the workspace name stands beside it as Visual Studio's solution name does): plain = go to file (fuzzy over a trimmable, bounded workspace index, ranked on a worker, top 100), `>` commands (title, category, keybinding badge, recent first, `Enablement` honoured),
 `:` go to line[:column], `@` document symbols, `#` workspace symbols, `?` help. Cheap modes answer synchronously (first paint needs no dispatcher turn); stale async results are dropped. Also drives `ShowQuickPick`/`ShowInputBox`.
 Theme picker (`workbench.action.selectTheme`) previews live while arrowing and reverts on Esc.
 
@@ -169,9 +178,25 @@ Other modules (Vim mode, remote indicator) register their own through `IStatusBa
 
 `workbench.action.showCommands`, `quickOpen`, `gotoLine`, `gotoSymbol`, `showAllSymbols`, `files.openFolder`, `files.openFile`, `files.newUntitledFile`, `files.save`, `files.saveAs`, `files.saveAll`,
 `closeActiveEditor`, `closeAllEditors`, `closeOtherEditors`, `reopenClosedEditor`, `nextEditor`, `previousEditor`, `pinEditor`, `splitEditorRight`, `splitEditorDown`, `moveEditorToNextGroup`, `closeFolder`, `quit`, `reloadWindow`
-(refreshes menus only), `toggleFullScreen`, `toggleZenMode`, `selectTheme`, `openSettings`, `openSettingsJson`, `workbench.view.explorer`, `workbench.action.output.toggleOutput`, `workbench.actions.view.problems`,
-`workbench.action.findResults.toggle`, `cscode.references.show`, `cscode.shell.{resetLayout,openRecent,about,showWelcome,showKeyboardReference,toggleNotifications,changeLanguageMode,showErrorList}`.
+(refreshes menus only), `toggleFullScreen`, `toggleZenMode`, `selectTheme`, `workbench.view.explorer`, `workbench.action.output.toggleOutput`, `workbench.actions.view.problems`,
+`workbench.action.findResults.toggle`, the toggle of every tool window whose module did not register its `ToggleCommandId` (debug windows: `workbench.debug.action.toggle*`), `cscode.references.show`,
+`cscode.shell.{resetLayout,openRecent,about,showWelcome,showKeyboardReference,toggleNotifications,changeLanguageMode,showErrorList}`. `gotoLine` also takes an optional `"line[:column]"` argument.
+`openSettings` / `openSettingsJson` are only fallbacks (they open settings.json) for a composition without the Settings panel.
 Everything else in the menus (`editor.action.*`, `debug.*`, terminal, tasks) is owned by other modules and stays disabled until they register it.
+
+### Command ownership
+
+The command table is a stack per id (the newest registration runs), so ownership is decided by registration order, and `ShellController.Initialize` fixes that order: the editor
+factory (resolved with the document well) registers first, then Dap (`IDebugService`), then the panels (their hosts are built while the tool windows are enumerated), and the shell last,
+skipping ids a panel already owns. Ids registered by more than one module, and who wins (asserted over the real composition by `RealAppCommandOwnershipTests`):
+
+| Id | Registered by | Effective owner | Why |
+|---|---|---|---|
+| `workbench.action.gotoLine` | Editor (input box, standalone fallback), shell | shell | VS Code behaviour (palette in `:` mode); the shell accepts the editor's `"line[:column]"` argument |
+| `editor.debug.action.toggleBreakpoint` | Editor (standalone fallback), Dap | Dap | DAP owns the debug commands; both toggle at the active editor's caret |
+| `workbench.action.openSettings`, `openSettingsJson` | Settings panel (shell only when no panel is composed) | Settings panel | Settings editor (optional query argument) and settings.json (created when missing) |
+
+Every other id has exactly one registration; the test fails when a new duplicate appears, so it needs a decision here.
 
 ### Settings
 
@@ -235,11 +260,13 @@ File menu with icon, shortcut and separator columns, palette with fuzzy list and
 Not done: single-instance forwarding (SHOULD); native menu bar (`NativeMenu` on macOS / DBus global menu); Explorer drag-and-drop **UI** (the model's `MoveAsync` is tested; the view has no drag source/drop target) and dropping files from the OS onto the window;
 dirty marker is Dock's `*` rather than a dot that turns into a close glyph on hover; pinned tabs have model/commands but no pin glyph; layout restore reopens tabs but does not recreate split document groups or floating windows;
 auto-hide/peek animations, taskbar jump list, high-contrast theme, `--diff`, toolbar overflow (all SHOULD); the Windows/macOS title-bar path (`ExtendClientAreaToDecorationsHint`) is written but untested here (Linux only).
-`reloadWindow` only refreshes menus. `Find in Files` has no panel of its own (Find Results hosts results delivered by `cscode.references.show`). Explorer filter searches loaded nodes only.
+`reloadWindow` only refreshes menus. Find in Files is the Search panel's tool window (`CsCode.Panels.Search`); Find Results hosts the references delivered by `cscode.references.show`. Explorer filter searches loaded nodes only.
 
 Known issues: (1) **Combined hostile storm p99 is ~19 ms, not < 16 ms** (each source alone meets it; max is within 50 ms). (2) **Dock.Avalonia 12.1.0.13 keeps closed (presented) dockables reachable** (verified with a bare `DockControl` and a plain template, independent of this shell);
-the shell therefore releases everything a tab pinned (editor document, view, controller, subscriptions) and presents a thin host that it empties. Even so, in the live-host test some tabs closed early in a long run were observed to remain reachable (which ones varied between runs; I did not find the owner);
-the test asserts the steady state (everything from tab 120 on is released, heap flat). Worth a memory-profiler pass with the real editor during integration.
+the shell therefore releases everything a tab pinned (editor document, view, controller, subscriptions) and presents a thin host that it empties. The owner that kept some closed tabs' views and documents
+reachable in the live-host test (run to run) was found during integration: the `DockControl`'s `ControlRecycling` cache (Dock.Controls.Recycling) keeps the content of every dockable it presented, keyed by the
+dockable, and never evicts; an emptied host whose child left while the host was already detached still lists the child's composition visual, so the view and its document stayed reachable.
+`MainWindow` now evicts a document tab from that cache when it closes (`RealAppDockCacheTests`); the 300-tab test still asserts the steady state (from tab 120 on, heap flat), and now passes consistently.
 (3) The editor contract has no "release view" call, so views are expected to implement `IDisposable` for deterministic cleanup; the shell calls it.
 
 ## Integration notes
@@ -247,6 +274,11 @@ the test asserts the steady state (everything from tab 120 on is released, heap 
 * **Needs registered** (resolved with `GetRequiredService`): `ICommandService`, `IContextKeyService`, `IConfigurationService`, `IKeybindingService`, `IWorkspaceService`, `IStateStorage`, `IColorThemeService`, `IEditorViewFactory`,
   and from Core `IDocumentManager`, `IDiagnosticService`, `IContributionRegistry`, `ILanguageFeatureRegistry`. **Optional**: `IDebugService` (toolbar combo, debug context keys), `ILanguageService`, `IMemoryMonitor`, `ILanguageServerManager`.
 * Editor views must be a `Control`; the shell wraps them in a host, sets the focus-area marker on the host, and disposes the view when the tab closes or loses its live-view slot.
-* `IToolWindow`s registered by other modules (`AddSingleton<IToolWindow, ...>`) are placed by `DefaultLocation`; `AutoShowWhen` windows start hidden and follow their context key; a Left-located tool creates the left well.
+* `IToolWindow`s registered by other modules (`AddSingleton<IToolWindow, ...>`) are placed by `DefaultLocation`; `AutoShowWhen` windows follow their context key; all of them start hidden (only
+  `DefaultLayoutTools` are in the default layout) and are brought up by their command through `IViewActivator.ShowViewAsync(id)`; a Left-located tool creates the left well; `Document`-located
+  windows open as document tabs.
+* `tests/CsCode.App.Tests/RealApp/*` run the REAL composition (`AppServices.Build` with every module, `CSCODE_HOME` in a temp directory, all built-in language servers disabled;
+  `Infrastructure/RealAppHost.cs`): view activation (also after a tool window was closed with its X, clicked), document windows, default layout, debug auto-show, command
+  ownership (which module registered each duplicated id, in order), selection, Ln/Col, keys, wording.
 * The brief's `IExtensionService.ActivateByEventAsync("onStartupFinished")` is **not** used: the extension system was removed (commit "Drop the extension system").
 * The removed system's remnants elsewhere (extension command ids, `ExtensionsDir`, the `ExtensionId` members, Core wording, the README tagline) were deleted at integration.

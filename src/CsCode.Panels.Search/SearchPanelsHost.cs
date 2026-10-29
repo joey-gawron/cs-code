@@ -122,7 +122,9 @@ public sealed class SearchPanelsHost : IDisposable
         void Reg(string id, string title, Func<CommandInvocation, ValueTask<object?>> handler)
         {
             if (commands.Has(id)) return; // the shell (or another module) owns it
-            _store.Add(commands.Register(id, handler, new CommandMetadata(id, title)));
+            // VS Code's palette categories: "Search: Find in Files", "Preferences: Open Keyboard Shortcuts".
+            var category = id is FindInFiles or ReplaceInFiles || id.StartsWith("search.", StringComparison.Ordinal) ? "Search" : "Preferences";
+            _store.Add(commands.Register(id, handler, new CommandMetadata(id, title, category)));
         }
 
         Reg(FindInFiles, "Find in Files", inv => FindAsync(inv, replace: false));

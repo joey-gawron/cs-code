@@ -33,6 +33,13 @@ public sealed class ShellController : IDisposable
 {
     public const string UiStallSetting = "cscode.diagnostics.uiStallLogMs";
 
+    /// <summary>
+    /// The tool windows of the default (and reset) layout, like Visual Studio's: Explorer on the right, Output and Error List at the bottom. Every
+    /// other tool window starts hidden (Find Results, Find in Files, Modules...) unless its <see cref="IToolWindow.AutoShowWhen"/> holds, so a
+    /// module that contributes a window never changes the default layout by accident.
+    /// </summary>
+    public static readonly IReadOnlyList<string> DefaultLayoutTools = ["explorer", "output", "errorlist"];
+
     private readonly IServiceProvider _sp;
     private readonly IUiDispatcher _ui;
     private readonly DisposableStore _disposables = new();
@@ -73,11 +80,16 @@ public sealed class ShellController : IDisposable
         var keys = _sp.GetRequiredService<IContextKeyService>();
         var window = _sp.GetRequiredService<IWindowService>();
         var quick = _sp.GetRequiredService<QuickInputViewModel>();
+        // Command ownership is decided by registration order (the command table is a stack: the newest registration runs), so the order of
+        // the next three lines is part of the contract (docs/SHELL.md, "Command ownership"): the editor factory registers its standalone
+        // fallbacks first, Dap then owns the debug commands, the panels (built by enumerating the tool windows) register theirs, and only then
+        // does the shell register its own commands, skipping ids a panel already owns.
         var well = Well;
+        var debug = _sp.GetService<IDebugService>();
+        var specs = _sp.GetServices<IToolWindow>().ToArray();
         var nav = _sp.GetRequiredService<NavigationService>();
         var workspace = _sp.GetService<IWorkspaceService>();
         var state = _sp.GetService<IStateStorage>();
-        var debug = _sp.GetService<IDebugService>();
 
         Palette = new PaletteController(quick, new PaletteContext(commands, nav, well, keys, _sp.GetService<IKeybindingService>(), workspace, state,
             _sp.GetService<ILanguageFeatureRegistry>(), _sp.GetService<IMemoryMonitor>()), _ui, window);
@@ -86,17 +98,18 @@ public sealed class ShellController : IDisposable
         ContextKeys = new ContextKeyTracker(keys, well, _ui, quick, workspace, debug);
         _disposables.Add(ContextKeys);
 
-        Layout = new LayoutPersistence(Factory, Tools, well, _ui, state, ["findresults"]);
+        if (_sp.GetService<ActiveSelectionProvider>() is { } selection) _disposables.Add(selection.Track(well));
 
-        var specs = _sp.GetServices<IToolWindow>().ToArray();
+        Layout = new LayoutPersistence(Factory, Tools, well, _ui, state, Tools.Tools.Select(t => t.Spec.Id).Except(DefaultLayoutTools));
+
         _disposables.Add(ShellCommands.Register(new ShellCommandContext(
             commands, well, Tools, Palette, window, _sp.GetRequiredService<IModalDialogs>(), nav, workspace, config, themes, _sp.GetService<IKeybindingService>(),
             _sp.GetRequiredService<FindResultsViewModel>(), _sp.GetRequiredService<NotificationCenter>(), chrome,
             ResetLayoutAsync, RefreshExplorerAsync, specs,
             () => new WelcomeView(commands, workspace, state), () => new KeyboardReferenceView(_sp.GetService<IKeybindingService>(), commands),
-            _sp.GetService<ILanguageService>())));
+            _sp.GetService<ILanguageService>(), _sp.GetService<ShellViewActivator>())));
 
-        Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window);
+        Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window, context: keys);
         _disposables.Add(Keyboard);
 
         Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs, id => Tools.IsVisible(id));

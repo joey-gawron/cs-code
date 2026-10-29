@@ -104,10 +104,14 @@ public sealed class LayoutPersistence
             if (_tools.Get(layout.Id) is not { } tool) continue; // a tool that no longer exists
             var target = layout.Dock switch { "left" when _factory.IncludeLeftTools => _factory.LeftTools, "bottom" => _factory.BottomTools, _ => _factory.RightTools };
             var wasVisible = _tools.IsVisible(layout.Id);
-            if (!wasVisible) _factory.RestoreDockable(tool);
+            if (!wasVisible) _tools.Restore(tool);
             if (tool.Owner is IDock from && !ReferenceEquals(from, target)) _factory.MoveDockable(from, target, tool, null);
             if (!layout.Visible) _tools.Hide(layout.Id);
         }
+        // A tool the snapshot does not know (its module was added after the layout was saved) gets its default visibility, not "visible".
+        var known = snapshot.Tools.Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var tool in _tools.Tools.Where(t => !known.Contains(t.Spec.Id) && _defaultHidden.Contains(t.Spec.Id)).ToArray())
+            _tools.Hide(tool.Spec.Id);
 
         if (!restoreDocuments) return;
         foreach (var d in snapshot.Documents.OrderBy(d => d.Group))

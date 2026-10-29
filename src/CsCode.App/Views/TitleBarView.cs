@@ -14,9 +14,10 @@ using CsCode.Ui.Theming;
 namespace CsCode.App.Views;
 
 /// <summary>
-/// The custom title bar: app icon, menu bar, a centred Quick Launch box (opens the palette) and window controls. Dragging the empty area
-/// moves the window (the platform's own move, so snapping works), double-click toggles maximise. On platforms that keep native
-/// decorations (<c>showCaptionButtons = false</c>) the caption buttons are omitted.
+/// The custom title bar: app icon, menu bar, a centred Quick Launch box (opens the palette; always reads "Search (Ctrl+Q)" like Visual Studio's),
+/// the workspace name beside it (Visual Studio's solution name badge) and window controls. Dragging the empty area moves the window (the platform's
+/// own move, so snapping works), double-click toggles maximise. On platforms that keep native decorations (<c>showCaptionButtons = false</c>)
+/// the caption buttons are omitted.
 /// </summary>
 public sealed class TitleBarView : Border
 {
@@ -24,6 +25,8 @@ public sealed class TitleBarView : Border
     private readonly Button _maxButton;
     private readonly Icon _maxIcon = new(IconKey.WindowMax, 10);
     private readonly TextBlock _title = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
+    private readonly TextBlock _workspace = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
+    private readonly Border _workspaceBadge;
 
     public TitleBarView(Window window, MenuModel menus, ICommandService commands, bool showCaptionButtons)
     {
@@ -42,8 +45,8 @@ public sealed class TitleBarView : Border
         Grid.SetColumn(menu, 1);
         grid.Children.Add(menu);
 
-        // Centre: Quick Launch box + window title (workspace name, dirty marker).
-        var center = new Grid { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        // Centre: the Quick Launch box, then the workspace name.
+        var center = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         var quick = new Border
         {
             Width = 360, Height = 22, CornerRadius = new CornerRadius(2), BorderThickness = new Thickness(1),
@@ -55,15 +58,21 @@ public sealed class TitleBarView : Border
             },
         };
         _title.Foreground = ThemeBrushes.Get("descriptionForeground");
-        _title.Text = "Quick Launch (Ctrl+Q)";
+        _title.Text = "Search";
         quick.PointerPressed += async (_, e) =>
         {
             if (!e.GetCurrentPoint(quick).Properties.IsLeftButtonPressed) return;
             e.Handled = true;
             try { await commands.ExecuteAsync(KnownCommands.CommandPalette).ConfigureAwait(true); } catch (CommandNotFoundException) { }
         };
-        ToolTip.SetTip(quick, "Quick Launch (Ctrl+Q)");
+        ToolTip.SetTip(quick, "Search commands, files and symbols");
         center.Children.Add(quick);
+        _workspaceBadge = new Border
+        {
+            Padding = new Thickness(8, 2), CornerRadius = new CornerRadius(2), VerticalAlignment = VerticalAlignment.Center, IsVisible = false,
+            Background = ThemeBrushes.Get("commandCenter.background"), Child = _workspace,
+        };
+        center.Children.Add(_workspaceBadge);
         Grid.SetColumn(center, 2);
         grid.Children.Add(center);
 
@@ -88,8 +97,30 @@ public sealed class TitleBarView : Border
         DoubleTapped += OnDoubleTapped;
     }
 
-    /// <summary>Sets the text of the Quick Launch box (the workspace name / active file title).</summary>
-    public void SetTitle(string text) => _title.Text = text;
+    /// <summary>Placeholder of the Quick Launch box.</summary>
+    public string QuickLaunchText => _title.Text ?? "";
+
+    /// <summary>The workspace name shown beside the Quick Launch box (null when no folder is open).</summary>
+    public string? WorkspaceName => _workspaceBadge.IsVisible ? _workspace.Text : null;
+
+    /// <summary>Sets the Quick Launch placeholder from the palette's shortcut (see <see cref="PlaceholderFor"/>).</summary>
+    public void SetShortcut(IKeybindingService? bindings) => _title.Text = PlaceholderFor(bindings);
+
+    public void SetWorkspaceName(string? name)
+    {
+        _workspace.Text = name;
+        _workspaceBadge.IsVisible = !string.IsNullOrEmpty(name);
+    }
+
+    /// <summary>"Search (Ctrl+Q)": Visual Studio's wording with the palette's real shortcut, preferring Ctrl+Q (the Visual Studio keymap's Quick Launch key).</summary>
+    public static string PlaceholderFor(IKeybindingService? bindings)
+    {
+        if (bindings is null) return "Search";
+        var quickLaunch = bindings.GetBindingsFor(KnownCommands.CommandPalette)
+            .Any(b => !b.IsNegative && b.Chord is [{ Key: "q", Ctrl: true, Shift: false, Alt: false, Meta: false }]);
+        var label = quickLaunch ? "Ctrl+Q" : bindings.GetLabel(KnownCommands.CommandPalette);
+        return label is null ? "Search" : $"Search ({label})";
+    }
 
     private Button CaptionButton(Icon icon, Action onClick, bool danger = false)
     {

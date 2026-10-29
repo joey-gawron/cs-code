@@ -35,6 +35,8 @@ public static class ShellMenus
     public const string KeyboardReference = "cscode.shell.showKeyboardReference";
     public const string ToggleNotifications = "cscode.shell.toggleNotifications";
     public const string ToggleToolWindow = "cscode.shell.toggleToolWindow";
+    /// <summary>The Keyboard Shortcuts editor (owned by the Settings panel; the item stays disabled without it).</summary>
+    public const string OpenKeyboardShortcuts = "workbench.action.openGlobalKeybindings";
 
     private static MenuNode M(string header, string cmd, string? when = null, string? icon = null) => new(header, cmd, when, IconKey: icon);
     private static MenuNode Sub(string header, params MenuNode[] children) => new(header, Children: children);
@@ -130,8 +132,10 @@ public static class ShellMenus
             M("Run _Build Task...", "workbench.action.tasks.build")),
 
         Sub("T_ools",
-            M("_Settings (JSON)", "workbench.action.openSettingsJson", icon: IconKey.Gear),
-            M("_Keyboard Shortcuts Reference", KeyboardReference, icon: IconKey.Key),
+            M("_Options...", KnownCommands.OpenSettings, icon: IconKey.Gear),
+            M("_Settings (JSON)", "workbench.action.openSettingsJson"),
+            M("_Keyboard Shortcuts...", OpenKeyboardShortcuts, icon: IconKey.Key),
+            M("Keyboard Shortcuts _Reference", KeyboardReference),
             M("_Color Theme...", KnownCommands.SelectTheme)),
 
         Sub("_Window",

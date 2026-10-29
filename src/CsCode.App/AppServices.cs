@@ -82,6 +82,12 @@ public static class AppServices
         services.AddSingleton<IToolWindow, ErrorListToolWindow>();
         services.AddSingleton<IToolWindow, FindResultsToolWindow>();
         services.AddSingleton(sp => new ToolWindowManager(sp.GetRequiredService<ShellDockFactory>(), sp.GetServices<IToolWindow>(), sp));
+        // Panels bring their views to the front through this (Find in Files, Settings, Keyboard Shortcuts); document-location windows open as tabs.
+        services.AddSingleton<ShellViewActivator>();
+        services.AddSingleton<IViewActivator>(sp => sp.GetRequiredService<ShellViewActivator>());
+        // ${selectedText} (Dap) and the Find in Files seed; ShellController attaches it to the document well.
+        services.AddSingleton<ActiveSelectionProvider>();
+        services.AddSingleton<Core.Debugging.IActiveSelectionProvider>(sp => sp.GetRequiredService<ActiveSelectionProvider>());
         services.AddSingleton<FindResultsViewModel>(sp => new FindResultsViewModel(sp.GetService<INavigationService>(), sp.GetService<IWorkspaceService>()?.FileSystem, sp.GetService<Core.Text.IDocumentManager>()));
 
         services.AddSingleton<ShellController>();

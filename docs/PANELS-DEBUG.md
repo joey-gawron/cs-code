@@ -28,7 +28,7 @@ All dock at the bottom. The shell creates a window's view lazily and disposes it
 **Commands.** The panels register one command: `debug.addToWatch` (argument: the expression). With no argument it starts the Watch window's
 empty row when that window is **on screen** (its view in the visual tree and visible: the shell creates the views of every auto-shown debug
 window but only one tab of a group is shown); otherwise it brings the window forward through the optional Core `IViewActivator` and starts the
-row there, else asks with an input box. The runtime contributes its **Ctrl+Alt+W** binding (`when: inDebugMode`) through
+row there, else asks with an input box. An expression that came with the command is added and the Watch window is brought forward, as Visual Studio does on Add Watch. Modules is manual: it is not in the shell's default layout. The runtime contributes its **Ctrl+Alt+W** binding (`when: inDebugMode`) through
 `IContributionRegistry` (built-in rank: the user's `keybindings.json` can remove it). The `workbench.action.debug.*` commands belong to the DAP module
 and the `workbench.debug.action.toggle*` ids are only *declared* here: **the shell must bind each `IToolWindow.ToggleCommandId` to
 `ToolWindowManager.Toggle(id)`** (nothing in the panels can toggle a dock). **Context key** published for auto-show:

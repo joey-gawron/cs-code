@@ -18,7 +18,16 @@ public class ShellDocument : Document, IDisposable
 
     public Control? LiveView => _view;
 
-    public Control EnsureView() => _view ??= CreateView();
+    public Control EnsureView()
+    {
+        if (_view is not null) return _view;
+        _view = CreateView();
+        OnViewCreated(); // after the assignment: listeners read LiveView (and the editor controller behind it)
+        return _view;
+    }
+
+    /// <summary>Runs once per created view, after <see cref="LiveView"/> holds it.</summary>
+    protected virtual void OnViewCreated() { }
 
     private Border? _host;
 
@@ -142,9 +151,11 @@ public sealed class EditorTab : ShellDocument
         }
         SavedViewState = null;
         PendingReveal = null;
-        _viewCreated.Fire(this);
         return view;
     }
+
+    // Not from CreateView: there LiveView is still null, so a listener asking for Controller (caret, selection) would get nothing.
+    protected override void OnViewCreated() => _viewCreated.Fire(this);
 
     public override void DisposeView()
     {

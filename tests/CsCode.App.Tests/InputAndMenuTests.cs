@@ -65,7 +65,7 @@ public class KeyboardPipelineTests
         {
             Bindings = new FakeKeybindingService(Keys);
             Status = new StatusBarService(Ui);
-            Pipeline = new KeyboardPipeline(Bindings, Commands, Ui, Status, Window, Time);
+            Pipeline = new KeyboardPipeline(Bindings, Commands, Ui, Status, Window, Time, context: Keys);
         }
 
         public void Cmd(string id) => Commands.Register(id, inv => { Executed.Add((id, inv.Args.ToArray())); return ValueTask.FromResult<object?>(null); });
@@ -118,6 +118,7 @@ public class KeyboardPipelineTests
     public void A_dead_chord_is_swallowed_with_an_explanation()
     {
         var r = new Rig();
+        r.Cmd("x.y");
         r.Bindings.Add("x.y", "ctrl+k ctrl+c");
         r.Press("ctrl+k");
         Assert.Equal(KeyDispatch.Handled, r.Press("z"));
@@ -130,6 +131,7 @@ public class KeyboardPipelineTests
     public void Escape_abandons_a_pending_chord_and_a_timeout_does_too()
     {
         var r = new Rig();
+        r.Cmd("x.y");
         r.Bindings.Add("x.y", "ctrl+k ctrl+c");
         r.Press("ctrl+k");
         Assert.Equal(KeyDispatch.Handled, r.Press("escape"));
@@ -170,13 +172,40 @@ public class KeyboardPipelineTests
     }
 
     [Fact]
-    public async Task An_unknown_command_is_reported_not_thrown()
+    public async Task A_key_bound_to_a_command_no_module_registered_reaches_the_focused_control()
+    {
+        // The presets bind ids of modules that may not be composed (e.g. F3 -> editor.action.nextMatchFindAction): the editor must still get F3.
+        var r = new Rig();
+        r.Bindings.Add("does.not.exist", "f3");
+        Assert.Equal(KeyDispatch.PassThrough, r.Press("f3"));
+        await Task.Delay(20);
+        Assert.Empty(r.Window.Messages); // no "command not available" toast for every press either
+        Assert.Equal(0, r.Pipeline.ExecutedCount);
+    }
+
+    [Fact]
+    public async Task An_unregistered_binding_falls_back_to_a_registered_binding_of_the_same_keys()
     {
         var r = new Rig();
-        r.Bindings.Add("does.not.exist", "f9");
-        r.Press("f9");
-        for (var i = 0; i < 40 && r.Window.Messages.Count == 0; i++) await Task.Delay(5);
-        Assert.Contains("does.not.exist", Assert.Single(r.Window.Messages).Message);
+        r.Cmd("real.cmd");
+        r.Bindings.Add("real.cmd", "f8", when: "editorTextFocus");
+        r.Bindings.Add("does.not.exist", "f8"); // higher precedence (added later), but nobody registered it
+        Assert.Equal(KeyDispatch.PassThrough, r.Press("f8")); // the fallback's `when` does not hold
+        r.Keys.Set("editorTextFocus", true);
+        Assert.Equal(KeyDispatch.Handled, r.Press("f8"));
+        await r.Settle();
+        Assert.Equal("real.cmd", Assert.Single(r.Executed).Id);
+    }
+
+    [Fact]
+    public void A_chord_prefix_that_only_leads_to_unregistered_commands_is_not_a_chord()
+    {
+        var r = new Rig();
+        r.Bindings.Add("does.not.exist", "ctrl+k ctrl+c");
+        Assert.Equal(KeyDispatch.PassThrough, r.Press("ctrl+k"));
+        Assert.False(r.Pipeline.IsChordPending);
+        Assert.Null(r.StatusText("keys.pending"));
+        Assert.Equal(KeyDispatch.PassThrough, r.Press("ctrl+c")); // copy still works
     }
 
     [Fact]
@@ -330,6 +359,19 @@ public class MenuModelTests
         public string? ToggleCommandId => toggle;
         public string? AutoShowWhen => null;
         public Avalonia.Controls.Control CreateView(IServiceProvider services) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public void A_refresh_still_queued_when_the_menus_are_disposed_does_not_run()
+    {
+        var rig = new Rig();
+        rig.Tools.Add(new FakeTool("explorer", "Explorer", "workbench.view.explorer"));
+        var refreshes = rig.Menu.RefreshCount;
+        rig.Keys.Set("anything", true); // schedules a coalesced refresh
+        rig.Menu.Dispose();             // the window closed (and the provider behind isToolVisible is gone) before it ran
+        rig.Visible.Clear();
+        rig.Ui.RunPending();
+        Assert.Equal(refreshes, rig.Menu.RefreshCount);
     }
 
     [Fact]

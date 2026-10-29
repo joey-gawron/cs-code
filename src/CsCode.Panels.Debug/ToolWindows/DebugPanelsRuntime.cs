@@ -138,6 +138,8 @@ public sealed class DebugPanelsRuntime : IDisposable
         }
         if (string.IsNullOrWhiteSpace(expression)) return null;
         services.Watches.Add(expression); // loads the saved list first
+        // Visual Studio brings the Watch window up on Add Watch, also when the expression came with the command (editor, Locals).
+        if (_provider.GetService<IViewActivator>() is { } shown) await ShowWatchWindowAsync(shown);
         return null;
     }
 

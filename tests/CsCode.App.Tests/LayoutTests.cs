@@ -252,6 +252,81 @@ public class LayoutPersistenceTests
         Assert.False(rig.Tools.IsVisible("callstack")); // AutoShowWhen windows come back only when their context key says so
         Assert.Null(rig.Layout.Load());
     }
+
+    [Fact]
+    public async Task A_tool_that_a_saved_layout_does_not_know_gets_its_default_visibility_not_visible()
+    {
+        // A layout saved before a module contributed "modules" (hidden by default) must not make that window appear on the next start.
+        var factory = new ShellDockFactory();
+        var modules = new FakeTool("modules", ToolWindowLocation.Bottom);
+        var output = new FakeTool("output", ToolWindowLocation.Bottom);
+        using var tools = new ToolWindowManager(factory, [output, modules], new Dictionary<string, object>().ToServiceProvider());
+        using var well = new DocumentWell(factory, new FakeEditorViewFactory(), new FakeModalDialogs());
+        var layout = new LayoutPersistence(factory, tools, well, new ManualUiDispatcher(), new InMemoryStateStorage(), ["modules"]);
+        var older = new LayoutSnapshot(1, [new ToolLayout("output", "bottom", true, 0)], 0.2, 0.2, 0.2, [], null);
+        await layout.ApplyAsync(older);
+        Assert.True(tools.IsVisible("output"));
+        Assert.False(tools.IsVisible("modules"));
+
+        // A layout that does mention it keeps the user's choice.
+        await layout.ApplyAsync(older with { Tools = [.. older.Tools, new ToolLayout("modules", "bottom", true, 1)] });
+        Assert.True(tools.IsVisible("modules"));
+    }
+
+    [AvaloniaFact]
+    public void Closing_a_tool_the_way_its_X_does_hides_it_drops_its_view_and_Show_docks_it_where_it_was()
+    {
+        using var rig = new Rig();
+        rig.Tools.Show("output");
+        var output = rig.Tools.Get("output")!;
+        rig.Factory.CloseDockable(output); // what the tool window's X and its tab's Close call
+        Assert.False(rig.Tools.IsVisible("output"));
+        Assert.Null(output.LiveView);
+        Assert.Equal(1, rig.Output.Disposed);
+        Assert.Contains(output, rig.Factory.Root!.HiddenDockables!); // hidden, not removed: Dock can restore it
+        Assert.False(rig.Layout.Capture().Tools.Single(t => t.Id == "output").Visible);
+
+        rig.Tools.Show("output");
+        Assert.True(rig.Tools.IsVisible("output"));
+        Assert.Contains(output, rig.Factory.BottomTools.VisibleDockables!);
+        Assert.Equal(2, rig.Output.Created);
+        Assert.Same(output.LiveView, ((Border)output.EnsureHost()).Child); // the presented host holds the new view
+    }
+
+    [AvaloniaFact]
+    public async Task A_tool_that_Dock_removed_from_the_layout_drops_its_view_and_Show_and_Reset_dock_it_again()
+    {
+        using var rig = new Rig();
+        rig.Factory.HideToolsOnClose = false; // Dock's default: closing removes the tool from the layout
+        rig.Tools.Show("output");
+        var output = rig.Tools.Get("output")!;
+        rig.Factory.CloseDockable(output);
+        Assert.False(rig.Tools.IsVisible("output"));
+        Assert.Null(output.LiveView);
+        Assert.Equal(1, rig.Output.Disposed);
+
+        rig.Tools.Show("output");
+        Assert.True(rig.Tools.IsVisible("output"));
+        Assert.Contains(output, rig.Factory.BottomTools.VisibleDockables!);
+        Assert.Equal(2, rig.Output.Created);
+
+        rig.Factory.CloseDockable(output);
+        await rig.Layout.ResetAsync();
+        Assert.True(rig.Tools.IsVisible("output"));
+        Assert.Contains(output, rig.Factory.BottomTools.VisibleDockables!);
+    }
+
+    [Fact]
+    public void Document_location_windows_never_enter_a_tool_well()
+    {
+        var factory = new ShellDockFactory();
+        var settings = new FakeTool("settings", ToolWindowLocation.Document);
+        using var tools = new ToolWindowManager(factory, [new FakeTool("explorer", ToolWindowLocation.Right), settings], new Dictionary<string, object>().ToServiceProvider());
+        Assert.Equal(["explorer"], factory.RightTools.VisibleDockables!.OfType<ToolTab>().Select(t => t.Spec.Id));
+        Assert.Null(tools.Get("settings"));
+        Assert.Same(settings, tools.GetDocumentView("settings"));
+        Assert.Equal(0, settings.Created); // opened on demand only
+    }
 }
 
 internal static class ServiceProviderExtensions
