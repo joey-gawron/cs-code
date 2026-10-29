@@ -118,6 +118,23 @@ public class RemoteCompositionTests
         Assert.Empty(o.UnknownSwitches);
     }
 
+    [Fact]
+    public void The_app_binary_answers_askpass_without_starting_the_gui()
+    {
+        var app = Path.Combine(AppContext.BaseDirectory, "cscode.dll");
+        Assert.SkipUnless(File.Exists(app), "cscode.dll is not next to the tests");
+        var psi = new System.Diagnostics.ProcessStartInfo(LocalServer.FindDotnetHost()) { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
+        foreach (var a in new[] { app, "--askpass", "Enter passphrase for key '/k':" }) psi.ArgumentList.Add(a);
+        psi.Environment.Remove(CsCode.Remote.Askpass.AskpassServer.SocketVariable);
+        psi.Environment.Remove(CsCode.Remote.Askpass.AskpassServer.TokenVariable);
+        psi.Environment.Remove("DISPLAY");
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        var stderr = p.StandardError.ReadToEnd();
+        Assert.True(p.WaitForExit(30_000));
+        Assert.Equal(1, p.ExitCode); // nobody to ask: ssh then treats it as a refusal
+        Assert.Contains("not started by CsCode", stderr);
+    }
+
     private static bool ProcessesWithMarker(string marker)
     {
         if (!OperatingSystem.IsLinux()) return false;
