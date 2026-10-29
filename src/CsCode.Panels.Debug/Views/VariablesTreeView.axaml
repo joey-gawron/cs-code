@@ -1,0 +1,92 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:CsCode.Panels.Debug.Variables"
+             xmlns:icons="using:CsCode.Ui.Icons"
+             xmlns:views="using:CsCode.Panels.Debug.Views"
+             x:Class="CsCode.Panels.Debug.Views.VariablesTreeView"
+             x:DataType="vm:VariablesTreeViewModel">
+  <UserControl.Styles>
+    <StyleInclude Source="avares://CsCode.Panels.Debug/Views/DebugPanelStyles.axaml" />
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto" Background="{DynamicResource vsc:panel.background}">
+    <!-- Column header with draggable separators (the widths are shared with every row through Columns). -->
+    <Border Grid.Row="0" Classes="header">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="{Binding Columns.First, Mode=TwoWay}" />
+          <ColumnDefinition Width="{Binding Columns.Second, Mode=TwoWay}" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <TextBlock Grid.Column="0" Text="Name" />
+        <GridSplitter Grid.Column="0" Classes="colsplit" HorizontalAlignment="Right" ResizeBehavior="CurrentAndNext" />
+        <TextBlock Grid.Column="1" Text="Value" />
+        <GridSplitter Grid.Column="1" Classes="colsplit" HorizontalAlignment="Right" ResizeBehavior="CurrentAndNext" />
+        <TextBlock Grid.Column="2" Text="Type" />
+      </Grid>
+    </Border>
+
+    <ListBox x:Name="Rows" Grid.Row="1" Classes="debug"
+             ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}" SelectionMode="Single"
+             AutomationProperties.Name="Variables">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="vm:VariableNodeViewModel">
+          <Grid ToolTip.Tip="{Binding Tooltip}" MinHeight="20">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="{Binding Tree.Columns.First}" />
+              <ColumnDefinition Width="{Binding Tree.Columns.Second}" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Name: indent, expander, name or the expression editor. -->
+            <Grid Grid.Column="0" Grid.ColumnSpan="{Binding NameSpan}" ColumnDefinitions="Auto,16,*" ClipToBounds="True" Margin="{Binding Indent}">
+              <Button Grid.Column="1" Classes="tool" Width="16" Height="16" Padding="0" Focusable="False"
+                      Command="{Binding ToggleCommand}" IsVisible="{Binding HasChildren}">
+                <icons:Icon Kind="{Binding ChevronKind}" Size="10" />
+              </Button>
+              <TextBlock Grid.Column="2" Classes="cell" Text="{Binding Name}" IsVisible="{Binding ShowNameText}"
+                         Classes.dim="{Binding IsMore}" FontStyle="{Binding NameStyle}" />
+              <TextBlock Grid.Column="2" Classes="cell dim" FontStyle="Italic" Text="Add item to watch" IsVisible="{Binding IsNewWatch}" />
+              <TextBox Grid.Column="2" Classes="inline" Text="{Binding EditText}" IsVisible="{Binding IsEditingExpression}"
+                       views:EditorFocus.FocusWhenVisible="True" LostFocus="OnEditorLostFocus">
+                <TextBox.KeyBindings>
+                  <KeyBinding Gesture="Enter" Command="{Binding CommitEditCommand}" />
+                  <KeyBinding Gesture="Escape" Command="{Binding CancelEditCommand}" />
+                </TextBox.KeyBindings>
+              </TextBox>
+            </Grid>
+
+            <!-- Value: text (red when it changed, dimmed while running) or the value editor with its inline error. -->
+            <Grid Grid.Column="1" ClipToBounds="True" IsVisible="{Binding ShowColumns}">
+              <TextBlock Classes="cell" Text="{Binding DisplayValue}" IsVisible="{Binding ShowValueText}"
+                         Classes.changed="{Binding IsChanged}" Classes.error="{Binding IsError}" Classes.stale="{Binding IsStale}" />
+              <StackPanel>
+                <TextBox Classes="inline" Text="{Binding EditText}" IsVisible="{Binding IsEditingValue}" views:EditorFocus.FocusWhenVisible="True" LostFocus="OnEditorLostFocus">
+                  <TextBox.KeyBindings>
+                    <KeyBinding Gesture="Enter" Command="{Binding CommitEditCommand}" />
+                    <KeyBinding Gesture="Escape" Command="{Binding CancelEditCommand}" />
+                  </TextBox.KeyBindings>
+                </TextBox>
+                <TextBlock Classes="cell error" Text="{Binding EditError}" IsVisible="{Binding HasEditError}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Grid>
+
+            <TextBlock Grid.Column="2" Classes="cell dim" Text="{Binding Type}" IsVisible="{Binding ShowColumns}" ClipToBounds="True" />
+
+            <!-- Where a dragged watch will land. -->
+            <Border Grid.ColumnSpan="3" Height="2" VerticalAlignment="Top" IsHitTestVisible="False" IsVisible="{Binding IsDropTarget}"
+                    Background="{DynamicResource vsc:focusBorder}" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+
+    <TextBlock Grid.Row="1" Classes="status" Text="{Binding StatusText}" IsVisible="{Binding ShowStatus}"
+               VerticalAlignment="Top" HorizontalAlignment="Left" IsHitTestVisible="False" />
+
+    <Border Grid.Row="2" IsVisible="{Binding HasError}" Background="{DynamicResource vsc:inputValidation.errorBackground}"
+            BorderBrush="{DynamicResource vsc:inputValidation.errorBorder}" BorderThickness="0,1,0,0" Padding="6,3">
+      <TextBlock Text="{Binding ErrorText}" TextWrapping="Wrap" Foreground="{DynamicResource vsc:inputValidation.errorForeground}" />
+    </Border>
+  </Grid>
+</UserControl>

@@ -6,6 +6,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Demo/ is a separate developer project (a real window over the real DAP module), not part of this library. -->
+    <Compile Remove="Demo/**" />
+    <EmbeddedResource Remove="Demo/**" />
+    <None Remove="Demo/**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
     <ProjectReference Include="../CsCode.Ui/CsCode.Ui.csproj" />
   </ItemGroup>

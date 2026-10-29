@@ -1,0 +1,41 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:CsCode.Panels.Debug.Modules"
+             xmlns:icons="using:CsCode.Ui.Icons"
+             x:Class="CsCode.Panels.Debug.Views.ModulesView"
+             x:DataType="vm:ModulesViewModel">
+  <UserControl.Styles>
+    <StyleInclude Source="avares://CsCode.Panels.Debug/Views/DebugPanelStyles.axaml" />
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,Auto,*" Background="{DynamicResource vsc:panel.background}">
+    <Border Grid.Row="0" Background="{DynamicResource vsc:sideBarSectionHeader.background}" BorderBrush="{DynamicResource vsc:panel.border}" BorderThickness="0,0,0,1" Padding="4,2">
+      <Button Classes="tool" Command="{Binding RefreshCommand}" ToolTip.Tip="Refresh" AutomationProperties.Name="Refresh Modules" HorizontalAlignment="Left">
+        <icons:Icon Kind="refresh" Size="14" />
+      </Button>
+    </Border>
+    <Border Grid.Row="1" Classes="header">
+      <Grid ColumnDefinitions="200,*,110,80,150">
+        <TextBlock Grid.Column="0" Text="Name" />
+        <TextBlock Grid.Column="1" Text="Path" />
+        <TextBlock Grid.Column="2" Text="Version" />
+        <TextBlock Grid.Column="3" Text="User Code" />
+        <TextBlock Grid.Column="4" Text="Symbols" />
+      </Grid>
+    </Border>
+    <ListBox x:Name="Rows" Grid.Row="2" Classes="debug" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}" SelectionMode="Single" AutomationProperties.Name="Modules">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="vm:ModuleRow">
+          <Grid ColumnDefinitions="200,*,110,80,150" MinHeight="20" ToolTip.Tip="{Binding Path}">
+            <TextBlock Grid.Column="0" Classes="cell" Text="{Binding Name}" />
+            <TextBlock Grid.Column="1" Classes="cell dim" Text="{Binding Path}" />
+            <TextBlock Grid.Column="2" Classes="cell" Text="{Binding Version}" />
+            <TextBlock Grid.Column="3" Classes="cell" Text="{Binding UserCode}" />
+            <TextBlock Grid.Column="4" Classes="cell dim" Text="{Binding SymbolStatus}" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+    <TextBlock Grid.Row="2" Classes="status" Text="{Binding StatusText}" IsVisible="{Binding ShowStatus}" VerticalAlignment="Top" HorizontalAlignment="Left" IsHitTestVisible="False" />
+  </Grid>
+</UserControl>

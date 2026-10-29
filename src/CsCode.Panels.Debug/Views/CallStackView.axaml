@@ -1,0 +1,49 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:CsCode.Panels.Debug.CallStack"
+             xmlns:icons="using:CsCode.Ui.Icons"
+             x:Class="CsCode.Panels.Debug.Views.CallStackView"
+             x:DataType="vm:CallStackViewModel">
+  <UserControl.Styles>
+    <StyleInclude Source="avares://CsCode.Panels.Debug/Views/DebugPanelStyles.axaml" />
+    <Style Selector="icons|Icon.top">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:editorWarning.foreground}" />
+    </Style>
+    <Style Selector="icons|Icon.caller">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:debugIcon.continueForeground}" />
+    </Style>
+    <Style Selector="TextBlock.external">
+      <Setter Property="Opacity" Value="0.55" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*" Background="{DynamicResource vsc:panel.background}">
+    <Border Grid.Row="0" Classes="header">
+      <Grid ColumnDefinitions="22,*,Auto">
+        <TextBlock Grid.Column="1" Text="Name" />
+        <TextBlock Grid.Column="2" Text="Location" />
+      </Grid>
+    </Border>
+
+    <ListBox x:Name="Rows" Grid.Row="1" Classes="debug" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+             SelectionMode="Single" AutomationProperties.Name="Call Stack">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="vm:CallStackRow">
+          <Grid ColumnDefinitions="22,*,Auto" MinHeight="20" ToolTip.Tip="{Binding Tooltip}">
+            <icons:Icon Grid.Column="0" Kind="{Binding ArrowKind}" Size="14" HorizontalAlignment="Center" VerticalAlignment="Center"
+                        IsVisible="{Binding ShowArrow}" Classes.top="{Binding IsTopFrame}" Classes.caller="{Binding !IsTopFrame}" />
+            <Grid Grid.Column="1" ColumnDefinitions="Auto,16,*" Margin="{Binding Indent}" ClipToBounds="True">
+              <icons:Icon Grid.Column="1" Kind="{Binding ChevronKind}" Size="10" IsVisible="{Binding IsThread}" />
+              <TextBlock Grid.Column="2" Classes="cell" Classes.external="{Binding IsExternal}" Text="{Binding Text}"
+                         FontWeight="{Binding TextWeight}" FontStyle="{Binding TextStyle}" />
+            </Grid>
+            <TextBlock Grid.Column="2" Classes="cell dim" Text="{Binding Location}" IsVisible="{Binding IsFrame}" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+
+    <TextBlock Grid.Row="1" Classes="status" Text="{Binding StatusText}" IsVisible="{Binding ShowStatus}"
+               VerticalAlignment="Top" HorizontalAlignment="Left" IsHitTestVisible="False" />
+  </Grid>
+</UserControl>

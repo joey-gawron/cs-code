@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Developer demo, NOT part of CsCode.slnx and never shipped: opens the debug panels in a real window and debugs a tiny C# program with
+    the REAL DAP module and netcoredbg, so the panels can be tried by hand:
+        tools/fetch-netcoredbg.sh
+        dotnet run, project src/CsCode.Panels.Debug/Demo
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Panels.Debug.csproj" />
+    <ProjectReference Include="../../CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../../CsCode.Ui/CsCode.Ui.csproj" />
+    <ProjectReference Include="../../CsCode.Dap/CsCode.Dap.csproj" />
+    <ProjectReference Include="../../../tests/CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Avalonia.Fonts.Inter" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+</Project>

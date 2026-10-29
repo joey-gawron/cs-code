@@ -1,0 +1,42 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:CsCode.Panels.Debug.Threads"
+             xmlns:icons="using:CsCode.Ui.Icons"
+             x:Class="CsCode.Panels.Debug.Views.ThreadsView"
+             x:DataType="vm:ThreadsViewModel">
+  <UserControl.Styles>
+    <StyleInclude Source="avares://CsCode.Panels.Debug/Views/DebugPanelStyles.axaml" />
+    <Style Selector="icons|Icon.current">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:editorWarning.foreground}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*" Background="{DynamicResource vsc:panel.background}">
+    <Border Grid.Row="0" Classes="header">
+      <Grid ColumnDefinitions="22,48,160,*,80">
+        <TextBlock Grid.Column="1" Text="ID" />
+        <TextBlock Grid.Column="2" Text="Name" />
+        <TextBlock Grid.Column="3" Text="Location" />
+        <TextBlock Grid.Column="4" Text="State" />
+      </Grid>
+    </Border>
+
+    <ListBox x:Name="Rows" Grid.Row="1" Classes="debug" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+             SelectionMode="Single" AutomationProperties.Name="Threads">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="vm:ThreadRow">
+          <Grid ColumnDefinitions="22,48,160,*,80" MinHeight="20">
+            <icons:Icon Grid.Column="0" Kind="debug-stackframe-active" Size="14" HorizontalAlignment="Center" IsVisible="{Binding IsCurrent}" Classes="current" />
+            <TextBlock Grid.Column="1" Classes="cell" Text="{Binding Id}" />
+            <TextBlock Grid.Column="2" Classes="cell" Text="{Binding Name}" />
+            <TextBlock Grid.Column="3" Classes="cell" Text="{Binding Location}" />
+            <TextBlock Grid.Column="4" Classes="cell dim" Text="{Binding State}" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+
+    <TextBlock Grid.Row="1" Classes="status" Text="{Binding StatusText}" IsVisible="{Binding ShowStatus}"
+               VerticalAlignment="Top" HorizontalAlignment="Left" IsHitTestVisible="False" />
+  </Grid>
+</UserControl>

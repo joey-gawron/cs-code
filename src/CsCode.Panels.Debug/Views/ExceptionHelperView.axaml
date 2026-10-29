@@ -1,0 +1,52 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:CsCode.Panels.Debug.Exceptions"
+             xmlns:icons="using:CsCode.Ui.Icons"
+             x:Class="CsCode.Panels.Debug.Views.ExceptionHelperView"
+             x:DataType="vm:ExceptionHelperViewModel">
+  <UserControl.Styles>
+    <StyleInclude Source="avares://CsCode.Panels.Debug/Views/DebugPanelStyles.axaml" />
+    <Style Selector="Button.link">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="8,3" />
+      <Setter Property="Foreground" Value="{DynamicResource vsc:textLink.foreground}" />
+    </Style>
+    <Style Selector="Button.link:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource vsc:toolbar.hoverBackground}" />
+      <Setter Property="Foreground" Value="{DynamicResource vsc:textLink.activeForeground}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="*,Auto" Background="{DynamicResource vsc:panel.background}">
+    <TextBlock Classes="status" Text="{Binding StatusText}" IsVisible="{Binding ShowStatus}" VerticalAlignment="Top" />
+
+    <ScrollViewer IsVisible="{Binding HasException}" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+      <StackPanel Margin="10,8" Spacing="6">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <icons:Icon Kind="error" Size="16" Foreground="{DynamicResource vsc:errorForeground}" />
+          <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="{DynamicResource ui:FontSizeLarge}" Foreground="{DynamicResource vsc:errorForeground}" />
+        </StackPanel>
+        <ItemsControl ItemsSource="{Binding Chain}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ExceptionHelperViewModel+ChainItem">
+              <StackPanel Margin="{Binding Indent}" Spacing="2">
+                <TextBlock Text="{Binding Heading}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding StackTrace}" IsVisible="{Binding HasStack}" Classes="dim"
+                           FontFamily="{DynamicResource ui:CodeFontFamily}" FontSize="{DynamicResource ui:FontSizeSmall}" TextWrapping="NoWrap" />
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="1" IsVisible="{Binding HasException}" Background="{DynamicResource vsc:sideBarSectionHeader.background}"
+            BorderBrush="{DynamicResource vsc:panel.border}" BorderThickness="0,1,0,0" Padding="4,2">
+      <StackPanel Orientation="Horizontal" Spacing="4">
+        <Button Classes="link" Command="{Binding CopyCommand}" Content="Copy Details" />
+        <Button Classes="link" Command="{Binding ContinueCommand}" Content="Continue" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>
