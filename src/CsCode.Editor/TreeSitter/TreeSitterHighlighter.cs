@@ -181,6 +181,7 @@ internal sealed class TreeSitterHighlighter : IDisposable
                 if (!Highlight(session, text, vFirst, vLast)) return;
                 _dirty.Take(vFirst, vLast);
                 _viewportDone = (vFirst, vLast, _syntax.Generation);
+                session.MarkViewportReady(snap.Version);
             }
             // dirty lines nearest the viewport first (below, then above)
             while (!_dirty.IsEmpty && Stopwatch.GetTimestamp() < deadline)

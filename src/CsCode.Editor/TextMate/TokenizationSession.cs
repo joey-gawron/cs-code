@@ -238,6 +238,7 @@ internal sealed class TokenizationSession : IDisposable
             {
                 if (!Store.Publish(snap.Version, batchStart, batch, checkpoints, chain)) return; // stale: drop it, a newer job follows the newer version
                 NotifyChanged(batchStart, line);
+                if (line >= vLast && batchStart <= vLast) MarkViewportReady(snap.Version);
                 batchStart = line + 1;
                 batch.Clear();
                 checkpoints.Clear();
@@ -277,6 +278,15 @@ internal sealed class TokenizationSession : IDisposable
     internal bool IsQuiet => Stopwatch.GetElapsedTime(Volatile.Read(ref _lastEditTimestamp)) >= ReadAheadQuietPeriod;
 
     internal void ScheduleSlice(WorkPriority priority) => Schedule(priority);
+
+    /// <summary>
+    /// When the visible lines were last brought up to date, and for which document version (both engines; benchmarks measure keystroke →
+    /// re-coloured viewport with it). Written on the worker, read anywhere.
+    /// </summary>
+    internal ViewportReadyMark? ViewportReady => Volatile.Read(ref _viewportReady);
+    private ViewportReadyMark? _viewportReady;
+
+    internal void MarkViewportReady(int version) => Volatile.Write(ref _viewportReady, new ViewportReadyMark(version, Stopwatch.GetTimestamp()));
 
     /// <summary>UI thread: the setting now asks for a different engine than the one this session runs (a restart switches it).</summary>
     internal bool TreeSitterWantedChanged() => _owner.TreeSitter.IsEnabledFor(_doc.LanguageId) != _treeSitterWanted;
@@ -433,3 +443,6 @@ internal sealed class TokenizationSession : IDisposable
         _owner.Remove(this);
     }
 }
+
+/// <summary>The viewport was up to date for document <paramref name="Version"/> at <paramref name="Timestamp"/> (<see cref="Stopwatch"/> ticks).</summary>
+internal sealed record ViewportReadyMark(int Version, long Timestamp);
