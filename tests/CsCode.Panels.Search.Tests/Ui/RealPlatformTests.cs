@@ -63,6 +63,27 @@ public class RealPlatformTests : IDisposable
     }
 
     [Fact]
+    public async Task The_default_source_searches_through_the_real_workspace_service()
+    {
+        // Both "use exclude settings" and "use ignore files" on: the engine streams IWorkspaceService.FindFilesAsync (the platform's walker).
+        _work.WriteFile(".gitignore", "*.log\n");
+        _work.WriteFile("src/a.cs", "var needle = 1;");
+        _work.WriteFile("src/b.log", "needle");
+        _work.WriteFile("docs/readme.md", "a needle in docs");
+        _work.WriteFile(".git/needle.txt", "needle");
+        var options = new PlatformOptions { IoThreads = 2 };
+        using var watcher = new CsCode.Platform.Watching.FileWatcher(_lane, null, options);
+        using var state = new CsCode.Platform.State.StateStorage(_paths, _lane, options);
+        using var ws = new CsCode.Platform.Workspace.WorkspaceService(_fs, watcher, state, _config, _lane, [_config, state], options);
+        await ws.OpenFolderAsync(_work.Uri, Ct);
+        using var engine = new SearchEngine(ws, null, _config);
+        using var session = engine.Start(new SearchQuery("needle"));
+        var r = await SearchHarness.Collect(session);
+        Assert.Equal(SearchOutcome.Completed, r.Outcome);
+        Assert.Equal(["a.cs", "readme.md"], r.FileNames);
+    }
+
+    [Fact]
     public async Task The_walker_keeps_its_filtering_on_the_coordinator_thread_with_the_real_io_lane()
     {
         // Directories without files make the walker go straight from one listing to the next, i.e. run its code in the continuation of

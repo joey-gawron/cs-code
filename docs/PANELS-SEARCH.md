@@ -94,7 +94,8 @@ Start(query) --enqueue--> coordinator thread ("cscode-search-coordinator", singl
     on the IO lane): `INavigationService` has no compare-and-swap edit.
   * **Limits and failures.** The plan uses the search's settings (`search.maxFileSizeBytes`, `search.regexTimeoutMs`, read when planning), so a file the search could show
     can be replaced. Anything that goes wrong in one file (a regex timeout, an unreadable file, a closed untitled buffer from "open editors only") skips that file with a
-    reason; it never fails the whole plan.
+    reason; it never fails the whole plan. A closed file whose stat says read-only is skipped too ("the file is read-only"): the shell would refuse to write it and
+    then await its own error toast (see Known gaps) before the next file could be applied.
 
 ## Find in Files (view-model `FindInFilesViewModel`)
 
@@ -157,7 +158,7 @@ Settings registered by this module: `search.maxResults`, `search.maxFileSizeByte
 
 ## Tests (`tests/CsCode.Panels.Search.Tests`, xUnit v3 + Avalonia.Headless)
 
-`dotnet test tests/CsCode.Panels.Search.Tests` (on Nix-provided dotnet run it after `source tools/nix-dev-env.sh`, the headless tests need Skia's libraries). 364 tests:
+`dotnet test tests/CsCode.Panels.Search.Tests` (on Nix-provided dotnet run it after `source tools/nix-dev-env.sh`, the headless tests need Skia's libraries). 368 tests:
 engine (matching, files/encodings, filters and `.gitignore`, open documents, limits/lifecycle, replace), view-models (find, replace flows, history, settings, host/commands,
 shortcuts), headless UI + screenshots, real-platform integration, hostile/responsiveness and leak tests.
 * Screenshots are written to `.scratch/screenshots/` (git-ignored): `search-*.png`, `settings-*.png`, `keybindings.png`.
@@ -191,9 +192,10 @@ Shortcuts table from the real keymap. On Nix-provided dotnet source `tools/nix-d
 * The replace preview in the tree sees only the (clipped) matched text, so for patterns that depend on context (anchors) it is an approximation, and for patterns that
   need the backtracking engine it does not substitute `$` groups (see Replace preview); the replacement that is actually written is always computed from the file.
 * A named pipe (FIFO) inside the workspace would block a worker on open (not guarded). Cancel still completes the search at once, but that worker thread stays blocked
-  until the pipe gets a writer. The real `WorkspaceService.FindFilesAsync` was not available in this base; the engine is tested against a fake of it plus the real
-  `LocalFileSystem` (walker) and must be re-checked when Platform lands it.
+  until the pipe gets a writer. The engine's default source is tested against the real `WorkspaceService.FindFilesAsync` (with the real `LocalFileSystem` and
+  `ConfigurationService`) as well as against a fake of it; the walker against the real `LocalFileSystem`.
 * Outside this module: the shell's `NavigationService.FailAsync` (src/CsCode.App/Services/NavigationService.cs) awaits its action-less 20 s error toast before
-  `ApplyWorkspaceEditAsync` returns `false`. Files are applied one by one, so every failing file (read-only, say) delays the rest of a Replace All by about 20 s.
-  The shell should show that toast without awaiting it.
+  `ApplyWorkspaceEditAsync` returns `false`. Files are applied one by one, so every file whose write fails delays the rest of a Replace All by about 20 s (or for
+  good, if newer toasts push that one off the stack). Read-only files, the common case, are skipped before they reach the shell; other write failures (a full disk,
+  a folder without write permission) still stall. The shell should show that toast without awaiting it.
 * Search-as-you-type and re-run on workspace change are not implemented (a folder change marks the results stale instead).
