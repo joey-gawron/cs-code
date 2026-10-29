@@ -211,7 +211,7 @@ public static class BuiltinLanguageServers
                 "Install it with: brew install bufbuild/buf/buf (or the alternative server: cargo install protols)",
                 "Install it with: npm install -g @bufbuild/buf (or the alternative server: cargo install protols)"),
             "buf (buf format) / protols (clang-format)", RootStrategy.Outermost,
-            [Alt("protols")], "buf before 1.50 called the server `buf beta lsp`; set cscode.languageServers.protobuf.args to [\"beta\", \"lsp\"] there."),
+            [Alt("protols")], "Older buf releases name the server `buf beta lsp`: set cscode.languageServers.protobuf.args to [\"beta\", \"lsp\"] for those."),
         S(Def("graphql", "GraphQL (graphql-lsp)", ["graphql"], "graphql-lsp", ["server", "-m", "stream"],
                 [".graphqlrc*", "graphql.config.*", "package.json"]),
             All3("Install it with: npm install -g graphql-language-service-cli"),
