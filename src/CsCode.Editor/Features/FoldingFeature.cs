@@ -358,6 +358,7 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
 
     public void Dispose()
     {
+        if (_disposed) return; // idempotent: a view may be torn down twice (an explicit dispose, then the control's)
         _disposed = true;
         _debounce?.Cancel();
         _debounce?.Dispose();

@@ -304,6 +304,7 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return; // idempotent: a view may be torn down twice (an explicit dispose, then the control's)
         _disposed = true;
         End();
         _v.TextView.BackgroundRenderers.Remove(_renderer);

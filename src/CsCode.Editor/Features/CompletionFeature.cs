@@ -29,7 +29,6 @@ namespace CsCode.Editor.Features;
 internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISettingsAware, IDisposable
 {
     private static readonly TimeSpan ProviderTimeout = TimeSpan.FromSeconds(5);
-    private const int MaxEntries = 100_000;
 
     private sealed class Session
     {
@@ -41,11 +40,13 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
         public string? TriggerCharacter { get; init; }
         public required int ProviderCount { get; init; }
         public int Answered { get; set; }
-        public CompletionEntry[] Entries { get; set; } = [];
+        /// <summary>The providers' answers as returned (never copied per item).</summary>
+        public CompletionSource[] Sources { get; set; } = [];
+        public int EntryCount => Sources.Sum(x => x.Items.Count);
         public bool Incomplete { get; set; }
         public List<FilteredCompletion> Filtered { get; set; } = [];
         public int Selected { get; set; }
-        public Dictionary<CompletionEntry, CompletionItem> Resolved { get; } = new();
+        public Dictionary<CompletionItem, CompletionItem> Resolved { get; } = new(ReferenceEqualityComparer.Instance);
         public string LastRequestedPrefix { get; set; } = "";
         public bool PopupShown { get; set; }
         public bool Closed { get; set; }
@@ -97,7 +98,7 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
 
     /// <summary>One-line state for diagnostics and test failure messages.</summary>
     internal string DebugState => _session is { } s
-        ? $"session#{s.Id} closed={s.Closed} entries={s.Entries.Length} answered={s.Answered}/{s.ProviderCount} filtered={s.Filtered.Count} shown={s.PopupShown} start={(s.Start.IsDeleted ? -1 : s.Start.Offset)} caret={_v.Editor.CaretOffset} popupOpen={_popup.IsOpen}"
+        ? $"session#{s.Id} closed={s.Closed} entries={s.EntryCount} answered={s.Answered}/{s.ProviderCount} filtered={s.Filtered.Count} shown={s.PopupShown} start={(s.Start.IsDeleted ? -1 : s.Start.Offset)} caret={_v.Editor.CaretOffset} popupOpen={_popup.IsOpen}"
         : $"no session; popupOpen={_popup.IsOpen}";
 
     internal IReadOnlyList<string> VisibleLabels => _session?.Filtered.Select(f => f.Entry.Item.Label).ToList() ?? [];
@@ -233,7 +234,7 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
             if (t.IsCanceled) return;
             _v.Post(() =>
             {
-                if (_session == session && !session.PopupShown && session.Entries.Length == 0 && !session.Closed) ShowLoading(session);
+                if (_session == session && !session.PopupShown && session.EntryCount == 0 && !session.Closed) ShowLoading(session);
             });
         }, TaskScheduler.Default);
     }
@@ -250,39 +251,34 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(s.Cts.Token);
                 timeout.CancelAfter(ProviderTimeout);
                 var list = await provider.ProvideCompletionAsync(doc, position, context, timeout.Token).ConfigureAwait(false);
-                _v.Post(() => OnProviderResult(s, provider, order, list));
+                // the provider's list is kept as it is (50k items = one reference); nothing is copied per item
+                var source = list is { Items.Count: > 0 } ? new CompletionSource(list.Items, provider, order) : null;
+                var incomplete = list?.IsIncomplete ?? false;
+                _v.Post(() => OnProviderResult(s, source, incomplete));
             }
             catch (OperationCanceledException)
             {
-                _v.Post(() => OnProviderResult(s, provider, order, null));
+                _v.Post(() => OnProviderResult(s, null, false));
             }
             catch (Exception ex)
             {
                 _v.Services.LoggerFactory.CreateLogger<CompletionFeature>().LogDebug(ex, "Completion provider failed");
-                _v.Post(() => OnProviderResult(s, provider, order, null));
+                _v.Post(() => OnProviderResult(s, null, false));
             }
         });
     }
 
-    private void OnProviderResult(Session s, ICompletionProvider provider, int order, CompletionList? list)
+    private void OnProviderResult(Session s, CompletionSource? source, bool incomplete)
     {
         if (_session != s || s.Closed) return;
         s.Answered++;
-        if (list is { Items.Count: > 0 })
+        if (source is not null)
         {
-            var merged = new CompletionEntry[Math.Min(MaxEntries, s.Entries.Length + list.Items.Count)];
-            Array.Copy(s.Entries, merged, s.Entries.Length);
-            var i = s.Entries.Length;
-            foreach (var item in list.Items)
-            {
-                if (i >= merged.Length) break;
-                merged[i++] = new CompletionEntry(item, provider, order);
-            }
-            s.Entries = merged;
-            s.Incomplete |= list.IsIncomplete;
+            s.Sources = [.. s.Sources, source];
+            s.Incomplete |= incomplete;
         }
         Refilter(s);
-        if (s.Answered == s.ProviderCount && s.Entries.Length == 0) Close(); // everyone answered with nothing
+        if (s.Answered == s.ProviderCount && s.EntryCount == 0) Close(); // everyone answered with nothing
     }
 
     // ---- filtering (worker) → popup (UI) ----
@@ -304,14 +300,14 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
             return;
         }
         if (s.Incomplete && prefix != s.LastRequestedPrefix && s.Answered == s.ProviderCount) RequestMore(s, prefix);
-        var entries = s.Entries;
+        var sources = s.Sources;
         var caretPosition = _v.Document.PositionAt(caret);
         var lineText = _v.Document.GetLineText(caretPosition.Line);
         var lineBefore = lineText[..Math.Min(caretPosition.Character, lineText.Length)];
         _v.Factory.Worker.Post(WorkPriority.Interactive, _filterKey, ct =>
         {
-            var filtered = CompletionFilter.Filter(entries, prefix, ct, lineBefore, caretPosition.Line);
-            _v.Post(() => ApplyFiltered(s, prefix, entries, filtered));
+            var filtered = CompletionFilter.Filter(sources, prefix, ct, lineBefore, caretPosition.Line);
+            _v.Post(() => ApplyFiltered(s, prefix, sources, filtered));
         });
     }
 
@@ -319,18 +315,18 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
     {
         s.LastRequestedPrefix = prefix;
         s.Answered = 0;
-        s.Entries = [];
+        s.Sources = [];
         var context = new CompletionContext(CompletionTriggerKind.TriggerForIncompleteCompletions);
         var providers = _v.Services.Features.GetProviders<ICompletionProvider>(_v.Document);
         for (var order = 0; order < providers.Count; order++) Launch(s, providers[order], order, context);
     }
 
-    private void ApplyFiltered(Session s, string prefix, CompletionEntry[] computedFrom, List<FilteredCompletion> filtered)
+    private void ApplyFiltered(Session s, string prefix, CompletionSource[] computedFrom, List<FilteredCompletion> filtered)
     {
         if (_session != s || s.Closed || _disposed) return;
         // Computed from an older set of entries (a slower provider answered since): its result — above all an EMPTY one — is stale.
         // The merge queued a newer filter, so just drop this one.
-        if (!ReferenceEquals(computedFrom, s.Entries)) return;
+        if (!ReferenceEquals(computedFrom, s.Sources)) return;
         // stale guard: the word may have changed while the worker was busy; a newer filter is queued for it
         var caret = _v.Editor.CaretOffset;
         if (caret < s.Start.Offset || _v.Document.GetText(new TextRange(_v.Document.PositionAt(s.Start.Offset), _v.Document.PositionAt(caret))) != prefix) return;
@@ -382,7 +378,7 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
 
     private async Task ResolveAsync(Session s, CompletionEntry entry)
     {
-        if (s.Resolved.ContainsKey(entry)) return;
+        if (s.Resolved.ContainsKey(entry.Item)) return;
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(s.Cts.Token);
@@ -391,7 +387,7 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
             _v.Post(() =>
             {
                 if (_session != s || s.Closed) return;
-                s.Resolved[entry] = resolved;
+                s.Resolved[entry.Item] = resolved;
                 if (s.Filtered.Count > s.Selected && ReferenceEquals(s.Filtered[s.Selected].Entry, entry)) UpdateDocs(s);
             });
         }
@@ -409,7 +405,7 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
             return;
         }
         var entry = s.Filtered[s.Selected].Entry;
-        var item = s.Resolved.GetValueOrDefault(entry) ?? entry.Item;
+        var item = s.Resolved.GetValueOrDefault(entry.Item) ?? entry.Item;
         if (item.Detail is null && item.Documentation is null)
         {
             _docPanel.IsVisible = false;
@@ -477,7 +473,7 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
         if (s is null || s.Closed) return;
         var caret = _v.Editor.CaretOffset;
         if (s.Start.IsDeleted || caret < s.Start.Offset) Close();
-        else if (s.PopupShown || s.Entries.Length > 0) Refilter(s);
+        else if (s.PopupShown || s.EntryCount > 0) Refilter(s);
     }
 
     // ---- accepting ----
@@ -487,7 +483,7 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
         var s = _session;
         if (s is null || s.Closed || s.Filtered.Count == 0) return;
         var entry = s.Filtered[Math.Clamp(s.Selected, 0, s.Filtered.Count - 1)].Entry;
-        var item = s.Resolved.GetValueOrDefault(entry) ?? entry.Item;
+        var item = s.Resolved.GetValueOrDefault(entry.Item) ?? entry.Item;
         var requestPosition = s.RequestPosition;
         var start = s.Start.Offset;
         Close();
@@ -666,6 +662,7 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
 
     public void Dispose()
     {
+        if (_disposed) return; // idempotent: a view may be torn down twice (an explicit dispose, then the control's)
         _disposed = true;
         Close();
         _list.SelectionChanged -= OnListSelectionChanged;

@@ -331,6 +331,7 @@ internal sealed class BracketFeature : IThemeAware, ISettingsAware, IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return; // idempotent: a view may be torn down twice (an explicit dispose, then the control's)
         _disposed = true;
         _mapDebounce?.Cancel();
         _mapDebounce?.Dispose();

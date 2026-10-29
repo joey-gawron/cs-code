@@ -130,6 +130,7 @@ internal sealed class FormattingFeature : IFormattingFeature, IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return; // idempotent: a view may be torn down twice (an explicit dispose, then the control's)
         _disposed = true;
         _d.Dispose();
     }

@@ -40,6 +40,15 @@ internal sealed class TokenizationSession : IDisposable
     private volatile bool _disposed;
     private volatile bool _hasGrammar;
     private int _views;
+    private long _lastEditTimestamp;
+    private int _readAheadPending;
+
+    /// <summary>
+    /// While the user is typing, only the viewport is kept tokenised after each edit (a few dozen lines); the read-ahead beyond it — thousands of
+    /// lines — waits for this much quiet. Re-tokenising the whole window after every keystroke is what made typing in a big file allocate hundreds
+    /// of megabytes: the lines below the viewport are simply tokenised again when the typing pauses (or when they are scrolled into view).
+    /// </summary>
+    public static readonly TimeSpan ReadAheadQuietPeriod = TimeSpan.FromMilliseconds(250);
 
     public TokenizationSession(TokenizationManager owner, EditorDocument doc)
     {
@@ -74,6 +83,7 @@ internal sealed class TokenizationSession : IDisposable
 
     private void OnDocumentChanged(TextDocumentChangedEventArgs e)
     {
+        Volatile.Write(ref _lastEditTimestamp, Stopwatch.GetTimestamp());
         foreach (var c in e.Changes)
             Store.ApplyChange(c.Range.Start.Line, c.Range.End.Line - c.Range.Start.Line, CountBreaks(c.Text));
         Store.SetVersion(e.Version);
@@ -156,13 +166,19 @@ internal sealed class TokenizationSession : IDisposable
         var vFirst = Math.Min(Volatile.Read(ref _viewFirst), lineCount - 1);
         var vLast = Math.Min(Math.Max(Volatile.Read(ref _viewLast), vFirst), lineCount - 1);
         var valid = Store.ValidLines;
-        var target = Math.Min(lineCount - 1, vLast + ReadAheadLines);
+        var quiet = Stopwatch.GetElapsedTime(Volatile.Read(ref _lastEditTimestamp)) >= ReadAheadQuietPeriod;
+        var target = Math.Min(lineCount - 1, vLast + (quiet ? ReadAheadLines : 0));
 
         var viewportDone = Store.HasTokens(vFirst, vLast) && vLast < valid;
         int begin;
         if (!viewportDone) begin = Math.Min(vFirst, valid);
         else if (valid <= target && vFirst - valid <= MaxCatchUpLines) begin = valid; // viewport is good: read ahead along the valid chain
-        else return;                                                                  // nothing useful left to do for now
+        else
+        {
+            // nothing useful left to do for now; if only the typing-pause is holding the read-ahead back, come back when it is over
+            if (!quiet && valid <= Math.Min(lineCount - 1, vLast + ReadAheadLines)) ScheduleReadAheadLater();
+            return;
+        }
         var (start, state) = Store.ResumePoint(begin);
         var chain = true;
         if (vFirst - start > MaxCatchUpLines && !viewportDone)
@@ -202,6 +218,18 @@ internal sealed class TokenizationSession : IDisposable
                 }
             }
         }
+        // the viewport is done; the read-ahead beyond it was held back for the typing pause: pick it up when that is over
+        if (!quiet && chain && target < Math.Min(lineCount - 1, vLast + ReadAheadLines)) ScheduleReadAheadLater();
+    }
+
+    private void ScheduleReadAheadLater()
+    {
+        if (Interlocked.Exchange(ref _readAheadPending, 1) == 1) return;
+        _ = Task.Delay(ReadAheadQuietPeriod + TimeSpan.FromMilliseconds(20)).ContinueWith(_ =>
+        {
+            Volatile.Write(ref _readAheadPending, 0);
+            Schedule(WorkPriority.Background);
+        }, TaskScheduler.Default);
     }
 
     private int[] TokenizeLine(IGrammar grammar, string text, ref IStateStack? state)

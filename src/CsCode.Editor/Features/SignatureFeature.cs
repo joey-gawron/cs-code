@@ -225,6 +225,7 @@ internal sealed class SignatureFeature : ISignatureFeature, IThemeAware, IDispos
 
     public void Dispose()
     {
+        if (_disposed) return; // idempotent: a view may be torn down twice (an explicit dispose, then the control's)
         _disposed = true;
         _cts?.Cancel();
         _cts?.Dispose();

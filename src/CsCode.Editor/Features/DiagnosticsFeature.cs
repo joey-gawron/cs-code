@@ -35,7 +35,8 @@ internal sealed class DiagnosticsFeature : IThemeAware, IDisposable
     private readonly UnnecessaryFade _fade;
     private readonly object _key = new();
     private TextSegmentCollection<DiagSegment> _segments;
-    private CancellationTokenSource? _debounce;
+    private readonly CancellationTokenSource _lifetime = new();
+    private int _scheduled;
     private int _generation;
     private bool _disposed;
 
@@ -66,13 +67,15 @@ internal sealed class DiagnosticsFeature : IThemeAware, IDisposable
 
     // ---- updating ----
 
+    /// <summary>
+    /// At most ONE run is ever pending: a source publishing 100k times a second costs an interlocked exchange per event, not a timer, a task and a
+    /// token per event. The pending run reads the latest published state when it fires, so nothing is lost by not scheduling again.
+    /// </summary>
     private void Schedule(bool immediate = false)
     {
         if (_disposed) return;
-        _debounce?.Cancel();
-        _debounce?.Dispose();
-        var cts = _debounce = new CancellationTokenSource();
-        _ = RunAsync(immediate ? TimeSpan.Zero : Coalesce, cts.Token);
+        if (Interlocked.Exchange(ref _scheduled, 1) == 1 && !immediate) return;
+        _ = RunAsync(immediate ? TimeSpan.Zero : Coalesce, _lifetime.Token);
     }
 
     private async Task RunAsync(TimeSpan delay, CancellationToken ct)
@@ -85,6 +88,7 @@ internal sealed class DiagnosticsFeature : IThemeAware, IDisposable
         {
             return;
         }
+        Volatile.Write(ref _scheduled, 0); // from here on a new change schedules the next run
         if (_disposed) return;
         var doc = _v.Document;
         var service = _v.Services.Diagnostics;
@@ -135,7 +139,7 @@ internal sealed class DiagnosticsFeature : IThemeAware, IDisposable
         if (to < prepared.Count)
         {
             // keep each UI step small (≤ 500 anchors): yield to input/render between slices
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => ApplySliceAt(generation, version, prepared, to, into), Avalonia.Threading.DispatcherPriority.Background);
+            UiJobs.Post(() => ApplySliceAt(generation, version, prepared, to, into), Avalonia.Threading.DispatcherPriority.Background);
             return;
         }
         _segments = into;
@@ -223,9 +227,9 @@ internal sealed class DiagnosticsFeature : IThemeAware, IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return; // idempotent: a view may be torn down twice (an explicit dispose, then the control's)
         _disposed = true;
-        _debounce?.Cancel();
-        _debounce?.Dispose();
+        _lifetime.Cancel(); // (not disposed: a producer thread may race a last Schedule(); a cancelled source without timers holds nothing)
         _v.TextView.BackgroundRenderers.Remove(_renderer);
         _v.TextView.LineTransformers.Remove(_fade);
         _d.Dispose();

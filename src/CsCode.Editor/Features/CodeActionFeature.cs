@@ -254,6 +254,7 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
 
     public void Dispose()
     {
+        if (_disposed) return; // idempotent: a view may be torn down twice (an explicit dispose, then the control's)
         _disposed = true;
         _debounce?.Cancel();
         _bulbCts?.Cancel();

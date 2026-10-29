@@ -28,6 +28,38 @@ public interface IUiThread
     void Invoke(Action action);
 }
 
+/// <summary>
+/// Posts to the UI dispatcher and, when a test (or a diagnostic session) has installed <see cref="Observer"/>, reports how long each of the
+/// editor's own UI jobs ran — the evidence behind "no UI step longer than a few milliseconds". Free when nobody observes.
+/// </summary>
+internal static class UiJobs
+{
+    /// <summary>Receives (the job's delegate, its duration) after each posted job. Null in production.</summary>
+    public static Action<Delegate, TimeSpan>? Observer { get; set; }
+
+    public static void Post(Action action, DispatcherPriority priority)
+    {
+        var observer = Observer;
+        if (observer is null)
+        {
+            Dispatcher.UIThread.Post(action, priority);
+            return;
+        }
+        Dispatcher.UIThread.Post(() =>
+        {
+            var start = System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                action();
+            }
+            finally
+            {
+                observer(action, System.Diagnostics.Stopwatch.GetElapsedTime(start));
+            }
+        }, priority);
+    }
+}
+
 /// <summary>Production implementation over <see cref="Dispatcher.UIThread"/>.</summary>
 public sealed class AvaloniaUiThread : IUiThread
 {
@@ -48,7 +80,7 @@ public sealed class AvaloniaUiThread : IUiThread
         }
     }
 
-    public void Post(Action action) => Dispatcher.UIThread.Post(action, DispatcherPriority.Normal);
+    public void Post(Action action) => UiJobs.Post(action, DispatcherPriority.Normal);
 
     public Task InvokeAsync(Action action)
     {
