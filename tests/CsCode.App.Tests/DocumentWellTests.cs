@@ -316,4 +316,42 @@ public class DocumentWellTests
         Assert.Equal(new Core.Text.TextPosition(2, 5), again.Caret);
         Assert.Equal(Core.Text.TextRange.FromLines(2, 1, 2, 5), again.Selections.Single());
     }
+
+    [AvaloniaFact]
+    public async Task An_evicted_editor_view_comes_back_with_its_scroll_position_and_folds_through_the_editor_view_state()
+    {
+        using var rig = new WellRig();
+        var a = await rig.Open("a.cs");
+        var ctl = (FakeController)rig.Editors.GetController(a.EnsureView())!;
+        ctl.SetSelection(Core.Text.TextRange.FromLines(40, 2, 41, 7), reveal: false);
+        ctl.Layout = (812.5, 24, [3, 17]);
+        a.DisposeView();
+        var again = (FakeController)rig.Editors.GetController(a.EnsureView())!;
+        var restored = Assert.Single(again.Restored);
+        Assert.Equal((812.5, 24.0), (restored.VerticalOffset, restored.HorizontalOffset));
+        Assert.Equal([3, 17], restored.FoldedStartLines);
+        Assert.Equal(Core.Text.TextRange.FromLines(40, 2, 41, 7), again.Selections.Single());
+    }
+
+    [AvaloniaFact]
+    public async Task Closing_a_tab_and_evicting_a_view_hand_the_view_back_to_the_editor_factory()
+    {
+        using var rig = new WellRig();
+        var closing = await rig.Open("closing.cs");
+        var closedView = closing.EnsureView();
+        await rig.Well.CloseAsync(closing);
+        Assert.True(rig.Editors.WasDisposed(closedView)); // IEditorViewFactory.DisposeView, not just IDisposable (a view need not be disposable)
+
+        var created = new List<(EditorTab Tab, Avalonia.Controls.Control View)>();
+        for (var i = 0; i < DocumentWell.DefaultLiveViews + 4; i++)
+        {
+            var t = await rig.Open($"f{i}.cs");
+            created.Add((t, t.EnsureView()));
+        }
+        rig.Well.EnforceViewBudget();
+        var evicted = created.Where(c => c.Tab.LiveView is null).ToArray();
+        Assert.NotEmpty(evicted);
+        Assert.All(evicted, c => Assert.True(rig.Editors.WasDisposed(c.View)));
+        Assert.All(created.Where(c => c.Tab.LiveView is not null), c => Assert.False(rig.Editors.WasDisposed(c.View)));
+    }
 }

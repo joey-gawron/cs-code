@@ -180,7 +180,19 @@ Esc or a 5 s timeout abandons a chord. Context keys (`ContextKeyTracker`): `edit
 **Documents.** `DocumentWell` adds to the Dock model (the single source of truth for tabs, order and groups): open / preview (italic, replaced by the next preview, promoted by editing or reopening) /
 pin / close / close others / saved / all / to the right / reopen closed (last 20), Save/Don't Save/Cancel prompts (also when the user clicks Dock's close button: Dock's close is cancelled and routed through the prompt),
 split right/down, move between groups, MRU order and the **Ctrl+Tab switcher** overlay. Only the active tab of each group plus the last `cscode.shell.liveEditorViews` (default 8) tabs keep a live editor view;
-others are disposed and recreated from saved caret/selection. Dock presents a thin `Border` host per tab; the host is emptied on close (see Known issues).
+others follow the editor's contract (docs/EDITOR.md): `GetViewState()` (caret, selection, scroll offsets, folds) -> `IEditorViewFactory.DisposeView(view)`, and on the next
+presentation `CreateView` + `RestoreViewState`. Closed tabs' views go back through `DisposeView` too. Dock presents a thin `Border` host per tab (see *View lifecycle and Dock* below).
+
+**View lifecycle and Dock.** Two things kept destroyed views reachable, and the shell handles both:
+* Dock.Avalonia 12.1 caches the control it presented for every dockable (control recycling on the `DockControl`, keyed by the dockable), and a host
+  emptied while out of the window still lists the removed view in its composition visual (that list is synchronised only when the host is rendered).
+  So a tab whose host Dock no longer shows drops the host (a fresh one is built on the next presentation) and removes its own entry from Dock's
+  recycling cache; a closed tab always removes its entry. This was the "closed tabs stay reachable" retention noted earlier: with it fixed, closed tab
+  objects, their documents and views are all released (the live 300-tab test asserts every sample, not just the steady state).
+* A focused editor stays reachable from Avalonia's focus machinery and from AvaloniaEdit's static "last focused element" (`RoutedCommand`) until another
+  element takes focus; detaching it is not enough. Before Dock removes a tab whose view holds keyboard focus, the well clears focus (the window is
+  not focusable), and once the document that takes its place is presented its editor gets the keyboard, as in Visual Studio. When the last document
+  closes nothing takes focus, so AvaloniaEdit's static slot keeps that one view until focus next moves anywhere (bounded: one view).
 
 **Layout.** `LayoutPersistence`: tool placement, visibility, splitter proportions, open files with pin/preview, active file; versioned JSON, workspace scope first then global default,
 tolerant of corrupt/future data; saved (debounced) on change and on exit; `View > Appearance > Reset Window Layout`. There is no left tool well unless a tool window asks for one.
@@ -241,8 +253,8 @@ Other checks: service calls from the UI thread return without waiting for the wo
 
 Bounded: Output 2 MB per channel, 20k lines in the view; notification history 100; closed-tab history 20; palette index capped at 300k files and an `IMemoryTrimmable`; icon geometry cache trimmable; Error List at most one immutable array.
 Lifetimes: every view and model owns a `DisposableStore`; tool-window views and their view-models are disposed when hidden; tab views by the LRU policy and on close. Tests: 100x show/hide of every tool window balances creation and disposal and retains nothing;
-500 palette opens retain no entries; 500 dialogs leave the heap flat; 200 theme switches leave the resource table and brush set unchanged; 300 tabs opened/closed in the live Dock host release documents and views in steady state
-(managed heap flat between tab 100 and 300); output flood and status updates use a bounded number of dispatcher posts.
+500 palette opens retain no entries; 500 dialogs leave the heap flat; 200 theme switches leave the resource table and brush set unchanged; 300 tabs opened/closed in the live Dock host release every sampled tab, document and view
+(managed heap flat between tab 100 and 300); a focused real editor's view is released when its tab closes, and an evicted view is released while its tab stays open; output flood and status updates use a bounded number of dispatcher posts.
 
 ## Running it
 
@@ -269,16 +281,16 @@ dirty marker is Dock's `*` rather than a dot that turns into a close glyph on ho
 auto-hide/peek animations, taskbar jump list, high-contrast theme, `--diff`, toolbar overflow (all SHOULD); the Windows/macOS title-bar path (`ExtendClientAreaToDecorationsHint`) is written but untested here (Linux only).
 `reloadWindow` only refreshes menus. `Find in Files` has no panel of its own (Find Results hosts results delivered by `cscode.references.show`). Explorer filter searches loaded nodes only.
 
-Known issues: (1) **Combined hostile storm p99 is ~19 ms, not < 16 ms** (each source alone meets it; max is within 50 ms). (2) **Dock.Avalonia 12.1.0.13 keeps closed (presented) dockables reachable** (verified with a bare `DockControl` and a plain template, independent of this shell);
-the shell therefore releases everything a tab pinned (editor document, view, controller, subscriptions) and presents a thin host that it empties. Even so, in the live-host test some tabs closed early in a long run were observed to remain reachable (which ones varied between runs; I did not find the owner);
-the test asserts the steady state (everything from tab 120 on is released, heap flat). Worth a memory-profiler pass with the real editor during integration.
-(3) The editor contract has no "release view" call, so views are expected to implement `IDisposable` for deterministic cleanup; the shell calls it.
+Known issues: (1) **Combined hostile storm p99 is ~19 ms, not < 16 ms** (each source alone meets it; max is within 50 ms). (2) Dock.Avalonia 12.1.0.13 keeps every presented dockable in its control-recycling
+cache; the shell removes a tab's entry itself (see *View lifecycle and Dock*), which depends on the cache being reachable through `ControlRecyclingDataTemplate.ControlRecycling` on an ancestor of the host.
+(3) AvaloniaEdit's static `RoutedCommand` keeps the last element that took focus: after the last document closes, that one view stays reachable until focus moves anywhere (bounded).
 
 ## Integration notes
 
 * **Needs registered** (resolved with `GetRequiredService`): `ICommandService`, `IContextKeyService`, `IConfigurationService`, `IKeybindingService`, `IWorkspaceService`, `IStateStorage`, `IColorThemeService`, `IEditorViewFactory`,
   and from Core `IDocumentManager`, `IDiagnosticService`, `IContributionRegistry`, `ILanguageFeatureRegistry`. **Optional**: `IDebugService` (toolbar combo, debug context keys), `ILanguageService`, `IMemoryMonitor`, `ILanguageServerManager`.
-* Editor views must be a `Control`; the shell wraps them in a host, sets the focus-area marker on the host, and disposes the view when the tab closes or loses its live-view slot.
+* Editor views must be a `Control`; the shell wraps them in a host, sets the focus-area marker on the host, and hands the view back through `IEditorViewFactory.DisposeView` when the tab
+  closes or loses its live-view slot (after `GetViewState`, restored with `RestoreViewState` on re-creation).
 * `IToolWindow`s registered by other modules (`AddSingleton<IToolWindow, ...>`) are placed by `DefaultLocation`; `AutoShowWhen` windows start hidden and follow their context key; a Left-located tool creates the left well.
 * The brief's `IExtensionService.ActivateByEventAsync("onStartupFinished")` is **not** used: the extension system was removed (commit "Drop the extension system").
 * Remaining mentions of the removed system outside this module (not edited, per ownership): `KnownCommands.InstallExtension/ShowExtensions`, `IAppPaths.ExtensionsDir`, `ConfigurationProperty.ExtensionId`, `ColorTheme.ExtensionId`, `LanguageInfo.ExtensionId`,

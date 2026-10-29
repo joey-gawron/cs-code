@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Threading;
 using CsCode.App.Notifications;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
@@ -249,6 +250,7 @@ public sealed class DocumentWell : IDisposable
             while (_closed.Count > MaxClosedHistory) _closed.RemoveLast();
         }
         tab.WasActiveOnClose = ReferenceEquals(_active, tab);
+        tab.ReleaseFocus(); // while the view is still in the window: a focused editor that Dock detached stays reachable
         _suppressActive = true; // Dock activates its own neighbour while closing; that must not reorder the MRU list
         try
         {
@@ -363,6 +365,7 @@ public sealed class DocumentWell : IDisposable
             e.Cancel = true;
             _ = CloseAfterPromptAsync(tab);
         }
+        else if (e.Dockable is ShellDocument closingNow && !e.Cancel) closingNow.ReleaseFocus(); // before Dock detaches the view (see RemoveTab)
     }
 
     private async Task CloseAfterPromptAsync(EditorTab tab)
@@ -409,10 +412,31 @@ public sealed class DocumentWell : IDisposable
         {
             var live = Tabs;
             var next = _mru.FirstOrDefault(live.Contains);
-            if (next is not null) { _active = null; Activate(next, preserveFocus: true); _reassertMru = true; }
+            if (next is not null)
+            {
+                _active = null;
+                Activate(next, preserveFocus: true);
+                _reassertMru = true;
+                if (tab.HadKeyboardFocus) FocusWhenShown(next);
+            }
             else { _active = null; _activeChanged.Fire(null); }
         }
         _tabsChanged.Fire(null);
+    }
+
+    /// <summary>
+    /// Visual Studio: closing the focused document puts the keyboard into the document that takes its place. Dock presents it after this turn, so
+    /// wait (bounded) until its editor is in the window. Nothing happens if the user focused something else meanwhile.
+    /// </summary>
+    private void FocusWhenShown(ShellDocument next, int attempt = 0)
+    {
+        if (next is not EditorTab editor || editor.IsDisposed || !ReferenceEquals(_active, editor)) return;
+        if (editor.LiveView is { } view && TopLevel.GetTopLevel(view) is { } top && editor.Controller is { } controller)
+        {
+            if (top.FocusManager?.GetFocusedElement() is null) controller.Focus();
+            return;
+        }
+        if (attempt < 20) DispatcherTimer.RunOnce(() => FocusWhenShown(next, attempt + 1), TimeSpan.FromMilliseconds(25));
     }
 
     private async Task CloseDocumentAsync(IEditorDocument doc)

@@ -127,11 +127,18 @@ public sealed class FakeEditorViewFactory(IDocumentManager? documents = null) : 
         return ValueTask.CompletedTask;
     }
 
-    public List<Control> DisposedViews { get; } = new();
+    // Weak as well: remembering destroyed views strongly would itself retain them (leak tests run through this fake).
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Control, object> _disposedViews = new();
+
+    public int DisposedViewCount { get; private set; }
+
+    /// <summary>Whether the shell handed <paramref name="view"/> back through <see cref="DisposeView"/>.</summary>
+    public bool WasDisposed(Control view) => _disposedViews.TryGetValue(view, out _);
 
     public void DisposeView(Control view)
     {
-        DisposedViews.Add(view);
+        _disposedViews.AddOrUpdate(view, this);
+        DisposedViewCount++;
         _controllers.Remove(view);
     }
 
@@ -166,10 +173,20 @@ public sealed class FakeController(IEditorDocument document) : IEditorViewContro
     public void SetDebugStopLine(int? line) { }
     public IEventSource<TextPosition> CaretChanged => _caret;
     public IEventSource<IReadOnlyList<TextRange>> SelectionChanged => _sel;
-    public EditorViewState GetViewState() => _selection is { } s
-        ? EditorViewState.Initial with { Caret = Caret, SelectionStart = s.Start, SelectionEnd = s.End }
-        : EditorViewState.Initial with { Caret = Caret };
-    public void RestoreViewState(EditorViewState state) => SetSelection(new TextRange(state.SelectionStart, state.SelectionEnd), reveal: false);
+    /// <summary>What a real view would add to its state: scroll offsets and folded regions.</summary>
+    public (double Vertical, double Horizontal, IReadOnlyList<int> Folds) Layout { get; set; } = (0, 0, []);
+    /// <summary>Every state this controller was asked to restore.</summary>
+    public List<EditorViewState> Restored { get; } = new();
+    public EditorViewState GetViewState() => (_selection is { } s
+            ? EditorViewState.Initial with { Caret = Caret, SelectionStart = s.Start, SelectionEnd = s.End }
+            : EditorViewState.Initial with { Caret = Caret, SelectionStart = Caret, SelectionEnd = Caret })
+        with { VerticalOffset = Layout.Vertical, HorizontalOffset = Layout.Horizontal, FoldedStartLines = Layout.Folds };
+    public void RestoreViewState(EditorViewState state)
+    {
+        Restored.Add(state);
+        Layout = (state.VerticalOffset, state.HorizontalOffset, state.FoldedStartLines);
+        SetSelection(state.SelectionStart == state.SelectionEnd ? new TextRange(state.Caret, state.Caret) : new TextRange(state.SelectionStart, state.SelectionEnd), reveal: false);
+    }
     public ValueTask<IReadOnlyList<string>> GetBreadcrumbsAsync(CancellationToken ct = default) => ValueTask.FromResult<IReadOnlyList<string>>([]);
     public bool IsFocused => false;
 }
