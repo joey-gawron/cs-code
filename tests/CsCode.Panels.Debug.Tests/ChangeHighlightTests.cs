@@ -120,6 +120,41 @@ public class ChangeHighlightTests
         Assert.Equal(2, rig.Session.StackCalls);
     }
 
+    /// <summary>
+    /// The stop location keys the shared identity request only when it describes the frame asked about. A caller frame focused while the
+    /// location still describes the top frame (a renumbering <c>invalidated</c>, a focus that has not reached the service yet) must not reuse,
+    /// at a later stop at the same top location, the identity read for the caller frame of the earlier stop: frame ids are reused for depth
+    /// (netcoredbg), so the frame with that id may be in another function now.
+    /// </summary>
+    private static string? FunctionOf(string? identity) => identity?.Split('\n')[2]; // session, thread, frame name, source
+
+    [Fact]
+    public async Task A_caller_frame_is_not_given_the_identity_of_an_earlier_stops_caller_with_the_same_id()
+    {
+        var session = new FakeDebugSession();
+        var lookup = new Infrastructure.FrameIdentityLookup();
+        var top = new DebugStopLocation(session, 1, 10, new Uri("file:///work/src/util.ts"), 2, 2, "breakpoint");
+
+        session.Frames[1] = [new DebugStackFrame(10, "add", Util, 2, 2), new DebugStackFrame(11, "work", Main, 12, 4)];
+        session.Stop();
+        var first = await lookup.GetAsync(session, 1, 11, top);
+        Assert.Equal("work", FunctionOf(first));
+        session.Resume();
+
+        // The next stop is at the same top location, but add() was called from main() this time; its frame has the id work's had.
+        session.Frames[1] = [new DebugStackFrame(10, "add", Util, 2, 2), new DebugStackFrame(11, "main", Main, 54, 4)];
+        session.Stop();
+        var second = await lookup.GetAsync(session, 1, 11, top with { });
+        Assert.Equal("main", FunctionOf(second)); // was "work": the earlier stop's caller
+
+        // The top frame itself, which the location does describe, is still shared between the panels of one stop.
+        var calls = session.StackCalls;
+        var a = await lookup.GetAsync(session, 1, 10, top);
+        var b = await lookup.GetAsync(session, 1, 10, top);
+        Assert.Equal(a, b);
+        Assert.Equal(calls + 1, session.StackCalls);
+    }
+
     [AvaloniaFact]
     public async Task Without_the_frames_identity_its_variable_names_still_key_the_comparison()
     {

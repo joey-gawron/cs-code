@@ -28,12 +28,15 @@ public sealed class FrameIdentityLookup
 
     /// <summary>
     /// The identity of <paramref name="frameId"/> (null when the stack cannot be read or the frame is not among its first
-    /// <see cref="MaxFrames"/>). <paramref name="location"/> is the debugger's current stop location: it describes the focused frame, so it
-    /// keys the shared request. Never throws; completes off the UI thread.
+    /// <see cref="MaxFrames"/>). <paramref name="location"/> is the debugger's current stop location: when it describes this very frame (the
+    /// focused one, normally) it keys the shared request. Never throws; completes off the UI thread.
     /// </summary>
     public Task<string?> GetAsync(IDebugSession session, int threadId, int frameId, DebugStopLocation? location)
     {
-        if (location is null || !ReferenceEquals(location.Session, session) || location.ThreadId != threadId)
+        // Only a location of THIS frame tells where the frame is. Another frame's location (the top frame's while a caller is focused, the old
+        // id after a renumbering `invalidated`) says nothing about it: at a later stop at that same location, the frame with this id (ids are
+        // reused for depth) may be in another function.
+        if (location is null || !ReferenceEquals(location.Session, session) || location.ThreadId != threadId || location.FrameId != frameId)
             return FetchAsync(session, threadId, frameId, null); // nothing describes this frame: ask, and share nothing
         var key = new Key(session.Id, threadId, frameId, location.Uri?.AbsoluteUri, location.Line, location.Column);
         lock (_gate)
