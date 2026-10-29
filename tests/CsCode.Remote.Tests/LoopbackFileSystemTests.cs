@@ -226,6 +226,40 @@ public class LoopbackFileSystemTests
         Assert.True(failures.Count == 0, "synchronous cost on the caller must stay under 0.1 ms: " + string.Join("; ", failures));
     }
 
+    [Fact]
+    public async Task Connecting_and_disconnecting_return_to_the_caller_at_once()
+    {
+        await using var host = new RemoteTestHost();
+        await host.ConnectAsync(); // warm up (JIT) and leave connected
+        await host.Manager.DisconnectAsync(Ct);
+        var context = new ThrowingSyncContext();
+        Task? connect = null, disconnect = null;
+        TimeSpan connectCost = default, disconnectCost = default;
+        var caller = new Thread(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            var sw = Stopwatch.StartNew();
+            connect = host.Manager.ConnectAsync(RemoteTestHost.Host, Ct).AsTask(); // starts a process and a handshake: none of it on this thread
+            connectCost = sw.Elapsed;
+        });
+        caller.Start();
+        Assert.True(caller.Join(TimeSpan.FromSeconds(10)));
+        await connect!;
+        caller = new Thread(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            var sw = Stopwatch.StartNew();
+            disconnect = host.Manager.DisconnectAsync(Ct).AsTask();
+            disconnectCost = sw.Elapsed;
+        });
+        caller.Start();
+        Assert.True(caller.Join(TimeSpan.FromSeconds(10)));
+        await disconnect!;
+        Assert.Equal(0, context.Posts);
+        Assert.True(connectCost < TimeSpan.FromMilliseconds(1), $"connect held the caller {connectCost.TotalMilliseconds:0.000} ms");
+        Assert.True(disconnectCost < TimeSpan.FromMilliseconds(1), $"disconnect held the caller {disconnectCost.TotalMilliseconds:0.000} ms");
+    }
+
     private sealed class ThrowingSyncContext : SynchronizationContext
     {
         public int Posts;

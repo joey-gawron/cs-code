@@ -112,7 +112,7 @@ public sealed class RemoteClient : IAsyncDisposable
     /// <summary>Connects (no-op when connected). Completes when connected; throws on failure (status <c>Failed</c>).</summary>
     public async Task ConnectAsync(CancellationToken ct = default)
     {
-        await Task.Yield(); // the caller (maybe the UI thread) pays only this
+        await new PoolHop(); // the caller (maybe the UI thread) pays only this: settings, bundle lookup and process start happen off it
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -179,7 +179,7 @@ public sealed class RemoteClient : IAsyncDisposable
 
     private async Task OnLostAsync(int generation, Exception? reason)
     {
-        await Task.Yield();
+        await new PoolHop(); // never on the reader thread that noticed the drop
         var lifetime = _lifetime;
         if (Volatile.Read(ref _generation) != generation || lifetime is null || lifetime.IsCancellationRequested) return; // a deliberate disconnect, or old news
         await _gate.WaitAsync().ConfigureAwait(false);
@@ -230,7 +230,7 @@ public sealed class RemoteClient : IAsyncDisposable
     /// <summary>Closes the connection (stopping the server and its transport process). Idempotent; ends in <c>Disconnected</c>.</summary>
     public async Task DisconnectAsync()
     {
-        await Task.Yield();
+        await new PoolHop();
         var lifetime = Interlocked.Exchange(ref _lifetime, null);
         lifetime?.Cancel(); // stops a reconnect loop (which holds the gate while it waits)
         await _gate.WaitAsync().ConfigureAwait(false);

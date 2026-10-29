@@ -63,6 +63,7 @@ public class LanguageBridgeTests
         var documents = host.Services.GetRequiredService<IDocumentManager>();
         var diagnostics = host.Services.GetRequiredService<IDiagnosticService>();
         var registry = host.Services.GetRequiredService<ILanguageFeatureRegistry>();
+        var localManager = host.Services.GetRequiredService<ILanguageServerManager>(); // the in-process client, observing documents from now on
         var util = new InMemoryTextDocument(host.Remote("src/util.ts"), "typescript", UtilTs);
         var main = new InMemoryTextDocument(host.Remote("src/main.ts"), "typescript", MainTs);
         using var u = documents.Register(util); // what the editor does when it opens a tab
@@ -95,6 +96,7 @@ public class LanguageBridgeTests
         var definition = await UntilAsync(async () => await registry.GetProviders<IDefinitionProvider>(main)[0].ProvideDefinitionAsync(main, new TextPosition(3, 18), DefinitionKind.Definition, Ct),
             "definition of greet", l => l.Count > 0);
         Assert.Equal(util.Uri, definition[0].TargetUri); // the server's file: URI came back as the client's ssh: URI
+        Assert.Empty(localManager.Servers); // ssh: documents never start a language server on this machine
 
         // fixing the error clears the mirrored diagnostic
         var oops = main.GetText().IndexOf("\"oops\"", StringComparison.Ordinal);

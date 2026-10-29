@@ -86,6 +86,7 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
         var authority = RemoteAuthority.Parse(host);
+        await new PoolHop(); // composing a host reads settings and may find bundles on disk: not on the caller's (UI) thread
         Host target;
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -103,6 +104,7 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
 
     public async ValueTask DisconnectAsync(CancellationToken ct = default)
     {
+        await new PoolHop();
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {

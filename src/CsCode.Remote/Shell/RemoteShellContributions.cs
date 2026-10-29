@@ -81,6 +81,7 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
     /// <summary>Lists ssh_config hosts (+ "Add New SSH Host…"), connects with a progress notification, then offers to open a remote folder.</summary>
     public async Task ConnectToHostAsync(string? host = null)
     {
+        await new PoolHop(); // commands run on the UI thread; listing hosts reads the ssh configuration file
         host ??= await PickHostAsync().ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(host)) return;
         if (!await ConnectWithProgressAsync(host).ConfigureAwait(false)) return;
@@ -90,6 +91,7 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
     /// <summary>Opens a remote folder: <paramref name="target"/> is an <c>ssh://</c> URI (command line), or the user is asked (connecting first if needed).</summary>
     public async Task OpenRemoteFolderAsync(string? target)
     {
+        await new PoolHop();
         var manager = Manager;
         string? path = null;
         if (target is { Length: > 0 } && target.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
