@@ -152,7 +152,11 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             JsonElement raw;
             try
             {
-                raw = await rpc.InvokeWithParameterObjectAsync<JsonElement>(P.LspMethods.Initialize, initParams, initCts.Token).ConfigureAwait(false);
+                // StreamJsonRpc sends $/cancelRequest on cancellation but only completes the local task once the server answers:
+                // WaitAsync is what actually bounds the wait for a server that never does.
+                var call = rpc.InvokeWithParameterObjectAsync<JsonElement>(P.LspMethods.Initialize, initParams, initCts.Token);
+                ObserveAbandoned(call);
+                raw = await call.WaitAsync(initCts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested && !_lifetime.IsCancellationRequested)
             {
@@ -167,7 +171,9 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             ParseSyncOptions(ServerCapabilities);
 
             NotifyRaw(P.LspMethods.Initialized, new P.InitializedParams());
-            SetState(LanguageServerState.Running);
+            // Atomic Starting -> Running: if the connection was lost meanwhile (teardown already moved the state on) this session is dead.
+            if (Interlocked.CompareExchange(ref _state, (int)LanguageServerState.Running, (int)LanguageServerState.Starting) != (int)LanguageServerState.Starting)
+                throw new IOException("the server connection was lost during start-up");
 
             if (_ctx.Services.Memory is { } mem) _store.Add(mem.Register(TokenCache));
             _features.RegisterStatic(ServerCapabilities);
@@ -275,8 +281,10 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             {
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(timeout);
-                lock (_sendLock) { /* order shutdown after everything already enqueued */ }
-                await _rpc!.InvokeWithParameterObjectAsync<JsonElement?>(P.LspMethods.Shutdown, null, cts.Token).ConfigureAwait(false);
+                Task<JsonElement?> shutdown;
+                lock (_sendLock) shutdown = _rpc!.InvokeWithParameterObjectAsync<JsonElement?>(P.LspMethods.Shutdown, null, cts.Token); // ordered after everything already sent
+                ObserveAbandoned(shutdown);
+                await shutdown.WaitAsync(cts.Token).ConfigureAwait(false);
                 NotifyRaw(P.LspMethods.Exit, null);
                 await _connection!.Closed.WaitAsync(timeout, ct).ConfigureAwait(false);
             }
@@ -399,9 +407,10 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             }
 
             Interlocked.Increment(ref _inFlight);
+            ObserveAbandoned(call);
             try
             {
-                var result = await call.ConfigureAwait(false);
+                var result = await call.WaitAsync(linked.Token).ConfigureAwait(false);
                 _breaker.RecordSuccess();
                 TraceIn(method, result);
                 return result.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ? null : result;
@@ -439,6 +448,13 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             }
         }
     }
+
+    /// <summary>
+    /// A call we stop waiting for (timeout / cancellation) may still fault later (server error, connection loss at teardown);
+    /// observing it keeps those from surfacing as unobserved task exceptions.
+    /// </summary>
+    private static void ObserveAbandoned(Task call) =>
+        _ = call.ContinueWith(static t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
     private void NoteTimeout(string method, TimeSpan limit)
     {

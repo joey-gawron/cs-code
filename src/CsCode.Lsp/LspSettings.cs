@@ -60,28 +60,39 @@ internal sealed record LspSettings
         var d = new LspSettings();
         return d with
         {
-            MaxDocumentBytes = Math.Max(1024, cfg.Get(LspSettingKeys.MaxDocumentBytes, d.MaxDocumentBytes)),
+            MaxDocumentBytes = Math.Max(1024, Raw(cfg, LspSettingKeys.MaxDocumentBytes, d.MaxDocumentBytes)),
             Trace = ParseTrace(cfg.Get<string>(LspSettingKeys.Trace)),
-            WorkerThreads = Math.Clamp(cfg.Get(LspSettingKeys.WorkerThreads, d.WorkerThreads), 1, 8),
+            WorkerThreads = Math.Clamp(Raw(cfg, LspSettingKeys.WorkerThreads, d.WorkerThreads), 1, 8),
             Priority = ParsePriority(cfg.Get<string>(LspSettingKeys.ProcessPriority)),
-            MaxCompletionItems = Math.Max(10, cfg.Get(LspSettingKeys.MaxCompletionItems, d.MaxCompletionItems)),
-            MaxReferences = Math.Max(10, cfg.Get(LspSettingKeys.MaxReferences, d.MaxReferences)),
-            MaxWorkspaceSymbols = Math.Max(10, cfg.Get(LspSettingKeys.MaxWorkspaceSymbols, d.MaxWorkspaceSymbols)),
-            MaxSemanticTokens = Math.Max(100, cfg.Get(LspSettingKeys.MaxSemanticTokens, d.MaxSemanticTokens)),
-            InteractiveTimeout = TimeSpan.FromMilliseconds(Math.Max(10, cfg.Get(LspSettingKeys.InteractiveTimeoutMs, (int)d.InteractiveTimeout.TotalMilliseconds))),
-            BackgroundTimeout = TimeSpan.FromMilliseconds(Math.Max(10, cfg.Get(LspSettingKeys.BackgroundTimeoutMs, (int)d.BackgroundTimeout.TotalMilliseconds))),
-            InitializeTimeout = TimeSpan.FromMilliseconds(Math.Max(100, cfg.Get(LspSettingKeys.InitializeTimeoutMs, (int)d.InitializeTimeout.TotalMilliseconds))),
-            ShutdownTimeout = TimeSpan.FromMilliseconds(Math.Max(10, cfg.Get(LspSettingKeys.ShutdownTimeoutMs, (int)d.ShutdownTimeout.TotalMilliseconds))),
+            MaxCompletionItems = Math.Max(10, Raw(cfg, LspSettingKeys.MaxCompletionItems, d.MaxCompletionItems)),
+            MaxReferences = Math.Max(10, Raw(cfg, LspSettingKeys.MaxReferences, d.MaxReferences)),
+            MaxWorkspaceSymbols = Math.Max(10, Raw(cfg, LspSettingKeys.MaxWorkspaceSymbols, d.MaxWorkspaceSymbols)),
+            MaxSemanticTokens = Math.Max(100, Raw(cfg, LspSettingKeys.MaxSemanticTokens, d.MaxSemanticTokens)),
+            InteractiveTimeout = TimeSpan.FromMilliseconds(Math.Max(10, Raw(cfg, LspSettingKeys.InteractiveTimeoutMs, (int)d.InteractiveTimeout.TotalMilliseconds))),
+            BackgroundTimeout = TimeSpan.FromMilliseconds(Math.Max(10, Raw(cfg, LspSettingKeys.BackgroundTimeoutMs, (int)d.BackgroundTimeout.TotalMilliseconds))),
+            InitializeTimeout = TimeSpan.FromMilliseconds(Math.Max(100, Raw(cfg, LspSettingKeys.InitializeTimeoutMs, (int)d.InitializeTimeout.TotalMilliseconds))),
+            ShutdownTimeout = TimeSpan.FromMilliseconds(Math.Max(10, Raw(cfg, LspSettingKeys.ShutdownTimeoutMs, (int)d.ShutdownTimeout.TotalMilliseconds))),
             AutoPositionEncoding = string.Equals(cfg.Get<string>(LspSettingKeys.PositionEncoding), "auto", StringComparison.OrdinalIgnoreCase),
-            QueueCapacity = Math.Clamp(cfg.Get(LspSettingKeys.QueueCapacity, d.QueueCapacity), 16, 100_000),
-            BreakerThreshold = Math.Max(1, cfg.Get(LspSettingKeys.BreakerThreshold, d.BreakerThreshold)),
-            BreakerProbeInterval = TimeSpan.FromMilliseconds(Math.Max(10, cfg.Get(LspSettingKeys.BreakerProbeMs, (int)d.BreakerProbeInterval.TotalMilliseconds))),
-            MaxRestarts = Math.Max(0, cfg.Get(LspSettingKeys.MaxRestarts, d.MaxRestarts)),
-            RestartWindow = TimeSpan.FromSeconds(Math.Max(1, cfg.Get(LspSettingKeys.RestartWindowSeconds, (int)d.RestartWindow.TotalSeconds))),
-            RestartBackoff = cfg.Get<int[]>(LspSettingKeys.RestartBackoffMs) is { Length: > 0 } ms
+            QueueCapacity = Math.Clamp(Raw(cfg, LspSettingKeys.QueueCapacity, d.QueueCapacity), 16, 100_000),
+            BreakerThreshold = Math.Max(1, Raw(cfg, LspSettingKeys.BreakerThreshold, d.BreakerThreshold)),
+            BreakerProbeInterval = TimeSpan.FromMilliseconds(Math.Max(10, Raw(cfg, LspSettingKeys.BreakerProbeMs, (int)d.BreakerProbeInterval.TotalMilliseconds))),
+            MaxRestarts = Math.Max(0, Raw(cfg, LspSettingKeys.MaxRestarts, d.MaxRestarts)),
+            RestartWindow = TimeSpan.FromSeconds(Math.Max(1, Raw(cfg, LspSettingKeys.RestartWindowSeconds, (int)d.RestartWindow.TotalSeconds))),
+            RestartBackoff = Raw<int[]?>(cfg, LspSettingKeys.RestartBackoffMs, null) is { Length: > 0 } ms
                 ? ms.Select(m => TimeSpan.FromMilliseconds(Math.Max(0, m))).ToArray()
                 : d.RestartBackoff,
         };
+    }
+
+    /// <summary>
+    /// Reads one setting through GetRaw so an UNSET value-typed key yields the documented default (not default(T)) whatever the
+    /// configuration service does for Get&lt;T&gt;(key, fallback).
+    /// </summary>
+    private static T Raw<T>(IConfigurationService cfg, string key, T fallback)
+    {
+        if (cfg.GetRaw(key) is not { } raw || raw.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return fallback;
+        try { return raw.Deserialize<T>(CoreJson.Options) ?? fallback; }
+        catch (JsonException) { return fallback; }
     }
 
     private static LspTraceMode ParseTrace(string? s) => s?.ToLowerInvariant() switch

@@ -95,7 +95,11 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
 
     public async Task StartAsync(bool user = true, CancellationToken ct = default)
     {
-        if (user) { lock (_gate) { _userStopped = false; _autoStartTried = true; } }
+        if (user)
+        {
+            lock (_gate) { _userStopped = false; _autoStartTried = true; }
+            CancelRestartTimer(); // an explicit start supersedes a pending automatic restart (but an automatic restart must not cancel itself)
+        }
         await _lifecycle.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -108,7 +112,6 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
 
     private async Task StartCoreAsync(CancellationToken ct)
     {
-        CancelRestartTimer();
         SetState(LanguageServerState.Starting, keepError: true);
         var client = new LanguageClient(ctx, Definition, Key, RootUri, Folders, this);
         lock (_gate)
@@ -119,7 +122,12 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
         try
         {
             await client.StartAsync(ct).ConfigureAwait(false);
-            lock (_gate) { _faultMessageShown = false; _notFoundShown = false; }
+            lock (_gate)
+            {
+                if (!ReferenceEquals(_client, client)) return; // the session already ended (OnExited handled it)
+                _faultMessageShown = false;
+                _notFoundShown = false;
+            }
             SetState(LanguageServerState.Running);
         }
         catch (ServerNotFoundException ex)
