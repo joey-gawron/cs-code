@@ -915,30 +915,32 @@ public sealed partial class VimEngine
         return true;
     }
 
-    /// <summary>Runs a vimrc-style script: errors are reported (message line) but never abort loading.</summary>
-    public void LoadScript(string text, string origin)
+    /// <summary>Runs a vimrc-style script. Errors are reported on the message line and returned ("line 3: E492: ..."), but never abort loading.</summary>
+    public IReadOnlyList<string> LoadScript(string text, string origin)
     {
+        var errors = new List<string>();
         var old = _loadingOrigin;
         _loadingOrigin = origin;
         try
         {
             var lines = text.Replace("\r\n", "\n").Split('\n');
-            var sb = new StringBuilder();
             for (var i = 0; i < lines.Length; i++)
             {
+                var lineNumber = i + 1;
                 var line = lines[i];
                 // a following line starting with a backslash continues this one
                 while (i + 1 < lines.Length && lines[i + 1].TrimStart().StartsWith('\\')) { line += lines[i + 1].TrimStart()[1..]; i++; }
                 var t = line.Trim();
                 if (t.Length == 0 || t[0] == '"') continue;
                 var before = _exErrors;
+                LastError = null;
                 ExecuteExLine(t);
                 _macroAborted = false;
-                if (_exErrors != before) { }
+                if (_exErrors != before) errors.Add($"line {lineNumber}: {LastError ?? "error"}");
             }
-            _ = sb;
         }
         finally { _loadingOrigin = old; }
+        return errors;
     }
 
     // ------------------------------------------------------------------------------------------------------------

@@ -269,6 +269,7 @@ public sealed partial class VimEngine
             return false;
         }
         RegisterFile.Store(target!, lines, type, width, append);
+        if (regForClipboard is { } named && named < 128 && char.IsAsciiLetter((char)named)) NotifyNamedRegisterChange();
         var start = oap.Start;
         var end = oap.End;
         if (!deleting)
