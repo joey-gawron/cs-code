@@ -44,6 +44,9 @@ public sealed class DebugPanelServices(
     /// <summary>The watch list shared by every Watch window (persisted per workspace, reloaded when another folder is opened).</summary>
     public Variables.WatchStore Watches { get; } = new(debug, state, workspace);
 
+    /// <summary>The Debug Console's REPL history and transcript, which outlive the console window's view-model.</summary>
+    public Console.ReplState Repl { get; } = new(state);
+
     /// <summary>Releases the app-lifetime subscriptions (the owner, <see cref="ToolWindows.DebugPanelsRuntime"/>, calls it at shutdown).</summary>
     public void Dispose() => Watches.Dispose();
 

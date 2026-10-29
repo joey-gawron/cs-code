@@ -65,6 +65,25 @@ public class ConsolePumpTests
     }
 
     [Fact]
+    public void Repl_lines_follow_the_output_they_followed_and_those_whose_output_left_the_history_come_first()
+    {
+        using var pump = new ConsoleOutputPump(new ConsoleBuffer(), _ => true, _ => { });
+        var s = new FakeDebugSession();
+        var trimmed = new DebugOutputEventArgs(s, "stdout", "old\n");
+        var first = new DebugOutputEventArgs(s, "stdout", "one\ntwo\n");
+        var second = new DebugOutputEventArgs(s, "stdout", "three\n");
+        var lines = pump.ToLines([first, second], 100,
+        [
+            new ReplLine(ConsoleLineKind.Input, "> a", new WeakReference<DebugOutputEventArgs>(trimmed)),
+            new ReplLine(ConsoleLineKind.Input, "> b", new WeakReference<DebugOutputEventArgs>(first)),
+            new ReplLine(ConsoleLineKind.Result, "2", new WeakReference<DebugOutputEventArgs>(first)),
+        ]);
+        Assert.Equal(["> a", "one", "two", "> b", "2", "three"], lines.Select(l => l.Text));
+        Assert.True(lines.Zip(lines.Skip(1)).All(p => p.First.Sequence < p.Second.Sequence));
+        GC.KeepAlive(trimmed);
+    }
+
+    [Fact]
     public async Task The_producer_side_only_enqueues_and_a_flood_stays_bounded()
     {
         var buffer = new ConsoleBuffer();
@@ -154,6 +173,53 @@ public class ConsoleViewModelTests
         rig.Debug.EmitOutput(Out(rig, "stdout", "c\n"));
         await PanelRig.Eventually(() => vm.Lines.Count == 1);
         Assert.Equal("c", vm.Lines[0].Text);
+    }
+
+    [AvaloniaFact]
+    public async Task The_repl_history_and_transcript_survive_the_console_being_hidden_and_shown_again()
+    {
+        // Regression (dbgp-life-1): the shell disposes the console's view-model whenever the window is hidden (also the automatic hide at the
+        // end of every session). Program output came back from IDebugOutputHistory, but the '> expr' lines, their results and the ↑ history did not.
+        using var rig = new PanelRig();
+        rig.Session.Evaluator = (e, _, _) => new DebugEvaluateResult(e == "1 + 1" ? "2" : "?", "int");
+        rig.StopAt(2);
+        var first = await Open(rig);
+        rig.Debug.EmitOutput(Out(rig, "stdout", "before\n"));
+        await PanelRig.Eventually(() => first.Lines.Any(l => l.Text == "before"), what: "output");
+        first.Input = "1 + 1";
+        await first.SubmitAsync();
+        await PanelRig.Eventually(() => first.Lines.Any(l => l.Text == "2"), what: "result");
+        first.Input = "nope";
+        await first.SubmitAsync();
+        await PanelRig.Eventually(() => first.Lines.Any(l => l.Text == "?"), what: "second result");
+        rig.Debug.EmitOutput(Out(rig, "stdout", "after\n"));
+        await PanelRig.Eventually(() => first.Lines.Any(l => l.Text == "after"), what: "more output");
+        string[] shown = [.. first.Lines.Select(l => l.Text)];
+        Assert.Equal(["before", "> 1 + 1", "2", "> nope", "?", "after"], shown);
+        first.Dispose();
+
+        using var second = await Open(rig);
+        await PanelRig.Eventually(() => second.Lines.Count >= shown.Length, what: "re-seeded");
+        await Task.Delay(50);
+        Assert.Equal(shown, second.Lines.Select(l => l.Text));
+        Assert.Equal([ConsoleLineKind.Output, ConsoleLineKind.Input, ConsoleLineKind.Result], second.Lines.Take(3).Select(l => l.Kind));
+        Assert.True(second.HistoryPrevious());
+        Assert.Equal("nope", second.Input);
+        Assert.True(second.HistoryPrevious());
+        Assert.Equal("1 + 1", second.Input);
+
+        // Clear empties the transcript too, and the history is persisted (application scope) for the next run.
+        second.ClearCommand.Execute(null);
+        await PanelRig.Eventually(() => second.Lines.Count == 0);
+        second.Dispose();
+        using var third = await Open(rig);
+        await Task.Delay(100);
+        Assert.Empty(third.Lines);
+        Assert.Equal(["1 + 1", "nope"], rig.State.Get<List<string>>(ReplState.HistoryKey));
+        using var restarted = new PanelRig();
+        restarted.State.Set(ReplState.HistoryKey, new List<string> { "a", "b" });
+        using var fresh = new DebugConsoleViewModel(new DebugPanelServices(restarted.Debug, restarted.Ui, state: restarted.State));
+        Assert.Equal(["a", "b"], fresh.HistoryEntries);
     }
 
     [AvaloniaFact]
