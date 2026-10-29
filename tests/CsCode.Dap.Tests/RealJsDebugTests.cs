@@ -477,6 +477,122 @@ public class RealJsDebugTests
         }
     }
 
+    [Fact]
+    public async Task An_adapter_crash_ends_both_sessions_and_reaps_the_orphaned_debuggee()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
+        var parent = await rig.StartAsync();
+        await rig.WaitForStopAsync(1);
+        var server = parent.AdapterProcessId!.Value;
+        var marker = parent.AdapterProcessMarker!;
+        var debuggees = ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", marker).Where(p => p != server).ToList();
+        Note($"before the crash: server {server}, other processes carrying its marker: {string.Join(", ", debuggees.Select(p => $"{p} {ProcessTable.CommandLine(p)}"))}");
+        Assert.NotEmpty(debuggees);
+        using (var p = Process.GetProcessById(server)) p.Kill(); // the adapter alone dies (SIGKILL): its debuggee is orphaned
+        await rig.WaitForEndAsync(20_000);
+        await rig.AssertNothingLeftRunningAsync();
+        Note("after the crash: terminations " + string.Join(" | ", rig.Terminated.Select(t => $"{t.Session.Name}: {t.Reason}")));
+    }
+
+    [Fact]
+    public async Task Shutting_the_debug_service_down_while_stopped_ends_every_process()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
+        await rig.StartAsync();
+        await rig.WaitForStopAsync(1);
+        var sw = Stopwatch.StartNew();
+        await rig.Service.DisposeAsync(); // app shutdown
+        Note($"debug service disposed while stopped in {sw.ElapsedMilliseconds} ms");
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
+    // ------------------------------------------------------------------ the templates
+
+    [Fact]
+    public async Task The_typescript_template_builds_with_tsc_through_its_preLaunchTask_and_stops_in_the_ts_source()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        using var fresh = JsDebugSample.Write("jsdebug-template-"); // sources only: the preLaunchTask must compile them
+        var folder = fresh.Dir.Uri;
+        var launchJson = await rig.H.Configurations.CreateLaunchJsonAsync("pwa-node", folder, Ct);
+        Note("generated launch.json: " + File.ReadAllText(launchJson.LocalPath).Replace("\n", " ", StringComparison.Ordinal));
+        Note("generated tasks.json: " + File.ReadAllText(fresh.Dir.Combine(".cscode", "tasks.json")).Replace("\n", " ", StringComparison.Ordinal));
+        var config = (await rig.H.Configurations.GetLaunchConfigurationsAsync(folder, Ct)).Single(c => c.Name == "TypeScript: Launch (tsc build)");
+        Assert.False(File.Exists(fresh.MainJs));
+        rig.H.Breakpoints.Add(new Uri(fresh.MainTs), InMain("loop"));
+
+        await rig.StartAsync(config);
+        Assert.True(File.Exists(fresh.MainJs + ".map"), "the preLaunchTask ran tsc");
+        var loc = await rig.WaitForStopAsync(1);
+        Assert.Equal(fresh.MainTs, loc.Uri?.LocalPath);
+        Assert.Equal(InMain("loop"), loc.Line);
+        Note("Tasks channel: " + rig.H.Output.Text(CsCode.Dap.Tasks.TaskService.ChannelName).Replace("\n", " | ", StringComparison.Ordinal));
+        await rig.Service.StopAllAsync(Ct);
+        await rig.WaitForEndAsync();
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
+    // ------------------------------------------------------------------ leaks
+
+    [Fact]
+    public async Task Ten_real_sessions_leave_no_processes_threads_or_retained_sessions()
+    {
+        await using var rig = await RealJsDebugRig.CreateAsync();
+        rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
+        // warm up (lane thread, JIT, thread pool, the TCP stack) so the baseline is meaningful
+        await rig.StartAsync(rig.Config("warm"));
+        await rig.WaitForStopAsync(1);
+        await rig.Service.StopAllAsync(Ct);
+        await rig.WaitForEndAsync();
+        await rig.AssertNothingLeftRunningAsync();
+        lock (rig.Started) rig.Started.Clear();
+        lock (rig.Stops) rig.Stops.Clear();
+        lock (rig.Terminated) rig.Terminated.Clear();
+        for (var i = 0; i < 5; i++) { GC.Collect(2, GCCollectionMode.Forced, true, true); GC.WaitForPendingFinalizers(); await Task.Delay(50, Ct); }
+        var baselineThreads = Process.GetCurrentProcess().Threads.Count;
+
+        var weak = await RunSessionsAsync(rig, 10);
+        Assert.Equal(20, weak.Count); // a parent and a child per run
+        await rig.AssertNothingLeftRunningAsync();
+        Assert.Equal(0, rig.H.Breakpoints.StatusCount);
+
+        for (var i = 0; i < 10 && weak.Any(w => w.TryGetTarget(out _)); i++)
+        {
+            GC.Collect(2, GCCollectionMode.Forced, true, true);
+            GC.WaitForPendingFinalizers();
+            await Task.Delay(100, Ct);
+        }
+        Assert.DoesNotContain(weak, w => w.TryGetTarget(out _));
+        await Task.Delay(1_000, Ct); // idle pool threads retire
+        var threads = Process.GetCurrentProcess().Threads.Count;
+        Note($"10-session soak: {weak.Count} sessions collected, {rig.ServerPids.Count} js-debug servers all gone, threads {baselineThreads} -> {threads}");
+        Assert.InRange(threads, 0, baselineThreads + 6);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static async Task<List<WeakReference<IDebugSession>>> RunSessionsAsync(RealJsDebugRig rig, int count)
+    {
+        var weak = new List<WeakReference<IDebugSession>>();
+        for (var i = 0; i < count; i++)
+        {
+            await rig.StartAsync(rig.Config("soak" + i));
+            await rig.WaitForStopAsync(i + 1);
+            await rig.Service.StopAllAsync(Ct);
+            await rig.WaitForEndAsync();
+        }
+        lock (rig.Started)
+        {
+            weak.AddRange(rig.Started.Select(s => new WeakReference<IDebugSession>(s)));
+            rig.Started.Clear();
+        }
+        lock (rig.Stops) rig.Stops.Clear();
+        lock (rig.Terminated) rig.Terminated.Clear();
+        lock (rig.Output) rig.Output.Clear();
+        return weak;
+    }
+
     // ------------------------------------------------------------------ flood
 
     [Fact]

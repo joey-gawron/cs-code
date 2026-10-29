@@ -85,6 +85,16 @@ public class JsDebugWaveFixTests
     }
 
     [Fact]
+    public async Task A_generated_launch_json_keeps_skipFiles_patterns_readable()
+    {
+        var factory = new CsCode.Dap.Adapters.JsDebugAdapterFactory(new CsCode.Dap.Configuration.DapPlatform());
+        var text = CsCode.Dap.Configuration.LaunchJson.Render(await factory.ProvideInitialAsync(null, Ct));
+        Assert.Contains("\"<node_internals>/**\"", text);
+        Assert.DoesNotContain("\\u003C", text);
+        Assert.Equal("<node_internals>/**", CsCode.Dap.Configuration.LaunchJson.Parse(text, new Uri("file:///w/"), "/w/.cscode/launch.json").All.First().Properties["skipFiles"][0].GetString());
+    }
+
+    [Fact]
     public async Task After_a_flood_batch_the_console_history_still_holds_the_newest_5000_lines()
     {
         await using var h = new ServiceHarness();

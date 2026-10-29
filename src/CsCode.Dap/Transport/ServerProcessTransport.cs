@@ -76,7 +76,7 @@ public sealed class ServerProcessTransport : IDapTransport
     public int Port => _tcp.Port;
     /// <summary>The marker this server and everything it spawned carry in their environment (tests use it to find leftovers).</summary>
     public string Marker => _marker;
-    public string StandardErrorTail => _stderr.Text is { Length: > 0 } err ? err : _stdout.Text;
+    public string StandardErrorTail => _stderr.Text;
 
     /// <summary>Starts the server, waits (bounded) for its listening line, and connects. On any failure the process tree is killed before throwing.</summary>
     public static async ValueTask<ServerProcessTransport> StartAsync(DebugAdapterServerProcess descriptor, ILogger logger, CancellationToken ct)
