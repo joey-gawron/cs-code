@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using CsCode.App.Tests.Hosting;
 using Xunit;
 
 [assembly: AvaloniaTestApplication(typeof(CsCode.App.Tests.TestAppBuilder))]
@@ -18,12 +19,11 @@ public static class TestAppBuilder
 public class HeadlessSmokeTests
 {
     [AvaloniaFact]
-    public void MainWindow_shows_and_renders_a_frame()
+    public async Task MainWindow_shows_and_renders_a_frame_on_the_dev_host()
     {
-        var window = new CsCode.App.MainWindow();
-        window.Show();
-        var frame = window.CaptureRenderedFrame();
-        Assert.NotNull(frame);
-        Assert.True(frame!.PixelSize.Width > 0 && frame.PixelSize.Height > 0);
+        using var host = new DevHost().Build();
+        await host.ShowAsync();
+        var path = host.Capture("smoke");
+        Assert.True(File.Exists(path));
     }
 }

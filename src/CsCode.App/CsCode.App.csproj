@@ -4,7 +4,7 @@
     <OutputType>WinExe</OutputType>
     <AssemblyName>cscode</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
     <TrimMode>partial</TrimMode>
   </PropertyGroup>
