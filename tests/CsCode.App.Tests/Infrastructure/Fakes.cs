@@ -127,6 +127,14 @@ public sealed class FakeEditorViewFactory(IDocumentManager? documents = null) : 
         return ValueTask.CompletedTask;
     }
 
+    public List<Control> DisposedViews { get; } = new();
+
+    public void DisposeView(Control view)
+    {
+        DisposedViews.Add(view);
+        _controllers.Remove(view);
+    }
+
     public FakeEditorDocument Doc(Uri uri) => _docs[uri];
     public int OpenCount => _docs.Count;
 }
@@ -158,6 +166,12 @@ public sealed class FakeController(IEditorDocument document) : IEditorViewContro
     public void SetDebugStopLine(int? line) { }
     public IEventSource<TextPosition> CaretChanged => _caret;
     public IEventSource<IReadOnlyList<TextRange>> SelectionChanged => _sel;
+    public EditorViewState GetViewState() => _selection is { } s
+        ? EditorViewState.Initial with { Caret = Caret, SelectionStart = s.Start, SelectionEnd = s.End }
+        : EditorViewState.Initial with { Caret = Caret };
+    public void RestoreViewState(EditorViewState state) => SetSelection(new TextRange(state.SelectionStart, state.SelectionEnd), reveal: false);
+    public ValueTask<IReadOnlyList<string>> GetBreadcrumbsAsync(CancellationToken ct = default) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+    public bool IsFocused => false;
 }
 
 public sealed class FakeModalDialogs : IModalDialogs
