@@ -8,6 +8,7 @@
     <Project Path="src/CsCode.Lsp/CsCode.Lsp.csproj" />
     <Project Path="src/CsCode.Platform/CsCode.Platform.csproj" />
     <Project Path="src/CsCode.Profiling/CsCode.Profiling.csproj" />
+    <Project Path="src/CsCode.Ui/CsCode.Ui.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/CsCode.App.Tests/CsCode.App.Tests.csproj" />
@@ -18,5 +19,6 @@
     <Project Path="tests/CsCode.Lsp.Tests/CsCode.Lsp.Tests.csproj" />
     <Project Path="tests/CsCode.MemoryTests/CsCode.MemoryTests.csproj" />
     <Project Path="tests/CsCode.Platform.Tests/CsCode.Platform.Tests.csproj" />
+    <Project Path="tests/CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
   </Folder>
 </Solution>

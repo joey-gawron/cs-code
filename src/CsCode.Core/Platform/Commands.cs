@@ -14,6 +14,19 @@ public interface ICommandService
     IReadOnlyList<CommandMetadata> All { get; }
     ValueTask<object?> ExecuteAsync(string id, params object?[] args);
     IEventSource<string> Registered { get; }
+
+    /// <summary>
+    /// Called when <see cref="ExecuteAsync"/> is asked for an id nobody has registered yet (e.g. a command contributed by a
+    /// not-yet-activated extension: the resolver fires the `onCommand:&lt;id&gt;` activation event). Return true if the id may
+    /// now be registered; execution then retries once. Resolvers are tried in registration order.
+    /// </summary>
+    IDisposable AddUnknownCommandResolver(Func<string, CancellationToken, ValueTask<bool>> resolver);
+}
+
+/// <summary>Thrown by <see cref="ICommandService.ExecuteAsync"/> for an unknown command id.</summary>
+public sealed class CommandNotFoundException(string id) : InvalidOperationException($"Command '{id}' not found")
+{
+    public string CommandId { get; } = id;
 }
 
 public sealed record CommandInvocation(string Id, IReadOnlyList<object?> Args, CancellationToken Cancellation = default)

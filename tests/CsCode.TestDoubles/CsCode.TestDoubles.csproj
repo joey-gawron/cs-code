@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Shared in-memory fakes + leak helpers for every module's tests. Not a test project itself. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- Test doubles may legitimately leave fire-and-forget tasks, etc. -->
+    <NoWarn>$(NoWarn);CA1822</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
+  </ItemGroup>
+
+</Project>

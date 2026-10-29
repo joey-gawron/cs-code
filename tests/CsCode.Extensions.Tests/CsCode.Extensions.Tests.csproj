@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
     <ProjectReference Include="../../src/CsCode.Platform/CsCode.Platform.csproj" />
     <ProjectReference Include="../../src/CsCode.Extensions/CsCode.Extensions.csproj" />
   </ItemGroup>

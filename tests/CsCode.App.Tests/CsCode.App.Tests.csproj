@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
     <ProjectReference Include="../../src/CsCode.Platform/CsCode.Platform.csproj" />
     <ProjectReference Include="../../src/CsCode.Lsp/CsCode.Lsp.csproj" />
     <ProjectReference Include="../../src/CsCode.Dap/CsCode.Dap.csproj" />
@@ -18,6 +19,7 @@
     <ProjectReference Include="../../src/CsCode.Editor/CsCode.Editor.csproj" />
     <ProjectReference Include="../../src/CsCode.Profiling/CsCode.Profiling.csproj" />
     <ProjectReference Include="../../src/CsCode.App/CsCode.App.csproj" />
+    <ProjectReference Include="../../src/CsCode.Ui/CsCode.Ui.csproj" />
   </ItemGroup>
 
 </Project>
