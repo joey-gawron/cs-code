@@ -250,5 +250,5 @@ third-party native supply chain. If one is adopted later, use it only for its na
 * **Points vs lines:** tree-sitter counts rows by `\n` only; a file with bare-CR line endings gets correct colours (offsets are used) but
   injection `#offset!` row arithmetic may be off by the CR lines.
 * **Viewport query cost grows with document size** (the query cursor walks siblings before the range): fine to ~1 MB, measurable at 10 MB (§4).
-* **Native memory accounting** in production is an estimate (node count × 48 B); exact numbers come from the counting allocator in tests/benchmarks.
+* **Native memory accounting** in production is an estimate (visible node count × 140 B, calibrated in B4); exact numbers come from the counting allocator in tests/benchmarks.
 * **Not done:** the structural features of §7, a status-bar indicator, user-supplied grammars UI, Windows/macOS library names are coded but untested.

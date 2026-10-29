@@ -154,7 +154,7 @@ public class TreeSitterBenchmarks
             Record(scenario, "tree-sitter", "tree has ERROR nodes (1 = yes)", doc.RootHasError ? 1 : 0, "flag");
             if (TsRuntime.AllocationsTracked) Record(scenario, "tree-sitter", "tree native bytes (counted)", (TsRuntime.AllocatedBytes - nativeBefore) / 1024.0 / 1024.0, "MB");
             Record(scenario, "tree-sitter", "tree native bytes (C heap delta)", (TsRuntime.ProcessNativeHeapBytes() - heapBefore) / 1024.0 / 1024.0, "MB");
-            Record(scenario, "tree-sitter", "tree bytes estimate (nodes x 48)", doc.EstimatedTreeBytes / 1024.0 / 1024.0, "MB");
+            Record(scenario, "tree-sitter", "tree bytes estimate (nodes x 140)", doc.EstimatedTreeBytes / 1024.0 / 1024.0, "MB");
 
             var stacks = new TestStacks();
             var paint = new PaintBuffer();

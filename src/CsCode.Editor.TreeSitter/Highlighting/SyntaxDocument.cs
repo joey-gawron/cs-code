@@ -135,8 +135,13 @@ public sealed unsafe class SyntaxDocument : IDisposable
     /// <summary>Halted parses that were thrown away because the text changed under them (stale parses cancelled, not finished).</summary>
     public int AbandonedParses { get; private set; }
 
-    /// <summary>Approximate native bytes held by the tree (tree-sitter has no exact per-tree accounting: node count × 48 B, calibrated in the benchmark).</summary>
-    public long EstimatedTreeBytes => _tree == IntPtr.Zero ? 0 : TsApi.ts_node_descendant_count(TsApi.ts_tree_root_node(_tree)) * 48L;
+    /// <summary>
+    /// Approximate native bytes held by this document's tree and parser (tree-sitter has no per-tree accounting): visible node count × 140 B,
+    /// calibrated against the counting allocator in benchmark B4 (100 K characters of C#: 3.5 MB counted, ≈ 25 k visible nodes).
+    /// </summary>
+    public long EstimatedTreeBytes => _tree == IntPtr.Zero ? 0 : TsApi.ts_node_descendant_count(TsApi.ts_tree_root_node(_tree)) * NativeBytesPerNode;
+
+    internal const long NativeBytesPerNode = 140;
 
     public bool RootHasError => _tree != IntPtr.Zero && TsApi.ts_node_has_error(TsApi.ts_tree_root_node(_tree)) != 0;
 
