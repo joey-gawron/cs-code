@@ -54,6 +54,39 @@ public class GdbPanelFixTests
         Assert.Equal("52", vm.Tree.Rows[0].DisplayValue);
     }
 
+    /// <summary>Answers like GDB 18: <c>filter</c> is ignored (named or indexed, every child), <c>start</c>/<c>count</c> are honoured.</summary>
+    private sealed class GdbLikeSession : FakeDebugSession, IDebugSessionVariablePaging
+    {
+        public List<string?> Filters { get; } = new();
+
+        public GdbLikeSession() : base("s1", "gdb") => WithDefaultScript();
+
+        public ValueTask<IReadOnlyList<DebugVariable>> GetVariablesAsync(int variablesReference, string? filter, int? start, int? count, CancellationToken ct = default)
+        {
+            lock (Filters) Filters.Add(filter);
+            return GetVariablesAsync(variablesReference, start, count, ct);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task A_vector_gdb_announces_only_indexed_children_for_pages_through_its_elements_in_order()
+    {
+        var session = new GdbLikeSession();
+        session.Variables[1000] = [new DebugVariable("big", "Vec(size=250)", "alloc::vec::Vec<u32>", 4000, null, NamedVariables: null, IndexedVariables: 250)];
+        session.Variables[4000] = [.. Enumerable.Range(0, 250).Select(i => new DebugVariable($"[{i}]", (i * 2).ToString(System.Globalization.CultureInfo.InvariantCulture), "u32"))];
+        using var rig = new PanelRig(session: session);
+        using var vm = new LocalsViewModel(rig.Services);
+        rig.StopAt(0);
+        await PanelRig.Eventually(() => vm.Tree.Rows.Any(r => r.Name == "big"), what: "locals");
+        var big = vm.Tree.Rows.Single(r => r.Name == "big");
+        await vm.Tree.ToggleAsync(big);
+        for (var page = 0; page < 5 && vm.Tree.Rows.Any(r => r.Parent == big && r.Kind == VariableRowKind.More); page++)
+            await vm.Tree.LoadMoreAsync(vm.Tree.Rows.First(r => r.Parent == big && r.Kind == VariableRowKind.More));
+        var elements = vm.Tree.Rows.Where(r => r.Parent == big && r.Kind == VariableRowKind.Variable).Select(r => r.Name).ToList();
+        Assert.Equal(Enumerable.Range(0, 250).Select(i => $"[{i}]"), elements);
+        Assert.DoesNotContain("named", session.Filters); // GDB would answer it with every element
+    }
+
     [Fact]
     public void Rust_strings_gdb_already_quoted_are_not_quoted_again()
     {

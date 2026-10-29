@@ -64,6 +64,7 @@ public class GdbQuirksTests
     [Theory]
     [InlineData("p x", "A syntax error in expression, near `x'.", true)]
     [InlineData("info locals", "A syntax error in expression, near `locals'.", true)]
+    [InlineData("p s", "Syntax error near 's'", true)] // GDB 18's Rust parser words it so
     [InlineData("bt", "No symbol 'bt' in current context", true)]
     [InlineData("x + 1", "No symbol 'x' in current context", false)] // x is also GDB's examine-memory command: keep the expression's error
     [InlineData("p + 1", "No symbol 'p' in current context", false)]
@@ -335,6 +336,14 @@ public class GdbQuirksTests
     {
         var frame = new DebugStackFrame(0, "f", new DebugSource(Path.GetFileName(path), path, sourceReference), 1, 0);
         Assert.Equal(library ? "deemphasize" : null, Quirks.MapFrame(frame).Source?.PresentationHint);
+    }
+
+    [Fact]
+    public void A_frame_without_debug_information_is_deemphasized_too()
+    {
+        var frame = new DebugStackFrame(5, "__rust_try", null, 0, 0);
+        Assert.Equal("deemphasize", Quirks.MapFrame(frame).PresentationHint);
+        Assert.Equal("label", Quirks.MapFrame(frame with { PresentationHint = "label" }).PresentationHint); // the adapter's own hint stays
     }
 
     /// <summary>A pause in libc's sleep or a panic inside std: the stop shows the first frame of the user's code (VS Code's rule).</summary>

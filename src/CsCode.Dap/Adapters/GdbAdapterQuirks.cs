@@ -69,9 +69,12 @@ public sealed partial class GdbAdapterQuirks : DebugAdapterQuirks
         // names no variable ("bt"): "x + 1" with an undefined x keeps its own error instead of running GDB's x (examine memory) command.
         var single = first.Length == text.Length && first.Length > 1;
         return new ReplRequest(text, "watch", new ReplRequest(text, "repl"),
-            error => error.StartsWith("A syntax error in expression", StringComparison.Ordinal)
-                || (single && error.TrimEnd('.') == $"No symbol '{first}' in current context"));
+            error => IsSyntaxError(error) || (single && error.TrimEnd('.') == $"No symbol '{first}' in current context"));
     }
+
+    /// <summary>GDB 18's parsers word it differently: "A syntax error in expression, near `x'." (C), "Syntax error near 's'" (Rust).</summary>
+    private static bool IsSyntaxError(string error) =>
+        error.StartsWith("A syntax error in expression", StringComparison.Ordinal) || error.StartsWith("Syntax error", StringComparison.Ordinal);
 
     private static string? FirstWord(string text)
     {
@@ -193,7 +196,10 @@ public sealed partial class GdbAdapterQuirks : DebugAdapterQuirks
 
     public override DebugStackFrame MapFrame(DebugStackFrame frame)
     {
-        if (frame.Source is not { } source || source.PresentationHint == "deemphasize" || !IsLibrarySource(source)) return frame;
+        // A frame without debug information (std's __rust_try, a C library without its debug package) has no source at all: not the user's
+        // code either, and it belongs in the same [External Code] run as the library frames around it.
+        if (frame.Source is not { } source) return frame.PresentationHint is null ? frame with { PresentationHint = "deemphasize" } : frame;
+        if (source.PresentationHint == "deemphasize" || !IsLibrarySource(source)) return frame;
         return frame with { Source = source with { PresentationHint = "deemphasize" } };
     }
 
