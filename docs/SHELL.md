@@ -376,7 +376,7 @@ Every other id has exactly one registration; the test fails when a new duplicate
   that fails or an unregistered command hides an item, the command's enablement disables it. Menu ids (`MenuIds`): `editor/context`,
   `editor/title/context`, `explorer/context`, `problems/context`, `output/context`, `search/context`, `view/title/context`, `statusBar/context`.
 * **Editor text area**: built entirely from `editor/context` contributions (the editor module contributes Visual Studio 2022's items; the shell
-  hard-codes none), at the pointer or, from the keyboard (Shift+F10, the Menu key: Avalonia's context request; or `editor.action.showContextMenu`),
+  hard-codes none), at the pointer or, from the keyboard (the Menu key through Avalonia's context request; Shift+F10, which Avalonia does not map, through the editor; or `editor.action.showContextMenu`),
   below the caret. A window-level tunnelling handler owns the request unless a control on the way (the find box) has a menu of its own.
 * **Document tabs** (replacing Dock's): Save *file* (when dirty), Close, Close All But This, Close All, Close To The Right, Pin / Unpin Tab,
   Copy Full Path, Open Containing Folder, Reveal in Explorer (files in an open folder), New Horizontal / Vertical Document Group, then
