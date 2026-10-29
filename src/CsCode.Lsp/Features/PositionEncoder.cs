@@ -32,6 +32,8 @@ public sealed class PositionEncoder(PositionEncodingMode kind)
     {
         if (IsIdentity) return utf16Column;
         var end = Math.Clamp(utf16Column, 0, line.Length);
+        // Pure-ASCII prefix (by far the common case): every code unit is one byte / one code point, so all encodings coincide. Vectorised check.
+        if (System.Text.Ascii.IsValid(line.AsSpan(0, end))) return utf16Column;
         var count = 0;
         for (var i = 0; i < end; i++)
         {
@@ -56,6 +58,8 @@ public sealed class PositionEncoder(PositionEncodingMode kind)
     public int FromLsp(string line, int column)
     {
         if (IsIdentity) return column;
+        var probe = Math.Clamp(column, 0, line.Length);
+        if (System.Text.Ascii.IsValid(line.AsSpan(0, probe))) return probe; // ASCII prefix: encodings coincide (and an overshooting column clamps to the line end)
         var units = 0;
         var i = 0;
         while (i < line.Length && units < column)

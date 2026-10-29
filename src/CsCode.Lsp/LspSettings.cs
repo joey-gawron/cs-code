@@ -15,6 +15,7 @@ public static class LspSettingKeys
     public const string Trace = "cscode.lsp.trace";
     public const string WorkerThreads = "cscode.lsp.workerThreads";
     public const string ProcessPriority = "cscode.lsp.processPriority";
+    public const string CpuQuotaPercent = "cscode.lsp.cpuQuotaPercent";
     public const string MaxCompletionItems = "cscode.lsp.maxCompletionItems";
     public const string MaxReferences = "cscode.lsp.maxReferences";
     public const string MaxWorkspaceSymbols = "cscode.lsp.maxWorkspaceSymbols";
@@ -40,6 +41,7 @@ internal sealed record LspSettings
     public LspTraceMode Trace { get; init; } = LspTraceMode.Off;
     public int WorkerThreads { get; init; } = 2;
     public ProcessPriority Priority { get; init; } = ProcessPriority.BelowNormal;
+    public int CpuQuotaPercent { get; init; }
     public int MaxCompletionItems { get; init; } = 5_000;
     public int MaxReferences { get; init; } = 10_000;
     public int MaxWorkspaceSymbols { get; init; } = 5_000;
@@ -67,6 +69,7 @@ internal sealed record LspSettings
             Trace = ParseTrace(cfg.Get<string>(LspSettingKeys.Trace)),
             WorkerThreads = Math.Clamp(Raw(cfg, LspSettingKeys.WorkerThreads, d.WorkerThreads), 1, 8),
             Priority = ParsePriority(cfg.Get<string>(LspSettingKeys.ProcessPriority)),
+            CpuQuotaPercent = Math.Clamp(Raw(cfg, LspSettingKeys.CpuQuotaPercent, 0), 0, 10_000),
             MaxCompletionItems = Math.Max(10, Raw(cfg, LspSettingKeys.MaxCompletionItems, d.MaxCompletionItems)),
             MaxReferences = Math.Max(10, Raw(cfg, LspSettingKeys.MaxReferences, d.MaxReferences)),
             MaxWorkspaceSymbols = Math.Max(10, Raw(cfg, LspSettingKeys.MaxWorkspaceSymbols, d.MaxWorkspaceSymbols)),
@@ -122,6 +125,7 @@ internal sealed record LspSettings
         yield return new(LspSettingKeys.Trace, J("off"), "Language-server protocol tracing into the server's Output channel: off | messages | verbose.");
         yield return new(LspSettingKeys.WorkerThreads, J(d.WorkerThreads), "Dedicated (below-normal priority) threads of the language lane. Applies to servers started after the change.");
         yield return new(LspSettingKeys.ProcessPriority, J("belowNormal"), "OS priority of language-server child processes: belowNormal | normal | idle.");
+        yield return new(LspSettingKeys.CpuQuotaPercent, J(0), "Linux: cap each language server (and its children) to this percentage of one CPU using a transient systemd user scope (100 = one core, 0 = no cap).");
         yield return new(LspSettingKeys.MaxCompletionItems, J(d.MaxCompletionItems), "Completion lists are capped to this many items (the list is then marked incomplete).");
         yield return new(LspSettingKeys.MaxReferences, J(d.MaxReferences), "Maximum references returned by Find References.");
         yield return new(LspSettingKeys.MaxWorkspaceSymbols, J(d.MaxWorkspaceSymbols), "Maximum workspace symbols returned per query.");

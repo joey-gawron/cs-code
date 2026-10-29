@@ -212,6 +212,35 @@ public class HostileServerTests
         Assert.All(rig.Everyone, pid => Assert.True(!Directory.Exists("/proc/" + pid) || File.ReadAllText($"/proc/{pid}/stat").Contains(") Z "), $"process {pid} survived StopAll"));
     }
 
+    // STRETCH: optional Linux CPU cap through a transient systemd user scope (cscode.lsp.cpuQuotaPercent).
+    [Fact]
+    public async Task The_optional_cpu_quota_confines_the_server_and_its_children_to_a_capped_cgroup_scope()
+    {
+        if (!RequireNode()) return;
+        await using var rig = await StartAsync("cpu", c => c.Set(LspSettingKeys.CpuQuotaPercent, 25));
+        var log = rig.Env.Output.Text(Channel);
+        if (log.Contains("systemd-run (user scopes) is not usable")) { Assert.Skip("systemd-run --user --scope is not usable on this host (the fallback path is what ran)"); return; }
+
+        var pid = rig.HostilePid;
+        await TestHelpers.EventuallyAsync(() => ProcessReaper.Descendants(pid).Count >= 2, "burners started", TimeSpan.FromSeconds(10));
+        string CgroupOf(int p) => File.ReadAllLines($"/proc/{p}/cgroup").First(l => l.StartsWith("0::", StringComparison.Ordinal))[3..];
+
+        var cgroup = CgroupOf(pid);
+        Assert.Contains(".scope", cgroup);
+        foreach (var child in ProcessReaper.Descendants(pid)) Assert.Equal(cgroup, CgroupOf(child)); // the burners are inside the same capped scope
+        Assert.True(NativePriority.GetProcessNice(pid) >= 10); // priority wrapping still applies inside the scope
+
+        var cpuMax = Path.Combine("/sys/fs/cgroup", cgroup.TrimStart('/'), "cpu.max");
+        if (!File.Exists(cpuMax) || File.ReadAllText(cpuMax).StartsWith("max", StringComparison.Ordinal))
+        {
+            Assert.Skip("the cpu controller is not delegated to user scopes on this host, so the quota cannot be enforced (scope placement was verified)");
+            return;
+        }
+        Assert.Equal("25000 100000", File.ReadAllText(cpuMax).Trim());
+        rig.Track();
+        await rig.Env.Manager.StopAllAsync(Ct);
+    }
+
     // =================================================================================================================
     // (b) answers every request after 5 s
     // =================================================================================================================
