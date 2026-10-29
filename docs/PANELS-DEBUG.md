@@ -66,7 +66,11 @@ IDebugService / IDebugSession events (any thread)
 * **Virtualised by flattening**: visible nodes live in one `RangeObservableCollection` (precise Add/Remove notifications, so selection, focus and
   scroll survive expand/collapse and paging; the shell's `BulkObservableCollection` is used for the lists that are replaced wholesale).
   A million-element array shows one page (100 rows) + a pager row.
-* **Lazy + paged**: `GetVariablesAsync(ref, start, 100)`; the `… N more` row loads the next page. A short page ends the list whatever the adapter
+* **Lazy + paged**: `GetVariablesAsync(ref, start, 100)`; the `… N more` row loads the next page. A value with `IndexedVariables` from a session
+  that implements the Core `IDebugSessionVariablePaging` (the DAP session does) pages through `filter: "indexed"` and lists its named children
+  (`length`, `[[Prototype]]`) once, first — DAP only promises `start`/`count` on a filtered set, and js-debug ignores `start` without one.
+  A **lazy** value (`DebugVariable.IsLazy`, DAP `presentationHint.lazy`: js-debug's getters) shows `(…)` and runs only when activated (Enter,
+  double-click, →), then shows its value in place. A short page ends the list whatever the adapter
   announced; at most 10,000 children per node are ever held (then a notice row). An adapter that ignores `start/count` is recognised and cannot
   duplicate rows; a page of up to 10,000 nodes is created in ≤ 4 ms slices (`UiDispatcher.PostBatched`) and inserted in 100-row chunks.
   A chunk's position is resolved when it goes in (the end of the parent's block *then*), not before the yield: Watch re-expands every root
@@ -75,11 +79,12 @@ IDebugService / IDebugSession events (any thread)
 * **Handle lifetime**: on `Continued`/step/session end the generation is bumped, in-flight loads are cancelled, **every node is dropped**
   (nothing holds a stale `variablesReference`), but expansion *paths* and the shown values are remembered. After the next stop the tree is
   re-expanded lazily (one request at a time) and values that differ from the previous stop are red. Baselines are kept **per frame shape**
-  (the frame's first root names), so stepping into another function does not paint its locals red and picking another frame in the Call Stack
+  (the frame's first root names; pseudo-variables with whitespace in their name, such as js-debug's `Return value` after a step, do not count),
+  so stepping into another function does not paint its locals red and picking another frame in the Call Stack
   does not turn the current stop's values into the baseline. Autos keys its baseline by the frame's **full** variable list (and remembers all
   of its values), not by the line-filtered subset it shows, so a step is always compared with the previous stop.
 * **Editing**: `setVariable` (only when the adapter advertises it and the parent handle is live); a failure stays in the inline editor with the
-  adapter's message. Display: strings quoted, ≤ 200 chars + `…` (full text in tooltip and Copy Value), newlines shown as `⏎`, integers
+  adapter's message. Display: strings quoted (unless the adapter already quoted them, `"…"` or js-debug's `'…'`), ≤ 200 chars + `…` (full text in tooltip and Copy Value), newlines shown as `⏎`, integers
   hex/decimal client-side (per tree and per row). Copy Value / Copy Expression (`evaluateName`) / Add Watch.
 * **Keyboard**: ↑↓ move, → expand (or into the children), ← collapse (or to the parent), Enter edits (or loads more / opens the empty watch row),
   F2 rename/edit, Delete remove a watch, Ctrl+C copy the value, Alt+↑/↓ reorder watches; Enter/Esc end an inline edit and keep the keyboard in the list.
@@ -101,19 +106,27 @@ IDebugService / IDebugSession events (any thread)
 ### Call Stack, Threads
 
 * Flat frame list for one thread, otherwise thread rows with their frames. Frames are paged (50 per request + `… load more frames`). Frames without
-  source or hinted `subtle`/`label` are greyed; "Show External Code" off folds runs of them into one `[External Code]` row.
+  source, hinted `subtle`/`label`, or de-emphasised by the adapter (`deemphasize` on the frame or its source: js-debug's skipped Node internals)
+  are greyed; "Show External Code" off folds runs of them into one `[External Code]` row — except `label` frames (js-debug's `await` between the
+  frames of an async call stack), which stay visible as separators and cannot be picked.
 * Yellow arrow = the stopped location; a picked caller frame gets the outlined (green) arrow. Click picks the frame through
   `IDebugFrameFocus.SetFocusedFrameAsync` (which moves the editor's stop marker and re-scopes Locals/Autos/Watch) and opens the source via
   `INavigationService` (keeps keyboard focus in the window); double-click/Enter also moves focus to the editor. Copy Call Stack. The service
-  may decline without an error, so the arrow moves and the source opens only when `FocusedFrameId` really became the picked frame; otherwise
-  the status bar says so (Locals/Autos/Watch and the REPL follow the service, never just the row).
+  throws for a frame it cannot focus (no longer valid, ended or unfocused session — the `IDebugFrameFocus` contract), so the arrow moves and the
+  source opens only when `FocusedFrameId` really became the picked frame; otherwise the status bar names the frame and the reason
+  (Locals/Autos/Watch and the REPL follow the service, never just the row). The test fake throws the same way.
+* **Where the debugger stopped**: when a stop (breakpoint, step) is in a document that is not the active editor — another file, a file not open
+  at all — the runtime opens it at the stop line (preview tab, keyboard focus kept); the editor marks and reveals the line.
 * Threads lists id, name, top frame and state; switching focuses the thread's top frame (with the same check). **Freeze/thaw is not offered** (no contract for it).
 
 ### Breakpoints
 
 Source / function / exception breakpoints with enable checkboxes, condition / hit-count / log-message badges and the adapter's verdict from
 `IBreakpointManager.GetStatus` (verified, unverified = hollow, moved-to-line note, failed message in red). Condition, hit count and log message
-are edited through `IWindowService.ShowInputBoxAsync`; Delete / Delete All / Enable All / Disable All / New Function Breakpoint; double-click or
+are edited through `IWindowService.ShowInputBoxAsync` — hit counts and log messages only when the active adapter supports them
+(`DebugCapabilityGate`: the running session's capabilities, else the last ones of the selected configuration's type; netcoredbg has neither,
+js-debug both): otherwise the menu entry is disabled with "(not supported)" and the reason as tooltip, and the command says why instead of
+asking; Delete / Delete All / Enable All / Disable All / New Function Breakpoint; double-click or
 Enter navigates (to the adapter-moved line when it moved). Rows update **in place** when only a status or flag changed. **Limit:** the manager
 contract cannot update a function breakpoint, so its checkbox is read-only.
 
@@ -170,6 +183,9 @@ real Skia headless platform.
 | `InteractionTests` | real views in a headless window: keyboard model, inline editors, drag-reorder, context routing |
 | `ScreenshotTests` | renders every window in the VS Dark/Light/Blue themes → `.scratch/screenshots/debug-*.png` (git-ignored) |
 | `RealDebuggerEndToEndTests` | **real `CsCode.Dap` + real netcoredbg**: breakpoint, real frames, real locals, frame switch, step with a highlighted change, watch, REPL, console stdout, modules from `module` events, clean exit, no stray processes |
+| `RealJsDebugPanelsTests` | **real `CsCode.Dap` + real js-debug** on a TypeScript program compiled by tsc: moved breakpoint in the Breakpoints window, Locals values (classes, `'strings'`, Map/Set, a getter run in place, a 250-element array paged to its end), REPL + completions, set variable from Locals, Autos, Watch errors, the async call stack with greyed/folded Node internals, an async frame without variables, step highlighting, stderr in red, the Exception window |
+| `RealJsDebugResponsivenessTests` | a TypeScript program printing 1,000,000 lines through js-debug with the Debug Console on screen: dispatcher p99 < 16 ms, max < 50 ms (measured ≈ 9–11 / 10–14 ms) |
+| `JsDebugPanelFixTests` | regression tests of the js-debug wave: deemphasized/label frames, quoted strings, lazy getters, filtered paging, `Return value` shape, opening the stop file, the throwing frame focus (fake and real), hit counts/logpoints per capability |
 | `ResponsivenessTests` | dispatcher heartbeat (p99 < 16 ms, max < 50 ms) under the hostile scenarios; `.scratch/responsiveness.log` has the measured numbers |
 | `LeakTests` | show/hide ×100 across 20 sessions: nothing reachable, no subscriptions left on service/sessions/breakpoint manager |
 
