@@ -149,10 +149,11 @@ public sealed class NavigationService : INavigationService, IDisposable
 
     private IEditorDocument? FindOpen(Uri uri) => (_documents?.Get(uri) as IEditorDocument) ?? _well.Find(uri)?.Doc;
 
-    private async ValueTask<bool> FailAsync(string message)
+    // Not awaited: an action-less toast completes only when dismissed or demoted, and callers (Replace All) apply files one after another.
+    private ValueTask<bool> FailAsync(string message)
     {
-        if (_windows is not null) await _windows.ShowMessageAsync(MessageSeverity.Error, message).ConfigureAwait(false);
-        return false;
+        if (_windows is not null) _ = _windows.ShowMessageAsync(MessageSeverity.Error, message).AsTask();
+        return ValueTask.FromResult(false);
     }
 
     private async ValueTask<bool> EditClosedFileAsync(Uri uri, IReadOnlyList<TextEdit> edits, CancellationToken ct)
