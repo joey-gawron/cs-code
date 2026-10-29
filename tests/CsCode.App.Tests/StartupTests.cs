@@ -1,5 +1,6 @@
 using CsCode.App.Startup;
 using CsCode.TestDoubles;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace CsCode.App.Tests;
@@ -139,5 +140,34 @@ public class CrashHandlerTests
             Assert.Equal(Path.Combine("/tmp/cscode-home-test", "logs"), CrashHandler.DefaultLogDirectory());
         }
         finally { Environment.SetEnvironmentVariable("CSCODE_HOME", old); }
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("/xdg/state", null)]
+    [InlineData("relative/state", null)] // XDG: relative values are ignored
+    [InlineData("/xdg/state", "/portable")]
+    public void Crash_logs_go_where_the_platform_logger_writes(string? xdgState, string? cscodeHome)
+    {
+        var env = new Dictionary<string, string?> { ["XDG_STATE_HOME"] = xdgState, ["CSCODE_HOME"] = cscodeHome };
+        string? Env(string name) => env.GetValueOrDefault(name);
+        // The rolling file logger writes to IAppPaths.LogsDir: one directory holds every log the user may be asked for.
+        Assert.Equal(new Platform.AppPaths(Env).LogsDir, CrashHandler.DefaultLogDirectory(Env));
+    }
+
+    [Fact]
+    public void Without_CSCODE_HOME_crash_logs_follow_the_XDG_state_directory_on_Linux()
+    {
+        if (!OperatingSystem.IsLinux()) Assert.Skip("XDG layout: Linux only");
+        string? Env(string name) => name == "XDG_STATE_HOME" ? "/xdg/state" : null;
+        Assert.Equal("/xdg/state/cscode/logs", CrashHandler.DefaultLogDirectory(Env)); // was ~/.cscode/logs, apart from the platform log
+    }
+
+    [Fact]
+    public void The_crash_handler_is_resolvable_so_shell_failures_after_startup_are_reported()
+    {
+        // MainWindow reports deferred-startup and closing failures through the container; without a registration they were silently dropped.
+        using var sp = AppServices.Build([]);
+        Assert.Same(App.Crash, sp.GetService<CrashHandler>());
     }
 }

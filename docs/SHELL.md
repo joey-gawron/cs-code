@@ -11,15 +11,19 @@ command palette, notifications, themes. It is the composition root of CsCode. Th
 ## Architecture
 
 ```
-Program -> App.axaml.cs -> AppServices.Build(args, configure) -> MainWindow(provider)
+Program -> App.axaml.cs -> AppSession -> AppStartup.BuildServicesAsync (pool thread) -> MainWindow(provider) (UI thread)
                                    |                                |
-              AddCsCodeCore/Platform/Lsp/Dap/Editor/Profiling       +-- ShellController.Initialize()  (before first frame, no I/O)
-              + AddCsCodeShell (shell services, singletons)         +-- ShellController.StartDeferredAsync()  (after first frame)
+              AppServices.Build:                                    +-- ShellController.Initialize()  (before first frame, no I/O)
+              AddCsCodeCore/Platform/Lsp/Dap/Editor/Profiling       +-- ShellController.StartDeferredAsync()  (after first frame)
+              + AddCsCodeShell (shell services, singletons)
               + configure?.Invoke(services)   <- dev host / tests replace anything here
+              main window closed -> AppShutdown.RunAsync (bounded) -> lifetime.Shutdown
 ```
 
 * **`AppServices.Build`** registers the real modules and the shell services. There are no silent fallbacks: if a module that the shell needs
   is not registered, resolution fails and the shell shows the crash window with the log path (it never exits silently).
+* **Process lifecycle** (`Startup/`, see below): the container is built and the file-reading Platform services are constructed off the UI thread; the
+  exit is an orderly, bounded shutdown owned by `AppSession`.
 * **`ShellController`** wires everything that is not pure view: theme registration and `ThemeApplier`, the palette, every shell command,
   keyboard pipeline, context-key tracker, menus, status items, tool-window auto-show, layout persistence, the UI stall watchdog.
 * **First paint**: the window shows with the chrome and an empty dock; layout restore, command-line targets, theme from settings and the
@@ -35,11 +39,42 @@ Program -> App.axaml.cs -> AppServices.Build(args, configure) -> MainWindow(prov
 | `IWindowService` | `WindowService` | toasts with action buttons + notification centre, quick pick / input box overlays, native dialogs through `IShellHost`, progress notification + status item, clipboard, `OpenExternalAsync` |
 | `IStatusBarService` | `StatusBarService` | thread safe, `Changed` coalesced to one per UI turn |
 | `IOutputService` | `OutputService` | 2 MB ring per channel, appends batched (one flush per UI turn, never a post per line) |
-| `INavigationService` | `NavigationService` | open/preview/reveal, `ApplyWorkspaceEditAsync` (open docs: one undo group each; closed files: read, edit, write via `IFileSystem` off the UI thread; create/rename/delete; confirmation for multi-file edits, setting `cscode.shell.confirmMultiFileEdits`) |
+| `INavigationService` | `NavigationService` | open/preview/reveal, `ApplyWorkspaceEditAsync` (open docs: one undo group each; closed files: read, edit, write via `IFileSystem` off the UI thread; create/rename/delete with the file-operation participants around them; confirmation for multi-file edits, setting `cscode.shell.confirmMultiFileEdits`) |
 | `IToolWindow` host | `ToolWindowManager` | views created on first show, **disposed when hidden**; `ToolWindowLocation.Document` windows are not docked (see Layout) |
 | `IViewActivator` | `ShellViewActivator` | panels' "show view X" (Find in Files, Settings, Keyboard Shortcuts, Watch): a tool window is shown in its well, a document-location window opens or re-activates its singleton document tab; any thread |
 | `IActiveSelectionProvider` | `ActiveSelectionProvider` | primary selection of the active editor (`${selectedText}` for Dap, the Find in Files seed); the UI thread publishes a (document, range) snapshot, readers on any thread take the text on demand |
 | `IColorThemeService` consumer | `ThemeApplier` | the three VS2022 themes are registered into the module's `IColorThemeService` |
+
+### Process lifecycle (`src/CsCode.App/Startup`)
+
+* **Start-up.** `Program.Main` sets `GCSettings.LatencyMode = SustainedLowLatency` (no blocking gen-2 collections while typing; the editor's figures
+  were measured in this mode) and installs the crash handler. `App` hands the desktop lifetime to an `AppSession`, which builds the container on a pool
+  thread while Avalonia finishes starting (`AppStartup.BuildServicesAsync`) and constructs there the services whose constructors read files synchronously
+  (`ConfigurationService`, `StateStorage`, `KeybindingService`, plus the file logger and the workspace service; docs/PLATFORM.md). The main window is then
+  created and shown on the UI thread. A failure anywhere in this path, `Window.Show` included (a windowing or GL error), writes a fatal crash log and
+  shows the crash window instead (a main window that failed while opening is closed without prompts); the run ends with exit code 1 when it is closed.
+  If not even the crash window can be shown, the session prints the summary and the log path to stderr, shuts the services down and ends with exit
+  code 1: with the exit taken over (below), a lost exception here would otherwise leave the process running without a window.
+* **Exit.** The session takes the exit over (`ShutdownMode.OnExplicitShutdown`): when the main window has closed (after its own Save prompts and layout
+  save), `AppShutdown.RunAsync` runs on the UI thread before the dispatcher stops, bounded by `App.ShutdownDeadline` (default **5 s**):
+  1. flush `IStateStorage` (what the user did up to now is on disk before anything can hang);
+  2. dispose, in parallel and off the UI thread, the services that own sessions and child processes: `ILanguageServerManager` (shutdown/exit to every
+     server, then their process trees are killed), `IDebugService` (sessions terminated), `IBreakpointManager` (persists on dispose),
+     `IDebugConfigurationService`;
+  3. flush state again (`StateStorage.DisposeAsync`: what step 2 persisted), with at least 0.75 s even if step 2 used up the deadline;
+  4. **kill tracked child processes that are still running**: modules report their language servers and debug adapters through
+     `IMemoryMonitor.TrackChildProcess`; the shell wraps the registered monitor (`ShellMemoryMonitor`, a stand-in that tracks children and lists
+     trimmables but samples nothing while CsCode.Profiling registers none) and `ChildProcessTracker` kills the survivors' process trees. Only reported
+     pids are killed (a browser started through `xdg-open` is a child too), and only while the pid still has the reported start time (pid reuse);
+  5. dispose the container synchronously on the UI thread (UI singletons must be disposed on their thread; an async container dispose would continue on
+     a pool thread). The module singletons of step 2 are no-ops by then, so nothing here waits for a server.
+
+  If the lifetime is ended some other way (`Shutdown` called directly), `AppShutdown.RunAbrupt` kills the tracked children and flushes state
+  synchronously. Not covered: processes started by `ITaskService` are not reported through `TrackChildProcess` (Dap module), so a task that is still
+  running at the exit is not killed by the shell.
+* **Crash logs** go to `IAppPaths.LogsDir` (`$XDG_STATE_HOME/cscode/logs`, `%LOCALAPPDATA%\CsCode\Logs`, `~/Library/Logs/CsCode`, `$CSCODE_HOME/logs`),
+  next to the rolling `cscode.log`; `CrashHandler.DefaultLogDirectory` asks Platform's pure `AppPaths` because the handler starts before the container.
+  The handler is also registered in the container, so the main window reports deferred-startup and closing failures through it.
 
 ## Design system (`CsCode.Ui`)
 
@@ -154,7 +189,19 @@ reaches the focused control (F3 gets to the editor's own find); a chord prefix w
 **Documents.** `DocumentWell` adds to the Dock model (the single source of truth for tabs, order and groups): open / preview (italic, replaced by the next preview, promoted by editing or reopening) /
 pin / close / close others / saved / all / to the right / reopen closed (last 20), Save/Don't Save/Cancel prompts (also when the user clicks Dock's close button: Dock's close is cancelled and routed through the prompt),
 split right/down, move between groups, MRU order and the **Ctrl+Tab switcher** overlay. Only the active tab of each group plus the last `cscode.shell.liveEditorViews` (default 8) tabs keep a live editor view;
-others are disposed and recreated from saved caret/selection. Dock presents a thin `Border` host per tab; the host is emptied on close (see Known issues).
+others follow the editor's contract (docs/EDITOR.md): `GetViewState()` (caret, selection, scroll offsets, folds) -> `IEditorViewFactory.DisposeView(view)`, and on the next
+presentation `CreateView` + `RestoreViewState`. Closed tabs' views go back through `DisposeView` too. Dock presents a thin `Border` host per tab (see *View lifecycle and Dock* below).
+
+**View lifecycle and Dock.** Two things kept destroyed views reachable, and the shell handles both:
+* Dock.Avalonia 12.1 caches the control it presented for every dockable (control recycling on the `DockControl`, keyed by the dockable), and a host
+  emptied while out of the window still lists the removed view in its composition visual (that list is synchronised only when the host is rendered).
+  So a tab whose host Dock no longer shows drops the host (a fresh one is built on the next presentation) and removes its own entry from Dock's
+  recycling cache; a closed tab always removes its entry. This was the "closed tabs stay reachable" retention noted earlier: with it fixed, closed tab
+  objects, their documents and views are all released (the live 300-tab test asserts every sample, not just the steady state).
+* A focused editor stays reachable from Avalonia's focus machinery and from AvaloniaEdit's static "last focused element" (`RoutedCommand`) until another
+  element takes focus; detaching it is not enough. Before Dock removes a tab whose view holds keyboard focus, the well clears focus (the window is
+  not focusable), and once the document that takes its place is presented its editor gets the keyboard, as in Visual Studio. When the last document
+  closes nothing takes focus, so AvaloniaEdit's static slot keeps that one view until focus next moves anywhere (bounded: one view).
 
 **Layout.** `LayoutPersistence`: tool placement, visibility, splitter proportions, open files with pin/preview, active file; versioned JSON, workspace scope first then global default,
 tolerant of corrupt/future data; saved (debounced) on change and on exit; `View > Appearance > Reset Window Layout`. There is no left tool well unless a tool window asks for one.
@@ -166,7 +213,15 @@ The default (and reset) layout shows exactly `ShellController.DefaultLayoutTools
 `:` go to line[:column], `@` document symbols, `#` workspace symbols, `?` help. Cheap modes answer synchronously (first paint needs no dispatcher turn); stale async results are dropped. Also drives `ShowQuickPick`/`ShowInputBox`.
 Theme picker (`workbench.action.selectTheme`) previews live while arrowing and reverts on Esc.
 
-**Explorer** (virtualised flat rows, 20k siblings expand in well under a second): lazy folders, off-thread read/sort, VS file icons, persisted expansion, create/rename (F2 inline)/delete (trash, confirmed)/duplicate/cut/copy/paste/move (model),
+**Saving and file operations with language servers** (`FileParticipants`, docs/LSP.md). Every save of the shell (Save, Save As, Save All, the Save
+answer of a close prompt) goes through `DocumentWell.SaveAsync`: the `IWillSaveParticipant`s (the LSP manager: `willSave` / `willSaveWaitUntil`) are
+asked first and their edits applied as one undo unit each; together they may delay a save by at most **1.5 s**, a failing or late participant is
+skipped (logged) and edits computed for a version the user has since changed are dropped. Explorer create/rename/move/delete/duplicate/paste and the
+resource operations of workspace edits run the `IFileOperationParticipant`s around the file-system call: `WillRenameFilesAsync` first (bounded to 3 s;
+its edit is applied before the move, so references and imports follow the file; in a workspace edit without a second confirmation), then
+`DidRename/DidCreate/DidDeleteFilesAsync`. Participants are resolved on first use (the language client itself depends on the navigation service).
+
+**Explorer** (virtualised flat rows, 20k siblings expand in well under a second): lazy folders, off-thread read/sort, VS file icons, persisted expansion, create/rename (F2 inline)/delete (trash, confirmed)/duplicate/cut/copy/paste/move (model; with the file-operation participants),
 reveal active file, `files.exclude`, watcher batches applied by diffing only the affected loaded directories, type-ahead, filter box (loaded nodes), context menu incl. contributed items, empty state, multi-root.
 **Error List** (counts and chips, search, group by file, sort, double-click navigates, aggregation and sorting on a worker at <= 10 Hz, 50k rows apply as one property change).
 **Output** (channel dropdown, clear, shows the most recent 5,000 lines of a channel; the ring keeps 2 MB). **Find Results** (target of `cscode.references.show`; preview lines read lazily).
@@ -234,8 +289,8 @@ Other checks: service calls from the UI thread return without waiting for the wo
 
 Bounded: Output 2 MB per channel, 20k lines in the view; notification history 100; closed-tab history 20; palette index capped at 300k files and an `IMemoryTrimmable`; icon geometry cache trimmable; Error List at most one immutable array.
 Lifetimes: every view and model owns a `DisposableStore`; tool-window views and their view-models are disposed when hidden; tab views by the LRU policy and on close. Tests: 100x show/hide of every tool window balances creation and disposal and retains nothing;
-500 palette opens retain no entries; 500 dialogs leave the heap flat; 200 theme switches leave the resource table and brush set unchanged; 300 tabs opened/closed in the live Dock host release documents and views in steady state
-(managed heap flat between tab 100 and 300); output flood and status updates use a bounded number of dispatcher posts.
+500 palette opens retain no entries; 500 dialogs leave the heap flat; 200 theme switches leave the resource table and brush set unchanged; 300 tabs opened/closed in the live Dock host release every sampled tab, document and view
+(managed heap flat between tab 100 and 300); a focused real editor's view is released when its tab closes, and an evicted view is released while its tab stays open; output flood and status updates use a bounded number of dispatcher posts.
 
 ## Running it
 
@@ -262,18 +317,17 @@ dirty marker is Dock's `*` rather than a dot that turns into a close glyph on ho
 auto-hide/peek animations, taskbar jump list, high-contrast theme, `--diff`, toolbar overflow (all SHOULD); the Windows/macOS title-bar path (`ExtendClientAreaToDecorationsHint`) is written but untested here (Linux only).
 `reloadWindow` only refreshes menus. Find in Files is the Search panel's tool window (`CsCode.Panels.Search`); Find Results hosts the references delivered by `cscode.references.show`. Explorer filter searches loaded nodes only.
 
-Known issues: (1) **Combined hostile storm p99 is ~19 ms, not < 16 ms** (each source alone meets it; max is within 50 ms). (2) **Dock.Avalonia 12.1.0.13 keeps closed (presented) dockables reachable** (verified with a bare `DockControl` and a plain template, independent of this shell);
-the shell therefore releases everything a tab pinned (editor document, view, controller, subscriptions) and presents a thin host that it empties. The owner that kept some closed tabs' views and documents
-reachable in the live-host test (run to run) was found during integration: the `DockControl`'s `ControlRecycling` cache (Dock.Controls.Recycling) keeps the content of every dockable it presented, keyed by the
-dockable, and never evicts; an emptied host whose child left while the host was already detached still lists the child's composition visual, so the view and its document stayed reachable.
-`MainWindow` now evicts a document tab from that cache when it closes (`RealAppDockCacheTests`); the 300-tab test still asserts the steady state (from tab 120 on, heap flat), and now passes consistently.
-(3) The editor contract has no "release view" call, so views are expected to implement `IDisposable` for deterministic cleanup; the shell calls it.
+Known issues: (1) **Combined hostile storm p99 is ~19 ms, not < 16 ms** (each source alone meets it; max is within 50 ms). (2) Dock.Avalonia 12.1.0.13 keeps every presented dockable in its control-recycling
+cache (`ControlRecycling`, keyed by the dockable, never evicted); the shell removes a closed tab's entry itself (see *View lifecycle and Dock*), which depends on the cache being reachable through
+`ControlRecyclingDataTemplate.ControlRecycling` on an ancestor of the host. The 300-tab live-host test asserts the steady state (heap flat, closed tabs unreachable).
+(3) AvaloniaEdit's static `RoutedCommand` keeps the last element that took focus: after the last document closes, that one view stays reachable until focus moves anywhere (bounded).
 
 ## Integration notes
 
 * **Needs registered** (resolved with `GetRequiredService`): `ICommandService`, `IContextKeyService`, `IConfigurationService`, `IKeybindingService`, `IWorkspaceService`, `IStateStorage`, `IColorThemeService`, `IEditorViewFactory`,
   and from Core `IDocumentManager`, `IDiagnosticService`, `IContributionRegistry`, `ILanguageFeatureRegistry`. **Optional**: `IDebugService` (toolbar combo, debug context keys), `ILanguageService`, `IMemoryMonitor`, `ILanguageServerManager`.
-* Editor views must be a `Control`; the shell wraps them in a host, sets the focus-area marker on the host, and disposes the view when the tab closes or loses its live-view slot.
+* Editor views must be a `Control`; the shell wraps them in a host, sets the focus-area marker on the host, and hands the view back through `IEditorViewFactory.DisposeView` when the tab
+  closes or loses its live-view slot (after `GetViewState`, restored with `RestoreViewState` on re-creation).
 * `IToolWindow`s registered by other modules (`AddSingleton<IToolWindow, ...>`) are placed by `DefaultLocation`; `AutoShowWhen` windows follow their context key; all of them start hidden (only
   `DefaultLayoutTools` are in the default layout) and are brought up by their command through `IViewActivator.ShowViewAsync(id)`; a Left-located tool creates the left well; `Document`-located
   windows open as document tabs.

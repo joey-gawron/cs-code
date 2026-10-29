@@ -24,6 +24,8 @@ namespace CsCode.App.Tests.Hosting;
 public sealed class DevHost : IDisposable
 {
     public TempDirectory Workspace { get; } = new("cscode-devhost-");
+    /// <summary>Where the shell's crash handler writes in this host (never the user's real log directory).</summary>
+    public TempDirectory CrashLogs { get; } = new("cscode-devhost-logs-");
     public ServiceProvider Services { get; private set; } = null!;
     public MainWindow Window { get; private set; } = null!;
     public TestCommandService Commands { get; } = new();
@@ -97,6 +99,7 @@ public sealed class DevHost : IDisposable
         Replace<IEditorViewFactory>(services, Editors);
         Replace<IDocumentManager>(services, Documents);
         Replace<IDebugService>(services, Debug);
+        Replace(services, new Startup.CrashHandler(CrashLogs.Path));
         Configure?.Invoke(services);
     }
 
@@ -171,5 +174,6 @@ public sealed class DevHost : IDisposable
         Window?.CloseWithoutPrompt();
         Services?.Dispose();
         Workspace.Dispose();
+        CrashLogs.Dispose();
     }
 }

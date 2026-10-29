@@ -1,5 +1,7 @@
 using Avalonia.Controls;
+using Avalonia.Controls.Recycling;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Text;
 using CsCode.Editor;
@@ -30,28 +32,98 @@ public class ShellDocument : Document, IDisposable
     protected virtual void OnViewCreated() { }
 
     private Border? _host;
+    private WeakReference<TopLevel>? _window;
+    // Every Dock cache that presented this tab (a floating window has a DockControl, and a cache, of its own). Weak: the caches outlive no window.
+    private readonly List<WeakReference<ControlRecycling>> _recyclers = new(1);
 
     /// <summary>
-    /// What Dock presents: a thin host holding the real view. Dock.Avalonia 12.1 keeps presented content reachable after a tab closes, so the shell
-    /// presents a host and empties it on dispose; the heavy view (and the document behind it) is then released no matter what Dock retains.
+    /// What Dock presents: a thin host holding the real view, so the view can be destroyed and recreated while Dock keeps presenting "this tab".
+    /// See <see cref="DisposeView"/> for how a host that Dock no longer shows is released.
     /// </summary>
     public Control EnsureHost()
     {
-        _host ??= new Border();
+        if (_host is null)
+        {
+            _host = new Border();
+            _host.AttachedToVisualTree += OnHostAttached;
+        }
         var view = EnsureView();
         if (!ReferenceEquals(_host.Child, view)) _host.Child = view;
         return _host;
     }
 
+    // Remembered while the host is in the window: focus may have to be moved, and Dock's cache entry dropped, after Dock has detached it.
+    private void OnHostAttached(object? sender, Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        if (sender is not Avalonia.Visual host) return;
+        if (TopLevel.GetTopLevel(host) is { } top) _window = new WeakReference<TopLevel>(top);
+        for (var v = host; v is not null; v = v.GetVisualParent())
+        {
+            if (ControlRecyclingDataTemplate.GetControlRecycling(v) is not ControlRecycling recycling) continue;
+            if (!_recyclers.Any(w => w.TryGetTarget(out var known) && ReferenceEquals(known, recycling))) _recyclers.Add(new WeakReference<ControlRecycling>(recycling));
+            break;
+        }
+    }
+
     protected virtual Control CreateView() => ViewFactory?.Invoke() ?? new TextBlock { Text = Title };
 
-    /// <summary>Drops the live view (memory policy / tab close). Safe to call repeatedly; the view is recreated on next presentation.</summary>
+    /// <summary>
+    /// Drops the live view (memory policy / tab close). Safe to call repeatedly; the view is recreated on next presentation.
+    /// A host that Dock no longer shows is dropped with it: Dock's control-recycling cache keeps the host it presented for every tab, and a host emptied
+    /// while out of the window still lists the removed view in its composition visual (that list is only synchronised when the host is rendered), so
+    /// the view would stay reachable through Dock. The next presentation builds a fresh host.
+    /// </summary>
     public virtual void DisposeView()
     {
-        if (_host is not null) _host.Child = null;
-        if (_view is null) return;
-        (_view as IDisposable)?.Dispose();
+        var view = _view;
+        if (view is not null) MoveFocusOff(view);
+        if (_host is not null)
+        {
+            _host.Child = null;
+            if (_host.GetVisualParent() is null) ForgetHost();
+        }
+        if (view is null) return;
         _view = null;
+        ReleaseView(view);
+    }
+
+    /// <summary>Destroys a view this tab created (after it left the tree). Views that are not the editor's are disposed if they can be.</summary>
+    protected virtual void ReleaseView(Control view) => (view as IDisposable)?.Dispose();
+
+    private void ForgetHost()
+    {
+        if (_host is { } host) host.AttachedToVisualTree -= OnHostAttached;
+        _host = null;
+        foreach (var w in _recyclers)
+            if (w.TryGetTarget(out var recycling)) recycling.Remove(this);
+        _recyclers.Clear();
+    }
+
+    /// <summary>True when keyboard focus was inside this tab's view as it closed (the well then focuses the editor that takes its place).</summary>
+    internal bool HadKeyboardFocus { get; private set; }
+
+    /// <summary>Called by the well just before Dock removes the tab, while the view is still in the window: see <see cref="MoveFocusOff"/>.</summary>
+    internal void ReleaseFocus()
+    {
+        if (_view is { } view && MoveFocusOff(view)) HadKeyboardFocus = true;
+    }
+
+    /// <summary>
+    /// A focused control stays reachable from Avalonia's focus and input-method machinery until focus moves elsewhere (true of a bare AvaloniaEdit editor,
+    /// docs/EDITOR.md; detaching the control is not enough), so a view that holds keyboard focus gives it up before it is destroyed. The window is not
+    /// focusable, so focus is cleared; the well then focuses the editor that takes the closed tab's place. Focus elsewhere (Explorer, a tool window) is
+    /// left alone. Returns whether focus was inside the view.
+    /// </summary>
+    private bool MoveFocusOff(Control view)
+    {
+        var top = TopLevel.GetTopLevel(view);
+        if (top is null && _window?.TryGetTarget(out var remembered) == true) top = remembered;
+        if (top?.FocusManager is not { } focus) return false;
+        var focused = focus.GetFocusedElement() as Avalonia.Visual;
+        var inView = view.IsKeyboardFocusWithin || (focused is not null && (ReferenceEquals(focused, view) || view.IsVisualAncestorOf(focused)));
+        if (!inView) return false;
+        if (!top.Focus()) focus.Focus(null);
+        return true;
     }
 
     public bool IsDisposed { get; private set; }
@@ -63,7 +135,7 @@ public class ShellDocument : Document, IDisposable
     {
         IsDisposed = true;
         DisposeView();
-        _host = null;
+        ForgetHost(); // also the cache entry of a host that was still in the window: the tab is gone for good
     }
 }
 
@@ -120,8 +192,8 @@ public sealed class EditorTab : ShellDocument
     /// <summary>Bound by the tab style so preview tabs render in italic.</summary>
     public FontStyle PreviewFontStyle => _isPreview ? FontStyle.Italic : FontStyle.Normal;
 
-    /// <summary>Caret/selection captured when the view was dropped by the LRU policy; restored when the view is recreated.</summary>
-    public (TextPosition Caret, IReadOnlyList<TextRange> Selections)? SavedViewState { get; private set; }
+    /// <summary>The editor's view state (caret, selection, scroll position, folds) captured when the view was dropped by the LRU policy; restored when the view is recreated.</summary>
+    public EditorViewState? SavedViewState { get; private set; }
 
     /// <summary>Set while a user-confirmed close is in flight so the Dock closing hook lets it through.</summary>
     public bool CloseConfirmed { get; set; }
@@ -142,11 +214,7 @@ public sealed class EditorTab : ShellDocument
         var controller = _editors.GetController(view);
         if (controller is not null)
         {
-            if (SavedViewState is { } s)
-            {
-                controller.SetSelection(new TextRange(s.Caret, s.Caret), reveal: false);
-                if (s.Selections.Count > 0) controller.SetSelection(s.Selections[0], reveal: false);
-            }
+            if (SavedViewState is { } s) controller.RestoreViewState(s); // clamped by the editor if the document changed meanwhile
             if (PendingReveal is { } r) controller.SetSelection(r, reveal: true);
         }
         SavedViewState = null;
@@ -159,10 +227,13 @@ public sealed class EditorTab : ShellDocument
 
     public override void DisposeView()
     {
-        if (LiveView is { } v && _editors.GetController(v) is { } c)
-            SavedViewState = (c.Caret, c.Selections.ToArray());
+        // GetViewState -> DisposeView now, CreateView + RestoreViewState later (docs/EDITOR.md): the tab comes back exactly as it was.
+        if (LiveView is { } v && _editors.GetController(v) is { } c) SavedViewState = c.GetViewState();
         base.DisposeView();
     }
+
+    /// <summary>The editor owns its views' teardown (handlers, renderers, margins, undo-history references): hand the view back to it.</summary>
+    protected override void ReleaseView(Control view) => _editors.DisposeView(view);
 
     public override void Dispose()
     {

@@ -7,6 +7,8 @@ using CsCode.App.Startup;
 using CsCode.App.ToolWindows;
 using CsCode.App.ToolWindows.FindResults;
 using CsCode.Core;
+using CsCode.Core.Diagnostics;
+using CsCode.Core.Languages;
 using CsCode.Core.Platform;
 using CsCode.Dap;
 using CsCode.Editor;
@@ -18,6 +20,8 @@ using CsCode.Profiling;
 using CsCode.Ui;
 using CsCode.Ui.Threading;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
 namespace CsCode.App;
 
@@ -48,13 +52,38 @@ public static class AppServices
         services.AddCsCodeDebugPanels();
         services.AddCsCodeSearchPanels();
         configure?.Invoke(services); // dev/test host: replace anything above
+        AddChildProcessTracking(services); // last: wraps whichever memory monitor ended up registered
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+    }
+
+    /// <summary>
+    /// Modules report their child processes through <see cref="IMemoryMonitor.TrackChildProcess"/>; the shell wraps the registered monitor (or stands in
+    /// for it while CsCode.Profiling registers none) so the exit path knows which processes to kill if their owner does not stop them in time.
+    /// </summary>
+    private static void AddChildProcessTracking(IServiceCollection services)
+    {
+        services.TryAddSingleton<ChildProcessTracker>();
+        var registered = services.LastOrDefault(d => d.ServiceType == typeof(IMemoryMonitor) && !d.IsKeyedService);
+        if (registered is not null) services.Remove(registered);
+        services.AddSingleton<IMemoryMonitor>(sp =>
+        {
+            var (inner, owned) = registered switch
+            {
+                null => (null, false),
+                { ImplementationInstance: IMemoryMonitor instance } => (instance, false), // the container never disposes instances either
+                { ImplementationFactory: { } factory } => ((IMemoryMonitor)factory(sp), true),
+                { ImplementationType: { } type } => ((IMemoryMonitor)ActivatorUtilities.CreateInstance(sp, type), true),
+                _ => ((IMemoryMonitor?)null, false),
+            };
+            return new ShellMemoryMonitor(inner, owned, sp.GetRequiredService<ChildProcessTracker>());
+        });
     }
 
     /// <summary>Registers the shell's own services (all singletons; the shell has one window).</summary>
     public static IServiceCollection AddCsCodeShell(this IServiceCollection services, IReadOnlyList<string> args)
     {
         services.AddSingleton(CommandLineOptions.Parse(args));
+        services.TryAddSingleton(_ => App.Crash); // the process-wide handler (installed before the container exists): the window reports late failures through it
         services.AddSingleton<IUiDispatcher>(_ => AvaloniaUiDispatcher.Instance);
         services.AddSingleton<WindowHolder>();
         services.AddSingleton<IShellHost>(sp => new AvaloniaShellHost(() => sp.GetRequiredService<WindowHolder>().Window));
@@ -70,11 +99,15 @@ public static class AppServices
         services.AddSingleton<IOutputService>(sp => sp.GetRequiredService<OutputService>());
         services.AddSingleton<IWindowService, WindowService>();
 
+        // Language servers take part in saves and file operations; resolved lazily because the language client itself depends on navigation.
+        services.AddSingleton(sp => new FileParticipants(() => sp.GetServices<IWillSaveParticipant>(), () => sp.GetServices<IFileOperationParticipant>(),
+            sp.GetService<ILoggerFactory>()?.CreateLogger("CsCode.Shell.FileParticipants")));
         services.AddSingleton<ShellDockFactory>();
         services.AddSingleton(sp => new DocumentWell(sp.GetRequiredService<ShellDockFactory>(), sp.GetRequiredService<IEditorViewFactory>(), sp.GetRequiredService<IModalDialogs>(),
-            sp.GetService<IWindowService>(), sp.GetService<IConfigurationService>(), sp.GetRequiredService<IUiDispatcher>()));
+            sp.GetService<IWindowService>(), sp.GetService<IConfigurationService>(), sp.GetRequiredService<IUiDispatcher>(), sp.GetService<FileParticipants>()));
         services.AddSingleton(sp => new NavigationService(sp.GetRequiredService<DocumentWell>(), sp.GetRequiredService<IUiDispatcher>(), sp.GetRequiredService<IModalDialogs>(),
-            sp.GetService<IWorkspaceService>()?.FileSystem, sp.GetService<Core.Text.IDocumentManager>(), sp.GetService<IWindowService>(), sp.GetService<IConfigurationService>()));
+            sp.GetService<IWorkspaceService>()?.FileSystem, sp.GetService<Core.Text.IDocumentManager>(), sp.GetService<IWindowService>(), sp.GetService<IConfigurationService>(),
+            sp.GetService<FileParticipants>()));
         services.AddSingleton<INavigationService>(sp => sp.GetRequiredService<NavigationService>());
 
         services.AddSingleton<IToolWindow, ExplorerToolWindow>();

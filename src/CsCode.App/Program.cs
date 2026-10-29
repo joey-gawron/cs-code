@@ -8,6 +8,7 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        AppStartup.ConfigureRuntime();
         var options = CommandLineOptions.Parse(args);
         if (options.ShowHelp) { Console.WriteLine(CommandLineOptions.HelpText); return 0; }
         if (options.ShowVersion) { Console.WriteLine(typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "dev"); return 0; }

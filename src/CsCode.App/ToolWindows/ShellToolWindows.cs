@@ -29,7 +29,8 @@ public sealed class ExplorerToolWindow : IToolWindow
     {
         var vm = new ExplorerViewModel(
             services.GetRequiredService<IWorkspaceService>(), services.GetRequiredService<IUiDispatcher>(), services.GetService<INavigationService>(),
-            services.GetService<IConfigurationService>(), services.GetService<IStateStorage>(), services.GetService<IModalDialogs>(), services.GetService<DocumentWell>());
+            services.GetService<IConfigurationService>(), services.GetService<IStateStorage>(), services.GetService<IModalDialogs>(), services.GetService<DocumentWell>(),
+            services.GetService<Services.FileParticipants>());
         var view = new ExplorerView(vm, services.GetRequiredService<IWindowService>(), services.GetService<ICommandService>(), services.GetService<IContextKeyService>(),
             services.GetService<IContributionRegistry>());
         // Load after the first frame so showing the window never waits for the directory read.

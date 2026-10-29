@@ -1,4 +1,5 @@
 using System.Text;
+using CsCode.Platform;
 
 namespace CsCode.App.Startup;
 
@@ -27,13 +28,13 @@ public sealed class CrashHandler
     public string LogDirectory => _logDirectory;
     public int ReportCount => Volatile.Read(ref _reported);
 
-    /// <summary>Default log directory honouring <c>CSCODE_HOME</c> (portable / test installs).</summary>
-    public static string DefaultLogDirectory()
-    {
-        var home = Environment.GetEnvironmentVariable("CSCODE_HOME");
-        var root = string.IsNullOrEmpty(home) ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cscode") : home;
-        return Path.Combine(root, "logs");
-    }
+    /// <summary>
+    /// The application's log directory (<c>IAppPaths.LogsDir</c>): crash logs sit next to the rolling <c>cscode.log</c>. The crash handler is installed before
+    /// the container exists, so it asks Platform's <see cref="AppPaths"/> directly (pure: computing a path never touches the disk) rather than repeating the
+    /// per-OS / XDG / <c>CSCODE_HOME</c> rules here.
+    /// </summary>
+    /// <param name="getEnv">Environment lookup (defaults to the process environment); injectable so tests never mutate process state.</param>
+    public static string DefaultLogDirectory(Func<string, string?>? getEnv = null) => new AppPaths(getEnv).LogsDir;
 
     /// <summary>Hooks the process-wide unhandled-exception events. The UI-thread hook is installed by the app because it needs the dispatcher.</summary>
     public void Install()

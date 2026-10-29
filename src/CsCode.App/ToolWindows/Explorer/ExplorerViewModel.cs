@@ -2,6 +2,7 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CsCode.App.Docking;
 using CsCode.App.Notifications;
+using CsCode.App.Services;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
@@ -15,7 +16,8 @@ namespace CsCode.App.ToolWindows.Explorer;
 /// (<see cref="Rows"/>), so the list control virtualises it and 20k siblings cost one bulk collection change. Directory reads, sorting
 /// and diffing happen on workers; the UI thread only splices already-built node arrays into <see cref="Rows"/>. File-system changes
 /// arrive batched from <see cref="IFileWatcher"/> and are diffed against the loaded subtree by name: the tree is never rebuilt.
-/// All file operations go through <see cref="IFileSystem"/> (async; delete uses the trash). UI-thread object.
+/// All file operations go through <see cref="IFileSystem"/> (async; delete uses the trash), with the file-operation participants around them
+/// (language servers: will-rename edits are applied before a rename or move, did-create/rename/delete follow). UI-thread object.
 /// </summary>
 public sealed class ExplorerViewModel : ObservableObject, IDisposable
 {
@@ -30,6 +32,7 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     private readonly IStateStorage? _state;
     private readonly IModalDialogs? _dialogs;
     private readonly DocumentWell? _well;
+    private readonly FileParticipants? _participants;
     private readonly DisposableStore _subs = new();
     private readonly List<IDisposable> _watches = new();
     private readonly List<ExplorerNode> _roots = new();
@@ -44,8 +47,9 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     private bool _restoring;
 
     public ExplorerViewModel(IWorkspaceService workspace, IUiDispatcher ui, INavigationService? navigation = null, IConfigurationService? config = null,
-        IStateStorage? state = null, IModalDialogs? dialogs = null, DocumentWell? well = null)
+        IStateStorage? state = null, IModalDialogs? dialogs = null, DocumentWell? well = null, FileParticipants? participants = null)
     {
+        _participants = participants;
         _workspace = workspace;
         _ui = ui;
         _fs = workspace.FileSystem;
@@ -321,6 +325,7 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         var uri = Child(container.Uri, name, isDirectory);
         if (isDirectory) await _fs.CreateDirectoryAsync(uri).ConfigureAwait(true);
         else await _fs.WriteFileAsync(uri, ReadOnlyMemory<byte>.Empty, createParents: false).ConfigureAwait(true);
+        if (_participants is not null) await _participants.DidCreateAsync([uri]).ConfigureAwait(true);
         await ReloadDirectoryAsync(container).ConfigureAwait(true);
         return uri;
     }
@@ -356,7 +361,11 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         return true;
     }
 
-    /// <summary>Renames/moves on disk; open tabs inside the moved path are closed first (with their save prompts) and reopened at the new location.</summary>
+    /// <summary>
+    /// Renames/moves on disk; open tabs inside the moved path are closed first (with their save prompts) and reopened at the new location.
+    /// Will-rename participants (language servers updating imports and references) are asked first and their edit is applied before the move;
+    /// did-rename follows it.
+    /// </summary>
     private async Task MoveUriAsync(Uri from, Uri to)
     {
         var reopen = new List<(Uri Old, Uri New)>();
@@ -368,9 +377,15 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
                 if (!await _well.CloseAsync(tab).ConfigureAwait(true)) return; // user cancelled a save prompt: abort the move
                 reopen.Add((tab.Uri, new Uri(to.AbsoluteUri.TrimEnd('/') + (rel.Length > 0 ? "/" + rel : ""))));
             }
+        IReadOnlyList<(Uri, Uri)> renamed = [(from, to)];
+        if (_participants is not null && await _participants.WillRenameAsync(renamed).ConfigureAwait(true) is { } edit && _navigation is not null)
+            await _navigation.ApplyWorkspaceEditAsync(edit, $"Rename {NameOf(from)}").ConfigureAwait(true); // declined or failed: the move still happens
         await _fs.RenameAsync(from, to).ConfigureAwait(true);
+        if (_participants is not null) await _participants.DidRenameAsync(renamed).ConfigureAwait(true);
         if (_navigation is not null) foreach (var (_, n) in reopen) await _navigation.OpenAsync(n).ConfigureAwait(true);
     }
+
+    private static string NameOf(Uri uri) => Uri.UnescapeDataString(uri.AbsolutePath.TrimEnd('/').Split('/')[^1]);
 
     private static string? RelativeUnder(Uri root, Uri candidate)
     {
@@ -392,6 +407,7 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
             foreach (var tab in _well.EditorTabs.Where(t => RelativeUnder(node.Uri, t.Uri) is not null).ToArray())
                 await _well.CloseAsync(tab, prompt: false).ConfigureAwait(true);
         await _fs.DeleteAsync(node.Uri, recursive: true, useTrash: true).ConfigureAwait(true);
+        if (_participants is not null) await _participants.DidDeleteAsync([node.Uri]).ConfigureAwait(true);
         var container = node.Parent!;
         await ReloadDirectoryAsync(container).ConfigureAwait(true);
         return true;
@@ -400,10 +416,11 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     public async Task<Uri?> DuplicateAsync(ExplorerNode node)
     {
         var container = node.Parent ?? ContainerOf(node);
-        var target = UniqueName(container, node.Name, node.IsDirectory, " copy");
-        await _fs.CopyAsync(node.Uri, Child(container.Uri, target, node.IsDirectory)).ConfigureAwait(true);
+        var target = Child(container.Uri, UniqueName(container, node.Name, node.IsDirectory, " copy"), node.IsDirectory);
+        await _fs.CopyAsync(node.Uri, target).ConfigureAwait(true);
+        if (_participants is not null) await _participants.DidCreateAsync([target]).ConfigureAwait(true);
         await ReloadDirectoryAsync(container).ConfigureAwait(true);
-        return Child(container.Uri, target, node.IsDirectory);
+        return target;
     }
 
     public void Copy(IEnumerable<ExplorerNode> nodes) => SetClipboard(nodes, cut: false);
@@ -433,7 +450,12 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
                 if (dest == src) continue;
                 await MoveUriAsync(src, dest).ConfigureAwait(true);
             }
-            else await _fs.CopyAsync(src, Child(container.Uri, UniqueName(container, name, isDir, " copy"), isDir)).ConfigureAwait(true);
+            else
+            {
+                var copy = Child(container.Uri, UniqueName(container, name, isDir, " copy"), isDir);
+                await _fs.CopyAsync(src, copy).ConfigureAwait(true);
+                if (_participants is not null) await _participants.DidCreateAsync([copy]).ConfigureAwait(true);
+            }
         }
         if (clip.Cut) _clipboard = null;
         await ReloadDirectoryAsync(container).ConfigureAwait(true);

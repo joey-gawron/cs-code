@@ -289,9 +289,9 @@ public class ShellIntegrationTests
         {
             var tab = await well.OpenAsync(new Uri($"file:///scratch/f{i}.txt"));
             await DevHost.WaitFor(() => tab.LiveView is not null, 1000); // Dock presented it, creating the editor view
-            // Dock.Avalonia 12.1 keeps a closed (presented) tab object reachable; the shell guarantees that what the tab pinned (editor document,
-            // view, controller, subscriptions) is released. See docs/SHELL.md "Known issues".
-            if (i % 30 == 0) { weak.Add((i, "doc", new WeakReference(tab.Doc))); if (tab.LiveView is { } v) weak.Add((i, "view", new WeakReference(v))); }
+            // Dock.Avalonia 12.1 caches the control it presented for every dockable (control recycling, keyed by the dockable); the shell drops a tab's
+            // entry when the tab closes, so the tab object itself, its document and its view are all released (see docs/SHELL.md).
+            if (i % 30 == 0) { weak.Add((i, "doc", new WeakReference(tab.Doc))); if (tab.LiveView is { } v) weak.Add((i, "view", new WeakReference(v))); weak.Add((i, "tab", new WeakReference(tab))); }
             await well.CloseAsync(tab, prompt: false);
             if (i == 100) { await DevScene.SettleAsync(5); GcUntil(() => false); at100 = GC.GetTotalMemory(forceFullCollection: true); }
         }
@@ -301,14 +301,11 @@ public class ShellIntegrationTests
             await DevScene.SettleAsync(40);
             GcUntil(() => weak.Count(w => w.Ref.IsAlive) == 0);
         }
+        await DevScene.SettleAsync(5); // the last close's coalesced UI work runs before the host is disposed
         var at300 = GC.GetTotalMemory(forceFullCollection: true);
-        // Observed (not explained): tabs closed early in the session (samples 30, 60, 90) stay reachable through something inside Dock/Avalonia, while
-        // every tab from index 120 on is released. The retention is bounded, not growing: steady state releases everything and memory is flat.
-        // Which tabs stay reachable varies from run to run (see docs/SHELL.md, Known issues), so the assertion is "most are released and nothing grows",
-        // not "every one is": at most a third of the steady-state samples may still be reachable, and the heap must be flat (below).
-        var steady = weak.Where(w => w.Index >= 120).ToArray();
-        var alive = steady.Where(w => w.Ref.IsAlive).Select(w => $"{w.Kind}#{w.Index}").ToArray();
-        Assert.True(alive.Length <= steady.Length / 3, $"{alive.Length} of {steady.Length} steady-state objects still reachable: " + string.Join(", ", alive));
+        // Every sample, early ones included: before the recycling cache entry was dropped, 6-8 of the 12 steady-state samples could stay reachable.
+        var alive = weak.Where(w => w.Ref.IsAlive).Select(w => $"{w.Kind}#{w.Index}").ToArray();
+        Assert.True(alive.Length == 0, $"{alive.Length} of {weak.Count} closed tabs/documents/views still reachable: " + string.Join(", ", alive));
         Assert.True(at300 - at100 < 4 * 1024 * 1024, $"managed heap grew by {(at300 - at100) / 1024} KB between tab 100 and tab 300");
     }
 
