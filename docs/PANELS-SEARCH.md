@@ -17,15 +17,15 @@ Find in Files (with replace), the Settings editor and the Keyboard Shortcuts vie
   `IConfigurationService`, `IStateStorage`, `ICommandService`, `IKeybindingService`, `IContextKeyService`, `IActiveSelectionProvider`,
   `CsCode.Ui.Threading.IUiDispatcher` (falls back to `AvaloniaUiDispatcher.Instance`).
 * **Additive Core change:** `src/CsCode.Core/Platform/ViewActivation.cs` adds `IViewActivator.ShowViewAsync(string viewId)`. The commands call it to
-  bring a view to the front ("search", "settings", "keybindings"). **The shell must implement it** (map to `ToolWindowManager.Show` /
+  bring a view to the front ("search", "settings", "keybindings"). The shell implements it (`ShellViewActivator`: `ToolWindowManager.Show` /
   `DocumentWell.OpenView`). Without it the commands still work, but nothing is revealed. It is the only Core change.
-* **Document-location tool windows.** `Settings` and `Keyboard Shortcuts` use `ToolWindowLocation.Document`. `ToolWindowManager.DockFor` in this base maps
-  every location other than Left/Bottom to the right tool well, so the shell has to route `Document` to `DocumentWell.OpenView(id, title, factory)`.
+* **Document-location tool windows.** `Settings` and `Keyboard Shortcuts` use `ToolWindowLocation.Document`: the shell keeps them out of the tool wells and opens
+  them on demand as singleton document tabs. Find in Files is not in the shell's default layout; its commands show it.
 * **Views are disposable.** `FindInFilesView`, `SettingsView`, `KeyboardShortcutsView` implement `IDisposable`; the shell's `ToolTab.DisposeView`
   already disposes views and their DataContext. Disposing cancels a running search, flushes pending settings edits and drops every subscription.
 * **Resource keys.** XAML must write `{DynamicResource ResourceKey='vsc:editor.background'}` (quoted, named argument). The shorthand
   `{DynamicResource vsc:editor.background}` compiles but the `vsc:` is read as an XML prefix and the lookup silently fails (found with a headless screenshot).
-* Commands registered (only if not already registered by someone else): `workbench.action.findInFiles`, `workbench.action.replaceInFiles`,
+* Commands registered (only if not already registered by someone else; palette categories "Search" and "Preferences", as in VS Code): `workbench.action.findInFiles`, `workbench.action.replaceInFiles`,
   `search.action.focusNextSearchResult` (F4), `search.action.focusPreviousSearchResult` (Shift+F4), `search.action.clearSearchResults`,
   `search.action.collapseSearchResults`, `search.action.findInFolder` (argument: folder URI), `workbench.action.openSettings` (optional query argument),
   `workbench.action.openSettingsJson`, `workbench.action.openGlobalKeybindings`, `workbench.action.openGlobalKeybindingsFile`.

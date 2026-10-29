@@ -26,7 +26,8 @@ All dock at the bottom. The shell creates a window's view lazily and disposes it
 `UserControl` whose `DataContext` is a fully disposable view-model, so creating one is cheap and hiding one releases every subscription.
 
 **Commands.** The panels register one command: `debug.addToWatch` (argument: the expression; with no argument it focuses the Watch
-window's empty row, or asks with an input box when the window is closed). The `workbench.action.debug.*` commands belong to the DAP module
+window's empty row, or asks with an input box when the window is closed; the Watch window is then shown through the shell's `IViewActivator`, as Visual
+Studio does on Add Watch). Modules is manual: it is not in the shell's default layout. The `workbench.action.debug.*` commands belong to the DAP module
 and the `workbench.debug.action.toggle*` ids are only *declared* here: **the shell must bind each `IToolWindow.ToggleCommandId` to
 `ToolWindowManager.Toggle(id)`** (nothing in the panels can toggle a dock). **Context key** published for auto-show:
 `cscode.debug.exceptionStopped`.
