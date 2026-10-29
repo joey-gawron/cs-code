@@ -70,7 +70,10 @@ greeting line `CSCODE-SERVER-READY v1` before the framed stream; the client skip
 
 ## Server bootstrap
 
-`ShellServerTransport` runs two **fixed** POSIX sh scripts (`ServerScripts`) through an `IRemoteShell` — `ssh … -- host sh -c '<script>' cscode '<arg>'…` or,
+Before anything runs on the remote, `ssh -G` resolves the effective settings for the destination (the user's ssh_config applied); they go to the
+Remote log ("Resolved box: me@10.0.0.5:22 via bastion"), and a configuration ssh rejects fails the connection right there with ssh's message.
+
+`ShellServerTransport` then runs two **fixed** POSIX sh scripts (`ServerScripts`) through an `IRemoteShell` — `ssh … -- host sh -c '<script>' cscode '<arg>'…` or,
 in tests, `/bin/sh -c <script> cscode <arg>…` locally:
 
 1. **Start** (`$1` install root, `$2` data dir, `$3` marker, `$4` force, `$5…` candidate hashes): execs `<root>/bin/<hash>/cscode-server --stdio --data-dir …`
@@ -202,6 +205,9 @@ a process marker, reconnect policy, clock, call timeout, a transport factory, th
   at once on cancel/timeout; StreamJsonRpc runs its reader on the thread pool and completes a cancelled call only when the other side answers (see LSP.md).
   It is ~500 lines and covered by its own tests.
 * **Pull-based search sessions** rather than streamed notifications: back-pressure without a client-side buffer.
+* **Method names + DTO records instead of typed service interfaces** (`IRemoteFileSystem`, `IRemoteSearch`… in the brief): the protocol is
+  `RemoteMethods` + the records in `Protocol/Messages.cs`; the client-facing types are the Core contracts themselves (`IFileSystemProvider`,
+  `IFileWatcherProvider`, `IFileSearchProvider`, the feature-provider interfaces), so no second interface layer was added.
 * **Document versions are the editor's**: the server mirror takes the client's version numbers, so stale-result checks agree on both ends.
 
 ## Limits and known gaps
@@ -215,6 +221,9 @@ a process marker, reconnect policy, clock, call timeout, a transport factory, th
   does update). Remote workspace settings apply on the server (language servers) but not to client-side editor options.
 * Windows remotes (cmd/PowerShell login shells) and csh/fish login shells are not supported; only linux-x64 bundles build offline here (other RIDs need
   their runtime packs).
+* Not done from the brief's R1 detail list: content prefetch for open tabs (each open reads on demand, chunked and pipelined), JSON-RPC batch
+  arrays (requests pipeline instead), the remote icon overlay in the Explorer title (the Explorer belongs to the shell), and the "Show Log" action on the
+  progress notification itself (it is on the failure message; `Remote: Show Log` is a command).
 * The status-bar indicator shows state through icons and text; it has no blue/green/orange/red background (`StatusBarItemModel` has no background
   colour, and a foreground colour key could be unreadable on some themes).
 * A server killed with SIGKILL orphans the language servers it started (a clean exit or a dropped connection stops them).
@@ -240,12 +249,14 @@ Run without `SSH_AUTH_SOCK` and without a display (the tests set `SSH_AUTH_SOCK`
   `.gitignore` and `files.exclude`, server-side text search, watcher events, TypeScript diagnostics/completion/resolve/hover/definition through the
   bridge (real `typescript-language-server` on PATH), settings mirror, full resync after the server is killed, UI forwarding, process language host
   (TypeScript runs under the child), chaos (500 ms RTT + bandwidth cap, a link cut mid-transfer → reconnect, a SIGSTOPped server → timeouts → recovery),
-  20 connect/disconnect cycles with `LeakAssert` and thread counts, no process left (marker scan of `/proc`) after every test.
+  50 connect/disconnect cycles of the state machine with `LeakAssert` and thread counts, 10 real connect/watch/read/disconnect cycles with process,
+  thread and descriptor counts, no process left (marker scan of `/proc`) after every test, and the language servers a server started exit with it.
 * **Installer** (the real scripts in `/bin/sh` with the published bundles): upload + verify + install + start, reuse, forced reinstall, portable bundle on
   the local .NET runtime, corrupted bundle refused, old installs cleaned up (keeping two), unsupported platform.
 * **Real SSH**: an own `sshd` (from `/usr/sbin` or the Nix store) on a free loopback port with throwaway host/client keys, `authorized_keys`, `sshd_config`
   and `ssh_config` in a temp dir (`SetEnv HOME/XDG/PATH` for the session); `ssh -F <temp> … IdentitiesOnly … UserKnownHostsFile=<temp>`; never `~/.ssh`,
-  never the agent; sshd stopped by PID. Bootstrap (32 MB upload over ssh) + files + quick open + watcher + TypeScript diagnostics, askpass with a host-key
+  never the agent; sshd stopped by PID. `ssh -G` resolution, bootstrap (32 MB upload over ssh) + files + quick open + watcher + TypeScript diagnostics,
+  a broken ssh configuration failing with ssh's message, askpass with a host-key
   confirmation and a passphrase-protected key (the server binary's `--askpass` mode as the helper), and a wrong passphrase failing with ssh's reason.
   Skips with a reason when no sshd exists.
 * **App composition** (`tests/CsCode.App.Tests/RemoteCompositionTests.cs`, headless, real app start/exit): a remote folder opens in the Explorer, a file is

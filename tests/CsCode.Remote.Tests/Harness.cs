@@ -181,6 +181,41 @@ public static class TestEnv
         return pids;
     }
 
+    /// <summary>Every live descendant of <paramref name="pid"/> (Linux /proc parent links), e.g. the language servers a server started.</summary>
+    public static IReadOnlyList<int> Descendants(int pid)
+    {
+        var parents = new Dictionary<int, int>();
+        if (!OperatingSystem.IsLinux()) return [];
+        foreach (var dir in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(dir), out var p)) continue;
+            try
+            {
+                var stat = File.ReadAllText(Path.Combine(dir, "stat"));
+                var close = stat.LastIndexOf(')');
+                var fields = stat[(close + 2)..].Split(' ');
+                if (fields[0] != "Z") parents[p] = int.Parse(fields[1], System.Globalization.CultureInfo.InvariantCulture);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException) { }
+        }
+        var result = new List<int>();
+        var frontier = new Queue<int>([pid]);
+        while (frontier.TryDequeue(out var cur))
+            foreach (var (child, parent) in parents)
+                if (parent == cur) { result.Add(child); frontier.Enqueue(child); }
+        return result;
+    }
+
+    public static bool IsAlive(int pid)
+    {
+        try
+        {
+            var stat = File.ReadAllText($"/proc/{pid}/stat");
+            return stat[(stat.LastIndexOf(')') + 2)] != 'Z';
+        }
+        catch (IOException) { return false; }
+    }
+
     private static bool IsZombie(string procDir)
     {
         try

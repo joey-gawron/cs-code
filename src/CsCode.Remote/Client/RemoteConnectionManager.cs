@@ -272,6 +272,15 @@ public sealed class SshServerTransport(SshOptions ssh, RemoteAuthority destinati
                 foreach (var (k, v) in askpass.Environment) env[k] = v;
                 options = ssh with { Environment = env };
             }
+            // `ssh -G`: the effective settings for the destination (the user's ssh_config applied) — logged, and a broken configuration fails here
+            // with ssh's own message before anything else runs.
+            var resolved = await RemoteShellExtensions.RunAsync(new ProcessLaunch(options.SshPath, SshArgs.ResolveConfig(options, destination)) { Environment = options.Environment },
+                null, TimeSpan.FromSeconds(20), ct).ConfigureAwait(false);
+            if (resolved.ExitCode != 0)
+                throw new RemoteBootstrapException($"ssh rejected the configuration for {destination.Destination}: {resolved.Stderr.Trim()}");
+            var effective = SshEffectiveConfig.Parse(resolved.Stdout);
+            progress?.Report($"Resolved {destination.Destination}: {effective.User}@{effective.HostName}:{effective.Port}" +
+                             (effective.ProxyJump.Count > 0 ? " via " + string.Join(", ", effective.ProxyJump) : ""));
             return await new ShellServerTransport(new SshRemoteShell(options, destination), launch).ConnectAsync(progress, ct).ConfigureAwait(false);
         }
         finally { askpass?.Dispose(); }

@@ -43,9 +43,13 @@ public static class RemoteShellExtensions
     /// to 1 MB each). Cancellation or the timeout kills the process tree.
     /// </summary>
     public static Task<ShellResult> RunAsync(this IRemoteShell shell, string script, IReadOnlyList<string> args, Stream? stdin, TimeSpan timeout, CancellationToken ct) =>
+        RunAsync(shell.Launch(script, args), stdin, timeout, ct);
+
+    /// <summary>Runs a process to completion on a dedicated thread (same rules as the script overload).</summary>
+    public static Task<ShellResult> RunAsync(ProcessLaunch launch, Stream? stdin, TimeSpan timeout, CancellationToken ct) =>
         BlockingWork.RunAsync("shell", () =>
         {
-            var channel = ProcessChannel.Start(shell.Launch(script, args));
+            var channel = ProcessChannel.Start(launch);
             using var killer = ct.Register(() => _ = channel.DisposeAsync());
             using var timer = new Timer(_ => _ = channel.DisposeAsync(), null, timeout, Timeout.InfiniteTimeSpan);
             var stdout = new StringBuilder();

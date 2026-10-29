@@ -211,7 +211,7 @@ public class ConnectionStateTests
         {
             var (client, _, _, _, _) = Create();
             var sessions = new List<object>();
-            for (var i = 0; i < 20; i++)
+            for (var i = 0; i < 50; i++)
             {
                 await client.ConnectAsync(Ct);
                 sessions.Add(client.Session!);

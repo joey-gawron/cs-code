@@ -105,8 +105,11 @@ public class ProcessLanguageHostTests
 
         var completion = host.Services.GetRequiredService<ILanguageFeatureRegistry>().GetProviders<ICompletionProvider>(main);
         Assert.NotEmpty(completion);
+        var tree = TestEnv.Descendants(plh.Client.Session!.Server.ProcessId);
+        Assert.Contains(tsPid, tree);
         await plh.StopAllAsync(Ct);
         await TestEnv.WaitUntilAsync(() => plh.Servers.All(s => s.State is LanguageServerState.Stopped), TimeSpan.FromSeconds(30), "stop all through the proxy");
+        await TestEnv.WaitUntilAsync(() => !TestEnv.IsAlive(tsPid), TimeSpan.FromSeconds(20), "the stopped server's process to exit");
     }
 
     private static int ParentOf(int pid)

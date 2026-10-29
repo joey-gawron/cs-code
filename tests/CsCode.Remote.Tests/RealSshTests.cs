@@ -176,6 +176,7 @@ public class RealSshTests(SshdFixture sshd) : IClassFixture<SshdFixture>
         await host.ConnectAsync("cscode-test");
         var output = host.Output.Text(Client.RemoteConnectionManager.OutputChannel);
         Assert.Contains("Installing the server", output); // uploaded over the ssh channel (fresh install root)
+        Assert.Contains($"Resolved cscode-test: {Environment.UserName}@127.0.0.1:{sshd.Port}", output); // ssh -G with the temp config
         Assert.Equal(RemoteConnectionState.Connected, host.Manager.Status.State);
         Assert.Equal(sshd.RemoteHome, host.Manager.Session!.Server.Home); // the session ran with the fixture's environment
         Assert.True(File.Exists(Path.Combine(sshd.Dir.Combine("remote-install"), "bin", InstallerTests.PublishedBundles()!.SelfContained("linux-x64")!.Hash, "cscode-server")));
@@ -254,6 +255,21 @@ public class RealSshTests(SshdFixture sshd) : IClassFixture<SshdFixture>
         var ex = await Assert.ThrowsAnyAsync<IOException>(() => host.ConnectAsync("cscode-askpass"));
         Assert.Contains("Permission denied", ex.Message + host.Dump());
         Assert.Equal(RemoteConnectionState.Failed, host.Manager.Status.State);
+    }
+
+    [Fact]
+    public async Task A_broken_ssh_configuration_fails_with_sshs_message()
+    {
+        Assert.SkipUnless(File.Exists("/usr/bin/ssh"), "no ssh client");
+        using var dir = new TempDirectory("cscode-badcfg-");
+        var cfg = dir.WriteFile("ssh_config", "Host x\n  NoSuchOption yes\n");
+        await using var host = new RemoteTestHost(loopback: false, userSettings: JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["remote.ssh.configFile"] = cfg, ["remote.ssh.useAskpass"] = false,
+        }));
+        var ex = await Assert.ThrowsAnyAsync<IOException>(() => host.ConnectAsync("x"));
+        Assert.Contains("ssh rejected the configuration", ex.Message);
+        Assert.Contains("NoSuchOption", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Answers confirmations "Yes" and input boxes from a queue, recording what was asked.</summary>

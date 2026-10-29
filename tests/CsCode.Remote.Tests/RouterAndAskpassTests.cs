@@ -118,6 +118,39 @@ public class RouterTests
     }
 }
 
+public class DirectoryCacheTests
+{
+    [Fact]
+    public void Listings_expire_are_invalidated_by_changes_are_bounded_and_trimmable()
+    {
+        var clock = new ManualClock();
+        var cache = new CsCode.Remote.Client.DirectoryCache(TimeSpan.FromSeconds(3), clock);
+        DirectoryEntry[] entries = [new("a", FileType.File)];
+        cache.Put("/w/src/", entries);
+        Assert.True(cache.TryGet("/w/src", out var hit)); // trailing slash does not matter
+        Assert.Same(entries, hit);
+        clock.Advance(TimeSpan.FromSeconds(4));
+        Assert.False(cache.TryGet("/w/src", out _)); // TTL
+
+        cache.Put("/w", entries);
+        cache.Put("/w/src", entries);
+        cache.Put("/w/src/deep", entries);
+        cache.InvalidatePath("/w/src/new.txt"); // a created/deleted entry changes its parent's listing
+        Assert.False(cache.TryGet("/w/src", out _));
+        Assert.True(cache.TryGet("/w", out _));
+        cache.InvalidateTree("/w"); // a directory went away
+        Assert.Equal(0, cache.Count);
+
+        for (var i = 0; i < CsCode.Remote.Client.DirectoryCache.Capacity + 100; i++) cache.Put("/d" + i, entries);
+        Assert.Equal(CsCode.Remote.Client.DirectoryCache.Capacity, cache.Count); // LRU-bounded
+        Assert.True(cache.TryGet("/d" + (CsCode.Remote.Client.DirectoryCache.Capacity + 99), out _));
+        Assert.False(cache.TryGet("/d0", out _));
+        Assert.True(cache.EstimatedBytes > 0);
+        Assert.True(cache.Trim(Core.Diagnostics.MemoryTrimLevel.Moderate) > 0);
+        Assert.Equal(0, cache.Count);
+    }
+}
+
 public class AskpassTests
 {
     private static CancellationToken Ct => TestEnv.Ct;

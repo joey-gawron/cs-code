@@ -106,9 +106,12 @@ public class LanguageBridgeTests
         // the connection going away takes its providers and diagnostics with it
         main.ApplyEdits([new TextEdit(new TextRange(main.PositionAt(oops), main.PositionAt(oops + 1)), "\"again\"")]);
         await TestEnv.WaitUntilAsync(() => diagnostics.Get(main.Uri).Any(d => d.Code == "2322"), TimeSpan.FromSeconds(60), "diagnostic back");
+        var serverTree = TestEnv.Descendants(host.Manager.Session!.Server.ProcessId); // typescript-language-server, tsserver…
+        Assert.NotEmpty(serverTree);
         await host.Manager.DisconnectAsync(Ct);
         Assert.Empty(registry.GetProviders<ICompletionProvider>(main));
         Assert.Empty(diagnostics.Get(main.Uri));
+        await TestEnv.WaitUntilAsync(() => !serverTree.Any(TestEnv.IsAlive), TimeSpan.FromSeconds(20), "the server's language servers to exit with it");
     }
 
     [Fact]
