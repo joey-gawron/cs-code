@@ -127,8 +127,8 @@ internal sealed class ConsoleOutputPump : IDisposable
     /// <summary>
     /// Splits events into lines keeping only the newest <paramref name="maxLines"/> (older text is dropped without being split: counting
     /// newlines is cheap, creating a million strings is not). A note line says how many were not shown. <paramref name="repl"/> lines go
-    /// right after the event they followed; those whose event is no longer among <paramref name="events"/> (trimmed from the history, or
-    /// none yet) are older than all of them and go first.
+    /// right after the event they followed (or its archived copy, see <see cref="OutputAnchor"/>); those whose event is no longer among
+    /// <paramref name="events"/> (trimmed from the history, or none yet) go right after the line entered before them, or first.
     /// </summary>
     internal List<ConsoleLine> ToLines(List<DebugOutputEventArgs> events, int maxLines, IReadOnlyList<ReplLine>? repl = null)
     {
@@ -165,26 +165,40 @@ internal sealed class ConsoleOutputPump : IDisposable
             return lines;
         }
 
-        var comparer = ReferenceEqualityComparer.Instance as IEqualityComparer<DebugOutputEventArgs>;
-        var shown = new HashSet<DebugOutputEventArgs>(kept.Select(k => k.Event), comparer);
-        var after = new Dictionary<DebugOutputEventArgs, List<ReplLine>>(comparer);
+        // Where each shown event is, by instance and by its Output instance (an archived copy of an ended session's event shares the latter).
+        var byEvent = new Dictionary<DebugOutputEventArgs, int>(ReferenceEqualityComparer.Instance);
+        var byOutput = new Dictionary<string, int>(ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < kept.Count; i++)
+        {
+            byEvent.TryAdd(kept[i].Event, i);
+            byOutput.TryAdd(kept[i].Event.Output, i);
+        }
+        var after = new List<ReplLine>?[kept.Count];
+        var previous = -1;
         foreach (var r in repl)
         {
-            if (r.After is not null && r.After.TryGetTarget(out var anchor) && shown.Contains(anchor))
-            {
-                if (!after.TryGetValue(anchor, out var list)) after[anchor] = list = new List<ReplLine>();
-                list.Add(r);
-            }
-            else lines.Add(new ConsoleLine(NextSequence(), r.Kind, r.Text));
+            // REPL lines are in the order they were entered: none goes before the place of the line entered before it.
+            var at = Math.Max(Place(r.After, byEvent, byOutput), previous);
+            previous = at;
+            if (at < 0) lines.Add(new ConsoleLine(NextSequence(), r.Kind, r.Text));
+            else (after[at] ??= new List<ReplLine>()).Add(r);
         }
-        foreach (var (e, text) in kept)
+        for (var i = 0; i < kept.Count; i++)
         {
-            AddLines(lines, e, text);
-            if (after.TryGetValue(e, out var list))
+            AddLines(lines, kept[i].Event, kept[i].Text);
+            if (after[i] is { } list)
                 foreach (var r in list) lines.Add(new ConsoleLine(NextSequence(), r.Kind, r.Text));
         }
         if (lines.Count > maxLines) lines.RemoveRange(0, lines.Count - maxLines);
         return lines;
+    }
+
+    /// <summary>The index of the shown event <paramref name="anchor"/> refers to (the event itself, else an archived copy of it), or -1.</summary>
+    private static int Place(OutputAnchor? anchor, Dictionary<DebugOutputEventArgs, int> byEvent, Dictionary<string, int> byOutput)
+    {
+        if (anchor is null) return -1;
+        if (anchor.TryGetEvent(out var e) && byEvent.TryGetValue(e, out var at)) return at;
+        return anchor.TryGetOutput(out var output) && byOutput.TryGetValue(output, out at) ? at : -1;
     }
 
     private void AddLines(List<ConsoleLine> lines, DebugOutputEventArgs e, string text)

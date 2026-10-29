@@ -187,6 +187,11 @@ public sealed class FakeDebugService : IDebugService, IDebugFrameFocus, IDebugOu
         {
             _sessions.Remove(session);
             if (ReferenceEquals(_active, session)) _active = _sessions.LastOrDefault();
+            // Like DebugService.ArchiveHistory: the ended session's output stays in the history as copies that keep its label (and share the
+            // Output text) but no longer reference the session.
+            var ended = new FakeDebugSession(session.Id, session.Name);
+            for (var i = 0; i < _history.Count; i++)
+                if (ReferenceEquals(_history[i].Session, session)) _history[i] = _history[i] with { Session = ended };
         }
         SessionTerminatedEmitter.Fire(session);
         ActiveSessionChangedEmitter.Fire(ActiveSession);

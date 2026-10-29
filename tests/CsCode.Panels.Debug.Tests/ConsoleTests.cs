@@ -74,13 +74,37 @@ public class ConsolePumpTests
         var second = new DebugOutputEventArgs(s, "stdout", "three\n");
         var lines = pump.ToLines([first, second], 100,
         [
-            new ReplLine(ConsoleLineKind.Input, "> a", new WeakReference<DebugOutputEventArgs>(trimmed)),
-            new ReplLine(ConsoleLineKind.Input, "> b", new WeakReference<DebugOutputEventArgs>(first)),
-            new ReplLine(ConsoleLineKind.Result, "2", new WeakReference<DebugOutputEventArgs>(first)),
+            new ReplLine(ConsoleLineKind.Input, "> a", new OutputAnchor(trimmed)),
+            new ReplLine(ConsoleLineKind.Input, "> b", new OutputAnchor(first)),
+            new ReplLine(ConsoleLineKind.Result, "2", new OutputAnchor(first)),
         ]);
         Assert.Equal(["> a", "one", "two", "> b", "2", "three"], lines.Select(l => l.Text));
         Assert.True(lines.Zip(lines.Skip(1)).All(p => p.First.Sequence < p.Second.Sequence));
         GC.KeepAlive(trimmed);
+    }
+
+    [Fact]
+    public void Repl_lines_find_the_archived_copies_of_an_ended_sessions_output_but_not_output_that_merely_has_the_same_text()
+    {
+        // Regression (dbgp-life-1, review): DebugService.ArchiveHistory replaces an ended session's history entries with `with { Session = ended }`
+        // copies; the copy shares the Output string instance, a different event with the same text does not.
+        using var pump = new ConsoleOutputPump(new ConsoleBuffer(), _ => true, _ => { });
+        var s = new FakeDebugSession();
+        var ended = new FakeDebugSession(s.Id, s.Name);
+        var tick1 = new DebugOutputEventArgs(s, "stdout", new string("tick\n".AsSpan()));
+        var tick2 = new DebugOutputEventArgs(s, "stdout", new string("tick\n".AsSpan()));
+        var done = new DebugOutputEventArgs(s, "stdout", new string("done\n".AsSpan()));
+        var lost = new DebugOutputEventArgs(s, "stdout", new string("lost\n".AsSpan())); // its archived copy was replaced (a trimmed giant batch)
+        DebugOutputEventArgs[] archived = [tick1 with { Session = ended }, tick2 with { Session = ended }, done with { Session = ended }];
+        var lines = pump.ToLines([.. archived], 100,
+        [
+            new ReplLine(ConsoleLineKind.Input, "> a", new OutputAnchor(tick2)),
+            new ReplLine(ConsoleLineKind.Result, "1", new OutputAnchor(tick2)),
+            new ReplLine(ConsoleLineKind.Input, "> b", new OutputAnchor(lost)),
+            new ReplLine(ConsoleLineKind.Input, "> c", new OutputAnchor(done)),
+        ]);
+        Assert.Equal(["tick", "tick", "> a", "1", "> b", "done", "> c"], lines.Select(l => l.Text));
+        GC.KeepAlive(lost);
     }
 
     [Fact]
@@ -220,6 +244,47 @@ public class ConsoleViewModelTests
         restarted.State.Set(ReplState.HistoryKey, new List<string> { "a", "b" });
         using var fresh = new DebugConsoleViewModel(new DebugPanelServices(restarted.Debug, restarted.Ui, state: restarted.State));
         Assert.Equal(["a", "b"], fresh.HistoryEntries);
+    }
+
+    [AvaloniaFact]
+    public async Task The_transcript_keeps_its_place_in_the_output_when_the_session_ended_before_the_console_was_shown_again()
+    {
+        // Regression (dbgp-life-1, review): at the end of a session the real DebugService replaces every history entry with a copy whose
+        // Session is an EndedSession (ArchiveHistory), and the console is hidden automatically. The console opened for the next session never
+        // saw the event instances the REPL lines were anchored to, so it replayed them all as one block before the program output.
+        using var rig = new PanelRig();
+        rig.Session.Evaluator = (e, _, _) => new DebugEvaluateResult(e == "1 + 1" ? "2" : "?", "int");
+        rig.StopAt(2);
+        var first = await Open(rig);
+        rig.Debug.EmitOutput(Out(rig, "stdout", "before\n"));
+        await PanelRig.Eventually(() => first.Lines.Any(l => l.Text == "before"), what: "output");
+        first.Input = "1 + 1";
+        await first.SubmitAsync();
+        await PanelRig.Eventually(() => first.Lines.Any(l => l.Text == "2"), what: "result");
+        rig.Debug.EmitOutput(Out(rig, "stdout", "middle\n"));
+        await PanelRig.Eventually(() => first.Lines.Any(l => l.Text == "middle"), what: "more output");
+        first.Input = "nope";
+        await first.SubmitAsync();
+        await PanelRig.Eventually(() => first.Lines.Any(l => l.Text == "?"), what: "second result");
+        rig.Debug.EmitOutput(Out(rig, "stdout", "exited\n"));
+        await PanelRig.Eventually(() => first.Lines.Any(l => l.Text == "exited"), what: "last output");
+        string[] shown = [.. first.Lines.Select(l => l.Text)];
+        Assert.Equal(["before", "> 1 + 1", "2", "middle", "> nope", "?", "exited"], shown);
+
+        // The session ends: the history is archived (copies) and the console is hidden.
+        rig.Session.Terminate();
+        rig.Debug.RemoveSession(rig.Session);
+        first.Dispose();
+        Assert.All(rig.Debug.GetOutputHistory(), e => Assert.NotSame(rig.Session, e.Session));
+
+        // The next session's console shows the previous run in the same order, then the new output.
+        var next = new FakeDebugSession("s2", "Next").WithDefaultScript();
+        rig.Debug.AddSession(next);
+        using var second = await Open(rig);
+        rig.Debug.EmitOutput(new DebugOutputEventArgs(next, "stdout", "next run\n"));
+        await PanelRig.Eventually(() => second.Lines.Any(l => l.Text == "next run"), what: "re-seeded and new output");
+        await Task.Delay(50);
+        Assert.Equal([.. shown, "next run"], second.Lines.Select(l => l.Text));
     }
 
     [AvaloniaFact]

@@ -1,12 +1,29 @@
+using System.Diagnostics.CodeAnalysis;
 using CsCode.Core.Debugging;
 using CsCode.Core.Platform;
 
 namespace CsCode.Panels.Debug.Console;
 
 /// <summary>One REPL line of the transcript (an entered expression, a result or an error), placed after the program output it followed.</summary>
-/// <param name="After">The output event that was the newest one when the line was added (weakly: an event references its session);
-/// null or collected = before any output still in the history.</param>
-internal sealed record ReplLine(ConsoleLineKind Kind, string Text, WeakReference<DebugOutputEventArgs>? After);
+/// <param name="After">The output event that was the newest one when the line was added; null or no longer in the history = before any
+/// output still in the history.</param>
+internal sealed record ReplLine(ConsoleLineKind Kind, string Text, OutputAnchor? After);
+
+/// <summary>
+/// The output event a REPL line followed, recognised in a later console's history. When a session ends the debug service replaces each of
+/// its history entries with a copy whose <c>Session</c> no longer references it (<c>DebugService.ArchiveHistory</c>, a record <c>with</c>),
+/// so the event is matched by instance first and then by its <see cref="DebugOutputEventArgs.Output"/> string instance, which the copy shares
+/// (each DAP output batch carries a string of its own). Both are held weakly: an event references its session and its text can be large, and
+/// once the history drops it there is nothing to place the line after anyway.
+/// </summary>
+internal sealed class OutputAnchor(DebugOutputEventArgs after)
+{
+    private readonly WeakReference<DebugOutputEventArgs> _event = new(after);
+    private readonly WeakReference<string> _output = new(after.Output);
+
+    public bool TryGetEvent([NotNullWhen(true)] out DebugOutputEventArgs? e) => _event.TryGetTarget(out e);
+    public bool TryGetOutput([NotNullWhen(true)] out string? output) => _output.TryGetTarget(out output);
+}
 
 /// <summary>
 /// What the Debug Console's REPL keeps across console view-models. The shell disposes the view-model whenever the window is hidden (also
@@ -48,7 +65,7 @@ public sealed class ReplState
 
     internal void Record(ConsoleLineKind kind, string text, DebugOutputEventArgs? after)
     {
-        var line = new ReplLine(kind, text, after is null ? null : new WeakReference<DebugOutputEventArgs>(after));
+        var line = new ReplLine(kind, text, after is null ? null : new OutputAnchor(after));
         lock (_gate)
         {
             _transcript.Enqueue(line);
