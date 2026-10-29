@@ -161,6 +161,63 @@ public class ThreadingTests
         await TestHelpers.EventuallyAsync(() => server.TextOf(doc.Uri.AbsoluteUri) == doc.GetText(), "server converges after the backlog (full resync)");
     }
 
+    [Fact]
+    public async Task Manager_start_stop_and_restart_never_run_blocking_work_on_the_calling_thread()
+    {
+        await using var env = new LspTestEnv();
+        env.Connections.SyncBlock = TimeSpan.FromMilliseconds(400); // "Process.Start" blocks this long
+        env.AddFake();
+        var context = new ThrowingSyncContext();
+        var callerThread = -1;
+        Task start = Task.CompletedTask, stop = Task.CompletedTask, restart = Task.CompletedTask;
+        double startMs = 0, stopMs = 0, restartMs = 0;
+        var t = new Thread(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            callerThread = Environment.CurrentManagedThreadId;
+            var sw = Stopwatch.StartNew();
+            start = env.Manager.StartAsync("fake", Ct).AsTask();
+            startMs = sw.Elapsed.TotalMilliseconds;
+        });
+        t.Start();
+        Assert.True(t.Join(TimeSpan.FromSeconds(10)));
+        Assert.True(startMs < 100, $"StartAsync returned to the caller after {startMs:F1} ms although connecting blocks for 400 ms");
+        await start.Within();
+        await env.WaitForStateAsync("fake", LanguageServerState.Running);
+
+        var t2 = new Thread(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            var sw = Stopwatch.StartNew();
+            restart = env.Manager.RestartAsync("fake", Ct).AsTask();
+            restartMs = sw.Elapsed.TotalMilliseconds;
+            sw.Restart();
+        });
+        t2.Start();
+        Assert.True(t2.Join(TimeSpan.FromSeconds(10)));
+        Assert.True(restartMs < 100, $"RestartAsync returned after {restartMs:F1} ms");
+        await restart.Within();
+
+        var t3 = new Thread(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            var sw = Stopwatch.StartNew();
+            stop = env.Manager.StopAsync("fake", Ct).AsTask();
+            stopMs = sw.Elapsed.TotalMilliseconds;
+        });
+        t3.Start();
+        Assert.True(t3.Join(TimeSpan.FromSeconds(10)));
+        Assert.True(stopMs < 100, $"StopAsync returned after {stopMs:F1} ms");
+        await stop.Within();
+
+        Assert.Equal(0, context.Posts);
+        string?[] connectThreads;
+        lock (env.Connections.ConnectThreads) connectThreads = env.Connections.ConnectThreads.ToArray();
+        Assert.NotEmpty(connectThreads);
+        Assert.StartsWith("cscode-lsp-lane", connectThreads[0]);        // the blocking connect of the first start ran on the lane...
+        Assert.All(connectThreads, name => Assert.NotNull(name));       // ...and never on the (unnamed) calling thread; continuations of a restart may use the pool
+    }
+
     // ------------------------------------------------------------------------------------------------------------
     // language work runs on the lane
     // ------------------------------------------------------------------------------------------------------------

@@ -357,8 +357,14 @@ public sealed class FakeConnectionFactory : ILspConnectionFactory
     /// <summary>The next <paramref name="count"/> connection attempts throw ServerNotFoundException.</summary>
     public void FailNext(int count = 1) => Interlocked.Exchange(ref _failures, count);
 
+    /// <summary>Blocks the connecting thread synchronously (what Process.Start does), to prove callers never run that code themselves.</summary>
+    public TimeSpan SyncBlock { get; set; }
+    public List<string?> ConnectThreads { get; } = new();
+
     public async ValueTask<ILspConnection> ConnectAsync(LspLaunchRequest request, CancellationToken ct)
     {
+        lock (ConnectThreads) ConnectThreads.Add(Thread.CurrentThread.Name);
+        if (SyncBlock > TimeSpan.Zero) Thread.Sleep(SyncBlock);
         lock (Requests) Requests.Add(request with { OnStderrLine = null }); // keep the record, not the callback (it would retain the client)
         if (ConnectDelay > TimeSpan.Zero) await Task.Delay(ConnectDelay, ct).ConfigureAwait(false);
         if (Interlocked.Decrement(ref _failures) >= 0) throw new ServerNotFoundException(request.Definition.Command);
