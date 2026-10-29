@@ -276,10 +276,12 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable, ID
     // ------------------------------------------------------------------ line tracking
 
     /// <summary>
-    /// The editor reports an edit as "lines at or after <paramref name="fromLine"/> moved by <paramref name="delta"/>".
-    /// <paramref name="fromLine"/> is the first line AFTER the edit position. Insertion (delta &gt; 0): breakpoints on lines
-    /// &gt;= fromLine move down. Deletion (delta &lt; 0): lines [fromLine, fromLine - delta) vanished, so breakpoints on them are
-    /// removed, and breakpoints below move up by |delta|.
+    /// The editor's contract (src/CsCode.Editor BreakpointShift, docs/EDITOR.md): every breakpoint of <paramref name="uri"/> at a line
+    /// &gt;= <paramref name="fromLine"/> moves by <paramref name="delta"/>. <paramref name="fromLine"/> is the first line (before the edit)
+    /// whose text moves: the line after the edit position for an insertion (the edit's own line when whole lines were inserted at column 0),
+    /// and the first surviving line after the deleted range for a deletion. So for delta &lt; 0 the |delta| lines just above it,
+    /// [fromLine + delta, fromLine), are the ones that vanished: their breakpoints are removed. The editor removes them itself before calling;
+    /// doing it here as well keeps one breakpoint per line for any caller (the moved ones land exactly on those lines).
     /// </summary>
     public void ApplyLineShift(Uri uri, int fromLine, int delta)
     {
@@ -290,9 +292,9 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable, ID
             var next = new List<SourceBreakpoint>(_source.Length);
             foreach (var b in _source)
             {
-                if (b.Uri != uri || b.Line < fromLine) { next.Add(b); continue; }
+                if (b.Uri != uri || b.Line < fromLine + Math.Min(delta, 0)) { next.Add(b); continue; }
                 changed = true;
-                if (delta < 0 && b.Line < fromLine - delta) { _statuses.Remove(b.Id); continue; } // its line was deleted
+                if (b.Line < fromLine) { _statuses.Remove(b.Id); continue; } // delta < 0 and its line was deleted
                 next.Add(b with { Line = b.Line + delta });
             }
             if (!changed) return;

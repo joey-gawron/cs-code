@@ -144,9 +144,52 @@ public class BreakpointManagerTests
     public void Deleting_lines_removes_breakpoints_on_them_and_moves_the_rest_up()
     {
         var (m, _) = Make();
-        m.Add(A, 2); m.Add(A, 5); m.Add(A, 6); m.Add(A, 9);
-        m.ApplyLineShift(A, fromLine: 5, delta: -2); // lines 5 and 6 are gone
-        Assert.Equal([2, 7], m.GetForUri(A).Select(b => b.Line).Order());
+        m.Add(A, 2); m.Add(A, 3); m.Add(A, 4); m.Add(A, 5); m.Add(A, 9);
+        // fromLine is the first SURVIVING line after the deleted range: lines 3 and 4 are gone, what was line 5 is now line 3
+        m.ApplyLineShift(A, fromLine: 5, delta: -2);
+        Assert.Equal([2, 3, 7], m.GetForUri(A).Select(b => b.Line).Order());
+        Assert.Equal(m.GetForUri(A).Count, m.GetForUri(A).Select(b => b.Line).Distinct().Count()); // still one breakpoint per line
+    }
+
+    /// <summary>
+    /// The editor's computation (CsCode.Editor BreakpointShift.Of, pinned by its own tests) for typical edits, replayed exactly the way the
+    /// editor's DebugFeature applies it: Remove the breakpoints on the vanished lines, then ApplyLineShift(fromLine, delta). Every breakpoint
+    /// must end up on the line that now holds its original text.
+    /// </summary>
+    [Theory]
+    // Enter in the middle of line 5: line 5 keeps its breakpoint, 6.. move down
+    [InlineData(1, 0, 6, 1, "0>0 1>1 2>2 3>3 4>4 5>5 6>7 7>8 8>9 9>10")]
+    // Enter at the start of line 5: line 5's text (and breakpoint) moves down with it
+    [InlineData(1, 0, 5, 1, "0>0 1>1 2>2 3>3 4>4 5>6 6>7 7>8 8>9 9>10")]
+    // delete (3,2)-(5,4): something of line 3 survives, lines 4 and 5 vanish, what was line 6 is line 4
+    [InlineData(4, 5, 6, -2, "0>0 1>1 2>2 3>3 4>- 5>- 6>4 7>5 8>6 9>7")]
+    // delete (3,0)-(5,0): lines 3 and 4 vanish, what was line 5 is line 3
+    [InlineData(3, 4, 5, -2, "0>0 1>1 2>2 3>- 4>- 5>3 6>4 7>5 8>6 9>7")]
+    // paste "a\nb\nc" at (2,4): line 2 keeps its breakpoint, 3.. move down by 2
+    [InlineData(1, 0, 3, 2, "0>0 1>1 2>2 3>5 4>6 5>7 6>8 7>9 8>10 9>11")]
+    public void Breakpoints_follow_the_editors_line_shifts_exactly(int vanishedFrom, int vanishedTo, int fromLine, int delta, string expected)
+    {
+        var (m, _) = Make();
+        var byOriginalLine = Enumerable.Range(0, 10).ToDictionary(line => line, line => m.Add(A, line).Id);
+        m.Add(B, 6);
+
+        foreach (var bp in m.GetForUri(A).Where(b => b.Line >= vanishedFrom && b.Line <= vanishedTo).ToList()) m.Remove(bp.Id);
+        m.ApplyLineShift(A, fromLine, delta);
+
+        var now = m.GetForUri(A).ToDictionary(b => b.Id, b => b.Line);
+        var actual = string.Join(' ', byOriginalLine.Select(kv => $"{kv.Key}>{(now.TryGetValue(kv.Value, out var line) ? line : "-")}"));
+        Assert.Equal(expected, actual);
+        Assert.Equal([6], m.GetForUri(B).Select(b => b.Line)); // other documents untouched
+    }
+
+    [Fact]
+    public void A_deletion_shift_alone_removes_the_vanished_lines_so_moved_breakpoints_never_stack_up()
+    {
+        var (m, _) = Make();
+        var survivors = new[] { m.Add(A, 2).Id, m.Add(A, 5).Id, m.Add(A, 6).Id };
+        m.Add(A, 3); m.Add(A, 4);
+        m.ApplyLineShift(A, fromLine: 5, delta: -2); // the caller did not remove lines 3 and 4 first
+        Assert.Equal([(survivors[0], 2), (survivors[1], 3), (survivors[2], 4)], m.GetForUri(A).OrderBy(b => b.Line).Select(b => (b.Id, b.Line)));
     }
 
     [Fact]

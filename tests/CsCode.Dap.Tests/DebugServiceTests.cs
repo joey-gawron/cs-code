@@ -156,7 +156,8 @@ public class DebugServiceStartTests
     {
         await using var h = new ServiceHarness();
         Assert.Contains(h.Service.DebuggerTypes, t => t.Type == "coreclr" && t.Languages.Contains("csharp"));
-        Assert.Contains(h.Service.DebuggerTypes, t => t.Type == "fake");
+        // RegisterAdapterFactory only enqueues: the snapshot is rebuilt on the Debug lane (on a loaded machine, after this line runs).
+        await SessionHarness.Eventually(() => h.Service.DebuggerTypes.Any(t => t.Type == "fake"), what: "the registered type is published");
     }
 
     private sealed class AmendingProvider : IDebugConfigurationProvider
@@ -477,7 +478,7 @@ public class DebugServiceStopLocationTests
     }
 
     [Fact]
-    public async Task SetFocusedFrame_ignores_unknown_sessions_frames_and_running_sessions()
+    public async Task SetFocusedFrame_fails_for_ended_sessions_unknown_frames_and_after_a_resume_without_moving_the_focus()
     {
         await using var h = new ServiceHarness();
         var session = await h.StartAsync();
@@ -485,9 +486,59 @@ public class DebugServiceStopLocationTests
         await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
         var before = h.Service.StopLocation;
         var focus = (IDebugFrameFocus)h.Service;
-        await focus.SetFocusedFrameAsync("nope", 1, 101, Ct);
-        await focus.SetFocusedFrameAsync(session.Id, 1, 99999, Ct);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await focus.SetFocusedFrameAsync("nope", 1, 101, Ct));
+        await Assert.ThrowsAsync<DebugHandleInvalidatedException>(async () => await focus.SetFocusedFrameAsync(session.Id, 1, 99999, Ct));
         Assert.Equal(before, h.Service.StopLocation);
+        Assert.Equal(before!.FrameId, h.Service.FocusedFrameId);
+
+        // A frame of the stop is dead once the debuggee resumed.
+        await session.ContinueAsync(ct: Ct);
+        await Assert.ThrowsAsync<DebugHandleInvalidatedException>(async () => await focus.SetFocusedFrameAsync(session.Id, 1, 101, Ct));
+        Assert.Null(h.Service.FocusedFrameId);
+    }
+
+    private static IReadOnlyList<DapStackFrame> DeepStack(int count) =>
+        [.. Enumerable.Range(0, count).Select(i => new DapStackFrame { Id = 1000 + i, Name = "Level" + i, Source = new DapSource { Name = "Deep.cs", Path = "/work/Deep.cs" }, Line = 10 + i, Column = 1 })];
+
+    [Fact]
+    public async Task SetFocusedFrame_focuses_a_frame_from_a_later_call_stack_page_of_the_stopped_thread()
+    {
+        await using var h = new ServiceHarness(configureHost: host => host.Configure = (a, _) => a.Frames = DeepStack(120));
+        var session = await h.StartAsync();
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+        Assert.Equal(1000, h.Service.StopLocation!.FrameId);
+
+        // What the Call Stack window does: pages of 50, then "load more".
+        await session.GetStackTraceAsync(1, 0, 50, Ct);
+        var second = await session.GetStackTraceAsync(1, 50, 50, Ct);
+        var deep = second[25]; // level 75, far beyond what the stop itself fetched
+        await ((IDebugFrameFocus)h.Service).SetFocusedFrameAsync(session.Id, 1, deep.Id, Ct);
+
+        Assert.Equal(deep.Id, h.Service.FocusedFrameId);
+        Assert.Equal((deep.Id, deep.Line, "frame"), (h.Service.StopLocation!.FrameId, h.Service.StopLocation.Line, h.Service.StopLocation.Reason));
+        Assert.Equal(new Uri("/work/Deep.cs"), h.Service.StopLocation.Uri);
+        Assert.Equal(3, h.AdapterFor(0).CountOf("stackTrace")); // the stop's own fetch + the two pages: focusing did not ask again
+    }
+
+    [Fact]
+    public async Task SetFocusedFrame_focuses_a_deep_frame_of_another_thread()
+    {
+        await using var h = new ServiceHarness(configureHost: host => host.Configure = (a, _) =>
+        {
+            a.Frames = DeepStack(80);
+            a.On("threads", _ => new DapThreadsResponse { Threads = [new DapThread { Id = 1, Name = "main" }, new DapThread { Id = 2, Name = "worker" }] });
+        });
+        var session = await h.StartAsync();
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+
+        await session.GetStackTraceAsync(2, 0, 50, Ct);
+        var page = await session.GetStackTraceAsync(2, 50, 50, Ct);
+        await ((IDebugFrameFocus)h.Service).SetFocusedFrameAsync(session.Id, 2, page[10].Id, Ct);
+
+        Assert.Equal((2, page[10].Id, page[10].Line), (h.Service.StopLocation!.ThreadId, h.Service.StopLocation.FrameId, h.Service.StopLocation.Line));
+        Assert.Equal(page[10].Id, h.Service.FocusedFrameId);
     }
 
     [Fact]
@@ -501,6 +552,91 @@ public class DebugServiceStopLocationTests
         await session.ContinueAsync(ct: Ct); // resume while the stackTrace for the stop is still in flight
         await Task.Delay(900, Ct);
         Assert.Null(h.Service.StopLocation);
+    }
+
+    // ---- adapter `invalidated` while stopped: the published location must stay usable
+
+    [Fact]
+    public async Task After_invalidated_stacks_the_stack_is_fetched_again_and_the_location_points_at_a_live_frame()
+    {
+        await using var h = new ServiceHarness();
+        var session = await h.StartAsync();
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+        Assert.Equal(100, h.Service.StopLocation!.FrameId);
+
+        // The adapter renumbers its frames (e.g. after a hot reload) and tells the client.
+        h.AdapterFor(0).Frames = [new DapStackFrame { Id = 200, Name = "Main", Source = new DapSource { Name = "Program.cs", Path = "/work/Program.cs" }, Line = 12, Column = 5 }];
+        await h.AdapterFor(0).SendEventAsync("invalidated", new DapInvalidatedEvent { Areas = ["stacks"] });
+
+        await SessionHarness.Eventually(() => h.Service.StopLocation?.FrameId == 200, what: "a fresh location after the invalidation");
+        var loc = h.Service.StopLocation!;
+        Assert.Equal((1, 11, "breakpoint"), (loc.ThreadId, loc.Line, loc.Reason));
+        Assert.Equal(200, h.Service.FocusedFrameId);
+        Assert.NotEmpty(await session.GetScopesAsync(loc.FrameId, Ct)); // what Locals does with it
+        Assert.Equal("<x@watch>", (await session.EvaluateAsync("x", loc.FrameId, "watch", Ct)).Result); // what Watch does with it
+        await Assert.ThrowsAsync<DebugHandleInvalidatedException>(async () => await session.GetScopesAsync(100, Ct));
+    }
+
+    [Fact]
+    public async Task After_an_invalidation_with_stable_frame_ids_the_same_location_is_published_again_and_usable()
+    {
+        await using var h = new ServiceHarness();
+        var session = await h.StartAsync();
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+        var before = h.Service.StopLocation!;
+        var published = new List<DebugStopLocation?>();
+        h.Service.StopLocationChanged.Subscribe(l => { lock (published) published.Add(l); });
+
+        await h.AdapterFor(0).SendEventAsync("invalidated", new DapInvalidatedEvent()); // no areas = all (netcoredbg-style stable ids)
+
+        await SessionHarness.Eventually(() => { lock (published) return published.LastOrDefault() is not null; }, what: "location published again");
+        Assert.Equal(before, h.Service.StopLocation);
+        Assert.NotEmpty(await session.GetScopesAsync(before.FrameId, Ct)); // the frame id is live again, not "Not available"
+    }
+
+    /// <summary>
+    /// StopLocationChanged means "the stop moved": the editor re-centers every view of the stop file on it. An invalidation that leaves the
+    /// focused frame alive must therefore not announce the (identical) location again, or a user reading code elsewhere in that file is
+    /// scrolled back to the stop line. The data panels re-read through their own Invalidated subscription.
+    /// </summary>
+    [Theory]
+    [InlineData("variables")]
+    [InlineData("threads")]
+    [InlineData("variables,threads")]
+    public async Task After_an_invalidation_that_keeps_the_frames_the_focused_frame_stays_and_the_unchanged_location_is_not_announced_again(string areaList)
+    {
+        var areas = areaList.Split(',');
+        await using var h = new ServiceHarness();
+        var session = await h.StartAsync();
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+        await ((IDebugFrameFocus)h.Service).SetFocusedFrameAsync(session.Id, 1, 101, Ct); // the user picked the caller
+        var before = h.Service.StopLocation!;
+        var scopes = await session.GetScopesAsync(101, Ct);
+        var stackTraces = h.AdapterFor(0).CountOf("stackTrace");
+        var announced = new List<DebugStopLocation?>();
+        h.Service.StopLocationChanged.Subscribe(l => { lock (announced) announced.Add(l); });
+        // Subscribed after the service, whose handler is posted to the lane from its own subscription: a lane item posted from here runs
+        // after that handler, so awaiting it means the service has finished reacting to the event.
+        var handled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        session.Invalidated.Subscribe(_ => h.Lane.Post(() => handled.TrySetResult()));
+
+        await h.AdapterFor(0).SendEventAsync("invalidated", new DapInvalidatedEvent { Areas = [.. areas] });
+        await handled.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await Task.Delay(100, Ct); // nothing (e.g. a re-fetch of the stack) may announce it late either
+
+        lock (announced) Assert.Empty(announced);
+        Assert.Equal(before, h.Service.StopLocation);
+        Assert.Equal(101, h.Service.FocusedFrameId);
+        Assert.Equal(stackTraces, h.AdapterFor(0).CountOf("stackTrace"));
+        // Checked before scopes are read again: the fake adapter hands out the same reference numbers, which would make it live again.
+        if (areas.Contains("variables"))
+            await Assert.ThrowsAsync<DebugHandleInvalidatedException>(async () => await session.GetVariablesAsync(scopes[0].VariablesReference, ct: Ct));
+        else
+            Assert.NotNull(await session.GetVariablesAsync(scopes[0].VariablesReference, ct: Ct));
+        Assert.NotEmpty(await session.GetScopesAsync(101, Ct)); // what Locals reads with the unchanged location
     }
 
     [Fact]

@@ -114,18 +114,30 @@ public class RealNetCoreDbgTests
         Assert.Equal("52", (await session.EvaluateAsync("x + 1", frames[0].Id, "repl", Ct)).Result);
         Assert.Equal("51", (await session.EvaluateAsync("x", frames[0].Id, "watch", Ct)).Result);
 
-        // step into Outer, over, out
+        // step into Outer: in a Debug build its opening brace has a sequence point, so that is where the step lands (as in Visual Studio)
         await session.StepIntoAsync(ct: Ct);
         var inOuter = await rig.WaitForStopAsync(2);
         var outerFrames = await session.GetStackTraceAsync(inOuter.ThreadId, 0, 10, Ct);
         Assert.Contains("Outer", outerFrames[0].Name);
-        AssertAt(inOuter, "outer");
+        Assert.Equal(Zero("outer") - 1, inOuter.Line); // `{`
+        Assert.Contains("Main", outerFrames[1].Name);
+
+        // focusing the caller's frame moves the stop location there and scopes evaluation to it
+        await ((IDebugFrameFocus)rig.Service).SetFocusedFrameAsync(session.Id, inOuter.ThreadId, outerFrames[1].Id, Ct);
+        AssertAt(rig.Service.StopLocation!, "call");
+        Assert.Equal(outerFrames[1].Id, rig.Service.FocusedFrameId);
+        Assert.Equal("51", (await session.EvaluateAsync("x", rig.Service.FocusedFrameId, "watch", Ct)).Result);
+
+        // over, over, out
         await session.StepOverAsync(ct: Ct);
-        var next = await rig.WaitForStopAsync(3);
+        AssertAt(await rig.WaitForStopAsync(3), "outer");
+        await session.StepOverAsync(ct: Ct);
+        var next = await rig.WaitForStopAsync(4);
         Assert.Equal(Zero("outer") + 1, next.Line); // `return inner * 2;`
         await session.StepOutAsync(ct: Ct);
-        var back = await rig.WaitForStopAsync(4);
+        var back = await rig.WaitForStopAsync(5);
         Assert.Contains("Main", (await session.GetStackTraceAsync(back.ThreadId, 0, 10, Ct))[0].Name);
+        AssertAt(back, "call"); // netcoredbg lands back on the calling statement (the assignment to r is still to run)
 
         // continue → runs to exit with the program's exit code
         await session.ContinueAsync(ct: Ct);
@@ -176,12 +188,47 @@ public class RealNetCoreDbgTests
         Assert.Equal(1, rig.StopCount);
     }
 
+    /// <summary>
+    /// A breakpoint kind the adapter does not advertise is never sent without its condition (it would stop where the user said it must not):
+    /// it is reported unverified with the reason, and the program runs to its end without stopping. netcoredbg 3.2.0-1092 advertises neither
+    /// hit-count breakpoints nor logpoints, and ignores a hitCondition it is sent anyway (it stops on the first hit).
+    /// </summary>
+    private static async Task AssertUnsupportedBreakpointIsReportedAndNeverStopsAsync(Rig rig, List<DebugBreakpointStatus> verdicts, string kind)
+    {
+        // The verdict belongs to the session: it is reported during the handshake and forgotten when the (short) program has ended.
+        DebugBreakpointStatus status;
+        lock (verdicts) status = Assert.Single(verdicts);
+        Assert.False(status.Verified);
+        Assert.Equal($"This debug adapter does not support {kind}.", status.Message);
+        await SessionHarness.Eventually(() => { lock (rig.Terminated) return rig.Terminated.Count == 1; }, 30_000, "program runs to the end");
+        Assert.Equal(0, rig.StopCount);
+        Assert.Equal(7, rig.Terminated[0].ExitCode);
+    }
+
+    /// <summary>Every distinct verdict reported for <paramref name="bp"/> (subscribe before starting: verdicts arrive during the handshake).</summary>
+    private static List<DebugBreakpointStatus> RecordVerdicts(Rig rig, SourceBreakpoint bp)
+    {
+        var verdicts = new List<DebugBreakpointStatus>();
+        rig.H.Breakpoints.Changed.Subscribe(_ =>
+        {
+            if (rig.H.Breakpoints.GetStatus(bp.Id) is not { } status) return;
+            lock (verdicts) if (verdicts.Count == 0 || !ReferenceEquals(verdicts[^1], status)) verdicts.Add(status);
+        });
+        return verdicts;
+    }
+
     [Fact]
-    public async Task Hit_count_breakpoint_stops_on_the_requested_hit()
+    public async Task Hit_count_breakpoint_stops_on_the_requested_hit_or_is_reported_unsupported()
     {
         await using var rig = await Rig.CreateAsync();
-        rig.H.Breakpoints.Add(rig.SourceUri, Zero("loop"), hitCondition: "3");
+        var bp = rig.H.Breakpoints.Add(rig.SourceUri, Zero("loop"), hitCondition: "3");
+        var verdicts = RecordVerdicts(rig, bp);
         var session = await rig.StartAsync();
+        if (!session.Capabilities.SupportsHitConditionalBreakpoints)
+        {
+            await AssertUnsupportedBreakpointIsReportedAndNeverStopsAsync(rig, verdicts, "hit-count breakpoints");
+            return;
+        }
         var loc = await rig.WaitForStopAsync(1);
         AssertAt(loc, "loop");
         var frames = await session.GetStackTraceAsync(loc.ThreadId, 0, 5, Ct);
@@ -192,12 +239,18 @@ public class RealNetCoreDbgTests
     }
 
     [Fact]
-    public async Task Logpoint_prints_to_the_debug_console_without_stopping()
+    public async Task Logpoint_prints_to_the_debug_console_without_stopping_or_is_reported_unsupported()
     {
         await using var rig = await Rig.CreateAsync();
-        rig.H.Breakpoints.Add(rig.SourceUri, Zero("print"), logMessage: "logged i={i}");
+        var bp = rig.H.Breakpoints.Add(rig.SourceUri, Zero("print"), logMessage: "logged i={i}");
+        var verdicts = RecordVerdicts(rig, bp);
         var session = await rig.StartAsync();
-        Assert.SkipUnless(session.Capabilities.SupportsLogPoints, "this netcoredbg build does not advertise logpoints");
+        if (!session.Capabilities.SupportsLogPoints)
+        {
+            await AssertUnsupportedBreakpointIsReportedAndNeverStopsAsync(rig, verdicts, "logpoints");
+            Assert.DoesNotContain("logged i=", rig.OutputText);
+            return;
+        }
         await SessionHarness.Eventually(() => { lock (rig.Terminated) return rig.Terminated.Count == 1; }, 30_000, "program runs to the end");
         Assert.Equal(0, rig.StopCount);
         Assert.Contains("logged i=0", rig.OutputText);

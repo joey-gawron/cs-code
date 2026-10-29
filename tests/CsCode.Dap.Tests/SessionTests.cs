@@ -672,6 +672,34 @@ public class SessionDataTests
     }
 
     [Fact]
+    public async Task Invalidated_variables_keep_the_frames_of_the_stop_and_scopes_are_fetched_again()
+    {
+        await using var h = await SessionHarness.StartAsync();
+        var (frames, _) = await h.StopAndLoadAsync();
+        await h.Adapter.SendEventAsync("invalidated", new DapInvalidatedEvent { Areas = ["variables"] });
+        await SessionHarness.Eventually(() => h.InvalidatedCount == 1);
+        var scopes = await h.Session.GetScopesAsync(frames[0].Id, Ct); // the frame is still valid (DAP: only variable data died)
+        Assert.NotEmpty(scopes);
+        Assert.Equal(2, h.Adapter.CountOf("scopes")); // the cached scope list (old variablesReferences) was not reused
+        await h.Session.EvaluateAsync("x", frames[0].Id, ct: Ct);
+    }
+
+    [Theory]
+    [InlineData("stacks")]
+    [InlineData("all")]
+    [InlineData(null)]
+    public async Task Invalidated_stacks_kill_the_frames_of_the_stop_until_the_stack_is_fetched_again(string? area)
+    {
+        await using var h = await SessionHarness.StartAsync();
+        var (frames, _) = await h.StopAndLoadAsync();
+        await h.Adapter.SendEventAsync("invalidated", new DapInvalidatedEvent { Areas = area is null ? null : [area] });
+        await SessionHarness.Eventually(() => h.InvalidatedCount == 1);
+        await Assert.ThrowsAsync<DebugHandleInvalidatedException>(async () => await h.Session.GetScopesAsync(frames[0].Id, Ct));
+        var again = await h.Session.GetStackTraceAsync(1, 0, 20, Ct);
+        Assert.NotEmpty(await h.Session.GetScopesAsync(again[0].Id, Ct));
+    }
+
+    [Fact]
     public async Task Invalidated_event_for_unrelated_areas_keeps_handles()
     {
         await using var h = await SessionHarness.StartAsync();

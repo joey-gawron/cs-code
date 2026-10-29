@@ -144,9 +144,14 @@ public sealed partial class DebugSession
     {
         MarkAlive();
         var areas = e.Areas;
-        if (areas is null || areas.Count == 0 || areas.Any(a => a is "all" or "variables" or "stacks"))
+        if (areas is null || areas.Count == 0 || areas.Any(a => a is "all" or "stacks"))
         {
-            _handles.Invalidate();
+            _handles.Invalidate(); // frame ids die too: DebugService re-fetches the stack and publishes a live stop location
+            _completions.Clear();
+        }
+        else if (areas.Contains("variables"))
+        {
+            _handles.InvalidateVariables(); // the frames of this stop stay valid, so the focused frame survives
             _completions.Clear();
         }
         _invalidated.Fire(this);
