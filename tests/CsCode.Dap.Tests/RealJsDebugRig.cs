@@ -149,7 +149,15 @@ internal sealed class RealJsDebugRig : IAsyncDisposable
             string[] markers;
             lock (ServerPids) servers = [.. ServerPids];
             lock (Markers) markers = [.. Markers];
-            var left = servers.Where(ProcessTable.IsAlive).Concat(markers.SelectMany(m => ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", m))).Distinct().ToList();
+            List<int> Left() => [.. servers.Where(ProcessTable.IsAlive).Concat(markers.SelectMany(m => ProcessTable.WithEnvironment("CSCODE_DAP_ADAPTER", m))).Distinct()];
+            // A debuggee killed with the server's tree a moment ago may still be exiting: give it time before calling it a leftover.
+            var left = Left();
+            var deadline = System.Diagnostics.Stopwatch.GetTimestamp() + 3 * System.Diagnostics.Stopwatch.Frequency;
+            while (left.Count > 0 && System.Diagnostics.Stopwatch.GetTimestamp() < deadline)
+            {
+                await Task.Delay(50);
+                left = Left();
+            }
             if (left.Count > 0) TestMetrics.Report("[js-debug] rig cleanup killed what the test left running: " + string.Join("; ", left.Select(p => $"{p} {ProcessTable.CommandLine(p)}")));
             foreach (var pid in left)
                 try { using var p = System.Diagnostics.Process.GetProcessById(pid); p.Kill(entireProcessTree: true); }
