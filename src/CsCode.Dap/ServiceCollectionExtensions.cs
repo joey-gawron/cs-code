@@ -1,12 +1,57 @@
+using CsCode.Core.Debugging;
+using CsCode.Core.Tasks;
+using CsCode.Dap.Adapters;
+using CsCode.Dap.Breakpoints;
+using CsCode.Dap.Client;
+using CsCode.Dap.Configuration;
+using CsCode.Dap.Service;
+using CsCode.Dap.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CsCode.Dap;
 
 public static class ServiceCollectionExtensions
 {
-    /// <summary>Registers this module's services. Owned by the CsCode.Dap module (fill in; keep this signature).</summary>
+    /// <summary>
+    /// Registers the DAP module: <see cref="IDebugService"/> (+ <see cref="IDebugFrameFocus"/>, <see cref="IDebugOutputHistory"/>,
+    /// <see cref="IDebugSourceContentProvider"/> resolving to the same instance), <see cref="IBreakpointManager"/>,
+    /// <see cref="IDebugConfigurationService"/>, <see cref="ITaskService"/> and the built-in adapter factories (netcoredbg for
+    /// <c>coreclr</c>/<c>netcoredbg</c>). Every Core platform service it can use (settings, state storage, window, commands, output…)
+    /// is optional. Resolve <see cref="IDebugService"/> once at startup: its constructor registers the debug commands,
+    /// <c>${command:pickProcess}</c> and the context keys.
+    /// </summary>
     public static IServiceCollection AddCsCodeDap(this IServiceCollection services)
     {
+        services.AddSingleton<DebugLane>(_ => new DebugLane());
+        services.AddSingleton(DapPlatform.From);
+
+        services.AddSingleton<BreakpointManager>(sp => new BreakpointManager(
+            sp.GetService<CsCode.Core.Platform.IStateStorage>(),
+            sp.GetService<CsCode.Core.Platform.IWorkspaceService>(),
+            sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger("CsCode.Dap.Breakpoints")));
+        services.AddSingleton<IBreakpointManager>(sp => sp.GetRequiredService<BreakpointManager>());
+
+        services.AddSingleton<TaskService>(sp => new TaskService(sp.GetRequiredService<DebugLane>(), sp.GetRequiredService<DapPlatform>()));
+        services.AddSingleton<ITaskService>(sp => sp.GetRequiredService<TaskService>());
+
+        services.AddSingleton<DebugConfigurationService>(sp => new DebugConfigurationService(
+            sp.GetRequiredService<DebugLane>(), sp.GetRequiredService<DapPlatform>(), () => sp.GetService<ITaskService>()));
+        services.AddSingleton<IDebugConfigurationService>(sp => sp.GetRequiredService<DebugConfigurationService>());
+
+        services.AddSingleton<NetCoreDbgAdapterFactory>(sp => new NetCoreDbgAdapterFactory(sp.GetRequiredService<DapPlatform>()));
+        services.AddSingleton<BuiltinDebugAdapter>(sp =>
+        {
+            var factory = sp.GetRequiredService<NetCoreDbgAdapterFactory>();
+            return new BuiltinDebugAdapter("coreclr", ".NET (netcoredbg)", ["csharp", "fsharp", "vb"], factory, factory);
+        });
+
+        services.AddSingleton<DebugService>(sp => new DebugService(
+            sp.GetRequiredService<DebugLane>(), sp.GetRequiredService<DapPlatform>(), sp.GetRequiredService<BreakpointManager>(),
+            sp.GetRequiredService<DebugConfigurationService>(), sp.GetRequiredService<ITaskService>(), sp.GetServices<BuiltinDebugAdapter>()));
+        services.AddSingleton<IDebugService>(sp => sp.GetRequiredService<DebugService>());
+        services.AddSingleton<IDebugFrameFocus>(sp => sp.GetRequiredService<DebugService>());
+        services.AddSingleton<IDebugOutputHistory>(sp => sp.GetRequiredService<DebugService>());
+        services.AddSingleton<IDebugSourceContentProvider>(sp => sp.GetRequiredService<DebugService>());
         return services;
     }
 }
