@@ -42,7 +42,7 @@ public sealed class VimConfiguration : IDisposable
         _s.RegistersChanged = SaveRegisters;
     }
 
-    /// <summary>Whether Vim emulation is switched on (<c>vim.enabled</c>, or the last toggle command).</summary>
+    /// <summary>Whether Vim emulation is switched on (<c>vim.enable</c> and <c>vim.enabled</c>, or the last toggle command).</summary>
     public bool Enabled => _s.Enabled;
 
     public IEventSource<bool> EnabledChanged => _enabledChanged;
@@ -89,7 +89,7 @@ public sealed class VimConfiguration : IDisposable
         bool Changed(string key) => e is null || e.Affects(key);
         var o = _s.Options;
 
-        if (Changed(VimSettings.Enabled)) SetEnabled(Bool(VimSettings.Enabled, false));
+        if (Changed(VimSettings.Enable) || Changed(VimSettings.Enabled)) SetEnabled(Bool(VimSettings.Enable, true) && Bool(VimSettings.Enabled, true));
         if (Changed(VimSettings.UseSystemClipboard)) _s.UseSystemClipboard = Bool(VimSettings.UseSystemClipboard, false);
         if (Changed(VimSettings.HlSearch)) o.HlSearch = Bool(VimSettings.HlSearch, false);
         if (Changed(VimSettings.IncSearch)) o.IncSearch = Bool(VimSettings.IncSearch, true);

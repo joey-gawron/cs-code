@@ -85,6 +85,14 @@ public interface IVimHost
     /// <summary>Insert-mode Ctrl-N / Ctrl-P / Ctrl-X completion triggers.</summary>
     void RequestCompletion(VimCompletionKind kind) { }
 
+    /// <summary>
+    /// Insert mode: insert text the user typed (a character, or "\n" for Enter) through the editor's own typing path, so its auto-closing
+    /// pairs, completion and signature triggers, snippets and language-aware indentation apply. Return false to let the engine insert it.
+    /// The engine adopts whatever the editor changed (reported through <see cref="IVimBuffer.TryTakeExternalChanges"/>) as part of the
+    /// insert, and the caret from <see cref="GetCaret"/>. Never called for Replace mode or for repeated text (a count, Ctrl-A).
+    /// </summary>
+    bool InsertTypedText(string text) => false;
+
     // ---------------------------------------------------------------- time
 
     IVimTimer Timer { get; }

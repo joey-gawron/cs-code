@@ -6,6 +6,8 @@ namespace CsCode.Vim;
 /// <summary>The <c>vim.*</c> setting keys (VSCodeVim-compatible names) and their registered defaults.</summary>
 public static class VimSettings
 {
+    /// <summary>The master switch (default on). <see cref="Enabled"/> is the older spelling and still honoured: Vim is on only when neither is false.</summary>
+    public const string Enable = "vim.enable";
     public const string Enabled = "vim.enabled";
     public const string UseSystemClipboard = "vim.useSystemClipboard";
     public const string Leader = "vim.leader";
@@ -71,7 +73,8 @@ public static class VimSettings
     {
         var l = new List<ConfigurationProperty>
         {
-            new(Enabled, J(false), "Enable Vim emulation in editors."),
+            new(Enable, J(true), "Vim emulation in editors (on by default). The command \"Toggle Vim Mode\" switches it for the session."),
+            new(Enabled, J(true), "Older name of vim.enable; Vim is off when either is false."),
             new(UseSystemClipboard, J(false), "Use the system clipboard for the unnamed register (yank, delete and put)."),
             new(Leader, J("\\"), "The key that <leader> expands to in key bindings."),
             new(HlSearch, J(false), "Highlight all matches of the last search."),
@@ -86,7 +89,7 @@ public static class VimSettings
             new(MaxRegisterChars, J(8_000_000), "Largest text a register may hold, in characters."),
             new(AutoSwitchInputMethod, J(new Dictionary<string, object>()), "Accepted for VSCodeVim compatibility; ignored."),
             new(VimrcEnable, J(true), "Load the vimrc file at startup."),
-            new(VimrcPath, J(""), "Path of the vimrc file. Empty: 'vimrc' in the user data directory."),
+            new(VimrcPath, J(""), "Path of the vimrc file (\"~/.vimrc\" to use your Vim configuration). Empty: 'vimrc' in the CsCode user data directory; ~/.vimrc is never read unless named here."),
             new(Surround, J(true), "Enable the vim-surround emulation (ys, ds, cs, S)."),
             new(Commentary, J(true), "Enable the vim-commentary emulation (gc, gcc)."),
             new(Sneak, J(false), "Enable the vim-sneak emulation (s, S, z)."),

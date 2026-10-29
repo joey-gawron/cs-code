@@ -48,7 +48,7 @@ public class ConfigurationTests
         var keys = config.Properties.Select(p => p.Key).ToHashSet();
         foreach (var k in new[]
         {
-            "vim.enabled", "vim.useSystemClipboard", "vim.leader", "vim.hlsearch", "vim.incsearch", "vim.ignorecase", "vim.smartcase", "vim.wrapscan",
+            "vim.enable", "vim.enabled", "vim.useSystemClipboard", "vim.leader", "vim.hlsearch", "vim.incsearch", "vim.ignorecase", "vim.smartcase", "vim.wrapscan",
             "vim.startInInsertMode", "vim.timeout", "vim.handleKeys", "vim.normalModeKeyBindings", "vim.normalModeKeyBindingsNonRecursive",
             "vim.insertModeKeyBindings", "vim.insertModeKeyBindingsNonRecursive", "vim.visualModeKeyBindings", "vim.visualModeKeyBindingsNonRecursive",
             "vim.operatorPendingModeKeyBindings", "vim.operatorPendingModeKeyBindingsNonRecursive", "vim.commandLineModeKeyBindings",
@@ -61,11 +61,11 @@ public class ConfigurationTests
     }
 
     [Fact]
-    public void Vim_is_disabled_by_default_and_the_defaults_are_applied()
+    public void Vim_is_enabled_by_default_and_the_defaults_are_applied()
     {
         var (session, _, vim) = Create();
-        Assert.False(vim.Enabled);
-        Assert.False(session.Enabled);
+        Assert.True(vim.Enabled);
+        Assert.True(session.Enabled);
         Assert.True(session.Options.IgnoreCase);
         Assert.True(session.Options.SmartCase);
         Assert.True(session.Options.IncSearch);
@@ -470,9 +470,12 @@ public class ConfigurationTests
         Assert.Contains(config.Properties, p => p.Key == "vim.enabled");
         await vim.VimrcLoaded;
 
-        Assert.False(vim.Enabled);
+        Assert.True(vim.Enabled);
+        Assert.Equal("Toggle Vim Mode", commands.All.Single(c => c.Id == "vim.toggle").Title);
         var changes = new List<bool>();
         using var sub = vim.EnabledChanged.Subscribe(changes.Add);
+        await commands.ExecuteAsync("vim.toggle");
+        Assert.False(vim.Enabled);
         await commands.ExecuteAsync("vim.toggle");
         Assert.True(vim.Enabled);
         await commands.ExecuteAsync("vim.disable");
@@ -480,7 +483,7 @@ public class ConfigurationTests
         await commands.ExecuteAsync("vim.enable");
         await commands.ExecuteAsync("vim.enable");
         Assert.True(vim.Enabled);
-        Assert.Equal([true, false, true], changes);
+        Assert.Equal([false, true, false, true], changes);
 
         await commands.ExecuteAsync("vim.showCheatSheet");
         Assert.Contains("Vim cheat sheet", output.GetOrCreate(VimService.CheatSheetChannel).GetText());
@@ -495,6 +498,7 @@ public class ConfigurationTests
         var vim = provider.GetRequiredService<IVimService>();
         var host = new InMemoryVimHost("abc");
         using var engine = vim.CreateEngine(host);
+        await commands.ExecuteAsync("vim.disable");
         Assert.Equal(VimKeyResult.PassThrough, engine.HandleKey('x'));
         await commands.ExecuteAsync("vim.enable");
         Assert.Equal(VimKeyResult.Handled, engine.HandleKey('x'));
@@ -510,10 +514,27 @@ public class ConfigurationTests
         var config = new TestConfigurationService();
         using var provider = BuildProvider(config, new TestCommandService());
         var vim = provider.GetRequiredService<IVimService>();
-        config.Set("vim.enabled", true);
-        Assert.True(vim.Enabled);
         config.Set("vim.enabled", false);
         Assert.False(vim.Enabled);
+        config.Set("vim.enabled", true);
+        Assert.True(vim.Enabled);
+    }
+
+    [Fact]
+    public void Vim_enable_is_the_switch_and_the_older_vim_enabled_still_turns_it_off()
+    {
+        var config = new TestConfigurationService();
+        using var provider = BuildProvider(config, new TestCommandService());
+        var vim = provider.GetRequiredService<IVimService>();
+        Assert.True(vim.Enabled);
+        config.Set("vim.enable", false);
+        Assert.False(vim.Enabled);
+        config.Set("vim.enable", true);
+        Assert.True(vim.Enabled);
+        config.Set("vim.enabled", false);
+        Assert.False(vim.Enabled); // either spelling set to false switches Vim off
+        config.Set("vim.enabled", true);
+        Assert.True(vim.Enabled);
     }
 
     [Fact]

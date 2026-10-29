@@ -324,7 +324,38 @@ public sealed partial class VimEngine
     private void InsertTyped(int cp)
     {
         if (_arrowUsed) StopArrow();
+        if (cp != '\t' && TryHostType(CharStrings.Get(cp))) return;
         InsertTypedRaw(cp);
+    }
+
+    /// <summary>
+    /// Lets the host insert typed text through the editor's own typing path (<see cref="IVimHost.InsertTypedText"/>): auto-closing pairs,
+    /// completion triggers, snippets and language-aware Enter then work as without Vim. Whatever the editor changed joins the insert in
+    /// progress (undo, '. and the change list) and the cursor follows the editor's caret. Only in Insert mode and only for keys the user typed:
+    /// replays of earlier typing (dot-repeat, macros, mapping expansions, a count, Ctrl-A, Ctrl-R) insert exactly the recorded text, as in Vim.
+    /// </summary>
+    private bool TryHostType(string text)
+    {
+        if (_mode != VimMode.Insert || !_feedingTyped || _insert is not { Replaying: false } || _buf.IsReadOnly) return false;
+        // the host types at its caret: make sure it is ours (typeahead may have moved it within this key's pump)
+        var caret = new TextPosition(_line, _col);
+        if (caret != _sentCaret)
+        {
+            Host.SetCaret(caret, insertLike: true);
+            _sentCaret = caret;
+            _sentInsertLike = true;
+        }
+        if (!Host.InsertTypedText(text)) return false;
+        if (_host is null) return true;
+        AdoptExternal();
+        var c = Host.GetCaret();
+        _line = Math.Clamp(c.Line, 0, _buf.LineCount - 1);
+        _col = c.Character;
+        CheckCursor();
+        _setCurswant = true;
+        _didAutoIndent = false;
+        _insertBatch = false;
+        return true;
     }
 
     private void StopArrow()
@@ -437,6 +468,7 @@ public sealed partial class VimEngine
     private void InsertNewline()
     {
         if (_arrowUsed) StopArrow();
+        if (TryHostType("\n")) return;
         InsertNewlineRaw();
     }
 

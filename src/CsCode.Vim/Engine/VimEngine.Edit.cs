@@ -138,6 +138,31 @@ public sealed partial class VimEngine
         if (saveULine && oldCount == 1) SaveULine(first);
     }
 
+    /// <summary>
+    /// <see cref="SaveUndo"/> for a change that already happened elsewhere: <paramref name="old"/> is what lines [first, first+old.Length)
+    /// held before it, <paramref name="newCount"/> lines hold the result.
+    /// </summary>
+    private void SaveUndoExternal(int first, string[] old, int newCount)
+    {
+        if (O.UndoLevels < 0) return;
+        EnsureUndoHeader();
+        var h = _bs.Undo.Current;
+        if (old.Length == 1 && newCount == 1)
+        {
+            // as in SaveUndo: a single line saved earlier in this step (no lines added/removed since) already restores the original
+            for (int i = h.Entries.Count - 1, seen = 0; i >= 0 && seen < 10; i--, seen++)
+            {
+                var e = h.Entries[i];
+                if (e.Old.Length != e.NewCount) break;
+                if (e.Start == first && e.Old.Length == 1) return;
+            }
+        }
+        var chars = 0;
+        foreach (var l in old) chars += l.Length + 16;
+        h.Entries.Add(new UndoEntry { Start = first, Old = old, NewCount = newCount });
+        _bs.Undo.AddSaved(h, chars);
+    }
+
     private void SaveULine(int line)
     {
         if (_bs.ULineNr == line) return;
@@ -308,9 +333,31 @@ public sealed partial class VimEngine
         else HostEdit(new VimEdit(new TextPosition(n - 1, L(n - 1).Length), new TextPosition(n - 1, L(n - 1).Length), "\n" + string.Join('\n', newLines)));
     }
 
+    /// <summary>Set when a host undo left the buffer in a state the undo history cannot describe; the pump resets the history afterwards.</summary>
+    private bool _historyLost;
+
+    private void ApplySplices(SpliceOverlay overlay)
+    {
+        foreach (var (top, removed, lines) in overlay.Splices) RawReplaceLines(top, removed, lines);
+    }
+
+    /// <summary>Largest undo step (in entries) a host may undo in its own history; bigger steps are applied as edits (the overlay below is linear).</summary>
+    private const int MaxHostUndoEntries = 512;
+
     /// <summary>Applies one undo header in the given direction (port of Vim's u_undoredo, including its cursor placement rules).</summary>
     private void ApplyUndoHeader(UndoHeader h, bool undo, out int oldCountSum, out int newCountSum)
     {
+        IsApplyingUndo = true;
+        try { ApplyUndoHeaderCore(h, undo, out oldCountSum, out newCountSum); }
+        finally { IsApplyingUndo = false; }
+    }
+
+    private void ApplyUndoHeaderCore(UndoHeader h, bool undo, out int oldCountSum, out int newCountSum)
+    {
+        // A host that mirrors our steps in its own history undoes the step there (so both histories stay in step): the entries are then
+        // walked against an overlay of the buffer instead of being applied, and applied for real only if the host cannot do it after all.
+        var overlay = h.Entries.Count <= MaxHostUndoEntries && _buf.CanUndoRedoStep(h.Seq, redo: !undo) ? new SpliceOverlay(_buf) : null;
+        string Line(int l) => overlay is null ? L(l) : overlay.Get(l);
         var savedMarks = (TextPosition?[])_bs.Marks.Clone();
         var savedVisual = (_bs.VisualStart, _bs.VisualEnd, _bs.VisualMode, _bs.VisualCurswant);
         var opStart = new TextPosition(LastLine, 0);
@@ -342,15 +389,16 @@ public sealed partial class VimEngine
                 {
                     var i = 0;
                     for (; i < newsize && i < oldsize; i++)
-                        if (L(top + i) != e.Old[i]) break;
+                        if (Line(top + i) != e.Old[i]) break;
                     if (i == newsize && newlnum == int.MaxValue && isLast) { newlnum = top; curLnum = newlnum + 1; }
                     else if (i < newsize) { newlnum = top + i; curLnum = newlnum + 1; }
                 }
             }
 
             var replaced = new string[oldsize];
-            for (var i = 0; i < oldsize; i++) replaced[i] = L(top + i);
-            RawReplaceLines(top, oldsize, e.Old);
+            for (var i = 0; i < oldsize; i++) replaced[i] = Line(top + i);
+            if (overlay is not null) overlay.Splice(top, oldsize, e.Old);
+            else RawReplaceLines(top, oldsize, e.Old);
             if (oldsize != newsize)
             {
                 // mark_adjust(top + 1, top + oldsize, MAXLNUM, newsize - oldsize) in Vim's 1-based terms
@@ -367,6 +415,17 @@ public sealed partial class VimEngine
             oldCountSum += oldsize;
             e.Old = replaced;
             e.NewCount = newsize;
+        }
+
+        if (overlay is not null)
+        {
+            if (!_buf.UndoRedoStep(h.Seq, redo: !undo)) ApplySplices(overlay);
+            else if (!overlay.Matches(_buf))
+            {
+                // The host's history did not hold exactly this step (something else was grouped with it): put its step back and apply ours.
+                if (_buf.UndoRedoStep(h.Seq, redo: undo)) ApplySplices(overlay);
+                else _historyLost = true;   // not even that worked: the history no longer describes the buffer (reset after this key)
+            }
         }
 
         _bs.OpStart = new TextPosition(Math.Clamp(opStart.Line, 0, LastLine), 0);
@@ -587,4 +646,70 @@ public sealed partial class VimEngine
     }
 
     private StringBuilder Sb(int capacity = 64) => new(capacity);
+}
+
+/// <summary>
+/// The buffer as it will be after a list of line splices, without editing it: what an undo step computes against while the host performs the
+/// undo in its own history. Reads walk the splices backwards (cheap for the handful of entries a step usually has; capped by the caller).
+/// </summary>
+internal sealed class SpliceOverlay(IVimBuffer buffer)
+{
+    private readonly List<(int Top, int Removed, string[] Lines)> _splices = [];
+    private int _count = buffer.LineCount;
+
+    public IReadOnlyList<(int Top, int Removed, string[] Lines)> Splices => _splices;
+
+    public string Get(int line)
+    {
+        if ((uint)line >= (uint)_count) return "";
+        for (var j = _splices.Count - 1; j >= 0; j--)
+        {
+            var (top, removed, lines) = _splices[j];
+            if (line < top) continue;
+            if (line < top + lines.Length) return lines[line - top];
+            line += removed - lines.Length;
+        }
+        return (uint)line < (uint)buffer.LineCount ? buffer.GetLine(line) : "";
+    }
+
+    /// <summary>Most lines <see cref="Matches"/> compares; a step's lines beyond it are trusted.</summary>
+    private const int MaxVerifiedLines = 4096;
+
+    /// <summary>
+    /// Whether <paramref name="buffer"/> now holds what the splices produce: the line count, and every spliced line that survives the later
+    /// splices at its final position. The check after a host undo: a host group that held something else is caught here.
+    /// </summary>
+    public bool Matches(IVimBuffer buffer)
+    {
+        if (buffer.LineCount != _count) return false;
+        var checkedLines = 0;
+        for (var j = 0; j < _splices.Count; j++)
+        {
+            var (top, _, lines) = _splices[j];
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var p = top + i;
+                var alive = true;
+                for (var k = j + 1; k < _splices.Count && alive; k++)
+                {
+                    var (t, r, l) = _splices[k];
+                    if (p >= t + r) p += l.Length - r;
+                    else if (p >= t) alive = false;
+                }
+                if (!alive) continue;
+                if ((uint)p >= (uint)buffer.LineCount || buffer.GetLine(p) != lines[i]) return false;
+                if (++checkedLines >= MaxVerifiedLines) return true;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Lines [top, top+removed) become <paramref name="lines"/> (a buffer never has zero lines: removing all leaves one empty line, like the real edit).</summary>
+    public void Splice(int top, int removed, string[] lines)
+    {
+        removed = Math.Clamp(removed, 0, Math.Max(0, _count - top));
+        if (lines.Length == 0 && removed >= _count) lines = [""];
+        _splices.Add((top, removed, lines));
+        _count += lines.Length - removed;
+    }
 }
