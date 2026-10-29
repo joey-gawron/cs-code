@@ -28,7 +28,7 @@ public static class ProcessStates
 /// <item><c>hide</c>, <c>claim {session, paths?, hidden?}</c> (a warm spare takes a session), <c>listSessions</c>, <c>quit {force}</c>,
 /// <c>focusFile {paths}</c> (open without changing the window's visibility).</item>
 /// <item>Test-only verbs, accepted only by a process started with <c>--headless-test</c>: <c>inspect</c>, <c>testEdit</c>, <c>testCloseTab</c>,
-/// <c>testCaret</c>, <c>testFold</c>, <c>testCycle</c>.</item>
+/// <c>testCaret</c>, <c>testFold</c>, <c>testCloseWindow</c>.</item>
 /// </list>
 /// Framing: a 4-byte little-endian length followed by that many bytes of UTF-8 JSON (at most <see cref="IpcFraming.MaxMessageBytes"/>).
 /// </summary>
@@ -79,9 +79,9 @@ public static class IpcVerbs
     public const string TestCloseTab = "testCloseTab";
     public const string TestCaret = "testCaret";
     public const string TestFold = "testFold";
-    public const string TestCycle = "testCycle";
+    public const string TestCloseWindow = "testCloseWindow";
 
-    public static bool IsTestOnly(string type) => type is Inspect or TestEdit or TestCloseTab or TestCaret or TestFold or TestCycle;
+    public static bool IsTestOnly(string type) => type is Inspect or TestEdit or TestCloseTab or TestCaret or TestFold or TestCloseWindow;
 }
 
 public sealed class IpcProtocolException(string message) : IOException(message);

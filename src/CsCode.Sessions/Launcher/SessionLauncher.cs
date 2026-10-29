@@ -48,6 +48,12 @@ public sealed class SessionLauncher
         _timeouts = timeouts ?? new LauncherTimeouts();
     }
 
+    /// <summary>
+    /// The launcher process's synchronous entry point: it has no UI thread (Avalonia is not initialised in client mode), so blocking its main
+    /// thread on the run is what a console program does.
+    /// </summary>
+    public LaunchOutcome Run(LaunchRequest request) => RunAsync(request).GetAwaiter().GetResult();
+
     /// <summary>Exit code 0 on success, 1 when the request failed, 2 when IPC is unusable (the caller then runs the app in-process).</summary>
     public async Task<LaunchOutcome> RunAsync(LaunchRequest request, CancellationToken ct = default)
     {

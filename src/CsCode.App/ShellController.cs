@@ -190,6 +190,12 @@ public sealed class ShellController : IDisposable
             }));
     }
 
+    /// <summary>
+    /// Background mode: replaces the layout restore of <see cref="StartDeferredAsync"/> with the session's own (folders, layout, editors with view
+    /// state, hot-exit backups). Set by the session controller before it calls <see cref="StartDeferredAsync"/> on a still hidden window.
+    /// </summary>
+    public Func<Task>? RestoreOverride { get; set; }
+
     /// <summary>Runs after the first frame: theme from settings, layout restore, command-line targets, the Welcome page.</summary>
     public async Task StartDeferredAsync()
     {
@@ -199,8 +205,8 @@ public sealed class ShellController : IDisposable
         _restoring = true;
         try
         {
-            var snapshot = Layout.Load();
-            if (snapshot is not null) await Layout.ApplyAsync(snapshot).ConfigureAwait(true);
+            if (RestoreOverride is { } restore) await restore().ConfigureAwait(true);
+            else if (Layout.Load() is { } snapshot) await Layout.ApplyAsync(snapshot).ConfigureAwait(true);
             else await ResetLayoutAsync().ConfigureAwait(true);
             Tools.HideInitiallyHidden(t => t.AutoShowWhen is not null && !_sp.GetRequiredService<IContextKeyService>().Evaluate(t.AutoShowWhen));
             await OpenCommandLineTargetsAsync().ConfigureAwait(true);
