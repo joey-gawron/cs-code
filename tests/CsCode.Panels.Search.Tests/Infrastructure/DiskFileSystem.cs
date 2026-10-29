@@ -80,8 +80,20 @@ public sealed class TestWorkspace : IWorkspaceService
     public IReadOnlyList<Uri>? Files { get; set; }
     public int FindFilesCalls;
 
-    public ValueTask OpenFolderAsync(Uri folder, CancellationToken ct = default) { _folders.Add(folder); return ValueTask.CompletedTask; }
-    public ValueTask CloseFolderAsync(CancellationToken ct = default) { _folders.Clear(); return ValueTask.CompletedTask; }
+    public ValueTask OpenFolderAsync(Uri folder, CancellationToken ct = default)
+    {
+        _folders.Add(folder);
+        _changed.Fire(new WorkspaceFoldersChangedEventArgs([folder], []));
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask CloseFolderAsync(CancellationToken ct = default)
+    {
+        var removed = _folders.ToArray();
+        _folders.Clear();
+        _changed.Fire(new WorkspaceFoldersChangedEventArgs([], removed));
+        return ValueTask.CompletedTask;
+    }
 
     public async IAsyncEnumerable<Uri> FindFilesAsync(string? includeGlob, int maxResults, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
