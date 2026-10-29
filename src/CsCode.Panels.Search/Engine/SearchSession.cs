@@ -20,6 +20,7 @@ public sealed class SearchSession : IDisposable
     private readonly Emitter<SearchCompletion> _completed = new();
     private readonly TaskCompletionSource<SearchCompletion> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _workersStopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _stopRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly long _startTicks = Stopwatch.GetTimestamp();
     private List<FileMatches> _pending = [];
     private SearchProgress? _lastProgress;
@@ -54,6 +55,9 @@ public sealed class SearchSession : IDisposable
 
     internal bool CapReached => _truncated;
 
+    /// <summary>Completes on the first stop request (user cancel, result cap or failure); the coordinator stops waiting for workers then.</summary>
+    internal Task StopRequested => _stopRequested.Task;
+
     public int ActiveWorkers => Volatile.Read(ref _activeWorkers);
     public bool IsCompleted => Volatile.Read(ref _done) != 0;
 
@@ -69,6 +73,7 @@ public sealed class SearchSession : IDisposable
     internal void Stop(StopReason reason)
     {
         if (Interlocked.CompareExchange(ref _stopReason, (int)reason, (int)StopReason.None) != (int)StopReason.None) return;
+        _stopRequested.TrySetResult();
         try { _cts.Cancel(); }
         catch (ObjectDisposedException) { /* all workers already gone */ }
     }

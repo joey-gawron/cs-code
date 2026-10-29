@@ -44,11 +44,17 @@ public sealed class SearchEngine : IDisposable
     public int ActiveSessions => _sessions.Count;
 
     /// <summary>Starts a search and returns immediately. Dispose or <see cref="SearchSession.Cancel"/> the session to stop it.</summary>
-    public SearchSession Start(SearchQuery query)
+    /// <param name="attach">
+    /// Subscribes to the session's events BEFORE it runs. Subscribe here rather than after <see cref="Start"/> returns: the coordinator may
+    /// finish a session before then (an invalid pattern completes at once), and <see cref="SearchSession.Completed"/> never fires for a late
+    /// subscriber.
+    /// </param>
+    public SearchSession Start(SearchQuery query, Action<SearchSession>? attach = null)
     {
         ArgumentNullException.ThrowIfNull(query);
         ObjectDisposedException.ThrowIf(_disposed, this);
         var session = new SearchSession(Interlocked.Increment(ref _nextId), query, _limitsOverride ?? new SearchLimits());
+        attach?.Invoke(session);
         _sessions[session.Id] = session;
         _ = session.Result.ContinueWith(static (_task, s) =>
         {
@@ -105,8 +111,11 @@ public sealed class SearchEngine : IDisposable
                 queue.Complete(workers);
             }
 
-            if (!session.Token.IsCancellationRequested) await session.WorkersStopped.ConfigureAwait(true);
-            else if (session.CapReached)
+            // Wait for the workers to finish, but a stop (user cancel, result cap, failure) ends the wait whenever it comes, also after the
+            // enumeration is over: a worker stuck in a slow regex (up to search.regexTimeoutMs) or a blocking open must not keep the session,
+            // its flush timer and the panel's "Searching…" alive.
+            await Task.WhenAny(session.WorkersStopped, session.StopRequested).ConfigureAwait(true);
+            if (session.CapReached)
             {
                 // Truncated: let the workers hand in the file they were scanning so the delivered count equals the reported one,
                 // but never wait long on a worker that is stuck in a slow regex.

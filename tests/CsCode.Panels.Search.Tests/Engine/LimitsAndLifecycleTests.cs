@@ -139,6 +139,27 @@ public class LimitsAndLifecycleTests : IDisposable
     }
 
     [Fact]
+    public async Task Cancel_after_enumeration_finished_completes_at_once_while_a_worker_is_stuck_in_a_regex()
+    {
+        // One file, so enumeration ends immediately and the coordinator is left waiting for the worker, which is inside a slow regex.
+        var h = Harness(new SearchLimits { RegexTimeout = TimeSpan.FromSeconds(3), Parallelism = 1 });
+        h.Write("evil.txt", Evil);
+        using var session = h.Engine.Start(new SearchQuery(Pathological, IsRegex: true));
+        for (var i = 0; i < 400 && session.CurrentProgress.Enumerating; i++) await Task.Delay(5, TestContext.Current.CancellationToken);
+        Assert.False(session.CurrentProgress.Enumerating);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        var sw = Stopwatch.StartNew();
+        session.Cancel();
+        var done = await session.Result.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.True(sw.Elapsed < TimeSpan.FromMilliseconds(500), $"Result completed {sw.Elapsed.TotalMilliseconds:F0} ms after Cancel");
+        Assert.Equal(SearchOutcome.Cancelled, done.Outcome);
+        for (var i = 0; i < 100 && h.Engine.ActiveSessions > 0; i++) await Task.Delay(10, TestContext.Current.CancellationToken);
+        Assert.Equal(0, h.Engine.ActiveSessions);                           // the finished session left the engine at once
+        await session.WorkersStopped.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);   // the worker gives up at the regex timeout
+        Assert.Equal(0, h.Engine.RunningWorkers);
+    }
+
+    [Fact]
     public async Task Cancel_is_idempotent_and_harmless_after_completion()
     {
         var h = Harness();
@@ -181,6 +202,24 @@ public class LimitsAndLifecycleTests : IDisposable
         var late = 0;
         session.Completed.Subscribe(_ => late++);
         Assert.Equal(0, late);
+    }
+
+    [Fact]
+    public async Task Subscribers_attached_at_start_always_hear_of_a_session_that_ends_at_once()
+    {
+        // An invalid pattern completes on the coordinator immediately, possibly before Start has returned; a subscriber added after Start
+        // returns would then never be called (see above: Completed fires once and drops its subscribers). Start's attach callback runs first.
+        var h = Harness();
+        for (var i = 0; i < 200; i++)
+        {
+            var fired = new TaskCompletionSource<SearchCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
+            IDisposable? sub = null;
+            using var session = h.Engine.Start(new SearchQuery("foo(", IsRegex: true), s => sub = s.Completed.Subscribe(c => fired.TrySetResult(c)));
+            var completion = await fired.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            Assert.Equal(SearchOutcome.Failed, completion.Outcome);
+            Assert.False(string.IsNullOrEmpty(completion.Error));
+            sub!.Dispose();
+        }
     }
 
     [Fact]
