@@ -32,12 +32,14 @@ public static class LaunchPlanner
         var (name, isNew) = ResolveSession(request, world, settings);
         var warnings = new List<string>();
         var spares = world.Processes.Where(p => p.IsSpare).ToArray();
+        // A spare that is still starting (no session, not ready yet) is not claimed, but it is not missing either: no second one is started.
+        var sparesComing = world.Processes.Count(p => p.Responsive && p.Session is null && p.State == ProcessStates.Starting);
 
         if (world.Processes.FirstOrDefault(p => p.OwnsSession(name)) is { } owner)
         {
             return new LaunchPlan(LaunchAction.Show)
             {
-                Session = name, Pid = owner.Pid, EnsureSpare = settings.WarmSpare && spares.Length == 0,
+                Session = name, Pid = owner.Pid, EnsureSpare = settings.WarmSpare && spares.Length + sparesComing == 0,
                 Evict = ResidentPolicy.SelectEvictions(world.Processes, settings.MaxResidentSessions, keepPid: owner.Pid),
             };
         }
@@ -57,14 +59,14 @@ public static class LaunchPlanner
         {
             return new LaunchPlan(LaunchAction.Claim)
             {
-                Session = name, Pid = spare.Pid, NewUnnamed = isNew, EnsureSpare = settings.WarmSpare && spares.Length <= 1, Warnings = warnings,
+                Session = name, Pid = spare.Pid, NewUnnamed = isNew, EnsureSpare = settings.WarmSpare && spares.Length + sparesComing <= 1, Warnings = warnings,
                 Evict = ResidentPolicy.SelectEvictions(world.Processes.Where(p => p.Pid != spare.Pid), settings.MaxResidentSessions - 1, keepPid: null),
             };
         }
 
         return new LaunchPlan(LaunchAction.Start)
         {
-            Session = name, SeedFrom = seedFrom, NewUnnamed = isNew, EnsureSpare = settings.WarmSpare && spares.Length == 0, Warnings = warnings,
+            Session = name, SeedFrom = seedFrom, NewUnnamed = isNew, EnsureSpare = settings.WarmSpare && spares.Length + sparesComing == 0, Warnings = warnings,
             Evict = ResidentPolicy.SelectEvictions(world.Processes, settings.MaxResidentSessions - 1, keepPid: null),
         };
     }
@@ -136,7 +138,8 @@ public static class LaunchPlanner
                 start.Add(s.Name);
             }
         }
-        return new LaunchPlan(LaunchAction.Background) { EnsureSpare = settings.WarmSpare && !world.Processes.Any(p => p.IsSpare), StartHidden = start };
+        var spareExists = world.Processes.Any(p => p.IsSpare || (p.Responsive && p.Session is null && p.State == ProcessStates.Starting));
+        return new LaunchPlan(LaunchAction.Background) { EnsureSpare = settings.WarmSpare && !spareExists, StartHidden = start };
     }
 }
 

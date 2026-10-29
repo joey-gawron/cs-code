@@ -126,7 +126,7 @@ public sealed class SessionLauncher
             }
 
             // After the window is up (none of this may delay it): a new spare, and the evictions beyond maxResidentSessions.
-            if ((plan.EnsureSpare || (plan.Action == LaunchAction.Claim && _settings.WarmSpare)) && SpawnSpare() is { } newSpare) started.Add(newSpare);
+            if (plan.EnsureSpare && SpawnSpare() is { } newSpare) started.Add(newSpare);
             foreach (var pid in plan.Evict) TryRequest(pid, new IpcMessage { Type = IpcVerbs.Quit, Force = false }, TimeSpan.FromSeconds(5));
             return new LaunchOutcome(code, plan, target, clock.Elapsed, started);
         }

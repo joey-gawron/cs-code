@@ -46,6 +46,17 @@ public class LaunchPlannerTests
     }
 
     [Fact]
+    public void A_spare_that_is_still_starting_is_not_claimed_and_not_duplicated()
+    {
+        var starting = Proc(11, null, ProcessStates.Starting);
+        var start = LaunchPlanner.Plan(Open("work"), World([starting]), Defaults);
+        Assert.Equal((LaunchAction.Start, false), (start.Action, start.EnsureSpare));
+        var show = LaunchPlanner.Plan(Open("work"), World([starting, Proc(10, "work", ProcessStates.Hidden)]), Defaults);
+        Assert.Equal((LaunchAction.Show, false), (show.Action, show.EnsureSpare));
+        Assert.False(LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Background), World([starting]), Defaults).EnsureSpare);
+    }
+
+    [Fact]
     public void Unresponsive_processes_are_never_targets()
     {
         // A spare that does not answer is not claimed; a stale owner (gone from the list) means the session is free.
