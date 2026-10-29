@@ -125,7 +125,8 @@ public sealed class DebugPanelsRuntime : IDisposable
     {
         if (GetServices() is not { } services) return null;
         var expression = invocation.Arg<string>(0);
-        if (string.IsNullOrWhiteSpace(expression))
+        var given = !string.IsNullOrWhiteSpace(expression);
+        if (!given)
         {
             // Inline in the Watch window's empty row when it is on screen; otherwise bring the window forward first (the shell's optional
             // IViewActivator, resolved now: resolving it while the tool windows are constructed could be circular), else ask.
@@ -138,8 +139,9 @@ public sealed class DebugPanelsRuntime : IDisposable
         }
         if (string.IsNullOrWhiteSpace(expression)) return null;
         services.Watches.Add(expression); // loads the saved list first
-        // Visual Studio brings the Watch window up on Add Watch, also when the expression came with the command (editor, Locals).
-        if (_provider.GetService<IViewActivator>() is { } shown) await ShowWatchWindowAsync(shown);
+        // Visual Studio brings the Watch window up on Add Watch, also when the expression came with the command (editor, Locals). Without one,
+        // the window was already brought forward above (or could not be).
+        if (given && _provider.GetService<IViewActivator>() is { } shown) await ShowWatchWindowAsync(shown);
         return null;
     }
 

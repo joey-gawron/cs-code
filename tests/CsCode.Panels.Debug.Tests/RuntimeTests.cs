@@ -108,6 +108,19 @@ public class RuntimeTests
     }
 
     [AvaloniaFact]
+    public async Task Add_watch_with_an_expression_adds_it_and_brings_the_watch_window_forward_once()
+    {
+        // As Visual Studio does when Add Watch comes from the editor or from Locals with the expression already chosen.
+        var activator = new TestViewActivator { OnShow = _ => true };
+        using var sc = new Scenario(configure: s => s.AddSingleton<IViewActivator>(activator));
+
+        await sc.Provider.GetRequiredService<ICommandService>().ExecuteAsync(DebugPanelsRuntime.AddToWatchCommand, "count * 2").AsTask();
+        Assert.Equal(["debug.watch"], activator.Shown);
+        Assert.Empty(sc.Rig.Window.InputPrompts);
+        Assert.Equal("count * 2", Assert.Single(sc.Rig.Debug.Watches).Expression);
+    }
+
+    [AvaloniaFact]
     public void Ctrl_alt_w_is_contributed_for_add_watch_while_debugging_and_withdrawn_with_the_runtime()
     {
         // Regression (dbgp-int-6): the shortcut the brief asks for was bound nowhere.
