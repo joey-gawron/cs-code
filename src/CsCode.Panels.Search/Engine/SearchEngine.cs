@@ -289,7 +289,12 @@ public sealed class SearchEngine : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        foreach (var s in _sessions.Values) s.Cancel();
+        foreach (var s in _sessions.Values)
+        {
+            // Complete here rather than waiting for the coordinator, which is about to go away (its continuations would be dropped).
+            s.Cancel();
+            s.Complete();
+        }
         DedicatedThreadScheduler? scheduler;
         lock (_schedulerGate)
         {
@@ -358,9 +363,6 @@ internal sealed class DedicatedThreadScheduler : TaskScheduler, IDisposable
 
     protected override IEnumerable<Task> GetScheduledTasks() => _tasks.ToArray();
 
-    public void Dispose()
-    {
-        _tasks.CompleteAdding();
-        if (Thread.CurrentThread != _thread) _thread.Join(1000);
-    }
+    /// <summary>Lets the thread finish what is queued and exit. Never blocks the caller (which may be the UI thread).</summary>
+    public void Dispose() => _tasks.CompleteAdding();
 }
