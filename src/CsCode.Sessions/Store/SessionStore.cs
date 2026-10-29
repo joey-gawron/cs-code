@@ -85,6 +85,8 @@ public sealed class SessionStore
             var existing = TryRead(path, out _);
             if (existing.Error == SessionFormatError.TooNew)
                 throw new InvalidOperationException($"Session '{session.Name}' was written by a newer CsCode; not overwriting it.");
+            // An unreadable file is kept for inspection (one copy), never silently overwritten.
+            if (existing.Error == SessionFormatError.Corrupt && File.Exists(path)) File.Move(path, path + ".corrupt", overwrite: true);
             AtomicFile.Write(path, bytes, existing.Session is not null ? BackupPathOf(session.Name) : null);
         }
     }

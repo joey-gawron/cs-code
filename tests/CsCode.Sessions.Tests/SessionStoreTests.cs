@@ -52,6 +52,11 @@ public class SessionStoreTests
         Assert.Equal(SessionLoadStatus.Corrupt, corrupt.Status);
         Assert.Null(corrupt.Session);
         Assert.True(File.Exists(store.PathOf("work")), "a corrupt file is kept for inspection, not deleted");
+
+        // The next save (the session started empty) keeps the damaged file as .corrupt instead of overwriting it.
+        store.Save(new SessionDocument { Name = "work" });
+        Assert.Equal("garbage", File.ReadAllText(store.PathOf("work") + ".corrupt"));
+        Assert.Equal(SessionLoadStatus.Loaded, store.Load("work").Status);
     }
 
     [Fact]

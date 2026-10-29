@@ -94,7 +94,7 @@ bounds and state (normal/maximized/fullscreen), and `wasResident`. Breakpoints a
 **not** copied: their modules already persist them per workspace/application, so reopening the session's folder brings them back.
 
 * **Atomic writes** (`AtomicFile`): temp file + flush + rename; the previous version is kept as `.bak`. A torn or corrupt file falls back to
-  `.bak` (the user is told); both unreadable → the session starts empty and the files are kept. A file written by a **newer** CsCode is never
+  `.bak` (the user is told); both unreadable → the session starts empty and the damaged file is kept as `.corrupt`. A file written by a **newer** CsCode is never
   loaded or overwritten (the window says so and does not autosave).
 * **Migration**: `SessionSerializer.Migrate` upgrades step by step; v1 (development builds: folders, layout, a flat `openFiles` list) → v2.
 * **Autosave**: every change (tabs, active tab, edits of dirty documents, folders, tool windows) marks the session; it is written at most 1.5 s

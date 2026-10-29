@@ -91,7 +91,7 @@ public sealed class IpcServer : IDisposable
         {
             Socket client;
             try { client = _listener!.Accept(); }
-            catch (Exception ex) when (ex is SocketException or ObjectDisposedException or NullReferenceException) { return; } // disposed
+            catch (Exception ex) when (ex is SocketException or ObjectDisposedException) { return; } // disposed
             if (!_slots.Wait(0)) { client.Dispose(); continue; }
             _ = Task.Run(() => ServeSocketAsync(client));
         }
