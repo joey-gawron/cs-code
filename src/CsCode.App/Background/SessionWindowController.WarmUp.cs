@@ -39,6 +39,8 @@ public sealed partial class SessionWindowController
             // Only an optimisation: a spare that could not warm up is still a spare.
             SessionTrace.Mark("host: spare warm-up failed: " + ex.Message);
         }
+        // Waiting for a claim is idle time: no periodic work (the UI stall watchdog stops like in a hidden session).
+        if (_host.IsUnclaimedSpare) _shell.SetHidden(true);
         SessionTrace.Mark("host: spare warm");
     }
 }

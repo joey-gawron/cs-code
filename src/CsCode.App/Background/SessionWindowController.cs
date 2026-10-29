@@ -145,6 +145,7 @@ public sealed partial class SessionWindowController : IDisposable
             _autosave.MarkDirty(); // the session now exists on disk (WasResident) even if nothing changes
             if (hidden)
             {
+                _shell.SetHidden(true);
                 _host.SetState(ProcessStates.Hidden);
                 _policy.OnHidden();
             }
@@ -276,6 +277,7 @@ public sealed partial class SessionWindowController : IDisposable
         if (!_window.IsVisible)
         {
             RecreateActiveViews(); // the hidden-session trim may have disposed them: the first frame must show the editors, not empty hosts
+            _shell.SetHidden(false);
             _window.Show();
             SessionTrace.Mark("host: shown");
         }
@@ -294,6 +296,7 @@ public sealed partial class SessionWindowController : IDisposable
         if (!_window.IsVisible || _quitting) return;
         CaptureBounds();
         _window.Hide();
+        _shell.SetHidden(true);
         _host.SetState(ProcessStates.Hidden);
         _ = SaveNowAsync();
         _policy.OnHidden();

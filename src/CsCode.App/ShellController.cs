@@ -45,6 +45,8 @@ public sealed class ShellController : IDisposable
     private readonly DisposableStore _disposables = new();
     private readonly TimeProvider _time;
     private ITimer? _saveTimer;
+    private UiStallWatchdog? _watchdog;
+    private Func<UiStallWatchdog>? _startWatchdog;
     private readonly HashSet<string> _autoShown = new(StringComparer.Ordinal);
     private bool _started, _restoring, _disposed;
 
@@ -159,9 +161,13 @@ public sealed class ShellController : IDisposable
         if (stallMs > 0 && _sp.GetService<IOutputService>() is { } outputService)
         {
             var channel = outputService.GetOrCreate("CsCode UI Diagnostics");
-            var dog = new UiStallWatchdog(_ui, channel.AppendLine, stallMs);
-            dog.Start();
-            _disposables.Add(dog);
+            _startWatchdog = () =>
+            {
+                var dog = new UiStallWatchdog(_ui, channel.AppendLine, stallMs);
+                dog.Start();
+                return dog;
+            };
+            _watchdog = _startWatchdog();
         }
 
         // Re-creatable memory held by the design system joins the memory-pressure policy.
@@ -294,9 +300,26 @@ public sealed class ShellController : IDisposable
         Layout.Save();
     }
 
+    /// <summary>
+    /// Background mode: a hidden window must have no periodic work (≈0 % CPU), so the UI stall watchdog, which polls the dispatcher every 20 ms,
+    /// stops while the window is hidden and starts again when it is shown.
+    /// </summary>
+    public void SetHidden(bool hidden)
+    {
+        _ui.AssertUiThread();
+        if (hidden)
+        {
+            _watchdog?.Dispose();
+            _watchdog = null;
+        }
+        else if (_watchdog is null && _startWatchdog is { } start && !_disposed) _watchdog = start();
+    }
+
     public void Dispose()
     {
         _disposed = true;
+        _watchdog?.Dispose();
+        _watchdog = null;
         _saveTimer?.Dispose();
         _disposables.Dispose();
     }
