@@ -13,7 +13,11 @@ public sealed class DiskFileSystem : IFileSystem
     {
         var p = uri.LocalPath;
         if (Directory.Exists(p)) return ValueTask.FromResult<FileStat?>(new FileStat(FileType.Directory, 0, Directory.GetLastWriteTimeUtc(p)));
-        if (File.Exists(p)) return ValueTask.FromResult<FileStat?>(new FileStat(FileType.File, new FileInfo(p).Length, File.GetLastWriteTimeUtc(p)));
+        if (File.Exists(p))
+        {
+            var info = new FileInfo(p);   // like LocalFileSystem: the read-only flag is reported
+            return ValueTask.FromResult<FileStat?>(new FileStat(FileType.File, info.Length, info.LastWriteTimeUtc, info.IsReadOnly));
+        }
         return ValueTask.FromResult<FileStat?>(null);
     }
 

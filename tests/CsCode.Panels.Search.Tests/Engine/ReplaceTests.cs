@@ -5,6 +5,7 @@ using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Panels.Search.Engine;
 using CsCode.TestDoubles;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace CsCode.Panels.Search.Tests.Engine;
@@ -35,6 +36,35 @@ public sealed class DiskApplyingNavigation(IDocumentManager documents) : INaviga
             await File.WriteAllBytesAsync(uri.LocalPath, bom ? [.. Encoding.UTF8.GetPreamble(), .. body] : body, ct);
         }
         return true;
+    }
+}
+
+/// <summary>
+/// <see cref="DiskApplyingNavigation"/> plus the shell's failure path: a closed file it cannot write (read-only) makes it AWAIT its action-less
+/// error toast before returning false, as NavigationService.FailAsync does (resolved by the shell 20 s later, or never).
+/// </summary>
+public sealed class ShellLikeNavigation(IDocumentManager documents, IWindowService windows) : INavigationService
+{
+    private readonly DiskApplyingNavigation _inner = new(documents);
+    public List<Uri> Asked { get; } = new();
+    public IEditorDocument? ActiveDocument => null;
+    public TextPosition? ActiveCaret => null;
+    public IEventSource<IEditorDocument?> ActiveDocumentChanged => _inner.ActiveDocumentChanged;
+    public IReadOnlyList<IEditorDocument> OpenDocuments => _inner.OpenDocuments;
+    public ValueTask<IEditorDocument?> OpenAsync(Uri uri, TextRange? selection = null, bool preview = false, bool preserveFocus = false, CancellationToken ct = default) => _inner.OpenAsync(uri, selection, preview, preserveFocus, ct);
+
+    public async ValueTask<bool> ApplyWorkspaceEditAsync(WorkspaceEdit edit, string? label = null, CancellationToken ct = default)
+    {
+        foreach (var uri in edit.Changes.Keys)
+        {
+            Asked.Add(uri);
+            if (documents.Get(uri) is null && new FileInfo(uri.LocalPath).IsReadOnly)
+            {
+                await windows.ShowMessageAsync(MessageSeverity.Error, $"Workspace edit failed: Access to the path '{uri.LocalPath}' is denied.", ct: ct);
+                return false;
+            }
+        }
+        return await _inner.ApplyWorkspaceEditAsync(edit, label, ct);
     }
 }
 
@@ -213,6 +243,99 @@ public class ReplaceTests : IDisposable
         Assert.Equal(0, result.FilesChanged);
         Assert.Contains("changed since the search", Assert.Single(result.Problems));
         Assert.Equal("typed foo", doc.GetText());
+    }
+
+    [Fact]
+    public async Task A_closed_file_that_changed_on_disk_after_planning_is_skipped_at_apply_time()
+    {
+        var path = _h.Write("a.txt", "x\nfoo\n");
+        var plan = await Plan(new SearchQuery("foo"), "bar");
+        File.WriteAllText(path, "inserted\nx\nfoo\n");                    // e.g. a git pull while the confirmation was showing
+        var result = await _replace.ApplyAsync(plan, _nav, ct: Ct);
+        Assert.Equal(0, result.FilesChanged);
+        Assert.Contains("changed", Assert.Single(result.Problems));
+        Assert.Equal("inserted\nx\nfoo\n", File.ReadAllText(path));        // the old ranges were not applied to the new text
+        Assert.Empty(_nav.Edits);
+    }
+
+    [Fact]
+    public async Task A_document_closed_with_its_changes_discarded_after_planning_is_skipped()
+    {
+        var path = _h.Write("a.txt", "on disk");
+        var reg = _h.Documents.Register(new TestEditorDocument(_h.UriOf("a.txt"), "foo in memory", dirty: true));
+        var plan = await Plan(new SearchQuery("foo"), "bar");
+        Assert.NotNull(plan.Files.Single().Version);
+        reg.Dispose();                                                     // closed, "Don't save"
+        var result = await _replace.ApplyAsync(plan, _nav, ct: Ct);
+        Assert.Equal(0, result.FilesChanged);
+        Assert.Equal("on disk", File.ReadAllText(path));                   // the buffer's ranges never reach the disk copy
+    }
+
+    [Fact]
+    public async Task A_closed_file_that_was_opened_unchanged_after_planning_is_still_replaced()
+    {
+        _h.Write("a.txt", "one foo\ntwo foo");
+        var plan = await Plan(new SearchQuery("foo"), "bar");
+        var doc = Open("a.txt", "one foo\ntwo foo", dirty: false);        // the user clicked a result: a preview tab, nothing edited
+        var result = await _replace.ApplyAsync(plan, _nav, ct: Ct);
+        Assert.Equal(1, result.FilesChanged);
+        Assert.Equal("one bar\ntwo bar", doc.GetText());
+    }
+
+    [Fact]
+    public async Task Opening_a_crlf_file_in_an_editor_that_normalises_line_endings_is_not_a_change()
+    {
+        _h.Write("a.txt", "one foo\r\ntwo foo\r\n");
+        var plan = await Plan(new SearchQuery("foo"), "bar");
+        var doc = Open("a.txt", "one foo\ntwo foo\n", dirty: false);      // same lines and columns, other line ending style
+        var result = await _replace.ApplyAsync(plan, _nav, ct: Ct);
+        Assert.Equal(1, result.FilesChanged);
+        Assert.Equal("one bar\ntwo bar\n", doc.GetText());
+    }
+
+    [Fact]
+    public async Task A_closed_file_that_was_opened_and_edited_after_planning_is_skipped()
+    {
+        _h.Write("a.txt", "foo");
+        var plan = await Plan(new SearchQuery("foo"), "bar");
+        var doc = Open("a.txt", "foo");
+        doc.ApplyEdits([TextEdit.Insert(new TextPosition(0, 0), "typed ")]);
+        var result = await _replace.ApplyAsync(plan, _nav, ct: Ct);
+        Assert.Equal(0, result.FilesChanged);
+        Assert.Equal("typed foo", doc.GetText());
+    }
+
+    [Fact]
+    public async Task A_regex_that_times_out_in_one_file_skips_that_file_instead_of_failing_the_plan()
+    {
+        using var replace = new ReplaceService(_h.Workspace, _h.Documents, new SearchLimits { RegexTimeout = TimeSpan.FromMilliseconds(50) });
+        _h.Write("evil.txt", new string('a', 40) + "c");
+        _h.Write("fine.txt", "aaa");
+        var plan = await replace.PlanAsync(new SearchQuery("(?=a)(a+)+$", IsRegex: true), [new ReplaceTarget(_h.UriOf("evil.txt")), new ReplaceTarget(_h.UriOf("fine.txt"))],
+            new ReplaceOptions("b"), Ct);
+        Assert.Equal(["fine.txt"], plan.Files.Select(f => Path.GetFileName(f.Uri.LocalPath)));
+        Assert.Contains("timed out", Assert.Single(plan.Skipped).Reason);
+    }
+
+    [Fact]
+    public async Task The_replace_service_built_for_the_panel_honours_the_search_size_limit_setting()
+    {
+        var config = new TestConfigurationService();
+        config.Set(SearchLimits.MaxFileSizeKey, 8L * 1024 * 1024);            // raised above the 5 MiB default
+        using var sp = new ServiceCollection().AddSingleton<IWorkspaceService>(_h.Workspace).AddSingleton<IConfigurationService>(config).BuildServiceProvider();
+        var s = CsCode.Panels.Search.ViewModels.SearchServices.From(sp);
+        try
+        {
+            _h.Write("big.txt", "needle\n" + new string('x', 6 * 1024 * 1024));
+            var plan = await s.Replace.PlanAsync(new SearchQuery("needle"), [new ReplaceTarget(_h.UriOf("big.txt"))], new ReplaceOptions("pin"), Ct);
+            Assert.Empty(plan.Skipped);                                       // the search shows the match, so replace must be able to replace it
+            Assert.Equal(1, plan.ReplacementCount);
+        }
+        finally
+        {
+            s.Engine.Dispose();
+            s.Replace.Dispose();
+        }
     }
 
     [Fact]

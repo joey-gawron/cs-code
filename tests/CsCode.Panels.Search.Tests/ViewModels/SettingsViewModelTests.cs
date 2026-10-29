@@ -337,7 +337,98 @@ public class SettingsViewModelTests : IDisposable
         Assert.False(Item(vm, "editor.minimap.enabled").IsModified);
     }
 
+    [Fact]
+    public async Task A_settings_file_with_a_utf8_bom_is_read()
+    {
+        var vm = Make();
+        Directory.CreateDirectory(Path.GetDirectoryName(_f.UserSettingsFile)!);
+        // Explicitly set to its default: only the file says it is set, so only a readable file makes it "modified" (and resettable).
+        await File.WriteAllBytesAsync(_f.UserSettingsFile, [0xEF, 0xBB, 0xBF, .. "{ \"editor.tabSize\": 4 }"u8.ToArray()], TestContext.Current.CancellationToken);
+        await vm.RefreshAsync();
+        Assert.True(Item(vm, "editor.tabSize").IsModified);
+        Assert.Equal(4, SettingsViewModel.Flatten([0xEF, 0xBB, 0xBF, .. "{\"a.b\":4}"u8.ToArray()], new HashSet<string>())["a.b"].GetInt32());
+    }
+
+    [Fact]
+    public async Task Keys_set_only_in_vscode_settings_are_modified_in_neither_scope_and_say_where_they_are()
+    {
+        var vm = Make();
+        _f.Harness.Write(".vscode/settings.json", "{ \"editor.tabSize\": 2 }");
+        _f.ConfigStore.Set("editor.tabSize", 2);       // what the platform's configuration merges from .vscode/settings.json
+        await vm.RefreshAsync();
+        var tab = (NumberSettingViewModel)Item(vm, "editor.tabSize");
+        Assert.False(tab.IsModified);                  // Reset (UpdateAsync(key, null, User)) could not remove it: no marker, no Reset
+        Assert.Equal(".vscode/settings.json", tab.AlsoModifiedIn);
+        vm.SelectedScope = SettingsScope.Workspace;
+        await vm.RefreshAsync();
+        Assert.False(tab.IsModified);
+        Assert.Equal(".vscode/settings.json", tab.AlsoModifiedIn);
+        Assert.Equal("2", tab.Text);
+        vm.SearchText = "@modified";
+        Assert.Empty(vm.Items);
+    }
+
+    [Fact]
+    public async Task Keys_set_in_another_workspace_folder_are_attributed_to_that_folder()
+    {
+        using var second = new CsCode.TestDoubles.TempDirectory("cscode-second-");
+        second.WriteFile(".cscode/settings.json", "{ \"editor.fontFamily\": \"Hack\" }");
+        await _f.Harness.Workspace.OpenFolderAsync(second.Uri, TestContext.Current.CancellationToken);
+        var vm = Make();
+        _f.ConfigStore.Set("editor.fontFamily", "Hack");
+        await vm.RefreshAsync();
+        var font = Item(vm, "editor.fontFamily");
+        Assert.False(font.IsModified);
+        Assert.Equal(Path.GetFileName(second.Path.TrimEnd('/')) + "/.cscode/settings.json", font.AlsoModifiedIn);
+    }
+
     // ------------------------------------------------------------------------------ live updates
+
+    [Fact]
+    public async Task A_refresh_keeps_text_that_is_still_invalid_while_the_user_types()
+    {
+        var vm = Make(debounceMs: 60_000);
+        var size = (NumberSettingViewModel)Item(vm, "editor.fontSize");
+        size.Text = "";                                     // cleared to type a new value: invalid, so nothing is pending
+        Assert.Equal("Enter a number.", size.Error);
+        _f.ConfigStore.Set("editor.tabSize", 2);            // another setting's write lands: Changed, refresh
+        await _f.Ui.PumpUntilAsync(() => Item(vm, "editor.tabSize").IsModified);
+        Assert.Equal("", size.Text);                        // not "14" under the caret
+        Assert.Equal("Enter a number.", size.Error);
+        size.Text = "16";                                   // the user goes on typing
+        Assert.Null(size.Error);
+        await vm.FlushAsync();
+        Assert.Equal(16.0, (double)_f.Recording.Writes.Single(w => w.Key == "editor.fontSize").Value!);   // a "number" setting
+    }
+
+    [Fact]
+    public async Task A_refresh_keeps_a_string_that_breaks_its_pattern_while_the_user_types()
+    {
+        var vm = Make(30, P("x.id", "abc", schema: """{"type":"string","pattern":"^[a-z]+$"}"""), P("x.other", 1));
+        var id = (StringSettingViewModel)Item(vm, "x.id");
+        id.Value = "ab-";
+        Assert.NotNull(id.Error);
+        _f.ConfigStore.Set("x.other", 2);
+        await _f.Ui.PumpUntilAsync(() => Item(vm, "x.other").IsModified);
+        Assert.Equal("ab-", id.Value);
+        Assert.NotNull(id.Error);
+    }
+
+    [Fact]
+    public async Task Reset_and_switching_scope_discard_an_invalid_edit()
+    {
+        var vm = Make(debounceMs: 60_000);
+        var size = (NumberSettingViewModel)Item(vm, "editor.fontSize");
+        size.Text = "-";
+        await vm.ResetAsync(size);
+        Assert.Equal("14", size.Text);
+        Assert.Null(size.Error);
+        size.Text = "";
+        vm.SelectedScope = SettingsScope.Workspace;
+        await vm.RefreshAsync();
+        Assert.Equal("14", size.Text);
+        Assert.Null(size.Error);
+    }
 
     [Fact]
     public async Task External_changes_update_the_controls_when_the_configuration_raises_changed()

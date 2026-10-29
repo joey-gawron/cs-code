@@ -14,7 +14,12 @@ public sealed record FileSourceRequest(
     GlobFilter Exclude,
     GlobFilter SettingsExclude);
 
-/// <summary>Streams the URIs of files that may contain matches. Implementations must honour cancellation promptly and never buffer the whole tree.</summary>
+/// <summary>
+/// Streams the URIs of files that may contain matches. Implementations must honour cancellation promptly and never buffer the whole tree.
+/// They are enumerated on the engine's coordinator thread and must await with <c>ConfigureAwait(true)</c>, so that their own work (filtering,
+/// ignore files) resumes there: the real file system completes on its IO lane with asynchronous continuations, and <c>ConfigureAwait(false)</c>
+/// would move that work to the shared thread pool.
+/// </summary>
 public interface ISearchFileSource
 {
     IAsyncEnumerable<Uri> EnumerateAsync(FileSourceRequest request, CancellationToken ct);
@@ -28,7 +33,7 @@ public sealed class WorkspaceFileSource(IWorkspaceService workspace) : ISearchFi
 {
     public async IAsyncEnumerable<Uri> EnumerateAsync(FileSourceRequest request, [EnumeratorCancellation] CancellationToken ct)
     {
-        await foreach (var uri in workspace.FindFilesAsync(null, int.MaxValue, ct).ConfigureAwait(false))
+        await foreach (var uri in workspace.FindFilesAsync(null, int.MaxValue, ct).ConfigureAwait(true))
             yield return uri;
     }
 }
@@ -58,7 +63,7 @@ public sealed class WalkingFileSource(IFileSystem fileSystem) : ISearchFileSourc
                 ct.ThrowIfCancellationRequested();
                 var frame = stack.Pop();
                 IReadOnlyList<DirectoryEntry> entries;
-                try { entries = await fileSystem.ReadDirectoryAsync(frame.Uri, ct).ConfigureAwait(false); }
+                try { entries = await fileSystem.ReadDirectoryAsync(frame.Uri, ct).ConfigureAwait(true); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException) { continue; }
 
                 var ignore = frame.Ignore;
@@ -66,7 +71,7 @@ public sealed class WalkingFileSource(IFileSystem fileSystem) : ISearchFileSourc
                 {
                     try
                     {
-                        var bytes = await fileSystem.ReadFileAsync(ChildUri(frame.Uri, ".gitignore", false), ct).ConfigureAwait(false);
+                        var bytes = await fileSystem.ReadFileAsync(ChildUri(frame.Uri, ".gitignore", false), ct).ConfigureAwait(true);
                         var rules = IgnoreRules.Parse(Encoding.UTF8.GetString(bytes));
                         if (rules.Count > 0) ignore = new IgnoreNode(frame.Rel, rules, ignore);
                     }

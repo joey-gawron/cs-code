@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CsCode.Core.Contributions;
 using CsCode.Core.Debugging;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
@@ -34,9 +35,10 @@ public class HostAndShortcutsTests : IDisposable
         public string? SelectedText => text;
     }
 
-    private ServiceProvider Provider(string? selection = null, bool preRegister = false)
+    private ServiceProvider Provider(string? selection = null, bool preRegister = false, IContributionRegistry? contributions = null)
     {
         var s = new ServiceCollection();
+        if (contributions is not null) s.AddSingleton(contributions);
         s.AddSingleton(_f.Harness.Workspace);
         s.AddSingleton<IWorkspaceService>(_f.Harness.Workspace);
         s.AddSingleton<IDocumentManager>(_f.Harness.Documents);
@@ -71,6 +73,20 @@ public class HostAndShortcutsTests : IDisposable
         Assert.Equal("workbench.action.openSettings", tools["settings"].ToggleCommandId);
         Assert.All(tools.Values, t => Assert.True(Avalonia.Application.Current is null || t.IconKey is not null));
         Assert.All(tools.Values, t => Assert.Contains(t.IconKey, CsCode.Ui.Icons.IconCatalog.Names));
+    }
+
+    [Fact]
+    public void The_module_contributes_f4_and_shift_f4_for_the_result_commands_while_the_panel_is_visible()
+    {
+        var registry = new ContributionRegistry();
+        var sp = Provider(contributions: registry);
+        _ = sp.GetServices<IToolWindow>().ToList();
+        var bindings = registry.Of<KeybindingContribution>().Items.Select(i => i.Value).ToList();
+        Assert.Contains(new KeybindingContribution(SearchPanelsHost.NextResult, "f4", When: "searchViewletVisible"), bindings);
+        Assert.Contains(new KeybindingContribution(SearchPanelsHost.PreviousResult, "shift+f4", When: "searchViewletVisible"), bindings);
+        Assert.All(registry.Of<KeybindingContribution>().Items, i => Assert.Equal(ContributionSources.Builtin, i.SourceId));
+        sp.GetRequiredService<SearchPanelsHost>().Dispose();
+        Assert.Empty(registry.Of<KeybindingContribution>().Items);       // withdrawn with the host
     }
 
     [Fact]

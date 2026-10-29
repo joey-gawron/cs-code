@@ -15,7 +15,7 @@ Find in Files (with replace), the Settings editor and the Keyboard Shortcuts vie
   in its constructor, and the tool windows depend on it**, so the shell enumerating `IEnumerable<IToolWindow>` at startup is what registers them.
   Required service: `IWorkspaceService`. Optional (the panel degrades without them): `IDocumentManager`, `INavigationService`, `IWindowService`,
   `IConfigurationService`, `IStateStorage`, `ICommandService`, `IKeybindingService`, `IContextKeyService`, `IActiveSelectionProvider`,
-  `CsCode.Ui.Threading.IUiDispatcher` (falls back to `AvaloniaUiDispatcher.Instance`).
+  `IContributionRegistry`, `CsCode.Ui.Threading.IUiDispatcher` (falls back to `AvaloniaUiDispatcher.Instance`).
 * **Additive Core change:** `src/CsCode.Core/Platform/ViewActivation.cs` adds `IViewActivator.ShowViewAsync(string viewId)`. The commands call it to
   bring a view to the front ("search", "settings", "keybindings"). **The shell must implement it** (map to `ToolWindowManager.Show` /
   `DocumentWell.OpenView`). Without it the commands still work, but nothing is revealed. It is the only Core change.
@@ -32,7 +32,13 @@ Find in Files (with replace), the Settings editor and the Keyboard Shortcuts vie
   `findInFiles`/`replaceInFiles` take VS Code's argument object (`query`, `replace`, `filesToInclude`, `filesToExclude`, `isRegex`, `isCaseSensitive`,
   `matchWholeWord`, `preserveCase`, `useExcludeSettingsAndIgnoreFiles`, `triggerSearch`) or a plain string, and seed the query from
   `IActiveSelectionProvider.SelectedText` (single line) or the word at the caret.
-* Context key set: `searchViewletVisible`. Settings registered: see below. Default key bindings are the Platform keymap's business.
+* Context key set: `searchViewletVisible`. Settings registered: see below.
+* **Key bindings.** Neither preset keymap binds F4 / Shift+F4, so the host contributes them (`SearchPanelsHost.DefaultKeybindings`:
+  `f4` → `search.action.focusNextSearchResult`, `shift+f4` → `search.action.focusPreviousSearchResult`, both `when: searchViewletVisible`) to
+  `IContributionRegistry` as `ContributionSources.Builtin`, withdrawn when the host is disposed. The platform's `KeybindingService` layers built-in
+  contributions over the preset and the user's keybindings.json over both (verified against the real service in `RealPlatformTests`); the integrator
+  only has to construct `KeybindingService` with the registry. With the panel focused the shell's window-level key pipeline runs the command first,
+  so a step happens once. Ctrl+Shift+F / Ctrl+Shift+H stay in the preset keymaps.
 
 ## Search engine (`Engine/`, UI-free)
 
@@ -48,8 +54,12 @@ Start(query) --enqueue--> coordinator thread ("cscode-search-coordinator", singl
 
 * **Threading.** `SearchEngine.Start`/`Cancel` cost the caller one enqueue / one token flip (asserted < 5 ms worst case, typically microseconds).
   Nothing runs on the UI thread or the shared pool; a test counts thread-pool work items during a 200k-file search (471 in this run, all the test's own awaits).
+  File sources await with `ConfigureAwait(true)`, so the walker's filtering and `.gitignore` parsing resume on the coordinator even though the real
+  `LocalFileSystem` completes on its IO lane with asynchronous continuations (a test records the thread of every listing over the real IO lane).
   Events fire on engine threads; the view-model enqueues and applies them on the UI thread in slices of at most 4 ms
   (`IUiDispatcher.Post` at background priority, one ordered queue), then sorts the files by path on a worker and swaps the order in once.
+* **Subscribing.** `Start(query, attach)` calls `attach(session)` before the session is queued; subscribe there. An invalid pattern completes on the
+  coordinator at once, possibly before `Start` returns, and `Completed` never fires for a later subscriber (the view-model does this).
 * **Files.** `ISearchFileSource`: when "use exclude settings" and "use ignore files" are both on, `IWorkspaceService.FindFilesAsync` (the platform's
   `files.exclude` + `.gitignore` semantics). Otherwise the built-in `WalkingFileSource` (depth-first in name order, nested `.gitignore` with negation/anchoring/`**`,
   `files.exclude` + `search.exclude`, never follows directory symlinks, always skips `.git`/`.svn`/`.hg`). On top of either: per-query include/exclude globs
@@ -67,13 +77,25 @@ Start(query) --enqueue--> coordinator thread ("cscode-search-coordinator", singl
 * **Limits.** `search.maxResults` (default 20,000: the search stops, the summary says "truncated"; the cap is exact across workers), `search.maxFileSizeBytes` (5 MiB),
   `search.regexTimeoutMs` (1000). Memory is O(results) (each match: a range and two short strings); the queue is bounded; file contents are never held except for multi-line mode.
 * **Cancellation.** A token checked per line and per chunk; `Result` completes at once (about 0.1 ms measured), `WorkersStopped` when the last worker has exited.
-  A backtracking regex cannot be interrupted mid-match, so its worker stops within the regex timeout; `Result` still completes immediately.
-* **Replace (`ReplaceService`).** Results only remember positions, so replace **re-searches each file right before editing** (open document from memory, closed file from
+  A backtracking regex cannot be interrupted mid-match, so its worker stops within the regex timeout; `Result` still completes immediately, also when the cancel
+  comes after enumeration has finished (the coordinator's wait for the workers ends on any stop request: user cancel, result cap, failure), so the session, its
+  16 ms flush timer and the panel's "Searching…" never outlive a cancel.
+* **Replace (`ReplaceService`).** Results only remember positions, so replace **re-searches each file when planning** (open document from memory, closed file from
   disk) and replaces exactly the matches that are still there; a requested match that is gone is reported as skipped. Regex replacement expands `$1`, `${name}`, `$&`
   and the escapes `\n`, `\t`, `\\`; "preserve case" follows the matched text; newlines follow the file's line ending; CRLF and the BOM survive. Replace is supported for
   UTF-8 and UTF-16 files only (the shell's closed-file editor refuses anything else, so the panel skips such files with a reason). Files are applied **one at a time** through
   `INavigationService.ApplyWorkspaceEditAsync` (an open document is therefore one undo step, and the shell never shows its own multi-file prompt on top of the panel's single
-  confirmation). A document that changed after planning is skipped.
+  confirmation).
+  * **Stale plans.** The multi-file confirmation is a toast that can wait indefinitely, so every planned file carries a fingerprint (SHA-256 of the text it was planned
+    from, line breaks normalised because the edits are line/column based) and `ApplyAsync` re-reads it **right before its edit** (whatever it is now: open document or
+    disk) on the replace thread. A file whose text changed (edited, rewritten by `git pull`, closed with its changes discarded, opened and edited) is skipped and listed
+    in the "Some replacements were skipped" warning; an open document is also skipped if its version moves between that check and the edit. A file that was merely
+    opened (or whose editor normalised CRLF to LF) is still replaced. What remains is the gap between the check and the shell's own read of a closed file (milliseconds,
+    on the IO lane): `INavigationService` has no compare-and-swap edit.
+  * **Limits and failures.** The plan uses the search's settings (`search.maxFileSizeBytes`, `search.regexTimeoutMs`, read when planning), so a file the search could show
+    can be replaced. Anything that goes wrong in one file (a regex timeout, an unreadable file, a closed untitled buffer from "open editors only") skips that file with a
+    reason; it never fails the whole plan. A closed file whose stat says read-only is skipped too ("the file is read-only"): the shell would refuse to write it and
+    then await its own error toast (see Known gaps) before the next file could be applied.
 
 ## Find in Files (view-model `FindInFilesViewModel`)
 
@@ -86,6 +108,18 @@ expands a collapsed file), Ctrl+C (copy path). Click opens a preview tab, double
 command `revealInExplorer` exists), Expand/Collapse, Exclude This Folder, Replace, Dismiss. Summary line: "12 results in 4 files — 38 ms", "No results found for 'x' …",
 "truncated at 20,000, refine the search", "Search cancelled", or the regex error. After replacing, the replaced matches leave the tree; files that still have matches
 (positions moved) are re-searched.
+
+* **Replace needs the replace UI.** The row icons (Replace All in this file, Replace) are only shown while the replace row is open, the context menu offers Replace
+  only then, Enter in the replace box and Ctrl+Alt+Enter go through `ReplaceAllCommand` (`CanReplace`), and `ReplaceAsync` itself refuses while it is closed: in plain
+  Find the replacement is "" and a single-file replace asks no confirmation, so a stray click used to delete every match of a file.
+* **Messages after a replace** ("Nothing was replaced", "Some replacements were skipped") are shown, not awaited, after Replace is unlocked: a notification without
+  actions resolves only when the shell demotes it (8-20 s) or never (pushed off the toast stack). Only the multi-file confirmation is awaited.
+* **Replace preview** follows the query that produced the results (what Replace writes), not the form: toggling `.*` or editing the pattern without searching
+  again does not change it. Its regex is compiled once per query (a keystroke in the replace box builds a closure only) and only kept when it runs on the
+  `NonBacktracking` engine; for a pattern that needs the backtracking engine (lookarounds, backreferences) the preview shows the template with its escapes expanded
+  but `$` groups not substituted, because re-matching the clipped matched text on the UI thread could take the whole regex timeout per row.
+* **Bulk removal.** Exclude This Folder and the clean-up after Replace All remove their rows with one rebuild of the flat list (one reset notification), not one
+  `IndexOf`/`RemoveRange`/reset per file; Dismiss of a single row stays incremental.
 
 ## Settings editor (`SettingsViewModel`)
 
@@ -104,12 +138,18 @@ Mapping from `ConfigurationProperty` (default + JSON-schema fragment) to control
   (`cscode.memory.budgetMb` is Memory). Titles are humanised ("Editor › Minimap: Enabled").
 * **Search** is a fuzzy filter (`FuzzyMatcher`): each word must be a substring of title/key/description or a fuzzy match of title+key; searching ignores the selected category.
   `@modified` (alone or with words) shows only changed settings.
-* **Scope tabs** User / Workspace (`ConfigurationTarget`); the Workspace tab is disabled without an open folder. Values shown for a scope come from that scope's file
-  (`settings.json` flattened, nested and dotted keys equivalent, `.cscode/settings.json` for the workspace), falling back to the effective value. *Modified* = set in
-  this scope (or, if no file mentions the key, different from the default); "(also modified in Workspace)" is shown for the other scope.
+* **Scope tabs** User / Workspace (`ConfigurationTarget`); the Workspace tab is disabled without an open folder. Core's `IConfigurationService` has no per-scope
+  "inspect" API, so the view reads the settings files itself, **the same files in the same order as the platform's `ConfigurationService`**: the user
+  `settings.json`, the primary folder's `.vscode/settings.json` and `.cscode/settings.json`, then every other folder's `.cscode/settings.json` (flattened, nested and
+  dotted keys equivalent, comments and a UTF-8 BOM allowed). The User tab writes the user file, the Workspace tab the primary `.cscode/settings.json`. Values shown for
+  a tab come from its file, falling back to the effective value. *Modified* (blue bar, Reset enabled) = set in the tab's own file, or, when no file mentions the key,
+  different from the default. A key set elsewhere is not modified in a tab that cannot reset it; "(also modified in …)" names every other file that sets it
+  ("Workspace", "User", ".vscode/settings.json", "<folder>/.cscode/settings.json").
 * **Writes** always go through `IConfigurationService.UpdateAsync(key, value, target)` (the platform's comment-preserving JSONC writer; verified against the real
-  `ConfigurationService` in `RealPlatformTests`). **Reset Setting** = `UpdateAsync(key, null)` (removes the key). A refresh never overwrites a box with an edit waiting;
-  closing the tab flushes waiting edits. `IConfigurationService.Changed` (raised on IO threads) is marshalled and coalesced.
+  `ConfigurationService` in `RealPlatformTests`). **Reset Setting** = `UpdateAsync(key, null)` (removes the key). A refresh never overwrites a box the user is typing in:
+  neither one with an edit waiting for its debounce nor one holding text that is not valid yet (an emptied number box, a lone "-", a string breaking its pattern;
+  such text is kept with its error until the next valid edit, Reset Setting or a scope switch). Closing the tab flushes waiting edits.
+  `IConfigurationService.Changed` (raised on IO threads) is marshalled and coalesced.
 * **Keyboard Shortcuts**: table of `IKeybindingService.All` (command title or id, key label such as `Ctrl+K, Ctrl+C`, `when`, source User/Default, removals shown as `-command`), filter over all
   columns, "keybindings.json" button (`workbench.action.openGlobalKeybindingsFile`; creates the file if missing). Rebinding in the UI is a STRETCH and not implemented.
 
@@ -118,7 +158,7 @@ Settings registered by this module: `search.maxResults`, `search.maxFileSizeByte
 
 ## Tests (`tests/CsCode.Panels.Search.Tests`, xUnit v3 + Avalonia.Headless)
 
-`dotnet test tests/CsCode.Panels.Search.Tests` (on Nix-provided dotnet run it after `source tools/nix-dev-env.sh`, the headless tests need Skia's libraries). 335 tests:
+`dotnet test tests/CsCode.Panels.Search.Tests` (on Nix-provided dotnet run it after `source tools/nix-dev-env.sh`, the headless tests need Skia's libraries). 368 tests:
 engine (matching, files/encodings, filters and `.gitignore`, open documents, limits/lifecycle, replace), view-models (find, replace flows, history, settings, host/commands,
 shortcuts), headless UI + screenshots, real-platform integration, hostile/responsiveness and leak tests.
 * Screenshots are written to `.scratch/screenshots/` (git-ignored): `search-*.png`, `settings-*.png`, `keybindings.png`.
@@ -149,8 +189,13 @@ Shortcuts table from the real keymap. On Nix-provided dotnet source `tools/nix-d
 
 * Not implemented: "open results in an editor" (SHOULD), include/exclude presets (SHOULD), a command/UI to *start* a search-in-selection (the engine supports `SelectionScope`,
   but Core exposes no selection range, only `IActiveSelectionProvider.SelectedText`), rebinding UI (STRETCH).
-* The replace preview in the tree sees only the (clipped) matched text, so for patterns that depend on context (lookarounds, anchors) it is an approximation; the replacement that is
-  actually written is always computed from the file.
-* A named pipe (FIFO) inside the workspace would block a worker on open (not guarded). The real `WorkspaceService.FindFilesAsync` was not available in this base; the
-  engine is tested against a fake of it plus the real `LocalFileSystem` (walker) and must be re-checked when Platform lands it.
+* The replace preview in the tree sees only the (clipped) matched text, so for patterns that depend on context (anchors) it is an approximation, and for patterns that
+  need the backtracking engine it does not substitute `$` groups (see Replace preview); the replacement that is actually written is always computed from the file.
+* A named pipe (FIFO) inside the workspace would block a worker on open (not guarded). Cancel still completes the search at once, but that worker thread stays blocked
+  until the pipe gets a writer. The engine's default source is tested against the real `WorkspaceService.FindFilesAsync` (with the real `LocalFileSystem` and
+  `ConfigurationService`) as well as against a fake of it; the walker against the real `LocalFileSystem`.
+* Outside this module: the shell's `NavigationService.FailAsync` (src/CsCode.App/Services/NavigationService.cs) awaits its action-less 20 s error toast before
+  `ApplyWorkspaceEditAsync` returns `false`. Files are applied one by one, so every file whose write fails delays the rest of a Replace All by about 20 s (or for
+  good, if newer toasts push that one off the stack). Read-only files, the common case, are skipped before they reach the shell; other write failures (a full disk,
+  a folder without write permission) still stall. The shell should show that toast without awaiting it.
 * Search-as-you-type and re-run on workspace change are not implemented (a folder change marks the results stale instead).

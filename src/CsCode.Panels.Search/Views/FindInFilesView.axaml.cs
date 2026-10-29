@@ -93,8 +93,14 @@ public sealed partial class FindInFilesView : UserControl, IDisposable
 
     private void OnReplaceKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter && e.KeyModifiers == KeyModifiers.None) { _ = Vm.ReplaceAllAsync(); e.Handled = true; }
+        if (e.Key == Key.Enter && e.KeyModifiers == KeyModifiers.None) { ReplaceAll(); e.Handled = true; }
         else if (e.Key == Key.Escape) { ResultsList.Focus(); e.Handled = true; }
+    }
+
+    /// <summary>Keyboard Replace All goes through the command, so it obeys the same rules as the button (replace UI open, results, not busy).</summary>
+    private void ReplaceAll()
+    {
+        if (Vm.ReplaceAllCommand.CanExecute(null)) Vm.ReplaceAllCommand.Execute(null);
     }
 
     /// <summary>Shortcuts that work anywhere in the panel: F4 / Shift+F4, Alt+C/W/R/P toggles, Ctrl+Alt+Enter.</summary>
@@ -107,7 +113,7 @@ public sealed partial class FindInFilesView : UserControl, IDisposable
         else if (m == KeyModifiers.Alt && e.Key == Key.W) { Vm.WholeWord = !Vm.WholeWord; e.Handled = true; }
         else if (m == KeyModifiers.Alt && e.Key == Key.R) { Vm.IsRegex = !Vm.IsRegex; e.Handled = true; }
         else if (m == KeyModifiers.Alt && e.Key == Key.P) { Vm.PreserveCase = !Vm.PreserveCase; e.Handled = true; }
-        else if (m == (KeyModifiers.Control | KeyModifiers.Alt) && e.Key == Key.Enter) { _ = Vm.ReplaceAllAsync(); e.Handled = true; }
+        else if (m == (KeyModifiers.Control | KeyModifiers.Alt) && e.Key == Key.Enter) { ReplaceAll(); e.Handled = true; }
     }
 
     private void OnResultsKeyDown(object? sender, KeyEventArgs e)
