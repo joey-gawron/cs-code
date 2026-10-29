@@ -282,6 +282,9 @@ public sealed class CodeEditorControl : UserControl, IDisposable
 
     internal void AddComponent(IDisposable component) => _components.Add(component);
 
+    /// <summary>Fires for each typed character BEFORE it is inserted (completion uses it to accept on commit characters).</summary>
+    internal Emitter<string> PreTyping { get; } = new();
+
     /// <summary>Characters typed into this view (after the text was entered or the auto-close/over-type handled it): features key off this.</summary>
     internal IEventSource<string>? Typed { get; set; }
 

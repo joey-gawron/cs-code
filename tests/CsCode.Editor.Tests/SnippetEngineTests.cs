@@ -533,8 +533,15 @@ public class SnippetEngineTests
         Assert.Equal(InsertTextFormat.Snippet, region.InsertTextFormat);
         Assert.Equal("#region $0", region.InsertText);
         Assert.Equal("#region", region.FilterText);
-        var again = await provider.ProvideCompletionAsync(doc, new TextPosition(0, 4), new CompletionContext(CompletionTriggerKind.Invoked), CancellationToken.None);
-        Assert.Same(list, again);
+        // typed "#reg" is the start of the prefix "#region" and the '#' belongs to it: the item replaces exactly the typed text
+        Assert.Equal(TextRange.FromLines(0, 0, 0, 4), region.TextEdit!.Range);
+        Assert.Equal("#region $0", region.TextEdit.NewText);
+        // ...whereas a plain word prefix needs no explicit edit (the popup replaces the word being completed)
+        var plainDoc = new InMemoryTextDocument(new Uri("file:///b.cs"), "csharp", "cla");
+        var plain = await provider.ProvideCompletionAsync(plainDoc, new TextPosition(0, 3), new CompletionContext(CompletionTriggerKind.Invoked), CancellationToken.None);
+        Assert.Null(plain!.Items.First(i => i.Label == "#region").TextEdit);
+        Assert.Equal(4, SnippetCompletionProvider.TypedPrefixLength("x = #reg", "#region"));
+        Assert.Equal(0, SnippetCompletionProvider.TypedPrefixLength("abc", "xyz"));
         var none = await provider.ProvideCompletionAsync(new InMemoryTextDocument(new Uri("file:///a.zzz"), "no-such", ""), TextPosition.Zero, new CompletionContext(CompletionTriggerKind.Invoked), CancellationToken.None);
         Assert.Null(none);
     }

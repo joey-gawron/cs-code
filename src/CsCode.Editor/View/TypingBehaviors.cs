@@ -78,6 +78,7 @@ internal sealed class TypingBehaviors : IDisposable, ISettingsAware
         var text = e.Text;
         if (string.IsNullOrEmpty(text) || e.Handled || _v.Document.IsReadOnly) return;
         BeginTypingGroup(text);
+        _v.PreTyping.Fire(text);
         if (HandleAutoClosing(e, text)) EndTypingGroup(text); // handled here: TextEntered will not come
     }
 

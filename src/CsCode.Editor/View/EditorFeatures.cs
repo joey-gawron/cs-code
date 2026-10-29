@@ -11,8 +11,13 @@ internal static class EditorFeatures
     public static IEnumerable<IDisposable> Create(CodeEditorControl view)
     {
         if (view.Document.IsLargeFile) return [];
-        var list = new List<IDisposable>();
-        // components are added here as they are implemented (each takes the view and unhooks itself on Dispose)
+        var list = new List<IDisposable>
+        {
+            new Features.FoldingFeature(view),
+            new Features.SnippetFeature(view),
+            new Features.CompletionFeature(view),
+        };
+        // further components are added here (each takes the view and unhooks itself on Dispose)
         return list;
     }
 }
