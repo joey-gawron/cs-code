@@ -260,6 +260,32 @@ public class LoopbackFileSystemTests
         Assert.True(disconnectCost < TimeSpan.FromMilliseconds(1), $"disconnect held the caller {disconnectCost.TotalMilliseconds:0.000} ms");
     }
 
+    [Fact]
+    public async Task Repeated_connect_and_disconnect_leave_no_process_thread_or_descriptor_behind()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fd");
+        await using var host = new RemoteTestHost();
+        File.WriteAllText(Path.Combine(host.Workspace.Path, "a.txt"), "a");
+        await host.ConnectAsync(); // warm up: JIT, lazily created services, the first lane threads
+        using (host.Services.GetRequiredService<IFileWatcher>().Watch(host.Remote(), true, null, _ => { })) { }
+        await host.Manager.DisconnectAsync(Ct);
+        await Task.Delay(500, Ct);
+        int Fds() => Directory.GetFiles("/proc/self/fd").Length;
+        int Threads() => Process.GetCurrentProcess().Threads.Count;
+        var (fds, threads) = (Fds(), Threads());
+        const int Cycles = 10;
+        for (var i = 0; i < Cycles; i++)
+        {
+            await host.ConnectAsync();
+            using var watch = host.Services.GetRequiredService<IFileWatcher>().Watch(host.Remote(), true, null, _ => { });
+            Assert.Equal("a", RemoteTestHost.Text(await host.FileSystem.ReadFileAsync(host.Remote("a.txt"), Ct)));
+            await host.Manager.DisconnectAsync(Ct);
+        }
+        await TestEnv.AssertNoProcessesAsync(host.Marker); // every server (and its ssh/loopback process) is gone
+        await TestEnv.WaitUntilAsync(() => Fds() - fds < 10 && Threads() - threads < 10, TimeSpan.FromSeconds(15),
+            $"descriptors/threads to settle (fds {fds} -> {Fds()}, threads {threads} -> {Threads()})");
+    }
+
     private sealed class ThrowingSyncContext : SynchronizationContext
     {
         public int Posts;
