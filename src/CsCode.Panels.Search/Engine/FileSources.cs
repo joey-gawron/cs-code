@@ -66,7 +66,7 @@ public sealed class WalkingFileSource(IFileSystem fileSystem) : ISearchFileSourc
                 {
                     try
                     {
-                        var bytes = await fileSystem.ReadFileAsync(new Uri(frame.Uri, ".gitignore"), ct).ConfigureAwait(false);
+                        var bytes = await fileSystem.ReadFileAsync(ChildUri(frame.Uri, ".gitignore", false), ct).ConfigureAwait(false);
                         var rules = IgnoreRules.Parse(Encoding.UTF8.GetString(bytes));
                         if (rules.Count > 0) ignore = new IgnoreNode(frame.Rel, rules, ignore);
                     }
@@ -87,8 +87,8 @@ public sealed class WalkingFileSource(IFileSystem fileSystem) : ISearchFileSourc
                     if (request.Exclude.IsMatch(rel)) continue;
                     if (ignore is not null && IsIgnored(ignore, rel, isDir)) continue;
 
-                    if (isDir) subdirs.Add(new Frame(new Uri(frame.Uri, Uri.EscapeDataString(entry.Name) + "/"), rel, ignore));
-                    else if (request.Include.IsEmpty || request.Include.IsMatch(rel)) yield return new Uri(frame.Uri, Uri.EscapeDataString(entry.Name));
+                    if (isDir) subdirs.Add(new Frame(ChildUri(frame.Uri, entry.Name, true), rel, ignore));
+                    else if (request.Include.IsEmpty || request.Include.IsMatch(rel)) yield return ChildUri(frame.Uri, entry.Name, false);
                 }
                 for (var i = subdirs.Count - 1; i >= 0; i--) stack.Push(subdirs[i]); // pop in name order
             }
@@ -104,6 +104,13 @@ public sealed class WalkingFileSource(IFileSystem fileSystem) : ISearchFileSourc
         }
         return false;
     }
+
+    /// <summary>
+    /// Child of a directory URI (which ends with '/'), built from the absolute string. <c>new Uri(base, relative)</c> must not be used: for a
+    /// base made from a plain file path it re-escapes an already escaped name ("%23" becomes "%2523"), so "#" or "%" in a name broke the file.
+    /// </summary>
+    internal static Uri ChildUri(Uri directory, string name, bool isDirectory) =>
+        new(directory.AbsoluteUri + Uri.EscapeDataString(name) + (isDirectory ? "/" : ""), UriKind.Absolute);
 
     internal static Uri EnsureSlash(Uri uri)
     {

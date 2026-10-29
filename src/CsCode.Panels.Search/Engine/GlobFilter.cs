@@ -64,7 +64,12 @@ public sealed class GlobFilter
         if (config?.GetRaw(key) is not { ValueKind: JsonValueKind.Object } obj) return Empty;
         var list = new List<string>();
         foreach (var p in obj.EnumerateObject())
-            if (p.Value.ValueKind == JsonValueKind.True) list.Add(p.Name);
+        {
+            if (p.Value.ValueKind != JsonValueKind.True) continue;
+            list.Add(p.Name);
+            // An excluded folder hides everything below it ("**/node_modules" must also exclude "…/node_modules/x.js").
+            if (!p.Name.EndsWith("**", StringComparison.Ordinal)) list.Add(p.Name.TrimEnd('/') + "/**");
+        }
         return FromPatterns(list);
     }
 
