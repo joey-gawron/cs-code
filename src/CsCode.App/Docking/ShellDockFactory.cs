@@ -43,11 +43,13 @@ public sealed class ShellDockFactory : Factory
     public override IRootDock CreateLayout()
     {
         // The primary document group and the tool wells must survive being emptied: Dock would otherwise collapse an empty dock out
-        // of the layout and later tabs would land in a detached dock. (Groups created by "split" stay collapsible.)
+        // of the layout and later tabs would land in a detached dock. (Groups created by "split" stay collapsible.) The tool wells are
+        // collapsible all the same, because Dock's theme only gives up the room of an empty dock that is collapsible (an empty well kept its
+        // share of the window); CollapseDock below keeps them in the model.
         PrimaryDocuments.IsCollapsable = false;
-        LeftTools.IsCollapsable = false;
-        RightTools.IsCollapsable = false;
-        BottomTools.IsCollapsable = false;
+        LeftTools.IsCollapsable = true;
+        RightTools.IsCollapsable = true;
+        BottomTools.IsCollapsable = true;
         PrimaryDocuments.VisibleDockables = CreateList<IDockable>();
         LeftTools.VisibleDockables = CreateList<IDockable>();
         RightTools.VisibleDockables = CreateList<IDockable>();
@@ -76,6 +78,13 @@ public sealed class ShellDockFactory : Factory
         root.ActiveDockable = main;
         Root = root;
         return root;
+    }
+
+    /// <summary>An emptied tool well stays in the layout (it only takes no room on screen while empty); other docks collapse as Dock does.</summary>
+    public override void CollapseDock(IDock dock)
+    {
+        if (ReferenceEquals(dock, LeftTools) || ReferenceEquals(dock, RightTools) || ReferenceEquals(dock, BottomTools)) return;
+        base.CollapseDock(dock);
     }
 
     /// <summary>All document groups currently in the layout (the primary plus any created by split right / down).</summary>

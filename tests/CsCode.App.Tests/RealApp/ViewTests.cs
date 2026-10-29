@@ -115,6 +115,31 @@ public class RealAppViewTests
     }
 
     [AvaloniaFact(Timeout = 60_000)]
+    public async Task A_tool_well_without_visible_windows_takes_no_room_and_comes_back_at_its_width()
+    {
+        // Find in Files is the only Left-located window and is not in the default layout: its empty well used to keep 22% of the window.
+        await using var host = await RealAppHost.Create().StartAsync();
+        var tools = host.Shell.Tools;
+        var left = host.Shell.Factory.LeftTools;
+        Assert.False(tools.IsVisible(SearchPanelsHost.FindViewId));
+        Assert.True(await RealAppHost.WaitFor(() => WellWidth(host, left) < 1), $"empty left well is {WellWidth(host, left):F0} px wide (IsEmpty={left.IsEmpty})");
+
+        await host.RunAsync(SearchPanelsHost.FindInFiles, "needle");
+        Assert.True(await RealAppHost.WaitFor(() => WellWidth(host, left) > 200), $"left well with Find in Files is {WellWidth(host, left):F0} px wide");
+        var shown = WellWidth(host, left);
+
+        tools.Hide(SearchPanelsHost.FindViewId);
+        Assert.True(await RealAppHost.WaitFor(() => WellWidth(host, left) < 1), $"left well after hiding is {WellWidth(host, left):F0} px wide");
+        await host.RunAsync(SearchPanelsHost.FindInFiles, "again");
+        Assert.True(await RealAppHost.WaitFor(() => Math.Abs(WellWidth(host, left) - shown) < 2), $"left well came back at {WellWidth(host, left):F0} px, was {shown:F0}");
+    }
+
+    /// <summary>Width of the control Dock presents for <paramref name="well"/> (0 when it is not presented).</summary>
+    private static double WellWidth(RealAppHost host, Dock.Model.Core.IDock well) =>
+        host.Window.GetVisualDescendants().OfType<Control>().Where(c => ReferenceEquals(c.DataContext, well) && c.IsEffectivelyVisible)
+            .Select(c => c.Bounds.Width).DefaultIfEmpty(0).Max();
+
+    [AvaloniaFact(Timeout = 60_000)]
     public async Task An_auto_hidden_tool_window_stays_one_window_through_its_command_its_toggle_debug_auto_show_and_Reset()
     {
         await using var host = await RealAppHost.Create().StartAsync();
