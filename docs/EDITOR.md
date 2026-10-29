@@ -83,7 +83,9 @@ Numbers refer to the brief's MUST list.
 5. **LanguageService** — detection order: `files.associations` → exact file name → name pattern → longest extension → first-line regex; ~40 built-in languages from embedded manifests plus a supplement table; `language-configuration.json` parser (JSONC; brackets,
    auto-closing pairs with `notIn`, surrounding pairs, word pattern as string or `{pattern,flags}`, folding markers, indentation rules, `onEnterRules`, `offSide`), live on contribution changes.
 6. **ColorThemeService + VS Code theme loader** — JSON/JSONC, `include` chains, `colors`, `tokenColors` (comma/array scopes), `semanticTokenColors`, light/dark/HC; ~200-key defaults table for dark/light/HC with fallback chains; selection persisted in `workbench.colorTheme`;
-   Dark+/Light+/Dark/Light/HC built in; `Register` for shell themes; user themes from `{UserDataDir}/themes` watched for changes.
+   the 21 themes embedded in `TextMateSharp.Grammars` built in (`BuiltinColorThemes`: Dark+, Light+, Monokai, Solarized, Dracula, ... with VS Code's labels); `Register` for shell themes;
+   user themes from `{UserDataDir}/themes` watched for changes; `IColorThemePreview` (a picker shows a theme without selecting or persisting it) and `SetCompletion`
+   (the shell's VS 2022 chrome completion is applied to every theme the service hands out; docs/SHELL.md).
 7. **Editing behaviours** — all the listed commands (§7), auto-indent from the language configuration + `.editorconfig`, auto-close/over-type/surround honouring `notIn` and the TextMate token under the caret, typing bursts coalesced into one undo step, sort/join/transpose/trim, expand/shrink selection
    (`ISelectionRangeProvider` when present, else a word/line/block heuristic), format on save / on type / on paste.
 8. **Snippet engine** — full VS Code grammar (tab stops, placeholders, nesting, choices, mirrors, variables incl. transforms), indentation normalisation, live mirrored session with Tab/Shift+Tab/Esc, user snippet files `{UserDataDir}/snippets/<lang>.json` watched for changes, prefix completion; well over the required 60 tests (`SnippetEngineTests`).
@@ -192,4 +194,4 @@ Not done, or done only in part — none of this is faked:
 
 ## 10. Third-party content
 
-AvaloniaEdit (MIT), TextMateSharp and TextMateSharp.Grammars (MIT; the bundled grammars and themes are Microsoft's VS Code built-ins, MIT), the Oniguruma regex engine through `TextMateSharp.Onigwrap` (BSD), Avalonia (MIT). No icon font, Codicon or other artwork is embedded.
+AvaloniaEdit (MIT), TextMateSharp and TextMateSharp.Grammars (MIT; the bundled grammars and 15 of its 21 themes are Microsoft's VS Code built-ins, MIT; the other six are TextMateSharp's own, see THIRD-PARTY-NOTICES.md), the Oniguruma regex engine through `TextMateSharp.Onigwrap` (BSD), Avalonia (MIT). No icon font, Codicon or other artwork is embedded.

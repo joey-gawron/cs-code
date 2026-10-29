@@ -7,6 +7,7 @@ using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Theming;
 using CsCode.Ui;
+using CsCode.Ui.Theming;
 
 namespace CsCode.App.Commands;
 
@@ -41,7 +42,8 @@ public sealed record ShellCommandContext(
     Func<Avalonia.Controls.Control> CreateWelcome,
     Func<Avalonia.Controls.Control> CreateKeyboardReference,
     CsCode.Core.Languages.ILanguageService? LanguageService = null,
-    ShellViewActivator? Views = null);
+    ShellViewActivator? Views = null,
+    CsCode.Ui.Threading.IUiDispatcher? Ui = null);
 
 /// <summary>
 /// Registers every command the shell owns (tabs, files, palette modes, window layout, theme picker, Find Results, tool-window toggles).
@@ -134,6 +136,12 @@ public static class ShellCommands
         if (!c.Commands.Has(KnownCommands.OpenSettings)) Run(KnownCommands.OpenSettings, "Open Settings", "Preferences", () => OpenSettingsFile(c));
         if (!c.Commands.Has(OpenSettingsJson)) Run(OpenSettingsJson, "Open Settings (JSON)", "Preferences", () => OpenSettingsFile(c));
         Run(KnownCommands.SelectTheme, "Color Theme", "Preferences", () => PickThemeAsync(c));
+        // View > Toolbars: the group's setting is the state (so settings.json and other windows agree); the toolbar follows the setting.
+        Hidden(ShellMenus.ToggleToolbar, async inv =>
+        {
+            if (c.Config is null || inv.Arg<string>(0) is not { } id || Views.ToolbarView.Groups.FirstOrDefault(g => g.Id == id) is not { } group) return;
+            await c.Config.UpdateAsync(group.SettingKey, !c.Config.Get(group.SettingKey, true)).ConfigureAwait(true);
+        });
 
         // ---- tool windows (and document views such as Settings, when their module did not register its own command)
         foreach (var tool in c.ToolWindows)
@@ -199,35 +207,27 @@ public static class ShellCommands
         await c.Navigation.OpenAsync(new Uri(c.Config.UserSettingsPath)).ConfigureAwait(true);
     }
 
-    /// <summary>Quick pick of the registered themes with live preview while arrowing, reverting on Esc.</summary>
+    /// <summary>
+    /// Quick pick of the registered themes (grouped Dark / Light / High contrast, as in the toolbar dropdown) with live preview while arrowing:
+    /// a preview persists nothing, Esc reverts, choosing applies and persists <c>workbench.colorTheme</c> (<see cref="ThemeSelection"/>).
+    /// </summary>
     private static async Task PickThemeAsync(ShellCommandContext c)
     {
         if (c.Themes is null) return;
         var original = c.Themes.Current;
-        var items = c.Themes.Available.Select(t => new QuickPickItem(t.Label, t.Kind.ToString(), Tag: t.Id, Picked: t.Id == original.Id)).ToArray();
-        var preview = new ThemePreview(c.Themes);
+        var items = ThemeSelection.BuildItems(c.Themes.Available).OfType<ThemeChoiceItem>()
+            .Select(t => new QuickPickItem(t.Label, ThemeSelection.GroupOf(t.Kind), Tag: t.Id, Picked: t.Id == original.Id)).ToArray();
+        // At most one preview per ThemePreviewer.MinInterval while an arrow key repeats (the shell always passes its dispatcher).
+        using var previewer = c.Ui is { } ui ? new ThemePreviewer(c.Themes, ui) : null;
         var picked = await c.Palette.PickWithPreviewAsync(items, "Select Color Theme", "Select a color theme (up/down keys to preview)", e =>
         {
-            if (e?.Tag is QuickPickItem { Tag: string id }) preview.Preview(id);
+            if (e?.Tag is not QuickPickItem { Tag: string id }) return;
+            if (previewer is not null) previewer.Request(id);
+            else ThemeSelection.Preview(c.Themes, id);
         }).ConfigureAwait(true);
-        if (picked?.Tag is string chosen)
-        {
-            await c.Themes.SetCurrentAsync(chosen).ConfigureAwait(true);
-            if (c.Config is not null) await c.Config.UpdateAsync(SettingKeys.WorkbenchColorTheme, chosen).ConfigureAwait(true);
-        }
-        else await c.Themes.SetCurrentAsync(original.Id).ConfigureAwait(true); // Esc: revert
-    }
-
-    private sealed class ThemePreview(IColorThemeService themes)
-    {
-        private string? _last;
-
-        public void Preview(string id)
-        {
-            if (id == _last) return;
-            _last = id;
-            _ = themes.SetCurrentAsync(id);
-        }
+        previewer?.Cancel(); // a preview still waiting for its interval must not land after the choice
+        if (picked?.Tag is string chosen) await ThemeSelection.CommitAsync(c.Themes, c.Config, chosen).ConfigureAwait(true);
+        else ThemeSelection.EndPreview(c.Themes, original.Id); // Esc: revert
     }
 }
 

@@ -35,6 +35,8 @@ public static class ShellMenus
     public const string KeyboardReference = "cscode.shell.showKeyboardReference";
     public const string ToggleNotifications = "cscode.shell.toggleNotifications";
     public const string ToggleToolWindow = "cscode.shell.toggleToolWindow";
+    /// <summary>Shows or hides a toolbar group (argument: the group id, <see cref="Views.ToolbarView.Groups"/>); persisted in its setting.</summary>
+    public const string ToggleToolbar = "cscode.shell.toggleToolbar";
     /// <summary>The Keyboard Shortcuts editor (owned by the Settings panel; the item stays disabled without it).</summary>
     public const string OpenKeyboardShortcuts = "workbench.action.openGlobalKeybindings";
 
@@ -83,6 +85,8 @@ public static class ShellMenus
             M("Go to _File...", KnownCommands.QuickOpen),
             S,
             new MenuNode("_Tool Windows", Dynamic: "toolWindows", Children: []),
+            Sub("Tool_bars", Views.ToolbarView.Groups.Select(g =>
+                new MenuNode("_" + g.Title, ToggleToolbar, CheckWhen: "config." + g.SettingKey, Argument: g.Id)).ToArray()),
             S,
             Sub("_Appearance",
                 M("_Color Theme...", KnownCommands.SelectTheme),

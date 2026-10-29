@@ -29,6 +29,9 @@ public static class AppStartup
             _ = services.GetService<IStateStorage>();
             _ = services.GetService<IKeybindingService>();
             _ = services.GetService<IWorkspaceService>();
+            // The colour theme service parses the 21 embedded theme files when constructed, and the shell's completion of the current theme
+            // (VS 2022 chrome mapping, contrast check) runs here too, so neither happens on the UI thread before the first frame.
+            if (services.GetService<CsCode.Core.Theming.IColorThemeService>() is { } themes) ShellController.PrepareThemes(themes);
             return services;
         }
         catch

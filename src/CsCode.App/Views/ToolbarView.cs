@@ -8,20 +8,38 @@ using Avalonia.Media;
 using CsCode.Core.Debugging;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
+using CsCode.Core.Theming;
 using CsCode.Ui.Icons;
 using CsCode.Ui.Theming;
 using CsCode.Ui.Threading;
 
 namespace CsCode.App.Views;
 
+/// <summary>A group of the toolbar that View &gt; Toolbars shows or hides; <paramref name="SettingKey"/> (a boolean, default true) persists it.</summary>
+public sealed record ToolbarGroup(string Id, string Title, string SettingKey);
+
 /// <summary>
-/// The standard toolbar (VS2022 layout): back/forward, new/open/save/save-all, undo/redo, launch-configuration dropdown with the green Start
-/// button, step buttons that appear only while debugging, and find-in-files. Every button runs a command id; enablement follows
+/// The standard toolbar (VS2022 layout), in groups that View &gt; Toolbars hides: <b>Standard</b> (back/forward, new/open/save/save-all,
+/// undo/redo, find in files), <b>Debug</b> (launch-configuration dropdown with the green Start button, step buttons that appear only while
+/// debugging) and <b>Color Theme</b> (the theme dropdown, <see cref="ThemePicker"/>). Every button runs a command id; enablement follows
 /// <c>when</c> clauses and command availability and is refreshed (coalesced) when context keys or registrations change.
-/// The launch-configuration combo is bound to <see cref="IDebugConfigurationService"/> only when a debug service is resolvable.
+/// The launch-configuration combo is bound to <see cref="IDebugConfigurationService"/> only when a debug service is resolvable, the theme
+/// dropdown only when a colour theme service is.
 /// </summary>
 public sealed class ToolbarView : Border, IDisposable
 {
+    public const string StandardGroup = "standard";
+    public const string DebugGroup = "debug";
+    public const string ColorThemeGroup = "colorTheme";
+
+    /// <summary>The hideable groups, in toolbar order. Their settings are declared by the shell (<see cref="ShellController"/>).</summary>
+    public static IReadOnlyList<ToolbarGroup> Groups { get; } =
+    [
+        new(StandardGroup, "Standard", "cscode.toolbars.standard"),
+        new(DebugGroup, "Debug", "cscode.toolbars.debug"),
+        new(ColorThemeGroup, "Color Theme", "cscode.toolbars.colorTheme"),
+    ];
+
     private sealed record Spec(string CommandId, string Icon, string Tooltip, string? When = null, string ColorId = "foreground", bool DebugOnly = false);
 
     private static readonly Spec[] Standard =
@@ -57,15 +75,19 @@ public sealed class ToolbarView : Border, IDisposable
     private readonly List<Control> _debugOnly = new();
     private readonly ComboBox? _configs;
     private readonly TextBlock _startLabel = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12, Text = "Start" };
+    private readonly IConfigurationService? _config;
+    private readonly Dictionary<string, (Panel Panel, Control LeadingSeparator)> _groups = new(StringComparer.Ordinal);
     private Button? _start;
 
-    public ToolbarView(ICommandService commands, IContextKeyService keys, IUiDispatcher ui, IKeybindingService? bindings = null, IDebugService? debug = null)
+    public ToolbarView(ICommandService commands, IContextKeyService keys, IUiDispatcher ui, IKeybindingService? bindings = null, IDebugService? debug = null,
+        IColorThemeService? themes = null, IConfigurationService? config = null)
     {
         _commands = commands;
         _keys = keys;
         _bindings = bindings;
         _ui = ui;
         _debug = debug;
+        _config = config;
         Height = 30;
         Background = ThemeBrushes.Get("toolbar.background");
         BorderBrush = ThemeBrushes.Get("panel.border");
@@ -73,15 +95,28 @@ public sealed class ToolbarView : Border, IDisposable
         TextElement.SetForeground(this, ThemeBrushes.Get("toolbar.foreground"));
 
         var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 0), Spacing = 1 };
+        StackPanel Group(string id)
+        {
+            // A group carries its own leading separator, so hiding a group leaves no double separator behind.
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 1, Name = "toolbar-" + id };
+            var separator = ViewHelpers.Separator();
+            panel.Children.Add(separator);
+            _groups[id] = (panel, separator);
+            row.Children.Add(panel);
+            return panel;
+        }
+
+        var standard = Group(StandardGroup);
         var i = 0;
         foreach (var spec in Standard)
         {
-            row.Children.Add(MakeButton(spec));
-            if (++i is 2 or 6) row.Children.Add(ViewHelpers.Separator());
-            if (i == 4) { /* group: new / open / save */ }
+            standard.Children.Add(MakeButton(spec));
+            if (++i is 2 or 6) standard.Children.Add(ViewHelpers.Separator());
         }
-        row.Children.Add(ViewHelpers.Separator());
+        standard.Children.Add(ViewHelpers.Separator());
+        standard.Children.Add(MakeButton(new Spec("workbench.action.findInFiles", IconKey.Search, "Find in Files", "workspaceFolderCount")));
 
+        var debugGroup = Group(DebugGroup);
         if (debug is not null)
         {
             _configs = new ComboBox { MinWidth = 150, Height = 22, MinHeight = 0, Padding = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, FontSize = 12, PlaceholderText = "No configurations" };
@@ -89,7 +124,7 @@ public sealed class ToolbarView : Border, IDisposable
             {
                 if (_configs.SelectedItem is DebugConfiguration c && !ReferenceEquals(debug.Configurations.Selected, c)) debug.Configurations.Selected = c;
             };
-            row.Children.Add(_configs);
+            debugGroup.Children.Add(_configs);
             _subs.Add(debug.Configurations.ConfigurationsChanged.Subscribe(_ => _ui.Post(() => _ = ReloadConfigurationsAsync())));
             _subs.Add(debug.Configurations.SelectedChanged.Subscribe(_ => _ui.Post(SyncSelection)));
             _ = ReloadConfigurationsAsync();
@@ -100,30 +135,60 @@ public sealed class ToolbarView : Border, IDisposable
         _start.Classes.Add("flat");
         _start.Click += async (_, _) => await Run(KnownCommands.DebugStart).ConfigureAwait(true);
         ToolTip.SetTip(_start, Tip("Start Debugging", KnownCommands.DebugStart));
-        row.Children.Add(_start);
+        debugGroup.Children.Add(_start);
         var startNoDebug = new Button { Content = ViewHelpers.Glyph("play", 14, "foreground"), Padding = new Thickness(4), VerticalAlignment = VerticalAlignment.Center };
         startNoDebug.Classes.Add("flat");
         startNoDebug.Click += async (_, _) => await Run(KnownCommands.DebugRun).ConfigureAwait(true);
         ToolTip.SetTip(startNoDebug, Tip("Start Without Debugging", KnownCommands.DebugRun));
-        row.Children.Add(startNoDebug);
+        debugGroup.Children.Add(startNoDebug);
         _buttons.Add((startNoDebug, new Spec(KnownCommands.DebugRun, "play", "", "debugState == 'inactive'")));
 
         var stepSep = ViewHelpers.Separator();
-        row.Children.Add(stepSep);
+        debugGroup.Children.Add(stepSep);
         _debugOnly.Add(stepSep);
         foreach (var spec in Steps)
         {
             var b = MakeButton(spec);
             _debugOnly.Add(b);
-            row.Children.Add(b);
+            debugGroup.Children.Add(b);
         }
-        row.Children.Add(ViewHelpers.Separator());
-        row.Children.Add(MakeButton(new Spec("workbench.action.findInFiles", IconKey.Search, "Find in Files", "workspaceFolderCount")));
+
+        // Color Theme (VS: Tools > Options > Environment > General; here also on the toolbar, after the debug group).
+        if (themes is not null)
+        {
+            ThemePicker = new ThemePicker(themes, ui, config) { Width = 230, Height = 22, MinHeight = 0, Padding = new Thickness(4, 0), VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
+            Group(ColorThemeGroup).Children.Add(ThemePicker);
+        }
 
         Child = row;
         Refresh();
+        ApplyGroupVisibility();
         _subs.Add(keys.Changed.Subscribe(_ => ScheduleRefresh()));
         _subs.Add(commands.Registered.Subscribe(_ => ScheduleRefresh()));
+        if (config is not null)
+            _subs.Add(config.Changed.Subscribe(e =>
+            {
+                if (Groups.Any(g => e.Affects(g.SettingKey))) _ui.PostCoalesced("toolbar.groups", ApplyGroupVisibility);
+            }));
+    }
+
+    /// <summary>The Color Theme dropdown (null when no colour theme service is composed).</summary>
+    public ThemePicker? ThemePicker { get; }
+
+    /// <summary>Whether a group is shown (View &gt; Toolbars).</summary>
+    public bool IsGroupVisible(string groupId) => _groups.TryGetValue(groupId, out var g) && g.Panel.IsVisible;
+
+    private void ApplyGroupVisibility()
+    {
+        // Only a group with a visible group before it shows its leading separator.
+        var anyBefore = false;
+        foreach (var g in Groups)
+        {
+            if (!_groups.TryGetValue(g.Id, out var group)) continue;
+            group.Panel.IsVisible = _config?.Get(g.SettingKey, true) ?? true;
+            group.LeadingSeparator.IsVisible = anyBefore;
+            anyBefore |= group.Panel.IsVisible;
+        }
     }
 
     private string Tip(string title, string commandId) => _bindings?.GetLabel(commandId) is { } g ? $"{title} ({g})" : title;
@@ -174,5 +239,9 @@ public sealed class ToolbarView : Border, IDisposable
         _startLabel.Text = selected?.Name is { Length: > 0 } n ? n : "Start";
     }
 
-    public void Dispose() => _subs.Dispose();
+    public void Dispose()
+    {
+        _subs.Dispose();
+        ThemePicker?.Dispose();
+    }
 }

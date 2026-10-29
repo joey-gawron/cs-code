@@ -65,7 +65,8 @@ public static class WorkbenchColors
             "editorError.foreground", "editorWarning.foreground", "editorInfo.foreground", "editorHint.foreground",
             "editorWidget.background", "editorWidget.foreground", "editorWidget.border",
             "editorSuggestWidget.background", "editorSuggestWidget.border", "editorSuggestWidget.foreground", "editorSuggestWidget.selectedBackground", "editorSuggestWidget.highlightForeground",
-            "editorHoverWidget.background", "editorHoverWidget.foreground", "editorHoverWidget.border", "editorOverviewRuler.border"]),
+            "editorHoverWidget.background", "editorHoverWidget.foreground", "editorHoverWidget.border", "editorOverviewRuler.border",
+            "diffEditor.insertedTextBackground", "diffEditor.removedTextBackground"]),
         ("Debug, problems, git", [
             "debugToolBar.background", "debugToolBar.border", "debugIcon.breakpointForeground", "debugIcon.startForeground", "debugIcon.stopForeground", "debugIcon.pauseForeground",
             "debugIcon.continueForeground", "debugIcon.stepOverForeground", "debugIcon.stepIntoForeground", "debugIcon.stepOutForeground", "debugIcon.restartForeground",

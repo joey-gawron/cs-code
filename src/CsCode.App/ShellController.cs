@@ -66,15 +66,32 @@ public sealed class ShellController : IDisposable
     public DocumentWell Well => _sp.GetRequiredService<DocumentWell>();
     public ToolWindowManager Tools => _sp.GetRequiredService<ToolWindowManager>();
 
+    /// <summary>
+    /// Makes the editor's theme service hand out complete themes: every theme (the 21 embedded ones, user theme files) is completed with the VS 2022
+    /// chrome mapping (<see cref="ThemeCompletion"/>), so the shell, the editor and the theme dropdown all see the same colours. Idempotent and safe on
+    /// any thread: <see cref="AppStartup"/> calls it on the start-up pool thread (the current theme is completed there, JIT included), and
+    /// <see cref="Initialize"/> again for compositions built on the UI thread (tests). Other <see cref="IColorThemeService"/> implementations are
+    /// completed by <see cref="ThemeApplier"/> when they are applied.
+    /// </summary>
+    public static void PrepareThemes(IColorThemeService themes)
+    {
+        if (themes is not CsCode.Editor.Theming.ColorThemeService service || service.HasCompletion) return;
+        service.SetCompletion(ThemeCompletion.Complete);
+        _ = service.Current;
+    }
+
     /// <summary>Synchronous wiring that must exist before the first frame (themes, commands, keys, menus). Cheap: no I/O.</summary>
     public void Initialize(IWindowChrome chrome)
     {
         _ui.AssertUiThread();
         var themes = _sp.GetRequiredService<IColorThemeService>();
         var config = _sp.GetService<IConfigurationService>();
+        PrepareThemes(themes);
         VsThemes.RegisterAll(themes, null);
         if (Application.Current is { } app) Theme = new ThemeApplier(app, themes, _ui, config);
         _disposables.Add(Disposable.Create(() => Theme?.Dispose()));
+        // The dropdown lists every theme: complete them all now, on a pool thread, rather than on the UI thread when the list first opens.
+        _ = Task.Run(() => themes.Available.Count);
 
         var commands = _sp.GetRequiredService<ICommandService>();
         var keys = _sp.GetRequiredService<IContextKeyService>();
@@ -107,7 +124,7 @@ public sealed class ShellController : IDisposable
             _sp.GetRequiredService<FindResultsViewModel>(), _sp.GetRequiredService<NotificationCenter>(), chrome,
             ResetLayoutAsync, RefreshExplorerAsync, specs,
             () => new WelcomeView(commands, workspace, state), () => new KeyboardReferenceView(_sp.GetService<IKeybindingService>(), commands),
-            _sp.GetService<ILanguageService>(), _sp.GetService<ShellViewActivator>())));
+            _sp.GetService<ILanguageService>(), _sp.GetService<ShellViewActivator>(), _ui)));
 
         Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window, context: keys);
         _disposables.Add(Keyboard);
@@ -130,6 +147,8 @@ public sealed class ShellController : IDisposable
                 new ConfigurationProperty(DocumentWell.LiveViewsSetting, System.Text.Json.JsonSerializer.SerializeToElement(DocumentWell.DefaultLiveViews), "How many editor views stay alive besides the active tab of each group; older ones are disposed and recreated on demand."),
                 new ConfigurationProperty(NavigationService.ConfirmMultiFileSetting, System.Text.Json.JsonSerializer.SerializeToElement(true), "Ask for confirmation before applying a workspace edit (rename, refactor) that spans several files."),
                 new ConfigurationProperty(UiStallSetting, System.Text.Json.JsonSerializer.SerializeToElement(0), "Log a diagnostic when the UI thread has not pumped for this many milliseconds (0 = off; Debug builds default to 100)."),
+                .. ToolbarView.Groups.Select(g => new ConfigurationProperty(g.SettingKey, System.Text.Json.JsonSerializer.SerializeToElement(true),
+                    $"Show the {g.Title} toolbar (View > Toolbars).")),
             ]));
 
         // UI stall watchdog: Debug builds, or whenever the setting is > 0.
@@ -199,8 +218,11 @@ public sealed class ShellController : IDisposable
     {
         if (_disposed) return;
         var themes = _sp.GetRequiredService<IColorThemeService>();
-        var id = _sp.GetService<IConfigurationService>()?.Get<string>(SettingKeys.WorkbenchColorTheme);
-        if (id is not null && themes.Current.Id != id && themes.Available.Any(t => t.Id == id)) await themes.SetCurrentAsync(id).ConfigureAwait(true);
+        // workbench.colorTheme holds a label (VS Code's convention; ids are accepted too). The editor's service follows the setting itself; this
+        // is for services that do not, and it never ends a picker's preview (the picker commits or reverts).
+        var value = _sp.GetService<IConfigurationService>()?.Get<string>(SettingKeys.WorkbenchColorTheme);
+        if (value is null || ThemeSelection.Names(themes.Current, value) || themes is IColorThemePreview { PreviewedThemeId: not null }) return;
+        if (themes.Available.FirstOrDefault(t => ThemeSelection.Names(t, value)) is { } wanted) await themes.SetCurrentAsync(wanted.Id).ConfigureAwait(true);
     }
 
     private async Task OpenCommandLineTargetsAsync()

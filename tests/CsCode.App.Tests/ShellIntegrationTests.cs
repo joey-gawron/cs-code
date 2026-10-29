@@ -133,7 +133,8 @@ public class ShellIntegrationTests
         quick.MoveSelection(+1);
         quick.Accept();
         await DevHost.WaitFor(() => host.Config.Get<string>(SettingKeys.WorkbenchColorTheme) is not null);
-        Assert.Equal(VsThemes.LightId, host.Config.Get<string>(SettingKeys.WorkbenchColorTheme));
+        // The label, as VS Code (and the editor's theme service) store it; a theme id is accepted when read back.
+        Assert.Equal(VsThemes.Light.Label, host.Config.Get<string>(SettingKeys.WorkbenchColorTheme));
         Assert.Equal(VsThemes.LightId, host.Themes.Current.Id);
     }
 
