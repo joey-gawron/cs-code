@@ -337,9 +337,10 @@ public sealed partial class VimEngine
     private bool TryHostType(string text)
     {
         if (_mode != VimMode.Insert || !_feedingTyped || _insert is not { Replaying: false } || _buf.IsReadOnly) return false;
-        // the host types at its caret: make sure it is ours (typeahead may have moved it within this key's pump)
+        // the host types at its caret: make sure it is ours (typeahead may have moved it within this key's pump); when it already is, leave
+        // it alone (a selected snippet placeholder is typed over)
         var caret = new TextPosition(_line, _col);
-        if (caret != _sentCaret)
+        if (caret != Host.GetCaret())
         {
             Host.SetCaret(caret, insertLike: true);
             _sentCaret = caret;

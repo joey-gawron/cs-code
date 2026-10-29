@@ -915,3 +915,28 @@ keys: 9b
 keys: 9e
 < on‸e
 
+
+=== motion-131
+> one
+> two
+> ‸three
+keys: <C-p>
+< one
+< ‸two
+< three
+
+=== motion-132
+> ‸one
+> two
+> three
+keys: 2<C-n>
+< one
+< two
+< ‸three
+
+=== motion-133
+> ‸one
+> two
+> three
+keys: <C-j>d<C-p>
+< ‸three

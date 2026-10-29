@@ -20,6 +20,30 @@ public sealed partial class VimEngine
     // Visual mode lifecycle
     // ------------------------------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// Enters (or re-anchors) Visual mode over [<paramref name="anchor"/>, <paramref name="active"/>], both characters included, as if the user had
+    /// typed v at the anchor and moved to the active end: what a host does with a selection made with the mouse. Only from Normal or Visual mode
+    /// with nothing pending; returns whether it did.
+    /// </summary>
+    public bool SelectVisual(TextPosition anchor, TextPosition active, VimMode mode = VimMode.Visual)
+    {
+        if (_host is null || !_s.Enabled || _inPump || _work is not null || _pend.Count > 0 || _cmdline is not null) return false;
+        if (mode is not (VimMode.Visual or VimMode.VisualLine or VimMode.VisualBlock)) return false;
+        if (_mode is not (VimMode.Normal or VimMode.Visual or VimMode.VisualLine or VimMode.VisualBlock)) return false;
+        SyncFromHost();
+        _line = Math.Clamp(anchor.Line, 0, LastLine);
+        _col = anchor.Character;
+        CheckCursor();
+        _visualStart = new TextPosition(_line, _col);
+        if (_mode != mode) SetMode(mode);
+        _line = Math.Clamp(active.Line, 0, LastLine);
+        _col = active.Character;
+        CheckCursor();
+        _setCurswant = true;
+        FlushHost();
+        return true;
+    }
+
     private void StartVisualMode(VimMode m, int count0)
     {
         if (VisualActive)
