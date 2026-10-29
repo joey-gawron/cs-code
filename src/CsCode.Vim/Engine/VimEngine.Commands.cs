@@ -216,6 +216,7 @@ public sealed partial class VimEngine
                 return;
             case '&':
                 if (_s.Search.SubPattern.Length == 0 && _s.Search.LastExCommand.Length == 0) { Error("E35: No previous regular expression"); return; }
+                _s.Registers.LastCommandLine = "s";
                 ExecuteExLine("s");
                 return;
             case 'v' or 'V' or 22:
@@ -422,6 +423,8 @@ public sealed partial class VimEngine
         _didAutoIndent = indent.Length > 0;
         _aiCol = indent.Length;
         StartInsert(below ? 'o' : 'O', count, restart: false);
+        _insert!.Start = new TextPosition(_line, 0);
+        _insert.StartOrig = new TextPosition(_line, _col);
     }
 
     private void JoinCommand(Cmd c, bool insertSpace)
@@ -577,7 +580,6 @@ public sealed partial class VimEngine
         }
         _bs.ChangeListIdx = idx;
         var p = list[idx];
-        SetPcmark();
         _line = Math.Min(p.Line, LastLine);
         _col = p.Character;
         CheckCursor();
@@ -588,9 +590,9 @@ public sealed partial class VimEngine
     {
         var cur = _bs.Undo.Current.Seq;
         var target = cur + delta;
-        if (target < 0) { Message("Already at oldest change"); Beep(); return; }
-        if (target > _bs.Undo.LastSeq) { Message("Already at newest change"); Beep(); return; }
-        UndoToSeq(target);
+        if (cur == 0 && delta < 0) { Message("Already at oldest change"); Beep(); return; }
+        if (cur == _bs.Undo.LastSeq && delta > 0) { Message("Already at newest change"); Beep(); return; }
+        UndoToSeq(Math.Clamp(target, 0, _bs.Undo.LastSeq));
     }
 
     // ------------------------------------------------------------------------------------------------------------

@@ -274,7 +274,9 @@ public sealed partial class VimEngine
         if (!deleting)
         {
             _bs.OpStart = start;
-            _bs.OpEnd = type == VimRegisterType.Line ? new TextPosition(end.Line, 1 << 30) : end;
+            var yEnd = end;
+            if (!oap.Inclusive && !oap.BlockMode && type == VimRegisterType.Character) { var yl = end.Line; var yc = end.Character; Dec(ref yl, ref yc); yEnd = new TextPosition(yl, yc); }
+            _bs.OpEnd = type == VimRegisterType.Line ? new TextPosition(end.Line, 1 << 30) : yEnd;
             if (type == VimRegisterType.Line) _bs.OpStart = new TextPosition(start.Line, 0);
             if (_s.Plugins.HighlightedYank) Host.OnYankHighlight(start, end, type == VimRegisterType.Line);
         }
@@ -291,15 +293,17 @@ public sealed partial class VimEngine
     {
         if (oap.Reg == '_') return;
         var reg = oap.Reg == 0 && _s.UseSystemClipboard ? '*' : oap.Reg;
+        var appended = false;
         if (reg != 0)
         {
             if (!RegisterFile.IsValidName(reg) || reg is '.' or ':' or '%' or '#' or '=') { Beep(); return; }
             var t = _s.Registers.ForWrite(reg, out var append);
+            appended = append;
             if (t is not null) OpYank(oap, deleting: true, t, append, reg);
         }
         if (oap.Type == MType.Line || oap.LineCount > 1 || oap.UseRegOne)
         {
-            var one = _s.Registers.ShiftDeleteRegisters();
+            var one = _s.Registers.ShiftDeleteRegisters(keepPrevious: appended);
             OpYank(oap, deleting: true, one, false, null);
         }
         if ((reg == 0 || (O.UnnamedClip && reg == '*') || (O.UnnamedPlusClip && reg == '+')) && oap.Type != MType.Line && oap.LineCount == 1)
@@ -316,7 +320,8 @@ public sealed partial class VimEngine
 
     private bool OpDelete(OpArgs oap)
     {
-        if (LineCount == 1 && L(0).Length == 0 && oap.Type == MType.Line && false) return true;
+        // nothing to delete in an empty buffer: registers stay untouched
+        if (LineCount == 1 && L(0).Length == 0) return true;
         if (!CanModify()) return false;
         if (oap.Type == MType.Char && !oap.IsVisual && !oap.BlockMode && oap.LineCount > 1 && oap.Force == 0 && oap.Op == OpType.Delete)
         {
@@ -771,10 +776,29 @@ public sealed partial class VimEngine
         }
         if (reg is null || reg.IsEmpty)
         {
-            Error($"E353: Nothing in register {(regname == 0 ? "\"" : ((char)regname).ToString())}");
+            Error(regname switch
+            {
+                '.' => "E29: No inserted text yet",
+                ':' => "E30: No previous command line",
+                '/' => "E35: No previous regular expression",
+                '%' => "E32: No file name",
+                '#' => "E23: No alternate file",
+                _ => $"E353: Nothing in register {(regname == 0 ? "\"" : char.ConvertFromUtf32(regname))}",
+            });
             return false;
         }
         if (!CanModify()) return false;
+        if (regname == '.' && fake is null)
+        {
+            // the inserted text is "put" by typing it: a (or i) + text + Esc
+            var typed = Keys.Decode(_s.Registers.LastInserted ?? "");
+            var stuffKeys = new List<int> { forward ? 'a' : 'i' };
+            for (var i = 0; i < Math.Max(1, count); i++) stuffKeys.AddRange(typed);
+            stuffKeys.Add(Keys.Esc);
+            if ((flags & PutFlags.CursEnd) != 0) stuffKeys.Add('l');
+            _stuff.PushFront(stuffKeys.ToArray());
+            return true;
+        }
         var type = reg.Type;
         var yarr = reg.Lines;
         var ysize = yarr.Length;

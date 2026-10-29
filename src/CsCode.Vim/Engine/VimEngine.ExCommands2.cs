@@ -455,13 +455,6 @@ public sealed partial class VimEngine
             yield break;
         }
         if (_globalBusy) _globalSubs += subs;
-        if (!_globalBusy)
-        {
-            var keepL = _line; var keepC = _col;
-            _line = Math.Clamp(firstLineWithMatch, 0, LastLine);
-            SetPcmark();
-            _line = keepL; _col = keepC;
-        }
         ApplyLineBatch(edits);
         var delta = edits.Sum(e => e.NewLines.Length - e.OldCount);
         var lastSubLine = Math.Clamp(edits[^1].Line + edits[^1].NewLines.Length - 1, 0, LastLine);
@@ -689,7 +682,7 @@ public sealed partial class VimEngine
                 var cur = _s.Registers.ForRead(r == '"' ? 0 : r);
                 val = (cur is null ? "" : string.Join('\n', cur.Lines)) + val;
             }
-            var target = _s.Registers.ForWrite(char.ToLowerInvariant(r) == r ? r : r, out var append);
+            var target = _s.Registers.ForWrite(r, out var append, updatePrevious: false);
             if (target is null) return true;
             // a value ending in a newline becomes a linewise register
             var type = val.EndsWith('\n') ? VimRegisterType.Line : VimRegisterType.Character;

@@ -273,11 +273,11 @@ public sealed partial class VimEngine
                 // marks in fully removed middle lines vanish; marks on the old last line follow the joined text
                 if (end.Line - 1 >= start.Line + 1) _bs.MarkAdjust(start.Line + 1, end.Line - 1, 0, 0, delete: true);
                 _bs.MarkColAdjust(end.Line, 0, start.Line + newLines - 1 - end.Line, tailStartCol);
-                _bs.MarkAdjust(end.Line + 1, int.MaxValue / 2, 0, delta, delete: false);
+                _bs.MarkAdjust(end.Line + 1, int.MaxValue / 2, delta, 0, delete: false);
             }
             else
             {
-                _bs.MarkAdjust(end.Line + 1, int.MaxValue / 2, 0, delta, delete: false);
+                _bs.MarkAdjust(end.Line + 1, int.MaxValue / 2, delta, 0, delete: false);
                 _bs.MarkColAdjust(end.Line, end.Character, start.Line + newLines - 1 - end.Line, tailStartCol - end.Character);
             }
         }
@@ -360,7 +360,7 @@ public sealed partial class VimEngine
             if (top < opStart.Line) opStart = new TextPosition(top, 0);
             if (newsize == 0 && top > opEnd.Line) opEnd = new TextPosition(top, 0);
             else if (top + newsize - 1 > opEnd.Line) opEnd = new TextPosition(top + newsize - 1, 0);
-            NoteChange(top, 0);
+            NoteChange(undo ? top : Math.Max(top, top + newsize - 1), 0);
             newCountSum += newsize;
             oldCountSum += oldsize;
             e.Old = replaced;
@@ -393,8 +393,6 @@ public sealed partial class VimEngine
             _col = 0;
         }
         _setCurswant = true;
-        _bs.ULineNr = -1;
-        _bs.ULineText = null;
         CheckCursor();
         _bs.KnownVersion = _buf.Version;
     }
@@ -403,7 +401,6 @@ public sealed partial class VimEngine
     {
         var tree = _bs.Undo;
         tree.Synced = true;
-        SetPcmark();
         for (var n = 0; n < Math.Max(1, count); n++)
         {
             if (tree.Current.Parent is null)
@@ -412,6 +409,7 @@ public sealed partial class VimEngine
                 Message("Already at oldest change");
                 return;
             }
+            if (n == 0) SetPcmark();
             var h = tree.Current;
             ApplyUndoHeader(h, undo: true, out var oc, out var nc);
             h.Parent!.Preferred = h;
@@ -464,6 +462,7 @@ public sealed partial class VimEngine
         var ancestors = new HashSet<UndoHeader>(path);
         var oc = 0;
         var nc = 0;
+        if (target != tree.Current) SetPcmark();
         while (!ancestors.Contains(tree.Current))
         {
             var h = tree.Current;
@@ -474,6 +473,7 @@ public sealed partial class VimEngine
         }
         var down = new List<UndoHeader>();
         for (var t = target; t != tree.Current; t = t!.Parent) down.Add(t!);
+        if (down.Count > 0 || !ancestors.Contains(tree.Current) || tree.Current != target) { }
         down.Reverse();
         foreach (var h in down)
         {

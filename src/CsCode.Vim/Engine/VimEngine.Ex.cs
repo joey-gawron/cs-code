@@ -353,8 +353,8 @@ public sealed partial class VimEngine
 
     private void GotoLineEx(int line)
     {
-        _line = Math.Clamp(line, 0, LastLine);
         SetPcmark();
+        _line = Math.Clamp(line, 0, LastLine);
         Beginline(BL.Sol | BL.Fix);
     }
 

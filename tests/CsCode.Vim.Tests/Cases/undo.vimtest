@@ -1,0 +1,522 @@
+# undo/redo
+=== undo-001
+> ‸foo bar
+keys: xu
+< ‸foo bar
+
+=== undo-002
+> ‸foo bar
+keys: xxu
+< ‸oo bar
+
+=== undo-003
+> ‸foo bar
+keys: xxuu
+< ‸foo bar
+
+=== undo-004
+> ‸foo bar
+keys: xxxuu<C-r>
+< ‸o bar
+
+=== undo-005
+> ‸foo bar
+keys: xu<C-r>
+< ‸oo bar
+
+=== undo-006
+> ‸foo bar
+keys: xu<C-r><C-r>
+< ‸oo bar
+
+=== undo-007
+> ‸foo bar
+keys: u
+< ‸foo bar
+
+=== undo-008
+> ‸foo bar
+keys: <C-r>
+< ‸foo bar
+
+=== undo-009
+> ‸foo bar
+keys: xuu
+< ‸foo bar
+
+=== undo-010
+> ‸foo bar
+keys: x2u
+< ‸foo bar
+
+=== undo-011
+> ‸foo bar
+keys: xxx2u
+< ‸oo bar
+
+=== undo-012
+> ‸foo bar
+keys: xxx2u2<C-r>
+< ‸ bar
+
+=== undo-013
+> ‸foo bar
+keys: dwu
+< ‸foo bar
+
+=== undo-014
+> ‸foo bar
+keys: dwdwu
+< ‸bar
+
+=== undo-015
+> ‸foo bar baz
+keys: dwwdwuu
+< ‸foo bar baz
+
+=== undo-016
+> ‸foo
+> bar
+keys: ddu
+< ‸foo
+< bar
+
+=== undo-017
+> ‸foo
+> bar
+keys: ddjddu
+< ‸bar
+
+=== undo-018
+> ‸foo
+> bar
+> baz
+keys: dduu
+< ‸foo
+< bar
+< baz
+
+=== undo-019
+> foo
+> ‸bar
+> baz
+keys: ddu
+< foo
+< ‸bar
+< baz
+
+=== undo-020
+> foo
+> bar
+> ‸baz
+keys: ddu
+< foo
+< bar
+< ‸baz
+
+=== undo-021
+> foo
+> ‸bar
+> baz
+keys: ddu<C-r>
+< foo
+< ‸baz
+
+=== undo-022
+> ‸foo
+> bar
+keys: yypu
+< ‸foo
+< bar
+
+=== undo-023
+> ‸foo
+> bar
+keys: yyp<Esc>u
+< ‸foo
+< bar
+
+=== undo-024
+> ‸foo
+keys: ohello<Esc>u
+< ‸foo
+
+=== undo-025
+> foo ‸bar
+keys: ohello<Esc>u
+< foo ‸bar
+
+=== undo-026
+> foo
+> ‸bar
+keys: Ohello<Esc>u
+< foo
+< ‸bar
+
+=== undo-027
+> ‸foo bar
+keys: wcwxyz<Esc>u
+< foo ‸bar
+
+=== undo-028
+> ‸foo bar
+keys: wcwxyz<Esc>u<C-r>
+< foo ‸xyz
+
+=== undo-029
+> foo ‸bar baz
+keys: Dxu
+< foo‸ ⏎
+
+=== undo-030
+> foo ‸bar baz
+keys: Du
+< foo ‸bar baz
+
+=== undo-031
+> ‸foo bar
+keys: wD0u
+< foo ‸bar
+
+=== undo-032
+> ‸a
+> b
+> c
+keys: JJu
+< a‸ b
+< c
+
+=== undo-033
+> ‸a
+> b
+> c
+keys: JJuu
+< ‸a
+< b
+< c
+
+=== undo-034
+> ‸a
+> b
+> c
+keys: JJuu<C-r>
+< ‸a b
+< c
+
+=== undo-035
+> ‸a b
+keys: >>u
+< ‸a b
+
+=== undo-036
+> ‸a b
+keys: g~wu
+< ‸a b
+
+=== undo-037
+> ‸a b
+keys: gUUu
+< ‸a b
+
+=== undo-038
+> ‸a b
+keys: ~u
+< ‸a b
+
+=== undo-039
+> ‸a b
+keys: 3~u
+< ‸a b
+
+=== undo-040
+> ‸a b
+keys: rxu
+< ‸a b
+
+=== undo-041
+> ‸a b
+keys: Rxy<Esc>u
+< ‸a b
+
+=== undo-042
+> ‸foo
+keys: :s/o/0/<CR>u
+< ‸foo
+
+=== undo-043
+> ‸foo
+> foo
+keys: :%s/o/0/<CR>u
+< ‸foo
+< foo
+
+=== undo-044
+> ‸foo
+> foo
+keys: :%s/o/0/<CR>u<C-r>
+< ‸f0o
+< f0o
+
+=== undo-045
+> ‸foo
+> foo
+keys: :%s/o/0/<CR>uu
+< ‸foo
+< foo
+
+=== undo-046
+> ‸foo
+> foo
+> bar
+keys: :g/foo/d<CR>u
+< ‸foo
+< foo
+< bar
+
+=== undo-047
+> ‸a
+> b
+> c
+keys: :2d<CR>u
+< a
+< ‸b
+< c
+
+=== undo-048
+> ‸a
+> b
+> c
+keys: :m$<CR>u
+< ‸a
+< b
+< c
+
+=== undo-049
+> ‸a
+> b
+> c
+keys: :t.<CR>u
+< ‸a
+< b
+< c
+
+=== undo-050
+> ‸a
+> b
+> c
+keys: :>u
+< ‸a
+< b
+< c
+mode: c
+
+=== undo-051
+> ‸foo bar
+keys: xxxuuu:undo 0<CR>
+< ‸foo bar
+
+=== undo-052
+> ‸foo bar
+keys: xxx:undo 1<CR>
+< ‸oo bar
+
+=== undo-053
+> ‸foo bar
+keys: xxx:undo 2<CR>
+< ‸o bar
+
+=== undo-054
+> ‸foo bar
+keys: xxx:undo 0<CR>
+< ‸foo bar
+
+=== undo-055
+> ‸foo bar
+keys: xxx:undo 3<CR>
+< ‸ bar
+
+=== undo-056
+> ‸foo bar
+keys: xxx:undo 9<CR>
+< ‸ bar
+
+=== undo-057
+> ‸foo bar
+keys: xxuxx:undo 2<CR>
+< ‸o bar
+
+=== undo-058
+> ‸foo bar
+keys: xxuxx:undo 3<CR>
+< ‸o bar
+
+=== undo-059
+> ‸foo bar
+keys: xxuxxg-
+< ‸o bar
+
+=== undo-060
+> ‸foo bar
+keys: xxuxxg-g-
+< ‸o bar
+
+=== undo-061
+> ‸foo bar
+keys: xxuxxg-g-g-
+< ‸oo bar
+
+=== undo-062
+> ‸foo bar
+keys: xxuxxg-g-g+
+< ‸o bar
+
+=== undo-063
+> ‸foo bar
+keys: xxuxxg-g-g+g+
+< ‸ bar
+
+=== undo-064
+> ‸foo bar
+keys: xg-
+< ‸foo bar
+
+=== undo-065
+> ‸foo bar
+keys: xg+
+< ‸oo bar
+
+=== undo-066
+> ‸foo bar
+keys: xxg-g-g-
+< ‸foo bar
+
+=== undo-067
+> ‸foo bar
+keys: xxxg-g-g+
+< ‸o bar
+
+=== undo-068
+> ‸foo bar
+keys: x:earlier 1<CR>
+< ‸foo bar
+
+=== undo-069
+> ‸foo bar
+keys: xxx:earlier 2<CR>
+< ‸oo bar
+
+=== undo-070
+> ‸foo bar
+keys: xxx:earlier 2<CR>:later 1<CR>
+< ‸o bar
+
+=== undo-071
+> ‸foo bar
+keys: xxx:earlier 9<CR>
+< ‸foo bar
+
+=== undo-072
+> ‸foo bar
+keys: xxx:earlier 1f<CR>
+< ‸foo bar
+
+=== undo-073
+> ‸foo bar
+keys: xxx:earlier 1f<CR>:later 1f<CR>
+< ‸ bar
+
+=== undo-074
+> ‸foo bar
+keys: xxxuuu:redo<CR>
+< ‸oo bar
+
+=== undo-075
+> ‸foo bar
+keys: xxxuuu:redo<CR>:redo<CR>
+< ‸o bar
+
+=== undo-076
+> ‸foo bar
+keys: xx:u<CR>
+< ‸oo bar
+
+=== undo-077
+> ‸foo bar
+keys: xx:u<CR>:u<CR>
+< ‸foo bar
+
+=== undo-078
+> ‸foo bar
+keys: xx:undo<CR>:redo<CR>
+< ‸o bar
+
+=== undo-079
+> ‸foo bar
+keys: xu.
+< ‸oo bar
+
+=== undo-080
+> ‸foo bar
+keys: ixy<Esc>u.
+< x‸yfoo bar
+
+=== undo-081
+> ‸foo bar
+keys: xxxuuu.
+< ‸oo bar
+
+=== undo-082
+> ‸foo bar
+keys: x.u
+< ‸oo bar
+
+=== undo-083
+> ‸foo bar
+keys: x..uu
+< ‸oo bar
+
+=== undo-084
+> ‸foo bar
+keys: x..uuu
+< ‸foo bar
+
+=== undo-085
+> ‸foo bar baz
+keys: dw..uu
+< ‸bar baz
+
+=== undo-086
+> ‸foo bar baz
+keys: dw..uuu
+< ‸foo bar baz
+
+=== undo-087
+> ‸a b c d e
+keys: dw..uuu<C-r><C-r>
+< ‸c d e
+
+=== undo-088
+> ‸abcdef
+keys: 2x.u
+< ‸cdef
+
+=== undo-089
+> ‸abcdef
+keys: 2x.uu
+< ‸abcdef
+
+=== undo-090
+> ‸abcdef
+keys: 2x.uu<C-r>
+< ‸cdef
+
+=== undo-091
+> foo ‸bar
+keys: yiwuP
+< foo ba‸rbar
+
+=== undo-092
+> foo ‸bar
+keys: xuxu
+< foo ‸bar
+

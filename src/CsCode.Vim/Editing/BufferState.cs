@@ -181,7 +181,7 @@ internal sealed class BufferState
         for (var i = 0; i < Marks.Length; i++) Marks[i] = Adj(Marks[i], false);
         OpStart = Adj(OpStart, true); OpEnd = Adj(OpEnd, true);
         VisualStart = Adj(VisualStart, true); VisualEnd = Adj(VisualEnd, true);
-        LastChange = Adj(LastChange, true); LastInsert = Adj(LastInsert, true); LastCursor = Adj(LastCursor, true);
+        LastChange = Adj(LastChange, false); LastInsert = Adj(LastInsert, false); LastCursor = Adj(LastCursor, false);
         PcMark = Adj(PcMark, false); PrevPcMark = Adj(PrevPcMark, false);
         for (var i = 0; i < ChangeList.Count; i++) ChangeList[i] = Adj(ChangeList[i], true)!.Value;
         if (GlobalLines is { } gl)

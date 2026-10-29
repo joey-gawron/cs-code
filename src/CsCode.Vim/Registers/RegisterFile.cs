@@ -105,12 +105,12 @@ public sealed class RegisterFile
     /// Register to WRITE for <paramref name="name"/>; remembers it as the target of the unnamed register.
     /// <paramref name="append"/> is true for A-Z. Returns null for the black hole.
     /// </summary>
-    public Register? ForWrite(int name, out bool append)
+    public Register? ForWrite(int name, out bool append, bool updatePrevious = true)
     {
         append = name is >= 'A' and <= 'Z';
         if (name == '_') return null;
         var r = name is 0 or '"' or '+' or '*' ? _regs[0] : _regs[Index(name)];
-        _previous = r;
+        if (updatePrevious) _previous = r;
         return r;
     }
 
@@ -135,13 +135,13 @@ public sealed class RegisterFile
     }
 
     /// <summary>1 -> 2 -> ... -> 9 ring shift done before a multi-line delete lands in register 1.</summary>
-    public Register ShiftDeleteRegisters()
+    public Register ShiftDeleteRegisters(bool keepPrevious = false)
     {
         var nine = _regs[9];
         for (var n = 9; n > 1; n--) _regs[n] = _regs[n - 1];
         _regs[1] = nine;
         nine.Set([], VimRegisterType.Character);
-        _previous = _regs[1];
+        if (!keepPrevious) _previous = _regs[1];
         return _regs[1];
     }
 

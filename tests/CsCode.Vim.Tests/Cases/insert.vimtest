@@ -1,0 +1,831 @@
+# insert mode
+=== insert-001
+> ‸foo
+keys: ihello<Esc>
+< hell‸ofoo
+
+=== insert-002
+> ‸foo
+keys: ahello<Esc>
+< fhell‸ooo
+
+=== insert-003
+> f‸oo
+keys: ahello<Esc>
+< fohell‸oo
+
+=== insert-004
+> foo‸
+keys: ahello<Esc>
+< foohell‸o
+
+=== insert-005
+>   ‸foo
+keys: Ihello<Esc>
+<   hell‸ofoo
+
+=== insert-006
+>   fo‸o
+keys: Ahello<Esc>
+<   foohell‸o
+
+=== insert-007
+> ‸foo
+keys: ohello<Esc>
+< foo
+< hell‸o
+
+=== insert-008
+> ‸foo
+keys: Ohello<Esc>
+< hell‸o
+< foo
+
+=== insert-009
+> ‸foo
+> bar
+keys: ohello<Esc>
+< foo
+< hell‸o
+< bar
+
+=== insert-010
+> foo
+> ‸bar
+keys: Ohello<Esc>
+< foo
+< hell‸o
+< bar
+
+=== insert-011
+>   ‸foo
+keys: ohello<Esc>
+<   foo
+< hell‸o
+
+=== insert-012
+set: ai
+>   ‸foo
+keys: ohello<Esc>
+<   foo
+<   hell‸o
+
+=== insert-013
+set: ai
+>   ‸foo
+keys: Ohello<Esc>
+<   hell‸o
+<   foo
+
+=== insert-014
+set: ai
+>   ‸foo
+keys: o<Esc>
+<   foo
+< ‸
+
+=== insert-015
+set: ai
+>   ‸foo
+keys: ox<CR>y<Esc>
+<   foo
+<   x
+<   ‸y
+
+=== insert-016
+set: ai
+>   fo‸o bar
+keys: i<CR><Esc>
+<   fo
+<  ‸ o bar
+
+=== insert-017
+set: ai
+>   foo ‸ bar
+keys: i<CR><Esc>
+<   foo ⏎
+<  ‸ bar
+
+=== insert-018
+> ‸foo
+keys: 3ihello<Esc>
+< hellohellohell‸ofoo
+
+=== insert-019
+> ‸foo
+keys: 3ahello<Esc>
+< fhellohellohell‸ooo
+
+=== insert-020
+> ‸foo
+keys: 3ohello<Esc>
+< foo
+< hello
+< hello
+< hell‸o
+
+=== insert-021
+> ‸foo
+keys: 3Ohello<Esc>
+< hello
+< hello
+< hell‸o
+< foo
+
+=== insert-022
+> ‸foo
+keys: 2ia<CR>b<Esc>
+< a
+< ba
+< ‸bfoo
+
+=== insert-023
+> ‸foo
+keys: 2oa<CR>b<Esc>
+< foo
+< a
+< b
+< a
+< ‸b
+
+=== insert-024
+> ‸foo
+keys: 3Ax<Esc>
+< fooxx‸x
+
+=== insert-025
+> ‸foo
+keys: 3Ix<Esc>
+< xx‸xfoo
+
+=== insert-026
+> ‸foo
+keys: ihello<Esc>u
+< ‸foo
+
+=== insert-027
+> ‸foo
+keys: ihello<Esc>u<C-r>
+< ‸hellofoo
+
+=== insert-028
+> ‸foo
+keys: ihello<Esc>.
+< hellhell‸oofoo
+
+=== insert-029
+> ‸foo
+keys: ihello<Esc>..
+< hellhellhell‸ooofoo
+
+=== insert-030
+> ‸foo
+keys: ahello<Esc>.
+< fhellohell‸ooo
+
+=== insert-031
+> ‸foo
+keys: Ahello<Esc>j.
+< foohellohell‸o
+
+=== insert-032
+> ‸foo
+> bar
+keys: Ahello<Esc>j.
+< foohello
+< barhell‸o
+
+=== insert-033
+> ‸foo
+> bar
+keys: ohello<Esc>.
+< foo
+< hello
+< hell‸o
+< bar
+
+=== insert-034
+> ‸foo
+> bar
+keys: Ohello<Esc>.
+< hell‸o
+< hello
+< foo
+< bar
+
+=== insert-035
+> ‸foo
+keys: 2ihi<Esc>.
+< hihhih‸iifoo
+
+=== insert-036
+> ‸foo
+keys: 2ihi<Esc>3.
+< hihhihih‸iifoo
+
+=== insert-037
+> ‸foo
+keys: ihello<Esc>u.
+< hell‸ofoo
+
+=== insert-038
+> ‸foo
+keys: ia<Esc>ib<Esc>u
+< ‸afoo
+
+=== insert-039
+> ‸foo
+keys: ia<Esc>ib<Esc>uu
+< ‸foo
+
+=== insert-040
+> ‸foo
+keys: ia<Esc>ib<Esc>uu<C-r>
+< ‸afoo
+
+=== insert-041
+> ‸foo
+keys: ia<Esc>ib<Esc>uu<C-r><C-r>
+< ‸bafoo
+
+=== insert-042
+> ‸foo
+keys: ia<Esc>ib<Esc>uuU
+< ‸
+
+=== insert-043
+> ‸foo bar
+keys: xxxU
+< ‸
+
+=== insert-044
+> ‸foo bar
+keys: xxxUU
+< ‸ bar
+
+=== insert-045
+> foo ‸bar
+keys: xxxuU
+< ‸
+
+=== insert-046
+> ‸foo
+keys: ihello<BS><Esc>
+< hel‸lfoo
+
+=== insert-047
+> ‸foo
+keys: ihello<BS><BS><Esc>
+< he‸lfoo
+
+=== insert-048
+> fo‸o
+keys: i<BS>x<Esc>
+< f‸xo
+
+=== insert-049
+> ‸foo
+keys: i<BS>x<Esc>
+< ‸xfoo
+
+=== insert-050
+> foo
+> ‸bar
+keys: i<BS>x<Esc>
+< foo‸xbar
+
+=== insert-051
+> foo
+> ‸bar
+keys: i<BS><BS>x<Esc>
+< fo‸xbar
+
+=== insert-052
+> ‸foo bar
+keys: A baz<C-w><Esc>
+< foo bar‸ ⏎
+
+=== insert-053
+> ‸foo bar
+keys: A baz<C-w><C-w><Esc>
+< foo ba‸r
+
+=== insert-054
+> ‸foo bar
+keys: A baz<C-w><C-w><C-w><Esc>
+< foo‸ ⏎
+
+=== insert-055
+> ‸foo bar
+keys: A baz<C-u><Esc>
+< foo ba‸r
+
+=== insert-056
+> ‸foo bar
+keys: Aab<C-u><Esc>
+< foo ba‸r
+
+=== insert-057
+> foo bar‸
+keys: a<C-u><Esc>
+< ‸
+
+=== insert-058
+> ‸foo
+keys: A  bar<C-w><Esc>
+< foo ‸ ⏎
+
+=== insert-059
+> ‸foo.bar
+keys: A<C-w><Esc>
+< foo‸.
+
+=== insert-060
+> ‸foo
+keys: Ahello world<C-w>x<Esc>
+< foohello ‸x
+
+=== insert-061
+> ‸foo
+keys: ihello<C-v><Esc>x<Esc>
+< hello‸xfoo
+
+=== insert-062
+> ‸foo
+keys: i<C-v>065<Esc>
+< ‸Afoo
+
+=== insert-063
+> ‸foo
+keys: i<C-v>u00e9<Esc>
+< ‸éfoo
+
+=== insert-064
+> ‸foo
+keys: i<C-v>x41<Esc>
+< ‸Afoo
+
+=== insert-065
+> ‸foo
+keys: i<C-v><Tab><Esc>
+< ‸\tfoo
+
+=== insert-066
+> ‸foo
+keys: i<Tab><Esc>
+< ‸\tfoo
+
+=== insert-067
+set: et sw=4 ts=4
+> ‸foo
+keys: i<Tab><Esc>
+<    ‸ foo
+
+=== insert-068
+set: et ts=4
+> ‸foo
+keys: i<Tab><Tab><Esc>
+<        ‸ foo
+
+=== insert-069
+set: sts=4
+> ‸foo
+keys: i<Tab>x<Esc>
+<     ‸xfoo
+
+=== insert-070
+set: sts=4 et
+> ‸foo
+keys: i<Tab><Tab>x<BS><Esc>
+<        ‸ foo
+
+=== insert-071
+set: sts=4 et
+> ‸foo
+keys: i<Tab><Tab><BS><Esc>
+<    ‸ foo
+
+=== insert-076
+> ‸foo
+keys: A<C-r>a<Esc>
+< fo‸o
+
+=== insert-077
+> ‸foo bar
+keys: yiwA <C-r>"<Esc>
+< foo bar fo‸o
+
+=== insert-078
+> ‸foo bar
+keys: yiwA <C-r>0<Esc>
+< foo bar fo‸o
+
+=== insert-079
+> ‸foo bar
+keys: yiwA<C-r><C-r>0<Esc>
+< foo barfo‸o
+
+=== insert-080
+> ‸foo
+> bar
+keys: yyjA<C-r>"<Esc>
+< foo
+< barfoo
+< ‸
+
+=== insert-081
+> ‸foo
+keys: ihello<Esc>A<C-r>.<Esc>
+< hellofoohell‸o
+
+=== insert-082
+> ‸foo
+keys: ihello<Esc>o<C-a><Esc>
+< hellofoo
+< hell‸o
+
+=== insert-083
+> ‸foo
+keys: ihello<Esc>o<C-@>
+< hellofoo
+< hell‸o
+
+=== insert-084
+> ‸foo
+keys: ix<C-o>ly<Esc>
+< xf‸yoo
+
+=== insert-085
+> ‸foo bar
+keys: A<C-o>0X<Esc>
+< ‸Xfoo bar
+
+=== insert-086
+> ‸foo bar
+keys: A<C-o>bX<Esc>
+< foo ‸Xbar
+
+=== insert-087
+> ‸foo bar
+keys: iX<C-o>wY<Esc>
+< Xfoo ‸Ybar
+
+=== insert-088
+> ‸foo bar
+keys: iX<C-o>$Y<Esc>
+< Xfoo bar‸Y
+
+=== insert-089
+> ‸foo bar
+keys: A<C-o>:s/o/0/<CR>X<Esc>
+< ‸Xf0o bar
+
+=== insert-090
+> ‸foo bar
+keys: i<C-o>diwX<Esc>
+< ‸X bar
+
+=== insert-091
+> ‸foo bar
+keys: A<C-o>ixy<Esc>
+< foo bax‸yr
+
+=== insert-092
+> ‸foo
+> bar
+keys: ix<Down>y<Esc>
+< xfoo
+< b‸yar
+
+=== insert-093
+> foo
+> ‸bar
+keys: ix<Up>y<Esc>
+< f‸yoo
+< xbar
+
+=== insert-094
+> ‸foo bar
+keys: ix<Right>y<Esc>
+< xf‸yoo bar
+
+=== insert-095
+> fo‸o bar
+keys: ix<Left>y<Esc>
+< fo‸yxo bar
+
+=== insert-096
+> ‸foo bar
+keys: ix<End>y<Esc>
+< xfoo bar‸y
+
+=== insert-097
+> foo ‸bar
+keys: ix<Home>y<Esc>
+< ‸yfoo xbar
+
+=== insert-098
+> ‸foo
+keys: ix<Left>y<Esc>u
+< ‸xfoo
+
+=== insert-099
+> ‸foo
+keys: ix<Left>y<Esc>uu
+< ‸foo
+
+=== insert-100
+> ‸foo bar
+keys: i<C-g>ux<Esc>u
+< ‸foo bar
+
+=== insert-101
+> ‸foo
+keys: ia<C-g>ub<Esc>u
+< a‸foo
+
+=== insert-102
+> ‸foo
+> bar
+keys: i<C-e><Esc>
+< ‸bfoo
+< bar
+
+=== insert-103
+> foo
+> bar
+keys: ‸i<C-y><Esc>
+< ‸foo
+< bar
+
+=== insert-104
+> foo
+> ‸bar
+keys: A<C-y><Esc>
+< foo
+< ba‸r
+
+=== insert-105
+> ‸foo
+> bar
+keys: A<C-e><Esc>
+< fo‸o
+< bar
+
+=== insert-106
+> ‸foo
+> bar
+keys: A<C-e><C-e><Esc>
+< fo‸o
+< bar
+
+=== insert-107
+> abc
+> ‸
+keys: i<C-y><C-y><Esc>
+< abc
+< a‸b
+
+=== insert-108
+> ‸foo
+keys: i<C-k>a:<Esc>
+< ‸äfoo
+
+=== insert-109
+> ‸foo
+keys: i<C-k>e'<Esc>
+< ‸éfoo
+
+=== insert-110
+> ‸foo
+keys: i<C-k>Co<Esc>
+< ‸©foo
+
+=== insert-111
+> ‸foo
+keys: ihello<Esc>:s/h/j/<CR>
+< ‸jellofoo
+
+=== insert-112
+> ‸foo
+keys: A<Esc>
+< fo‸o
+
+=== insert-113
+> ‸foo
+keys: a<Esc>
+< ‸foo
+
+=== insert-114
+> ‸
+keys: ihello<Esc>
+< hell‸o
+
+=== insert-115
+> ‸
+keys: ohello<Esc>
+< 
+< hell‸o
+
+=== insert-116
+> ‸
+keys: 3oabc<Esc>
+< 
+< abc
+< abc
+< ab‸c
+
+=== insert-117
+> ‸foo
+keys: gIhello<Esc>
+< hell‸ofoo
+
+=== insert-118
+>   ‸foo
+keys: gIhello<Esc>
+< hell‸o  foo
+
+=== insert-119
+> foo ‸bar
+keys: ihello<Esc>jgihello<Esc>
+< foo hellohell‸obar
+
+=== insert-120
+> foo
+> bar
+keys: ihello<Esc>jgiX<Esc>
+< hello‸Xfoo
+< bar
+
+=== insert-121
+> ‸foo bar
+keys: wihello<Esc>gg0gi<Esc>
+< foo hell‸obar
+
+=== insert-122
+> ‸abc
+keys: i<Esc>
+< ‸abc
+
+=== insert-123
+> ‸abc
+keys: ll<Esc>a<Esc>
+< ab‸c
+
+=== insert-124
+> ‸abc
+keys: lla<Esc>
+< ab‸c
+
+=== insert-125
+> ‸abc
+keys: $i<Esc>
+< a‸bc
+
+=== insert-126
+> ab‸c
+keys: a<Esc>
+< ab‸c
+
+=== insert-127
+> ab‸c
+keys: ax<Esc>
+< abc‸x
+
+=== insert-128
+> ‸héllo
+keys: lix<Esc>
+< h‸xéllo
+
+=== insert-129
+> ‸héllo
+keys: ax<Esc>
+< h‸xéllo
+
+=== insert-130
+> ‸日本語
+keys: ax<Esc>
+< 日‸x本語
+
+=== insert-131
+> ‸日本語
+keys: Ax<Esc>
+< 日本語‸x
+
+=== insert-132
+> ‸a😀b
+keys: lax<Esc>
+< a😀‸xb
+
+=== insert-133
+> ‸a😀b
+keys: lli<Esc>
+< a‸😀b
+
+=== insert-134
+> ‸foo
+keys: ihé<Esc>
+< h‸éfoo
+
+=== insert-135 nodiff
+> ‸foo
+keys: i😀<Esc>
+< ‸😀foo
+
+=== insert-136 nodiff
+> ‸foo
+keys: A😀<Esc>u
+< fo‸o
+
+=== insert-137
+> ‸ab
+keys: ia<Esc>jA<Esc>
+< aa‸b
+
+=== insert-138
+> ‸ab
+> cd
+keys: Ax<Esc>jAy<Esc>
+< abx
+< cd‸y
+
+=== insert-139
+> ‸ab
+> cd
+keys: Ax<Esc>ju
+< a‸b
+< cd
+
+=== insert-140
+> ‸ab
+> cd
+keys: Ax<Esc>jAy<Esc>u
+< abx
+< c‸d
+
+=== insert-141
+> ‸ab
+> cd
+keys: Ax<Esc>jAy<Esc>uu
+< a‸b
+< cd
+
+=== insert-142
+> ‸foo
+keys: ix<Esc>ix<Esc>
+< ‸xxfoo
+
+=== insert-143
+> ‸foo
+keys: cwab<Esc>w.
+< aa‸b
+
+=== insert-144
+> ‸foo
+keys: i<Esc>
+< ‸foo
+
+=== insert-145
+> ‸foo
+keys: i<CR><Esc>
+< 
+< ‸foo
+
+=== insert-146
+> fo‸o
+keys: i<CR><Esc>
+< fo
+< ‸o
+
+=== insert-147
+> foo‸
+keys: a<CR><Esc>
+< foo
+< ‸
+
+=== insert-148
+> foo ‸bar
+keys: i<CR><Esc>
+< foo ⏎
+< ‸bar
+
+=== insert-149
+> foo ‸bar
+keys: i<CR>x<Esc>u
+< foo ‸bar
+
+=== insert-150
+> foo ‸bar
+keys: ox<Esc>u
+< foo ‸bar
+
+=== insert-151
+> foo ‸bar
+keys: Ox<Esc>u
+< foo ‸bar
+
+=== insert-152
+> ‸foo
+keys: ix<Esc>u:s/o/0/<CR>u
+< ‸foo
+

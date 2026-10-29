@@ -83,7 +83,13 @@ public static class NvimOracle
         end
         function _G.__setup(lines, row, col)
           vim.bo.undolevels = -1
-          vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
+          -- a single-line buffer would leave the initial empty line saved for "U"; go through two lines to avoid that
+          if #lines == 1 then
+            vim.api.nvim_buf_set_lines(0, 0, -1, false, { lines[1], "" })
+            vim.api.nvim_buf_set_lines(0, 1, 2, false, {})
+          else
+            vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
+          end
           vim.bo.undolevels = 1000
           vim.api.nvim_win_set_cursor(0, { row, col })
           vim.bo.modified = false

@@ -65,7 +65,7 @@ public sealed partial class VimEngine
             if (k is Keys.Esc or 3)
             {
                 if (VisualActive) EndVisual();
-                else if (_mode == VimMode.InsertNormal) { }
+                else if (_mode == VimMode.InsertNormal) ResumeInsert();
                 ClearOpState();
                 return;
             }
@@ -102,6 +102,14 @@ public sealed partial class VimEngine
             if (_pend.Count == cmdKeysCount) _pend.Clear();
             _opPendingShown = false;
         }
+        MaybeResumeInsert();
+    }
+
+    /// <summary>After the single Normal command that followed Insert-mode Ctrl-O completes, go back to Insert mode.</summary>
+    private void MaybeResumeInsert()
+    {
+        if (_mode == VimMode.InsertNormal && _insert is not null && _pend.Count == 0 && _cmdline is null && !VisualActive && !_searchPendingOp && !_opPendingShown)
+            ResumeInsert();
     }
 
     private void ClearOpState()

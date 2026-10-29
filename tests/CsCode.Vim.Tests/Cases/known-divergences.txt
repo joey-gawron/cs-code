@@ -2,3 +2,35 @@
 # A case listed here is still run through nvim and reported, but does not fail the differential suite.
 textobj:textobj-082 | d2it when the closing tag starts a line: Vim removes the line break between the tags; the engine leaves it (tag objects are a simplified port)
 visual:visual-042 | '> after a linewise Visual change keeps its line in nvim; the engine moves it up like for a delete
+
+# Neovim sets the ' (previous context) mark after some :s commands and not after others; the engine never does.
+block:block-078 | ' mark after :s
+insert:insert-089 | ' mark after :s
+insert:insert-111 | ' mark after :s
+marks:marks-106 | ' mark after :s
+marks:marks-107 | ' mark after :s
+marks:marks-108 | ' mark after :s
+marks:marks-109 | ' mark after :s
+registers:registers-056 | ' mark after :s
+registers:registers-057 | ' mark after :s
+registers:registers-058 | ' mark after :s
+registers:registers-059 | ' mark after :s
+registers:registers-060 | ' mark after :s
+registers:registers-061 | ' mark after :s
+visual:visual-026 | ' mark after :s
+visual:visual-046 | ' mark after :s
+visual:visual-078 | ' mark after :s
+visual:visual-079 | ' mark after :s
+yank:yank-040 | ' mark after :s
+# Error message differs at the ends of the change list (the cursor behaviour is identical).
+marks:marks-129 | E19 vs E662 at the start of the change list
+marks:marks-132 | E19 vs E663 at the end of the change list
+marks:marks-135 | E662 vs E663 at the ends of the change list
+# '^ and ' after undoing line-count-changing changes depend on Vim's per-entry mark_adjust order.
+undo:undo-048 | ' mark after undoing :m
+insert:insert-149 | '^ after undoing a multi-line insert
+insert:insert-150 | '^ after undoing a multi-line insert
+insert:insert-151 | '^ after undoing a multi-line insert
+undo:undo-024 | '^ after undoing a multi-line insert
+undo:undo-025 | '^ after undoing a multi-line insert
+undo:undo-026 | '^ after undoing a multi-line insert

@@ -64,8 +64,13 @@ public sealed partial class VimEngine
 
     private void StartExFromVisual()
     {
-        // leave Visual mode (setting '< '>) and pre-fill the range
+        // leave Visual mode (setting '< '>) and pre-fill the range; the cursor goes to the start of the area
+        var a = _visualStart;
+        var b = new TextPosition(_line, _col);
         EndVisualKeepRestart();
+        var lo = a < b ? a : b;
+        _line = lo.Line; _col = lo.Character;
+        CheckCursor();
         OpenCommandLine(':', "'<,'>", 1, null, default, VimMode.Normal);
     }
 
@@ -98,6 +103,7 @@ public sealed partial class VimEngine
         CheckCursor();
         PublishCommandLine();
         UpdateSearchHighlight(incremental: false);
+        if (_restartEdit && _insert is not null && _mode == VimMode.Normal) ResumeInsert();
     }
 
     private void CmdLineKey(int k)

@@ -425,6 +425,7 @@ public sealed partial class VimEngine : IDisposable
     private void StartWork(IEnumerator<int> work)
     {
         _work = work;
+        StepWork(Stopwatch.GetTimestamp() + _sliceTicks);
     }
 
     private void CancelWork()

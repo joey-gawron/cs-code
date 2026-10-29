@@ -1,0 +1,791 @@
+# dot repeat
+=== dot-001
+> ‸foo bar baz
+keys: dw.
+< ‸baz
+
+=== dot-002
+> ‸foo bar baz
+keys: dw..
+< ‸
+
+=== dot-003
+> ‸foo bar baz qux
+keys: 2dw.
+< ‸
+
+=== dot-004
+> ‸foo bar baz qux
+keys: 2dw3.
+< ‸
+
+=== dot-005
+> ‸a b c d e f
+keys: d2w.
+< ‸e f
+
+=== dot-006
+> ‸a b c d e f
+keys: d2w3.
+< ‸f
+
+=== dot-007
+> ‸a b c d e f
+keys: 2d2w.
+< ‸
+
+=== dot-008
+> ‸abcdef
+keys: x.
+< ‸cdef
+
+=== dot-009
+> ‸abcdef
+keys: 2x.
+< ‸ef
+
+=== dot-010
+> ‸abcdef
+keys: 2x3.
+< ‸f
+
+=== dot-011
+> ‸abcdef
+keys: x3.
+< ‸ef
+
+=== dot-012
+> ‸abcdef
+keys: 3x.
+< ‸
+
+=== dot-013
+> ‸abcdef
+keys: 3x2.
+< ‸f
+
+=== dot-014
+> ‸abcdef
+keys: 3x2..
+< ‸
+
+=== dot-015
+> ‸foo bar baz
+keys: cwX<Esc>w.
+< X ‸X baz
+
+=== dot-016
+> ‸foo bar baz
+keys: cwX<Esc>w.w.
+< X X ‸X
+
+=== dot-017
+> ‸foo bar baz
+keys: ciwX<Esc>w.
+< X ‸X baz
+
+=== dot-018
+> ‸foo bar baz
+keys: ciwX<Esc>ww.
+< X bar ‸X
+
+=== dot-019
+> ‸foo bar
+keys: A!<Esc>.
+< foo bar!‸!
+
+=== dot-020
+> ‸foo bar
+keys: I!<Esc>.
+< ‸!!foo bar
+
+=== dot-021
+> ‸foo
+> bar
+keys: A!<Esc>j.
+< foo!
+< bar‸!
+
+=== dot-022
+> ‸foo
+> bar
+keys: I!<Esc>j.
+< !foo
+< ‸!bar
+
+=== dot-023
+> ‸foo
+> bar
+keys: o!<Esc>.
+< foo
+< !
+< ‸!
+< bar
+
+=== dot-024
+> ‸foo
+> bar
+keys: O!<Esc>.
+< ‸!
+< !
+< foo
+< bar
+
+=== dot-025
+> ‸foo
+> bar
+keys: 2o!<Esc>.
+< foo
+< !
+< !
+< !
+< ‸!
+< bar
+
+=== dot-026
+> ‸foo
+> bar
+keys: 2o!<Esc>3.
+< foo
+< !
+< !
+< !
+< !
+< ‸!
+< bar
+
+=== dot-027
+> ‸foo
+keys: 3a!<Esc>.
+< f!!!!!‸!oo
+
+=== dot-028
+> ‸foo
+keys: 3a!<Esc>2.
+< f!!!!‸!oo
+
+=== dot-029
+> ‸a
+> b
+> c
+> d
+keys: dd.
+< ‸c
+< d
+
+=== dot-030
+> ‸a
+> b
+> c
+> d
+keys: dd..
+< ‸d
+
+=== dot-031
+> ‸a
+> b
+> c
+> d
+keys: 2dd.
+< ‸
+
+=== dot-032
+> ‸a
+> b
+> c
+> d
+keys: 2dd1.
+< ‸d
+
+=== dot-033
+> ‸a
+> b
+> c
+> d
+keys: dj.
+< ‸
+
+=== dot-034
+> ‸a
+> b
+> c
+> d
+> e
+keys: dj.
+< ‸e
+
+=== dot-035
+> ‸a
+> b
+> c
+> d
+keys: yyp.
+< a
+< a
+< ‸a
+< b
+< c
+< d
+
+=== dot-036
+> ‸a
+> b
+> c
+> d
+keys: yyp..
+< a
+< a
+< a
+< ‸a
+< b
+< c
+< d
+
+=== dot-037
+> ‸a
+> b
+> c
+> d
+keys: yyP.
+< ‸a
+< a
+< a
+< b
+< c
+< d
+
+=== dot-038
+> ‸a
+> b
+keys: yyjp.
+< a
+< b
+< a
+< ‸a
+
+=== dot-039
+> ‸foo bar
+keys: ywP.
+< foofoo‸  foo bar
+
+=== dot-040
+> ‸foo bar
+keys: yw$p.
+< foo barfoo foo‸ ⏎
+
+=== dot-041
+> ‸foo bar
+keys: yw3P.
+< foo foo foofoo foo foo‸  foo bar
+
+=== dot-042
+> ‸foo bar
+keys: yw3P2.
+< foo foo foofoo foo‸  foo bar
+
+=== dot-043
+> ‸a b
+> c d
+keys: J.
+< a b‸ c d
+
+=== dot-044
+> ‸a
+> b
+> c
+> d
+keys: J.
+< a b‸ c
+< d
+
+=== dot-045
+> ‸a
+> b
+> c
+> d
+keys: 3J.
+< a b c‸ d
+
+=== dot-046
+> ‸a
+> b
+> c
+> d
+> e
+> f
+keys: 3J.
+< a b c d‸ e
+< f
+
+=== dot-047
+> ‸foo bar
+keys: ~.
+< FO‸o bar
+
+=== dot-048
+> ‸foo bar
+keys: 2~.
+< FOO ‸bar
+
+=== dot-049
+> ‸foo bar
+keys: ~..
+< FOO‸ bar
+
+=== dot-050
+> ‸foo bar
+keys: gUiw.
+< ‸FOO bar
+
+=== dot-051
+> ‸foo bar baz
+keys: gUiww.
+< FOO ‸BAR baz
+
+=== dot-052
+> ‸foo bar baz
+keys: gUiw..
+< ‸FOO bar baz
+
+=== dot-053
+> ‸foo bar baz
+keys: gUiwww.
+< FOO bar ‸BAZ
+
+=== dot-054
+> ‸foo bar baz
+keys: g~iwww.
+< FOO bar ‸BAZ
+
+=== dot-055
+> ‸a b c
+keys: >>.
+< \t\t‸a b c
+
+=== dot-056
+> ‸a b c
+keys: >>..
+< \t\t\t‸a b c
+
+=== dot-057
+> ‸a
+> b
+> c
+keys: >>j.
+< \ta
+< \t‸b
+< c
+
+=== dot-058
+> ‸a
+> b
+> c
+keys: >jj.
+< \ta
+< \t\t‸b
+< \tc
+
+=== dot-059
+> ‸a
+> b
+> c
+keys: 2>>.
+< \t\t‸a
+< \t\tb
+< c
+
+=== dot-060
+> ‸abc
+keys: rx.
+< ‸xbc
+
+=== dot-061
+> ‸abc
+keys: rxl.
+< x‸xc
+
+=== dot-062
+> ‸abc
+keys: rxll.
+< xb‸x
+
+=== dot-063
+> ‸abc
+keys: 2rxl.
+< xx‸c
+
+=== dot-064
+> ‸abcdef
+keys: 2rxl3.
+< xxxx‸xf
+
+=== dot-065
+> ‸abc
+keys: Rxy<Esc>.
+< xx‸y
+
+=== dot-066
+> ‸abcdef
+keys: Rxy<Esc>l.
+< xyx‸yef
+
+=== dot-067
+> ‸foo
+keys: ia<Esc>.
+< ‸aafoo
+
+=== dot-068
+> ‸foo
+keys: ia<Esc>..
+< ‸aaafoo
+
+=== dot-069
+> ‸foo
+keys: ia<Esc>l.
+< a‸afoo
+
+=== dot-070
+> ‸foo
+keys: ia<Esc>3.
+< aa‸aafoo
+
+=== dot-071
+> ‸foo
+keys: 2ia<Esc>.
+< aa‸aafoo
+
+=== dot-072
+> ‸foo
+keys: 2ia<Esc>3.
+< aaa‸aafoo
+
+=== dot-073
+> ‸foo
+keys: A<CR>x<Esc>.
+< foo
+< x
+< ‸x
+
+=== dot-074
+> ‸foo bar
+keys: wD0.
+< ‸
+
+=== dot-075
+> ‸foo bar
+keys: C!<Esc>0.
+< ‸!
+
+=== dot-076
+> ‸foo bar baz
+keys: wC!<Esc>0.
+< ‸!
+
+=== dot-077
+> ‸foo bar
+keys: S!<Esc>.
+< ‸!
+
+=== dot-078
+> ‸foo
+> bar
+keys: S!<Esc>j.
+< !
+< ‸!
+
+=== dot-079
+> ‸foo
+> bar
+keys: cc!<Esc>j.
+< !
+< ‸!
+
+=== dot-080
+> ‸foo bar
+keys: s!<Esc>l.
+< !‸!o bar
+
+=== dot-081
+> ‸foo bar
+keys: 2s!<Esc>l.
+< !‸!bar
+
+=== dot-082
+> ‸foo bar
+keys: xp.
+< of‸fo bar
+
+=== dot-083
+> ‸foo bar
+keys: xpl.
+< ofo‸f bar
+
+=== dot-084
+> ‸foo bar
+keys: dwP.
+< foofoo‸  bar
+
+=== dot-085
+> ‸foo bar baz
+keys: dwP.
+< foofoo‸  bar baz
+
+=== dot-086
+> ‸foo
+keys: "ayw.
+< ‸foo
+
+=== dot-087
+> ‸foo bar
+keys: "_dw.
+< ‸
+
+=== dot-088
+> ‸foo bar
+keys: "adw.
+< ‸
+
+=== dot-089
+> ‸foo bar baz qux
+keys: "adw."ap
+< bbar‸ az qux
+
+=== dot-090
+> ‸foo bar baz qux
+keys: "add.
+< ‸
+
+=== dot-091
+> ‸a1
+> a2
+> a3
+keys: "add."ap
+< a3
+< ‸a2
+
+=== dot-092
+> ‸a
+> b
+> c
+> d
+keys: "add."ap"ap
+< c
+< b
+< ‸b
+< d
+
+=== dot-093
+> ‸a
+> b
+> c
+> d
+keys: "Add."ap
+< c
+< ‸a
+< b
+< d
+
+=== dot-094
+> ‸a
+> b
+> c
+> d
+keys: "Add.
+< ‸c
+< d
+
+=== dot-095
+> ‸foo(bar)
+keys: ci(x<Esc>
+< foo(‸x)
+
+=== dot-096
+> ‸foo(bar)
+keys: f(ci(x<Esc>.
+< foo(‸x)
+
+=== dot-097
+> ‸foo(bar) baz(qux)
+keys: f(ci(x<Esc>f(.
+< foo(x) baz(‸x)
+
+=== dot-098
+> a(b) c(d)
+keys: f(ci(x<Esc>f(.
+< a(x) c(‸x)
+
+=== dot-099
+> a(b) c(d)
+keys: f(ci(x<Esc>fc.
+< a(x) c(‸x)
+
+=== dot-100
+> ‸a b
+keys: dwu.
+< ‸b
+
+=== dot-101
+> ‸a b c d
+keys: dwu..
+< ‸c d
+
+=== dot-102
+> ‸a b c d
+keys: xdw.
+< ‸c d
+
+=== dot-103
+> ‸a b c d
+keys: dwx.
+< ‸c d
+
+=== dot-104
+> ‸a b c d
+keys: dw3.
+< ‸
+
+=== dot-105
+> ‸a b c d
+keys: dw3.u
+< ‸b c d
+
+=== dot-106
+> ‸foo bar
+keys: gUU.
+< ‸FOO BAR
+
+=== dot-107
+> ‸foo bar
+keys: guu.
+< ‸foo bar
+
+=== dot-108
+> ‸foo bar
+keys: g~~.
+< ‸foo bar
+
+=== dot-109
+> ‸foo bar
+keys: g??.
+< ‸foo bar
+
+=== dot-110
+> ‸foo bar
+keys: guu.
+< ‸foo bar
+
+=== dot-111
+> ‸a b c d e f
+keys: 3dw.
+< ‸
+
+=== dot-112
+> ‸a b c d e f
+keys: 3dw2.
+< ‸f
+
+=== dot-113
+> ‸a b c d e f
+keys: 3dw2.u
+< ‸d e f
+
+=== dot-114
+> ‸foo bar
+keys: vey.
+< ‸foo bar
+
+=== dot-115
+> ‸foo bar
+keys: yy.
+< ‸foo bar
+
+=== dot-116
+> ‸foo bar
+keys: cwx<Esc>u.
+< ‸x bar
+
+=== dot-117
+> ‸a b c d e
+keys: vld.
+< ‸c d e
+
+=== dot-118
+> ‸abcdef
+keys: vlld.
+< ‸
+
+=== dot-119
+> ‸abcdef
+keys: vlld.u
+< ‸def
+
+=== dot-120
+> ‸abc
+> def
+> ghi
+keys: Vd.
+< ‸ghi
+
+=== dot-121
+> ‸abc
+> def
+> ghi
+> jkl
+keys: Vjd.
+< ‸
+
+=== dot-122
+> ‸abc def
+keys: vey.
+< ‸abc def
+
+=== dot-123
+> ‸abc def ghi jkl
+keys: vedw.
+<  ‸ ghi jkl
+
+=== dot-124
+> ‸abc def ghi jkl
+keys: vcx<Esc>w.
+< xbc ‸xef ghi jkl
+
+=== dot-125
+> ‸abc def ghi jkl
+keys: vlcx<Esc>w.
+< xc ‸xf ghi jkl
+
+=== dot-126
+> ‸abcdef ghijkl
+keys: vllcx<Esc>w.
+< xdef ‸xjkl
+
+=== dot-127
+> ‸abcdef ghijkl
+keys: vlr-w.
+< --‸--ef ghijkl
+
+=== dot-128
+> ‸abc def
+keys: vlU.
+< ‸ABc def
+
+=== dot-129
+> ‸abc def ghi
+keys: vlUw.
+< ABc ‸DEf ghi
+
+=== dot-130
+> ‸abc def ghi
+keys: vlUww.
+< ABc def ‸GHi
+
+=== dot-131
+> ‸abc def ghi
+keys: vlU2w.
+< ABc def ‸GHi
+
+=== dot-132
+> ‸abc def ghi
+keys: vl~ww.
+< ABc def ‸GHi
+

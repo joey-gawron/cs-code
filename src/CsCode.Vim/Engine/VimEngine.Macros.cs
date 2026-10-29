@@ -29,6 +29,7 @@ public sealed partial class VimEngine
     private void RecordTyped(int rawKey)
     {
         _macroKeys = 0;
+        _macroAborted = false;
         _macroStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         if (_recReg == 0) return;
         var before = _recBuf.Length;
