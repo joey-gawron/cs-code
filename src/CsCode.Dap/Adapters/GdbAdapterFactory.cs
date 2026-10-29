@@ -222,9 +222,10 @@ public sealed class GdbAdapterFactory : IDebugAdapterFactory, IDebugConfiguratio
             if (!props.ContainsKey("cwd") && folder is { IsFile: true } f) props["cwd"] = JsonSerializer.SerializeToElement(DapPlatform.NormalizeDir(f.LocalPath));
             if (props.Remove("env", out var env) && env.ValueKind == JsonValueKind.Object)
             {
-                if (env.EnumerateObject().FirstOrDefault(p => p.Value.ValueKind == JsonValueKind.String && (p.Value.GetString() ?? "").IndexOfAny(['\n', '\r']) >= 0) is { Name.Length: > 0 } bad)
+                foreach (var variable in env.EnumerateObject())
                 {
-                    await ReportAsync($"The environment variable '{bad.Name}' of '{configuration.Name}' contains a line break, which GDB cannot pass to the program.");
+                    if (variable.Value.ValueKind != JsonValueKind.String || (variable.Value.GetString() ?? "").IndexOfAny(['\n', '\r']) < 0) continue;
+                    await ReportAsync($"The environment variable '{variable.Name}' of '{configuration.Name}' contains a line break, which GDB cannot pass to the program.");
                     return null;
                 }
                 props[EnvironmentKey] = env;

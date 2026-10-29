@@ -153,21 +153,21 @@ public sealed partial class GdbAdapterQuirks : DebugAdapterQuirks
 
     // ------------------------------------------------------------------ output
 
-    // GDB's own messages, which arrive on the program's output pipe as "stdout".
+    // GDB's own messages, which arrive on the program's output pipe as "stdout" (spaces are written [ ]: the pattern ignores whitespace).
     [GeneratedRegex("""
-        ^(?:No source file named .*\.
-        |Breakpoint \d+ \(.*\) pending\.
-        |Breakpoint \d+ at 0x[0-9a-f]+(?:: file .*, line \d+\.|: .*)?
-        |Function ".*" not defined\.
-        |No symbol table is loaded\.  Use the "file" command\.
-        |Reading symbols from .*
-        |\[(?:New Thread|Thread) 0x[0-9a-f]+ \(LWP \d+\)(?: \(id \d+\))?(?: exited)?\]
-        |\[Inferior \d+ \(process \d+\) (?:exited normally|exited with code \d+|killed|detached)\]
-        |\[Thread debugging using libthread_db enabled\]
-        |Using host libthread_db library ".*"\.
-        |\[Detaching after v?fork from child process \d+\]
-        |\[Switching to (?:thread|Thread) .*\]
-        |warning: Error disabling address space randomization: .*
+        ^(?:No[ ]source[ ]file[ ]named[ ].*\.
+        |Breakpoint[ ]\d+[ ]\(.*\)[ ]pending\.
+        |Breakpoint[ ]\d+[ ]at[ ]0x[0-9a-f]+(?::[ ]file[ ].*,[ ]line[ ]\d+\.|:[ ].*)?
+        |Function[ ]".*"[ ]not[ ]defined\.
+        |No[ ]symbol[ ]table[ ]is[ ]loaded\.[ ][ ]Use[ ]the[ ]"file"[ ]command\.
+        |Reading[ ]symbols[ ]from[ ].*
+        |\[(?:New[ ]Thread|Thread)[ ]0x[0-9a-f]+[ ]\(LWP[ ]\d+\)(?:[ ]\(id[ ]\d+\))?(?:[ ]exited)?\]
+        |\[Inferior[ ]\d+[ ]\(process[ ]\d+\)[ ](?:exited[ ]normally|exited[ ]with[ ]code[ ]\d+|killed|detached)\]
+        |\[Thread[ ]debugging[ ]using[ ]libthread_db[ ]enabled\]
+        |Using[ ]host[ ]libthread_db[ ]library[ ]".*"\.
+        |\[Detaching[ ]after[ ]v?fork[ ]from[ ]child[ ]process[ ]\d+\]
+        |\[Switching[ ]to[ ](?:thread|Thread)[ ].*\]
+        |warning:[ ]Error[ ]disabling[ ]address[ ]space[ ]randomization:[ ].*
         )\r?\n?$
         """, RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace, 1000)]
     private static partial Regex GdbMessage();
