@@ -113,6 +113,9 @@ public sealed class MainWindow : Window, IWindowChrome
         var workspace = _sp.GetService<IWorkspaceService>();
         if (workspace is not null) _disposables.Add(workspace.FoldersChanged.Subscribe(_ => ui.Post(UpdateTitle)));
         UpdateTitle();
+        var bindings = _sp.GetService<IKeybindingService>();
+        _titleBar.SetShortcut(bindings);
+        if (bindings is not null) _disposables.Add(bindings.Changed.Subscribe(_ => ui.PostCoalesced("titlebar.shortcut", () => _titleBar.SetShortcut(bindings))));
     }
 
     // ------------------------------------------------------------------ dock host
@@ -236,7 +239,7 @@ public sealed class MainWindow : Window, IWindowChrome
         var file = active?.Title is { } t ? t + " - " : "";
         var title = $"{dirty}{file}{(name is null ? "" : name + " - ")}CsCode";
         Title = title;
-        _titleBar.SetTitle(name ?? active?.Title ?? "Quick Launch (Ctrl+Q)");
+        _titleBar.SetWorkspaceName(name);
     }
 
     // ------------------------------------------------------------------ closing

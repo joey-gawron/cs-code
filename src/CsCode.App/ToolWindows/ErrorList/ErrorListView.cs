@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
+using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -76,7 +77,7 @@ public sealed class ErrorListView : UserControl, IDisposable
     private static ToggleButton Chip(string icon, string checkedPath, string countPath, string noun, string colorId)
     {
         var count = new TextBlock { FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
-        count.Bind(TextBlock.TextProperty, new Binding(countPath) { StringFormat = "{0} " + noun + "s" });
+        count.Bind(TextBlock.TextProperty, new Binding(countPath) { Converter = new FuncValueConverter<int, string>(n => CountText(n, noun)) });
         var b = new ToggleButton
         {
             Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, Children = { ViewHelpers.Glyph(icon, 13, colorId), count } },
@@ -85,6 +86,9 @@ public sealed class ErrorListView : UserControl, IDisposable
         b.Bind(ToggleButton.IsCheckedProperty, new Binding(checkedPath) { Mode = BindingMode.TwoWay });
         return b;
     }
+
+    /// <summary>"1 Error", "0 Errors", "2 Messages" (the chip captions, as Visual Studio words them).</summary>
+    public static string CountText(int count, string noun) => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
 
     private static Control RowFor(ErrorRow r)
     {
