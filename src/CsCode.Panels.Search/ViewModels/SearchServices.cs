@@ -1,6 +1,7 @@
 using CsCode.Core.Debugging;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
+using CsCode.Core.Theming;
 using CsCode.Panels.Search.Engine;
 using CsCode.Ui.Threading;
 using Microsoft.Extensions.DependencyInjection;
@@ -28,6 +29,8 @@ public sealed class SearchServices
     public IViewActivator? Views { get; init; }
     public IActiveSelectionProvider? Selection { get; init; }
     public IFileSystem? FileSystem { get; init; }
+    /// <summary>The colour themes (the Settings page's Color Theme dropdown); optional.</summary>
+    public IColorThemeService? Themes { get; init; }
 
     public static SearchServices From(IServiceProvider sp)
     {
@@ -51,6 +54,7 @@ public sealed class SearchServices
             Views = sp.GetService<IViewActivator>(),
             Selection = sp.GetService<IActiveSelectionProvider>(),
             FileSystem = workspace.FileSystem,
+            Themes = sp.GetService<IColorThemeService>(),
         };
     }
 }

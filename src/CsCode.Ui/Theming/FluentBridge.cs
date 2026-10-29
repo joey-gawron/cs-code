@@ -85,7 +85,11 @@ internal static class FluentBridge
         resources["ScrollBarSize"] = 12.0;
     }
 
-    /// <summary>Retargets the Fluent palette of the active variant at the workbench colours. Mutates in place and only what changed.</summary>
+    /// <summary>
+    /// Retargets the Fluent palette of <paramref name="variant"/> at the workbench colours. Every property set on a live palette makes every
+    /// control re-resolve its Fluent resources, so a switch that changes the palette builds the new one aside and swaps it in once (one
+    /// re-resolution instead of ~25); a switch that changes none of these colours touches nothing.
+    /// </summary>
     internal static void UpdatePalette(Application app, Func<string, Color> color, ThemeVariant variant)
     {
         var fluent = app.Styles.OfType<FluentTheme>().FirstOrDefault();
@@ -93,10 +97,8 @@ internal static class FluentBridge
         var bg = color("editor.background");
         var fg = color("foreground");
         Color A(Color c, byte a) => Color.FromArgb(a, c.R, c.G, c.B);
-        // One palette object per variant, mutated in place: assigning an unchanged value is a no-op, so a theme switch touches only what differs
-        // (replacing the whole palette would invalidate every resource derived from it).
-        var created = !fluent.Palettes.TryGetValue(variant, out var palette);
-        palette ??= new ColorPaletteResources();
+        fluent.Palettes.TryGetValue(variant, out var existing);
+        var palette = new ColorPaletteResources();
         palette.Accent = color("focusBorder");
         palette.RegionColor = bg;
         palette.AltHigh = bg; palette.AltMediumHigh = A(bg, 0xCC); palette.AltMedium = A(bg, 0x99); palette.AltMediumLow = A(bg, 0x66); palette.AltLow = A(bg, 0x33);
@@ -108,12 +110,25 @@ internal static class FluentBridge
         palette.ChromeWhite = Colors.White;
         palette.ListLow = color("list.hoverBackground"); palette.ListMedium = color("list.inactiveSelectionBackground");
         palette.ErrorText = color("errorForeground");
-        if (created) fluent.Palettes[variant] = palette;
+        if (existing is null || !SamePalette(existing, palette)) fluent.Palettes[variant] = palette;
+    }
 
-        var selection = color("selection.background");
+    /// <summary>Text boxes' selection colour (a Color resource in Fluent, so it is replaced, not mutated): only when it changes.</summary>
+    internal static void UpdateSelectionHighlight(Application app, Color selection)
+    {
         if (!app.Resources.TryGetResource("TextControlSelectionHighlightColor", null, out var current) || current is not Color c || c != selection)
             app.Resources["TextControlSelectionHighlightColor"] = selection;
     }
+
+    private static bool SamePalette(ColorPaletteResources a, ColorPaletteResources b) =>
+        a.Accent == b.Accent && a.RegionColor == b.RegionColor && a.AltHigh == b.AltHigh && a.AltMediumHigh == b.AltMediumHigh && a.AltMedium == b.AltMedium &&
+        a.AltMediumLow == b.AltMediumLow && a.AltLow == b.AltLow && a.BaseHigh == b.BaseHigh && a.BaseMediumHigh == b.BaseMediumHigh &&
+        a.BaseMedium == b.BaseMedium && a.BaseMediumLow == b.BaseMediumLow && a.BaseLow == b.BaseLow && a.ChromeLow == b.ChromeLow &&
+        a.ChromeMediumLow == b.ChromeMediumLow && a.ChromeMedium == b.ChromeMedium && a.ChromeHigh == b.ChromeHigh && a.ChromeAltLow == b.ChromeAltLow &&
+        a.ChromeGray == b.ChromeGray && a.ChromeDisabledLow == b.ChromeDisabledLow && a.ChromeDisabledHigh == b.ChromeDisabledHigh &&
+        a.ChromeBlackLow == b.ChromeBlackLow && a.ChromeBlackMediumLow == b.ChromeBlackMediumLow && a.ChromeBlackMedium == b.ChromeBlackMedium &&
+        a.ChromeBlackHigh == b.ChromeBlackHigh && a.ChromeWhite == b.ChromeWhite && a.ListLow == b.ListLow && a.ListMedium == b.ListMedium &&
+        a.ErrorText == b.ErrorText;
 
     private static Color Mix(Color a, Color b, double t) => Color.FromArgb(
         255,

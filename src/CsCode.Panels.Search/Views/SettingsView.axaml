@@ -109,19 +109,32 @@
     </Border>
 
     <!-- Settings list -->
-    <Grid Grid.Column="1" RowDefinitions="Auto,Auto,*">
-      <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="20,14,20,6">
+    <Grid Grid.Column="1" RowDefinitions="Auto,Auto,Auto,*">
+      <!-- Environment > Appearance: the Color Theme dropdown at the top of the page, where Visual Studio has it (Tools > Options > Environment > General).
+           The dropdown is the toolbar's control, created in code-behind (it needs the theme service); hidden without one. -->
+      <Border Grid.Row="0" x:Name="AppearanceSection" IsVisible="False" Margin="20,14,20,2" Padding="0,0,0,10"
+              BorderBrush="{DynamicResource ResourceKey='vsc:panel.border'}" BorderThickness="0,0,0,1">
+        <StackPanel Spacing="4">
+          <TextBlock Text="Environment › Appearance" Classes="dim" FontSize="11" />
+          <StackPanel Orientation="Horizontal" Spacing="12">
+            <TextBlock Text="Color Theme" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+            <ContentControl x:Name="ThemePickerHost" VerticalAlignment="Center" />
+          </StackPanel>
+          <TextBlock Classes="dim" TextWrapping="Wrap" Text="The color theme of the whole window and the editor (workbench.colorTheme). Arrow through the list to preview; Enter applies." />
+        </StackPanel>
+      </Border>
+      <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="20,14,20,6">
         <TextBox x:Name="SearchBox" Text="{Binding SearchText, Mode=TwoWay}" PlaceholderText="Search settings  (@modified shows changed ones)" MinHeight="26" Padding="8,3"
                  AutomationProperties.Name="Search settings" />
         <Button Grid.Column="1" Classes="tool" Command="{Binding OpenJsonCommand}" Margin="6,0,0,0" Width="28" Height="26" ToolTip.Tip="Open Settings (JSON)" AutomationProperties.Name="Open settings.json">
           <ic:Icon Kind="json" Size="16" />
         </Button>
       </Grid>
-      <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="20,0,20,0">
+      <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="20,0,20,0">
         <ToggleButton Classes="tab" IsChecked="{Binding IsUserScope, Mode=TwoWay}" Content="User" />
         <ToggleButton Classes="tab" IsChecked="{Binding IsWorkspaceScope, Mode=TwoWay}" IsEnabled="{Binding IsWorkspaceAvailable}" Content="Workspace" />
       </StackPanel>
-      <ListBox Grid.Row="2" x:Name="SettingsList" ItemsSource="{Binding Items}" Background="Transparent" BorderThickness="0" Margin="0,6,0,0" SelectionMode="Single"
+      <ListBox Grid.Row="3" x:Name="SettingsList" ItemsSource="{Binding Items}" Background="Transparent" BorderThickness="0" Margin="0,6,0,0" SelectionMode="Single"
                AutomationProperties.Name="Settings">
         <ListBox.ItemContainerTheme>
           <ControlTheme x:DataType="ListBoxItem" TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">

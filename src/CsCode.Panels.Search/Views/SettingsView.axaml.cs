@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Data.Converters;
 using Avalonia.Interactivity;
 using CsCode.Panels.Search.Settings;
+using CsCode.Ui.Theming;
 
 namespace CsCode.Panels.Search.Views;
 
@@ -22,7 +23,16 @@ public sealed partial class SettingsView : UserControl, IDisposable
         _release = release;
         InitializeComponent();
         if (viewModel is not null) DataContext = viewModel;
+        if (viewModel?.Themes is { } themes)
+        {
+            ThemePicker = new ThemePicker(themes, viewModel.Ui, viewModel.Configuration) { MinWidth = 280, MinHeight = 26, Padding = new Thickness(4, 1) };
+            ThemePickerHost.Content = ThemePicker;
+            AppearanceSection.IsVisible = true;
+        }
     }
+
+    /// <summary>The Environment &gt; Appearance Color Theme dropdown (null without a colour theme service).</summary>
+    public ThemePicker? ThemePicker { get; }
 
     /// <summary>The gear button of a setting: Reset / Copy ID / Edit in settings.json (a ContextMenu built on demand, so no flyout DataContext tricks).</summary>
     private void OnGearClick(object? sender, RoutedEventArgs e)
@@ -42,6 +52,7 @@ public sealed partial class SettingsView : UserControl, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        ThemePicker?.Dispose();
         if (DataContext is SettingsViewModel vm)
         {
             if (_release is not null) _release(vm); else vm.Dispose();

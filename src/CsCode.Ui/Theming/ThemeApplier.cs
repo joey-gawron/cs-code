@@ -67,17 +67,17 @@ public sealed class ThemeApplier : IDisposable
         ApplyNow(themes.Current);
     }
 
-    /// <summary>Id of the theme currently applied to the resources (null before the first apply).</summary>
+    /// <summary>Id of the theme fully applied to the resources, Fluent's palette and variant included (null before the first apply).</summary>
     public string? AppliedThemeId => _appliedThemeId;
 
-    /// <summary>Number of theme applications performed (tests use this to prove coalescing under rapid switching).</summary>
+    /// <summary>Number of theme applications (brush repaints) performed (tests use this to prove coalescing under rapid switching).</summary>
     public int ApplyCount { get; private set; }
 
     /// <summary>Applies <paramref name="theme"/> synchronously on the calling (UI) thread. Used at startup, before the first frame.</summary>
     public void ApplyNow(ColorTheme theme)
     {
         _ui.AssertUiThread();
-        Apply(Prepare(theme));
+        Apply(Prepare(theme), sliced: false);
     }
 
     private void OnThemeChanged(ColorTheme theme)
@@ -98,7 +98,7 @@ public sealed class ThemeApplier : IDisposable
             {
                 Prepared? next;
                 lock (_slotGate) { next = _slot; _slot = null; }
-                if (next is not null) Apply(next);
+                if (next is not null) Apply(next, sliced: true);
             });
         });
     }
@@ -111,11 +111,17 @@ public sealed class ThemeApplier : IDisposable
 
     private Prepared Prepare(ColorTheme theme)
     {
+        // Whatever the service hands over (a user's theme file, a test double's theme) is completed for the VS 2022 chrome first, so no published
+        // id is ever unthemed and chrome text meets WCAG AA. The editor's service already completes its themes: then this is a lookup.
+        var full = Completions.GetValue(theme, ThemeCompletion.Complete);
         var ids = WorkbenchColors.All;
         var colors = new Color[ids.Count];
-        for (var i = 0; i < ids.Count; i++) colors[i] = ToColor(Resolve(theme, ids[i], 0));
+        for (var i = 0; i < ids.Count; i++) colors[i] = ToColor(Resolve(full, ids[i], 0));
         return new Prepared(theme.Id, theme.Kind, colors);
     }
+
+    // Per theme instance (reference identity), dropped with the theme: bounded by the number of themes, never by the number of switches.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ColorTheme, ColorTheme> Completions = new();
 
     private Rgba Resolve(ColorTheme theme, string id, int depth)
     {
@@ -127,14 +133,22 @@ public sealed class ThemeApplier : IDisposable
 
     private static Color ToColor(Rgba c) => Color.FromArgb(c.A, c.R, c.G, c.B);
 
-    /// <summary>Per-phase milliseconds of the most recent apply (brushes, dock keys, fluent bridge, variant), for budget diagnostics.</summary>
+    /// <summary>Per-phase milliseconds of the most recent apply (brushes, dock keys, fluent palette, variant, selection), for budget diagnostics.</summary>
     public string LastTimings { get; private set; } = "";
 
-    private void Apply(Prepared p)
+    private int _applyVersion;
+
+    /// <summary>
+    /// Brushes first (in place: everything bound to a <c>vsc:</c> brush repaints), then Avalonia Fluent's own resources. Each step of the second part
+    /// (the palette, the light/dark variant, the text selection colour) makes every control re-resolve its Fluent resources, a few milliseconds on a
+    /// full window. A runtime switch (<paramref name="sliced"/>) gives each its own dispatcher callback, so input and rendering interleave and no
+    /// callback approaches the latency budget; a newer theme's apply supersedes the remaining steps of an older one. The startup apply runs them
+    /// in one go, before the first frame.
+    /// </summary>
+    private void Apply(Prepared p, bool sliced)
     {
         _ui.AssertUiThread();
         var t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-        double Ms(long from) => (System.Diagnostics.Stopwatch.GetTimestamp() - from) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         var ids = WorkbenchColors.All;
         var resources = _app.Resources;
         for (var i = 0; i < ids.Count; i++)
@@ -149,9 +163,10 @@ public sealed class ThemeApplier : IDisposable
                 brush.Color = p.Colors[i];
             }
         }
-        var t1 = Ms(t0);
+        var brushesMs = Ms(t0);
         // Every assignment into the application resource dictionary makes ALL controls re-resolve their dynamic resources, so the structural
         // entries (Dock keys, tokens, bridge keys) are published exactly once: the brushes behind them are mutated in place afterwards.
+        t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         if (!_structureApplied)
         {
             foreach (var (key, id) in DockBridge) resources[key] = _brushes[id];
@@ -163,15 +178,57 @@ public sealed class ThemeApplier : IDisposable
             FluentBridge.PublishStructure(_app, _brushes);
             _structureApplied = true;
         }
-        var t2 = Ms(t0);
+        var structureMs = Ms(t0);
         var variant = p.Kind is ThemeKind.Light or ThemeKind.HighContrastLight ? ThemeVariant.Light : ThemeVariant.Dark;
-        if (_app.RequestedThemeVariant != variant) _app.RequestedThemeVariant = variant;
-        var t3 = Ms(t0);
-        FluentBridge.UpdatePalette(_app, id => _brushes[id].Color, variant);
-        _appliedThemeId = p.ThemeId;
+        var version = ++_applyVersion;
         ApplyCount++;
-        LastTimings = $"brushes={t1:F1} structure={t2 - t1:F1} variant={t3 - t2:F1} palette={Ms(t0) - t3:F1} total={Ms(t0):F1} ms";
+        double paletteMs = 0, variantMs = 0;
+
+        // The target variant's palette before the variant: a variant switch then re-resolves once, with the final palette.
+        void Palette()
+        {
+            if (version != _applyVersion) return; // superseded by a newer theme
+            var t = System.Diagnostics.Stopwatch.GetTimestamp();
+            FluentBridge.UpdatePalette(_app, id => _brushes[id].Color, variant);
+            paletteMs = Ms(t);
+            if (sliced) _ui.PostCoalesced("theme.apply.variant", Variant); else Variant();
+        }
+        void Variant()
+        {
+            if (version != _applyVersion) return;
+            var t = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_app.RequestedThemeVariant != variant) _app.RequestedThemeVariant = variant;
+            variantMs = Ms(t);
+            if (sliced) _ui.PostCoalesced("theme.apply.selection", Selection); else Selection();
+        }
+        void Selection()
+        {
+            if (version != _applyVersion) return;
+            var t = System.Diagnostics.Stopwatch.GetTimestamp();
+            FluentBridge.UpdateSelectionHighlight(_app, _brushes["selection.background"].Color);
+            _appliedThemeId = p.ThemeId;
+            LastTimings = $"brushes={brushesMs:F1} structure={structureMs:F1} palette={paletteMs:F1} variant={variantMs:F1} selection={Ms(t):F1} ms";
+        }
+
+        if (!sliced) { Palette(); return; }
+        // A burst of switches (arrowing through a theme list: a preview every ~120 ms) repaints every vsc: brush at once but defers Fluent's steps
+        // until the burst settles, so the expensive re-resolutions run once per burst instead of once per preview. A lone switch runs them now.
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        var burst = _lastSlicedApply != 0 && System.Diagnostics.Stopwatch.GetElapsedTime(_lastSlicedApply, now) < BurstWindow;
+        _lastSlicedApply = now;
+        _settleTimer?.Dispose();
+        _settleTimer = null;
+        if (!burst) _ui.PostCoalesced("theme.apply.palette", Palette);
+        else _settleTimer = TimeProvider.System.CreateTimer(_ => _ui.PostCoalesced("theme.apply.palette", Palette), null, BurstWindow, Timeout.InfiniteTimeSpan);
     }
+
+    /// <summary>Two switches closer than this are a burst (see <see cref="Apply"/>).</summary>
+    public static readonly TimeSpan BurstWindow = TimeSpan.FromMilliseconds(200);
+
+    private long _lastSlicedApply;
+    private ITimer? _settleTimer;
+
+    private static double Ms(long from) => (System.Diagnostics.Stopwatch.GetTimestamp() - from) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
     private bool _structureApplied;
 
@@ -205,5 +262,10 @@ public sealed class ThemeApplier : IDisposable
         _app.Resources["ui:CodeFontFamily"] = new FontFamily(string.IsNullOrWhiteSpace(family) ? "Cascadia Code, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" : family);
     }
 
-    public void Dispose() => _subs.Dispose();
+    public void Dispose()
+    {
+        _subs.Dispose();
+        _settleTimer?.Dispose();
+        _applyVersion++; // a step still queued finds itself superseded
+    }
 }

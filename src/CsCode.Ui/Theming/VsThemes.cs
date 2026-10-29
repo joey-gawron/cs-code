@@ -18,11 +18,11 @@ public static class VsThemes
 
     public static ColorTheme Dark { get; } = Build(DarkId, "Visual Studio Dark", ThemeKind.Dark, new Palette
     {
-        Bg = "#1E1E1E", Fg = "#F1F1F1", Subtle = "#999999", Disabled = "#656565",
+        Bg = "#1E1E1E", Fg = "#F1F1F1", Subtle = "#A0A0A0", Disabled = "#656565",
         Tool = "#252526", Chrome = "#2D2D30", Input = "#333337", Border = "#3F3F46", Accent = "#007ACC", AccentFg = "#FFFFFF",
-        Hover = "#3E3E40", Selection = "#3399FF", SelectionFg = "#FFFFFF", SelectionInactive = "#3F3F46",
+        Hover = "#3E3E40", Selection = "#007ACC", SelectionFg = "#FFFFFF", SelectionInactive = "#3F3F46",
         TitleBg = "#2D2D30", TitleFg = "#F1F1F1", ToolbarBg = "#2D2D30", MenuBg = "#333337", MenuHover = "#007ACC",
-        Status = "#007ACC", StatusDebug = "#CA5100", StatusNoFolder = "#68217A",
+        Status = "#007ACC", StatusDebug = "#C95000", StatusNoFolder = "#68217A",
         TabActiveBg = "#1E1E1E", TabActiveFg = "#FFFFFF", TabInactiveBg = "#2D2D30", TabInactiveFg = "#CCCCCC", TabHover = "#3E3E40", TabTop = "#007ACC",
         EditorSel = "#264F78", EditorSelInactive = "#3A3D41", LineHighlight = "#282828", LineNo = "#858585", LineNoActive = "#C6C6C6",
         Widget = "#252526", ScrollThumb = "#686868", ScrollThumbHover = "#9E9E9E", ScrollThumbActive = "#BEBEBE",
@@ -38,9 +38,9 @@ public static class VsThemes
     {
         Bg = "#FFFFFF", Fg = "#1E1E1E", Subtle = "#6D6D6D", Disabled = "#A0A0A0",
         Tool = "#EEF0F8", Chrome = "#CFD6E5", Input = "#FFFFFF", Border = "#8E9BBC", Accent = "#007ACC", AccentFg = "#FFFFFF",
-        Hover = "#FFF29D", Selection = "#3399FF", SelectionFg = "#FFFFFF", SelectionInactive = "#CCCEDB",
+        Hover = "#FFF29D", Selection = "#007ACC", SelectionFg = "#FFFFFF", SelectionInactive = "#CCCEDB",
         TitleBg = "#293955", TitleFg = "#FFFFFF", ToolbarBg = "#CFD6E5", MenuBg = "#FFFFFF", MenuHover = "#FFF29D",
-        Status = "#007ACC", StatusDebug = "#CA5100", StatusNoFolder = "#68217A",
+        Status = "#007ACC", StatusDebug = "#C95000", StatusNoFolder = "#68217A",
         TabActiveBg = "#FFF29D", TabActiveFg = "#1E1E1E", TabInactiveBg = "#293955", TabInactiveFg = "#FFFFFF", TabHover = "#5D6B99", TabTop = "#FFF29D",
         EditorSel = "#ADD6FF", EditorSelInactive = "#E5EBF1", LineHighlight = "#EEF3FA", LineNo = "#2B91AF", LineNoActive = "#0B216F",
         Widget = "#F3F3F3", ScrollThumb = "#8E9BBC", ScrollThumbHover = "#6C7BA6", ScrollThumbActive = "#4E5C8E",
@@ -54,12 +54,12 @@ public static class VsThemes
 
     public static ColorTheme Light { get; } = Build(LightId, "Visual Studio Light", ThemeKind.Light, new Palette
     {
-        Bg = "#FFFFFF", Fg = "#1E1E1E", Subtle = "#717171", Disabled = "#A0A0A0",
+        Bg = "#FFFFFF", Fg = "#1E1E1E", Subtle = "#6A6A6A", Disabled = "#A0A0A0",
         Tool = "#F5F5F5", Chrome = "#EEEEF2", Input = "#FFFFFF", Border = "#CCCEDB", Accent = "#007ACC", AccentFg = "#FFFFFF",
-        Hover = "#E6E6E6", Selection = "#3399FF", SelectionFg = "#FFFFFF", SelectionInactive = "#CCCEDB",
+        Hover = "#E6E6E6", Selection = "#007ACC", SelectionFg = "#FFFFFF", SelectionInactive = "#CCCEDB",
         TitleBg = "#EEEEF2", TitleFg = "#1E1E1E", ToolbarBg = "#EEEEF2", MenuBg = "#F5F5F5", MenuHover = "#C9DEF5",
-        Status = "#007ACC", StatusDebug = "#CA5100", StatusNoFolder = "#68217A",
-        TabActiveBg = "#FFFFFF", TabActiveFg = "#1E1E1E", TabInactiveBg = "#EEEEF2", TabInactiveFg = "#717171", TabHover = "#C9DEF5", TabTop = "#007ACC",
+        Status = "#007ACC", StatusDebug = "#C95000", StatusNoFolder = "#68217A",
+        TabActiveBg = "#FFFFFF", TabActiveFg = "#1E1E1E", TabInactiveBg = "#EEEEF2", TabInactiveFg = "#6A6A6A", TabHover = "#C9DEF5", TabTop = "#007ACC",
         EditorSel = "#ADD6FF", EditorSelInactive = "#E5EBF1", LineHighlight = "#F5F5F5", LineNo = "#2B91AF", LineNoActive = "#0B216F",
         Widget = "#F3F3F3", ScrollThumb = "#C2C3C9", ScrollThumbHover = "#9E9FA5", ScrollThumbActive = "#7B7C82",
         Link = "#006AB1", Error = "#E51400", Warning = "#BF8803", Info = "#1A85FF", Hint = "#6C6C6C",
@@ -69,6 +69,71 @@ public static class VsThemes
         Function = "#74531F", Variable = "#001080", Constant = "#0070C1", Operator = "#000000", Punct = "#000000", Tag = "#800000",
         Attribute = "#FF0000", Regex = "#811F3F", Preproc = "#808080", Invalid = "#CD3131",
     });
+
+    /// <summary>
+    /// High-contrast base (black): not offered as a theme of its own (VS Code's Dark High Contrast is), but the palette that
+    /// <see cref="ThemeCompletion"/> fills a high-contrast theme's missing chrome keys from, as Dark and Light do for the other kinds. Modelled on
+    /// Windows' High Contrast Black and VS Code's defaults for <c>hc-black</c>: black surfaces, white text, cyan borders, orange focus.
+    /// </summary>
+    public static ColorTheme HighContrastDark { get; } = Build("vs2022-hc-dark", "Visual Studio High Contrast (base)", ThemeKind.HighContrastDark, new Palette
+    {
+        Bg = "#000000", Fg = "#FFFFFF", Subtle = "#D0D0D0", Disabled = "#A0A0A0",
+        Tool = "#000000", Chrome = "#000000", Input = "#000000", Border = "#6FC3DF", Accent = "#F38518", AccentFg = "#FFFFFF",
+        Hover = "#262626", Selection = "#1AEBFF", SelectionFg = "#000000", SelectionInactive = "#333333",
+        TitleBg = "#000000", TitleFg = "#FFFFFF", ToolbarBg = "#000000", MenuBg = "#000000", MenuHover = "#1AEBFF",
+        Status = "#000000", StatusDebug = "#BA592C", StatusNoFolder = "#68217A",
+        TabActiveBg = "#000000", TabActiveFg = "#FFFFFF", TabInactiveBg = "#000000", TabInactiveFg = "#FFFFFF", TabHover = "#262626", TabTop = "#F38518",
+        EditorSel = "#264F78", EditorSelInactive = "#3A3D41", LineHighlight = "#000000", LineNo = "#FFFFFF", LineNoActive = "#FFFFFF",
+        Widget = "#0C141F", ScrollThumb = "#6FC3DF", ScrollThumbHover = "#9BD6E9", ScrollThumbActive = "#FFFFFF",
+        Link = "#21A6FF", Error = "#F48771", Warning = "#FFD37A", Info = "#3794FF", Hint = "#EEEEEE",
+        Success = "#89D185", Modified = "#E2C08D", Added = "#81B88B", Deleted = "#F48771",
+        Welcome = "#000000", Tile = "#000000", TileHover = "#262626", Light = false,
+        Keyword = "#569CD6", ControlKeyword = "#C586C0", Type = "#4EC9B0", Str = "#CE9178", Comment = "#7CA668", Number = "#B5CEA8",
+        Function = "#DCDCAA", Variable = "#9CDCFE", Constant = "#4FC1FF", Operator = "#D4D4D4", Punct = "#FFFFFF", Tag = "#569CD6",
+        Attribute = "#9CDCFE", Regex = "#D16969", Preproc = "#9B9B9B", Invalid = "#F44747",
+    }, new Dictionary<string, string>
+    {
+        // Selections are cyan with black text (Windows' highlight pair); separators and outlines are the high-contrast border.
+        ["menu.selectionForeground"] = "#000000", ["quickInputList.focusForeground"] = "#000000", ["list.activeSelectionForeground"] = "#000000",
+        ["list.inactiveSelectionForeground"] = "#FFFFFF", ["contrastBorder"] = "#6FC3DF", ["contrastActiveBorder"] = "#F38518",
+        ["button.background"] = "#000000", ["button.border"] = "#6FC3DF", ["button.hoverBackground"] = "#262626",
+        ["badge.background"] = "#000000", ["badge.foreground"] = "#FFFFFF", ["list.highlightForeground"] = "#F38518",
+        ["editorSuggestWidget.highlightForeground"] = "#F38518", ["pickerGroup.foreground"] = "#FFFFFF", ["textSeparator.foreground"] = "#FFFFFF",
+    });
+
+    /// <summary>High-contrast base (white), the counterpart of <see cref="HighContrastDark"/> for <c>hc-light</c> themes.</summary>
+    public static ColorTheme HighContrastLight { get; } = Build("vs2022-hc-light", "Visual Studio High Contrast Light (base)", ThemeKind.HighContrastLight, new Palette
+    {
+        Bg = "#FFFFFF", Fg = "#000000", Subtle = "#3C3C3C", Disabled = "#6E6E6E",
+        Tool = "#FFFFFF", Chrome = "#FFFFFF", Input = "#FFFFFF", Border = "#0F4A85", Accent = "#006BBD", AccentFg = "#FFFFFF",
+        Hover = "#E6E6E6", Selection = "#0F4A85", SelectionFg = "#FFFFFF", SelectionInactive = "#E0E0E0",
+        TitleBg = "#FFFFFF", TitleFg = "#000000", ToolbarBg = "#FFFFFF", MenuBg = "#FFFFFF", MenuHover = "#0F4A85",
+        Status = "#0F4A85", StatusDebug = "#B5200D", StatusNoFolder = "#68217A",
+        TabActiveBg = "#FFFFFF", TabActiveFg = "#000000", TabInactiveBg = "#FFFFFF", TabInactiveFg = "#292929", TabHover = "#E6E6E6", TabTop = "#006BBD",
+        EditorSel = "#ADD6FF", EditorSelInactive = "#E5EBF1", LineHighlight = "#FFFFFF", LineNo = "#292929", LineNoActive = "#000000",
+        Widget = "#FFFFFF", ScrollThumb = "#0F4A85", ScrollThumbHover = "#3C6E9E", ScrollThumbActive = "#000000",
+        Link = "#0F4A85", Error = "#B5200D", Warning = "#895503", Info = "#1A85FF", Hint = "#292929",
+        Success = "#388A34", Modified = "#895503", Added = "#374E06", Deleted = "#AD0707",
+        Welcome = "#FFFFFF", Tile = "#FFFFFF", TileHover = "#E6E6E6", Light = true,
+        Keyword = "#0000FF", ControlKeyword = "#8F08C4", Type = "#185E73", Str = "#A31515", Comment = "#515151", Number = "#096D48",
+        Function = "#5E2CBC", Variable = "#001080", Constant = "#0070C1", Operator = "#000000", Punct = "#000000", Tag = "#0F4A85",
+        Attribute = "#264F78", Regex = "#811F3F", Preproc = "#515151", Invalid = "#B5200D",
+    }, new Dictionary<string, string>
+    {
+        ["menu.selectionForeground"] = "#FFFFFF", ["contrastBorder"] = "#0F4A85", ["contrastActiveBorder"] = "#006BBD",
+        ["button.border"] = "#0F4A85", ["badge.background"] = "#0F4A85", ["badge.foreground"] = "#FFFFFF",
+        ["list.highlightForeground"] = "#0F4A85", ["editorSuggestWidget.highlightForeground"] = "#0F4A85", ["pickerGroup.foreground"] = "#000000",
+        ["textSeparator.foreground"] = "#000000", ["statusBarItem.hoverBackground"] = "#FFFFFF33", ["statusBarItem.activeBackground"] = "#FFFFFF4D",
+    });
+
+    /// <summary>The bases <see cref="ThemeCompletion"/> fills from, by kind: Dark, Light, High Contrast (dark) and High Contrast Light.</summary>
+    public static ColorTheme BaseFor(ThemeKind kind) => kind switch
+    {
+        ThemeKind.Light => Light,
+        ThemeKind.HighContrastDark => HighContrastDark,
+        ThemeKind.HighContrastLight => HighContrastLight,
+        _ => Dark,
+    };
 
     /// <summary>Registers the three built-in themes (the shell does this once at startup, before the first frame).</summary>
     public static void RegisterAll(IColorThemeService service, ICollection<IDisposable>? registrations = null)
@@ -152,7 +217,7 @@ public static class VsThemes
         public required string Invalid { get; init; }
     }
 
-    private static ColorTheme Build(string id, string label, ThemeKind kind, Palette p)
+    private static ColorTheme Build(string id, string label, ThemeKind kind, Palette p, IReadOnlyDictionary<string, string>? overrides = null)
     {
         var c = new Dictionary<string, Rgba>(StringComparer.Ordinal);
         void Set(string hex, params string[] keys)
@@ -285,6 +350,9 @@ public static class VsThemes
         Set(p.Widget, "editorWidget.background", "editorSuggestWidget.background", "editorHoverWidget.background");
         Set(p.Selection, "editorSuggestWidget.selectedBackground");
         c["editorSuggestWidget.highlightForeground"] = c["list.highlightForeground"];
+        // Replace previews (Find in Files): VS Code's defaults, translucent so the text keeps its colour.
+        c["diffEditor.insertedTextBackground"] = Rgba.Parse(p.Light ? "#9CCC2C40" : "#9CCC2C33");
+        c["diffEditor.removedTextBackground"] = Rgba.Parse("#FF000033");
 
         // Debug / problems / git
         Set(p.Chrome, "debugToolBar.background");
@@ -341,6 +409,8 @@ public static class VsThemes
             Rule(p.Fg, "italic", "markup.italic"),
         ];
 
+        if (overrides is not null)
+            foreach (var (key, hex) in overrides) c[key] = Rgba.Parse(hex);
         return new ColorTheme(id, label, kind, c, tokens);
     }
 

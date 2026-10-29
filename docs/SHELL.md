@@ -24,7 +24,7 @@ Program -> App.axaml.cs -> AppSession -> AppStartup.BuildServicesAsync (pool thr
   is not registered, resolution fails and the shell shows the crash window with the log path (it never exits silently).
 * **Process lifecycle** (`Startup/`, see below): the container is built and the file-reading Platform services are constructed off the UI thread; the
   exit is an orderly, bounded shutdown owned by `AppSession`.
-* **`ShellController`** wires everything that is not pure view: theme registration and `ThemeApplier`, the palette, every shell command,
+* **`ShellController`** wires everything that is not pure view: theme registration, completion and `ThemeApplier`, the palette, every shell command,
   keyboard pipeline, context-key tracker, menus, status items, tool-window auto-show, layout persistence, the UI stall watchdog.
 * **First paint**: the window shows with the chrome and an empty dock; layout restore, command-line targets, theme from settings and the
   Welcome page run at `Background` priority after the first frame.
@@ -43,7 +43,7 @@ Program -> App.axaml.cs -> AppSession -> AppStartup.BuildServicesAsync (pool thr
 | `IToolWindow` host | `ToolWindowManager` | views created on first show, **disposed when hidden**; `ToolWindowLocation.Document` windows are not docked (see Layout) |
 | `IViewActivator` | `ShellViewActivator` | panels' "show view X" (Find in Files, Settings, Keyboard Shortcuts, Watch): a tool window is shown in its well, a document-location window opens or re-activates its singleton document tab; any thread |
 | `IActiveSelectionProvider` | `ActiveSelectionProvider` | primary selection of the active editor (`${selectedText}` for Dap, the Find in Files seed); the UI thread publishes a (document, range) snapshot, readers on any thread take the text on demand |
-| `IColorThemeService` consumer | `ThemeApplier` | the three VS2022 themes are registered into the module's `IColorThemeService` |
+| `IColorThemeService` consumer | `ThemeApplier`, `ThemePicker` | the three VS2022 themes are registered into the module's `IColorThemeService`, and the service is given the shell's completion (`ThemeCompletion`) so that it hands out complete themes; `IColorThemePreview` (Core, optional) is used for the dropdowns' live preview |
 
 ### Process lifecycle (`src/CsCode.App/Startup`)
 
@@ -80,10 +80,15 @@ Program -> App.axaml.cs -> AppSession -> AppStartup.BuildServicesAsync (pool thr
 
 **Theme pipeline.** `ThemeApplier` listens to `IColorThemeService.Changed` and publishes one `SolidColorBrush` per workbench colour id under
 `vsc:<colorId>` (`{DynamicResource vsc:editor.background}`), plus the `ui:*` tokens and the Dock.Avalonia brush keys. Brushes are created once and
-their `Color` is mutated in place, so a theme switch repaints every window without recreating anything. Resolution of missing ids uses the shell
-fallbacks (`WorkbenchColors.ShellFallbacks`) and then `IColorThemeService.GetColor` (the Core chain), off the UI thread; the UI thread applies a small
-immutable array. A theme switch costs 0.1-7 ms of UI work (measured, see Threading) because structural resource entries are published once: every
-assignment into the application resource dictionary makes all controls re-resolve dynamic resources, so only brush colours and the Fluent palette change afterwards.
+their `Color` is mutated in place, so a theme switch repaints every window without recreating anything. Every theme is first **completed**
+(`ThemeCompletion`, below; the editor's service hands out completed themes, any other service's theme is completed by the applier, cached per theme
+instance), so no published id is ever unthemed; the shell fallbacks (`WorkbenchColors.ShellFallbacks`) and `IColorThemeService.GetColor` (the Core
+chain) remain as a safety net. Preparation runs off the UI thread; the UI thread applies a small immutable array. Structural resource entries are
+published once (every assignment into the application resource dictionary makes all controls re-resolve dynamic resources), so a runtime switch is
+brush colours in one dispatcher callback, then Avalonia Fluent's palette, light/dark variant and text-selection colour in one callback each (each makes
+every control re-resolve its Fluent resources: the palette step is 4-8 ms on a full window, the others < 1 ms). A newer switch supersedes the queued
+steps of an older one, and a **burst** of switches (two within `ThemeApplier.BurstWindow`, 200 ms: arrowing through a theme list) repaints the
+brushes each time but runs the Fluent steps once, when the burst settles. The startup apply runs everything in one go before the first frame.
 
 Code-built views use `ThemeBrushes.Get("statusBar.background")` (the same live brush instance).
 
@@ -94,7 +99,80 @@ Code-built views use `ThemeBrushes.Get("statusBar.background")` (the same live b
 **Built-in themes** (`VsThemes`): *Visual Studio Dark* (default), *Visual Studio Blue*, *Visual Studio Light*, each a `ColorTheme` that defines **every**
 published id without relying on fallbacks (enforced by a test), with VS-style token colours (keywords `#569CD6`, types `#4EC9B0`, strings `#D69D85`,
 comments `#57A64A`, numbers `#B5CEA8`, functions `#DCDCAA` in Dark; the Visual Studio Light equivalents in Blue/Light). Dark values are tested against the palette in the spec
-(`#1E1E1E` editor, `#252526` tool windows, `#2D2D30` chrome, `#3F3F46` border, `#007ACC` accent, status bar `#007ACC` / `#CA5100` debugging / `#68217A` no folder).
+(`#1E1E1E` editor, `#252526` tool windows, `#2D2D30` chrome, `#3F3F46` border, `#007ACC` accent, status bar `#007ACC` / `#C95000` debugging / `#68217A` no folder).
+The three pass every chrome contrast check without repair; four values were nudged for that (WCAG AA, 4.5:1, below): the debugging orange `#CA5100` gives
+white text 4.48:1 and is `#C95000` (4.54:1, indistinguishable), list/quick-pick selection `#3399FF` under white text (3.0:1) is the accent `#007ACC`,
+Dark's secondary text `#999999` (4.42:1 on menus and inputs) is `#A0A0A0`, Light's secondary and inactive-tab text `#717171` is `#6A6A6A`.
+Two more palettes, *High Contrast* (black) and *High Contrast Light* (white), are not offered as themes: they are the bases `ThemeCompletion` fills
+high-contrast themes from (`VsThemes.BaseFor(kind)`).
+
+**Theme catalogue** (`CsCode.Editor/Theming/BuiltinColorThemes`, registered by the editor's `ColorThemeService`): besides the three VS 2022 themes, the
+21 VS Code-format themes embedded in `TextMateSharp.Grammars` 2.0.3, with their `include` chains resolved (Dark+ includes Dark (Visual Studio),
+Light+ and Light High Contrast include Light (Visual Studio)): Dark+, Light+, Dark (Visual Studio), Light (Visual Studio), Dark High Contrast,
+Light High Contrast, Abyss, Kimbie Dark, Monokai, Monokai Dimmed, Quiet Light, Red, Solarized Dark, Solarized Light, Tomorrow Night Blue (VS Code's
+built-in theme extensions), Atom One Dark, Atom One Light, One Dark, Dracula, and the package's own "Visual Studio Dark/Light", listed as
+*Visual Studio Dark/Light (TextMateSharp)* so they cannot be confused with the shell's. Labels are VS Code's (`workbench.colorTheme` stores the label,
+as VS Code does; ids such as `vscode.monokai` are accepted too); kinds come from VS Code's `uiTheme` (several files carry no `type`). Licences and
+origins: `THIRD-PARTY-NOTICES.md`. User theme files (`{UserDataDir}/themes/*.json`) join the same list.
+
+**Theme completion** (`ThemeCompletion`). A VS Code theme defines the VS Code workbench, not the VS 2022 shell (Dark+ defines 12 of the 231 published
+ids). The shell completes every theme, built-in or user, in three steps: (1) every key the theme defines is kept, and all token colours untouched;
+(2) a missing chrome key is **borrowed** from the related key the theme does define, the way the VS 2022 layout maps onto VS Code's (toolbar = title
+bar band, Quick Launch box = input box, tool windows = side bar, menus = dropdowns, ...; a text colour is borrowed only together with its background,
+so text and surface stay a matched pair; the editor colours come from the theme's global token colours when `colors` lacks them, as in VS Code);
+(3) anything still missing comes from the nearest VS 2022 base (Dark, Light, High Contrast, High Contrast Light by the theme's kind). So no chrome
+element is ever unthemed: in particular the coloured icons (green Start triangle, Error List severity icons, debug step icons, notification icons),
+which no VS Code theme colours and which were transparent (invisible) with Dark+ before the completion. Then **contrast**: 40 chrome text pairs
+(`ThemeCompletion.ChromeText`: title and menu bar, Quick Launch, toolbar, dropdowns, menus and shortcuts, document tabs, tool windows and panels,
+headers, the Settings page, links, status bar in its three states, list and quick-pick selections, inputs, buttons, badges, toggle chips,
+notifications, hovers, completion list, editor widgets) are composited as drawn and checked against WCAG AA for normal text (4.5:1); a failing text
+colour is moved towards white or black (same hue, 1 % steps) just far enough to pass, or, when the text is already white (black) on its side, its
+background is moved instead (white on a mid orange gets a slightly darker orange). Disabled and inactive-window text is exempt, as in WCAG.
+`ThemeCompletion.Analyze` returns the evidence (source of every colour, every check). The table below is generated by
+`ThemeCatalogTests.Shell_docs_carry_the_current_contrast_table`, which fails when it is stale (the current one is written to
+`.scratch/screenshots/theme-contrast.md`). Colours = defined by the theme / borrowed / from the VS 2022 base.
+
+<!-- THEME-CONTRAST-BEGIN -->
+40 chrome text pairs checked per theme (WCAG AA, 4.5:1). Colours: theme / borrowed / VS 2022 base, of 231 published ids.
+
+| Theme | Kind | Origin | Colours | Below AA before repair: element (foreground key) ratio, substitute, ratio after |
+|---|---|---|---|---|
+| Visual Studio Dark | dark | CsCode (Visual Studio 2022 palette) | 231 / 0 / 0 | none |
+| Visual Studio Blue | light | CsCode (Visual Studio 2022 palette) | 231 / 0 / 0 | none |
+| Visual Studio Light | light | CsCode (Visual Studio 2022 palette) | 231 / 0 / 0 | none |
+| Dark+ (default dark) | dark | VS Code built-in | 12 / 25 / 194 | none |
+| Light+ (default light) | light | VS Code built-in | 11 / 31 / 189 | none |
+| Dark (Visual Studio) | dark | VS Code built-in | 12 / 25 / 194 | none |
+| Light (Visual Studio) | light | VS Code built-in | 11 / 31 / 189 | none |
+| Dark High Contrast | HC dark | VS Code built-in | 7 / 22 / 202 | none |
+| Light High Contrast | HC light | VS Code built-in | 11 / 31 / 189 | none |
+| Abyss | dark | VS Code built-in | 71 / 90 / 70 | Quick Launch box (`descriptionForeground`, borrowed) 2.74, #7187AE 4.53; Menu shortcut (`descriptionForeground`, borrowed) 2.74, fixed with an earlier pair 4.53; Menu, highlighted item (`menu.selectionForeground`, borrowed) 3.90, #7594D1 4.53; Document tab, inactive (`tab.inactiveForeground`, borrowed) 3.11, #6C82AE 4.54; Tool window, secondary text (`descriptionForeground`, borrowed) 3.31, fixed with an earlier pair 5.47; Bottom panel, secondary text (`descriptionForeground`, borrowed) 3.31, fixed with an earlier pair 5.47; Settings page, secondary text (`descriptionForeground`, borrowed) 3.28, fixed with an earlier pair 5.42; Settings scope tab, inactive (`panelTitle.inactiveForeground`, borrowed) 3.28, #637AA6 4.56; Link (`textLink.foreground`, borrowed) 3.12, #2E7FB5 4.52; List selection (`list.activeSelectionForeground`, borrowed) 3.90, #7594D1 4.53; Quick pick (`quickInput.foreground`, borrowed) 4.15, #6F8FCF 4.53; Quick pick, focused row (`quickInputList.focusForeground`, borrowed) 3.90, #7594D1 4.53; Input placeholder (`input.placeholderForeground`, borrowed) 2.74, #7187AE 4.53; Toggle chip, on (Error List) (`foreground`, borrowed) 3.66, #7B99D3 4.51; Notification (`notifications.foreground`, borrowed) 4.15, #6F8FCF 4.53; Completion list (`editorSuggestWidget.foreground`, borrowed) 4.15, #6F8FCF 4.53; Editor widget (find, peek) (`editorWidget.foreground`, borrowed) 4.15, #6F8FCF 4.53 |
+| Kimbie Dark | dark | VS Code built-in | 39 / 77 / 115 | Quick Launch box (`descriptionForeground`, borrowed) 2.72, #C0AE99 4.55; Menu shortcut (`descriptionForeground`, borrowed) 4.00, fixed with an earlier pair 6.70; Menu, highlighted item (`menu.selectionForeground`, borrowed) 4.32, #D1D1D1 4.54; Tool window, secondary text (`descriptionForeground`, borrowed) 4.00, fixed with an earlier pair 6.70; Bottom panel, secondary text (`descriptionForeground`, borrowed) 4.00, fixed with an earlier pair 6.70; List selection (`list.activeSelectionForeground`, borrowed) 3.39, #E3CDB3 4.51; List selection, unfocused (`list.inactiveSelectionForeground`, borrowed) 3.59, #E0C7AA 4.52; Input placeholder (`input.placeholderForeground`, borrowed) 2.72, #C0AE99 4.55; Toggle chip, on (Error List) (`foreground`, borrowed) 4.13, #D8B893 4.52 |
+| Monokai | dark | VS Code built-in | 77 / 80 / 74 | Menu, highlighted item (`menu.selectionForeground`, borrowed) 3.06, #F5F5F5 4.50; Settings scope tab, inactive (`panelTitle.inactiveForeground`, theme) 3.03, #928F80 4.57 |
+| Monokai Dimmed | dark | VS Code built-in | 49 / 80 / 102 | Quick Launch box (`descriptionForeground`, borrowed) 2.59, #C4C5C4 4.51; Menu, highlighted item (`menu.selectionForeground`, borrowed) 3.08, #F4F4F4 4.50; List selection (`list.activeSelectionForeground`, borrowed) 2.94, #F4F5F4 4.53; Quick pick, focused row (`quickInputList.focusForeground`, borrowed) 2.94, #F4F5F4 4.53; Input placeholder (`input.placeholderForeground`, borrowed) 2.59, #C4C5C4 4.51 |
+| Quiet Light | light | VS Code built-in | 43 / 81 / 107 | Menu, highlighted item (`menu.selectionForeground`, borrowed) 3.48, #5A5A5A 4.57; Document tab, inactive (`tab.inactiveForeground`, borrowed) 3.52, #4D4B52 4.54; Error message (`errorForeground`, theme) 2.23, #A45D56 4.50; List selection (`list.activeSelectionForeground`, theme) 3.48, #5A5A5A 4.57; Quick pick, focused row (`quickInputList.focusForeground`, borrowed) 3.67, #5E5E5E 4.53; Badge (`badge.foreground`, base) 3.10, background #7D6F92 4.60 |
+| Red | dark | VS Code built-in | 42 / 85 / 104 | none |
+| Solarized Dark | dark | VS Code built-in | 72 / 90 / 69 | Quick Launch box (`descriptionForeground`, borrowed) 2.55, #8D9EA1 4.55; Menu shortcut (`descriptionForeground`, borrowed) 3.38, fixed with an earlier pair 6.02; Menu, highlighted item (`menu.selectionForeground`, borrowed) 2.47, #BFC7C8 4.54; Document tab, inactive (`tab.inactiveForeground`, theme) 4.23, #99A7A7 4.55; Tool window, secondary text (`descriptionForeground`, borrowed) 3.38, fixed with an earlier pair 6.02; Bottom panel, secondary text (`descriptionForeground`, borrowed) 3.38, fixed with an earlier pair 6.02; Column and section headers (`sideBarSectionHeader.foreground`, borrowed) 4.23, #99A7A7 4.55; Group headers (`foreground`, borrowed) 3.58, #98A6A8 4.50; Settings page, secondary text (`descriptionForeground`, borrowed) 3.02, fixed with an earlier pair 5.39; Settings scope tab, inactive (`panelTitle.inactiveForeground`, borrowed) 3.02, #7E9195 4.55; List selection (`list.activeSelectionForeground`, borrowed) 2.47, #BFC7C8 4.54; List selection, unfocused (`list.inactiveSelectionForeground`, borrowed) 4.24, #89999B 4.53; Quick pick, focused row (`quickInputList.focusForeground`, borrowed) 2.47, #BFC7C8 4.54; Input placeholder (`input.placeholderForeground`, theme) 2.92, #899EA2 4.51; Toggle chip, on (Error List) (`foreground`, borrowed) 3.62, fixed with an earlier pair 4.56; Hover and tooltip (`editorHoverWidget.foreground`, borrowed) 3.58, #98A6A8 4.50 |
+| Solarized Light | light | VS Code built-in | 64 / 89 / 78 | Title bar and menu bar (`titleBar.activeForeground`, borrowed) 3.64, #586B72 4.56; Quick Launch box (`descriptionForeground`, borrowed) 1.86, #575E5E 4.57; Workspace name (title bar) (`commandCenter.foreground`, borrowed) 3.71, #4D6066 4.55; Toolbar (`toolbar.foreground`, borrowed) 3.64, #586B72 4.56; Dropdown (toolbar, Settings) (`dropdown.foreground`, borrowed) 4.39, #566C73 4.52; Menu (`menu.foreground`, borrowed) 3.64, #586B72 4.56; Menu shortcut (`descriptionForeground`, borrowed) 2.20, fixed with an earlier pair 5.41; Menu, highlighted item (`menu.selectionForeground`, borrowed) 3.24, #565656 4.52; Document tab, active (`tab.activeForeground`, borrowed) 4.13, #5F747B 4.56; Document tab, inactive (`tab.inactiveForeground`, theme) 3.33, #47595F 4.54; Tool window text (`foreground`, borrowed) 3.64, #586B72 5.60; Tool window, side bar text (`sideBar.foreground`, borrowed) 3.64, #586B72 4.56; Tool window, secondary text (`descriptionForeground`, borrowed) 2.20, fixed with an earlier pair 5.41; Bottom panel text (`foreground`, borrowed) 3.64, fixed with an earlier pair 5.60; Bottom panel, secondary text (`descriptionForeground`, borrowed) 2.20, fixed with an earlier pair 5.41; Column and section headers (`sideBarSectionHeader.foreground`, borrowed) 3.57, #4B5E63 4.53; Group headers (`foreground`, borrowed) 2.96, #4D5D63 4.56; Settings page text (`foreground`, borrowed) 4.13, fixed with an earlier pair 6.36; Settings page, secondary text (`descriptionForeground`, borrowed) 2.50, fixed with an earlier pair 6.15; Settings scope tab, active (`panelTitle.activeForeground`, borrowed) 4.13, #5F747B 4.56; Settings scope tab, inactive (`panelTitle.inactiveForeground`, borrowed) 2.50, #6A7373 4.51; Error message (`errorForeground`, base) 4.39, #E01400 4.56; Status bar (`statusBar.foreground`, theme) 4.39, #566C73 4.52; Status bar, debugging (`statusBar.debuggingForeground`, borrowed) 4.39, #566C73 4.52; Status bar, no folder (`statusBar.noFolderForeground`, borrowed) 4.39, #566C73 4.52; List selection (`list.activeSelectionForeground`, theme) 3.24, #565656 4.52; List selection, unfocused (`list.inactiveSelectionForeground`, borrowed) 2.75, #49595E 4.50; Quick pick (`quickInput.foreground`, borrowed) 3.64, #586B72 4.56; Quick pick, focused row (`quickInputList.focusForeground`, borrowed) 3.84, #616161 4.53; Input box (`input.foreground`, theme) 3.71, #4D6066 4.55; Input placeholder (`input.placeholderForeground`, theme) 2.25, #565E5C 4.59; Button (`button.foreground`, base) 2.72, background #817641 4.56; Secondary button (`button.secondaryForeground`, borrowed) 4.39, #566C73 4.52; Badge (`badge.foreground`, base) 2.28, background #887330 4.62; Toggle chip, on (Error List) (`foreground`, borrowed) 2.98, fixed with an earlier pair 4.59; Notification (`notifications.foreground`, borrowed) 3.64, #586B72 4.56; Hover and tooltip (`editorHoverWidget.foreground`, borrowed) 2.56, #455459 4.54; Completion list (`editorSuggestWidget.foreground`, borrowed) 3.64, #586B72 4.56; Editor widget (find, peek) (`editorWidget.foreground`, borrowed) 3.64, #586B72 4.56 |
+| Tomorrow Night Blue | dark | VS Code built-in | 50 / 86 / 95 | Error message (`errorForeground`, theme) 2.18, #C9738C 4.61 |
+| Atom One Dark | dark | TextMateSharp | 55 / 77 / 99 | Quick Launch box (`descriptionForeground`, borrowed) 3.01, #A6ABB3 4.52; Menu shortcut (`descriptionForeground`, borrowed) 3.01, fixed with an earlier pair 4.52; Document tab, inactive (`tab.inactiveForeground`, theme) 2.55, #868C95 4.54; Tool window, secondary text (`descriptionForeground`, borrowed) 4.44, fixed with an earlier pair 6.67; Bottom panel, secondary text (`descriptionForeground`, borrowed) 4.44, fixed with an earlier pair 6.67; Settings page, secondary text (`descriptionForeground`, borrowed) 4.03, fixed with an earlier pair 6.06; Settings scope tab, inactive (`panelTitle.inactiveForeground`, borrowed) 4.03, #8E939D 4.54; Input placeholder (`input.placeholderForeground`, borrowed) 3.01, #A6ABB3 4.52; Badge (`badge.foreground`, borrowed) 3.23, background #4473D4 4.52 |
+| Atom One Light | light | TextMateSharp | 55 / 77 / 99 | Document tab, inactive (`tab.inactiveForeground`, theme) 2.29, #6D6D6D 4.54; Tool window, secondary text (`descriptionForeground`, borrowed) 4.29, #6D6F74 4.61; Bottom panel, secondary text (`descriptionForeground`, borrowed) 4.29, fixed with an earlier pair 4.61; Settings page, secondary text (`descriptionForeground`, borrowed) 4.48, fixed with an earlier pair 4.82; Settings scope tab, inactive (`panelTitle.inactiveForeground`, borrowed) 4.48, #717378 4.55; Badge (`badge.foreground`, borrowed) 4.05, background #3C71E3 4.50 |
+| One Dark | dark | TextMateSharp | 55 / 77 / 99 | Quick Launch box (`descriptionForeground`, borrowed) 3.01, #A6ABB3 4.52; Menu shortcut (`descriptionForeground`, borrowed) 3.01, fixed with an earlier pair 4.52; Document tab, inactive (`tab.inactiveForeground`, theme) 2.55, #868C95 4.54; Tool window, secondary text (`descriptionForeground`, borrowed) 4.44, fixed with an earlier pair 6.67; Bottom panel, secondary text (`descriptionForeground`, borrowed) 4.44, fixed with an earlier pair 6.67; Settings page, secondary text (`descriptionForeground`, borrowed) 4.03, fixed with an earlier pair 6.06; Settings scope tab, inactive (`panelTitle.inactiveForeground`, borrowed) 4.03, #8E939D 4.54; Input placeholder (`input.placeholderForeground`, borrowed) 3.01, #A6ABB3 4.52; Badge (`badge.foreground`, borrowed) 3.23, background #4473D4 4.52 |
+| Dracula | dark | TextMateSharp | 55 / 77 / 99 | Document tab, inactive (`tab.inactiveForeground`, theme) 3.03, #8390B7 4.50 |
+| Visual Studio Dark (TextMateSharp) | dark | TextMateSharp | 55 / 77 / 99 | Menu, highlighted item (`menu.selectionForeground`, borrowed) 2.94, background #2877C7 4.61; List selection (`list.activeSelectionForeground`, theme) 2.94, background #2877C7 4.61; Quick pick, focused row (`quickInputList.focusForeground`, borrowed) 2.94, background #2877C7 4.61 |
+| Visual Studio Light (TextMateSharp) | light | TextMateSharp | 55 / 77 / 99 | Menu, highlighted item (`menu.selectionForeground`, borrowed) 2.94, background #2877C7 4.61; Document tab, inactive (`tab.inactiveForeground`, theme) 4.17, #707070 4.54; List selection (`list.activeSelectionForeground`, theme) 2.94, background #2877C7 4.61; Quick pick, focused row (`quickInputList.focusForeground`, borrowed) 2.94, background #2877C7 4.61 |
+<!-- THEME-CONTRAST-END -->
+
+**Color Theme dropdown** (`ThemePicker`, a `ComboBox`): on the main toolbar after the debug group (its own group, hidden through View > Toolbars >
+Color Theme, setting `cscode.toolbars.colorTheme`) and at the top of the Settings page (*Environment › Appearance*, where Visual Studio has it under
+Tools > Options > Environment > General). Every installed theme, grouped Dark / Light / High contrast (sorted by label), each with a swatch: the
+editor background with three token colours (keyword, string, function). Arrowing through the open list previews live through `IColorThemePreview`
+(nothing is persisted; at most one preview per `ThemePreviewer.MinInterval`, 250 ms, latest wins, so holding an arrow key does not repaint the window
+30 times a second); Escape or clicking away reverts; Enter or a click applies and writes `workbench.colorTheme` (the label). Arrow keys on the closed,
+focused box apply directly, as Visual Studio's combos do; group headers are neither focusable nor selectable. Every dropdown follows every other way of
+changing the theme (the palette's Color Theme command, a `settings.json` edit, another window, the other dropdown) through `IColorThemeService.Changed`.
+The list is rebuilt only when the set of themes changes, never per switch. The palette command *Color Theme* (`workbench.action.selectTheme`) uses
+the same grouping, the same throttled preview and the same commit (`ThemeSelection`).
 
 **Controls: what is and is not custom.** Avalonia's Fluent theme is used as the *structural base* of the stock controls and is **retargeted** at the workbench palette
 (`FluentBridge`: the per-variant `ColorPaletteResources` ramp plus about 100 control-specific keys for menus, scroll bars, tooltips, buttons, inputs, lists, tabs), with
@@ -153,9 +231,9 @@ The list is generated from `WorkbenchColors.All`; a test fails if this document 
 
 `quickInput.background`, `quickInput.foreground`, `quickInputList.focusBackground`, `quickInputList.focusForeground`, `quickInputTitle.background`, `pickerGroup.foreground`, `pickerGroup.border`, `notifications.background`, `notifications.foreground`, `notifications.border`, `notificationCenter.border`, `notificationCenterHeader.background`, `notificationCenterHeader.foreground`, `notificationToast.border`, `notificationLink.foreground`, `notificationsErrorIcon.foreground`, `notificationsWarningIcon.foreground`, `notificationsInfoIcon.foreground`
 
-**Editor** (35)
+**Editor** (37)
 
-`editor.background`, `editor.foreground`, `editor.selectionBackground`, `editor.inactiveSelectionBackground`, `editor.lineHighlightBackground`, `editor.lineHighlightBorder`, `editor.findMatchBackground`, `editor.findMatchHighlightBackground`, `editor.wordHighlightBackground`, `editor.stackFrameHighlightBackground`, `editor.focusedStackFrameHighlightBackground`, `editorCursor.foreground`, `editorLineNumber.foreground`, `editorLineNumber.activeForeground`, `editorIndentGuide.background`, `editorWhitespace.foreground`, `editorBracketMatch.background`, `editorBracketMatch.border`, `editorGutter.background`, `editorError.foreground`, `editorWarning.foreground`, `editorInfo.foreground`, `editorHint.foreground`, `editorWidget.background`, `editorWidget.foreground`, `editorWidget.border`, `editorSuggestWidget.background`, `editorSuggestWidget.border`, `editorSuggestWidget.foreground`, `editorSuggestWidget.selectedBackground`, `editorSuggestWidget.highlightForeground`, `editorHoverWidget.background`, `editorHoverWidget.foreground`, `editorHoverWidget.border`, `editorOverviewRuler.border`
+`editor.background`, `editor.foreground`, `editor.selectionBackground`, `editor.inactiveSelectionBackground`, `editor.lineHighlightBackground`, `editor.lineHighlightBorder`, `editor.findMatchBackground`, `editor.findMatchHighlightBackground`, `editor.wordHighlightBackground`, `editor.stackFrameHighlightBackground`, `editor.focusedStackFrameHighlightBackground`, `editorCursor.foreground`, `editorLineNumber.foreground`, `editorLineNumber.activeForeground`, `editorIndentGuide.background`, `editorWhitespace.foreground`, `editorBracketMatch.background`, `editorBracketMatch.border`, `editorGutter.background`, `editorError.foreground`, `editorWarning.foreground`, `editorInfo.foreground`, `editorHint.foreground`, `editorWidget.background`, `editorWidget.foreground`, `editorWidget.border`, `editorSuggestWidget.background`, `editorSuggestWidget.border`, `editorSuggestWidget.foreground`, `editorSuggestWidget.selectedBackground`, `editorSuggestWidget.highlightForeground`, `editorHoverWidget.background`, `editorHoverWidget.foreground`, `editorHoverWidget.border`, `editorOverviewRuler.border`, `diffEditor.insertedTextBackground`, `diffEditor.removedTextBackground`
 
 **Debug, problems, git** (20)
 
@@ -211,7 +289,7 @@ The default (and reset) layout shows exactly `ShellController.DefaultLayoutTools
 
 **Palette / Quick Launch** (`PaletteSource`; the title bar box reads "Search (Ctrl+Q)", with the palette's real shortcut, and the workspace name stands beside it as Visual Studio's solution name does): plain = go to file (fuzzy over a trimmable, bounded workspace index, ranked on a worker, top 100), `>` commands (title, category, keybinding badge, recent first, `Enablement` honoured),
 `:` go to line[:column], `@` document symbols, `#` workspace symbols, `?` help. Cheap modes answer synchronously (first paint needs no dispatcher turn); stale async results are dropped. Also drives `ShowQuickPick`/`ShowInputBox`.
-Theme picker (`workbench.action.selectTheme`) previews live while arrowing and reverts on Esc.
+Theme picker (`workbench.action.selectTheme`) lists the themes grouped Dark / Light / High contrast, previews live while arrowing (throttled, nothing persisted) and reverts on Esc.
 
 **Saving and file operations with language servers** (`FileParticipants`, docs/LSP.md). Every save of the shell (Save, Save As, Save All, the Save
 answer of a close prompt) goes through `DocumentWell.SaveAsync`: the `IWillSaveParticipant`s (the LSP manager: `willSave` / `willSaveWaitUntil`) are
@@ -235,7 +313,8 @@ Other modules (Vim mode, remote indicator) register their own through `IStatusBa
 `closeActiveEditor`, `closeAllEditors`, `closeOtherEditors`, `reopenClosedEditor`, `nextEditor`, `previousEditor`, `pinEditor`, `splitEditorRight`, `splitEditorDown`, `moveEditorToNextGroup`, `closeFolder`, `quit`, `reloadWindow`
 (refreshes menus only), `toggleFullScreen`, `toggleZenMode`, `selectTheme`, `workbench.view.explorer`, `workbench.action.output.toggleOutput`, `workbench.actions.view.problems`,
 `workbench.action.findResults.toggle`, the toggle of every tool window whose module did not register its `ToggleCommandId` (debug windows: `workbench.debug.action.toggle*`), `cscode.references.show`,
-`cscode.shell.{resetLayout,openRecent,about,showWelcome,showKeyboardReference,toggleNotifications,changeLanguageMode,showErrorList}`. `gotoLine` also takes an optional `"line[:column]"` argument.
+`cscode.shell.{resetLayout,openRecent,about,showWelcome,showKeyboardReference,toggleNotifications,changeLanguageMode,showErrorList,toggleToolbar}`
+(`toggleToolbar` takes a toolbar group id: `standard`, `debug`, `colorTheme`; View > Toolbars). `gotoLine` also takes an optional `"line[:column]"` argument.
 `openSettings` / `openSettingsJson` are only fallbacks (they open settings.json) for a composition without the Settings panel.
 Everything else in the menus (`editor.action.*`, `debug.*`, terminal, tasks) is owned by other modules and stays disabled until they register it.
 
@@ -255,7 +334,9 @@ Every other id has exactly one registration; the test fails when a new duplicate
 
 ### Settings
 
-`cscode.shell.liveEditorViews` (8), `cscode.shell.confirmMultiFileEdits` (true), `cscode.diagnostics.uiStallLogMs` (0; Debug builds default to 100), plus the ones it reads:
+`cscode.shell.liveEditorViews` (8), `cscode.shell.confirmMultiFileEdits` (true), `cscode.diagnostics.uiStallLogMs` (0; Debug builds default to 100),
+`cscode.toolbars.standard`, `cscode.toolbars.debug`, `cscode.toolbars.colorTheme` (true: the toolbar groups View > Toolbars shows; the setting is the
+state, so settings.json and other windows agree), plus the ones it reads:
 `workbench.colorTheme`, `workbench.startupEditor`, `files.exclude`, `editor.fontFamily`, `editor.tabSize`, `editor.insertSpaces`. They are declared through `IConfigurationService.RegisterProperties`.
 
 ## Threading and isolation (binding rules, and how they are enforced)
@@ -281,6 +362,14 @@ A heartbeat posts a tick to the real dispatcher every 10 ms and records how late
 | theme switching | 10.6 ms | 12.8 ms | 5.1 ms |
 | **all at once** | **18.7 ms (budget 16 not met)** | 19.8-28.8 ms | 9-16 ms |
 
+**Theme previews** (`ThemeSwitchingCostTests`, the real composition with an editor and both dropdowns open; preview requests at key-repeat rate,
+about 30 a second, through all 24 themes): p99 14.7 ms, max 18.1 ms, longest UI callback 8.2 ms (the Fluent palette step; brushes < 0.1 ms), 11
+theme applies in 2.5 s (throttled); 100 switches through the closed dropdown leave the managed heap flat (+52 KB) and rebuild neither list. What
+these numbers do **not** include: frame rendering. The headless platform renders only when a test forces a frame, and then on the test's own thread
+with software Skia (a full-window repaint after a theme change takes ~100 ms that way under load); on a desktop the rasterisation runs on Avalonia's
+render thread, but recording the re-resolved controls' draw operations is UI-thread work that no test here measures (there is no display for
+tests). Nor the open list's own arrow handling: a plain 27-item Avalonia `ComboBox` takes 3-25 ms per arrow press headless, rendering included.
+
 Fixes that this suite drove: theme application 30-50 ms to < 8 ms (idempotent resource publication), status bar rebuild made incremental, diagnostics counting moved off the UI thread,
 Output attach limited to the recent tail, `PostCoalesced` + version race in `ThemeApplier` (a stale preparation could overwrite the newest one).
 Other checks: service calls from the UI thread return without waiting for the work; shell async flows run under a `SynchronizationContext` whose `Send` throws (no sync-over-async dispatch).
@@ -289,7 +378,9 @@ Other checks: service calls from the UI thread return without waiting for the wo
 
 Bounded: Output 2 MB per channel, 20k lines in the view; notification history 100; closed-tab history 20; palette index capped at 300k files and an `IMemoryTrimmable`; icon geometry cache trimmable; Error List at most one immutable array.
 Lifetimes: every view and model owns a `DisposableStore`; tool-window views and their view-models are disposed when hidden; tab views by the LRU policy and on close. Tests: 100x show/hide of every tool window balances creation and disposal and retains nothing;
-500 palette opens retain no entries; 500 dialogs leave the heap flat; 200 theme switches leave the resource table and brush set unchanged; 300 tabs opened/closed in the live Dock host release every sampled tab, document and view
+500 palette opens retain no entries; 500 dialogs leave the heap flat; 200 theme switches leave the resource table and brush set unchanged; 100 switches
+through the theme dropdown on the real composition leave the managed heap flat (< 512 KB, measured +52 KB) and keep both dropdowns' lists; a closed
+Settings page releases its dropdown; 300 tabs opened/closed in the live Dock host release every sampled tab, document and view
 (managed heap flat between tab 100 and 300); a focused real editor's view is released when its tab closes, and an evicted view is released while its tab stays open; output flood and status updates use a bounded number of dispatcher posts.
 
 ## Running it
@@ -302,6 +393,9 @@ dotnet test tests/CsCode.App.Tests            # on a Nix dotnet: source tools/ni
 * **Dev host** (`tests/CsCode.App.Tests/DevHost`): composes the **real** shell (`AppServices.Build` + `MainWindow`) over in-memory fakes for the modules that are written concurrently
   (command service, context keys with a real `when` evaluator, configuration, keybindings with chord state, workspace + file system + watcher, state storage, colour themes with a fallback chain, editor factory, debug service).
   `DevScene.BuildAsync` seeds a workspace, tabs, diagnostics, output and a debug state. `host.Capture("name")` writes `.scratch/screenshots/name.png` (git-ignored).
+* **Theme screenshots**: `RealApp/ThemeScreenshotTests` photographs the real main window (a folder and a C# file open, TextMate highlighting) in every
+  installed theme (`.scratch/screenshots/theme-<id>.png`, 24 of them), the open dropdown in Dark and Solarized Light and the Settings page in Dark,
+  Monokai and Light; `RealApp/ThemeIconTests` writes `theme-icons-dark-plus.png` and checks the coloured icons are drawn.
 * **Screenshots**: `ScreenshotTests` renders Dark, Blue and Light, the palette, an open File menu, the debugging (orange) state, toasts and the modal dialog; `RealWindowSmokeTests` runs the
   real app on the X server (`DISPLAY`) in a child process, photographs the live window and checks for clean exit and no crash log.
 * A production start (`dotnet run --project src/CsCode.App`) needs the other modules' registrations; until they are merged it ends in the crash window that names the missing service (by design).
@@ -314,13 +408,17 @@ File menu with icon, shortcut and separator columns, palette with fuzzy list and
 
 Not done: single-instance forwarding (SHOULD); native menu bar (`NativeMenu` on macOS / DBus global menu); Explorer drag-and-drop **UI** (the model's `MoveAsync` is tested; the view has no drag source/drop target) and dropping files from the OS onto the window;
 dirty marker is Dock's `*` rather than a dot that turns into a close glyph on hover; pinned tabs have model/commands but no pin glyph; layout restore reopens tabs but does not recreate split document groups or floating windows;
-auto-hide/peek animations, taskbar jump list, high-contrast theme, `--diff`, toolbar overflow (all SHOULD); the Windows/macOS title-bar path (`ExtendClientAreaToDecorationsHint`) is written but untested here (Linux only).
+auto-hide/peek animations, taskbar jump list, `--diff`, toolbar overflow (all SHOULD; high contrast comes from VS Code's two high-contrast themes, completed from the shell's high-contrast bases); the Windows/macOS title-bar path (`ExtendClientAreaToDecorationsHint`) is written but untested here (Linux only).
 `reloadWindow` only refreshes menus. Find in Files is the Search panel's tool window (`CsCode.Panels.Search`); Find Results hosts the references delivered by `cscode.references.show`. Explorer filter searches loaded nodes only.
 
 Known issues: (1) **Combined hostile storm p99 is ~19 ms, not < 16 ms** (each source alone meets it; max is within 50 ms). (2) Dock.Avalonia 12.1.0.13 keeps every presented dockable in its control-recycling
 cache (`ControlRecycling`, keyed by the dockable, never evicted); the shell removes a closed tab's entry itself (see *View lifecycle and Dock*), which depends on the cache being reachable through
 `ControlRecyclingDataTemplate.ControlRecycling` on an ancestor of the host. The 300-tab live-host test asserts the steady state (heap flat, closed tabs unreachable).
 (3) AvaloniaEdit's static `RoutedCommand` keeps the last element that took focus: after the last document closes, that one view stays reachable until focus moves anywhere (bounded).
+(4) A theme switch's Fluent palette step is one dispatcher callback of 4-8 ms on a full window (over the 4 ms slice rule): assigning the palette is a
+single Avalonia resource change that every control re-resolves, and it cannot be split; bursts run it once. (5) The contrast repair changes a theme's
+own colours where they fail AA (listed per theme above), e.g. Solarized Light's chrome text is darkened; a user who wants the theme's exact colours
+cannot switch the repair off yet.
 
 ## Integration notes
 
@@ -333,6 +431,11 @@ cache (`ControlRecycling`, keyed by the dockable, never evicted); the shell remo
   windows open as document tabs.
 * `tests/CsCode.App.Tests/RealApp/*` run the REAL composition (`AppServices.Build` with every module, `CSCODE_HOME` in a temp directory, all built-in language servers disabled;
   `Infrastructure/RealAppHost.cs`): view activation (also after a tool window was closed with its X, clicked), document windows, default layout, debug auto-show, command
-  ownership (which module registered each duplicated id, in order), selection, Ln/Col, keys, wording.
+  ownership (which module registered each duplicated id, in order), selection, Ln/Col, keys, wording, the Color Theme dropdowns (`ThemeDropdownTests`), theme
+  icons (`ThemeIconTests`), switching cost (`ThemeSwitchingCostTests`) and screenshots (`ThemeScreenshotTests`).
+* **Themes**: `ShellController.PrepareThemes` gives the editor's `ColorThemeService` the shell's completion (`AppStartup` calls it on the start-up pool
+  thread, so parsing the 21 embedded themes and completing the current one never runs on the UI thread before the first frame; the other themes are
+  completed on a pool thread right after). The Settings page gets `IColorThemeService` through `SearchServices.Themes` (optional; without it the
+  Appearance section is hidden).
 * The brief's `IExtensionService.ActivateByEventAsync("onStartupFinished")` is **not** used: the extension system was removed (commit "Drop the extension system").
 * The removed system's remnants elsewhere (extension command ids, `ExtensionsDir`, the `ExtensionId` members, Core wording, the README tagline) were deleted at integration.

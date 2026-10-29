@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.Input;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
+using CsCode.Core.Theming;
 using CsCode.Panels.Search.ViewModels;
 using CsCode.Ui.Collections;
 using CsCode.Ui.Text;
@@ -69,6 +70,14 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     public ICommand ClearFilterCommand { get; }
 
     public IReadOnlyList<SettingItemViewModel> AllItems => _all;
+
+    /// <summary>
+    /// The services the page's Environment &gt; Appearance section needs for its Color Theme dropdown (the same control as the toolbar's,
+    /// <c>CsCode.Ui.Theming.ThemePicker</c>); null when no colour theme service is composed, and the section is then not shown.
+    /// </summary>
+    public IColorThemeService? Themes => _s.Themes;
+    public IUiDispatcher Ui => _s.Ui;
+    public IConfigurationService? Configuration => _s.Configuration;
     public int ModifiedCount => _all.Count(i => i.IsModified);
     public bool IsWorkspaceAvailable => _s.Workspace.Folders.Count > 0;
     public int DebounceMs => _debounceMs;

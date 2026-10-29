@@ -45,14 +45,15 @@ public class BuiltInThemeTests
         Assert.Equal("#007ACC", c["focusBorder"].ToHex());
         Assert.Equal("#264F78", c["editor.selectionBackground"].ToHex());
         Assert.Equal("#007ACC", c["statusBar.background"].ToHex());
-        Assert.Equal("#CA5100", c["statusBar.debuggingBackground"].ToHex());
+        // #CA5100 (the VS orange) gives white text 4.48:1, just under WCAG AA: one step darker reaches 4.54:1 and looks the same.
+        Assert.Equal("#C95000", c["statusBar.debuggingBackground"].ToHex());
         Assert.Equal("#68217A", c["statusBar.noFolderBackground"].ToHex());
         Assert.Equal("#007ACC", c["tab.activeBorderTop"].ToHex());
         Assert.Equal("#1E1E1E", c["tab.activeBackground"].ToHex());
         Assert.Equal("#2D2D30", c["tab.inactiveBackground"].ToHex());
         Assert.Equal("#333337", c["menu.background"].ToHex());
         Assert.Equal("#F1F1F1", c["foreground"].ToHex());
-        Assert.Equal("#999999", c["descriptionForeground"].ToHex());
+        Assert.Equal("#A0A0A0", c["descriptionForeground"].ToHex()); // #999999 failed AA on menus and inputs (#333337): 4.42:1
         Assert.Equal("#3E3E40", c["list.hoverBackground"].ToHex());
         Assert.Equal("#333337", c["input.background"].ToHex());
     }
@@ -208,6 +209,93 @@ public class ThemeApplierTests
         Assert.Equal(Color.FromRgb(10, 20, 30), ((SolidColorBrush)applier.GetBrush("toolbar.background")!).Color);
         // tab.inactiveBackground is a VS Code id: it goes through the Core chain (here: editorGroupHeader.tabsBackground, undefined => transparent).
         Assert.NotNull(applier.GetBrush("tab.inactiveBackground"));
+    }
+
+    [AvaloniaFact]
+    public void A_theme_from_a_service_that_does_not_complete_is_completed_by_the_applier_so_no_icon_colour_is_transparent()
+    {
+        var svc = new FakeColorThemeService();
+        // A user theme (or a VS Code theme) that knows nothing of the shell's icons.
+        svc.Register(new ColorTheme("user", "User", ThemeKind.Dark,
+            new Dictionary<string, Rgba> { ["editor.background"] = new Rgba(1, 2, 3), ["editor.foreground"] = new Rgba(220, 220, 220) }, []));
+        using var applier = new ThemeApplier(Application.Current!, svc, new ImmediateUiDispatcher());
+        foreach (var id in new[] { "debugIcon.startForeground", "problemsErrorIcon.foreground", "problemsWarningIcon.foreground", "problemsInfoIcon.foreground" })
+        {
+            var expected = VsThemes.Dark.Colors[id];
+            Assert.Equal(Color.FromArgb(expected.A, expected.R, expected.G, expected.B), ((SolidColorBrush)applier.GetBrush(id)!).Color);
+        }
+        Assert.Equal(Color.FromRgb(1, 2, 3), ((SolidColorBrush)applier.GetBrush("editor.background")!).Color); // the theme's own colours stay
+    }
+
+    private static async Task WaitForPostAsync(ManualUiDispatcher ui)
+    {
+        var deadline = Environment.TickCount64 + 5000;
+        while (ui.PendingCount == 0 && Environment.TickCount64 < deadline) await Task.Delay(2); // the preparation runs off the UI thread
+        Assert.True(ui.PendingCount > 0, "the prepared theme was never posted");
+    }
+
+    [AvaloniaFact]
+    public async Task A_runtime_switch_repaints_the_brushes_in_one_callback_and_retargets_fluent_in_three_more()
+    {
+        var svc = Themes();
+        var app = Application.Current!;
+        var ui = new ManualUiDispatcher();
+        using var applier = new ThemeApplier(app, svc, ui);
+        var editorBg = (SolidColorBrush)applier.GetBrush("editor.background")!;
+
+        await svc.SetCurrentAsync(VsThemes.LightId);
+        await WaitForPostAsync(ui);
+        Assert.Equal(1, ui.RunOneTurn());
+        Assert.Equal(Color.Parse("#FFFFFF"), editorBg.Color);            // every vsc: brush repainted at once
+        Assert.Equal(VsThemes.DarkId, applier.AppliedThemeId);           // Fluent's palette, variant and text selection follow, one callback each
+        Assert.Equal(ThemeVariant.Dark, app.RequestedThemeVariant);
+        var turns = 0;
+        while (applier.AppliedThemeId != VsThemes.LightId && turns < 10) turns += ui.RunOneTurn();
+        Assert.Equal(3, turns);
+        Assert.Equal(ThemeVariant.Light, app.RequestedThemeVariant);
+    }
+
+    [AvaloniaFact]
+    public async Task A_burst_of_switches_repaints_the_brushes_each_time_and_retargets_fluent_once_it_settles()
+    {
+        var svc = Themes();
+        var app = Application.Current!;
+        var ui = new ManualUiDispatcher();
+        using var applier = new ThemeApplier(app, svc, ui);
+        var titleBar = (SolidColorBrush)applier.GetBrush("titleBar.activeBackground")!;
+
+        await svc.SetCurrentAsync(VsThemes.LightId);
+        await WaitForPostAsync(ui);
+        var first = System.Diagnostics.Stopwatch.GetTimestamp();
+        ui.RunPending();
+        Assert.Equal(VsThemes.LightId, applier.AppliedThemeId);          // a lone switch is applied completely at once
+
+        await svc.SetCurrentAsync(VsThemes.BlueId);
+        await WaitForPostAsync(ui);
+        ui.RunPending();
+        var gap = System.Diagnostics.Stopwatch.GetElapsedTime(first);    // at least the time between the two applies
+        Assert.Equal(Color.Parse("#293955"), titleBar.Color);             // Blue's brushes are on screen
+        // (On a machine so loaded that the second switch came later than the window, it was a lone switch and is applied completely.)
+        if (gap < ThemeApplier.BurstWindow)
+            Assert.Equal(VsThemes.LightId, applier.AppliedThemeId);      // a burst: Fluent waits until the switching stops
+        var deadline = Environment.TickCount64 + 5000;
+        while (applier.AppliedThemeId != VsThemes.BlueId && Environment.TickCount64 < deadline) { ui.RunPending(); await Task.Delay(5); }
+        Assert.Equal(VsThemes.BlueId, applier.AppliedThemeId);
+        Assert.Equal(ThemeVariant.Light, app.RequestedThemeVariant);
+    }
+
+    [AvaloniaFact]
+    public async Task Disposing_the_applier_cancels_the_steps_still_queued()
+    {
+        var svc = Themes();
+        var ui = new ManualUiDispatcher();
+        var applier = new ThemeApplier(Application.Current!, svc, ui);
+        await svc.SetCurrentAsync(VsThemes.LightId);
+        await WaitForPostAsync(ui);
+        ui.RunOneTurn();                                                  // brushes applied, Fluent's steps queued
+        applier.Dispose();
+        ui.RunPending();
+        Assert.Equal(VsThemes.DarkId, applier.AppliedThemeId);           // the queued steps found themselves superseded
     }
 
     [AvaloniaFact]
