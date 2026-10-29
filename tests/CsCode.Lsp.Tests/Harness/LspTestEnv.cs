@@ -62,6 +62,33 @@ public sealed class FakeWorkspace : IWorkspaceService, IFileWatcher
     }
 }
 
+/// <summary>Delegates to the shared <see cref="RecordingWindowService"/> but also records progress (title, reports, completion).</summary>
+public sealed class ProgressRecordingWindow(RecordingWindowService inner) : IWindowService
+{
+    public List<string> Events { get; } = new();
+    public ValueTask<string?> ShowMessageAsync(MessageSeverity severity, string message, IReadOnlyList<MessageAction>? actions = null, CancellationToken ct = default) => inner.ShowMessageAsync(severity, message, actions, ct);
+    public ValueTask<QuickPickItem?> ShowQuickPickAsync(IReadOnlyList<QuickPickItem> items, QuickPickOptions? options = null, CancellationToken ct = default) => inner.ShowQuickPickAsync(items, options, ct);
+    public ValueTask<IReadOnlyList<QuickPickItem>?> ShowQuickPickManyAsync(IReadOnlyList<QuickPickItem> items, QuickPickOptions? options = null, CancellationToken ct = default) => inner.ShowQuickPickManyAsync(items, options, ct);
+    public ValueTask<string?> ShowInputBoxAsync(InputBoxOptions? options = null, CancellationToken ct = default) => inner.ShowInputBoxAsync(options, ct);
+    public ValueTask<IReadOnlyList<Uri>?> ShowOpenDialogAsync(OpenDialogOptions options, CancellationToken ct = default) => inner.ShowOpenDialogAsync(options, ct);
+    public ValueTask<Uri?> ShowSaveDialogAsync(SaveDialogOptions options, CancellationToken ct = default) => inner.ShowSaveDialogAsync(options, ct);
+    public IDisposable SetStatusBarMessage(string text, TimeSpan? timeout = null) => inner.SetStatusBarMessage(text, timeout);
+    public ValueTask<bool> OpenExternalAsync(Uri uri) { lock (Events) Events.Add("external:" + uri); return inner.OpenExternalAsync(uri); }
+    public ValueTask CopyToClipboardAsync(string text) => inner.CopyToClipboardAsync(text);
+
+    public async Task<T> WithProgressAsync<T>(string title, bool cancellable, Func<IProgressReporter, CancellationToken, Task<T>> work)
+    {
+        lock (Events) Events.Add("begin:" + title);
+        try { return await work(new Reporter(this), CancellationToken.None); }
+        finally { lock (Events) Events.Add("end:" + title); }
+    }
+
+    private sealed class Reporter(ProgressRecordingWindow owner) : IProgressReporter
+    {
+        public void Report(string? message = null, double? percent = null) { lock (owner.Events) owner.Events.Add($"report:{message}:{percent}"); }
+    }
+}
+
 /// <summary>Everything a LSP test needs: Core services, test doubles, a fake connection factory and the real manager.</summary>
 public sealed class LspTestEnv : IAsyncDisposable
 {
@@ -73,6 +100,7 @@ public sealed class LspTestEnv : IAsyncDisposable
     public DiagnosticService Diagnostics { get; } = new();
     public TestConfigurationService Config { get; } = new();
     public RecordingWindowService Window { get; } = new();
+    public ProgressRecordingWindow ProgressWindow { get; }
     public InMemoryOutputService Output { get; } = new();
     public TestCommandService Commands { get; } = new();
     public TestAppPaths Paths { get; } = new();
@@ -87,6 +115,7 @@ public sealed class LspTestEnv : IAsyncDisposable
     public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false)
     {
         Navigation = new RecordingNavigationService(Documents);
+        ProgressWindow = new ProgressRecordingWindow(Window);
         // Snappy defaults for tests; individual tests override before creating the manager when they need real budgets.
         Config.Set(LspSettingKeys.InteractiveTimeoutMs, 3000);
         Config.Set(LspSettingKeys.BackgroundTimeoutMs, 5000);
@@ -100,7 +129,7 @@ public sealed class LspTestEnv : IAsyncDisposable
         {
             Configuration = Config,
             Workspace = Workspace,
-            Window = Window,
+            Window = ProgressWindow,
             Output = Output,
             Navigation = Navigation,
             Watcher = Workspace,

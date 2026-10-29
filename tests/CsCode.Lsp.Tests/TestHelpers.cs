@@ -35,3 +35,20 @@ public static class TestHelpers
         }
     }
 }
+
+/// <summary>Occupies every Language-lane thread until released, so backlogs (coalescing, shedding) can be observed deterministically.</summary>
+public sealed class LaneBlock : IDisposable
+{
+    private readonly ManualResetEventSlim _gate = new(false);
+
+    public LaneBlock(LanguageWorkQueue q)
+    {
+        var entered = new CountdownEvent(q.ThreadCount);
+        var ct = TestContext.Current.CancellationToken;
+        for (var i = 0; i < q.ThreadCount; i++) q.Post(LanePriority.Interactive, () => { entered.Signal(); _gate.Wait(ct); }, exempt: true);
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10), ct), "lane threads did not pick up the blockers");
+    }
+
+    public void Release() => _gate.Set();
+    public void Dispose() => _gate.Set();
+}

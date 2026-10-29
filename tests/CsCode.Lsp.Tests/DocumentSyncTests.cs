@@ -14,21 +14,6 @@ public class DocumentSyncTests
 {
     private static string UriOf(ITextDocument d) => d.Uri.AbsoluteUri;
 
-    /// <summary>Occupies every lane thread until released so a burst of edits can be observed coalescing deterministically.</summary>
-    private sealed class LaneBlock : IDisposable
-    {
-        private readonly ManualResetEventSlim _gate = new(false);
-        public LaneBlock(LanguageWorkQueue q)
-        {
-            var entered = new CountdownEvent(q.ThreadCount);
-            var ct = TestContext.Current.CancellationToken;
-            for (var i = 0; i < q.ThreadCount; i++) q.Post(LanePriority.Interactive, () => { entered.Signal(); _gate.Wait(ct); }, exempt: true);
-            Assert.True(entered.Wait(TimeSpan.FromSeconds(10), ct));
-        }
-        public void Release() => _gate.Set();
-        public void Dispose() => _gate.Set();
-    }
-
     [Fact]
     public async Task Incremental_changes_reproduce_the_document_exactly_on_the_server()
     {
