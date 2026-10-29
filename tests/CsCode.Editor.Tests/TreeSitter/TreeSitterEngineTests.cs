@@ -43,6 +43,36 @@ public class TreeSitterEngineTests
         Assert.DoesNotContain(bundle.Diagnostics, d => d.Contains("not evaluated", StringComparison.Ordinal) || d.Contains("could not be translated", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Evidence for the hybrid option: the 17 languages CsCode detects but cannot highlight today (docs/LANGUAGES.md) all have a grammar and
+    /// Neovim queries on this machine; each must load within the runtime's ABI and its highlight query must compile with this engine.
+    /// </summary>
+    [Theory]
+    [InlineData("toml")]
+    [InlineData("kotlin")]
+    [InlineData("scala")]
+    [InlineData("zig")]
+    [InlineData("proto")]
+    [InlineData("graphql")]
+    [InlineData("haskell")]
+    [InlineData("elixir")]
+    [InlineData("erlang")]
+    [InlineData("ocaml")]
+    [InlineData("vue")]
+    [InlineData("svelte")]
+    [InlineData("terraform")]
+    [InlineData("nix")]
+    [InlineData("rst")]
+    [InlineData("asm")]
+    [InlineData("csv")]
+    public void Grammars_for_the_languages_TextMate_cannot_highlight_load_and_compile(string grammar)
+    {
+        var bundle = RequireGrammar(grammar);
+        Assert.InRange(bundle.Language.AbiVersion, TsRuntime.MinAbi, TsRuntime.MaxAbi);
+        Assert.NotNull(bundle.Highlights);
+        Assert.True(bundle.Highlights!.PatternCount > 0);
+    }
+
     [Fact]
     public void TypeScript_highlights_inherit_the_ecma_queries_first()
     {
