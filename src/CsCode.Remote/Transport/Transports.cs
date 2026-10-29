@@ -1,0 +1,180 @@
+using System.Text;
+using CsCode.Remote.Install;
+using CsCode.Remote.Protocol;
+
+namespace CsCode.Remote.Transport;
+
+/// <summary>A started server: a duplex byte stream (its stdout/stdin) plus the process carrying it (ssh, or the local server).</summary>
+public sealed class RemoteChannel : IAsyncDisposable
+{
+    private readonly ProcessChannel _process;
+
+    internal RemoteChannel(ProcessChannel process, string description)
+    {
+        _process = process;
+        Description = description;
+    }
+
+    public string Description { get; }
+    public Stream Input => _process.Input;
+    public Stream Output => _process.Output;
+    public Task<int> Exited => _process.Exited;
+    public int ProcessId => _process.ProcessId;
+    public string StderrTail => _process.StderrTail;
+    public Action<string>? StderrLine { get => _process.StderrLine; set => _process.StderrLine = value; }
+
+    /// <summary>Closes stdin (the server exits at EOF), waits <paramref name="grace"/>, then kills the process tree.</summary>
+    public Task StopAsync(TimeSpan grace)
+    {
+        _process.CloseOutput();
+        return _process.StopAsync(grace);
+    }
+
+    public ValueTask DisposeAsync() => _process.DisposeAsync();
+}
+
+/// <summary>Byte-stream transport to a <c>cscode-server</c> (ssh, local process; later WSL/Docker). Connecting includes starting (and if needed installing) the server.</summary>
+public interface IRemoteTransport
+{
+    string Description { get; }
+    /// <param name="progress">Human-readable steps ("Installing the server…") for the connection notification and the Remote log.</param>
+    Task<RemoteChannel> ConnectAsync(IProgress<string>? progress, CancellationToken ct);
+}
+
+/// <summary>Bootstrapping failed in a way retrying will not fix (unsupported platform, no bundle, checksum, ssh exit 255…).</summary>
+public sealed class RemoteBootstrapException(string message, Exception? inner = null) : IOException(message, inner);
+
+public sealed record ServerLaunchOptions
+{
+    /// <summary>Remote install root (<c>remote.ssh.serverInstallPath</c>); null/empty = <c>~/.cscode-server</c>.</summary>
+    public string? InstallRoot { get; init; }
+    /// <summary>The server's data directory (its settings, state and logs); null = <c>&lt;root&gt;/data</c>.</summary>
+    public string? DataDir { get; init; }
+    /// <summary>Opaque tag passed as <c>--marker</c> (lets tests and the leak checks find exactly the processes they started).</summary>
+    public string? Marker { get; init; }
+    public ServerBundleSet? Bundles { get; init; }
+    /// <summary>Ignore an existing install and upload again (Remote: Reinstall Server).</summary>
+    public bool ForceReinstall { get; init; }
+    /// <summary>Upper bound for "server greeted us" (covers ssh authentication, which may wait for the user at an askpass prompt).</summary>
+    public TimeSpan StartTimeout { get; init; } = TimeSpan.FromMinutes(3);
+    public TimeSpan InstallTimeout { get; init; } = TimeSpan.FromMinutes(10);
+}
+
+/// <summary>
+/// Starts the server through an <see cref="IRemoteShell"/> (ssh, or local sh for tests): runs the fixed start script; if it reports that nothing is
+/// installed, decides which bundle fits the remote (<see cref="InstallDecision"/>), streams it over the same kind of channel to the install script
+/// (checksum-verified, atomic rename), and starts again. An installed server costs one ssh connection.
+/// </summary>
+public sealed class ShellServerTransport(IRemoteShell shell, ServerLaunchOptions options) : IRemoteTransport
+{
+    public IRemoteShell Shell { get; } = shell;
+    public ServerLaunchOptions Options { get; } = options;
+    public string Description => Shell.Description;
+
+    public async Task<RemoteChannel> ConnectAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        var force = Options.ForceReinstall;
+        for (var attempt = 0; ; attempt++)
+        {
+            progress?.Report(attempt == 0 ? $"Starting the server ({Shell.Description})" : "Starting the installed server");
+            var hashes = Options.Bundles?.CandidateHashes ?? [];
+            var launch = Shell.Launch(ServerScripts.Start, [Options.InstallRoot ?? "", Options.DataDir ?? "", Options.Marker ?? "", force ? "force" : "", .. hashes]);
+            var start = await Greeting.StartAsync(launch, Shell.Description, Options.StartTimeout, ct).ConfigureAwait(false);
+            if (start.Channel is { } channel) return channel;
+            if (start.ProbeOutput is null)
+                throw new RemoteBootstrapException($"The server did not start ({Shell.Description}, exit code {start.ExitCode}): {LastLines(start.Stderr)}");
+            if (attempt > 0)
+                throw new RemoteBootstrapException("The server is still not installed after uploading it: " + LastLines(start.ProbeOutput));
+
+            var probe = RemoteProbe.Parse(start.ProbeOutput);
+            var plan = InstallDecision.Decide(probe, Options.Bundles);
+            if (plan.Action != InstallAction.Upload || plan.Bundle is not { } bundle) throw new RemoteBootstrapException(plan.Reason);
+            var size = new FileInfo(bundle.FullPath).Length;
+            progress?.Report($"Installing the server on {Shell.Description}: {plan.Reason}, {size / (1024.0 * 1024):0.0} MB");
+            ShellResult result;
+            await using (var bytes = File.OpenRead(bundle.FullPath))
+                result = await Shell.RunAsync(ServerScripts.Install, [Options.InstallRoot ?? "", bundle.Hash, bundle.Sha256, force ? "force" : ""], bytes, Options.InstallTimeout, ct)
+                    .ConfigureAwait(false);
+            if (result.ExitCode != 0 || !result.Stdout.Contains(ServerScripts.InstalledMarker, StringComparison.Ordinal))
+                throw new RemoteBootstrapException($"Installing the server failed (exit code {result.ExitCode}): {LastLines(result.Stderr + "\n" + result.Stdout)}");
+            force = false;
+        }
+    }
+
+    private static string LastLines(string text)
+    {
+        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return lines.Length == 0 ? "(no output)" : string.Join(" | ", lines.TakeLast(6));
+    }
+}
+
+/// <summary>
+/// Runs <c>cscode-server --stdio</c> on this machine as a child process (below-normal priority): the loopback transport of the tests, and the
+/// out-of-process language host (<c>cscode.languageHost = process</c>).
+/// </summary>
+public sealed class LoopbackTransport(ProcessLaunch launch) : IRemoteTransport
+{
+    public ProcessLaunch Launch { get; } = launch;
+    public TimeSpan StartTimeout { get; init; } = TimeSpan.FromMinutes(1);
+    public string Description => "local server process";
+
+    public async Task<RemoteChannel> ConnectAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        progress?.Report("Starting the local server process");
+        var start = await Greeting.StartAsync(Launch, Description, StartTimeout, ct).ConfigureAwait(false);
+        return start.Channel ?? throw new RemoteBootstrapException($"The local server did not start (exit code {start.ExitCode}): {start.Stderr}");
+    }
+}
+
+/// <summary>Starts a process and reads its stdout up to the server greeting (or the start script's not-installed report).</summary>
+internal static class Greeting
+{
+    public sealed record Outcome(RemoteChannel? Channel, string? ProbeOutput, int ExitCode, string Stderr);
+
+    public static Task<Outcome> StartAsync(ProcessLaunch launch, string description, TimeSpan timeout, CancellationToken ct) =>
+        BlockingWork.RunAsync("start", () =>
+        {
+            var process = ProcessChannel.Start(launch);
+            var ok = false;
+            using var killer = ct.Register(() => _ = process.DisposeAsync());
+            using var timer = new Timer(_ => _ = process.DisposeAsync(), null, timeout, Timeout.InfiniteTimeSpan);
+            try
+            {
+                var junk = new StringBuilder();
+                var line = new List<byte>(128);
+                var total = 0;
+                while (true)
+                {
+                    int b;
+                    try { b = process.Input.ReadByte(); }
+                    catch (Exception ex) when (ex is IOException or ObjectDisposedException) { b = -1; }
+                    if (b < 0)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var code = process.Exited.Wait(TimeSpan.FromSeconds(5)) ? process.Exited.Result : -1;
+                        return new Outcome(null, null, code, process.StderrTail + (junk.Length > 0 ? "\n" + junk : ""));
+                    }
+                    if (++total > 1024 * 1024) throw new RemoteBootstrapException($"{description}: no server greeting in the first megabyte of output");
+                    if (b != '\n') { line.Add((byte)b); continue; }
+                    var text = Encoding.UTF8.GetString(line.ToArray()).TrimEnd('\r');
+                    line.Clear();
+                    if (text == RemoteProtocol.Greeting)
+                    {
+                        ok = true;
+                        return new Outcome(new RemoteChannel(process, description), null, 0, "");
+                    }
+                    if (text == ServerScripts.NotInstalledMarker)
+                    {
+                        var rest = new StreamReader(process.Input, Encoding.UTF8).ReadToEnd();
+                        var code = process.Exited.Wait(TimeSpan.FromSeconds(10)) ? process.Exited.Result : -1;
+                        return new Outcome(null, rest, code, process.StderrTail);
+                    }
+                    if (junk.Length < 4096) junk.AppendLine(text); // banner / motd printed by the login shell
+                }
+            }
+            finally
+            {
+                if (!ok) process.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(6));
+            }
+        });
+}

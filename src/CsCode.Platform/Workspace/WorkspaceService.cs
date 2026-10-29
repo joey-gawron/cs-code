@@ -17,7 +17,8 @@ namespace CsCode.Platform.Workspace;
 /// and <c>.gitignore</c> (nested files, negations, <c>.git/info/exclude</c>), never enters VCS directories, is symlink-loop safe, and its memory is
 /// proportional to tree depth, not to the number of files. <c>search.useIgnoreFiles</c> / <c>search.followSymlinks</c> control the last two.</item>
 /// </list>
-/// Only <c>file:</c> folders are walked; other schemes (remote) have their own search.
+/// Only <c>file:</c> folders are walked here; folders of other schemes (remote) are searched by the <see cref="IFileSearchProvider"/> registered
+/// for their scheme, next to their files.
 /// </summary>
 public sealed class WorkspaceService : IWorkspaceService, IDisposable
 {
@@ -32,6 +33,7 @@ public sealed class WorkspaceService : IWorkspaceService, IDisposable
     private readonly IReadOnlyList<IWorkspaceBound> _bound;
     private readonly PlatformOptions _options;
     private readonly ILogger _log;
+    private readonly Lazy<IReadOnlyList<IFileSearchProvider>> _searchProviders;
     private readonly Emitter<WorkspaceFoldersChangedEventArgs> _changed = new();
     private readonly SemaphoreSlim _changeGate = new(1, 1);
     private readonly object _recentsGate = new();
@@ -39,8 +41,11 @@ public sealed class WorkspaceService : IWorkspaceService, IDisposable
     private Uri[] _recents;
 
     public WorkspaceService(IFileSystem fileSystem, IFileWatcher watcher, IStateStorage state, IConfigurationService configuration, IoLane lane,
-        IEnumerable<IWorkspaceBound>? bound = null, PlatformOptions? options = null, ILogger<WorkspaceService>? logger = null)
+        IEnumerable<IWorkspaceBound>? bound = null, PlatformOptions? options = null, ILogger<WorkspaceService>? logger = null,
+        Func<IEnumerable<IFileSearchProvider>>? searchProviders = null)
     {
+        // Resolved on the first search of a non-file folder (a remote provider depends on services that depend on this one).
+        _searchProviders = new(() => searchProviders?.Invoke().ToArray() ?? [], LazyThreadSafetyMode.ExecutionAndPublication);
         _fs = fileSystem;
         _watcher = watcher;
         _state = state;
@@ -218,6 +223,39 @@ public sealed class WorkspaceService : IWorkspaceService, IDisposable
     /// Cancelling stops the walk promptly; abandoning the enumeration does too.
     /// </summary>
     public async IAsyncEnumerable<Uri> FindFilesAsync(string? includeGlob, int maxResults, [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var folders = Folders;
+        var remaining = maxResults <= 0 ? int.MaxValue : maxResults;
+        if (folders.Any(f => f.IsFile))
+        {
+            await foreach (var uri in FindLocalFilesAsync(includeGlob, remaining, ct).ConfigureAwait(false))
+            {
+                yield return uri;
+                if (--remaining == 0) yield break;
+            }
+        }
+
+        var others = folders.Where(f => !f.IsFile).ToArray();
+        if (others.Length == 0) yield break;
+        var options = new FileSearchOptions(
+            string.IsNullOrWhiteSpace(includeGlob) ? null : includeGlob,
+            (_config.Get<Dictionary<string, bool>>(SettingKeys.FilesExclude) ?? []).Where(kv => kv.Value).Select(kv => kv.Key).ToArray(),
+            _config.Get("search.useIgnoreFiles", true),
+            _config.Get("search.followSymlinks", true),
+            remaining == int.MaxValue ? 0 : remaining);
+        foreach (var folder in others)
+        {
+            var provider = _searchProviders.Value.FirstOrDefault(p => string.Equals(p.Scheme, folder.Scheme, StringComparison.OrdinalIgnoreCase));
+            if (provider is null) continue; // nobody serves this scheme: nothing to find
+            await foreach (var uri in provider.FindFilesAsync(folder, options with { MaxResults = remaining == int.MaxValue ? 0 : remaining }, ct).ConfigureAwait(false))
+            {
+                yield return uri;
+                if (--remaining == 0) yield break;
+            }
+        }
+    }
+
+    private async IAsyncEnumerable<Uri> FindLocalFilesAsync(string? includeGlob, int maxResults, [EnumeratorCancellation] CancellationToken ct)
     {
         var roots = Folders.Where(f => f.IsFile).Select(FileUri.ToPath).ToArray();
         if (roots.Length == 0) yield break;

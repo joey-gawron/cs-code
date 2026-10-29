@@ -94,7 +94,10 @@ public class DependencyInjectionTests : IDisposable
         Assert.Same(_f.Get<IWorkspaceService>(), _f.Get<WorkspaceService>());
         Assert.Same(_f.Get<IStateStorage>(), _f.Get<StateStorage>());
         Assert.Same(_f.Get<IContextKeyService>(), _f.Get<CsCode.Platform.Context.ContextKeyService>());
-        Assert.Same(_f.Get<IFileWatcher>(), _f.Get<CsCode.Platform.Watching.FileWatcher>());
+        // IFileSystem / IFileWatcher route by scheme (file: local, remote schemes to their providers); file: is the Platform implementation
+        Assert.Same(_f.Get<IFileWatcher>(), _f.Get<CsCode.Platform.Watching.FileWatcherRouter>());
+        Assert.Same(_f.Get<CsCode.Platform.Watching.FileWatcher>(), _f.Get<CsCode.Platform.Watching.FileWatcherRouter>().Local);
+        Assert.Same(_f.Get<LocalFileSystem>(), _f.Get<CsCode.Platform.FileSystem.FileSystemRouter>().Local);
         // and the services really share the infrastructure
         Assert.Same(_f.Get<IFileSystem>(), _f.Get<IWorkspaceService>().FileSystem);
         Assert.Same(_f.Get<IFileWatcher>(), _f.Get<IWorkspaceService>().Watcher);
