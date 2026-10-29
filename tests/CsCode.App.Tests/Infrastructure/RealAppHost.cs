@@ -56,7 +56,14 @@ public sealed class RealAppHost : IAsyncDisposable
     /// <summary>Composes the real app, shows the window and waits until the deferred startup (layout, command-line targets) has run.</summary>
     public async Task<RealAppHost> StartAsync(IReadOnlyList<string>? args = null, Action<IServiceCollection>? configure = null)
     {
-        Services = AppServices.Build(args ?? [], configure);
+        // Tests never touch a real X server's PRIMARY selection, also when the developer's DISPLAY is set: an in-process one stands in
+        // (a test that wants another registers its own clipboard service in `configure`, which runs after this).
+        Services = AppServices.Build(args ?? [], services =>
+        {
+            services.AddSingleton(sp => new CsCode.App.Services.ClipboardService(sp.GetRequiredService<Ui.Threading.IUiDispatcher>(),
+                CsCode.App.Services.AvaloniaPlatformClipboard.Of(() => sp.GetRequiredService<WindowHolder>().Window), () => new CsCode.App.Services.InMemoryPrimarySelection()));
+            configure?.Invoke(services);
+        });
         Window = new MainWindow(Services) { Width = 1280, Height = 800 };
         Window.Show();
         await DevHost.WaitFor(() => Window.IsVisible);

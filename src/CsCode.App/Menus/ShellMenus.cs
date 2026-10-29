@@ -71,7 +71,7 @@ public static class ShellMenus
             M("Cu_t", "editor.action.clipboardCutAction", Input.ClipboardRouter.CanCutKey),
             M("_Copy", "editor.action.clipboardCopyAction", Input.ClipboardRouter.CanCopyKey, IconKey.Copy),
             M("_Paste", "editor.action.clipboardPasteAction", Input.ClipboardRouter.CanPasteKey, "clippy"),
-            M("Cycle Clipboard _Ring", "cscode.editor.cycleClipboardRing", "editorTextFocus && !editorReadonly"),
+            M("Cycle Clipboard _Ring", "cscode.editor.cycleClipboardRing", Input.ClipboardRouter.EditorPasteKey),
             M("Select _All", "editor.action.selectAll", "editorTextFocus"),
             S,
             M("_Find...", KnownCommands.Find, "hasOpenEditors", IconKey.Search),
