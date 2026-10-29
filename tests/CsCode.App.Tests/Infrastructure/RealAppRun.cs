@@ -16,8 +16,13 @@ namespace CsCode.App.Tests.Infrastructure;
 public sealed class RealAppHome : IDisposable
 {
     private readonly string? _previous = Environment.GetEnvironmentVariable("CSCODE_HOME");
+    private readonly string? _previousData = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
 
-    public RealAppHome() => Environment.SetEnvironmentVariable("CSCODE_HOME", Home.Path);
+    public RealAppHome()
+    {
+        Environment.SetEnvironmentVariable("CSCODE_HOME", Home.Path);
+        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Home.Combine("xdg-data")); // the Platform trash lives here: deletes never reach the user's real Trash
+    }
 
     public TempDirectory Home { get; } = new("cscode-life-home-");
     public TempDirectory Workspace { get; } = new("cscode-life-ws-");
@@ -36,6 +41,7 @@ public sealed class RealAppHome : IDisposable
     public void Dispose()
     {
         Environment.SetEnvironmentVariable("CSCODE_HOME", _previous);
+        Environment.SetEnvironmentVariable("XDG_DATA_HOME", _previousData);
         Home.Dispose();
         Workspace.Dispose();
         CrashLogs.Dispose();
@@ -96,8 +102,10 @@ public sealed class RealAppRun : IAsyncDisposable
     }
 }
 
-/// <summary>A minimal stdio language server (python3) for exit tests: answers <c>initialize</c>; "polite" also honours shutdown/exit, "stubborn" ignores
-/// shutdown, exit, stdin EOF and SIGTERM (only a kill ends it).</summary>
+/// <summary>A minimal stdio language server (python3): answers <c>initialize</c>; "polite" also honours shutdown/exit, "stubborn" ignores shutdown, exit,
+/// stdin EOF and SIGTERM (only a kill ends it). With a log path it also advertises will-save-wait-until (answered with an edit, or never: "hang") and the
+/// workspace file operations for <c>*.fakels</c> (will-rename answered with an edit of the renamed file's sibling <c>refs.fakels</c>), and appends every
+/// message it receives to the log as one JSON line.</summary>
 public static class FakeLanguageServer
 {
     public const string Id = "fakels";
@@ -106,6 +114,8 @@ public static class FakeLanguageServer
     private const string Script = """
         import json, signal, sys, time
         mode = sys.argv[1]
+        log_path = sys.argv[2] if len(sys.argv) > 2 else None
+        will_save = sys.argv[3] if len(sys.argv) > 3 else 'none'
         if mode == 'stubborn':
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
             signal.signal(signal.SIGHUP, signal.SIG_IGN)
@@ -137,8 +147,23 @@ public static class FakeLanguageServer
                 while True:
                     time.sleep(3600)
             method = msg.get('method')
+            if log_path and method:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({'method': method, 'params': msg.get('params')}) + '\n')
             if method == 'initialize':
-                send({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'capabilities': {'textDocumentSync': 1}}})
+                caps = {'textDocumentSync': 1}
+                if log_path:
+                    caps['textDocumentSync'] = {'openClose': True, 'change': 1, 'willSave': True, 'willSaveWaitUntil': will_save != 'none', 'save': {'includeText': False}}
+                    files = {'filters': [{'scheme': 'file', 'pattern': {'glob': '**/*.fakels'}}]}
+                    caps['workspace'] = {'fileOperations': {'didCreate': files, 'willRename': files, 'didRename': files, 'didDelete': files}}
+                send({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'capabilities': caps}})
+            elif method == 'textDocument/willSaveWaitUntil' and will_save == 'edit':
+                start = {'line': 0, 'character': 0}
+                send({'jsonrpc': '2.0', 'id': msg['id'], 'result': [{'range': {'start': start, 'end': start}, 'newText': '// formatted on save\n'}]})
+            elif method == 'workspace/willRenameFiles':
+                refs = msg['params']['files'][0]['oldUri'].rsplit('/', 1)[0] + '/refs.fakels'
+                edit = {'range': {'start': {'line': 0, 'character': 0}, 'end': {'line': 0, 'character': 3}}, 'newText': 'new'}
+                send({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'changes': {refs: [edit]}}})
             elif method == 'shutdown' and mode == 'polite':
                 send({'jsonrpc': '2.0', 'id': msg['id'], 'result': None})
             elif method == 'exit' and mode == 'polite':
@@ -148,14 +173,15 @@ public static class FakeLanguageServer
     public static string? Python => FindOnPath("python3");
 
     /// <summary>Writes the server script and returns the user settings that define it for <c>*.fakels</c> files.</summary>
-    public static string Settings(RealAppHome env, string python, string mode, int shutdownTimeoutMs)
+    public static string Settings(RealAppHome env, string python, string mode, int shutdownTimeoutMs, string? logPath = null, string willSave = "none")
     {
         var script = env.Home.WriteFile("fake-language-server.py", Script);
+        string[] args = logPath is null ? [script, mode] : [script, mode, logPath, willSave];
         return System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
         {
             ["cscode.languageServers"] = new Dictionary<string, object>
             {
-                [Id] = new { command = python, args = new[] { script, mode }, selector = new[] { new { pattern = "**/*" + Extension } } },
+                [Id] = new { command = python, args, selector = new[] { new { pattern = "**/*" + Extension } } },
             },
             ["cscode.lsp.shutdownTimeoutMs"] = shutdownTimeoutMs,
         });

@@ -39,7 +39,7 @@ Program -> App.axaml.cs -> AppSession -> AppStartup.BuildServicesAsync (pool thr
 | `IWindowService` | `WindowService` | toasts with action buttons + notification centre, quick pick / input box overlays, native dialogs through `IShellHost`, progress notification + status item, clipboard, `OpenExternalAsync` |
 | `IStatusBarService` | `StatusBarService` | thread safe, `Changed` coalesced to one per UI turn |
 | `IOutputService` | `OutputService` | 2 MB ring per channel, appends batched (one flush per UI turn, never a post per line) |
-| `INavigationService` | `NavigationService` | open/preview/reveal, `ApplyWorkspaceEditAsync` (open docs: one undo group each; closed files: read, edit, write via `IFileSystem` off the UI thread; create/rename/delete; confirmation for multi-file edits, setting `cscode.shell.confirmMultiFileEdits`) |
+| `INavigationService` | `NavigationService` | open/preview/reveal, `ApplyWorkspaceEditAsync` (open docs: one undo group each; closed files: read, edit, write via `IFileSystem` off the UI thread; create/rename/delete with the file-operation participants around them; confirmation for multi-file edits, setting `cscode.shell.confirmMultiFileEdits`) |
 | `IToolWindow` host | `ToolWindowManager` | views created on first show, **disposed when hidden** |
 | `IColorThemeService` consumer | `ThemeApplier` | the three VS2022 themes are registered into the module's `IColorThemeService` |
 
@@ -201,7 +201,15 @@ tolerant of corrupt/future data; saved (debounced) on change and on exit; `View 
 `:` go to line[:column], `@` document symbols, `#` workspace symbols, `?` help. Cheap modes answer synchronously (first paint needs no dispatcher turn); stale async results are dropped. Also drives `ShowQuickPick`/`ShowInputBox`.
 Theme picker (`workbench.action.selectTheme`) previews live while arrowing and reverts on Esc.
 
-**Explorer** (virtualised flat rows, 20k siblings expand in well under a second): lazy folders, off-thread read/sort, VS file icons, persisted expansion, create/rename (F2 inline)/delete (trash, confirmed)/duplicate/cut/copy/paste/move (model),
+**Saving and file operations with language servers** (`FileParticipants`, docs/LSP.md). Every save of the shell (Save, Save As, Save All, the Save
+answer of a close prompt) goes through `DocumentWell.SaveAsync`: the `IWillSaveParticipant`s (the LSP manager: `willSave` / `willSaveWaitUntil`) are
+asked first and their edits applied as one undo unit each; together they may delay a save by at most **1.5 s**, a failing or late participant is
+skipped (logged) and edits computed for a version the user has since changed are dropped. Explorer create/rename/move/delete/duplicate/paste and the
+resource operations of workspace edits run the `IFileOperationParticipant`s around the file-system call: `WillRenameFilesAsync` first (bounded to 3 s;
+its edit is applied before the move, so references and imports follow the file; in a workspace edit without a second confirmation), then
+`DidRename/DidCreate/DidDeleteFilesAsync`. Participants are resolved on first use (the language client itself depends on the navigation service).
+
+**Explorer** (virtualised flat rows, 20k siblings expand in well under a second): lazy folders, off-thread read/sort, VS file icons, persisted expansion, create/rename (F2 inline)/delete (trash, confirmed)/duplicate/cut/copy/paste/move (model; with the file-operation participants),
 reveal active file, `files.exclude`, watcher batches applied by diffing only the affected loaded directories, type-ahead, filter box (loaded nodes), context menu incl. contributed items, empty state, multi-root.
 **Error List** (counts and chips, search, group by file, sort, double-click navigates, aggregation and sorting on a worker at <= 10 Hz, 50k rows apply as one property change).
 **Output** (channel dropdown, clear, shows the most recent 5,000 lines of a channel; the ring keeps 2 MB). **Find Results** (target of `cscode.references.show`; preview lines read lazily).

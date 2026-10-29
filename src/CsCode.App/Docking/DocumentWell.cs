@@ -1,6 +1,8 @@
 using Avalonia.Controls;
 using Avalonia.Threading;
 using CsCode.App.Notifications;
+using CsCode.App.Services;
+using CsCode.Core.Languages;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
@@ -31,6 +33,7 @@ public sealed class DocumentWell : IDisposable
     private readonly IModalDialogs _dialogs;
     private readonly IWindowService? _windows;
     private readonly IConfigurationService? _config;
+    private readonly FileParticipants? _participants;
     private readonly DisposableStore _subs = new();
     private readonly List<ShellDocument> _mru = new();
     private readonly LinkedList<Uri> _closed = new();
@@ -41,9 +44,11 @@ public sealed class DocumentWell : IDisposable
 
     private readonly IUiDispatcher? _ui;
 
-    public DocumentWell(ShellDockFactory factory, IEditorViewFactory editors, IModalDialogs dialogs, IWindowService? windows = null, IConfigurationService? config = null, IUiDispatcher? ui = null)
+    public DocumentWell(ShellDockFactory factory, IEditorViewFactory editors, IModalDialogs dialogs, IWindowService? windows = null, IConfigurationService? config = null, IUiDispatcher? ui = null,
+        FileParticipants? participants = null)
     {
         _ui = ui;
+        _participants = participants;
         _factory = factory;
         _editors = editors;
         _dialogs = dialogs;
@@ -207,6 +212,27 @@ public sealed class DocumentWell : IDisposable
 
     private static bool IsPinned(ShellDocument t) => t is EditorTab { IsPinned: true };
 
+    /// <summary>
+    /// Saves a tab: Save As (a dialog) for untitled buffers or when <paramref name="saveAs"/> is set, then the will-save participants (language servers'
+    /// format-on-save edits; bounded, docs/LSP.md), then the editor writes the file. Every save path of the shell goes through here.
+    /// Returns false when the user cancelled the Save As dialog. UI thread.
+    /// </summary>
+    public async ValueTask<bool> SaveAsync(EditorTab tab, bool saveAs = false)
+    {
+        Uri? target = null;
+        if (saveAs || tab.Doc.IsUntitled)
+        {
+            if (_windows is null) return false;
+            target = await _windows.ShowSaveDialogAsync(new SaveDialogOptions(Title: saveAs ? "Save As" : "Save " + tab.Title));
+            if (target is null) return false;
+        }
+        var doc = tab.Doc;
+        if (_participants is not null) await _participants.WillSaveAsync(doc, DocumentSaveReason.Manual);
+        if (target is not null) await doc.SaveAsAsync(target);
+        else await doc.SaveAsync();
+        return true;
+    }
+
     /// <summary>Save / Don't Save / Cancel. Returns true if the tab may be closed.</summary>
     public async ValueTask<bool> ConfirmCloseAsync(EditorTab tab)
     {
@@ -219,15 +245,7 @@ public sealed class DocumentWell : IDisposable
             case "Save":
                 try
                 {
-                    if (tab.Doc.IsUntitled)
-                    {
-                        if (_windows is null) return false;
-                        var target = await _windows.ShowSaveDialogAsync(new SaveDialogOptions(Title: "Save " + tab.Title));
-                        if (target is null) return false;
-                        await tab.Doc.SaveAsAsync(target);
-                    }
-                    else await tab.Doc.SaveAsync();
-                    return true;
+                    return await SaveAsync(tab);
                 }
                 catch (Exception ex)
                 {

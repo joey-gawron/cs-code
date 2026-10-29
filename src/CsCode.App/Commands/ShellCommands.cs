@@ -90,16 +90,12 @@ public static class ShellCommands
         });
         Run("workbench.action.closeFolder", "Close Folder", "File", async () => { if (c.Workspace is not null) await c.Workspace.CloseFolderAsync().ConfigureAwait(true); });
         Run(KnownCommands.NewUntitledFile, "New Untitled File", "File", () => { c.Well.OpenUntitled(); return Task.CompletedTask; });
-        Run(KnownCommands.Save, "Save", "File", async () => { if (c.Well.ActiveEditor is { } t) await SaveAsync(c, t).ConfigureAwait(true); });
-        Run("workbench.action.files.saveAs", "Save As...", "File", async () =>
-        {
-            if (c.Well.ActiveEditor is not { } t) return;
-            var target = await c.Window.ShowSaveDialogAsync(new SaveDialogOptions(Title: "Save As")).ConfigureAwait(true);
-            if (target is not null) await t.Doc.SaveAsAsync(target).ConfigureAwait(true);
-        });
+        // Every save goes through the well: will-save participants (format on save) run first.
+        Run(KnownCommands.Save, "Save", "File", async () => { if (c.Well.ActiveEditor is { } t) await c.Well.SaveAsync(t).ConfigureAwait(true); });
+        Run("workbench.action.files.saveAs", "Save As...", "File", async () => { if (c.Well.ActiveEditor is { } t) await c.Well.SaveAsync(t, saveAs: true).ConfigureAwait(true); });
         Run(KnownCommands.SaveAll, "Save All", "File", async () =>
         {
-            foreach (var t in c.Well.EditorTabs.Where(t => t.IsDirty).ToArray()) await SaveAsync(c, t).ConfigureAwait(true);
+            foreach (var t in c.Well.EditorTabs.Where(t => t.IsDirty).ToArray()) await c.Well.SaveAsync(t).ConfigureAwait(true);
         });
 
         // ---- tabs
@@ -156,16 +152,6 @@ public static class ShellCommands
         });
 
         return regs;
-    }
-
-    private static async Task SaveAsync(ShellCommandContext c, EditorTab tab)
-    {
-        if (tab.Doc.IsUntitled)
-        {
-            var target = await c.Window.ShowSaveDialogAsync(new SaveDialogOptions(Title: "Save " + tab.Title)).ConfigureAwait(true);
-            if (target is not null) await tab.Doc.SaveAsAsync(target).ConfigureAwait(true);
-        }
-        else await tab.Doc.SaveAsync().ConfigureAwait(true);
     }
 
     private static void Cycle(ShellCommandContext c, int step)

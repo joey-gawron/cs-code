@@ -13,8 +13,8 @@ namespace CsCode.App.Services;
 /// <see cref="INavigationService"/> over the document well. Callable from any thread (the synchronous cost on the caller is a single
 /// dispatcher post); the active document / caret are published through volatile snapshots so non-UI readers never touch the UI thread.
 /// <see cref="ApplyWorkspaceEditAsync"/> edits open documents in-editor as ONE undo group each, edits closed files on disk through
-/// <see cref="IFileSystem"/> (read, apply, write, off the UI thread), performs create/rename/delete resource operations and asks for
-/// confirmation when an edit spans several files.
+/// <see cref="IFileSystem"/> (read, apply, write, off the UI thread), performs create/rename/delete resource operations (with the file-operation
+/// participants around them: will-rename edits first, did-create/rename/delete afterwards) and asks for confirmation when an edit spans several files.
 /// </summary>
 public sealed class NavigationService : INavigationService, IDisposable
 {
@@ -27,6 +27,7 @@ public sealed class NavigationService : INavigationService, IDisposable
     private readonly IModalDialogs _dialogs;
     private readonly IWindowService? _windows;
     private readonly IConfigurationService? _config;
+    private readonly FileParticipants? _participants;
     private readonly DisposableStore _subs = new();
     private readonly Emitter<IEditorDocument?> _activeChanged = new();
     private readonly Emitter<TextPosition?> _caretChanged = new();
@@ -36,8 +37,9 @@ public sealed class NavigationService : INavigationService, IDisposable
     private volatile IReadOnlyList<IEditorDocument> _open = [];
 
     public NavigationService(DocumentWell well, IUiDispatcher ui, IModalDialogs dialogs, IFileSystem? fileSystem = null, IDocumentManager? documents = null,
-        IWindowService? windows = null, IConfigurationService? config = null)
+        IWindowService? windows = null, IConfigurationService? config = null, FileParticipants? participants = null)
     {
+        _participants = participants;
         _well = well;
         _ui = ui;
         _dialogs = dialogs;
@@ -96,7 +98,12 @@ public sealed class NavigationService : INavigationService, IDisposable
 
     // ------------------------------------------------------------------ workspace edits
 
-    public async ValueTask<bool> ApplyWorkspaceEditAsync(WorkspaceEdit edit, string? label = null, CancellationToken ct = default)
+    public ValueTask<bool> ApplyWorkspaceEditAsync(WorkspaceEdit edit, string? label = null, CancellationToken ct = default) =>
+        ApplyAsync(edit, label, nested: false, ct);
+
+    /// <param name="nested">The edit will-rename participants returned for a rename inside another edit: applied without a second confirmation and
+    /// without asking the participants again (their edit already accounts for the rename).</param>
+    private async ValueTask<bool> ApplyAsync(WorkspaceEdit edit, string? label, bool nested, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(edit);
         if (edit.IsEmpty) return true;
@@ -105,7 +112,7 @@ public sealed class NavigationService : INavigationService, IDisposable
         foreach (var op in edit.ResourceOperations ?? [])
             files.Add(op switch { CreateFileOperation c => c.Uri, RenameFileOperation r => r.OldUri, DeleteFileOperation d => d.Uri, _ => throw new NotSupportedException(op.GetType().Name) });
 
-        if (files.Count > 1 && (_config?.Get(ConfirmMultiFileSetting, true) ?? true))
+        if (!nested && files.Count > 1 && (_config?.Get(ConfirmMultiFileSetting, true) ?? true))
         {
             var answer = await await _ui.InvokeAsync(() => _dialogs.ShowAsync(
                 label ?? "Apply changes",
@@ -116,7 +123,7 @@ public sealed class NavigationService : INavigationService, IDisposable
         try
         {
             foreach (var op in edit.ResourceOperations ?? [])
-                await ApplyResourceOperationAsync(op, ct).ConfigureAwait(false);
+                await ApplyResourceOperationAsync(op, nested, ct).ConfigureAwait(false);
 
             foreach (var (uri, edits) in edit.Changes)
             {
@@ -178,7 +185,7 @@ public sealed class NavigationService : INavigationService, IDisposable
         return (new UTF8Encoding(false, true).GetString(bytes), new UTF8Encoding(false));
     }
 
-    private async ValueTask ApplyResourceOperationAsync(ResourceOperation op, CancellationToken ct)
+    private async ValueTask ApplyResourceOperationAsync(ResourceOperation op, bool nested, CancellationToken ct)
     {
         if (_fs is null) throw new InvalidOperationException("No file system available for resource operations");
         switch (op)
@@ -189,6 +196,7 @@ public sealed class NavigationService : INavigationService, IDisposable
                 if (exists && c.IgnoreIfExists) return;
                 if (exists && !c.Overwrite) throw new IOException($"{c.Uri} already exists");
                 await _fs.WriteFileAsync(c.Uri, ReadOnlyMemory<byte>.Empty, createParents: true, ct).ConfigureAwait(false);
+                if (_participants is not null) await _participants.DidCreateAsync([c.Uri]).ConfigureAwait(false);
                 break;
             }
             case RenameFileOperation r:
@@ -202,7 +210,11 @@ public sealed class NavigationService : INavigationService, IDisposable
                 var wasOpen = await _ui.InvokeAsync(() => _well.Find(r.OldUri) is not null).ConfigureAwait(false);
                 if (wasOpen)
                     await await _ui.InvokeAsync(async () => await _well.CloseAsync(_well.Find(r.OldUri)!, prompt: true).ConfigureAwait(true)).ConfigureAwait(false);
+                IReadOnlyList<(Uri, Uri)> renamed = [(r.OldUri, r.NewUri)];
+                if (!nested && _participants is not null && await _participants.WillRenameAsync(renamed, ct).ConfigureAwait(false) is { } participantEdit)
+                    await ApplyAsync(participantEdit, null, nested: true, ct).ConfigureAwait(false); // e.g. imports that name the file
                 await _fs.RenameAsync(r.OldUri, r.NewUri, r.Overwrite, ct).ConfigureAwait(false);
+                if (_participants is not null) await _participants.DidRenameAsync(renamed).ConfigureAwait(false);
                 if (wasOpen) await OpenAsync(r.NewUri, ct: ct).ConfigureAwait(false);
                 break;
             }
@@ -216,6 +228,7 @@ public sealed class NavigationService : INavigationService, IDisposable
                 var open = await _ui.InvokeAsync(() => _well.Find(d.Uri)).ConfigureAwait(false);
                 if (open is not null) await await _ui.InvokeAsync(async () => await _well.CloseAsync(open, prompt: false).ConfigureAwait(true)).ConfigureAwait(false);
                 await _fs.DeleteAsync(d.Uri, d.Recursive, useTrash: true, ct).ConfigureAwait(false);
+                if (_participants is not null) await _participants.DidDeleteAsync([d.Uri]).ConfigureAwait(false);
                 break;
             }
         }

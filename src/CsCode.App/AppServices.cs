@@ -8,6 +8,7 @@ using CsCode.App.ToolWindows;
 using CsCode.App.ToolWindows.FindResults;
 using CsCode.Core;
 using CsCode.Core.Diagnostics;
+using CsCode.Core.Languages;
 using CsCode.Core.Platform;
 using CsCode.Dap;
 using CsCode.Editor;
@@ -20,6 +21,7 @@ using CsCode.Ui;
 using CsCode.Ui.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
 namespace CsCode.App;
 
@@ -97,11 +99,15 @@ public static class AppServices
         services.AddSingleton<IOutputService>(sp => sp.GetRequiredService<OutputService>());
         services.AddSingleton<IWindowService, WindowService>();
 
+        // Language servers take part in saves and file operations; resolved lazily because the language client itself depends on navigation.
+        services.AddSingleton(sp => new FileParticipants(() => sp.GetServices<IWillSaveParticipant>(), () => sp.GetServices<IFileOperationParticipant>(),
+            sp.GetService<ILoggerFactory>()?.CreateLogger("CsCode.Shell.FileParticipants")));
         services.AddSingleton<ShellDockFactory>();
         services.AddSingleton(sp => new DocumentWell(sp.GetRequiredService<ShellDockFactory>(), sp.GetRequiredService<IEditorViewFactory>(), sp.GetRequiredService<IModalDialogs>(),
-            sp.GetService<IWindowService>(), sp.GetService<IConfigurationService>(), sp.GetRequiredService<IUiDispatcher>()));
+            sp.GetService<IWindowService>(), sp.GetService<IConfigurationService>(), sp.GetRequiredService<IUiDispatcher>(), sp.GetService<FileParticipants>()));
         services.AddSingleton(sp => new NavigationService(sp.GetRequiredService<DocumentWell>(), sp.GetRequiredService<IUiDispatcher>(), sp.GetRequiredService<IModalDialogs>(),
-            sp.GetService<IWorkspaceService>()?.FileSystem, sp.GetService<Core.Text.IDocumentManager>(), sp.GetService<IWindowService>(), sp.GetService<IConfigurationService>()));
+            sp.GetService<IWorkspaceService>()?.FileSystem, sp.GetService<Core.Text.IDocumentManager>(), sp.GetService<IWindowService>(), sp.GetService<IConfigurationService>(),
+            sp.GetService<FileParticipants>()));
         services.AddSingleton<INavigationService>(sp => sp.GetRequiredService<NavigationService>());
 
         services.AddSingleton<IToolWindow, ExplorerToolWindow>();
