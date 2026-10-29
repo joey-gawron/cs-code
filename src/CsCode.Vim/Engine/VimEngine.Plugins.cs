@@ -29,7 +29,7 @@ public sealed partial class VimEngine
                 return ($"<{t}>", $"</{name}>");
             }
             default:
-                return (char.ConvertFromUtf32(ch), char.ConvertFromUtf32(ch));
+                return (Keys.SafeString(ch), Keys.SafeString(ch));
         }
     }
 

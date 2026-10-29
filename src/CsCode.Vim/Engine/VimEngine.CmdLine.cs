@@ -114,7 +114,7 @@ public sealed partial class VimEngine
         if (c.Literal == 1)
         {
             c.Literal = 0; _noMap--;
-            if (k is >= 0 and < 0x110000) { t.Insert(c.Cursor, char.ConvertFromUtf32(k)); c.Cursor += k > 0xFFFF ? 2 : 1; }
+            if (k is >= 0 and < 0x110000) { t.Insert(c.Cursor, Keys.SafeString(k)); c.Cursor += k > 0xFFFF ? 2 : 1; }
             PublishCommandLine();
             return;
         }
@@ -186,7 +186,7 @@ public sealed partial class VimEngine
             case Keys.Tab:
                 break;
             default:
-                if (Keys.IsChar(k) && k >= 32) { var s = char.ConvertFromUtf32(k); t.Insert(c.Cursor, s); c.Cursor += s.Length; }
+                if (Keys.IsChar(k) && k >= 32) { var s = Keys.SafeString(k); t.Insert(c.Cursor, s); c.Cursor += s.Length; }
                 else if (Keys.IsChar(k) && k < 32) { }
                 break;
         }

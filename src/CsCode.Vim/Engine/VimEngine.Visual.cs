@@ -509,7 +509,7 @@ public sealed partial class VimEngine
         if (ch is Keys.Esc or 3) { return; }
         var first = oap.Start.Line;
         var last = oap.End.Line;
-        var rep = ch == Keys.CR || ch == Keys.NL ? "\r" : char.ConvertFromUtf32(ch);
+        var rep = ch == Keys.CR || ch == Keys.NL ? "\r" : Keys.SafeString(ch);
         if (oap.BlockMode)
         {
             for (var l = first; l <= last; l++)

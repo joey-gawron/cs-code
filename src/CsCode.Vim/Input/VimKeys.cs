@@ -67,6 +67,10 @@ public static class Keys
 
     public static bool IsSpecial(int key) => (key & Special) != 0;
     public static int BaseOf(int key) => key & BaseMask;
+
+    /// <summary>Text of a code point; lone surrogates and values outside Unicode (which text can contain after odd edits) become a single code unit instead of throwing.</summary>
+    public static string SafeString(int codePoint) =>
+        codePoint is >= 0 and < 0x110000 && codePoint is not (>= 0xD800 and <= 0xDFFF) ? char.ConvertFromUtf32(codePoint) : ((char)(codePoint & 0xFFFF)).ToString();
     public static bool HasMods(int key) => (key & ModMask) != 0;
 
     /// <summary>True for a plain Unicode scalar with no flags (the common typed-character case).</summary>
@@ -243,7 +247,7 @@ public static class Keys
                 case 0: sb.Append("<Nul>"); return;
                 case 127: sb.Append("<C-?>"); return;
                 case < 32: sb.Append("<C-").Append((char)(b + 64)).Append('>'); return;
-                default: sb.Append(char.ConvertFromUtf32(b)); return;
+                default: sb.Append(Keys.SafeString(b)); return;
             }
         }
         sb.Append('<');
@@ -252,7 +256,7 @@ public static class Keys
         if ((mods & ModAlt) != 0) sb.Append("M-");
         if ((mods & ModMeta) != 0) sb.Append("D-");
         if (IsSpecial(key)) sb.Append(CodeToName.TryGetValue(b | Special, out var n) ? n : "?");
-        else sb.Append(b switch { Esc => "Esc", CR => "CR", Tab => "Tab", ' ' => "Space", < 32 => "C-" + (char)(b + 64), _ => char.ConvertFromUtf32(b) });
+        else sb.Append(b switch { Esc => "Esc", CR => "CR", Tab => "Tab", ' ' => "Space", < 32 => "C-" + (char)(b + 64), _ => Keys.SafeString(b) });
         sb.Append('>');
     }
 
@@ -275,7 +279,7 @@ public static class Keys
             sb.Append(CodeToPair.TryGetValue(b | Special, out var pair) ? pair : "ýI");
         }
         else if (b == KSpecial) sb.Append(KSpecial).Append(KsSpecial).Append('X');
-        else if (b > 0xFFFF) sb.Append(char.ConvertFromUtf32(b));
+        else if (b > 0xFFFF) sb.Append(Keys.SafeString(b));
         else sb.Append((char)b);
     }
 
@@ -343,5 +347,5 @@ public static class CharStrings
     }
 
     public static string Get(char c) => c < Table.Length ? Table[c] : c.ToString();
-    public static string Get(int codePoint) => codePoint < Table.Length ? Table[codePoint] : char.ConvertFromUtf32(codePoint);
+    public static string Get(int codePoint) => codePoint < Table.Length ? Table[codePoint] : Keys.SafeString(codePoint);
 }

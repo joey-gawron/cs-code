@@ -819,7 +819,7 @@ public sealed partial class VimEngine
                 '/' => "E35: No previous regular expression",
                 '%' => "E32: No file name",
                 '#' => "E23: No alternate file",
-                _ => $"E353: Nothing in register {(regname == 0 ? "\"" : char.ConvertFromUtf32(regname))}",
+                _ => $"E353: Nothing in register {(regname == 0 ? "\"" : Keys.SafeString(regname))}",
             });
             return false;
         }

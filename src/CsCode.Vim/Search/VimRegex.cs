@@ -376,15 +376,15 @@ public static class VimRegex
             switch (t.Kind)
             {
                 case T.Lit: return Lit(t.C);
-                case T.Coll: Multiline |= t.Nl; return Collection(t.Raw, t.Nl);
+                case T.Coll: Multiline |= t.Nl; return WidenNegated(Collection(t.Raw, t.Nl));
                 case T.Brace: throw new VimRegexException(t.C == '@' ? "E64: \\@ follows nothing" : "E64: \\{ follows nothing");
                 case T.Pct: return Pct(t);
-                case T.UCmd: return UnderscoreCmd(t.C);
-                case T.Cmd: return Command(t.C);
+                case T.UCmd: return WidenNegated(UnderscoreCmd(t.C));
+                case T.Cmd: return WidenNegated(Command(t.C));
                 case T.Op:
                     switch (t.C)
                     {
-                        case '.': return "[^\\n]";
+                        case '.': return WidenNegated("[^\\n]");
                         case '^':
                             if (atStart || _p == 1) { startAnchor = true; return "^"; }
                             return "\\^";
@@ -430,7 +430,7 @@ public static class VimRegex
 
         private static string Lit(int cp)
         {
-            if (cp > 0xFFFF) return Regex.Escape(char.ConvertFromUtf32(cp));
+            if (cp > 0xFFFF) return Regex.Escape(Keys.SafeString(cp));
             return cp switch
             {
                 '\n' => "\\n",
@@ -522,6 +522,12 @@ public static class VimRegex
             throw new VimRegexException("E63: Invalid use of \\_");
         }
 
+        /// <summary>.NET matches UTF-16 code units; Vim matches characters. A class that can match "anything but ..." must take a surrogate pair as one character.</summary>
+        private static string WidenNegated(string cls) =>
+            cls.StartsWith("[^", StringComparison.Ordinal) && !cls.Contains('|') && cls.EndsWith(']')
+                ? "(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|" + cls + ")"
+                : cls;
+
         private string Pct(Tok t)
         {
             if (t.C == '[')
@@ -584,7 +590,7 @@ public static class VimRegex
                             var s = i;
                             while (i < raw.Length && i - s < max && Uri.IsHexDigit(raw[i]) && (radix == 16 || raw[i] < '0' + radix)) i++;
                             if (i == s) { sb.Append("\\\\").Append(e); continue; }
-                            sb.Append(Regex.Escape(char.ConvertFromUtf32(Convert.ToInt32(raw.Substring(s, i - s), radix))));
+                            sb.Append(Regex.Escape(Keys.SafeString(Convert.ToInt32(raw.Substring(s, i - s), radix))));
                             continue;
                         }
                     }

@@ -118,7 +118,7 @@ public sealed partial class VimEngine
             for (var i = 0; i < count && !_macroAborted; i++) ExecuteExLine(_s.Registers.LastCommandLine);
             return;
         }
-        if (reg is '%' or '#' || !RegisterFile.IsValidName(reg) || reg == '_') { Error($"E354: Invalid register name: '{char.ConvertFromUtf32(reg)}'"); return; }
+        if (reg is '%' or '#' || !RegisterFile.IsValidName(reg) || reg == '_') { Error($"E354: Invalid register name: '{Keys.SafeString(reg)}'"); return; }
         Register? r;
         if (reg == '.') r = _s.Registers.ForRead('.');
         else r = _s.Registers.ForRead(reg == '"' ? 0 : reg, () => Host.ReadClipboard());

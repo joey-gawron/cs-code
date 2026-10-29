@@ -338,6 +338,7 @@ public sealed partial class VimEngine
     private void InsertTypedRaw(int cp)
     {
         if (!CanModify()) { return; }
+        if (cp == 10) cp = 0;   // a line feed typed with Ctrl-V is stored as NUL (a line cannot contain a newline)
         var s = CurLine;
         var text = CharStrings.Get(cp);
         if (cp is not (' ' or '\t')) _didAutoIndent = false;

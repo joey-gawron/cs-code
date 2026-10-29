@@ -86,11 +86,12 @@ public sealed partial class VimEngine
     /// <summary>Executes Ex command text (one or several commands separated by '|'). Returns false if an error was reported.</summary>
     public bool ExecuteEx(string text)
     {
-        var errors = LastErrorCount;
+        var exErrors = _exErrors;
+        var errors = _errorCount;
         ExecuteExLine(text);
         Drain();
         FlushHost();
-        return LastErrorCount == errors;
+        return _exErrors == exErrors && _errorCount == errors;
     }
 
     private int LastErrorCount;
@@ -98,6 +99,7 @@ public sealed partial class VimEngine
     private void ExecuteExLine(string line)
     {
         var before = _exErrors;
+        var errorsBefore = _errorCount;
         var i = 0;
         while (i <= line.Length)
         {
@@ -110,7 +112,7 @@ public sealed partial class VimEngine
             i = line.Length - rest.Length;
             if (_macroAborted && false) break;
         }
-        if (_exErrors != before) LastErrorCount++;
+        if (_exErrors != before || _errorCount != errorsBefore) LastErrorCount++;
     }
 
     private int _exErrors;

@@ -345,11 +345,13 @@ public sealed partial class VimEngine : IDisposable
 
     /// <summary>An error message (Vim's emsg): shows it, aborts macros/mappings in flight and cancels the pending command.</summary>
     private int _silentErrors;
+    private long _errorCount;
 
     private void Error(string text)
     {
         // ":silent!" swallows errors: nothing is shown and macros keep going
         if (_silentErrors > 0) { LastError = text; return; }
+        _errorCount++;
         Message(text, VimMessageKind.Error);
         Beep();
     }

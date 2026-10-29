@@ -412,7 +412,7 @@ public sealed partial class VimEngine
             _s.Registers.LastInserted = "\n";
             return;
         }
-        var rep = ch == 0 ? "" : char.ConvertFromUtf32(ch);
+        var rep = ch == 0 ? "" : Keys.SafeString(ch);
         var text = count == 1 ? rep : VimText.Repeat(rep, count);
         var start = _col;
         ReplaceInLine(_line, start, i - start, text);
@@ -592,7 +592,7 @@ public sealed partial class VimEngine
     {
         var cp = CharAtCursor();
         if (cp == 0) return "NUL";
-        return $"<{char.ConvertFromUtf32(cp)}> {cp}, Hex {cp:x2}, Oct {Convert.ToString(cp, 8)}";
+        return $"<{Keys.SafeString(cp)}> {cp}, Hex {cp:x2}, Oct {Convert.ToString(cp, 8)}";
     }
 
     private bool ExecBracketCommand(Cmd c)

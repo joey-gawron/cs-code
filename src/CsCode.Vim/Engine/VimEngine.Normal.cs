@@ -424,7 +424,7 @@ public sealed partial class VimEngine
             if (!Next(out var tk)) return false;
             if (tk == Keys.Esc) { _tagCancelled = true; return false; }
             if (tk is '>' or Keys.CR) break;
-            sb.Append(char.ConvertFromUtf32(tk));
+            sb.Append(Keys.SafeString(tk));
         }
         c.SurroundTag = sb.ToString();
         return true;
