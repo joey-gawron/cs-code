@@ -10,14 +10,16 @@ namespace CsCode.Platform.Tests;
 public class FileLoggerTests : IDisposable
 {
     private readonly TempDirectory _dir = new("cscode-log-");
-    public void Dispose() => _dir.Dispose();
+    // TestAppPaths owns a temp directory of its own: it must be disposed or every run leaves one behind on the (shared) machine.
+    private readonly TestAppPaths _paths = new();
+    public void Dispose() { _paths.Dispose(); _dir.Dispose(); }
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private FileLoggerProvider Create(Action<FileLoggerOptions>? configure = null)
     {
         var options = new FileLoggerOptions { Directory = _dir.Path };
         configure?.Invoke(options);
-        return new FileLoggerProvider(new TestAppPaths(), options);
+        return new FileLoggerProvider(_paths, options);
     }
 
     private string Log => Path.Combine(_dir.Path, "cscode.log");
@@ -223,7 +225,7 @@ public class FileLoggerTests : IDisposable
     public async Task An_unwritable_log_location_never_throws_into_the_caller()
     {
         var blocker = _dir.WriteFile("not-a-dir", "x");
-        using var provider = new FileLoggerProvider(new TestAppPaths(), new FileLoggerOptions { Directory = Path.Combine(blocker, "logs") });
+        using var provider = new FileLoggerProvider(_paths, new FileLoggerOptions { Directory = Path.Combine(blocker, "logs") });
         var logger = provider.CreateLogger("c");
         logger.LogError("this goes nowhere");
         await provider.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5), Ct);   // and the writer thread survives
