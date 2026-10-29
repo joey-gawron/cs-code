@@ -21,84 +21,96 @@ internal sealed class VimShellActions(VimIntegration owner, DocumentWell well, S
 {
     public bool Perform(VimView view, VimEditorAction action, in VimActionArgs args)
     {
+        if (action is VimEditorAction.ResizeEqual or VimEditorAction.ResizeMaximize or VimEditorAction.ResizeIncreaseHeight or VimEditorAction.ResizeDecreaseHeight
+            or VimEditorAction.ResizeIncreaseWidth or VimEditorAction.ResizeDecreaseWidth or VimEditorAction.MoveWindowLeft or VimEditorAction.MoveWindowRight
+            or VimEditorAction.MoveWindowUp or VimEditorAction.MoveWindowDown or VimEditorAction.ExchangeWindow or VimEditorAction.ShowRegisters or VimEditorAction.ShowMarks)
+            return false; // groups are sized and arranged by dragging in this shell
+        // After the key: closing or switching tabs may destroy the very view whose engine is asking.
+        var a = args;
+        owner.Post(() => PerformNow(view, action, a));
+        return true;
+    }
+
+    private void PerformNow(VimView view, VimEditorAction action, VimActionArgs args)
+    {
         var tab = TabOf(view);
         var arg = args.Argument?.Trim();
         var bang = args.Bang;
         switch (action)
         {
             case VimEditorAction.Write:
-                if (tab is null) return false;
+                if (tab is null) return;
                 Run(() => WriteAsync(tab, arg));
-                return true;
+                return;
             case VimEditorAction.WriteQuit:
-                if (tab is null) return false;
+                if (tab is null) return;
                 Run(async () =>
                 {
                     if (await WriteAsync(tab, arg).ConfigureAwait(true)) await well.CloseAsync(tab, prompt: false).ConfigureAwait(true);
                 });
-                return true;
+                return;
             case VimEditorAction.Quit or VimEditorAction.Close or VimEditorAction.DeleteBuffer or VimEditorAction.CloseTab:
-                if (tab is null) return false;
+                if (tab is null) return;
                 Run(() => well.CloseAsync(tab, prompt: !bang).AsTask());
-                return true;
+                return;
             case VimEditorAction.QuitAll:
                 Run(async () =>
                 {
                     foreach (var t in well.EditorTabs.ToArray())
                         if (!await well.CloseAsync(t, prompt: !bang).ConfigureAwait(true)) return; // Cancel stops, like Vim's :qa on a modified buffer
                 });
-                return true;
+                return;
             case VimEditorAction.WriteAll:
                 Run(SaveAllAsync);
-                return true;
+                return;
             case VimEditorAction.WriteQuitAll:
                 Run(async () =>
                 {
                     await SaveAllAsync().ConfigureAwait(true);
                     foreach (var t in well.EditorTabs.ToArray()) await well.CloseAsync(t, prompt: true).ConfigureAwait(true);
                 });
-                return true;
+                return;
             case VimEditorAction.Edit or VimEditorAction.NewTab:
                 if (string.IsNullOrEmpty(arg))
                 {
                     if (action == VimEditorAction.NewTab) well.OpenUntitled();
                     else if (tab is not null && bang) Run(() => tab.Doc.ReloadAsync()); // :e! re-reads the file
-                    return true;                                                      // :e re-edits the current file: it is already current
+                    return;                                                      // :e re-edits the current file: it is already current
                 }
-                if (Resolve(arg, tab) is not { } uri) { owner.ShowError(view, $"E499: Empty file name for '%' or '#', works only with \":p:h\": {arg}"); return true; }
+                if (Resolve(arg, tab) is not { } uri) return;
                 Run(() => well.OpenAsync(uri).AsTask());
-                return true;
+                return;
             case VimEditorAction.Reload:
-                if (tab is null) return false;
+                if (tab is null) return;
                 Run(() => tab.Doc.ReloadAsync());
-                return true;
+                return;
             case VimEditorAction.NewBuffer:
                 well.OpenUntitled();
-                return true;
+                return;
             case VimEditorAction.SaveAs:
-                if (tab is null) return false;
+                if (tab is null) return;
                 if (string.IsNullOrEmpty(arg)) Run(() => well.SaveAsync(tab, saveAs: true).AsTask());
                 else if (Resolve(arg, tab) is { } target) Run(() => tab.Doc.SaveAsAsync(target));
-                return true;
+                return;
             case VimEditorAction.NextBuffer or VimEditorAction.NextTab:
                 Cycle(tab, +Math.Max(1, args.Count ?? 1));
-                return true;
+                return;
             case VimEditorAction.PreviousBuffer or VimEditorAction.PreviousTab:
                 Cycle(tab, -Math.Max(1, args.Count ?? 1));
-                return true;
+                return;
             case VimEditorAction.GoToBuffer:
                 GoToBuffer(view, arg, args.Count);
-                return true;
+                return;
             case VimEditorAction.AlternateBuffer:
                 if (well.MruOrder.OfType<EditorTab>().FirstOrDefault(t => !ReferenceEquals(t, tab)) is { } alt) well.Activate(alt);
                 else owner.ShowError(view, "E23: No alternate file");
-                return true;
+                return;
             case VimEditorAction.ListBuffers:
                 Run(ListBuffersAsync);
-                return true;
+                return;
             case VimEditorAction.Split or VimEditorAction.VSplit or VimEditorAction.NewSplit or VimEditorAction.NewVSplit:
                 Split(tab, arg, vertical: action is VimEditorAction.VSplit or VimEditorAction.NewVSplit, untitled: action is VimEditorAction.NewSplit or VimEditorAction.NewVSplit);
-                return true;
+                return;
             case VimEditorAction.Only:
                 Run(async () =>
                 {
@@ -106,18 +118,18 @@ internal sealed class VimShellActions(VimIntegration owner, DocumentWell well, S
                     foreach (var t in well.Tabs.Where(t => dock.GroupOf(t) is { } g && !ReferenceEquals(g, group)).ToArray())
                         if (!await well.CloseAsync(t).ConfigureAwait(true)) return;
                 });
-                return true;
+                return;
             case VimEditorAction.FocusLeft or VimEditorAction.FocusRight or VimEditorAction.FocusUp or VimEditorAction.FocusDown:
                 FocusDirection(tab, action);
-                return true;
+                return;
             case VimEditorAction.FocusNext or VimEditorAction.FocusPrevious or VimEditorAction.FocusTop or VimEditorAction.FocusBottom or VimEditorAction.FocusLast:
                 FocusCycle(tab, action);
-                return true;
+                return;
             case VimEditorAction.Help:
                 if (windows is not null) Run(() => windows.OpenExternalAsync(new Uri("https://vimhelp.org/" + (string.IsNullOrEmpty(arg) ? "" : "search.html#q=" + Uri.EscapeDataString(arg)))).AsTask());
-                return true;
+                return;
             default:
-                return false; // resizing and moving windows: groups are sized and arranged by dragging in this shell
+                return;
         }
     }
 

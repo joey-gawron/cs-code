@@ -185,6 +185,8 @@ public sealed class EditorModalSurface : IDisposable
         area.Caret.BringCaretToView();
     }
 
+    public bool HasSelection => !_v.TextArea.Selection.IsEmpty;
+
     public void ClearSelection()
     {
         if (!_v.TextArea.Selection.IsEmpty) _v.TextArea.ClearSelection();

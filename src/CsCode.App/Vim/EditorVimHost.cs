@@ -47,11 +47,24 @@ internal sealed class EditorVimHost : IVimHost
         _surface.SetCaret(position);
     }
 
+    /// <summary>The selection the engine last asked for, and the editor range it was drawn as (to tell the engine's selection from the mouse's).</summary>
+    public VimSelection LastSelection { get; private set; } = VimSelection.None;
+    private TextRange _drawn;
+
+    public bool IsShowing(TextRange editorRange) => LastSelection.Kind != VimSelectionKind.None && editorRange == _drawn;
+
     public void SetSelection(in VimSelection selection)
     {
+        LastSelection = selection;
         var view = View;
         if (view is not null) view.InVisual = selection.Kind != VimSelectionKind.None;
         var doc = _surface.Document;
+        try { DrawSelection(selection, doc); }
+        finally { _drawn = _surface.Controller.Selections is [var s] ? s : default; }
+    }
+
+    private void DrawSelection(in VimSelection selection, Core.Text.IEditorDocument doc)
+    {
         switch (selection.Kind)
         {
             case VimSelectionKind.None:

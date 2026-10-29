@@ -146,6 +146,29 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
         public void Dispose() => owner._typingDepth--;
     }
 
+    private bool _editorKey;
+
+    /// <summary>
+    /// A key Vim leaves to the editor in Insert mode (Enter or Tab accepting a completion, a paste) is about to be handled: what the editor
+    /// changes belongs to the Insert session, in its undo group. <see cref="EndEditorKey"/> after the key event.
+    /// </summary>
+    public void BeginEditorKey()
+    {
+        if (_editorKey || _disposed) return;
+        _editorKey = true;
+        _pumpDepth++;
+        _typingDepth++;
+        EnsureGroup();
+    }
+
+    public void EndEditorKey()
+    {
+        if (!_editorKey) return;
+        _editorKey = false;
+        _typingDepth--;
+        EndEditGroup();
+    }
+
     // ---------------------------------------------------------------- undo groups
 
     private static long Label(int generation, int seq) => ((long)generation << 32) | (uint)seq;
@@ -157,6 +180,7 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
     {
         if (_pumpDepth == 0 || _disposed) return; // a change outside a key forms its own group, as any editor change
         var label = NextLabel();
+        if (label == Unlabelled) return;
         if (_groupOpen)
         {
             if (label == _groupLabel) return;

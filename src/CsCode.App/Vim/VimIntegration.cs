@@ -69,6 +69,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     private System.Text.RegularExpressions.Regex? _searchRegex;
     private bool _started, _enabled, _disposed, _lastKeyDownToVim;
     private int _holdGeneration;
+    private VimView? _editorKey;
 
     private VimIntegration(IServiceProvider sp, IVimService vim, EditorViewFactory editors)
     {
@@ -128,6 +129,13 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         _subscriptions.Add(_editors.ViewClosing.Subscribe(Detach));
         if (_documents is not null)
             _subscriptions.Add(_documents.Closed.Subscribe(e => _ui.Post(() => ReleaseBuffer(e.Document))));
+        if (_windowHolder.Window is { } top)
+        {
+            // runs after every handler of a key press (bubbling, handled or not): the editor has done whatever it does with a key Vim left it
+            void OnKeyDownDone(object? s, KeyEventArgs e) => EndEditorKey();
+            top.AddHandler(InputElement.KeyDownEvent, OnKeyDownDone, RoutingStrategies.Bubble, handledEventsToo: true);
+            _subscriptions.Add(Disposable.Create(() => top.RemoveHandler(InputElement.KeyDownEvent, OnKeyDownDone)));
+        }
         if (_windowHolder.Window is WindowBase window)
         {
             // Text copied in another application reaches "+p / "*p: the clipboard is read when the window becomes active (and on editor focus).
@@ -188,8 +196,14 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         _views[view] = vimView;
         vimView.Subscriptions.Add(engine.PendingWorkChanged.Subscribe(pending => { if (pending) SchedulePump(vimView); }));
         void OnFocus(object? s, RoutedEventArgs e) => OnViewFocused(vimView);
+        void OnPointerReleased(object? s, PointerReleasedEventArgs e) => _ui.Post(() => OnMouseSelection(vimView)); // after the editor finished the gesture
         view.GotFocus += OnFocus;
-        vimView.Subscriptions.Add(Disposable.Create(() => view.GotFocus -= OnFocus));
+        view.AddHandler(InputElement.PointerReleasedEvent, OnPointerReleased, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
+        vimView.Subscriptions.Add(Disposable.Create(() =>
+        {
+            view.GotFocus -= OnFocus;
+            view.RemoveHandler(InputElement.PointerReleasedEvent, OnPointerReleased);
+        }));
         if (_searchRegex is not null) surface.SetPatternHighlight(_searchRegex);
         // The engine reports its mode only when it changes: publish the starting state (Normal: caret clamped onto a character, block caret).
         buffer.SetActiveEngine(engine);
@@ -202,6 +216,14 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     {
         if (!_views.Remove(view, out var v)) return;
         v.IsDisposed = true;
+        // A view destroyed by something its own engine started (a command run synchronously) goes once the engine call has returned.
+        if (v.Busy > 0) v.DetachPending = true;
+        else FinishDetach(v);
+    }
+
+    private void FinishDetach(VimView v)
+    {
+        v.DetachPending = false;
         v.Subscriptions.Dispose();
         if (ReferenceEquals(v.Buffer.ActiveEngine, v.Engine)) v.Buffer.SetActiveEngine(null);
         v.Engine.Dispose();
@@ -251,12 +273,19 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         }
         var mode = v.Engine.Mode;
         var popups = Popups(v);
+        var insert = mode is VimMode.Insert or VimMode.Replace;
         if (VimKeyPolicy.Decide(stroke, mode, popups, _handleKeys) == VimKeyOwner.App)
         {
             _lastKeyDownToVim = false;
+            if (insert)
+            {
+                // the editor's answer (an accepted completion, a paste) is part of the Insert session: one undo step with it
+                v.Buffer.SetActiveEngine(v.Engine);
+                v.Buffer.BeginEditorKey();
+                _editorKey = v;
+            }
             return false;
         }
-        var insert = mode is VimMode.Insert or VimMode.Replace;
         if (insert && stroke is { Ctrl: true, Key: "n" or "p" } && (popups & EditorPopups.Completion) != 0)
         {
             v.Surface.MoveCompletionSelection(stroke.Key == "n" ? 1 : -1);
@@ -323,15 +352,36 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     }
 
     /// <summary>Runs an engine call for <paramref name="v"/>: its buffer attributes changes to it, its options follow the editor, sliced work continues.</summary>
+    private void EndEditorKey()
+    {
+        if (_editorKey is not { } v) return;
+        _editorKey = null;
+        v.Buffer.EndEditorKey();
+    }
+
     private VimKeyResult Run(VimView v, Func<VimKeyResult> call)
     {
+        EndEditorKey(); // defensive: a key whose bubbling never completed must not leave its undo group open
         if (v.IsDisposed) return VimKeyResult.PassThrough;
         SyncOptions(v);
         v.Buffer.SetActiveEngine(v.Engine);
-        var result = call();
+        VimKeyResult result;
+        v.Busy++;
+        try { result = call(); }
+        finally
+        {
+            v.Busy--;
+            if (v.Busy == 0 && v.DetachPending) FinishDetach(v);
+        }
         if (!v.IsDisposed && v.Engine.HasPendingWork) SchedulePump(v);
         return result;
     }
+
+    /// <summary>Runs <paramref name="action"/> after the current key (shell actions must not destroy a view while its engine is running).</summary>
+    internal void Post(Action action) => _ui.Post(() =>
+    {
+        if (!_disposed) action();
+    });
 
     /// <summary>The editor's tab settings are the source of truth (as in VSCodeVim); <c>:set ts</c> lasts until another view takes the keys.</summary>
     private void SyncOptions(VimView v)
@@ -397,6 +447,40 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
             for (var j = i + 1; j < keys.Length; j++) _held.Enqueue(keys[j]);
             return;
         }
+    }
+
+    /// <summary>
+    /// A selection made with the mouse becomes Visual mode (as in VSCodeVim and Vim's mouse=a), so Vim's operators act on it; a plain click in
+    /// Visual mode ends it.
+    /// </summary>
+    private void OnMouseSelection(VimView v)
+    {
+        if (!_enabled || v.IsDisposed) return;
+        var engine = v.Engine;
+        var mode = engine.Mode;
+        if (mode is not (VimMode.Normal or VimMode.Visual or VimMode.VisualLine or VimMode.VisualBlock)) return;
+        var selections = v.Surface.Controller.Selections;
+        if (selections is not [var s] || s.IsEmpty)
+        {
+            if (mode != VimMode.Normal && v.Host.LastSelection.Kind != VimSelectionKind.None && !v.Surface.HasSelection)
+                Run(v, () => engine.HandleKey(new Core.Platform.KeyStroke("escape"))); // clicked: Visual mode ends where the click put the caret
+            return;
+        }
+        if (v.Host.IsShowing(s)) return; // the engine's own Visual selection
+        var caret = v.Surface.Caret;
+        // the engine's selection includes both end characters: the active end is the character before the caret when it is the range's end
+        var atEnd = caret == s.End;
+        var active = atEnd ? Before(v, s.End) : s.Start;
+        var anchor = atEnd ? s.Start : Before(v, s.End);
+        Run(v, () => engine.SelectVisual(anchor, active) ? VimKeyResult.Handled : VimKeyResult.PassThrough);
+    }
+
+    private static TextPosition Before(VimView v, TextPosition p)
+    {
+        if (p.Character > 0) return new TextPosition(p.Line, p.Character - 1);
+        if (p.Line == 0) return p;
+        var previous = v.Surface.Document.GetLineText(p.Line - 1);
+        return new TextPosition(p.Line - 1, Math.Max(0, previous.Length - 1));
     }
 
     /// <summary>The editor's Undo/Redo (menu, toolbar, key binding) run Vim's <c>u</c>/<c>Ctrl-R</c>, so the two histories never disagree.</summary>
@@ -499,17 +583,34 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         if (ReferenceEquals(v, _current)) UpdateStatus();
     }
 
+    /// <summary>Application commands (gd, gr, K, bindings with commands) start after the key: they are fire and forget and may change the window.</summary>
     internal void ExecuteCommand(string id, IReadOnlyList<object?>? args)
     {
         var view = _current;
+        var arguments = args is null ? [] : args.ToArray();
         async Task RunAsync()
         {
-            try { await _commands.ExecuteAsync(id, args is null ? [] : args.ToArray()).ConfigureAwait(true); }
+            try
+            {
+                await _commands.ExecuteAsync(id, arguments).ConfigureAwait(true);
+                CollapseNavigationSelection();
+            }
             catch (CommandNotFoundException) { ShowError(view, $"E492: Not an editor command: {id}"); }
             catch (OperationCanceledException) { }
             catch (Exception ex) { ShowError(view, $"{id}: {ex.Message}"); }
         }
-        _ = RunAsync();
+        Post(() => _ = RunAsync());
+    }
+
+    /// <summary>
+    /// The editor selects the target of a navigation (go to definition, next problem); after gd ]d... Vim's cursor goes to the start of the
+    /// target instead, in Normal mode, as in Vim.
+    /// </summary>
+    private void CollapseNavigationSelection()
+    {
+        if (!_enabled || _well.ActiveEditor?.LiveView is not CodeEditorControl c || !_views.TryGetValue(c, out var v) || v.IsDisposed) return;
+        if (v.Engine.Mode != VimMode.Normal || v.Surface.Controller.Selections is not [{ IsEmpty: false } selection]) return;
+        v.Surface.SetCaret(selection.Start);
     }
 
     // ------------------------------------------------------------------------------------------------------------ status bar
@@ -630,6 +731,9 @@ internal sealed class VimView(CodeEditorControl view, EditorModalSurface surface
     public VimEngine Engine { get; set; } = null!;
     public DisposableStore Subscriptions { get; } = new();
     public bool IsDisposed { get; set; }
+    /// <summary>Engine calls in progress (a view destroyed meanwhile is torn down when they return).</summary>
+    public int Busy { get; set; }
+    public bool DetachPending { get; set; }
     public bool PumpScheduled { get; set; }
     public bool InVisual { get; set; }
     public VimMode Mode { get; set; }
