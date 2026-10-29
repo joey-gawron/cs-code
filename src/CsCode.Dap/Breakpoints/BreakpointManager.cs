@@ -30,7 +30,9 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable
     private readonly IStateStorage? _storage;
     private readonly ILogger _logger;
     private readonly DisposableStore _subs = new();
-    private readonly Dictionary<string, DebugBreakpointStatus> _statuses = new();
+    // breakpoint id → (session id → verdict). Per session, so one session ending never erases another live session's verdict.
+    private readonly Dictionary<string, Dictionary<string, (long Seq, DebugBreakpointStatus Status)>> _statuses = new();
+    private long _statusSeq;
     private SourceBreakpoint[] _source = [];
     private FunctionBreakpoint[] _functions = [];
     private ExceptionFilterSetting[] _filters = [];
@@ -218,7 +220,10 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable
 
     public DebugBreakpointStatus? GetStatus(string breakpointId)
     {
-        lock (_gate) return _statuses.GetValueOrDefault(breakpointId);
+        lock (_gate)
+            return _statuses.TryGetValue(breakpointId, out var perSession) && perSession.Count > 0
+                ? perSession.Values.MaxBy(v => v.Seq).Status
+                : null;
     }
 
     public void ReportStatus(DebugBreakpointStatus status)
@@ -229,8 +234,9 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable
             var bp = _source.FirstOrDefault(b => b.Id == status.BreakpointId);
             var isFunction = bp is null && _functions.Any(f => f.Id == status.BreakpointId);
             if (bp is null && !isFunction) return; // the breakpoint was removed while the adapter was answering
-            if (_statuses.TryGetValue(status.BreakpointId, out var old) && Same(old, status)) return;
-            _statuses[status.BreakpointId] = status;
+            if (!_statuses.TryGetValue(status.BreakpointId, out var perSession)) _statuses[status.BreakpointId] = perSession = new();
+            if (perSession.TryGetValue(status.Session.Id, out var old) && Same(old.Status, status)) return;
+            perSession[status.Session.Id] = (++_statusSeq, status);
             if (bp is not null) uris = [bp.Uri];
         }
         Raise(uris, uris.Length == 0);
@@ -248,17 +254,21 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable
         Uri[] uris;
         lock (_gate)
         {
-            var doomed = _statuses.Where(kv => sessionId is null || kv.Value.Session.Id == sessionId).Select(kv => kv.Key).ToArray();
-            if (doomed.Length == 0) return;
-            var ids = doomed.ToHashSet();
-            uris = [.. _source.Where(b => ids.Contains(b.Id)).Select(b => b.Uri).Distinct()];
-            foreach (var id in doomed) _statuses.Remove(id);
+            var touched = new HashSet<string>();
+            foreach (var (bpId, perSession) in _statuses)
+            {
+                if (sessionId is null) { if (perSession.Count > 0) touched.Add(bpId); perSession.Clear(); }
+                else if (perSession.Remove(sessionId)) touched.Add(bpId);
+            }
+            foreach (var empty in _statuses.Where(kv => kv.Value.Count == 0).Select(kv => kv.Key).ToArray()) _statuses.Remove(empty);
+            if (touched.Count == 0) return;
+            uris = [.. _source.Where(b => touched.Contains(b.Id)).Select(b => b.Uri).Distinct()];
         }
         Raise(uris, false);
     }
 
     /// <summary>Number of retained verdicts (tests assert this returns to 0 after sessions end).</summary>
-    public int StatusCount { get { lock (_gate) return _statuses.Count; } }
+    public int StatusCount { get { lock (_gate) return _statuses.Values.Sum(v => v.Count); } }
 
     // ------------------------------------------------------------------ line tracking
 

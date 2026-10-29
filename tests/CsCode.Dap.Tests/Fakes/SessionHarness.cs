@@ -21,7 +21,7 @@ public static class Cfg
 /// <summary>Spins up lane + fake adapter + breakpoint manager + a started session, and records every session event.</summary>
 public sealed class SessionHarness : IAsyncDisposable
 {
-    private readonly bool _ownsLane;
+    private readonly bool _ownsLane, _ownsBreakpoints;
     public DebugLane Lane { get; }
     public FakeDebugAdapter Adapter { get; }
     public FakeStateStorage Storage { get; } = new();
@@ -38,12 +38,13 @@ public sealed class SessionHarness : IAsyncDisposable
     public List<DebugThreadEventArgs> ThreadEvents { get; } = new();
     public int InvalidatedCount;
 
-    public SessionHarness(DebugLane? lane = null, FakeDebugAdapter? adapter = null)
+    public SessionHarness(DebugLane? lane = null, FakeDebugAdapter? adapter = null, BreakpointManager? breakpoints = null)
     {
         _ownsLane = lane is null;
+        _ownsBreakpoints = breakpoints is null;
         Lane = lane ?? new DebugLane("test-session-lane");
         Adapter = adapter ?? new FakeDebugAdapter();
-        Breakpoints = new BreakpointManager(Storage);
+        Breakpoints = breakpoints ?? new BreakpointManager(Storage);
     }
 
     public static async Task<SessionHarness> StartAsync(
@@ -52,11 +53,13 @@ public sealed class SessionHarness : IAsyncDisposable
         DebugSessionSettings? settings = null,
         StartChildSession? startChild = null,
         Action<SessionHarness>? beforeStart = null,
-        DebugLane? lane = null)
+        DebugLane? lane = null,
+        BreakpointManager? breakpoints = null,
+        string id = "s1")
     {
-        var h = new SessionHarness(lane);
+        var h = new SessionHarness(lane, null, breakpoints);
         configure?.Invoke(h.Adapter);
-        h.Create(config ?? Cfg.Make(), settings, startChild);
+        h.Create(config ?? Cfg.Make(), settings, startChild, null, id);
         beforeStart?.Invoke(h);
         await h.Session.StartAsync(Ct);
         return h;
@@ -109,10 +112,13 @@ public sealed class SessionHarness : IAsyncDisposable
 
     public T[] Snapshot<T>(List<T> list) { lock (list) return [.. list]; }
 
+    private int _disposed;
+
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         if (Session is not null) await Session.DisposeAsync();
-        await Breakpoints.DisposeAsync();
+        if (_ownsBreakpoints) await Breakpoints.DisposeAsync();
         await Adapter.DisposeAsync();
         if (_ownsLane) Lane.Dispose();
     }

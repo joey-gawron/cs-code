@@ -480,8 +480,11 @@ public sealed class FakeDebugAdapter : IAsyncDisposable
         }
     }
 
+    private int _disposedFlag;
+
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposedFlag, 1) != 0) return;
         _cts.Cancel();
         _fromAdapter.CompleteWriting();
         _toAdapter.CompleteWriting();
