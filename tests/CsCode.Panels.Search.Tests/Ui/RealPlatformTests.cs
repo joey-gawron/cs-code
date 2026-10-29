@@ -16,8 +16,9 @@ using Xunit;
 namespace CsCode.Panels.Search.Tests.Ui;
 
 /// <summary>
-/// Integration against the REAL platform pieces that exist in this base: <see cref="LocalFileSystem"/> (IO-lane file system) and
-/// <see cref="ConfigurationService"/> (the comment-preserving settings writer). The real WorkspaceService is not in this base yet.
+/// Integration against the REAL platform pieces: <see cref="LocalFileSystem"/> (IO-lane file system), <see cref="ConfigurationService"/>
+/// (layered settings with the comment-preserving writer) and <see cref="KeybindingService"/>. The workspace is a test double; folders reach the
+/// configuration through the same <c>IWorkspaceBound</c> hook the platform's WorkspaceService uses.
 /// </summary>
 public class RealPlatformTests : IDisposable
 {
@@ -190,13 +191,9 @@ public class RealPlatformTests : IDisposable
         }
     }
 
-    /// <summary>What the (future) WorkspaceService does on open: hand the folders to the configuration (the interface is internal to Platform).</summary>
-    private async Task BindFoldersAsync(params Uri[] folders)
-    {
-        var bound = typeof(ConfigurationService).GetInterfaces().Single(i => i.Name == "IWorkspaceBound");
-        var call = bound.GetMethod("OnWorkspaceFoldersChangedAsync")!;
-        await (ValueTask)call.Invoke(_config, [(IReadOnlyList<Uri>)folders, Ct])!;
-    }
+    /// <summary>What the platform's WorkspaceService does when a folder opens: hand the folders to the configuration, which layers their settings.</summary>
+    private async Task BindFoldersAsync(params Uri[] folders) =>
+        await ((CsCode.Platform.Workspace.IWorkspaceBound)_config).OnWorkspaceFoldersChangedAsync(folders, Ct);
 
     [Fact]
     public async Task Keys_from_vscode_settings_say_where_they_come_from_and_are_modified_in_neither_tab()

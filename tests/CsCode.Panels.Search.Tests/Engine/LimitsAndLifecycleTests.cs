@@ -223,6 +223,25 @@ public class LimitsAndLifecycleTests : IDisposable
     }
 
     [Fact]
+    public async Task A_subscriber_that_is_slow_to_attach_still_hears_of_a_session_that_ends_at_once()
+    {
+        // The deterministic form of the race: the subscribing thread is preempted for a long time (a loaded machine). Were the run queued
+        // before attach, the coordinator would complete the failed session (and drop its subscribers) during the pause.
+        var h = Harness();
+        var fired = new TaskCompletionSource<SearchCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IDisposable? sub = null;
+        using var session = h.Engine.Start(new SearchQuery("foo(", IsRegex: true), s =>
+        {
+            Thread.Sleep(200);
+            Assert.False(s.IsCompleted);                  // nothing has run yet
+            sub = s.Completed.Subscribe(c => fired.TrySetResult(c));
+        });
+        var completion = await fired.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Equal(SearchOutcome.Failed, completion.Outcome);
+        sub!.Dispose();
+    }
+
+    [Fact]
     public async Task Finished_sessions_leave_the_engine()
     {
         var h = Harness();
