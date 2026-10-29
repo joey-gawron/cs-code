@@ -127,7 +127,7 @@ internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int m
 
     public bool IsValidFrame(int frameId) => _framesOverflowed || _frames.ContainsKey(frameId);
 
-    /// <summary>A frame handed out during the current stop (any thread, any page). False also when tracking overflowed.</summary>
+    /// <summary>A frame handed out during the current stop (any thread, any page). False for a stale id and for one handed out after the cap.</summary>
     public bool TryGetFrame(int frameId, [MaybeNullWhen(false)] out DebugStackFrame frame) => _frames.TryGetValue(frameId, out frame);
 
     public bool TryGetPage(VariablesKey key, out IReadOnlyList<DebugVariable> page) => _pages.TryGet(key, out page!);

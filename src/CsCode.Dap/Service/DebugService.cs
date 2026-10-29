@@ -497,8 +497,8 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     /// <summary>
     /// Focuses a frame the UI got from <paramref name="sessionId"/>'s <c>GetStackTraceAsync</c> during the current stop, however deep (the Call
     /// Stack window pages 50+ frames, other threads, "load more"). Fails with <see cref="DebugHandleInvalidatedException"/> when the frame is no
-    /// longer valid (resumed, stopped again, invalidated) and <see cref="InvalidOperationException"/> when the session has ended, so the caller
-    /// never believes focus moved when it did not.
+    /// longer valid (resumed, stopped again, invalidated) and <see cref="InvalidOperationException"/> when the session has ended or is no longer
+    /// the focused one, so the caller never believes focus moved when it did not.
     /// </summary>
     public ValueTask SetFocusedFrameAsync(string sessionId, int threadId, int frameId, CancellationToken ct = default) =>
         new(_lane.RunAsync(async () =>
@@ -516,7 +516,8 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             }
             // FocusedFrameId and StopLocation describe the ACTIVE session (the REPL evaluates in that frame): a frame of another session
             // (the focus moved on while this call was queued) must not end up there.
-            if (!ReferenceEquals(ActiveSession, session)) throw new InvalidOperationException($"The debug session '{session.Name}' is no longer the focused session.");
+            if (!ReferenceEquals(ActiveSession, session))
+                throw new InvalidOperationException($"The debug session '{session.Name}' is no longer the focused session.");
             Volatile.Write(ref _focusedFrameId, frameId);
             SetStopLocation(ToLocation(session, threadId, frame, "frame"));
             return 0;
