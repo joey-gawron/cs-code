@@ -4,6 +4,8 @@ using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CsCode.Panels.Debug.Console;
+using CsCode.Panels.Debug.Infrastructure;
+using CsCode.Ui.Menus;
 
 namespace CsCode.Panels.Debug.Views;
 
@@ -12,8 +14,39 @@ namespace CsCode.Panels.Debug.Views;
 /// walks the history with ↑/↓ (when the caret is on the first/last line), and drives the completion list (↑↓ select, Tab/Enter accept,
 /// Esc close, Ctrl+Space ask).
 /// </summary>
-public sealed partial class ConsoleView : UserControl, IDisposable
+public sealed partial class ConsoleView : UserControl, IDisposable, IClipboardTarget
 {
+    private ListBox LinesList => this.FindControl<ListBox>("Lines")!;
+
+    /// <summary>The output lines' clipboard (the REPL box, a text box, has its own Cut/Copy/Paste).</summary>
+    public bool CanCopy => LinesList.SelectedItems is { Count: > 0 } && _model is not null;
+
+    public async Task CopyAsync()
+    {
+        if (_model is { } model) await model.CopyAsync(LinesList.SelectedItems?.OfType<ConsoleLine>() ?? []);
+    }
+
+    /// <summary>The output's menu: Copy (the selected lines), Copy All, Clear All.</summary>
+    internal ContextMenu BuildLinesMenu()
+    {
+        var model = _model;
+        var menu = new ContextMenu();
+        menu.Items.Add(new MenuItem { Header = "Copy", InputGesture = KeyGesture.Parse("Ctrl+C"), IsEnabled = CanCopy, Command = new UiCommand(CopyAsync) });
+        menu.Items.Add(new MenuItem { Header = "Copy All", IsEnabled = model is { Lines.Count: > 0 }, Command = new UiCommand(() => model?.CopyAsync(model.Lines) ?? Task.CompletedTask) });
+        menu.Items.Add(new Separator());
+        menu.Items.Add(new MenuItem { Header = "Clear All", IsEnabled = model is { Lines.Count: > 0 }, Command = new UiCommand(() => model?.Clear()) });
+        return menu;
+    }
+
+    private void OnLinesContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        if (_model is null) return;
+        if (e.Source is Avalonia.Visual v && v.FindAncestorOfType<ListBoxItem>(includeSelf: true) is { DataContext: ConsoleLine line } && !LinesList.SelectedItems!.Contains(line))
+            LinesList.SelectedItem = line;
+        e.Handled = true;
+        BuildLinesMenu().Open(LinesList);
+    }
+
     private DebugConsoleViewModel? _model;
     private bool _scrollQueued;
 
@@ -24,6 +57,7 @@ public sealed partial class ConsoleView : UserControl, IDisposable
         input.AddHandler(KeyDownEvent, OnInputKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         var lines = this.FindControl<ListBox>("Lines")!;
         lines.AddHandler(KeyDownEvent, OnLinesKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        lines.ContextRequested += OnLinesContextRequested;
         this.FindControl<ListBox>("Completions")!.DoubleTapped += (_, _) =>
         {
             if (_model?.SelectedCompletion is { } c) Accept(c);
@@ -111,7 +145,7 @@ public sealed partial class ConsoleView : UserControl, IDisposable
 
     private async void OnLinesKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key != Key.C || (e.KeyModifiers & KeyModifiers.Control) == 0 || _model is not { } model) return;
+        if (ClipboardKeys.Classify(e) != ClipboardAction.Copy || _model is not { } model) return; // Ctrl+C, Ctrl+Insert
         var list = this.FindControl<ListBox>("Lines")!;
         e.Handled = true;
         await model.CopyAsync(list.SelectedItems?.OfType<ConsoleLine>() ?? []);

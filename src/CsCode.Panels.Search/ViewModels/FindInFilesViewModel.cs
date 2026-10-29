@@ -706,6 +706,12 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
 
     public string? CopyPathOf(ResultRow row) => row switch { FileRow f => f.FullPath, MatchRow m => m.File.FullPath, _ => null };
 
+    /// <summary>Puts <paramref name="text"/> on the clipboard (the view's Copy and Copy All).</summary>
+    public async Task CopyTextAsync(string text)
+    {
+        if (text.Length > 0 && _s.Windows is not null) await _s.Windows.CopyToClipboardAsync(text);
+    }
+
     public async Task CopyPathAsync(ResultRow row)
     {
         if (CopyPathOf(row) is { } p && _s.Windows is not null) await _s.Windows.CopyToClipboardAsync(p);

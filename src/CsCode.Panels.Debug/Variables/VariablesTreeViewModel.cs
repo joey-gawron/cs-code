@@ -869,6 +869,11 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
         if (_s.Window is { } window && node.IsDataRow) await window.CopyToClipboardAsync(node.FullValue);
     }
 
+    public async Task CopyNameAsync(VariableNodeViewModel node)
+    {
+        if (_s.Window is { } window && node.IsDataRow) await window.CopyToClipboardAsync(node.Name);
+    }
+
     public async Task CopyExpressionAsync(VariableNodeViewModel node)
     {
         if (_s.Window is { } window && node.IsDataRow) await window.CopyToClipboardAsync(ExpressionOf(node));

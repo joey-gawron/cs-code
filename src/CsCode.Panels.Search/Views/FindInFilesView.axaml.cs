@@ -14,7 +14,7 @@ namespace CsCode.Panels.Search.Views;
 /// The Find in Files tool window. Implements <see cref="IDisposable"/> because the shell disposes tool views when they are hidden:
 /// disposing releases the view-model (which cancels a running search and drops every subscription).
 /// </summary>
-public sealed partial class FindInFilesView : UserControl, IDisposable
+public sealed partial class FindInFilesView : UserControl, IDisposable, CsCode.Ui.Menus.IClipboardTarget
 {
     public static readonly IValueConverter ChevronConverter = new FuncValueConverter<bool, string>(expanded => expanded ? "chevron-down" : "chevron-right");
 
@@ -138,8 +138,8 @@ public sealed partial class FindInFilesView : UserControl, IDisposable
                 Vm.SetExpanded(f2, true);
                 e.Handled = true;
                 break;
-            case Key.C when e.KeyModifiers == KeyModifiers.Control && row is not null:
-                _ = Vm.CopyPathAsync(row);
+            case Key.C or Key.Insert when row is not null && CsCode.Ui.Menus.ClipboardKeys.Classify(e) == CsCode.Ui.Menus.ClipboardAction.Copy:
+                _ = CopyAsync();
                 e.Handled = true;
                 break;
         }
@@ -189,14 +189,17 @@ public sealed partial class FindInFilesView : UserControl, IDisposable
         Vm.SelectedRow = row;
         var vm = Vm;
         var items = new List<Control>();
-        MenuItem Item(string header, Action action, bool enabled = true)
+        MenuItem Item(string header, Action action, bool enabled = true, string? gesture = null)
         {
-            var mi = new MenuItem { Header = header, IsEnabled = enabled };
+            var mi = new MenuItem { Header = header, IsEnabled = enabled, InputGesture = gesture is null ? null : KeyGesture.Parse(gesture) };
             mi.Click += (_, _) => action();
             return mi;
         }
         items.Add(Item("Open", () => _ = vm.OpenAsync(row)));
+        items.Add(new Separator());
+        items.Add(Item("Copy", () => _ = CopyAsync(), gesture: "Ctrl+C"));
         items.Add(Item("Copy Path", () => _ = vm.CopyPathAsync(row)));
+        items.Add(Item("Copy All", () => _ = CopyAllAsync(), enabled: vm.Rows.Count > 0));
         if (vm.HasCommand("revealInExplorer")) items.Add(Item("Reveal in Explorer", () => _ = vm.RevealInExplorerAsync(row)));
         items.Add(new Separator());
         if (row is FileRow file)
@@ -210,6 +213,31 @@ public sealed partial class FindInFilesView : UserControl, IDisposable
         var menu = new ContextMenu { ItemsSource = items };
         menu.Open(target);
         e.Handled = true;
+    }
+
+    // ------------------------------------------------------------------------------------- clipboard (Ctrl+C, Ctrl+Insert, Edit > Copy)
+
+    /// <summary>A result as Visual Studio's Find Results copies it: a match as <c>path(line): text</c>, a file as its path.</summary>
+    internal static string CopyText(ResultRow row) => row switch
+    {
+        MatchRow m => $"{m.File.FullPath}({m.LineNumber}): {m.Preview.Trim()}",
+        FileRow f => f.FullPath,
+        _ => "",
+    };
+
+    public bool CanCopy => DataContext is FindInFilesViewModel { SelectedRow: not null };
+
+    public async Task CopyAsync()
+    {
+        if (DataContext is FindInFilesViewModel { SelectedRow: { } row } vm) await vm.CopyTextAsync(CopyText(row));
+    }
+
+    /// <summary>Every result, files and their matches, one per line.</summary>
+    private async Task CopyAllAsync()
+    {
+        if (DataContext is not FindInFilesViewModel vm) return;
+        var text = string.Join("\n", vm.Rows.Select(CopyText));
+        await vm.CopyTextAsync(text);
     }
 
     public void Dispose()
