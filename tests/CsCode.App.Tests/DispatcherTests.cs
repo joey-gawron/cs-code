@@ -82,12 +82,16 @@ public class DispatcherTests
 
 #if DEBUG // the asserts are [Conditional("DEBUG")] and compile away in Release
     [Fact]
-    public async Task Ui_thread_asserts_throw_on_the_wrong_thread()
+    public void Ui_thread_asserts_throw_on_the_wrong_thread()
     {
         var ui = new ManualUiDispatcher();
         ui.AssertUiThread();
         Assert.Throws<InvalidOperationException>(() => ui.AssertNotUiThread());
-        var error = await Task.Run(() => Record.Exception(() => ui.AssertUiThread()));
+        // A dedicated thread: Task.Run from a pool thread may be run inline by the same thread once it yields.
+        Exception? error = null;
+        var worker = new Thread(() => error = Record.Exception(() => ui.AssertUiThread()));
+        worker.Start();
+        worker.Join();
         Assert.IsType<InvalidOperationException>(error);
     }
 #endif

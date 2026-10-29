@@ -32,6 +32,9 @@ public class ShellDocument : Document, IDisposable
 
     public bool IsDisposed { get; private set; }
 
+    /// <summary>Recorded just before the tab closes so the well can pick the most-recently-used successor (Dock would pick a neighbour).</summary>
+    internal bool WasActiveOnClose { get; set; }
+
     public virtual void Dispose()
     {
         IsDisposed = true;

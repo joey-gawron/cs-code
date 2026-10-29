@@ -38,8 +38,11 @@ public sealed class DocumentWell : IDisposable
     private readonly Emitter<object?> _tabsChanged = new();
     private ShellDocument? _active;
 
-    public DocumentWell(ShellDockFactory factory, IEditorViewFactory editors, IModalDialogs dialogs, IWindowService? windows = null, IConfigurationService? config = null)
+    private readonly IUiDispatcher? _ui;
+
+    public DocumentWell(ShellDockFactory factory, IEditorViewFactory editors, IModalDialogs dialogs, IWindowService? windows = null, IConfigurationService? config = null, IUiDispatcher? ui = null)
     {
+        _ui = ui;
         _factory = factory;
         _editors = editors;
         _dialogs = dialogs;
@@ -243,10 +246,28 @@ public sealed class DocumentWell : IDisposable
             _closed.AddFirst(et.Uri);
             while (_closed.Count > MaxClosedHistory) _closed.RemoveLast();
         }
-        _factory.CloseDockable(tab);
-        // Dock fires DockableClosed synchronously; if a host variant did not, make sure we still clean up.
-        if (Tabs.Contains(tab)) _factory.RemoveDockable(tab, collapse: true);
-        CleanUp(tab);
+        tab.WasActiveOnClose = ReferenceEquals(_active, tab);
+        _suppressActive = true; // Dock activates its own neighbour while closing; that must not reorder the MRU list
+        try
+        {
+            _factory.CloseDockable(tab);
+            // Dock fires DockableClosed synchronously; if a host variant did not, make sure we still clean up.
+            if (Tabs.Contains(tab)) _factory.RemoveDockable(tab, collapse: true);
+            CleanUp(tab);
+        }
+        finally { _suppressActive = false; }
+        ReassertMru(); // the user-visible rule is "most recently used", not Dock's neighbour
+    }
+
+    private bool _reassertMru;
+    private bool _suppressActive;
+
+    private void ReassertMru()
+    {
+        if (!_reassertMru) return;
+        _reassertMru = false;
+        var live = Tabs;
+        if (_mru.FirstOrDefault(live.Contains) is { } next && !ReferenceEquals(_active, next)) Activate(next, preserveFocus: true);
     }
 
     public async ValueTask<bool> ReopenClosedAsync()
@@ -328,11 +349,12 @@ public sealed class DocumentWell : IDisposable
 
     private void OnActiveDockableChanged(object? sender, ActiveDockableChangedEventArgs e)
     {
-        if (e.Dockable is ShellDocument d) OnActive(d);
+        if (e.Dockable is ShellDocument d) OnActive(d, fromDock: true);
     }
 
     private void OnClosing(object? sender, DockableClosingEventArgs e)
     {
+        if (e.Dockable is ShellDocument closing && !e.Cancel && !_suppressActive) closing.WasActiveOnClose = ReferenceEquals(_active, closing);
         // The user clicked a tab's close button. A dirty tab needs an async prompt, so cancel Dock's close and run ours.
         if (e.Dockable is EditorTab { CloseConfirmed: false, IsDirty: true } tab)
         {
@@ -349,11 +371,19 @@ public sealed class DocumentWell : IDisposable
 
     private void OnClosed(object? sender, DockableClosedEventArgs e)
     {
-        if (e.Dockable is ShellDocument tab) CleanUp(tab);
+        if (e.Dockable is not ShellDocument tab) return;
+        CleanUp(tab);
+        if (_suppressActive) return; // programmatic close: RemoveTab finishes the job
+        // Dock-initiated close (the tab's X button): Dock picks the neighbour after this event returns, so keep ignoring its activation
+        // until the next UI turn, then re-assert the MRU choice.
+        if (_ui is null) { _suppressActive = false; return; }
+        _suppressActive = true;
+        _ui.Post(() => { _suppressActive = false; ReassertMru(); });
     }
 
-    private void OnActive(ShellDocument tab)
+    private void OnActive(ShellDocument tab, bool fromDock = false)
     {
+        if (fromDock && _suppressActive) return; // Dock's own neighbour pick while a tab is closing
         _mru.Remove(tab);
         _mru.Insert(0, tab);
         if (ReferenceEquals(_active, tab)) return;
@@ -365,7 +395,8 @@ public sealed class DocumentWell : IDisposable
     private void CleanUp(ShellDocument tab)
     {
         if (tab.IsDisposed) return; // Dock's DockableClosed and RemoveTab both end up here
-        var wasActive = ReferenceEquals(_active, tab);
+        // Dock may already have activated its own neighbour; the user-visible rule is "most recently used", so we re-pick.
+        var wasActive = tab.WasActiveOnClose || ReferenceEquals(_active, tab);
         _mru.Remove(tab);
         var doc = (tab as EditorTab)?.Doc;
         tab.Dispose();
@@ -374,10 +405,10 @@ public sealed class DocumentWell : IDisposable
         if (tab is not EditorTab) _singletons.Where(kv => ReferenceEquals(kv.Value, tab)).Select(kv => kv.Key).ToList().ForEach(k => _singletons.Remove(k));
         if (wasActive)
         {
-            _active = null;
-            var next = _mru.FirstOrDefault(Tabs.Contains);
-            if (next is not null) Activate(next, preserveFocus: true);
-            else _activeChanged.Fire(null);
+            var live = Tabs;
+            var next = _mru.FirstOrDefault(live.Contains);
+            if (next is not null) { _active = null; Activate(next, preserveFocus: true); _reassertMru = true; }
+            else { _active = null; _activeChanged.Fire(null); }
         }
         _tabsChanged.Fire(null);
     }

@@ -21,6 +21,12 @@ public sealed class ShellDockFactory : Factory
 
     public override IRootDock CreateLayout()
     {
+        // The primary document group and the tool wells must survive being emptied: Dock would otherwise collapse an empty dock out
+        // of the layout and later tabs would land in a detached dock. (Groups created by "split" stay collapsible.)
+        PrimaryDocuments.IsCollapsable = false;
+        LeftTools.IsCollapsable = false;
+        RightTools.IsCollapsable = false;
+        BottomTools.IsCollapsable = false;
         PrimaryDocuments.VisibleDockables = CreateList<IDockable>();
         LeftTools.VisibleDockables = CreateList<IDockable>();
         RightTools.VisibleDockables = CreateList<IDockable>();
