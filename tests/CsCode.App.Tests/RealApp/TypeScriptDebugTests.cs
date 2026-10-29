@@ -73,6 +73,20 @@ public class RealAppTypeScriptDebugTests
         });
         await host.StartAsync([host.Files.Path]);
         var debug = host.Get<IDebugService>();
+        try
+        {
+            await DebugAsync(host, debug);
+        }
+        finally
+        {
+            // The host disposes the container synchronously (no AppShutdown), which only STARTS the debug service's asynchronous shutdown:
+            // a failing assertion must not leave js-debug's server (it never exits by itself) running after the test process ends.
+            await debug.StopAllAsync();
+        }
+    }
+
+    private static async Task DebugAsync(RealAppHost host, IDebugService debug)
+    {
         var commands = host.Get<ICommandService>();
         var main = new Uri(host.Files.Combine("src", "main.ts"));
         var line = JsDebugSample.MainLine("loop");

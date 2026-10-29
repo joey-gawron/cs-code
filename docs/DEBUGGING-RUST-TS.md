@@ -139,6 +139,12 @@ Tests: **D** = `tests/CsCode.Dap.Tests/RealJsDebugTests.cs` (real `DebugService`
   need it set `outputCapture: "std"` or `console: "integratedTerminal"` (output then comes through our `runInTerminal`, still in the Debug Console).
 * Debug-lane stall of ~100 ms while a flood of large output events is parsed (32 frames per yield); the UI budget is unaffected.
 * `pwa-chrome` / browser debugging is out of scope; the factory handles `pwa-node`/`node` only.
+* **A js-debug server never exits by itself**, unlike a stdio adapter (netcoredbg exits when its stdin closes). Every way a session ends kills
+  it, and so do the app's shutdown paths (graceful: the debug service's `DisposeAsync`; abrupt: `ChildProcessTracker.KillSurvivorsNow`, which
+  knows the server through `IMemoryMonitor.TrackChildProcess`). If CsCode itself is killed (SIGKILL, crash) during a session, the server and its
+  debuggee survive. Seen in this work: a test host that disposes the container synchronously (`RealAppHost`) and then exits only *starts* the
+  asynchronous shutdown, so two failing runs of the real-composition test left their servers behind; the test now stops debugging in a
+  `finally` (a simulated failure left nothing).
 
 ### Running the suites
 

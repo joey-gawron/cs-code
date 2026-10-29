@@ -4,12 +4,12 @@
 Samsung **netcoredbg** (MIT). No Avalonia, no Newtonsoft, no extension host: the protocol layer is hand-written on `System.Text.Json`,
 and customisation is native and file based (`launch.json`, `tasks.json`, the `cscode.debuggers` setting).
 
-> **Status in one paragraph.** Everything in the brief's MUST list is implemented and covered by **455 passing tests against scripted
+> **Status in one paragraph.** Everything in the brief's MUST list is implemented and covered by **490 passing tests against scripted
 > in-process fake adapters, real child processes (`/bin/sh`, `python3`) and real TCP/unix sockets**, plus the SHOULD items listed below.
-> The **real netcoredbg end-to-end suite (`Category=RealAdapter`, 8 tests including the 10-session soak) passes against netcoredbg
-> 3.2.0-1092** on Linux x64 (integration run; no adapter or debuggee process is left behind). It was not executed by the module's original
-> author (the permission system refused to run the downloaded binary then). Run it with
-> `tools/fetch-netcoredbg.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter`.
+> The **real-adapter suites (`Category=RealAdapter`, 33 tests) pass**: netcoredbg 3.2.0-1092 (8 tests including the 10-session soak) and
+> **js-debug v1.140.0 for Node.js/TypeScript** (25 tests: the whole TypeScript evaluation matrix of [DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md),
+> including a 10-session soak), on Linux x64, three runs in a row, no adapter, debuggee or task process left behind. Run them with
+> `tools/fetch-netcoredbg.sh && tools/fetch-js-debug.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter`.
 > See [Real-adapter tests](#real-adapter-tests-netcoredbg).
 
 ## Layout
@@ -232,7 +232,7 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 ## Tests (`tests/CsCode.Dap.Tests`, xUnit v3)
 
 ```
-dotnet test tests/CsCode.Dap.Tests --filter "Category!=RealAdapter"     # 455 tests: fakes, real processes/sockets, threading, leaks
+dotnet test tests/CsCode.Dap.Tests --filter "Category!=RealAdapter"     # 490 tests: fakes, real processes/sockets, threading, leaks
 dotnet test tests/CsCode.Dap.Tests --filter Category=RealTools          # SDK build of the sample project only (never starts netcoredbg)
 tools/fetch-netcoredbg.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter   # the real netcoredbg end-to-end suite
 ```
