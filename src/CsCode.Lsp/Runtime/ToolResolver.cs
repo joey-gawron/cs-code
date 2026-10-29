@@ -2,11 +2,49 @@ namespace CsCode.Lsp.Runtime;
 
 /// <summary>
 /// Resolves a server command to an executable file: absolute/relative path as given, else PATH (honouring a definition's PATH override),
+/// else the per-user install directories (<c>cscode.lsp.searchDirs</c>: <c>~/.nix-profile/bin</c>, <c>~/.cargo/bin</c>, <c>~/go/bin</c>, …),
 /// else the managed tools directory <c>{ToolsDir}/lsp/**</c> (npm <c>.bin</c> folders, <c>bin</c> folders, the dir itself).
+/// The install directories matter for an editor started from a desktop launcher, whose PATH rarely contains them. Nothing is ever installed.
 /// </summary>
 public static class ToolResolver
 {
-    public static string? Resolve(string command, string? toolsDir, string? workingDirectory, IReadOnlyDictionary<string, string>? env)
+    /// <summary>
+    /// The usual per-user install locations of language servers, unexpanded (<c>~</c> = home, <c>%VAR%</c> = environment variable):
+    /// the default of <c>cscode.lsp.searchDirs</c>. Package managers put binaries here without necessarily adding them to the PATH a GUI sees.
+    /// </summary>
+    public static IReadOnlyList<string> DefaultSearchDirs { get; } = OperatingSystem.IsWindows()
+        ?
+        [
+            "~/.cargo/bin", "~/go/bin", "~/.dotnet/tools", "%APPDATA%/npm", "~/scoop/shims", "%LOCALAPPDATA%/Coursier/data/bin", "~/.ghcup/bin",
+        ]
+        : OperatingSystem.IsMacOS()
+            ?
+            [
+                "/opt/homebrew/bin", "/usr/local/bin", "~/.nix-profile/bin", "/nix/var/nix/profiles/default/bin", "~/.cargo/bin", "~/.local/bin",
+                "~/go/bin", "~/.dotnet/tools", "~/Library/Application Support/Coursier/bin", "~/.ghcup/bin",
+            ]
+            :
+            [
+                "~/.nix-profile/bin", "/nix/var/nix/profiles/default/bin", "~/.cargo/bin", "~/.local/bin", "~/go/bin", "~/.dotnet/tools",
+                "~/.local/share/coursier/bin", "~/.ghcup/bin",
+            ];
+
+    /// <summary>Expands a leading <c>~</c> to the user's home directory and <c>%VAR%</c> environment references; returns null for an empty entry.</summary>
+    public static string? ExpandDirectory(string? dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir)) return null;
+        var d = Environment.ExpandEnvironmentVariables(dir.Trim());
+        if (d == "~" || d.StartsWith("~/", StringComparison.Ordinal) || d.StartsWith("~\\", StringComparison.Ordinal))
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (string.IsNullOrEmpty(home)) return null;
+            d = d.Length == 1 ? home : Path.Combine(home, d[2..]);
+        }
+        return d.Contains('%', StringComparison.Ordinal) ? null : d; // an unset %VAR% stays literal: not a real directory
+    }
+
+    /// <param name="searchDirs">Already expanded directories searched after PATH; null = none (the manager passes <c>cscode.lsp.searchDirs</c>).</param>
+    public static string? Resolve(string command, string? toolsDir, string? workingDirectory, IReadOnlyDictionary<string, string>? env, IReadOnlyList<string>? searchDirs = null)
     {
         if (string.IsNullOrWhiteSpace(command)) return null;
         if (command.Contains('/') || command.Contains('\\'))
@@ -19,6 +57,11 @@ public static class ToolResolver
         env?.TryGetValue("PATH", out pathVar);
         var onPath = FindOnPath(command, pathVar);
         if (onPath is not null) return onPath;
+
+        if (searchDirs is not null)
+            foreach (var dir in searchDirs)
+                foreach (var candidate in Candidates(dir, command))
+                    if (IsExecutableFile(candidate)) return candidate;
 
         return toolsDir is null ? null : FindInToolsDir(command, Path.Combine(toolsDir, "lsp"));
     }

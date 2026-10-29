@@ -8,7 +8,10 @@ namespace CsCode.Lsp.Runtime;
 
 public enum ProcessPriority { BelowNormal, Normal, Idle }
 
-/// <summary>Everything needed to reach one language server. The factory resolves <c>Definition.Command</c> (PATH, then <c>{ToolsDir}/lsp/**</c>).</summary>
+/// <summary>
+/// Everything needed to reach one language server. The factory resolves <c>Definition.Command</c> (PATH, then <see cref="SearchDirs"/>, then
+/// <c>{ToolsDir}/lsp/**</c>) and, when that finds nothing, each of <see cref="Alternatives"/> in order (see <see cref="ServerLaunch"/>).
+/// </summary>
 public sealed record LspLaunchRequest(
     LanguageServerDefinition Definition,
     string? ToolsDir,
@@ -16,7 +19,37 @@ public sealed record LspLaunchRequest(
     ProcessPriority Priority = ProcessPriority.BelowNormal,
     Action<string>? OnStderrLine = null,
     /// <summary>Linux only: cap the server (and everything it spawns) to this percentage of one CPU via a transient systemd scope; 0 = no cap.</summary>
-    int CpuQuotaPercent = 0);
+    int CpuQuotaPercent = 0,
+    /// <summary>Expanded per-user install directories searched after PATH (<c>cscode.lsp.searchDirs</c>).</summary>
+    IReadOnlyList<string>? SearchDirs = null,
+    /// <summary>Other executables serving the same languages (e.g. nixd for nil), tried in order when the definition's command is not found.</summary>
+    IReadOnlyList<ServerAlternative>? Alternatives = null);
+
+/// <summary>Another executable (with its own arguments) that can stand in for a definition's command, e.g. <c>nixd</c> for <c>nil</c>.</summary>
+public sealed record ServerAlternative(string Command, IReadOnlyList<string> Args);
+
+/// <summary>What a process launch resolved to: the definition actually run (command and args of the alternative, if one was used) and its executable.</summary>
+public sealed record ResolvedLaunch(LanguageServerDefinition Definition, string Executable, bool UsedAlternative);
+
+/// <summary>Resolution of a process launch request, separated from process creation so it can be tested (and reported) on its own.</summary>
+public static class ServerLaunch
+{
+    /// <summary>The definition's own command first, then each alternative; null when none of them is installed.</summary>
+    public static ResolvedLaunch? Resolve(LspLaunchRequest request)
+    {
+        var def = request.Definition;
+        if (ToolResolver.Resolve(def.Command, request.ToolsDir, request.WorkingDirectory, def.Env, request.SearchDirs) is { } own)
+            return new ResolvedLaunch(def, own, false);
+        foreach (var alt in request.Alternatives ?? [])
+            if (ToolResolver.Resolve(alt.Command, request.ToolsDir, request.WorkingDirectory, def.Env, request.SearchDirs) is { } path)
+                return new ResolvedLaunch(def with { Command = alt.Command, Args = alt.Args }, path, true);
+        return null;
+    }
+
+    /// <summary>Every command that was looked for, for the "not found" message: <c>nil / nixd</c>.</summary>
+    public static string Describe(LspLaunchRequest request) =>
+        string.Join(" / ", new[] { request.Definition.Command }.Concat((request.Alternatives ?? []).Select(a => a.Command)).Distinct(StringComparer.Ordinal));
+}
 
 /// <summary>A live byte transport to a server (child-process stdio, TCP socket, named pipe / unix socket, or an in-proc pipe in tests).</summary>
 public interface ILspConnection : IAsyncDisposable
@@ -109,12 +142,16 @@ public sealed class DefaultLspConnectionFactory : ILspConnectionFactory
         {
             case LspEndpointKind.Process:
             {
-                var resolved = ToolResolver.Resolve(request.Definition.Command, request.ToolsDir, request.WorkingDirectory, request.Definition.Env)
-                    ?? throw new ServerNotFoundException(request.Definition.Command);
+                var resolved = ServerLaunch.Resolve(request) ?? throw new ServerNotFoundException(ServerLaunch.Describe(request));
+                if (resolved.UsedAlternative)
+                {
+                    request.OnStderrLine?.Invoke($"[client] '{request.Definition.Command}' was not found; starting '{resolved.Definition.Command}' instead ({resolved.Executable})");
+                    request = request with { Definition = resolved.Definition };
+                }
                 var systemdRun = request.CpuQuotaPercent > 0 ? await SystemdRunAsync().ConfigureAwait(false) : null;
                 if (request.CpuQuotaPercent > 0 && systemdRun is null)
                     request.OnStderrLine?.Invoke("[client] cscode.lsp.cpuQuotaPercent is set but systemd-run (user scopes) is not usable here; starting without a CPU cap");
-                return ProcessConnection.Start(request, resolved, systemdRun);
+                return ProcessConnection.Start(request, resolved.Executable, systemdRun);
             }
             case LspEndpointKind.Tcp:
             {

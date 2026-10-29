@@ -7,6 +7,9 @@ namespace CsCode.Lsp.Manager;
 /// Finds the workspace root a document belongs to for a server: walk up from the file looking for any of the definition's RootMarkers
 /// (names or globs such as <c>*.sln</c>), never leaving the workspace folder that contains the file; fall back to that folder, then to
 /// the file's directory. Definitions without markers use the workspace folder(s) directly (one server for all folders).
+/// Built-in servers whose build systems nest marker files (Maven/Gradle modules, Mix umbrellas, dune, Cabal projects, Nix trees) take the
+/// OUTERMOST marked directory inside the workspace folder instead of the nearest one (<see cref="RootStrategy.Outermost"/>), so one
+/// project gets one server rather than one per module.
 /// Probing touches the file system, so it only ever runs on the Language lane. Results are cached briefly and the cache is bounded.
 /// </summary>
 internal sealed class RootDetector
@@ -33,7 +36,9 @@ internal sealed class RootDetector
         var file = documentUri.LocalPath;
         var dir = Path.GetDirectoryName(file);
         var bound = workspaceFolders.Where(f => f.IsFile && Contains(f.LocalPath, file)).OrderByDescending(f => f.LocalPath.Length).FirstOrDefault();
-        var found = dir is null ? null : Probe(dir, bound?.LocalPath, markers);
+        // Outermost needs a bound: without a containing workspace folder it would climb to the file-system root.
+        var outermost = bound is not null && BuiltinLanguageServers.RootStrategyFor(def) == RootStrategy.Outermost;
+        var found = dir is null ? null : Probe(dir, bound?.LocalPath, markers, outermost);
         if (found is not null) return ToRoot(found);
         if (bound is not null) return ToRoot(bound.LocalPath);
         return dir is null ? new Root("none", null, false) : ToRoot(dir);
@@ -51,27 +56,30 @@ internal sealed class RootDetector
         return file.StartsWith(f + Path.DirectorySeparatorChar, StringComparison.Ordinal) || file.StartsWith(f + "/", StringComparison.Ordinal);
     }
 
-    private string? Probe(string startDir, string? boundDir, IReadOnlyList<string> markers)
+    private string? Probe(string startDir, string? boundDir, IReadOnlyList<string> markers, bool outermost)
     {
         var markerKey = string.Join('|', markers);
         var bound = boundDir is null ? null : Path.TrimEndingDirectorySeparator(boundDir);
         var now = Environment.TickCount64;
+        string? found = null;
         for (var dir = startDir; dir is not null; dir = Path.GetDirectoryName(dir))
         {
-            if (_cache.TryGetValue((dir, markerKey), out var hit) && now - hit.Ticks < Ttl.TotalMilliseconds)
-            {
-                if (hit.Root is not null) return hit.Root;
-            }
+            string? root;
+            if (_cache.TryGetValue((dir, markerKey), out var hit) && now - hit.Ticks < Ttl.TotalMilliseconds) root = hit.Root;
             else
             {
-                var has = HasMarker(dir, markers);
+                root = HasMarker(dir, markers) ? dir : null;
                 if (_cache.Count >= MaxCache) _cache.Clear(); // crude but bounded: probing is cheap to redo
-                _cache[(dir, markerKey)] = (has ? dir : null, now);
-                if (has) return dir;
+                _cache[(dir, markerKey)] = (root, now);
+            }
+            if (root is not null)
+            {
+                if (!outermost) return root;
+                found = root; // keep climbing: an enclosing build (parent pom, settings.gradle, umbrella mix.exs) wins
             }
             if (bound is not null && string.Equals(Path.TrimEndingDirectorySeparator(dir), bound, StringComparison.Ordinal)) break;
         }
-        return null;
+        return found;
     }
 
     private static bool HasMarker(string dir, IReadOnlyList<string> markers)
