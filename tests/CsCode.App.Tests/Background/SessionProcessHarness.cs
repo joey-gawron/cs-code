@@ -18,11 +18,15 @@ public sealed record LauncherRun(int ExitCode, string Output, string Error, Time
 /// </summary>
 public sealed class SessionProcessHarness : IDisposable
 {
+    private readonly bool _trace;
+
     private static readonly string[] BuiltinServers =
         ["typescript", "csharp", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua"];
 
-    public SessionProcessHarness(string? extraSettings = null)
+    /// <param name="trace">Write a per-phase timeline of every process to <see cref="TracePath"/> (adds file writes to the measured paths).</param>
+    public SessionProcessHarness(string? extraSettings = null, bool trace = true)
     {
+        _trace = trace;
         // Short: Unix socket paths are limited to ~108 bytes.
         Home = Path.Combine("/tmp", "csb-" + Guid.NewGuid().ToString("N")[..8]);
         Workspace = Path.Combine(Home, "ws");
@@ -87,7 +91,8 @@ public sealed class SessionProcessHarness : IDisposable
         foreach (var a in args) psi.ArgumentList.Add(a);
         psi.Environment["CSCODE_HOME"] = Home;
         psi.Environment["XDG_DATA_HOME"] = Path.Combine(Home, "xdg-data"); // the Platform trash: never the user's real Trash
-        psi.Environment["CSCODE_SESSION_TRACE"] = TracePath;
+        if (_trace) psi.Environment["CSCODE_SESSION_TRACE"] = TracePath;
+        else psi.Environment.Remove("CSCODE_SESSION_TRACE");
         psi.Environment.Remove("DISPLAY");
         psi.Environment.Remove("WAYLAND_DISPLAY");
         psi.Environment.Remove("SSH_AUTH_SOCK");

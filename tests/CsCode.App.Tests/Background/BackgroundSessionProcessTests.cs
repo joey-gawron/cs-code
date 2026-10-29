@@ -40,9 +40,11 @@ public class BackgroundSessionProcessTests
         var background = await h.RunAsync("--background");
         Assert.True(background.ExitCode == 0, background.Error);
         var spare = await h.WaitForAsync(p => p.IsSpare, what: "warm spare");
-        // The spare is claimable at once; give it time to finish its off-screen warm-up so the measurement is of a warm spare.
-        await SessionProcessHarness.WaitUntilAsync(() => h.Trace().Contains($"pid {spare.Pid} ") && h.Trace().Contains("host: spare warm"), 60_000);
-        await Task.Delay(500);
+        // The spare is claimable at once; give it time to finish its off-screen warm-up and trim so the measurement is of a warm spare
+        // (with tracing, wait for its "warm" mark; without, a fixed settle time).
+        if (h.Trace() != "(no trace)") await SessionProcessHarness.WaitUntilAsync(() => h.Trace().Contains($"pid {spare.Pid} +") && h.Trace().Contains("host: spare warm"), 60_000);
+        else await Task.Delay(5000);
+        await Task.Delay(1000);
         return spare.Pid;
     }
 
@@ -73,14 +75,20 @@ public class BackgroundSessionProcessTests
 
         // 2. Unsaved edit, a fold, a caret move.
         h.Must(a.Pid, new IpcMessage { Type = IpcVerbs.TestEdit, Uri = uri, Line = 2, Column = 0, Text = "// UNSAVED EDIT\n" });
-        h.Must(a.Pid, new IpcMessage { Type = IpcVerbs.TestFold, Uri = uri, Line = 3 });
-        h.Must(a.Pid, new IpcMessage { Type = IpcVerbs.TestCaret, Uri = uri, Line = 12, Column = 8 });
+        // Folding regions are computed asynchronously after the edit: fold the Shrink() body (lines 12-15 now) once its region exists.
+        Assert.True(await SessionProcessHarness.WaitUntilAsync(() =>
+        {
+            h.Must(a.Pid, new IpcMessage { Type = IpcVerbs.TestFold, Uri = uri, Line = 12 });
+            h.Must(a.Pid, new IpcMessage { Type = IpcVerbs.TestFold, Uri = uri, Line = 13 });
+            return Assert.Single(h.Inspect(a.Pid).Tabs).Folded.Count > 0;
+        }, 15_000), "no folding region appeared");
+        h.Must(a.Pid, new IpcMessage { Type = IpcVerbs.TestCaret, Uri = uri, Line = 9, Column = 8 });
         var edited = h.Inspect(a.Pid);
         var editedTab = Assert.Single(edited.Tabs);
         Assert.True(editedTab.Dirty);
-        Assert.Equal((12, 8), (editedTab.CaretLine, editedTab.CaretColumn));
+        Assert.Equal((9, 8), (editedTab.CaretLine, editedTab.CaretColumn));
         var folds = editedTab.Folded;
-        Assert.Contains(3, folds); // the class body (after the inserted line) is folded
+        Assert.NotEmpty(folds);
 
         // 3. Closing the window hides it: the process stays, its endpoint answers, nothing was prompted.
         h.Must(a.Pid, new IpcMessage { Type = IpcVerbs.TestCloseWindow });
@@ -98,12 +106,14 @@ public class BackgroundSessionProcessTests
         Assert.True(show.ExitCode == 0, show.Error);
         var back = h.Inspect(a.Pid, withText: true);
         Assert.True(back.Visible);
+        Assert.True(back.LiveViews >= 1, "the active editor view was not recreated before the window was shown");
         var backTab = Assert.Single(back.Tabs);
         Assert.True(backTab.Dirty);
         Assert.Contains("// UNSAVED EDIT", backTab.Text);
-        Assert.Equal((12, 8), (backTab.CaretLine, backTab.CaretColumn));
-        Assert.Equal(folds, backTab.Folded);
-        Assert.True(back.LiveViews >= 1, "the active editor view was not recreated before the window was shown");
+        Assert.Equal((9, 8), (backTab.CaretLine, backTab.CaretColumn));
+        // The recreated view computes its folding regions asynchronously, then re-applies the saved folds.
+        Assert.True(await SessionProcessHarness.WaitUntilAsync(() => Assert.Single(h.Inspect(a.Pid).Tabs).Folded.SequenceEqual(folds), 15_000),
+            $"folds after show: [{string.Join(",", Assert.Single(h.Inspect(a.Pid).Tabs).Folded)}], expected [{string.Join(",", folds)}]");
 
         // 6. kill -9: the next launch restores the session from its autosave and hot-exit backup (no save prompt, the edit is there).
         Assert.True(await SessionProcessHarness.WaitUntilAsync(() => h.Store.Backups.List("A").Count == 1, 10_000), "no hot-exit backup was written");
@@ -118,6 +128,7 @@ public class BackgroundSessionProcessTests
         Assert.True(afterTab.Dirty, "the unsaved edit must come back as unsaved");
         Assert.Contains("// UNSAVED EDIT", afterTab.Text);
         Assert.Equal(Source.Split('\n').Length + 1, afterTab.Text!.Split('\n').Length);
+        Assert.Equal((9, 8), (afterTab.CaretLine, afterTab.CaretColumn)); // the autosaved view state
         Assert.Equal(new Uri(h.Workspace + "/").ToString(), Assert.Single(after.Folders));
         Assert.DoesNotContain("UNSAVED", File.ReadAllText(file)); // hot exit never writes the user's file
 
@@ -132,7 +143,7 @@ public class BackgroundSessionProcessTests
     [Fact]
     public async Task Latency_resident_show_and_warm_spare_claim_are_within_budget()
     {
-        using var h = new SessionProcessHarness();
+        using var h = new SessionProcessHarness(trace: false);
         h.WriteFile("Widget.cs", Source);
         await SpareAsync(h);
 

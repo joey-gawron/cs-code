@@ -19,6 +19,8 @@ public static class SessionCommandIds
     public const string CloseWindow = "cscode.sessions.closeWindow";
     public const string QuitSession = "cscode.sessions.quit";
     public const string ExitAll = "cscode.sessions.exitAll";
+    /// <summary>Toggles "start CsCode in the background at login" (asks first; <see cref="AutostartEntry"/>).</summary>
+    public const string StartAtLogin = "cscode.sessions.startAtLogin";
 }
 
 public sealed partial class SessionWindowController
@@ -39,6 +41,7 @@ public sealed partial class SessionWindowController
         Add(SessionCommandIds.CloseWindow, "Close Window (Keep Running)", () => { Hide(); return Task.CompletedTask; });
         Add(SessionCommandIds.QuitSession, "Quit Session", async () => await QuitAsync(force: false).ConfigureAwait(true));
         Add(SessionCommandIds.ExitAll, "Exit All", ExitAllAsync);
+        Add(SessionCommandIds.StartAtLogin, "Start CsCode in the Background at Login...", ToggleStartAtLoginAsync);
         // In a session process "Exit" ends CsCode as a whole, like closing the last window of a multi-window editor (with hot exit, nothing is asked).
         Add(KnownCommands.Quit, "Exit", ExitAllAsync);
     }
@@ -127,6 +130,32 @@ public sealed partial class SessionWindowController
             return true;
         }).ConfigureAwait(true);
         if (!deleted) Notify(MessageSeverity.Error, $"Session '{name}' is running; quit it first.");
+    }
+
+    /// <summary>Installs or removes the login autostart entry, after the user confirmed exactly what is written where.</summary>
+    private async Task ToggleStartAtLoginAsync()
+    {
+        if (AutostartEntry.PathFor() is not { } path)
+        {
+            Notify(MessageSeverity.Info, "On this system, run the script in tools/autostart/ to start CsCode at login (docs/SESSIONS.md).");
+            return;
+        }
+        var (installed, executable) = await _host.Lane.RunAsync(() => (AutostartEntry.IsInstalled(), AutostartEntry.DefaultExecutable())).ConfigureAwait(true);
+        var question = installed
+            ? $"CsCode starts in the background at login ({path}). Stop that?"
+            : $"Start CsCode in the background at login? This writes {path}, which runs \"{executable} --background\" when you log in (the warm spare; no window opens).";
+        var yes = installed ? "Stop Starting at Login" : "Start at Login";
+        var answer = await Windows.ShowMessageAsync(MessageSeverity.Info, question, [new MessageAction(yes), new MessageAction("Cancel", IsCloseAffordance: true)]).ConfigureAwait(true);
+        if (answer != yes) return;
+        try
+        {
+            await _host.Lane.RunAsync(() => { if (installed) AutostartEntry.Uninstall(); else AutostartEntry.Install(executable); }).ConfigureAwait(true);
+            Notify(MessageSeverity.Info, installed ? "CsCode no longer starts at login." : "CsCode will start in the background at login.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Notify(MessageSeverity.Error, "Could not change the login autostart entry: " + ex.Message);
+        }
     }
 
     /// <summary>Exit All: every other CsCode process quits (hot exit), then this one.</summary>

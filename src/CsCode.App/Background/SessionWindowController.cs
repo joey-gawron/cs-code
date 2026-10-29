@@ -474,8 +474,13 @@ public sealed partial class SessionWindowController : IDisposable
     private void StopServersFromTimer()
     {
         if (_sp.GetService<ILanguageServerManager>() is not { } servers) return;
-        var running = servers.Servers.Where(s => s.State is LanguageServerState.Running or LanguageServerState.Starting or LanguageServerState.Unresponsive)
-            .Select(s => s.Id).Distinct(StringComparer.Ordinal).ToArray();
+        string[] running;
+        try
+        {
+            running = servers.Servers.Where(s => s.State is LanguageServerState.Running or LanguageServerState.Starting or LanguageServerState.Unresponsive)
+                .Select(s => s.Id).Distinct(StringComparer.Ordinal).ToArray();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { return; } // shutting down
         _stoppedServers = running;
         foreach (var id in running)
             _ = Task.Run(async () =>

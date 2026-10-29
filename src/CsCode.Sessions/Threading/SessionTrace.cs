@@ -12,13 +12,18 @@ public static class SessionTrace
 {
     private static readonly string? s_path = Environment.GetEnvironmentVariable("CSCODE_SESSION_TRACE") is { Length: > 0 } p ? p : null;
     private static readonly object s_gate = new();
+    private static readonly Lazy<DateTime> s_started = new(() =>
+    {
+        using var self = Process.GetCurrentProcess();
+        return self.StartTime;
+    });
 
     public static bool Enabled => s_path is not null;
 
     public static void Mark(string phase)
     {
         if (s_path is null) return;
-        var sinceStart = (DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMilliseconds;
+        var sinceStart = (DateTime.Now - s_started.Value).TotalMilliseconds;
         var line = string.Create(CultureInfo.InvariantCulture, $"{DateTime.Now:HH:mm:ss.fff} pid {Environment.ProcessId} +{sinceStart:0} ms {phase}\n");
         lock (s_gate)
         {
