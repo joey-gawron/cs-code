@@ -157,6 +157,11 @@ public class RealAppViewTests
         Assert.True(await Task.Run(() => activator.ShowViewAsync(SearchPanelsHost.KeybindingsViewId).AsTask()));
         Assert.Equal("view:keybindings", host.Shell.Well.Active?.Id);
         Assert.False(await activator.ShowViewAsync("no.such.view"));
+
+        // Both are document tabs now, so the shell's read-only reference must not carry the editor's title.
+        await host.RunAsync(ShellMenus.KeyboardReference);
+        Assert.Equal(["Keyboard Shortcuts", "Keyboard Shortcuts Reference"],
+            host.Shell.Well.Tabs.Where(t => t.Id is "view:keybindings" or "view:keyboard").Select(t => t.Title).Order(StringComparer.Ordinal));
     }
 
     [AvaloniaFact(Timeout = 60_000)]

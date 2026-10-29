@@ -131,7 +131,7 @@ public static class ShellCommands
         Run(ShellMenus.ResetLayout, "Reset Window Layout", "View", () => c.ResetLayout());
         Run(ShellMenus.ToggleNotifications, "Toggle Notifications", "View", () => { c.Notifications.IsCenterOpen = !c.Notifications.IsCenterOpen; return Task.CompletedTask; });
         Run(ShellMenus.Welcome, "Welcome", "Help", () => { c.Well.OpenView("welcome", "Welcome", c.CreateWelcome); return Task.CompletedTask; });
-        Run(ShellMenus.KeyboardReference, "Keyboard Shortcuts Reference", "Help", () => { c.Well.OpenView("keyboard", "Keyboard Shortcuts", c.CreateKeyboardReference); return Task.CompletedTask; });
+        Run(ShellMenus.KeyboardReference, "Keyboard Shortcuts Reference", "Help", () => { c.Well.OpenView("keyboard", "Keyboard Shortcuts Reference", c.CreateKeyboardReference); return Task.CompletedTask; });
         Run(ShellMenus.About, "About CsCode", "Help", async () => { await c.Dialogs.ShowAsync("About CsCode", AboutText.Build(), ["OK"]).ConfigureAwait(true); });
         // The Settings panel owns both ids (the Settings editor and the JSON file); these fallbacks only exist when no such panel is composed.
         // The panels registered their commands while the tool windows were enumerated, before this runs (see ShellController.Initialize).
