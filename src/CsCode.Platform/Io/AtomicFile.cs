@@ -14,7 +14,7 @@ internal static class AtomicFile
     /// target), an existing file's permission bits are preserved, and parents are created when asked to.
     /// <paramref name="beforeCommit"/> runs after the temp file is durable and before the rename (fault-injection point for tests).
     /// </summary>
-    public static void Write(string path, ReadOnlySpan<byte> content, bool createParents, CancellationToken ct, Action? beforeCommit = null)
+    public static void Write(string path, ReadOnlySpan<byte> content, bool createParents, CancellationToken ct, Action? beforeCommit = null, Action? onChunk = null)
     {
         var target = ResolveFinalTarget(path);
         var dir = Path.GetDirectoryName(target) ?? throw new ArgumentException("Path has no directory", nameof(path));
@@ -38,6 +38,7 @@ internal static class AtomicFile
                     var n = Math.Min(ChunkSize, content.Length - offset);
                     fs.Write(content.Slice(offset, n));
                     offset += n;
+                    onChunk?.Invoke();
                 }
                 fs.Flush(flushToDisk: true); // fsync BEFORE the rename: otherwise a power cut can leave a renamed-but-empty file
             }
@@ -74,7 +75,7 @@ internal static class AtomicFile
     }
 
     /// <summary>Reads a whole file in 64 KB chunks, observing cancellation between chunks.</summary>
-    public static byte[] ReadAll(string path, CancellationToken ct)
+    public static byte[] ReadAll(string path, CancellationToken ct, Action? onChunk = null)
     {
         using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, FileOptions.SequentialScan);
         var length = RandomAccess.GetLength(handle);
@@ -83,7 +84,7 @@ internal static class AtomicFile
         if (length == 0)
         {
             // /proc-style files report 0 but have content: fall back to reading until EOF.
-            return ReadUntilEof(handle, ct);
+            return ReadUntilEof(handle, ct, onChunk);
         }
 
         var buffer = new byte[length];
@@ -94,6 +95,7 @@ internal static class AtomicFile
             var n = RandomAccess.Read(handle, buffer.AsSpan(read, Math.Min(ChunkSize, buffer.Length - read)), read);
             if (n == 0) break; // truncated while reading
             read += n;
+            onChunk?.Invoke();
         }
         if (read < buffer.Length) Array.Resize(ref buffer, read);
         else
@@ -124,7 +126,7 @@ internal static class AtomicFile
         return ms.ToArray();
     }
 
-    private static byte[] ReadUntilEof(Microsoft.Win32.SafeHandles.SafeFileHandle handle, CancellationToken ct)
+    private static byte[] ReadUntilEof(Microsoft.Win32.SafeHandles.SafeFileHandle handle, CancellationToken ct, Action? onChunk)
     {
         using var ms = new MemoryStream();
         var chunk = new byte[ChunkSize];
@@ -138,7 +140,12 @@ internal static class AtomicFile
             if (n == 0) break;
             ms.Write(chunk, 0, n);
             offset += n;
+            onChunk?.Invoke();
+            // Files that claim length 0 but have content (procfs) are tiny; an endless source (/dev/zero) must not eat all memory.
+            if (offset > MaxUnknownLengthRead) throw new IOException($"File reports no size and is larger than {MaxUnknownLengthRead / (1024 * 1024)} MB; refusing to read it into memory");
         }
         return ms.ToArray();
     }
+
+    private const long MaxUnknownLengthRead = 256L * 1024 * 1024;
 }
