@@ -139,7 +139,8 @@ internal static class EditorMenus
         if (view.Services.ContextKeys is not { } keys) return;
         var debug = view.Feature<DebugFeature>();
         var line = view.Controller.Caret.Line;
-        var bp = debug?.BreakpointAt(line);
+        // The breakpoint manager is asked directly (the margin's cache is refreshed on a later turn).
+        var bp = debug is null ? null : view.Services.Debug?.Breakpoints.GetForUri(view.Document.Uri).FirstOrDefault(b => b.Line == line);
         keys.Set(BreakpointsAvailableKey, debug is not null && debug.IsFileDocument);
         keys.Set(LineHasBreakpointKey, bp is not null);
         keys.Set(LineBreakpointEnabledKey, bp?.Enabled ?? false);
