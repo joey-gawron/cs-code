@@ -15,8 +15,8 @@ internal sealed class PlainEditorViewFactory : IEditorViewFactory
 
     public ValueTask<IEditorDocument> OpenDocumentAsync(Uri uri, CancellationToken ct = default)
     {
-        var text = uri.IsFile && File.Exists(uri.LocalPath) ? File.ReadAllText(uri.LocalPath) : string.Empty;
-        return ValueTask.FromResult<IEditorDocument>(new PlainDocument(uri, "plaintext", text));
+        // Temporary stub (replaced by EditorViewFactory in this module): no sync file I/O allowed any more.
+        return ValueTask.FromResult<IEditorDocument>(new PlainDocument(uri, "plaintext", string.Empty));
     }
 
     public IEditorDocument CreateUntitled(string? languageId = null) =>
