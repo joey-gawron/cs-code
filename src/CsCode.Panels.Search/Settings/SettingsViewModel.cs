@@ -31,7 +31,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     private readonly Dictionary<string, PendingWrite> _pending = new(StringComparer.Ordinal);
     private readonly string _refreshKey = "settings.refresh." + Guid.NewGuid().ToString("N");
     private readonly int _debounceMs;
-    private Dictionary<ConfigurationTarget, IReadOnlyDictionary<string, JsonElement>?> _fileValues = new();
+    private IReadOnlyList<ScopeFile> _scopeFiles = [];
     private string _searchText = "";
     private CategoryNode? _selectedCategory;
     private SettingsScope _scope = SettingsScope.User;
@@ -92,6 +92,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         {
             if (value == SettingsScope.Workspace && !IsWorkspaceAvailable) return;
             if (!SetProperty(ref _scope, value)) return;
+            foreach (var item in _all) item.DiscardInvalidEdit(); // half-typed text belonged to the other scope's value
             OnPropertyChanged(nameof(IsUserScope));
             OnPropertyChanged(nameof(IsWorkspaceScope));
             _ = RefreshAsync();
@@ -142,45 +143,69 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     public async Task RefreshAsync()
     {
         if (_disposed) return;
-        var user = await ReadScopeAsync(ConfigurationTarget.User);
-        var workspace = IsWorkspaceAvailable ? await ReadScopeAsync(ConfigurationTarget.Workspace) : null;
+        var registered = (_s.Configuration?.Properties ?? []).Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
+        var files = new List<ScopeFile>();
+        foreach (var (label, target, path) in SettingsFiles())
+            files.Add(new ScopeFile(label, target, await ReadScopeAsync(path, registered)));
         if (_disposed) return;
-        _fileValues = new() { [ConfigurationTarget.User] = user, [ConfigurationTarget.Workspace] = workspace };
-        foreach (var item in _all) LoadItem(item, _fileValues);
+        _scopeFiles = files;
+        foreach (var item in _all) LoadItem(item, _scopeFiles);
         OnPropertyChanged(nameof(ModifiedCount));
         ApplyFilter();
     }
 
-    private void LoadItem(SettingItemViewModel item, Dictionary<ConfigurationTarget, IReadOnlyDictionary<string, JsonElement>?>? files)
+    private void LoadItem(SettingItemViewModel item, IReadOnlyList<ScopeFile>? files)
     {
-        if (_pending.ContainsKey(item.Key)) return; // the user is typing: never overwrite the box with an older value
+        // The user is typing: never overwrite the box, neither with an edit waiting for its debounce nor with text that is not valid yet.
+        if (_pending.ContainsKey(item.Key) || item.HasInvalidEdit) return;
 
         var cfg = _s.Configuration;
         var merged = cfg?.GetRaw(item.Key);
         if (merged is { ValueKind: JsonValueKind.Null }) merged = null;
-        IReadOnlyDictionary<string, JsonElement>? scoped = null, other = null;
-        files?.TryGetValue(Target, out scoped);
-        files?.TryGetValue(Target == ConfigurationTarget.User ? ConfigurationTarget.Workspace : ConfigurationTarget.User, out other);
+        JsonElement? own = null;
+        List<string>? elsewhere = null;
+        foreach (var file in files ?? [])
+        {
+            if (file.Values is null || !file.Values.TryGetValue(item.Key, out var value)) continue;
+            if (file.Target == Target) own = value;
+            else (elsewhere ??= []).Add(file.Label);
+        }
+        item.Load(own ?? merged ?? item.Default);
 
-        var explicitHere = scoped is not null && scoped.TryGetValue(item.Key, out _);
-        var explicitOther = other is not null && other.ContainsKey(item.Key);
-        JsonElement? shown = explicitHere ? scoped![item.Key] : merged ?? item.Default;
-        item.Load(shown);
-
-        // Modified = set in this scope; when no file says anything about the key, a value that differs from the default counts as modified.
-        var anyFile = explicitHere || explicitOther;
-        item.IsModified = explicitHere || (!anyFile && merged is { } m && !Same(m, item.Default));
-        item.AlsoModifiedIn = explicitOther ? (Target == ConfigurationTarget.User ? "Workspace" : "User") : null;
+        // Modified = set in the file this tab writes (so Reset can remove it). Only when no file mentions the key at all does a value that
+        // differs from the default count as modified. A key that only .vscode/settings.json or another folder sets is not modified here:
+        // the tab could not reset it; "(also modified in …)" says where it is.
+        item.IsModified = own is not null || (elsewhere is null && merged is { } m && !Same(m, item.Default));
+        item.AlsoModifiedIn = elsewhere is null ? null : string.Join(", ", elsewhere);
     }
 
     private static bool Same(JsonElement a, JsonElement? b) => b is { } e && a.GetRawText() == e.GetRawText();
 
-    private async Task<IReadOnlyDictionary<string, JsonElement>?> ReadScopeAsync(ConfigurationTarget scope)
+    /// <summary>One settings file of the layering; <see cref="Target"/> is set for the two files the tabs write (User, Workspace).</summary>
+    private sealed record ScopeFile(string Label, ConfigurationTarget? Target, IReadOnlyDictionary<string, JsonElement>? Values);
+
+    /// <summary>
+    /// The settings files, in the order the platform's <c>ConfigurationService</c> layers them. Core's <see cref="IConfigurationService"/> has
+    /// no per-scope "inspect", so the panel reads the same files itself: the user settings.json, then the primary folder's
+    /// .vscode/settings.json and .cscode/settings.json (the Workspace tab's file), then every other folder's .cscode/settings.json.
+    /// </summary>
+    internal IEnumerable<(string Label, ConfigurationTarget? Target, string Path)> SettingsFiles()
+    {
+        if (_s.Configuration?.UserSettingsPath is { Length: > 0 } user) yield return ("User", ConfigurationTarget.User, user);
+        var folders = _s.Workspace.Folders;
+        if (folders.Count == 0) yield break;
+        if (folders[0] is { IsFile: true } primary)
+        {
+            yield return (".vscode/settings.json", null, Path.Combine(primary.LocalPath, ".vscode", "settings.json"));
+            yield return ("Workspace", ConfigurationTarget.Workspace, Path.Combine(primary.LocalPath, ".cscode", "settings.json"));
+        }
+        foreach (var folder in folders.Skip(1).Where(f => f.IsFile))
+            yield return (Path.GetFileName(folder.LocalPath.TrimEnd('/', '\\')) + "/.cscode/settings.json", null, Path.Combine(folder.LocalPath, ".cscode", "settings.json"));
+    }
+
+    private async Task<IReadOnlyDictionary<string, JsonElement>?> ReadScopeAsync(string path, ISet<string> registered)
     {
         var fs = _s.FileSystem ?? _s.Workspace.FileSystem;
-        var registered = (_s.Configuration?.Properties ?? []).Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
-        var path = SettingsFilePath(scope);
-        if (path is null) return null;
         try
         {
             var uri = FileUri(path);
@@ -207,8 +232,10 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     internal static IReadOnlyDictionary<string, JsonElement> Flatten(byte[] bytes, ISet<string> registered)
     {
         var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        if (bytes.Length == 0) return result;
-        using var doc = JsonDocument.Parse(bytes, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+        // A UTF-8 BOM (common on Windows; the platform's writer keeps it) is not skipped by the byte overload of JsonDocument.Parse.
+        var json = bytes.AsMemory(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0);
+        if (json.Length == 0) return result;
+        using var doc = JsonDocument.Parse(json, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
         if (doc.RootElement.ValueKind != JsonValueKind.Object) return result;
         void Walk(JsonElement obj, string prefix)
         {
@@ -336,6 +363,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     {
         if (_s.Configuration is null) return;
         if (_pending.Remove(item.Key, out var p)) p.Cts.Cancel();
+        item.DiscardInvalidEdit();
         try
         {
             // null removes the key from the file; the effective value falls back to the next scope or the default.

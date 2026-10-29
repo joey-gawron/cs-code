@@ -49,7 +49,29 @@ public abstract class SettingItemViewModel : ObservableObject
     public string? Error { get => _error; protected set { if (SetProperty(ref _error, value)) OnPropertyChanged(nameof(HasError)); } }
     public bool HasError => _error is not null;
 
+    /// <summary>
+    /// The box holds text the user typed that is not valid yet (an emptied number box, a lone "-"). Nothing is written for it, so nothing is
+    /// pending either; this flag is what stops a refresh (another setting's write, an external change) from replacing it under the caret.
+    /// Cleared by the next valid edit, a reset or a scope switch.
+    /// </summary>
+    internal bool HasInvalidEdit { get; private set; }
+
     internal void ReportError(string message) => Error = message;
+
+    protected void RejectEdit(string error)
+    {
+        Error = error;
+        HasInvalidEdit = true;
+    }
+
+    protected void AcceptEdit()
+    {
+        Error = null;
+        HasInvalidEdit = false;
+    }
+
+    /// <summary>Forgets an invalid edit so the next load shows the stored value again.</summary>
+    internal void DiscardInvalidEdit() => HasInvalidEdit = false;
 
     public ICommand ResetCommand { get; }
     public ICommand CopyIdCommand { get; }
@@ -150,8 +172,8 @@ public sealed class NumberSettingViewModel : SettingItemViewModel
         set
         {
             if (!SetProperty(ref _text, value) || _loading) return;
-            if (!TryParse(value, out var number, out var error)) { Error = error; return; }
-            Error = null;
+            if (!TryParse(value, out var number, out var error)) { RejectEdit(error!); return; }
+            AcceptEdit();
             Owner.Write(this, IsInteger ? (object)(long)number : number, debounce: true);
         }
     }
@@ -196,17 +218,17 @@ public sealed class StringSettingViewModel(SettingsViewModel owner, Configuratio
         set
         {
             if (!SetProperty(ref _value, value) || _loading) return;
-            if (MaxLength is { } max && value.Length > max) { Error = $"At most {max} characters."; return; }
+            if (MaxLength is { } max && value.Length > max) { RejectEdit($"At most {max} characters."); return; }
             if (SchemaString(Property.Schema, "pattern") is { } pattern)
             {
                 try
                 {
-                    if (!System.Text.RegularExpressions.Regex.IsMatch(value, pattern, System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromMilliseconds(100))) { Error = "Does not match the required format."; return; }
+                    if (!System.Text.RegularExpressions.Regex.IsMatch(value, pattern, System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromMilliseconds(100))) { RejectEdit("Does not match the required format."); return; }
                 }
                 catch (ArgumentException) { /* an invalid schema pattern must not block editing */ }
                 catch (System.Text.RegularExpressions.RegexMatchTimeoutException) { }
             }
-            Error = null;
+            AcceptEdit();
             Owner.Write(this, value, debounce: true);
         }
     }
