@@ -220,7 +220,7 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
         };
         var askpass = RemoteSettings.For(config, host, RemoteSettings.UseAskpass, true) && !OperatingSystem.IsWindows() ? Get<IWindowService>() : null;
         Log($"Connecting to {host} with {ssh.SshPath}{(ssh.ConfigFile is null ? "" : " -F " + ssh.ConfigFile)}; bundles: {bundles?.Directory ?? "(none found)"}");
-        return new SshServerTransport(ssh, authority, launch, askpass, _options.AskpassCommand ?? RemoteOptions.DefaultAskpassCommand(), _log);
+        return new SshServerTransport(ssh, authority, launch, askpass, _options.AskpassCommand ?? RemoteOptions.DefaultAskpassCommand(), _log, _options.AskpassDirectory);
     }
 
     private static string? NullIfEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
@@ -246,7 +246,7 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
 
 /// <summary>The ssh transport with prompts routed to the GUI: an <see cref="AskpassServer"/> lives for the duration of one connect (all its ssh runs).</summary>
 public sealed class SshServerTransport(SshOptions ssh, RemoteAuthority destination, ServerLaunchOptions launch, IWindowService? askpassWindow,
-    IReadOnlyList<string> askpassCommand, ILogger? log = null) : IRemoteTransport
+    IReadOnlyList<string> askpassCommand, ILogger? log = null, string? askpassDirectory = null) : IRemoteTransport
 {
     public string Description => "ssh " + destination.Destination;
 
@@ -258,7 +258,7 @@ public sealed class SshServerTransport(SshOptions ssh, RemoteAuthority destinati
             var options = ssh;
             if (askpassWindow is not null)
             {
-                askpass = AskpassServer.Start(askpassWindow, askpassCommand, log);
+                askpass = AskpassServer.Start(askpassWindow, askpassCommand, log, askpassDirectory);
                 var env = new Dictionary<string, string?>(ssh.Environment ?? new Dictionary<string, string?>());
                 foreach (var (k, v) in askpass.Environment) env[k] = v;
                 options = ssh with { Environment = env };

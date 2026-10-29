@@ -234,19 +234,30 @@ public sealed class RemoteTestHost : IAsyncDisposable
     private readonly TempDirectory _home = new("cscode-remote-client-");
     private readonly TempDirectory _serverData = new("cscode-remote-server-");
 
-    public RemoteTestHost(Action<RemoteOptions>? options = null, Action<IServiceCollection>? services = null, Func<IRemoteTransport, IRemoteTransport>? wrap = null)
+    /// <param name="loopback">false: the real ssh transport (settings from <paramref name="userSettings"/>, e.g. remote.ssh.configFile).</param>
+    /// <param name="userSettings">The client's user settings.json (written to the temp CSCODE_HOME before anything reads it).</param>
+    public RemoteTestHost(Action<RemoteOptions>? options = null, Action<IServiceCollection>? services = null, Func<IRemoteTransport, IRemoteTransport>? wrap = null,
+        bool loopback = true, string? userSettings = null, IWindowService? window = null)
     {
+        if (userSettings is not null)
+        {
+            Directory.CreateDirectory(Path.Combine(_home.Path, "config"));
+            File.WriteAllText(Path.Combine(_home.Path, "config", "settings.json"), userSettings);
+        }
         Marker = "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
         Workspace = new TempDirectory("cscode-remote-ws-");
         var remoteOptions = new RemoteOptions
         {
             ServerMarker = Marker,
-            TransportFactory = (_, _) => wrap is null ? new LoopbackTransport(TestEnv.ServerLaunch(_serverData.Path, Marker)) : wrap(new LoopbackTransport(TestEnv.ServerLaunch(_serverData.Path, Marker))),
+            TransportFactory = !loopback ? null : (_, _) => wrap is null ? new LoopbackTransport(TestEnv.ServerLaunch(_serverData.Path, Marker)) : wrap(new LoopbackTransport(TestEnv.ServerLaunch(_serverData.Path, Marker))),
+            SshEnvironment = new Dictionary<string, string?> { ["SSH_AUTH_SOCK"] = null, ["SSH_AGENT_PID"] = null },
+            AskpassDirectory = _home.Path,
             Reconnect = new ReconnectPolicy(3, () => 0.5),
             CallTimeout = TimeSpan.FromSeconds(60),
         };
         options?.Invoke(remoteOptions);
-        Window = new RecordingWindowService();
+        Recording = new RecordingWindowService();
+        Window = window ?? Recording;
         Output = new InMemoryOutputService();
         var sc = new ServiceCollection();
         sc.AddLogging();
@@ -269,7 +280,8 @@ public sealed class RemoteTestHost : IAsyncDisposable
     public string Marker { get; }
     public TempDirectory Workspace { get; }
     public ServiceProvider Services { get; }
-    public RecordingWindowService Window { get; }
+    public IWindowService Window { get; }
+    public RecordingWindowService Recording { get; }
     public InMemoryOutputService Output { get; }
     public string ServerDataDir => _serverData.Path;
     public string ClientHome => _home.Path;
@@ -281,9 +293,9 @@ public sealed class RemoteTestHost : IAsyncDisposable
     /// <summary>ssh: URI of a path inside the workspace temp dir.</summary>
     public Uri Remote(string relative = "") => Manager.ToUri(Path.Combine(Workspace.Path, relative).TrimEnd('/') + (relative.Length == 0 || relative.EndsWith('/') ? "/" : ""))!;
 
-    public async Task ConnectAsync()
+    public async Task ConnectAsync(string host = Host)
     {
-        await Manager.ConnectAsync(Host, TestEnv.Ct);
+        await Manager.ConnectAsync(host, TestEnv.Ct);
         Assert.Equal(RemoteConnectionState.Connected, Manager.Status.State);
     }
 

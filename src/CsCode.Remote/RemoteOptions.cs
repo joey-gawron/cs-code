@@ -15,6 +15,9 @@ public sealed class RemoteOptions
     /// <summary>Program (+ leading arguments) that ssh runs as askpass with <c>--askpass</c>; null = this process's own executable.</summary>
     public IReadOnlyList<string>? AskpassCommand { get; set; }
 
+    /// <summary>Where the per-connection askpass directory (socket + wrapper script) is created; null = $XDG_RUNTIME_DIR, else the temp directory.</summary>
+    public string? AskpassDirectory { get; set; }
+
     /// <summary>Server bundles to upload; null = found through <c>remote.ssh.serverBundles</c> / next to the program.</summary>
     public ServerBundleSet? Bundles { get; set; }
 
