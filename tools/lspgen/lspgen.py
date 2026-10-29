@@ -129,7 +129,10 @@ class Gen:
                 return self.alias(n)
             return "JsonElement", False  # proposed / unknown
         if k == "array":
-            et, _ = self.cs(t["element"], ctx + "Item")
+            el = t["element"]
+            if el["kind"] == "base" and el["name"] == "uinteger":
+                return "uint[]", False  # semantic token data etc.: zero-copy into Core's IReadOnlyList<uint>
+            et, _ = self.cs(el, ctx + "Item")
             return f"{et}[]", False
         if k == "map":
             vt, vnull = self.cs(t["value"], ctx + "Value")
@@ -233,7 +236,7 @@ class Gen:
             t, nullable = self.cs(p["type"], f"{name}{pascal(jname)}")
             nullable_prop = optional or nullable
             if not optional:
-                required.append((jname, lit))
+                required.append((jname, lit, self.kind_check(t)))
             sb.append(doc_summary(p.get("documentation"), 4))
             sb.append(f'    [JsonPropertyName("{jname}")]\n')
             if nullable and not optional:
@@ -250,14 +253,31 @@ class Gen:
                 sb.append(f"    public {t} {pname} {{ get; init; }} = default!;\n\n")
         # shape matcher used by OneOf discrimination
         conds = ["e.ValueKind == JsonValueKind.Object"]
-        for jname, lit in required:
+        for jname, lit, kind in required:
+            v = f"p_{self.ident(jname)}"
             if lit is not None:
-                conds.append(f'e.TryGetProperty("{jname}", out var p_{self.ident(jname)}) && p_{self.ident(jname)}.ValueKind == JsonValueKind.String && p_{self.ident(jname)}.ValueEquals("{lit}")')
+                conds.append(f'e.TryGetProperty("{jname}", out var {v}) && {v}.ValueKind == JsonValueKind.String && {v}.ValueEquals("{lit}")')
+            elif kind:
+                conds.append(f'e.TryGetProperty("{jname}", out var {v}) && {kind.format(v=v)}')
             else:
                 conds.append(f'e.TryGetProperty("{jname}", out _)')
         sb.append("    /// <summary>Structural check used when a union has several object-shaped arms.</summary>\n")
         sb.append("    public static bool MatchesShape(JsonElement e) =>\n        " + "\n        && ".join(conds) + ";\n")
         sb.append("}\n\n")
+
+    def kind_check(self, t):
+        """C# condition template ({v} = the property JsonElement) checking the JSON kind of a required property, or None."""
+        if t == "string" or (t in self.enums and self.enums[t]["type"]["name"] == "string"):
+            return "{v}.ValueKind == JsonValueKind.String"
+        if t in ("int", "double") or (t in self.enums and self.enums[t]["type"]["name"] != "string"):
+            return "{v}.ValueKind == JsonValueKind.Number"
+        if t == "bool":
+            return "({v}.ValueKind == JsonValueKind.True || {v}.ValueKind == JsonValueKind.False)"
+        if t.endswith("[]"):
+            return "{v}.ValueKind == JsonValueKind.Array"
+        if t.startswith("Dictionary<") or t in self.structs or t in self.extra_names:
+            return "{v}.ValueKind == JsonValueKind.Object"
+        return None
 
     @staticmethod
     def ident(s):
