@@ -30,6 +30,10 @@
     <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
+    <!-- Banned-API rule (UI thread must never block): see BannedSymbols.txt (same list as CsCode.Ui). -->
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <AdditionalFiles Include="BannedSymbols.txt" />
+    <InternalsVisibleTo Include="CsCode.App.Tests" />
   </ItemGroup>
 
 </Project>

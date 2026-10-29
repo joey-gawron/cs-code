@@ -1,5 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <!-- xUnit1051 asks every call with an optional CancellationToken to pass TestContext.Current.CancellationToken. Our APIs take an optional
+         token everywhere, so the rule would add noise to every arrange step without making these (self-terminating) tests more responsive. -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
