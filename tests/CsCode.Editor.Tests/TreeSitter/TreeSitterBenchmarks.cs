@@ -345,9 +345,15 @@ public class TreeSitterBenchmarks
         var engine = treeSitter ? "tree-sitter" : "TextMate";
         var text = CSharp(megabytes * 1024L * 1024L);
         using var host = ViewHost.Create();
-        // 10 MB is above the large-file threshold (5 MB: plain text, no engine at all); raise it to compare the engines on 10 MB
+        // 10 MB is above the large-file threshold (5 MB: plain text, no engine at all), and the repository's generated icon table has lines
+        // over the 20,000-character long-line limit: raise both to compare the engines on 10 MB
         host.Config.Set(SettingKeys.EditorLargeFileOptimizationsLimit, 200L * 1024 * 1024);
+        host.Config.Set("cscode.editor.largeFileLongLineChars", 100_000_000);
         host.Config.Set(TreeSitterService.SettingKey, treeSitter);
+        // the give-up guard (5 s of parsing without a tree) would hand a 10 MB C# file to TextMate: measure tree-sitter itself here
+        var guard = TreeSitterHighlighter.MaxParseTimeWithoutTree;
+        TreeSitterHighlighter.MaxParseTimeWithoutTree = TimeSpan.FromMinutes(10);
+        using var restoreGuard = CsCode.Core.Lifecycle.Disposable.Create(() => TreeSitterHighlighter.MaxParseTimeWithoutTree = guard);
         var scenario = $"B2/B3 editor, {megabytes} MB C# ({text.Count(c => c == '\n')} lines)";
 
         // warm-up: the first window of the process pays for Avalonia/Skia/font start-up and JIT; keep that out of the numbers
