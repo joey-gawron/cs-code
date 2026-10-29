@@ -107,15 +107,17 @@ public class ChaosTests
         Assert.NotNull(await fs.StatAsync(uri, Ct));
         Assert.True(sw.ElapsedMilliseconds >= 400, $"a round trip took only {sw.ElapsedMilliseconds} ms: the latency was not applied");
 
-        // many calls in flight: each costs the caller an enqueue; they pipeline instead of queueing one round trip each
+        // many calls in flight: each costs the caller an enqueue (same method as the other caller-cost tests: warm-up, then the average over
+        // 300 calls); they pipeline instead of queueing one round trip each
         var pending = new List<Task>();
+        for (var i = 0; i < 20; i++) pending.Add(fs.StatAsync(uri, Ct).AsTask());
         var calls = Stopwatch.StartNew();
-        for (var i = 0; i < 200; i++) pending.Add(fs.StatAsync(uri, Ct).AsTask());
+        for (var i = 0; i < 300; i++) pending.Add(fs.StatAsync(uri, Ct).AsTask());
         calls.Stop();
-        Assert.True(calls.Elapsed.TotalMilliseconds / 200 < 0.1, $"{calls.Elapsed.TotalMilliseconds / 200 * 1000:0.0} us per call on the caller");
+        Assert.True(calls.Elapsed.TotalMilliseconds / 300 < 0.1, $"{calls.Elapsed.TotalMilliseconds / 300 * 1000:0.0} us per call on the caller");
         var all = Stopwatch.StartNew();
         await Task.WhenAll(pending);
-        Assert.True(all.Elapsed < TimeSpan.FromSeconds(20), $"200 pipelined calls took {all.Elapsed.TotalSeconds:0.0} s");
+        Assert.True(all.Elapsed < TimeSpan.FromSeconds(20), $"320 pipelined calls took {all.Elapsed.TotalSeconds:0.0} s");
     }
 
     [Fact]
