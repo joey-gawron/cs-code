@@ -138,6 +138,7 @@ public sealed class UiForwarding : IRemoteParticipant
 
     public void OnDisconnected()
     {
+        _peer = null;
         foreach (var id in _progress.Keys.ToArray()) if (_progress.TryRemove(id, out var s)) s.Done.TrySetResult();
         foreach (var id in _status.Keys.ToArray()) if (_status.TryRemove(id, out var d)) d.Dispose();
     }
@@ -187,6 +188,7 @@ public sealed class CommandsBridge(Func<ICommandService?> commands, ILogger? log
 
     public void OnDisconnected()
     {
+        _peer = null;
         foreach (var id in _registered.Keys.ToArray())
             if (_registered.TryRemove(id, out var t))
             {

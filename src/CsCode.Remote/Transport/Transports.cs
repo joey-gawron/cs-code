@@ -4,33 +4,66 @@ using CsCode.Remote.Protocol;
 
 namespace CsCode.Remote.Transport;
 
-/// <summary>A started server: a duplex byte stream (its stdout/stdin) plus the process carrying it (ssh, or the local server).</summary>
+/// <summary>
+/// A started server: a duplex byte stream (its stdout/stdin) plus whatever carries it — normally a process (ssh, or the local server), whose tree is
+/// killed on dispose; tests and wrappers (latency/fault injection) can supply plain streams with their own teardown.
+/// </summary>
 public sealed class RemoteChannel : IAsyncDisposable
 {
-    private readonly ProcessChannel _process;
+    private readonly ProcessChannel? _process;
+    private readonly Func<TimeSpan, Task>? _stop;
+    private readonly Task<int> _exited;
+    private int _disposed;
 
     internal RemoteChannel(ProcessChannel process, string description)
     {
         _process = process;
         Description = description;
+        Input = process.Input;
+        Output = process.Output;
+        _exited = process.Exited;
     }
+
+    /// <param name="stop">Ends the link (given a grace period); called once by <see cref="StopAsync"/>/<see cref="DisposeAsync"/>.</param>
+    public RemoteChannel(Stream input, Stream output, string description, Func<TimeSpan, Task> stop, Task<int>? exited = null, int processId = 0)
+    {
+        Input = input;
+        Output = output;
+        Description = description;
+        _stop = stop;
+        _exited = exited ?? new TaskCompletionSource<int>().Task;
+        ProcessId = processId;
+    }
+
+    /// <summary>The same link seen through other streams (fault injection); stopping the wrapper stops this channel.</summary>
+    public RemoteChannel Wrap(Func<Stream, Stream> input, Func<Stream, Stream> output) =>
+        new(input(Input), output(Output), Description, StopAsync, _exited, ProcessId);
 
     public string Description { get; }
-    public Stream Input => _process.Input;
-    public Stream Output => _process.Output;
-    public Task<int> Exited => _process.Exited;
-    public int ProcessId => _process.ProcessId;
-    public string StderrTail => _process.StderrTail;
-    public Action<string>? StderrLine { get => _process.StderrLine; set => _process.StderrLine = value; }
-
-    /// <summary>Closes stdin (the server exits at EOF), waits <paramref name="grace"/>, then kills the process tree.</summary>
-    public Task StopAsync(TimeSpan grace)
+    public Stream Input { get; }
+    public Stream Output { get; }
+    public Task<int> Exited => _exited;
+    public int ProcessId { get => _process?.ProcessId ?? field; private init; }
+    public string StderrTail => _process?.StderrTail ?? "";
+    public Action<string>? StderrLine
     {
-        _process.CloseOutput();
-        return _process.StopAsync(grace);
+        get => _process?.StderrLine;
+        set { if (_process is not null) _process.StderrLine = value; }
     }
 
-    public ValueTask DisposeAsync() => _process.DisposeAsync();
+    /// <summary>Closes stdin (the server exits at EOF), waits <paramref name="grace"/>, then kills the process tree.</summary>
+    public async Task StopAsync(TimeSpan grace)
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        if (_process is not null)
+        {
+            _process.CloseOutput();
+            await _process.StopAsync(grace).ConfigureAwait(false);
+        }
+        else if (_stop is not null) await _stop(grace).ConfigureAwait(false);
+    }
+
+    public async ValueTask DisposeAsync() => await StopAsync(TimeSpan.Zero).ConfigureAwait(false);
 }
 
 /// <summary>Byte-stream transport to a <c>cscode-server</c> (ssh, local process; later WSL/Docker). Connecting includes starting (and if needed installing) the server.</summary>

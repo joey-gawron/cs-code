@@ -38,6 +38,7 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
         public Action<IReadOnlyList<FileChange>>? OnChanges = onChanges;
         public SshUriMapper Mapper { get; } = mapper;
         public RemoteSession? ArmedOn;
+        public bool WasArmed;
         public readonly TaskCompletionSource FirstArmed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
@@ -80,6 +81,7 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
         {
             await session.Peer.InvokeAsync<WatchStartParams, Empty>(RemoteMethods.WatchStart, new WatchStartParams(sub.Id, sub.Path, sub.Recursive, sub.Excludes)).ConfigureAwait(false);
             sub.ArmedOn = session;
+            sub.WasArmed = true;
             if (!_subs.ContainsKey(sub.Id)) { session.Peer.Fire(RemoteMethods.WatchStop, new WatchStopParams(sub.Id)); return; } // disposed meanwhile
             sub.FirstArmed.TrySetResult();
             if (rescan) Deliver(sub, [new FileChange(sub.Root, FileChangeKind.Changed)]);
@@ -108,11 +110,12 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
     {
         foreach (var sub in _subs.Values.ToArray())
             if (sub.Mapper.Authority == (session.Mapper as SshUriMapper)?.Authority)
-                await ArmAsync(sub, session, rescan: sub.ArmedOn is not null).ConfigureAwait(false);
+                await ArmAsync(sub, session, rescan: sub.WasArmed).ConfigureAwait(false);
     }
 
     void IRemoteParticipant.OnDisconnected()
     {
+        foreach (var sub in _subs.Values) sub.ArmedOn = null; // never keep a closed session alive
         _endpoint.Directories.Clear();
     }
 

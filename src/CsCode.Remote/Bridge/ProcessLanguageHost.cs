@@ -41,7 +41,7 @@ public sealed class ProcessLanguageHost : ILanguageServerManager, IWillSaveParti
         var assembly = LocalServer.FindServerAssembly(options.LocalServerAssembly)
                        ?? throw new FileNotFoundException("cscode-server.dll was not found next to the program; cscode.languageHost = process needs it");
         var dataDir = options.LocalServerDataDir ?? Path.Combine(paths?.GlobalStorageDir ?? Path.GetTempPath(), "language-host");
-        var launch = LocalServer.Launch(assembly, dataDir, options.ServerMarker);
+        var launch = LocalServer.Launch(assembly, dataDir, options.ServerMarker, environment: options.LocalServerEnvironment);
         var output = sp.GetService<IOutputService>();
         _client = new RemoteClient("local language host", () => new LoopbackTransport(launch), UriMapper.Identity, "process", options.Reconnect ?? new ReconnectPolicy(5),
             options.Time, _log, line => output?.GetOrCreate("Language Host").AppendLine(line)) { CallTimeout = options.CallTimeout };

@@ -39,6 +39,9 @@ public sealed class RemoteOptions
     /// <summary>Data directory of the local process language host; null = <c>{GlobalStorageDir}/language-host</c>.</summary>
     public string? LocalServerDataDir { get; set; }
 
+    /// <summary>Environment changes for the local language host process (null value removes a variable).</summary>
+    public IReadOnlyDictionary<string, string?>? LocalServerEnvironment { get; set; }
+
     /// <summary>Overrides <c>cscode.languageHost</c> (tests).</summary>
     public string? LanguageHostMode { get; set; }
 
