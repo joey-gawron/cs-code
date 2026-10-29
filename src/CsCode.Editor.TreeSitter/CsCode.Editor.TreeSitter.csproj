@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- EXPERIMENTAL tree-sitter engine for syntax colouring, behind the setting editor.experimental.treeSitter (docs/TREE-SITTER-EVALUATION.md).
+       A thin own P/Invoke layer over the tree-sitter C API (libtree-sitter 0.25+, grammar ABI 13-15), grammar and query discovery, query
+       predicates, capture -> TextMate scope mapping and the per-document parser/highlighter. No Avalonia and no UI thread: everything here
+       is called on the editor worker. Native code is NOT shipped: the runtime and the grammars are found on the machine. -->
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Editor" />
+    <InternalsVisibleTo Include="CsCode.Editor.Tests" />
+  </ItemGroup>
+
+</Project>
