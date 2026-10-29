@@ -111,6 +111,12 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     internal EditorViewFactory Factory => _factory;
     internal IUiThread Ui => Services.Ui;
     internal TokenizationSession? Tokens { get; private set; }
+
+    /// <summary>
+    /// Which engine colours this view right now: "TextMate", "tree-sitter" (the EXPERIMENTAL engine, <c>editor.experimental.treeSitter</c>), or
+    /// null (plain text, large-file mode). Diagnostics only; may change after a setting or language change.
+    /// </summary>
+    public string? SyntaxEngine => Tokens is not { } t ? null : t.TreeSitter is not null ? "tree-sitter" : "TextMate";
     internal TextArea TextArea => Editor.TextArea;
     internal TextView TextView => Editor.TextArea.TextView;
     internal bool IsDisposed => _disposed;
