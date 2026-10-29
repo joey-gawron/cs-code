@@ -71,9 +71,15 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
 
     internal Emitter<int?> StopLineChanged { get; } = new();
 
+    /// <summary>
+    /// Sets the stop-line decoration and reveals (centres) the line — only when the line actually changes. The debug feature calls this on every
+    /// stop-location and state notification; re-announcing the same line (a variables-only <c>invalidated</c>, a state change of another
+    /// session, a second stop at the same line without a resume in between) must not scroll a view the user moved away from the stop line.
+    /// A new stop after a resume is a change (the line was cleared in between), so it is revealed.
+    /// </summary>
     public void SetDebugStopLine(int? line)
     {
-        if (_disposed) return;
+        if (_disposed || StopLine == line) return;
         StopLine = line;
         StopLineHandler?.Invoke(line);
         StopLineChanged.Fire(line);

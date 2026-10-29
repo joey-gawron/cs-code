@@ -103,6 +103,80 @@ public class JsDebugWaveFixTests
     }
 }
 
+/// <summary>Follow-up (b): task processes (a preLaunchTask's tsc) are tracked child processes, and a task still running at shutdown is killed.</summary>
+[Collection(SerialCollection.Name)]
+public class TaskProcessLifetimeTests
+{
+    private sealed class RecordingMemoryMonitor : CsCode.Core.Diagnostics.IMemoryMonitor
+    {
+        public List<(string Name, int Pid)> Tracked { get; } = new();
+        public int Released;
+        public CsCode.Core.Diagnostics.MemorySnapshot Current => throw new NotSupportedException();
+        public long BudgetBytes => 0;
+        public CsCode.Core.Lifecycle.IEventSource<CsCode.Core.Diagnostics.MemorySnapshot> Sampled { get; } = new CsCode.Core.Lifecycle.Emitter<CsCode.Core.Diagnostics.MemorySnapshot>();
+        public IDisposable Register(CsCode.Core.Diagnostics.IMemoryTrimmable trimmable) => CsCode.Core.Lifecycle.Disposable.Empty;
+        public IReadOnlyList<CsCode.Core.Diagnostics.IMemoryTrimmable> Trimmables => [];
+        public ValueTask TrimNowAsync(CsCode.Core.Diagnostics.MemoryTrimLevel level, CancellationToken ct = default) => ValueTask.CompletedTask;
+        public IDisposable TrackChildProcess(string name, int pid, long? restartAboveBytes = null, Func<ValueTask>? onOverBudget = null)
+        {
+            lock (Tracked) Tracked.Add((name, pid));
+            return CsCode.Core.Lifecycle.Disposable.Create(() => Interlocked.Increment(ref Released));
+        }
+    }
+
+    private static (CsCode.Dap.Tasks.TaskService Service, CsCode.Dap.Client.DebugLane Lane, FakeWorkspace Ws, RecordingMemoryMonitor Memory) Make(CsCode.TestDoubles.TempDirectory dir, string tasksJson)
+    {
+        dir.WriteFile(".cscode/tasks.json", tasksJson);
+        var lane = new CsCode.Dap.Client.DebugLane("task-lifetime");
+        var ws = new FakeWorkspace(dir.Uri);
+        var memory = new RecordingMemoryMonitor();
+        return (new CsCode.Dap.Tasks.TaskService(lane, new CsCode.Dap.Configuration.DapPlatform { Workspace = ws, Memory = memory }), lane, ws, memory);
+    }
+
+    [Fact]
+    public async Task A_task_process_is_reported_to_the_memory_monitor_while_it_runs()
+    {
+        Assert.SkipUnless(File.Exists("/bin/sh"), "needs /bin/sh");
+        using var dir = new CsCode.TestDoubles.TempDirectory("tasklife-");
+        var (service, lane, _, memory) = Make(dir, """{"tasks":[{"label":"tsc: build","type":"shell","command":"echo","args":["compiled"]}]}""");
+        try
+        {
+            var result = await service.RunAsync("tsc: build", dir.Uri, Ct);
+            Assert.True(result.Succeeded, result.Error);
+            var (name, pid) = Assert.Single(memory.Tracked);
+            Assert.Equal("task (tsc: build)", name);
+            Assert.True(pid > 0);
+            Assert.Equal(1, Volatile.Read(ref memory.Released)); // released once the task ended
+        }
+        finally { service.Dispose(); lane.Dispose(); }
+    }
+
+    [Fact]
+    public async Task Disposing_the_task_service_kills_a_task_that_is_still_running()
+    {
+        Assert.SkipUnless(File.Exists("/bin/sh") && OperatingSystem.IsLinux(), "needs /bin/sh and Linux /proc");
+        using var dir = new CsCode.TestDoubles.TempDirectory("tasklife-");
+        var marker = Guid.NewGuid().ToString("N");
+        var (service, lane, _, _) = Make(dir, """{"tasks":[{"label":"watch","type":"shell","command":"sleep 300 & sleep 301; wait","options":{"env":{"TASK_PROBE":"MARKER"}}}]}""".Replace("MARKER", marker, StringComparison.Ordinal));
+        try
+        {
+            var run = service.RunAsync("watch", dir.Uri, Ct).AsTask();
+            await SessionHarness.Eventually(() => CsCode.TestDoubles.ProcessTable.WithEnvironment("TASK_PROBE", marker).Count >= 3, 10_000, "the task and its children run");
+            ((IDisposable)service).Dispose(); // what the container does at app shutdown
+            await SessionHarness.Eventually(() => CsCode.TestDoubles.ProcessTable.WithEnvironment("TASK_PROBE", marker).Count == 0, 10_000, "nothing of the task is left");
+            var result = await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+            Assert.True(result.Cancelled);
+            Assert.False((await service.RunAsync("watch", dir.Uri, Ct)).Succeeded); // shut down: no new tasks
+        }
+        finally
+        {
+            foreach (var pid in CsCode.TestDoubles.ProcessTable.WithEnvironment("TASK_PROBE", marker))
+                try { using var p = System.Diagnostics.Process.GetProcessById(pid); p.Kill(); } catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { }
+            lane.Dispose();
+        }
+    }
+}
+
 internal static class DebugServiceHistory
 {
     public const int MaxLines = CsCode.Dap.Service.DebugService.MaxHistoryLines;
