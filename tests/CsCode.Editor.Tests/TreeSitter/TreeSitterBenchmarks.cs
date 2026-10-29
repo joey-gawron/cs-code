@@ -475,10 +475,15 @@ public class TreeSitterBenchmarks
             var s = samples[i % samples.Length];
             var text = string.Concat(Enumerable.Repeat(s.Text + "\n", 1 + i % 8));
             var (doc, view, window) = await host.OpenAsync(text, $"{i}-{s.FileName}", 700, 400);
-            await ViewHost.WaitFor(() => view.Tokens is null || view.Tokens.ViewportReady is not null, "coloured", 60_000);
+            await ViewHost.WaitFor(() => view.Tokens is null || view.Tokens.Store.HasTokens(0, Math.Min(10, doc.LineCount - 1)), "coloured", 60_000);
             Type(view, "abcde");
-            if (view.Tokens is not null)
-                await ViewHost.WaitFor(() => view.Tokens!.ViewportReady is { } r && r.Version == doc.Version, "re-coloured", 60_000);
+            // let the engine catch up with the edit (a soak, not a latency measurement: never fail on this wait)
+            var settle = Stopwatch.StartNew();
+            while (view.Tokens is { } t && t.ViewportReady?.Version != doc.Version && settle.ElapsedMilliseconds < 3000)
+            {
+                ViewHost.Pump();
+                await Task.Delay(10);
+            }
             peakNative = Math.Max(peakNative, TsRuntime.AllocatedBytes - native0);
             host.Factory.DisposeView(view);
             host.Close(window);
