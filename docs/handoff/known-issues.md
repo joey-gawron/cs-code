@@ -1,0 +1,11 @@
+# Known issues found during integration (not fixed yet)
+
+* **Editor PerfMemoryTests 10 MB open budget (4.5x) fails inside the full Editor.Tests run** (6.4x on integration, 5.9x on the editor agent's own branch 62b9445), passes alone (2.6x) and when only PerfMemoryTests runs. Serializing the class did not help; the following 1 MB case reads -85 MB, so earlier cases' memory is released lazily during later measurements. Pre-existing, order-dependent; belongs to the parked memory-profiling wave (do not loosen the budget).
+* **Editor TextMateTests.Tokenisation_happens_on_the_editor_worker...** stalls under full-suite load ("tokenised 58/300 lines in 30000 ms"); passes alone. TokenizationSession.RunSlice waits for a UI Changed handler the test never pumps. Load-dependent.
+* **Panels.Search SettingsViewModelTests.Invalid_numbers_show_an_inline_error_and_are_not_written("101")**: flaky (fails some full runs, also on 44bc116).
+* **Panels.Search HostileTests.Cancelling_a_search_of_200k_files...** assumes the scan is still running after 400 ms; a fast machine finishes it in ~310 ms. Needs a bigger tree or a cancellation trigger that does not depend on elapsed time.
+* Closed after the 2026-10-29 fix merge: the 300-tab live dock retention test (Dock's ControlRecycling cache; fixed by the shell lifecycle and wiring branches) and the 2 real netcoredbg failures (the adapter has no hit-count breakpoints or logpoints; the tests now assert they are reported unsupported).
+* **Dap SessionTerminationTests.Stop_prefers_terminate_when_supported_then_disconnects**: races the fake adapter's command record ('disconnect' missing when asserted); fails in full Dap runs, passes alone 4/4.
+* **App ResponsivenessTests storms** fail under machine load (load average ~4, e.g. while agents build); they fail the same way on older commits. Environmental.
+* **Debug Console 1M one-console.log-per-line flood** misses the UI budget (p99 17-25 ms, max 53/70 ms once each): DEFERRED by the user to the performance/profiling wave (2026-10-29). The RealJsDebugResponsivenessTests one-per-line case may fail until then.
+* **App ThemeSwitchingCostTests preview-rate budget** fails on main 2a9226e: the theme dropdown was merged before its review finished, at the user's request; the original session corrects it.
