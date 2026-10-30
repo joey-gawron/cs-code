@@ -15,6 +15,11 @@ public sealed record EditorSettings
 {
     public string FontFamily { get; init; } = FontFamilies.DefaultCode; // the bundled Fira Code, then the OS's own monospace faces
     public double FontSize { get; init; } = 14;
+    /// <summary>
+    /// <c>editor.fontLigatures</c> as OpenType features (<see cref="FontFamilies.LigatureFeatures"/>, comma-separated): off by default, as in VS Code, so Fira
+    /// Code draws <c>!=</c> and <c>=&gt;</c> as their characters; empty when the font's own ligatures are wanted.
+    /// </summary>
+    public string FontFeatures { get; init; } = string.Join(", ", FontFamilies.LigaturesOff);
     public double LineHeightFactor { get; init; } = 1.0;
     public int TabSize { get; init; } = 4;
     public bool InsertSpaces { get; init; } = true;
@@ -66,6 +71,7 @@ public sealed record EditorSettings
         return new EditorSettings
         {
             FontFamily = G(SettingKeys.EditorFontFamily, defaults.FontFamily),
+            FontFeatures = string.Join(", ", FontFamilies.LigatureFeatures(cfg.GetRawFor(SettingKeys.EditorFontLigatures, languageId))),
             FontSize = Math.Clamp(G(SettingKeys.EditorFontSize, defaults.FontSize), 6, 72),
             LineHeightFactor = Math.Clamp(G("editor.lineHeightFactor", defaults.LineHeightFactor), 0.8, 3),
             TabSize = Math.Clamp(tabSize, 1, 16),

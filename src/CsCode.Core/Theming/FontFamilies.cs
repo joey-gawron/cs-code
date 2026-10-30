@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace CsCode.Core.Theming;
 
@@ -50,6 +51,37 @@ public static class FontFamilies
         }
         return string.Join(", ", names);
     }
+
+    /// <summary>
+    /// The OpenType features <c>editor.fontLigatures</c> asks for, in the syntax Avalonia's <c>FontFeature.Parse</c> reads. Off (false, unset or
+    /// anything else, VS Code's default) turns off the font's ligatures and contextual alternates (<c>-liga</c>, <c>-calt</c>: Fira Code draws
+    /// its <c>!=</c> and <c>=&gt;</c> through calt); on (true) leaves the font's defaults; a string is VS Code's CSS font-feature-settings
+    /// (<c>"'ss01', 'zero', 'calt' 0"</c>), which turns ligatures on and adds those features.
+    /// </summary>
+    public static IReadOnlyList<string> LigatureFeatures(JsonElement? setting)
+    {
+        if (setting is not { } value) return LigaturesOff;
+        if (value.ValueKind == JsonValueKind.True) return [];
+        if (value.ValueKind != JsonValueKind.String) return LigaturesOff;
+        var text = value.GetString() ?? "";
+        if (text.Trim() is "" or "true") return [];
+        if (text.Trim() == "false") return LigaturesOff;
+        var features = new List<string>();
+        foreach (var part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            // 'tag' [on|off|N], as CSS writes it; a tag is four printable ASCII characters
+            var words = part.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var tag = words[0].Trim('\'', '"');
+            if (tag.Length != 4 || tag.Any(c => c is < '!' or > '~' or '=' or '+' or '-' or '[' or ']')) continue;
+            var state = words.Length > 1 ? words[1] : "1";
+            var n = state switch { "on" => 1, "off" => 0, _ => int.TryParse(state, out var v) && v >= 0 ? v : -1 };
+            if (n >= 0) features.Add(tag + "=" + n.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        return features;
+    }
+
+    /// <summary>What <see cref="LigatureFeatures"/> answers when ligatures are off.</summary>
+    public static IReadOnlyList<string> LigaturesOff { get; } = ["-liga", "-calt"];
 
     private static OSPlatform Current =>
         OperatingSystem.IsMacOS() ? OSPlatform.OSX : OperatingSystem.IsWindows() ? OSPlatform.Windows : OSPlatform.Linux;

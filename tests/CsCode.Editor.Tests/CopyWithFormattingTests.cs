@@ -55,6 +55,23 @@ public class CopyWithFormattingTests
         Assert.DoesNotContain("<script", html);
     }
 
+    [Fact]
+    public void An_avalonia_font_collection_name_is_written_as_its_family_name() =>
+        Assert.Equal("'Fira Code', 'Menlo', monospace", HtmlClipboard.CssFontFamily("fonts:CsCode#Fira Code, Menlo"));
+
+    [AvaloniaFact]
+    public async Task A_users_font_setting_reaches_the_html_as_written()
+    {
+        var clipboard = new InMemoryClipboardService();
+        using var host = ViewHost.Create(s => s.AddSingleton<IClipboardService>(clipboard));
+        var (_, view, _) = await host.OpenAsync("class A {}\n");
+        host.Config.Set("editor.fontFamily", "'Fira Code', Menlo, monospace");
+        ViewHost.Pump();
+        view.Controller.SetSelection(TextRange.FromLines(0, 0, 0, 10));
+        await view.Controller.CopyWithFormattingAsync();
+        Assert.Contains("font-family: 'Fira Code', 'Menlo', monospace;", clipboard.Content!.Html!);
+    }
+
     [AvaloniaFact]
     public async Task Copy_with_formatting_in_a_real_view_puts_the_text_and_html_with_the_themes_token_colours_on_the_clipboard()
     {
@@ -77,6 +94,11 @@ public class CopyWithFormattingTests
         Assert.Contains("&quot;&lt;hi&gt;&quot;", html);
         Assert.Contains($"background-color: {HtmlClipboard.Hex(themes.GetColor("editor.background"))};", html);
         Assert.Equal(7, Regex.Matches(html, "<div>").Count);
+        // the font as the setting names it (FontFamilies.DefaultCode): Fira Code by name, not the collection the view builds its font from
+        Assert.Contains("font-family: " + HtmlClipboard.CssFontFamily(FontFamilies.DefaultCode) + ";", html);
+        Assert.Contains("font-family: 'Fira Code', ", html);
+        Assert.DoesNotContain("fonts:", html);
+        Assert.DoesNotContain("compositefont", html);
 
         // The plain Copy carries no HTML.
         await view.Controller.CopyAsync();

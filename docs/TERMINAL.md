@@ -250,8 +250,8 @@ output flows).
   buttons (no shell API exists for them).
 * **Renderer** (`TerminalPainter`): only visible rows; per row, runs of equal rendition become one background rectangle and glyph runs built
   without shaping (each glyph advances exactly one or two cells, as terminals draw; grapheme clusters are shaped on their own); built runs are
-  cached per `TerminalRow` instance. Font: `terminal.integrated.fontFamily`, else the editor's, else the bundled Fira Code then
-  Cascadia/Consolas/DejaVu/Liberation (`FontFamilies.DefaultCode`), with Menlo/Monaco (macOS) and DejaVu/Noto/Liberation Mono appended as last
+  cached per `TerminalRow` instance. Font: `terminal.integrated.fontFamily`, else the editor's, else `FontFamilies.DefaultCode`
+  (the bundled Fira Code, then Menlo/SF Mono/Monaco on macOS and Cascadia/Consolas/DejaVu/Liberation elsewhere), with Menlo/Monaco (macOS) and DejaVu/Noto/Liberation Mono appended as last
   resorts (the first family the system really has: the font manager answers a missing family with its default face, so the returned face is
   checked; "Fira Code" is looked up in the app's own collection, so it needs nothing installed; being unshaped, the terminal draws no ligatures),
   `fontSize` (else `editor.fontSize`), `lineHeight`, `letterSpacing`; system fallback per character (CJK, emoji) with a bounded cache.

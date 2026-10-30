@@ -114,11 +114,15 @@ public static class HtmlClipboard
 
     private static string Px(double v) => v.ToString("0.##", CultureInfo.InvariantCulture) + "px";
 
-    /// <summary>The editor's font family list ("Cascadia Code, Consolas") as CSS, quoted where needed, with monospace as the last resort.</summary>
+    /// <summary>
+    /// The editor's font family list as settings write it ("Fira Code, Cascadia Code, Consolas") as CSS, quoted where needed, with monospace as
+    /// the last resort. An Avalonia collection name (<c>fonts:CsCode#Fira Code</c>, the bundled font) is written as its family name.
+    /// </summary>
     internal static string CssFontFamily(string families)
     {
         var parts = families.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Select(f => f.Trim('\'', '"'))
+            .Select(f => f.Contains('#', StringComparison.Ordinal) ? f[(f.LastIndexOf('#') + 1)..].Trim() : f)
             .Where(f => f.Length > 0 && f.IndexOfAny(['<', '>', '"', ';', '{', '}']) < 0)
             .Select(f => f is "monospace" or "serif" or "sans-serif" ? f : "'" + f.Replace("'", "", StringComparison.Ordinal) + "'")
             .ToList();

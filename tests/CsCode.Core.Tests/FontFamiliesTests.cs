@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using CsCode.Core.Theming;
 using Xunit;
 
@@ -56,5 +57,21 @@ public sealed class FontFamiliesTests
         Assert.StartsWith("Fira Code, Cascadia Code,", FontFamilies.OtherCode);
         Assert.Equal(OperatingSystem.IsMacOS() ? FontFamilies.MacCode : FontFamilies.OtherCode, FontFamilies.DefaultCode);
         Assert.StartsWith("fonts:CsCode#Fira Code, Menlo, SF Mono, Monaco", FontFamilies.Normalize(FontFamilies.MacCode, OSPlatform.OSX));
+    }
+
+    /// <summary>editor.fontLigatures as font features: off unless the setting says otherwise (VS Code's default), on with the font's own, or a CSS feature list.</summary>
+    [Theory]
+    [InlineData(null, "-liga, -calt")]
+    [InlineData("false", "-liga, -calt")]
+    [InlineData("\"false\"", "-liga, -calt")]
+    [InlineData("42", "-liga, -calt")] // a wrongly typed value is ignored
+    [InlineData("true", "")]
+    [InlineData("\"true\"", "")]
+    [InlineData("\"'ss01', 'zero'\"", "ss01=1, zero=1")]
+    [InlineData("\"\\\"cv01\\\" 2, 'calt' 0, 'liga' off, 'ss02' on, 'bad tag', 'x=1y'\"", "cv01=2, calt=0, liga=0, ss02=1")]
+    public void Ligature_features_follow_editor_fontLigatures(string? json, string expected)
+    {
+        JsonElement? setting = json is null ? null : JsonDocument.Parse(json).RootElement;
+        Assert.Equal(expected, string.Join(", ", FontFamilies.LigatureFeatures(setting)));
     }
 }

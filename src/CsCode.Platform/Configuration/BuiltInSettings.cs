@@ -36,6 +36,8 @@ public static class BuiltInSettings
     public static IReadOnlyList<ConfigurationProperty> All { get; } =
     [
         P(SettingKeys.EditorFontFamily, DefaultFontFamily, "Controls the font family.", """{"type":"string"}"""),
+        P(SettingKeys.EditorFontLigatures, false, "Font ligatures and contextual alternates (Fira Code's != and =>): true for the font's own, or a CSS font-feature-settings list such as \"'ss01', 'zero'\".",
+            """{"type":["boolean","string"]}"""),
         P(SettingKeys.EditorFontSize, 14, "Controls the font size in pixels.", """{"type":"number","minimum":6,"maximum":100}"""),
         P(SettingKeys.EditorTabSize, 4, "The number of spaces a tab is equal to.", """{"type":"integer","minimum":1}"""),
         P(SettingKeys.EditorInsertSpaces, true, "Insert spaces when pressing Tab.", """{"type":"boolean"}"""),
