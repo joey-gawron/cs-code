@@ -140,42 +140,58 @@ public class DebugGateAndRevealTests
     }
 
     /// <summary>
-    /// Integrator finding on a real display: the code-action lightbulb was drawn over the breakpoint glyph of the caret line. It now moves into
-    /// the line's indentation, or to a free gutter line next to it, and comes back when the glyph goes.
+    /// The code-action lightbulb never covers the breakpoint margin, so a click there always sets a breakpoint (integrator finding on a real
+    /// display: it was drawn over the caret line's breakpoint glyph; then from the desktop: even without a breakpoint it sat in the glyph column,
+    /// so the first click on the caret line opened the code actions). It goes into the text: the line's indentation, a blank or indented
+    /// neighbouring line, else the folding column right against the text.
     /// </summary>
     [AvaloniaFact]
-    public async Task The_lightbulb_is_never_drawn_over_a_breakpoint_glyph()
+    public async Task The_lightbulb_never_covers_the_breakpoint_margin()
     {
         var (debug, host) = DebugHost();
         using var _ = host;
-        var (doc, view, _) = await host.OpenAsync("function f() {\n        return total;\n}\nconst x = 1;\nconst y = 2;\n", "a.ts");
+        var (doc, view, _) = await host.OpenAsync("function f() {\n        return total;\n}\nconst x = 1;\nconst y = 2;\n\nconst z = 3;\n", "a.ts");
         host.Factory.Services.Features.Register<CsCode.Core.Languages.ICodeActionProvider>(DocumentSelector.All,
             new CsCode.Editor.Tests.Support.FakeCodeActionProvider((d, _, _, _) => Task.FromResult<IReadOnlyList<CsCode.Core.Languages.CodeAction>?>(
                 [new CsCode.Core.Languages.CodeAction("Fix it", "quickfix")])));
         var bulb = view.Feature<CodeActionFeature>()!;
-        var feature = view.Feature<DebugFeature>()!;
-        var margin = view.TextArea.LeftMargins.OfType<Control>().First();
-        Assert.Same(margin, view.TextArea.LeftMargins[0]); // the glyph margin is leftmost
-        double GlyphRight() => margin.TranslatePoint(new Point(margin.Bounds.Width, 0), view.Overlay)!.Value.X;
+        var margins = view.TextArea.LeftMargins.OfType<Control>().ToArray();
+        var glyph = margins[0]; // the glyph margin is leftmost
+        Assert.IsNotType<AvaloniaEdit.Editing.LineNumberMargin>(glyph);
+        Rect InOverlay(Control c) => new(c.TranslatePoint(default, view.Overlay)!.Value, c.Bounds.Size);
         double LineTop(int line) => OverlayPopup.AnchorFor(view, new TextPosition(line, 0)).Top.Y;
+        double TextLeft() => OverlayPopup.AnchorFor(view, new TextPosition(0, 0)).Top.X;
+        string Layout() => $"bulb {bulb.BulbBounds}; margins {string.Join(", ", margins.Select(m => $"{m.GetType().Name} {InOverlay(m)}"))}; text at {TextLeft()}";
+        async Task<Rect> BulbOn(int line, int column)
+        {
+            view.Controller.SetSelection(TextRange.At(line, column));
+            await ViewHost.WaitFor(() => bulb.BulbVisible, $"lightbulb for line {line}");
+            for (var i = 0; i < 3; i++) ViewHost.Pump();
+            var b = bulb.BulbBounds;
+            Assert.True(b.Left >= InOverlay(glyph).Right - 0.5, $"line {line}: over the breakpoint margin: {Layout()}");
+            if (margins.OfType<AvaloniaEdit.Editing.LineNumberMargin>().FirstOrDefault() is { } numbers)
+                Assert.True(b.Left >= InOverlay(numbers).Right - 0.5, $"line {line}: over the line numbers: {Layout()}");
+            return b;
+        }
 
-        // no breakpoint: in the gutter of the caret line, as before
-        view.Controller.SetSelection(TextRange.At(1, 10));
-        await ViewHost.WaitFor(() => bulb.BulbVisible, "lightbulb on the indented line");
-        Assert.True(bulb.BulbBounds.Left < GlyphRight(), $"in the gutter: {bulb.BulbBounds}");
+        // an indented line: in its indentation
+        var indented = await BulbOn(1, 10);
+        Assert.True(indented.Right <= OverlayPopup.AnchorFor(view, new TextPosition(1, 8)).Top.X + 0.5, $"inside the indentation: {Layout()}");
+        Assert.InRange(indented.Top, LineTop(1) - 1, LineTop(1) + 4);
 
-        // a breakpoint on that line (F9 while the bulb shows): the bulb moves into the line's indentation, off the glyph
+        // a breakpoint there changes nothing: the bulb was never in its way
         debug.Manager.Add(doc.Uri, 1);
-        await ViewHost.WaitFor(() => feature.BreakpointAt(1) is not null && bulb.BulbBounds.Left >= GlyphRight(), "the bulb left the glyph's spot");
-        Assert.True(bulb.BulbBounds.Right <= OverlayPopup.AnchorFor(view, new TextPosition(1, 8)).Top.X + 0.5, $"inside the indentation: {bulb.BulbBounds}");
-        Assert.InRange(bulb.BulbBounds.Top, LineTop(1) - 1, LineTop(1) + 4);
+        await ViewHost.WaitFor(() => view.Feature<DebugFeature>()!.BreakpointAt(1) is not null, "breakpoint shown");
+        Assert.Equal(indented, bulb.BulbBounds);
 
-        // a breakpoint on a line without indentation: the bulb goes to the gutter of a free neighbouring line
-        debug.Manager.Add(doc.Uri, 3);
-        view.Controller.SetSelection(TextRange.At(3, 2));
-        await ViewHost.WaitFor(() => bulb.BulbVisible && feature.BreakpointAt(3) is not null, "lightbulb on the unindented line");
-        await ViewHost.WaitFor(() => Math.Abs(bulb.BulbBounds.Top - LineTop(3)) > 4, "moved to another line");
-        Assert.True(bulb.BulbBounds.Left < GlyphRight(), $"in the gutter: {bulb.BulbBounds}");
-        Assert.InRange(bulb.BulbBounds.Top, LineTop(2) - 1, LineTop(2) + 4); // the line above ("}") has no glyph
+        // an unindented line under a blank one: on the blank line, where it covers no text
+        var underBlank = await BulbOn(6, 2);
+        Assert.InRange(underBlank.Top, LineTop(5) - 1, LineTop(5) + 4);
+        Assert.True(underBlank.Left >= TextLeft() - 0.5, $"in the text column: {Layout()}");
+
+        // an unindented line between unindented ones: in the folding column, right against the text
+        var squeezed = await BulbOn(3, 2);
+        Assert.InRange(squeezed.Top, LineTop(3) - 1, LineTop(3) + 4);
+        Assert.True(squeezed.Right <= TextLeft() + 0.5, $"left of the text: {Layout()}");
     }
 }

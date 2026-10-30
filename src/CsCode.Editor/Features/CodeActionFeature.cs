@@ -13,8 +13,8 @@ using Microsoft.Extensions.Logging;
 namespace CsCode.Editor.Features;
 
 /// <summary>
-/// Code actions: the lightbulb in the gutter of the caret line (shown only after a provider has said there IS something to offer — requested
-/// 250 ms after the caret settles, off the UI thread, latest-wins), the Ctrl+. menu (<see cref="IWindowService.ShowQuickPickAsync"/>), and
+/// Code actions: the lightbulb by the caret line (never in the breakpoint margin, see <see cref="PositionBulb"/>; shown only after a provider
+/// has said there IS something to offer — requested 250 ms after the caret settles, off the UI thread, latest-wins), the Ctrl+. menu (<see cref="IWindowService.ShowQuickPickAsync"/>), and
 /// executing the chosen action: its workspace edit through <see cref="INavigationService.ApplyWorkspaceEditAsync"/> and its command through
 /// <see cref="ICommandService"/>. <see cref="OrganizeImportsAsync"/> is the <c>source.organizeImports</c> action kind.
 /// </summary>
@@ -106,41 +106,44 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
     }
 
     /// <summary>
-    /// The lightbulb sits in the gutter of the caret line — unless the breakpoint glyph margin draws something there (a breakpoint, the
-    /// debugger's stop arrow), which it must not cover. Then it goes where VS Code puts it: into the line's indentation when that is wide
-    /// enough, otherwise into the gutter of the line above (or below) when that one is free. Only when all of those are taken does it share
-    /// the glyph's spot.
+    /// The lightbulb never sits in the breakpoint margin: a click there must always set a breakpoint (reported from the desktop: the bulb of the
+    /// caret line covered the whole 18 px glyph column, so the first click opened the code actions instead). It goes where VS Code draws it, in
+    /// the text: into the caret line's indentation when that is wide enough, else into the line just above or below when that one is blank or
+    /// indented enough, and otherwise into the folding column right against the text.
     /// </summary>
     private void PositionBulb(int line)
     {
         var (top, bottom) = OverlayPopup.AnchorFor(_v, new TextPosition(line, 0));
-        var x = 2.0;
-        var y = top.Y + Math.Max(0, (bottom.Y - top.Y - _bulb.Height) / 2);
-        if (_v.Feature<DebugFeature>() is { } debug && debug.HasGlyph(line))
+        var height = bottom.Y - top.Y;
+        var textLeft = top.X;
+        var x = textLeft + 1;
+        var y = top.Y + Math.Max(0, (height - _bulb.Height) / 2);
+        if (!Fits(line))
         {
-            var text = _v.Document.GetLineText(line);
-            var indent = text.Length - text.TrimStart(' ', '\t').Length;
-            var first = OverlayPopup.AnchorFor(_v, new TextPosition(line, indent)).Top;
-            var lines = _v.Document.LineCount;
-            if (indent > 0 && first.X - top.X >= _bulb.Width + 2) x = top.X + 1;
-            else if ((Adjacent(line - 1) ?? Adjacent(line + 1)) is { } other) y = other;
-
-            double? Adjacent(int candidate)
-            {
-                if (candidate < 0 || candidate >= lines || debug.HasGlyph(candidate)) return null;
-                var (t, b) = OverlayPopup.AnchorFor(_v, new TextPosition(candidate, 0));
-                return t.Y + Math.Max(0, (b.Y - t.Y - _bulb.Height) / 2);
-            }
+            if ((Neighbour(line - 1) ?? Neighbour(line + 1)) is { } other) y = other;
+            else x = textLeft - _bulb.Width;
         }
         Canvas.SetLeft(_bulb, x);
         Canvas.SetTop(_bulb, y);
         _bulb.IsVisible = top.Y >= -1 && bottom.Y <= _v.Overlay.Bounds.Height + 1;
-    }
 
-    /// <summary>A breakpoint or the stop arrow appeared or went away in the gutter: a visible lightbulb moves out of (or back into) its way.</summary>
-    internal void OnGutterChanged()
-    {
-        if (_bulb.IsVisible && !_disposed) PositionBulb(_v.Controller.Caret.Line);
+        // Blank, or indented by at least the bulb's width: the bulb covers no text there.
+        bool Fits(int l)
+        {
+            var text = _v.Document.GetLineText(l);
+            var indent = text.Length - text.TrimStart(' ', '\t').Length;
+            if (indent == text.Length) return true;
+            return indent > 0 && OverlayPopup.AnchorFor(_v, new TextPosition(l, indent)).Top.X - textLeft >= _bulb.Width + 2;
+        }
+
+        // A line next to the caret line on screen (not one hidden in a fold, nor a wrapped line's far end) where the bulb fits.
+        double? Neighbour(int candidate)
+        {
+            if (candidate < 0 || candidate >= _v.Document.LineCount || !Fits(candidate)) return null;
+            var (t, b) = OverlayPopup.AnchorFor(_v, new TextPosition(candidate, 0));
+            if (Math.Abs(Math.Abs(t.Y - top.Y) - height) > 1) return null;
+            return t.Y + Math.Max(0, (b.Y - t.Y - _bulb.Height) / 2);
+        }
     }
 
     private void OnScrolled(object? sender, EventArgs e)
