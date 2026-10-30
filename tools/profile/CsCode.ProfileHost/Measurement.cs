@@ -94,6 +94,10 @@ public sealed class RunMetrics : IDisposable
                      "DOTNET_ReadyToRun", "DOTNET_GCgen0size", "DOTNET_GCgen0MaxBudget", "DOTNET_GCHeapCount", "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT", "DOTNET_gcServer", "DOTNET_gcConcurrent" })
             if (Environment.GetEnvironmentVariable(name) is { } v) parts.Add($"{name[7..]}={v}");
         parts.Add($"r2r={IsReadyToRun()}");
+        // What the GC itself says it runs with (environment variables override the runtimeconfig knobs; this shows the effective values).
+        var gc = GC.GetConfigurationVariables();
+        foreach (var key in new[] { "ServerGC", "ConcurrentGC", "ConserveMemory", "RetainVM", "HeapCount", "Gen0Size", "GCGen0MaxBudget" })
+            if (gc.TryGetValue(key, out var value)) parts.Add($"gc.{key}={value}");
         return string.Join(' ', parts);
     }
 

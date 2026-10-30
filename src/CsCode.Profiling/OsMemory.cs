@@ -32,6 +32,16 @@ public static class OsMemory
         ReturnFreePages();
     }
 
+    /// <summary>
+    /// The gentle variant for a trim while the user is active: starts a background (concurrent) gen2 collection — no long pause, no compaction —
+    /// then returns free native pages. Frees garbage; returns less to the OS than <see cref="CompactAndRelease"/>.
+    /// </summary>
+    public static void CollectInBackgroundAndRelease()
+    {
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: false, compacting: false);
+        ReturnFreePages();
+    }
+
     /// <summary>Asks the OS allocator to give free pages back; true when a call was made.</summary>
     public static bool ReturnFreePages()
     {

@@ -355,13 +355,15 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
         if (!_trimGate.Wait(0)) return false; // a trim is already running: that one counts
         try
         {
-            TrimCore(level, reason, CancellationToken.None);
+            // A Moderate trim fires while the user may be typing (70 % of the budget): it collects in the background instead of pausing every
+            // thread for a compacting collection (~60-120 ms with the app's ~60 MB live heap, docs/MEMORY.md). Idle and Aggressive compact.
+            TrimCore(level, reason, CancellationToken.None, compact: level != MemoryTrimLevel.Moderate);
             return true;
         }
         finally { _trimGate.Release(); }
     }
 
-    private void TrimCore(MemoryTrimLevel level, string reason, CancellationToken ct)
+    private void TrimCore(MemoryTrimLevel level, string reason, CancellationToken ct, bool compact = true)
     {
         var before = _sampler.Sample();
         var all = Volatile.Read(ref _trimmables);
@@ -391,7 +393,8 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
         var trimmablesElapsed = Stopwatch.GetElapsedTime(start);
         ct.ThrowIfCancellationRequested();
         var collect = Stopwatch.GetTimestamp();
-        OsMemory.CompactAndRelease(level);
+        if (compact) OsMemory.CompactAndRelease(level);
+        else OsMemory.CollectInBackgroundAndRelease();
         var collectElapsed = Stopwatch.GetElapsedTime(collect);
         var after = _sampler.Sample();
         var report = new MemoryTrimReport(level, reason, DateTimeOffset.UtcNow, released, results, before.WorkingSetBytes, after.WorkingSetBytes,

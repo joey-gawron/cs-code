@@ -175,6 +175,39 @@ public sealed class MemoryMonitorTests
         }
     }
 
+    private sealed class Node(Node? next) { public Node? Next = next; public byte[] Data = new byte[64]; }
+
+    [Fact]
+    public async Task A_policy_moderate_trim_collects_in_the_background_while_an_aggressive_one_compacts()
+    {
+        // ~600k small live objects: a compacting collection has real work to do, a background one barely pauses
+        Node? graph = null;
+        for (var i = 0; i < 600_000; i++) graph = new Node(graph);
+        FullGc.Collect();
+        var rss = Environment.WorkingSet;
+        var moderateConfig = Config((int)(rss / 0.78 / 1024 / 1024), trimOnIdle: false);
+        double moderatePause, aggressivePause;
+        using (var recorder = new GcPauseRecorder())
+        using (var monitor = new MemoryMonitor(configuration: () => moderateConfig))
+        {
+            monitor.Tick();
+            Assert.Equal(MemoryTrimLevel.Moderate, monitor.LastTrim!.Level);
+            await Task.Delay(1500);
+            moderatePause = recorder.Pauses.Report().MaxMs;
+        }
+        var aggressiveConfig = Config((int)(Environment.WorkingSet / 0.95 / 1024 / 1024), trimOnIdle: false);
+        using (var recorder = new GcPauseRecorder())
+        using (var monitor = new MemoryMonitor(configuration: () => aggressiveConfig))
+        {
+            monitor.Tick();
+            Assert.Equal(MemoryTrimLevel.Aggressive, monitor.LastTrim!.Level);
+            await Task.Delay(1500);
+            aggressivePause = recorder.Pauses.Report().MaxMs;
+        }
+        GC.KeepAlive(graph);
+        Assert.True(moderatePause < aggressivePause / 2, $"background trim paused {moderatePause:F1} ms, compacting trim {aggressivePause:F1} ms");
+    }
+
     [Fact]
     public void Changing_the_budget_setting_takes_effect_on_the_next_sample()
     {
@@ -203,10 +236,17 @@ public sealed class MemoryMonitorTests
         MemoryTrimReport? fired = null;
         using var sub = monitor.Trimmed.Subscribe(r => fired = r);
 
-        var caller = Environment.CurrentManagedThreadId;
-        var sw = Stopwatch.StartNew();
-        var pending = monitor.TrimNowAsync(MemoryTrimLevel.Moderate);
-        var callerCost = sw.Elapsed;
+        // Called from a dedicated thread (a UI thread stand-in): a pool-thread caller could legitimately be handed the trim's work item afterwards.
+        using var ui = new Toolkit.SimulatedUiThread();
+        var caller = ui.ManagedThreadId;
+        TimeSpan callerCost = default;
+        Task pending = Task.CompletedTask;
+        await ui.InvokeAsync(() =>
+        {
+            var sw = Stopwatch.StartNew();
+            pending = monitor.TrimNowAsync(MemoryTrimLevel.Moderate).AsTask();
+            callerCost = sw.Elapsed;
+        });
         await pending;
 
         Assert.True(callerCost < TimeSpan.FromMilliseconds(5), $"TrimNowAsync kept its caller {callerCost.TotalMilliseconds:F1} ms");
