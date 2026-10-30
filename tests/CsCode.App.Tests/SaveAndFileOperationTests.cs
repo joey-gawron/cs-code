@@ -104,6 +104,35 @@ public class SaveAndFileOperationTests
         Assert.False(File.Exists(created!.LocalPath));
     }
 
+    // files-1: a move that fails (a case-only folder rename on macOS did; here a file of the same name is in the way) left the tabs it had closed
+    // closed. They come back where they were.
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_failed_explorer_move_reopens_the_tabs_it_closed()
+    {
+        using var env = new RealAppHome();
+        var moving = env.Workspace.WriteFile("a/x.txt", "mine\n");
+        var inTheWay = env.Workspace.WriteFile("b/x.txt", "in the way\n");
+        await using var run = new RealAppRun(env);
+        await run.MainWindowAsync();
+        var sp = run.Services;
+        await sp.GetRequiredService<IWorkspaceService>().OpenFolderAsync(env.Workspace.Uri);
+        Assert.NotNull(await sp.GetRequiredService<INavigationService>().OpenAsync(new Uri(moving)));
+        var well = sp.GetRequiredService<DocumentWell>();
+        using var explorer = new ExplorerViewModel(sp.GetRequiredService<IWorkspaceService>(), sp.GetRequiredService<IUiDispatcher>(), sp.GetRequiredService<INavigationService>(),
+            sp.GetService<IConfigurationService>(), sp.GetService<IStateStorage>(), dialogs: null, well, sp.GetRequiredService<FileParticipants>());
+        await explorer.RefreshRootsAsync();
+        var a = explorer.Roots[0].Children!.Single(c => c.Name == "a");
+        var b = explorer.Roots[0].Children!.Single(c => c.Name == "b");
+        await explorer.ExpandAsync(a);
+
+        explorer.Cut([a.Children!.Single(c => c.Name == "x.txt")]);
+        await Assert.ThrowsAnyAsync<IOException>(() => explorer.PasteAsync(b));
+
+        Assert.Contains(well.EditorTabs, t => t.Uri == new Uri(moving));
+        Assert.Equal("mine\n", NormalizedText(moving));
+        Assert.Equal("in the way\n", NormalizedText(inTheWay));
+    }
+
     [AvaloniaFact(Timeout = 120_000)]
     public async Task Workspace_edit_resource_operations_run_the_file_operation_participants()
     {

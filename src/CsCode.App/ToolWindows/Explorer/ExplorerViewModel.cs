@@ -382,7 +382,16 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         IReadOnlyList<(Uri, Uri)> renamed = [(from, to)];
         if (_participants is not null && await _participants.WillRenameAsync(renamed).ConfigureAwait(true) is { } edit && _navigation is not null)
             await _navigation.ApplyWorkspaceEditAsync(edit, $"Rename {NameOf(from)}").ConfigureAwait(true); // declined or failed: the move still happens
-        await _fs.RenameAsync(from, to).ConfigureAwait(true);
+        try
+        {
+            await _fs.RenameAsync(from, to).ConfigureAwait(true);
+        }
+        catch
+        {
+            // Nothing moved (a target in the way, a volume that refuses): the tabs closed for the move come back where they were (files-1).
+            if (_navigation is not null) foreach (var (o, _) in reopen) await _navigation.OpenAsync(o).ConfigureAwait(true);
+            throw;
+        }
         if (_participants is not null) await _participants.DidRenameAsync(renamed).ConfigureAwait(true);
         if (_navigation is not null) foreach (var (_, n) in reopen) await _navigation.OpenAsync(n).ConfigureAwait(true);
     }
