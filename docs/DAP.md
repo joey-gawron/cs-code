@@ -288,8 +288,10 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   registered.
 * Environment: CsCode's own `DOTNET_ROOT_<ARCH>` (set by `dotnet run`/`dotnet test`) is folded into `DOTNET_ROOT` for debug adapters (and so
   the programs they launch), `runInTerminal` debuggees and tasks, as for language servers (`DotnetRootFold.cs`).
-* Variables paging: an adapter that answers a page with more than `count` children (it ignores `start`/`count`, as CodeLLDB does) is detected
-  per session; from then on whole lists are asked for and the pages cut by the session, as with the `IgnoresVariablePaging` quirk.
+* Variables paging: an adapter that answers a later page with more than `count` children starting at the container's first child (it
+  ignores `start`/`count`, as CodeLLDB does) is detected per container; that answer is kept as the container's whole list and its pages are cut
+  by the session, as with the `IgnoresVariablePaging` quirk (no quirk needed: user adapters too). More than `count` alone is not taken as
+  ignoring paging (js-debug adds a row to an honoured page).
 
 ## Integration notes
 
