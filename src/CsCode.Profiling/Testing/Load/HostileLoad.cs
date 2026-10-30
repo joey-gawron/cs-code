@@ -37,13 +37,22 @@ public sealed class CpuBurner : IDisposable
         return burner;
     }
 
-    /// <summary>Starts <paramref name="processes"/> busy child processes (<c>/bin/sh -c 'while :; do :; done'</c>). Unix only.</summary>
-    public static CpuBurner ChildProcesses(int processes)
+    /// <summary>
+    /// Starts <paramref name="processes"/> busy child processes (<c>/bin/sh -c 'while :; do :; done'</c>), at <paramref name="nice"/> (0 = normal
+    /// priority; the app starts language servers below normal, so 10 mirrors a pegged server). Unix only.
+    /// </summary>
+    public static CpuBurner ChildProcesses(int processes, int nice = 0)
     {
         var burner = new CpuBurner();
         for (var i = 0; i < processes; i++)
         {
-            var psi = new ProcessStartInfo("/bin/sh") { UseShellExecute = false, RedirectStandardInput = true };
+            var psi = new ProcessStartInfo(nice > 0 ? "nice" : "/bin/sh") { UseShellExecute = false, RedirectStandardInput = true };
+            if (nice > 0)
+            {
+                psi.ArgumentList.Add("-n");
+                psi.ArgumentList.Add(nice.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                psi.ArgumentList.Add("/bin/sh");
+            }
             psi.ArgumentList.Add("-c");
             psi.ArgumentList.Add("while :; do :; done");
             burner._children.Add(Process.Start(psi) ?? throw new InvalidOperationException("sh did not start"));
