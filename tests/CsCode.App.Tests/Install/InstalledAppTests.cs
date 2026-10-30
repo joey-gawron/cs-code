@@ -79,7 +79,8 @@ public sealed class InstalledAppTests(PublishedAppFixture published) : IClassFix
             Assert.False(environ.ContainsKey("CSCODE_HOME"));
             Assert.False(environ.ContainsKey("LD_LIBRARY_PATH"));
             // The normal per-user directories, inside the throwaway HOME.
-            var written = box.Snapshot().Keys.Where(k => !k.StartsWith(".local/share/cscode/" + new FileInfo(box.Current).LinkTarget, StringComparison.Ordinal)).ToList();
+            // (not the session locks' folder: the running session holds its window's lock exclusively, so its content cannot be read now)
+            var written = box.Snapshot(".local/share/cscode/sessions/.locks").Keys.Where(k => !k.StartsWith(".local/share/cscode/" + new FileInfo(box.Current).LinkTarget, StringComparison.Ordinal)).ToList();
             Assert.True(written.Any(k => k.StartsWith(".local/share/cscode/sessions", StringComparison.Ordinal)), "the app did not use ~/.local/share/cscode:\n" + string.Join("\n", written));
 
             // The X11 window: class cscode (what StartupWMClass matches) and the 128 px artwork as _NET_WM_ICON (xprop, when installed).
