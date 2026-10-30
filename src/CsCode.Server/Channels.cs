@@ -55,6 +55,9 @@ internal sealed class ServerChannel
     public long Id { get; }
     public string Kind { get; }
     public IChannelSource? Source { get; set; }
+
+    /// <summary>The task start a task's terminal belongs to (<see cref="TaskTerminalTag"/>): kept by <c>chan/keep</c> while the client still opens it.</summary>
+    public string? TaskTag { get; set; }
     public bool IsClosed { get { lock (_gate) return _closed; } }
     public long Produced { get { lock (_gate) return _sent; } }
 
@@ -215,7 +218,10 @@ internal sealed class ChannelHub : IDisposable
         _link.OnRequest<ChanKeepParams, Empty>(RemoteMethods.ChanKeep, (p, _) =>
         {
             var keep = p.Ids.ToHashSet();
-            foreach (var id in _channels.Keys.Where(id => !keep.Contains(id)).ToArray())
+            // A task's terminal whose term/create answer the client lost is not among its channels yet: it asks for it again (by its tag) instead.
+            var opening = p.TaskTags is { Count: > 0 } tags ? tags.ToHashSet(StringComparer.Ordinal) : null;
+            foreach (var id in _channels.Where(c => !keep.Contains(c.Key) && !(c.Value.TaskTag is { } tag && opening?.Contains(tag) == true))
+                         .Select(c => c.Key).ToArray())
             {
                 _log.LogInformation("Channel {Id} was not reclaimed by the reconnected client: ending it", id);
                 Remove(id);

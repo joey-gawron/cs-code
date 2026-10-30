@@ -275,6 +275,40 @@ public class R3Tests
         await TerminalProbe.WaitForTextAsync(localTerminal, "here-by-");
     }
 
+    /// <summary>The client's task presentation, slow to report a task's terminal as shown (its <c>task/terminal</c> answer waits).</summary>
+    private sealed class SlowToShowTaskTerminals(ITaskTerminalHost inner, Task shown) : ITaskTerminalHost
+    {
+        public async ValueTask<ITaskTerminalRun> StartAsync(TaskTerminalRequest request, CancellationToken ct = default)
+        {
+            var run = await inner.StartAsync(request, ct);
+            await shown;
+            return run;
+        }
+    }
+
+    [Fact]
+    public async Task A_task_cancelled_after_its_terminal_started_but_before_the_client_answered_ends_on_the_server()
+    {
+        // The server claimed the run (its PTY runs the task) while the task/terminal answer is still on its way: a cancel then must still reach the
+        // program, though the runner never got the run to terminate it.
+        var shown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var host = new RemoteTestHost(r3: true,
+            services: sc => sc.AddSingleton<ITaskTerminalHost>(sp => new SlowToShowTaskTerminals(sp.GetRequiredService<Terminal.Tasks.TaskTerminalHost>(), shown.Task)));
+        var sleep = $"77.{Random.Shared.Next(100_000, 999_999)}";
+        Directory.CreateDirectory(Path.Combine(host.Workspace.Path, ".vscode"));
+        File.WriteAllText(Path.Combine(host.Workspace.Path, ".vscode", "tasks.json"),
+            $$"""{ "version": "2.0.0", "tasks": [ { "label": "slow", "type": "shell", "command": "sleep {{sleep}}" } ] }""");
+        await host.ConnectAsync();
+        await host.OpenWorkspaceAsync();
+        using var cts = new CancellationTokenSource();
+        var run = host.Services.GetRequiredService<ITaskService>().RunAsync("slow", null, cts.Token).AsTask();
+        await TestEnv.WaitUntilAsync(() => TestEnv.ProcessesWithMarker(sleep).Count > 0, TimeSpan.FromSeconds(30), "the task's program on the server");
+        cts.Cancel();
+        Assert.True((await run.WaitAsync(TimeSpan.FromSeconds(30), Ct)).Cancelled);
+        await TestEnv.WaitUntilAsync(() => TestEnv.ProcessesWithMarker(sleep).Count == 0, TimeSpan.FromSeconds(15), "the cancelled task's program to end on the server");
+        shown.SetResult();
+    }
+
     [Fact]
     public async Task An_idle_debuggee_terminal_is_reused_only_by_a_program_that_runs_where_it_runs()
     {

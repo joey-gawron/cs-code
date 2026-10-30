@@ -53,7 +53,8 @@ internal sealed class ServerTaskTerminals : ITaskTerminalHost
         var ask = new TaskTerminalParams(tag, request.Label, request.FileName, request.Arguments, request.WorkingDirectory, request.Environment,
             request.Presentation, request.CommandLine);
         _unclaimed[tag] = run;
-        // Every way out but a claim forgets the tag: a terminal that still comes for it is refused (Claim), so a task nobody waits for never runs.
+        // Every way out but a claim forgets the tag: a terminal that still comes for it is refused (Claim), so a task nobody waits for never runs;
+        // a terminal that came first is ended.
         try
         {
             var deadline = DateTime.UtcNow + ReconnectWindow;
@@ -68,7 +69,9 @@ internal sealed class ServerTaskTerminals : ITaskTerminalHost
                 {
                     // The connection went away with the request or its answer. The client may go on (its terminal's term/create can come after the
                     // reconnect), or not: whichever comes first decides — the terminal, or the next connection, which is asked again (the client
-                    // answers a repeated tag with the start it already made).
+                    // answers a repeated tag with the start it already made). A terminal that started already is never asked for again: the client
+                    // that lost the term/create answer with the connection asks for the same PTY again by its tag (chan/keep spares it meanwhile).
+                    if (run.TerminalStarted.IsCompleted) break;
                     var left = deadline - DateTime.UtcNow;
                     if (left <= TimeSpan.Zero) throw new InvalidOperationException("the connection to the client was lost before its terminal started: " + ex.Message, ex);
                     using var attached = NextConnection(out var connection);
@@ -85,9 +88,12 @@ internal sealed class ServerTaskTerminals : ITaskTerminalHost
             if (!run.Claimed) throw new InvalidOperationException("its terminal did not start on the remote host");
             return run;
         }
-        catch when (!run.Claimed)
+        catch
         {
-            _unclaimed.TryRemove(tag, out _);
+            // Nobody will wait for this run (cancelled, or the client could not show it): its tag is forgotten, so a terminal that still comes for
+            // it is refused. If the terminal's term/create claimed it first (the PTY may already run, the client's answer to task/terminal had
+            // not come), its program is ended: it would otherwise run on unseen, out of reach of the cancel.
+            if (!_unclaimed.TryRemove(tag, out _)) run.Terminate();
             throw;
         }
     }

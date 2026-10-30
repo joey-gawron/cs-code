@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using CsCode.Core.Platform;
+using CsCode.Core.Terminal;
 using CsCode.Remote.Protocol;
 using CsCode.Terminal.Pty;
 using CsCode.Terminal.Sessions;
@@ -18,6 +19,7 @@ namespace CsCode.Server;
 internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILogger log, ServerTaskTerminals? tasks = null)
 {
     private readonly ConcurrentDictionary<long, PtySource> _terminals = new();
+    private readonly object _taskStarts = new(); // a task's term/create and its repetition never run at once
     private readonly IConfigurationService? _config = sp.GetService<IConfigurationService>();
     private readonly TerminalLaunchResolver _resolver = new(sp.GetService<IConfigurationService>(), sp.GetService<IWorkspaceService>());
 
@@ -51,8 +53,23 @@ internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILog
         // newest workspace folders yet when the terminal is created right after opening one.
         if (options.Cwd is null && p.Folder is { IsFile: true } folder && string.IsNullOrWhiteSpace(_config?.Get<string>(TerminalSettingKeys.Cwd)))
             options = options with { Cwd = folder.LocalPath.Length > 1 ? folder.LocalPath.TrimEnd('/') : folder.LocalPath };
-        var task = taskTag is null ? null
-            : tasks?.Claim(taskTag) ?? throw new IOException("The task this terminal was opened for is no longer waiting for it on the remote host (it started elsewhere, failed or was cancelled).");
+        if (taskTag is null) return Start(options, columns, rows, null, null);
+        lock (_taskStarts)
+        {
+            // The client lost the answer to its term/create for this task with the connection and asks again: the PTY started then is the task's.
+            if (_terminals.Values.FirstOrDefault(t => t.Channel.TaskTag == taskTag) is { Answer: { } answer })
+            {
+                log.LogInformation("Terminal {Id}: the task terminal's start was asked for again (its answer was lost with the connection)", answer.Channel);
+                return answer;
+            }
+            var task = tasks?.Claim(taskTag)
+                       ?? throw new IOException("The task this terminal was opened for is no longer waiting for it on the remote host (it started elsewhere, failed or was cancelled).");
+            return Start(options, columns, rows, task, taskTag);
+        }
+    }
+
+    private TermCreateResult Start(TerminalCreateOptions options, int columns, int rows, ServerTaskTerminals.Run? task, string? taskTag)
+    {
         PtyStartInfo info;
         try { info = _resolver.Resolve(options, columns, rows); } // PtySpawnException → an error answer with the reason
         catch (PtySpawnException)
@@ -61,6 +78,7 @@ internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILog
             throw;
         }
         var channel = hub.Create("terminal");
+        channel.TaskTag = taskTag;
         var source = new PtySource(channel, PtyHosts.Create(), () => _terminals.TryRemove(channel.Id, out _)) { Task = task };
         channel.Source = source;
         _terminals[channel.Id] = source;
@@ -74,7 +92,7 @@ internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILog
         task?.Attach(source);
         log.LogInformation("Terminal {Id}: {Program} (pid {Pid}) in {Cwd}{Task}", channel.Id, info.FileName, source.Host.ProcessId, info.WorkingDirectory,
             task is null ? "" : " (a task's)");
-        return new TermCreateResult(channel.Id, source.Host.ProcessId, info.FileName, info.WorkingDirectory, ShellIntegrationOf(info));
+        return source.Answer = new TermCreateResult(channel.Id, source.Host.ProcessId, info.FileName, info.WorkingDirectory, ShellIntegrationOf(info));
     }
 
     /// <summary>
@@ -101,6 +119,9 @@ internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILog
         public ServerChannel Channel { get; } = channel;
         public IPtyHost Host { get; } = host;
         public ServerTaskTerminals.Run? Task { get; init; }
+
+        /// <summary>What term/create answered (a task's terminal is answered with it again when the client lost it).</summary>
+        public TermCreateResult? Answer { get; set; }
 
         public void OnOutput(ReadOnlySpan<byte> data)
         {

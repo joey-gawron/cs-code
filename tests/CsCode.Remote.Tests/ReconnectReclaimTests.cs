@@ -3,6 +3,7 @@ using CsCode.Core.Remote;
 using CsCode.Core.Tasks;
 using CsCode.Remote.Client;
 using CsCode.Remote.Protocol;
+using CsCode.Remote.Transport;
 using CsCode.Terminal.Sessions;
 using CsCode.TestDoubles;
 using Microsoft.Extensions.DependencyInjection;
@@ -175,6 +176,109 @@ public class ReconnectReclaimTests
         Assert.Null(result.Error);
         Assert.Equal(["run"], File.ReadAllLines(Path.Combine(host.Workspace.Path, "runs.txt"))); // asked twice, run once
         Assert.Equal(1, cutting!.Calls);
+    }
+
+    /// <summary>
+    /// Holds what the server sends to the client (the link stays up, nothing arrives) until <see cref="Drop"/>: the held bytes are lost with the
+    /// connection, as when the network fails right after the server answered.
+    /// </summary>
+    private sealed class InboundHold
+    {
+        private readonly ManualResetEventSlim _dropped = new(false);
+        public volatile bool Holding;
+
+        public void Drop() => _dropped.Set();
+
+        public IRemoteTransport Wrap(IRemoteTransport inner) => new HeldTransport(inner, this);
+
+        private sealed class HeldTransport(IRemoteTransport inner, InboundHold hold) : IRemoteTransport
+        {
+            public string Description => inner.Description;
+            public async Task<RemoteChannel> ConnectAsync(IProgress<string>? progress, CancellationToken ct) =>
+                (await inner.ConnectAsync(progress, ct)).Wrap(input => new HeldStream(input, hold), output => output);
+        }
+
+        private sealed class HeldStream(Stream inner, InboundHold hold) : Stream
+        {
+            public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+            public override int Read(Span<byte> buffer)
+            {
+                var n = inner.Read(buffer);
+                if (n > 0 && hold.Holding)
+                {
+                    hold._dropped.Wait(TimeSpan.FromSeconds(60));
+                    return 0; // the connection ends here: what was held never arrives
+                }
+                return n;
+            }
+
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) inner.Dispose();
+                base.Dispose(disposing);
+            }
+        }
+    }
+
+    /// <summary>The client's task presentation; the server's answers stop arriving just before the first task's terminal is opened.</summary>
+    private sealed class HoldingTaskTerminals(ITaskTerminalHost inner, InboundHold hold) : ITaskTerminalHost
+    {
+        public ValueTask<ITaskTerminalRun> StartAsync(TaskTerminalRequest request, CancellationToken ct = default)
+        {
+            hold.Holding = true;
+            return inner.StartAsync(request, ct);
+        }
+    }
+
+    [Fact]
+    public async Task A_task_whose_terminal_started_on_the_server_but_whose_answer_was_lost_with_the_link_runs_to_its_own_end_in_that_terminal()
+    {
+        // T49 after the claim: the server started the task's PTY, then the link failed before the term/create answer arrived. The client asks for
+        // the same terminal again on the next connection and gets that PTY (its output replayed); the server did not end it at the reconnect.
+        var control = new CuttableTransport.Control();
+        var hold = new InboundHold();
+        await using var host = new RemoteTestHost(o => o.Reconnect = new ReconnectPolicy(10, () => 0.5),
+            services: sc => sc.AddSingleton<ITaskTerminalHost>(sp => new HoldingTaskTerminals(sp.GetRequiredService<Terminal.Tasks.TaskTerminalHost>(), hold)),
+            wrap: t => hold.Wrap(new CuttableTransport(t, control)), r3: true, persistent: Grace);
+        var sleep = UniqueSleep(4);
+        Directory.CreateDirectory(Path.Combine(host.Workspace.Path, ".vscode"));
+        File.WriteAllText(Path.Combine(host.Workspace.Path, ".vscode", "tasks.json"),
+            $$"""{ "version": "2.0.0", "tasks": [ { "label": "once", "type": "shell", "command": "echo run >> runs.txt; echo hello-from-the-task; sleep {{sleep}}; exit 4" } ] }""");
+        await host.ConnectAsync();
+        await host.OpenWorkspaceAsync();
+        var run = host.Services.GetRequiredService<ITaskService>().RunAsync("once", null, Ct).AsTask();
+        var runs = Path.Combine(host.Workspace.Path, "runs.txt");
+        await TestEnv.WaitUntilAsync(() => File.Exists(runs) && TestEnv.ProcessesWithMarker(sleep).Count > 0, TimeSpan.FromSeconds(30),
+            "the task's program to start on the server");
+        Assert.True(hold.Holding);
+
+        control.Refuse = true;
+        await control.CutAsync();
+        hold.Drop(); // the answer to the term/create is gone with the link
+        await TestEnv.WaitUntilAsync(() => host.Manager.Session is null, TimeSpan.FromSeconds(10), "the client to notice the drop");
+        hold.Holding = false;
+        await RestoreAsync(host, control);
+
+        var result = await run.WaitAsync(TimeSpan.FromSeconds(60), Ct);
+        Assert.Null(result.Error);
+        Assert.False(result.Cancelled);
+        Assert.Equal(4, result.ExitCode); // the program's own end, not killed at the reconnect
+        Assert.Equal(["run"], File.ReadAllLines(runs));
+        var terminal = Assert.Single(host.Services.GetRequiredService<TerminalService>().Sessions, s => s.Options.Name == "once");
+        await TerminalProbe.WaitForTextAsync(terminal, "hello-from-the-task"); // the output from before the drop, replayed into the client's terminal
+        await TestEnv.WaitUntilAsync(() => terminal.HasExited, TimeSpan.FromSeconds(10), "the client's terminal to show the end");
+        Assert.Equal(4, terminal.ExitCode);
     }
 
     [Fact]

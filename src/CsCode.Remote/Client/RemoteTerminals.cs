@@ -75,23 +75,41 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
     public TerminalBackendStarted Start(TerminalCreateOptions options, int columns, int rows)
     {
         // Blocking by contract: the terminal service runs this off the UI thread, as it forks local programs there.
-        using var cts = new CancellationTokenSource(StartTimeout);
-        try
+        // A task's terminal (tagged) whose answer is lost with the connection may already run on the server: the same term/create on the next
+        // connection to that server is answered with its PTY (chan/keep spares it meanwhile, since the tag is named as opening), whose output so far is
+        // replayed — the task runs once and is not ended by the drop. Another terminal's start fails with the connection (the user opens another).
+        var tag = options.Env is { } env && env.TryGetValue(TaskTerminalTag.Variable, out var t) ? t : null;
+        using var opening = tag is null ? null : _channels.OpeningTaskTerminal(tag);
+        string? instance = null;
+        for (var attempt = 0; ; attempt++)
         {
-            var session = _manager.WaitForSessionAsync(StartTimeout, cts.Token).GetAwaiter().GetResult();
-            if (!session.Server.Capabilities.Contains(RemoteProtocol.Capabilities.Terminals))
-                throw new NotSupportedException($"The server on {_manager.HostName} cannot run terminals.");
-            var r = session.Peer.InvokeAsync<TermCreateParams, TermCreateResult>(RemoteMethods.TermCreate, new TermCreateParams(options, columns, rows, Folder), cts.Token, StartTimeout)
-                        .GetAwaiter().GetResult() ?? throw new IOException("The server sent no answer for the new terminal.");
-            _pid = r.ProcessId;
-            _size = ((long)columns << 32) | (uint)rows;
-            _channel = _channels.Open(r.Channel, this);
-            _delivery = new Thread(DeliveryLoop) { IsBackground = true, Name = "CsCode.Remote-terminal-" + r.Channel };
-            _delivery.Start();
-            return new TerminalBackendStarted(r.ProcessId, r.Program, r.WorkingDirectory) { Environment = r.ShellIntegration };
+            using var cts = new CancellationTokenSource(StartTimeout);
+            try
+            {
+                var session = _manager.WaitForSessionAsync(StartTimeout, cts.Token).GetAwaiter().GetResult();
+                if (attempt > 0 && session.Server.InstanceId != instance)
+                    throw new IOException($"The connection to {_manager.HostName} was lost while the task's terminal started, and the server did not keep it.");
+                instance = session.Server.InstanceId;
+                if (!session.Server.Capabilities.Contains(RemoteProtocol.Capabilities.Terminals))
+                    throw new NotSupportedException($"The server on {_manager.HostName} cannot run terminals.");
+                var r = session.Peer.InvokeAsync<TermCreateParams, TermCreateResult>(RemoteMethods.TermCreate, new TermCreateParams(options, columns, rows, Folder), cts.Token, StartTimeout)
+                            .GetAwaiter().GetResult() ?? throw new IOException("The server sent no answer for the new terminal.");
+                _pid = r.ProcessId;
+                _size = ((long)columns << 32) | (uint)rows;
+                _channel = _channels.Open(r.Channel, this);
+                // Asked again: the PTY may have been started on the lost connection, whose output went there: the server replays it from the start.
+                if (attempt > 0) _channel.ReattachAsync(session.Peer, cts.Token).GetAwaiter().GetResult();
+                _delivery = new Thread(DeliveryLoop) { IsBackground = true, Name = "CsCode.Remote-terminal-" + r.Channel };
+                _delivery.Start();
+                return new TerminalBackendStarted(r.ProcessId, r.Program, r.WorkingDirectory) { Environment = r.ShellIntegration };
+            }
+            catch (RemoteDisconnectedException ex) when (tag is not null && instance is not null && attempt < 2)
+            {
+                _log.LogInformation("The connection was lost while the terminal of a task started; asking the server for it again: {Error}", ex.Message);
+            }
+            catch (OperationCanceledException) { throw new TimeoutException($"Starting a terminal on {_manager.HostName} took more than {StartTimeout.TotalSeconds:0} s."); }
+            catch (NotSupportedException ex) { throw new InvalidOperationException(ex.Message, ex); }
         }
-        catch (OperationCanceledException) { throw new TimeoutException($"Starting a terminal on {_manager.HostName} took more than {StartTimeout.TotalSeconds:0} s."); }
-        catch (NotSupportedException ex) { throw new InvalidOperationException(ex.Message, ex); }
     }
 
     public void Attach(ITerminalBackendListener listener)

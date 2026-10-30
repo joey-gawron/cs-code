@@ -214,6 +214,7 @@ public sealed class RemoteChannels : IRemoteParticipant, IDisposable
     private const int MaxEarlyBytes = 1024 * 1024;
     private readonly ConcurrentDictionary<long, ClientChannel> _channels = new();
     private readonly ConcurrentDictionary<long, List<object>> _early = new(); // ChanDataParams / ChanClosedParams before Open
+    private readonly ConcurrentDictionary<string, int> _opening = new(StringComparer.Ordinal); // task tags whose term/create is under way
     private readonly ILogger _log;
     private volatile RemoteSession? _session;
     private string? _instance;
@@ -275,6 +276,19 @@ public sealed class RemoteChannels : IRemoteParticipant, IDisposable
 
     internal void Forget(ClientChannel channel) => _channels.TryRemove(new KeyValuePair<long, ClientChannel>(channel.Id, channel));
 
+    /// <summary>
+    /// A task's terminal (<paramref name="tag"/>) is being opened until the result is disposed: <c>chan/keep</c> names it, so a PTY the server started
+    /// for it — whose <c>term/create</c> answer was lost with the connection — is kept for the repeated <c>term/create</c>.
+    /// </summary>
+    internal IDisposable OpeningTaskTerminal(string tag)
+    {
+        _opening.AddOrUpdate(tag, 1, (_, n) => n + 1);
+        return Core.Lifecycle.Disposable.Create(() =>
+        {
+            if (_opening.AddOrUpdate(tag, 0, (_, n) => n - 1) <= 0) _opening.TryRemove(new KeyValuePair<string, int>(tag, 0));
+        });
+    }
+
     public async Task OnConnectedAsync(RemoteSession session, CancellationToken ct)
     {
         var previous = Interlocked.Exchange(ref _instance, session.Server.InstanceId);
@@ -294,7 +308,11 @@ public sealed class RemoteChannels : IRemoteParticipant, IDisposable
         // the earlier connection, whose programs would otherwise run on with nobody to see or end them. Nothing to end on a new server. No channel
         // can be created on this session before this runs (the session is published after the participants).
         if (session.Server.InstanceId is not null)
-            await session.Peer.InvokeAsync<ChanKeepParams, Empty>(RemoteMethods.ChanKeep, new ChanKeepParams(_channels.Keys.ToArray()), ct).ConfigureAwait(false);
+        {
+            var opening = _opening.Keys.ToArray();
+            await session.Peer.InvokeAsync<ChanKeepParams, Empty>(RemoteMethods.ChanKeep, new ChanKeepParams(_channels.Keys.ToArray(), opening.Length == 0 ? null : opening), ct)
+                .ConfigureAwait(false);
+        }
     }
 
     public void OnDisconnected()

@@ -386,7 +386,10 @@ public sealed record ChanAttachParams(long Id, long ReceivedOffset);
 /// <param name="ServerReceived">Bytes of client input the server has accepted (the client resends from there).</param>
 /// <param name="LostBytes">Output that fell out of the server's replay buffer while nobody was connected.</param>
 public sealed record ChanAttachResult(bool Exists, long ServerReceived, long LostBytes);
-public sealed record ChanKeepParams(IReadOnlyList<long> Ids);
+/// <param name="Ids">The channels the client still has: the server ends every other one.</param>
+/// <param name="TaskTags">Task terminals the client is still opening (<see cref="TaskTerminalTag"/>) whose <c>term/create</c> answer was lost with the
+/// connection: a PTY the server started for one of them is kept too, and the client's repeated <c>term/create</c> is answered with it.</param>
+public sealed record ChanKeepParams(IReadOnlyList<long> Ids, IReadOnlyList<string>? TaskTags = null);
 
 /// <param name="Folder">The client's workspace folder: a new terminal starts there even when the server has not applied the client's latest
 /// <c>workspace/setFolders</c> yet (requests run concurrently on the server).</param>

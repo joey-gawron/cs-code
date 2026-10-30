@@ -226,8 +226,11 @@ connection that created or reattached it, so the replay always comes before newe
   there too (`TerminalService.RestartAsync` through the backend). Only a terminal that runs where the program must run is reused: Remote: Open
   Remote Folder keeps the window's terminals, and an idle local task terminal is never picked for a server's task, nor an idle remote one for a
   local task (also for `runInTerminal`'s idle debuggee terminal); `RestartAsync` refuses a local restart of a program the backend provider claims,
-  as the last guard. A link drop while a task's terminal is being opened: the server asks again on the
-  next connection with the same tag and the client answers it with the start it already made. A client without the integrated
+  as the last guard. A link drop while a task's terminal is being opened: before the server claimed the run, it asks again on the next connection
+  with the same tag and the client answers it with the start it already made; after the claim (the PTY runs, the `term/create` answer was lost)
+  it never asks again — the client, which names the tag as still opening in `chan/keep` (so the server keeps that PTY), sends the same
+  `term/create` on the next connection to the same server and is answered with that PTY, whose output so far is replayed. A start abandoned on the
+  server (cancelled, or the client could not show it) ends a PTY that claimed the run meanwhile. A client without the integrated
   terminal gets the old presentation: the output piped into "Remote: Tasks". `task/start` + `task/wait` (long poll): a run outlives the connection
   that started it and the client waits for it again after a reconnect to the same server (a task's terminal is a channel like any other); after each
   (re)connect `task/keep` names the runs the client still waits for and the server cancels the others (one cancelled while the link was down, or a
