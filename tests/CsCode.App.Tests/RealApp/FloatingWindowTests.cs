@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -264,7 +265,7 @@ public class FloatingWindowTests
         well.Activate(a);
         well.Activate(b);
         await DevScene.SettleAsync(5);
-        var switcher = host.Window.GetVisualDescendants().OfType<Border>().Single(x => x.MinWidth == 300 && x.Child is StackPanel);
+        var switcher = host.Window.GetVisualDescendants().OfType<Border>().Single(x => x.Name == MainWindow.SwitcherName);
 
         host.Window.KeyPress(Key.Tab, RawInputModifiers.Control, PhysicalKey.Tab, null); // Ctrl held: the switcher stays open
         await DevScene.SettleAsync(2);
@@ -322,7 +323,7 @@ public class FloatingWindowTests
         // Ctrl+Tab there: the switcher too.
         floating.KeyPress(Key.Tab, RawInputModifiers.Control, PhysicalKey.Tab, null);
         await DevScene.SettleAsync(2);
-        var switcher = floating.GetVisualDescendants().OfType<Border>().SingleOrDefault(x => x.MinWidth == 300 && x.Child is StackPanel);
+        var switcher = floating.GetVisualDescendants().OfType<Border>().SingleOrDefault(x => x.Name == MainWindow.SwitcherName);
         Assert.NotNull(switcher);
         Assert.True(switcher.IsVisible);
         floating.KeyRelease(Key.LeftCtrl, RawInputModifiers.None, PhysicalKey.ControlLeft, null);
@@ -352,6 +353,86 @@ public class FloatingWindowTests
         var running = await host.OpenPaletteAsync(KnownCommands.CommandPalette);
         Assert.Same(host.Window, WindowOf(quickView));
         await host.ClosePaletteAsync(running);
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task The_palette_prompts_and_switcher_fit_a_narrow_or_short_floating_window()
+    {
+        // A tool window floats at its docked size (a right-hand one is narrow); the overlays are an adorner over that window's dock, clipped to it.
+        await using var host = await StartAsync();
+        var well = host.Shell.Well;
+        var b = well.EditorTabs.Single(t => t.Title == "b.txt");
+        well.Float(b);
+        Assert.True(await RealAppHost.WaitFor(() => WindowOf(b.LiveView) is HostWindow { IsVisible: true } && b.Controller is not null));
+        var floating = (HostWindow)WindowOf(b.LiveView)!;
+        floating.Width = 260;
+        floating.Height = 420;
+        await DevScene.SettleAsync(5);
+        var dock = floating.GetVisualDescendants().OfType<DockControl>().First();
+        Assert.True(dock.Bounds.Width is > 200 and < 270, $"the floating dock is {dock.Bounds.Size}");
+        b.Controller!.Focus();
+        var quickView = host.Window.GetVisualDescendants().OfType<Views.QuickInputView>().Single();
+        var dialogView = host.Window.GetVisualDescendants().OfType<Views.DialogHostView>().Single();
+        var quick = host.Get<QuickInput.QuickInputViewModel>();
+
+        async Task PaletteFitsAsync()
+        {
+            floating.KeyPress(Key.P, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.P, null);
+            Assert.True(await RealAppHost.WaitFor(() => quick.IsVisible && quick.Items.Count > 0), "no palette");
+            Assert.Same(floating, WindowOf(quickView));
+            await DevScene.SettleAsync(3);
+            var card = quickView.GetVisualChildren().OfType<Border>().Single(x => x.Child is DockPanel);
+            AssertWithin(card, dock, "the palette");
+            Assert.Equal(Math.Floor(Math.Min(620, dock.Bounds.Width * 0.62)), card.Bounds.Width, 0); // VS Code: 62 % of its window's width
+            AssertWithin(quickView.GetVisualDescendants().OfType<TextBox>().Single(), dock, "the palette's box");
+            var row = quickView.GetVisualDescendants().OfType<ListBoxItem>().FirstOrDefault(r => r.IsEffectivelyVisible);
+            Assert.NotNull(row);
+            AssertWithin(row, dock, "the palette's first row");
+            floating.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+            Assert.True(await RealAppHost.WaitFor(() => !quick.IsVisible && b.Controller.IsFocused), "Esc did not close the palette");
+        }
+
+        await PaletteFitsAsync(); // narrow
+        floating.Height = 170;     // short: the list keeps some rows under the box
+        await DevScene.SettleAsync(5);
+        await PaletteFitsAsync();
+
+        // Ctrl+Tab: the switcher stays inside the window (Esc closes it without switching).
+        floating.Height = 420;
+        await DevScene.SettleAsync(5);
+        floating.KeyPress(Key.Tab, RawInputModifiers.Control, PhysicalKey.Tab, null);
+        await DevScene.SettleAsync(3);
+        var switcher = floating.GetVisualDescendants().OfType<Border>().Single(x => x.Name == MainWindow.SwitcherName);
+        Assert.True(switcher.IsVisible);
+        AssertWithin(switcher, dock, "the switcher");
+        floating.KeyPress(Key.Escape, RawInputModifiers.Control, PhysicalKey.Escape, null);
+        floating.KeyRelease(Key.LeftCtrl, RawInputModifiers.None, PhysicalKey.ControlLeft, null);
+        await DevScene.SettleAsync(2);
+        Assert.False(switcher.IsVisible);
+        Assert.Same(b, well.ActiveEditor);
+
+        // The floating window's close button with a dirty document: the Save prompt and every one of its buttons are inside the window.
+        b.Doc.ApplyEdits([new Core.Text.TextEdit(Core.Text.TextRange.At(0, 0), "Z")]);
+        floating.Close();
+        var dialogs = host.Get<Notifications.DialogHostViewModel>();
+        Assert.True(await RealAppHost.WaitFor(() => dialogs.IsVisible), "no Save prompt");
+        Assert.Same(floating, WindowOf(dialogView));
+        await DevScene.SettleAsync(3);
+        AssertWithin(dialogView.GetVisualChildren().OfType<Border>().Single(), dock, "the Save prompt");
+        var buttons = dialogView.GetVisualDescendants().OfType<Button>().ToList();
+        Assert.Equal(3, buttons.Count);
+        foreach (var button in buttons) AssertWithin(button, dock, "the prompt's " + button.Content);
+        dialogs.Choose("Don't Save");
+        Assert.True(await RealAppHost.WaitFor(() => !well.Tabs.Contains(b) && host.Shell.Factory.FloatingWindows.Count == 0), "the floating window did not close");
+    }
+
+    /// <summary>Asserts that <paramref name="part"/> is drawn whole inside <paramref name="host"/> (an adorner is clipped to the element it adorns).</summary>
+    private static void AssertWithin(Visual part, Visual host, string what)
+    {
+        var origin = part.TranslatePoint(default, host) ?? throw new InvalidOperationException(what + " is not in " + host);
+        var r = new Avalonia.Rect(origin, part.Bounds.Size);
+        Assert.True(r.Width > 0 && r.Height > 0 && r.X >= -0.5 && r.Y >= -0.5 && r.Right <= host.Bounds.Width + 0.5 && r.Bottom <= host.Bounds.Height + 0.5,
+            $"{what} at {r} is cut off by its window's dock ({host.Bounds.Size})");
     }
 
     /// <summary>What the platform reports when another application takes the keyboard (the headless platform has no other application).</summary>

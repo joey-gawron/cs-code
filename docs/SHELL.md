@@ -343,7 +343,11 @@ each of these must be on every window (without them a recording in a floating ed
 there mixed with a playing macro, and the idle trim's blocking collection could run mid-typing). The overlays that take the keyboard (the quick
 input, a modal prompt, the Ctrl+Tab switcher) are shown in the window that has the keyboard, as VS Code shows them in an auxiliary window: in a
 floating window as an adorner over its dock (an owned window stays above the main one, so the main window's overlays could be hidden under it);
-toasts stay in the main window. When a floating window closes with the keyboard in it, the keyboard returns to the main window's active editor.
+toasts stay in the main window. They size to the window they are in, as VS Code's do (`OverlaySizing`; an adorner is clipped to its dock, and a
+tool window floats at its docked size, so fixed sizes were cut off): the quick input is 62 % of the window's width (at most 620 px) with its list at
+most 40 % of its height (at most 360 px; in a short window the list keeps what is left under the box), a prompt at most 90 % of the width (at most
+460 px; its buttons wrap, its message scrolls between the title and the buttons), the Ctrl+Tab switcher at most the window less a 12 px margin
+(its titles trimmed, its rows scrolling). When a floating window closes with the keyboard in it, the keyboard returns to the main window's active editor.
 A floating document is still one of the well's tabs (`DocumentWell.Tabs` covers the floating groups: Save, Ctrl+Tab, the live-view budget,
 close prompts, the session all see it). Dock (tool) / Dock as Tabbed Document (document; `workbench.action.restoreEditorsToMainWindow` docks them
 all) returns it to the well or group it came from (else its default well, or the primary group). A floating window closes once it is empty (its

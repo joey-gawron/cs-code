@@ -40,10 +40,11 @@ public sealed class MainWindow : Window, IWindowChrome
     private readonly TitleBarView _titleBar;
     private readonly Border _switcher = new();
     private readonly StackPanel _switcherItems = new() { Spacing = 1 };
+    private readonly ScrollViewer _switcherScroll = new() { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
     // The overlays that take the keyboard (MRU switcher, quick input, modal prompt) are shown in the window that has it: this one's overlay grid, or
     // a floating window's (as an adorner over its dock; an owned floating window stays above this one and would hide them). Toasts stay here.
     private readonly Grid _overlays = new() { IsHitTestVisible = true };
-    private readonly Grid _keyboardOverlays = new();
+    private readonly KeyboardOverlayLayer _keyboardOverlays = new();
     private readonly QuickInputView _quick;
     private Control? _overlaysAdorning; // the floating window's dock the keyboard overlays adorn (null: they are in this window)
     private TopLevel? _overlayHost; // that floating window
@@ -375,13 +376,32 @@ public sealed class MainWindow : Window, IWindowChrome
         _switcher.IsVisible = false;
         _switcher.HorizontalAlignment = HorizontalAlignment.Center;
         _switcher.VerticalAlignment = VerticalAlignment.Center;
-        _switcher.MinWidth = 300;
+        _switcher.Name = SwitcherName;
+        _switcher.MinWidth = OverlaySizing.SwitcherMinWidth;
         _switcher.Padding = new Thickness(6);
         _switcher.Background = ThemeBrushes.Get("editorWidget.background");
         _switcher.BorderBrush = ThemeBrushes.Get("editorWidget.border");
         _switcher.BorderThickness = new Thickness(1);
         _switcher.BoxShadow = BoxShadows.Parse("0 6 18 0 #66000000");
-        _switcher.Child = _switcherItems;
+        _switcher.Child = _switcherScroll;
+        _switcherScroll.Content = _switcherItems;
+        _keyboardOverlays.Measuring = FitSwitcher;
+    }
+
+    /// <summary>The switcher's name in the visual tree (tests).</summary>
+    internal const string SwitcherName = "CtrlTabSwitcher";
+
+    /// <summary>
+    /// The switcher fits the window it is in (a floating one can be narrow or short): at most that window inside a margin, its rows scrolling and
+    /// their titles trimmed.
+    /// </summary>
+    private void FitSwitcher(Size window)
+    {
+        var width = OverlaySizing.Inside(window.Width);
+        var height = OverlaySizing.Inside(window.Height);
+        OverlaySizing.Set(_switcher, MaxWidthProperty, width);
+        OverlaySizing.Set(_switcher, MinWidthProperty, Math.Min(OverlaySizing.SwitcherMinWidth, width));
+        OverlaySizing.Set(_switcher, MaxHeightProperty, height);
     }
 
     private void StepSwitcher(int delta)
@@ -396,16 +416,22 @@ public sealed class MainWindow : Window, IWindowChrome
         }
         _switcherIndex = ((_switcherIndex + delta) % _switcherList.Count + _switcherList.Count) % _switcherList.Count;
         _switcherItems.Children.Clear();
+        Border? selected = null;
         for (var i = 0; i < _switcherList.Count; i++)
         {
+            var label = ViewHelpers.Label(_switcherList[i].Title, i == _switcherIndex ? "list.activeSelectionForeground" : "foreground", 12);
+            label.TextTrimming = TextTrimming.CharacterEllipsis;
             var row = new Border
             {
                 Padding = new Thickness(10, 4), Background = i == _switcherIndex ? ThemeBrushes.Get("list.activeSelectionBackground") : Brushes.Transparent,
-                Child = ViewHelpers.Label(_switcherList[i].Title, i == _switcherIndex ? "list.activeSelectionForeground" : "foreground", 12),
+                Child = label,
             };
+            if (i == _switcherIndex) selected = row;
             _switcherItems.Children.Add(row);
         }
         _switcher.IsVisible = true;
+        // a short window shows some of the rows: the selected one is among them
+        if (selected is not null) Dispatcher.UIThread.Post(() => { if (_switcher.IsVisible && selected.IsAttachedToVisualTree()) selected.BringIntoView(); }, DispatcherPriority.Loaded);
     }
 
     private void HideSwitcher(bool commit)
