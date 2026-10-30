@@ -746,7 +746,7 @@ public sealed partial class VimEngine
         if (!CanModify()) return;
         var keepRegister = c.Key == 'P';
         var regName = c.Reg;
-        var src = _s.Registers.ForRead(regName == 0 && _s.UseSystemClipboard ? SystemClipboardRegister : regName, ReadSystemRegister);
+        var src = _s.Registers.ForRead(PutRegister(regName), ReadSystemRegister);
         // copy the register content NOW: the delete below overwrites the unnamed register
         var saved = new Register();
         if (src is not null) saved.CopyFrom(src);

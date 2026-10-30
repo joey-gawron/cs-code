@@ -83,6 +83,13 @@ public interface IVimHost
     /// </summary>
     VimRegisterType? ReadClipboardType(char register) => null;
 
+    /// <summary>
+    /// Register <paramref name="register"/>'s text and type in one read, which is what the engine calls: a host whose clipboard is refreshed off
+    /// the key's thread answers both from the same copy, so one copy's text is never put with another's type. Defaults to
+    /// <see cref="ReadClipboard(char)"/> and <see cref="ReadClipboardType(char)"/>.
+    /// </summary>
+    (string? Text, VimRegisterType? Type) ReadClipboardRegister(char register) => (ReadClipboard(register), ReadClipboardType(register));
+
     /// <summary>Writes register <c>'+'</c> or <c>'*'</c> (text with <c>'\n'</c> line ends). Defaults to <see cref="WriteClipboard(string, VimRegisterType)"/>.</summary>
     void WriteClipboard(char register, string text, VimRegisterType type) => WriteClipboard(text, type);
 

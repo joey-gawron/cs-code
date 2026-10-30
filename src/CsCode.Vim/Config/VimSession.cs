@@ -174,6 +174,12 @@ public sealed class VimSession : IDisposable
     public HashSet<int> UnhandledKeys { get; } = [];
 
     public bool UseSystemClipboard { get; set; }
+
+    /// <summary>
+    /// The clipboard register a put without a register name reads (Vim's adjust_clip_reg): <c>+</c> with 'clipboard' unnamedplus or
+    /// <see cref="UseSystemClipboard"/>, <c>*</c> with 'clipboard' unnamed alone; null when the unnamed register is Vim's own.
+    /// </summary>
+    public char? UnnamedClipboardRegister => UseSystemClipboard || Options.UnnamedPlusClip ? '+' : Options.UnnamedClip ? '*' : null;
     public bool PersistRegisters { get; set; } = true;
     public bool StartInInsertMode { get; set; }
     public bool Enabled { get; set; } = true;

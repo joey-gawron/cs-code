@@ -136,6 +136,164 @@ public class ClipboardRegisterTests
         Assert.Equal(['+', '*', '*'], h.Reads);
     }
 
+    // ---------------------------------------------------------------- 'clipboard' unnamed / unnamedplus (vim-macros-clipboard-4)
+
+    private static string Reg(VimEngine e, char name) => e.Session.Registers.ForRead(name)?.ToText() ?? "";
+
+    [Theory]
+    [InlineData("unnamedplus", '+')]
+    [InlineData("unnamed", '*')]
+    [InlineData("unnamed,unnamedplus", '+')] // unnamedplus prevails for a put (Vim's adjust_clip_reg)
+    public void The_clipboard_option_makes_p_put_its_register(string option, char register)
+    {
+        var (e, h, _) = Create("one two\n");
+        e.ExecuteEx("set clipboard=" + option);
+        e.TypeKeys("yiw");                                   // the unnamed register now holds "one"
+        h.Held[register] = ("X", null);                      // copied in another application
+        e.TypeKeys("$p");
+        Assert.Equal("one twoX", h.Buffer.GetLine(0));
+        Assert.Equal([register], h.Reads);
+    }
+
+    [Fact]
+    public void With_unnamedplus_P_gp_Visual_p_and_put_read_the_clipboard()
+    {
+        var (e, h, _) = Create("ab\ncd\n");
+        e.ExecuteEx("set clipboard=unnamedplus");
+        h.Held['+'] = ("X", null);
+        e.TypeKeys("P");
+        Assert.Equal("Xab", h.Buffer.GetLine(0));
+        e.TypeKeys("0vlp");                                  // Visual p: "Xa" replaced by the clipboard
+        Assert.Equal("Xb", h.Buffer.GetLine(0));
+        h.Held['+'] = ("line\n", null);
+        e.ExecuteEx("put");
+        Assert.Equal("line", h.Buffer.GetLine(1));
+        Assert.Equal(['+', '+', '+'], h.Reads);
+    }
+
+    [Fact]
+    public void With_unnamed_and_unnamedplus_yanks_go_to_both_registers_and_deletes_to_plus_only()
+    {
+        var (e, h, _) = Create("one two\n");
+        e.ExecuteEx("set clipboard=unnamed,unnamedplus");
+        e.TypeKeys("yiw");
+        Assert.Equal([('*', "one", VimRegisterType.Character), ('+', "one", VimRegisterType.Character)], h.Writes.OrderBy(w => w.Register));
+        h.Writes.Clear();
+        e.TypeKeys("dw");
+        Assert.Equal([('+', "one ", VimRegisterType.Character)], h.Writes);
+    }
+
+    [Fact]
+    public void With_unnamedplus_insert_ctrl_r_quote_reads_the_unnamed_register_as_in_Vim()
+    {
+        // :h 'clipboard': '+' stands in for the unnamed register in yank, delete, change and put operations; CTRL-R " is none of them
+        var (e, h, _) = Create("word\n");
+        e.ExecuteEx("set clipboard=unnamedplus");
+        e.TypeKeys("yiw");
+        h.Held['+'] = ("CLIP", null);
+        e.TypeKeys("A <C-r>\"<Esc>");
+        Assert.Equal("word word", h.Buffer.GetLine(0));
+        Assert.Empty(h.Reads);
+    }
+
+    // ---------------------------------------------------------------- "0 and "- next to the clipboard registers (vim-macros-clipboard-5)
+
+    [Fact]
+    public void Plus_and_star_yanks_and_deletes_leave_register_0_alone()
+    {
+        var (e, h, _) = Create("alpha beta gamma delta\n");
+        e.TypeKeys("yiw");
+        e.TypeKeys("w\"+dw");
+        Assert.Equal("alpha", Reg(e, '0'));
+        e.TypeKeys("\"*yiw");
+        Assert.Equal("alpha", Reg(e, '0'));
+        e.TypeKeys("\"+yiw");
+        Assert.Equal("alpha", Reg(e, '0'));
+        e.TypeKeys("\"0P");
+        Assert.Equal("alpha alphagamma delta", h.Buffer.GetLine(0));
+    }
+
+    [Fact]
+    public void After_a_plus_yank_the_unnamed_register_is_that_yank()
+    {
+        // Vim keeps "+ in a register of its own and points the unnamed register at it (get_yank_register)
+        var (e, _, _) = Create("alpha beta\n");
+        e.TypeKeys("yiw");
+        e.TypeKeys("w\"+yiw");
+        Assert.Equal("beta", Reg(e, '"'));
+        Assert.Equal("alpha", Reg(e, '0'));
+    }
+
+    [Fact]
+    public void With_vim_useSystemClipboard_a_delete_fills_the_small_delete_register_and_not_register_0()
+    {
+        var (e, h, _) = Create("alpha beta\n", new VimSession { UseSystemClipboard = true });
+        e.TypeKeys("yiw");
+        e.TypeKeys("x");
+        Assert.Equal("a", Reg(e, '-'));
+        Assert.Equal("alpha", Reg(e, '0'));
+        Assert.Equal(('+', "a", VimRegisterType.Character), h.Writes[^1]); // still mirrored to the clipboard
+        e.TypeKeys("wdw");
+        Assert.Equal("alpha", Reg(e, '0'));
+        e.TypeKeys("\"0P");
+        Assert.Equal("lphaalpha ", h.Buffer.GetLine(0)); // the yank, not the deleted "beta"
+    }
+
+    [Fact]
+    public void With_vim_useSystemClipboard_a_multi_line_delete_shifts_the_numbered_registers()
+    {
+        var (e, h, _) = Create("one\ntwo\nthree\n", new VimSession { UseSystemClipboard = true });
+        e.TypeKeys("yy");
+        e.TypeKeys("jdd");
+        Assert.Equal("two\n", Reg(e, '1'));
+        Assert.Equal("one\n", Reg(e, '0'));
+        Assert.Equal(('+', "two\n", VimRegisterType.Line), h.Writes[^1]);
+    }
+
+    [Fact]
+    public void Let_on_a_clipboard_register_writes_the_clipboard()
+    {
+        var (e, h, _) = Create("x\n");
+        e.TypeKeys("yiw");
+        e.ExecuteEx("let @+ = 'set'");
+        Assert.Equal([('+', "set", VimRegisterType.Character)], h.Writes.Where(w => w.Text == "set"));
+        Assert.Equal("x", Reg(e, '0'));
+        e.ExecuteEx("let @* = \"line\\n\"");
+        Assert.Equal(('*', "line\n", VimRegisterType.Line), h.Writes[^1]);
+    }
+
+    // ---------------------------------------------------------------- one read per put (vim-macros-clipboard-9)
+
+    /// <summary>A host whose clipboard changes between calls: the separate text and type reads would disagree.</summary>
+    private sealed class SnapshotHost(InMemoryVimHost inner) : IVimHost
+    {
+        public int SnapshotReads, SeparateReads;
+        public IVimBuffer Buffer => inner.Buffer;
+        public IVimTimer Timer => inner.Timer;
+        public TextPosition GetCaret() => inner.GetCaret();
+        public void SetCaret(TextPosition position, bool insertLike) => inner.SetCaret(position, insertLike);
+        public void SetSelection(in VimSelection selection) => inner.SetSelection(selection);
+        public void OnModeChanged(VimMode mode, in VimModeInfo info) => inner.OnModeChanged(mode, info);
+        public string? ReadClipboard(char register) { SeparateReads++; return "a\nb"; }
+        public VimRegisterType? ReadClipboardType(char register) { SeparateReads++; return VimRegisterType.Line; }
+        public (string? Text, VimRegisterType? Type) ReadClipboardRegister(char register)
+        {
+            SnapshotReads++;
+            return ("a\nb", VimRegisterType.Block);
+        }
+    }
+
+    [Fact]
+    public void A_put_reads_the_clipboard_text_and_type_in_one_call()
+    {
+        var host = new SnapshotHost(new InMemoryVimHost("12\n34\n"));
+        var e = new VimEngine(host, new VimSession());
+        e.TypeKeys("\"+P");
+        Assert.Equal(["a12", "b34"], [host.Buffer.GetLine(0), host.Buffer.GetLine(1)]); // the block, not the type of another read
+        Assert.Equal(1, host.SnapshotReads);
+        Assert.Equal(0, host.SeparateReads);
+    }
+
     [Fact]
     public void A_host_with_only_the_older_members_still_gets_both_registers_through_the_defaults()
     {

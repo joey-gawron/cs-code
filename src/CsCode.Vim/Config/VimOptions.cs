@@ -40,8 +40,10 @@ public sealed class VimOptions
     public bool VirtualOneMore => VirtualEdit.Contains("onemore", StringComparison.Ordinal) || VirtualEdit.Contains("all", StringComparison.Ordinal);
     public bool VirtualBlock => VirtualEdit.Contains("block", StringComparison.Ordinal) || VirtualEdit.Contains("all", StringComparison.Ordinal);
     public bool SelectionExclusive => Selection == "exclusive";
-    public bool UnnamedClip => Clipboard.Contains("unnamed", StringComparison.Ordinal) && !Clipboard.Contains("unnamedplus", StringComparison.Ordinal);
-    public bool UnnamedPlusClip => Clipboard.Contains("unnamedplus", StringComparison.Ordinal);
+    /// <summary>'clipboard' has the item "unnamed" ('clipboard' is a comma-separated list: "unnamed,unnamedplus" sets both).</summary>
+    public bool UnnamedClip => Has(Clipboard, "unnamed");
+    /// <summary>'clipboard' has the item "unnamedplus".</summary>
+    public bool UnnamedPlusClip => Has(Clipboard, "unnamedplus");
 
     public bool NrBin => Has(NrFormats, "bin");
     public bool NrOctal => Has(NrFormats, "octal");

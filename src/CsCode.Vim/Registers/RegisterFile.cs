@@ -54,6 +54,11 @@ public sealed class RegisterFile
 {
     private const int Small = 36;
     private readonly Register[] _regs = Enumerable.Range(0, 37).Select(_ => new Register()).ToArray();
+    /// <summary>
+    /// What was last yanked or deleted into <c>+</c> / <c>*</c> (Vim's PLUS_REGISTER / STAR_REGISTER): never "0, which only yanks without a
+    /// register name write. Reads of <c>+</c> / <c>*</c> go to the host's clipboard; these are what the unnamed register points at afterwards.
+    /// </summary>
+    private readonly Register _plus = new(), _star = new();
     private Register? _previous;
 
     /// <summary>The last text typed in Insert mode (register '.'), stored in key-encoded form.</summary>
@@ -115,7 +120,13 @@ public sealed class RegisterFile
     {
         append = name is >= 'A' and <= 'Z';
         if (name == '_') return null;
-        var r = name is 0 or '"' or '+' or '*' ? _regs[0] : _regs[Index(name)];
+        var r = name switch
+        {
+            0 or '"' => _regs[0],
+            '+' => _plus,
+            '*' => _star,
+            _ => _regs[Index(name)],
+        };
         if (updatePrevious) _previous = r;
         return r;
     }
@@ -170,6 +181,8 @@ public sealed class RegisterFile
     public void Clear()
     {
         foreach (var r in _regs) r.Set([], VimRegisterType.Character);
+        _plus.Set([], VimRegisterType.Character);
+        _star.Set([], VimRegisterType.Character);
         _previous = null;
     }
 
