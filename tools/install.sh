@@ -300,7 +300,7 @@ mkdir -p "$stage/.cscode-install"
     printf 'installed\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "$stage/.cscode-install/info"
 [ -z "$(cd "$stage" && find . -name $'*\t*' -o -name $'*\n*')" ] || die "a file name in the build contains a tab or a newline"
-(cd "$stage" && find . -mindepth 1 \( -type d -printf 'dir\t%P\n' \) -o \( -printf 'file\t%P\n' \)) > "$tmp/files.tsv"
+(cd "$stage" && find . -mindepth 1 \( -type d -printf 'dir\t%P\n' \) -o \( -printf 'file\t%P\n' \)) | LC_ALL=C sort -t $'\t' -k2 > "$tmp/files.tsv"
 printf 'file\t.cscode-install/files.tsv\n' >> "$tmp/files.tsv"
 mv -- "$tmp/files.tsv" "$stage/.cscode-install/files.tsv"
 
