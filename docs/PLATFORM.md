@@ -278,6 +278,10 @@ Atomic writes; the last good file is copied to `.bak` before replacement (never 
 `FileLoggerProvider`: `{LogsDir}/cscode.log`, rotated by size to `cscode.1.log …` — at most **5 files × 5 MB** (`FileLoggerOptions`); line format `2026-10-28T12:34:56.789Z [INF] Category: message` (exceptions and continuation lines indented);
 default level Information. Callers only enqueue into a bounded ring (8192 entries); when it overflows the **oldest** entries are dropped, counted (`DroppedCount`) and reported by a warning line in the log. The writer thread swallows
 any failure (an unwritable log location never reaches the caller), rotation is checked per line, dispose drains the queue.
+Several CsCode processes share the file: each batch is written under an exclusive lock on `.cscode.lock` beside it (readers of the logs folder
+read `*.log` only). A batch waits for another process's batch as long as that takes, never writing without the lock (a holder stalled mid-batch
+would overwrite it); while stopping the wait ends 1 s after `Dispose` began and what is still queued is dropped (counted). A lock that cannot be
+taken at all (read-only or full disk, I/O error) is not waited for: the batch is written without it.
 
 ## EditorConfig
 
