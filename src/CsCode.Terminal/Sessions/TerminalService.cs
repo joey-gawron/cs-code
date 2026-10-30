@@ -12,9 +12,10 @@ public sealed record TerminalPresentation(TerminalSession? Terminal, bool Preser
 
 /// <summary>
 /// <see cref="ITerminalService"/>: the list of terminals, the active one, creation (resolution and spawning run off the caller's thread),
-/// kill and the events. The UI is a subscriber: <see cref="PresentationRequested"/> asks the Terminal window to show (it also goes through
-/// <see cref="IViewActivator"/> when one is registered). Disposing the service kills every terminal's process group. Terminals are not
-/// restored after a restart (docs/TERMINAL.md).
+/// kill and the events. Terminals live in VS Code's <see cref="TerminalGroup"/>s (one entry of the terminal list each, several panes when
+/// split); <see cref="Terminals"/> lists them in group order. The UI is a subscriber: <see cref="PresentationRequested"/> asks the Terminal
+/// window to show (it also goes through <see cref="IViewActivator"/> when one is registered). Disposing the service kills every terminal's
+/// process group. Terminals are not restored after a restart (docs/TERMINAL.md).
 /// </summary>
 public sealed class TerminalService : ITerminalService, IDisposable
 {
@@ -33,9 +34,12 @@ public sealed class TerminalService : ITerminalService, IDisposable
     private readonly Emitter<ITerminal> _titleChanged = new();
     private readonly Emitter<ITerminal?> _activeChanged = new();
     private readonly Emitter<TerminalPresentation> _presentation = new();
+    private readonly Emitter<object?> _groupsChanged = new();
     private TerminalSession[] _terminals = [];
+    private TerminalGroup[] _groups = [];
     private TerminalSession? _active;
     private int _nextId;
+    private int _nextGroupId;
     private bool _disposed;
 
     public TerminalService(IConfigurationService? config = null, IWorkspaceService? workspace = null, IViewActivator? views = null,
@@ -57,10 +61,28 @@ public sealed class TerminalService : ITerminalService, IDisposable
     /// <summary>Default grid until a view measures itself.</summary>
     public (int Columns, int Rows) DefaultSize { get; set; } = (80, 24);
 
+    /// <summary>Every terminal, in group order (a split pane right after the one it was split from).</summary>
     public IReadOnlyList<ITerminal> Terminals => Volatile.Read(ref _terminals);
     public IReadOnlyList<TerminalSession> Sessions => Volatile.Read(ref _terminals);
     public ITerminal? ActiveTerminal => Volatile.Read(ref _active);
     public TerminalSession? ActiveSession => Volatile.Read(ref _active);
+
+    /// <summary>The terminal list's entries (VS Code's groups), in order.</summary>
+    public IReadOnlyList<TerminalGroup> Groups => Volatile.Read(ref _groups);
+
+    /// <summary>The group of the active terminal.</summary>
+    public TerminalGroup? ActiveGroup => ActiveSession is { } a ? GroupOf(a) : null;
+
+    public TerminalGroup? GroupOf(ITerminal terminal)
+    {
+        if (terminal is not TerminalSession session) return null;
+        foreach (var g in Groups)
+            if (g.Contains(session)) return g;
+        return null;
+    }
+
+    /// <summary>Groups were added, removed, split or joined (fires on any thread; <see cref="Groups"/> is current).</summary>
+    public IEventSource<object?> GroupsChanged => _groupsChanged;
 
     public IEventSource<ITerminal> Created => _created;
     public IEventSource<TerminalExitedEventArgs> Exited => _exited;
@@ -70,18 +92,39 @@ public sealed class TerminalService : ITerminalService, IDisposable
     /// <summary>The Terminal window should come forward (fires on any thread).</summary>
     public IEventSource<TerminalPresentation> PresentationRequested => _presentation;
 
-    public async ValueTask<ITerminal> CreateAsync(TerminalCreateOptions? options = null, CancellationToken ct = default)
+    public async ValueTask<ITerminal> CreateAsync(TerminalCreateOptions? options = null, CancellationToken ct = default) =>
+        await CreateSessionAsync(options, null, null, ct).ConfigureAwait(false);
+
+    /// <summary>
+    /// VS Code's Split Terminal: a new terminal in <paramref name="parent"/>'s group, right of it, made the active one. Without
+    /// <paramref name="options"/> it runs the parent's profile (a split of a task's or debuggee's terminal runs the default profile) in the
+    /// directory <c>terminal.integrated.splitCwd</c> names (default "inherited": the parent shell's current directory).
+    /// </summary>
+    public async ValueTask<TerminalSession> SplitAsync(TerminalSession parent, TerminalCreateOptions? options = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(parent);
+        options ??= await Task.Run(() => SplitOptions(parent), ct).ConfigureAwait(false);
+        return await CreateSessionAsync(options, parent, null, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Creates (or, with <see cref="TerminalCreateOptions.ReuseWhenIdle"/>, restarts) a terminal; with <paramref name="parent"/> as a split pane
+    /// of the parent's group. <paramref name="beforeStart"/> runs on the new (or reused) session before its program is started (an output tap
+    /// must not miss the program's first bytes).
+    /// </summary>
+    internal async ValueTask<TerminalSession> CreateSessionAsync(TerminalCreateOptions? options, TerminalSession? parent, Action<TerminalSession>? beforeStart,
+        CancellationToken ct = default)
     {
         options ??= new TerminalCreateOptions();
         ObjectDisposedException.ThrowIf(_disposed, this);
         // Resolution reads settings and the file system and spawning takes a fork/exec: never on the caller's (UI) thread.
-        var session = await Task.Run(() => CreateCore(options), ct).ConfigureAwait(false);
+        var session = await Task.Run(() => CreateCore(options, parent, beforeStart), ct).ConfigureAwait(false);
         if (options.Show) await ShowAsync(session, options.PreserveFocus, ct).ConfigureAwait(false);
-        else if (ActiveTerminal is null) SetActive(session);
+        else if (ActiveTerminal is null || (parent is not null && ReferenceEquals(ActiveSession, parent))) SetActive(session);
         return session;
     }
 
-    private TerminalSession CreateCore(TerminalCreateOptions options)
+    private TerminalSession CreateCore(TerminalCreateOptions options, TerminalSession? parent, Action<TerminalSession>? beforeStart)
     {
         var (columns, rows) = options.InitialSize ?? DefaultSize;
         if (options.ReuseWhenIdle && options.IsTransient && options.Name is { } name
@@ -89,6 +132,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
         {
             if (Resolve(options, idle.Emulator.Columns, idle.Emulator.Rows, idle) is { } again)
             {
+                beforeStart?.Invoke(idle);
                 idle.Restart(again);
                 Track(idle);
             }
@@ -104,12 +148,75 @@ public sealed class TerminalService : ITerminalService, IDisposable
         {
             if (_disposed) { session.Dispose(); throw new ObjectDisposedException(nameof(TerminalService)); }
             _perTerminal[session] = subs;
-            _terminals = [.. _terminals, session];
+            var group = parent is null ? null : _groups.FirstOrDefault(g => g.Contains(parent));
+            if (group is not null) group.Insert(group.IndexOf(parent!) + 1, session);
+            else _groups = [.. _groups, new TerminalGroup(++_nextGroupId, session)];
+            _terminals = Flatten();
         }
+        _groupsChanged.Fire(null);
+        beforeStart?.Invoke(session);
         if (Resolve(options, columns, rows, session) is { } info) session.Start(info);
         Track(session);
         _created.Fire(session);
         return session;
+    }
+
+    private TerminalSession[] Flatten() => _groups.SelectMany(g => g.Terminals).ToArray();
+
+    /// <summary>How a split of <paramref name="parent"/> starts (reads /proc and settings: off the UI thread).</summary>
+    internal TerminalCreateOptions SplitOptions(TerminalSession parent)
+    {
+        var p = parent.Options;
+        if (p.IsTransient) return new TerminalCreateOptions { Show = false };
+        var mode = _config?.Get<string>(TerminalSettingKeys.SplitCwd) ?? "inherited";
+        var cwd = mode switch
+        {
+            "workspaceRoot" => null, // the default directory
+            "initial" => parent.StartDirectory,
+            _ => parent.ProcessDirectory() ?? parent.CurrentDirectory,
+        };
+        return new TerminalCreateOptions { ProfileName = p.ProfileName, ShellPath = p.ShellPath, ShellArgs = p.ShellArgs, Env = p.Env, Cwd = cwd, Show = false };
+    }
+
+    /// <summary>VS Code's Unsplit Terminal: the terminal leaves its split group for a group of its own, right after it.</summary>
+    public void Unsplit(TerminalSession session)
+    {
+        lock (_gate)
+        {
+            var index = Array.FindIndex(_groups, g => g.Contains(session));
+            if (index < 0 || !_groups[index].IsSplit) return;
+            _groups[index].Remove(session);
+            var list = _groups.ToList();
+            list.Insert(index + 1, new TerminalGroup(++_nextGroupId, session));
+            _groups = list.ToArray();
+            _terminals = Flatten();
+        }
+        _groupsChanged.Fire(null);
+        _activeChanged.Fire(ActiveSession);
+    }
+
+    /// <summary>VS Code's Join Terminals: <paramref name="sessions"/> move into <paramref name="target"/>'s group as panes on its right.</summary>
+    public void Join(TerminalSession target, IEnumerable<TerminalSession> sessions)
+    {
+        lock (_gate)
+        {
+            var group = _groups.FirstOrDefault(g => g.Contains(target));
+            if (group is null) return;
+            var changed = false;
+            foreach (var s in sessions)
+            {
+                var from = _groups.FirstOrDefault(g => g.Contains(s));
+                if (from is null || ReferenceEquals(from, group)) continue;
+                from.Remove(s);
+                group.Insert(group.Terminals.Count, s);
+                changed = true;
+            }
+            if (!changed) return;
+            _groups = _groups.Where(g => g.Terminals.Count > 0).ToArray();
+            _terminals = Flatten();
+        }
+        _groupsChanged.Fire(null);
+        _activeChanged.Fire(ActiveSession);
     }
 
     private PtyStartInfo? Resolve(TerminalCreateOptions options, int columns, int rows, TerminalSession session)
@@ -153,6 +260,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
         }
     }
 
+    /// <summary>Makes <paramref name="terminal"/> the active one, which also makes its group the shown one and it that group's focused pane.</summary>
     public void SetActive(ITerminal terminal)
     {
         if (terminal is not TerminalSession session) throw new ArgumentException("Not a terminal of this service.", nameof(terminal));
@@ -160,6 +268,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
         {
             if (ReferenceEquals(_active, session) || !_terminals.Contains(session)) return;
             _active = session;
+            _groups.FirstOrDefault(g => g.Contains(session))?.SetActive(session);
         }
         _activeChanged.Fire(session);
     }
@@ -170,24 +279,33 @@ public sealed class TerminalService : ITerminalService, IDisposable
         await target.SendTextAsync(text, addNewLine, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Kills the terminal's process and closes its pane. In a split group the pane's neighbour (left, else right) becomes the active terminal;
+    /// the last pane of a group closes the group and the neighbouring group (the previous one, else the next) is shown, as in VS Code.
+    /// </summary>
     public ValueTask KillAsync(ITerminal terminal, CancellationToken ct = default)
     {
         if (terminal is not TerminalSession session) return ValueTask.CompletedTask;
         TerminalSession? nextActive = null;
+        var activeMoved = false;
         bool removed;
         DisposableStore? subs;
         lock (_gate)
         {
-            var index = Array.IndexOf(_terminals, session);
-            removed = index >= 0;
+            var groupIndex = Array.FindIndex(_groups, g => g.Contains(session));
+            removed = groupIndex >= 0;
             if (removed)
             {
-                _terminals = _terminals.Where(t => !ReferenceEquals(t, session)).ToArray();
+                var group = _groups[groupIndex];
+                group.Remove(session);
+                if (group.Terminals.Count == 0) _groups = _groups.Where(g => !ReferenceEquals(g, group)).ToArray();
+                _terminals = Flatten();
                 if (ReferenceEquals(_active, session))
                 {
-                    // VS Code activates the neighbour (the previous one, else the next).
-                    _active = _terminals.Length == 0 ? null : _terminals[Math.Clamp(index - 1, 0, _terminals.Length - 1)];
+                    _active = group.ActiveTerminal
+                        ?? (_groups.Length == 0 ? null : _groups[Math.Clamp(groupIndex - 1, 0, _groups.Length - 1)].ActiveTerminal);
                     nextActive = _active;
+                    activeMoved = true;
                 }
             }
             _perTerminal.Remove(session, out subs);
@@ -196,8 +314,9 @@ public sealed class TerminalService : ITerminalService, IDisposable
         session.Dispose(); // kills the process group (SIGHUP, SIGKILL after the grace period) and reaps it
         if (removed)
         {
+            _groupsChanged.Fire(null);
             _removed.Fire(session);
-            if (nextActive is not null || ActiveTerminal is null) _activeChanged.Fire(nextActive);
+            if (activeMoved) _activeChanged.Fire(nextActive);
         }
         return ValueTask.CompletedTask;
     }
@@ -211,6 +330,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
             _disposed = true;
             all = _terminals;
             _terminals = [];
+            _groups = [];
             _active = null;
         }
         foreach (var s in all) s.Dispose();
@@ -223,5 +343,6 @@ public sealed class TerminalService : ITerminalService, IDisposable
         _titleChanged.Clear();
         _activeChanged.Clear();
         _presentation.Clear();
+        _groupsChanged.Clear();
     }
 }

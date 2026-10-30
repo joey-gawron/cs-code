@@ -266,6 +266,63 @@ public sealed class RealAppTerminalTests
     }
 
     [AvaloniaFact]
+    public async Task Ctrl_shift_5_splits_the_terminal_and_alt_arrows_move_between_real_shells()
+    {
+        await using var app = await TerminalAppHost.StartAsync();
+        app.Shell.Menus.Refresh();
+        var terminalMenu = app.Shell.Menus.Roots.Single(r => r.Header.Replace("_", "", StringComparison.Ordinal) == "Terminal");
+        var splitItem = terminalMenu.Children.Single(c => c.CommandId == TerminalCommandSet.Split);
+        Assert.True(splitItem.IsEnabled);
+        Assert.Equal("Ctrl+Shift+5", splitItem.Gesture);
+
+        await app.RunAsync(TerminalCommandSet.Focus);
+        Assert.True(await app.WaitForScreenAsync("$"), "no prompt: " + app.ScreenText());
+        var first = app.Terminals.ActiveSession!;
+        var work = app.Sandbox.Combine("left");
+        Directory.CreateDirectory(work);
+        await first.SendTextAsync($"cd '{work}'");
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Control.IsKeyboardFocusWithin));
+
+        app.Window.KeyPress(Key.D5, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.Digit5, "%");
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes.Count == 2 && app.View.Panes[1].Control.IsKeyboardFocusWithin),
+            "Ctrl+Shift+5 did not split the terminal and focus the new pane");
+        var second = app.Terminals.ActiveSession!;
+        Assert.NotSame(first, second);
+        Assert.Equal(true, app.Get<IContextKeyService>().Get("terminalSplitPaneActive"));
+        // the split starts where the first shell is (splitCwd "inherited")
+        app.Window.KeyTextInput("pwd");
+        app.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes[1].Control.Snapshot is { } s
+            && s.Rows.Any(r => r.GetText() == work), 10_000), "the split did not start in the first shell's directory");
+
+        // Alt+Left: the left pane; typing goes to its shell
+        app.Window.KeyPress(Key.Left, RawInputModifiers.Alt, PhysicalKey.ArrowLeft, null);
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes[0].Control.IsKeyboardFocusWithin && ReferenceEquals(app.Terminals.ActiveSession, first)),
+            "Alt+Left did not move to the left pane");
+        app.Window.KeyTextInput("echo left-$((40+2))");
+        app.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes[0].Control.Snapshot is { } s && s.Rows.Any(r => r.GetText() == "left-42")),
+            "the left shell did not run the command");
+        Assert.DoesNotContain(app.View!.Panes[1].Control.Snapshot!.Rows, r => r.GetText().Contains("left-42", StringComparison.Ordinal));
+
+        // Ctrl+Shift+Right: the left pane grows
+        var before = app.View.Panes[0].Bounds.Width;
+        app.Window.KeyPress(Key.Right, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.ArrowRight, null);
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes[0].Bounds.Width > before + 10), "Ctrl+Shift+Right did not resize the pane");
+        app.Capture("terminal-split");
+
+        // Alt+Right back; kill the right pane: the left one is all that is left and has the keyboard
+        app.Window.KeyPress(Key.Right, RawInputModifiers.Alt, PhysicalKey.ArrowRight, null);
+        Assert.True(await TerminalAppHost.WaitFor(() => ReferenceEquals(app.Terminals.ActiveSession, second)));
+        await app.RunAsync(TerminalCommandSet.Kill);
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes.Count == 1 && app.View.Control.IsKeyboardFocusWithin
+            && ReferenceEquals(app.View.Control.Session, first)), "killing the right pane did not leave the left one focused");
+        Assert.Equal(false, app.Get<IContextKeyService>().Get("terminalSplitPaneActive"));
+        // without a split Alt+Left belongs to the shell again (readline gets ESC [1;3D)
+        Assert.False(app.Runtime.GoesToWorkbench(new CsCode.Core.Platform.KeyStroke("left", false, false, true, false)));
+    }
+
+    [AvaloniaFact]
     public async Task A_theme_switch_repaints_the_terminal_in_the_new_colours()
     {
         await using var app = await TerminalAppHost.StartAsync();

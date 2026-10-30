@@ -40,16 +40,26 @@ public static class TerminalCommandSet
     public const string FindNext = "workbench.action.terminal.findNext";
     public const string FindPrevious = "workbench.action.terminal.findPrevious";
     public const string HideFind = "workbench.action.terminal.hideFind";
+    public const string Split = "workbench.action.terminal.split";
+    public const string Unsplit = "workbench.action.terminal.unsplit";
+    public const string Join = "workbench.action.terminal.join";
+    public const string FocusNextPane = "workbench.action.terminal.focusNextPane";
+    public const string FocusPreviousPane = "workbench.action.terminal.focusPreviousPane";
+    public const string ResizePaneLeft = "workbench.action.terminal.resizePaneLeft";
+    public const string ResizePaneRight = "workbench.action.terminal.resizePaneRight";
+    public const string KillAll = "workbench.action.terminal.killAll";
 
     public static readonly string[] Ids =
     [
         New, NewHere, Toggle, Focus, Kill, Clear, FocusNext, FocusPrevious, Rename, SelectAll, CopySelection, Paste, ScrollUp, ScrollDown, ScrollUpPage,
         ScrollDownPage, ScrollToTop, ScrollToBottom, RunSelectedText, RunActiveFile, SendSequence, ScrollToPreviousCommand, ScrollToNextCommand,
-        FocusFind, FindNext, FindPrevious, HideFind,
+        FocusFind, FindNext, FindPrevious, HideFind, Split, Unsplit, Join, FocusNextPane, FocusPreviousPane, ResizePaneLeft, ResizePaneRight, KillAll,
     ];
 
     private const string Focused = "terminalFocus";
     private const string FocusedPrimary = "terminalFocus && !terminalAltBufferActive";
+    // VS Code binds the pane keys whenever a terminal has focus; CsCode only while the group is split, so Alt+arrows reach a lone shell
+    private const string FocusedSplit = "terminalFocus && terminalSplitPaneActive";
 
     /// <summary>Default keys (VS Code's on Linux/Windows). Ctrl+` (toggle) comes with both keymap presets.</summary>
     public static readonly KeybindingContribution[] Keybindings =
@@ -71,7 +81,16 @@ public static class TerminalCommandSet
         new(FocusFind, "ctrl+f", When: Focused),
         new(FocusNext, "ctrl+pagedown", When: Focused),
         new(FocusPrevious, "ctrl+pageup", When: Focused),
+        new(Split, "ctrl+shift+5", When: ProcessSupported),
+        new(FocusNextPane, "alt+right", When: FocusedSplit),
+        new(FocusNextPane, "alt+down", When: FocusedSplit),
+        new(FocusPreviousPane, "alt+left", When: FocusedSplit),
+        new(FocusPreviousPane, "alt+up", When: FocusedSplit),
+        new(ResizePaneLeft, "ctrl+shift+left", When: FocusedSplit),
+        new(ResizePaneRight, "ctrl+shift+right", When: FocusedSplit),
     ];
+
+    private const string ProcessSupported = "terminalProcessSupported";
 
     public static IDisposable Register(ICommandService commands, TerminalPanelRuntime runtime)
     {
@@ -97,8 +116,23 @@ public static class TerminalCommandSet
             if (service.ActiveSession is { } s) s.Post(() => s.Emulator.ClearKeepingCursorLine());
             return Task.CompletedTask;
         }, "clear-all");
-        Add(FocusNext, "Focus Next Terminal", async _ => await CycleAsync(runtime, +1).ConfigureAwait(true));
-        Add(FocusPrevious, "Focus Previous Terminal", async _ => await CycleAsync(runtime, -1).ConfigureAwait(true));
+        Add(FocusNext, "Focus Next Terminal Group", async _ => await CycleAsync(runtime, +1).ConfigureAwait(true));
+        Add(FocusPrevious, "Focus Previous Terminal Group", async _ => await CycleAsync(runtime, -1).ConfigureAwait(true));
+        Add(Split, "Split Terminal", async _ => await SplitAsync(runtime).ConfigureAwait(true), "split-horizontal");
+        Add(Unsplit, "Unsplit Terminal", _ =>
+        {
+            if (service.ActiveSession is { } s) service.Unsplit(s);
+            return Task.CompletedTask;
+        });
+        Add(Join, "Join Terminals...", async _ => await JoinAsync(runtime).ConfigureAwait(true));
+        Add(FocusNextPane, "Focus Next Terminal in Terminal Group", _ => { runtime.View?.FocusPane(+1); return Task.CompletedTask; });
+        Add(FocusPreviousPane, "Focus Previous Terminal in Terminal Group", _ => { runtime.View?.FocusPane(-1); return Task.CompletedTask; });
+        Add(ResizePaneLeft, "Resize Terminal Left", _ => { runtime.View?.ResizeActivePane(-1); return Task.CompletedTask; });
+        Add(ResizePaneRight, "Resize Terminal Right", _ => { runtime.View?.ResizeActivePane(+1); return Task.CompletedTask; });
+        Add(KillAll, "Kill All Terminals", async _ =>
+        {
+            foreach (var s in service.Sessions.Reverse()) await service.KillAsync(s).ConfigureAwait(true);
+        });
         Add(Rename, "Rename...", async inv =>
         {
             if (service.ActiveSession is not { } s) return;
@@ -160,13 +194,44 @@ public static class TerminalCommandSet
         await runtime.Service.ShowAsync(t, preserveFocus: false).ConfigureAwait(true);
     }
 
+    /// <summary>VS Code's Focus Next/Previous Terminal Group: the neighbouring entry of the terminal list (wrapping), its focused pane active.</summary>
     private static async Task CycleAsync(TerminalPanelRuntime runtime, int delta)
     {
-        var list = runtime.Service.Sessions;
-        if (list.Count == 0) return;
-        var index = runtime.Service.ActiveSession is { } a ? list.ToList().IndexOf(a) : 0;
-        var next = list[((index + delta) % list.Count + list.Count) % list.Count];
-        await runtime.Service.ShowAsync(next, preserveFocus: false).ConfigureAwait(true);
+        var groups = runtime.Service.Groups;
+        if (groups.Count == 0) return;
+        var index = runtime.Service.ActiveGroup is { } a ? groups.ToList().IndexOf(a) : 0;
+        var group = groups[((index + delta) % groups.Count + groups.Count) % groups.Count];
+        if ((group.ActiveTerminal ?? group.Terminals.FirstOrDefault()) is { } next) await runtime.Service.ShowAsync(next, preserveFocus: false).ConfigureAwait(true);
+    }
+
+    /// <summary>Split Terminal: a new pane right of the active terminal (no terminal yet: a new one), shown and focused.</summary>
+    private static async Task SplitAsync(TerminalPanelRuntime runtime)
+    {
+        if (runtime.Service.ActiveSession is not { IsDisposed: false } parent)
+        {
+            await NewTerminalAsync(runtime, null).ConfigureAwait(true);
+            return;
+        }
+        var split = await runtime.Service.SplitAsync(parent).ConfigureAwait(true);
+        await runtime.Service.ShowAsync(split, preserveFocus: false).ConfigureAwait(true);
+    }
+
+    /// <summary>Join Terminals: pick terminals of other groups; they become panes of the active terminal's group.</summary>
+    private static async Task JoinAsync(TerminalPanelRuntime runtime)
+    {
+        var service = runtime.Service;
+        if (service.ActiveSession is not { } target || runtime.Window is not { } window) return;
+        var group = service.GroupOf(target);
+        var others = service.Sessions.Where(s => group is null || !group.Contains(s)).ToList();
+        if (others.Count == 0)
+        {
+            window.SetStatusBarMessage("There are no other terminals to join.", TimeSpan.FromSeconds(4));
+            return;
+        }
+        var items = others.Select(s => new QuickPickItem($"{s.Id}: {s.Title}", Tag: s)).ToList();
+        var picked = await window.ShowQuickPickManyAsync(items, new QuickPickOptions(Title: "Join Terminals", Placeholder: "Select the terminals to join with the active one")).ConfigureAwait(true);
+        if (picked is null || picked.Count == 0) return;
+        service.Join(target, picked.Select(p => p.Tag).OfType<TerminalSession>());
     }
 
     /// <summary>terminal.integrated.confirmOnKill: "editor" (default) never asks for panel terminals; "panel"/"always" ask when a program runs in it.</summary>

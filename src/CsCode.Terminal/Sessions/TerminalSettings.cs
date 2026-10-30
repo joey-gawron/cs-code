@@ -43,6 +43,7 @@ public static class TerminalSettingKeys
     public const string RightClickBehavior = Prefix + "rightClickBehavior";
     public const string AltClickMovesCursor = Prefix + "altClickMovesCursor";
     public const string PersistentSessionReviveProcess = Prefix + "persistentSessionReviveProcess";
+    public const string SplitCwd = Prefix + "splitCwd";
 
     /// <summary>VS Code's default word separators for double-click selection.</summary>
     public const string DefaultWordSeparators = " ()[]{}',\"`─‘’“”|";
@@ -89,6 +90,7 @@ public static class TerminalSettingKeys
         new(RightClickBehavior, J("default"), "Right-click: default (context menu), copyPaste, paste, selectWord, nothing."),
         new(AltClickMovesCursor, J(true), "Alt+click moves the prompt's cursor (not implemented: the click is passed on)."),
         new(PersistentSessionReviveProcess, J("never"), "CsCode does not restore terminals after a restart; only 'never' is honoured."),
+        new(SplitCwd, J("inherited"), "Where a split terminal starts: inherited (the current directory of the terminal it splits), initial (where that terminal started), workspaceRoot."),
     ];
 }
 

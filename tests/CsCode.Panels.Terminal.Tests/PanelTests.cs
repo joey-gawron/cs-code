@@ -328,11 +328,16 @@ public sealed class PanelTests
     }
 
     [AvaloniaFact]
-    public async Task Context_menu_has_copy_paste_select_all_clear_rename_kill()
+    public async Task Context_menu_has_copy_paste_select_all_clear_split_rename_kill()
     {
         await using var rig = await new PanelRig().ReadyAsync();
         var entries = rig.Runtime.ContextMenuEntries(rig.Control).Where(e => !e.IsSeparator).Select(e => e.AccessibleName).ToList();
-        Assert.Equal(["Copy", "Paste", "Select All", "Clear Terminal", "Rename...", "Kill Terminal"], entries);
+        Assert.Equal(["Copy", "Paste", "Select All", "Clear Terminal", "Split Terminal", "Rename...", "Kill Terminal"], entries);
+        // a split pane offers Unsplit too
+        await rig.Commands.ExecuteAsync(TerminalCommandSet.Split);
+        Assert.True(await PanelRig.Pump(() => rig.View.Panes.Count == 2));
+        entries = rig.Runtime.ContextMenuEntries(rig.Control).Where(e => !e.IsSeparator).Select(e => e.AccessibleName).ToList();
+        Assert.Equal(["Copy", "Paste", "Select All", "Clear Terminal", "Split Terminal", "Unsplit Terminal", "Rename...", "Kill Terminal"], entries);
     }
 
     [AvaloniaFact]

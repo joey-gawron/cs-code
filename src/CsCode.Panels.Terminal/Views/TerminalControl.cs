@@ -277,6 +277,8 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
     {
         base.OnGotFocus(e);
         _runtime.SetTerminalFocus(true, this);
+        // clicking (or tabbing) into a split pane makes its terminal the active one: keys, commands and Find act on it
+        if (_session is { IsDisposed: false } focused && !ReferenceEquals(_runtime.Service.ActiveSession, focused)) _runtime.Service.SetActive(focused);
         if (_session is { } s && s.Modes.FocusEvents) s.Input(KeyEncoder.Focus(true));
         StartBlink();
         InvalidateVisual();

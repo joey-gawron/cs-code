@@ -35,6 +35,7 @@ public sealed class TerminalPanelRuntime : IDisposable
     public const string AltBufferContextKey = "terminalAltBufferActive";
     public const string HasSelectionContextKey = "terminalTextSelected";
     public const string ProcessSupportedContextKey = "terminalProcessSupported";
+    public const string SplitPaneActiveContextKey = "terminalSplitPaneActive";
 
     /// <summary>VS Code's default <c>terminal.integrated.commandsToSkipShell</c> (the subset CsCode has), plus every terminal command.</summary>
     public static readonly string[] DefaultCommandsToSkipShell =
@@ -208,6 +209,9 @@ public sealed class TerminalPanelRuntime : IDisposable
     }
 
     internal void SetAltBuffer(bool active) => Keys?.Set(AltBufferContextKey, active);
+
+    /// <summary><c>terminalSplitPaneActive</c>: the shown group is split (the pane keys apply).</summary>
+    internal void SetSplitPaneActive(bool split) => Keys?.Set(SplitPaneActiveContextKey, split);
 
     /// <summary>A view asks whether it should take the keyboard when it appears (a command asked for the Terminal window).</summary>
     internal bool TakeFocusRequest()
@@ -383,6 +387,10 @@ public sealed class TerminalPanelRuntime : IDisposable
             ],
             [
                 new MenuEntry("C_lear Terminal", () => Run(TerminalCommandSet.Clear)) { Icon = "clear-all", CommandId = TerminalCommandSet.Clear },
+                new MenuEntry("_Split Terminal", () => Run(TerminalCommandSet.Split)) { Icon = "split-horizontal", Gesture = Bindings?.GetLabel(TerminalCommandSet.Split), CommandId = TerminalCommandSet.Split },
+                .. (control.Session is { } shown && Service.GroupOf(shown) is { IsSplit: true }
+                    ? new[] { new MenuEntry("_Unsplit Terminal", () => Run(TerminalCommandSet.Unsplit)) { CommandId = TerminalCommandSet.Unsplit } }
+                    : []),
                 new MenuEntry("_Rename...", () => Run(TerminalCommandSet.Rename)) { CommandId = TerminalCommandSet.Rename },
                 new MenuEntry("_Kill Terminal", () => Run(TerminalCommandSet.Kill)) { Icon = "trash", CommandId = TerminalCommandSet.Kill },
             ]);

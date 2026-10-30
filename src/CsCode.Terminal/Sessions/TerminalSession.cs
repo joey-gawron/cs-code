@@ -96,6 +96,20 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
     public string? CurrentDirectory => _cwd;
     public bool IsDisposed => _disposed;
 
+    /// <summary>The directory the program was started in.</summary>
+    public string? StartDirectory { get; private set; }
+
+    /// <summary>
+    /// The program's working directory as the kernel knows it (<c>/proc/&lt;pid&gt;/cwd</c>): right even for a shell without shell integration
+    /// that never reported a <c>cd</c>. Null when unknown (exited, no /proc). Blocking file-system read: call off the UI thread.
+    /// </summary>
+    public string? ProcessDirectory()
+    {
+        if (ProcessId is not { } pid || _hasExited || !OperatingSystem.IsLinux()) return null;
+        try { return new FileInfo($"/proc/{pid}/cwd").LinkTarget is { Length: > 0 } dir && Directory.Exists(dir) ? dir : null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
+
     /// <summary>The program's window title (OSC 0/2), if it set one.</summary>
     public string? ProgramTitle => _oscTitle;
 
@@ -134,6 +148,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
             _processName = Path.GetFileName(info.FileName);
             _startName = host.GetForegroundProcessName() ?? _processName;
             _cwd = info.WorkingDirectory;
+            StartDirectory = info.WorkingDirectory;
         }
         catch (PtySpawnException ex)
         {
