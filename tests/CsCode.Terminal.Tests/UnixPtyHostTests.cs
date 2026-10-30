@@ -325,7 +325,6 @@ public sealed class UnixPtyHostTests : IDisposable
         host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "exit 0"]), output);
         await output.WaitExitAsync();
         Assert.True(await ProcessChecks.WaitGoneAsync(host.ProcessId), "not reaped");
-        await Task.Delay(50); // a later clock tick than the reap (start times count in 10 ms ticks)
 
         // An unrelated session leader started after the reap stands in for a process that was given the reaped pid: the kernel reuses a
         // number once nothing holds it. (The real reuse was reproduced in a private pid namespace: docs/TERMINAL.md.)
@@ -406,29 +405,23 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public void Only_a_session_that_kept_the_number_in_use_since_the_reap_is_killed()
     {
-        const ulong reap = 1_000;
-        // a member that started before (or in the tick of) the reap: the number was never free, every member is the terminal's
-        Assert.Equal([10, 11], UnixPtyHost.OrphansToKill([(10, 990), (11, 1_500)], reap));
-        Assert.Equal([12], UnixPtyHost.OrphansToKill([(12, 1_000)], reap));
-        // only processes started after the reap: the number may have been reused (a new session leader and its children)
-        Assert.Empty(UnixPtyHost.OrphansToKill([(13, 1_001), (14, 2_000)], reap));
-        Assert.Empty(UnixPtyHost.OrphansToKill([], reap));
-        // the moment of the reap is unknown: nothing is killed by number
-        Assert.Empty(UnixPtyHost.OrphansToKill([(15, 1)], 0));
+        (int, ulong)[] atReap = [(10, 990), (11, 995)];
+        // a member the session had at the reap is still in it: the number was never free, every member is the terminal's (also one started later)
+        Assert.Equal([10, 12], UnixPtyHost.OrphansToKill([(10, 990), (12, 1_500)], atReap));
+        // those members are gone (or their pids now name processes started later): the number may have been reused
+        Assert.Empty(UnixPtyHost.OrphansToKill([(13, 1_001), (14, 2_000)], atReap));
+        Assert.Empty(UnixPtyHost.OrphansToKill([(10, 1_700)], atReap)); // pid 10 reused by another process
+        Assert.Empty(UnixPtyHost.OrphansToKill([(15, 1)], [])); // nothing was left at the reap
+        Assert.Empty(UnixPtyHost.OrphansToKill([(15, 1)], null)); // the reap was not seen: nothing is killed by number
     }
 
     [Fact]
-    public void Uptime_is_read_in_clock_ticks()
+    public void A_process_start_time_is_read_from_proc()
     {
-        Assert.Equal(1_234_567UL, ProcessTable.ParseUptimeTicks("12345.67 54321.00\n", 100));
-        Assert.Equal(1_234_500UL, ProcessTable.ParseUptimeTicks("12345 1", 100));
-        Assert.Equal(12_345_670UL, ProcessTable.ParseUptimeTicks("12345.67 1", 1000));
-        Assert.Equal(0UL, ProcessTable.ParseUptimeTicks("garbage", 100));
-        if (!OperatingSystem.IsLinux()) return;
-        // a process started just now started at or before now, on the same clock
-        var now = ProcessTable.BootTicksNow();
-        Assert.True(now > 0);
-        Assert.True(ProcessTable.Stat(Environment.ProcessId)!.Value.StartTicks <= now);
+        RequireLinux();
+        var self = ProcessTable.Stat(Environment.ProcessId)!.Value;
+        Assert.True(self.StartTicks > 0);
+        Assert.Equal(self.StartTicks, ProcessTable.Stat(Environment.ProcessId)!.Value.StartTicks);
     }
 }
 

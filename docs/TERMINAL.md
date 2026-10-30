@@ -42,8 +42,9 @@ which also registers `TaskTerminalHost` as `ITaskTerminalHost`). The tool window
   process still in the terminal's session (`/proc/*/stat`), so background jobs in their own process groups go too. A program that called
   `setsid` itself (a daemon) is deliberately left alone. Disposing the service kills every terminal. Once the program has been reaped its pid
   is only a number the kernel hands out again when nothing uses it (pids wrap in about a day here): killing or reusing an exited terminal
-  (a finished task's, hours later) signals its session only when a member that started no later than the reap still carries the session id
-  (so the number never was free), never `kill(-pid)` blindly; that `/proc` scan runs on the pool, never on the caller's (UI) thread. Checked
+  (a finished task's, hours later) signals its session only when a member it had when the program was reaped (same pid, same start time,
+  noted by the reader at the reap) still carries the session id, so the number never was free; never `kill(-pid)` blindly. That `/proc`
+  scan runs on the pool, never on the caller's (UI) thread. Checked
   with a real pid reuse in a private pid namespace (`CSCODE_PIDNS_TEST=1 unshare -Urpfm --mount-proc dotnet test ... --filter
   FullyQualifiedName~private_pid_namespace`).
 * **Start races** (end pass): a size the view measured before the program could start (a split pane laid out during a remote round trip) is

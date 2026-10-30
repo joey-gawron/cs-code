@@ -40,7 +40,7 @@ public sealed unsafe class UnixPtyHost : IPtyHost
     private int _references; // threads alive + the owner; descriptors are closed when it drops to 0
     private IPtyListener? _listener;
     private bool _killRequested;
-    private ulong _reapedAtTicks; // when the child was reaped (ProcessTable.BootTicksNow); 0: not yet, or unknown
+    private IReadOnlyList<(int Pid, ulong StartTicks)>? _membersAtReap; // the session's members when the child was reaped (null: not yet, unknown)
     private string? _slavePath;
 
     /// <summary>Pending SIGKILL escalations: a timer must fire even when nothing else references its host any more.</summary>
@@ -273,7 +273,7 @@ public sealed unsafe class UnixPtyHost : IPtyHost
         if (r < 0 && Marshal.GetLastPInvokeError() == ECHILD)
         {
             // Someone else reaped it (only possible if the runtime's SIGCHLD handling reaps every child): the code is lost, and so is the
-            // moment of the reap (_reapedAtTicks stays 0: nothing is killed by its number afterwards).
+            // session at the reap (_membersAtReap stays null: nothing is killed by its number afterwards).
             Volatile.Write(ref _exitCode, 0);
             _exited = true;
             return true;
@@ -281,10 +281,13 @@ public sealed unsafe class UnixPtyHost : IPtyHost
         return false;
     }
 
-    /// <summary>The child was reaped just now: from here on its pid may be reused once nothing else (its session's members) holds the number.</summary>
+    /// <summary>
+    /// The child was reaped just now: from here on its pid may be reused once nothing else (its session's members) holds the number. Who those
+    /// members are is noted now, while the number is certainly still the terminal's (a /proc scan on the reader thread, once per exit).
+    /// </summary>
     private void Reaped(int exitCode)
     {
-        Volatile.Write(ref _reapedAtTicks, ProcessTable.BootTicksNow());
+        Volatile.Write(ref _membersAtReap, ProcessTable.SessionMembersWithStart(_pid));
         Volatile.Write(ref _exitCode, exitCode);
         _exited = true;
     }
@@ -439,7 +442,7 @@ public sealed unsafe class UnixPtyHost : IPtyHost
                 kill(pid, SIGKILL);
             return;
         }
-        var members = OrphansToKill(ProcessTable.SessionMembersWithStart(sid), Volatile.Read(ref _reapedAtTicks));
+        var members = OrphansToKill(ProcessTable.SessionMembersWithStart(sid), Volatile.Read(ref _membersAtReap));
         if (members.Count == 0) return;
         kill(-sid, SIGKILL);
         foreach (var pid in members)
@@ -447,15 +450,15 @@ public sealed unsafe class UnixPtyHost : IPtyHost
     }
 
     /// <summary>
-    /// What may be killed of a reaped leader's session (<paramref name="members"/>: the processes whose session id is its pid now, with their
-    /// start times; <paramref name="reapedAt"/>: when it was reaped, same clock). A member that started no later than the reap has carried that
+    /// What may be killed of a reaped leader's session: <paramref name="members"/> are the processes whose session id is its pid now (with their
+    /// start times), <paramref name="atReap"/> those it had when the leader was reaped. A member of both (same pid, same start) has carried that
     /// session id ever since (a session id never comes back once left), so the number stayed in use the whole time and was never free for
-    /// another process: every member is then the terminal's. Without such a member the number may have been reused (a new session leader
-    /// started later, its children) and nothing is killed.
+    /// another process: every member is then the terminal's, also one its jobs started later. Without such a member the number may have been
+    /// reused (a new session leader, its children) and nothing is killed.
     /// </summary>
-    internal static IReadOnlyList<int> OrphansToKill(IReadOnlyList<(int Pid, ulong StartTicks)> members, ulong reapedAt)
+    internal static IReadOnlyList<int> OrphansToKill(IReadOnlyList<(int Pid, ulong StartTicks)> members, IReadOnlyList<(int Pid, ulong StartTicks)>? atReap)
     {
-        if (reapedAt == 0 || !members.Any(m => m.StartTicks <= reapedAt)) return [];
+        if (atReap is not { Count: > 0 } || !members.Any(atReap.Contains)) return [];
         return members.Select(m => m.Pid).ToList();
     }
 
