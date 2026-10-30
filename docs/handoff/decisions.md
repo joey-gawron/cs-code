@@ -23,6 +23,9 @@ Everything below is already built one way (my pick first). Say a number and "swi
 6. **Sticky scroll**: off by default (pick; VS Code has it on). It is implemented and costs < 16 ms per scroll step.
 7. **Icon at 16 px**: your artwork as is (pick); the navy tile almost merges with the dark title bar at 16 px. A higher-contrast 16 px variant would need a new drawing from you.
 8. **Desktop entry**: opens CsCode for 37 source-file types, not plain .txt or folders (pick). Say if .txt files or folders should offer CsCode.
+   **Decided 2026-10-30**: offer CsCode for plain text and folders too, as the Mac's Info.plist does. Done: the desktop entry's MimeType list
+   (packaging/linux/cscode.desktop.in) starts with `text/plain;inode/directory;`. A desktop entry has no "alternate" rank: whether CsCode
+   becomes the default for them is the desktop's choice (mimeapps.list), as for the source types.
 
 ## Done the VS Code way (FYI; say if you object)
 

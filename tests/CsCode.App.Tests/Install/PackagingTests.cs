@@ -127,6 +127,25 @@ public sealed class PackagingTests
     /// The Windows launcher (cscode.cmd) passes every argument and adds the global .NET tools to PATH, and sets no DOTNET_ROOT (cross-branch
     /// review C1, as tools/install.sh's launcher): the app chooses it per program it starts.
     /// </summary>
+    /// <summary>
+    /// Linux's desktop entry offers CsCode for plain text and folders as the Mac's Info.plist does (public.plain-text, public.folder; decided
+    /// 2026-10-30): before, it listed source files only and "Open With" left CsCode out for a .txt file or a folder. Read from the template,
+    /// so it is checked on every OS (InstallScriptTests checks the installed entry on Linux).
+    /// </summary>
+    [Fact]
+    public void The_linux_desktop_entry_offers_plain_text_and_folders_as_the_mac_bundle_does()
+    {
+        var template = DesktopEntry.Parse(File.ReadAllText(Path.Combine(InstallSandbox.RepoRoot(), "packaging", "linux", "cscode.desktop.in")));
+        var mime = template["Desktop Entry"]["MimeType"].Split(';', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Contains("text/plain", mime);
+        Assert.Contains("inode/directory", mime);
+        Assert.Contains("text/x-csharp", mime);
+        Assert.Equal(mime.Length, mime.Distinct(StringComparer.Ordinal).Count());
+        var bundle = File.ReadAllText(Tool("macos", "make-app-bundle.sh"));
+        Assert.Contains("<string>public.plain-text</string>", bundle, StringComparison.Ordinal);
+        Assert.Contains("<string>public.folder</string>", bundle, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_Windows_launcher_passes_every_argument_and_leaves_DOTNET_ROOT_to_the_app()
     {
