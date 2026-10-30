@@ -1,4 +1,6 @@
+using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.VisualTree;
 using CsCode.App.Docking;
 using CsCode.App.Services;
 using CsCode.App.Startup;
@@ -57,6 +59,13 @@ public class RemoteCompositionTests
 
             await manager.ConnectAsync("tester@box");
             Assert.True(await DevHost.WaitFor(() => status.Items.Any(i => i.Id == "remote.indicator" && i.Text.Contains("SSH: tester@box", StringComparison.Ordinal)), 10_000));
+            // the indicator is drawn as a badge in the theme's remote colours (VS 2022 Dark: white on #16825D)
+            var window = await run.MainWindowAsync();
+            Button? badge = null;
+            Assert.True(await DevHost.WaitFor(() => (badge = window.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Classes.Contains("badge"))) is not null, 10_000), "no badge in the status bar");
+            var brush = Assert.IsAssignableFrom<Avalonia.Media.ISolidColorBrush>(badge!.Background);
+            Assert.Equal(Avalonia.Media.Color.Parse("#16825D"), brush.Color);
+            Assert.Same(CsCode.Ui.Theming.ThemeBrushes.Get("statusBarItem.remoteBackground"), badge.Background);
 
             var folder = manager.ToUri(env.Workspace.Path + "/")!;
             await sp.GetRequiredService<IWorkspaceService>().OpenFolderAsync(folder);
@@ -124,6 +133,50 @@ public class RemoteCompositionTests
             Assert.False(doc.IsDirty);
         }
         Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task In_the_real_app_a_remote_workspace_terminal_runs_on_the_server()
+    {
+        // R3 in the real composition: the Terminal module asks the Remote module's provider; a remote folder's terminal is the server's child.
+        Assert.SkipUnless(File.Exists(ServerAssembly), "cscode-server.dll is not next to the tests");
+        using var env = new RealAppHome();
+        using var serverData = new TempDirectory("cscode-app-remote-");
+        var marker = "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
+        await using (var run = new RealAppRun(env, s => Remote(s, serverData, marker)))
+        {
+            await run.MainWindowAsync();
+            var sp = run.Services;
+            var manager = sp.GetRequiredService<IRemoteConnectionManager>();
+            await manager.ConnectAsync("tester@box");
+            await sp.GetRequiredService<IWorkspaceService>().OpenFolderAsync(manager.ToUri(env.Workspace.Path + "/")!);
+            var terminals = sp.GetRequiredService<CsCode.Core.Terminal.ITerminalService>();
+            var t = await terminals.CreateAsync(new CsCode.Core.Terminal.TerminalCreateOptions
+            {
+                ShellPath = "/bin/bash", ShellArgs = ["--noprofile", "--norc"], Show = false,
+                Env = new Dictionary<string, string?> { ["HISTFILE"] = "/dev/null" },
+            });
+            var server = ((CsCode.Remote.Client.RemoteConnectionManager)manager).Session!.Server.ProcessId;
+            Assert.True(IsDescendant(t.ProcessId!.Value, server), $"terminal pid {t.ProcessId} is not under the server {server}");
+            Assert.Equal(env.Workspace.Path, t.CurrentDirectory);
+            await terminals.KillAsync(t);
+        }
+        Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
+    }
+
+    private static bool IsDescendant(int pid, int ancestor)
+    {
+        for (var p = pid; p > 1;)
+        {
+            if (p == ancestor) return true;
+            try
+            {
+                var stat = File.ReadAllText($"/proc/{p}/stat");
+                p = int.Parse(stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[1], System.Globalization.CultureInfo.InvariantCulture);
+            }
+            catch (IOException) { return false; }
+        }
+        return false;
     }
 
     [AvaloniaFact(Timeout = 180_000)]

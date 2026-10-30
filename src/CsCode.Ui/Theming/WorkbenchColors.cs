@@ -49,6 +49,7 @@ public static class WorkbenchColors
         ("Status bar, title bar, menus", [
             "statusBar.background", "statusBar.foreground", "statusBar.border", "statusBar.debuggingBackground", "statusBar.debuggingForeground",
             "statusBar.noFolderBackground", "statusBar.noFolderForeground", "statusBar.noFolderBorder", "statusBarItem.hoverBackground", "statusBarItem.prominentBackground",
+            "statusBarItem.remoteBackground", "statusBarItem.remoteForeground",
             "titleBar.activeBackground", "titleBar.activeForeground", "titleBar.inactiveBackground", "titleBar.inactiveForeground", "titleBar.border",
             "menu.background", "menu.foreground", "menu.selectionBackground", "menu.selectionForeground", "menu.separatorBackground", "menu.border",
             "menubar.selectionBackground", "menubar.selectionForeground", "menubar.selectionBorder",

@@ -307,6 +307,9 @@ public static class VsThemes
         // Status bar / title bar / menus
         Set(p.Status, "statusBar.background", "statusBarItem.prominentBackground");
         Set(p.StatusDebug, "statusBar.debuggingBackground");
+        // The remote indicator's badge (VS Code's default colours: white on green, 4.8:1).
+        c["statusBarItem.remoteBackground"] = Rgba.Parse("#16825D");
+        c["statusBarItem.remoteForeground"] = Rgba.Parse("#FFFFFF");
         Set(p.StatusNoFolder, "statusBar.noFolderBackground", "statusBar.noFolderBorder");
         Set(p.TitleBg, "titleBar.activeBackground", "titleBar.inactiveBackground");
         Set(p.TitleFg, "titleBar.activeForeground");

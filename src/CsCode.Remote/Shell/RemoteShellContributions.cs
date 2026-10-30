@@ -69,14 +69,26 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
         return null;
     }
 
-    internal static StatusBarItemModel Indicator(RemoteConnectionStatus s) => s.State switch
+    /// <summary>The badge's theme colours (VS Code's): the indicator is always drawn as a coloured badge at the left of the status bar.</summary>
+    public const string BadgeBackground = "statusBarItem.remoteBackground";
+    public const string BadgeForeground = "statusBarItem.remoteForeground";
+
+    internal static StatusBarItemModel Indicator(RemoteConnectionStatus s) => (s.State switch
     {
-        RemoteConnectionState.Connected => new(IndicatorId, $"$(remote) SSH: {s.Host}", $"Connected to {s.Host}. Click for remote commands.", Connect, StatusBarAlignment.Left, 10_000),
+        RemoteConnectionState.Connected => new StatusBarItemModel(IndicatorId, $"$(remote) {Label(s)}", $"Connected to {s.Host}. Click for remote commands.", Connect, StatusBarAlignment.Left, 10_000),
         RemoteConnectionState.Connecting or RemoteConnectionState.Bootstrapping =>
-            new(IndicatorId, $"$(sync~spin) SSH: {s.Host}", s.Message ?? "Connecting…", ShowLog, StatusBarAlignment.Left, 10_000),
-        RemoteConnectionState.Reconnecting => new(IndicatorId, $"$(sync~spin) SSH: {s.Host} (reconnecting)", s.Message ?? "Reconnecting…", ShowLog, StatusBarAlignment.Left, 10_000),
-        RemoteConnectionState.Failed => new(IndicatorId, $"$(error) SSH: {s.Host} (disconnected)", s.Message ?? "Connection failed", Reconnect, StatusBarAlignment.Left, 10_000),
+            new(IndicatorId, $"$(sync~spin) {Label(s)}", s.Message ?? "Connecting…", ShowLog, StatusBarAlignment.Left, 10_000),
+        RemoteConnectionState.Reconnecting => new(IndicatorId, $"$(sync~spin) {Label(s)} (reconnecting)", s.Message ?? "Reconnecting…", ShowLog, StatusBarAlignment.Left, 10_000),
+        RemoteConnectionState.Failed => new(IndicatorId, $"$(error) {Label(s)} (disconnected)", s.Message ?? "Connection failed", Reconnect, StatusBarAlignment.Left, 10_000),
         _ => new(IndicatorId, "$(remote)", "Open a remote window (Connect to Host…)", Connect, StatusBarAlignment.Left, 10_000),
+    }) with { ColorKey = BadgeForeground, BackgroundColorKey = BadgeBackground };
+
+    /// <summary>"SSH: host", "Docker: container", "WSL: distro" — by the connection's URI scheme.</summary>
+    private static string Label(RemoteConnectionStatus s) => s.Authority?.Scheme switch
+    {
+        RemoteSchemes.Docker => "Docker: " + s.Host,
+        RemoteSchemes.Wsl => "WSL: " + s.Host,
+        _ => "SSH: " + s.Host,
     };
 
     // Set updates the entry by id; only the newest token is kept (disposing an older one would remove the entry).

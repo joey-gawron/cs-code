@@ -44,7 +44,14 @@ public interface IWindowService
 
 public enum StatusBarAlignment { Left = 1, Right = 2 }
 
-public sealed record StatusBarItemModel(string Id, string Text, string? Tooltip = null, string? CommandId = null, StatusBarAlignment Alignment = StatusBarAlignment.Left, int Priority = 0, bool IsVisible = true, string? ColorKey = null);
+public sealed record StatusBarItemModel(string Id, string Text, string? Tooltip = null, string? CommandId = null, StatusBarAlignment Alignment = StatusBarAlignment.Left, int Priority = 0, bool IsVisible = true, string? ColorKey = null)
+{
+    /// <summary>
+    /// A theme colour id for the item's own background (VS Code's <c>statusBarItem.remoteBackground</c> for the remote indicator; additive, Remote
+    /// R4/wave 3). Null: the status bar's background shows through. Pair it with a matching <see cref="ColorKey"/> for the text.
+    /// </summary>
+    public string? BackgroundColorKey { get; init; }
+}
 
 /// <summary>Contributed status-bar entries (language selector, diagnostics counts, debug state, memory, EOL, caret position…).</summary>
 public interface IStatusBarService
