@@ -206,7 +206,9 @@ public sealed class TerminalService : ITerminalService, IDisposable
                         ? throw new PtySpawnException("This terminal runs on this machine, and the program must run on the remote host.")
                         : Resolver.Resolve(options, session.Emulator.Columns, session.Emulator.Rows);
             }
-            catch (Exception ex) when (ex is PtySpawnException or IOException or UnauthorizedAccessException)
+            // InvalidOperationException: the backend provider refuses a program that must run elsewhere but cannot now (a server's task while its
+            // host is not connected): the terminal says so and stays exited, like any program that cannot start.
+            catch (Exception ex) when (ex is PtySpawnException or IOException or UnauthorizedAccessException or (InvalidOperationException and not ObjectDisposedException))
             {
                 session.WriteLocal($"\e[31m{ex.Message}\e[0m\r\n");
                 return false;
