@@ -135,7 +135,8 @@ The tests that read process-wide counters or latency budgets run in a non-parall
   `threads` only), the location is unchanged and **no `StopLocationChanged` fires**: that event means "the stop moved" and the editor
   reveals (re-centers on) the stop line for it, so re-announcing an identical location would scroll the user's view back. Data views
   re-read through their own `IDebugSession.Invalidated` subscription (the panels' focus tracker starts a new epoch on it and accepts the
-  unchanged location after its grace period). Otherwise (`stacks`/`all`) it clears the location, fetches the stack again (re-registering
+  unchanged location at once: the session's `IDebugSessionFrames.FrameGeneration`, readable from any thread, changes only when frame ids
+  die, and has already changed when `Invalidated` fires). Otherwise (`stacks`/`all`) it clears the location, fetches the stack again (re-registering
   the frames) and publishes a location on a live frame, like a new stop (VS Code re-runs the stop for these areas too, revealing the line).
   A dead `FrameId` is never left published.
 * Termination: graceful (`terminate` if supported and the session is a launch, else `disconnect{terminateDebuggee}` / detach for attach),

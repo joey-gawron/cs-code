@@ -699,6 +699,24 @@ public class SessionDataTests
     }
 
     [Theory]
+    [InlineData("variables", false)]
+    [InlineData("stacks", true)]
+    [InlineData(null, true)]
+    public async Task The_frame_generation_the_panels_read_changes_with_the_frames_and_before_the_invalidated_event(string? area, bool changes)
+    {
+        // The panels' focus tracker compares it in its Invalidated handler to keep the focused frame across a variables-only invalidation.
+        await using var h = await SessionHarness.StartAsync();
+        await h.StopAndLoadAsync();
+        var frames = (IDebugSessionFrames)h.Session;
+        var before = frames.FrameGeneration;
+        long? seen = null;
+        using var sub = h.Session.Invalidated.Subscribe(_ => seen = frames.FrameGeneration);
+        await h.Adapter.SendEventAsync("invalidated", new DapInvalidatedEvent { Areas = area is null ? null : [area] });
+        await SessionHarness.Eventually(() => seen is not null);
+        Assert.Equal(changes, seen != before);
+    }
+
+    [Theory]
     [InlineData("stacks")]
     [InlineData("all")]
     [InlineData(null)]

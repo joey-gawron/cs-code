@@ -20,10 +20,11 @@ public enum FakeLatency
 /// and completions, with real handle semantics (everything handed out before a resume throws afterwards) and per-request counters.
 /// Events are public emitters so a test can fire any sequence.
 /// </summary>
-public class FakeDebugSession : IDebugSession
+public class FakeDebugSession : IDebugSession, IDebugSessionFrames
 {
     private readonly object _gate = new();
     private long _stopGeneration = 1;
+    private long _frameGeneration;
     private DebugSessionState _state = DebugSessionState.Running;
 
     public FakeDebugSession(string id = "s1", string name = "Fake")
@@ -83,11 +84,18 @@ public class FakeDebugSession : IDebugSession
     public bool TrackFrameIds { get; set; }
     private readonly HashSet<int> _liveFrames = new();
 
+    /// <summary>Like CsCode.Dap's DebugSession: changes on every stop, resume and <see cref="Invalidate"/>, not on <see cref="InvalidateVariables"/>.</summary>
+    public long FrameGeneration => Interlocked.Read(ref _frameGeneration);
+
+    /// <summary>The adapter sent <c>invalidated</c> of variables only: the frames of the stop stay valid (nothing else is modelled to die).</summary>
+    public void InvalidateVariables() => InvalidatedEmitter.Fire(this);
+
     /// <summary>The adapter sent <c>invalidated</c>: frame ids are forgotten (and, for adapters without stable ids, renumbered).</summary>
     public void Invalidate(bool renumberFrames = false)
     {
         lock (_gate)
         {
+            Interlocked.Increment(ref _frameGeneration);
             _liveFrames.Clear();
             if (renumberFrames)
                 foreach (var frames in Frames.Values)
@@ -136,6 +144,7 @@ public class FakeDebugSession : IDebugSession
         lock (_gate)
         {
             _stopGeneration++;
+            Interlocked.Increment(ref _frameGeneration);
             State = DebugSessionState.Stopped;
             _liveFrames.Clear();
             if (Frames.TryGetValue(threadId, out var stopped)) foreach (var f in stopped) _liveFrames.Add(f.Id);
@@ -151,6 +160,7 @@ public class FakeDebugSession : IDebugSession
         lock (_gate)
         {
             _stopGeneration++;
+            Interlocked.Increment(ref _frameGeneration);
             State = DebugSessionState.Running;
         }
         ContinuedEmitter.Fire(new DebugContinuedEventArgs(this, threadId, true));

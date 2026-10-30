@@ -114,6 +114,9 @@ public sealed partial class DebugSession
         return _handles.TryGetFrame(frameId, out frame);
     }
 
+    /// <summary>Any thread. Changes when frame ids die, so the panels keep the focused frame across an invalidation of variables only.</summary>
+    long IDebugSessionFrames.FrameGeneration => _handles.FrameGeneration;
+
     /// <summary>Lane only. Whether <paramref name="frameId"/> may still be used (handed out during this stop, or tracking overflowed).</summary>
     internal bool IsFrameValid(int frameId)
     {

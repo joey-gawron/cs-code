@@ -56,7 +56,10 @@ IDebugService / IDebugSession events (any thread)
   publish the old location: the tracker then accepts the location only after **one** `stackTrace` request (`Infrastructure/FrameRevalidator`,
   shared by every panel) re-registered the ids; when the adapter renumbered its frames, the frame at the same position is focused (and
   `IDebugFrameFocus` is asked to follow), never a dead id. That live frame is kept for its epoch only (dropped at the next stop, resume,
-  invalidation or session change), so the runtime's app-lifetime tracker does not keep an ended session reachable.
+  invalidation or session change), so the runtime's app-lifetime tracker does not keep an ended session reachable. An invalidation of
+  `variables` only (the session's `IDebugSessionFrames.FrameGeneration` did not change since its stop or previous invalidation) keeps the
+  frame ids: a location that was current stays current for the new epoch (and so does a live frame found for a renumbered one), so the panels
+  reload at once instead of showing "Loading…" for a `stackTrace` round-trip.
 * `Infrastructure/UiAsync.OnUi` — never captures a `SynchronizationContext` (so view-models behave the same under a test dispatcher) and a
   cancelled token unblocks the await **even if the adapter ignores it**: a hung adapter cannot keep a closed panel alive.
 * `Variables/VariablesTreeViewModel` — the engine behind Locals/Autos/Watch (and reusable for editor hover pins).
@@ -195,7 +198,7 @@ real Skia headless platform.
 | Suite | What it proves |
 |---|---|
 | `VariablesTests`, `WatchTests`, `CallStackTests`, `BreakpointsTests`, `ConsoleTests`, `ExceptionAndModulesTests` | view-model behaviour against fake `IDebugService`/`IDebugSession` (lazy expansion, paging, chunked inserts racing collapse/re-expansion, change highlighting incl. Autos, handle invalidation, edits, watch persistence and folder switches, frame focus incl. a declined focus, breakpoint states, console bounding/history/completions, REPL state across console views and across a session end, exception helper, modules) |
-| `InvalidationTests` | adapter `invalidated`: Locals/Watch reload in a live frame, renumbered frames, one shared stack request, no ended session kept by a tracker that outlives it |
+| `InvalidationTests` | adapter `invalidated`: Locals/Watch reload in a live frame, a variables-only one without a stack request or a pending focus, renumbered frames, one shared stack request, no ended session kept by a tracker that outlives it |
 | `ChangeHighlightTests` | change highlighting by the frame's function (js-debug on Node.js 24 shapes): names added and removed between stops of one frame, a new local marked, a block scope coming and going, one shared identity request per stop, no identity of an earlier stop's caller frame, the name fallback without an identity |
 | `RuntimeTests` | `debug.addToWatch` with the Watch tab hidden / on screen / brought forward, and the Ctrl+Alt+W contribution |
 | `InteractionTests` | real views in a headless window: keyboard model, inline editors, drag-reorder, context routing |
