@@ -284,6 +284,33 @@ public class ThemeApplierTests
         Assert.Equal(ThemeVariant.Light, app.RequestedThemeVariant);
     }
 
+    /// <summary>
+    /// T4: the pickers preview at most once per <see cref="ThemePreviewer.MinInterval"/>, so previews arrowed through at that pace must count as a
+    /// burst (Fluent's palette step once, when the arrowing stops); with a burst window shorter than the interval every preview paid for it.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task Previews_at_the_pickers_interval_are_a_burst_and_fluent_waits_until_they_stop()
+    {
+        Assert.True(ThemeApplier.BurstWindow > ThemePreviewer.MinInterval + TimeSpan.FromMilliseconds(100));
+        var svc = Themes();
+        var ui = new ManualUiDispatcher();
+        using var applier = new ThemeApplier(Application.Current!, svc, ui);
+        await svc.SetCurrentAsync(VsThemes.LightId);
+        await WaitForPostAsync(ui);
+        var first = System.Diagnostics.Stopwatch.GetTimestamp();
+        ui.RunPending();
+        Assert.Equal(VsThemes.LightId, applier.AppliedThemeId);
+        await Task.Delay(ThemePreviewer.MinInterval);                     // the next preview, as a held arrow key gives it
+        await svc.SetCurrentAsync(VsThemes.BlueId);
+        await WaitForPostAsync(ui);
+        ui.RunPending();
+        var gap = System.Diagnostics.Stopwatch.GetElapsedTime(first);
+        if (gap < ThemeApplier.BurstWindow) Assert.Equal(VsThemes.LightId, applier.AppliedThemeId); // deferred (unless the machine stalled past the window)
+        var deadline = Environment.TickCount64 + 5000;
+        while (applier.AppliedThemeId != VsThemes.BlueId && Environment.TickCount64 < deadline) { ui.RunPending(); await Task.Delay(5); }
+        Assert.Equal(VsThemes.BlueId, applier.AppliedThemeId);
+    }
+
     [AvaloniaFact]
     public async Task Disposing_the_applier_cancels_the_steps_still_queued()
     {

@@ -13,10 +13,21 @@ using CsCode.Ui.Theming;
 
 namespace CsCode.App.Views;
 
-/// <summary>The Start window shown when no folder is open: recent folders and files, Open Folder, New File and help links (VS2022 "Start window" inspired).</summary>
+/// <summary>
+/// The Start window shown when no folder is open: recent folders and files, the saved sessions (background mode), Open Folder, New File and help
+/// links (VS2022 "Start window" inspired). The sessions are read off the UI thread and appear when they are known.
+/// </summary>
 public sealed class WelcomeView : UserControl
 {
-    public WelcomeView(ICommandService commands, IWorkspaceService? workspace, IStateStorage? state)
+    /// <summary>Sessions shown on the page; the rest are a click on "More sessions..." away.</summary>
+    public const int MaxSessions = 8;
+
+    private readonly StackPanel _sessions = new() { Spacing = 2, Margin = new Thickness(0, 24, 0, 0), IsVisible = false };
+
+    /// <summary>Completes once the saved sessions are listed (tests).</summary>
+    public Task SessionsLoaded { get; } = Task.CompletedTask;
+
+    public WelcomeView(ICommandService commands, IWorkspaceService? workspace, IStateStorage? state, SessionCatalog? sessions = null)
     {
         Control Link(string text, string? icon, Func<Task> action, string? subtitle = null)
         {
@@ -54,6 +65,9 @@ public sealed class WelcomeView : UserControl
             if (Uri.TryCreate(s, UriKind.Absolute, out var u) && u.IsFile)
                 recent.Children.Add(Link(Path.GetFileName(u.LocalPath), IconKey.File, () => Run(KnownCommands.OpenFile, u.ToString()), Path.GetDirectoryName(u.LocalPath)));
 
+        recent.Children.Add(_sessions);
+        if (sessions is { CanOpen: true }) SessionsLoaded = LoadSessionsAsync(sessions, Link);
+
         var help = new StackPanel { Spacing = 2, Margin = new Thickness(0, 24, 0, 0) };
         help.Children.Add(ViewHelpers.Label("Help", "foreground", 16, FontWeight.SemiBold));
         help.Children.Add(Link("Keyboard shortcuts reference", IconKey.Key, () => Run(ShellMenus.KeyboardReference)));
@@ -74,6 +88,18 @@ public sealed class WelcomeView : UserControl
             Background = ThemeBrushes.Get("welcomePage.background"),
             Content = new StackPanel { Margin = new Thickness(56, 40), Children = { title, columns } },
         };
+    }
+
+    private async Task LoadSessionsAsync(SessionCatalog sessions, Func<string, string?, Func<Task>, string?, Control> link)
+    {
+        var list = await sessions.ListAsync().ConfigureAwait(true);
+        _sessions.Children.Add(ViewHelpers.Label("Sessions", "foreground", 16, FontWeight.SemiBold));
+        if (list.Count == 0) _sessions.Children.Add(ViewHelpers.Label("No other saved sessions", "descriptionForeground"));
+        foreach (var s in list.Take(MaxSessions))
+            _sessions.Children.Add(link(s.Name, "window", () => sessions.OpenAsync(s.Name), s.Detail.Length > 0 ? s.Detail : null));
+        if (list.Count > MaxSessions)
+            _sessions.Children.Add(link("More sessions...", null, sessions.PickAsync, null));
+        _sessions.IsVisible = true;
     }
 }
 

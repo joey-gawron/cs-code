@@ -326,8 +326,16 @@ public sealed class FakeWorkspaceService : IWorkspaceService
         return ValueTask.CompletedTask;
     }
 
+    /// <summary>When set, the next FindFilesAsync throws it (an unreadable folder, an I/O error) and clears it.</summary>
+    public Exception? FindFilesFailure { get; set; }
+
     public async IAsyncEnumerable<Uri> FindFilesAsync(string? includeGlob, int maxResults, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
+        if (FindFilesFailure is { } failure)
+        {
+            FindFilesFailure = null;
+            throw failure;
+        }
         var n = 0;
         if (SyntheticFiles is not null)
         {

@@ -1,7 +1,9 @@
 using Avalonia.Controls;
 using Avalonia.Controls.Recycling;
+using Avalonia.Controls.Templates;
 using Avalonia.Media;
 using Avalonia.VisualTree;
+using CsCode.App.Input;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Text;
 using CsCode.Editor;
@@ -10,8 +12,14 @@ using Dock.Model.Mvvm.Controls;
 
 namespace CsCode.App.Docking;
 
-/// <summary>A document-well tab that is not necessarily a file (Welcome page, Find Results as a document, ...).</summary>
-public class ShellDocument : Document, IDisposable
+/// <summary>
+/// A document-well tab that is not necessarily a file (Welcome page, Find Results as a document, ...).
+/// <para>
+/// A tab is its own content template (<see cref="IRecyclingDataTemplate"/>, see <see cref="ShellDockContent"/>): Dock's content presenter asks the
+/// tab itself for its host, so the shell registers no data template that other presenters could find while Dock re-templates a tab (T14).
+/// </para>
+/// </summary>
+public class ShellDocument : Document, IDisposable, IRecyclingDataTemplate
 {
     private Control? _view;
 
@@ -36,6 +44,9 @@ public class ShellDocument : Document, IDisposable
     // Every Dock cache that presented this tab (a floating window has a DockControl, and a cache, of its own). Weak: the caches outlive no window.
     private readonly List<WeakReference<ControlRecycling>> _recyclers = new(1);
 
+    /// <summary>The shell region keyboard focus is in while it is inside this tab's view (context keys: docs/SHELL.md, Keyboard).</summary>
+    protected virtual FocusArea FocusArea => FocusArea.None;
+
     /// <summary>
     /// What Dock presents: a thin host holding the real view, so the view can be destroyed and recreated while Dock keeps presenting "this tab".
     /// See <see cref="DisposeView"/> for how a host that Dock no longer shows is released.
@@ -45,12 +56,19 @@ public class ShellDocument : Document, IDisposable
         if (_host is null)
         {
             _host = new Border();
+            if (FocusArea != FocusArea.None) ShellFocus.SetArea(_host, FocusArea);
             _host.AttachedToVisualTree += OnHostAttached;
         }
         var view = EnsureView();
         if (!ReferenceEquals(_host.Child, view)) _host.Child = view;
         return _host;
     }
+
+    // Dock's content presenter (its ControlRecyclingDataTemplate) builds a dockable that is itself a recycling template from that template, before
+    // it looks at its cache or the data templates of the tree: the tab hands out its host and nothing else can.
+    bool IDataTemplate.Match(object? data) => ReferenceEquals(data, this);
+    Control? ITemplate<object?, Control?>.Build(object? param) => ReferenceEquals(param, this) && !IsDisposed ? EnsureHost() : null;
+    Control? IRecyclingDataTemplate.Build(object? data, Control? existing) => ReferenceEquals(data, this) && !IsDisposed ? EnsureHost() : null;
 
     // Remembered while the host is in the window: focus may have to be moved, and Dock's cache entry dropped, after Dock has detached it.
     private void OnHostAttached(object? sender, Avalonia.VisualTreeAttachmentEventArgs e)
@@ -231,6 +249,8 @@ public sealed class EditorTab : ShellDocument
     // Not from CreateView: there LiveView is still null, so a listener asking for Controller (caret, selection) would get nothing.
     protected override void OnViewCreated() => _viewCreated.Fire(this);
 
+    protected override FocusArea FocusArea => FocusArea.Editor;
+
     public override void DisposeView()
     {
         // GetViewState -> DisposeView now, CreateView + RestoreViewState later (docs/EDITOR.md): the tab comes back exactly as it was.
@@ -260,8 +280,11 @@ public sealed class EditorTab : ShellDocument
     }
 }
 
-/// <summary>A dockable tool window instance (Explorer, Output, ...). The view is created when first shown and disposed when hidden.</summary>
-public sealed class ToolTab : Tool, IDisposable
+/// <summary>
+/// A dockable tool window instance (Explorer, Output, ...). The view is created when first shown and disposed when hidden. Like a document tab it is
+/// its own content template (<see cref="ShellDocument"/>).
+/// </summary>
+public sealed class ToolTab : Tool, IDisposable, IRecyclingDataTemplate
 {
     private Control? _view;
     private readonly IServiceProvider _services;
@@ -284,14 +307,22 @@ public sealed class ToolTab : Tool, IDisposable
 
     private Border? _host;
 
-    /// <summary>The thin host Dock presents (see <see cref="ShellDocument.EnsureHost"/>).</summary>
+    /// <summary>The thin host Dock presents (see <see cref="ShellDocument.EnsureHost"/>), marked with the tool's focus area.</summary>
     public Control EnsureHost()
     {
-        _host ??= new Border();
+        if (_host is null)
+        {
+            _host = new Border();
+            ShellFocus.SetArea(_host, Spec.Id is "explorer" ? FocusArea.Explorer : FocusArea.Panel);
+        }
         var view = EnsureView();
         if (!ReferenceEquals(_host.Child, view)) _host.Child = view;
         return _host;
     }
+
+    bool IDataTemplate.Match(object? data) => ReferenceEquals(data, this);
+    Control? ITemplate<object?, Control?>.Build(object? param) => ReferenceEquals(param, this) ? EnsureHost() : null;
+    Control? IRecyclingDataTemplate.Build(object? data, Control? existing) => ReferenceEquals(data, this) ? EnsureHost() : null;
 
     public void DisposeView()
     {

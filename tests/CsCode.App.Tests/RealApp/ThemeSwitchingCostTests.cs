@@ -6,7 +6,6 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
-using CsCode.App.Views;
 using CsCode.Core.Theming;
 using CsCode.Panels.Search;
 using CsCode.Panels.Search.Views;
@@ -17,9 +16,9 @@ using Xunit;
 namespace CsCode.App.Tests.RealApp;
 
 /// <summary>
-/// A4 on the REAL composition, with an editor open and both dropdowns (toolbar and Settings page) alive: switching themes allocates nothing that
-/// survives (100 switches: managed heap flat, the dropdowns never rebuild their lists, the published brushes stay the same objects) and keeps the
-/// dispatcher budgets (heartbeat p99 &lt; 16 ms, max &lt; 50 ms) while themes are previewed at key-repeat rate.
+/// A4 on the REAL composition, with an editor open and the Settings page's dropdown alive (the only one since the toolbar's was removed):
+/// switching themes allocates nothing that survives (100 switches: managed heap flat, the dropdown never rebuilds its list, the published brushes
+/// stay the same objects) and keeps the dispatcher budgets (heartbeat p99 &lt; 16 ms, max &lt; 50 ms) while themes are previewed at key-repeat rate.
 /// </summary>
 public class ThemeSwitchingCostTests(ITestOutputHelper output)
 {
@@ -33,7 +32,7 @@ public class ThemeSwitchingCostTests(ITestOutputHelper output)
         return host;
     }
 
-    private static ThemePicker Toolbar(RealAppHost host) => host.Window.GetVisualDescendants().OfType<ToolbarView>().Single().ThemePicker!;
+    private static ThemePicker SettingsPicker(RealAppHost host) => host.Window.GetVisualDescendants().OfType<SettingsView>().Single().ThemePicker!;
 
     private static async Task SwitchAsync(RealAppHost host, ThemePicker picker, string id)
     {
@@ -55,15 +54,13 @@ public class ThemeSwitchingCostTests(ITestOutputHelper output)
     public async Task A_hundred_theme_switches_leave_the_managed_heap_flat_and_rebuild_nothing()
     {
         await using var host = await StartAsync();
-        var picker = Toolbar(host);
-        var settingsPicker = host.Window.GetVisualDescendants().OfType<SettingsView>().Single().ThemePicker!;
+        var picker = SettingsPicker(host);
         var ids = host.Get<IColorThemeService>().Available.Select(t => t.Id).ToArray();
         // Warm-up: every theme once (first completion, JIT, the editor's palette per theme, Fluent's per-variant palettes).
         foreach (var id in ids) await SwitchAsync(host, picker, id);
         await SwitchAsync(host, picker, ids[0]);
         await DevScene.SettleAsync(50);
         var items = picker.ItemsSource;
-        var settingsItems = settingsPicker.ItemsSource;
         var brushes = WorkbenchColors.All.Select(id => host.Shell.Theme!.GetBrush(id)).ToArray();
         var resources = Avalonia.Application.Current!.Resources.Count;
         var before = Heap();
@@ -74,8 +71,7 @@ public class ThemeSwitchingCostTests(ITestOutputHelper output)
         var after = Heap();
 
         output.WriteLine($"managed heap before {before / 1024} KB, after 100 switches {after / 1024} KB, delta {(after - before) / 1024} KB");
-        Assert.Same(items, picker.ItemsSource);              // the lists are built once, not per switch
-        Assert.Same(settingsItems, settingsPicker.ItemsSource);
+        Assert.Same(items, picker.ItemsSource);              // the list is built once, not per switch
         for (var i = 0; i < brushes.Length; i++) Assert.Same(brushes[i], host.Shell.Theme!.GetBrush(WorkbenchColors.All[i]));
         Assert.Equal(resources, Avalonia.Application.Current!.Resources.Count);
         Assert.True(after - before < 512 * 1024, $"the managed heap grew by {(after - before) / 1024} KB over 100 theme switches");
@@ -116,8 +112,8 @@ public class ThemeSwitchingCostTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// The dropdown's preview path (<see cref="ThemePreviewer"/>, then <see cref="IColorThemePreview"/>, the applier, the editor view and both
-    /// dropdowns reacting) driven at key-repeat rate, about 30 requests a second through every theme, light and dark alternating. Measured are the
+    /// The dropdown's preview path (<see cref="ThemePreviewer"/>, then <see cref="IColorThemePreview"/>, the applier, the editor view and the
+    /// Settings page's dropdown reacting) driven at key-repeat rate, about 30 requests a second through every theme, light and dark alternating. Measured are the
     /// dispatcher callbacks; neither the open list's own arrow-key handling (a plain 27-item Avalonia ComboBox: 3-25 ms per press headless,
     /// rendering included) nor frame rendering is part of it: the headless platform renders only when a test forces a frame, on the test's
     /// thread (docs/SHELL.md, Measured).
@@ -171,7 +167,7 @@ public class ThemeSwitchingCostTests(ITestOutputHelper output)
     {
         await using var host = await StartAsync();
         var themes = host.Get<IColorThemeService>();
-        var picker = Toolbar(host);
+        var picker = SettingsPicker(host);
         picker.Focus();
         picker.IsDropDownOpen = true;
         await DevScene.SettleAsync(5);

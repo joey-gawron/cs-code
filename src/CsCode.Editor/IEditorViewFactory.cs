@@ -86,6 +86,9 @@ public interface IEditorViewController
     Task CopyAsync() => Task.CompletedTask;
     Task PasteAsync() => Task.CompletedTask;
 
+    /// <summary>Copy with Formatting: the copy plus an HTML rendition with the theme's syntax colours (text/html). Defaults to a plain copy.</summary>
+    Task CopyWithFormattingAsync() => CopyAsync();
+
     /// <summary>The caret's rectangle in the view's coordinates: where a keyboard-opened context menu goes.</summary>
     Avalonia.Rect GetCaretBounds() => default;
 

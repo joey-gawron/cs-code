@@ -21,7 +21,7 @@ namespace CsCode.App.Menus;
 /// <item>the editor's text area: entirely from <see cref="MenuIds.EditorContext"/> contributions (the editor module adds its items, the shell
 /// hard-codes none), opened at the pointer or, from the keyboard (Shift+F10, the Menu key), below the caret;</item>
 /// <item>document tabs (Visual Studio's tab menu, plus <see cref="MenuIds.EditorTitleContext"/> contributions), replacing Dock's own;</item>
-/// <item>tool-window title bars and tool tabs (Dock, Auto Hide, Close, plus <see cref="MenuIds.ToolWindowTitleContext"/>), replacing Dock's own.</item>
+/// <item>tool-window title bars and tool tabs (Float, Dock, Auto Hide, Close, plus <see cref="MenuIds.ToolWindowTitleContext"/>), replacing Dock's own.</item>
 /// </list>
 /// A tunnelling handler on the window sees every ContextRequested first: requests it does not own (a text box, a panel row) pass on untouched.
 /// Also registers the file commands those menus and the Explorer's share: Copy Full Path, Copy Relative Path, Open Containing Folder, Reveal in
@@ -183,6 +183,9 @@ public sealed class ShellContextMenus : IDisposable
                 _menus.Command("Reveal in _Explorer", RevealInExplorer, "files", args: [file], enabled: InWorkspace(file)),
             ],
             [
+                _well.IsFloating(doc)
+                    ? new MenuEntry("Dock as Tabbed _Document", () => { _well.DockBack(doc); return Task.CompletedTask; }) { Gesture = Gesture(Commands.ShellCommands.DockEditor) }
+                    : new MenuEntry("_Float", () => { _well.Float(doc); return Task.CompletedTask; }) { Gesture = Gesture(Commands.ShellCommands.FloatEditor), Icon = "window" },
                 new MenuEntry("New _Horizontal Document Group", () => { _well.SplitDown(doc); return Task.CompletedTask; }) { Gesture = Gesture("workbench.action.splitEditorDown"), Icon = "split-vertical", IsEnabled = siblings.Count > 1 },
                 new MenuEntry("New _Vertical Document Group", () => { _well.SplitRight(doc); return Task.CompletedTask; }) { Gesture = Gesture("workbench.action.splitEditorRight"), Icon = "split-horizontal", IsEnabled = siblings.Count > 1 },
             ],
@@ -215,16 +218,20 @@ public sealed class ShellContextMenus : IDisposable
         return null;
     }
 
-    /// <summary>Visual Studio's tool-window title menu: Dock (when auto-hidden), Auto Hide, Close; plus contributed items. Float is left out:
-    /// the shell has no floating host windows yet (see docs/SHELL.md).</summary>
+    /// <summary>
+    /// Visual Studio's tool-window title menu: Float (into a window of its own), Dock (back into its well, when floating or auto-hidden), Auto Hide,
+    /// Close; plus contributed items.
+    /// </summary>
     internal IReadOnlyList<MenuEntry> ToolMenu(ToolTab tool)
     {
         var id = tool.Spec.Id;
-        var pinned = _factory.Root is IRootDock root && _factory.IsDockablePinned(tool, root);
+        var floating = _factory.IsFloating(tool);
+        var pinned = !floating && _factory.Root is IRootDock root && _factory.IsDockablePinned(tool, root);
         return MenuSections.Join(
             [
-                new MenuEntry("_Dock", () => { _tools.Unpin(tool); return Task.CompletedTask; }) { IsEnabled = pinned },
-                new MenuEntry("_Auto Hide", () => { _factory.PinDockable(tool); return Task.CompletedTask; }) { IsEnabled = !pinned, Icon = "pin" },
+                new MenuEntry("_Float", () => { _tools.Float(id); return Task.CompletedTask; }) { IsEnabled = !floating, Icon = "window" },
+                new MenuEntry("_Dock", () => { _tools.Dock(id); return Task.CompletedTask; }) { IsEnabled = pinned || floating },
+                new MenuEntry("_Auto Hide", () => { _factory.PinDockable(tool); return Task.CompletedTask; }) { IsEnabled = !pinned && !floating, Icon = "pin" },
                 new MenuEntry("_Close", () => { _tools.Hide(id); return Task.CompletedTask; }) { Icon = "close" },
             ],
             MenuContributions.Resolve(_menus, MenuIds.ToolWindowTitleContext, [id]));

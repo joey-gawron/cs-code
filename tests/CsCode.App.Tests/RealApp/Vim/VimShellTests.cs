@@ -107,12 +107,11 @@ public class VimShellTests
     }
 
     /// <summary>
-    /// Skipped: splitting itself fails in the shell (also View > Split Editor Right, without Vim): the document well's data template for editor
-    /// tabs also matches the close-button presenters of Dock's tab strip (PART_ClosePresenter / PART_CompactClosePresenter), which then take an
-    /// inactive tab's view host, and Dock.Avalonia throws while moving the tab ("The control Border already has a visual parent ...").
-    /// The Vim side (:sp :vsp :new, Ctrl-W s v h j k l w W t b o c q) maps onto that split and the groups it creates.
+    /// The Vim side (:sp :vsp :new, Ctrl-W s v h j k l w W t b o c q) maps onto the shell's split and the groups it creates. It was skipped while
+    /// the split itself threw inside Dock.Avalonia (T14: the shell's data template for editor tabs also matched the tab strip's close-button
+    /// presenters; fixed by <see cref="CsCode.App.Docking.ShellDockContent"/>, see <c>SplitEditorTests</c>).
     /// </summary>
-    [AvaloniaFact(Timeout = 120_000, Skip = "The shell's editor split throws inside Dock.Avalonia (the tab data template also matches the tab strip's close presenters); see the comment")]
+    [AvaloniaFact(Timeout = 120_000)]
     public async Task Split_windows_and_Ctrl_W_move_between_editor_groups()
     {
         await using var app = await VimApp.StartAsync("left\n", settings: Quiet);

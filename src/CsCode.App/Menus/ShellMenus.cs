@@ -84,6 +84,8 @@ public static class ShellMenus
             // Cut/Copy/Paste act on what has focus (editor, text box, a panel's selection): Input.ClipboardRouter sets these keys.
             M("Cu_t", "editor.action.clipboardCutAction", Input.ClipboardRouter.CanCutKey),
             M("_Copy", "editor.action.clipboardCopyAction", Input.ClipboardRouter.CanCopyKey, IconKey.Copy),
+            // The editor's copy with the theme's syntax colours as HTML (text/html), for documents and mail.
+            M("Copy wit_h Formatting", "editor.action.clipboardCopyWithSyntaxHighlightingAction", Input.ClipboardRouter.EditorCopyKey),
             M("_Paste", "editor.action.clipboardPasteAction", Input.ClipboardRouter.CanPasteKey, "clippy"),
             M("Cycle Clipboard _Ring", "cscode.editor.cycleClipboardRing", Input.ClipboardRouter.EditorPasteKey),
             M("Select _All", "editor.action.selectAll", "editorTextFocus"),
@@ -176,6 +178,8 @@ public static class ShellMenus
             M("Split Editor _Right", "workbench.action.splitEditorRight", "hasOpenEditors", IconKey.SplitRight),
             M("Split Editor _Down", "workbench.action.splitEditorDown", "hasOpenEditors", IconKey.SplitDown),
             M("Move Editor to _Next Group", "workbench.action.moveEditorToNextGroup", "hasOpenEditors"),
+            M("_Float Editor", Commands.ShellCommands.FloatEditor, "hasOpenEditors"),
+            M("Dock _All Floating Editors", Commands.ShellCommands.DockEditor, "hasOpenEditors"),
             S,
             M("Ne_xt Editor", "workbench.action.nextEditor", "hasOpenEditors"),
             M("Pre_vious Editor", "workbench.action.previousEditor", "hasOpenEditors"),

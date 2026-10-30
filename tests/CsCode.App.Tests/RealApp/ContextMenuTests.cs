@@ -92,7 +92,7 @@ public class RealAppContextMenuTests
         [
             "Breakpoint", "Run To Cursor", "-",
             "Snippet", "-",
-            "Cut", "Copy", "Paste", "-",
+            "Cut", "Copy", "Copy with Formatting", "Paste", "-",
             "Comment Selection", "Uncomment Selection", "-",
             "Command Palette...",
         ], Headers(menu));
@@ -218,7 +218,7 @@ public class RealAppContextMenuTests
             "Close", "Close All But This", "Close All", "Close To The Right", "-",
             "Pin Tab", "-",
             "Copy Full Path", "Open Containing Folder", "Reveal in Explorer", "-",
-            "New Horizontal Document Group", "New Vertical Document Group",
+            "Float", "New Horizontal Document Group", "New Vertical Document Group",
         ], Headers(menu));
         var entries = Entries(menu).ToDictionary(e => e.AccessibleName);
         Assert.Equal("Ctrl+F4", entries["Close"].Gesture);
@@ -232,15 +232,16 @@ public class RealAppContextMenuTests
     }
 
     [AvaloniaFact(Timeout = 60_000)]
-    public async Task Tool_window_tabs_have_Dock_Auto_Hide_and_Close()
+    public async Task Tool_window_tabs_have_Float_Dock_Auto_Hide_and_Close()
     {
         await using var host = await RealAppHost.Create().StartAsync();
         var output = host.Shell.Tools.Get("output")!;
         var tab = host.Window.GetVisualDescendants().OfType<ToolTabStripItem>().First(i => ReferenceEquals(i.DataContext, output));
         var menu = await RightClickAsync(host, tab, new Point(8, 6));
-        Assert.Equal(["Dock", "Auto Hide", "Close"], Headers(menu));
+        Assert.Equal(["Float", "Dock", "Auto Hide", "Close"], Headers(menu));
         var entries = Entries(menu);
-        Assert.False(entries[0].IsEnabled); // docked already
+        Assert.True(entries[0].IsEnabled);
+        Assert.False(entries[1].IsEnabled); // docked already
         await Click(ContextMenus.ItemsOf(menu).Last());
         Assert.False(host.Shell.Tools.IsVisible("output"));
     }

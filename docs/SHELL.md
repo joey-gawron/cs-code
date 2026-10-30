@@ -44,7 +44,7 @@ Program -> App.axaml.cs -> AppSession -> AppStartup.BuildServicesAsync (pool thr
 | `IViewActivator` | `ShellViewActivator` | panels' "show view X" (Find in Files, Settings, Keyboard Shortcuts, Watch): a tool window is shown in its well, a document-location window opens or re-activates its singleton document tab; any thread |
 | `IClipboardService` (Core, new) | `ClipboardService` | the system clipboard of the main window (Avalonia; X11 CLIPBOARD, also under XWayland) through `IPlatformClipboard`, CsCode's shape metadata (whole lines, block, one piece per caret), the in-memory clipboard ring, and the Linux PRIMARY selection (`X11PrimarySelection`); see *Clipboard* below. `IWindowService.CopyToClipboardAsync` goes through it |
 | `IActiveSelectionProvider` | `ActiveSelectionProvider` | primary selection of the active editor (`${selectedText}` for Dap, the Find in Files seed); the UI thread publishes a (document, range) snapshot, readers on any thread take the text on demand |
-| `IColorThemeService` consumer | `ThemeApplier`, `ThemePicker` | the three VS2022 themes are registered into the module's `IColorThemeService`, and the service is given the shell's completion (`ThemeCompletion`) so that it hands out complete themes; `IColorThemePreview` (Core, optional) is used for the dropdowns' live preview |
+| `IColorThemeService` consumer | `ThemeApplier`, `ThemePicker` | the three VS2022 themes are registered into the module's `IColorThemeService`, and the service is given the shell's completion (`ThemeCompletion`) so that it hands out complete themes; `IColorThemePreview` (Core, optional) is used for the Settings page dropdown's live preview |
 
 ### Process lifecycle (`src/CsCode.App/Startup`)
 
@@ -88,7 +88,8 @@ chain) remain as a safety net. Preparation runs off the UI thread; the UI thread
 published once (every assignment into the application resource dictionary makes all controls re-resolve dynamic resources), so a runtime switch is
 brush colours in one dispatcher callback, then Avalonia Fluent's palette, light/dark variant and text-selection colour in one callback each (each makes
 every control re-resolve its Fluent resources: the palette step is 4-8 ms on a full window, the others < 1 ms). A newer switch supersedes the queued
-steps of an older one, and a **burst** of switches (two within `ThemeApplier.BurstWindow`, 200 ms: arrowing through a theme list) repaints the
+steps of an older one, and a **burst** of switches (two within `ThemeApplier.BurstWindow`, 400 ms: arrowing through a theme list, whose previews come every 250 ms; it was 200 ms,
+shorter than the preview interval, so previews never formed a burst and each paid for Fluent's palette step: T4) repaints the
 brushes each time but runs the Fluent steps once, when the burst settles. The startup apply runs everything in one go before the first frame.
 
 Code-built views use `ThemeBrushes.Get("statusBar.background")` (the same live brush instance).
@@ -164,14 +165,15 @@ background is moved instead (white on a mid orange gets a slightly darker orange
 | Visual Studio Light (TextMateSharp) | light | TextMateSharp | 55 / 77 / 99 | Menu, highlighted item (`menu.selectionForeground`, borrowed) 2.94, background #2877C7 4.61; Document tab, inactive (`tab.inactiveForeground`, theme) 4.17, #707070 4.54; List selection (`list.activeSelectionForeground`, theme) 2.94, background #2877C7 4.61; Quick pick, focused row (`quickInputList.focusForeground`, borrowed) 2.94, background #2877C7 4.61 |
 <!-- THEME-CONTRAST-END -->
 
-**Color Theme dropdown** (`ThemePicker`, a `ComboBox`): on the main toolbar after the debug group (its own group, hidden through View > Toolbars >
-Color Theme, setting `cscode.toolbars.colorTheme`) and at the top of the Settings page (*Environment › Appearance*, where Visual Studio has it under
-Tools > Options > Environment > General). Every installed theme, grouped Dark / Light / High contrast (sorted by label), each with a swatch: the
+**Color Theme dropdown** (`ThemePicker`, a `ComboBox`): only at the top of the Settings page (*Environment › Appearance*, where Visual Studio has it
+under Tools > Options > Environment > General; Tools > Options opens it). The main toolbar had one too until the user asked for it to go (wave 3,
+2026-10-29: "only have it in the settings menu"): the toolbar, View > Toolbars and the setting `cscode.toolbars.colorTheme` no longer have it (an old
+`settings.json` entry for that key is ignored); `ThemeDropdownTests` asserts the main window has no theme dropdown. Every installed theme, grouped Dark / Light / High contrast (sorted by label), each with a swatch: the
 editor background with three token colours (keyword, string, function). Arrowing through the open list previews live through `IColorThemePreview`
 (nothing is persisted; at most one preview per `ThemePreviewer.MinInterval`, 250 ms, latest wins, so holding an arrow key does not repaint the window
 30 times a second); Escape or clicking away reverts; Enter or a click applies and writes `workbench.colorTheme` (the label). Arrow keys on the closed,
-focused box apply directly, as Visual Studio's combos do; group headers are neither focusable nor selectable. Every dropdown follows every other way of
-changing the theme (the palette's Color Theme command, a `settings.json` edit, another window, the other dropdown) through `IColorThemeService.Changed`.
+focused box apply directly, as Visual Studio's combos do; group headers are neither focusable nor selectable. The dropdown follows every other way of
+changing the theme (the palette's Color Theme command, a `settings.json` edit, another window) through `IColorThemeService.Changed`.
 The list is rebuilt only when the set of themes changes, never per switch. The palette command *Color Theme* (`workbench.action.selectTheme`) uses
 the same grouping, the same throttled preview and the same commit (`ThemeSelection`).
 
@@ -267,7 +269,11 @@ What it passes through reaches the pipeline and the editor as before. A binding 
 (F3 `editor.action.nextMatchFindAction`, Ctrl+] `jumpToBracket`, Alt+F12 `peekDefinition`, Ctrl+\` terminal...), so a registered lower-precedence binding of the same keys runs instead, else the key
 reaches the focused control (F3 gets to the editor's own find); a chord prefix whose every continuation is unregistered is not a chord. Context keys (`ContextKeyTracker`): `editorTextFocus`, `editorHasSelection`, `editorReadonly`, `editorLangId`, `resourceExtname`, `resourceFilename`,
 `resourceScheme`, `explorerViewletFocus`, `listFocus`, `panelFocus`, `inputFocus`, `terminalFocus`, `inDebugMode`, `debugState`, `isMac/isLinux/isWindows`, `workspaceFolderCount`, `hasOpenEditors`,
-`activeEditorIsDirty`, `quickInputVisible`. Focus areas come from the `ShellFocus.Area` attached property on view roots.
+`activeEditorIsDirty`, `quickInputVisible`. Focus areas come from the `ShellFocus.Area` attached property on the tabs' view hosts (a focused
+`TerminalControl` is the terminal area; its window's find box and buttons are the panel). The main window follows `GotFocus` with handled events
+too (AvaloniaEdit marks its text area's GotFocus handled, so the editor taking focus used to go unseen and the area stayed stale, T7) and writes
+every focus key on each focus change, after the control's own handler: it agrees with what the terminal sets for itself (T22), so the keys are
+right synchronously, without a dispatcher turn (`FocusContextKeyTests`). Floating windows get the same handlers (see *Floating windows*).
 
 **Documents.** `DocumentWell` adds to the Dock model (the single source of truth for tabs, order and groups): open / preview (italic, replaced by the next preview, promoted by editing or reopening) /
 pin / close / close others / saved / all / to the right / reopen closed (last 20), Save/Don't Save/Cancel prompts (also when the user clicks Dock's close button: Dock's close is cancelled and routed through the prompt),
@@ -278,22 +284,49 @@ presentation `CreateView` + `RestoreViewState`. Closed tabs' views go back throu
 **View lifecycle and Dock.** Two things kept destroyed views reachable, and the shell handles both:
 * Dock.Avalonia 12.1 caches the control it presented for every dockable (control recycling on the `DockControl`, keyed by the dockable), and a host
   emptied while out of the window still lists the removed view in its composition visual (that list is synchronised only when the host is rendered).
-  So a tab whose host Dock no longer shows drops the host (a fresh one is built on the next presentation) and removes its own entry from Dock's
-  recycling cache; a closed tab always removes its entry. This was the "closed tabs stay reachable" retention noted earlier: with it fixed, closed tab
-  objects, their documents and views are all released (the live 300-tab test asserts every sample, not just the steady state).
+  The shell's tabs (`ShellDocument`, `ToolTab`) are their own content templates (`IRecyclingDataTemplate`), which Dock's content presenter asks
+  before its cache, so the cache never holds a shell tab (`RealAppDockCacheTests`); a tab whose host Dock no longer shows still drops the host (a
+  fresh one is built on the next presentation) and removes any cache entry it finds. This was the "closed tabs stay reachable" retention noted
+  earlier: closed tab objects, their documents and views are all released (the live 300-tab test asserts every sample, not just the steady state).
+* **No data template for the shell's tabs** (`ShellDockContent`, T14): the shell used to register `FuncDataTemplate<EditorTab>` (and for documents
+  and tools) on the DockControl. The tab strip's close-button presenters (`PART_ClosePresenter`, `PART_CompactClosePresenter`), whose content is
+  the dockable too, fall back to the tree's data templates while Dock re-templates a moved tab, took an inactive tab's shared host, and Window >
+  Split Editor Right / Down threw "The control Border already has a visual parent". Now the DockControl's first data template turns the shell's tab
+  types into an empty placeholder for any presenter that falls back to the tree; only Dock's content presenter gets a tab's host
+  (`SplitEditorTests`, and Vim's `:vsp` / Ctrl-W test is no longer skipped).
 * A focused editor stays reachable from Avalonia's focus machinery and from AvaloniaEdit's static "last focused element" (`RoutedCommand`) until another
   element takes focus; detaching it is not enough. Before Dock removes a tab whose view holds keyboard focus, the well clears focus (the window is
   not focusable), and once the document that takes its place is presented its editor gets the keyboard, as in Visual Studio. When the last document
   closes nothing takes focus, so AvaloniaEdit's static slot keeps that one view until focus next moves anywhere (bounded: one view).
 
-**Layout.** `LayoutPersistence`: tool placement, visibility, splitter proportions, open files with pin/preview, active file; versioned JSON, workspace scope first then global default,
+**Floating windows** (wave 3). Float in a document tab's or a tool window's menu (and Window > Float Editor, `workbench.action.moveEditorToNewWindow`)
+moves it into a native window of its own: Dock.Avalonia's `HostWindow`, owned by the main window (it stays above it and out of the taskbar), with a
+layout root of its own (`IRootDock.Windows`). The factory creates the host windows (`ShellDockFactory.HostWindowCreated`), and the main window gives
+each one the shell's Dock styles and the same window-level handlers it has itself: Vim and the keyboard pipeline (every key binding works in a
+floating window), the focus context keys, the right-click menus and the Edit menu's clipboard routing (which follows the window that last took
+focus). A floating document is still one of the well's tabs (`DocumentWell.Tabs` covers the floating groups: Save, Ctrl+Tab, the live-view budget,
+close prompts, the session all see it). Dock (tool) / Dock as Tabbed Document (document; `workbench.action.restoreEditorsToMainWindow` docks them
+all) returns it to the well or group it came from (else its default well, or the primary group). A floating window closes once it is empty (its
+last tab closed, docked or hidden). Its own close button (Alt+F4) empties it the shell's way: tools are hidden, documents closed with their Save
+prompts (Cancel keeps the window). A tool window hidden while it floats goes back to its well hidden, and its window's place is remembered: showing
+it again (its command, View menu, Reset excepted) floats it there again, as in Visual Studio. The floating windows hide and show with the main
+window (background mode hides the main window instead of closing it), and when the main window really closes, everything floating is docked back
+after the layout was saved. Reset Window Layout docks everything. Not done: dragging a tab out of the window to float it relies on Dock's own drag
+(not tested), and a floating window holds either tools or documents (Dock gives a floating root one kind of dock), never both.
+
+**Layout.** `LayoutPersistence`: tool placement, visibility, splitter proportions, open files with pin/preview, active file, floating windows (their
+place and the tools and documents in them, and where hidden floating tools float again: `LayoutSnapshot.Floating` / `FloatingHidden`, still
+version 1; a background session restoring into a hidden window floats them when the window is shown); versioned JSON, workspace scope first then global default,
 tolerant of corrupt/future data; saved (debounced) on change and on exit; `View > Appearance > Reset Window Layout`. There is no left tool well unless a tool window asks for one.
 The default (and reset) layout shows exactly `ShellController.DefaultLayoutTools`: Explorer (right), Output and Error List (bottom). Every other tool window, whichever module contributes it
 (Find Results, Find in Files, Modules...), starts hidden unless its `AutoShowWhen` holds, and a tool that a saved layout does not mention (its module was added later) gets that default too.
 `ToolWindowLocation.Document` windows (Settings, Keyboard Shortcuts) never enter a tool well: they open on demand as singleton document tabs (through `IViewActivator`) and are not restored at startup.
 
-**Palette / Quick Launch** (`PaletteSource`; the title bar box reads "Search (Ctrl+Q)", with the palette's real shortcut, and the workspace name stands beside it as Visual Studio's solution name does): plain = go to file (fuzzy over a trimmable, bounded workspace index, ranked on a worker, top 100), `>` commands (title, category, keybinding badge, recent first, `Enablement` honoured),
-`:` go to line[:column], `@` document symbols, `#` workspace symbols, `?` help. Cheap modes answer synchronously (first paint needs no dispatcher turn); stale async results are dropped. Also drives `ShowQuickPick`/`ShowInputBox`.
+**Palette / Quick Launch** (`PaletteSource`; the title bar box reads "Search (Ctrl+Q)", with the palette's real shortcut, and the workspace name stands beside it as Visual Studio's solution name does): plain = go to file (fuzzy over a trimmable, bounded workspace index, ranked on a worker, top 100; a failed index build is not cached, the next query builds again), `>` **every** command, as VS Code (title, category, keybinding badge, recent first, `Enablement` honoured; no row cap: the 100-row cap hid 'Preferences:' and 'Search:' commands behind the macro ones; the list is a virtualised `ListBox`, 17 of 176 rows realised in the real app; ranked on the UI thread up to `PaletteSource.SyncCommandLimit` = 1,000 commands, on a worker beyond),
+`:` go to line[:column], `@` document symbols, `#` workspace symbols, `session:` saved sessions (background mode, docs/SESSIONS.md: the other saved
+sessions, most recently used first, fuzzy over the name and the folder's name, read off the UI thread; Enter opens one through File > Sessions >
+Open Session with its name; a `--foreground` window says sessions need background mode), `?` help. The **Welcome page** lists the same saved
+sessions under *Sessions* (eight, then *More sessions...*, the Open Session picker; `SessionCatalog`). Cheap modes answer synchronously (first paint needs no dispatcher turn); stale async results are dropped. Also drives `ShowQuickPick`/`ShowInputBox`.
 Theme picker (`workbench.action.selectTheme`) lists the themes grouped Dark / Light / High contrast, previews live while arrowing (throttled, nothing persisted) and reverts on Esc.
 
 **Saving and file operations with language servers** (`FileParticipants`, docs/LSP.md). Every save of the shell (Save, Save As, Save All, the Save
@@ -317,11 +350,11 @@ Other modules (Vim mode, remote indicator) register their own through `IStatusBa
 ### Commands registered by the shell
 
 `workbench.action.showCommands`, `quickOpen`, `gotoLine`, `gotoSymbol`, `showAllSymbols`, `files.openFolder`, `files.openFile`, `files.newUntitledFile`, `files.save`, `files.saveAs`, `files.saveAll`,
-`closeActiveEditor`, `closeAllEditors`, `closeOtherEditors`, `reopenClosedEditor`, `nextEditor`, `previousEditor`, `pinEditor`, `splitEditorRight`, `splitEditorDown`, `moveEditorToNextGroup`, `closeFolder`, `quit`, `reloadWindow`
+`closeActiveEditor`, `closeAllEditors`, `closeOtherEditors`, `reopenClosedEditor`, `nextEditor`, `previousEditor`, `pinEditor`, `splitEditorRight`, `splitEditorDown`, `moveEditorToNextGroup`, `moveEditorToNewWindow` (float), `restoreEditorsToMainWindow` (dock floating documents), `closeFolder`, `quit`, `reloadWindow`
 (refreshes menus only), `toggleFullScreen`, `toggleZenMode`, `selectTheme`, `workbench.view.explorer`, `workbench.action.output.toggleOutput`, `workbench.actions.view.problems`,
 `workbench.action.findResults.toggle`, the toggle of every tool window whose module did not register its `ToggleCommandId` (debug windows: `workbench.debug.action.toggle*`), `cscode.references.show`,
 `cscode.shell.{resetLayout,openRecent,about,showWelcome,showKeyboardReference,toggleNotifications,changeLanguageMode,showErrorList,toggleToolbar}`
-(`toggleToolbar` takes a toolbar group id: `standard`, `debug`, `colorTheme`; View > Toolbars). `gotoLine` also takes an optional `"line[:column]"` argument.
+(`toggleToolbar` takes a toolbar group id: `standard`, `debug`; View > Toolbars). `gotoLine` also takes an optional `"line[:column]"` argument.
 `openSettings` / `openSettingsJson` are only fallbacks (they open settings.json) for a composition without the Settings panel.
 Clipboard and menus (`ShellContextMenus`, `ClipboardRouter`): `editor.action.clipboardCutAction` / `clipboardCopyAction` / `clipboardPasteAction`
 (focus routing, see *Command ownership*), and VS Code's file commands, which take a URI (else the active file): `copyFilePath`, `copyRelativeFilePath`,
@@ -350,8 +383,10 @@ Every other id has exactly one registration; the test fails when a new duplicate
   an empty paste, never a frozen window. CsCode remembers the shape of its last copy (whole lines, block, one piece per caret, the source line's
   indentation) and hands it back only while the clipboard still holds exactly that text: text another application put there reads as plain
   text. Copies always go to the LOCAL clipboard, also for documents of a remote workspace (the service is process-local; nothing goes through
-  `IFileSystem`). HTML (copy with formatting) is offered as `text/html` next to the text on Linux when a caller provides it (nothing provides it
-  yet, see *Known gaps*).
+  `IFileSystem`). HTML (copy with formatting) is offered as `text/html` next to the text on Linux when a caller provides it:
+  the editor's **Copy with Formatting** (Edit menu, the editor's right-click menu, `editor.action.clipboardCopyWithSyntaxHighlightingAction`,
+  enabled through `cscode.edit.editorCanCopy` while an editor that can copy has focus) writes the selection with the theme's syntax colours
+  (docs/EDITOR.md §7a); the ring keeps only the text.
 * **Clipboard ring** (Visual Studio's Ctrl+Shift+V, Edit > Cycle Clipboard Ring): the last 20 copies, newest first, each at most 1 MB of
   managed memory (512 K characters; a bigger copy still goes to the system clipboard, it is only left out of the ring), a repeated copy moves
   to the top; in memory only, never persisted (the service has no state storage).
@@ -387,10 +422,10 @@ Every other id has exactly one registration; the test fails when a new duplicate
   hard-codes none), at the pointer or, from the keyboard (the Menu key through Avalonia's context request; Shift+F10, which Avalonia does not map, through the editor; or `editor.action.showContextMenu`),
   below the caret. A window-level tunnelling handler owns the request unless a control on the way (the find box) has a menu of its own.
 * **Document tabs** (replacing Dock's): Save *file* (when dirty), Close, Close All But This, Close All, Close To The Right, Pin / Unpin Tab,
-  Copy Full Path, Open Containing Folder, Reveal in Explorer (files in an open folder), New Horizontal / Vertical Document Group, then
-  `editor/title/context` items.
-* **Tool windows** (tool tabs, auto-hide strip tabs, title bars; replacing Dock's): Dock (when auto-hidden), Auto Hide, Close, then
-  `view/title/context`. Float is left out: the shell has no floating host windows yet (*Known gaps*).
+  Copy Full Path, Open Containing Folder, Reveal in Explorer (files in an open folder), Float (or Dock as Tabbed Document when it floats), New
+  Horizontal / Vertical Document Group, then `editor/title/context` items.
+* **Tool windows** (tool tabs, auto-hide strip tabs, title bars; replacing Dock's): Float, Dock (when floating or auto-hidden), Auto Hide, Close,
+  then `view/title/context`. See *Floating windows*.
 * **Explorer**: New File / New Folder (folders), Reveal in File Manager, Open in Terminal (only when a terminal registers
   `workbench.action.terminal.newHere`), Find in Folder (folders), Cut / Copy / Paste (files, like Solution Explorer), Copy Path / Copy Relative
   Path, Rename (F2), Duplicate, Delete (Del), then `explorer/context`. Keys: Ctrl+C/X/V, Ctrl+Insert, Shift+Insert, Shift+Delete on files.
@@ -411,7 +446,7 @@ Every other id has exactly one registration; the test fails when a new duplicate
 ### Settings
 
 `cscode.shell.liveEditorViews` (8), `cscode.shell.confirmMultiFileEdits` (true), `cscode.diagnostics.uiStallLogMs` (0; Debug builds default to 100),
-`cscode.toolbars.standard`, `cscode.toolbars.debug`, `cscode.toolbars.colorTheme` (true: the toolbar groups View > Toolbars shows; the setting is the
+`cscode.toolbars.standard`, `cscode.toolbars.debug` (true: the toolbar groups View > Toolbars shows; the setting is the
 state, so settings.json and other windows agree), plus the ones it reads:
 `workbench.colorTheme`, `workbench.startupEditor`, `files.exclude`, `editor.fontFamily`, `editor.tabSize`, `editor.insertSpaces`. They are declared through `IConfigurationService.RegisterProperties`.
 
@@ -438,9 +473,12 @@ A heartbeat posts a tick to the real dispatcher every 10 ms and records how late
 | theme switching | 10.6 ms | 12.8 ms | 5.1 ms |
 | **all at once** | **18.7 ms (budget 16 not met)** | 19.8-28.8 ms | 9-16 ms |
 
-**Theme previews** (`ThemeSwitchingCostTests`, the real composition with an editor and both dropdowns open; preview requests at key-repeat rate,
-about 30 a second, through all 24 themes): p99 14.7 ms, max 18.1 ms, longest UI callback 8.2 ms (the Fluent palette step; brushes < 0.1 ms), 11
-theme applies in 2.5 s (throttled); 100 switches through the closed dropdown leave the managed heap flat (+52 KB) and rebuild neither list. What
+**Theme previews** (`ThemeSwitchingCostTests`, the real composition with an editor and the Settings page's dropdown open; preview requests at key-repeat rate,
+about 30 a second, through all 24 themes): p99 14.7 ms, max 18.1 ms, longest UI callback 8.2 ms (the Fluent palette step; brushes < 0.1 ms; wave 3, T4: the
+failures under load were real, every preview ran that step because the burst window was shorter than the preview interval; with the 400 ms window
+the step runs once when the arrowing stops: first attempt p99 15.0 ms, max 15.4 ms, longest UI callback 0.7 ms at load average 10-12, where all five
+attempts had failed before with p99 19-87 ms and palette steps of 9-30 ms), 11
+theme applies in 2.5 s (throttled); 100 switches through the closed dropdown leave the managed heap flat (+52 KB) and never rebuild its list. What
 these numbers do **not** include: frame rendering. The headless platform renders only when a test forces a frame, and then on the test's own thread
 with software Skia (a full-window repaint after a theme change takes ~100 ms that way under load); on a desktop the rasterisation runs on Avalonia's
 render thread, but recording the re-resolved controls' draw operations is UI-thread work that no test here measures (there is no display for
@@ -455,7 +493,7 @@ Other checks: service calls from the UI thread return without waiting for the wo
 Bounded: Output 2 MB per channel, 20k lines in the view; notification history 100; closed-tab history 20; palette index capped at 300k files and an `IMemoryTrimmable`; icon geometry cache trimmable; Error List at most one immutable array.
 Lifetimes: every view and model owns a `DisposableStore`; tool-window views and their view-models are disposed when hidden; tab views by the LRU policy and on close. Tests: 100x show/hide of every tool window balances creation and disposal and retains nothing;
 500 palette opens retain no entries; 500 dialogs leave the heap flat; 200 theme switches leave the resource table and brush set unchanged; 100 switches
-through the theme dropdown on the real composition leave the managed heap flat (< 512 KB, measured +52 KB) and keep both dropdowns' lists; a closed
+through the theme dropdown on the real composition leave the managed heap flat (< 512 KB, measured +52 KB) and keep the dropdown's list; a closed
 Settings page releases its dropdown; 300 tabs opened/closed in the live Dock host release every sampled tab, document and view
 (managed heap flat between tab 100 and 300); a focused real editor's view is released when its tab closes, and an evicted view is released while its tab stays open; output flood and status updates use a bounded number of dispatcher posts.
 
@@ -490,21 +528,19 @@ File menu with icon, shortcut and separator columns, palette with fuzzy list and
 ## Known gaps and issues (honest list)
 
 Not done: single-instance forwarding (SHOULD); native menu bar (`NativeMenu` on macOS / DBus global menu); Explorer drag-and-drop **UI** (the model's `MoveAsync` is tested; the view has no drag source/drop target) and dropping files from the OS onto the window;
-dirty marker is Dock's `*` rather than a dot that turns into a close glyph on hover; pinned tabs have model/commands but no pin glyph; layout restore reopens tabs but does not recreate split document groups or floating windows;
+dirty marker is Dock's `*` rather than a dot that turns into a close glyph on hover; pinned tabs have model/commands but no pin glyph; layout restore reopens tabs but does not recreate split document groups (floating windows it does recreate);
 auto-hide/peek animations, taskbar jump list, `--diff`, toolbar overflow (all SHOULD; high contrast comes from VS Code's two high-contrast themes, completed from the shell's high-contrast bases); the Windows/macOS title-bar path (`ExtendClientAreaToDecorationsHint`) is written but untested here (Linux only).
 `reloadWindow` only refreshes menus. Find in Files is the Search panel's tool window (`CsCode.Panels.Search`); Find Results hosts the references delivered by `cscode.references.show`. Explorer filter searches loaded nodes only.
 
-Clipboard and menus, not done: Float on tool windows and tabs (no floating host windows); Copy with formatting (HTML with the theme's syntax
-colours; the service writes `text/html` when given one, nothing builds it yet); the terminal (does not exist); a native Wayland primary selection
+Clipboard and menus, not done: a native Wayland primary selection
 (Avalonia 12 runs through XWayland here); Peek Definition and QuickWatch's tree (Peek is not implemented by the editor, so the item stays hidden;
 QuickWatch shows the value in a notification with Add Watch). Not verified headless: the Wayland <-> XWayland round trip with native KDE
 applications (Kate, Konsole, Firefox) and screenshots on the real desktop are the integrator's check. The menu-open budget is met in quiet runs
-only (above). Found while testing: the main window's `OnGotFocus` (focus areas for `listFocus`, `panelFocus`...) never sees the editor take focus,
-because AvaloniaEdit marks GotFocus handled; the editor sets `editorTextFocus` itself, but `ContextKeyTracker.Focus` can keep a stale area.
+only (above). (The stale focus area found while testing, the main window not seeing the editor take focus, is fixed: *Keyboard* above.)
 
 Known issues: (1) **Combined hostile storm p99 is ~19 ms, not < 16 ms** (each source alone meets it; max is within 50 ms). (2) Dock.Avalonia 12.1.0.13 keeps every presented dockable in its control-recycling
-cache (`ControlRecycling`, keyed by the dockable, never evicted); the shell removes a closed tab's entry itself (see *View lifecycle and Dock*), which depends on the cache being reachable through
-`ControlRecyclingDataTemplate.ControlRecycling` on an ancestor of the host. The 300-tab live-host test asserts the steady state (heap flat, closed tabs unreachable).
+cache (`ControlRecycling`, keyed by the dockable, never evicted); the shell's tabs stay out of it by being their own content templates (see *View lifecycle and Dock*), which depends on
+Dock's `ControlRecyclingDataTemplate` asking an `IRecyclingDataTemplate` dockable first (true of 12.1.0.13; `RealAppDockCacheTests` fails if an upgrade changes it). The 300-tab live-host test asserts the steady state (heap flat, closed tabs unreachable).
 (3) AvaloniaEdit's static `RoutedCommand` keeps the last element that took focus: after the last document closes, that one view stays reachable until focus moves anywhere (bounded).
 (4) A theme switch's Fluent palette step is one dispatcher callback of 4-8 ms on a full window (over the 4 ms slice rule): assigning the palette is a
 single Avalonia resource change that every control re-resolves, and it cannot be split; bursts run it once. (5) The contrast repair changes a theme's
@@ -522,8 +558,11 @@ cannot switch the repair off yet.
   windows open as document tabs.
 * `tests/CsCode.App.Tests/RealApp/*` run the REAL composition (`AppServices.Build` with every module, `CSCODE_HOME` in a temp directory, all built-in language servers disabled;
   `Infrastructure/RealAppHost.cs`): view activation (also after a tool window was closed with its X, clicked), document windows, default layout, debug auto-show, command
-  ownership (which module registered each duplicated id, in order), selection, Ln/Col, keys, wording, the Color Theme dropdowns (`ThemeDropdownTests`), theme
-  icons (`ThemeIconTests`), switching cost (`ThemeSwitchingCostTests`) and screenshots (`ThemeScreenshotTests`).
+  ownership (which module registered each duplicated id, in order), selection, Ln/Col, keys, wording, the Settings page's Color Theme dropdown and its absence from the main window (`ThemeDropdownTests`), theme
+  icons (`ThemeIconTests`), switching cost (`ThemeSwitchingCostTests`) and screenshots (`ThemeScreenshotTests`); wave 3: Split Editor (`SplitEditorTests`, and
+  Vim's `:vsp` / Ctrl-W), focus context keys (`FocusContextKeyTests`), the palette's every-command list (`PaletteRealAppTests`), floating windows
+  (`FloatingWindowTests`), Copy with Formatting (`RealAppCopyWithFormattingTests`), saved sessions (`SessionPickerTests`) and the find box's focus
+  (`FindFocusTests`).
 * **Themes**: `ShellController.PrepareThemes` gives the editor's `ColorThemeService` the shell's completion (`AppStartup` calls it on the start-up pool
   thread, so parsing the 21 embedded themes and completing the current one never runs on the UI thread before the first frame; the other themes are
   completed on a pool thread right after). The Settings page gets `IColorThemeService` through `SearchServices.Themes` (optional; without it the

@@ -21,19 +21,29 @@ public sealed record PaletteContext(
     IWorkspaceService? Workspace = null,
     IStateStorage? State = null,
     ILanguageFeatureRegistry? Languages = null,
-    IMemoryMonitor? Memory = null);
+    IMemoryMonitor? Memory = null,
+    SessionCatalog? Sessions = null);
 
 /// <summary>
 /// The command palette / Quick Launch as a quick-pick source. The first character selects the mode: none = go to file,
-/// <c>&gt;</c> commands, <c>:</c> go to line, <c>@</c> symbols in the active file, <c>#</c> workspace symbols, <c>?</c> help.
+/// <c>&gt;</c> commands, <c>:</c> go to line, <c>@</c> symbols in the active file, <c>#</c> workspace symbols, <c>session:</c> saved sessions
+/// (background mode, docs/SESSIONS.md), <c>?</c> help.
 /// Cheap modes answer synchronously (first paint is instant); file search and symbol queries rank on a worker and only the top
-/// <see cref="MaxResults"/> immutable entries reach the UI thread.
+/// <see cref="MaxResults"/> immutable entries reach the UI thread. Command mode lists <b>every</b> command, as VS Code does (a few hundred rows; the
+/// quick-input list is virtualised): synchronously up to <see cref="SyncCommandLimit"/> commands, on a worker beyond that.
 /// </summary>
 public sealed class PaletteSource : IQuickPickSource
 {
     public const int MaxResults = 100;
+    /// <summary>
+    /// Command mode answers on the UI thread while the command table has at most this many commands (the threading rule: no sorting or filtering of
+    /// more than 1,000 items there); a bigger table is ranked on a worker. Either way every matching command is listed.
+    /// </summary>
+    public const int SyncCommandLimit = 1_000;
     public const string RecentFilesKey = "shell.recentFiles";
     public const string RecentCommandsKey = "shell.recentCommands";
+    /// <summary>Quick Launch's saved-session mode: <c>session:</c> then a filter.</summary>
+    public const string SessionPrefix = "session:";
     private const int MaxRecent = 30;
 
     private readonly PaletteContext _ctx;
@@ -45,16 +55,17 @@ public sealed class PaletteSource : IQuickPickSource
         _files = sharedIndex ?? new FileIndex(context.Workspace);
     }
 
-    public string? Placeholder => "Type '?' for help, '>' for commands, ':' for line, '@' for symbols, '#' for workspace symbols";
+    public string? Placeholder => "Type '?' for help, '>' for commands, ':' for line, '@' for symbols, '#' for workspace symbols, 'session:' for sessions";
     public FileIndex Index => _files;
 
     public IReadOnlyList<QuickPickEntry>? TryQuerySync(string text)
     {
+        if (IsSessionQuery(text)) return null; // the saved sessions are read from disk, off the UI thread
         if (text.Length > 0)
         {
             switch (text[0])
             {
-                case '>': return Commands(text[1..].TrimStart());
+                case '>': return _ctx.Commands.All.Count <= SyncCommandLimit ? Commands(text[1..].TrimStart(), _ctx.Commands.All, CancellationToken.None) : null;
                 case ':': return GotoLine(text[1..]);
                 case '?': return Help();
                 case '@': case '#': return null; // symbol providers are asynchronous
@@ -66,8 +77,15 @@ public sealed class PaletteSource : IQuickPickSource
 
     public async Task<IReadOnlyList<QuickPickEntry>> QueryAsync(string text, CancellationToken ct)
     {
+        if (IsSessionQuery(text)) return await Sessions(text[SessionPrefix.Length..].Trim(), ct).ConfigureAwait(false);
         if (text.Length > 0 && text[0] == '@') return await DocumentSymbols(text[1..].TrimStart(), ct).ConfigureAwait(false);
         if (text.Length > 0 && text[0] == '#') return await WorkspaceSymbols(text[1..].TrimStart(), ct).ConfigureAwait(false);
+        if (text.Length > 0 && text[0] == '>')
+        {
+            // A command table too big for the UI thread: the metadata is taken here, ranked on a worker.
+            var all = _ctx.Commands.All;
+            return await Task.Run(() => Commands(text[1..].TrimStart(), all, ct), ct).ConfigureAwait(false);
+        }
         return await Files(text, ct).ConfigureAwait(false);
     }
 
@@ -137,12 +155,13 @@ public sealed class PaletteSource : IQuickPickSource
 
     // ------------------------------------------------------------------ commands
 
-    private IReadOnlyList<QuickPickEntry> Commands(string query)
+    private IReadOnlyList<QuickPickEntry> Commands(string query, IReadOnlyList<CommandMetadata> all, CancellationToken ct)
     {
         var recents = _ctx.State?.Get<List<string>>(RecentCommandsKey) ?? [];
-        var scored = new List<(CommandMetadata Meta, string Label, int Score)>();
-        foreach (var meta in _ctx.Commands.All)
+        var scored = new List<(CommandMetadata Meta, string Label, int Score)>(all.Count);
+        foreach (var meta in all)
         {
+            ct.ThrowIfCancellationRequested();
             if (string.IsNullOrEmpty(meta.Title)) continue;
             if (!_ctx.Keys.Evaluate(meta.Enablement)) continue;
             var label = string.IsNullOrEmpty(meta.Category) ? meta.Title : meta.Category + ": " + meta.Title;
@@ -153,7 +172,8 @@ public sealed class PaletteSource : IQuickPickSource
             scored.Add((meta, label, recentRank >= 0 ? 10_000 - recentRank : s));
         }
         scored.Sort(static (a, b) => b.Score != a.Score ? b.Score.CompareTo(a.Score) : string.Compare(a.Label, b.Label, StringComparison.OrdinalIgnoreCase));
-        return scored.Take(MaxResults).Select(x => new QuickPickEntry(x.Label)
+        // Every command, no cap (T13/T18: with 100, 'Search: Find in Files' and 'Preferences: ...' fell off the end and could not be scrolled to).
+        return scored.Select(x => new QuickPickEntry(x.Label)
         {
             KeybindingLabel = _ctx.Bindings?.GetLabel(x.Meta.Id),
             LabelMatches = query.Length == 0 ? [] : FuzzyMatcher.Positions(query, x.Label),
@@ -163,6 +183,35 @@ public sealed class PaletteSource : IQuickPickSource
                 Remember(RecentCommandsKey, x.Meta.Id);
                 await _ctx.Commands.ExecuteAsync(x.Meta.Id).ConfigureAwait(true);
             },
+        }).ToArray();
+    }
+
+    // ------------------------------------------------------------------ saved sessions
+
+    private static bool IsSessionQuery(string text) => text.StartsWith(SessionPrefix, StringComparison.OrdinalIgnoreCase);
+
+    private async Task<IReadOnlyList<QuickPickEntry>> Sessions(string query, CancellationToken ct)
+    {
+        if (_ctx.Sessions is not { } catalog || !catalog.CanOpen)
+            return [new QuickPickEntry("Sessions are opened by CsCode's background mode") { Description = "this window runs with --foreground" }];
+        var sessions = await catalog.ListAsync(ct).ConfigureAwait(false);
+        if (sessions.Count == 0) return [new QuickPickEntry("No other saved sessions") { Description = "File > Sessions > Save Session As... names this one" }];
+        var scored = new List<(SavedSession Session, int Score)>();
+        foreach (var s in sessions)
+        {
+            var score = query.Length == 0 ? 0 : FuzzyMatcher.Score(query, s.Name);
+            // A session is also found by its folder's name (not the whole path: every path would match a short query).
+            if (score < 0 && query.Length > 0 && s.Folder is { } folder) score = FuzzyMatcher.Score(query, Path.GetFileName(folder.TrimEnd('/', '\\'))) - 5;
+            if (score >= 0) scored.Add((s, score));
+        }
+        if (query.Length > 0) scored.Sort(static (a, b) => b.Score.CompareTo(a.Score)); // else most recently used first, as listed
+        return scored.Select(x => new QuickPickEntry(x.Session.Name)
+        {
+            Description = x.Session.Detail.Length > 0 ? x.Session.Detail : x.Session.IsUnnamed ? "unnamed" : null,
+            IconKey = "window",
+            LabelMatches = query.Length == 0 ? [] : FuzzyMatcher.Positions(query, x.Session.Name),
+            Tag = x.Session,
+            Accept = () => catalog.OpenAsync(x.Session.Name),
         }).ToArray();
     }
 
@@ -263,6 +312,7 @@ public sealed class PaletteSource : IQuickPickSource
         new QuickPickEntry(":") { Description = "Go to line / column in the active editor" },
         new QuickPickEntry("@") { Description = "Go to symbol in the active editor" },
         new QuickPickEntry("#") { Description = "Go to symbol in the workspace" },
+        new QuickPickEntry(SessionPrefix) { Description = "Open a saved session" },
     ];
 
     /// <summary>Bounded top-K by score (insertion into a tiny sorted array): no allocation per candidate, no full sort of 200k hits.</summary>
@@ -305,7 +355,8 @@ public sealed class FileIndex : IMemoryTrimmable, IDisposable
     public string Name => "shell.fileIndex";
     private long _bytes;
     public long EstimatedBytes => Interlocked.Read(ref _bytes);
-    public int BuildCount { get; private set; }
+    private int _buildCount;
+    public int BuildCount => Volatile.Read(ref _buildCount);
 
     public long Trim(MemoryTrimLevel level)
     {
@@ -320,14 +371,22 @@ public sealed class FileIndex : IMemoryTrimmable, IDisposable
         Interlocked.Exchange(ref _bytes, 0);
     }
 
+    /// <summary>
+    /// The index, built once and shared. A build that failed (an unreadable folder, a file system error) is not kept: the caller sees its exception
+    /// once and the next query builds again (T12; it used to be cached until the folders changed, so go to file stayed broken).
+    /// </summary>
     public Task<Snapshot> GetAsync(CancellationToken ct)
     {
-        lock (_gate) return _build ??= Task.Run(() => BuildAsync(), CancellationToken.None);
+        lock (_gate)
+        {
+            if (_build is { IsFaulted: true } or { IsCanceled: true }) _build = null;
+            return _build ??= Task.Run(() => BuildAsync(), CancellationToken.None);
+        }
     }
 
     private async Task<Snapshot> BuildAsync()
     {
-        BuildCount++;
+        Interlocked.Increment(ref _buildCount);
         var roots = _workspace?.Folders.ToArray() ?? [];
         var paths = new List<string>();
         var rootIndex = new List<byte>();

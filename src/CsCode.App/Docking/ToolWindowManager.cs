@@ -84,7 +84,13 @@ public sealed class ToolWindowManager : IDisposable
     public void Show(string id)
     {
         if (!_tools.TryGetValue(id, out var t)) return;
-        if (!IsVisible(id)) Restore(t);
+        if (!IsVisible(id))
+        {
+            Restore(t);
+            // A tool hidden while it floated floats again where it was (Visual Studio).
+            if (_factory.TakeFloatingMemory(id) is { } bounds) _factory.Float(t, bounds);
+        }
+        if (_factory.WindowOf(t) is { } floating) floating.SetActive();
         if (IsPinned(t))
             _factory.PreviewPinnedDockable(t); // slides out of its strip and stays auto-hidden, as in Visual Studio
         else
@@ -101,6 +107,36 @@ public sealed class ToolWindowManager : IDisposable
     {
         if (IsPinned(t)) _factory.PinDockable(t); // toggles
     }
+
+    /// <summary>Visual Studio's Float: the tool moves into a floating window of its own (shown first when hidden).</summary>
+    public void Float(string id)
+    {
+        if (!_tools.TryGetValue(id, out var t)) return;
+        if (!IsVisible(id)) Show(id);
+        Unpin(t);
+        _factory.Float(t);
+        _factory.WindowOf(t)?.SetActive();
+        _visibilityChanged.Fire((id, true)); // the layout changed (persistence, menus)
+    }
+
+    /// <summary>Visual Studio's Dock: a floating or auto-hidden tool goes back into its well.</summary>
+    public void Dock(string id)
+    {
+        if (!_tools.TryGetValue(id, out var t)) return;
+        if (_factory.IsFloating(t)) _factory.DockBack(t, DockFor(t.Spec.DefaultLocation));
+        else Unpin(t);
+        _visibilityChanged.Fire((id, true));
+    }
+
+    /// <summary>Whether the tool is shown in a floating window.</summary>
+    public bool IsFloating(string id) => _tools.TryGetValue(id, out var t) && _factory.IsFloating(t);
+
+    /// <summary>The well a tool belongs in: where it is docked, else where it was floated from, else its default well.</summary>
+    public IDock HomeWell(ToolTab t) =>
+        t.Owner is IDock owner && IsWell(owner) ? owner
+        : _factory.HomeOf(t) is { } home && IsWell(home) ? home
+        : t.OriginalOwner is IDock original && IsWell(original) ? original
+        : DockFor(t.Spec.DefaultLocation);
 
     /// <summary>
     /// Puts a tool that is not visible back into the layout: a hidden one (Hide, or its X: <see cref="ShellDockFactory"/> hides tools on close)

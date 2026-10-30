@@ -35,7 +35,13 @@ public sealed partial class SessionWindowController
 
         Add(SessionCommandIds.SaveSessionAs, "Save Session As...", () => NameSessionAsync(rename: false));
         Add(SessionCommandIds.RenameSession, "Rename Session...", () => NameSessionAsync(rename: true));
-        Add(SessionCommandIds.OpenSession, "Open Session...", () => PickAndOpenAsync(switching: false));
+        // A session name as argument (the Welcome page's Sessions list, Quick Launch's session: mode) opens that session; none shows the picker.
+        _subs.Add(commands.Register(SessionCommandIds.OpenSession, async inv =>
+        {
+            if (inv.Arg<string>(0) is { Length: > 0 } name) await OpenNamedAsync(name).ConfigureAwait(true);
+            else await PickAndOpenAsync(switching: false).ConfigureAwait(true);
+            return null;
+        }, new CommandMetadata(SessionCommandIds.OpenSession, "Open Session...", "Session")));
         Add(SessionCommandIds.SwitchSession, "Switch Session...", () => PickAndOpenAsync(switching: true));
         Add(SessionCommandIds.DeleteSession, "Delete Session...", DeleteSessionAsync);
         Add(SessionCommandIds.CloseWindow, "Close Window (Keep Running)", () => { Hide(); return Task.CompletedTask; });
@@ -99,6 +105,18 @@ public sealed partial class SessionWindowController
         }
         var pick = await Windows.ShowQuickPickAsync(items, new QuickPickOptions(switching ? "Switch Session" : "Open Session", "Session name", MatchOnDetail: true)).ConfigureAwait(true);
         if (pick?.Tag is not SessionChoice choice) return;
+        await LaunchAsync(choice, switching).ConfigureAwait(true);
+    }
+
+    /// <summary>Opens the named saved session (its window is shown, started when it is not running); this window's own session is already here.</summary>
+    private async Task OpenNamedAsync(string name)
+    {
+        if (name == _host.SessionName || !SessionNames.IsValid(name)) return;
+        await LaunchAsync(new SessionChoice(name, false), switching: false).ConfigureAwait(true);
+    }
+
+    private async Task LaunchAsync(SessionChoice choice, bool switching)
+    {
         var errors = new StringWriter();
         var request = new LaunchRequest(LaunchKind.Open) { Session = choice.Name, NewWindow = choice.NewWindow };
         var outcome = await Task.Run(() => NewLauncher(errors).RunAsync(request)).ConfigureAwait(true);

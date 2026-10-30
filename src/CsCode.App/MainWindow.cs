@@ -8,6 +8,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CsCode.App.Commands;
 using CsCode.App.Docking;
 using CsCode.App.Input;
@@ -66,8 +67,7 @@ public sealed class MainWindow : Window, IWindowChrome
         var commands = _sp.GetRequiredService<ICommandService>();
         var keys = _sp.GetRequiredService<IContextKeyService>();
         _titleBar = new TitleBarView(this, _shell.Menus, commands, showCaptionButtons: useCustomChrome);
-        _toolbar = new ToolbarView(commands, keys, ui, _sp.GetService<IKeybindingService>(), _sp.GetService<IDebugService>(),
-            _sp.GetService<Core.Theming.IColorThemeService>(), _sp.GetService<IConfigurationService>());
+        _toolbar = new ToolbarView(commands, keys, ui, _sp.GetService<IKeybindingService>(), _sp.GetService<IDebugService>(), _sp.GetService<IConfigurationService>());
         _status = new StatusBarView(_sp.GetRequiredService<IStatusBarService>(), commands, keys, ui, _sp.GetService<IWindowService>(),
             new Ui.Menus.MenuServices(commands, keys, _sp.GetService<IKeybindingService>(), _sp.GetService<Core.Contributions.IContributionRegistry>()));
 
@@ -96,23 +96,19 @@ public sealed class MainWindow : Window, IWindowChrome
         AddResizeGrips(root, useCustomChrome);
         Content = root;
 
-        // An empty tool well (e.g. nothing docked left) takes no space, like Visual Studio.
-        Styles.Add(new Style(x => x.OfType<ToolDockControl>()) { Setters = { new Setter(IsVisibleProperty, new Avalonia.Data.Binding("!IsEmpty")) } });
-        Styles.Add(new Style(x => x.OfType<DocumentTabStripItem>()) { Setters = { new Setter(FontStyleProperty, new Avalonia.Data.Binding("PreviewFontStyle")) } });
-        // VS: the active document tab carries a coloured accent bar on its TOP edge.
-        Styles.Add(new Style(x => x.OfType<DocumentTabStripItem>().Class(":selected"))
-        {
-            Setters = { new Setter(BorderBrushProperty, ThemeBrushes.Get("tab.activeBorderTop")), new Setter(BorderThicknessProperty, new Thickness(0, 2, 0, 0)) },
-        });
-
-        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
-        AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
-        AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
-        AddHandler(GotFocusEvent, OnGotFocus, RoutingStrategies.Bubble | RoutingStrategies.Tunnel);
-        _disposables.Add(_shell.ContextMenus.Attach(this));
-        _disposables.Add(_shell.Clipboard.Attach(this));
+        AddDockStyles(this);
+        _disposables.Add(AttachShellInput(this));
         Closing += OnClosing;
         Opened += OnOpened;
+
+        // Floating windows (Float in the tab and tool-window menus): each gets the shell's keys, focus keys, menus and clipboard routing, follows
+        // this window's visibility (a background session hides it), and is emptied rather than closed by its own close button.
+        var factory = _shell.Factory;
+        factory.HostWindowCreated += OnHostWindowCreated;
+        factory.WindowClosingInterceptor = w => { _ = EmptyFloatingWindowAsync(w); return false; };
+        _disposables.Add(Disposable.Create(() => { factory.HostWindowCreated -= OnHostWindowCreated; factory.WindowClosingInterceptor = null; }));
+        _shell.Layout.CanPresentWindows = () => IsVisible;
+        _disposables.Add(this.GetObservable(IsVisibleProperty).Subscribe(new Avalonia.Reactive.AnonymousObserver<bool>(OnVisibilityChanged)));
 
         var well = _shell.Well;
         _disposables.Add(well.ActiveChanged.Subscribe(_ => UpdateTitle()));
@@ -125,6 +121,112 @@ public sealed class MainWindow : Window, IWindowChrome
         if (bindings is not null) _disposables.Add(bindings.Changed.Subscribe(_ => ui.PostCoalesced("titlebar.shortcut", () => _titleBar.SetShortcut(bindings))));
     }
 
+    // ------------------------------------------------------------------ shell input and styles (main and floating windows)
+
+    /// <summary>
+    /// The window-level handlers every shell window needs: Vim and the keyboard pipeline (tunnelling KeyDown / TextInput / KeyUp), the focus
+    /// context keys, the right-click menus and the Edit menu's focus routing. Dispose to remove them.
+    /// </summary>
+    private IDisposable AttachShellInput(Window window)
+    {
+        window.AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
+        window.AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
+        window.AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
+        // Focus context keys (T7/T22): handled events too, because AvaloniaEdit marks its text area's GotFocus handled (the editor taking focus
+        // was never seen, and the focus area kept a stale value). This handler runs after the focused control's own (GotFocus bubbles), so it
+        // must agree with what a control sets for itself: the terminal sets terminalFocus, and Classify calls a focused terminal a terminal.
+        window.AddHandler(GotFocusEvent, OnGotFocus, RoutingStrategies.Bubble, handledEventsToo: true);
+        var menus = _shell.ContextMenus.Attach(window);
+        var clipboard = _shell.Clipboard.Attach(window);
+        return Disposable.Create(() =>
+        {
+            window.RemoveHandler(KeyDownEvent, OnPreviewKeyDown);
+            window.RemoveHandler(TextInputEvent, OnPreviewTextInput);
+            window.RemoveHandler(KeyUpEvent, OnPreviewKeyUp);
+            window.RemoveHandler(GotFocusEvent, OnGotFocus);
+            menus.Dispose();
+            clipboard.Dispose();
+        });
+    }
+
+    /// <summary>The shell's Dock styles (empty wells take no room, italic preview tabs, the active tab's accent bar), in every shell window.</summary>
+    private static void AddDockStyles(Window window)
+    {
+        // An empty tool well (e.g. nothing docked left) takes no space, like Visual Studio.
+        window.Styles.Add(new Style(x => x.OfType<ToolDockControl>()) { Setters = { new Setter(IsVisibleProperty, new Avalonia.Data.Binding("!IsEmpty")) } });
+        window.Styles.Add(new Style(x => x.OfType<DocumentTabStripItem>()) { Setters = { new Setter(FontStyleProperty, new Avalonia.Data.Binding("PreviewFontStyle")) } });
+        // VS: the active document tab carries a coloured accent bar on its TOP edge.
+        window.Styles.Add(new Style(x => x.OfType<DocumentTabStripItem>().Class(":selected"))
+        {
+            Setters = { new Setter(BorderBrushProperty, ThemeBrushes.Get("tab.activeBorderTop")), new Setter(BorderThicknessProperty, new Thickness(0, 2, 0, 0)) },
+        });
+    }
+
+    // ------------------------------------------------------------------ floating windows
+
+    private void OnHostWindowCreated(HostWindow window)
+    {
+        AddDockStyles(window);
+        window.Icon = Icon;
+        var input = AttachShellInput(window);
+        void OnOpened(object? sender, EventArgs e)
+        {
+            // Its DockControl (from the host's template) presents the shell's tabs as the main one does (ShellDockContent).
+            foreach (var dock in window.GetVisualDescendants().OfType<DockControl>()) ShellDockContent.Install(dock);
+            if (!IsVisible) window.Hide(); // the main window is hidden (background mode): so are its floating windows
+        }
+        void OnClosedHost(object? sender, EventArgs e)
+        {
+            window.Opened -= OnOpened;
+            window.Closed -= OnClosedHost;
+            input.Dispose();
+        }
+        window.Opened += OnOpened;
+        window.Closed += OnClosedHost;
+    }
+
+    private void OnVisibilityChanged(bool visible)
+    {
+        foreach (var w in _shell.Factory.FloatingWindows)
+        {
+            if (w.Host is not Window host) continue;
+            if (visible && !host.IsVisible) host.Show();
+            else if (!visible && host.IsVisible) host.Hide();
+        }
+        if (visible) _shell.Layout.ApplyPendingFloating();
+    }
+
+    /// <summary>
+    /// A floating window's own close button (or Alt+F4): its tool windows are hidden (they float there again when shown, as in Visual Studio) and
+    /// its documents closed through the well (Save prompts); the window closes once it is empty. A cancelled prompt leaves the rest open.
+    /// </summary>
+    private async Task EmptyFloatingWindowAsync(Dock.Model.Core.IDockWindow window)
+    {
+        try
+        {
+            var inWindow = new List<Dock.Model.Core.IDockable>();
+            void Collect(Dock.Model.Core.IDockable d)
+            {
+                if (d is ShellDocument or ToolTab) inWindow.Add(d);
+                if (d is Dock.Model.Core.IDock { VisibleDockables: { } kids }) foreach (var k in kids.ToArray()) Collect(k);
+            }
+            if (window.Layout is { } layout) Collect(layout);
+            foreach (var tool in inWindow.OfType<ToolTab>()) _shell.Tools.Hide(tool.Spec.Id);
+            foreach (var doc in inWindow.OfType<ShellDocument>())
+                if (!await _shell.Well.CloseAsync(doc).ConfigureAwait(true)) break;
+            _shell.Factory.CloseEmptyWindows();
+        }
+        catch (Exception ex) { _sp.GetService<Startup.CrashHandler>()?.Report(ex, fatal: false, source: "Floating window"); }
+    }
+
+    /// <summary>Before the main window closes (its layout was saved): floating tools and documents go back into it, and their windows close.</summary>
+    private void ReleaseFloatingWindows()
+    {
+        _shell.Factory.IsShuttingDown = true; // what is still open when this window closes (an owned window) closes with it
+        try { _shell.Layout.DockAllFloating(); }
+        catch (Exception ex) { _sp.GetService<Startup.CrashHandler>()?.Report(ex, fatal: false, source: "Floating window"); }
+    }
+
     // ------------------------------------------------------------------ dock host
 
     private DockControl BuildDock()
@@ -132,9 +234,7 @@ public sealed class MainWindow : Window, IWindowChrome
         var factory = _shell.Factory;
         var layout = factory.EnsureLayout();
         var dock = new DockControl { Layout = layout, Factory = factory, InitializeLayout = false, InitializeFactory = false };
-        dock.DataTemplates.Add(new FuncDataTemplate<EditorTab>((t, _) => t is null ? new Panel() : Mark(t.EnsureHost(), FocusArea.Editor)));
-        dock.DataTemplates.Add(new FuncDataTemplate<ShellDocument>((t, _) => t is null ? new Panel() : Mark(t.EnsureHost(), FocusArea.None)));
-        dock.DataTemplates.Add(new FuncDataTemplate<ToolTab>((t, _) => t is null ? new Panel() : Mark(t.EnsureHost(), t.Spec.Id is "explorer" ? FocusArea.Explorer : FocusArea.Panel)));
+        ShellDockContent.Install(dock);
         // Dock's control recycling caches the content of every dockable it presented, keyed by the dockable, and never evicts: a closed tab's
         // host stayed reachable for the whole session and, through the host's composition visual (no longer updated once the host left the
         // tree), so did the editor view and document it had held. A closed document tab is never presented again (reopening creates a new tab),
@@ -149,12 +249,6 @@ public sealed class MainWindow : Window, IWindowChrome
         // Tool windows exist in the model before they are shown: the manager adds them to their docks, then the layout is restored.
         _ = _shell.Tools;
         return dock;
-    }
-
-    private static Control Mark(Control view, FocusArea area)
-    {
-        if (area != FocusArea.None) ShellFocus.SetArea(view, area);
-        return view;
     }
 
     // ------------------------------------------------------------------ startup
@@ -198,11 +292,7 @@ public sealed class MainWindow : Window, IWindowChrome
         if (_switcherActive && e.Key is Key.LeftCtrl or Key.RightCtrl) HideSwitcher(commit: true);
     }
 
-    private void OnGotFocus(object? sender, RoutedEventArgs e)
-    {
-        var area = ShellFocus.Classify(e.Source as Visual);
-        if (area != _shell.ContextKeys.Focus) _shell.ContextKeys.SetFocus(area);
-    }
+    private void OnGotFocus(object? sender, RoutedEventArgs e) => _shell.ContextKeys.SetFocus(ShellFocus.Classify(e.Source as Visual));
 
     // ------------------------------------------------------------------ MRU switcher
 
@@ -303,6 +393,7 @@ public sealed class MainWindow : Window, IWindowChrome
             if (await _shell.Well.CloseAllAsync().ConfigureAwait(true))
             {
                 _closeConfirmed = true;
+                ReleaseFloatingWindows();
                 Close();
             }
             else _shell.Layout.Save(); // the user cancelled a Save prompt: keep the layout as it is
@@ -319,6 +410,7 @@ public sealed class MainWindow : Window, IWindowChrome
     public void CloseWithoutPrompt()
     {
         _closeConfirmed = true;
+        ReleaseFloatingWindows();
         Close();
     }
 
@@ -327,6 +419,7 @@ public sealed class MainWindow : Window, IWindowChrome
         _shell.SaveLayoutNow();
         if (!await _shell.Well.CloseAllAsync().ConfigureAwait(true)) return false;
         _closeConfirmed = true;
+        ReleaseFloatingWindows();
         Close();
         return true;
     }
@@ -376,6 +469,7 @@ public sealed class MainWindow : Window, IWindowChrome
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e);
+        if (_shell.Factory.FloatingWindows.Count > 0) ReleaseFloatingWindows(); // closed some other way (the lifetime ended)
         _disposables.Dispose();
         _status.Dispose();
         _toolbar.Dispose();

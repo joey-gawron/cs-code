@@ -118,6 +118,7 @@ internal static class EditorCommands
         // ---- clipboard (Visual Studio's behaviours: EditorClipboard, ClipboardOperations) and the context menu ----
         Cmd(EditorMenus.Cut, "Cut", (view, _) => view.Clipboard.CutAsync());
         Cmd(EditorMenus.Copy, "Copy", (view, _) => view.Clipboard.CopyAsync());
+        Cmd(EditorMenus.CopyWithFormatting, "Copy with Formatting", (view, _) => view.Clipboard.CopyAsync(withFormatting: true));
         Cmd(EditorMenus.Paste, "Paste", (view, _) => view.Clipboard.PasteAsync());
         Cmd(EditorMenus.CycleClipboardRing, "Cycle Clipboard Ring", (view, _) => view.Clipboard.CycleRingAsync());
         Cmd(EditorMenus.ShowContextMenu, "Show Editor Context Menu", (view, _) => { view.ShowContextMenu(); return Task.CompletedTask; });

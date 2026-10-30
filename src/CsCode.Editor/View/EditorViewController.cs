@@ -73,6 +73,11 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
         var panel = view.Editor.SearchPanel;
         panel.IsReplaceMode = replace;
         panel.Open();
+        // AvaloniaEdit's Open focuses the find box only when the panel's template is already applied, which it is not the first time the panel
+        // opens (no layout pass yet; always so on the headless platform): apply it now and put the keyboard in the box, as Ctrl+F does in
+        // Visual Studio and VS Code (T20: recording Enter in the find box depends on it).
+        panel.ApplyTemplate();
+        panel.Reactivate();
     }
 
     public void FormatDocument() => FormatHandler?.Invoke();
@@ -173,6 +178,7 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
     public bool CanPaste => !_disposed && view.Clipboard.CanPaste;
     public Task CutAsync() => _disposed ? Task.CompletedTask : view.Clipboard.CutAsync();
     public Task CopyAsync() => _disposed ? Task.CompletedTask : view.Clipboard.CopyAsync();
+    public Task CopyWithFormattingAsync() => _disposed ? Task.CompletedTask : view.Clipboard.CopyAsync(withFormatting: true);
     public Task PasteAsync() => _disposed ? Task.CompletedTask : view.Clipboard.PasteAsync();
     public Avalonia.Rect GetCaretBounds() => _disposed ? default : view.CaretBounds();
     public void PrepareContextMenu()
