@@ -134,11 +134,25 @@ crash loop. Revisit if user-supplied grammars are ever loaded (unvetted native c
   grammar build in `{UserDataDir}/tree-sitter/quarantine.json`. **Two crashes** (one may be the user killing a busy process) or **one hang**
   quarantine the build: it is never loaded again, its languages fall back to TextMate, the user is told why. Entries are per build (bundle
   digest, or path/size/time): a new grammar build starts clean. The command *Clear Quarantined Tree-sitter Grammars*
-  (`editor.treeSitter.clearQuarantine`) forgives everything. A clean exit deletes the recorder file.
+  (`editor.treeSitter.clearQuarantine`) forgives everything, also before the process's first tree-sitter document (it clears the file
+  itself then). A clean exit deletes the recorder file.
+* **Several processes** (background mode) share the folder. A recorder file belongs to a live process for as long as its owner holds a
+  shared `flock` on it (the kernel drops it when the process ends, crash or not); another process collects a file only when it gets the
+  exclusive lock (comparing the pid's start time does not work: .NET computes it from a per-process boot time, so a live process looked
+  dead to another one). The quarantine file carries a clear generation: a process that finds a newer one forgives what it held from before
+  the clear instead of merging it back, and `Reason` re-reads the file when it changed, so a clear in one process holds in all of them.
+  The file work happens on the lane outside the lock the UI thread takes to schedule documents.
 * **Guards.** Parse give-up: a document that parses for 5 s of lane time without a tree goes to TextMate (unchanged from the prototype). Query
   guard (new): every query runs with `ts_query_cursor_exec_with_options` and a progress callback that stops it after `MaxQueryTime` (1 s); a
   document whose highlight passes run into it three times in a row goes to TextMate. Match limit 2048 per cursor. Injection depth 4, 400
-  injection sites per highlight call.
+  injection sites per highlight call. **Injection parses** run under the same 1 s limit of the highlight they belong to (and stop on an
+  edit's cancel), never under the 10 s hang watchdog alone: a block that runs out of time stays in the host's colours, the pass counts as
+  partial, and a region of that language at least as big is not tried again in that document; regions over 1 M characters are not parsed.
+* **Injection languages from the document.** A fence's info string, an rst `code-block` argument or a `<script type>` value is rewritten by
+  the query's `#gsub!`/`#trim!` (Lua patterns with their captures; so Nix's `/* bash */ ''…''` and HTML's `type="text/javascript"` inject
+  bash and JavaScript), then used only as the name of an INSTALLED grammar: `[a-z0-9_]{1,64}` and listed under a search root (or, for
+  development, in the Nix store). Anything else is refused before any path is built or any library is loaded, and nothing is cached for it,
+  so a document can neither name a library to `dlopen` nor grow the registry's caches.
 * **Gate.** §3: digests and ABI before anything is loaded.
 
 ## 5. Structure
