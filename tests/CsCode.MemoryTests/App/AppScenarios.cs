@@ -251,7 +251,11 @@ public sealed class LanguageServerScenario(MemoryAppHost host, string serverId, 
     {
         var manager = Host.Get<ILanguageServerManager>();
         await OpenAsync(file);
-        await Require(() => manager.Servers.Any(s => s.Id == serverId && s.State == LanguageServerState.Running), serverId + " running", 60_000);
+        // The first open starts it; after an explicit stop the manager waits for an explicit start (as VS Code's "restart server").
+        if (iteration > 0) await manager.StartAsync(serverId, ct);
+        if (!await MemoryAppHost.WaitFor(() => manager.Servers.Any(s => s.Id == serverId && s.State == LanguageServerState.Running), 60_000))
+            throw new InvalidOperationException($"{serverId} did not start: servers [{string.Join(", ", manager.Servers.Select(s => $"{s.Id}={s.State} {s.LastError}"))}], " +
+                $"definitions [{string.Join(", ", manager.Definitions.Select(d => d.Id))}]");
         await CloseAllAsync();
         await manager.StopAsync(serverId, ct);
         await Require(() => !manager.Servers.Any(s => s.Id == serverId && s.State is LanguageServerState.Running or LanguageServerState.Starting or LanguageServerState.Stopping),
@@ -294,13 +298,15 @@ public sealed class DebugScenario(MemoryAppHost host) : AppScenario(host, "debug
 
     public static string? SkipReason() => JsDebugToolchain.FindNode() is null ? "node is not on PATH" : JsDebugToolchain.FindJsDebug() is null ? "js-debug not found (CSCODE_JSDEBUG)" : null;
 
-    /// <summary>Seeds the workspace (main.js + launch.json) and returns the settings pointing at js-debug.</summary>
-    public static Dictionary<string, object?> Seed(TempDirectory files)
+    /// <summary>Seeds the workspace folder: main.js and a launch.json.</summary>
+    public static void Seed(TempDirectory files)
     {
         files.WriteFile("main.js", Program);
         files.WriteFile(".vscode/launch.json", LaunchJson);
-        return new() { [CsCode.Dap.Adapters.JsDebugAdapterFactory.SettingPath] = JsDebugToolchain.FindJsDebug() };
     }
+
+    /// <summary>The settings pointing at js-debug (never the download offer).</summary>
+    public static Dictionary<string, object?> Settings() => new() { [CsCode.Dap.Adapters.JsDebugAdapterFactory.SettingPath] = JsDebugToolchain.FindJsDebug() };
 
     public override async Task InitializeAsync(CancellationToken ct)
     {

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The profiling host (docs/MEMORY.md): runs the REAL app headless in a process of its own for the memory budget table, the GC/runtime matrix
+       (tools/profile/gc-matrix.sh), the long soak (tools/profile/soak.sh) and the BenchmarkDotNet suite of Core's hot paths. Measure with a
+       Release build (the scripts publish one under .scratch/). The real-app host and scenarios are the memory tests' own, linked as source. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>cscode-profile</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <!-- BenchmarkDotNet needs public, non-sealed benchmark classes with instance methods; this is a console tool, not library code. -->
+    <NoWarn>$(NoWarn);CA1822;CA1707;CA2007;CA1001;CA1515;CA1852</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../../../src/CsCode.Profiling/CsCode.Profiling.csproj" />
+    <ProjectReference Include="../../../src/CsCode.App/CsCode.App.csproj" />
+    <ProjectReference Include="../../../tests/CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless" />
+    <PackageReference Include="Avalonia.Skia" />
+    <PackageReference Include="Avalonia.Fonts.Inter" />
+    <PackageReference Include="BenchmarkDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../tests/CsCode.MemoryTests/App/MemoryAppHost.cs" Link="App/MemoryAppHost.cs" />
+    <Compile Include="../../../tests/CsCode.MemoryTests/App/AppScenarios.cs" Link="App/AppScenarios.cs" />
+  </ItemGroup>
+
+</Project>
