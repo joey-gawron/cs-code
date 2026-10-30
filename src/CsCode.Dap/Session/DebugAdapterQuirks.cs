@@ -94,4 +94,19 @@ public class DebugAdapterQuirks
     /// sends it none, rather than show every breakpoint as failed while the program runs.
     /// </summary>
     public virtual bool RefusesBreakpointsWithoutDebugging => false;
+
+    /// <summary>
+    /// The adapter ignores a <c>variables</c> request's <c>start</c>, <c>count</c> and <c>filter</c> and answers with every child from the first
+    /// (CodeLLDB: its handler reads only the reference, and it never announces <c>indexedVariables</c>). The session then asks once for all the
+    /// children (at most <see cref="DebugSessionOptions.MaxVariablesPerRequest"/>) and cuts the pages itself: otherwise every page would be the
+    /// first one again, and a container's children past the first page could never be shown.
+    /// </summary>
+    public virtual bool IgnoresVariablePaging => false;
+
+    /// <summary>
+    /// Whether a stop that arrives while the client's own <c>pause</c> request is outstanding is that pause, although the adapter reports it
+    /// otherwise (CodeLLDB on Linux: LLDB halts the process with SIGSTOP and the adapter reports reason <c>exception</c>, "signal SIGSTOP"). The
+    /// session then reports it as reason <c>pause</c>, so Break All is not shown as an exception.
+    /// </summary>
+    public virtual bool IsPauseStop(string reason, string? description) => false;
 }

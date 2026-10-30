@@ -206,6 +206,167 @@ public class CodeLldbQuirksTests
         Assert.Equal(("/cmd bt", "repl"), (evaluate.GetProperty("expression").GetString(), evaluate.GetProperty("context").GetString()));
     }
 
+    /// <summary>
+    /// What reaches CodeLLDB for a completion, and where its answer goes. Its answers, as observed: "`fram" → frame (start 0, length 4);
+    /// "/cmd frame variable p." → p.x and p.y (start 15, length 2): the start counts inside the command with its prefix stripped.
+    /// </summary>
+    [Theory]
+    [InlineData("p.", 2, "/cmd frame variable p.", 2, 0)]
+    [InlineData("x + p.", 6, "/cmd frame variable x + p.", 2, 4)]
+    [InlineData("`fram", 5, "`fram", 4, 1)]
+    [InlineData("/cmd fram", 9, "/cmd fram", 4, 5)]
+    [InlineData("-exec fram", 10, "/cmd fram", 4, 6)]
+    [InlineData("  -exec   fram", 14, "/cmd fram", 4, 10)]
+    [InlineData("wrapper.po + 1", 10, "/cmd frame variable wrapper.po", 10, 0)] // only what is before the caret
+    public void Completions_go_to_codelldb_as_lldb_commands_and_come_back_at_the_caret(string text, int column, string sent, int overlap, int start)
+    {
+        var mapping = Quirks.MapCompletions(text, column)!;
+        Assert.Equal((sent, sent.Length), (mapping.Text, mapping.Column));
+        var answer = mapping.Map(new DebugCompletionItem("completed", "completed", null, 0, overlap))!;
+        Assert.Equal((start, overlap), (answer.Start, answer.Length));
+    }
+
+    [Fact]
+    public async Task A_completion_reaches_codelldb_as_frame_variable_and_replaces_what_was_typed()
+    {
+        await using var h = Harness((a, _) => a.On("completions", r => new DapCompletionsResponse
+        {
+            // CodeLLDB v1.12.3's answer to "/cmd frame variable p." (start: 0-based inside "frame variable p.")
+            Targets = r.Args<DapCompletionsArguments>().Text == "/cmd frame variable p."
+                ? [new DapCompletionItem { Label = "p.x", Text = "p.x", Start = 15, Length = 2 }, new DapCompletionItem { Label = "p.y", Text = "p.y", Start = 15, Length = 2 }]
+                : [],
+        }));
+        var session = (DebugSession)await h.StartAsync(Config(h));
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => session.State == DebugSessionState.Stopped);
+        var frames = await session.GetStackTraceAsync(1, 0, 20, Ct);
+        var items = await session.CompletionsAsync(frames[0].Id, "p.", 2, Ct);
+        var sent = h.AdapterFor(0).RequestsOf("completions")[^1].Args<DapCompletionsArguments>();
+        Assert.Equal(("/cmd frame variable p.", 23), (sent.Text, sent.Column)); // the caret after the text, 1-based
+        Assert.Equal([("p.x", 0, 2), ("p.y", 0, 2)], items.Select(i => (i.Text!, i.Start!.Value, i.Length!.Value)));
+    }
+
+    // ------------------------------------------------------------------ paging, pause (observed with the real CodeLLDB v1.12.3)
+
+    /// <summary>
+    /// CodeLLDB answers <c>variables</c> with every child whatever <c>start</c>/<c>count</c>/<c>filter</c> say (seen on the wire: [240, 250) of a
+    /// 250-element Vec came back as all 250 and its [raw] row). Before, the session kept the first <c>count</c> of them, so every page was the
+    /// first one and the Locals window could never show a Vec's elements past the first hundred.
+    /// </summary>
+    [Fact]
+    public async Task Codelldb_ignores_paging_so_the_session_asks_once_for_every_child_and_cuts_the_pages_itself()
+    {
+        static List<DapVariable> Elements() =>
+            [.. Enumerable.Range(0, 250).Select(i => new DapVariable { Name = $"[{i}]", Value = (2 * i).ToString(System.Globalization.CultureInfo.InvariantCulture), Type = "unsigned int" }),
+             new DapVariable { Name = "[raw]", Value = "alloc::vec::Vec<unsigned int, alloc::alloc::Global>", VariablesReference = 31 }];
+        await using var h = Harness((a, _) =>
+        {
+            a.On("scopes", _ => new DapScopesResponse { Scopes = [new DapScope { Name = "Local", VariablesReference = 1 }] });
+            a.On("variables", r => r.Args<DapVariablesArguments>().VariablesReference switch
+            {
+                1 => new DapVariablesResponse { Variables = [new DapVariable { Name = "big", Value = "size=250", VariablesReference = 30 }] },
+                30 => new DapVariablesResponse { Variables = Elements() }, // CodeLLDB: start, count and filter are not read
+                _ => new DapVariablesResponse(),
+            });
+        });
+        var session = (DebugSession)await h.StartAsync(Config(h));
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => session.State == DebugSessionState.Stopped);
+
+        async Task<int> LoadBigAsync()
+        {
+            var frames = await session.GetStackTraceAsync(1, 0, 20, Ct);
+            var scope = Assert.Single(await session.GetScopesAsync(frames[0].Id, Ct));
+            return Assert.Single(await session.GetVariablesAsync(scope.VariablesReference, ct: Ct)).VariablesReference;
+        }
+        var big = await LoadBigAsync();
+        static string Names(IReadOnlyList<DebugVariable> page) => page.Count == 0 ? "" : $"{page[0].Name}..{page[^1].Name} ({page.Count})";
+        var tail = await session.GetVariablesAsync(big, "indexed", 240, 10, Ct);
+        Assert.Equal("[240]..[249] (10)", Names(tail));
+        Assert.Equal("498", tail[^1].Value);
+        Assert.Equal("[0]..[99] (100)", Names(await session.GetVariablesAsync(big, 0, 100, Ct)));      // the panels' first page
+        Assert.Equal("[100]..[199] (100)", Names(await session.GetVariablesAsync(big, 100, 100, Ct))); // "… more"
+        Assert.Equal("[200]..[raw] (51)", Names(await session.GetVariablesAsync(big, 200, 100, Ct))); // a short page: the end
+        Assert.Empty(await session.GetVariablesAsync(big, 300, 100, Ct));
+        Assert.Equal(251, (await session.GetVariablesAsync(big, ct: Ct)).Count);
+        var asked = h.AdapterFor(0).RequestsOf("variables").Select(r => r.Args<DapVariablesArguments>()).Where(a => a.VariablesReference == 30).ToList();
+        var once = Assert.Single(asked); // one request per stop for all the pages
+        Assert.Equal((null, null, null), (once.Start, once.Count, once.Filter));
+        Assert.True((await session.GetVariablesAsync(31, ct: Ct)).Count == 0); // the [raw] row's handle was registered with the children
+
+        // a new stop: the children are asked for again (references die when the program moves)
+        await session.ContinueAsync(ct: Ct);
+        await h.AdapterFor(0).SendStoppedAsync("step", 1);
+        await SessionHarness.Eventually(() => session.State == DebugSessionState.Stopped);
+        big = await LoadBigAsync();
+        Assert.Equal("[100]..[199] (100)", Names(await session.GetVariablesAsync(big, 100, 100, Ct)));
+        Assert.Equal(2, h.AdapterFor(0).RequestsOf("variables").Count(r => r.Args<DapVariablesArguments>().VariablesReference == 30));
+    }
+
+    [Fact]
+    public void A_page_of_a_complete_child_list_is_cut_by_start_and_count()
+    {
+        static DebugVariable V(int i) => new($"[{i}]", i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        IReadOnlyList<DebugVariable> all = [.. Enumerable.Range(0, 5).Select(V)];
+        Assert.Same(all, DebugSession.Page(all, null, null));
+        Assert.Same(all, DebugSession.Page(all, 0, 10));
+        Assert.Equal(["[1]", "[2]"], DebugSession.Page(all, 1, 2).Select(v => v.Name));
+        Assert.Equal(["[3]", "[4]"], DebugSession.Page(all, 3, null).Select(v => v.Name));
+        Assert.Empty(DebugSession.Page(all, 9, 2));
+        Assert.Equal(["[0]"], DebugSession.Page(all, -4, 1).Select(v => v.Name));
+    }
+
+    /// <summary>
+    /// CodeLLDB pauses by stopping the process (LLDB sends SIGSTOP) and reports every signal stop as reason "exception" with the signal as the
+    /// description — so Break All showed as the exception "signal SIGSTOP" (seen on the wire: <c>{"reason":"exception","description":"signal
+    /// SIGSTOP"}</c> after our pause). Only that signal and only while our pause is outstanding is the pause.
+    /// </summary>
+    [Fact]
+    public async Task A_pause_codelldb_reports_as_the_exception_signal_sigstop_is_a_pause_and_real_signals_stay_exceptions()
+    {
+        var answer = "signal SIGSTOP";
+        await using var h = Harness((a, _) =>
+            a.AfterResponse("pause", () => a.SendEventAsync("stopped", new DapStoppedEvent { Reason = "exception", Description = answer, ThreadId = 1, AllThreadsStopped = true })));
+        var session = (DebugSession)await h.StartAsync(Config(h));
+        await h.AdapterFor(0).WaitForRequestAsync("configurationDone");
+        var stops = new List<DebugStoppedEventArgs>();
+        session.Stopped.Subscribe(e => { lock (stops) stops.Add(e); });
+        int Stops() { lock (stops) return stops.Count; }
+
+        await session.PauseAsync(ct: Ct);
+        await SessionHarness.Eventually(() => Stops() == 1);
+        Assert.Equal(("pause", null, null), (stops[0].Reason, stops[0].Description, stops[0].Text));
+        await session.GetThreadsAsync(Ct); // a lane round trip: an exceptionInfo request would have been sent by now
+        Assert.Equal(0, h.AdapterFor(0).CountOf("exceptionInfo"));
+        Assert.Null(session.LastException);
+
+        // the same signal without our pause (kill -STOP from a terminal) is what the adapter says it is
+        await session.ContinueAsync(ct: Ct);
+        await h.AdapterFor(0).SendEventAsync("stopped", new DapStoppedEvent { Reason = "exception", Description = "signal SIGSTOP", ThreadId = 1, AllThreadsStopped = true });
+        await SessionHarness.Eventually(() => Stops() == 2);
+        Assert.Equal(("exception", "signal SIGSTOP"), (stops[1].Reason, stops[1].Description));
+        await h.AdapterFor(0).WaitForRequestAsync("exceptionInfo");
+
+        // a real signal that wins the race with our pause stays an exception
+        await session.ContinueAsync(ct: Ct);
+        answer = "signal SIGSEGV: address not mapped to object";
+        await session.PauseAsync(ct: Ct);
+        await SessionHarness.Eventually(() => Stops() == 3);
+        Assert.Equal(("exception", answer), (stops[2].Reason, stops[2].Description));
+    }
+
+    [Theory]
+    [InlineData("exception", "signal SIGSTOP", true)]
+    [InlineData("exception", "signal SIGSEGV", false)]
+    [InlineData("exception", null, false)]
+    [InlineData("breakpoint", "signal SIGSTOP", false)]
+    public void Only_the_sigstop_exception_answers_a_pause(string reason, string? description, bool pause) =>
+        Assert.Equal(pause, Quirks.IsPauseStop(reason, description));
+
+    [Fact]
+    public void Other_adapters_keep_their_pause_stops_and_their_paging() =>
+        Assert.Equal((false, false), (DebugAdapterQuirks.None.IsPauseStop("exception", "signal SIGSTOP"), DebugAdapterQuirks.None.IgnoresVariablePaging));
+
     [Theory]
     [InlineData("/rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/std/src/panicking.rs", 0, true)]
     [InlineData("/home/u/.rustup/toolchains/stable/lib/rustlib/src/rust/library/core/src/panicking.rs", 0, true)]

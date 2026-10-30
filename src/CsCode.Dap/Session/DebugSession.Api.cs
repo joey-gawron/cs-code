@@ -118,6 +118,7 @@ public sealed partial class DebugSession
         EnsureLive();
         if (reference <= 0) return [];
         if (!_handles.IsValidHandle(reference)) throw Stale("variables reference");
+        if (_quirks.IgnoresVariablePaging) return Page(await GetAllChildrenAsync(reference, ct), start, count);
         var key = new VariableHandleCache.VariablesKey(reference, filter, start, count);
         if (_handles.TryGetPage(key, out var cached)) return cached;
 
@@ -131,6 +132,34 @@ public sealed partial class DebugSession
         foreach (var v in vars) _handles.RegisterHandle(v.VariablesReference);
         _handles.SetPage(key, vars);
         return vars;
+    }
+
+    /// <summary>
+    /// Lane only. Every child of <paramref name="reference"/> from an adapter that ignores paging (<see cref="DebugAdapterQuirks.IgnoresVariablePaging"/>):
+    /// asked for once per stop, without <c>start</c>/<c>count</c>/<c>filter</c> (it would ignore them), at most
+    /// <see cref="DebugSessionOptions.MaxVariablesPerRequest"/> kept. Such an adapter announces no indexed/named split, so a filter cannot apply.
+    /// </summary>
+    private async Task<IReadOnlyList<DebugVariable>> GetAllChildrenAsync(int reference, CancellationToken ct)
+    {
+        if (_handles.TryGetAllChildren(reference, out var cached)) return cached;
+        var gen = _handles.Generation;
+        var resp = DapJson.Deserialize<DapVariablesResponse>(await RequestAsync("variables", new DapVariablesArguments { VariablesReference = reference }, ct)) ?? new DapVariablesResponse();
+        if (gen != _handles.Generation) throw Stale("variables reference");
+        var vars = resp.Variables.Take(_settings.MaxVariablesPerRequest).Select(DapMapping.ToCore).ToArray();
+        foreach (var v in vars) _handles.RegisterHandle(v.VariablesReference);
+        _handles.SetAllChildren(reference, vars);
+        return vars;
+    }
+
+    /// <summary>The page [<paramref name="start"/>, <paramref name="start"/> + <paramref name="count"/>) of a complete child list (null: from the first / to the end).</summary>
+    internal static IReadOnlyList<DebugVariable> Page(IReadOnlyList<DebugVariable> all, int? start, int? count)
+    {
+        var from = Math.Clamp(start ?? 0, 0, all.Count);
+        var take = count is > 0 ? Math.Min(count.Value, all.Count - from) : all.Count - from;
+        if (from == 0 && take == all.Count) return all;
+        var page = new DebugVariable[take];
+        for (var i = 0; i < take; i++) page[i] = all[from + i];
+        return page;
     }
 
     public ValueTask<DebugEvaluateResult> EvaluateAsync(string expression, int? frameId, string context = "repl", CancellationToken ct = default) =>
@@ -279,7 +308,14 @@ public sealed partial class DebugSession
         {
             EnsureLive();
             var tid = await ResolveThreadAsync(threadId, ct);
-            await RequestAsync("pause", new DapPauseArguments { ThreadId = tid }, ct);
+            // Set before the request: the adapter may announce the stop before it answers.
+            _pauseRequested = true;
+            try { await RequestAsync("pause", new DapPauseArguments { ThreadId = tid }, ct); }
+            catch
+            {
+                _pauseRequested = false;
+                throw;
+            }
         }, ct);
 
     // ------------------------------------------------------------------ misc

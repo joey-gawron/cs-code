@@ -102,12 +102,40 @@ internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int m
         Generation++;
         _handles.Clear();
         _pages.Clear();
+        _allChildren = null;
         _scopes.Clear();
         _overflowed = false;
     }
 
     /// <summary>Only the cached pages (e.g. after setVariable changed a value); handles stay valid.</summary>
-    public void InvalidatePages() => _pages.Clear();
+    public void InvalidatePages()
+    {
+        _pages.Clear();
+        _allChildren = null;
+    }
+
+    private (int Reference, IReadOnlyList<DebugVariable> Children)? _allChildren;
+
+    /// <summary>
+    /// Every child of <paramref name="reference"/> from an adapter that ignores paging: in the page cache when they fit, and the latest such list
+    /// also in a slot of its own, because a list too big for the page cache is still paged by the UI a hundred rows at a time and must not be
+    /// fetched again for each page. Bounded: one list (the session keeps at most its per-request cap of children).
+    /// </summary>
+    public void SetAllChildren(int reference, IReadOnlyList<DebugVariable> children)
+    {
+        _pages.Set(new VariablesKey(reference, null, null, null), children);
+        _allChildren = (reference, children);
+    }
+
+    public bool TryGetAllChildren(int reference, [NotNullWhen(true)] out IReadOnlyList<DebugVariable>? children)
+    {
+        if (_allChildren is { } slot && slot.Reference == reference)
+        {
+            children = slot.Children;
+            return true;
+        }
+        return _pages.TryGet(new VariablesKey(reference, null, null, null), out children);
+    }
 
     public void RegisterHandle(int reference)
     {
