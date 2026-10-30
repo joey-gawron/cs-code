@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using CsCode.Core.Platform;
 using CsCode.Core.Remote;
 using CsCode.Core.Tasks;
@@ -50,6 +51,10 @@ public sealed class RemoteTaskService(ITaskService local, RemoteConnectionManage
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { return new TaskResult(taskLabel, -1, Cancelled: true); }
         catch (IOException ex) { return new TaskResult(taskLabel, -1, Error: ex.Message); }
 
+        // A cancel while the connection is down cannot be sent: the run is no longer claimed (task/keep) when the client reconnects, so the server
+        // cancels it then. The same covers a cancel sent on a link that had died unnoticed.
+        manager.TaskRuns.Add(run.RunId);
+        using var claimed = Core.Lifecycle.Disposable.Create(() => manager.TaskRuns.Remove(run.RunId));
         using var cancel = ct.Register(() => manager.Session?.Peer.Fire(RemoteMethods.TaskCancel, run));
         var instance = session.Server.InstanceId;
         while (true)
@@ -73,4 +78,32 @@ public sealed class RemoteTaskService(ITaskService local, RemoteConnectionManage
             catch (Exception ex) when (ex is IOException or InvalidOperationException) { return new TaskResult(taskLabel, -1, Error: ex.Message); }
         }
     }
+}
+
+/// <summary>
+/// The remote task runs this client still waits for. After every (re)connect the server is told which ones they are (<c>task/keep</c>) and cancels
+/// every other run: one cancelled while the connection was down (its <c>task/cancel</c> could not be sent), and every run of a previous client
+/// process of the session (a restarted client reattaching to the server a crashed one left running). Thread-safe.
+/// </summary>
+public sealed class RemoteTaskRuns(ILogger? log = null) : IRemoteParticipant
+{
+    private readonly ConcurrentDictionary<string, byte> _active = new(StringComparer.Ordinal);
+    private readonly ILogger _log = log ?? NullLogger.Instance;
+
+    public int Count => _active.Count;
+
+    internal void Add(string runId) => _active[runId] = 0;
+
+    internal void Remove(string runId) => _active.TryRemove(runId, out _);
+
+    void IRemoteParticipant.Attach(RpcPeer peer) { }
+
+    async Task IRemoteParticipant.OnConnectedAsync(RemoteSession session, CancellationToken ct)
+    {
+        if (!session.Server.Capabilities.Contains(RemoteProtocol.Capabilities.Tasks)) return;
+        try { await session.Peer.InvokeAsync<TaskKeepParams, Empty>(RemoteMethods.TaskKeep, new TaskKeepParams(_active.Keys.ToArray()), ct).ConfigureAwait(false); }
+        catch (RemoteException ex) when (ex.Code == RpcErrorCodes.MethodNotFound) { _log.LogDebug("The server cannot cancel unclaimed task runs: {Error}", ex.Message); }
+    }
+
+    void IRemoteParticipant.OnDisconnected() { }
 }

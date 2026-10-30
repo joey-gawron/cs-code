@@ -58,6 +58,7 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
         FileSystem = new RemoteFileSystem(this);
         Watcher = new RemoteWatcher(this, _log);
         Search = new RemoteSearch(this);
+        TaskRuns = new RemoteTaskRuns(_log);
         SaveParticipant = new RemoteSaveParticipant(() => _host?.Client.Session);
         if (sp.GetService<IMemoryMonitor>() is { } memory) _trimToken = memory.Register(Directories);
         var storage = sp.GetService<IAppPaths>()?.GlobalStorageDir;
@@ -71,6 +72,8 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
     public RemoteFileSystem FileSystem { get; }
     public RemoteWatcher Watcher { get; }
     public RemoteSearch Search { get; }
+    /// <summary>The remote task runs being waited for (claimed on the server after every reconnect).</summary>
+    public RemoteTaskRuns TaskRuns { get; }
     public RemoteSaveParticipant SaveParticipant { get; }
     public DirectoryCache Directories { get; }
 
@@ -205,6 +208,7 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
         owned.Add(channels);
         client.AddParticipant(Watcher);
         client.AddParticipant(channels); // early: terminal output and debug streams resume first after a reconnect
+        client.AddParticipant(TaskRuns);
         AddParticipants(client, mapper, owned, "remote:" + host, "Remote: ");
         owned.Add(client.StatusChanged.Subscribe(s =>
         {

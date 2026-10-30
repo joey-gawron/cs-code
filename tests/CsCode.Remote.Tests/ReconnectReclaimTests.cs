@@ -1,0 +1,209 @@
+using CsCode.Core.Platform;
+using CsCode.Core.Remote;
+using CsCode.Core.Tasks;
+using CsCode.Remote.Client;
+using CsCode.Remote.Protocol;
+using CsCode.Terminal.Sessions;
+using CsCode.TestDoubles;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit;
+
+namespace CsCode.Remote.Tests;
+
+/// <summary>
+/// What a reconnect to the persistent server (a real loopback relay + daemon) must put right: files that changed during the outage are looked at
+/// again (remote-1), and whatever the client no longer has — watches stopped and task runs cancelled while the link was down, everything of a
+/// crashed client process — ends on the server instead of running there unseen (remote-3, remote-6, remote-10).
+/// </summary>
+public class ReconnectReclaimTests
+{
+    private static CancellationToken Ct => TestEnv.Ct;
+    private static readonly TimeSpan Grace = TimeSpan.FromSeconds(60);
+
+    private static RemoteTestHost Persistent(CuttableTransport.Control control, bool r3 = false, Action<RemoteOptions>? options = null, TempDirectory? clientHome = null) =>
+        new(o => { o.Reconnect = new ReconnectPolicy(10, () => 0.5); options?.Invoke(o); }, wrap: t => new CuttableTransport(t, control), r3: r3, persistent: Grace,
+            clientHome: clientHome);
+
+    private static async Task<ServerStatus> StatusAsync(RemoteTestHost host) =>
+        (await host.Manager.Session!.Peer.InvokeAsync<Empty, ServerStatus>(RemoteMethods.Status, Empty.Value, Ct))!;
+
+    private static async Task DropAsync(RemoteTestHost host, CuttableTransport.Control control)
+    {
+        control.Refuse = true;
+        await control.CutAsync();
+        await TestEnv.WaitUntilAsync(() => host.Manager.Session is null, TimeSpan.FromSeconds(10), "the client to notice the drop");
+    }
+
+    private static async Task RestoreAsync(RemoteTestHost host, CuttableTransport.Control control)
+    {
+        var connects = control.Connects;
+        control.Refuse = false;
+        await TestEnv.WaitUntilAsync(() => control.Connects > connects && host.Manager.Session is { IsOpen: true } && host.Manager.Status.IsConnected,
+            TimeSpan.FromSeconds(60), "the client to reconnect");
+        Assert.True(host.Manager.Session!.Resumed);
+    }
+
+    /// <summary>A unique duration: the marker of one sleep process (a single argument, as /proc/PID/cmdline separates them with NULs).</summary>
+    private static string UniqueSleep(int seconds) => $"{seconds}.{Random.Shared.Next(100_000, 999_999)}";
+
+    [Fact]
+    public async Task A_remote_file_that_changed_while_disconnected_is_reported_to_its_own_watcher_after_the_reconnect()
+    {
+        var control = new CuttableTransport.Control();
+        await using var host = Persistent(control);
+        await host.ConnectAsync();
+        var path = Path.Combine(host.Workspace.Path, "a.txt");
+        File.WriteAllText(path, "one");
+        var self = host.Remote("a.txt");
+        var matched = 0;
+        // What an open editor does (EditorDocument.StartWatchingProvider): watch the file's directory, react only to its own URI.
+        using var watch = host.Services.GetRequiredService<IFileWatcher>().Watch(host.Remote(), false, null, changes =>
+        {
+            foreach (var c in changes)
+                if (c.Uri == self) Interlocked.Increment(ref matched);
+        });
+        await TestEnv.WaitUntilAsync(() => host.Manager.Watcher.Count == 1, TimeSpan.FromSeconds(10), "the watch");
+        // armed once a change comes through
+        await TestEnv.WaitUntilAsync(() =>
+        {
+            File.WriteAllText(path, "two " + Environment.TickCount64);
+            return Volatile.Read(ref matched) > 0;
+        }, TimeSpan.FromSeconds(20), "the live change");
+        await Task.Delay(500, Ct); // let the last live events settle
+        var before = Volatile.Read(ref matched);
+
+        await DropAsync(host, control);
+        File.WriteAllText(path, "changed on the server while the client was away");
+        await Task.Delay(1000, Ct); // the server's watcher fires now, with nobody connected: that event is gone
+        Assert.Equal(before, Volatile.Read(ref matched));
+        await RestoreAsync(host, control);
+        await TestEnv.WaitUntilAsync(() => Volatile.Read(ref matched) > before, TimeSpan.FromSeconds(15),
+            "a change for a.txt itself after the reconnect (a Changed for the directory alone is never matched by an open editor)");
+    }
+
+    [Fact]
+    public async Task A_watch_stopped_while_disconnected_ends_on_the_server_after_the_reconnect()
+    {
+        var control = new CuttableTransport.Control();
+        await using var host = Persistent(control);
+        await host.ConnectAsync();
+        Directory.CreateDirectory(Path.Combine(host.Workspace.Path, "one"));
+        Directory.CreateDirectory(Path.Combine(host.Workspace.Path, "two"));
+        var first = (RemoteWatcher.Handle)host.Manager.Watcher.Watch(host.Remote("one/"), false, null, _ => { });
+        var second = (RemoteWatcher.Handle)host.Manager.Watcher.Watch(host.Remote("two/"), false, null, _ => { });
+        await Task.WhenAll(first.Ready, second.Ready).WaitAsync(TimeSpan.FromSeconds(20), Ct);
+        Assert.Equal(2, (await StatusAsync(host)).Watches);
+
+        await DropAsync(host, control);
+        first.Dispose(); // a remote tab closed while the badge says Reconnecting: its watch/stop cannot be sent
+        await RestoreAsync(host, control);
+        Assert.Equal(1, host.Manager.Watcher.Count);
+        Assert.Equal(1, (await StatusAsync(host)).Watches);
+        second.Dispose();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while ((await StatusAsync(host)).Watches != 0)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the last watch did not stop on the server");
+            await Task.Delay(50, Ct);
+        }
+    }
+
+    [Fact]
+    public async Task A_task_cancelled_while_disconnected_is_cancelled_on_the_server_after_the_reconnect()
+    {
+        var control = new CuttableTransport.Control();
+        await using var host = Persistent(control, r3: true);
+        var sleep = UniqueSleep(41);
+        Directory.CreateDirectory(Path.Combine(host.Workspace.Path, ".vscode"));
+        File.WriteAllText(Path.Combine(host.Workspace.Path, ".vscode", "tasks.json"),
+            $$"""{ "version": "2.0.0", "tasks": [ { "label": "serve", "type": "shell", "command": "sleep {{sleep}}" } ] }""");
+        await host.ConnectAsync();
+        await host.OpenWorkspaceAsync();
+        var tasks = host.Services.GetRequiredService<ITaskService>();
+        using var cts = new CancellationTokenSource();
+        var run = tasks.RunAsync("serve", null, cts.Token).AsTask();
+        await TestEnv.WaitUntilAsync(() => TestEnv.ProcessesWithMarker(sleep).Count > 0, TimeSpan.FromSeconds(30), "the task's process");
+        Assert.Equal(1, host.Manager.TaskRuns.Count);
+
+        await DropAsync(host, control);
+        cts.Cancel(); // Stop pressed while reconnecting: task/cancel cannot reach the server
+        var result = await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        Assert.True(result.Cancelled);
+        Assert.Equal(0, host.Manager.TaskRuns.Count);
+        Assert.NotEmpty(TestEnv.ProcessesWithMarker(sleep)); // still running on the server, for now
+
+        await RestoreAsync(host, control);
+        Assert.Equal(0, (await StatusAsync(host)).RunningTasks);
+        await TestEnv.WaitUntilAsync(() => TestEnv.ProcessesWithMarker(sleep).Count == 0, TimeSpan.FromSeconds(15), "the cancelled task's process to end on the server");
+    }
+
+    [Fact]
+    public async Task A_task_still_waited_for_keeps_running_across_the_reconnect()
+    {
+        var control = new CuttableTransport.Control();
+        await using var host = Persistent(control, r3: true);
+        Directory.CreateDirectory(Path.Combine(host.Workspace.Path, ".vscode"));
+        File.WriteAllText(Path.Combine(host.Workspace.Path, ".vscode", "tasks.json"),
+            """{ "version": "2.0.0", "tasks": [ { "label": "long", "type": "shell", "command": "sleep 3; exit 7" } ] }""");
+        await host.ConnectAsync();
+        await host.OpenWorkspaceAsync();
+        var run = host.Services.GetRequiredService<ITaskService>().RunAsync("long", null, Ct).AsTask();
+        await TestEnv.WaitUntilAsync(() => host.Manager.TaskRuns.Count == 1, TimeSpan.FromSeconds(30), "the run");
+        await DropAsync(host, control);
+        await RestoreAsync(host, control); // task/keep claims it
+        var result = await run.WaitAsync(TimeSpan.FromSeconds(60), Ct);
+        Assert.Equal(7, result.ExitCode);
+        Assert.Null(result.Error);
+    }
+
+    [Fact]
+    public async Task A_restarted_client_ends_the_terminals_tasks_and_watches_a_crashed_client_left_on_the_server()
+    {
+        using var clientHome = new TempDirectory("cscode-remote-restart-");
+        var session = ServerSessionRegistry.NewId();
+        var crashed = new CuttableTransport.Control();
+        var terminalSleep = UniqueSleep(98);
+        var taskSleep = UniqueSleep(97);
+        var a = Persistent(crashed, r3: true, options: o => { o.ServerSession = session; o.Reconnect = new ReconnectPolicy(2, () => 0.5); }, clientHome: clientHome);
+        Directory.CreateDirectory(Path.Combine(a.Workspace.Path, ".vscode"));
+        File.WriteAllText(Path.Combine(a.Workspace.Path, ".vscode", "tasks.json"),
+            $$"""{ "version": "2.0.0", "tasks": [ { "label": "hold", "type": "shell", "command": "sleep {{taskSleep}}" } ] }""");
+        await a.ConnectAsync();
+        await a.OpenWorkspaceAsync();
+        var terminals = a.Services.GetRequiredService<TerminalService>();
+        var t = (TerminalSession)await terminals.CreateAsync(TerminalProbe.Bash(), Ct);
+        await t.SendTextAsync("sleep " + terminalSleep, true, Ct);
+        _ = a.Services.GetRequiredService<ITaskService>().RunAsync("hold", null, Ct).AsTask();
+        var watch = (RemoteWatcher.Handle)a.Manager.Watcher.Watch(a.Remote(".vscode/"), false, null, _ => { });
+        await watch.Ready.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+        await TestEnv.WaitUntilAsync(() => TestEnv.ProcessesWithMarker(taskSleep).Count > 0, TimeSpan.FromSeconds(30), "the task's program");
+        await TestEnv.WaitUntilAsync(() => TestEnv.ProcessesWithMarker(terminalSleep).Count > 0, TimeSpan.FromSeconds(30),
+            "the terminal's program: " + await TerminalProbe.ScreenAsync(t));
+        var before = await StatusAsync(a);
+        Assert.True(before.Channels >= 1 && before.RunningTasks == 1 && before.Watches >= 1, $"{before}");
+        var serverData = a.ServerDataDir;
+
+        // A "crashes": its link dies for good and it never says goodbye.
+        crashed.Refuse = true;
+        await crashed.CutAsync();
+        await TestEnv.WaitUntilAsync(() => a.Manager.Status.State == RemoteConnectionState.Failed, TimeSpan.FromSeconds(60), "client A to give up");
+
+        // B (the restarted program) reattaches to the same server: nothing of A's can be shown or waited for again, so it all ends there.
+        var restarted = new CuttableTransport.Control();
+        await using (var b = new RemoteTestHost(o => o.ServerSession = session, wrap: tr => new CuttableTransport(tr, restarted), r3: true, persistent: Grace,
+                         clientHome: clientHome, serverDataDir: serverData, marker: a.Marker))
+        {
+            await b.ConnectAsync();
+            Assert.Equal(before.InstanceId, b.Manager.Session!.Server.InstanceId);
+            var after = await StatusAsync(b);
+            Assert.Equal(0, after.Channels);
+            Assert.Equal(0, after.RunningTasks);
+            Assert.Equal(b.Manager.Watcher.Count, after.Watches);
+            await TestEnv.WaitUntilAsync(() => TestEnv.ProcessesWithMarker(terminalSleep).Count == 0 && TestEnv.ProcessesWithMarker(taskSleep).Count == 0,
+                TimeSpan.FromSeconds(15), "the crashed client's terminal and task programs to end");
+        }
+        watch.Dispose();
+        await TestEnv.AssertNoProcessesAsync(a.Marker);
+        await a.DisposeAsync();
+    }
+}

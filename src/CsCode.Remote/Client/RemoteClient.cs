@@ -211,7 +211,7 @@ public sealed class RemoteClient : IAsyncDisposable
                     return;
                 }
                 catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
-                catch (RemoteBootstrapException ex) when (attempt >= 1 && IsPermanent(ex))
+                catch (RemoteBootstrapException ex) when (ex.IsPermanent)
                 {
                     SetStatus(new RemoteConnectionStatus(RemoteConnectionState.Failed, Host, Authority, ex.Message));
                     return;
@@ -225,11 +225,6 @@ public sealed class RemoteClient : IAsyncDisposable
         }
         finally { _gate.Release(); }
     }
-
-    // Retrying cannot fix these (no bundle for the platform, checksum, protocol mismatch).
-    private static bool IsPermanent(RemoteBootstrapException ex) =>
-        ex.Message.Contains("bundle", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("protocol", StringComparison.OrdinalIgnoreCase)
-        || ex.Message.Contains("checksum", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Closes the connection (stopping the server and its transport process). Idempotent; ends in <c>Disconnected</c>.</summary>
     public async Task DisconnectAsync()

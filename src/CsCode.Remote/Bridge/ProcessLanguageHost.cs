@@ -43,7 +43,7 @@ public sealed class ProcessLanguageHost : ILanguageServerManager, IWillSaveParti
         IRemoteTransport Transport()
         {
             var assembly = LocalServer.FindServerAssembly(options.LocalServerAssembly)
-                           ?? throw new RemoteBootstrapException("cscode-server.dll was not found next to the program; cscode.languageHost = process needs it");
+                           ?? throw new RemoteBootstrapException("cscode-server.dll was not found next to the program; cscode.languageHost = process needs it") { IsPermanent = true };
             var dataDir = options.LocalServerDataDir ?? Path.Combine(paths?.GlobalStorageDir ?? Path.GetTempPath(), "language-host");
             return new LoopbackTransport(LocalServer.Launch(assembly, dataDir, options.ServerMarker, environment: options.LocalServerEnvironment));
         }

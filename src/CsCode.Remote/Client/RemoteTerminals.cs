@@ -36,7 +36,7 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
     private readonly RemoteConnectionManager _manager;
     private readonly RemoteChannels _channels;
     private readonly ILogger _log;
-    private readonly BlockingCollection<object> _queue = new(new ConcurrentQueue<object>()); // byte[] / Exit / LostMarker
+    private readonly BlockingCollection<object> _queue = new(new ConcurrentQueue<object>()); // byte[] / Exit / Notice
     private readonly ManualResetEventSlim _attached = new(false);
     private ITerminalBackendListener? _listener;
     private ClientChannel? _channel;
@@ -50,6 +50,9 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
     private int _foregroundBusy, _disposed;
 
     private sealed record Exit(int Code, string? Reason);
+
+    /// <summary>Text of our own (not the program's output): shown, never acknowledged as consumed channel bytes.</summary>
+    private sealed record Notice(byte[] Text);
 
     public RemoteTerminalBackend(RemoteConnectionManager manager, RemoteChannels channels, ILogger? log = null)
     {
@@ -96,7 +99,7 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
     void IChannelSink.Deliver(ReadOnlyMemory<byte> data) => TryAdd(data.ToArray());
 
     void IChannelSink.Lost(long bytes) =>
-        TryAdd(System.Text.Encoding.UTF8.GetBytes($"\r\n\e[33m[{bytes} bytes of output were lost while the connection was down]\e[0m\r\n"));
+        TryAdd(new Notice(System.Text.Encoding.UTF8.GetBytes($"\r\n\e[33m[{bytes} bytes of output were lost while the connection was down]\e[0m\r\n")));
 
     void IChannelSink.Closed(int? exitCode, string? reason) => TryAdd(new Exit(exitCode ?? -1, reason));
 
@@ -119,6 +122,7 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
                     listener.OnOutput(data); // may block: the terminal's worker is behind (back-pressure)
                     _channel?.Consumed(data.Length);
                 }
+                else if (item is Notice notice) listener.OnOutput(notice.Text);
                 else if (item is Exit exit)
                 {
                     if (exit.Code == -1 && exit.Reason is { } why) listener.OnOutput(System.Text.Encoding.UTF8.GetBytes($"\r\n\e[31m{why}\e[0m\r\n"));

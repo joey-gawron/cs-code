@@ -50,7 +50,7 @@ public sealed class RemoteSession : IAsyncDisposable
                 new HelloParams(RemoteProtocol.Version, ClientVersion, [RemoteProtocol.Capabilities.Gzip], mode), ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false)
                 ?? throw new RemoteBootstrapException("The server sent an empty handshake");
             if (hello.ProtocolVersion != RemoteProtocol.Version)
-                throw new RemoteBootstrapException($"The server speaks protocol v{hello.ProtocolVersion}, this client v{RemoteProtocol.Version} (reinstall the server)");
+                throw new RemoteBootstrapException($"The server speaks protocol v{hello.ProtocolVersion}, this client v{RemoteProtocol.Version} (reinstall the server)") { IsPermanent = true };
             return new RemoteSession(channel, peer, mapper, hello);
         }
         catch

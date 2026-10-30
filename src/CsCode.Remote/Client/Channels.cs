@@ -62,7 +62,14 @@ public sealed class ClientChannel : IDisposable
         {
             if (_closed || offset + data.Length <= _received) return; // after the end, or a replayed part we have
             var skip = (int)Math.Max(0, _received - offset);
-            if (offset > _received) _sink.Lost(offset - _received); // a gap the server could not replay
+            if (offset > _received)
+            {
+                // A gap the server could not replay. Acknowledgements are stream offsets: the lost bytes count as consumed, or the client's acks
+                // would stay that far behind the server's offsets for good and a producer more than a window ahead would never be released.
+                var gap = offset - _received;
+                _consumed += gap;
+                _sink.Lost(gap);
+            }
             _received = offset + data.Length;
             _sink.Deliver(data.AsMemory(skip));
             if (_pendingClose is { } close && _received >= close.FinalOffset) Close(close.ExitCode, close.Reason);
@@ -96,7 +103,10 @@ public sealed class ClientChannel : IDisposable
         _owner.Forget(this);
     }
 
-    /// <summary>The sink passed <paramref name="bytes"/> on: acknowledged in steps of <see cref="AckEvery"/> (and at the very end).</summary>
+    /// <summary>
+    /// The sink passed <paramref name="bytes"/> of delivered output on (never text of its own, such as a lost-output marker): acknowledged in steps
+    /// of <see cref="AckEvery"/> (and at the very end) as the stream offset consumed so far.
+    /// </summary>
     public void Consumed(int bytes)
     {
         long ack;
@@ -272,17 +282,19 @@ public sealed class RemoteChannels : IRemoteParticipant, IDisposable
         _session = session;
         var channels = _channels.Values.ToArray();
         if (!resumed)
-        {
             foreach (var c in channels) c.Gone("The connection to the remote server was lost and the server did not keep the program.");
-            return;
-        }
-        foreach (var c in channels)
-        {
-            try { await c.ReattachAsync(session.Peer, ct).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is IOException or TimeoutException) { _log.LogDebug("Reattaching channel {Id} failed: {Error}", c.Id, ex.Message); }
-        }
-        // Whatever we no longer have (closed while we were away, or a previous client process's) ends on the server.
-        await session.Peer.InvokeAsync<ChanKeepParams, Empty>(RemoteMethods.ChanKeep, new ChanKeepParams(_channels.Keys.ToArray()), ct).ConfigureAwait(false);
+        else
+            foreach (var c in channels)
+            {
+                try { await c.ReattachAsync(session.Peer, ct).ConfigureAwait(false); }
+                catch (Exception ex) when (ex is IOException or TimeoutException) { _log.LogDebug("Reattaching channel {Id} failed: {Error}", c.Id, ex.Message); }
+            }
+        // Whatever we no longer have ends on the server: channels closed while we were away and — on a server this object has not seen (a restarted
+        // client reattaching to the server a crashed one left running, or this client after it gave up and connected again) — every channel of
+        // the earlier connection, whose programs would otherwise run on with nobody to see or end them. Nothing to end on a new server. No channel
+        // can be created on this session before this runs (the session is published after the participants).
+        if (session.Server.InstanceId is not null)
+            await session.Peer.InvokeAsync<ChanKeepParams, Empty>(RemoteMethods.ChanKeep, new ChanKeepParams(_channels.Keys.ToArray()), ct).ConfigureAwait(false);
     }
 
     public void OnDisconnected()

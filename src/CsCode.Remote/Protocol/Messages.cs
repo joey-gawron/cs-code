@@ -59,6 +59,9 @@ public static class RemoteMethods
 
     public const string WatchStart = "watch/start";
     public const string WatchStop = "watch/stop";
+    /// <summary>client → server after a (re)connect: the watches the client still has; the server stops every other one (stopped while the
+    /// client was away, or left by a previous client process of the session).</summary>
+    public const string WatchKeep = "watch/keep";
     /// <summary>server → client notification</summary>
     public const string WatchChanges = "watch/changes";
 
@@ -140,6 +143,9 @@ public static class RemoteMethods
     /// <summary>Long poll: completes with the task's result (re-issued after a reconnect; the task keeps running on the server).</summary>
     public const string TaskWait = "task/wait";
     public const string TaskCancel = "task/cancel";
+    /// <summary>client → server after a (re)connect: the task runs the client still waits for; the server cancels and forgets every other one
+    /// (cancelled while the client was away, or started by a previous client process of the session).</summary>
+    public const string TaskKeep = "task/keep";
 
     /// <summary>client → server after a reconnect: the documents the client still has open; the server closes the others.</summary>
     public const string DocKeep = "doc/keep";
@@ -209,6 +215,7 @@ public sealed record MoveParams(string Source, string Target, bool Overwrite);
 
 public sealed record WatchStartParams(string WatchId, string Root, bool Recursive, IReadOnlyList<string>? Excludes);
 public sealed record WatchStopParams(string WatchId);
+public sealed record WatchKeepParams(IReadOnlyList<string> WatchIds);
 public sealed record WireFileChange(string Path, FileChangeKind Kind);
 public sealed record WatchChangesParams(string WatchId, IReadOnlyList<WireFileChange> Changes);
 
@@ -388,6 +395,7 @@ public sealed record TaskListParams(Uri? Folder);
 public sealed record TaskStartParams(string Label, Uri? Folder);
 public sealed record TaskRunParams(string RunId);
 public sealed record TaskResultWire(TaskResult Result);
+public sealed record TaskKeepParams(IReadOnlyList<string> RunIds);
 
 public sealed record DocKeepParams(IReadOnlyList<Uri> Uris);
 

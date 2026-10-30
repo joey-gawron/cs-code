@@ -74,8 +74,15 @@ public interface IRemoteTransport
     Task<RemoteChannel> ConnectAsync(IProgress<string>? progress, CancellationToken ct);
 }
 
-/// <summary>Bootstrapping failed in a way retrying will not fix (unsupported platform, no bundle, checksum, ssh exit 255…).</summary>
-public sealed class RemoteBootstrapException(string message, Exception? inner = null) : IOException(message, inner);
+/// <summary>Starting or bootstrapping the server failed (ssh could not connect, no bundle for the platform, checksum, protocol mismatch…).</summary>
+public sealed class RemoteBootstrapException(string message, Exception? inner = null) : IOException(message, inner)
+{
+    /// <summary>
+    /// Retrying cannot fix it (no bundle for the platform, a refused upload, a protocol mismatch): the reconnect loop gives up at once. Set where it
+    /// is thrown, never inferred from the message, which carries host names, paths and ssh's own text.
+    /// </summary>
+    public bool IsPermanent { get; init; }
+}
 
 public sealed record ServerLaunchOptions
 {
@@ -122,19 +129,22 @@ public sealed class ShellServerTransport(IRemoteShell shell, ServerLaunchOptions
             if (start.ProbeOutput is null)
                 throw new RemoteBootstrapException($"The server did not start ({Shell.Description}, exit code {start.ExitCode}): {LastLines(start.Stderr)}");
             if (attempt > 0)
-                throw new RemoteBootstrapException("The server is still not installed after uploading it: " + LastLines(start.ProbeOutput));
+                throw new RemoteBootstrapException("The server is still not installed after uploading it: " + LastLines(start.ProbeOutput)) { IsPermanent = true };
 
             var probe = RemoteProbe.Parse(start.ProbeOutput);
             var plan = InstallDecision.Decide(probe, Options.Bundles);
-            if (plan.Action != InstallAction.Upload || plan.Bundle is not { } bundle) throw new RemoteBootstrapException(plan.Reason);
+            if (plan.Action != InstallAction.Upload || plan.Bundle is not { } bundle) throw new RemoteBootstrapException(plan.Reason) { IsPermanent = true };
             var size = new FileInfo(bundle.FullPath).Length;
             progress?.Report($"Installing the server on {Shell.Description}: {plan.Reason}, {size / (1024.0 * 1024):0.0} MB");
             ShellResult result;
             await using (var bytes = File.OpenRead(bundle.FullPath))
                 result = await Shell.RunAsync(ServerScripts.Install, [Options.InstallRoot ?? "", bundle.Hash, bundle.Sha256, force ? "force" : ""], bytes, Options.InstallTimeout, ct)
                     .ConfigureAwait(false);
+            // The install script refused the bundle (checksum, no space, permissions): permanent. Exit code 255 is ssh's own (the connection broke
+            // during the upload): the next attempt uploads again.
             if (result.ExitCode != 0 || !result.Stdout.Contains(ServerScripts.InstalledMarker, StringComparison.Ordinal))
-                throw new RemoteBootstrapException($"Installing the server failed (exit code {result.ExitCode}): {LastLines(result.Stderr + "\n" + result.Stdout)}");
+                throw new RemoteBootstrapException($"Installing the server failed (exit code {result.ExitCode}): {LastLines(result.Stderr + "\n" + result.Stdout)}")
+                    { IsPermanent = result.ExitCode != 255 };
             force = false;
         }
     }
