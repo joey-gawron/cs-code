@@ -356,7 +356,33 @@ Each row: a user types 80 keys at 50 ms intervals into a real editor while the l
 p99 ≤ 20 ms, no key lost, heap within 64 MB of the start once the load is gone, UI queue drained (`IUiDispatcher.Stats` posted − executed ≤ 2)
 within 3 s.
 
-<!--HOSTILE-->
+**Measured** (2026-10-29 22:58–23:03, `AppHostileMatrixTests`, headless real app in the app's GC mode, best of three attempts per row; load average
+11–18 for the whole session — the "rerun alone below load 4" rule could not be met, so these are environment-limited numbers, not verdicts):
+
+| Load | Dispatcher p50 / p99 / max ms | Typing p99 ms (handling p99) | Heap after, queues | GC pause p99; collections in the attempt | With headless rasterisation: p99 / max ms | Load avg |
+|---|---|---|---|---|---|---|
+| **baseline** (typing only, no load) | 6.0 / **45.0** / 57.2 | 21.8 (7.5), 0 lost | +3.7 MB, drained | **54.8 ms**; gen0/1/2 0/15/27 | 18.4 / 28.2 | 13.8 |
+| diagnostics flood | 12.2 / 74.8 / 87.1 | 51.1 (1.9) | +8.4 MB, drained | 83.1 ms; 6/35/26 | 92.0 / 92.0 | 12.0 |
+| output flood | 4.8 / 36.9 / 61.0 | 28.8 (11.1) | +3.7 MB, drained | 58.7 ms; 17/12/29 | 13.4 / 23.4 | 16.5 |
+| giant completion (50k) | 6.1 / 42.5 / 51.8 | 36.1 (6.2) | +32.6 MB, drained | 95.4 ms; 12/7/30 | 45.6 / 54.8 | 11.6 |
+| slow completion (2 s) | 7.6 / 45.0 / 56.5 | 23.6 (9.6) | +3.9 MB, drained | 58.9 ms; 1/16/28 | 35.8 / 38.2 | 11.7 |
+| blocking completion (200 ms on its caller) | 11.7 / 60.9 / 71.1 | 28.5 (14.0) | +4.0 MB, drained | 56.4 ms; 3/14/24 | 58.4 / 74.4 | 17.6 |
+| hanging completion | 3.2 / 30.7 / 38.7 | 6.3 (5.5) | +16.8 MB, drained | 40.7 ms; 5/13/33 | 31.0 / 35.2 | 11.8 |
+| crashing completion | 4.5 / 38.4 / 48.2 | 20.4 (7.8) | +4.5 MB, drained | 47.1 ms; 4/14/30 | 48.6 / 58.1 | 11.0 |
+| CPU burners (5 × nice 10) | 11.7 / 60.4 / 74.2 | 39.8 (10.3) | +3.3 MB, drained | 55.1 ms; 8/13/23 | 35.3 / 42.5 | 11.0 |
+
+What the numbers say: **every row misses the 16 ms p99, the baseline included** — the test host itself does, before any hostile load. In the
+baseline attempt the process ran **27 gen2 collections in ~6 s, 24 of them `induced_noforce`** (the GC reacting to `GC.AddMemoryPressure`, which
+SkiaSharp calls for its native objects), and the dispatcher's max (57 ms) matches the GC pause p99 (55 ms): the misses are GC pauses of the test
+process on a machine at load 11–18, not the hostile loads. Over the baseline, the diagnostics flood (+30 ms p99), the blocking provider and the
+CPU burners (+15 ms) cost something; output flood, slow, hanging and crashing providers stay at the baseline; every load lost no key, drained its
+queues within 3 s and returned the heap (the giant completion row keeps +33 MB: the 50k-item list held by the last completion session until the
+next one). The blocking provider never ran on the UI thread (handling p99 14 ms, not 200 ms). Core-level subset on a simulated UI thread (no
+Avalonia, no Skia): **within budget** — diagnostics flood (2,000 publishes/s × 500): dispatcher p99 0.45 ms, max 1.6 ms, typing p99 0.30 ms;
+emitter fan-out (2,000 fires/s to 1,000 subscribers = 5.9M deliveries, coalesced to 5.1M UI jobs): p99 4.5 ms, max 13 ms, typing p99 13 ms.
+
+To do on a quiet machine (and on a desktop, where Skia rasterises on the render thread): rerun `--filter AppHostileMatrixTests` with
+`/proc/loadavg` < 4, and look at why the baseline sees 4 gen2 collections a second (finding 3).
 
 ### Measuring UI budgets headless (T23)
 
