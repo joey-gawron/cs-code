@@ -40,6 +40,11 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     public const string OutputChannel = "Vim";
     /// <summary>Origin of the key bindings the integration adds (gD gi ]d [d g.); a vimrc or settings binding of the same keys replaces them.</summary>
     public const string IntegrationOrigin = "cscode.integration";
+    /// <summary>
+    /// Context key: Vim is on (VSCodeVim's name). The shell's own bindings of keys Vim has for itself say <c>!vim.active</c> (Ctrl+W v, h, l...:
+    /// with Vim on the engine's Ctrl-W does the same, and a key Vim leaves to the app must not start the shell's chord instead).
+    /// </summary>
+    public const string ActiveContextKey = "vim.active";
 
     /// <summary>Engine time per slice of long work; with the editor's reaction to the slice's changes a callback stays around 4 ms.</summary>
     public static readonly TimeSpan SliceBudget = TimeSpan.FromMilliseconds(2);
@@ -56,6 +61,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     private readonly IOutputService? _output;
     private readonly IDocumentManager? _documents;
     private readonly WindowHolder _windowHolder;
+    private readonly IContextKeyService? _contextKeys;
     private readonly Services.ClipboardService? _ownedClipboard;
     private readonly DisposableStore _subscriptions = new();
     private readonly Dictionary<CodeEditorControl, VimView> _views = new(ReferenceEqualityComparer.Instance);
@@ -87,6 +93,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         _output = sp.GetService<IOutputService>();
         _documents = sp.GetService<IDocumentManager>();
         _windowHolder = sp.GetRequiredService<WindowHolder>();
+        _contextKeys = sp.GetService<IContextKeyService>();
         // The shell's clipboard service (ring, shape metadata, PRIMARY); a composition without one gets a clipboard-only service of its own.
         var clipboard = sp.GetService<IClipboardService>();
         if (clipboard is null)
@@ -95,7 +102,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
             clipboard = _ownedClipboard;
         }
         Clipboard = new VimClipboard(clipboard, IsEditorSelection) { Enabled = false }; // follows vim.enable (SetEnabled)
-        Actions = new VimShellActions(this, _well, sp.GetRequiredService<ShellDockFactory>(), sp.GetService<IWindowService>(), sp.GetService<IWorkspaceService>());
+        Actions = new VimShellActions(this, _well, sp.GetService<IWindowService>(), sp.GetService<IWorkspaceService>());
     }
 
     /// <summary>
@@ -197,6 +204,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     private void SetEnabled(bool on)
     {
         if (_disposed) return;
+        _contextKeys?.Set(ActiveContextKey, on);
         if (_enabled == on && (on || _views.Count == 0))
         {
             UpdateToggleItem();
@@ -827,6 +835,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         foreach (var view in _views.Keys.ToArray()) Detach(view);
         foreach (var buffer in _buffers.Values) buffer.Dispose();
         _buffers.Clear();
+        _contextKeys?.Set(ActiveContextKey, false);
         _disposed = true;
         _subscriptions.Dispose();
         foreach (var item in _statusItems.Values) item.Dispose();

@@ -181,8 +181,15 @@ Later entries win; `{"command":"-foo"}` removes **earlier** entries of that comm
   Visual Studio preset: F5 start / continue (when `inDebugMode`), Ctrl+F5 run, Shift+F5 stop, Ctrl+Shift+F5 restart, F9 breakpoint, F10/F11/Shift+F11 step, F12 definition, Shift+F12 references,
   Ctrl+F12 implementation, F2 and Ctrl+R Ctrl+R rename, Ctrl+K Ctrl+D format document, Ctrl+K Ctrl+C/U comment/uncomment, Ctrl+/ toggle comment, Ctrl+. quick fix, Ctrl+Space / Ctrl+Shift+Space suggest / parameter hints,
   Ctrl+Q and Ctrl+Shift+P palette (Quick Launch opens the palette), Ctrl+T and Ctrl+, go to all, Ctrl+P quick open, Ctrl+Shift+F find in files, Ctrl+F / Ctrl+H / Ctrl+G, Ctrl+S / Ctrl+Shift+S (save all),
-  Ctrl+Tab MRU, Ctrl+W / Ctrl+F4 close, Ctrl+Alt+L explorer, Ctrl+Alt+O output, Ctrl+\ Ctrl+E error list, Ctrl+\` terminal, Alt+Up/Down move lines, Ctrl+D duplicate, Ctrl+L delete line, folding chords.
+  Ctrl+Tab MRU, Ctrl+F4 close, Ctrl+Alt+L explorer, Ctrl+Alt+O output, Ctrl+\ Ctrl+E error list, Ctrl+\` terminal, Alt+Up/Down move lines, Ctrl+D duplicate, Ctrl+L delete line, folding chords.
   VS Code preset: the VS Code defaults for the same feature set (e.g. Shift+Alt+F format — Ctrl+Shift+I on Linux, Ctrl+Shift+K delete line, Ctrl+Shift+E/U/M views, Ctrl+K S save all).
+  Both presets: Vim's window commands with Vim off, only while an editor has the keyboard (`editorTextFocus && !vim.active`; the terminal keeps Ctrl+W, and with Vim on
+  the engine's own Ctrl-W does the same through the shell): Ctrl+W then `v` split right, `s`/`S` split down, `h`/`j`/`k`/`l` focus the group left / below / above / right,
+  `w` next group (wraps), `W`/`p` previous group, `o` close the editors of the other groups (`:only`), `c`/`q` close the editor (with the save prompt), `n` a new untitled editor
+  in a group below; the second key also with Ctrl (Ctrl+W Ctrl+V == Ctrl+W v) except `c`/`W`. Control on a Mac too (`⌃W ⌃V`). Ctrl+W alone therefore closes nothing off the
+  Mac: Ctrl+F4 closes the editor (Cmd+W and Cmd+F4 on a Mac). An unbound second key ends the chord, says so in the status bar and is not typed.
+  Next / previous group run through the main window's groups (top to bottom, left to right) and then each floating window's, wrapping, so a floating
+  window leads back to the main one; `h`/`j`/`k`/`l` stay in the window; from a tab that is not an editor (Welcome, Settings) they step from that tab's group.
   macOS: every Ctrl binding of both presets has a `mac` key (a test enforces it): Cmd in Ctrl's place (Visual Studio for Mac, VS Code for Mac), VS Code for Mac's key where Cmd+key
   belongs to macOS (folding on Cmd+K chords, block comment Shift+Alt+A, pause F6, Find Next/Previous Cmd+G/Cmd+Shift+G, Quick Launch Cmd+Shift+A), and Control kept where VS Code for Mac
   keeps it (Ctrl+Space, Ctrl+Tab, Ctrl+\`, Ctrl+G, Ctrl+-). Cmd+, opens Settings in both presets (Visual Studio's has no Settings key elsewhere).
