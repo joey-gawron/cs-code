@@ -221,8 +221,10 @@ connection that created or reattached it, so the replay always comes before newe
   whose own task presentation (`TaskTerminalHost`: a terminal named after the task, `presentation` reuse/reveal/echo/clear/close, "press any key")
   opens a terminal; its `term/create` carries the request's tag (`CSCODE_SERVER_TASK`, removed from the program's environment), so the PTY — on the
   server — is connected to the waiting run: its output feeds the problem matchers there, its exit is the result, cancelling kills it, closing the
-  terminal ends the task (terminated). A tagged terminal always runs on the server (`RemoteTerminals` refuses rather than starting it locally), and a
-  reused task terminal starts the next program there too (`TerminalService.RestartAsync` through the backend). A client without the integrated
+  terminal ends the task (terminated). A tagged terminal always runs on the server (`RemoteTerminals` refuses rather than starting it locally), the
+  server refuses a tagged `term/create` no run waits for (so a task never runs twice or unwanted), and a reused task terminal starts the next program
+  there too (`TerminalService.RestartAsync` through the backend). A link drop while a task's terminal is being opened: the server asks again on the
+  next connection with the same tag and the client answers it with the start it already made. A client without the integrated
   terminal gets the old presentation: the output piped into "Remote: Tasks". `task/start` + `task/wait` (long poll): a run outlives the connection
   that started it and the client waits for it again after a reconnect to the same server (a task's terminal is a channel like any other); after each
   (re)connect `task/keep` names the runs the client still waits for and the server cancels the others (one cancelled while the link was down, or a
