@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Avalonia.Headless.XUnit;
+using CsCode.Editor.Tests.Support;
 using CsCode.Editor.TreeSitter;
 using CsCode.Editor.TreeSitter.Grammars;
 using CsCode.Editor.TreeSitter.Highlighting;
@@ -161,6 +163,7 @@ public class TreeSitterInjectionTests
             var block = string.Concat(csharp.Split('\n').Select(l => l.Length == 0 ? "\n" : "   " + l + "\n"));
             var text = "Title\n=====\n\n.. code-block:: csharp\n\n" + block + "\nAfter *the* block.\n";
             using var registry = NewRegistry();
+            Assert.NotNull(registry.Get("c_sharp", out _)); // loaded before the highlight (a first load inside it would spend its clock)
             using var doc = new SyntaxDocument(registry, bundle);
             var input = new StringInput(text);
             Assert.Equal(ParseOutcome.Completed, doc.Parse(input, long.MaxValue));
@@ -181,6 +184,115 @@ public class TreeSitterInjectionTests
         }
         finally
         {
+            SyntaxDocument.MaxQueryTime = previous;
+        }
+    }
+
+    /// <summary>
+    /// The regions of one highlight share its clock. Once a pathological block spent it, every later region stopped at its first progress
+    /// check and was remembered as slow under ITS language and size, so ordinary Python and C# blocks of that size stayed uncoloured for the
+    /// document's life. A region is remembered only when its own parse had the time; the others are parsed by the next highlight.
+    /// </summary>
+    [Fact]
+    public void A_region_that_only_ran_out_of_another_region_s_time_is_not_remembered_as_slow()
+    {
+        var bundle = RequireGrammar("rst");
+        RequireGrammar("c_sharp");
+        RequireGrammar("python");
+        var previous = SyntaxDocument.MaxQueryTime;
+        try
+        {
+            SyntaxDocument.MaxQueryTime = TimeSpan.FromMilliseconds(150);
+            static string Indent(string code) => string.Concat(code.Split('\n').Select(l => l.Length == 0 ? "\n" : "   " + l + "\n"));
+            var big = TreeSitterGuardTests.Unparsable + string.Concat(Enumerable.Range(0, 10_000).Select(i => $"public class C{i} {{ int F{i}(int a) {{ return a * {i}; }} }}\n"));
+            var python = string.Concat(Enumerable.Range(0, 15).Select(i => $"def pyfunc{i}(a):\n    return a + {i}\n"));
+            const string small = "class Small {\n    int F(int a) {\n        return a;\n    }\n}\n// end\n";
+            var text = "Title\n=====\n\n.. code-block:: csharp\n\n" + Indent(big)
+                + "\n.. code-block:: python\n\n" + Indent(python)
+                + "\n.. code-block:: csharp\n\n" + Indent(small) + "\nAfter *the* blocks.\n";
+            using var registry = NewRegistry();
+            Assert.NotNull(registry.Get("c_sharp", out _)); // loaded before the highlight (a first load inside it would spend its clock)
+            Assert.NotNull(registry.Get("python", out _));
+            using var doc = new SyntaxDocument(registry, bundle);
+            var input = new StringInput(text);
+            Assert.Equal(ParseOutcome.Completed, doc.Parse(input, long.MaxValue));
+            var stacks = new TestStacks();
+            var paint = new PaintBuffer();
+            string[] ScopesAt(string needle) => stacks.Scopes(paint.StackAt(text.IndexOf(needle, StringComparison.Ordinal)));
+            var pythonRoot = TreeSitterLanguages.RootScopeFor("python")!;
+            var csharpRoot = TreeSitterLanguages.RootScopeFor("c_sharp")!;
+
+            doc.Highlight(input, 0, text.Length, stacks, paint);
+            Assert.Equal(1, doc.InjectionParsesStopped); // the pathological block
+            Assert.True(doc.InjectionParsesDeferred >= 2, $"{doc.InjectionParsesDeferred} deferred"); // the blocks after it: not started, the clock was spent
+            Assert.True(doc.LastHighlightDeferred);
+            Assert.True(doc.LastQueryTimedOut);
+            Assert.Null(doc.SlowInjectionSize("python"));
+            Assert.True(doc.SlowInjectionSize("c_sharp") > 100_000, $"c_sharp remembered at {doc.SlowInjectionSize("c_sharp")} chars"); // the big block's size, not the 6-line one's
+
+            // the next highlight (a scroll, the next slice) colours them; the pathological block is not tried again
+            doc.Highlight(input, 0, text.Length, stacks, paint);
+            Assert.Equal(1, doc.InjectionParsesStopped);
+            Assert.Contains(pythonRoot, ScopesAt("pyfunc3"));
+            Assert.Contains(csharpRoot, ScopesAt("class Small"));
+            Assert.DoesNotContain(csharpRoot, ScopesAt("public class C5 "));
+            Assert.False(doc.LastQueryTimedOut);
+
+            // and after an edit (new tree, injection trees dropped) Python and small C# blocks are still parsed
+            doc.DropTree();
+            Assert.Equal(ParseOutcome.Completed, doc.Parse(input, long.MaxValue));
+            doc.Highlight(input, 0, text.Length, stacks, paint);
+            Assert.Contains(pythonRoot, ScopesAt("pyfunc3"));
+            Assert.Contains(csharpRoot, ScopesAt("class Small"));
+            Assert.Equal(1, doc.InjectionParsesStopped);
+        }
+        finally
+        {
+            SyntaxDocument.MaxQueryTime = previous;
+        }
+    }
+
+    /// <summary>
+    /// The same in a view: the highlighter highlights the viewport again when its pass left injected blocks for the next one, so the blocks
+    /// after a slow one are coloured without a scroll or an edit (the pass after the slow one does not try it again).
+    /// </summary>
+    [AvaloniaFact]
+    public async Task Blocks_left_by_a_slow_block_are_coloured_by_the_next_pass_without_any_input()
+    {
+        RequireGrammar("rst");
+        RequireGrammar("c_sharp");
+        RequireGrammar("python");
+        var previous = SyntaxDocument.MaxQueryTime;
+        SyntaxDocument.MaxQueryTime = TimeSpan.FromMilliseconds(300);
+        // a block whose parse runs out of time: it starts after its own limit has passed, so it stops at its first progress check
+        SyntaxDocument.InjectionParseHookForTests = (language, chars) =>
+        {
+            if (language == "c_sharp" && chars > 1_000) Thread.Sleep(400);
+        };
+        try
+        {
+            using var host = ViewHost.Create();
+            host.Config.Set(TreeSitterService.SettingKey, TreeSitterService.TreeSitter);
+            static string Indent(string code) => string.Concat(code.Split('\n').Select(l => l.Length == 0 ? "\n" : "   " + l + "\n"));
+            var slow = string.Concat(Enumerable.Range(0, 30).Select(i => $"class C{i} {{ int F{i}(int a) {{ return a * {i}; }} }}\n"));
+            var text = "Title\n=====\n\n.. code-block:: csharp\n\n" + Indent(slow)
+                + "\n.. code-block:: python\n\n" + Indent("def pyfunc(a):\n    return a + 1\n")
+                + "\n.. code-block:: csharp\n\n" + Indent("class Small { }\n") + "\nAfter.\n";
+            var lines = text.Split('\n');
+            var pyLine = Array.FindIndex(lines, l => l.Contains("def pyfunc", StringComparison.Ordinal));
+            var smallLine = Array.FindIndex(lines, l => l.Contains("class Small", StringComparison.Ordinal));
+            var (_, view, _) = await host.OpenAsync(text, "notes.rst", 900, 1600);
+            Assert.True(view.Tokens!.Viewport.Last >= smallLine, $"viewport {view.Tokens.Viewport}");
+            var python = TreeSitterLanguages.RootScopeFor("python")!;
+            var csharp = TreeSitterLanguages.RootScopeFor("c_sharp")!;
+            await ViewHost.WaitFor(() => TreeSitterViewTests.ScopesAt(view, pyLine, 4).Contains(python) && TreeSitterViewTests.ScopesAt(view, smallLine, 4).Contains(csharp),
+                "the Python block and the small C# block coloured", 20_000);
+            Assert.DoesNotContain(csharp, TreeSitterViewTests.ScopesAt(view, Array.FindIndex(lines, l => l.Contains("class C5 ", StringComparison.Ordinal)), 4));
+            Assert.False(view.Tokens.TreeSitterGaveUp);
+        }
+        finally
+        {
+            SyntaxDocument.InjectionParseHookForTests = null;
             SyntaxDocument.MaxQueryTime = previous;
         }
     }

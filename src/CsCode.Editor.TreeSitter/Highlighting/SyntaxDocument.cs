@@ -89,7 +89,8 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
     private readonly long[] _controlStorage = GC.AllocateArray<long>(4, pinned: true);
     private ParseControl* _control;
     private ParseControl* _injectionControl;
-    // per injected language: the smallest region (chars) whose parse ran out of time in this document; regions at least that big are not tried again
+    // per injected language: the smallest region (chars) whose own parse ran out of time (the whole MaxQueryTime) in this document; regions at
+    // least that big are not tried again
     private readonly Dictionary<string, int> _slowInjections = new(StringComparer.Ordinal);
     // The query guard: the cursor's options (progress callback + payload) and its deadline, pinned for the cursor's whole iteration.
     private readonly long[] _queryStorage = GC.AllocateArray<long>(4, pinned: true);
@@ -118,6 +119,9 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
     /// in for a grammar that never returns (a real one would have to be built with an endless loop in its scanner).
     /// </summary>
     internal static Action<string>? HangHookForTests { get; set; }
+
+    /// <summary>Tests: runs on the lane right before an injection parse starts (its language, its size in chars), e.g. to make it run out of time.</summary>
+    internal static Action<string, long>? InjectionParseHookForTests { get; set; }
 
     public SyntaxDocument(GrammarRegistry registry, LanguageBundle language)
     {
@@ -191,6 +195,15 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
 
     /// <summary>Injected regions whose parse was stopped by the highlight's time limit (tests, diagnostics).</summary>
     public int InjectionParsesStopped { get; private set; }
+
+    /// <summary>Injected regions left for the next highlight because an earlier region of the same highlight had spent its time (tests, diagnostics).</summary>
+    public int InjectionParsesDeferred { get; private set; }
+
+    /// <summary>True when the last <see cref="Highlight"/> left injected regions for the next one (its clock was spent before it reached them).</summary>
+    public bool LastHighlightDeferred { get; private set; }
+
+    /// <summary>The smallest region of <paramref name="language"/> whose parse ran out of time in this document, or null (tests, diagnostics).</summary>
+    internal int? SlowInjectionSize(string language) => _slowInjections.TryGetValue(language, out var chars) ? chars : null;
 
     /// <summary>Applies one edit to the current tree (in order, each against the text produced by the previous). Abandons a halted parse.</summary>
     public void ApplyEdit(in TextEditInfo e)
@@ -304,6 +317,7 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
         var root = stacks.Root(Language.RootScopeKey);
         paint.Reset(start, end - start, root);
         LastQueryTimedOut = false;
+        LastHighlightDeferred = false;
         if (_tree == IntPtr.Zero || end <= start) return 0;
         _text = text;
         _layerCounter = 0;
@@ -580,6 +594,17 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
             _injectionTrees[key] = IntPtr.Zero;
             return IntPtr.Zero;
         }
+        // Every layer of a highlight shares its clock. Once an earlier region spent it, a later one is not started (it would stop at its first
+        // progress check and be taken for slow): it stays in the host's colours for this pass, which is partial, and the next highlight, with a
+        // clock of its own, parses it (the slow region before it is not tried again).
+        var started = Stopwatch.GetTimestamp();
+        if (started >= *_queryDeadline)
+        {
+            _queryDeadline[1] = 1;
+            InjectionParsesDeferred++;
+            LastHighlightDeferred = true;
+            return IntPtr.Zero;
+        }
         var parser = _registry.InjectionParser(site.Language);
         if (parser == IntPtr.Zero) return IntPtr.Zero;
         var ranges = CollectionsMarshal.AsSpan(site.Ranges);
@@ -593,13 +618,17 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
         try
         {
             var input = new TSInput { Payload = (void*)GCHandle.ToIntPtr(handle), Read = &ReadInput, Encoding = TSInputEncoding.Utf16LE };
-            // An injection parse is bounded like the highlight it belongs to: the highlight's own time limit (MaxQueryTime, far below the hang
-            // watchdog) and the cancel an edit requests. Without a progress callback one slow block ran unbounded under the watchdog, which then
-            // quarantined a healthy grammar and abandoned the lane.
-            _injectionControl->Deadline = *_queryDeadline;
+            // An injection parse is bounded: MaxQueryTime from its own start (far below the hang watchdog), and the cancel an edit requests.
+            // Without a progress callback one slow block ran unbounded under the watchdog, which then quarantined a healthy grammar and
+            // abandoned the lane. It is started only while the highlight's clock has time left (above), so a highlight takes at most about
+            // twice the limit: its own clock, plus the one region that was still started before it ran out.
+            _injectionControl->Deadline = started + (long)(MaxQueryTime.TotalSeconds * Stopwatch.Frequency);
             var options = new TSParseOptions { Payload = _injectionControl, ProgressCallback = &Progress };
             using (Record(site.Language))
+            {
+                InjectionParseHookForTests?.Invoke(site.Language.Name, chars);
                 tree = TsApi.ts_parser_parse_with_options(parser, IntPtr.Zero, input, options);
+            }
         }
         finally
         {
@@ -613,6 +642,8 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
             // out of time: this highlight is partial (the query guard counts it), and the region stays in the host's colours
             _queryDeadline[1] = 1;
             InjectionParsesStopped++;
+            // It had the whole limit to itself, so the region (its language, its size) is remembered as slow. A region the highlight did not
+            // start because an earlier one spent the clock is not (above): it says nothing about itself, and the next highlight parses it.
             _slowInjections[site.Language.Name] = (int)Math.Min(chars, _slowInjections.GetValueOrDefault(site.Language.Name, int.MaxValue));
         }
         _injectionTrees[key] = tree;
