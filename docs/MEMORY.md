@@ -77,7 +77,9 @@ collection and the page release, measured before/after (`MemoryTrimReport`, logg
 * **Child processes**: `TrackChildProcess(name, pid, restartAboveBytes, onOverBudget)` — a child above its cap for 2 consecutive samples (1 under
   Aggressive pressure) gets its owner's callback, at most once a minute, exceptions isolated.
 * **Idle trim**: after `idleTrimSeconds` without input (`IUserActivityMonitor.NotifyActivity`, called by the shell's tunnel handlers for keys,
-  text, pointer press/move/wheel — one timestamp write per event), an Idle-level trim with a compacting collection, once per idle period.
+  text, pointer press/move/wheel — one timestamp write per event — on the main window and on every floating window: input in a floating window
+  used to leave the idle clock running, so the trim's blocking collection could run mid-typing), an Idle-level trim with a compacting collection,
+  once per idle period.
 
 **Measured effect in the real app** (`cscode-profile trim-effect`, headless, 20 documents open after 3 open/close cycles of 21 files, live GC heap
 ~60 MB; load ~10–15):
