@@ -67,6 +67,8 @@ public sealed class ShellController : IDisposable
     /// <summary>The Vim adapter (null when the composition has no Vim module or no real editor): sees keys before the key bindings.</summary>
     public Vim.VimIntegration? Vim { get; private set; }
     public IShellKeyInterceptor? KeyInterceptor => Vim;
+    /// <summary>General macros (null when the composition has no macro module or no real editor): the keyboard pipeline's tap.</summary>
+    public Macros.MacroIntegration? Macros { get; private set; }
     public ClipboardRouter Clipboard { get; private set; } = null!;
     public ShellContextMenus ContextMenus { get; private set; } = null!;
     public ShellDockFactory Factory => _sp.GetRequiredService<ShellDockFactory>();
@@ -145,6 +147,14 @@ public sealed class ShellController : IDisposable
         {
             vim.Start(() => Keyboard.IsChordPending);
             _disposables.Add(vim);
+        }
+
+        // General macros (docs/MACROS.md): record and replay through the keyboard pipeline's tap and the editor views.
+        Macros = global::CsCode.App.Macros.MacroIntegration.TryCreate(_sp);
+        if (Macros is { } macros)
+        {
+            macros.Start(Keyboard, Vim);
+            _disposables.Add(macros);
         }
 
         Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs, id => Tools.IsVisible(id));

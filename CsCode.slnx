@@ -6,6 +6,7 @@
     <Project Path="src/CsCode.Editor/CsCode.Editor.csproj" />
     <Project Path="src/CsCode.Editor.TreeSitter/CsCode.Editor.TreeSitter.csproj" />
     <Project Path="src/CsCode.Lsp/CsCode.Lsp.csproj" />
+    <Project Path="src/CsCode.Macros/CsCode.Macros.csproj" />
     <Project Path="src/CsCode.Panels.Debug/CsCode.Panels.Debug.csproj" />
     <Project Path="src/CsCode.Panels.Search/CsCode.Panels.Search.csproj" />
     <Project Path="src/CsCode.Platform/CsCode.Platform.csproj" />
@@ -22,6 +23,7 @@
     <Project Path="tests/CsCode.Dap.Tests/CsCode.Dap.Tests.csproj" />
     <Project Path="tests/CsCode.Editor.Tests/CsCode.Editor.Tests.csproj" />
     <Project Path="tests/CsCode.Lsp.Tests/CsCode.Lsp.Tests.csproj" />
+    <Project Path="tests/CsCode.Macros.Tests/CsCode.Macros.Tests.csproj" />
     <Project Path="tests/CsCode.MemoryTests/CsCode.MemoryTests.csproj" />
     <Project Path="tests/CsCode.Panels.Debug.Tests/CsCode.Panels.Debug.Tests.csproj" />
     <Project Path="tests/CsCode.Panels.Search.Tests/CsCode.Panels.Search.Tests.csproj" />

@@ -14,6 +14,22 @@ public enum KeyDispatch
 }
 
 /// <summary>
+/// Sees the keys of the <see cref="KeyboardPipeline"/> (macro recording and playback, docs/MACROS.md). Called on the UI thread inside the key
+/// event, for every key the pipeline is asked about (keys a modal layer such as Vim took never get here): keep it cheap and allocation-free.
+/// </summary>
+public interface IKeyboardTap
+{
+    /// <summary>
+    /// Before resolution. Null lets the pipeline resolve the key as usual; <see cref="KeyDispatch.Handled"/> consumes it (no binding runs and the
+    /// focused control does not get it); <see cref="KeyDispatch.PassThrough"/> skips the bindings and leaves the key to the focused control.
+    /// </summary>
+    KeyDispatch? BeforeResolve(KeyStroke stroke);
+
+    /// <summary>After resolution, with the pipeline's decision (<see cref="KeyDispatch.PassThrough"/>: the focused control gets the key).</summary>
+    void AfterResolve(KeyStroke stroke, KeyDispatch dispatch);
+}
+
+/// <summary>
 /// The shell's key path: toolkit-independent <see cref="KeyStroke"/> in, decision out. A matching binding executes its command (with args);
 /// a chord prefix is swallowed and announced in the status bar ("(Ctrl+K) was pressed. Waiting for second key of chord..."); anything
 /// else passes through so typing is never slowed or swallowed. Esc or a timeout abandons a pending chord. Resolution is allocation-light
@@ -59,7 +75,19 @@ public sealed class KeyboardPipeline : IDisposable
     /// <summary>Number of commands started by key bindings (diagnostics / tests).</summary>
     public int ExecutedCount { get; private set; }
 
+    /// <summary>Sees every key before and after resolution (the macro recorder and player); null when nothing taps the pipeline.</summary>
+    public IKeyboardTap? Tap { get; set; }
+
     public KeyDispatch Handle(KeyStroke stroke)
+    {
+        var tap = Tap;
+        if (tap?.BeforeResolve(stroke) is { } decided) return decided;
+        var dispatch = Resolve(stroke);
+        tap?.AfterResolve(stroke, dispatch);
+        return dispatch;
+    }
+
+    private KeyDispatch Resolve(KeyStroke stroke)
     {
         var wasPending = IsChordPending;
         if (wasPending) _lastChord = _keys.PendingChord.ToArray(); // the service clears its state on a dead chord; keep the prefix for the message

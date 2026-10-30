@@ -13,8 +13,12 @@ public sealed class TestCommandService : ICommandService
     private readonly Dictionary<string, List<Func<CommandInvocation, ValueTask<object?>>>> _handlers = new();
     private readonly Dictionary<string, CommandMetadata> _meta = new();
     private readonly Emitter<string> _registered = new();
+    private readonly Emitter<CommandExecuted> _executed = new();
+    private static readonly AsyncLocal<string[]?> s_callers = new();
 
     public IEventSource<string> Registered => _registered;
+    /// <summary>Same contract as Platform's: after a handler completed, with the ids of the commands whose handlers ran it (async-local).</summary>
+    public IEventSource<CommandExecuted> Executed => _executed;
     public IReadOnlyList<CommandMetadata> All { get { lock (_gate) return _meta.Values.ToArray(); } }
     public bool Has(string id) { lock (_gate) return _handlers.TryGetValue(id, out var l) && l.Count > 0; }
 
@@ -34,7 +38,12 @@ public sealed class TestCommandService : ICommandService
     {
         var handler = Find(id);
         if (handler is null) throw new CommandNotFoundException(id);
-        return await handler(new CommandInvocation(id, args));
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var callers = s_callers.Value ?? [];
+        s_callers.Value = [.. callers, id];
+        var result = await handler(new CommandInvocation(id, args ?? []));
+        _executed.Fire(new CommandExecuted(id, args ?? [], callers, started));
+        return result;
     }
 
     private Func<CommandInvocation, ValueTask<object?>>? Find(string id)

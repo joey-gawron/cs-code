@@ -10,6 +10,7 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
 {
     private readonly Emitter<TextPosition> _caretChanged = new();
     private readonly Emitter<IReadOnlyList<TextRange>> _selectionChanged = new();
+    private readonly Emitter<string> _textInput = new();
     private bool _disposed;
 
     // Hooks the feature components install (so this class does not depend on all of them).
@@ -179,6 +180,41 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
         if (!_disposed) EditorMenus.PrepareContextKeys(view);
     }
 
+    public IEventSource<string> TextInput => _textInput;
+
+    public bool ReplayText(string text)
+    {
+        if (_disposed || view.IsDisposed || view.Document.IsReadOnly || string.IsNullOrEmpty(text)) return false;
+        view.TextArea.PerformTextInput(text);
+        return true;
+    }
+
+    public bool ReplayKey(Avalonia.Input.Key key, Avalonia.Input.KeyModifiers modifiers)
+    {
+        if (_disposed || view.IsDisposed) return false;
+        var area = view.TextArea;
+        // AvaloniaEdit's editing and caret commands act on the focused text area (its RoutedCommand targets the last focused element, not the
+        // event's source): a key for this view must find it focused, or it would edit whichever editor had the focus last.
+        if (!area.IsFocused && (!area.Focus() || !area.IsFocused)) return false;
+        var down = new Avalonia.Input.KeyEventArgs { RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent, Key = key, KeyModifiers = modifiers, Source = area };
+        area.RaiseEvent(down);
+        // the release keeps handlers that track pressed keys (Ctrl held for Ctrl+Tab, Ctrl+click) consistent; it is never a command
+        if (!view.IsDisposed) area.RaiseEvent(new Avalonia.Input.KeyEventArgs { RoutedEvent = Avalonia.Input.InputElement.KeyUpEvent, Key = key, KeyModifiers = modifiers, Source = area });
+        return down.Handled;
+    }
+
+    /// <summary>Text input that reached the text area (see <see cref="IEditorViewController.TextInput"/>): control characters are not typing.</summary>
+    internal void RaiseTextInput(string text)
+    {
+        if (_disposed || _textInput.SubscriberCount == 0) return;
+        foreach (var c in text)
+            if (c >= ' ' && c != '\u007f')
+            {
+                _textInput.Fire(text);
+                return;
+            }
+    }
+
     public ValueTask<IReadOnlyList<string>> GetBreadcrumbsAsync(CancellationToken ct = default) =>
         BreadcrumbsHandler?.Invoke(ct) ?? ValueTask.FromResult<IReadOnlyList<string>>([]);
 
@@ -198,6 +234,7 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
         _disposed = true;
         _caretChanged.Clear();
         _selectionChanged.Clear();
+        _textInput.Clear();
         StopLineChanged.Clear();
         FoldedLinesProvider = null;
         FoldRestorer = null;

@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using CsCode.App.Docking;
+using CsCode.App.Macros;
 using CsCode.App.Notifications;
 using CsCode.App.QuickInput;
 using CsCode.App.Services;
@@ -50,6 +51,7 @@ public static class AppServices
         services.AddCsCodeDap();
         services.AddCsCodeEditor();
         services.AddCsCodeVim(); // engine + session; the shell's adapter (Vim/VimIntegration) connects it to the editor views
+        services.AddCsCodeMacrosShell(); // general macros + their UI scheduler; Macros/MacroIntegration connects them to the keys and editor views
         services.AddCsCodeProfiling();
         services.AddCsCodeShell(args);
         services.AddCsCodeDebugPanels();
