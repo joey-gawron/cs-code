@@ -26,6 +26,9 @@ public static class RemoteSettings
     /// <summary><c>inProcess</c> (default) or <c>process</c>: run the language client in a separate local cscode-server process (own heap/GC/CPU scheduling). Applies on restart.</summary>
     public const string LanguageHost = "cscode.languageHost";
 
+    // remote-5 (end pass): remote.ssh.path, remote.ssh.options, remote.docker.path and remote.wsl.path run or configure local programs, so a
+    // workspace's .vscode/settings.json must not set them (VS Code: machine/application scope). They get that scope when ConfigurationProperty has
+    // one (the lsp-core fixer adds it; this branch was cut before it existed).
     public static IReadOnlyList<ConfigurationProperty> Properties() =>
     [
         P(SshPath, "ssh", "The ssh client to run (resolved on PATH when not a path)."),
