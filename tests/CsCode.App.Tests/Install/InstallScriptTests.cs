@@ -469,6 +469,84 @@ public sealed class InstallScriptTests
         Assert.Contains("unknown argument", unknown.Error);
         Assert.Equal(InstallSandbox.Describe(before), InstallSandbox.Describe(box.Snapshot()));
     }
+
+    [Fact]
+    public async Task A_second_install_or_uninstall_waits_for_none_and_is_refused_while_one_runs()
+    {
+        if (!File.Exists("/usr/bin/flock")) Assert.Skip("flock(1) is not installed");
+        using var box = new InstallSandbox();
+        Ok(await box.InstallAsync("--from", box.FakePublish(), "--version", "1", "--no-adapters", "--no-tree-sitter", "--no-server-bundles"));
+        // Another run holds the folder's lock (flock(1) takes the same lock on the directory as the scripts do).
+        using var holder = Process.Start("/usr/bin/flock", [box.AppRoot, Path.Combine(box.FakePublish(), "sleeper"), "300"])!;
+        try
+        {
+            // flock(1) holds the lock itself while its command runs: wait until the kernel lists it
+            Assert.True(await SpinUntilAsync(() => File.ReadAllLines("/proc/locks").Any(l => l.Contains(" FLOCK ", StringComparison.Ordinal)
+                && l.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(holder.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)))), "flock(1) did not take the lock");
+            var install = await box.InstallAsync("--from", box.FakePublish("b", extra: "b"), "--version", "2", "--no-adapters", "--no-tree-sitter", "--no-server-bundles");
+            Assert.NotEqual(0, install.ExitCode);
+            Assert.Contains("another install or uninstall of CsCode is running", install.Error);
+            var uninstall = await box.UninstallAsync();
+            Assert.NotEqual(0, uninstall.ExitCode);
+            Assert.True(File.Exists(box.Launcher));
+        }
+        finally
+        {
+            holder.Kill(entireProcessTree: true);
+            holder.WaitForExit(5_000);
+        }
+        Ok(await box.UninstallAsync());
+    }
+
+    [Fact]
+    public async Task The_desktop_caches_are_refreshed_without_a_development_library_path_and_an_icon_cache_is_never_created()
+    {
+        using var box = new InstallSandbox();
+        // Stand-ins for the desktop tools, first on PATH (the real kbuildsycoca6 and friends never run in a test): each records its arguments
+        // and whether LD_LIBRARY_PATH reached it; update-desktop-database writes mimeinfo.cache as the real one does.
+        var bin = Path.Combine(box.Root, "fakebin");
+        Directory.CreateDirectory(bin);
+        var log = Path.Combine(box.Root, "refresh.log");
+        foreach (var tool in new[] { "update-desktop-database", "kbuildsycoca6", "gtk-update-icon-cache" })
+        {
+            var extra = tool == "update-desktop-database" ? "for a in \"$@\"; do case \"$a\" in -*) ;; *) : > \"$a/mimeinfo.cache\" ;; esac; done\n" : "";
+            File.WriteAllText(Path.Combine(bin, tool), $"#!/bin/sh\necho \"{tool} $* LD_LIBRARY_PATH=${{LD_LIBRARY_PATH-unset}}\" >> '{log}'\n{extra}");
+            File.SetUnixFileMode(Path.Combine(bin, tool), (UnixFileMode)0b111_101_101);
+        }
+        var env = new Dictionary<string, string?> { ["PATH"] = bin + ":/usr/bin:/bin", ["LD_LIBRARY_PATH"] = "/nix/store/not-for-desktop-tools/lib" };
+        Ok(await box.ScriptAsync("install.sh", ["--from", box.FakePublish(), "--version", "1", "--no-adapters", "--no-tree-sitter", "--no-server-bundles"], env));
+        var lines = File.ReadAllLines(log);
+        Assert.Contains(lines, l => l.StartsWith($"update-desktop-database -q {Path.Combine(box.Data, "applications")} ", StringComparison.Ordinal));
+        Assert.Contains(lines, l => l.StartsWith("kbuildsycoca6 ", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, l => l.StartsWith("gtk-update-icon-cache", StringComparison.Ordinal)); // there was no icon cache to keep current
+        Assert.All(lines, l => Assert.EndsWith("LD_LIBRARY_PATH=unset", l));
+
+        // An icon cache the user already has is kept current.
+        File.WriteAllText(Path.Combine(box.Data, "icons", "hicolor", "icon-theme.cache"), "cache");
+        File.Delete(log);
+        Ok(await box.ScriptAsync("install.sh", ["--from", box.FakePublish(), "--version", "1", "--no-adapters", "--no-tree-sitter", "--no-server-bundles"], env));
+        Assert.Contains(File.ReadAllLines(log), l => l.StartsWith($"gtk-update-icon-cache -q -t -f {Path.Combine(box.Data, "icons", "hicolor")} ", StringComparison.Ordinal));
+        File.Delete(Path.Combine(box.Data, "icons", "hicolor", "icon-theme.cache"));
+
+        // The uninstall refreshes them too, and the applications folder it created goes even though the refresh wrote mimeinfo.cache into it.
+        File.Delete(log);
+        Ok(await box.ScriptAsync("uninstall.sh", [], env));
+        Assert.Contains(File.ReadAllLines(log), l => l.StartsWith("kbuildsycoca6 ", StringComparison.Ordinal));
+        Assert.False(Directory.Exists(Path.Combine(box.Data, "applications")));
+        Assert.False(Directory.Exists(Path.Combine(box.Home, ".local")), "the install created ~/.local: the uninstall removes it again");
+    }
+
+    private static async Task<bool> SpinUntilAsync(Func<bool> condition, int timeoutMs = 10_000)
+    {
+        var clock = Stopwatch.StartNew();
+        while (clock.ElapsedMilliseconds < timeoutMs)
+        {
+            try { if (condition()) return true; }
+            catch (IOException) { }
+            await Task.Delay(50);
+        }
+        return false;
+    }
 }
 
 /// <summary>Just enough of the Desktop Entry Specification to read back what the installer wrote.</summary>

@@ -84,19 +84,19 @@ cscode_still_ours() {
 
 # Refreshes the desktop's caches that exist (docs/briefs/app-icon-and-install.md). The Qt/GTK tools run without a development shell's
 # LD_LIBRARY_PATH (the Nix shell's libraries would be loaded into KDE's tools otherwise). An icon cache is only ever updated, never created: a
-# cache the user does not have would go stale and hide icons other programs install later.
+# cache the user does not have would go stale and hide icons other programs install later. None of them inherits the install lock (fd 9).
 cscode_refresh_caches() {
     local run=(env -u LD_LIBRARY_PATH)
     if command -v update-desktop-database >/dev/null 2>&1 && [ -d "$cscode_apps" ]; then
-        "${run[@]}" update-desktop-database -q "$cscode_apps" || cscode_warn "update-desktop-database failed"
+        "${run[@]}" update-desktop-database -q "$cscode_apps" 9<&- || cscode_warn "update-desktop-database failed"
     fi
     if command -v gtk-update-icon-cache >/dev/null 2>&1 && [ -f "$cscode_icons/icon-theme.cache" ]; then
-        "${run[@]}" gtk-update-icon-cache -q -t -f "$cscode_icons" || cscode_warn "gtk-update-icon-cache failed"
+        "${run[@]}" gtk-update-icon-cache -q -t -f "$cscode_icons" 9<&- || cscode_warn "gtk-update-icon-cache failed"
     fi
     if command -v kbuildsycoca6 >/dev/null 2>&1; then
-        "${run[@]}" kbuildsycoca6 >/dev/null 2>&1 || cscode_warn "kbuildsycoca6 failed"
+        "${run[@]}" kbuildsycoca6 >/dev/null 2>&1 9<&- || cscode_warn "kbuildsycoca6 failed"
     elif command -v kbuildsycoca5 >/dev/null 2>&1; then
-        "${run[@]}" kbuildsycoca5 >/dev/null 2>&1 || cscode_warn "kbuildsycoca5 failed"
+        "${run[@]}" kbuildsycoca5 >/dev/null 2>&1 9<&- || cscode_warn "kbuildsycoca5 failed"
     fi
 }
 
@@ -105,7 +105,7 @@ cscode_uninstall_main() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --no-refresh) refresh=0; shift ;;
-            -h|--help) sed -n '2,15p' "${BASH_SOURCE[0]}"; exit 0 ;;
+            -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed -e 's/^#//' -e 's/^ //'; exit 0 ;;
             *) cscode_die "unknown argument '$1'" ;;
         esac
     done
@@ -115,6 +115,7 @@ cscode_uninstall_main() {
         cscode_say "CsCode is not installed for $(id -un) (no $cscode_manifest): nothing to remove."
         return 0
     fi
+    if command -v flock >/dev/null 2>&1; then exec 9<"$cscode_root"; flock -n 9 || cscode_die "an install or uninstall of CsCode is running"; fi
 
     local versions=() files=() links=() dirs=() kind a b
     while IFS=$'\t' read -r kind a b; do

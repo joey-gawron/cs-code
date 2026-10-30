@@ -61,7 +61,7 @@ while [ $# -gt 0 ]; do
         --server-bundles) need "$@"; servers_src=$2; shift 2 ;;
         --no-server-bundles) servers=0; shift ;;
         --no-refresh) refresh=0; shift ;;
-        -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,35p' "$0" | sed -e 's/^#//' -e 's/^ //'; exit 0 ;;
         *) die "unknown argument '$1' (see --help)" ;;
     esac
 done
@@ -183,13 +183,16 @@ ensure_dir() { # mkdir -p that records every directory it creates (tools/uninsta
 }
 
 ensure_dir "$cscode_root"
+# One install or uninstall at a time (a lock on the folder itself: nothing to clean up afterwards).
+if command -v flock >/dev/null 2>&1; then exec 9<"$cscode_root"; flock -n 9 || die "another install or uninstall of CsCode is running"; fi
 stage=$(mktemp -d "$cscode_root/.install-XXXXXX")
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/cscode-install.XXXXXX")
 cleanup() { [ -z "${stage:-}" ] || rm -rf -- "$stage"; rm -rf -- "$tmp"; }
 trap cleanup EXIT
 chmod 755 "$stage"
 say "Installing CsCode $version into $cscode_root/$version"
-cp -a -- "$src/." "$stage/"
+# Modes from the umask (644/755), not the build tree's (often group-writable); symlinks are copied as links.
+cp -RP --preserve=timestamps -- "$src/." "$stage/"
 summary=()
 
 # The tree-sitter bundle (src/CsCode.Editor.TreeSitter: <app>/tree-sitter, checked by its bundle.json before anything is loaded).
@@ -199,9 +202,9 @@ if [ "$treesitter" = 0 ]; then
 else
     if [ -n "$treesitter_src" ]; then
         [ -f "$treesitter_src/bundle.json" ] || die "--tree-sitter $treesitter_src: no bundle.json there"
-        rm -rf -- "$stage/tree-sitter"; mkdir -p "$stage/tree-sitter"; cp -a -- "$treesitter_src/." "$stage/tree-sitter/"
+        rm -rf -- "$stage/tree-sitter"; mkdir -p "$stage/tree-sitter"; cp -RP --preserve=timestamps -- "$treesitter_src/." "$stage/tree-sitter/"
     elif [ ! -f "$stage/tree-sitter/bundle.json" ] && [ -f "$repo/artifacts/tree-sitter/$rid/bundle.json" ]; then
-        mkdir -p "$stage/tree-sitter"; cp -a -- "$repo/artifacts/tree-sitter/$rid/." "$stage/tree-sitter/"
+        mkdir -p "$stage/tree-sitter"; cp -RP --preserve=timestamps -- "$repo/artifacts/tree-sitter/$rid/." "$stage/tree-sitter/"
     fi
     rm -rf -- "$stage/tree-sitter/.work"
     if [ -f "$stage/tree-sitter/bundle.json" ]; then summary+=("tree-sitter: $(find "$stage/tree-sitter/grammars" -maxdepth 1 -name '*.so' | wc -l) grammars")
@@ -211,7 +214,7 @@ fi
 # The terminal's shell-integration scripts (src/CsCode.Terminal: <app>/shellIntegration). A publish carries them; an older one gets the sources.
 if [ ! -f "$stage/shellIntegration/cscode.bash" ]; then
     if [ -f "$repo/src/CsCode.Terminal/ShellIntegration/cscode.bash" ]; then
-        mkdir -p "$stage/shellIntegration"; cp -a -- "$repo/src/CsCode.Terminal/ShellIntegration/." "$stage/shellIntegration/"
+        mkdir -p "$stage/shellIntegration"; cp -RP --preserve=timestamps -- "$repo/src/CsCode.Terminal/ShellIntegration/." "$stage/shellIntegration/"
     else
         warn "no shell-integration scripts: terminals run without command decorations"
     fi
@@ -224,11 +227,13 @@ if [ "$servers" = 0 ]; then
 else
     if [ -n "$servers_src" ]; then
         [ -f "$servers_src/manifest.json" ] || die "--server-bundles $servers_src: no manifest.json there"
-        rm -rf -- "$stage/server-bundles"; mkdir -p "$stage/server-bundles"; cp -a -- "$servers_src/." "$stage/server-bundles/"
+        rm -rf -- "$stage/server-bundles"; mkdir -p "$stage/server-bundles"; cp -RP --preserve=timestamps -- "$servers_src/." "$stage/server-bundles/"
     elif [ ! -f "$stage/server-bundles/manifest.json" ]; then
         if command -v dotnet >/dev/null; then
             say "Building the remote server bundles…"
-            "$here/publish-server.sh" --out "$stage/server-bundles" >/dev/null || { warn "tools/publish-server.sh failed: no remote server bundles"; rm -rf -- "$stage/server-bundles"; }
+            # No MSBuild nodes or compiler server left running (and none holding the install lock, fd 9).
+            MSBUILDDISABLENODEREUSE=1 UseSharedCompilation=false "$here/publish-server.sh" --out "$stage/server-bundles" >/dev/null 9<&- \
+                || { warn "tools/publish-server.sh failed: no remote server bundles"; rm -rf -- "$stage/server-bundles"; }
         else
             warn "dotnet was not found: no remote server bundles (pass --server-bundles DIR)"
         fi
@@ -247,7 +252,7 @@ bundle_netcoredbg() {
     [ -x "$dir/netcoredbg" ] || { warn "netcoredbg: $s holds no netcoredbg executable; not bundled"; return 1; }
     # Its folder is copied whole (it needs its libraries), so it must BE netcoredbg's folder, not e.g. /usr/bin.
     [ -f "$dir/libdbgshim.so" ] || [ -f "$dir/ManagedPart.dll" ] || { warn "netcoredbg: $dir does not look like netcoredbg's own folder; not bundled"; return 1; }
-    mkdir -p "$stage/debug-adapters/netcoredbg" && cp -a -- "$dir/." "$stage/debug-adapters/netcoredbg/" || die "netcoredbg: copying $dir failed"
+    mkdir -p "$stage/debug-adapters/netcoredbg" && cp -RP --preserve=timestamps -- "$dir/." "$stage/debug-adapters/netcoredbg/" || die "netcoredbg: copying $dir failed"
 }
 bundle_jsdebug() {
     local s=$1 dir=""
@@ -257,7 +262,7 @@ bundle_jsdebug() {
     fi
     [ -n "$dir" ] || { warn "js-debug: no src/dapDebugServer.js under $s; not bundled"; return 1; }
     case "$(cd "$dir/.." && pwd)" in */v[0-9]*) [ "$(basename "$(cd "$dir/.." && pwd)")" = "$jsdebug_version" ] || { warn "js-debug: $dir is not $jsdebug_version (the version the app pins); not bundled"; return 1; } ;; esac
-    mkdir -p "$stage/debug-adapters/js-debug/$jsdebug_version/js-debug" && cp -a -- "$dir/." "$stage/debug-adapters/js-debug/$jsdebug_version/js-debug/" \
+    mkdir -p "$stage/debug-adapters/js-debug/$jsdebug_version/js-debug" && cp -RP --preserve=timestamps -- "$dir/." "$stage/debug-adapters/js-debug/$jsdebug_version/js-debug/" \
         || die "js-debug: copying $dir failed"
 }
 bundle_codelldb() {
@@ -270,9 +275,9 @@ bundle_codelldb() {
     if [ -f "$inst/VERSION" ]; then have=$(tr -d ' \n\r' < "$inst/VERSION")
     else have=v$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$inst/extension/package.json" 2>/dev/null | head -n1); fi
     [ "$have" = "$codelldb_version" ] || { warn "CodeLLDB: $inst is ${have:-of unknown version}, the app pins $codelldb_version; not bundled"; return 1; }
-    mkdir -p "$stage/debug-adapters/codelldb/$codelldb_version" && cp -a -- "$inst/extension" "$stage/debug-adapters/codelldb/$codelldb_version/" \
+    mkdir -p "$stage/debug-adapters/codelldb/$codelldb_version" && cp -RP --preserve=timestamps -- "$inst/extension" "$stage/debug-adapters/codelldb/$codelldb_version/" \
         || die "CodeLLDB: copying $inst failed"
-    for f in VERSION PLATFORM; do [ ! -f "$inst/$f" ] || cp -a -- "$inst/$f" "$stage/debug-adapters/codelldb/$codelldb_version/" || die "CodeLLDB: copying $f failed"; done
+    for f in VERSION PLATFORM; do [ ! -f "$inst/$f" ] || cp -RP --preserve=timestamps -- "$inst/$f" "$stage/debug-adapters/codelldb/$codelldb_version/" || die "CodeLLDB: copying $f failed"; done
 }
 rm -rf -- "$stage/debug-adapters"
 if [ "$adapters" = 1 ]; then
