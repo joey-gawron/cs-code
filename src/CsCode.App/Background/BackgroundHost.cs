@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using CsCode.App.Docking;
 using CsCode.App.Startup;
 using CsCode.Platform;
@@ -79,8 +80,35 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     {
         SessionTrace.Mark("host: main");
         ProcessMemory.DetachFromTerminal();
-        return Start(options, crash, RuntimeDirectory.Resolve(), new SessionStore(new AppPaths().UserDataDir), out refusedExitCode);
+        var host = Start(options, crash, RuntimeDirectory.Resolve(), new SessionStore(new AppPaths().UserDataDir), out refusedExitCode);
+        if (host is not null && !OperatingSystem.IsWindows()) host._terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, host.OnTerminate);
+        return host;
     }
+
+    private PosixSignalRegistration? _terminate;
+
+    /// <summary>
+    /// SIGTERM (logout, <c>systemctl --user stop</c>, <c>kill</c>): the session quits the way Quit Session does, without asking anything (nobody is
+    /// there to answer): every unsaved change is backed up, beyond the backup size limit too. The runtime's default would end the process at once
+    /// and lose what changed since the last autosave. A process that is still starting has nothing to lose and ends as usual. If the UI thread does
+    /// not get the quit as far as its final save in time, the last captured snapshot is written and the process exits anyway.
+    /// </summary>
+    private void OnTerminate(PosixSignalContext context)
+    {
+        if (_controller is not { IsActive: true } controller) return;
+        context.Cancel = true;
+        SessionTrace.Mark("host: SIGTERM");
+        _ = controller.TerminateAsync();
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TerminateWatchdog).ConfigureAwait(false);
+            if (controller.QuitCommitted) return; // saved and closing: the orderly shutdown ends the process
+            controller.FlushOnCrash();
+            Environment.Exit(143); // 128 + SIGTERM
+        });
+    }
+
+    private static readonly TimeSpan TerminateWatchdog = TimeSpan.FromSeconds(15);
 
     /// <summary>The same with the runtime directory and store given (tests: a private directory, and no detaching of the test process).</summary>
     internal static BackgroundHost? Start(CommandLineOptions options, CrashHandler crash, RuntimeDirectory runtime, SessionStore store, out int? refusedExitCode)
@@ -133,7 +161,8 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         _server = server;
     }
 
-    private string TakeNewUnnamedSession()
+    /// <summary>Takes the lock of the lowest free <c>window-N</c> and makes it this process's session.</summary>
+    internal string TakeNewUnnamedSession()
     {
         var taken = Store.List().Select(s => s.Name).ToList();
         while (true)
@@ -313,15 +342,10 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _terminate?.Dispose();
         _crash.Reported -= OnCrashReported;
         _server?.Dispose();
-        FileLock? held;
-        lock (_gate)
-        {
-            held = _sessionLock;
-            _sessionLock = null;
-        }
-        held?.Dispose();
-        Lane.Dispose();
+        Lane.Dispose(); // drains the writes still queued (a final save) while the session is still this process's
+        ReleaseSessionLock();
     }
 }

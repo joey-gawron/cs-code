@@ -508,10 +508,12 @@ public sealed partial class SessionWindowController : IDisposable
     /// this version must not write, backups included), make a forced quit refuse and a normal one prompt. An eviction (<paramref name="evict"/>,
     /// more than <c>maxResidentSessions</c>) never prompts: it is refused instead, and the hidden window stays hidden.
     /// </summary>
-    internal async Task<IpcMessage> QuitAsync(bool force, bool windowClose = false, bool evict = false)
+    internal async Task<IpcMessage> QuitAsync(bool force, bool windowClose = false, bool evict = false, bool terminate = false)
     {
         _ui.AssertUiThread();
+        // A quit already under way (SIGTERM during the save prompts included: the host's watchdog writes the last snapshot and ends the process).
         if (_quitting) return IpcMessage.Reply();
+        force |= terminate;
         _quitting = true;
         EndWaits(); // the session quits: `cscode --wait` returns 0 (VS Code: the window closed)
         var previousState = _host.State;
@@ -528,6 +530,16 @@ public sealed partial class SessionWindowController : IDisposable
             var hotExit = _config?.Get(BackgroundSettings.HotExit, BackgroundSettings.HotExitOnExitAndWindowClose) ?? BackgroundSettings.HotExitOnExitAndWindowClose;
             var backUp = force || hotExit == BackgroundSettings.HotExitOnExitAndWindowClose || (hotExit == BackgroundSettings.HotExitOnExit && !windowClose);
             var dirty = _shell.Well.EditorTabs.Any(t => t.IsDirty);
+            if (dirty && _readOnly && terminate)
+            {
+                // Nobody can be asked, and the newer CsCode's session must not be written: its unsaved changes go to a new session of this
+                // version (window-N) instead, as Save Session As would put them.
+                var copy = await _host.Lane.RunAsync(_host.TakeNewUnnamedSession).ConfigureAwait(true);
+                lock (_writeGate) _readOnly = false;
+                _backedUp.Clear();
+                UpdateSessionIdentity();
+                SessionTrace.Mark("host: unsaved changes of a newer session kept as " + copy);
+            }
             if (dirty && _readOnly)
             {
                 if (force || evict)
@@ -543,7 +555,8 @@ public sealed partial class SessionWindowController : IDisposable
                 return await QuitWithPromptsAsync(previousState).ConfigureAwait(true);
             }
 
-            var result = await PersistAsync().ConfigureAwait(true);
+            // SIGTERM: no bound on the backups (keeping the text beats the disk limit when nobody can be asked to save it).
+            var result = await PersistAsync(maxBackupBytes: terminate ? long.MaxValue : null).ConfigureAwait(true);
             if (result.Skipped.Count > 0)
             {
                 if (evict) return Refuse(previousState, NotEvicted);
@@ -564,6 +577,16 @@ public sealed partial class SessionWindowController : IDisposable
     }
 
     private const string NotEvicted = "not evicted: quitting would have to ask about unsaved changes";
+
+    /// <summary>The quit is certain and the session's last write done (the host's SIGTERM watchdog leaves the rest to the orderly shutdown).</summary>
+    internal bool QuitCommitted => _quitCommitted;
+
+    /// <summary>SIGTERM (any thread): Quit Session with hot exit and no questions (<see cref="QuitAsync"/> with <c>terminate</c>).</summary>
+    internal async Task TerminateAsync()
+    {
+        var reply = await OnUiAsync(() => QuitAsync(force: true, terminate: true)).ConfigureAwait(false);
+        if (reply.Ok != true) SessionTrace.Mark("host: SIGTERM quit failed: " + reply.Error);
+    }
 
     private IpcMessage Refuse(string previousState, string reason)
     {

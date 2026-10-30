@@ -72,8 +72,12 @@ After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
+# The launcher starts the CsCode processes and exits. Without RemainAfterExit the unit would stop right then, and with the default
+# KillMode=control-group systemd would kill every process the launcher started (they stay in this unit's cgroup). KillMode=process: stopping
+# the unit never kills sessions either; at logout they get SIGTERM, which a session answers by saving (hot exit) before it ends.
 Type=oneshot
-RemainAfterExit=no
+RemainAfterExit=yes
+KillMode=process
 ExecStart=$cscode --background
 
 [Install]

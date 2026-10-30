@@ -87,7 +87,7 @@ public sealed partial class SessionWindowController
     /// version changed since its last backup (unchanged ones are only listed as "keep"). No document text is built here: a snapshot shares the
     /// buffer's rope, and its text is materialised on the lane.
     /// </summary>
-    internal Captured Capture(bool includeBackups)
+    internal Captured Capture(bool includeBackups, long? maxBackupBytes = null)
     {
         _ui.AssertUiThread();
         var well = _shell.Well;
@@ -127,7 +127,7 @@ public sealed partial class SessionWindowController
         }
         var captured = new Captured(Interlocked.Increment(ref _captureSeq), _host.SessionName ?? "", _host.IsUnnamed, _wasResident,
             _workspace?.Folders.Select(f => f.ToString()).ToArray() ?? [], editors, well.ActiveEditor?.Uri.ToString(), _shell.Layout.Capture(), CurrentBounds(),
-            _window.IsVisible ? DateTimeOffset.UtcNow : _host.LastShown ?? DateTimeOffset.UtcNow, changed, keep, includeBackups, BackgroundSettings.MaxBackupBytes(_config));
+            _window.IsVisible ? DateTimeOffset.UtcNow : _host.LastShown ?? DateTimeOffset.UtcNow, changed, keep, includeBackups, maxBackupBytes ?? BackgroundSettings.MaxBackupBytes(_config));
         _lastCaptured = captured;
         UpdateNeedsPrompt();
         return captured;
@@ -216,9 +216,9 @@ public sealed partial class SessionWindowController
     }
 
     /// <summary>Captures now and writes on the lane (quit).</summary>
-    private async Task<BackupWriteResult> PersistAsync(bool includeBackups = true)
+    private async Task<BackupWriteResult> PersistAsync(bool includeBackups = true, long? maxBackupBytes = null)
     {
-        var captured = Capture(includeBackups);
+        var captured = Capture(includeBackups, maxBackupBytes);
         return await _host.Lane.RunAsync(() => Write(captured)).ConfigureAwait(true);
     }
 
