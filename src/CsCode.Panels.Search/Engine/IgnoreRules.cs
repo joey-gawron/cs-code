@@ -4,7 +4,8 @@ namespace CsCode.Panels.Search.Engine;
 /// One parsed <c>.gitignore</c>. Implements the parts of the format that matter for searching: comments, <c>!</c> negation,
 /// trailing-<c>/</c> (directories only), leading/middle <c>/</c> anchoring, <c>*</c> <c>?</c> <c>[a-z]</c> and <c>**</c>, escapes.
 /// The last matching rule wins. Not implemented: global ignore files and <c>.git/info/exclude</c>.
-/// Matching is hand-written (no regex per rule) so a 500-rule file costs nothing to load.
+/// Matching is hand-written (no regex per rule) so a 500-rule file costs nothing to load. With <c>ignoreCase</c> (git's <c>core.ignorecase</c>, a
+/// Mac's default) rules and paths are compared lower-cased.
 /// </summary>
 public sealed class IgnoreRules
 {
@@ -12,13 +13,16 @@ public sealed class IgnoreRules
 
     private readonly Rule[] _rules;
 
-    private IgnoreRules(Rule[] rules) => _rules = rules;
+    private IgnoreRules(Rule[] rules, bool ignoreCase) { _rules = rules; IgnoreCase = ignoreCase; }
 
     public int Count => _rules.Length;
 
-    public static IgnoreRules Parse(string text)
+    public bool IgnoreCase { get; }
+
+    public static IgnoreRules Parse(string text, bool ignoreCase = false)
     {
         var rules = new List<Rule>();
+        if (ignoreCase) text = text.ToLowerInvariant();
         foreach (var rawLine in text.Split('\n'))
         {
             var line = rawLine.TrimEnd('\r');
@@ -44,7 +48,7 @@ public sealed class IgnoreRules
             var segs = line.Split('/', StringSplitOptions.RemoveEmptyEntries);
             rules.Add(new Rule(segs, negated, dirOnly, anchored));
         }
-        return new IgnoreRules(rules.ToArray());
+        return new IgnoreRules(rules.ToArray(), ignoreCase);
     }
 
     /// <summary>
@@ -54,6 +58,7 @@ public sealed class IgnoreRules
     public bool? Evaluate(string relativePath, bool isDirectory)
     {
         if (_rules.Length == 0) return null;
+        if (IgnoreCase) relativePath = relativePath.ToLowerInvariant();
         var path = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (path.Length == 0) return null;
         for (var i = _rules.Length - 1; i >= 0; i--)

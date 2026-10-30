@@ -48,6 +48,8 @@ internal sealed class FileWalker : IDisposable
         public required string RealPath { get; init; }
         public required Ancestor? Ancestors { get; init; }
         public IgnoreChain? Chain { get; set; }
+        /// <summary>The root's repository matches ignore rules case-insensitively (core.ignorecase), decided once per root.</summary>
+        public bool IgnoreCase { get; set; }
         public bool IsRoot { get; init; }
         public bool Started { get; set; }
         public IEnumerator<Entry>? Enumerator { get; set; }
@@ -81,7 +83,7 @@ internal sealed class FileWalker : IDisposable
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         foreach (var root in roots.Reverse()) // LIFO: the first root is walked first
-            _stack.Push(new DirWork { Path = root, Rel = "", RealPath = root, Ancestors = null, IsRoot = true });
+            _stack.Push(new DirWork { Path = root, Rel = "", RealPath = RealPath(root), Ancestors = null, IsRoot = true });
         if (_stack.Count == 0) { Complete(); return; }
 
         lock (_gate) SpawnPumpsLocked();
@@ -294,20 +296,55 @@ internal sealed class FileWalker : IDisposable
         {
             if (!_options.FollowSymlinks) return null;
             // follow a directory link only when it does not lead back into the chain we came down (that would loop forever)
-            string? target;
-            try { target = new DirectoryInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName; }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
-            if (target is null || !Directory.Exists(target)) return null;
+            var target = RealPath(path);
+            if (!Directory.Exists(target)) return null;
             for (var a = new Ancestor(parent.RealPath, parent.Ancestors); a is not null; a = a.Parent)
                 if (string.Equals(a.RealPath, target, StringComparison.Ordinal) || IsInside(a.RealPath, target)) return null;
             real = target;
         }
-        return new DirWork { Path = path, Rel = rel, RealPath = real, Ancestors = new Ancestor(parent.RealPath, parent.Ancestors), Chain = parent.Chain };
+        return new DirWork
+        {
+            Path = path, Rel = rel, RealPath = real, Ancestors = new Ancestor(parent.RealPath, parent.Ancestors), Chain = parent.Chain, IgnoreCase = parent.IgnoreCase,
+        };
     }
 
     // `target` is an ancestor if it equals it or contains it (a link to a parent directory of where we are).
     private static bool IsInside(string deeper, string possibleAncestor) =>
         deeper.StartsWith(possibleAncestor.TrimEnd('/') + "/", StringComparison.Ordinal);
+
+    /// <summary>
+    /// <paramref name="path"/> with every link in it resolved, as realpath(3) gives it. The ancestors' real paths and a link's target must be
+    /// compared in the same form: a root reached through a link (on macOS /tmp and /var are links to /private/...) never equalled a target, so a
+    /// link back to the root was followed one level before the loop was seen (files-15). A ".." is applied to what is resolved so far, never to
+    /// the text: in a target "other/.." where other is a link, it leaves the directory other leads to, not the one holding other. A part that
+    /// is not there, cannot be read or loops keeps its unresolved rest. Never throws.
+    /// </summary>
+    internal static string RealPath(string path)
+    {
+        var full = Path.IsPathRooted(path) ? path : Path.Combine(Environment.CurrentDirectory, path); // not GetFullPath: it collapses ".." as text
+        var real = Path.GetPathRoot(full) ?? "";
+        var hops = 0;
+        var rest = new Queue<string>(Parts(full, real.Length));
+        while (rest.TryDequeue(out var part))
+        {
+            if (part == ".") continue;
+            if (part == "..") { real = Path.GetDirectoryName(real) ?? real; continue; } // the root's parent is the root
+            var next = Path.Combine(real, part);
+            string? link;
+            try { link = new DirectoryInfo(next).LinkTarget; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { link = null; } // unreadable: taken as it is
+            if (link is null) { real = next; continue; }
+            if (++hops > 40) return Path.Combine([next, .. rest]); // ELOOP: leave the rest as it is
+            // the link's target replaces it: an absolute one from its own root, a relative one from the (resolved) directory holding the link
+            var targetRoot = Path.IsPathRooted(link) ? Path.GetPathRoot(link) ?? "" : "";
+            rest = new Queue<string>(Parts(link, targetRoot.Length).Concat(rest));
+            if (targetRoot.Length > 0) real = targetRoot;
+        }
+        return real;
+
+        static IEnumerable<string> Parts(string p, int skip) =>
+            p[skip..].Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Where(x => x.Length > 0);
+    }
 
     private static bool LinkTargetExists(string path)
     {
@@ -327,20 +364,21 @@ internal sealed class FileWalker : IDisposable
         var chain = w.Chain;
         if (w.IsRoot)
         {
-            var info = TryParse(System.IO.Path.Combine(w.Path, ".git", "info", "exclude"));
+            w.IgnoreCase = GitIgnoreFile.RepositoryIgnoresCase(w.Path);
+            var info = TryParse(System.IO.Path.Combine(w.Path, ".git", "info", "exclude"), w.IgnoreCase);
             if (info is not null) chain = new IgnoreChain(info, "", chain);
         }
-        var file = TryParse(System.IO.Path.Combine(w.Path, ".gitignore"));
+        var file = TryParse(System.IO.Path.Combine(w.Path, ".gitignore"), w.IgnoreCase);
         return file is null ? chain : new IgnoreChain(file, w.Rel, chain);
     }
 
-    private static GitIgnoreFile? TryParse(string path)
+    private static GitIgnoreFile? TryParse(string path, bool ignoreCase)
     {
         try
         {
             var info = new FileInfo(path);
             if (!info.Exists || info.Length == 0 || info.Length > MaxIgnoreFileBytes) return null;
-            var file = GitIgnoreFile.Parse(File.ReadAllText(path));
+            var file = GitIgnoreFile.Parse(File.ReadAllText(path), ignoreCase);
             return file.RuleCount == 0 ? null : file;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }

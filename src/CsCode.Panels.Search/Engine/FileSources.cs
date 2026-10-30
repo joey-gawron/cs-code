@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text;
 using CsCode.Core.Platform;
+using CsCode.Core.Text;
 
 namespace CsCode.Panels.Search.Engine;
 
@@ -56,6 +57,7 @@ public sealed class WalkingFileSource(IFileSystem fileSystem) : ISearchFileSourc
         foreach (var root in request.Roots)
         {
             var rootUri = EnsureSlash(root);
+            var ignoreCase = request.UseIgnoreFiles && await IgnoresCaseAsync(rootUri, ct).ConfigureAwait(true);
             var stack = new Stack<Frame>();
             stack.Push(new Frame(rootUri, "/", null));
             while (stack.Count > 0)
@@ -72,7 +74,7 @@ public sealed class WalkingFileSource(IFileSystem fileSystem) : ISearchFileSourc
                     try
                     {
                         var bytes = await fileSystem.ReadFileAsync(ChildUri(frame.Uri, ".gitignore", false), ct).ConfigureAwait(true);
-                        var rules = IgnoreRules.Parse(Encoding.UTF8.GetString(bytes));
+                        var rules = IgnoreRules.Parse(Encoding.UTF8.GetString(bytes), ignoreCase);
                         if (rules.Count > 0) ignore = new IgnoreNode(frame.Rel, rules, ignore);
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* an unreadable .gitignore ignores nothing */ }
@@ -98,6 +100,21 @@ public sealed class WalkingFileSource(IFileSystem fileSystem) : ISearchFileSourc
                 for (var i = subdirs.Count - 1; i >= 0; i--) stack.Push(subdirs[i]); // pop in name order
             }
         }
+    }
+
+    /// <summary>
+    /// core.ignorecase of the repository at <paramref name="root"/> (its own git config), else the platform's rule for a local folder (a Mac
+    /// ignores case) and case-sensitive for any other scheme, whose host's file system is not known here.
+    /// </summary>
+    private async Task<bool> IgnoresCaseAsync(Uri root, CancellationToken ct)
+    {
+        var fallback = root.IsFile && GitIgnoreCase.PlatformDefault;
+        try
+        {
+            var config = await fileSystem.ReadFileAsync(ChildUri(ChildUri(root, ".git", true), "config", false), ct).ConfigureAwait(true);
+            return GitIgnoreCase.Parse(Encoding.UTF8.GetString(config)) ?? fallback;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException) { return fallback; }
     }
 
     private static bool IsIgnored(IgnoreNode node, string rel, bool isDir)

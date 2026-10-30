@@ -243,7 +243,7 @@ public sealed class ThemeApplier : IDisposable
     private void SetTokens(IConfigurationService? config)
     {
         var r = _app.Resources;
-        r["ui:FontFamily"] = new FontFamily("Segoe UI, Inter, Noto Sans, sans-serif");
+        r["ui:FontFamily"] = new FontFamily(FontFamilies.Normalize(OperatingSystem.IsMacOS() ? FontFamilies.MacUi : "Segoe UI, Inter, Noto Sans, sans-serif"));
         r["ui:FontSize"] = 12.0;
         r["ui:FontSizeSmall"] = 11.0;
         r["ui:FontSizeLarge"] = 14.0;
@@ -264,7 +264,9 @@ public sealed class ThemeApplier : IDisposable
     private void SetCodeFont(IConfigurationService? config)
     {
         var family = config?.Get<string>(SettingKeys.EditorFontFamily);
-        _app.Resources["ui:CodeFontFamily"] = new FontFamily(string.IsNullOrWhiteSpace(family) ? "Cascadia Code, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" : family);
+        if (string.IsNullOrWhiteSpace(family))
+            family = OperatingSystem.IsMacOS() ? FontFamilies.MacCode : "Cascadia Code, Consolas, DejaVu Sans Mono, Liberation Mono, monospace";
+        _app.Resources["ui:CodeFontFamily"] = new FontFamily(FontFamilies.Normalize(family));
     }
 
     public void Dispose()
