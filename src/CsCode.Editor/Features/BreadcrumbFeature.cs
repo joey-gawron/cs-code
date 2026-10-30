@@ -38,9 +38,6 @@ internal sealed class BreadcrumbFeature : IDisposable
         }));
     }
 
-    /// <summary>Times the symbol providers were asked (tests).</summary>
-    internal int Queries { get; private set; }
-
     private async ValueTask<IReadOnlyList<string>> GetAsync(CancellationToken ct)
     {
         for (var attempt = 0; attempt < 3 && !_disposed; attempt++)
@@ -53,7 +50,6 @@ internal sealed class BreadcrumbFeature : IDisposable
             {
                 var providers = _v.Services.Features.GetProviders<IDocumentSymbolProvider>(doc);
                 if (providers.Count == 0) return [];
-                Queries++;
                 foreach (var call in providers.Select(p => FeatureSupport.CallAsync(_v, t => p.ProvideDocumentSymbolsAsync(doc, t), ct, TimeSpan.FromSeconds(3))).ToList())
                 {
                     if (await call.ConfigureAwait(true) is { } list)
