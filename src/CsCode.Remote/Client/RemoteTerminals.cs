@@ -82,7 +82,7 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
             _channel = _channels.Open(r.Channel, this);
             _delivery = new Thread(DeliveryLoop) { IsBackground = true, Name = "CsCode.Remote-terminal-" + r.Channel };
             _delivery.Start();
-            return new TerminalBackendStarted(r.ProcessId, r.Program, r.WorkingDirectory);
+            return new TerminalBackendStarted(r.ProcessId, r.Program, r.WorkingDirectory) { Environment = r.ShellIntegration };
         }
         catch (OperationCanceledException) { throw new TimeoutException($"Starting a terminal on {_manager.HostName} took more than {StartTimeout.TotalSeconds:0} s."); }
         catch (NotSupportedException ex) { throw new InvalidOperationException(ex.Message, ex); }

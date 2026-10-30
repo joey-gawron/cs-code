@@ -57,6 +57,7 @@ internal sealed class BackendLauncher(ITerminalBackendProvider provider, Termina
             throw new PtySpawnException(ex.Message, 0, ex);
         }
         Interlocked.Exchange(ref _started, backend)?.Dispose();
-        return new PtyStartInfo(started.Program, options.ShellArgs ?? [], started.WorkingDirectory, NoEnvironment, columns, rows);
+        // The shell-integration variables the other side gave the shell: the emulator trusts the command lines reported with that nonce.
+        return new PtyStartInfo(started.Program, options.ShellArgs ?? [], started.WorkingDirectory, started.Environment ?? NoEnvironment, columns, rows);
     }
 }

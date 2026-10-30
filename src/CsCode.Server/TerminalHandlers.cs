@@ -55,7 +55,19 @@ internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILog
             throw;
         }
         log.LogInformation("Terminal {Id}: {Program} (pid {Pid}) in {Cwd}", channel.Id, info.FileName, source.Host.ProcessId, info.WorkingDirectory);
-        return new TermCreateResult(channel.Id, source.Host.ProcessId, info.FileName, info.WorkingDirectory);
+        return new TermCreateResult(channel.Id, source.Host.ProcessId, info.FileName, info.WorkingDirectory, ShellIntegrationOf(info));
+    }
+
+    /// <summary>
+    /// The shell-integration variables the resolver gave the shell (injected with this server's own scripts, shipped next to it in the bundle):
+    /// the client's terminal needs the nonce to trust the command lines the shell reports. The rest of the environment stays here.
+    /// </summary>
+    private static Dictionary<string, string>? ShellIntegrationOf(PtyStartInfo info)
+    {
+        if (!info.Environment.TryGetValue(ShellIntegrationInjector.InjectionVariable, out var injected)) return null;
+        var env = new Dictionary<string, string>(StringComparer.Ordinal) { [ShellIntegrationInjector.InjectionVariable] = injected };
+        if (info.Environment.TryGetValue(ShellIntegrationInjector.NonceVariable, out var nonce)) env[ShellIntegrationInjector.NonceVariable] = nonce;
+        return env;
     }
 
     /// <summary>One PTY as a channel source: output → channel (blocking there throttles the program), client input → the PTY's bounded writer.</summary>

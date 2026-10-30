@@ -379,7 +379,9 @@ public sealed record ChanKeepParams(IReadOnlyList<long> Ids);
 /// <param name="Folder">The client's workspace folder: a new terminal starts there even when the server has not applied the client's latest
 /// <c>workspace/setFolders</c> yet (requests run concurrently on the server).</param>
 public sealed record TermCreateParams(TerminalCreateOptions Options, int Columns, int Rows, Uri? Folder = null);
-public sealed record TermCreateResult(long Channel, int ProcessId, string Program, string WorkingDirectory);
+/// <param name="ShellIntegration">The shell-integration variables the server started the shell with (<c>CSCODE_NONCE</c>, <c>CSCODE_INJECTION</c>;
+/// the server's own scripts, shipped in its bundle), so the client's terminal trusts the command lines the shell reports; null: not injected.</param>
+public sealed record TermCreateResult(long Channel, int ProcessId, string Program, string WorkingDirectory, IReadOnlyDictionary<string, string>? ShellIntegration = null);
 public sealed record TermResizeParams(long Id, int Columns, int Rows);
 public sealed record TermInfoResult(string? ForegroundProcess);
 

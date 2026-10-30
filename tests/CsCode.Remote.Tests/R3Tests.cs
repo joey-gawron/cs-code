@@ -89,6 +89,27 @@ public class R3Tests
     }
 
     [Fact]
+    public async Task A_remote_shell_gets_shell_integration_from_the_servers_own_scripts_and_the_client_trusts_its_reports()
+    {
+        // T44: the server injects with the scripts shipped next to it (bundle: shellIntegration/), never with client paths, and tells the client the
+        // nonce it gave the shell, so the terminal trusts the command lines the shell reports (as a local terminal does)
+        await using var host = new RemoteTestHost(r3: true);
+        await host.ConnectAsync();
+        await host.OpenWorkspaceAsync();
+        var terminals = host.Services.GetRequiredService<TerminalService>();
+        var t = (TerminalSession)await terminals.CreateAsync(TerminalProbe.Bash(), Ct);
+        Assert.True(t.ShellIntegrationInjected);
+        Assert.False(string.IsNullOrEmpty(await t.InvokeAsync(e => e.ShellIntegrationNonce)));
+        await t.SendTextAsync("echo marker-$((40+2))", true, Ct);
+        await TerminalProbe.WaitForTextAsync(t, "\nmarker-42");
+        await TestEnv.WaitUntilAsync(() => t.InvokeAsync(e => e.HasShellIntegration).GetAwaiter().GetResult(), TimeSpan.FromSeconds(10), "the shell's integration marks");
+        Terminal.Emulator.TerminalCommand? last = null;
+        await TestEnv.WaitUntilAsync(() => (last = t.InvokeAsync(e => e.LastCommand).GetAwaiter().GetResult()) is { ExitCode: 0 }, TimeSpan.FromSeconds(10), "the finished command");
+        Assert.Equal("echo marker-$((40+2))", last!.CommandLine);
+        await terminals.KillAsync(t, Ct);
+    }
+
+    [Fact]
     public async Task Killing_a_remote_terminal_ends_its_process_group_on_the_server_and_a_local_workspace_stays_local()
     {
         await using var host = new RemoteTestHost(r3: true);
