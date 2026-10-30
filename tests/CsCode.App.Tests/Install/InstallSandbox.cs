@@ -148,8 +148,14 @@ public sealed class InstallSandbox : IDisposable
                 if (ignore.Contains(rel)) continue;
                 if (entry.LinkTarget is { } target) result[rel] = "l:" + target;
                 else if (entry is DirectoryInfo d) { result[rel] = "d"; Walk(d.FullName); }
-                else result[rel] = $"f:{Convert.ToString((int)File.GetUnixFileMode(entry.FullName), 8)}:{Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(entry.FullName)))}";
+                else result[rel] = $"f:{Convert.ToString((int)File.GetUnixFileMode(entry.FullName), 8)}:{Hash(entry.FullName)}";
             }
+        }
+        // a running session holds its lock file (<data>/sessions/.locks/*.lock) exclusively: listed, not read
+        static string Hash(string file)
+        {
+            try { return Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(file))); }
+            catch (IOException) { return "in-use"; }
         }
         Walk(Home);
         return result;
