@@ -307,6 +307,7 @@ internal sealed class ProcessConnection : ILspConnection
 
         if (def.Env is not null)
             foreach (var (k, v) in def.Env) psi.Environment[k] = v;
+        DotnetLaunchEnvironment.Apply(psi.Environment, def, command, request.SearchDirs, request.OnStderrLine);
         psi.Environment[MarkerVariable] = marker;
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
