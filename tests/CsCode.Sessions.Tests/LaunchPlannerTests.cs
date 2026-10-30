@@ -141,6 +141,21 @@ public class LaunchPlannerTests
         Assert.Equal("b", LaunchPlanner.Plan(Open(), world, Defaults).Session);
     }
 
+    // From the desktop: a second session quit and left its last-active marker behind while the first window stayed open.
+    [Fact]
+    public void A_last_active_session_that_has_quit_gives_way_to_the_one_still_running()
+    {
+        var world = World([Proc(10, "a", ProcessStates.Shown, 5)], [Saved("a", 5), Saved("b", 1)], last: "b");
+        var file = LaunchPlanner.Plan(Open(targets: new LaunchTarget("/x/f.cs", false, 3, 4)), world, Defaults);
+        Assert.Equal((LaunchAction.Show, 10), (file.Action, file.Pid));
+        Assert.Equal("a", LaunchPlanner.Plan(Open(), world, Defaults).Session);
+        Assert.Equal([10], LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Quit), world, Defaults).QuitPids);
+
+        // nothing running: the saved last one, as before
+        var none = World([], [Saved("a", 5), Saved("b", 1)], last: "b");
+        Assert.Equal("b", LaunchPlanner.Plan(Open(), none, Defaults).Session);
+    }
+
     [Fact]
     public void An_invalid_session_name_fails()
     {

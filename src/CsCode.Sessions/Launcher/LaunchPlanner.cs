@@ -110,14 +110,25 @@ public static class LaunchPlanner
         var preference = settings.DefaultSession;
         if (string.Equals(preference, "new", StringComparison.Ordinal)) return (SessionNames.NextUnnamed(TakenNames(world)), true);
         if (!string.Equals(preference, "last", StringComparison.Ordinal) && SessionNames.IsValid(preference)) return (preference, false);
-        // Residents first: when the last session is running, the saved sessions are never read (the launcher reads them lazily).
-        if (world.LastActive is { } last && (world.Processes.Any(p => p.OwnsSession(last)) || world.Saved.Any(s => s.Name == last))) return (last, false);
-        // No last session yet: the most recently shown resident one, else the most recently used saved one, else a new one.
-        if (world.Processes.Where(p => p.Responsive && p.Session is not null && p.State != ProcessStates.Quitting)
-                .OrderByDescending(p => p.LastShownUtc ?? DateTimeOffset.MinValue).FirstOrDefault() is { Session: { } resident })
-            return (resident, false);
+        if (LastSession(world) is { } last) return (last, false);
+        // No last session at all: the most recently used saved one, else a new one.
         if (world.Saved.FirstOrDefault() is { } recent) return (recent.Name, false);
         return (SessionNames.NextUnnamed(TakenNames(world)), true);
+    }
+
+    /// <summary>
+    /// The session "the last one" means (no arguments, files only, <c>--quit</c> without a name): the last active session while a process has
+    /// it; once it has quit (its marker stays behind), the most recently shown session still running, and only then the saved last one.
+    /// Residents first, so the saved sessions are not read while one runs (the launcher reads them lazily). From the desktop: after a second
+    /// session quit, <c>cscode file</c> would have restarted it beside the window still open, and <c>cscode --quit</c> aimed at it.
+    /// </summary>
+    private static string? LastSession(LaunchWorld world)
+    {
+        if (world.LastActive is { } last && world.Processes.Any(p => p.OwnsSession(last))) return last;
+        if (world.Processes.Where(p => p.Responsive && p.Session is not null && p.State != ProcessStates.Quitting)
+                .OrderByDescending(p => p.LastShownUtc ?? DateTimeOffset.MinValue).FirstOrDefault() is { Session: { } resident })
+            return resident;
+        return world.LastActive is { } saved && world.Saved.Any(s => s.Name == saved) ? saved : null;
     }
 
     private static IEnumerable<string> TakenNames(LaunchWorld world) =>
@@ -154,7 +165,7 @@ public static class LaunchPlanner
                 .Select(p => $"CsCode process {p.Pid} does not respond; it was not asked to quit.").ToArray();
             return new LaunchPlan(LaunchAction.Quit) { QuitPids = world.Processes.Where(p => p.Responsive).Select(p => p.Pid).ToArray(), Warnings = warnings };
         }
-        var name = request.Session ?? world.LastActive;
+        var name = request.Session ?? LastSession(world);
         if (name is null) return new LaunchPlan(LaunchAction.Quit) { Warnings = ["No session to quit (name one, or use --all)."] };
         var owner = world.Processes.FirstOrDefault(p => p.OwnsSession(name));
         return owner is null
