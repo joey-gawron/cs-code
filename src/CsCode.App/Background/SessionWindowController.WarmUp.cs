@@ -13,7 +13,9 @@ public sealed partial class SessionWindowController
     /// window's templates and styles, the first layout pass, the first Skia render with its glyph and geometry caches, and the JIT of all of it)
     /// happens now, off screen: the hidden window is laid out at its size and rendered into a bitmap that is thrown away. No native window is
     /// shown. Runs in small steps at background priority, so a claim arriving meanwhile is not held up for long. Not warmed: the compositor's
-    /// first frame of the real window (a different path from the bitmap render; it needs a shown window), measured in docs/SESSIONS.md.
+    /// first frame of the real window (a different path from the bitmap render; it needs a shown window: Avalonia's
+    /// <c>Compositor.CreateCompositionVisualSnapshot</c> refuses the visual of a window that was never shown, tried 2026-10-29), measured in
+    /// docs/SESSIONS.md.
     /// </summary>
     internal async Task WarmUpSpareAsync()
     {

@@ -83,6 +83,7 @@ public sealed class AppSession
     {
         _desktop.TakeOverExit();
         _desktop.Exited += OnLifetimeExit;
+        CsCode.Sessions.SessionTrace.Mark("startup: avalonia initialized");
         var services = AppStartup.BuildServicesAsync(_desktop.Args, _configure);
         Dispatcher.UIThread.Post(() => _ = OpenWindowAsync(services));
     }
@@ -98,9 +99,11 @@ public sealed class AppSession
         try
         {
             _container = await pending.ConfigureAwait(true);
+            CsCode.Sessions.SessionTrace.Mark("startup: services ready on the UI thread");
             if (_background is { } background)
             {
                 var main = new MainWindow(_container);
+                CsCode.Sessions.SessionTrace.Mark("startup: main window constructed");
                 Present(main, show: false);
                 _crash.Reported += OnCrashReported;
                 await background.AttachAsync(main, _container).ConfigureAwait(true); // shows it, unless it is the spare or started hidden

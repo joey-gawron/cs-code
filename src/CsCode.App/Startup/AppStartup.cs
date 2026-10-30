@@ -21,7 +21,9 @@ public static class AppStartup
     /// </summary>
     public static Task<ServiceProvider> BuildServicesAsync(IReadOnlyList<string> args, Action<IServiceCollection>? configure = null) => Task.Run(() =>
     {
+        Sessions.SessionTrace.Mark("startup: building services");
         var services = AppServices.Build(args, configure);
+        Sessions.SessionTrace.Mark("startup: container built");
         try
         {
             _ = services.GetService<ILoggerFactory>(); // the file logger: creates its directory and writer thread
@@ -32,6 +34,7 @@ public static class AppStartup
             // The colour theme service parses the 21 embedded theme files when constructed, and the shell's completion of the current theme
             // (VS 2022 chrome mapping, contrast check) runs here too, so neither happens on the UI thread before the first frame.
             if (services.GetService<CsCode.Core.Theming.IColorThemeService>() is { } themes) ShellController.PrepareThemes(themes);
+            Sessions.SessionTrace.Mark("startup: services resolved");
             return services;
         }
         catch
