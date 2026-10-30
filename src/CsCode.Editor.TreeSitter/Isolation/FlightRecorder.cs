@@ -32,8 +32,10 @@ public sealed unsafe class FlightRecorder : IDisposable
     private GCHandle _pin;
     private readonly byte* _p;
     private readonly string? _path;
+    private readonly object _readGate = new(); // Current (the watchdog's thread) against Dispose (the lane): never read an unmapped page
+    private static int _instances;
     private string? _current;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     private FlightRecorder(string? path, MemoryMappedFile? file, MemoryMappedViewAccessor? view)
     {
@@ -71,6 +73,9 @@ public sealed unsafe class FlightRecorder : IDisposable
         try
         {
             Directory.CreateDirectory(directory);
+            // a second recorder in the same process and directory (a second composition: tests) must not share the first one's file
+            var instance = Interlocked.Increment(ref _instances);
+            if (suffix is null && File.Exists(Path.Combine(directory, Environment.ProcessId + ".flight"))) suffix = "i" + instance;
             var path = Path.Combine(directory, Environment.ProcessId + (suffix is null ? "" : "-" + suffix) + ".flight");
             using (var fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite)) fs.SetLength(Size);
             var file = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, Size, MemoryMappedFileAccess.ReadWrite);
@@ -133,10 +138,13 @@ public sealed unsafe class FlightRecorder : IDisposable
     {
         get
         {
-            if (_disposed || Volatile.Read(ref *(int*)(_p + OffState)) == 0) return (false, null, null, TimeSpan.Zero);
-            var elapsed = TimeSpan.FromMilliseconds(Environment.TickCount64 - Volatile.Read(ref *(long*)(_p + OffEntered)));
-            var (grammar, identity) = ReadName(_p);
-            return (true, grammar, identity, elapsed);
+            lock (_readGate)
+            {
+                if (_disposed || Volatile.Read(ref *(int*)(_p + OffState)) == 0) return (false, null, null, TimeSpan.Zero);
+                var elapsed = TimeSpan.FromMilliseconds(Environment.TickCount64 - Volatile.Read(ref *(long*)(_p + OffEntered)));
+                var (grammar, identity) = ReadName(_p);
+                return (true, grammar, identity, elapsed);
+            }
         }
     }
 
@@ -227,8 +235,11 @@ public sealed unsafe class FlightRecorder : IDisposable
     /// </summary>
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        lock (_readGate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+        }
         if (_view is not null)
         {
             _view.SafeMemoryMappedViewHandle.ReleasePointer();

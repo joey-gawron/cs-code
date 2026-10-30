@@ -188,12 +188,24 @@ internal sealed partial class TreeSitterLanguageFeatures(TokenizationManager man
             {
                 return null;
             }
-            var (outcome, value) = await lane.RunAsync(WorkPriority.Interactive, _ =>
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero) return null;
+            (Outcome, T?) answer;
+            try
             {
-                if (session.TreeSitter is not { } engine || !session.IsCurrentEngine(engine)) return (Outcome.NoEngine, default(T));
-                if (engine.TreeVersion < version || engine.TreeText is not { } text) return (Outcome.NotReady, default(T));
-                return (Outcome.Ready, compute(engine.Syntax, text));
-            }, ct).ConfigureAwait(false);
+                // bounded: a lane that is shutting down (or was given up after a hang) never runs the job
+                answer = await lane.RunAsync(WorkPriority.Interactive, _ =>
+                {
+                    if (session.TreeSitter is not { } engine || !session.IsCurrentEngine(engine)) return (Outcome.NoEngine, default(T));
+                    if (engine.TreeVersion < version || engine.TreeText is not { } text) return (Outcome.NotReady, default(T));
+                    return (Outcome.Ready, compute(engine.Syntax, text));
+                }, ct).WaitAsync(remaining, ct).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                return null;
+            }
+            var (outcome, value) = answer;
             if (outcome == Outcome.Ready) return value;
             if (DateTime.UtcNow >= deadline) return null;
             await Task.Delay(delay, ct).ConfigureAwait(false);
