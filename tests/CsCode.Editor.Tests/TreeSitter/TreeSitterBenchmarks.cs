@@ -29,7 +29,7 @@ public sealed class TreeSitterBenchCollection
 /// <c>.scratch/bench/treesitter-&lt;run&gt;.md</c>. The assertions only check that each scenario completed: the numbers are the result.
 /// </summary>
 [Collection(TreeSitterBenchCollection.Name)]
-public class TreeSitterBenchmarks
+public partial class TreeSitterBenchmarks
 {
     private static bool Enabled => Environment.GetEnvironmentVariable("CSCODE_BENCH_TREESITTER") == "1";
 
