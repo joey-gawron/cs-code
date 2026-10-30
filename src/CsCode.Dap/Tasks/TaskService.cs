@@ -450,7 +450,7 @@ public sealed partial class TaskService : ITaskService, IDisposable
         var problems = StartProblemMatchers(task, folderPath, psi.WorkingDirectory is { Length: > 0 } wd ? wd : folderPath);
         var readiness = TrackReadiness(instance, task, problems); // before the start: its first output may already be a whole cycle
         // In a terminal the task's own env only: a local terminal folds CsCode's DOTNET_ROOT_<ARCH> in what it inherits, before the user's
-        // terminal.integrated.env and inheritEnv apply (TerminalLaunchResolver), and a remote workspace's terminal starts from the remote host's
+        // terminal.integrated.env and inheritEnv apply (TerminalLaunchResolver); a remote workspace's terminal starts from the remote host's environment
         if (_p.TaskTerminals?.Invoke() is { } terminals)
             return await ExecuteInTerminalAsync(terminals, task, psi, taskEnv, channel, problems, readiness, instance, key, ct);
 
