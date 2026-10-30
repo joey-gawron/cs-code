@@ -16,7 +16,10 @@ public enum ConfigurationScope
 {
     /// <summary>One value for the whole application (user settings only).</summary>
     Application = 1,
-    /// <summary>A value of this machine: programs and paths CsCode runs (user settings only; a remote server gets the client's user settings).</summary>
+    /// <summary>
+    /// A value of this machine: programs and paths CsCode runs (user settings only). In a remote window the remote host's own machine settings file
+    /// sets them instead, as in VS Code: the client's values name programs on the client's machine.
+    /// </summary>
     Machine = 2,
     /// <summary>The default: user, workspace and folder settings.</summary>
     Window = 3,

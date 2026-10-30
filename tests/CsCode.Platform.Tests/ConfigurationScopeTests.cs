@@ -232,6 +232,94 @@ public sealed class ConfigurationScopeTests : IDisposable
         Assert.Contains(seen, k => new ConfigurationChangedEventArgs([k]).Affects("files.associations"));
     }
 
+    // ---- remote windows: the remote host's machine settings (VS Code's remote user settings) ------------------------------------------
+
+    private static readonly ConfigurationProperty[] RemoteRegistry =
+    [
+        new("cscode.debug.gdbPath", JsonSerializer.SerializeToElement(""), "gdb") { Scope = ConfigurationScope.Machine },
+        new("terminal.integrated.inheritEnv", JsonSerializer.SerializeToElement(true), "inherit") { Scope = ConfigurationScope.Application },
+    ];
+
+    [Fact]
+    public async Task A_remote_window_takes_machine_settings_from_the_host_s_machine_file_and_ignores_the_client_s()
+    {
+        // The reviewer's case: the remote gdb is /opt/gdb-14/bin/gdb, the client's user settings name the client's own gdb. VS Code reads machine
+        // settings in a remote window from the remote host's machine settings file (Remote [SSH: host] tab), and drops the local user values.
+        _f.WriteUser("""
+            {
+              "cscode.debug.gdbPath": "/client/bin/gdb",
+              "cscode.lsp.searchDirs": ["/client/tools"],
+              "cscode.languageServers": { "rust": { "command": "/client/rust-analyzer", "settings": { "a": 1 } }, "go": { "command": "/client/gopls" } },
+              "terminal.integrated.inheritEnv": false,
+              "editor.tabSize": 3,
+              "editor.fontSize": 11
+            }
+            """);
+        var machine = _f.Temp.Combine("server-data", "machine", "settings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(machine)!);
+        File.WriteAllText(machine, """
+            {
+              "cscode.debug.gdbPath": "/opt/gdb-14/bin/gdb",
+              "cscode.languageServers": { "rust": { "command": "/opt/ra/rust-analyzer" } },
+              "terminal.integrated.inheritEnv": true,
+              "editor.tabSize": 5
+            }
+            """);
+        _f.WriteWorkspace(".vscode", """{ "cscode.debug.gdbPath": "./evil-gdb", "cscode.languageServers": { "rust": { "command": "./evil" } }, "editor.fontSize": 14 }""");
+        using var svc = Create();
+        using var reg = svc.RegisterProperties(RemoteRegistry);
+        await _f.OpenWorkspace(svc);
+        Assert.Equal("/client/bin/gdb", svc.Get("cscode.debug.gdbPath", "?")); // a local window: the user's own machine
+
+        await svc.SetRemoteMachineSettingsAsync(machine, Ct);
+        Assert.Equal(machine, svc.MachineSettingsPath);
+        Assert.Equal("/opt/gdb-14/bin/gdb", svc.Get("cscode.debug.gdbPath", "?"));    // machine scope: the host's file, not the client's, not the workspace's
+        var servers = svc.GetRaw("cscode.languageServers")!.Value;
+        Assert.Equal("/opt/ra/rust-analyzer", servers.GetProperty("rust").GetProperty("command").GetString());
+        Assert.Equal(1, servers.GetProperty("rust").GetProperty("settings").GetProperty("a").GetInt32()); // a window-scoped member of the client's entry stays
+        Assert.False(servers.GetProperty("go").TryGetProperty("command", out _));     // the client's gopls path is not this host's
+        Assert.Equal(["~/.cargo/bin"], svc.Get<string[]>("cscode.lsp.searchDirs") ?? []);   // the default: the client's dirs are not this host's
+        Assert.False(svc.Get("terminal.integrated.inheritEnv", true));                // application scope: the user file only
+        Assert.Equal(5, svc.Get("editor.tabSize", 0));                                 // window scope: user < machine
+        Assert.Equal(14, svc.Get("editor.fontSize", 0));                               //               machine < workspace
+        Assert.Contains(svc.IgnoredSettings, i => i.Key == "cscode.debug.gdbPath");   // the workspace's value is still reported
+
+        await svc.SetRemoteMachineSettingsAsync(null, Ct); // the process language host: the client's machine is this one
+        Assert.Null(svc.MachineSettingsPath);
+        Assert.Equal("/client/bin/gdb", svc.Get("cscode.debug.gdbPath", "?"));
+        Assert.Equal("/client/gopls", svc.GetRaw("cscode.languageServers")!.Value.GetProperty("go").GetProperty("command").GetString());
+        Assert.Equal(3, svc.Get("editor.tabSize", 0));
+    }
+
+    [Fact]
+    public async Task A_remote_host_without_a_machine_file_uses_the_defaults_and_picks_up_one_written_later()
+    {
+        _f.WriteUser("""{ "cscode.debug.gdbPath": "/client/bin/gdb" }""");
+        var machine = _f.Temp.Combine("server-data", "machine", "settings.json");
+        using var svc = Create();
+        using var reg = svc.RegisterProperties(RemoteRegistry);
+        await svc.SetRemoteMachineSettingsAsync(machine, Ct);
+        Assert.Equal("", svc.Get("cscode.debug.gdbPath", "?"));
+        Assert.Contains(_f.Watcher.ActiveRoots, r => r == Path.GetDirectoryName(machine));
+
+        var fired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = svc.Changed.Subscribe(e => { if (e.Affects("cscode.debug.gdbPath")) fired.TrySetResult(); });
+        File.WriteAllText(machine, """{ "cscode.debug.gdbPath": "/opt/gdb-14/bin/gdb" }""");
+        _f.Watcher.Raise(machine);
+        await fired.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        Assert.Equal("/opt/gdb-14/bin/gdb", svc.Get("cscode.debug.gdbPath", "?"));
+
+        File.WriteAllText(machine, """{ "cscode.debug.gdbPath": """); // malformed: the last good value stays, the error is reported
+        await svc.ReloadAsync(Ct);
+        Assert.Equal("/opt/gdb-14/bin/gdb", svc.Get("cscode.debug.gdbPath", "?"));
+        Assert.Equal(machine, svc.LastError?.Path);
+
+        var count = _f.Watcher.ActiveCount;
+        await svc.SetRemoteMachineSettingsAsync(null, Ct);
+        Assert.Equal(count - 1, _f.Watcher.ActiveCount); // the machine directory is no longer watched
+        Assert.Null(svc.LastError);
+    }
+
     // ---- lsp-core-7: every folder's settings are watched ----------------------------------------------------------------------------
 
     [Fact]

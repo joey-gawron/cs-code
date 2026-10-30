@@ -232,7 +232,7 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
         var workspace = new WorkspaceFoldersMirror(Get<IWorkspaceService>(), mapper, _log);
         owned.Add(workspace);
         client.AddParticipant(workspace);
-        var settings = new UserSettingsMirror(Get<IConfigurationService>(), Get<IFileSystem>(), _log);
+        var settings = new UserSettingsMirror(Get<IConfigurationService>(), Get<IFileSystem>(), _log, remoteWindow: true);
         owned.Add(settings);
         client.AddParticipant(settings);
         AddLanguageParticipants(_sp, client, mapper, owned, owner, outputPrefix, _log);

@@ -107,7 +107,8 @@ public sealed class ServerHost : IAsyncDisposable
         var search = new SearchHandlers(sp.GetRequiredService<IFileSystem>(), sp.GetRequiredService<IFileWatcher>(), sp.GetRequiredService<IoLane>(), sp.GetRequiredService<PlatformOptions>());
         search.Register(_link);
         _handlers.Add(_searchHandlers = search);
-        new WorkspaceHandlers(sp.GetRequiredService<WorkspaceService>(), sp.GetRequiredService<ConfigurationService>(), sp.GetRequiredService<IFileSystem>()).Register(_link);
+        new WorkspaceHandlers(sp.GetRequiredService<WorkspaceService>(), sp.GetRequiredService<ConfigurationService>(), sp.GetRequiredService<IFileSystem>(),
+            MachineSettingsPath(_options.DataDir)).Register(_link);
         var languages = new LanguageHost(sp, _link);
         languages.Register();
         _handlers.Add(_languages = languages);
@@ -178,6 +179,13 @@ public sealed class ServerHost : IAsyncDisposable
             capabilities,
             InstanceId);
     }
+
+    /// <summary>
+    /// This host's machine settings file, VS Code's remote <c>data/Machine/settings.json</c>: in a remote window the machine-scoped settings (language
+    /// server commands, debugger and shell paths, terminal profiles and env, <c>cscode.lsp.searchDirs</c>, …) come from here, not from the client's
+    /// user settings, whose paths are the client machine's.
+    /// </summary>
+    public static string MachineSettingsPath(string dataDir) => Path.Combine(dataDir, "machine", "settings.json");
 
     public static string Version =>
         typeof(ServerHost).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "dev";

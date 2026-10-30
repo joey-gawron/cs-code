@@ -54,8 +54,8 @@ public class R4Tests
     private static CancellationToken Ct => TestEnv.Ct;
     private static readonly TimeSpan Grace = TimeSpan.FromSeconds(60);
 
-    private static RemoteTestHost Persistent(CuttableTransport.Control control, string? userSettings = null, Action<RemoteOptions>? options = null, TempDirectory? clientHome = null) =>
-        new(options, wrap: t => new CuttableTransport(t, control), r3: true, persistent: Grace, userSettings: userSettings, clientHome: clientHome);
+    private static RemoteTestHost Persistent(CuttableTransport.Control control, string? machineSettings = null, Action<RemoteOptions>? options = null, TempDirectory? clientHome = null) =>
+        new(options, wrap: t => new CuttableTransport(t, control), r3: true, persistent: Grace, machineSettings: machineSettings, clientHome: clientHome);
 
     private static async Task<ServerStatus> StatusAsync(RemoteTestHost host) =>
         (await host.Manager.Session!.Peer.InvokeAsync<Empty, ServerStatus>(RemoteMethods.Status, Empty.Value, Ct))!;

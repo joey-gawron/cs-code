@@ -119,4 +119,67 @@ public sealed class SettingScopeTests
         Assert.Equal(JsonValueKind.Object, config.GetRaw(RemoteSettings.Hosts)!.Value.ValueKind);
         Assert.False(config.GetRaw(RemoteSettings.Hosts)!.Value.TryGetProperty("box", out _));
     }
+
+    // ---- remote windows: the remote host's own machine settings (VS Code's "Remote [SSH: host]" settings) ----------------------------------
+
+    [Fact]
+    public async Task A_remote_server_takes_machine_settings_from_its_host_s_machine_file_and_the_process_language_host_from_the_client()
+    {
+        using var data = new TempDirectory("cscode-scope-server-");
+        var machine = ServerHost.MachineSettingsPath(data.Path);
+        Directory.CreateDirectory(Path.GetDirectoryName(machine)!);
+        File.WriteAllText(machine, """{ "cscode.debug.gdbPath": "/opt/gdb-14/bin/gdb", "cscode.languageServers": { "rust": { "command": "/opt/ra/rust-analyzer" } }, "editor.tabSize": 5 }""");
+        var host = new ServerHost(new ServerOptions(Stdio: false, data.Path, Marker: null, ShowVersion: false, AskpassPrompt: null, Askpass: false));
+        try
+        {
+            var sp = host.Services;
+            _ = sp.GetRequiredService<ILanguageServerManager>();
+            var config = sp.GetRequiredService<ConfigurationService>();
+            var handlers = new WorkspaceHandlers(sp.GetRequiredService<CsCode.Platform.Workspace.WorkspaceService>(), config, sp.GetRequiredService<IFileSystem>(), machine);
+            const string client = """
+                { "cscode.debug.gdbPath": "/client/gdb", "cscode.languageServers": { "rust": { "command": "/client/rust-analyzer", "rootMarkers": ["Cargo.toml"] } },
+                  "editor.tabSize": 3 }
+                """;
+
+            await handlers.SetUserSettingsAsync(client, remoteWindow: true, Ct); // ssh / docker / wsl
+            Assert.Equal(machine, config.MachineSettingsPath);
+            Assert.Equal("/opt/gdb-14/bin/gdb", config.Get("cscode.debug.gdbPath", "?"));
+            var rust = config.GetRaw("cscode.languageServers")!.Value.GetProperty("rust");
+            Assert.Equal("/opt/ra/rust-analyzer", rust.GetProperty("command").GetString());
+            Assert.Equal("Cargo.toml", rust.GetProperty("rootMarkers")[0].GetString()); // the rest of the client's entry still applies
+            Assert.Equal(5, config.Get("editor.tabSize", 0));
+
+            await handlers.SetUserSettingsAsync(client, remoteWindow: false, Ct); // the local process language host: the client's machine is this one
+            Assert.Null(config.MachineSettingsPath);
+            Assert.Equal("/client/gdb", config.Get("cscode.debug.gdbPath", "?"));
+            Assert.Equal(3, config.Get("editor.tabSize", 0));
+        }
+        finally
+        {
+            await host.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task A_remote_terminal_gets_the_environment_of_the_server_host_s_machine_settings_not_the_client_s()
+    {
+        Assert.SkipUnless(CsCode.Terminal.Pty.PtyHosts.IsSupported, "needs a PTY");
+        await using var host = new RemoteTestHost(r3: true,
+            userSettings: """{ "terminal.integrated.env.linux": { "SCOPE_PROBE": "client-machine", "ONLY_CLIENT": "x" } }""",
+            machineSettings: """{ "terminal.integrated.env.linux": { "SCOPE_PROBE": "remote-machine" } }""");
+        await host.ConnectAsync();
+        await host.OpenWorkspaceAsync();
+        var terminals = host.Services.GetRequiredService<TerminalService>();
+        var t = (TerminalSession)await terminals.CreateAsync(TerminalProbe.Bash(), Ct);
+        try
+        {
+            Assert.Contains(t.ProcessId!.Value, TestEnv.Descendants(host.Manager.Session!.Server.ProcessId)); // it runs on the server
+            await t.SendTextAsync("echo \"probe=[$SCOPE_PROBE] only=[$ONLY_CLIENT]\"", true, Ct);
+            await TerminalProbe.WaitForTextAsync(t, "probe=[remote-machine] only=[]");
+        }
+        finally
+        {
+            await terminals.KillAsync(t, Ct);
+        }
+    }
 }

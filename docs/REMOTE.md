@@ -186,7 +186,10 @@ Also bridged: diagnostics (`diag/publish` → `IDiagnosticService`), will-save a
 locally as forwarders unless a local command has the id), `window/*` (messages with actions, quick picks — the server's items keep their `Tag`,
 input boxes — `Validate` is applied on the server, which re-asks with the error as prompt, progress with cancel, status messages, open external,
 clipboard), `nav/open` and `nav/applyEdit` (workspace edits come back with client URIs), and server output channels (prefixed `Remote: `).
-User settings flow client → server (`settings/setUser`, debounced re-send on change); workspace settings are read on the server.
+User settings flow client → server (`settings/setUser`, debounced re-send on change); workspace settings are read on the server. For a remote
+window (ssh, docker, wsl; not the local process language host) **machine-scoped settings come from the remote host's own machine settings file**,
+`<data dir>/machine/settings.json` (`ServerHost.MachineSettingsPath`; VS Code's `~/.vscode-server/data/Machine/settings.json`, its "Remote [SSH:
+host]" settings): see "Remote machine settings" below.
 The in-process language client ignores `ssh:` documents (Lsp hook), so a remote file never starts a local server.
 
 ## Terminals, debugging and tasks (R3)
@@ -330,6 +333,23 @@ workspace settings): only the user settings.json sets them, so a local folder's 
 `ProxyCommand`/`LocalCommand` option, the bundle directory or the docker CLI that *Connect to Host…* runs (ignored with a notice; docs/PLATFORM.md
 "Setting scopes"). `cscode.languageHost` is application-scoped. The remote server registers the terminal and debugger scopes itself, so a remote
 folder's settings cannot choose the shell, the debugger or a language server's command on the remote host either.
+
+**Remote machine settings** (lsp-core-1 / remote-5 follow-up, VS Code's behaviour). The programs a remote host runs are that host's: its gdb may be
+`/opt/gdb-14/bin/gdb` while the client's is on PATH. So, as VS Code does in a remote window, the server layers its host's own machine settings file,
+`<data dir>/machine/settings.json` (data dir: `remote.ssh.serverDataPath`, default `<install root>/data`), over the client's mirrored user settings:
+* machine-scoped settings and members (`cscode.debug.*Path`, `cscode.debug.gdbArgs`, `cscode.debuggers`, `cscode.lsp.searchDirs`,
+  `cscode.languageServers.<id>.command|args|env|workingDirectory`, `terminal.integrated.{profiles,defaultProfile,env}.<os>`, …) come from that file and
+  the defaults only. The client's values for them name programs on the client's machine and are **not used on the remote host** (logged once by the
+  server); a remote folder's `.vscode`/`.cscode` values stay ignored with a notice, which then names the machine file;
+* application-scoped settings (`terminal.integrated.inheritEnv`, `cscode.languageHost`) come from the client's user settings only;
+* everything else: defaults < client user settings < machine file < workspace < folder.
+
+The file is created by hand (or through the remote file system: open `<data dir>/machine/settings.json` on the host) and watched live; a malformed one
+keeps the last good values. The local process language host (`cscode.languageHost: process`) runs on the client's machine and keeps the client's
+values (`settings/setUser` carries `RemoteWindow`; an older client sends none and keeps the previous behaviour). Tests:
+`SettingScopeTests.A_remote_server_takes_machine_settings_from_its_host_s_machine_file…`, `…A_remote_terminal_gets_the_environment_of_the_server_host_s_machine_settings…`
+(Remote.Tests), `ConfigurationScopeTests.A_remote_window_takes_machine_settings…` (Platform.Tests). Not yet there: a "Remote" tab in the Settings
+page and VS Code's *Open Remote Settings* command.
 
 `RemoteOptions` (DI, not settings) carries what the host program or tests supply: ssh environment changes, the askpass command and directory, bundles,
 a process marker, reconnect policy, clock, call timeout, the reconnect wait, the grace period and a fixed server session id, a transport factory, the local

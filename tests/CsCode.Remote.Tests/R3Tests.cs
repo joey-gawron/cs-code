@@ -176,7 +176,7 @@ public class R3Tests
     public async Task A_remote_debug_session_runs_gdb_on_the_server_and_maps_breakpoints_and_frames_to_the_workspace_uris()
     {
         Assert.SkipUnless(File.Exists("/usr/bin/gdb") && File.Exists("/usr/bin/gcc"), "needs gdb (14+) and gcc");
-        await using var host = new RemoteTestHost(r3: true, userSettings: """{ "cscode.debug.gdbArgs": ["-nx"] }""");
+        await using var host = new RemoteTestHost(r3: true, machineSettings: """{ "cscode.debug.gdbArgs": ["-nx"] }"""); // machine scope: the server host's file
         var source = Path.Combine(host.Workspace.Path, "my prog.c");
         File.WriteAllText(source, """
             #include <stdio.h>
@@ -245,7 +245,7 @@ public class R3Tests
         // js-debug is an adapter SERVER: the launched program becomes a child session (startDebugging) that must connect to that same server.
         var jsDebug = Environment.GetEnvironmentVariable("CSCODE_JSDEBUG");
         Assert.SkipUnless(jsDebug is { Length: > 0 } && Directory.Exists(jsDebug) && File.Exists("/usr/bin/node"), "needs CSCODE_JSDEBUG (tools/fetch-js-debug.sh) and node");
-        await using var host = new RemoteTestHost(r3: true, userSettings: JsonSerializer.Serialize(new Dictionary<string, object> { ["cscode.debug.jsDebugPath"] = jsDebug! }));
+        await using var host = new RemoteTestHost(r3: true, machineSettings: JsonSerializer.Serialize(new Dictionary<string, object> { ["cscode.debug.jsDebugPath"] = jsDebug! }));
         File.WriteAllText(Path.Combine(host.Workspace.Path, "app.js"), """
             function twice(v) {
               const r = v * 2;

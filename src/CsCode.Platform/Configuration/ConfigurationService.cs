@@ -35,6 +35,9 @@ public sealed class ConfigurationFileException(string path, string message, Exce
 /// every <see cref="ConfigurationProperty.MachineScopedMembers"/> path, takes its value from the defaults and the user file only. What a workspace
 /// or folder file says there is dropped, listed in <see cref="IgnoredSettings"/>, logged and shown once as a notice; writing it there is refused.
 /// So a cloned repository cannot choose the programs CsCode starts. Settings nobody registered are window-scoped.</item>
+/// <item>Remote windows (<see cref="SetRemoteMachineSettingsAsync"/>, called by the remote server): VS Code's remote user settings. The remote host's
+/// own machine settings file sits between the user file (there: the client's, mirrored) and the workspace; machine-scoped settings come from it
+/// alone (the client machine's values in the user file are ignored), application-scoped ones from the user file alone.</item>
 /// <item>Reads (<see cref="Get{T}(string, T)"/>, <see cref="GetRaw"/>) come from an immutable snapshot swapped atomically: no lock and,
 /// for primitive types, no allocation after the first read of a key.</item>
 /// <item>Files are watched; a debounced reload diffs old/new merged values and raises <see cref="Changed"/> with the exact affected keys
@@ -78,6 +81,8 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
     private readonly DisposableStore _watches = new();
     private readonly Timer _reloadTimer;
     private readonly Layer _user = new("user", isWorkspace: false);
+    private readonly Layer _machine = new("machine", isWorkspace: false); // a remote host's own machine settings (Path null: a local window)
+    private IDisposable? _machineWatch;
     private readonly Layer _vscode = new("workspace(.vscode)", isWorkspace: true);
     private readonly Layer _workspace = new("workspace", isWorkspace: true);
     private List<Layer> _folderLayers = new();
@@ -117,6 +122,45 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
     }
 
     public string UserSettingsPath { get; }
+
+    /// <summary>The remote host's machine settings file while this service serves a remote window, else null (see <see cref="SetRemoteMachineSettingsAsync"/>).</summary>
+    public string? MachineSettingsPath
+    {
+        get { lock (_gate) return _machine.Path; }
+    }
+
+    /// <summary>
+    /// Makes this the configuration of a REMOTE window, as VS Code's remote extension host does (lsp-core-1 / remote-5 follow-up).
+    /// <paramref name="path"/> is the remote host's own machine settings file (VS Code: <c>~/.vscode-server/data/Machine/settings.json</c>); it is
+    /// layered over the user file, which on the remote server is the client's, mirrored:
+    /// <list type="bullet">
+    /// <item><see cref="ConfigurationScope.Machine"/> settings and machine-scoped members (the programs, paths and environments of language servers,
+    /// debuggers, shells) come from the defaults and this file only. The user file's values for them name programs on the CLIENT's machine and are
+    /// ignored here, as VS Code ignores local machine settings in a remote window; workspace files stay ignored for them too.</item>
+    /// <item><see cref="ConfigurationScope.Application"/> settings come from the user file only (this file's are ignored).</item>
+    /// <item>Everything else: defaults &lt; user &lt; this file &lt; workspace &lt; folder.</item>
+    /// </list>
+    /// The file is watched like the others. null makes this a local window again (the process language host: the client's machine IS this one).
+    /// </summary>
+    public Task SetRemoteMachineSettingsAsync(string? path, CancellationToken ct = default) => _lane.RunAsync(_ =>
+    {
+        if (_disposed) return;
+        lock (_gate)
+        {
+            if (string.Equals(_machine.Path, path, StringComparison.Ordinal)) return;
+            _machine.Path = path;
+            _machine.Text = null;
+            _machine.Tree = null;
+            _machine.Error = null;
+        }
+        Interlocked.Exchange(ref _machineWatch, null)?.Dispose();
+        if (path is not null)
+        {
+            LoadLayerFromDisk(_machine);
+            ArmMachineWatcher(path);
+        }
+        Publish();
+    }, ct);
 
     public IEventSource<ConfigurationChangedEventArgs> Changed => _changed;
 
@@ -283,6 +327,7 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
     private Layer? LayerForPath(string path)
     {
         if (string.Equals(_user.Path, path, StringComparison.Ordinal)) return _user;
+        if (string.Equals(_machine.Path, path, StringComparison.Ordinal)) return _machine;
         if (string.Equals(_workspace.Path, path, StringComparison.Ordinal)) return _workspace;
         if (string.Equals(_vscode.Path, path, StringComparison.Ordinal)) return _vscode;
         return _folderLayers.FirstOrDefault(l => string.Equals(l.Path, path, StringComparison.Ordinal));
@@ -362,16 +407,19 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
         {
             List<Snapshot.LayerTree> trees;
             List<ConfigurationProperty> props;
+            bool remoteWindow;
             lock (_gate)
             {
                 trees = new List<Snapshot.LayerTree>();
+                remoteWindow = _machine.Path is not null;
                 if (_user.Tree is not null) trees.Add(new(_user.Tree, _user.Path ?? _user.Name, IsWorkspace: false)); // user sits below every workspace layer
+                if (remoteWindow && _machine.Tree is not null) trees.Add(new(_machine.Tree, _machine.Path!, IsWorkspace: false, IsMachine: true));
                 foreach (var l in new[] { _vscode, _workspace }.Concat(_folderLayers))
                     if (l.Tree is not null) trees.Add(new(l.Tree, l.Path ?? l.Name, l.IsWorkspace));
                 props = _registrations.SelectMany(static r => r.Properties).ToList();
             }
 
-            var next = Snapshot.Build(props, trees);
+            var next = Snapshot.Build(props, trees, remoteWindow);
             var old = Interlocked.Exchange(ref _snapshot, next);
             if (raise)
             {
@@ -387,6 +435,9 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
             lock (_gate) error = ComputeError();
             errorChanged = !Equals(error, _lastError);
             _lastError = error;
+            if (!old.ClientMachineValues.SequenceEqual(next.ClientMachineValues) && next.ClientMachineValues.Count > 0)
+                _log.LogInformation("Remote window: {Keys} in the client's user settings name programs on the client's machine and are not used on this host; "
+                    + "set them in {MachineSettings}", string.Join(", ", next.ClientMachineValues), MachineSettingsPath);
         }
 
         if (affected is not null) _changed.Fire(new ConfigurationChangedEventArgs(affected));
@@ -403,8 +454,9 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
             var keys = string.Join(", ", group.Select(static i => i.Key));
             _log.LogWarning("Ignoring {Keys} in {Path}: these settings can only be set in user settings (they choose programs CsCode runs)", keys, group.Key);
             if (_disposed || _windowService?.Invoke() is not { } window) continue;
+            var target = MachineSettingsPath is { } machine ? $"this remote host's machine settings ({machine})" : "your user settings";
             var message = $"{group.Key} sets {keys}, which only user settings can set: they choose the programs CsCode runs. "
-                + "The workspace's value is ignored; copy it into your user settings if you trust this folder.";
+                + $"The workspace's value is ignored; copy it into {target} if you trust this folder.";
             _ = ShowNoticeAsync(window, message);
         }
     }
@@ -417,7 +469,7 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
 
     private ConfigurationError? ComputeError()
     {
-        foreach (var l in new[] { _user, _vscode, _workspace }.Concat(_folderLayers))
+        foreach (var l in new[] { _user, _machine, _vscode, _workspace }.Concat(_folderLayers))
             if (l.Error is { } e) return new ConfigurationError(l.Path ?? l.Name, e);
         return null;
     }
@@ -436,6 +488,22 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             _log.LogWarning(ex, "Cannot watch the settings directory; changes to settings.json will not be picked up live");
+        }
+    }
+
+    private void ArmMachineWatcher(string path)
+    {
+        if (_watcher is null || _disposed) return;
+        try
+        {
+            var dir = Path.GetDirectoryName(path)!;
+            Directory.CreateDirectory(dir);
+            var watch = _watcher.Watch(FileUri.FromDirectoryPath(dir), recursive: false, excludeGlobs: [], changes => OnFilesChanged(changes, null));
+            Interlocked.Exchange(ref _machineWatch, watch)?.Dispose();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            _log.LogWarning(ex, "Cannot watch the machine settings directory; changes to {Path} will not be picked up live", path);
         }
     }
 
@@ -513,7 +581,7 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
     {
         if (_disposed) return;
         Layer[] layers;
-        lock (_gate) layers = new[] { _user, _vscode, _workspace }.Concat(_folderLayers).ToArray();
+        lock (_gate) layers = new[] { _user, _machine, _vscode, _workspace }.Concat(_folderLayers).ToArray();
         var changed = false;
         foreach (var l in layers) changed |= LoadLayerFromDisk(l);
         if (changed) Publish();
@@ -552,6 +620,7 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
         _disposed = true;
         _reloadTimer.Dispose();
         _watches.Dispose();
+        Interlocked.Exchange(ref _machineWatch, null)?.Dispose();
         DisposableStore? ws;
         lock (_gate) { ws = _workspaceWatches; _workspaceWatches = null; }
         ws?.Dispose();
@@ -565,10 +634,13 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
     /// <summary>Immutable merged view + lazily filled read caches (replaced wholesale on every change, so caches can never be stale).</summary>
     private sealed class Snapshot
     {
-        public static readonly Snapshot Empty = new(new JsonObject(), new HashSet<string>(StringComparer.Ordinal), []);
+        public static readonly Snapshot Empty = new(new JsonObject(), new HashSet<string>(StringComparer.Ordinal), [], []);
 
-        /// <summary>One settings file's last good tree; <paramref name="IsWorkspace"/> marks a workspace or folder file.</summary>
-        public readonly record struct LayerTree(JsoncObject Tree, string Path, bool IsWorkspace);
+        /// <summary>
+        /// One settings file's last good tree; <paramref name="IsWorkspace"/> marks a workspace or folder file, <paramref name="IsMachine"/> a remote
+        /// host's machine settings file.
+        /// </summary>
+        public readonly record struct LayerTree(JsoncObject Tree, string Path, bool IsWorkspace, bool IsMachine = false);
 
         private readonly JsonObject _merged;
         private readonly HashSet<string> _atomic;
@@ -578,9 +650,19 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
         /// <summary>User-only settings that workspace or folder files set (and that were therefore ignored), in file order.</summary>
         public IReadOnlyList<IgnoredSetting> Ignored { get; }
 
-        private Snapshot(JsonObject merged, HashSet<string> atomic, IReadOnlyList<IgnoredSetting> ignored) { _merged = merged; _atomic = atomic; Ignored = ignored; }
+        /// <summary>Remote window: the machine-scoped keys the (client's) user file sets, which are not used on this host.</summary>
+        public IReadOnlyList<string> ClientMachineValues { get; }
 
-        public static Snapshot Build(IReadOnlyList<ConfigurationProperty> properties, IReadOnlyList<LayerTree> layers)
+        private Snapshot(JsonObject merged, HashSet<string> atomic, IReadOnlyList<IgnoredSetting> ignored, IReadOnlyList<string> clientMachineValues)
+        {
+            _merged = merged;
+            _atomic = atomic;
+            Ignored = ignored;
+            ClientMachineValues = clientMachineValues;
+        }
+
+        /// <param name="remoteWindow">The layers include (or would include) a remote host's machine settings file: see <see cref="SetRemoteMachineSettingsAsync"/>.</param>
+        public static Snapshot Build(IReadOnlyList<ConfigurationProperty> properties, IReadOnlyList<LayerTree> layers, bool remoteWindow = false)
         {
             var atomic = new HashSet<string>(StringComparer.Ordinal);
             var merged = new JsonObject();
@@ -601,11 +683,24 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
 
             var scoped = UserOnly.From(properties);
             List<IgnoredSetting>? ignored = null;
+            List<string>? clientMachine = null;
             UserOnly.Saved? userValues = null;
             foreach (var layer in layers)
             {
                 var normalized = new JsonObject();
                 Expand(layer.Tree, normalized, splitDots: true);
+                if (remoteWindow && !layer.IsWorkspace && !scoped.IsEmpty)
+                {
+                    // VS Code's remote window: machine settings come from the remote host's file, application settings from the local user file.
+                    if (layer.IsMachine) scoped.Strip(normalized, ConfigurationScope.Application);
+                    else
+                    {
+                        List<IgnoredSetting>? found = null;
+                        scoped.Report(normalized, layer.Path, ref found);
+                        foreach (var f in found ?? []) if (f.Scope == ConfigurationScope.Machine) (clientMachine ??= []).Add(f.Key);
+                        scoped.Strip(normalized, ConfigurationScope.Machine);
+                    }
+                }
                 if (layer.IsWorkspace && !scoped.IsEmpty)
                 {
                     // What defaults + user files say, before the first workspace file is merged: restored over whatever the workspace sets.
@@ -616,7 +711,7 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
                 DeepMerge(merged, normalized);
             }
             userValues?.Restore(merged);
-            return new Snapshot(merged, atomic, ignored is null ? [] : ignored);
+            return new Snapshot(merged, atomic, ignored is null ? [] : ignored, clientMachine is null ? [] : clientMachine);
         }
 
         /// <summary>
@@ -661,6 +756,22 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
                         if (NodeAt(block.Block, key) is JsonObject container)
                             foreach (var hit in Matches(container, member, 0, key))
                                 (into ??= []).Add(new IgnoredSetting(path, prefix + hit, ConfigurationScope.Machine));
+                }
+            }
+
+            /// <summary>
+            /// Removes from one file (and its "[lang]" blocks) every key registered with <paramref name="scope"/>, and for
+            /// <see cref="ConfigurationScope.Machine"/> every machine-scoped member too (a remote window's layering).
+            /// </summary>
+            public void Strip(JsonObject layer, ConfigurationScope scope)
+            {
+                foreach (var block in LanguageBlocks(layer).Select(static b => b.Block).ToArray().Prepend(layer))
+                {
+                    foreach (var (key, keyScope) in _keys)
+                        if (keyScope == scope) RemovePath(block, key);
+                    if (scope != ConfigurationScope.Machine) continue;
+                    foreach (var (key, member) in _members)
+                        if (NodeAt(block, key) is JsonObject container) RemoveMatches(container, member, 0);
                 }
             }
 
