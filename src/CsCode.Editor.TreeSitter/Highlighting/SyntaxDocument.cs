@@ -103,6 +103,12 @@ public sealed unsafe class SyntaxDocument : IDisposable
     /// <summary>True when the last <see cref="Highlight"/> (or query) was stopped by <see cref="MaxQueryTime"/> (its result is partial).</summary>
     public bool LastQueryTimedOut { get; private set; }
 
+    /// <summary>
+    /// Tests only: runs inside the flight recorder's scope just before a parse enters native code, with the grammar's name, so a test can stand
+    /// in for a grammar that never returns (a real one would have to be built with an endless loop in its scanner).
+    /// </summary>
+    internal static Action<string>? HangHookForTests { get; set; }
+
     public SyntaxDocument(GrammarRegistry registry, LanguageBundle language)
     {
         _registry = registry;
@@ -226,7 +232,10 @@ public sealed unsafe class SyntaxDocument : IDisposable
         var started = Stopwatch.GetTimestamp();
         IntPtr tree;
         using (Record(Language))
+        {
+            HangHookForTests?.Invoke(Language.Name);
             tree = TsApi.ts_parser_parse_with_options(_parser, _tree, input, options);
+        }
         LastParseTime += Stopwatch.GetElapsedTime(started);
         LastParseSlices++;
         if (tree == IntPtr.Zero) return ParseOutcome.Halted;

@@ -7,6 +7,8 @@
 #   tools/treesitter/fetch-grammars.sh --pin      also records sha256/size/commit/licence for entries that have none yet (maintainers only,
 #                                                 when a revision changes: clear the entry's sha256 first, then review the diff)
 #   --dir DIR                                     download root (default: CSCODE_DOWNLOADS, else <main checkout>/.scratch/downloads)
+#   --offline                                     never download: a missing archive is an error (verification only)
+#   --only NAME                                   just this source (e.g. tree-sitter-toml, tree-sitter, nvim-treesitter)
 #
 # Layout: <root>/<name>/<revision>/<name>-<revision>.tar.gz, one new directory per download (shared by all worktrees of the repository).
 # Nothing downloaded is executed: build-grammars.sh only compiles the C sources with the host's compiler. Needs curl, jq, gzip, tar, sha256sum
@@ -17,13 +19,17 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 manifest="$here/manifest.json"
 pin=0
+offline=0
+only=""
 root=${CSCODE_DOWNLOADS:-}
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --pin) pin=1 ;;
+        --offline) offline=1 ;;
+        --only) only=$2; shift ;;
         --dir) root=$2; shift ;;
-        -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
@@ -82,6 +88,8 @@ fetch() {
     want_sha=$(jq -r "$path.sha256" "$updated")
     want_size=$(jq -r "$path.size" "$updated")
     want_commit=$(jq -r "$path.commit" "$updated")
+    if [ -n "$only" ] && [ "$name" != "$only" ]; then return; fi
+    checked=$((checked + 1))
     case "$url" in https://github.com/*) ;; *) echo "  $name: only github.com sources are allowed ($url)" >&2; failures=$((failures + 1)); return ;; esac
     if [ -z "$want_sha" ] && [ "$pin" = 0 ]; then
         echo "  $name: not pinned (no sha256 in the manifest); run with --pin to record it" >&2
@@ -90,6 +98,11 @@ fetch() {
     fi
     dir="$root/$name/$rev"
     file="$dir/$name-$rev.tar.gz"
+    if [ ! -f "$file" ] && [ "$offline" = 1 ]; then
+        echo "  $name: $file is missing (--offline)" >&2
+        failures=$((failures + 1))
+        return
+    fi
     if [ ! -f "$file" ]; then
         mkdir -p "$dir"
         rm -f "$file.part"
@@ -148,10 +161,15 @@ fetch() {
 }
 
 echo "fetch-grammars: downloads in $root"
+checked=0
 fetch .runtime
 fetch .queries
 count=$(jq '.sources | length' "$updated")
 for ((i = 0; i < count; i++)); do fetch ".sources[$i]"; done
+if [ "$checked" = 0 ]; then
+    echo "fetch-grammars: no source named '$only' in the manifest" >&2
+    exit 2
+fi
 
 if [ "$pin" = 1 ] && ! cmp -s "$manifest" "$updated"; then
     cp "$updated" "$manifest"
@@ -161,4 +179,4 @@ if [ "$failures" -gt 0 ]; then
     echo "fetch-grammars: $failures problem(s)" >&2
     exit 1
 fi
-echo "fetch-grammars: all $((count + 2)) sources verified"
+echo "fetch-grammars: $checked source(s) verified"

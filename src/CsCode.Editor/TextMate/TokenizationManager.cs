@@ -29,7 +29,7 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
         Interner = new ScopeInterner();
         Log = services.LoggerFactory.CreateLogger<TokenizationManager>();
         Ui = services.Ui;
-        TreeSitter = new TreeSitterService(services, Interner, HasTextMateGrammar) { LaneReplaced = OnEngineSettingChanged };
+        TreeSitter = new TreeSitterService(services, Interner, HasTextMateGrammar) { LaneReplaced = OnTreeSitterReset };
         _subscriptions.Add(TreeSitter);
         _subscriptions.Add(services.Contributions.Of<GrammarContribution>().Changed.Subscribe(_ => OnGrammarsChanged()));
         // editor.syntaxEngine (global or "[language]", and the old editor.experimental.treeSitter alias) switches documents between the engines live
@@ -97,6 +97,23 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
         {
             foreach (var s in all)
                 if (s.TreeSitterWantedChanged()) s.RestartFromManager();
+            _availability.Fire(true); // views without a session (no grammar before) may have one now
+        });
+    }
+
+    /// <summary>
+    /// Tree-sitter moved to a new lane (a grammar hung) or the quarantine was cleared: every document on tree-sitter restarts its engine (an
+    /// engine of the old lane is dropped, never touched), and every document whose engine choice changed switches.
+    /// </summary>
+    private void OnTreeSitterReset()
+    {
+        TokenizationSession[] all;
+        lock (_gate) all = _sessions.ToArray();
+        Ui.Post(() =>
+        {
+            foreach (var s in all)
+                if (s.TreeSitterWanted || s.TreeSitterWantedChanged()) s.RestartFromManager();
+            _availability.Fire(true);
         });
     }
 
@@ -109,8 +126,17 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
         Ui.Post(() =>
         {
             foreach (var s in all) s.RestartFromManager();
+            _availability.Fire(true);
         });
     }
+
+    private readonly Emitter<bool> _availability = new();
+
+    /// <summary>
+    /// Fires on the UI thread after something may have given a language a grammar it had none of (the engine setting, a user grammar, a cleared
+    /// quarantine): a view without a tokenisation session asks again (<c>CodeEditorControl</c>).
+    /// </summary>
+    internal IEventSource<bool> GrammarAvailabilityChanged => _availability;
 
     // ---- IMemoryTrimmable ----
 
