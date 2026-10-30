@@ -111,6 +111,11 @@ public class TreeSitterEngineSettingTests
         host.Config.Set(TreeSitterService.SettingKey, TreeSitterService.TextMate);
         host.Config.Set(TreeSitterService.LegacySettingKey, true);
         Assert.Equal(TreeSitterService.TextMate, service.SettingFor("go")); // the alias only speaks while the new setting is at its default
+        // a language section as the settings service hands it back (dotted keys expanded into nested objects)
+        host.Config.Set("[python]", new Dictionary<string, object> { ["editor"] = new Dictionary<string, object> { ["syntaxEngine"] = TreeSitterService.TreeSitter } });
+        Assert.Equal(TreeSitterService.TreeSitter, service.SettingFor("python"));
+        host.Config.Set("[python]", new Dictionary<string, object> { ["editor"] = new Dictionary<string, object> { ["experimental"] = new Dictionary<string, object> { ["treeSitter"] = false } } });
+        Assert.Equal(TreeSitterService.Auto, service.SettingFor("python"));
         // an unknown value is ignored (the level below decides)
         host.Config.Set(TreeSitterService.SettingKey, "fancy");
         Assert.Equal(TreeSitterService.TreeSitter, service.SettingFor("go"));

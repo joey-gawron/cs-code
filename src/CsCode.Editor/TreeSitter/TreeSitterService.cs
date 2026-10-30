@@ -89,14 +89,34 @@ internal sealed class TreeSitterService : IDisposable
         var config = _services.Config;
         if (!string.IsNullOrEmpty(languageId) && config.GetRaw($"[{languageId}]") is { ValueKind: JsonValueKind.Object } section)
         {
-            if (section.TryGetProperty(SettingKey, out var scoped) && Normalise(scoped) is { } value) return value;
-            if (section.TryGetProperty(LegacySettingKey, out var legacy) && legacy.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            if (TryGet(section, SettingKey, out var scoped) && Normalise(scoped) is { } value) return value;
+            if (TryGet(section, LegacySettingKey, out var legacy) && legacy.ValueKind is JsonValueKind.True or JsonValueKind.False)
                 return legacy.ValueKind == JsonValueKind.True ? TreeSitter : Auto;
         }
         var global = config.GetRaw(SettingKey) is { } g ? Normalise(g) ?? Auto : Auto;
         // the alias only speaks when the new setting is at its default
         if (global == Auto && config.GetRaw(LegacySettingKey) is { ValueKind: JsonValueKind.True }) return TreeSitter;
         return global;
+    }
+
+    /// <summary>
+    /// <paramref name="dottedKey"/> inside a language section, written either way: <c>"editor.syntaxEngine"</c> as one property, or nested
+    /// (<c>{"editor": {"syntaxEngine": …}}</c>, which is how the settings service hands sections back: it expands dotted keys).
+    /// </summary>
+    private static bool TryGet(JsonElement section, string dottedKey, out JsonElement value)
+    {
+        if (section.TryGetProperty(dottedKey, out value)) return true;
+        var current = section;
+        foreach (var segment in dottedKey.Split('.'))
+        {
+            if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(segment, out current))
+            {
+                value = default;
+                return false;
+            }
+        }
+        value = current;
+        return true;
     }
 
     private static string? Normalise(JsonElement e) =>

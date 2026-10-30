@@ -200,6 +200,28 @@ public class TreeSitterIsolationTests
     }
 
     [AvaloniaFact]
+    public async Task The_flight_recorder_file_lives_as_long_as_the_engine_and_a_clean_shutdown_removes_it()
+    {
+        RequireGrammar("toml");
+        using var dir = new TempDirectory("cscode-ts-isolation-");
+        var file = Path.Combine(dir.Path, "flight", Environment.ProcessId + ".flight");
+        var host = ViewHost.Create();
+        try
+        {
+            host.Factory.Tokens.TreeSitter.IsolationDirectoryOverride = dir.Path;
+            var (_, toml, _) = await host.OpenAsync("[a]\nb = 1\n", "a.toml");
+            await WaitForTreeSitter(toml, 1);
+            Assert.True(File.Exists(file));
+            Assert.Empty(FlightRecorder.CollectCrashes(Path.Combine(dir.Path, "flight"))); // a live process is never "crashed"
+        }
+        finally
+        {
+            host.Dispose();
+        }
+        await ViewHost.WaitFor(() => !File.Exists(file), "the recorder removed on shutdown (on the lane)");
+    }
+
+    [AvaloniaFact]
     public async Task A_document_whose_highlight_queries_keep_running_into_the_query_limit_goes_to_TextMate()
     {
         RequireGrammar("rust");
