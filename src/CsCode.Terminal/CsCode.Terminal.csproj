@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The integrated terminal without UI: PTY hosts (Unix posix_spawn, Windows ConPTY), the VT parser, the screen model and scrollback,
+       terminal sessions and ITerminalService. No Avalonia here: CsCode.Panels.Terminal presents it, the remote server can host the PTY. -->
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Terminal.Tests" />
+    <InternalsVisibleTo Include="CsCode.Panels.Terminal" />
+    <InternalsVisibleTo Include="CsCode.Panels.Terminal.Tests" />
+  </ItemGroup>
+
+</Project>
