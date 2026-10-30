@@ -208,7 +208,10 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
             foreach (var dir in new[] { folder, Combine(folder, ".cscode/"), Combine(folder, ".vscode/") })
             {
                 try { _watches.Add(ws.Watcher.Watch(dir, false, null, changes => OnFilesChanged(folder, changes))); }
-                catch (Exception ex) when (ex is IOException or DirectoryNotFoundException or ArgumentException) { /* directory does not exist yet: the root watch will tell us when it appears */ }
+                // The Platform watcher takes a directory that does not exist yet (it waits for it to appear); a FileSystemWatcher-based one
+                // throws instead (like the Editor's fallback FswFileWatcher, which has no such waiting), and then the folder's own watch reports
+                // .cscode/.vscode appearing, and OnFilesChanged watches it.
+                catch (Exception ex) when (ex is IOException or DirectoryNotFoundException or ArgumentException) { }
             }
         }
     }

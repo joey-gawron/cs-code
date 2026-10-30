@@ -67,7 +67,9 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
   adapters from a `DebugAdapterExecutable` (netcoredbg) start at normal priority; adapter **servers** (`DebugAdapterServerProcess`, js-debug)
   and stdio adapters from a `DebugAdapterStdioProcess` (GDB) start under `nice -n 10` (PriorityClass BelowNormal on Windows), which the
   debuggees they launch inherit, with the environment marker `CSCODE_DAP_ADAPTER`; a stdio adapter that died (signal, non-zero exit — not GDB's
-  normal `quit`) has the processes still carrying its marker in its session reaped. Task processes (`tasks.json`, a preLaunchTask's `tsc`) are tracked
+  normal `quit`) has the processes still carrying its marker in its session reaped. **Decision (owner): netcoredbg keeps normal priority.**
+  It launches the .NET program itself, which would inherit a lowered priority and run slower under the debugger, so it is not niced like the
+  others; do not change this as a "consistency" fix. Task processes (`tasks.json`, a preLaunchTask's `tsc`) are tracked
   too, and `TaskService.Dispose` (app shutdown) kills any task still running. A server transport kills the server's tree on close; processes
   that left the tree survive a normal close (a program's detached browser or daemon) and are reaped only after the server died on its own (its
   environment marker, same session only). `DebugService.Dispose` — a container disposed synchronously — kills every adapter tree and
