@@ -11,8 +11,8 @@ namespace CsCode.Core.Tests;
 public sealed class FontFamiliesTests
 {
     [Theory]
-    [InlineData("'Fira Code', \"JetBrains Mono\", monospace", "Fira Code, JetBrains Mono, Menlo")]
-    [InlineData("Menlo, SF Mono, Monaco, monospace", "Menlo, SF Mono, Monaco")]                       // the default: monospace is Menlo again
+    [InlineData("'Source Code Pro', \"JetBrains Mono\", monospace", "Source Code Pro, JetBrains Mono, Menlo")]
+    [InlineData("Menlo, SF Mono, Monaco, monospace", "Menlo, SF Mono, Monaco")]                       // monospace is Menlo again
     [InlineData("system-ui, Helvetica Neue, sans-serif", ".AppleSystemUIFont, Helvetica Neue")]
     [InlineData("-apple-system, BlinkMacSystemFont, serif", ".AppleSystemUIFont, Times")]
     [InlineData(" Cascadia Code ,, ' ' , MONOSPACE ", "Cascadia Code, Menlo")]
@@ -28,7 +28,33 @@ public sealed class FontFamiliesTests
     [Theory]
     [InlineData("Cascadia Code, Cascadia Mono, Consolas, DejaVu Sans Mono, Liberation Mono, monospace", "Cascadia Code, Cascadia Mono, Consolas, DejaVu Sans Mono, Liberation Mono, monospace")]
     [InlineData("Segoe UI, Inter, Noto Sans, sans-serif", "Segoe UI, Inter, Noto Sans, sans-serif")]
-    [InlineData("'Fira Code', monospace", "Fira Code, monospace")]
+    [InlineData("'Source Code Pro', monospace", "Source Code Pro, monospace")]
     public void On_Linux_only_the_quotes_go_fontconfig_resolves_generic_names(string families, string expected) =>
         Assert.Equal(expected, FontFamilies.Normalize(families, OSPlatform.Linux));
+
+    public static TheoryData<string> Platforms => ["OSX", "WINDOWS", "LINUX"];
+
+    /// <summary>
+    /// The bundled Fira Code is reached through its collection (fonts:CsCode, registered by CsCode.Ui's CodeFonts) on every OS, whatever the
+    /// quotes and casing, so a user's "Fira Code" setting gets it without installing anything, and a Fira Code the OS has is not consulted.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Platforms))]
+    public void The_bare_name_Fira_Code_becomes_the_bundled_collection(string platform)
+    {
+        var os = OSPlatform.Create(platform);
+        Assert.Equal("fonts:CsCode#Fira Code", FontFamilies.Normalize("Fira Code", os));
+        Assert.Equal("fonts:CsCode#Fira Code, Hack", FontFamilies.Normalize("'fira code', Hack, \"Fira Code\"", os));
+        Assert.Equal("Fira Mono, FiraCode Nerd Font", FontFamilies.Normalize("Fira Mono, FiraCode Nerd Font", os)); // other names stay as they are
+    }
+
+    /// <summary>Fira Code first in the code font default of every OS, then each OS's own faces (Menlo on a Mac, Cascadia/Consolas/DejaVu elsewhere).</summary>
+    [Fact]
+    public void The_code_font_default_starts_with_the_bundled_Fira_Code_on_every_OS()
+    {
+        Assert.StartsWith("Fira Code, Menlo,", FontFamilies.MacCode);
+        Assert.StartsWith("Fira Code, Cascadia Code,", FontFamilies.OtherCode);
+        Assert.Equal(OperatingSystem.IsMacOS() ? FontFamilies.MacCode : FontFamilies.OtherCode, FontFamilies.DefaultCode);
+        Assert.StartsWith("fonts:CsCode#Fira Code, Menlo, SF Mono, Monaco", FontFamilies.Normalize(FontFamilies.MacCode, OSPlatform.OSX));
+    }
 }

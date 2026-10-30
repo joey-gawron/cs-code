@@ -265,7 +265,7 @@ public sealed class ThemeApplier : IDisposable
     {
         var family = config?.Get<string>(SettingKeys.EditorFontFamily);
         if (string.IsNullOrWhiteSpace(family))
-            family = OperatingSystem.IsMacOS() ? FontFamilies.MacCode : "Cascadia Code, Consolas, DejaVu Sans Mono, Liberation Mono, monospace";
+            family = FontFamilies.DefaultCode;
         _app.Resources["ui:CodeFontFamily"] = new FontFamily(FontFamilies.Normalize(family));
     }
 

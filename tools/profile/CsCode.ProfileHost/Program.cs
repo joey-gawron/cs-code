@@ -16,6 +16,7 @@ using CsCode.MemoryTests.App;
 using CsCode.Profiling;
 using CsCode.Profiling.Testing;
 using CsCode.TestDoubles;
+using CsCode.Ui.Theming;
 
 namespace CsCode.ProfileHost;
 
@@ -74,7 +75,7 @@ public static class Program
     private static int Headless(Func<Task<int>> work)
     {
         AppStartup.ConfigureRuntime();
-        AppBuilder.Configure<CsCode.App.App>().UseSkia().UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false }).WithInterFont()
+        AppBuilder.Configure<CsCode.App.App>().UseSkia().UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false }).WithInterFont().WithCodeFonts()
             .SetupWithoutStarting();
         var exit = 1;
         using var done = new CancellationTokenSource();

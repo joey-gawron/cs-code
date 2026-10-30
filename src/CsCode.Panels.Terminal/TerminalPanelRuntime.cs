@@ -139,7 +139,7 @@ public sealed class TerminalPanelRuntime : IDisposable
     {
         var family = Config?.Get<string>(TerminalSettingKeys.FontFamily) is { Length: > 0 } f ? f
             : Config?.Get<string>(SettingKeys.EditorFontFamily) is { Length: > 0 } ef ? ef
-            : "Cascadia Code, Cascadia Mono, Consolas, DejaVu Sans Mono, Liberation Mono, Noto Sans Mono, monospace";
+            : FontFamilies.DefaultCode; // the bundled Fira Code first; TerminalFont.Create adds the per-OS monospace fallbacks
         var size = Config?.Get(TerminalSettingKeys.FontSize, 0.0) is > 0 and var s ? s : Config?.Get(SettingKeys.EditorFontSize, 14.0) ?? 14.0;
         return TerminalFont.Create(family, size, Config?.Get(TerminalSettingKeys.LineHeight, 1.0) ?? 1.0, Config?.Get(TerminalSettingKeys.LetterSpacing, 0.0) ?? 0.0);
     }

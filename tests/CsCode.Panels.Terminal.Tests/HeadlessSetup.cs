@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Xunit;
+using CsCode.Ui.Theming;
 
 [assembly: AvaloniaTestApplication(typeof(CsCode.Panels.Terminal.Tests.TestAppBuilder))]
 // Latency budgets, process-wide counters (threads, descriptors) and CSCODE_HOME: no other test may run alongside.
@@ -15,5 +16,6 @@ public static class TestAppBuilder
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<CsCode.App.App>()
             .UseSkia()
-            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false });
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            .WithCodeFonts();
 }

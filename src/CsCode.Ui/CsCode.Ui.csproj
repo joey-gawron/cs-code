@@ -9,6 +9,12 @@
     <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
   </ItemGroup>
 
+  <!-- The bundled code font (Fira Code, SIL OFL 1.1: assets/fonts/fira-code/OFL.txt), as avares://CsCode.Ui/Assets/Fonts/FiraCode/<face>.ttf,
+       registered by Theming/CodeFonts.cs. Inside the assembly, so publishing needs nothing extra. -->
+  <ItemGroup>
+    <AvaloniaResource Include="../../assets/fonts/fira-code/*.ttf" Link="Assets/Fonts/FiraCode/%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Avalonia.Themes.Fluent" />

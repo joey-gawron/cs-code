@@ -20,6 +20,8 @@
     <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
     <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
     <ProjectReference Include="../../src/CsCode.Editor/CsCode.Editor.csproj" />
+    <!-- the bundled code font (CodeFonts.WithCodeFonts), so the editor lays text out in the font the app uses -->
+    <ProjectReference Include="../../src/CsCode.Ui/CsCode.Ui.csproj" />
   </ItemGroup>
 
 </Project>

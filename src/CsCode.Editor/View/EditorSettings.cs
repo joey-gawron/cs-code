@@ -13,7 +13,7 @@ namespace CsCode.Editor.View;
 /// </summary>
 public sealed record EditorSettings
 {
-    public string FontFamily { get; init; } = OperatingSystem.IsMacOS() ? FontFamilies.MacCode : "Cascadia Code, Cascadia Mono, Consolas, DejaVu Sans Mono, Liberation Mono, monospace";
+    public string FontFamily { get; init; } = FontFamilies.DefaultCode; // the bundled Fira Code, then the OS's own monospace faces
     public double FontSize { get; init; } = 14;
     public double LineHeightFactor { get; init; } = 1.0;
     public int TabSize { get; init; } = 4;

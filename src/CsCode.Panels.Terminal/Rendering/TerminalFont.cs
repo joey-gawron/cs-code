@@ -1,5 +1,6 @@
 using System.Globalization;
 using Avalonia.Media;
+using CsCode.Core.Theming;
 
 namespace CsCode.Panels.Terminal.Rendering;
 
@@ -54,15 +55,17 @@ internal sealed class TerminalFont
     {
         size = Math.Clamp(size, 4, 100);
         // The font manager answers a missing family with its default face, so a candidate counts only when the face it returns is that
-        // family (or, for the generic "monospace", any fixed-pitch face).
+        // family (or, for the generic "monospace", any fixed-pitch face). The bundled Fira Code is looked up in its own collection (fonts:CsCode)
+        // and kept there, so its bold and italic faces come from that collection too.
         foreach (var name in Candidates(families, OperatingSystem.IsMacOS()))
         {
-            var family = new FontFamily(name);
+            var bundled = name.Equals(FontFamilies.Bundled, StringComparison.OrdinalIgnoreCase);
+            var family = new FontFamily(bundled ? FontFamilies.Normalize(name) : name);
             if (Face(family, FontWeight.Normal, FontStyle.Normal) is not { } face || Lookup(face, 'M') == 0) continue;
             var matches = name.Equals("monospace", StringComparison.OrdinalIgnoreCase)
                 ? face.Metrics.IsFixedPitch
                 : face.FamilyName.Equals(name, StringComparison.OrdinalIgnoreCase) || face.TypographicFamilyName.Equals(name, StringComparison.OrdinalIgnoreCase);
-            if (matches) return new TerminalFont(new FontFamily(face.FamilyName), face, size, lineHeight, letterSpacing);
+            if (matches) return new TerminalFont(bundled ? family : new FontFamily(face.FamilyName), face, size, lineHeight, letterSpacing);
         }
         var fallback = FontFamily.Default;
         var regular = Face(fallback, FontWeight.Normal, FontStyle.Normal) ?? throw new InvalidOperationException("No font is available.");
