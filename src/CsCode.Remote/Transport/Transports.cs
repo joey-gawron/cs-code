@@ -139,10 +139,14 @@ public sealed class ShellServerTransport(IRemoteShell shell, ServerLaunchOptions
         }
     }
 
-    private static string LastLines(string text)
+    internal static string LastLines(string text)
     {
         var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return lines.Length == 0 ? "(no output)" : string.Join(" | ", lines.TakeLast(6));
+        var last = lines.Length == 0 ? "(no output)" : string.Join(" | ", lines.TakeLast(6));
+        // The self-contained server needs the host's OpenSSL (as every .NET program on Linux): say what to install.
+        return text.Contains("libssl", StringComparison.Ordinal)
+            ? last + " — the remote host needs OpenSSL's libssl (Debian/Ubuntu: libssl3, Fedora/RHEL: openssl-libs, Alpine: libssl3)"
+            : last;
     }
 }
 

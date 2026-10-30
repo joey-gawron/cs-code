@@ -25,6 +25,44 @@ public sealed class SshRemoteShell(SshOptions options, RemoteAuthority destinati
         new(Options.SshPath, SshArgs.Command(Options, Destination, PosixShell.ScriptCommand(script, args))) { Environment = Options.Environment };
 }
 
+/// <summary>
+/// Runs the scripts inside a running container: <c>docker exec -i [-u user] &lt;container&gt; sh -c &lt;script&gt; cscode &lt;args…&gt;</c> — an argument vector
+/// for the docker CLI, no shell on this side, the script a constant and every value a positional argument (as over ssh). No TTY: stdin/stdout are
+/// the binary protocol stream. The server installs and runs in the container's own file system (<c>$HOME/.cscode-server</c>).
+/// </summary>
+public sealed class DockerRemoteShell(string dockerPath, RemoteAuthority container, IReadOnlyDictionary<string, string?>? environment = null) : IRemoteShell
+{
+    public RemoteAuthority Container { get; } = container.Scheme == RemoteSchemes.Docker ? container : throw new ArgumentException("not a docker:// authority", nameof(container));
+    public string Description => "docker " + Container.Host;
+
+    public ProcessLaunch Launch(string script, IReadOnlyList<string> args)
+    {
+        List<string> argv = ["exec", "-i"];
+        if (Container.User is { } user) argv.AddRange(["-u", user]);
+        argv.AddRange([Container.Host, "sh", "-c", script, "cscode", .. args]);
+        return new ProcessLaunch(dockerPath, argv) { Environment = environment };
+    }
+}
+
+/// <summary>
+/// Runs the scripts in a WSL distribution (Windows only): <c>wsl.exe -d &lt;distro&gt; [-u user] --exec sh -c &lt;script&gt; cscode &lt;args…&gt;</c>.
+/// <c>--exec</c> runs sh directly (no login shell parsing the line); .NET quotes each argument for the Windows command line and wsl.exe hands them
+/// to Linux unchanged. Written against the transport seam like the others, but not tested here (no Windows host): see docs/REMOTE.md.
+/// </summary>
+public sealed class WslRemoteShell(string wslPath, RemoteAuthority distribution, IReadOnlyDictionary<string, string?>? environment = null) : IRemoteShell
+{
+    public RemoteAuthority Distribution { get; } = distribution.Scheme == RemoteSchemes.Wsl ? distribution : throw new ArgumentException("not a wsl:// authority", nameof(distribution));
+    public string Description => "wsl " + Distribution.Host;
+
+    public ProcessLaunch Launch(string script, IReadOnlyList<string> args)
+    {
+        List<string> argv = ["-d", Distribution.Host];
+        if (Distribution.User is { } user) argv.AddRange(["-u", user]);
+        argv.AddRange(["--exec", "sh", "-c", script, "cscode", .. args]);
+        return new ProcessLaunch(wslPath, argv) { Environment = environment };
+    }
+}
+
 /// <summary>Runs scripts with this machine's <c>/bin/sh</c> (argument vector, no quoting involved).</summary>
 public sealed class LocalRemoteShell(string shell = "/bin/sh", IReadOnlyDictionary<string, string?>? environment = null) : IRemoteShell
 {

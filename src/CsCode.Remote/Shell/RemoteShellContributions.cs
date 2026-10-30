@@ -86,10 +86,13 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
     /// <summary>"SSH: host", "Docker: container", "WSL: distro" — by the connection's URI scheme.</summary>
     private static string Label(RemoteConnectionStatus s) => s.Authority?.Scheme switch
     {
-        RemoteSchemes.Docker => "Docker: " + s.Host,
-        RemoteSchemes.Wsl => "WSL: " + s.Host,
+        RemoteSchemes.Docker => "Docker: " + Bare(s.Host, RemoteSchemes.Docker),
+        RemoteSchemes.Wsl => "WSL: " + Bare(s.Host, RemoteSchemes.Wsl),
         _ => "SSH: " + s.Host,
     };
+
+    private static string? Bare(string? host, string scheme) =>
+        host is not null && host.StartsWith(scheme + "://", StringComparison.OrdinalIgnoreCase) ? host[(scheme.Length + 3)..].TrimEnd('/') : host;
 
     // Set updates the entry by id; only the newest token is kept (disposing an older one would remove the entry).
     private void UpdateIndicator(IStatusBarService statusBar, RemoteConnectionStatus s) => Interlocked.Exchange(ref _indicator, statusBar.Set(Indicator(s)));
@@ -112,10 +115,10 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
         await new PoolHop();
         var manager = Manager;
         string? path = null;
-        if (target is { Length: > 0 } && target.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
+        if (target is { Length: > 0 } && Uri.TryCreate(target, UriKind.Absolute, out var uri) && RemoteSchemes.IsRemote(uri.Scheme))
         {
-            var uri = new Uri(target);
-            if (!await ConnectWithProgressAsync(RemoteAuthority.Parse(target).Destination).ConfigureAwait(false)) return;
+            var authority = RemoteAuthority.Parse(target);
+            if (!await ConnectWithProgressAsync(authority.Scheme == RemoteSchemes.Ssh ? authority.Destination : authority.ToString()).ConfigureAwait(false)) return;
             path = SshUriMapper.PathOf(uri, false);
         }
         else if (!manager.Status.IsConnected)
@@ -200,7 +203,7 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
     {
         var manager = Manager;
         // The remote folder stops being reachable: close it first so nothing keeps calling into a closed connection.
-        if (sp.GetService<IWorkspaceService>() is { } ws && ws.Folders.Any(f => f.Scheme == SshUriMapper.Scheme))
+        if (sp.GetService<IWorkspaceService>() is { } ws && ws.Folders.Any(IsRemoteFolder))
             await ws.CloseFolderAsync().ConfigureAwait(false);
         await manager.DisconnectAsync().ConfigureAwait(false);
     }

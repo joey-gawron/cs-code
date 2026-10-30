@@ -281,6 +281,15 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
             PersistSession = serverSession,
             GraceSeconds = graceSeconds,
         };
+        if (authority.Scheme != RemoteSchemes.Ssh)
+        {
+            // A container (docker exec) or a WSL distribution (wsl.exe --exec): the same fixed scripts and bootstrap, another carrier.
+            IRemoteShell shell = authority.Scheme == RemoteSchemes.Docker
+                ? new DockerRemoteShell(config?.Get(RemoteSettings.DockerPath, "docker") ?? "docker", authority, _options.SshEnvironment)
+                : new WslRemoteShell(config?.Get(RemoteSettings.WslPath, "wsl.exe") ?? "wsl.exe", authority, _options.SshEnvironment);
+            Log($"Connecting to {authority} with {shell.Description}; bundles: {bundles?.Directory ?? "(none found)"}");
+            return new ShellServerTransport(shell, launch);
+        }
         var askpass = RemoteSettings.For(config, host, RemoteSettings.UseAskpass, true) && !OperatingSystem.IsWindows() ? Get<IWindowService>() : null;
         Log($"Connecting to {host} with {ssh.SshPath}{(ssh.ConfigFile is null ? "" : " -F " + ssh.ConfigFile)}; bundles: {bundles?.Directory ?? "(none found)"}");
         return new SshServerTransport(ssh, authority, launch, askpass, _options.AskpassCommand ?? RemoteOptions.DefaultAskpassCommand(), _log, _options.AskpassDirectory);

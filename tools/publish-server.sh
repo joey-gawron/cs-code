@@ -68,12 +68,24 @@ if [ "$trim" = 1 ]; then
   # and the trimmer's warnings (reflection the analysis cannot follow) are reported, not fatal: the tests run against the result instead.
   trim_args=(-p:PublishTrimmed=true -p:TrimMode=partial -p:JsonSerializerIsReflectionEnabledByDefault=true -p:TreatWarningsAsErrors=false -p:SuppressTrimAnalysisWarnings=true)
 fi
+# The runtime, apphost and targeting packs come from NuGet (Microsoft's builds, verified by tools/fetch-server-runtime-packs.sh), never from the
+# SDK's own packs folder: a distribution's SDK may patch those for itself (Nix sets the apphost's ELF interpreter to its /nix/store glibc, which
+# no remote has). Pointing the pack root at an empty directory makes the SDK resolve every pack from the NuGet cache.
+mkdir -p "$work/no-local-packs"
 for rid in "${rids[@]}"; do
   echo "Publishing self-contained $rid…"
   dotnet publish "$project" --nologo -v:q -c Release -r "$rid" --self-contained true \
     -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none "${trim_args[@]}" \
+    -p:NetCoreTargetingPackRoot="$work/no-local-packs" -p:AllowMissingPrunePackageData=true \
     -o "$work/$rid"
   find "$work/$rid" -name '*.pdb' -delete
+  case "$rid" in
+    linux-*)
+      # The loader a Linux remote must have: the standard one, not a build machine's.
+      if LC_ALL=C head -c 8192 "$work/$rid/cscode-server" | grep -a -q '/nix/store/'; then
+        echo "publish-server.sh: $rid's cscode-server uses a /nix/store loader; it would not start on a remote" >&2; exit 1
+      fi ;;
+  esac
   bundle self-contained "$rid" "$work/$rid" "cscode-server-$rid.tar.gz" ""
 done
 

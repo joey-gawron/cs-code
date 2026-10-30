@@ -165,7 +165,7 @@ public class LoopbackFileSystemTests
         host.Workspace.WriteFile(".gitignore", "ignored/\n");
         host.Workspace.WriteFile("long.txt", new string('a', 300) + "needle" + new string('b', 300) + "\n");
         await host.ConnectAsync();
-        Core.Platform.ITextSearchProvider provider = host.Services.GetServices<Core.Platform.ITextSearchProvider>().Single();
+        Core.Platform.ITextSearchProvider provider = host.Services.GetServices<Core.Platform.ITextSearchProvider>().Single(p => p.Scheme == "ssh");
         Assert.Equal("ssh", provider.Scheme);
         var hits = new List<Core.Platform.TextSearchHit>();
         await foreach (var batch in provider.SearchAsync(new Core.Platform.TextSearchQuery([host.Remote()], "needle", false, true, false, ["**/obj"], true, 1000, 1 << 20), Ct))
