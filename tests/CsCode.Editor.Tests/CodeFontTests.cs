@@ -8,7 +8,7 @@ namespace CsCode.Editor.Tests;
 
 /// <summary>
 /// The editor's default code font is the Fira Code CsCode ships (CsCode.Ui CodeFonts, registered by the test app as by the real one), not
-/// whatever monospace face the OS has. Its ligatures (=>, !=, ===) are off unless editor.fontLigatures turns them on; then Fira Code draws them
+/// whatever monospace face the OS has. Its ligatures (=>, !=, ===) are on unless editor.fontLigatures turns them off; Fira Code draws them
 /// with HarfBuzz's default features (calt), one glyph per character at the same advance, so the caret and selection still land on every column.
 /// </summary>
 public class CodeFontTests
@@ -58,42 +58,43 @@ public class CodeFontTests
     }
 
     /// <summary>
-    /// editor.fontLigatures is off by default, as in VS Code (and as docs/briefs/editor.md asks): Fira Code's operators are drawn as their
-    /// characters. Before, the bundled Fira Code drew every !=, => and === as a ligature with no way to turn it off.
+    /// editor.fontLigatures is on by default (the owner's choice; VS Code's is off): the bundled Fira Code draws its !=, => and === ligatures,
+    /// and they keep one glyph per character, so the caret still lands on every column.
     /// </summary>
     [AvaloniaFact]
-    public async Task Ligatures_are_off_by_default_so_operators_are_drawn_as_their_characters()
+    public async Task Ligatures_are_on_by_default_and_keep_one_glyph_per_character_so_the_caret_lands_on_every_column()
     {
         using var host = ViewHost.Create();
         var (_, view, _) = await host.OpenAsync(Code + "\n", "a.txt");
-        ViewHost.Pump();
-
-        Assert.Equal(0, Substituted(view));
-        AssertCaretOnEveryColumn(view);
-    }
-
-    [AvaloniaFact]
-    public async Task With_editor_fontLigatures_on_ligatures_show_but_keep_one_glyph_per_character_so_the_caret_lands_on_every_column()
-    {
-        using var host = ViewHost.Create();
-        var (_, view, _) = await host.OpenAsync(Code + "\n", "a.txt");
-        ViewHost.Pump();
-        host.Config.Set("editor.fontLigatures", true);
         ViewHost.Pump();
 
         var substituted = Substituted(view);
         Assert.True(substituted >= 15, $"the operators are drawn as ligatures ({substituted} glyphs substituted)");
         AssertCaretOnEveryColumn(view);
-
-        host.Config.Set("editor.fontLigatures", false); // and live back off
-        ViewHost.Pump();
-        Assert.Equal(0, Substituted(view));
     }
 
     [AvaloniaFact]
-    public async Task Ligatures_stay_off_in_coloured_code_whose_elements_the_colourizer_splits()
+    public async Task With_editor_fontLigatures_off_operators_are_drawn_as_their_characters_and_live_back_on()
     {
         using var host = ViewHost.Create();
+        var (_, view, _) = await host.OpenAsync(Code + "\n", "a.txt");
+        ViewHost.Pump();
+        host.Config.Set("editor.fontLigatures", false);
+        ViewHost.Pump();
+
+        Assert.Equal(0, Substituted(view));
+        AssertCaretOnEveryColumn(view);
+
+        host.Config.Set("editor.fontLigatures", true); // and live back on
+        ViewHost.Pump();
+        Assert.True(Substituted(view) >= 15);
+    }
+
+    [AvaloniaFact]
+    public async Task Ligatures_turned_off_stay_off_in_coloured_code_whose_elements_the_colourizer_splits()
+    {
+        using var host = ViewHost.Create();
+        host.Config.Set("editor.fontLigatures", false);
         var (_, view, _) = await host.OpenAsync("class A { bool F(int a, int b) => a != b && a >= b; }\n", "a.cs");
         await ViewHost.WaitFor(() => view.Tokens is { } t && t.Store.ValidLines >= 1, "tokens");
         view.TextView.Redraw();

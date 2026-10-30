@@ -199,10 +199,10 @@ public class ThemeApplierTests
 
     /// <summary>
     /// The code panels (Output, Find Results, the debug console...) shape the code font with ui:CodeFontFeatures, from editor.fontLigatures:
-    /// off by default, so the bundled Fira Code draws != and => as their characters there too, and live on when the setting asks.
+    /// on by default, so the bundled Fira Code draws its != and => ligatures there too, and live off when the setting asks.
     /// </summary>
     [AvaloniaFact]
-    public void Code_panels_draw_Fira_Code_without_ligatures_unless_editor_fontLigatures_turns_them_on()
+    public void Code_panels_draw_Fira_Code_ligatures_unless_editor_fontLigatures_turns_them_off()
     {
         const string code = "a != b => c === d <= e";
         var config = new CsCode.TestDoubles.TestConfigurationService();
@@ -221,11 +221,11 @@ public class ThemeApplierTests
             return Enumerable.Range(0, code.Length).Count(i => face.CharacterToGlyphMap.TryGetGlyph(code[i], out var plain) && plain != glyphs[i].GlyphIndex);
         }
 
-        Assert.Equal(["-liga", "-calt"], ThemeBrushes.CodeFontFeatures!.Select(f => f.ToString()));
-        Assert.Equal(0, Substituted());
-        config.Set("editor.fontLigatures", true);
         Assert.Empty(ThemeBrushes.CodeFontFeatures!);
         Assert.True(Substituted() >= 8);
+        config.Set("editor.fontLigatures", false);
+        Assert.Equal(["-liga", "-calt"], ThemeBrushes.CodeFontFeatures!.Select(f => f.ToString()));
+        Assert.Equal(0, Substituted());
         config.Set("editor.fontLigatures", "'ss01', 'cv01' 2"); // VS Code's CSS feature list
         Assert.Equal(["ss01", "cv01=2"], ThemeBrushes.CodeFontFeatures!.Select(f => f.ToString()));
     }

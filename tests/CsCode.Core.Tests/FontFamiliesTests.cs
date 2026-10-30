@@ -59,12 +59,12 @@ public sealed class FontFamiliesTests
         Assert.StartsWith("fonts:CsCode#Fira Code, Menlo, SF Mono, Monaco", FontFamilies.Normalize(FontFamilies.MacCode, OSPlatform.OSX));
     }
 
-    /// <summary>editor.fontLigatures as font features: off unless the setting says otherwise (VS Code's default), on with the font's own, or a CSS feature list.</summary>
+    /// <summary>editor.fontLigatures as font features: the font's own unless the setting turns them off (unlike VS Code's default), or a CSS feature list.</summary>
     [Theory]
-    [InlineData(null, "-liga, -calt")]
+    [InlineData(null, "")]
     [InlineData("false", "-liga, -calt")]
     [InlineData("\"false\"", "-liga, -calt")]
-    [InlineData("42", "-liga, -calt")] // a wrongly typed value is ignored
+    [InlineData("42", "")] // a wrongly typed value is ignored
     [InlineData("true", "")]
     [InlineData("\"true\"", "")]
     [InlineData("\"'ss01', 'zero'\"", "ss01=1, zero=1")]

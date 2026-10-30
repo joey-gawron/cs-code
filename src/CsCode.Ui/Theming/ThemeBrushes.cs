@@ -20,7 +20,7 @@ public static class ThemeBrushes
     public static FontFamily CodeFont =>
         Application.Current?.Resources.TryGetResource("ui:CodeFontFamily", null, out var value) == true && value is FontFamily f ? f : FontFamily.Default;
 
-    /// <summary>The code font's OpenType features (<c>ui:CodeFontFeatures</c>, from <c>editor.fontLigatures</c>: ligatures off by default).</summary>
+    /// <summary>The code font's OpenType features (<c>ui:CodeFontFeatures</c>, from <c>editor.fontLigatures</c>: ligatures on by default).</summary>
     public static FontFeatureCollection? CodeFontFeatures =>
         Application.Current?.Resources.TryGetResource("ui:CodeFontFeatures", null, out var value) == true ? value as FontFeatureCollection : null;
 }

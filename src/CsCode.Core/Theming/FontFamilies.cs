@@ -53,16 +53,17 @@ public static class FontFamilies
     }
 
     /// <summary>
-    /// The OpenType features <c>editor.fontLigatures</c> asks for, in the syntax Avalonia's <c>FontFeature.Parse</c> reads. Off (false, unset or
-    /// anything else, VS Code's default) turns off the font's ligatures and contextual alternates (<c>-liga</c>, <c>-calt</c>: Fira Code draws
-    /// its <c>!=</c> and <c>=&gt;</c> through calt); on (true) leaves the font's defaults; a string is VS Code's CSS font-feature-settings
-    /// (<c>"'ss01', 'zero', 'calt' 0"</c>), which turns ligatures on and adds those features.
+    /// The OpenType features <c>editor.fontLigatures</c> asks for, in the syntax Avalonia's <c>FontFeature.Parse</c> reads. On (true, unset or
+    /// a wrongly typed value: CsCode's default, unlike VS Code's, since the bundled Fira Code is chosen for them) leaves the font's defaults;
+    /// off (false) turns off its ligatures and contextual alternates (<c>-liga</c>, <c>-calt</c>: Fira Code draws its <c>!=</c> and <c>=&gt;</c>
+    /// through calt); a string is VS Code's CSS font-feature-settings (<c>"'ss01', 'zero', 'calt' 0"</c>), which keeps ligatures on and adds
+    /// those features.
     /// </summary>
     public static IReadOnlyList<string> LigatureFeatures(JsonElement? setting)
     {
-        if (setting is not { } value) return LigaturesOff;
-        if (value.ValueKind == JsonValueKind.True) return [];
-        if (value.ValueKind != JsonValueKind.String) return LigaturesOff;
+        if (setting is not { } value) return [];
+        if (value.ValueKind == JsonValueKind.False) return LigaturesOff;
+        if (value.ValueKind != JsonValueKind.String) return [];
         var text = value.GetString() ?? "";
         if (text.Trim() is "" or "true") return [];
         if (text.Trim() == "false") return LigaturesOff;
