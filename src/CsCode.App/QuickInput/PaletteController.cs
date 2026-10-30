@@ -45,7 +45,7 @@ public sealed class PaletteController : IDisposable
     public async Task ShowAsync(string prefix)
     {
         var activeBefore = _ctx.Well.Active;
-        var focusBefore = _focused?.Invoke() is { } f ? new WeakReference<IInputElement>(f) : null;
+        var focusBefore = _ui.CheckAccess() && _focused?.Invoke() is { } f ? new WeakReference<IInputElement>(f) : null;
         var picked = await await _ui.InvokeAsync(() => _quick.PickAsync(new PaletteSource(_ctx, _index), null, null, prefix)).ConfigureAwait(true);
         if (picked?.Accept is not { } accept) return;
         var presses = Interlocked.Read(ref _presses);
