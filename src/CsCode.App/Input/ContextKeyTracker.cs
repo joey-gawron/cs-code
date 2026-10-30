@@ -71,7 +71,10 @@ public sealed class ContextKeyTracker : IDisposable
         _keys.Set("inDebugMode", state != DebugState.Inactive);
     }
 
-    /// <summary>Called by the main window when keyboard focus moves between regions.</summary>
+    /// <summary>
+    /// Called by the main window whenever keyboard focus moves (also within a region: a control may have changed a key itself meanwhile, so every
+    /// key is written again; the context key service publishes only values that changed).
+    /// </summary>
     public void SetFocus(FocusArea area)
     {
         _focus = area;

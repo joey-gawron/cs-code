@@ -268,7 +268,11 @@ What it passes through reaches the pipeline and the editor as before. A binding 
 (F3 `editor.action.nextMatchFindAction`, Ctrl+] `jumpToBracket`, Alt+F12 `peekDefinition`, Ctrl+\` terminal...), so a registered lower-precedence binding of the same keys runs instead, else the key
 reaches the focused control (F3 gets to the editor's own find); a chord prefix whose every continuation is unregistered is not a chord. Context keys (`ContextKeyTracker`): `editorTextFocus`, `editorHasSelection`, `editorReadonly`, `editorLangId`, `resourceExtname`, `resourceFilename`,
 `resourceScheme`, `explorerViewletFocus`, `listFocus`, `panelFocus`, `inputFocus`, `terminalFocus`, `inDebugMode`, `debugState`, `isMac/isLinux/isWindows`, `workspaceFolderCount`, `hasOpenEditors`,
-`activeEditorIsDirty`, `quickInputVisible`. Focus areas come from the `ShellFocus.Area` attached property on view roots.
+`activeEditorIsDirty`, `quickInputVisible`. Focus areas come from the `ShellFocus.Area` attached property on the tabs' view hosts (a focused
+`TerminalControl` is the terminal area; its window's find box and buttons are the panel). The main window follows `GotFocus` with handled events
+too (AvaloniaEdit marks its text area's GotFocus handled, so the editor taking focus used to go unseen and the area stayed stale, T7) and writes
+every focus key on each focus change, after the control's own handler: it agrees with what the terminal sets for itself (T22), so the keys are
+right synchronously, without a dispatcher turn (`FocusContextKeyTests`). Floating windows get the same handlers (see *Floating windows*).
 
 **Documents.** `DocumentWell` adds to the Dock model (the single source of truth for tabs, order and groups): open / preview (italic, replaced by the next preview, promoted by editing or reopening) /
 pin / close / close others / saved / all / to the right / reopen closed (last 20), Save/Don't Save/Cancel prompts (also when the user clicks Dock's close button: Dock's close is cancelled and routed through the prompt),
@@ -279,9 +283,16 @@ presentation `CreateView` + `RestoreViewState`. Closed tabs' views go back throu
 **View lifecycle and Dock.** Two things kept destroyed views reachable, and the shell handles both:
 * Dock.Avalonia 12.1 caches the control it presented for every dockable (control recycling on the `DockControl`, keyed by the dockable), and a host
   emptied while out of the window still lists the removed view in its composition visual (that list is synchronised only when the host is rendered).
-  So a tab whose host Dock no longer shows drops the host (a fresh one is built on the next presentation) and removes its own entry from Dock's
-  recycling cache; a closed tab always removes its entry. This was the "closed tabs stay reachable" retention noted earlier: with it fixed, closed tab
-  objects, their documents and views are all released (the live 300-tab test asserts every sample, not just the steady state).
+  The shell's tabs (`ShellDocument`, `ToolTab`) are their own content templates (`IRecyclingDataTemplate`), which Dock's content presenter asks
+  before its cache, so the cache never holds a shell tab (`RealAppDockCacheTests`); a tab whose host Dock no longer shows still drops the host (a
+  fresh one is built on the next presentation) and removes any cache entry it finds. This was the "closed tabs stay reachable" retention noted
+  earlier: closed tab objects, their documents and views are all released (the live 300-tab test asserts every sample, not just the steady state).
+* **No data template for the shell's tabs** (`ShellDockContent`, T14): the shell used to register `FuncDataTemplate<EditorTab>` (and for documents
+  and tools) on the DockControl. The tab strip's close-button presenters (`PART_ClosePresenter`, `PART_CompactClosePresenter`), whose content is
+  the dockable too, fall back to the tree's data templates while Dock re-templates a moved tab, took an inactive tab's shared host, and Window >
+  Split Editor Right / Down threw "The control Border already has a visual parent". Now the DockControl's first data template turns the shell's tab
+  types into an empty placeholder for any presenter that falls back to the tree; only Dock's content presenter gets a tab's host
+  (`SplitEditorTests`, and Vim's `:vsp` / Ctrl-W test is no longer skipped).
 * A focused editor stays reachable from Avalonia's focus machinery and from AvaloniaEdit's static "last focused element" (`RoutedCommand`) until another
   element takes focus; detaching it is not enough. Before Dock removes a tab whose view holds keyboard focus, the well clears focus (the window is
   not focusable), and once the document that takes its place is presented its editor gets the keyboard, as in Visual Studio. When the last document
@@ -498,12 +509,11 @@ colours; the service writes `text/html` when given one, nothing builds it yet); 
 (Avalonia 12 runs through XWayland here); Peek Definition and QuickWatch's tree (Peek is not implemented by the editor, so the item stays hidden;
 QuickWatch shows the value in a notification with Add Watch). Not verified headless: the Wayland <-> XWayland round trip with native KDE
 applications (Kate, Konsole, Firefox) and screenshots on the real desktop are the integrator's check. The menu-open budget is met in quiet runs
-only (above). Found while testing: the main window's `OnGotFocus` (focus areas for `listFocus`, `panelFocus`...) never sees the editor take focus,
-because AvaloniaEdit marks GotFocus handled; the editor sets `editorTextFocus` itself, but `ContextKeyTracker.Focus` can keep a stale area.
+only (above). (The stale focus area found while testing, the main window not seeing the editor take focus, is fixed: *Keyboard* above.)
 
 Known issues: (1) **Combined hostile storm p99 is ~19 ms, not < 16 ms** (each source alone meets it; max is within 50 ms). (2) Dock.Avalonia 12.1.0.13 keeps every presented dockable in its control-recycling
-cache (`ControlRecycling`, keyed by the dockable, never evicted); the shell removes a closed tab's entry itself (see *View lifecycle and Dock*), which depends on the cache being reachable through
-`ControlRecyclingDataTemplate.ControlRecycling` on an ancestor of the host. The 300-tab live-host test asserts the steady state (heap flat, closed tabs unreachable).
+cache (`ControlRecycling`, keyed by the dockable, never evicted); the shell's tabs stay out of it by being their own content templates (see *View lifecycle and Dock*), which depends on
+Dock's `ControlRecyclingDataTemplate` asking an `IRecyclingDataTemplate` dockable first (true of 12.1.0.13; `RealAppDockCacheTests` fails if an upgrade changes it). The 300-tab live-host test asserts the steady state (heap flat, closed tabs unreachable).
 (3) AvaloniaEdit's static `RoutedCommand` keeps the last element that took focus: after the last document closes, that one view stays reachable until focus moves anywhere (bounded).
 (4) A theme switch's Fluent palette step is one dispatcher callback of 4-8 ms on a full window (over the 4 ms slice rule): assigning the palette is a
 single Avalonia resource change that every control re-resolves, and it cannot be split; bursts run it once. (5) The contrast repair changes a theme's

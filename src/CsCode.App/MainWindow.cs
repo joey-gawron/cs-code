@@ -107,7 +107,10 @@ public sealed class MainWindow : Window, IWindowChrome
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
         AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
-        AddHandler(GotFocusEvent, OnGotFocus, RoutingStrategies.Bubble | RoutingStrategies.Tunnel);
+        // Focus context keys (T7/T22): handled events too, because AvaloniaEdit marks its text area's GotFocus handled (the editor taking focus
+        // was never seen, and the focus area kept a stale value). This handler runs after the focused control's own (GotFocus bubbles), so it
+        // must agree with what a control sets for itself: the terminal sets terminalFocus, and Classify calls a focused terminal a terminal.
+        AddHandler(GotFocusEvent, OnGotFocus, RoutingStrategies.Bubble, handledEventsToo: true);
         _disposables.Add(_shell.ContextMenus.Attach(this));
         _disposables.Add(_shell.Clipboard.Attach(this));
         Closing += OnClosing;
@@ -131,9 +134,7 @@ public sealed class MainWindow : Window, IWindowChrome
         var factory = _shell.Factory;
         var layout = factory.EnsureLayout();
         var dock = new DockControl { Layout = layout, Factory = factory, InitializeLayout = false, InitializeFactory = false };
-        dock.DataTemplates.Add(new FuncDataTemplate<EditorTab>((t, _) => t is null ? new Panel() : Mark(t.EnsureHost(), FocusArea.Editor)));
-        dock.DataTemplates.Add(new FuncDataTemplate<ShellDocument>((t, _) => t is null ? new Panel() : Mark(t.EnsureHost(), FocusArea.None)));
-        dock.DataTemplates.Add(new FuncDataTemplate<ToolTab>((t, _) => t is null ? new Panel() : Mark(t.EnsureHost(), t.Spec.Id is "explorer" ? FocusArea.Explorer : FocusArea.Panel)));
+        ShellDockContent.Install(dock);
         // Dock's control recycling caches the content of every dockable it presented, keyed by the dockable, and never evicts: a closed tab's
         // host stayed reachable for the whole session and, through the host's composition visual (no longer updated once the host left the
         // tree), so did the editor view and document it had held. A closed document tab is never presented again (reopening creates a new tab),
@@ -148,12 +149,6 @@ public sealed class MainWindow : Window, IWindowChrome
         // Tool windows exist in the model before they are shown: the manager adds them to their docks, then the layout is restored.
         _ = _shell.Tools;
         return dock;
-    }
-
-    private static Control Mark(Control view, FocusArea area)
-    {
-        if (area != FocusArea.None) ShellFocus.SetArea(view, area);
-        return view;
     }
 
     // ------------------------------------------------------------------ startup
@@ -197,11 +192,7 @@ public sealed class MainWindow : Window, IWindowChrome
         if (_switcherActive && e.Key is Key.LeftCtrl or Key.RightCtrl) HideSwitcher(commit: true);
     }
 
-    private void OnGotFocus(object? sender, RoutedEventArgs e)
-    {
-        var area = ShellFocus.Classify(e.Source as Visual);
-        if (area != _shell.ContextKeys.Focus) _shell.ContextKeys.SetFocus(area);
-    }
+    private void OnGotFocus(object? sender, RoutedEventArgs e) => _shell.ContextKeys.SetFocus(ShellFocus.Classify(e.Source as Visual));
 
     // ------------------------------------------------------------------ MRU switcher
 

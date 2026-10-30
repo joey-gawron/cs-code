@@ -6,7 +6,8 @@ namespace CsCode.App.Input;
 
 /// <summary>
 /// Marks a view as belonging to a shell region so the window can classify keyboard focus (editor / explorer / panel / terminal ...) by walking up the
-/// visual tree from the focused control. Set on the root of each tool-window or editor view.
+/// visual tree from the focused control. Set on the host of each tool-window or editor view (<see cref="Docking.ShellDocument.EnsureHost"/>,
+/// <see cref="Docking.ToolTab.EnsureHost"/>).
 /// </summary>
 public static class ShellFocus
 {
@@ -15,11 +16,17 @@ public static class ShellFocus
     public static void SetArea(Control control, FocusArea area) => control.SetValue(AreaProperty, area);
     public static FocusArea GetArea(Control control) => control.GetValue(AreaProperty);
 
-    /// <summary>The focus area for a focused element: the nearest marked ancestor, else Input for text boxes, else None.</summary>
+    /// <summary>
+    /// The focus area for a focused element: a terminal (the terminal control itself, not the Terminal window's find box or buttons, as VS Code's
+    /// <c>terminalFocus</c>), else the nearest marked ancestor, else Input for text boxes, else None.
+    /// </summary>
     public static FocusArea Classify(Visual? focused)
     {
         for (var v = focused; v is not null; v = v.GetVisualParent())
+        {
+            if (v is CsCode.Panels.Terminal.Views.TerminalControl) return FocusArea.Terminal;
             if (v is Control c && c.GetValue(AreaProperty) is var area && area != FocusArea.None) return area;
+        }
         return focused is TextBox ? FocusArea.Input : FocusArea.None;
     }
 }
