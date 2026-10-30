@@ -46,9 +46,10 @@ for pin in "${pins[@]}"; do
   IFS='|' read -r id size sha512 sha256 <<<"$pin"
   file="$cache/$id/$version/$id.$version.nupkg"
   if [ ! -f "$file" ]; then echo "MISSING  $id $version ($file)"; status=1; continue; fi
-  actual_size=$(stat -c %s "$file")
-  actual512=$(openssl dgst -sha512 -binary "$file" | base64 -w0)
-  actual256=$(sha256sum "$file" | cut -d' ' -f1)
+  # wc, tr and shasum rather than stat -c, base64 -w0 and sha256sum alone: the same on Linux and macOS.
+  actual_size=$(wc -c < "$file" | tr -d ' ')
+  actual512=$(openssl dgst -sha512 -binary "$file" | base64 | tr -d '\n')
+  actual256=$( (sha256sum "$file" 2>/dev/null || shasum -a 256 "$file") | cut -d' ' -f1)
   if [ "$actual_size" = "$size" ] && [ "$actual512" = "$sha512" ] && [ "$actual256" = "$sha256" ]; then
     echo "OK       $id $version  $size bytes  sha256 $actual256"
   else
