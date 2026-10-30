@@ -53,7 +53,7 @@ public sealed class RealAppTerminalTests
         var newItem = terminalMenu.Children.Single(c => c.CommandId == TerminalCommandSet.New);
         var toggle = terminalMenu.Children.Single(c => c.CommandId == TerminalCommandSet.Toggle);
         Assert.True(newItem.IsEnabled && toggle.IsEnabled);
-        Assert.Equal("Ctrl+Shift+`", newItem.Gesture);
+        Assert.Equal(TerminalAppHost.KeyLabel("ctrl+shift+`"), newItem.Gesture);
         newItem.Command!.Execute(null);
         Assert.True(await TerminalAppHost.WaitFor(() => app.Terminals.Terminals.Count == 1 && app.View is { IsShown: true }));
         Assert.True(await app.WaitForScreenAsync("$"));
@@ -85,15 +85,18 @@ public sealed class RealAppTerminalTests
         var host = hosts[0];
         host.ClearWritten();
 
-        // Ctrl+H is bound (the editor's Replace) but not in commandsToSkipShell: the shell gets ^H (readline: backward-delete-char)
-        var ctrlH = app.Get<IKeybindingService>().All.Where(b => b.Chord.Count == 1 && b.Chord[0] == KeyStrokeParser.ParseStroke("ctrl+h"))
+        // Ctrl+H is bound (the editor's Replace) but not in commandsToSkipShell: the shell gets ^H (readline: backward-delete-char). On macOS
+        // Replace is Cmd+Alt+F and Ctrl+H is free, so Ctrl+G (Go to Line, which stays on Ctrl there) is the bound key: the shell gets ^G.
+        var mac = OperatingSystem.IsMacOS();
+        var (bound, boundKey, boundCode) = mac ? ("ctrl+g", Key.G, PhysicalKey.G) : ("ctrl+h", Key.H, PhysicalKey.H);
+        var boundCommands = app.Get<IKeybindingService>().All.Where(b => b.Chord.Count == 1 && b.Chord[0] == KeyStrokeParser.ParseStroke(bound))
             .Select(b => b.Command).Where(app.Get<ICommandService>().Has).ToArray();
-        Assert.True(ctrlH.Length > 0, "precondition: Ctrl+H runs a registered command outside the terminal");
-        app.Window.KeyPress(Key.H, RawInputModifiers.Control, PhysicalKey.H, "h");
+        Assert.True(boundCommands.Length > 0, $"precondition: {bound} runs a registered command outside the terminal");
+        app.Window.KeyPress(boundKey, RawInputModifiers.Control, boundCode, bound[^1..]);
         // Ctrl+C: ^C to the shell (the editor's copy binding is for the editor)
         app.Window.KeyPress(Key.C, RawInputModifiers.Control, PhysicalKey.C, "c");
         await TerminalAppHost.SettleAsync(5);
-        Assert.Equal("\x08\x03", host.Written);
+        Assert.Equal(mac ? "\x07\x03" : "\x08\x03", host.Written);
 
         // Ctrl+F is the terminal's own Find (VS Code): the find bar opens and the shell gets nothing
         host.ClearWritten();
@@ -104,9 +107,10 @@ public sealed class RealAppTerminalTests
         Assert.True(await TerminalAppHost.WaitFor(() => !app.View!.IsFindVisible && app.View.Control.IsKeyboardFocusWithin), "Escape did not close Find");
         Assert.Equal("", host.Written);
 
-        // Ctrl+Shift+P (showCommands) is in commandsToSkipShell: the palette opens and the shell gets nothing
+        // Ctrl+Shift+P (showCommands; Cmd+Shift+P on macOS) is in commandsToSkipShell: the palette opens and the shell gets nothing
+        var palette = (mac ? RawInputModifiers.Meta : RawInputModifiers.Control) | RawInputModifiers.Shift;
         host.ClearWritten();
-        app.Window.KeyPress(Key.P, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.P, "P");
+        app.Window.KeyPress(Key.P, palette, PhysicalKey.P, "P");
         Assert.True(await TerminalAppHost.WaitFor(() => app.Get<QuickInputViewModel>().IsVisible), "the palette did not open");
         Assert.Equal("", host.Written);
         app.Get<QuickInputViewModel>().Cancel();
@@ -117,8 +121,16 @@ public sealed class RealAppTerminalTests
         await TerminalAppHost.WaitFor(() => app.View.Control.IsKeyboardFocusWithin);
         await app.Get<IConfigurationService>().UpdateAsync("terminal.integrated.commandsToSkipShell", new[] { "-workbench.action.showCommands" });
         host.ClearWritten();
-        app.Window.KeyPress(Key.P, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.P, "P");
+        app.Window.KeyPress(Key.P, palette, PhysicalKey.P, "P");
         await TerminalAppHost.SettleAsync(5);
+        if (mac)
+        {
+            // A Cmd key has no terminal encoding (as in Terminal.app, the shell never sees one): nothing reaches the shell, and the key is left
+            // to the window, whose binding still opens the palette.
+            Assert.Equal("", host.Written);
+            Assert.True(await TerminalAppHost.WaitFor(() => app.Get<QuickInputViewModel>().IsVisible), "Cmd+Shift+P did nothing");
+            return;
+        }
         Assert.Equal("\x10", host.Written);
         Assert.False(app.Get<QuickInputViewModel>().IsVisible);
     }
@@ -335,7 +347,7 @@ public sealed class RealAppTerminalTests
         var terminalMenu = app.Shell.Menus.Roots.Single(r => r.Header.Replace("_", "", StringComparison.Ordinal) == "Terminal");
         var splitItem = terminalMenu.Children.Single(c => c.CommandId == TerminalCommandSet.Split);
         Assert.True(splitItem.IsEnabled);
-        Assert.Equal("Ctrl+Shift+5", splitItem.Gesture);
+        Assert.Equal(TerminalAppHost.KeyLabel("ctrl+shift+5"), splitItem.Gesture);
 
         await app.RunAsync(TerminalCommandSet.Focus);
         Assert.True(await app.WaitForScreenAsync("$"), "no prompt: " + app.ScreenText());
@@ -353,11 +365,13 @@ public sealed class RealAppTerminalTests
         var second = app.Terminals.ActiveSession!;
         Assert.NotSame(first, second);
         Assert.Equal(true, app.Get<IContextKeyService>().Get("terminalSplitPaneActive"));
-        // the split starts where the first shell is (splitCwd "inherited")
+        // the split starts where the first shell is (splitCwd "inherited"; bash in it takes $PWD from getcwd, without symbolic links, and a long
+        // path wraps in the half-width pane)
         app.Window.KeyTextInput("pwd");
         app.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
-        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes[1].Control.Snapshot is { } s
-            && s.Rows.Any(r => r.GetText() == work), 10_000), "the split did not start in the first shell's directory");
+        string SplitText() => app.View!.Panes[1].Control.Snapshot is { } s ? string.Concat(s.Rows.Select(r => r.GetText())) : "";
+        Assert.True(await TerminalAppHost.WaitFor(() => SplitText().Contains("pwd" + Support.PhysicalPath(work) + "$", StringComparison.Ordinal), 10_000),
+            "the split did not start in the first shell's directory: " + SplitText());
 
         // Alt+Left: the left pane; typing goes to its shell
         app.Window.KeyPress(Key.Left, RawInputModifiers.Alt, PhysicalKey.ArrowLeft, null);
