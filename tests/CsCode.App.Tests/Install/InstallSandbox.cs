@@ -133,6 +133,71 @@ public sealed class InstallSandbox : IDisposable
         return dir;
     }
 
+    /// <summary>The file in which <see cref="FakeSourceTree"/>'s stand-in publish-app.sh records its arguments (one per line).</summary>
+    public string PublishArgs => Path.Combine(Root, "publish-args");
+
+    /// <summary>
+    /// A copy of what the installer scripts read from the source tree (tools/install.sh, uninstall.sh, tools/macos, packaging/linux, the
+    /// artwork, the adapter pins) with a stand-in tools/publish-app.sh, so the path that publishes runs in a second. It records its arguments in
+    /// <see cref="PublishArgs"/> and checks them with the REAL tools/publish-app.sh: a runtime identifier other than linux-x64 without
+    /// <c>--unpinned</c> goes to it as it is (it refuses at its pin check, before any restore or build); anything else goes to it followed by
+    /// <c>--help</c> (it parses every argument first, so one it does not know fails there, and <c>--help</c> then ends it before the pin check).
+    /// Then it puts <see cref="FakePublish"/> where the real one writes its output (<c>.scratch/publish/&lt;rid&gt;</c>). Returns the tree's root.
+    /// </summary>
+    public string FakeSourceTree()
+    {
+        var repo = RepoRoot();
+        var tree = Path.Combine(Root, "tree");
+        void Copy(string rel)
+        {
+            var to = Path.Combine(tree, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+            File.Copy(Path.Combine(repo, rel), to, overwrite: true);
+            File.SetUnixFileMode(to, File.GetUnixFileMode(Path.Combine(repo, rel)));
+        }
+        foreach (var rel in new[] { "tools/install.sh", "tools/uninstall.sh", "tools/macos/make-app-bundle.sh", "tools/macos/make-icns.py",
+            "packaging/linux/cscode.desktop.in", "src/CsCode.Dap/Adapters/JsDebugInstaller.cs", "src/CsCode.Dap/Adapters/CodeLldbInstaller.cs" })
+            Copy(rel);
+        foreach (var file in Directory.EnumerateFiles(Path.Combine(repo, "assets", "branding"))) Copy(Path.GetRelativePath(repo, file));
+        var publish = FakePublish("tree-publish");
+        static string Q(string s) => "'" + s.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
+        var stub = Path.Combine(tree, "tools", "publish-app.sh");
+        var real = Q(Path.Combine(repo, "tools", "publish-app.sh"));
+        File.WriteAllText(stub, $$"""
+            #!/bin/sh
+            printf '%s\n' "$@" > {{Q(PublishArgs)}}
+            rid=linux-x64; unpinned=0; prev=""
+            for a in "$@"; do
+                if [ "$prev" = --rid ]; then rid=$a; fi
+                if [ "$a" = --unpinned ]; then unpinned=1; fi
+                prev=$a
+            done
+            if [ "$rid" != linux-x64 ] && [ "$unpinned" != 1 ]; then /bin/bash {{real}} "$@"; exit $?; fi
+            /bin/bash {{real}} "$@" --help > /dev/null || exit 9
+            mkdir -p {{Q(tree)}}/.scratch/publish/"$rid"
+            cp -R {{Q(publish)}}/. {{Q(tree)}}/.scratch/publish/"$rid"/
+            """.Replace("\r", ""));
+        File.SetUnixFileMode(stub, (UnixFileMode)0b111_101_101);
+        return tree;
+    }
+
+    /// <summary>
+    /// A PATH for a Linux machine of another architecture: a <c>uname</c> that reports <paramref name="machine"/> for <c>-m</c> (Linux for
+    /// <c>-s</c>) and a <c>dotnet</c> that does nothing (the installer checks there is one before it publishes), before /usr/bin:/bin.
+    /// </summary>
+    public string MachinePath(string machine)
+    {
+        var bin = Path.Combine(Root, "bin-" + machine);
+        Directory.CreateDirectory(bin);
+        File.WriteAllText(Path.Combine(bin, "uname"), $$"""
+            #!/bin/sh
+            case "$1" in -m) echo {{machine}} ;; -s) echo Linux ;; *) exec /usr/bin/uname "$@" ;; esac
+            """.Replace("\r", ""));
+        File.WriteAllText(Path.Combine(bin, "dotnet"), "#!/bin/sh\nexit 0\n");
+        foreach (var f in new[] { "uname", "dotnet" }) File.SetUnixFileMode(Path.Combine(bin, f), (UnixFileMode)0b111_101_101);
+        return bin + ":/usr/bin:/bin";
+    }
+
     /// <summary>
     /// Every entry under <see cref="Home"/>: <c>d</c> for a directory, <c>l:&lt;target&gt;</c> for a symlink, <c>f:&lt;mode&gt;:&lt;sha256&gt;</c>
     /// for a file, keyed by the path relative to HOME.

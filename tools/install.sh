@@ -7,6 +7,8 @@
 #   tools/install.sh [options]
 #
 #   --from DIR             install this publish (tools/publish-app.sh's output) instead of publishing now
+#   --unpinned             publish for a machine other than x86_64 (aarch64: linux-arm64) with the runtime packs restore picks, unchecked.
+#                          Only linux-x64's packs are pinned (tools/fetch-publish-packs.sh): without it, or --from, the install is refused
 #   --version ID           the version's folder name (default: <app version>-g<commit>, plus -dirty.<time> for uncommitted changes; with
 #                          --from: <app version>-<content hash>)
 #   --netcoredbg PATH      netcoredbg to bundle: its executable or its folder (default: $CSCODE_NETCOREDBG, else .scratch/tools/netcoredbg)
@@ -45,12 +47,13 @@ say() { cscode_say "$@"; }
 warn() { cscode_warn "$@"; }
 die() { cscode_die "$@"; }
 
-from=""; version=""; refresh=1; adapters=1; treesitter=1; servers=1
+from=""; version=""; refresh=1; adapters=1; treesitter=1; servers=1; unpinned=0
 netcoredbg_src=""; jsdebug_src=""; codelldb_src=""; treesitter_src=""; servers_src=""
 need() { [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --from) need "$@"; from=$2; shift 2 ;;
+        --unpinned) unpinned=1; shift ;;
         --version) need "$@"; version=$2; shift 2 ;;
         --netcoredbg) need "$@"; netcoredbg_src=$2; shift 2 ;;
         --js-debug) need "$@"; jsdebug_src=$2; shift 2 ;;
@@ -61,7 +64,7 @@ while [ $# -gt 0 ]; do
         --server-bundles) need "$@"; servers_src=$2; shift 2 ;;
         --no-server-bundles) servers=0; shift ;;
         --no-refresh) refresh=0; shift ;;
-        -h|--help) sed -n '2,35p' "$0" | sed -e 's/^#//' -e 's/^ //'; exit 0 ;;
+        -h|--help) sed -n '2,/^[^#]/p' "$0" | sed -e '/^[^#]/d' -e 's/^#//' -e 's/^ //'; exit 0 ;; # the header comment
         *) die "unknown argument '$1' (see --help)" ;;
     esac
 done
@@ -75,6 +78,10 @@ case "$(uname -m)" in
     *) die "no CsCode build for $(uname -m)" ;;
 esac
 [ "$(uname -s)" = Linux ] || die "this installer is for Linux (Windows: tools/install.ps1; macOS: tools/macos/make-app-bundle.sh)"
+# tools/publish-app.sh refuses a runtime whose packs are not pinned unless told: say so now, not after the grammars were built.
+if [ -z "$from" ] && [ "$rid" != linux-x64 ] && [ "$unpinned" != 1 ]; then
+    die "only linux-x64's runtime packs are pinned (tools/fetch-publish-packs.sh): pass --unpinned to publish $rid with the packs restore picks (unchecked), or install an existing publish with --from DIR"
+fi
 branding="$repo/assets/branding"
 template="$repo/packaging/linux/cscode.desktop.in"
 [ -f "$template" ] && [ -f "$branding/cscode.svg" ] || die "run it from a CsCode source tree (packaging/linux and assets/branding are missing)"
@@ -146,10 +153,12 @@ else
             warn "the pinned tree-sitter sources are not all downloaded (tools/treesitter/fetch-grammars.sh): no new grammar build"
         fi
     fi
+    publish=(--rid "$rid")
+    if [ "$unpinned" = 1 ]; then publish+=(--unpinned); fi
     say "Publishing CsCode ($rid)…"
-    "$here/publish-app.sh" --rid "$rid" >/dev/null
+    "$here/publish-app.sh" "${publish[@]}" >/dev/null
     src="$repo/.scratch/publish/$rid"
-    srcdesc="tools/publish-app.sh --rid $rid"
+    srcdesc="tools/publish-app.sh ${publish[*]}"
 fi
 [ -x "$src/cscode" ] && [ -f "$src/cscode.dll" ] || die "$src is not a CsCode publish (cscode and cscode.dll missing)"
 
@@ -194,6 +203,7 @@ say "Installing CsCode $version into $cscode_root/$version"
 # Modes from the umask (644/755), not the build tree's (often group-writable); symlinks are copied as links.
 cp -RP --preserve=timestamps -- "$src/." "$stage/"
 summary=()
+if [ -z "$from" ] && [ "$unpinned" = 1 ] && [ "$rid" != linux-x64 ]; then summary+=("runtime packs: unpinned (the ones restore picked for $rid, unchecked)"); fi
 
 # The tree-sitter bundle (src/CsCode.Editor.TreeSitter: <app>/tree-sitter, checked by its bundle.json before anything is loaded).
 if [ "$treesitter" = 0 ]; then
@@ -316,22 +326,10 @@ cat > "$tmp/cscode" <<LAUNCHER
 #!/bin/sh
 # CsCode launcher ($CSCODE_MARKER). Written by CsCode's tools/install.sh, removed by its uninstall.sh; a reinstall replaces it.
 # Every argument goes to the installed app: in background mode (the default) that is the launcher role, which shows or starts the session's
-# window and returns (docs/SESSIONS.md, "Command line").
+# window and returns (docs/SESSIONS.md, "Command line"). DOTNET_ROOT passes through as it is: the app is self-contained, and it chooses a
+# DOTNET_ROOT per .NET language server, only when the .NET host's own lookup would not find the framework that server needs; one exported
+# here for every process would take that choice away (and reach every terminal, task and debuggee).
 app=$(sq "$cscode_root/current/cscode")
-if [ -z "\${DOTNET_ROOT:-}" ]; then
-    # .NET tools the app starts (csharp-ls, marksman) need DOTNET_ROOT when dotnet is not where they look by default (Nix, ~/.dotnet),
-    # also when CsCode is started from the desktop's menu rather than a shell. Only a dotnet with a runtime next to it counts.
-    for candidate in "\$(command -v dotnet 2>/dev/null)" "\${HOME:+\$HOME/.dotnet/dotnet}" "\${HOME:+\$HOME/.nix-profile/bin/dotnet}" \\
-        /usr/share/dotnet/dotnet /usr/lib/dotnet/dotnet /usr/lib64/dotnet/dotnet /usr/local/share/dotnet/dotnet /opt/dotnet/dotnet; do
-        [ -n "\$candidate" ] && [ -x "\$candidate" ] || continue
-        real=\$(readlink -f "\$candidate" 2>/dev/null) || continue
-        if [ -d "\${real%/*}/shared/Microsoft.NETCore.App" ]; then
-            DOTNET_ROOT=\${real%/*}
-            export DOTNET_ROOT
-            break
-        fi
-    done
-fi
 # Global .NET tools (csharp-ls) for the processes the app starts; a desktop session's PATH often lacks them.
 if [ -n "\${HOME:-}" ]; then
     case ":\${PATH:-}:" in

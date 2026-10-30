@@ -346,14 +346,16 @@ to it, whatever the SDK bundles: a newer SDK cannot quietly restore newer, unche
 
 `tools/install.sh` installs the published app for the current user (no sudo, nothing outside `$HOME`; README.md, "Install"). Without `--from DIR`
 it builds everything first: the tree-sitter grammars (`tools/treesitter/fetch-grammars.sh --offline`, then `build-grammars.sh`: the pinned sources
-must already be downloaded), the publish above, and the remote server bundles (`tools/publish-server.sh`: linux-x64 + portable).
+must already be downloaded), the publish above, and the remote server bundles (`tools/publish-server.sh`: linux-x64 + portable). On a machine
+other than x86_64 (aarch64: linux-arm64) the publish would be unpinned, which publish-app.sh refuses unless told: install.sh refuses at once,
+before any work, unless it gets `--unpinned` (handed on to publish-app.sh; the summary and `.cscode-install/info` say so) or `--from DIR`.
 
 | Path (XDG_DATA_HOME = `~/.local/share`) | What |
 |---|---|
 | `$XDG_DATA_HOME/cscode/<version>/` | the publish, plus `tree-sitter/`, `shellIntegration/`, `server-bundles/`, `debug-adapters/` (each where the app looks: `AppContext.BaseDirectory`), `uninstall.sh` and `.cscode-install/` (`info`; `files.tsv`, every file and directory of the version) |
 | `$XDG_DATA_HOME/cscode/current` | relative symlink to the installed version. The version before is kept for rollback (`ln -sfn <previous> current`); older ones are removed, except a version a running process still executes from (kept until a later install) |
 | `$XDG_DATA_HOME/cscode/install-manifest.tsv` | `current`, `previous`, the kept `version`s, the `link`, every `file` outside the versions with its SHA-256, every `dir` the installs created |
-| `~/.local/bin/cscode` | the launcher: `exec`s `current/cscode` with every argument (so it is background mode's launcher); sets `DOTNET_ROOT` only when it is unset and a dotnet with a runtime next to it is found (PATH, then `~/.dotnet`, `~/.nix-profile/bin`, the usual system folders; symlinks resolved, so Nix's profile gives the store's SDK folder); appends `~/.dotnet/tools` to PATH for the processes the app starts (`csharp-ls` from the start menu) |
+| `~/.local/bin/cscode` | the launcher: `exec`s `current/cscode` with every argument (so it is background mode's launcher); appends `~/.dotnet/tools` to PATH for the processes the app starts (`csharp-ls` from the start menu). It sets no `DOTNET_ROOT` (a user's own passes through): the app chooses one per .NET language server, only when the .NET host's own lookup would not find the framework the server needs (docs/LSP.md, `DotnetLaunchEnvironment`); one exported by the launcher made that rule step aside for every server and reached every terminal, task and debuggee (cross-branch review C1) |
 | `$XDG_DATA_HOME/applications/cscode.desktop` | from `packaging/linux/cscode.desktop.in`: Name, GenericName, `Exec=<launcher> %F` and `TryExec` by absolute path (the menu works even when the desktop session's PATH lacks `~/.local/bin`), `Icon=cscode`, `StartupWMClass=cscode` (the X11 window's class, so KDE matches the window, its taskbar entry and Alt+Tab icon to this entry), `Categories=Development;IDE;TextEditor;`, a MimeType list of source files (never `inode/directory` or `text/plain`, so CsCode does not become the default for folders or plain text), a New Window action (`--new-window %F`). Checked with `desktop-file-validate` before it is installed |
 | `$XDG_DATA_HOME/icons/hicolor/{16,32,48,64,128,256,512}x…/apps/cscode.png`, `scalable/apps/cscode.svg` | the committed artwork, byte for byte |
 
@@ -379,7 +381,8 @@ must already be downloaded), the publish above, and the remote server bundles (`
 
 Tests (`tests/CsCode.App.Tests/Install`): `InstallScriptTests` (a stand-in publish in throwaway homes: layout, the desktop entry parsed and
 validated also for a home path with spaces, quotes and `$`, idempotence, upgrades keeping one previous version, a running version kept, refusals,
-the launcher's arguments, `DOTNET_ROOT` and PATH, uninstall restoring the home exactly with the user's data kept, the shipped uninstaller,
+the launcher's arguments, `DOTNET_ROOT` passed through and PATH, `--unpinned` off linux-x64 (a stand-in publish whose arguments the real
+publish-app.sh checks, and a `uname` that says aarch64), uninstall restoring the home exactly with the user's data kept, the shipped uninstaller,
 bundles and adapters), `InstalledAppTests` (the real publish installed, then the installed launcher under `env -i` with only HOME, a private
 Xvfb's DISPLAY, a private XDG_RUNTIME_DIR and a private D-Bus session bus: `--version`, a window of class `cscode` with a 128 px `_NET_WM_ICON`,
 the session process runs the installed build on the system's libraries, quitting leaves no process; the tree-sitter bundle passes its gate,
@@ -388,7 +391,8 @@ Without a session bus, D-Bus would autolaunch daemons (`dbus-launch --autolaunch
 desktop always has one, so the test provides its own.
 
 Windows (`tools/install.ps1`, untested): `%LOCALAPPDATA%\Programs\CsCode\<version>` with a `current` junction, `bin\cscode.cmd` on the user's
-PATH, a Start Menu shortcut, `install-manifest.json`, `-Uninstall`. macOS (`tools/macos/make-app-bundle.sh`, untested on a Mac): `CsCode.app` with
+PATH (it sets no `DOTNET_ROOT` either), a Start Menu shortcut, `install-manifest.json`, `-Uninstall`. macOS (`tools/macos/make-app-bundle.sh`,
+untested on a Mac; `--from DIR`, or `--unpinned` to publish now with the osx packs restore picks: they are not pinned): `CsCode.app` with
 the publish in `Contents/MacOS`, `Info.plist` and `Resources/cscode.icns` (`make-icns.py`: the committed PNGs as PNG icon types), signed ad hoc
 when `codesign` exists.
 

@@ -84,6 +84,56 @@ public sealed class PackagingTests
         Assert.Single(Directory.GetDirectories(out1));
     }
 
+    /// <summary>
+    /// The osx runtime packs are not pinned (only linux-x64's are), and tools/publish-app.sh refuses another runtime identifier without
+    /// <c>--unpinned</c> (cross-branch review C2/C5): without it (and without <c>--from</c>) make-app-bundle.sh refuses at once and says what to
+    /// do; with it, it hands it on to the publish (checked against the real publish-app.sh's arguments by <see cref="InstallSandbox.FakeSourceTree"/>).
+    /// </summary>
+    [Fact]
+    public async Task The_macOS_bundle_publishes_unpinned_only_when_asked_and_otherwise_refuses_before_any_work()
+    {
+        using var box = new InstallSandbox();
+        var script = Path.Combine(box.FakeSourceTree(), "tools", "macos", "make-app-bundle.sh");
+        var out1 = Path.Combine(box.Root, "out");
+
+        var refused = await box.ScriptAsync(script, ["--rid", "osx-arm64", "--out", out1, "--no-sign"]);
+        Assert.NotEqual(0, refused.ExitCode);
+        Assert.Contains("osx-arm64", refused.Error);
+        Assert.Contains("--unpinned", refused.Error);
+        Assert.Contains("--from", refused.Error);
+        Assert.False(File.Exists(box.PublishArgs), "nothing is published");
+        Assert.False(Directory.Exists(out1));
+
+        var help = await box.ScriptAsync(script, ["--help"]);
+        Ok(help);
+        Assert.Contains("--unpinned", help.Output);
+        Assert.DoesNotContain("set -euo", help.Output);
+
+        if (!File.Exists("/usr/bin/python3")) Assert.Skip("python3 is not installed (the .icns)");
+        Ok(await box.ScriptAsync(script, ["--rid", "osx-x64", "--unpinned", "--out", out1, "--no-sign"]));
+        Assert.Equal(["--rid", "osx-x64", "--unpinned"], File.ReadAllLines(box.PublishArgs));
+        Assert.True(File.Exists(Path.Combine(out1, "CsCode.app", "Contents", "MacOS", "cscode.dll")), "the publish is in the bundle");
+        // a publish without cscode.deps.json (this stand-in) gets version 0.0.0, not a silent exit under pipefail
+        Assert.Contains("<string>0.0.0</string>", File.ReadAllText(Path.Combine(out1, "CsCode.app", "Contents", "Info.plist")));
+    }
+
+    /// <summary>
+    /// The Windows launcher (cscode.cmd) passes every argument and adds the global .NET tools to PATH, and sets no DOTNET_ROOT (cross-branch
+    /// review C1, as tools/install.sh's launcher): the app chooses it per program it starts.
+    /// </summary>
+    [Fact]
+    public void The_Windows_launcher_passes_every_argument_and_leaves_DOTNET_ROOT_to_the_app()
+    {
+        var script = File.ReadAllText(Tool("install.ps1")).Replace("\r", "", StringComparison.Ordinal);
+        var match = System.Text.RegularExpressions.Regex.Match(script, "\\$launcherText = @\"\\n(.*?)\\n\"@",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        Assert.True(match.Success, "tools/install.ps1 has no $launcherText here-string (cscode.cmd)");
+        var launcher = match.Groups[1].Value;
+        Assert.DoesNotContain("DOTNET_ROOT", launcher, StringComparison.Ordinal);
+        Assert.Contains("set \"PATH=%PATH%;%USERPROFILE%\\.dotnet\\tools\"", launcher, StringComparison.Ordinal);
+        Assert.Contains("cscode.exe\" %*", launcher, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Install_ps1_parses_in_PowerShell_7()
     {

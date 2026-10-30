@@ -52,8 +52,11 @@ Nix SDK run it as `bash .scratch/notes/with-nix-env.sh tools/install.sh` (the li
   bundles (`tools/publish-server.sh`) and copies the debug adapters already on the machine (netcoredbg, js-debug, CodeLLDB:
   `--netcoredbg`/`--js-debug`/`--codelldb` or `CSCODE_NETCOREDBG`/`CSCODE_JSDEBUG`/`CSCODE_CODELLDB`) next to the app, where the app finds
   them without those variables. Nothing is downloaded; `--from DIR` installs an existing publish instead.
+* Only linux-x64's runtime packs are pinned: on another machine (aarch64) the install refuses unless you pass `--unpinned` (publish with
+  the packs restore picks, unchecked) or `--from DIR`.
 * Files: the app in `~/.local/share/cscode/<version>/` with a `current` symlink (the previous version is kept for rollback:
-  `ln -sfn <previous> ~/.local/share/cscode/current`), the launcher `~/.local/bin/cscode`, `~/.local/share/applications/cscode.desktop`
+  `ln -sfn <previous> ~/.local/share/cscode/current`), the launcher `~/.local/bin/cscode` (passes every argument and your environment,
+  `DOTNET_ROOT` included, as they are; adds `~/.dotnet/tools` to PATH), `~/.local/share/applications/cscode.desktop`
   (Development menu; a New Window action) and the icons in `~/.local/share/icons/hicolor`. Every file it creates is listed in
   `~/.local/share/cscode/install-manifest.tsv`.
 * Rerunning it upgrades: the new build becomes `current`, the one before stays, older ones go (one still running is kept until a later
@@ -63,5 +66,6 @@ Nix SDK run it as `bash .scratch/notes/with-nix-env.sh tools/install.sh` (the li
   sessions and data. Both scripts refuse to replace or remove a `cscode` launcher or desktop entry they did not create.
 
 Windows: `tools/install.ps1` (Start Menu shortcut, `cscode` on the user's PATH; `-Uninstall`). macOS: `tools/macos/make-app-bundle.sh` builds
-`CsCode.app` with an `.icns` made from the PNGs. Both are written but untested (only Linux is available here). Details:
+`CsCode.app` with an `.icns` made from the PNGs, from `--from DIR` or, with `--unpinned`, a publish made now (the osx packs are not pinned).
+Both are written but untested (only Linux is available here). Details:
 [docs/SESSIONS.md](docs/SESSIONS.md), "Installing".

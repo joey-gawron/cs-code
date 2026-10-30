@@ -193,8 +193,15 @@ public sealed class InstallScriptTests
         Assert.Equal(InstallSandbox.Describe(before), InstallSandbox.Describe(box.Snapshot()));
     }
 
+    /// <summary>
+    /// The launcher passes DOTNET_ROOT through as it is (cross-branch review C1). It used to export the first dotnet it found with a runtime
+    /// next to it when the variable was unset; then CsCode.Lsp's DotnetLaunchEnvironment, which leaves DOTNET_ROOT unset when the .NET host's own
+    /// lookup finds the framework a language server needs (else picks a dotnet that has it), saw a DOTNET_ROOT in every environment and never
+    /// ran: a Nix SDK 10 first on PATH sent a net8.0 tool's host only there ("You must install or update .NET") although a global .NET 8 was
+    /// installed. The app chooses DOTNET_ROOT per program; the launcher only adds the global .NET tools to PATH.
+    /// </summary>
     [Fact]
-    public async Task The_launcher_passes_every_argument_and_sets_DOTNET_ROOT_only_when_unset_and_a_dotnet_is_found()
+    public async Task The_launcher_passes_every_argument_and_DOTNET_ROOT_as_it_is_and_adds_the_dotnet_tools_to_PATH()
     {
         using var box = new InstallSandbox();
         Ok(await box.InstallAsync("--from", box.FakePublish(), "--version", "1", "--no-adapters", "--no-tree-sitter", "--no-server-bundles"));
@@ -208,13 +215,10 @@ public sealed class InstallScriptTests
             return result;
         }
         var tools = Path.Combine(box.Home, ".dotnet", "tools");
-        // a dotnet in a standard system location would be found: then "unset" cannot be observed here
-        var systemDotnet = new[] { "/usr/share/dotnet", "/usr/lib/dotnet", "/usr/lib64/dotnet", "/usr/local/share/dotnet", "/opt/dotnet" }
-            .Any(d => Directory.Exists(Path.Combine(d, "shared", "Microsoft.NETCore.App")));
 
         var plain = await Launch([".", "a b", "src/File.cs:3:4", "--new-window", "", "naïve", "$HOME", "*"]);
         Assert.Equal(".|a b|src/File.cs:3:4|--new-window||naïve|$HOME|*", plain["args"]); // verbatim: no splitting, globbing or expansion
-        if (!systemDotnet) Assert.Equal("<unset>", plain["DOTNET_ROOT"]);
+        Assert.Equal("<unset>", plain["DOTNET_ROOT"]);
         Assert.Equal("/usr/bin:/bin:" + tools, plain["PATH"]);
 
         // No PATH at all (a bare env -i): the shell's default search path (dash has one; else the launcher's), plus the .NET tools.
@@ -224,26 +228,70 @@ public sealed class InstallScriptTests
         // Already on PATH: not added twice.
         Assert.Equal($"/usr/bin:{tools}:/bin", (await Launch([], new() { ["PATH"] = $"/usr/bin:{tools}:/bin" }))["PATH"]);
 
-        // ~/.dotnet with a runtime: DOTNET_ROOT is that folder.
+        // ~/.dotnet with a runtime, and a dotnet on PATH that is a symlink into an SDK folder with one (Nix's profile): still unset.
         var home = Path.Combine(box.Home, ".dotnet");
         Directory.CreateDirectory(Path.Combine(home, "shared", "Microsoft.NETCore.App", "10.0.0"));
         File.WriteAllText(Path.Combine(home, "dotnet"), "#!/bin/sh\n");
         File.SetUnixFileMode(Path.Combine(home, "dotnet"), (UnixFileMode)0b111_101_101);
-        Assert.Equal(home, (await Launch([]))["DOTNET_ROOT"]);
-        // A dotnet on PATH that is a symlink into an SDK folder (Nix's profile, /usr/bin/dotnet -> /usr/lib/dotnet/dotnet): the real folder, first.
+        Assert.Equal("<unset>", (await Launch([]))["DOTNET_ROOT"]);
         var sdk = Path.Combine(box.Root, "sdk", "share", "dotnet");
-        Directory.CreateDirectory(Path.Combine(sdk, "shared", "Microsoft.NETCore.App"));
+        Directory.CreateDirectory(Path.Combine(sdk, "shared", "Microsoft.NETCore.App", "10.0.0"));
         File.WriteAllText(Path.Combine(sdk, "dotnet"), "#!/bin/sh\n");
         File.SetUnixFileMode(Path.Combine(sdk, "dotnet"), (UnixFileMode)0b111_101_101);
         var bin = Path.Combine(box.Root, "profile", "bin");
         Directory.CreateDirectory(bin);
         File.CreateSymbolicLink(Path.Combine(bin, "dotnet"), Path.Combine(sdk, "dotnet"));
-        Assert.Equal(sdk, (await Launch([], new() { ["PATH"] = bin + ":/usr/bin:/bin" }))["DOTNET_ROOT"]);
-        // A dotnet without a runtime next to it does not count.
-        Directory.Delete(Path.Combine(sdk, "shared"), recursive: true);
-        Assert.Equal(home, (await Launch([], new() { ["PATH"] = bin + ":/usr/bin:/bin" }))["DOTNET_ROOT"]);
+        Assert.Equal("<unset>", (await Launch([], new() { ["PATH"] = bin + ":/usr/bin:/bin" }))["DOTNET_ROOT"]);
         // Set by the user: kept as it is.
         Assert.Equal("/opt/my-dotnet", (await Launch([], new() { ["DOTNET_ROOT"] = "/opt/my-dotnet" }))["DOTNET_ROOT"]);
+        Assert.DoesNotContain(File.ReadAllLines(box.Launcher), l => !l.TrimStart().StartsWith('#') && l.Contains("DOTNET_ROOT", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Only linux-x64's runtime packs are pinned, and tools/publish-app.sh refuses another runtime identifier without <c>--unpinned</c>
+    /// (cross-branch review C2/C5). On another machine (aarch64 here, through a <c>uname</c> that says so) the installer refuses at once, before
+    /// anything is written, and says what to do; with <c>--unpinned</c> it hands that on to the publish (checked against the real
+    /// publish-app.sh's arguments) and installs. On x86_64 the publish stays pinned, and <c>--from</c> needs no <c>--unpinned</c> anywhere.
+    /// </summary>
+    [Fact]
+    public async Task Off_linux_x64_the_installer_publishes_unpinned_only_when_asked_and_otherwise_refuses_before_any_work()
+    {
+        using var box = new InstallSandbox();
+        var tree = box.FakeSourceTree();
+        var script = Path.Combine(tree, "tools", "install.sh");
+        string[] quiet = ["--no-refresh", "--no-adapters", "--no-tree-sitter", "--no-server-bundles", "--version", "1"];
+        var arm64 = new Dictionary<string, string?> { ["PATH"] = box.MachinePath("aarch64") };
+        var before = box.Snapshot();
+
+        var refused = await box.ScriptAsync(script, quiet, arm64);
+        Assert.NotEqual(0, refused.ExitCode);
+        Assert.Contains("linux-arm64", refused.Error);
+        Assert.Contains("--unpinned", refused.Error);
+        Assert.Contains("--from", refused.Error);
+        Assert.False(File.Exists(box.PublishArgs), "nothing is published");
+        Assert.Equal(InstallSandbox.Describe(before), InstallSandbox.Describe(box.Snapshot()));
+
+        var unpinned = await box.ScriptAsync(script, [.. quiet, "--unpinned"], arm64);
+        Ok(unpinned);
+        Assert.Equal(["--rid", "linux-arm64", "--unpinned"], File.ReadAllLines(box.PublishArgs));
+        Assert.True(File.Exists(Path.Combine(box.CurrentVersionDir, "cscode.dll")));
+        Assert.Contains("runtime packs: unpinned", unpinned.Output); // the summary says so
+        Assert.Contains("source\ttools/publish-app.sh --rid linux-arm64 --unpinned", File.ReadAllText(Path.Combine(box.CurrentVersionDir, ".cscode-install", "info")));
+
+        File.Delete(box.PublishArgs);
+        Ok(await box.ScriptAsync(script, [.. quiet, "--from", box.FakePublish("arm64-publish")], arm64)); // an existing publish: nothing to pin
+        Assert.False(File.Exists(box.PublishArgs));
+
+        var pinned = await box.ScriptAsync(script, [.. quiet, "--version", "2"], new Dictionary<string, string?> { ["PATH"] = box.MachinePath("x86_64") });
+        Ok(pinned);
+        Assert.Equal(["--rid", "linux-x64"], File.ReadAllLines(box.PublishArgs));
+        Assert.DoesNotContain("unpinned", pinned.Output);
+
+        var help = await box.ScriptAsync(script, ["--help"]);
+        Ok(help);
+        Assert.Contains("--unpinned", help.Output);
+        Assert.Contains("--no-refresh", help.Output);
+        Assert.DoesNotContain("set -euo", help.Output);
     }
 
     [Fact]
