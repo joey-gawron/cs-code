@@ -325,6 +325,12 @@ connection (server and ssh stopped).
 | `remote.ssh.hosts` | `{}` | per-host overrides of the keys above: `{"box": {"serverInstallPath": "/opt/cscode"}}` |
 | `cscode.languageHost` | `inProcess` | `process`: language client in a local child process |
 
+Every `remote.ssh.*` setting, `remote.docker.path` and `remote.wsl.path` is **machine-scoped** (remote-5, as VS Code's Remote-SSH settings are not
+workspace settings): only the user settings.json sets them, so a local folder's `.vscode/settings.json` cannot pick the ssh binary, a
+`ProxyCommand`/`LocalCommand` option, the bundle directory or the docker CLI that *Connect to Host…* runs (ignored with a notice; docs/PLATFORM.md
+"Setting scopes"). `cscode.languageHost` is application-scoped. The remote server registers the terminal and debugger scopes itself, so a remote
+folder's settings cannot choose the shell, the debugger or a language server's command on the remote host either.
+
 `RemoteOptions` (DI, not settings) carries what the host program or tests supply: ssh environment changes, the askpass command and directory, bundles,
 a process marker, reconnect policy, clock, call timeout, the reconnect wait, the grace period and a fixed server session id, a transport factory, the local
 server path/data dir/environment, and a language-host override. The `remote.ssh.*` server settings (install/data path, bundles, reconnect) apply to the

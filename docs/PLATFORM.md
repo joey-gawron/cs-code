@@ -105,12 +105,26 @@ Layers, lowest to highest: **registered defaults → user `settings.json` → wo
 "Workspace" = the primary (first) folder; `UpdateAsync` with `Workspace` or `WorkspaceFolder` writes the primary folder's `.cscode/settings.json` (there is no per-resource scoping API).
 
 * **Format**: JSON with comments and trailing commas; a BOM and CRLF are accepted. `"editor.fontSize"` and `{"editor":{"fontSize":…}}` are equivalent and may be mixed;
-  duplicate keys: last wins. Registered **object-valued** settings (`files.exclude`, `editor.quickSuggestions`, anything registered with an object default or
-  `"type":"object"` schema) are kept whole so glob keys containing dots are never split; objects **merge** across layers, arrays/scalars replace.
-  (An *unregistered* object setting is expanded by dots — register such settings via `RegisterProperties`.)
+  duplicate keys: last wins. As in VS Code, only the **top-level keys** of a file (and the keys directly inside a `"[lang]"` block) are split on dots: member names
+  inside a value are kept as written, registered or not, so globs (`files.associations`, `files.exclude`), URLs (`yaml.schemas`) and server ids with dots survive
+  (lsp-core-2; they used to be split at every depth unless the setting was registered as an object). Objects **merge** across layers, arrays/scalars replace.
+* **Setting scopes** (VS Code's `ConfigurationScope`, lsp-core-1 / remote-5): a property registered with `Scope = Application` or `Machine`
+  (`ConfigurationProperty.IsUserSettingOnly`), and every `MachineScopedMembers` path of an object setting (`*` = any member name), takes its value from the
+  registered defaults and the **user** file only. A workspace or folder file's value there — in any spelling: dotted, nested, inside a `"[lang]"` block, or a
+  parent replaced by a scalar — is dropped, listed in `ConfigurationService.IgnoredSettings` (+ `IgnoredSettingsChanged`), logged as a warning and shown once per
+  file and key as a warning notice (through `IWindowService`, resolved lazily). `UpdateAsync(key, value, Workspace)` for such a key throws
+  `InvalidOperationException` (VS Code refuses the same write); removing one (`null`) is allowed. Every setting that names a program CsCode runs, its arguments,
+  its environment or its search path is machine-scoped, so a cloned repository's `.vscode/settings.json` cannot start anything through settings:
+  `cscode.languageServers.*.command|args|env|workingDirectory`, `cscode.lsp.searchDirs`, `cscode.debuggers`, `cscode.debug.{netcoredbg,jsDebug,node,gdb,codelldb}Path`,
+  `cscode.debug.gdbArgs`, `terminal.integrated.{profiles,defaultProfile,env}.<os>` (+ `inheritEnv`, application), every `remote.ssh.*`, `remote.docker.path`,
+  `remote.wsl.path` (`cscode.languageHost` is application-scoped). The audit list is `SettingScopeTests.ProgramSettings` (Remote.Tests); the remote server
+  registers the terminal and debugger scopes itself (it has no TerminalService/DebugService). A module must register an executable setting machine-scoped
+  **before** it first reads it; an unregistered key is window-scoped. Not covered by scopes (Workspace Trust territory, not implemented): `tasks.json` and
+  `launch.json` run commands by design, and language servers themselves execute project content (rust-analyzer build scripts and proc macros, a project's
+  TypeScript for Vue, server-specific `settings` such as rust-analyzer's `check.overrideCommand`).
 * **Reads**: `Get<T>(key, default)` / `GetRaw(key)` / section reads (`GetRaw("editor")` returns the merged object). A registered default beats the caller's fallback; a value of the
   wrong type yields the fallback (never throws). Primitive reads allocate nothing after the first read of a key.
-* **Live reload**: the settings directories are watched — the workspace's `.cscode/` and `.vscode/` also when they are created after the folder was opened; a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
+* **Live reload**: the settings directories are watched — the primary folder's `.cscode/` and `.vscode/` and every additional folder's `.cscode/` (lsp-core-7), also when they are created after the folder was opened; a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
   setting reports itself). Rewriting a file with the same values (different comments/order) fires nothing, nor does the echo of our own write.
 * **`UpdateAsync` edits the file in place** with a small JSONC-aware minimal-edit writer: only the value span is replaced; a new key is inserted before the closing brace using the file's
   indentation (tab/spaces), EOL (LF/CRLF), comma style (a trailing-comma file stays one) and single-line/multi-line shape; flat dotted keys, nested objects and mixes are found; `null` removes the key

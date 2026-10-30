@@ -50,6 +50,8 @@ Tests: `ProtocolRoundTripTests` (spec shapes, unions, optional/null handling, un
   (named pipe), `unix:///path` (unix domain socket). `ServerLaunch.Resolve` does the lookup (testable without a process); a built-in definition whose
   command and args are unchanged also tries its **alternatives** in order (`nil` → `nixd`, `erlang_ls` → `elp server`, …) and the not-found message
   names every executable it looked for. `${workspaceFolder}` / `${userHome}` expand in `args` and `initializationOptions` (`LaunchVariables`).
+  A command with a directory part must be absolute or start with `~/`: a relative one (`./bin/x`, `bin/x`) is **not** found — it used to be resolved
+  against the working directory, i.e. the server's root inside the workspace, so the opened repository chose the program (lsp-core-1).
 * Child processes (`ProcessConnection`): started **without a shell**, env + cwd from the definition, stderr drained on its own task into a bounded
   64-line ring and the bounded server log, below-normal priority, whole tree killed on dispose. Every child gets an environment marker
   (`CSCODE_LSP_SESSION`); on Linux a kill also finds **re-parented descendants** (server `kill -9`ed, grandchild orphaned) by scanning `/proc/*/environ`
@@ -172,6 +174,9 @@ plus `didChange`/`didSave`/`didOpen`/`didClose`/`willSave*`, watched files, exec
   `AddDefinition` (returns a removal token), and the **`cscode.languageServers`** override, a JSON object keyed by id:
   `command, args, env, selector, initializationOptions, settings, rootMarkers, autoStart, workingDirectory, restartAboveBytes, enabled` (an unknown id with
   `command` + `selector` defines a new server). Changing launch properties restarts a running server; selector-only changes don't.
+  **`command`, `args`, `env` and `workingDirectory` come from user settings only** (machine-scoped members, docs/PLATFORM.md "Setting scopes"), as does
+  `cscode.lsp.searchDirs`: a workspace's `.vscode`/`.cscode` settings.json may tune a server (`selector`, `settings`, `initializationOptions`,
+  `rootMarkers`, `enabled`, `autoStart`, `restartAboveBytes`) but cannot define what is started; its value is ignored with a notice.
 * **One server per (definition, workspace root)**: root = nearest ancestor containing a marker (names or globs like `*.sln`), never leaving the workspace
   folder that contains the file; fallback = that folder, then the file's directory. Built-ins whose build systems nest markers (jdtls, Kotlin, Metals,
   HLS, Elixir, Erlang, ocamllsp, Nix, buf) take the **outermost** marked directory inside the workspace folder instead (`RootStrategy.Outermost`; a
