@@ -109,10 +109,11 @@ public sealed class ToolWindowManager : IDisposable
 
     /// <summary>
     /// Puts the keyboard into a shown tool's view, as Visual Studio's View menu does for the window it shows (typing next goes there, not into the
-    /// editor): on the element the view prefers (<see cref="IToolWindowFocus"/>), else on its first focusable element in tab order, else, for a
-    /// view with nothing that can take it, on its host (<see cref="ToolTab.FocusHost"/>). <see cref="Show"/> only creates the view and Dock
-    /// presents it on a later layout pass, so this runs after layout and waits (bounded) until the view is on screen. Nothing happens when the
-    /// tool was hidden meanwhile or a later request superseded this one.
+    /// editor): on the element the view prefers (<see cref="IToolWindowFocus"/>), else on its first content element in tab order (never a button
+    /// or splitter, see <see cref="FirstContentElement"/>), else, for a view with nothing else that can take it, on its host
+    /// (<see cref="ToolTab.FocusHost"/>). <see cref="Show"/> only creates the view and Dock presents it on a later layout pass, so this runs after
+    /// layout and waits (bounded) until the view is on screen. Nothing happens when the tool was hidden meanwhile or a later request superseded
+    /// this one.
     /// </summary>
     public void FocusView(string id)
     {
@@ -127,11 +128,31 @@ public sealed class ToolWindowManager : IDisposable
         if (view.IsAttachedToVisualTree() && view.IsEffectivelyVisible)
         {
             if (view is IToolWindowFocus own && own.FocusPreferred()) return;
-            if (FocusManager.FindFirstFocusableElement(view)?.Focus() == true) return;
+            if (FirstContentElement(view)?.Focus() == true) return;
             t.FocusHost();
             return;
         }
         if (attempt < 20) DispatcherTimer.RunOnce(() => FocusWhenShown(t, request, attempt + 1), TimeSpan.FromMilliseconds(25));
+    }
+
+    /// <summary>
+    /// The first element of <paramref name="view"/> in tab order that is the window's content, not its chrome: never a button (ToggleButton,
+    /// CheckBox and the rest are buttons too) or a GridSplitter, which is what leads the tab order of a window with a toolbar or a column header.
+    /// The keyboard left there by the View menu does what the user did not ask for: the next Enter presses Clear Console or Continue, the next
+    /// arrow resizes the columns of Locals; Visual Studio puts it in the window's list or input. Null when nothing else in the view can take the
+    /// keyboard (the caller then focuses the host).
+    /// </summary>
+    internal static IInputElement? FirstContentElement(Control view)
+    {
+        var focus = TopLevel.GetTopLevel(view)?.FocusManager;
+        var seen = new HashSet<IInputElement>(); // tab order cycles (at the window, or inside a container with KeyboardNavigationMode.Cycle)
+        for (var e = FocusManager.FindFirstFocusableElement(view);
+             e is Avalonia.Visual v && (ReferenceEquals(v, view) || view.IsVisualAncestorOf(v)) && seen.Add(e);
+             e = focus?.FindNextElement(NavigationDirection.Next, new FindNextElementOptions { FocusedElement = e }))
+        {
+            if (e is not (Button or GridSplitter)) return e;
+        }
+        return null;
     }
 
     /// <summary>Docks an auto-hidden tool back into its well (a no-op for any other tool).</summary>

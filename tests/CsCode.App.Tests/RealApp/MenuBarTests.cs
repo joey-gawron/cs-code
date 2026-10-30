@@ -12,6 +12,7 @@ using CsCode.Core.Terminal;
 using CsCode.Core.Text;
 using CsCode.Panels.Terminal.Views;
 using CsCode.TestDoubles;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace CsCode.App.Tests.RealApp;
@@ -84,7 +85,9 @@ public class MenuBarTests
 
     // From the desktop: the View menu's items "do not function correctly". Each entry ran its tool's toggle, so one open as a background tab
     // (Output behind Error List) was hidden by the click meant to show it; Visual Studio's View menu only ever shows and activates. And it
-    // focuses: the window shown alone left the keyboard in the editor, so what the user typed next went into the file.
+    // focuses: the window shown alone left the keyboard in the editor, so what the user typed next went into the file. And not on chrome (found
+    // in review): the first element in tab order put it on Locals' column splitter (→ resized the columns) and on Clear Console (Enter cleared
+    // the console), where Visual Studio puts it in the window's list or input.
     [AvaloniaFact(Timeout = 120_000)]
     public async Task Every_View_Tool_Windows_item_shows_activates_and_focuses_its_window_and_never_hides_it()
     {
@@ -116,6 +119,9 @@ public class MenuBarTests
                 // In the view, or on the host around it when nothing in the view can take the keyboard (the Call Stack outside a debug session).
                 Assert.True(await RealAppHost.WaitFor(() => (tab.LiveView?.Parent as Control)?.IsKeyboardFocusWithin == true, 20_000),
                     $"View > Tool Windows > {item.Header} (click {click}) left the keyboard on {Focused(host)}");
+                // A ToggleButton (a CheckBox too) is a Button.
+                Assert.False(host.Window.FocusManager?.GetFocusedElement() is Button or GridSplitter,
+                    $"View > Tool Windows > {item.Header} (click {click}) put the keyboard on {Focused(host)}, where Enter presses it or the arrows drag it");
             }
         }
         Assert.Single(host.Get<ITerminalService>().Terminals); // the Terminal's view and its focus command did not each start one
@@ -171,6 +177,24 @@ public class MenuBarTests
         Assert.Equal("beta", Query()!.Text);
     }
 
+    // Found in review: the Debug Console's first element in tab order is its Clear Console button, so the View menu left the keyboard there; the
+    // next Enter cleared the console (and the history kept for late subscribers) and an expression typed went nowhere. Visual Studio's
+    // Immediate window takes the keyboard in its input.
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task View_Tool_Windows_Debug_Console_puts_the_keyboard_in_its_input_box()
+    {
+        await using var host = await RealAppHost.Create(h => h.Files.WriteFile("a.txt", "alpha beta\n")).StartAsync();
+        var editor = await host.Shell.Well.OpenAsync(new Uri(host.Files.Combine("a.txt")));
+        Assert.True(await RealAppHost.WaitFor(() => editor.Controller is not null && editor.LiveView!.IsAttachedToVisualTree()));
+        editor.Controller!.Focus();
+
+        await ClickToolWindowItemAsync(host, "Debug Console");
+
+        TextBox? Input() => host.Shell.Tools.Get("debug.console")?.LiveView?.GetVisualDescendants().OfType<TextBox>().FirstOrDefault(t => t.Name == "Input");
+        Assert.True(await RealAppHost.WaitFor(() => Input()?.IsFocused == true), $"the keyboard is on {Focused(host)}");
+        Assert.False(editor.Controller.IsFocused);
+    }
+
     // A tool with no focus logic of its own (no ShowCommandId) gets the keyboard where its view says: the Explorer's selected row, where the
     // arrows, Enter and F2 work, not the New File button that leads its tab order.
     [AvaloniaFact(Timeout = 60_000)]
@@ -192,6 +216,60 @@ public class MenuBarTests
         Assert.IsType<ListBoxItem>(host.Window.FocusManager?.GetFocusedElement());
         Assert.Equal(CsCode.App.Input.FocusArea.Explorer, host.Shell.ContextKeys.Focus);
         Assert.False(editor.Controller.IsFocused);
+    }
+
+    // Found in review: a tool with neither a ShowCommandId nor IToolWindowFocus got the keyboard on its first element in tab order, which in a
+    // window with a toolbar or a column header is a button (Enter presses it) or a splitter (the arrows drag it). The shell's fallback skips
+    // them for the window's content, and with nothing else focuses the window itself.
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task View_Tool_Windows_puts_the_keyboard_of_a_tool_without_focus_logic_past_its_toolbar_and_column_splitter()
+    {
+        await using var host = await RealAppHost.Create(h => h.Files.WriteFile("a.txt", "alpha beta\n")).StartAsync([], s =>
+        {
+            s.AddSingleton<CsCode.Ui.IToolWindow>(new ChromeFirstTool("test.content", "Chrome Then Content", withContent: true));
+            s.AddSingleton<CsCode.Ui.IToolWindow>(new ChromeFirstTool("test.chrome", "Chrome Only", withContent: false));
+        });
+        var editor = await host.Shell.Well.OpenAsync(new Uri(host.Files.Combine("a.txt")));
+        Assert.True(await RealAppHost.WaitFor(() => editor.Controller is not null && editor.LiveView!.IsAttachedToVisualTree()));
+
+        editor.Controller!.Focus();
+        await ClickToolWindowItemAsync(host, "Chrome Then Content");
+        var content = host.Shell.Tools.Get("test.content")!;
+        Assert.True(await RealAppHost.WaitFor(() => content.LiveView?.IsKeyboardFocusWithin == true), $"the keyboard is on {Focused(host)}");
+        Assert.Equal("Content", (host.Window.FocusManager?.GetFocusedElement() as Control)?.Name);
+
+        editor.Controller.Focus();
+        await ClickToolWindowItemAsync(host, "Chrome Only");
+        var chrome = host.Shell.Tools.Get("test.chrome")!;
+        Assert.True(await RealAppHost.WaitFor(() => (chrome.LiveView?.Parent as Control)?.IsKeyboardFocusWithin == true), $"the keyboard is on {Focused(host)}");
+        Assert.Same(chrome.LiveView!.Parent, host.Window.FocusManager?.GetFocusedElement()); // the window itself, not one of its buttons
+    }
+
+    /// <summary>
+    /// A tool window whose tab order starts with chrome, as the debug windows' does: a toolbar (a button and a toggle) and a column header with a
+    /// splitter, then (<paramref name="withContent"/>) a text box named Content.
+    /// </summary>
+    private sealed class ChromeFirstTool(string id, string title, bool withContent) : CsCode.Ui.IToolWindow
+    {
+        public string Id => id;
+        public string Title => title;
+        public string? IconKey => "files";
+        public CsCode.Ui.ToolWindowLocation DefaultLocation => CsCode.Ui.ToolWindowLocation.Bottom;
+        public string? ToggleCommandId => "test.toggle." + id; // View > Tool Windows lists only tools that have one
+        public string? AutoShowWhen => null;
+
+        public Control CreateView(IServiceProvider services)
+        {
+            var header = new Grid { ColumnDefinitions = new ColumnDefinitions("100,Auto,*") };
+            var splitter = new GridSplitter { Width = 4, ResizeDirection = GridResizeDirection.Columns };
+            Grid.SetColumn(splitter, 1);
+            header.Children.Add(splitter);
+            var view = new StackPanel();
+            view.Children.Add(new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Children = { new Button { Content = "Clear" }, new ToggleButton { Content = "Lock" } } });
+            view.Children.Add(header);
+            if (withContent) view.Children.Add(new TextBox { Name = "Content" });
+            return view;
+        }
     }
 
     /// <summary>Clicks View &gt; Tool Windows &gt; <paramref name="title"/> in the menu bar as the user does: the item's click, then the menu closes.</summary>

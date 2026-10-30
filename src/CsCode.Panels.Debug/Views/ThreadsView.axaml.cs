@@ -5,12 +5,16 @@ using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using CsCode.Panels.Debug.Infrastructure;
 using CsCode.Panels.Debug.Threads;
+using CsCode.Ui;
 
 namespace CsCode.Panels.Debug.Views;
 
 /// <summary>Threads window: double-click or Enter makes a thread current (its top frame is focused and its source opened).</summary>
-public sealed partial class ThreadsView : UserControl, IDisposable
+public sealed partial class ThreadsView : UserControl, IDisposable, IToolWindowFocus
 {
+    /// <summary>View &gt; Tool Windows &gt; Threads: the keyboard on a thread (the selected one, else one on screen), where Enter switches to it.</summary>
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(this.FindControl<ListBox>("Rows")!);
+
     public ThreadsView()
     {
         InitializeComponent();

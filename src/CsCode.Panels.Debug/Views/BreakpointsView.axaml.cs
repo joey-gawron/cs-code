@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using CsCode.Panels.Debug.Breakpoints;
 using CsCode.Panels.Debug.Infrastructure;
+using CsCode.Ui;
 
 namespace CsCode.Panels.Debug.Views;
 
@@ -12,8 +13,14 @@ namespace CsCode.Panels.Debug.Views;
 /// Breakpoints window: checkbox enables, double-click / Enter navigates, Space toggles, Delete removes, context menu edits the condition,
 /// hit count and log message.
 /// </summary>
-public sealed partial class BreakpointsView : UserControl, IDisposable
+public sealed partial class BreakpointsView : UserControl, IDisposable, IToolWindowFocus
 {
+    /// <summary>
+    /// View &gt; Tool Windows &gt; Breakpoints: the keyboard on a breakpoint (the selected one, else one on screen), where Enter goes to it, Space
+    /// toggles it and Delete removes it. Not on New Function Breakpoint, which leads the tab order and which Enter would press.
+    /// </summary>
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(this.FindControl<ListBox>("Rows")!);
+
     public BreakpointsView()
     {
         InitializeComponent();

@@ -5,6 +5,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CsCode.Panels.Debug.Console;
 using CsCode.Panels.Debug.Infrastructure;
+using CsCode.Ui;
 using CsCode.Ui.Menus;
 
 namespace CsCode.Panels.Debug.Views;
@@ -14,8 +15,15 @@ namespace CsCode.Panels.Debug.Views;
 /// walks the history with ↑/↓ (when the caret is on the first/last line), and drives the completion list (↑↓ select, Tab/Enter accept,
 /// Esc close, Ctrl+Space ask).
 /// </summary>
-public sealed partial class ConsoleView : UserControl, IDisposable, IClipboardTarget
+public sealed partial class ConsoleView : UserControl, IDisposable, IClipboardTarget, IToolWindowFocus
 {
+    /// <summary>
+    /// View &gt; Tool Windows &gt; Debug Console, as Visual Studio's Immediate window: the keyboard in the expression box, where what the user types
+    /// is evaluated. Not on Clear Console, which leads the tab order: the next Enter would press it and wipe the output (with the history kept for
+    /// late subscribers) while the expression typed went nowhere.
+    /// </summary>
+    public bool FocusPreferred() => this.FindControl<TextBox>("Input") is { IsEffectivelyVisible: true, IsEffectivelyEnabled: true } input && input.Focus();
+
     private ListBox LinesList => this.FindControl<ListBox>("Lines")!;
 
     /// <summary>The output lines' clipboard (the REPL box, a text box, has its own Cut/Copy/Paste).</summary>
