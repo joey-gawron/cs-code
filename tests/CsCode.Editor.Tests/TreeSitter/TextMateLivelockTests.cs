@@ -144,8 +144,27 @@ public class TextMateLivelockTests
         await ViewHost.WaitFor(() => tokens.Store.HasTokens(tokens.Viewport.First, tokens.Viewport.Last) && tokens.ViewportReady is not null, "the viewport coloured");
         var (first, last) = tokens.Viewport;
 
-        host.Factory.Tokens.Trim(Core.Diagnostics.MemoryTrimLevel.Aggressive);
-        Assert.False(tokens.Store.HasTokens(first, last));
+        // The trim posts the re-colour job before it returns: the engine's thread is held meanwhile, so the rows are seen empty first (a test
+        // thread preempted for a few ms under load otherwise found them already back, and failed without a bug).
+        var lanes = file.EndsWith(".toml", StringComparison.Ordinal) ? new[] { host.Factory.Worker, host.Factory.Tokens.TreeSitter.Lane } : [host.Factory.Worker];
+        using var release = new ManualResetEventSlim();
+        using var held = new CountdownEvent(lanes.Length);
+        try
+        {
+            foreach (var lane in lanes)
+                lane.Post(Threading.WorkPriority.Interactive, null, _ =>
+                {
+                    held.Signal();
+                    release.Wait(TimeSpan.FromSeconds(30));
+                });
+            await ViewHost.WaitFor(() => held.IsSet, "the engine's threads held");
+            host.Factory.Tokens.Trim(Core.Diagnostics.MemoryTrimLevel.Aggressive);
+            Assert.False(tokens.Store.HasTokens(first, last));
+        }
+        finally
+        {
+            release.Set();
+        }
         // no scroll, no edit, no redraw request: the engine brings the rows back on its own
         var clock = System.Diagnostics.Stopwatch.StartNew();
         while (!tokens.Store.HasTokens(first, last) && clock.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(20);
