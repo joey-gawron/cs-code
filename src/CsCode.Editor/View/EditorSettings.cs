@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CsCode.Core.Platform;
+using CsCode.Core.Theming;
 using CsCode.Editor.Documents;
 
 namespace CsCode.Editor.View;
@@ -12,7 +13,7 @@ namespace CsCode.Editor.View;
 /// </summary>
 public sealed record EditorSettings
 {
-    public string FontFamily { get; init; } = "Cascadia Code, Cascadia Mono, Consolas, DejaVu Sans Mono, Liberation Mono, monospace";
+    public string FontFamily { get; init; } = OperatingSystem.IsMacOS() ? FontFamilies.MacCode : "Cascadia Code, Cascadia Mono, Consolas, DejaVu Sans Mono, Liberation Mono, monospace";
     public double FontSize { get; init; } = 14;
     public double LineHeightFactor { get; init; } = 1.0;
     public int TabSize { get; init; } = 4;

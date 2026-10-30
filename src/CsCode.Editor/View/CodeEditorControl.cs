@@ -12,6 +12,7 @@ using CsCode.Editor.Languages;
 using CsCode.Core.Languages;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Text;
+using CsCode.Core.Theming;
 using CsCode.Editor.Documents;
 using CsCode.Editor.Editing;
 using CsCode.Editor.TextMate;
@@ -287,7 +288,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     private void ApplySettings(bool initial)
     {
         var s = Settings;
-        Editor.FontFamily = new FontFamily(s.FontFamily);
+        Editor.FontFamily = new FontFamily(FontFamilies.Normalize(s.FontFamily)); // 'Quoted' names and generic ones as settings write them
         Editor.FontSize = s.FontSize;
         Editor.WordWrap = s.WordWrap;
         Editor.ShowLineNumbers = s.ShowLineNumbers;

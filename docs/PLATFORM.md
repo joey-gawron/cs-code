@@ -146,7 +146,7 @@ Built-in defaults (all in `BuiltInSettings.All`; every key in `SettingKeys` has 
 
 | key | default |
 |---|---|
-| `editor.fontFamily` | `Cascadia Code, Consolas, 'Courier New', monospace` |
+| `editor.fontFamily` | `Cascadia Code, Consolas, monospace`; on macOS `Menlo, SF Mono, Monaco, monospace` (quotes are stripped and generic names mapped per OS when the font is built: `FontFamilies.Normalize`) |
 | `editor.fontSize` / `editor.tabSize` | `14` / `4` |
 | `editor.insertSpaces` / `editor.wordWrap` | `true` / `"off"` |
 | `editor.minimap.enabled` / `editor.formatOnSave` | `true` / `false` |
@@ -154,8 +154,8 @@ Built-in defaults (all in `BuiltInSettings.All`; every key in `SettingKeys` has 
 | `editor.quickSuggestions` | `{"other":"on","comments":"off","strings":"off"}` |
 | `cscode.editor.largeFileThresholdBytes` | `5242880` (5 MB) |
 | `files.autoSave` | `"off"` |
-| `files.exclude` | `**/.git`, `**/.svn`, `**/.hg`, `**/CVS`, `**/.DS_Store`, `**/Thumbs.db` → `true` |
-| `files.watcherExclude` | `**/.git/objects/**`, `**/.git/subtree-cache/**`, `**/.hg/store/**`, `**/node_modules/**`, `**/bin/**`, `**/obj/**` → `true` |
+| `files.exclude` | `**/.git`, `**/.svn`, `**/.hg`, `**/CVS`, `**/.DS_Store`, `**/Thumbs.db` → `true`; on macOS also `**/._*`, `**/.Spotlight-V100`, `**/.fseventsd`, `**/.Trashes`, `**/.TemporaryItems`, `**/.DocumentRevisions-V100` |
+| `files.watcherExclude` | `**/.git/objects/**`, `**/.git/subtree-cache/**`, `**/.hg/store/**`, `**/node_modules/**`, `**/bin/**`, `**/obj/**` → `true`; on macOS also the five volume folders above, as `**/<name>/**` |
 | `workbench.colorTheme` / `workbench.startupEditor` | `"Visual Studio Dark"` / `"welcomePage"` |
 | `cscode.memory.budgetMb` / `cscode.memory.trimOnIdle` | `0` / `true` |
 | `cscode.keymap` | `"visualstudio"` (or `"vscode"`) |
@@ -260,6 +260,7 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
 * **gitignore** (`GitIgnoreFile`, golden-tested): comments/blank lines · trailing unescaped spaces · `!` negation (last match wins; nearest file wins across nested files) · trailing `/` = directory only · a `/` at the start or middle anchors to the file's directory ·
   `*` `?` `[a-z]` `[!x]` never cross `/` · `**/x`, `a/**/b`, `a/**` · backslash escapes. Files in `.gitignore` apply even outside a Git repo; `.git/info/exclude` is read at the root; the global excludes file is not.
   A file inside an ignored directory cannot be re-included (the directory is never entered), as in Git. Ignore files > 1 MB are skipped. `search.useIgnoreFiles` turns it off.
+  Rules match case-insensitively when the root's repository has `core.ignorecase=true`, or has no such key on macOS/Windows (`GitIgnoreFile.RepositoryIgnoresCase`; a linked worktree's config is the main repository's), as git does.
 * `FuzzyMatcher` (VS Code quick-open style): subsequence match, case-insensitive; the score rewards consecutive runs (a run keeps the start bonus it began with), word starts (after space `_ - .`), camelCase humps and digit runs,
   characters after a path separator (`/` or `\`), the first character, and exact case; gaps are penalised (3 to open, 1 per extra char). `Score` is the allocation-free ranking path (vectorised prefilter, DP over match positions only);
   `Match`/`MatchPath` also return the matched indices; `ScorePath` adds a file-name bonus; `Rank` keeps the best N with a heap (ties: shorter text first). The DP is fuzz-tested against a brute-force oracle
@@ -302,7 +303,7 @@ Stated plainly — what is **not** done or **not verified**:
 * `ConfigurationTarget.Workspace` and `WorkspaceFolder` both write the primary folder; there is no per-resource folder scoping, so additional folders' settings are overlaid in order rather than applying to their own files only.
 * Settings, state and keybinding files are read synchronously **once, in their constructors** (see Registration); every later read, reload and write is on the IO lane.
 * `FileSystem.StatAsync` of a symlink chain resolves the final target only; `ReadDirectoryAsync` marks entry types but not link targets.
-* The `.gitignore` engine does not read the global `core.excludesFile`, is case-sensitive (no `core.ignorecase`), and ignores POSIX `[:alpha:]` classes.
+* The `.gitignore` engine does not read the global `core.excludesFile` or the global/system `core.ignorecase` (only the repository's), and ignores POSIX `[:alpha:]` classes.
 * Events carry no ordering guarantee between different services.
 * The Windows recycle bin and macOS trash do not write "put back" metadata.
 
