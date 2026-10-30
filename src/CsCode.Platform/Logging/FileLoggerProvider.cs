@@ -26,6 +26,10 @@ public sealed class FileLoggerOptions
 /// (<see cref="DroppedCount"/>) and reported in the log as a warning line.</item>
 /// <item>Thread-safe; each line carries a UTC timestamp, level and category; exceptions follow on indented lines.</item>
 /// <item>Disposing drains the queue and closes the file. <see cref="FlushAsync"/> completes when everything logged so far is on disk.</item>
+/// <item><b>Several processes share the file</b> (background mode runs one CsCode process per session, all logging here). Each batch is
+/// written under an exclusive lock on <c>.{BaseName}.lock</c> beside it, into the file opened for that batch: a stream kept open would
+/// write at its own idea of the end and overwrite the other processes' lines, and would follow the file into <c>cscode.1.log</c> when
+/// another process rotates it. Batches are rare (a log line is an event), so the open per batch costs nothing measurable.</item>
 /// </list>
 /// </summary>
 public sealed class FileLoggerProvider : ILoggerProvider
@@ -48,6 +52,9 @@ public sealed class FileLoggerProvider : ILoggerProvider
     private FileStream? _file;
     private long _fileSize;
 
+    /// <summary>How long a batch waits for another process's batch before writing without the lock (a stuck holder must not stop logging).</summary>
+    internal static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(1);
+
     public FileLoggerProvider(IAppPaths paths, FileLoggerOptions? options = null, TimeProvider? clock = null)
     {
         _options = options ?? new FileLoggerOptions();
@@ -59,6 +66,8 @@ public sealed class FileLoggerProvider : ILoggerProvider
     }
 
     public string LogFilePath => Path.Combine(_dir, _options.BaseName + ".log");
+
+    private string LockFilePath => Path.Combine(_dir, "." + _options.BaseName + ".lock");
 
     /// <summary>Entries discarded because the writer could not keep up.</summary>
     public long DroppedCount => Interlocked.Read(ref _dropped);
@@ -136,8 +145,10 @@ public sealed class FileLoggerProvider : ILoggerProvider
     private void Write(List<Entry> batch)
     {
         List<TaskCompletionSource>? markers = null;
+        FileStream? gate = null;
         try
         {
+            gate = AcquireLock();
             var dropped = Interlocked.Read(ref _dropped);
             if (dropped > _droppedReported)
             {
@@ -154,17 +165,39 @@ public sealed class FileLoggerProvider : ILoggerProvider
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Logging must never take the app down. Drop the rest of this batch; the next one retries opening the file.
-            CloseFile();
+            // Logging must never take the app down. Drop the rest of this batch; the next one opens the file again.
         }
         catch (Exception)
         {
             // Anything else is a bug in a formatter or the file system layer: an unhandled exception on this thread would terminate the
             // whole process, and there is nowhere left to report it. Swallow and keep serving later entries.
-            CloseFile();
+        }
+        finally
+        {
+            CloseFile(); // before the lock goes: the next holder must find every byte of this batch in the file
+            gate?.Dispose();
         }
         // Flush requests are completed no matter what happened above, or FlushAsync callers would hang.
         if (markers is not null) foreach (var m in markers) m.TrySetResult();
+    }
+
+    /// <summary>
+    /// The cross-process lock for one batch: the lock file opened with <see cref="FileShare.None"/> (an exclusive <c>flock</c> on Unix, a
+    /// sharing lock on Windows). Null when the directory cannot hold it or another process keeps it past <see cref="LockTimeout"/>: the batch
+    /// is then written without it, as logging must go on.
+    /// </summary>
+    private FileStream? AcquireLock()
+    {
+        try { System.IO.Directory.CreateDirectory(_dir); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        var deadline = Environment.TickCount64 + (long)LockTimeout.TotalMilliseconds;
+        while (true)
+        {
+            try { return new FileStream(LockFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, bufferSize: 1); }
+            catch (UnauthorizedAccessException) { return null; }
+            catch (IOException) when (Environment.TickCount64 < deadline) { Thread.Sleep(5); } // held by another process's batch
+            catch (IOException) { return null; }
+        }
     }
 
     private readonly StringBuilder _line = new();

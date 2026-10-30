@@ -124,7 +124,7 @@ public class FileLoggerTests : IDisposable
         var logger = provider.CreateLogger("one");
         for (var i = 0; i < 100; i++) logger.LogInformation("line {I:D3} xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", i);
         await provider.FlushAsync();
-        Assert.Equal(["cscode.log"], Directory.GetFiles(_dir.Path).Select(f => Path.GetFileName(f)!).ToArray());
+        Assert.Equal(["cscode.log"], Directory.GetFiles(_dir.Path, "*.log").Select(f => Path.GetFileName(f)!).ToArray());
         Assert.True(new FileInfo(Log).Length <= 1200);
     }
 
@@ -196,6 +196,51 @@ public class FileLoggerTests : IDisposable
             var mine = lines.Where(l => l.Contains($": t{t}-")).Select(l => int.Parse(l[^4..])).ToArray();
             Assert.Equal(Enumerable.Range(0, 2000), mine);
         }
+    }
+
+    // ---- several processes ---------------------------------------------------------------------------------------------------------
+
+    // Background mode runs one CsCode process per session, all logging to the same file. Two providers on one directory stand in for
+    // two processes: each opens its own file handle (and takes its own lock), exactly as separate processes do.
+    [Fact]
+    public async Task Two_processes_logging_to_the_same_file_never_overwrite_each_others_lines()
+    {
+        using var a = Create(o => o.QueueCapacity = 100_000);
+        using var b = Create(o => o.QueueCapacity = 100_000);
+        var tasks = new[] { (a, "A"), (b, "B") }.SelectMany(p => Enumerable.Range(0, 4).Select(t => Task.Run(() =>
+        {
+            var logger = p.Item1.CreateLogger(p.Item2);
+            for (var i = 0; i < 1000; i++) logger.LogInformation("t{T}-{I:D4}", t, i);
+        }, Ct))).ToArray();
+        await Task.WhenAll(tasks);
+        await Task.WhenAll(a.FlushAsync(), b.FlushAsync());
+
+        var lines = File.ReadAllLines(Log);
+        Assert.All(lines, l => Assert.Matches(new Regex(@"^\d{4}-\S+ \[INF\] [AB]: t\d-\d{4}$"), l));
+        Assert.Equal(8000, lines.Distinct().Count());
+        Assert.Equal(8000, lines.Length);
+    }
+
+    [Fact]
+    public async Task Rotation_by_one_process_never_strands_another_one_writing_past_the_cap()
+    {
+        using var a = Create(o => { o.MaxFileBytes = 2000; o.MaxFiles = 3; });
+        using var b = Create(o => { o.MaxFileBytes = 2000; o.MaxFiles = 3; });
+        var la = a.CreateLogger("A");
+        var lb = b.CreateLogger("B");
+        for (var i = 0; i < 200; i++)
+        {
+            la.LogInformation("entry {I:D4} with some padding to make the line longer", i);
+            await a.FlushAsync();
+            lb.LogInformation("entry {I:D4} with some padding to make the line longer", i);
+            await b.FlushAsync();
+        }
+
+        var files = Directory.GetFiles(_dir.Path, "*.log").Select(f => Path.GetFileName(f)!).Order().ToArray();
+        Assert.Equal(["cscode.1.log", "cscode.2.log", "cscode.log"], files);
+        foreach (var f in files) Assert.True(new FileInfo(Path.Combine(_dir.Path, f)).Length <= 2000 + 200, $"{f} grew past the cap");
+        var current = File.ReadAllText(Log);
+        Assert.Contains("B: entry 0199", current);
     }
 
     [Fact]
