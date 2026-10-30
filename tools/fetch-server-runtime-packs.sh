@@ -2,8 +2,9 @@
 # Restores (downloads, when they are not in the NuGet cache yet) the .NET runtime packs the self-contained cscode-server bundles need for the
 # five supported runtime ids, and checks every package against its pinned digest (docs/REMOTE.md, "Server bundles").
 #
-#   Microsoft.NETCore.App.Runtime.<rid> and Microsoft.NETCore.App.Host.<rid>, version 10.0.12 (the runtime of SDK 10.0.401),
-#   for linux-arm64, osx-x64, osx-arm64, win-x64 (linux-x64's come with the normal build).
+#   Microsoft.NETCore.App.Runtime.<rid> and Microsoft.NETCore.App.Host.<rid>, version 10.0.12 (the runtime of SDK 10.0.401), for linux-x64,
+#   linux-arm64, osx-x64, osx-arm64 and win-x64, and the targeting pack Microsoft.NETCore.App.Ref. tools/publish-server.sh takes every pack from
+#   the NuGet cache, never from the SDK's own packs folder (a distribution may patch those: Nix's give the apphost a /nix/store loader).
 #
 # Source: nuget.org only (nuget.config), through `dotnet restore` into the normal NuGet cache; the SDK verifies nuget.org's repository
 # signature on restore. The pinned values below are nuget.org's own published package hashes (catalog "packageHash", SHA-512, base64) and
@@ -18,6 +19,9 @@ cache=${NUGET_PACKAGES:-$HOME/.nuget/packages}
 
 # id | size | sha512 (base64, nuget.org catalog) | sha256 (hex, reference)
 pins=(
+  "microsoft.netcore.app.runtime.linux-x64|40083503|FWJ8ixsfc+snzowYyAUlRGHehPjH9xtmLg0owWDV1Ju9dUeZf+OKuBagE+E/flME5Hhx7rObgcSVTXQak/wvGg==|8869e2fb974bc810ffe40b8fb8e18b7ffb1d1a03e52a094c804668c4d793b1ae"
+  "microsoft.netcore.app.host.linux-x64|5564040|toj0lPRN7oDJe02OyTYDBkRW6mUWRn8LeUQWA7o5Rjnbt+7eJUB8ATlwKubVqDYnuOIyAkQMoDwmDC3gdB1yZg==|b62638d76d67a03e7f1f905f64eba792a4ff1c1ef42875b1ad8f8f8ddea8da87"
+  "microsoft.netcore.app.ref|7188850|uN98mMdrujRLQdIBUdx55aTcdktf24k4RP39uJW+BSR9MctOk0Urpmi+svP2Kj8w7YsSQuBregxTsREl/Gm6KA==|bf6e0a1fa7b5ce6a9bbfb7191d2c3151c2d6f812eafabee833fd000c1293b872"
   "microsoft.netcore.app.runtime.linux-arm64|37570581|wi7jZfGEVTuajiD5Rx/RL5sGRGcHn5d6UU6o/H6IhexDHlVpaPGt5R6JicIcEEietKAYEatuMMzsSnFI26DIbg==|7268839dca1ec677d4c9908b4e52395d4c003c6989550d0b8e965923a4a70036"
   "microsoft.netcore.app.runtime.osx-x64|39034152|iPpHFMcrH8KdkNomgTAX/T3SoBBTWb9iWVIFhHqFfU4lwXo67QK0JbMA9kG53i1VEYMrdbhQwRzoHyAKF4voBg==|ab5c57042afdbadc29d8ddbf7753de2ae9abd983e971da8cf97a2d246ea8f72b"
   "microsoft.netcore.app.runtime.osx-arm64|36679189|8rDt9QoxwXsA6a0tVl9b4fD5my0EZtXvJndCEFESf/H5hSlqvi26RBwfnvyiz3b8wS2pdP8G6H7xqdRJbSVkwg==|2f0e72fdf79ead91d0e1ad4960ea3a9bdeba1b7cb08467e3ead0a427d1fd2e08"
@@ -28,9 +32,13 @@ pins=(
   "microsoft.netcore.app.host.win-x64|5790931|M8J2D1k24eswYJ/DaJdHYbwzHrcg+gWTv5L58FDG2R1n9nOiJ4MWCrhMFtZzbowCwQBmztbAbM7tN49cuqeFiA==|1fbc2fcae33182f41955db3391ecf8a1b4aa047429852651d419b6b16eb4a523"
 )
 
-for rid in linux-arm64 osx-x64 osx-arm64 win-x64; do
+empty=$(mktemp -d "${TMPDIR:-/tmp}/cscode-no-packs.XXXXXX")
+trap 'rm -rf "$empty"' EXIT
+for rid in linux-x64 linux-arm64 osx-x64 osx-arm64 win-x64; do
   echo "Restoring the $rid runtime packs…"
-  dotnet restore "$repo/src/CsCode.Server/CsCode.Server.csproj" --nologo -v:q -r "$rid" -p:SelfContained=true
+  # As publish-server.sh does: packs from NuGet only (an empty pack root), so the cache gets exactly what the bundles are built from.
+  dotnet restore "$repo/src/CsCode.Server/CsCode.Server.csproj" --nologo -v:q -r "$rid" -p:SelfContained=true \
+    -p:NetCoreTargetingPackRoot="$empty" -p:AllowMissingPrunePackageData=true
 done
 
 status=0
