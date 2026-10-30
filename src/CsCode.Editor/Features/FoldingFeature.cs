@@ -229,6 +229,7 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
     {
         _v = view;
         _manager = FoldingManager.Install(view.TextArea);
+        Margin = ReplaceMargin(view.TextArea, _manager);
         _d.Add(view.Document.Changed.Subscribe(_ => Schedule()));
         _d.Add(view.Services.Features.ProvidersChanged.Subscribe(t =>
         {
@@ -242,6 +243,42 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
         view.Controller.FoldRestorer = RestoreFolds;
         ApplyBrushes();
         Schedule(immediate: true);
+    }
+
+    /// <summary>The +/- margin (ours, see <see cref="DetachingFoldingMargin"/>).</summary>
+    internal FoldingMargin Margin { get; }
+
+    /// <summary>Puts a <see cref="DetachingFoldingMargin"/> where the installation put AvaloniaEdit's own margin (which is then unused).</summary>
+    private static FoldingMargin ReplaceMargin(AvaloniaEdit.Editing.TextArea area, FoldingManager manager)
+    {
+        var margin = new DetachingFoldingMargin { FoldingManager = manager };
+        var installed = area.LeftMargins.OfType<FoldingMargin>().FirstOrDefault(m => ReferenceEquals(m.FoldingManager, manager));
+        if (installed is null) area.LeftMargins.Add(margin);
+        else
+        {
+            var index = area.LeftMargins.IndexOf(installed);
+            area.LeftMargins[index] = margin;
+            installed.FoldingManager = null;
+        }
+        return margin;
+    }
+
+    /// <summary>
+    /// AvaloniaEdit's folding margin, minus a leak (T36, docs/MEMORY.md §12 item 8). On every change of the visual lines (each scroll step) the
+    /// margin makes a marker control per visible fold and takes the previous ones out of its visual children, but they keep the margin as their
+    /// logical parent, which makes it their property-inheritance parent too: the margin's inheritance children list held every marker it ever
+    /// made, and each marker its visual line (drawing visuals, text lines, glyph runs), so scrolling a big file grew the heap by megabytes per
+    /// pass until the tab closed. The markers being replaced are detached from the logical tree first; everything else is AvaloniaEdit's.
+    /// </summary>
+    internal sealed class DetachingFoldingMargin : FoldingMargin
+    {
+        protected override void OnTextViewVisualLinesChanged()
+        {
+            foreach (var child in VisualChildren)
+                if (child is Avalonia.Controls.ISetLogicalParent marker && ReferenceEquals(((Avalonia.LogicalTree.ILogical)child).LogicalParent, this))
+                    marker.SetParent(null);
+            base.OnTextViewVisualLinesChanged();
+        }
     }
 
     /// <summary>Foldable regions currently installed (tests, diagnostics).</summary>
@@ -555,5 +592,7 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
         _v.Controller.FoldedLinesProvider = null;
         _v.Controller.FoldRestorer = null;
         FoldingManager.Uninstall(_manager);
+        _v.TextArea.LeftMargins.Remove(Margin); // ours, not the one the installation knows
+        Margin.FoldingManager = null;
     }
 }
