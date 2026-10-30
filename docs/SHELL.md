@@ -341,10 +341,13 @@ window (background mode hides the main window instead of closing it), and when t
 after the layout was saved. Reset Window Layout docks everything. Not done: dragging a tab out of the window to float it relies on Dock's own drag
 (not tested), and a floating window holds either tools or documents (Dock gives a floating root one kind of dock), never both.
 
-**Layout.** `LayoutPersistence`: tool placement, visibility, splitter proportions, open files with pin/preview, active file, floating windows (their
+**Layout.** `LayoutPersistence`: tool placement, visibility, Auto Hide (`ToolLayout.AutoHide`: an auto-hidden tool is on its well's edge strip again after a
+restart, as in Visual Studio; it used to be saved as hidden), splitter proportions, open files with pin/preview, active file, floating windows (their
 place and the tools and documents in them, and where hidden floating tools float again: `LayoutSnapshot.Floating` / `FloatingHidden`, still
 version 1; a background session restoring into a hidden window floats them when the window is shown); versioned JSON, workspace scope first then global default,
-tolerant of corrupt/future data; saved (debounced) on change and on exit; `View > Appearance > Reset Window Layout`. There is no left tool well unless a tool window asks for one.
+tolerant of corrupt/future data; saved (debounced) on change and on exit. On exit it is saved once, before any tab closes (`ShellController.BeginClose`), and no
+debounced save runs while the tabs close, also not while a Save prompt waits or when the user closes again meanwhile (each closed tab used to schedule
+one that kept only the tabs not closed yet); a cancelled prompt saves what is still open. `View > Appearance > Reset Window Layout`. There is no left tool well unless a tool window asks for one.
 The default (and reset) layout shows exactly `ShellController.DefaultLayoutTools`: Explorer (right), Output and Error List (bottom). Every other tool window, whichever module contributes it
 (Find Results, Find in Files, Modules...), starts hidden unless its `AutoShowWhen` holds, and a tool that a saved layout does not mention (its module was added later) gets that default too.
 `ToolWindowLocation.Document` windows (Settings, Keyboard Shortcuts) never enter a tool well: they open on demand as singleton document tabs (through `IViewActivator`) and are not restored at startup.

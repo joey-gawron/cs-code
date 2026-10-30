@@ -196,6 +196,37 @@ public class LayoutPersistenceTests
     }
 
     [Fact]
+    public async Task An_auto_hidden_tool_window_is_auto_hidden_again_after_a_restart()
+    {
+        using var rig = new Rig();
+        var errors = rig.Tools.Get("errorlist")!;
+        rig.Tools.AutoHide(errors); // the tool menu's Auto Hide
+        Assert.True(rig.Tools.IsAutoHidden(errors));
+        Assert.True(rig.Tools.IsVisible("errorlist"));
+
+        var snapshot = LayoutSerializer.Deserialize(LayoutSerializer.Serialize(rig.Layout.Capture()))!;
+        var saved = snapshot.Tools.Single(t => t.Id == "errorlist");
+        Assert.True(saved.Visible); // it used to be saved as hidden, and was gone after a restart
+        Assert.True(saved.AutoHide);
+        Assert.Equal("bottom", saved.Dock);
+        Assert.False(snapshot.Tools.Single(t => t.Id == "output").AutoHide);
+
+        using var second = new Rig();
+        await second.Layout.ApplyAsync(snapshot);
+        var restored = second.Tools.Get("errorlist")!;
+        Assert.True(second.Tools.IsAutoHidden(restored));
+        Assert.True(second.Tools.IsVisible("errorlist"));
+        Assert.False(second.Tools.IsAutoHidden(second.Tools.Get("output")!));
+        Assert.DoesNotContain(restored, second.Factory.BottomTools.VisibleDockables!);
+
+        // A layout without the flag (older CsCode) docks it; Reset Window Layout docks it too.
+        Assert.False(LayoutSerializer.Deserialize("""{"version":1,"tools":[{"id":"errorlist","dock":"bottom","visible":true,"order":0}],"leftProportion":0.2,"rightProportion":0.2,"bottomProportion":0.2,"documents":[],"activeDocument":null}""")!.Tools[0].AutoHide);
+        await second.Layout.ResetAsync();
+        Assert.False(second.Tools.IsAutoHidden(restored));
+        Assert.Contains(restored, second.Factory.BottomTools.VisibleDockables!);
+    }
+
+    [Fact]
     public async Task Moving_a_tool_to_another_well_is_persisted()
     {
         using var rig = new Rig();

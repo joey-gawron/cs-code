@@ -502,7 +502,8 @@ public sealed class DocumentWell : IDisposable
             if (focused is null or TopLevel || InViewOf(takeFrom, focused)) controller.Focus();
             return;
         }
-        if (attempt < 20 && Dispatcher.UIThread.CheckAccess()) DispatcherTimer.RunOnce(() => FocusWhenShown(next, attempt + 1, takeFrom), TimeSpan.FromMilliseconds(25));
+        // (a well without the shell's dispatcher, in unit tests, has no window to wait for)
+        if (attempt < 20 && _ui?.CheckAccess() == true) DispatcherTimer.RunOnce(() => FocusWhenShown(next, attempt + 1, takeFrom), TimeSpan.FromMilliseconds(25));
     }
 
     private static bool InViewOf(ShellDocument? tab, IInputElement focused) =>
