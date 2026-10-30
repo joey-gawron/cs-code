@@ -99,8 +99,8 @@ Internal switches (how the launcher starts processes; not part of the interface)
   current-user-only pipe ACL (`PipeOptions.CurrentUserOnly`; compiled, not tested here). No network listener, ever.
 * **Framing**: 4-byte little-endian length + UTF-8 JSON (≤ 4 MB), hand-written codec (`IpcCodec`, so a fresh launcher process does not build
   serializer metadata). One request → one reply; a connection may carry several.
-* **Verbs**: `hello` (pid, session, state `starting|spare|shown|hidden|quitting`, last shown, debugging, working set, `needsPrompt` —
-  answered without the UI thread), `show {paths, wait, remotes}`, `hide`, `claim {session, hidden, unnamed}`, `listSessions`,
+* **Verbs**: `hello` (pid, session, state `starting|spare|shown|hidden|quitting`, last shown, debugging, working set, `needsPrompt`, and while shown
+  `windowX`/`windowY`, its window's top-left corner — answered without the UI thread), `show {paths, wait, remotes}`, `hide`, `claim {session, hidden, unnamed}`, `listSessions`,
   `quit {force, evict}`, `focusFile {paths}`. A process whose quit is certain says `quitting` in hello from then on (also after save prompts,
   which show the window) and answers `show`/`focusFile` with the `quitting` error; one whose quit is still writing makes them wait for the
   outcome. The message format did not change with the lock move (new fields are optional), so the protocol version is still 1. Test-only
@@ -127,6 +127,13 @@ in tab order (uri, group, order, pinned, preview, language of untitled buffers, 
 and the id of the hot-exit backup), the active editor, the shell's dock layout snapshot (tool windows, splitters, document groups), window
 bounds and state (normal/maximized/fullscreen), and `wasResident`. Breakpoints and watches (Dap), search/palette history and Vim registers are
 **not** copied: their modules already persist them per workspace/application, so reopening the session's folder brings them back.
+
+**Where a window opens** (`WindowPlacement`): at its saved spot while a screen is still there, as long as no other shown CsCode window is at that
+spot (within 8 px; hello reports where each shown window is, asked while the session restores and given up after 300 ms). With no saved spot, or
+another window on it, it opens 30 px down and right of the most recently shown window (past any window already there), clamped to that screen's
+working area; at the area's far corner the cascade starts over at its top-left. Alone, it keeps its saved spot or the window manager's. Each session
+is a process of its own, so before this a second window opened exactly on top of the first (both placed alike, or both restoring one saved spot).
+The same on Linux and macOS (positions are Avalonia's screen pixels on both); `WindowPlacementTests`.
 
 * **Atomic writes** (`AtomicFile`): temp file + flush + rename; the previous version is kept as `.bak`. A torn or corrupt file falls back to
   `.bak` (the user is told); both unreadable → the session starts empty and the damaged file is kept as `.corrupt`. A file written by a **newer** CsCode is never

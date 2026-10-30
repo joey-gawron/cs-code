@@ -69,6 +69,17 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     public bool IsUnclaimedSpare { get { lock (_gate) return Options.Spare && !_claimed; } }
     public DateTimeOffset? LastShown => Interlocked.Read(ref _lastShownMs) is var ms and > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null;
 
+    /// <summary>
+    /// Answers hello's window position while the window is shown (set by the controller on the UI thread as the window shows and moves; read by
+    /// hello on a pool thread, hence one packed value).
+    /// </summary>
+    internal (int X, int Y)? WindowPosition
+    {
+        get => Interlocked.Read(ref _windowPosition) is var v and not long.MinValue ? ((int)(v >> 32), (int)v) : null;
+        set => Interlocked.Exchange(ref _windowPosition, value is var (x, y) ? ((long)x << 32) | (uint)y : long.MinValue);
+    }
+    private long _windowPosition = long.MinValue;
+
     /// <summary>Answers hello's "debugging" (set by the controller once the services exist).</summary>
     internal Func<bool>? IsDebugging { get; set; }
 
@@ -303,11 +314,13 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         switch (request.Type)
         {
             case IpcVerbs.Hello:
+                var window = _state == ProcessStates.Shown ? WindowPosition : null;
                 return new IpcMessage
                 {
                     Type = IpcVerbs.Hello, Ok = true, ProtocolVersion = IpcMessage.ProtocolVersionCurrent, Pid = Environment.ProcessId, Session = SessionName,
                     State = _state, LastShownUnixMs = LastShown?.ToUnixTimeMilliseconds(), Debugging = SafeIsDebugging(), WorkingSetBytes = Environment.WorkingSet,
                     NeedsPrompt = _needsPrompt ? true : null,
+                    WindowX = window?.X, WindowY = window?.Y,
                 };
             case IpcVerbs.ListSessions:
                 var list = await Lane.RunAsync(Store.List).ConfigureAwait(false);

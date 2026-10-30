@@ -45,7 +45,9 @@ internal sealed class InProcessSession : IAsyncDisposable
 
     /// <param name="settings">Extra user settings (JSON members, comma-separated).</param>
     /// <param name="seed">Writes the session's saved state before the process starts.</param>
-    public static async Task<InProcessSession> StartAsync(string session, string? settings = null, Action<SessionStore>? seed = null, Action<IServiceCollection>? configure = null)
+    /// <param name="runtimeReady">Called with the runtime directory before the process starts (other "processes" answering there).</param>
+    public static async Task<InProcessSession> StartAsync(string session, string? settings = null, Action<SessionStore>? seed = null, Action<IServiceCollection>? configure = null,
+        Action<RuntimeDirectory>? runtimeReady = null)
     {
         if (OperatingSystem.IsWindows()) Assert.Skip("Unix sockets");
         var env = new RealAppHome();
@@ -53,6 +55,7 @@ internal sealed class InProcessSession : IAsyncDisposable
         var runtime = RuntimeDirectory.Resolve(name => name == "CSCODE_HOME" ? env.Home.Path : null);
         var store = new SessionStore(env.Home.Combine("data"));
         seed?.Invoke(store);
+        runtimeReady?.Invoke(runtime);
         var host = BackgroundHost.Start(CommandLineOptions.Parse(["--host", "--session", session, "--headless-test"]), new CrashHandler(env.CrashLogs.Path), runtime, store, out var refused);
         Assert.Null(refused);
         Assert.NotNull(host);

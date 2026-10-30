@@ -52,6 +52,12 @@ public sealed record IpcMessage
     /// backup limit, or a session this version may not write). Such a session is never evicted.
     /// </summary>
     public bool? NeedsPrompt { get; init; }
+    /// <summary>
+    /// Hello: where the window of a shown session is (its top-left corner in screen pixels), so a window opening next to it does not open exactly on
+    /// top of it (<c>WindowPlacement</c> in the App).
+    /// </summary>
+    public int? WindowX { get; init; }
+    public int? WindowY { get; init; }
     /// <summary>Quit: an eviction (more than <c>maxResidentSessions</c>); the session refuses it rather than ask the user anything.</summary>
     public bool? Evict { get; init; }
     public IReadOnlyList<IpcPath>? Paths { get; init; }

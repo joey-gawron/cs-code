@@ -16,6 +16,9 @@ public sealed record ResidentProcess(
     /// <summary>Quitting it now would ask the user something (hello's <c>needsPrompt</c>): never evicted.</summary>
     public bool NeedsPrompt { get; init; }
 
+    /// <summary>Where its window is (top-left, screen pixels) while it is shown; null for a hidden window, a spare or an older CsCode.</summary>
+    public (int X, int Y)? WindowPosition { get; init; }
+
     public bool IsSpare => Responsive && State == ProcessStates.Spare;
     public bool OwnsSession(string name) => Responsive && string.Equals(Session, name, StringComparison.Ordinal) && State != ProcessStates.Quitting;
 
@@ -55,6 +58,7 @@ public static class ResidentDiscovery
                 hello.LastShownUnixMs is { } ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null, hello.Debugging ?? false, hello.WorkingSetBytes, Responsive: true)
             {
                 NeedsPrompt = hello.NeedsPrompt ?? false,
+                WindowPosition = hello.WindowX is { } x && hello.WindowY is { } y ? (x, y) : null,
             };
         }
         catch (IpcException ex) when (ex.Failure is IpcFailure.NoEndpoint) { return null; }
