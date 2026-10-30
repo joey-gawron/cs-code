@@ -9,8 +9,8 @@
 #   --uninstall remove whichever of the two is installed
 #   --dry-run   print what would be written/run, change nothing
 #
-# `cscode --background` only starts the warm spare (and, with "cscode.background.restoreOnLogin": true, the sessions that were running
-# before, hidden). It never opens a window.
+# `cscode --background` starts the warm spare when "cscode.background.warmSpare" is true (it is off by default) and, with
+# "cscode.background.restoreOnLogin": true, the sessions that were running before, hidden. With both off it starts nothing. It never opens a window.
 set -euo pipefail
 
 mode=""

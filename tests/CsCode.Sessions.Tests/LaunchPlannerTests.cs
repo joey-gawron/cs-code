@@ -9,6 +9,8 @@ public class LaunchPlannerTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 10, 29, 12, 0, 0, TimeSpan.Zero);
     private static readonly LaunchSettings Defaults = new();
+    /// <summary>The warm spare is off by default (docs/briefs/wave-3.md); the spare rows of the table turn it on.</summary>
+    private static readonly LaunchSettings WithSpare = new() { WarmSpare = true };
 
     private static ResidentProcess Proc(int pid, string? session, string state, int shownMinutesAgo = 0, bool debugging = false, bool responsive = true) =>
         new(pid, $"/run/{pid}.sock", session, state, session is null ? null : T0.AddMinutes(-shownMinutesAgo), debugging, 100_000_000, responsive);
@@ -25,23 +27,35 @@ public class LaunchPlannerTests
     [Fact]
     public void Resident_session_is_shown()
     {
-        var plan = LaunchPlanner.Plan(Open("work"), World([Proc(10, "work", ProcessStates.Hidden), Proc(11, null, ProcessStates.Spare)]), Defaults);
+        var plan = LaunchPlanner.Plan(Open("work"), World([Proc(10, "work", ProcessStates.Hidden), Proc(11, null, ProcessStates.Spare)]), WithSpare);
         Assert.Equal((LaunchAction.Show, 10, "work", false), (plan.Action, plan.Pid, plan.Session, plan.EnsureSpare));
     }
 
     [Fact]
     public void Non_resident_session_claims_the_warm_spare_and_a_new_spare_is_started()
     {
-        var plan = LaunchPlanner.Plan(Open("work"), World([Proc(11, null, ProcessStates.Spare)], [Saved("work")]), Defaults);
+        var plan = LaunchPlanner.Plan(Open("work"), World([Proc(11, null, ProcessStates.Spare)], [Saved("work")]), WithSpare);
         Assert.Equal((LaunchAction.Claim, 11, "work", true, false), (plan.Action, plan.Pid, plan.Session, plan.EnsureSpare, plan.NewUnnamed));
+    }
+
+    [Fact]
+    public void By_default_no_spare_is_started_but_one_that_runs_is_still_claimed()
+    {
+        Assert.False(Defaults.WarmSpare);
+        Assert.False(LaunchPlanner.Plan(Open("work"), World(), Defaults).EnsureSpare);
+        Assert.False(LaunchPlanner.Plan(Open("work"), World([Proc(10, "work", ProcessStates.Hidden)]), Defaults).EnsureSpare);
+        Assert.False(LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Background), World(), Defaults).EnsureSpare);
+        // A spare left from when the setting was on is used (and not replaced).
+        var claim = LaunchPlanner.Plan(Open("work"), World([Proc(11, null, ProcessStates.Spare)]), Defaults);
+        Assert.Equal((LaunchAction.Claim, 11, false), (claim.Action, claim.Pid, claim.EnsureSpare));
     }
 
     [Fact]
     public void Cold_start_when_there_is_no_spare_also_starts_one()
     {
-        var plan = LaunchPlanner.Plan(Open("work"), World(), Defaults);
+        var plan = LaunchPlanner.Plan(Open("work"), World(), WithSpare);
         Assert.Equal((LaunchAction.Start, "work", true), (plan.Action, plan.Session, plan.EnsureSpare));
-        var noSpare = LaunchPlanner.Plan(Open("work"), World(), Defaults with { WarmSpare = false });
+        var noSpare = LaunchPlanner.Plan(Open("work"), World(), WithSpare with { WarmSpare = false });
         Assert.False(noSpare.EnsureSpare);
     }
 
@@ -49,11 +63,11 @@ public class LaunchPlannerTests
     public void A_spare_that_is_still_starting_is_not_claimed_and_not_duplicated()
     {
         var starting = Proc(11, null, ProcessStates.Starting);
-        var start = LaunchPlanner.Plan(Open("work"), World([starting]), Defaults);
+        var start = LaunchPlanner.Plan(Open("work"), World([starting]), WithSpare);
         Assert.Equal((LaunchAction.Start, false), (start.Action, start.EnsureSpare));
-        var show = LaunchPlanner.Plan(Open("work"), World([starting, Proc(10, "work", ProcessStates.Hidden)]), Defaults);
+        var show = LaunchPlanner.Plan(Open("work"), World([starting, Proc(10, "work", ProcessStates.Hidden)]), WithSpare);
         Assert.Equal((LaunchAction.Show, false), (show.Action, show.EnsureSpare));
-        Assert.False(LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Background), World([starting]), Defaults).EnsureSpare);
+        Assert.False(LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Background), World([starting]), WithSpare).EnsureSpare);
     }
 
     [Fact]
@@ -194,14 +208,15 @@ public class LaunchPlannerTests
         var saved = new[] { Saved("a", 5, wasResident: true), Saved("b", 1, wasResident: true), Saved("c", 2), Saved("d", 9, wasResident: true), Saved("e", 3, wasResident: true) };
         var world = World([Proc(1, "e", ProcessStates.Hidden)], saved);
 
-        var plain = LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Background), world, Defaults);
+        var plain = LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Background), world, WithSpare);
         Assert.True(plain.EnsureSpare);
         Assert.Empty(plain.StartHidden);
 
         var restore = LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Background), world, Defaults with { RestoreOnLogin = true, MaxResidentSessions = 3 });
         Assert.Equal(["b", "a"], restore.StartHidden); // most recent first, e already resident, capped at 3 resident
+        Assert.False(restore.EnsureSpare); // the spare is off by default
 
-        var withSpare = LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Background), World([Proc(2, null, ProcessStates.Spare)]), Defaults);
+        var withSpare = LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Background), World([Proc(2, null, ProcessStates.Spare)]), WithSpare);
         Assert.False(withSpare.EnsureSpare);
     }
 }

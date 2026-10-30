@@ -206,19 +206,22 @@ public class LaunchSettingsTests
             // user settings
             {
               "cscode.sessions.default": "work",
-              "cscode.background.warmSpare": false,
+              "cscode.background.warmSpare": true,
               "cscode": { "background": { "maxResidentSessions": 5, "restoreOnLogin": true } },
             }
             """);
         var s = LaunchSettings.Read(dir.Path);
-        Assert.Equal(("work", false, 5, true), (s.DefaultSession, s.WarmSpare, s.MaxResidentSessions, s.RestoreOnLogin));
+        Assert.Equal(("work", true, 5, true), (s.DefaultSession, s.WarmSpare, s.MaxResidentSessions, s.RestoreOnLogin));
     }
 
     [Fact]
     public void Missing_or_broken_settings_give_the_defaults()
     {
         using var dir = new TempDirectory("cscode-ls-");
-        Assert.Equal(new LaunchSettings(), LaunchSettings.Read(dir.Path));
+        // The defaults (docs/SESSIONS.md "Settings"): the warm spare is off (the user's decision, docs/briefs/wave-3.md).
+        var d = new LaunchSettings();
+        Assert.Equal(("last", false, 3, false), (d.DefaultSession, d.WarmSpare, d.MaxResidentSessions, d.RestoreOnLogin));
+        Assert.Equal(d, LaunchSettings.Read(dir.Path));
         dir.WriteFile("settings.json", "{ not json");
         Assert.Equal(new LaunchSettings(), LaunchSettings.Read(dir.Path));
         dir.WriteFile("settings.json", """{ "cscode.background.maxResidentSessions": "three", "cscode.background.warmSpare": 1 }""");

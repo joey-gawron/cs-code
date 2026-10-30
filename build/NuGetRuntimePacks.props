@@ -1,0 +1,25 @@
+<Project>
+
+  <!--
+    Official runtime packs for self-contained builds on a Nix-provided SDK (imported by build/Publish.props and by CsCode.Server.csproj).
+
+    A Nix-provided SDK patches its bundled packs for the Nix store: the apphost's ELF interpreter is /nix/store/...-glibc/lib/ld-linux-x86-64.so.2
+    and the runtime's RUNPATH points into the store. A self-contained app published from them runs only where that store path exists, on Nix's
+    glibc, which does not see the system's libfontconfig/libX11 (why the development build needs tools/nix-dev-env.sh). This resolves the runtime,
+    apphost, targeting, crossgen2 and ILCompiler packs from nuget.org instead: the official, unpatched builds, downloaded by restore into the
+    NuGet cache (pinned and checked by tools/fetch-publish-packs.sh). Only for a build with a runtime identifier (`dotnet publish -r <rid>`);
+    plain builds and tests keep the SDK's packs. -p:CsCodeNuGetRuntimePacks=false turns it off, =true turns it on with any SDK.
+  -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != '' and '$(CsCodeNuGetRuntimePacks)' == '' and $(NetCoreRoot.StartsWith('/nix/store/'))">
+    <CsCodeNuGetRuntimePacks>true</CsCodeNuGetRuntimePacks>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != '' and '$(CsCodeNuGetRuntimePacks)' == 'true'">
+    <!-- Package pruning only reads data files from the targeting packs: the SDK's own (unpatched data) are fine for that. -->
+    <PrunePackageTargetingPackRoots Condition="'$(PrunePackageTargetingPackRoots)' == ''">$(NetCoreTargetingPackRoot)</PrunePackageTargetingPackRoots>
+    <!-- A directory that does not exist: no pack is found locally, so each one becomes a PackageDownload of restore. -->
+    <NetCoreTargetingPackRoot>$(MSBuildThisFileDirectory)no-local-packs</NetCoreTargetingPackRoot>
+    <!-- Only the packs this app uses (not the ASP.NET Core ones a transitive framework reference could need: none does). -->
+    <DisableTransitiveFrameworkReferenceDownloads>true</DisableTransitiveFrameworkReferenceDownloads>
+  </PropertyGroup>
+
+</Project>

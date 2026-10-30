@@ -30,7 +30,7 @@ public static class BackgroundSettings
         new(TrimAfterSeconds, Json(30), "Seconds after a window was hidden until its editor views are released and its memory is trimmed."),
         new(IdleServerTimeoutMinutes, Json(15), "Minutes after a window was hidden until its language servers are stopped (restarted when it is shown again). 0 = never."),
         new(MaxResidentSessions, Json(3), "How many sessions stay resident; beyond it the least recently shown hidden session is saved and its process exits."),
-        new(WarmSpare, Json(true), "Keep one pre-started CsCode process ready, so a session that is not running opens fast."),
+        new(WarmSpare, Json(false), "Keep one pre-started CsCode process ready (about 100-130 MB while idle), so a session that is not running opens faster."),
         new(RestoreOnLogin, Json(false), "With `cscode --background` at login: also restart the sessions that were running before (hidden)."),
         new(DefaultSession, Json("last"), "What `cscode` with no session opens: `last` (the session shown last), `new` (a new window) or a session name."),
         new(MaxBackupMb, Json(200), "Upper bound (MB) of the unsaved-changes backups of one session; documents beyond it are not backed up and ask to be saved on quit."),

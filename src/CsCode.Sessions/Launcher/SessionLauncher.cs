@@ -84,6 +84,9 @@ public sealed class SessionLauncher
                 case LaunchAction.Quit:
                     return new LaunchOutcome(Quit(plan.QuitPids), plan, null, clock.Elapsed, started);
                 case LaunchAction.Background:
+                    // The warm spare is off by default: an autostart entry then starts nothing, and the log (journal) should say why.
+                    if (!_settings.WarmSpare && !_settings.RestoreOnLogin)
+                        _out.WriteLine($"cscode: nothing to start in the background ({LaunchSettings.WarmSpareKey} and {LaunchSettings.RestoreOnLoginKey} are off)");
                     foreach (var name in plan.StartHidden)
                         if (Start(name, seedFrom: null, newUnnamed: false, hidden: true) is { } pid) started.Add(pid);
                     if (plan.EnsureSpare && SpawnSpare() is { } spare) started.Add(spare);

@@ -262,7 +262,12 @@ public sealed partial class SessionWindowController : IDisposable
     {
         await ShowWindowAsync().ConfigureAwait(true);
         var opened = await OpenPathsAsync(targets).ConfigureAwait(true);
-        if (opened.Count > 0) await WaitForPaintAsync().ConfigureAwait(true);
+        if (opened.Count > 0)
+        {
+            SessionTrace.Mark("host: paths opened");
+            await WaitForPaintAsync().ConfigureAwait(true);
+            SessionTrace.Mark("host: painted with the paths");
+        }
         if (wait && opened.Count == 1) await WaitForTabClosedAsync(opened[0], ct).ConfigureAwait(true);
         return IpcMessage.Reply();
     }

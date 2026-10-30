@@ -1,4 +1,5 @@
 using System.Text;
+using CsCode.Sessions.Launcher;
 
 namespace CsCode.App.Background;
 
@@ -34,6 +35,18 @@ public static class AutostartEntry
         var installed = Path.Combine(home, ".local", "bin", "cscode");
         return File.Exists(installed) ? installed : Environment.ProcessPath ?? "cscode";
     }
+
+    /// <summary>
+    /// What <c>cscode --background</c> starts at login with these settings, for the confirmation: the warm spare is off by default, and without it
+    /// (or <c>restoreOnLogin</c>) an autostart entry would start nothing.
+    /// </summary>
+    public static string WhatStartsAtLogin(LaunchSettings settings) => (settings.WarmSpare, settings.RestoreOnLogin) switch
+    {
+        (true, true) => "the warm spare and the sessions that were running, hidden; no window opens",
+        (true, false) => "the warm spare; no window opens",
+        (false, true) => "the sessions that were running, hidden; no window opens",
+        _ => $"nothing yet: turn on {LaunchSettings.WarmSpareKey} (a pre-started process, about 100-130 MB) or {LaunchSettings.RestoreOnLoginKey} first",
+    };
 
     public static string Content(string executable) => new StringBuilder()
         .Append("[Desktop Entry]\n")

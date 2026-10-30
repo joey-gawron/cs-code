@@ -12,6 +12,9 @@
   <!-- GC and runtime defaults chosen by the GC matrix (docs/MEMORY.md section 3) -->
   <Import Project="../../build/MemoryDefaults.props" />
 
+  <!-- How the installed app is published (self-contained, ReadyToRun; only for `dotnet publish -r <rid>`): docs/SESSIONS.md, "Publishing". -->
+  <Import Project="../../build/Publish.props" />
+
   <ItemGroup>
     <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
     <ProjectReference Include="../CsCode.Platform/CsCode.Platform.csproj" />

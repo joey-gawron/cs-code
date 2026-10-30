@@ -12,6 +12,9 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
+  <!-- Self-contained builds on a Nix-provided SDK take the official runtime packs (the SDK's own carry a /nix/store ELF interpreter). -->
+  <Import Project="../../build/NuGetRuntimePacks.props" />
+
   <ItemGroup>
     <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
     <ProjectReference Include="../CsCode.Platform/CsCode.Platform.csproj" />
