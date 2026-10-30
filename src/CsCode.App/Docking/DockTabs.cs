@@ -195,6 +195,12 @@ public sealed class EditorTab : ShellDocument
     /// <summary>The editor's view state (caret, selection, scroll position, folds) captured when the view was dropped by the LRU policy; restored when the view is recreated.</summary>
     public EditorViewState? SavedViewState { get; private set; }
 
+    /// <summary>
+    /// Background sessions: the view state to apply when this tab's view is next created (a restored session's caret, selection, scroll and
+    /// folds). Replaced by the live view's own state whenever the view is dropped.
+    /// </summary>
+    public void SetViewStateForNextView(EditorViewState state) => SavedViewState = state;
+
     /// <summary>Set while a user-confirmed close is in flight so the Dock closing hook lets it through.</summary>
     public bool CloseConfirmed { get; set; }
 

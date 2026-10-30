@@ -7,6 +7,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+    <!-- EXPERIMENTAL tree-sitter engine behind editor.experimental.treeSitter (docs/TREE-SITTER-EVALUATION.md); UI-free, no packages. -->
+    <ProjectReference Include="../CsCode.Editor.TreeSitter/CsCode.Editor.TreeSitter.csproj" />
   </ItemGroup>
 
   <ItemGroup>

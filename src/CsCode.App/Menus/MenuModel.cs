@@ -111,10 +111,14 @@ public sealed class MenuModel : IDisposable
     /// <summary>Last exception thrown by a menu-invoked command (the shell reports it as a notification).</summary>
     public Exception? LastError { get; private set; }
 
+    /// <summary>Runs at the start of every refresh: state that is only computed on demand (the Edit menu's clipboard keys) is brought up to date.</summary>
+    public Action? Refreshing { get; set; }
+
     /// <summary>Recomputes enablement, check state, shortcut labels and dynamic submenus.</summary>
     public void Refresh()
     {
         RefreshCount++;
+        Refreshing?.Invoke();
         foreach (var root in Roots) RefreshItem(root);
     }
 

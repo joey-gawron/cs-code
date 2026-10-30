@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- cscode-server: the headless workspace host (docs/REMOTE.md). Runs next to the files (over ssh, or as a local child process for
+       cscode.languageHost=process) and serves the file system, watcher, search and the language servers over JSON-RPC on stdio.
+       Composes Platform + Lsp; never references Avalonia. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>cscode-server</AssemblyName>
+    <RootNamespace>CsCode.Server</RootNamespace>
+    <!-- A remote host may have no libicu: culture data is not needed by a protocol server. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../CsCode.Platform/CsCode.Platform.csproj" />
+    <ProjectReference Include="../CsCode.Lsp/CsCode.Lsp.csproj" />
+    <ProjectReference Include="../CsCode.Remote/CsCode.Remote.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Remote.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -45,6 +45,8 @@ public sealed class ShellController : IDisposable
     private readonly DisposableStore _disposables = new();
     private readonly TimeProvider _time;
     private ITimer? _saveTimer;
+    private UiStallWatchdog? _watchdog;
+    private Func<UiStallWatchdog>? _startWatchdog;
     private readonly HashSet<string> _autoShown = new(StringComparer.Ordinal);
     private bool _started, _restoring, _disposed;
 
@@ -65,6 +67,8 @@ public sealed class ShellController : IDisposable
     /// <summary>The Vim adapter (null when the composition has no Vim module or no real editor): sees keys before the key bindings.</summary>
     public Vim.VimIntegration? Vim { get; private set; }
     public IShellKeyInterceptor? KeyInterceptor => Vim;
+    public ClipboardRouter Clipboard { get; private set; } = null!;
+    public ShellContextMenus ContextMenus { get; private set; } = null!;
     public ShellDockFactory Factory => _sp.GetRequiredService<ShellDockFactory>();
     public DocumentWell Well => _sp.GetRequiredService<DocumentWell>();
     public ToolWindowManager Tools => _sp.GetRequiredService<ToolWindowManager>();
@@ -129,6 +133,9 @@ public sealed class ShellController : IDisposable
             () => new WelcomeView(commands, workspace, state), () => new KeyboardReferenceView(_sp.GetService<IKeybindingService>(), commands),
             _sp.GetService<ILanguageService>(), _sp.GetService<ShellViewActivator>(), _ui)));
 
+        // Remote editing: Connect to Host / Open Remote Folder / disconnect... commands and the remote indicator in the status bar.
+        if (_sp.GetService<CsCode.Remote.Shell.RemoteShellContributions>() is { } remote) _disposables.Add(remote.Start());
+
         Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window, context: keys);
         _disposables.Add(Keyboard);
 
@@ -142,6 +149,13 @@ public sealed class ShellController : IDisposable
 
         Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs, id => Tools.IsVisible(id));
         _disposables.Add(Menus);
+        // Edit > Cut/Copy/Paste follow keyboard focus; right-click menus (editor, tabs, tool windows) are built from contributions.
+        Clipboard = new ClipboardRouter(commands, keys, well, () => _sp.GetService<WindowHolder>()?.Window);
+        _disposables.Add(Clipboard);
+        Menus.Refreshing = Clipboard.UpdateKeys;
+        ContextMenus = new ShellContextMenus(well, Tools, Factory, new Ui.Menus.MenuServices(commands, keys, _sp.GetService<IKeybindingService>(), _sp.GetService<Core.Contributions.IContributionRegistry>()),
+            window, workspace);
+        _disposables.Add(ContextMenus);
         _disposables.Add(Tools.VisibilityChanged.Subscribe(_ => Menus.ScheduleRefresh()));
 
         StatusItems = new ShellStatusItems(_sp.GetRequiredService<IStatusBarService>(), _ui, nav, _sp.GetRequiredService<NotificationCenter>(), config,
@@ -170,9 +184,13 @@ public sealed class ShellController : IDisposable
         if (stallMs > 0 && _sp.GetService<IOutputService>() is { } outputService)
         {
             var channel = outputService.GetOrCreate("CsCode UI Diagnostics");
-            var dog = new UiStallWatchdog(_ui, channel.AppendLine, stallMs);
-            dog.Start();
-            _disposables.Add(dog);
+            _startWatchdog = () =>
+            {
+                var dog = new UiStallWatchdog(_ui, channel.AppendLine, stallMs);
+                dog.Start();
+                return dog;
+            };
+            _watchdog = _startWatchdog();
         }
 
         // Re-creatable memory held by the design system joins the memory-pressure policy.
@@ -201,6 +219,12 @@ public sealed class ShellController : IDisposable
             }));
     }
 
+    /// <summary>
+    /// Background mode: replaces the layout restore of <see cref="StartDeferredAsync"/> with the session's own (folders, layout, editors with view
+    /// state, hot-exit backups). Set by the session controller before it calls <see cref="StartDeferredAsync"/> on a still hidden window.
+    /// </summary>
+    public Func<Task>? RestoreOverride { get; set; }
+
     /// <summary>Runs after the first frame: theme from settings, layout restore, command-line targets, the Welcome page.</summary>
     public async Task StartDeferredAsync()
     {
@@ -210,8 +234,8 @@ public sealed class ShellController : IDisposable
         _restoring = true;
         try
         {
-            var snapshot = Layout.Load();
-            if (snapshot is not null) await Layout.ApplyAsync(snapshot).ConfigureAwait(true);
+            if (RestoreOverride is { } restore) await restore().ConfigureAwait(true);
+            else if (Layout.Load() is { } snapshot) await Layout.ApplyAsync(snapshot).ConfigureAwait(true);
             else await ResetLayoutAsync().ConfigureAwait(true);
             Tools.HideInitiallyHidden(t => t.AutoShowWhen is not null && !_sp.GetRequiredService<IContextKeyService>().Evaluate(t.AutoShowWhen));
             await OpenCommandLineTargetsAsync().ConfigureAwait(true);
@@ -241,6 +265,8 @@ public sealed class ShellController : IDisposable
         var options = _sp.GetRequiredService<CommandLineOptions>();
         var workspace = _sp.GetService<IWorkspaceService>();
         var nav = _sp.GetRequiredService<INavigationService>();
+        foreach (var remote in options.RemoteTargets) // cscode ssh://[user@]host[:port]/path: connect, then open the folder
+            _ = _sp.GetRequiredService<ICommandService>().ExecuteAsync(CsCode.Remote.Shell.RemoteShellContributions.OpenFolder, remote).AsTask();
         foreach (var t in options.Targets)
         {
             try
@@ -299,9 +325,26 @@ public sealed class ShellController : IDisposable
         Layout.Save();
     }
 
+    /// <summary>
+    /// Background mode: a hidden window must have no periodic work (≈0 % CPU), so the UI stall watchdog, which polls the dispatcher every 20 ms,
+    /// stops while the window is hidden and starts again when it is shown.
+    /// </summary>
+    public void SetHidden(bool hidden)
+    {
+        _ui.AssertUiThread();
+        if (hidden)
+        {
+            _watchdog?.Dispose();
+            _watchdog = null;
+        }
+        else if (_watchdog is null && _startWatchdog is { } start && !_disposed) _watchdog = start();
+    }
+
     public void Dispose()
     {
         _disposed = true;
+        _watchdog?.Dispose();
+        _watchdog = null;
         _saveTimer?.Dispose();
         _disposables.Dispose();
     }

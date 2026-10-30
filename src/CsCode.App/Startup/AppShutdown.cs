@@ -97,6 +97,7 @@ public static class AppShutdown
         (string, object?)[] candidates =
         [
             ("language servers", TryGet<ILanguageServerManager>(services, failures)),
+            ("remote connection", TryGet<CsCode.Core.Remote.IRemoteConnectionManager>(services, failures)),
             ("debug sessions", TryGet<IDebugService>(services, failures)),
             ("breakpoints", TryGet<IBreakpointManager>(services, failures)),
             ("launch configurations", TryGet<IDebugConfigurationService>(services, failures)),

@@ -131,6 +131,13 @@ internal sealed class FormattingFeature : IFormattingFeature, IDisposable
         _ = FormatRangeAsync(new TextRange(_v.Document.PositionAt(start), _v.Document.PositionAt(end)), TimeSpan.FromSeconds(5));
     }
 
+    /// <summary>The editor's own paste (EditorClipboard: AvaloniaEdit's TextPasted is not raised for it): range formatting of the pasted text, as its own undo step.</summary>
+    public void OnPasted(TextRange range)
+    {
+        if (_disposed || !_v.Settings.FormatOnPaste || _v.Document.IsReadOnly || range.IsEmpty) return;
+        _ = FormatRangeAsync(range, TimeSpan.FromSeconds(5));
+    }
+
     public void Dispose()
     {
         if (_disposed) return; // idempotent: a view may be torn down twice (an explicit dispose, then the control's)

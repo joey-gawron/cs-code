@@ -5,16 +5,21 @@ using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using CsCode.Panels.Debug.Infrastructure;
 using CsCode.Panels.Debug.Variables;
+using CsCode.Ui.Menus;
 
 namespace CsCode.Panels.Debug.Views;
 
 /// <summary>
 /// The Locals / Autos / Watch grid: header, virtualised rows, inline editors, context menu and the keyboard model
 /// (↑↓ move, → expand / into the children, ← collapse / to the parent, Enter edit or activate, F2 rename or edit, Delete remove,
-/// Ctrl+C copy the value, Alt+↑/↓ move a watch).
+/// Ctrl+C / Ctrl+Insert copy the value, Alt+↑/↓ move a watch). Edit > Copy copies the selected row's value too (<see cref="IClipboardTarget"/>).
 /// </summary>
-public sealed partial class VariablesTreeView : UserControl
+public sealed partial class VariablesTreeView : UserControl, IClipboardTarget
 {
+    public bool CanCopy => Tree?.SelectedRow is { IsDataRow: true };
+
+    public Task CopyAsync() => Tree is { SelectedRow: { IsDataRow: true } row } tree ? tree.CopyValueAsync(row) : Task.CompletedTask;
+
     public VariablesTreeView()
     {
         InitializeComponent();
@@ -123,7 +128,7 @@ public sealed partial class VariablesTreeView : UserControl
                     e.Handled = true;
                     tree.DeleteRequested?.Invoke(row);
                     break;
-                case Key.C when ctrl:
+                case Key.C or Key.Insert when ClipboardKeys.Classify(e) == ClipboardAction.Copy:
                     e.Handled = true;
                     await tree.CopyValueAsync(row);
                     break;
@@ -211,6 +216,7 @@ public sealed partial class VariablesTreeView : UserControl
             if (row.Kind == VariableRowKind.Variable) AddSync("Edit Value", () => tree.BeginEditValue(row), tree.CanEditValue(row), "Enter");
             if (row.Kind == VariableRowKind.Watch) AddSync("Edit Expression", () => tree.BeginEditExpression(row), gesture: "F2");
             Add("Copy Value", () => tree.CopyValueAsync(row), gesture: "Ctrl+C");
+            Add("Copy Name", () => tree.CopyNameAsync(row));
             Add("Copy Expression", () => tree.CopyExpressionAsync(row));
             if (row.Kind == VariableRowKind.Variable) AddSync("Add Watch", () => tree.AddToWatch(row));
             if (row.CanViewAsNumber)

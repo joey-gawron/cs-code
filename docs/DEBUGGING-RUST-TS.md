@@ -1,13 +1,13 @@
 # Debugging Rust and TypeScript — evaluation and fixes
 
 User request (2026-10-29): *"can you see how well the debugger feature works with rust and typescript"* — the user approved the js-debug download
-and asked to start with it. This document records the evaluation matrix of `docs/briefs/debugger-rust-typescript.md` (MUST 3) with evidence,
+and asked to start with it; Rust followed with GDB (CodeLLDB is not approved). This document records the evaluation matrix of `docs/briefs/debugger-rust-typescript.md` (MUST 3) with evidence,
 what was fixed (each with a regression test that fails without the fix), and what is an adapter limitation.
 
 | Language | Adapter | Status |
 |---|---|---|
 | **TypeScript / JavaScript** | Microsoft **js-debug v1.140.0** (`js-debug-dap`, MIT), built in | **evaluated, defects fixed** — every row below |
-| **Rust** | GDB 16.3 (`gdb -i=dap`) | **not evaluated yet** (next round) |
+| **Rust** | **GDB 18.1**'s native DAP (`gdb -i=dap`, no download), built in; GDB 16.3, which the brief assumed, was replaced by the system update | **evaluated, defects fixed** — [Rust through GDB](#rust-through-gdb) |
 
 ## TypeScript / JavaScript through js-debug
 
@@ -246,4 +246,180 @@ temp directory; set `CSCODE_DAP_TEST_METRICS=<file>` to collect the evidence lin
 
 ## Rust through GDB
 
-**Not evaluated yet.** The Rust/GDB round (MUST 1, the Rust rows of MUST 3) comes next; CodeLLDB is not approved.
+CodeLLDB is not approved (no download): Rust is debugged with **GDB's native Debug Adapter Protocol support** (`gdb -i=dap`), which needs
+nothing but the system's GDB.
+
+### How it is wired (MUST 1)
+
+* **Adapter**: built-in debug types `gdb` and its alias `rust-gdb` (rewritten to `gdb`), label "Rust / C / C++ (GDB)", breakpoint languages
+  `rust`, `c`, `cpp` (`src/CsCode.Dap/Adapters/GdbAdapterFactory.cs`). GDB is a **stdio** adapter started from a `DebugAdapterStdioProcess`
+  descriptor (`src/CsCode.Dap/Transport/DapTransports.cs`): `nice -n 10 gdb [cscode.debug.gdbArgs] -q -iex … -i=dap` — below normal priority
+  (the program GDB launches inherits it: both run at nice 10, checked in `/proc`), tracked (`IMemoryMonitor.TrackChildProcess` through the
+  session's `AdapterProcessId`), with the environment marker `CSCODE_DAP_ADAPTER=<guid>` that GDB passes on to the program. The transport kills
+  GDB's process tree on close; if GDB **died** (killed by a signal, a non-zero exit — not the normal `quit` after `disconnect`, exit code 0),
+  the processes still carrying its marker in its session are reaped, as for js-debug's server.
+* **What rust-gdb does, on GDB's command line** (`-iex`, before anything loads), found through `rustc` on PATH (run in the workspace folder,
+  so rustup honours a `rust-toolchain` file; cached per folder): `source $(rustc --print sysroot)/lib/rustlib/etc/gdb_load_rust_pretty_printers.py`
+  when present (String, Vec, HashMap, Rc… by value) and `set substitute-path /rustc/<commit> <sysroot>/lib/rustlib/src/rust` when the rust-src
+  component is installed (`rustc -vV`'s commit hash: the standard library's frames then have their sources). rust-gdb's own way — auto-loading
+  the printers from the binary's `.debug_gdb_scripts` section through `add-auto-load-safe-path` and `directory` — does **not** load them with
+  this toolchain (`info auto-load python-scripts`: `No`), hence the explicit `source`.
+* **CsCode's GDB helper** `src/CsCode.Dap/Adapters/Gdb/cscode_gdb.py` (copied next to the assembly, `-iex source …`): a last-resort Python
+  pretty-printer for Rust values that have none — GDB's DAP shows a struct, an enum (Option, Result…) or a tuple as an **empty** value, and a
+  Box as a bare address. Its summary is GDB's own Rust rendering of the value with type paths dropped (`Point {x: 3, y: 4}`, `Some(5)`,
+  `Err("invalid digit found in string")`), bounded (depth 2, 100 elements, 200 characters), never raising, and only while the frame's language
+  is Rust; strings, slices and arrays keep GDB's printers, and the children are the ones GDB's DAP shows anyway.
+* **Lookup**: setting `cscode.debug.gdbPath` → `gdb` on PATH; otherwise the start fails with "GDB was not found… (GDB 14 or newer speaks the
+  Debug Adapter Protocol)". Extra arguments: `cscode.debug.gdbArgs` (e.g. `["-nx"]`, which every test uses so the user's gdbinit files are
+  never read). Nothing is downloaded.
+* **Configuration provider**: `env` is moved aside and turned into `set environment` / `unset environment` commands (GDB's own `env` REPLACES
+  the program's whole environment — PATH, HOME… gone — where VS Code's means "add these"; a value with a line break is refused with a
+  message); `cwd` defaults to the folder; for an attach a textual `pid` (what `${command:pickProcess}` substitutes; VS Code's C++ debugger
+  calls it `processId`) becomes the number GDB wants; CodeLLDB's **`"cargo"` key** is resolved: `{"args": ["test", "--no-run"],
+  "filter": {"name": …, "kind": "lib|bin|test|…"}, "cwd": …, "env": …}` runs cargo with `--message-format=json-render-diagnostics` (adding
+  `--no-run` to `test`/`bench`), its progress and compiler messages go to the Tasks output channel, and the executable cargo reports (after the
+  filter; several → a quick pick) becomes `program` — how a test binary, `target/debug/deps/<crate>-<hash>`, is found. The cargo process is
+  tracked and killed with its tree when the start is cancelled.
+* **Templates** (*Add Configuration* / *Create launch.json*, from `Cargo.toml`): **Rust: Debug <bin> (cargo build)** (`program:
+  ${workspaceFolder}/target/debug/<bin>`, `preLaunchTask: "cargo: build"`), **Rust: Debug unit tests of <package> (cargo test)** (the `cargo` key,
+  filter `kind: lib` for a package with a library, else its binary), **Rust: Attach to <bin>** (`pid: ${command:pickProcess}`); and the
+  `cargo: build` task in `tasks.json` as a **process** task (`cargo build`, `options.cwd` the folder: no shell re-reads the folder's path).
+  Without a Cargo.toml: plain GDB launch/attach templates. All three Rust templates were run end to end.
+* **What GDB does differently** is compensated in one place, `GdbAdapterQuirks` (`src/CsCode.Dap/Adapters/GdbAdapterQuirks.cs`), the GDB
+  instance of the new `DebugAdapterQuirks` (`src/CsCode.Dap/Session/DebugAdapterQuirks.cs`): a built-in adapter carries its quirks
+  (`BuiltinDebugAdapter.Quirks`) and every session of its type applies them (see "GDB quirks the client handles").
+
+### Toolchain notes
+
+* **GDB 18.1** (`/usr/bin/gdb`, Debian 18.1-3; its DAP implementation is Python under `/usr/share/gdb/python/gdb/dap/`, read to explain what
+  the matrix found). **Rust 1.98.1** (cargo, rustc from Nix; rust-src installed). The sample (`tests/CsCode.TestDoubles/RustGdbSample.cs`: a
+  cargo package with `src/main.rs` + `src/util.rs`, no dependencies, so `cargo build --offline` works) is built by the tests in temp
+  directories.
+* **ptrace**: attaching to a process GDB did not start needs `kernel.yama.ptrace_scope` 0 (it is 0 here; the attach test skips otherwise).
+
+### GDB 16.3 vs GDB 18.1
+
+The brief was written for GDB 16.3; the machine's system update replaced it with **18.1** before this round, and 16.3 is not available
+without a download, so **every row below was run on 18.1 only**. What GDB's own NEWS (`/usr/share/doc/gdb/NEWS.gz`) lists between them for
+DAP, and what it means here:
+
+* **GDB 17 added the `completions` request.** On 16.3 the adapter advertises no completions: the Debug Console then offers none (the session
+  asks only when `supportsCompletionsRequest` is set). Everything else in the matrix uses requests 16.3 already had.
+* GDB 16 added the `Globals` scope, the **`Return` scope** (`returnValue` hint) after a step out, and the deferred `launch`/`attach` (answered
+  only after `configurationDone`) — all present on 18.1 and handled. GDB 18 adds constants in scopes, Ada's `unhandled` filter, `adaSourceCharset`
+  and `coreFile` for attach.
+* What earlier docs (VS Code/CodeLLDB habits) assumed and 18.1 + Rust 1.98 do not do: a breakpoint on **`rust_panic`** never binds through
+  DAP — Rust 1.98 mangles the symbol as `__rustc::rust_panic` (its debug info calls it `std::panicking::rust_panic`), and GDB's DAP sets function
+  breakpoints as explicit locations that do not wildcard-match Rust paths (the CLI's `break rust_panic` does). `std::panicking::rust_panic` binds.
+
+### The matrix
+
+Evidence is what GDB sent and what the panels showed, recorded by the tests (`CSCODE_DAP_TEST_METRICS=<file>` collects it); line numbers are
+1-based. Tests: **D** = `tests/CsCode.Dap.Tests/RealGdbRustTests.cs` (real `DebugService`), **P** = `tests/CsCode.Panels.Debug.Tests/RealGdbPanelsTests.cs`
+(the panels' view-models over the real DAP module), **R** = `RealGdbResponsivenessTests.cs`, **A** = `tests/CsCode.App.Tests/RealApp/RustDebugTests.cs`
+(the real application). Regression tests of the fixes: `tests/CsCode.Dap.Tests/GdbQuirksTests.cs`, `GdbAdapterFactoryTests.cs`,
+`tests/CsCode.Panels.Debug.Tests/GdbPanelFixTests.cs`.
+
+| Row | Status | Evidence | Test |
+|---|---|---|---|
+| Launch + clean exit, nothing left running | **works** | `nice -n 10 gdb -nx -q -iex source …/gdb_load_rust_pretty_printers.py -iex set substitute-path /rustc/48a229ce… …/lib/rustlib/src/rust -iex source …/cscode_gdb.py -i=dap`: gdb and the program at nice 10, the program a child of gdb carrying its marker; it runs to the end (exit code 0, "done hello world 3 2 Some(5) …"); gdb, the program and every marked process gone (checked after every real test). | D `Launch_stops_at_a_breakpoint_and_exits_cleanly_with_gdb_below_normal_priority`, A |
+| Line breakpoints | **works** | GDB loads the program only at `configurationDone`, so `setBreakpoints` answers `verified: false, reason: "pending"`; a `breakpoint` event `changed, verified: true, line 97` follows once the program is loaded, before the first stop. | D, P, A |
+| Moved line (breakpoint on a comment line) | **works** | Requested 74 → stopped at 75; Breakpoints window: `main.rs : 74 Moved note='moved to line 75'`. | D `A_breakpoint_on_a_line_without_code_…`, P |
+| Breakpoint added while stopped | **works** | Added at `@call` while stopped at the loop: verified, hit after Continue; the other breakpoint stays verified. | D `A_breakpoint_added_while_stopped_…` |
+| Conditional breakpoint | **works** | `i == 3` stops once with `i = 3`, `x = 44`, then runs to the end. | D |
+| Hit-count breakpoint | **partial** (adapter) — translation **fixed** | GDB takes `hitCondition` as an **ignore count** (`bp.ignore_count = int(parse_and_eval(hitCondition))`): "3" sent as is skipped three hits and stopped at the fourth, and `>5`/`%3` were parse errors (breakpoint "failed"). Now `N`/`=N`/`==N` → N−1, `>N` → N, `>=N` → N−1: "3" first stops on the third hit (`i = 2`). GDB consumes an ignore count once, so it then stops on every later hit (`i = 3`, …) — adapter limitation. `%2`, `<5` are not sent: unverified, "GDB cannot break on the hit count '%2': it can only start breaking after a number of hits ('5', '>5' or '>=5')." | D `A_hit_count_breakpoint_first_stops_on_the_requested_hit_…`, fix tests |
+| Logpoint | **was partial → fixed** | `logged i={i} x={x}` → five messages, category `console`, no stop. GDB sends each message WITHOUT a line break, so they ran together in the Debug Console; now `logged i=0 x=41` … `logged i=4 x=47`, one per line. | D `A_logpoint_prints_each_message_on_its_own_line_…` |
+| Breakpoint on a `println!` line | **adapter behaviour** | Stops twice per pass, both at line 98 with `i = 0`: rustc emits two statement entries for the line (format, print) and GDB 18 puts a location on each. | D `A_breakpoint_on_a_println_line_stops_twice_per_pass` |
+| Function breakpoints | **works** (verdict **fixed**) | `sample::util::add` stops at `util.rs:4`. Set before the program loads, GDB answers "pending" and verifies it later by a `breakpoint` event — which was ignored for function breakpoints: the Breakpoints window showed it unverified forever. A bare `add` stays pending (GDB 18 resolves Rust paths only, see above) — adapter. | D `Function_breakpoints_stop_on_a_rust_path_…`, fix test |
+| Rust panics (exception breakpoints) | **was missing → added** | GDB advertises Ada and C++ filters only. **"Rust panics"** (on by default, like CodeLLDB's "Rust: on panic") is listed first in the Breakpoints window and sent as a function breakpoint on `std::panicking::rust_panic`; its stop is reported as reason `exception` ("Paused on exception: Rust panics", text "boom at the bottom") at the **user's frame** `util.rs:15` (`std::panicking::rust_panic` and five more std frames above it are de-emphasised), and `exceptionInfo` is answered by the session from the panic message the program printed (`{"exceptionId":"panic","description":"boom at the bottom","details":{"typeName":"panic","stackTrace":"thread 'main' panicked at src/util.rs:15:9"}}`), waiting (bounded) when the message arrives just after the stop. The panic the sample catches (`catch_unwind`) and the uncaught one (exit code 101) both stop. Exception window: "Exception Thrown / panic: boom at the bottom". Off: the program just ends with 101. | D `Rust_panics_stop_as_exceptions_…`, `With_rust_panics_off_…`, P, A |
+| Step over / into / out | **works** | From `util::add(x, 1)` (main.rs:100): into → `util.rs:4` (frames `sample::util::add`, `sample::main`), over → `util.rs:6` (the `}`: rustc gives the tail expression `sum` no line of its own), out → back on `main.rs:100`; reasons `step`. | D `Step_into_over_and_out_…`, P |
+| Return value after step out | **was hidden → fixed** | GDB 16+ answers `scopes` after a step out with a `Return` scope (hint `returnValue`) holding `(return) = 52`; Locals showed only `locals`/`arguments` scopes. Now Locals shows it as a group ("Return") and Autos first, whatever the line mentions (Visual Studio's "… returned"). | D, P, fix tests |
+| Pause | **works** (stop location **fixed**) | Running `serve` → pause → reason `pause` inside libc: `__internal_syscall_cancel` at `./nptl/./nptl/cancellation.c:44` — not on disk, so GDB hands out a `sourceReference` its `source` request cannot serve (`[Errno 2] No such file…`). The stop showed that frame (an error document); now libc and std frames are de-emphasised and the stop shows `sample::serve` at `main.rs:46`. | D `Pause_stops_a_running_program_in_the_users_code_…` |
+| Start Without Debugging (Ctrl+F5) | **was broken → fixed** | GDB's `launch` has no `noDebug`: the program ran under the debugger and stopped at the loop breakpoint and at the caught panic. Now a `noDebug` GDB session gets no breakpoints and no exception filters: the program runs to its end ("done hello world …", exit code 0), no stop. | D `Start_without_debugging_runs_the_program_to_its_end_…`, fix test |
+| Restart | **works** (client relaunch) | GDB has no `restart` request: the session ends GDB and the program and runs the handshake again — stopped again at the breakpoint after ~660 ms under a new GDB; the old one gone; no `Terminated` in between. | D `Restart_runs_the_program_again_under_a_new_gdb` |
+| Stop | **works** | Shift+F5 while stopped (`terminate` → GDB `kill` → `exited`, `terminated`) and while running: every session gone in a few ms; GDB quits after the courtesy `disconnect`. Host disposed while stopped (synchronous container dispose, `IKillableTransport`): gdb and the program gone after ~640 ms. | D `Pause_…`, `Stop_while_the_program_runs_…`, A (2) |
+| Adapter crash | **works** | SIGKILL to gdb while stopped: the session ends ("The debug adapter closed the connection."), the program does not survive it; the marker reaping is the safety net (tested with a stand-in that orphans its child). | D `An_adapter_crash_…`, `GdbAdapterFactoryTests.The_processes_a_crashed_stdio_adapter_orphaned_are_reaped_…` |
+| Call stack: generics and closures | **works** | `sample::apply<sample::main::{closure_env#4}>` → step into → `sample::main::{closure#4}` above it; `sample::util::describe<i32>`; threads: `sample::main::{closure#1}::{closure#0}`. GDB stops the stack at `main` (`backtrace past-main` off). | D `Generic_functions_and_closures_…` |
+| Call stack: standard library | **was partial → fixed** | std frames (`/rustc/<commit>/library/…`, mapped onto rust-src) and frames without debug information (`__rust_try`) were listed one by one between the user's frames. Now de-emphasised and folded: at the panic `[External Code] \| explode : 15 ⇐ \| explode : 17 \| explode : 17 \| {closure#5} : 105 \| [External Code] \| main : 105`; a click shows `std::panicking::rust_panic` … greyed. | P `A_rust_panic_shows_…_folds_the_standard_library`, fix tests |
+| Locals: String, &str, Vec, HashMap, Rc | **works** | Rust pretty-printers: `s = "hello"` (`alloc::string::String`), `text = "world"` (`&str`), `v = Vec(size=3)` → `[0]=1 [1]=2 [2]=3`, `map = HashMap(size=2)` → `key0="a" val0=1 key1="b" val1=2`, `shared = Rc(strong=2, weak=0)` → `value="shared" strong=2 weak=0`, `slice = &[i32](size=2)`. | D `Locals_show_rust_values_…`, P |
+| Locals: structs, enums, Option/Result, tuples, Box | **was broken → fixed** | GDB's DAP showed them EMPTY (`p = `, `some = `, `err = `) and a Box as an address. Now `p = Point {x: 3, y: 4}`, `some = Some(5)` (child `Some` → `__0 = 5`), `none = None`, `ok = Ok(12)`, `err = Err("invalid digit found in string")`, `shape = Circle{radius: 1.5}`, `rect = Rect(3, 4)`, `empty = Empty`, `pair = (1, "two")`, `wrapper = Wrapper {point: Point {x: 7, y: 8}, tag: Some("w")}`, `boxed = 0x5555555d3e80 Point {x: 5, y: 6}` (child `value`). GDB lists locals latest-declared first. | D, P |
+| Locals: a 250-element Vec, paging | **was broken → fixed** | GDB announces only `indexedVariables: 250` and **ignores `filter`** (honours `start`/`count`). The panels asked for the "named" children too (none announced), GDB answered with every element, and the Vec showed `[100]`…`[249]`, then `[0]`…`[99]`. Now named children are asked for only when announced: `[0]`…`[249]` in order, `[249]=498`. | P, `GdbPanelFixTests.A_vector_gdb_announces_only_indexed_children_…` |
+| Autos | **works** (documented approximation) | The variables the stop line and the line before mention, else all; after a step out the returned value first. | P |
+| Watch | **works** | `p.x + p.y = 7`, `x * 2 = 102`; `nope` → "No symbol 'nope' in current context" (GDB's message). | D, P |
+| Set variable | **works** | Locals inline edit `x = 100`: the REPL and `add` see it, the program prints `err 101`. GDB finds the variable among the children it listed (the Locals window lists them first; "no variable named 'x'" otherwise). | D, P |
+| Debug Console: REPL + completions | **was broken → fixed** | GDB runs `evaluate` with context `repl` as a **GDB command** (`x * 2` → "Attempt to take contents of a non-pointer value."; `print x` → `$1 = 44`). Now: an expression (`x * 2` → `102`, `v` → `Vec(size=3)`, expandable); `-exec <command>` or `` `<command> `` runs a GDB command (`-exec info locals`); input that is no expression but starts with a GDB command word is retried as one (`p s` → `$1 = "hello"`, `bt`) — only on GDB's syntax errors (the C parser's "A syntax error in expression…", the Rust parser's "Syntax error near 's'") or an unknown single command word, so `x + 1` with no `x` keeps its own error instead of running GDB's `x` (examine memory). Completions are GDB's command completions: an expression is completed as `print <expression>` and mapped back (`p.` → `p.x`, `p.y`; `-exec info lo` → `-exec info locals`). | D `The_debug_console_evaluates_…`, P, fix tests |
+| stdout / stderr in the console | **partial** (adapter) — GDB's messages **fixed** | The program's stdout AND stderr reach GDB through one pipe and arrive as `stdout`: `eprintln!("err 52")` is not red (adapter limitation). GDB's own messages on that pipe ("No source file named …", "Breakpoint 1 (…) pending.", "[Thread … exited]") were shown as program output; now as debugger messages (`console`). | D `Program_output_…`, P |
+| Threads (`std::thread`) | **works** | `worker-1`, `worker-2` (the stop thread named `worker-…`), the main thread named after the process (`sample`); a thread just spawned may not have its name yet at the first stop (`3=sample`); Linux keeps 15 characters of a thread name (`util::tests::ad`). Worker frames: `sample::worker`, `sample::main::{closure#1}::{closure#0}`, then std's start-up de-emphasised. | D `Threads_of_std_thread_…` |
+| Attach to a running process (pid) | **works** | `sample serve` started outside; attach with `pid` as text → number; GDB stops the process it attached to (reason `attach`); Continue → the `@tick` breakpoint, `ticks > 0`; Stop detaches and the program keeps running. | D `Attach_to_a_running_rust_program_by_pid_…` |
+| Unit-test binary (`cargo test --no-run`) | **works** (new) | The `cargo` key → `target/debug/deps/sample-c77dd8832268fcec`; stop in `sample::util::tests::adds_numbers` (`util.rs:26`) on the thread `util::tests::ad`; "test result: ok. 1 passed", exit code 0. | D `The_cargo_key_builds_the_test_binary_…` |
+| Templates | **works** | Create launch.json for `gdb` in a cargo folder: the three configurations and the `cargo: build` process task; the binary one builds (Tasks: "Task 'cargo: build' finished with exit code 0") and stops in `main.rs`, the unit-test one builds the tests and stops in `util.rs`. | D `The_cargo_template_…` |
+| `env` | **was broken → fixed** | GDB's `env` replaced the program's environment (`inf.clear_env()`): no PATH, no HOME. Now `CSCODE_GDB_TEST=yes it is` added, PATH kept, `LANG: null` removed, the marker kept. | D `Env_adds_to_the_programs_environment_…` |
+| 1M lines printed, UI responsive | **works** (last lines **fixed**) | `println!` × 1,000,000: GDB reads its pipe on a thread of its own and sends one DAP event per line; the session takes ~17–29 s, 621–1,212 batches reach the service, history 5,000 lines, heap +3.9 MB. GDB delivers the last ~2,500 lines AFTER `terminated`: they were lost ("flood done" missing — shown failing with the fix reverted); the session now ends once the output went quiet (150 ms, at most 2 s). With the Debug Console on screen: **dispatcher p99 12.2 ms, max 24.1 ms** on the second attempt; the first, at load average 16, missed (p99 41 ms, max 176 ms) — the same one-event-per-line shape as js-debug's `console.log` flood, deferred to the performance wave. | D `A_million_line_flood_…`, R |
+| 10-session soak | **works** | 10 sessions (start → stop at the loop → Locals → stop): all collected after forced GCs, 11 gdb processes gone, threads 20 → 20. | D `Ten_real_sessions_…` |
+| Real application, F5 | **works** | Real composition, `CSCODE_HOME` in a temp dir, headless window, `cscode.debug.gdbArgs: ["-nx"]`: open the cargo folder, F9 in `main.rs`, F5 → `cargo build` → GDB → stopped; Call Stack shows `sample::main` at `main.rs : 97` with the arrow, the editor marks the line; a breakpoint in `util.rs` (not open) opens it at the stop line; Continue → the panic: stop at `util.rs:15`, Exception window "panic: boom at the bottom"; Shift+F5 → no gdb, no program. | A (2) |
+
+### Fixes (each with a test that fails without it)
+
+| Module | Fix | Regression test |
+|---|---|---|
+| Dap (new) | GDB adapter: `gdb -i=dap` below normal priority with a marker, pretty-printers, std sources, CsCode's summaries, `gdbPath`/`gdbArgs`, templates, `cargo` key, `env` / `pid` | `GdbAdapterFactoryTests` (13), D |
+| Dap | `DebugAdapterStdioProcess`: `nice -n 10` + marker for a stdio adapter; orphans reaped after the adapter died, not after a normal quit | `GdbAdapterFactoryTests.A_stdio_adapter_runs_niced_…`, `The_processes_a_crashed_stdio_adapter_orphaned_are_reaped_…` |
+| Dap | Debug Console input as expressions, GDB commands with `-exec`/backtick or when no expression; completions through `print` | `GdbQuirksTests` (REPL and completion tests); D, P |
+| Dap | Hit counts as GDB ignore counts; inexpressible ones refused with the reason | `GdbQuirksTests.Hit_counts_…` (3) |
+| Dap | "Rust panics" client-side exception filter: function breakpoint, `exception` stop, `exceptionInfo` from the panic message (also when it arrives late) | `GdbQuirksTests.Rust_panics_…`, `A_panic_message_that_arrives_after_the_stop_…`, `The_panic_message_is_read_…` |
+| Dap | Start Without Debugging on an adapter that ignores `noDebug` (GDB) sends no breakpoints and no exception filters | `GdbQuirksTests.Start_without_debugging_sends_gdb_no_breakpoints_…`; D |
+| Dap | Function breakpoints' adapter ids are tracked, so a later `breakpoint` event updates their verdict (all adapters) | `GdbQuirksTests.A_function_breakpoint_verified_later_…` |
+| Dap | GDB's own messages shown as debugger messages; logpoint messages end their line | `GdbQuirksTests.Gdbs_own_messages_…`, `Logpoint_messages_end_their_line_…` |
+| Dap | Output that arrives after `terminated` still reaches the console (quiet period after `terminated`; a Stop meanwhile ends at once) | `GdbQuirksTests.Output_that_arrives_after_terminated_…`, `Stop_while_waiting_for_trailing_output_…`; D flood (fails with the fix reverted) |
+| Dap | std, libc and symbol-less frames de-emphasised; a stop shows the first frame that is not (VS Code's rule; all adapters that de-emphasise frames) | `GdbQuirksTests.Library_frames_…`, `A_frame_without_debug_information_…`, `The_stop_location_is_the_first_frame_that_is_not_library_code`, `Without_the_quirks_…` |
+| Panels | Locals and Autos show the `returnValue` scope (Autos: first) | `GdbPanelFixTests.Locals_show_the_value_…`, `Autos_show_the_returned_value_first_…` |
+| Panels | Named children are asked for only when the adapter announced some (GDB ignores `filter`: a Vec came out of order) | `GdbPanelFixTests.A_vector_gdb_announces_only_indexed_children_…` |
+
+### GDB quirks the client handles (GDB 18.1's native DAP)
+
+* `evaluate` with context `repl` runs a GDB command (see the REPL row); `completions` completes command lines and answers whole lines with no
+  `start` (GDB 17+).
+* `hitCondition` is an ignore count, consumed once.
+* No Rust exception filter; `rust_panic` must be named `std::panicking::rust_panic`.
+* The program's stdout and stderr, and GDB's own console messages, share one pipe, read line by line on a thread of its own: everything is
+  `stdout`, a line without its newline is held back until the newline comes, and the last lines can follow `terminated`.
+* Logpoint messages have no line break; logpoints evaluate `{expr}` with `str(gdb.Value)` (pretty-printers apply).
+* Breakpoints set before `configurationDone` are "pending" (the program is loaded only then) and verified later by events — function
+  breakpoints included.
+* `variables` ignores `filter`; a variable that has children but no pretty-printer has the value `""`; `setVariable` finds only children it
+  listed. Frame columns are always 0 (GDB has no columns).
+* A source GDB cannot find on disk gets a `sourceReference` its `source` request cannot serve.
+* `launch` with `env` clears the environment first.
+* No `restart` request (the session relaunches), `supportsTerminateRequest` (`kill`), `disconnect` makes GDB quit (exit code 0).
+* An attach stops the process (reason `attach`).
+* `noDebug` is ignored (the program is debugged anyway).
+
+### Known gaps (not fixed)
+
+* **stderr is not told apart** from stdout (one pipe in GDB): no red `eprintln!` lines.
+* **Hit counts are "from the Nth hit on"**: GDB keeps stopping after the ignore count is used up; `%N` cannot be expressed.
+* A `println!` line (and any line rustc splits into several statements) stops more than once per pass.
+* Debug Console input that is BOTH a valid expression and meant as a GDB command runs as the expression (`-exec` forces the command).
+* The panic message is read from the program's output: a custom panic hook that prints nothing (or something else) leaves "Rust panics" as the
+  description; output older than 8 KB before the stop is not searched.
+* Thread names: Linux keeps 15 characters; a thread may be listed under the process name until it sets its own.
+* Locals are listed latest-declared first, as GDB gives them; the `Return` scope turns Locals from a flat list into groups right after a step
+  out.
+* Struct summaries come from GDB's own Rust rendering: nested values deeper than two levels show as `{...}`, and very long ones end with `…`.
+* The 1M-line flood can miss the UI budget under heavy machine load (one DAP event per line, as js-debug's `console.log` flood; deferred to the
+  performance wave with it).
+* GDB 16.3 itself was not run (replaced by 18.1 on this machine): on 16 the Debug Console has no completions.
+* CodeLLDB (better Rust formatting, the VS Code default for Rust) needs a download the user has not approved: not evaluated.
+
+### Running the suites
+
+```bash
+dotnet test tests/CsCode.Dap.Tests --filter "FullyQualifiedName~RealGdbRustTests"            # the matrix (Category=RealAdapter)
+dotnet test tests/CsCode.Dap.Tests --filter "FullyQualifiedName~Gdb"                          # + GdbQuirksTests, GdbAdapterFactoryTests (no GDB needed)
+dotnet test tests/CsCode.Panels.Debug.Tests --filter "FullyQualifiedName~Gdb"                 # RealGdbPanelsTests, RealGdbResponsivenessTests, GdbPanelFixTests
+dotnet test tests/CsCode.App.Tests --filter "FullyQualifiedName~RealAppRustDebugTests"
+```
+
+Every real test skips with the reason when gdb (14+, with Python), cargo or rustc is missing, and builds the sample offline. Run them with
+`DISPLAY` and `SSH_AUTH_SOCK` unset and `CSCODE_HOME` pointing at a temp directory; set `CSCODE_DAP_TEST_METRICS=<file>` to collect the evidence
+lines quoted above.

@@ -64,9 +64,11 @@ public class RealAppCommandOwnershipTests
         await DevScene.SettleAsync(20);
 
         var duplicated = recorded!.Registrations.GroupBy(r => r.Id).Where(g => g.Count() > 1).Select(g => g.Key).OrderBy(x => x, StringComparer.Ordinal);
-        // Intended: the editor registers standalone fallbacks that the shell (Go to Line) and Dap (Toggle Breakpoint) shadow. The Settings
-        // commands belong to the Settings panel alone (the shell's openSettings used to shadow it, so the Settings editor could never open).
-        Assert.Equal([KnownCommands.DebugToggleBreakpoint, "workbench.action.gotoLine"], duplicated);
+        // Intended: the editor registers standalone fallbacks that the shell (Go to Line, Cut/Copy/Paste: they follow keyboard focus) and Dap
+        // (Toggle Breakpoint) shadow. The Settings commands belong to the Settings panel alone (the shell's openSettings used to shadow it, so the
+        // Settings editor could never open).
+        string[] clipboard = ["editor.action.clipboardCopyAction", "editor.action.clipboardCutAction", "editor.action.clipboardPasteAction"];
+        Assert.Equal([.. clipboard, KnownCommands.DebugToggleBreakpoint, "workbench.action.gotoLine"], duplicated);
 
         // Who registered them, in order (the last one runs). The behaviour checks below cannot tell the two Toggle Breakpoint handlers apart
         // (both toggle at the caret), so the owner is asserted by the module whose handler it is.
@@ -74,6 +76,7 @@ public class RealAppCommandOwnershipTests
         var editor = Module(typeof(CsCode.Editor.View.EditorViewFactory));
         Assert.Equal([editor, Module(typeof(CsCode.Dap.Service.DebugService))], RegisteredBy(KnownCommands.DebugToggleBreakpoint));
         Assert.Equal([editor, Module(typeof(ShellController))], RegisteredBy("workbench.action.gotoLine"));
+        foreach (var id in clipboard) Assert.Equal([editor, Module(typeof(ShellController))], RegisteredBy(id));
         Assert.Equal([Module(typeof(SearchPanelsHost))], RegisteredBy(KnownCommands.OpenSettings));
 
         // The effective handlers are the owners' ones.

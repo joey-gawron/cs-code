@@ -10,7 +10,11 @@ using Microsoft.Extensions.Logging;
 namespace CsCode.Dap.Adapters;
 
 /// <summary>A debug adapter shipped with the app.</summary>
-public sealed record BuiltinDebugAdapter(string Type, string Label, IReadOnlyList<string> Languages, IDebugAdapterFactory Factory, IDebugConfigurationProvider? Provider = null);
+public sealed record BuiltinDebugAdapter(string Type, string Label, IReadOnlyList<string> Languages, IDebugAdapterFactory Factory, IDebugConfigurationProvider? Provider = null)
+{
+    /// <summary>What this adapter does differently from what the client expects (GDB's native DAP); applied to every session of the type.</summary>
+    public DebugAdapterQuirks? Quirks { get; init; }
+}
 
 /// <summary>
 /// The default .NET story: Samsung <b>netcoredbg</b> (MIT; not vsdbg, whose licence forbids non-Microsoft products) launched as

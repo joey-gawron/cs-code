@@ -17,6 +17,9 @@ public sealed class App : Application
     /// <summary>The crash handler for this process (set by <c>Program</c>; created lazily for hosts that do not use <c>Program</c>).</summary>
     public static CrashHandler Crash { get; set; } = new(CrashHandler.DefaultLogDirectory());
 
+    /// <summary>Background mode: the session process's host (<c>--host</c>, set by <c>Program</c>); null for an in-process run and for tests.</summary>
+    internal static Background.BackgroundHost? Background { get; set; }
+
     /// <summary>Overall bound of the graceful part of the exit (language servers, debug sessions, state flush); see <see cref="AppShutdown"/>.</summary>
     public static TimeSpan ShutdownDeadline { get; set; } = AppShutdown.DefaultDeadline;
 
@@ -43,7 +46,7 @@ public sealed class App : Application
     /// <summary>Starts a run of the app on <paramref name="desktop"/> (see <see cref="AppSession"/>). Internal so tests can drive it with their own host.</summary>
     internal AppSession Start(IDesktopHost desktop)
     {
-        var session = new AppSession(desktop, Crash, ConfigureServices, ShutdownDeadline);
+        var session = new AppSession(desktop, Crash, ConfigureServices, ShutdownDeadline, Background);
         _session = session;
         session.Start();
         return session;

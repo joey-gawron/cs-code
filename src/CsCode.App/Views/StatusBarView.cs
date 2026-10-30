@@ -7,6 +7,9 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
+using Avalonia.Input;
+using Avalonia.VisualTree;
+using CsCode.Ui.Menus;
 using CsCode.Ui.Theming;
 using CsCode.Ui.Threading;
 
@@ -29,11 +32,18 @@ public sealed class StatusBarView : Border, IDisposable
     private readonly StackPanel _right = new() { Orientation = Orientation.Horizontal };
     private StatusBarState _state = StatusBarState.Normal;
 
-    public StatusBarView(IStatusBarService service, ICommandService commands, IContextKeyService keys, IUiDispatcher ui)
+    private readonly IWindowService? _window;
+    private readonly MenuServices _menus;
+
+    /// <param name="window">Copy on an item's menu goes through it; <paramref name="menus"/> adds contributed <c>statusBar/context</c> items.</param>
+    public StatusBarView(IStatusBarService service, ICommandService commands, IContextKeyService keys, IUiDispatcher ui, IWindowService? window = null, MenuServices? menus = null)
     {
         _service = service;
         _commands = commands;
         _keys = keys;
+        _window = window;
+        _menus = menus ?? new MenuServices(commands, keys);
+        ContextRequested += OnContextRequested;
         Height = 22;
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         _right.HorizontalAlignment = HorizontalAlignment.Right;
@@ -137,8 +147,40 @@ public sealed class StatusBarView : Border, IDisposable
         return element;
     }
 
+    // ---- the item menu: the item's own command, Copy (its text), and contributed items
+
+    /// <summary>The item under <paramref name="source"/>, if any.</summary>
+    internal StatusBarItemModel? ItemAt(Visual? source)
+    {
+        for (var v = source; v is not null && !ReferenceEquals(v, this); v = v.GetVisualParent())
+            foreach (var entry in _entries.Values)
+                if (ReferenceEquals(entry.Element, v)) return entry.Model;
+        return null;
+    }
+
+    /// <summary>The text an item shows, without its <c>$(icon)</c> runs ("Ln 12, Col 4", "UTF-8").</summary>
+    internal static string PlainText(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\$\([a-z0-9-~]+\)", "").Trim();
+
+    internal IReadOnlyList<MenuEntry> MenuFor(StatusBarItemModel item)
+    {
+        var title = item.CommandId is { } id ? _commands.All.FirstOrDefault(c => c.Id == id)?.Title : null;
+        var text = PlainText(item.Text);
+        return MenuSections.Join(
+            [item.CommandId is { } cmd ? _menus.Command(title ?? item.Tooltip ?? text, cmd) : null],
+            [new MenuEntry("_Copy", async () => { if (_window is not null) await _window.CopyToClipboardAsync(text).ConfigureAwait(true); }) { Icon = "copy", IsEnabled = _window is not null && text.Length > 0 }],
+            MenuContributions.Resolve(_menus, Core.Contributions.MenuIds.StatusBarContext, [item.Id]));
+    }
+
+    private void OnContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        if (ItemAt(e.Source as Visual) is not { } item) return;
+        e.Handled = true;
+        ContextMenus.Open(MenuFor(item), this, accessibleName: "Status bar item menu");
+    }
+
     public void Dispose()
     {
+        ContextRequested -= OnContextRequested;
         _subs.Dispose();
         _entries.Clear();
         _left.Children.Clear();

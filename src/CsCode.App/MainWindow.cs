@@ -39,6 +39,7 @@ public sealed class MainWindow : Window, IWindowChrome
     private readonly Border _switcher = new();
     private readonly StackPanel _switcherItems = new() { Spacing = 1 };
     private bool _closeConfirmed, _zen, _switcherActive;
+    private string? _sessionName;
     private int _switcherIndex;
     private WindowState _stateBeforeFullScreen;
     private IReadOnlyList<ShellDocument> _switcherList = [];
@@ -67,7 +68,8 @@ public sealed class MainWindow : Window, IWindowChrome
         _titleBar = new TitleBarView(this, _shell.Menus, commands, showCaptionButtons: useCustomChrome);
         _toolbar = new ToolbarView(commands, keys, ui, _sp.GetService<IKeybindingService>(), _sp.GetService<IDebugService>(),
             _sp.GetService<Core.Theming.IColorThemeService>(), _sp.GetService<IConfigurationService>());
-        _status = new StatusBarView(_sp.GetRequiredService<IStatusBarService>(), commands, keys, ui);
+        _status = new StatusBarView(_sp.GetRequiredService<IStatusBarService>(), commands, keys, ui, _sp.GetService<IWindowService>(),
+            new Ui.Menus.MenuServices(commands, keys, _sp.GetService<IKeybindingService>(), _sp.GetService<Core.Contributions.IContributionRegistry>()));
 
         var dock = BuildDock();
 
@@ -107,6 +109,8 @@ public sealed class MainWindow : Window, IWindowChrome
         AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
         AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
         AddHandler(GotFocusEvent, OnGotFocus, RoutingStrategies.Bubble | RoutingStrategies.Tunnel);
+        _disposables.Add(_shell.ContextMenus.Attach(this));
+        _disposables.Add(_shell.Clipboard.Attach(this));
         Closing += OnClosing;
         Opened += OnOpened;
 
@@ -251,10 +255,29 @@ public sealed class MainWindow : Window, IWindowChrome
 
     // ------------------------------------------------------------------ title
 
+    /// <summary>Background mode: the named session this window shows (title "file - session — folder - CsCode"); null for none or an unnamed one.</summary>
+    public string? SessionName
+    {
+        get => _sessionName;
+        set
+        {
+            if (_sessionName == value) return;
+            _sessionName = value;
+            UpdateTitle();
+        }
+    }
+
+    /// <summary>
+    /// Background mode: asked before a user's close goes ahead; returning true means it was handled (the window was hidden, or a quit with hot exit
+    /// started) and the close is cancelled. <see cref="CloseWithoutPrompt"/> and <see cref="RequestExitAsync"/> bypass it.
+    /// </summary>
+    public Func<WindowCloseReason, bool>? CloseInterceptor { get; set; }
+
     private void UpdateTitle()
     {
         var well = _shell.Well;
         var name = _sp.GetService<IWorkspaceService>()?.Name;
+        if (_sessionName is { } session) name = name is null ? session : session + " — " + name;
         var active = well.ActiveEditor;
         var dirty = well.EditorTabs.Any(t => t.IsDirty) ? "● " : "";
         var file = active?.Title is { } t ? t + " - " : "";
@@ -268,6 +291,11 @@ public sealed class MainWindow : Window, IWindowChrome
     private async void OnClosing(object? sender, WindowClosingEventArgs e)
     {
         if (_closeConfirmed) return;
+        if (CloseInterceptor?.Invoke(e.CloseReason) == true)
+        {
+            e.Cancel = true;
+            return;
+        }
         e.Cancel = true;
         try
         {

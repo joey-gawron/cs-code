@@ -6,22 +6,30 @@ using Avalonia.Data;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using CsCode.App.Views;
+using CsCode.Core.Platform;
 using CsCode.Ui.Icons;
+using CsCode.Ui.Menus;
 using CsCode.Ui.Theming;
 
 namespace CsCode.App.ToolWindows.Output;
 
 /// <summary>The Output panel: channel dropdown, clear, and a virtualised monospace line list that follows the tail while the user is at the bottom.</summary>
-public sealed class OutputView : UserControl, IDisposable
+public sealed class OutputView : UserControl, IDisposable, IClipboardTarget
 {
     private readonly OutputViewModel _vm;
     private readonly ListBox _list;
-    private bool _scrollQueued;
+    private readonly IWindowService? _window;
+    private readonly MenuServices? _menus;
+    private bool _scrollQueued, _wordWrap;
 
-    public OutputView(OutputViewModel vm)
+    public OutputView(OutputViewModel vm, IWindowService? window = null, MenuServices? menus = null)
     {
         _vm = vm;
+        _window = window;
+        _menus = menus;
         DataContext = vm;
         var combo = new ComboBox { MinWidth = 200, Height = 22, MinHeight = 0, Padding = new Thickness(6, 0), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
         combo.Bind(ItemsControl.ItemsSourceProperty, new Binding(nameof(OutputViewModel.Channels)));
@@ -32,8 +40,11 @@ public sealed class OutputView : UserControl, IDisposable
         bar.Children.Add(combo);
         bar.Children.Add(ViewHelpers.IconButton("clear-all", "Clear Output", vm.Clear));
 
-        _list = new ListBox { ItemsSource = vm.Lines, ItemTemplate = new FuncDataTemplate<string>((s, _) => s is null ? new Panel() : Line(s), supportsRecycling: true) };
+        // Several lines can be selected (Shift/Ctrl+click) and copied, as text is in Visual Studio's Output window.
+        _list = new ListBox { ItemsSource = vm.Lines, ItemTemplate = LineTemplate(wrap: false), SelectionMode = SelectionMode.Multiple };
         vm.Lines.CollectionChanged += OnLinesChanged;
+        _list.KeyDown += OnListKeyDown;
+        _list.ContextRequested += OnContextRequested;
 
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*"), Background = ThemeBrushes.Get("panel.background") };
         root.Children.Add(bar);
@@ -42,11 +53,59 @@ public sealed class OutputView : UserControl, IDisposable
         Content = root;
     }
 
-    private static Control Line(string? text)
+    private static FuncDataTemplate<string> LineTemplate(bool wrap) => new((s, _) => s is null ? new Panel() : Line(s, wrap), supportsRecycling: true);
+
+    private static Control Line(string? text, bool wrap)
     {
-        var t = new TextBlock { Text = text, Margin = new Thickness(8, 0), TextWrapping = TextWrapping.NoWrap };
+        var t = new TextBlock { Text = text, Margin = new Thickness(8, 0), TextWrapping = wrap ? TextWrapping.Wrap : TextWrapping.NoWrap };
         t.FontFamily = ThemeBrushes.CodeFont;
         return t;
+    }
+
+    // ---- Copy, Clear All, Word Wrap (Visual Studio's Output window menu)
+
+    /// <summary>Word wrap of the lines (the menu's check item); off by default, as in Visual Studio.</summary>
+    public bool WordWrap
+    {
+        get => _wordWrap;
+        set
+        {
+            if (_wordWrap == value) return;
+            _wordWrap = value;
+            _list.ItemTemplate = LineTemplate(value);
+            ScrollViewer.SetHorizontalScrollBarVisibility(_list, value ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto);
+        }
+    }
+
+    public bool CanCopy => _list.SelectedItems?.Count > 0 && _window is not null;
+
+    /// <summary>The selected lines, in the order they appear in the window.</summary>
+    internal string SelectedText()
+    {
+        if (_list.SelectedItems is not { Count: > 0 } selected) return "";
+        var picked = selected.Cast<object>().ToHashSet();
+        return string.Join("\n", _vm.Lines.Where(l => picked.Contains(l)));
+    }
+
+    public async Task CopyAsync()
+    {
+        if (_window is not null && SelectedText() is { Length: > 0 } text) await _window.CopyToClipboardAsync(text).ConfigureAwait(true);
+    }
+
+    internal IReadOnlyList<MenuEntry> Menu() => MenuSections.Join(
+        ClipboardKeys.Entries(this),
+        [
+            new MenuEntry("Clear _All", () => { _vm.Clear(); return Task.CompletedTask; }) { Icon = "clear-all", IsEnabled = _vm.Lines.Count > 0 },
+            new MenuEntry("_Word Wrap", () => { WordWrap = !WordWrap; return Task.CompletedTask; }) { Icon = "word-wrap", IsChecked = WordWrap },
+        ],
+        _menus is null ? null : MenuContributions.Resolve(_menus, Core.Contributions.MenuIds.OutputContext, _vm.SelectedChannel is { } c ? [c] : []));
+
+    private void OnListKeyDown(object? sender, KeyEventArgs e) => ClipboardKeys.TryHandle(e, this);
+
+    private void OnContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        e.Handled = true;
+        ContextMenus.Open(Menu(), _list, accessibleName: "Output menu");
     }
 
     private void OnLinesChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -63,6 +122,8 @@ public sealed class OutputView : UserControl, IDisposable
     public void Dispose()
     {
         _vm.Lines.CollectionChanged -= OnLinesChanged;
+        _list.KeyDown -= OnListKeyDown;
+        _list.ContextRequested -= OnContextRequested;
         _list.ItemsSource = null;
         DataContext = null;
         _vm.Dispose();

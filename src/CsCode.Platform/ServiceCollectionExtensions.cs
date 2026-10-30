@@ -43,12 +43,16 @@ public static class ServiceCollectionExtensions
         // File system, watcher
         services.TryAddSingleton<ITrashService>(_ => PlatformTrash.Create());
         services.TryAddSingleton(sp => new LocalFileSystem(sp.GetRequiredService<IoLane>(), sp.GetRequiredService<ITrashService>(), sp.GetService<ILogger<LocalFileSystem>>()));
-        services.TryAddSingleton<IFileSystem>(sp => sp.GetRequiredService<LocalFileSystem>());
+        // IFileSystem / IFileWatcher route by URI scheme: file: is local, other schemes (remote ssh:) go to the module that registered an
+        // IFileSystemProvider / IFileWatcherProvider / IFileSearchProvider for them. Providers are resolved lazily (on the first non-file call).
+        services.TryAddSingleton(sp => new FileSystemRouter(sp.GetRequiredService<LocalFileSystem>(), () => sp.GetServices<IFileSystemProvider>()));
+        services.TryAddSingleton<IFileSystem>(sp => sp.GetRequiredService<FileSystemRouter>());
         // The watcher reads files.watcherExclude from configuration, and configuration uses the watcher: the lazy accessor breaks the cycle
         // (configuration always passes explicit excludes for its own watches, so the accessor is never touched during its construction).
         services.TryAddSingleton(sp => new FileWatcher(sp.GetRequiredService<IoLane>(), new LazyWatcherConfig(sp), sp.GetRequiredService<PlatformOptions>(),
             sp.GetService<ILogger<FileWatcher>>(), fswFactory: null));
-        services.TryAddSingleton<IFileWatcher>(sp => sp.GetRequiredService<FileWatcher>());
+        services.TryAddSingleton(sp => new FileWatcherRouter(sp.GetRequiredService<FileWatcher>(), () => sp.GetServices<IFileWatcherProvider>()));
+        services.TryAddSingleton<IFileWatcher>(sp => sp.GetRequiredService<FileWatcherRouter>());
 
         // Configuration, state (both follow the open workspace folder)
         services.TryAddSingleton(sp => new ConfigurationService(sp.GetRequiredService<IAppPaths>(), sp.GetRequiredService<IoLane>(), sp.GetRequiredService<IFileWatcher>(),
@@ -80,7 +84,8 @@ public static class ServiceCollectionExtensions
 
         services.TryAddSingleton(sp => new WorkspaceService(
             sp.GetRequiredService<IFileSystem>(), sp.GetRequiredService<IFileWatcher>(), sp.GetRequiredService<IStateStorage>(), sp.GetRequiredService<IConfigurationService>(),
-            sp.GetRequiredService<IoLane>(), sp.GetServices<IWorkspaceBound>(), sp.GetRequiredService<PlatformOptions>(), sp.GetService<ILogger<WorkspaceService>>()));
+            sp.GetRequiredService<IoLane>(), sp.GetServices<IWorkspaceBound>(), sp.GetRequiredService<PlatformOptions>(), sp.GetService<ILogger<WorkspaceService>>(),
+            () => sp.GetServices<IFileSearchProvider>()));
         services.TryAddSingleton<IWorkspaceService>(sp => sp.GetRequiredService<WorkspaceService>());
 
         return services.AddCsCodeLogging();

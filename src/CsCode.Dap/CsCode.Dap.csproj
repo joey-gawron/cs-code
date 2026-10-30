@@ -13,4 +13,9 @@
     <InternalsVisibleTo Include="CsCode.Dap.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- CsCode's GDB helper (Rust value summaries), sourced by gdb at startup: copied next to the assembly, and so into the app's output. -->
+    <None Update="Adapters/Gdb/cscode_gdb.py" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

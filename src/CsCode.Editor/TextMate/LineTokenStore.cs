@@ -137,6 +137,25 @@ internal sealed class LineTokenStore
     }
 
     /// <summary>
+    /// Forgets the tokens of lines [<paramref name="first"/>, <paramref name="last"/>] (they render plain and are recomputed when they come
+    /// into view). Used by the tree-sitter engine for far-away lines whose syntax changed; refused when the document moved on.
+    /// </summary>
+    public void ClearLines(int version, int first, int last)
+    {
+        lock (_gate)
+        {
+            if (_version != version) return;
+            last = Math.Min(last, _lines.Count - 1);
+            for (var i = Math.Max(0, first); i <= last; i++)
+            {
+                if (_lines[i] is not { } t) continue;
+                _tokenInts -= t.Length;
+                _lines[i] = null;
+            }
+        }
+    }
+
+    /// <summary>
     /// Releases memory. Moderate: token arrays outside [keepFrom, keepTo] go (the cheap checkpoints stay, so the lines come back fast when
     /// scrolled to). Aggressive: everything, including checkpoints. Returns approximate bytes freed.
     /// </summary>

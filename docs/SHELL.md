@@ -42,6 +42,7 @@ Program -> App.axaml.cs -> AppSession -> AppStartup.BuildServicesAsync (pool thr
 | `INavigationService` | `NavigationService` | open/preview/reveal, `ApplyWorkspaceEditAsync` (open docs: one undo group each; closed files: read, edit, write via `IFileSystem` off the UI thread; create/rename/delete with the file-operation participants around them; confirmation for multi-file edits, setting `cscode.shell.confirmMultiFileEdits`) |
 | `IToolWindow` host | `ToolWindowManager` | views created on first show, **disposed when hidden**; `ToolWindowLocation.Document` windows are not docked (see Layout) |
 | `IViewActivator` | `ShellViewActivator` | panels' "show view X" (Find in Files, Settings, Keyboard Shortcuts, Watch): a tool window is shown in its well, a document-location window opens or re-activates its singleton document tab; any thread |
+| `IClipboardService` (Core, new) | `ClipboardService` | the system clipboard of the main window (Avalonia; X11 CLIPBOARD, also under XWayland) through `IPlatformClipboard`, CsCode's shape metadata (whole lines, block, one piece per caret), the in-memory clipboard ring, and the Linux PRIMARY selection (`X11PrimarySelection`); see *Clipboard* below. `IWindowService.CopyToClipboardAsync` goes through it |
 | `IActiveSelectionProvider` | `ActiveSelectionProvider` | primary selection of the active editor (`${selectedText}` for Dap, the Find in Files seed); the UI thread publishes a (document, range) snapshot, readers on any thread take the text on demand |
 | `IColorThemeService` consumer | `ThemeApplier`, `ThemePicker` | the three VS2022 themes are registered into the module's `IColorThemeService`, and the service is given the shell's completion (`ThemeCompletion`) so that it hands out complete themes; `IColorThemePreview` (Core, optional) is used for the dropdowns' live preview |
 
@@ -253,8 +254,8 @@ The list is generated from `WorkbenchColors.All`; a test fails if this document 
 
 **Menus.** File, Edit, View, Go, Debug, Terminal, Tools, Window, Help (`ShellMenus`). Items run command ids; enablement = command registered **and** `when` true; shortcut text from
 `IKeybindingService.GetLabel`; check marks for tool windows; Open Recent; Alt mnemonics. Menus regenerate when they open, so state is always current. There are no extension or marketplace entries.
-Contributed items (`IContributionRegistry.Of<MenuContribution>()`) feed the **Explorer context menu** (`explorer/context`); `ContributedMenus.Get` also serves `commandPalette`,
-`editor/context`, `editor/title` for the Editor module.
+Contributed items (`IContributionRegistry.Of<MenuContribution>()`) feed the right-click menus (see *Right-click menus* below: `editor/context`,
+`editor/title/context`, `explorer/context`, ...); `ContributedMenus.Get` still serves `commandPalette` and `editor/title`.
 
 **Keyboard.** A tunnelling window handler maps key events to `KeyStroke` (VS Code names) and asks `IKeybindingService.Resolve`: matched binding runs the command asynchronously (never blocks the key),
 a chord prefix is swallowed and the status bar shows "(Ctrl+K) was pressed. Waiting for second key of chord...", unbound keys pass through to the focused control (typing is untouched),
@@ -322,6 +323,9 @@ Other modules (Vim mode, remote indicator) register their own through `IStatusBa
 `cscode.shell.{resetLayout,openRecent,about,showWelcome,showKeyboardReference,toggleNotifications,changeLanguageMode,showErrorList,toggleToolbar}`
 (`toggleToolbar` takes a toolbar group id: `standard`, `debug`, `colorTheme`; View > Toolbars). `gotoLine` also takes an optional `"line[:column]"` argument.
 `openSettings` / `openSettingsJson` are only fallbacks (they open settings.json) for a composition without the Settings panel.
+Clipboard and menus (`ShellContextMenus`, `ClipboardRouter`): `editor.action.clipboardCutAction` / `clipboardCopyAction` / `clipboardPasteAction`
+(focus routing, see *Command ownership*), and VS Code's file commands, which take a URI (else the active file): `copyFilePath`, `copyRelativeFilePath`,
+`revealFileInOS` (Open Containing Folder / Reveal in File Manager), `revealInExplorer`.
 Everything else in the menus (`editor.action.*`, `debug.*`, terminal, tasks) is owned by other modules and stays disabled until they register it.
 
 ### Command ownership
@@ -335,8 +339,72 @@ skipping ids a panel already owns. Ids registered by more than one module, and w
 | `workbench.action.gotoLine` | Editor (input box, standalone fallback), shell | shell | VS Code behaviour (palette in `:` mode); the shell accepts the editor's `"line[:column]"` argument |
 | `editor.debug.action.toggleBreakpoint` | Editor (standalone fallback), Dap | Dap | DAP owns the debug commands; both toggle at the active editor's caret |
 | `workbench.action.openSettings`, `openSettingsJson` | Settings panel (shell only when no panel is composed) | Settings panel | Settings editor (optional query argument) and settings.json (created when missing) |
+| `editor.action.clipboardCutAction`, `clipboardCopyAction`, `clipboardPasteAction` | Editor (standalone), shell (`ClipboardRouter`) | shell | Edit > Cut/Copy/Paste and the keys act on what has keyboard focus: the editor (its Visual Studio behaviours, through `IEditorViewController`), a text box, or a view's own selection (`IClipboardTarget`) |
 
 Every other id has exactly one registration; the test fails when a new duplicate appears, so it needs a decision here.
+
+### Clipboard (`Services/ClipboardService.cs`, `Services/X11/`, `Input/ClipboardRouter.cs`)
+
+* **One service** (`IClipboardService`, Core): every copy in CsCode (editor, panels, Explorer paths, status items) goes through it. Reads and writes
+  start on the UI thread and are awaited off it; a read is bounded by `ClipboardService.ReadTimeout` (2 s) and an owner that never answers costs
+  an empty paste, never a frozen window. CsCode remembers the shape of its last copy (whole lines, block, one piece per caret, the source line's
+  indentation) and hands it back only while the clipboard still holds exactly that text: text another application put there reads as plain
+  text. Copies always go to the LOCAL clipboard, also for documents of a remote workspace (the service is process-local; nothing goes through
+  `IFileSystem`). HTML (copy with formatting) is offered as `text/html` next to the text on Linux when a caller provides it (nothing provides it
+  yet, see *Known gaps*).
+* **Clipboard ring** (Visual Studio's Ctrl+Shift+V, Edit > Cycle Clipboard Ring): the last 20 copies, newest first, each at most 1 MB of
+  managed memory (512 K characters; a bigger copy still goes to the system clipboard, it is only left out of the ring), a repeated copy moves
+  to the top; in memory only, never persisted (the service has no state storage).
+* **PRIMARY** (Linux): `X11PrimarySelection` over `X11SelectionClient`, an XCB client of its own (no xclip, xsel or wl-clipboard): its own
+  connection, an unmapped input-only window, one event thread that sleeps in `poll` and answers `SelectionRequest`s (TARGETS, TIMESTAMP,
+  UTF8_STRING, STRING, TEXT, text/plain; **INCR** above 256 KB), handles `SelectionClear`, and reads other owners' text (INCR included). XCB,
+  not Xlib: it is thread safe and reports protocol errors as events, where Xlib has one process-wide error handler (Avalonia's) whose default
+  exits the process. Callers only enqueue work and wake the thread through a pipe, so the UI thread never waits on the X server. The editor
+  offers its selection lazily (a provider over an immutable document snapshot, run on the X thread only when someone pastes). Under KDE Plasma
+  on Wayland CsCode runs through XWayland and KWin bridges X11 PRIMARY to the Wayland primary selection; a native Wayland backend (Avalonia 12
+  has none) would need `zwp_primary_selection`. Without `$DISPLAY` there is no PRIMARY (`IsPrimarySelectionSupported` false).
+* **Edit menu routing** (`ClipboardRouter`): Cut / Copy / Paste act on what has keyboard focus, as in Visual Studio: the editor, a text box (its
+  own Cut/Copy/Paste), or a view that copies its selection (`CsCode.Ui.Menus.IClipboardTarget`: Error List, Output, Find Results, Explorer files,
+  Call Stack, Locals/Autos/Watch, Debug Console, Find in Files). Focus moving into a menu or popup does not count, so Edit > Copy and a context
+  menu's Copy act on what had focus before. The Edit menu items are gated on `cscode.edit.canCut/canCopy/canPaste`, computed right before the
+  menus refresh (`MenuModel.Refreshing`). The router follows focus with `handledEventsToo`: AvaloniaEdit marks the text area's GotFocus handled.
+* **Keys**: the editor contributes Ctrl+X / Shift+Delete, Ctrl+C / Ctrl+Insert, Ctrl+V / Shift+Insert, Ctrl+Shift+V (`editorTextFocus`)
+  as built-in keybindings (so menus show them and keybindings.json can rebind them); text boxes use Avalonia's own (the same keys); list views
+  handle Ctrl+C and Ctrl+Insert themselves (`ClipboardKeys`).
+
+### Right-click menus (`CsCode.Ui/Menus`, `Menus/ShellContextMenus.cs`)
+
+* **One model**: `MenuEntry` lists, built when a menu opens and dropped when it closes, rendered by `ContextMenus` the same way everywhere:
+  the theme's menu colours (Fluent retargeted at the workbench palette, high contrast included), Codicon icons, a right-aligned shortcut column
+  from `IKeybindingService.GetLabel`, access keys, screen-reader names and accelerator keys (`AutomationProperties`), keyboard navigation
+  (Avalonia's). Other modules add items through `IContributionRegistry` (`MenuContribution` with `when`, `group@order`, VS wording in `Title`,
+  `Icon`, `Submenu` + `SubmenuContribution`, `Args`, `EnablementCheck` for asynchronous enablement; `MenuContributions.Resolve`): a `when`
+  that fails or an unregistered command hides an item, the command's enablement disables it. Menu ids (`MenuIds`): `editor/context`,
+  `editor/title/context`, `explorer/context`, `problems/context`, `output/context`, `search/context`, `view/title/context`, `statusBar/context`.
+* **Editor text area**: built entirely from `editor/context` contributions (the editor module contributes Visual Studio 2022's items; the shell
+  hard-codes none), at the pointer or, from the keyboard (the Menu key through Avalonia's context request; Shift+F10, which Avalonia does not map, through the editor; or `editor.action.showContextMenu`),
+  below the caret. A window-level tunnelling handler owns the request unless a control on the way (the find box) has a menu of its own.
+* **Document tabs** (replacing Dock's): Save *file* (when dirty), Close, Close All But This, Close All, Close To The Right, Pin / Unpin Tab,
+  Copy Full Path, Open Containing Folder, Reveal in Explorer (files in an open folder), New Horizontal / Vertical Document Group, then
+  `editor/title/context` items.
+* **Tool windows** (tool tabs, auto-hide strip tabs, title bars; replacing Dock's): Dock (when auto-hidden), Auto Hide, Close, then
+  `view/title/context`. Float is left out: the shell has no floating host windows yet (*Known gaps*).
+* **Explorer**: New File / New Folder (folders), Reveal in File Manager, Open in Terminal (only when a terminal registers
+  `workbench.action.terminal.newHere`), Find in Folder (folders), Cut / Copy / Paste (files, like Solution Explorer), Copy Path / Copy Relative
+  Path, Rename (F2), Duplicate, Delete (Del), then `explorer/context`. Keys: Ctrl+C/X/V, Ctrl+Insert, Shift+Insert, Shift+Delete on files.
+* **Error List** rows: Copy (severity, code, description, file, line; tab separated, as Visual Studio copies), Go To Location (Enter), Show Error
+  Help (F1; the diagnostic's `codeDescription` link, disabled without one), then `problems/context`. **Output**: Copy (selected lines; the list
+  takes Shift/Ctrl+click selections), Clear All, Word Wrap (check). **Find Results**: Go To Location, Copy (`path(line,column): text`), Copy Full
+  Path, Clear All. **Status bar** items: the item's command, Copy (its text without icons), then `statusBar/context`.
+* Debug panels (audited): Locals/Autos/Watch have Copy Value, Copy Name (new), Copy Expression; Call Stack has Copy (the selected frame, new) and
+  Copy Call Stack; the Debug Console output has Copy / Copy All / Clear All (new); Breakpoints and Threads keep their menus; Modules has none.
+  Search panels: Find in Files rows have Copy (new), Copy Path, Copy All (new); Settings' gear menu has Copy Setting ID. Text boxes keep
+  Fluent's Cut / Copy / Paste flyout.
+* **Budgets**: building a menu (resolving contributions, creating the items) takes 2-5 ms here; Avalonia's own `ContextMenu.Open` dominates
+  (headless Skia on this shared machine, load average 17-24: 40-100 ms for any 16-item menu, the same for a plain Avalonia menu without CsCode's
+  items). `RealAppContextMenuTests.Menus_open...` asserts the best of three runs of 100 openings stays under 50 ms and that 100 open/close cycles
+  retain nothing; it passed alone and failed once under full load (see *Known gaps*). No item does I/O or a language-server round trip while
+  the menu opens: Rename's prepareRename and Paste's clipboard query are `EnablementCheck`s (the item opens disabled and enables when they answer).
 
 ### Settings
 
@@ -399,6 +467,13 @@ dotnet test tests/CsCode.App.Tests            # on a Nix dotnet: source tools/ni
 * **Dev host** (`tests/CsCode.App.Tests/DevHost`): composes the **real** shell (`AppServices.Build` + `MainWindow`) over in-memory fakes for the modules that are written concurrently
   (command service, context keys with a real `when` evaluator, configuration, keybindings with chord state, workspace + file system + watcher, state storage, colour themes with a fallback chain, editor factory, debug service).
   `DevScene.BuildAsync` seeds a workspace, tabs, diagnostics, output and a debug state. `host.Capture("name")` writes `.scratch/screenshots/name.png` (git-ignored).
+* **Clipboard and menus**: `ClipboardServiceTests` (headless platform clipboard, a silent owner, the ring), `RealApp/ContextMenuTests` (every
+  menu over the real composition, the Edit menu's routing, budgets, screenshots `context-menu-editor.png`, `context-menu-tab.png`),
+  `X11SelectionTests` (PRIMARY between two X clients on a **private Xvfb** `:100`-`:199` started by the test, `-nolisten tcp`, stopped by its
+  PID; binary from `CSCODE_XVFB`, else the Nix store path, else PATH; skipped without one) and `RealWindowClipboardTests` (the real app in a
+  child process on the private Xvfb with Avalonia's X11 backend; this process is the second X client: CLIPBOARD and PRIMARY both ways, Unicode,
+  CRLF, 2 MB through INCR; `clipboard-real-window.png`). No xclip/xsel is installed here, so the second client is `X11SelectionClient` on its own
+  connection (Avalonia's X11 clipboard is the independent implementation on the other side).
 * **Theme screenshots**: `RealApp/ThemeScreenshotTests` photographs the real main window (a folder and a C# file open, TextMate highlighting) in every
   installed theme (`.scratch/screenshots/theme-<id>.png`, 24 of them), the open dropdown in Dark and Solarized Light and the Settings page in Dark,
   Monokai and Light; `RealApp/ThemeIconTests` writes `theme-icons-dark-plus.png` and checks the coloured icons are drawn.
@@ -416,6 +491,14 @@ Not done: single-instance forwarding (SHOULD); native menu bar (`NativeMenu` on 
 dirty marker is Dock's `*` rather than a dot that turns into a close glyph on hover; pinned tabs have model/commands but no pin glyph; layout restore reopens tabs but does not recreate split document groups or floating windows;
 auto-hide/peek animations, taskbar jump list, `--diff`, toolbar overflow (all SHOULD; high contrast comes from VS Code's two high-contrast themes, completed from the shell's high-contrast bases); the Windows/macOS title-bar path (`ExtendClientAreaToDecorationsHint`) is written but untested here (Linux only).
 `reloadWindow` only refreshes menus. Find in Files is the Search panel's tool window (`CsCode.Panels.Search`); Find Results hosts the references delivered by `cscode.references.show`. Explorer filter searches loaded nodes only.
+
+Clipboard and menus, not done: Float on tool windows and tabs (no floating host windows); Copy with formatting (HTML with the theme's syntax
+colours; the service writes `text/html` when given one, nothing builds it yet); the terminal (does not exist); a native Wayland primary selection
+(Avalonia 12 runs through XWayland here); Peek Definition and QuickWatch's tree (Peek is not implemented by the editor, so the item stays hidden;
+QuickWatch shows the value in a notification with Add Watch). Not verified headless: the Wayland <-> XWayland round trip with native KDE
+applications (Kate, Konsole, Firefox) and screenshots on the real desktop are the integrator's check. The menu-open budget is met in quiet runs
+only (above). Found while testing: the main window's `OnGotFocus` (focus areas for `listFocus`, `panelFocus`...) never sees the editor take focus,
+because AvaloniaEdit marks GotFocus handled; the editor sets `editorTextFocus` itself, but `ContextKeyTracker.Focus` can keep a stale area.
 
 Known issues: (1) **Combined hostile storm p99 is ~19 ms, not < 16 ms** (each source alone meets it; max is within 50 ms). (2) Dock.Avalonia 12.1.0.13 keeps every presented dockable in its control-recycling
 cache (`ControlRecycling`, keyed by the dockable, never evicted); the shell removes a closed tab's entry itself (see *View lifecycle and Dock*), which depends on the cache being reachable through

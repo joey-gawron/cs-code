@@ -13,6 +13,7 @@ namespace CsCode.Editor.Documents;
 public sealed class DocumentSnapshot
 {
     private readonly RopeTextSource _source;
+    private readonly Rope<char> _rope;
     private int[]? _lineStarts;
     private string? _text;
 
@@ -22,6 +23,7 @@ public sealed class DocumentSnapshot
         // Wrap WITHOUT the ITextSourceVersion: that object heads a linked list of every later change (with their text), so keeping
         // it alive from a long-lived snapshot would retain edit history.
         _source = new RopeTextSource(rope);
+        _rope = rope;
     }
 
     public int Version { get; }
@@ -41,6 +43,9 @@ public sealed class DocumentSnapshot
     public char GetCharAt(int offset) => _source.GetCharAt(offset);
 
     public ReadOnlyMemory<char> GetMemory(int offset, int length) => _source.GetTextAsMemory(offset, length);
+
+    /// <summary>Copies <paramref name="count"/> characters from <paramref name="offset"/> into <paramref name="destination"/> without allocating (the tree-sitter input reader).</summary>
+    internal void CopyTo(int offset, char[] destination, int destinationIndex, int count) => _rope.CopyTo(offset, destination, destinationIndex, count);
 
     public string GetText(TextRange range) => GetText(OffsetAt(range.Start), Math.Max(0, OffsetAt(range.End) - OffsetAt(range.Start)));
 

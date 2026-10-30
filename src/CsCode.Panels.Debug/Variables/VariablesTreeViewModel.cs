@@ -554,7 +554,9 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
                     if (indexed.Any(v => shown.Contains(v.Name))) indexed = [.. indexed.Where(v => !shown.Contains(v.Name))];
                 }
                 IReadOnlyList<DebugVariable> named = [];
-                if (start == 0 && node.NamedVariables is not 0)
+                // Only when the adapter announced named children: GDB gives a Rust Vec only `indexedVariables` and ignores the filter, so asking
+                // it for the "named" ones returned ALL the elements, which then came first, out of order ([100]…[249], [0]…[99]).
+                if (start == 0 && node.NamedVariables is > 0)
                 {
                     named = await _ui.OnUi(filtered.GetVariablesAsync(node.VariablesReference, "named", null, null, ct), ct);
                     if (!IsLive(generation)) return;
@@ -867,6 +869,11 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
     public async Task CopyValueAsync(VariableNodeViewModel node)
     {
         if (_s.Window is { } window && node.IsDataRow) await window.CopyToClipboardAsync(node.FullValue);
+    }
+
+    public async Task CopyNameAsync(VariableNodeViewModel node)
+    {
+        if (_s.Window is { } window && node.IsDataRow) await window.CopyToClipboardAsync(node.Name);
     }
 
     public async Task CopyExpressionAsync(VariableNodeViewModel node)

@@ -167,6 +167,18 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
         _scrollRetry = null;
     }
 
+    public bool CanCut => !_disposed && view.Clipboard.CanCut;
+    public bool CanCopy => !_disposed && view.Clipboard.CanCopy;
+    public bool CanPaste => !_disposed && view.Clipboard.CanPaste;
+    public Task CutAsync() => _disposed ? Task.CompletedTask : view.Clipboard.CutAsync();
+    public Task CopyAsync() => _disposed ? Task.CompletedTask : view.Clipboard.CopyAsync();
+    public Task PasteAsync() => _disposed ? Task.CompletedTask : view.Clipboard.PasteAsync();
+    public Avalonia.Rect GetCaretBounds() => _disposed ? default : view.CaretBounds();
+    public void PrepareContextMenu()
+    {
+        if (!_disposed) EditorMenus.PrepareContextKeys(view);
+    }
+
     public ValueTask<IReadOnlyList<string>> GetBreadcrumbsAsync(CancellationToken ct = default) =>
         BreadcrumbsHandler?.Invoke(ct) ?? ValueTask.FromResult<IReadOnlyList<string>>([]);
 

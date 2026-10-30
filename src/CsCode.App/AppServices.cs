@@ -17,6 +17,7 @@ using CsCode.Panels.Debug;
 using CsCode.Panels.Search;
 using CsCode.Platform;
 using CsCode.Profiling;
+using CsCode.Remote;
 using CsCode.Ui;
 using CsCode.Vim;
 using CsCode.Ui.Threading;
@@ -53,6 +54,7 @@ public static class AppServices
         services.AddCsCodeShell(args);
         services.AddCsCodeDebugPanels();
         services.AddCsCodeSearchPanels();
+        services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
         configure?.Invoke(services); // dev/test host: replace anything above
         AddChildProcessTracking(services); // last: wraps whichever memory monitor ended up registered
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
@@ -89,6 +91,9 @@ public static class AppServices
         services.AddSingleton<IUiDispatcher>(_ => AvaloniaUiDispatcher.Instance);
         services.AddSingleton<WindowHolder>();
         services.AddSingleton<IShellHost>(sp => new AvaloniaShellHost(() => sp.GetRequiredService<WindowHolder>().Window));
+        // The system clipboard (+ PRIMARY on X11) and the in-memory clipboard ring, for the editor, the panels and the shell.
+        services.TryAddSingleton(sp => new ClipboardService(sp.GetRequiredService<IUiDispatcher>(), AvaloniaPlatformClipboard.Of(() => sp.GetRequiredService<WindowHolder>().Window)));
+        services.TryAddSingleton<IClipboardService>(sp => sp.GetRequiredService<ClipboardService>());
 
         services.AddSingleton<NotificationCenter>();
         services.AddSingleton<QuickInputViewModel>();

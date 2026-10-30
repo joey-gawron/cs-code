@@ -235,6 +235,9 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
     private void Route(ITextDocument doc)
     {
         if (Volatile.Read(ref _disposed) != 0 || !ReferenceEquals(_services.Documents.Get(doc.Uri), doc)) return; // closed before we got here
+        // Documents of other schemes (ssh: remote workspaces) are served by the language host next to their files (CsCode.Server, bridged by
+        // CsCode.Remote), never by servers started on this machine.
+        if (!ServesScheme(doc.Uri)) { Unroute(doc); return; }
 
         List<DefinitionOverrides.Effective> candidates;
         lock (_gate) candidates = _effective.Values.Where(e => e.Enabled && e.Definition.Selector.Score(doc) > 0).ToList();
@@ -257,6 +260,10 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         // The document may have been closed while we were attaching: never leave a closed document attached anywhere.
         if (!ReferenceEquals(_services.Documents.Get(doc.Uri), doc)) Unroute(doc);
     }
+
+    /// <summary>The schemes an in-process language host serves: files on this machine and untitled buffers.</summary>
+    internal static bool ServesScheme(Uri uri) =>
+        !uri.IsAbsoluteUri || uri.IsFile || string.Equals(uri.Scheme, "untitled", StringComparison.OrdinalIgnoreCase);
 
     private ServerSlot GetOrCreateSlot(LanguageServerDefinition def, RootDetector.Root root)
     {

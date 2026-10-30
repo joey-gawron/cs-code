@@ -44,6 +44,12 @@ public sealed record EditorSettings
     public int QuickSuggestionsDelayMs { get; init; } = 10;
     public int HoverDelayMs { get; init; } = 300;
     public int UndoLimit { get; init; } = 1000;
+    /// <summary><c>editor.emptySelectionClipboard</c>: Ctrl+C / Ctrl+X on a caret copy / cut the whole line (Visual Studio, VS Code).</summary>
+    public bool EmptySelectionClipboard { get; init; } = true;
+    /// <summary><c>editor.selectionClipboard</c>: selecting sets the PRIMARY selection and middle-click pastes it (Linux only, as in VS Code).</summary>
+    public bool SelectionClipboard { get; init; } = OperatingSystem.IsLinux();
+    /// <summary><c>editor.autoIndentOnPaste</c> (and <c>editor.autoIndent</c> not "none"): a multi-line paste is re-indented to where it lands.</summary>
+    public bool AutoIndentOnPaste { get; init; } = true;
 
     public bool ShowLineNumbers => LineNumbers != "off";
 
@@ -89,6 +95,9 @@ public sealed record EditorSettings
             QuickSuggestionsDelayMs = Math.Clamp(G("editor.quickSuggestionsDelay", defaults.QuickSuggestionsDelayMs), 0, 2000),
             HoverDelayMs = Math.Clamp(G("editor.hover.delay", defaults.HoverDelayMs), 0, 5000),
             UndoLimit = Math.Max(0, G(EditorSettingKeys.UndoLimit, defaults.UndoLimit)),
+            EmptySelectionClipboard = G("editor.emptySelectionClipboard", defaults.EmptySelectionClipboard),
+            SelectionClipboard = OperatingSystem.IsLinux() && G("editor.selectionClipboard", defaults.SelectionClipboard),
+            AutoIndentOnPaste = G("editor.autoIndentOnPaste", defaults.AutoIndentOnPaste) && G("editor.autoIndent", "full") != "none",
         };
     }
 

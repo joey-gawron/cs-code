@@ -222,6 +222,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             Memory = _p.Memory,
             Settings = SettingsFor(final),
             StartChild = StartChildAsync,
+            Quirks = _builtins.GetValueOrDefault(final.Type)?.Quirks ?? DebugAdapterQuirks.None,
         });
         Attach(session, final.PostDebugTask, folder, group, configuration.Type);
         try
@@ -484,8 +485,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             var frames = await session.GetStackTraceAsync(t, 0, 20);
             if (Interlocked.Read(ref _stopEpoch) != epoch || session.State != DebugSessionState.Stopped) return; // resumed or stopped again meanwhile
             if (frames.Count == 0) { SetStopLocation(null); return; }
-            // Prefer the first frame we can show (adapters may start with runtime frames that have no source).
-            var frame = frames.FirstOrDefault(f => session.ResolveSourceUri(f.Source) is not null) ?? frames[0];
+            var frame = PreferredStopFrame(session, frames);
             if (!ReferenceEquals(ActiveSession, session)) return; // focus moved to another session meanwhile: its frame ids are not ours
             Volatile.Write(ref _focusedFrameId, frame.Id);
             SetStopLocation(ToLocation(session, t, frame, reason));
@@ -495,6 +495,16 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             _logger.LogDebug(ex, "Could not determine the stop location");
         }
     }
+
+    /// <summary>
+    /// The frame a stop shows: the first one with a source we can show that the adapter does not de-emphasise (VS Code's rule: a pause in a
+    /// libc sleep or a Rust panic inside the standard library shows the user's code that called it), else the first with a source (adapters
+    /// may start with runtime frames that have none), else the top frame.
+    /// </summary>
+    internal static DebugStackFrame PreferredStopFrame(DebugSession session, IReadOnlyList<DebugStackFrame> frames) =>
+        frames.FirstOrDefault(f => f.Source?.PresentationHint != "deemphasize" && f.PresentationHint is not ("deemphasize" or "label") && session.ResolveSourceUri(f.Source) is not null)
+        ?? frames.FirstOrDefault(f => session.ResolveSourceUri(f.Source) is not null)
+        ?? frames[0];
 
     private static DebugStopLocation ToLocation(DebugSession session, int threadId, DebugStackFrame frame, string reason) =>
         new(session, threadId, frame.Id, session.ResolveSourceUri(frame.Source), frame.Line, frame.Column, reason);
