@@ -37,4 +37,7 @@
     <Project Path="tests/CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
     <Project Path="tests/CsCode.Vim.Tests/CsCode.Vim.Tests.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/profile/CsCode.ProfileHost/CsCode.ProfileHost.csproj" />
+  </Folder>
 </Solution>

@@ -1,0 +1,15 @@
+{
+  "_comment": "Recommended runtime settings of the CsCode app, chosen by the GC matrix in docs/MEMORY.md (section 3; measured on Linux x64). build/MemoryDefaults.props encodes the same as MSBuild properties for CsCode.App.csproj. GCSettings.LatencyMode = SustainedLowLatency is set in code (AppStartup.ConfigureRuntime), not here.",
+  "runtimeOptions": {
+    "configProperties": {
+      "System.GC.Server": false,
+      "System.GC.Concurrent": true,
+      "System.GC.ConserveMemory": 3,
+      "System.GC.RetainVM": false,
+      "System.Runtime.TieredCompilation": true,
+      "System.Runtime.TieredCompilation.QuickJitForLoops": true,
+      "System.Runtime.TieredPGO": true,
+      "System.Globalization.Invariant": false
+    }
+  }
+}

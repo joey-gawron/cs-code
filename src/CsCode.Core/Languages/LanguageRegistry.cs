@@ -69,14 +69,40 @@ public sealed class LanguageFeatureRegistry : ILanguageFeatureRegistry
 
     public IReadOnlyList<TProvider> GetProviders<TProvider>(Uri uri, string languageId) where TProvider : class, ILanguageProvider
     {
-        Entry[] snapshot;
-        lock (_gate) snapshot = _entries.Where(e => Array.IndexOf(e.Types, typeof(TProvider)) >= 0).ToArray();
-        return snapshot
-            .Select(e => (e, score: e.Selector.Score(uri, languageId)))
-            .Where(x => x.score > 0)
-            .OrderByDescending(x => x.score).ThenByDescending(x => x.e.Seq)
-            .Select(x => (TProvider)x.e.Provider)
-            .ToArray();
+        // Hot path (every completion, hover, highlight…): one candidate array, scores computed outside the lock, an insertion sort over the few
+        // matches (best score first, newest registration first among equals — what the LINQ OrderByDescending/ThenByDescending did).
+        Entry[] candidates;
+        lock (_gate)
+        {
+            var count = 0;
+            foreach (var e in _entries) if (Array.IndexOf(e.Types, typeof(TProvider)) >= 0) count++;
+            if (count == 0) return [];
+            candidates = new Entry[count];
+            count = 0;
+            foreach (var e in _entries) if (Array.IndexOf(e.Types, typeof(TProvider)) >= 0) candidates[count++] = e;
+        }
+        Span<int> scores = candidates.Length <= 64 ? stackalloc int[candidates.Length] : new int[candidates.Length];
+        var matched = 0;
+        for (var i = 0; i < candidates.Length; i++)
+        {
+            var entry = candidates[i];
+            var score = entry.Selector.Score(uri, languageId);
+            if (score <= 0) continue;
+            // insert in order (in place: the matched prefix never passes i): higher score first, then higher Seq first
+            var j = matched++;
+            while (j > 0 && (scores[j - 1] < score || (scores[j - 1] == score && candidates[j - 1].Seq < entry.Seq)))
+            {
+                scores[j] = scores[j - 1];
+                candidates[j] = candidates[j - 1];
+                j--;
+            }
+            scores[j] = score;
+            candidates[j] = entry;
+        }
+        if (matched == 0) return [];
+        var result = new TProvider[matched];
+        for (var i = 0; i < matched; i++) result[i] = (TProvider)candidates[i].Provider;
+        return result;
     }
 
     public IReadOnlyList<TProvider> GetAll<TProvider>() where TProvider : class, ILanguageProvider
@@ -153,7 +179,15 @@ public sealed class DiagnosticService : IDiagnosticService
     public IReadOnlyList<(Uri Uri, Diagnostic Diagnostic)> GetAll()
     {
         lock (_gate)
-            return _store.SelectMany(kv => kv.Value.Values.SelectMany(v => v).Select(d => (kv.Key, d))).ToArray();
+        {
+            // Exact-size array, no LINQ iterator chain: the Error List and status bar call this on every change batch.
+            var count = 0;
+            foreach (var owners in _store.Values) foreach (var list in owners.Values) count += list.Count;
+            var result = new (Uri, Diagnostic)[count];
+            var i = 0;
+            foreach (var (uri, owners) in _store) foreach (var list in owners.Values) for (var k = 0; k < list.Count; k++) result[i++] = (uri, list[k]);
+            return result;
+        }
     }
 
     public (int Errors, int Warnings, int Infos, int Hints) Counts

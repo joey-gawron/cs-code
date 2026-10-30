@@ -210,6 +210,8 @@ public sealed class ShellController : IDisposable
 
         // Re-creatable memory held by the design system joins the memory-pressure policy.
         if (_sp.GetService<IMemoryMonitor>() is { } monitor) _disposables.Add(monitor.Register(new IconCacheTrimmable()));
+        // The memory monitor (CsCode.Profiling, docs/MEMORY.md) starts with the window, hears the user's input for its idle trim, writes the Memory channel.
+        _disposables.Add(ProfilingShell.Attach(_sp));
 
         // Persist the layout (debounced) whenever tabs or tool windows move.
         _disposables.Add(well.TabsChanged.Subscribe(_ => ScheduleSaveLayout()));
