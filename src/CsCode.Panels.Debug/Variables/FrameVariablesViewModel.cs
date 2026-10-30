@@ -12,16 +12,20 @@ public static partial class ScopeSelector
     private static partial Regex LocalsName();
 
     /// <summary>
-    /// The frame's "own" variables: scopes the adapter hints as <c>locals</c>/<c>arguments</c> (or names like them), else the first cheap scope.
-    /// Expensive scopes (globals, registers: the adapter says a fetch is slow) are never loaded automatically.
+    /// The frame's "own" variables: scopes the adapter hints as <c>locals</c>/<c>arguments</c> (or names like them), else the first cheap scope —
+    /// plus the value the function just stepped out of returned (hint <c>returnValue</c>: GDB's "Return" scope after a step out; Visual Studio
+    /// shows it too). Expensive scopes (globals, registers: the adapter says a fetch is slow) are never loaded automatically.
     /// </summary>
     public static IReadOnlyList<DebugScope> ForLocals(IReadOnlyList<DebugScope> scopes)
     {
         var cheap = scopes.Where(s => !s.Expensive && s.VariablesReference > 0).ToList();
         if (cheap.Count == 0) return [];
-        var preferred = cheap.Where(s => s.PresentationHint is "locals" or "arguments" || LocalsName().IsMatch(s.Name)).ToList();
+        var preferred = cheap.Where(s => s.PresentationHint is "locals" or "arguments" or "returnValue" || LocalsName().IsMatch(s.Name)).ToList();
         return preferred.Count > 0 ? preferred : [cheap[0]];
     }
+
+    /// <summary>A scope that holds the return value of the function the debuggee just left.</summary>
+    public static bool IsReturnValue(DebugScope scope) => scope.PresentationHint == "returnValue";
 }
 
 /// <summary>

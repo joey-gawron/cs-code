@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -25,6 +26,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private readonly DebugSessionSettings _settings;
     private readonly DebugLane _lane;
     private readonly ILogger _logger;
+    private readonly DebugAdapterQuirks _quirks;
     private readonly DapPositions _positions;
     private readonly OutputBatcher _output;
     private readonly DebuggeeLauncher _debuggees;
@@ -58,13 +60,17 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private BreakpointSync? _sync;
     private IDisposable? _memoryTrack;
     private int? _exitCode;
-    private bool _terminatedFired, _restarting, _stopping;
+    private bool _terminatedFired, _restarting, _stopping, _draining;
+    private long _lastOutputTimestamp;
     private TaskCompletionSource _terminatedSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _lastStopTimestamp;
     private string? _lastStopReason;
     private bool _lastStopAllThreads;
     private long _resumeEpoch, _stopCounter;
     private JsonObject? _launchArgs;
+    private SyntheticExceptionFilter? _syntheticStop;
+    private DebugExceptionInfo? _syntheticException;
+    private readonly System.Text.StringBuilder? _recentOutput;
     private readonly Dictionary<string, DebugModuleInfo> _modules = new();
 
     public DebugSession(DebugSessionOptions options)
@@ -73,6 +79,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         _settings = options.Settings;
         _lane = options.Lane;
         _logger = options.Logger ?? NullLogger.Instance;
+        _quirks = options.Quirks;
+        _recentOutput = _quirks.SyntheticExceptionFilters.Count > 0 ? new System.Text.StringBuilder() : null;
         _positions = new DapPositions(_settings.LinesStartAt1, _settings.ColumnsStartAt1);
         _output = new OutputBatcher(_lane, this, e => _outputEvent.Fire(e), _settings.OutputWindow);
         _debuggees = new DebuggeeLauncher(_lane, _logger, (category, text) => _output.Add(category, text));
@@ -118,8 +126,16 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     /// its child sessions connect there.
     /// </summary>
     public DebugAdapterDescriptor? AdapterEndpoint => _client?.Transport is { } t ? DapTransportFactory.EndpointOf(t) : null;
-    /// <summary>Environment marker carried by an adapter server this session started and by everything it spawned (null otherwise).</summary>
-    public string? AdapterProcessMarker => (_client?.Transport as ServerProcessTransport)?.Marker;
+    /// <summary>
+    /// Environment marker carried by an adapter process this session started (an adapter server, or a stdio adapter started from a
+    /// <see cref="DebugAdapterStdioProcess"/> such as GDB) and by everything it spawned (null otherwise).
+    /// </summary>
+    public string? AdapterProcessMarker => _client?.Transport switch
+    {
+        ServerProcessTransport server => server.Marker,
+        ProcessTransport process => process.Marker,
+        _ => null,
+    };
     /// <summary>The private directory of the socket of an adapter server this session started (null otherwise); deleted with the session.</summary>
     public string? AdapterSocketDirectory => (_client?.Transport as ServerProcessTransport)?.SocketDirectory;
 
@@ -147,6 +163,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     DapPositions IBreakpointSyncHost.Positions => _positions;
     DapCapabilities IBreakpointSyncHost.Capabilities => _dapCaps;
     bool IBreakpointSyncHost.IsLive => _client is { IsClosed: false } && State != DebugSessionState.Terminated;
+    DebugAdapterQuirks IBreakpointSyncHost.Quirks => _quirks;
     Task<JsonElement> IBreakpointSyncHost.RequestAsync(string command, object? arguments, CancellationToken ct) => RequestAsync(command, arguments, ct);
     void IBreakpointSyncHost.BreakpointStatusChanged(DebugBreakpointStatus status) => _breakpointStatus.Fire(status);
 
@@ -291,7 +308,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
 
         _sync = new BreakpointSync(this, _o.Breakpoints, _lane, _logger, _settings.BreakpointDebounce);
         MergeExceptionFilters();
-        await _sync.SendAllAsync(ct);
+        // Start Without Debugging on an adapter that debugs anyway (GDB): no breakpoints, no exception filters — nothing may stop the program.
+        if (!(_o.Configuration.NoDebug && _quirks.IgnoresNoDebug)) await _sync.SendAllAsync(ct);
 
         if (_dapCaps.SupportsConfigurationDoneRequest == true)
             await RequestAsync("configurationDone", null, ct, _settings.LaunchTimeout);
@@ -320,19 +338,32 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
             _rawCaps = JsonSerializer.SerializeToNode(fresh, DapJson.Options) as JsonObject ?? new JsonObject();
         }
         _caps = DapMapping.ToCore(_dapCaps);
+        if (_quirks.SyntheticExceptionFilters is { Count: > 0 } synthetic)
+        {
+            // Client-side exception filters (GDB: "Rust panics") are offered next to the adapter's own, and their stops are described by the
+            // session itself (exceptionInfo), which the Exception Helper asks for.
+            _caps = _caps with
+            {
+                SupportsExceptionInfo = true,
+                ExceptionBreakpointFilters = [.. synthetic.Select(f => new ExceptionBreakpointFilter(f.Filter, f.Label, f.Default, false, f.Description)), .. _caps.ExceptionBreakpointFilters ?? []],
+            };
+        }
         if (_client is not null) _client.SendCancelRequests = _dapCaps.SupportsCancelRequest == true;
     }
 
-    /// <summary>The adapter's exceptionBreakpointFilters become THE filter list (enabled state of known ids is kept; new ones use the adapter default).</summary>
+    /// <summary>
+    /// The adapter's exceptionBreakpointFilters (plus the client-side ones of its quirks, first) become THE filter list (enabled state of known
+    /// ids is kept; new ones use their default).
+    /// </summary>
     private void MergeExceptionFilters()
     {
-        var advertised = _dapCaps.ExceptionBreakpointFilters;
+        var advertised = _caps.ExceptionBreakpointFilters;
         if (advertised is null || advertised.Count == 0) return;
         var existing = _o.Breakpoints.ExceptionFilters.ToDictionary(f => f.Filter);
         _o.Breakpoints.SetExceptionFilters([.. advertised.Select(a =>
             existing.TryGetValue(a.Filter, out var e)
                 ? new ExceptionFilterSetting(a.Filter, a.Label, e.Enabled, e.Condition)
-                : new ExceptionFilterSetting(a.Filter, a.Label, a.Default == true))]);
+                : new ExceptionFilterSetting(a.Filter, a.Label, a.Default))]);
     }
 
     // ------------------------------------------------------------------ state machine
@@ -406,8 +437,41 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
             _ = RelaunchAsync(data);
             return;
         }
+        if (_quirks.TrailingOutputQuietPeriod > TimeSpan.Zero && !_stopping && !_terminatedFired)
+        {
+            _ = FinishAfterTrailingOutputAsync();
+            return;
+        }
         FinishTermination(null);
         _ = CleanupAsync(quick: false); // spec: after `terminated` the client sends `disconnect`
+    }
+
+    /// <summary>
+    /// GDB reads the program's output on a thread of its own: the last lines of a program that printed a lot can arrive after `terminated`.
+    /// The session ends once the output went quiet for <see cref="DebugAdapterQuirks.TrailingOutputQuietPeriod"/> (bounded by
+    /// <see cref="DebugAdapterQuirks.TrailingOutputLimit"/>), so those lines still reach the Debug Console. Runs on the lane.
+    /// </summary>
+    private async Task FinishAfterTrailingOutputAsync()
+    {
+        if (_draining) return;
+        _draining = true;
+        try
+        {
+            var quiet = _quirks.TrailingOutputQuietPeriod;
+            var terminatedAt = Stopwatch.GetTimestamp();
+            var deadline = terminatedAt + (long)(_quirks.TrailingOutputLimit.TotalSeconds * Stopwatch.Frequency);
+            while (!_terminatedFired && Stopwatch.GetTimestamp() < deadline)
+            {
+                // quiet since the later of the last output and `terminated` (a program's only line may still be on its way)
+                var since = Stopwatch.GetElapsedTime(Math.Max(Volatile.Read(ref _lastOutputTimestamp), terminatedAt));
+                if (since >= quiet) break;
+                await Task.Delay(quiet - since);
+            }
+        }
+        finally { _draining = false; }
+        if (_terminatedFired) return; // the connection closed or the user stopped meanwhile
+        FinishTermination(null);
+        await CleanupAsync(quick: false);
     }
 
     /// <summary>Graceful stop: terminate (if the adapter supports it) else disconnect{terminateDebuggee} (launch) / detach (attach); hard kill after the timeout.</summary>
@@ -419,6 +483,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
 
     private async Task StopCoreAsync(bool quick, CancellationToken ct)
     {
+        // The program already ended (the session only waits for its trailing output): nothing to terminate.
+        if (_draining && !_terminatedFired) { FinishTermination(null); await CleanupAsync(quick); return; }
         if (!_terminatedFired && _client is { IsClosed: false })
         {
             _stopping = true;

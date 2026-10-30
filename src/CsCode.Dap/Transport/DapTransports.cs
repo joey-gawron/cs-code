@@ -39,6 +39,7 @@ public static class DapTransportFactory
         descriptor switch
         {
             DebugAdapterExecutable exe => ProcessTransport.Start(exe, logger),
+            DebugAdapterStdioProcess process => ProcessTransport.Start(process, logger),
             DebugAdapterServer server => await TcpTransport.ConnectAsync(server.Host, server.Port, connectTimeout, ct).ConfigureAwait(false),
             DebugAdapterNamedPipe pipe => await PipeTransport.ConnectAsync(pipe.Path, connectTimeout, ct).ConfigureAwait(false),
             DebugAdapterServerProcess server => await ServerProcessTransport.StartAsync(server, logger, ct).ConfigureAwait(false),
@@ -59,7 +60,32 @@ public static class DapTransportFactory
     };
 }
 
-/// <summary>Adapter as a child process talking DAP over stdin/stdout. The process tree is killed on close: no zombies.</summary>
+/// <summary>
+/// A stdio debug adapter this module starts itself (GDB's native DAP, <c>gdb -i=dap</c>): like <see cref="DebugAdapterExecutable"/>, plus
+/// below-normal OS priority (ARCHITECTURE §6: <c>nice -n 10</c> on Unix, so the debuggee the adapter launches inherits it) and an environment
+/// marker (<c>CSCODE_DAP_ADAPTER=&lt;guid&gt;</c>) that the adapter passes on to everything it starts, so a debuggee the adapter orphaned when
+/// it died can be found and ended (see <see cref="ProcessTransport"/>).
+/// </summary>
+public sealed record DebugAdapterStdioProcess(
+    string Command,
+    IReadOnlyList<string> Args,
+    IReadOnlyDictionary<string, string>? Env = null,
+    string? Cwd = null) : DebugAdapterDescriptor
+{
+    public bool BelowNormalPriority { get; init; } = true;
+    /// <summary>Name used in messages and the memory monitor ("gdb").</summary>
+    public string DisplayName { get; init; } = "debug adapter";
+    /// <summary>Environment variables removed from the adapter's environment (and so from the debuggee's): the user's ssh-agent socket, …</summary>
+    public IReadOnlyList<string> RemoveEnv { get; init; } = [];
+}
+
+/// <summary>
+/// Adapter as a child process talking DAP over stdin/stdout. The process tree is killed on close: no zombies.
+/// <para>Started from a <see cref="DebugAdapterStdioProcess"/> it also runs below normal priority and carries an environment marker. A stdio
+/// adapter normally takes its debuggee down with it (its tree is killed on close); if it DIED on its own (crash, external kill), a debuggee it
+/// launched may have been re-parented out of the tree: the processes still carrying the marker and still in the adapter's session are reaped
+/// (Linux), as <see cref="ServerProcessTransport"/> does for adapter servers. A process attached to (not launched) carries no marker.</para>
+/// </summary>
 public sealed class ProcessTransport : IDapTransport, IKillableTransport
 {
     private const int StderrTailBytes = 16 * 1024;
@@ -68,19 +94,27 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly StringBuilder _stderr = new();
     private readonly Task _stderrPump;
+    private readonly int? _sessionId;
     private int _disposed;
+    private int _killedByUs;
 
-    private ProcessTransport(Process process, ILogger logger)
+    private ProcessTransport(Process process, ILogger logger, string? marker = null, string? name = null)
     {
         _process = process;
         _logger = logger;
         ProcessId = process.Id;
-        Description = $"{process.StartInfo.FileName} (pid {process.Id})";
+        Marker = marker;
+        Description = $"{name ?? process.StartInfo.FileName} (pid {process.Id})";
         process.EnableRaisingEvents = true;
         process.Exited += OnExited;
         _stderrPump = Task.Run(PumpStderrAsync);
+        // Read right after the start, while the adapter is certainly alive (its pid cannot have been reused yet).
+        _sessionId = marker is null ? null : AdapterProcessReaper.SessionOf(process.Id);
         if (process.HasExited) _completion.TrySetResult(); // exited before the handler was attached
     }
+
+    /// <summary>The environment marker of an adapter started from a <see cref="DebugAdapterStdioProcess"/> (null otherwise).</summary>
+    public string? Marker { get; }
 
     public Stream Input => _process.StandardOutput.BaseStream;
     public Stream Output => _process.StandardInput.BaseStream;
@@ -123,6 +157,61 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
         return new ProcessTransport(process, logger);
     }
 
+    /// <summary>
+    /// Starts <paramref name="descriptor"/> as <c>[nice -n 10] command args…</c> (no shell; nice execs the command, so <see cref="ProcessId"/> is
+    /// the adapter's own pid and the debuggee it launches inherits the lower priority — a post-start setpriority would race its first child),
+    /// with the environment marker set.
+    /// </summary>
+    public static ProcessTransport Start(DebugAdapterStdioProcess descriptor, ILogger logger)
+    {
+        var marker = Guid.NewGuid().ToString("N");
+        var psi = new ProcessStartInfo
+        {
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardErrorEncoding = Encoding.UTF8,
+        };
+        var nice = descriptor.BelowNormalPriority && !OperatingSystem.IsWindows() ? FindNice() : null;
+        var launch = new List<string>();
+        if (nice is not null) launch.AddRange([nice, "-n", "10"]);
+        launch.Add(descriptor.Command);
+        psi.FileName = launch[0];
+        foreach (var a in launch.Skip(1).Concat(descriptor.Args)) psi.ArgumentList.Add(a);
+        if (!string.IsNullOrEmpty(descriptor.Cwd) && Directory.Exists(descriptor.Cwd)) psi.WorkingDirectory = descriptor.Cwd;
+        foreach (var name in descriptor.RemoveEnv) psi.Environment.Remove(name);
+        if (descriptor.Env is not null)
+            foreach (var (k, v) in descriptor.Env) psi.Environment[k] = v;
+        psi.Environment[ServerProcessTransport.MarkerVariable] = marker;
+
+        var process = new Process { StartInfo = psi };
+        try
+        {
+            if (!process.Start()) throw new InvalidOperationException($"Could not start {descriptor.DisplayName} '{descriptor.Command}'.");
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException or DirectoryNotFoundException)
+        {
+            process.Dispose();
+            throw new InvalidOperationException($"Could not start {descriptor.DisplayName} '{descriptor.Command}': {ex.Message}", ex);
+        }
+        if (descriptor.BelowNormalPriority && nice is null)
+        {
+            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { /* best effort */ }
+        }
+        logger.LogDebug("Started {Name} {Command} (pid {Pid})", descriptor.DisplayName, descriptor.Command, process.Id);
+        return new ProcessTransport(process, logger, marker, descriptor.DisplayName);
+    }
+
+    internal static string? FindNice()
+    {
+        foreach (var p in new[] { "/usr/bin/nice", "/bin/nice", "/opt/homebrew/bin/nice", "/run/current-system/sw/bin/nice" })
+            if (File.Exists(p)) return p;
+        return null;
+    }
+
     private void OnExited(object? sender, EventArgs e) => _completion.TrySetResult();
 
     private async Task PumpStderrAsync()
@@ -149,7 +238,14 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
 
     public async ValueTask CloseAsync(TimeSpan grace)
     {
-        if (_process.HasExited) { await DrainAsync().ConfigureAwait(false); return; }
+        if (_process.HasExited)
+        {
+            // An adapter that DIED (killed by a signal or failed, not by us) may have orphaned the debuggee it launched: reap what carries its
+            // marker. One that quit normally (GDB after `disconnect`: exit code 0) took its debuggee down or detached from it on purpose.
+            if (Marker is { } marker && Volatile.Read(ref _killedByUs) == 0 && ExitedAbnormally()) await ReapOrphansAsync(marker).ConfigureAwait(false);
+            await DrainAsync().ConfigureAwait(false);
+            return;
+        }
         try { _process.StandardInput.Close(); } catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException) { }
         using var cts = new CancellationTokenSource(grace);
         try { await _process.WaitForExitAsync(cts.Token).ConfigureAwait(false); }
@@ -166,8 +262,22 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
         try { await _stderrPump.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch (TimeoutException) { }
     }
 
+    private bool ExitedAbnormally()
+    {
+        try { return _process.ExitCode != 0; }
+        catch (InvalidOperationException) { return false; }
+    }
+
+    private async Task ReapOrphansAsync(string marker)
+    {
+        var reaped = AdapterProcessReaper.KillMarked(ServerProcessTransport.MarkerVariable, marker, _sessionId);
+        if (reaped.Count > 0) _logger.LogDebug("Reaped {Count} process(es) the dead debug adapter pid {Pid} left behind", reaped.Count, ProcessId);
+        await AdapterProcessReaper.WaitUntilGoneAsync(reaped, TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+    }
+
     private void KillTree()
     {
+        Interlocked.Exchange(ref _killedByUs, 1);
         try { if (!_process.HasExited) _process.Kill(entireProcessTree: true); }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {

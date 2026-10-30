@@ -65,7 +65,7 @@ public sealed partial class DebugSession
         var gen = _handles.FrameGeneration;
         var resp = DapJson.Deserialize<DapStackTraceResponse>(await RequestAsync("stackTrace", args, ct)) ?? new DapStackTraceResponse();
         IEnumerable<DapStackFrame> frames = delayed ? resp.StackFrames : resp.StackFrames.Skip(startFrame);
-        var mapped = frames.Take(take).Select(f => DapMapping.ToCore(f, _positions)).ToArray();
+        var mapped = frames.Take(take).Select(f => _quirks.MapFrame(DapMapping.ToCore(f, _positions))).ToArray();
         if (gen == _handles.FrameGeneration) foreach (var f in mapped) _handles.RegisterFrame(f);
         return mapped;
     }
@@ -140,6 +140,28 @@ public sealed partial class DebugSession
     {
         EnsureLive();
         if (frameId is { } f && !_handles.IsValidFrame(f)) throw Stale("stack frame");
+        if (context == "repl" && !ReferenceEquals(_quirks, DebugAdapterQuirks.None))
+        {
+            // The Debug Console's input as this adapter understands it (GDB: an expression, or a GDB command when asked or when it is one).
+            var request = _quirks.MapReplInput(expression);
+            while (true)
+            {
+                try
+                {
+                    var result = await EvaluateOnceAsync(request.Expression, frameId, request.Context, ct);
+                    return result with { Result = _quirks.MapReplResult(request, result.Result) };
+                }
+                catch (DapRequestException ex) when (request.Fallback is { } fallback && (request.FallbackWhen?.Invoke(ex.Message) ?? true))
+                {
+                    request = fallback;
+                }
+            }
+        }
+        return await EvaluateOnceAsync(expression, frameId, context, ct);
+    }
+
+    private async Task<DebugEvaluateResult> EvaluateOnceAsync(string expression, int? frameId, string context, CancellationToken ct)
+    {
         var gen = _handles.Generation;
         var resp = DapJson.Deserialize<DapEvaluateResponse>(await RequestAsync("evaluate", new DapEvaluateArguments { Expression = expression, FrameId = frameId, Context = context }, ct)) ?? new DapEvaluateResponse();
         if (gen == _handles.Generation) _handles.RegisterHandle(resp.VariablesReference);
@@ -181,9 +203,14 @@ public sealed partial class DebugSession
         var key = (frameId, text, column);
         if (_completions.TryGet(key, out var cached)) return cached; // typing in the debug console re-asks the same prefix a lot
         var gen = _handles.Generation;
-        var resp = DapJson.Deserialize<DapCompletionsResponse>(await RequestAsync("completions", new DapCompletionsArguments { FrameId = frameId, Text = text, Column = _positions.ToWireColumn(column) }, ct)) ?? new DapCompletionsResponse();
+        var mapping = _quirks.MapCompletions(text, column); // GDB completes commands: an expression goes as `print <expression>`
+        var sent = mapping is null ? (text, column) : (mapping.Text, mapping.Column);
+        var resp = DapJson.Deserialize<DapCompletionsResponse>(await RequestAsync("completions", new DapCompletionsArguments { FrameId = frameId, Text = sent.Item1, Column = _positions.ToWireColumn(sent.Item2) }, ct)) ?? new DapCompletionsResponse();
         var items = resp.Targets.Take(500)
             .Select(t => new DebugCompletionItem(t.Label, t.Text, t.Type, t.Start is { } s ? _positions.ToCoreColumn(s) : null, t.Length))
+            .Select(i => mapping is null ? i : mapping.Map(i))
+            .OfType<DebugCompletionItem>()
+            .DistinctBy(i => (i.Label, i.Text))
             .ToArray();
         if (gen == _handles.Generation) _completions.Set(key, items);
         return items;
@@ -261,9 +288,29 @@ public sealed partial class DebugSession
         OnLane(async () =>
         {
             EnsureLive();
+            // The stop of a client-side exception filter is described by the session (the adapter knows no such exception).
+            if (command == "exceptionInfo" && _syntheticStop is not null)
+                return (JsonElement?)ToExceptionInfoBody(await SyntheticExceptionInfoAsync(ct));
             var body = await RequestAsync(command, arguments, ct);
             return body.ValueKind == JsonValueKind.Undefined ? (JsonElement?)null : body;
         }, ct);
+
+    /// <summary>Lane only. The exception the current client-side filter stop stands for, once known (bounded wait for the panic's output).</summary>
+    private async Task<DebugExceptionInfo> SyntheticExceptionInfoAsync(CancellationToken ct)
+    {
+        var filter = _syntheticStop!;
+        var deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency; // 1 s
+        while (_syntheticException is null && _syntheticStop == filter && Stopwatch.GetTimestamp() < deadline) await Task.Delay(25, ct);
+        return _syntheticException ?? new DebugExceptionInfo(filter.Filter, filter.Label, "always", null, filter.Label, null);
+    }
+
+    private static JsonElement ToExceptionInfoBody(DebugExceptionInfo info) => JsonSerializer.SerializeToElement(new DapExceptionInfoResponse
+    {
+        ExceptionId = info.ExceptionId,
+        Description = info.Description,
+        BreakMode = info.BreakMode,
+        Details = new DapExceptionDetails { Message = info.Message, TypeName = info.TypeName, StackTrace = info.StackTrace },
+    }, DapJson.Options);
 
     /// <summary>Maps an adapter source to a document URI: a real path → <c>file:</c>, adapter-only content → <c>debug:/session/ref/name</c>.</summary>
     public Uri? ResolveSourceUri(DebugSource? source)
@@ -291,6 +338,7 @@ public sealed partial class DebugSession
         {
             EnsureLive();
             if (!_caps.SupportsExceptionInfo) throw new NotSupportedException("The debug adapter does not support exceptionInfo.");
+            if (_syntheticStop is not null) return await SyntheticExceptionInfoAsync(ct);
             return await GetExceptionInfoCoreAsync(await ResolveThreadAsync(threadId, ct), ct);
         }, ct);
 

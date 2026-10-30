@@ -35,6 +35,10 @@ public sealed partial class DebugService
                 "Path of Microsoft's js-debug adapter used for Node.js/TypeScript debugging: the js-debug directory or its src/dapDebugServer.js (empty: CSCODE_JSDEBUG, then the tools directory, then an offer to download it)."),
             new ConfigurationProperty(JsDebugAdapterFactory.NodeSettingPath, Json(""),
                 "Path of the Node.js executable that runs the js-debug adapter (empty: 'node' on PATH)."),
+            new ConfigurationProperty(GdbAdapterFactory.SettingPath, Json(""),
+                "Path of the GDB executable used for Rust, C and C++ debugging through GDB's own Debug Adapter Protocol support (gdb -i=dap, GDB 14 or newer). Empty: 'gdb' on PATH."),
+            new ConfigurationProperty(GdbAdapterFactory.ArgsSettingPath, Json(Array.Empty<string>()),
+                "Extra command-line arguments for GDB, before CsCode's own (for example [\"-nx\"] to skip your gdbinit files)."),
             new ConfigurationProperty("cscode.debug.requestTimeoutSeconds", Json(10),
                 "Seconds a debug adapter may take to answer one request before the session reports it unresponsive."),
         ]));
