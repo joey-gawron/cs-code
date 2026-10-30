@@ -12,9 +12,11 @@ namespace CsCode.Remote.Bridge;
 /// <summary>
 /// R3 remote tasks: wraps the local <see cref="ITaskService"/> (the Dap module's runner). For a remote folder (the given one, else the workspace's
 /// primary folder) the server lists and runs the tasks of its tasks.json — processes start next to the files, problem matchers fill the server's
-/// diagnostics (mirrored into the Error List), output goes to the forwarded "Remote: Tasks" channel. A run survives a short loss of the connection:
-/// the client waits for it again on the same (persistent) server. Cancelling kills the task's process tree on the server. Local folders use the
-/// local runner unchanged.
+/// diagnostics (mirrored into the Error List). The process runs in a terminal named after the task, on a server PTY, when this client composes the
+/// integrated terminal (<see cref="RemoteTaskTerminals"/>, VS Code's presentation), else its output goes to the forwarded "Remote: Tasks" channel.
+/// A run survives a short loss of the connection: the client waits for it again on the same (persistent) server. Cancelling kills the task's
+/// process tree on the server (also when it happens while the connection is down: <see cref="RemoteTaskRuns"/>). Local folders use the local
+/// runner unchanged.
 /// </summary>
 public sealed class RemoteTaskService(ITaskService local, RemoteConnectionManager manager, Func<IWorkspaceService?> workspace, ILogger? log = null) : ITaskService
 {
