@@ -112,6 +112,12 @@ public sealed class SessionHarness : IAsyncDisposable
 
     public T[] Snapshot<T>(List<T> list) { lock (list) return [.. list]; }
 
+    /// <summary>
+    /// Waits for the session's <c>Terminated</c> EVENT. (Its state reads Terminated a moment before the event is delivered — subscribers see
+    /// the final state — so waiting for the state and then asserting on the recorded event raced when the lane was preempted in between: T26.)
+    /// </summary>
+    public Task WaitForTerminatedEventAsync(int timeoutMs = 5000) => Eventually(() => Snapshot(TerminatedEvents).Length > 0, timeoutMs, "the Terminated event");
+
     private int _disposed;
 
     public async ValueTask DisposeAsync()

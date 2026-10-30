@@ -490,7 +490,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private async Task StopCoreAsync(bool quick, CancellationToken ct)
     {
         // The program already ended (the session only waits for its trailing output): nothing to terminate.
-        if (_draining && !_terminatedFired) { FinishTermination(null); await CleanupAsync(quick); return; }
+        if (_draining && !_terminatedFired) { FinishTermination(null); await CleanupAsync(quick); await PendingCleanupsAsync(); return; }
         if (!_terminatedFired && _client is { IsClosed: false })
         {
             _stopping = true;
@@ -518,6 +518,15 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         }
         FinishTermination("stopped"); // hard path: adapter ignored us / timed out
         await CleanupAsync(quick);
+        // The cleanup the adapter's `terminated` started (its `disconnect`, the adapter's exit) is part of the stop: a stopped session has let
+        // go of its adapter. (Returning before it made "stopped" mean "maybe still disconnecting" — a race callers could see under load.)
+        await PendingCleanupsAsync();
+    }
+
+    private async Task PendingCleanupsAsync()
+    {
+        try { await _cleanups; }
+        catch (Exception ex) { _logger.LogDebug(ex, "Cleanup of session {Session}", Id); }
     }
 
     private async Task WaitSignalAsync(TimeSpan timeout, CancellationToken ct)
@@ -644,9 +653,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         {
             await _lane.RunAsync(async () =>
             {
-                await StopCoreAsync(quick: true, CancellationToken.None);
-                try { await _cleanups; } // the cleanup `terminated` started (its graceful `disconnect`) is not cut short
-                catch (Exception ex) { _logger.LogDebug(ex, "Cleanup of session {Session}", Id); }
+                await StopCoreAsync(quick: true, CancellationToken.None); // also waits for a cleanup under way (the graceful `disconnect` after `terminated`)
                 _output.Flush(); // what arrived until the adapter closed
                 _output.Dispose();
                 _handles.Invalidate();

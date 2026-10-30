@@ -21,7 +21,8 @@ internal sealed class DebuggeeLauncher : IDisposable
     private readonly ILogger _logger;
     private readonly Action<string, string> _output; // (category, text) — called on the lane
     private readonly List<Process> _processes = new();
-    private readonly List<ITerminal> _terminals = new();
+    /// <summary>The terminals running this session's debuggees, with the debuggee's pid: a terminal is reused for the next run (another session's).</summary>
+    private readonly List<(ITerminal Terminal, int Pid)> _terminals = new();
     private readonly Func<ITerminalService?>? _terminalService;
     private readonly object _gate = new();
     private bool _disposed;
@@ -102,8 +103,8 @@ internal sealed class DebuggeeLauncher : IDisposable
         lock (_gate)
         {
             if (_disposed) { terminal.KillProcess(); throw new ObjectDisposedException(nameof(DebuggeeLauncher)); }
-            _terminals.RemoveAll(t => t.HasExited);
-            _terminals.Add(terminal);
+            _terminals.RemoveAll(t => t.Terminal.HasExited || t.Terminal.ProcessId != t.Pid);
+            _terminals.Add((terminal, pid));
         }
         _logger.LogDebug("Debuggee {Program} runs in terminal {Terminal} (pid {Pid})", a.Args[0], terminal.Id, pid);
         return new DapRunInTerminalResponse { ProcessId = pid };
@@ -153,7 +154,7 @@ internal sealed class DebuggeeLauncher : IDisposable
     public void KillAll()
     {
         Process[] all;
-        ITerminal[] terminals;
+        (ITerminal Terminal, int Pid)[] terminals;
         lock (_gate)
         {
             all = [.. _processes];
@@ -161,8 +162,10 @@ internal sealed class DebuggeeLauncher : IDisposable
             terminals = [.. _terminals];
             _terminals.Clear();
         }
-        foreach (var t in terminals)
-            if (!t.HasExited) t.KillProcess(); // the terminal stays (its buffer and exit code); only the debuggee goes
+        // The terminal stays (its buffer and exit code); only OUR debuggee goes. Once it ended, the terminal may already run the next run's
+        // debuggee (it is reused when idle, and this session can end late — js-debug's parent session ends after its program's): never kill that.
+        foreach (var (terminal, pid) in terminals)
+            if (!terminal.HasExited && terminal.ProcessId == pid) terminal.KillProcess();
         foreach (var p in all)
         {
             SafeKill(p); // SIGKILL to the whole tree; the runtime reaps the child asynchronously (never block the lane waiting for it)

@@ -551,6 +551,70 @@ public class EndPassDebugTests
         Assert.Contains(h.Window.Messages, m => m.Message.Contains("netcoredbg was not found", StringComparison.Ordinal));
     }
 
+    // ------------------------------------------------------------------ T45: a reused debug terminal
+
+    private sealed class ReusedTerminal : CsCode.Core.Terminal.ITerminal
+    {
+        public int Kills;
+        public int Id => 1;
+        public string Title => "Launch App";
+        public int? ProcessId { get; set; }
+        public bool IsTransient => true;
+        public bool HasExited { get; set; }
+        public int? ExitCode => HasExited ? 0 : null;
+        public string? CurrentDirectory => null;
+        public ValueTask SendTextAsync(string text, bool addNewLine = true, CancellationToken ct = default) => ValueTask.CompletedTask;
+        public void KillProcess() => Interlocked.Increment(ref Kills);
+    }
+
+    private sealed class OneTerminalService(ReusedTerminal terminal) : CsCode.Core.Terminal.ITerminalService
+    {
+        private int _nextPid = 4000;
+        public IReadOnlyList<CsCode.Core.Terminal.ITerminal> Terminals => [terminal];
+        public CsCode.Core.Terminal.ITerminal? ActiveTerminal => terminal;
+        public ValueTask<CsCode.Core.Terminal.ITerminal> CreateAsync(CsCode.Core.Terminal.TerminalCreateOptions? options = null, CancellationToken ct = default)
+        {
+            // like TerminalService with ReuseWhenIdle: the idle terminal of that name is restarted with the new program
+            terminal.ProcessId = Interlocked.Increment(ref _nextPid);
+            terminal.HasExited = false;
+            return ValueTask.FromResult<CsCode.Core.Terminal.ITerminal>(terminal);
+        }
+        public ValueTask ShowAsync(CsCode.Core.Terminal.ITerminal? t = null, bool preserveFocus = false, CancellationToken ct = default) => ValueTask.CompletedTask;
+        public void SetActive(CsCode.Core.Terminal.ITerminal t) { }
+        public ValueTask SendTextAsync(string text, bool addNewLine = true, CancellationToken ct = default) => ValueTask.CompletedTask;
+        public ValueTask KillAsync(CsCode.Core.Terminal.ITerminal t, CancellationToken ct = default) => ValueTask.CompletedTask;
+        public IEventSource<CsCode.Core.Terminal.ITerminal> Created { get; } = new Emitter<CsCode.Core.Terminal.ITerminal>();
+        public IEventSource<CsCode.Core.Terminal.TerminalExitedEventArgs> Exited { get; } = new Emitter<CsCode.Core.Terminal.TerminalExitedEventArgs>();
+        public IEventSource<CsCode.Core.Terminal.ITerminal> Removed { get; } = new Emitter<CsCode.Core.Terminal.ITerminal>();
+        public IEventSource<CsCode.Core.Terminal.ITerminal> TitleChanged { get; } = new Emitter<CsCode.Core.Terminal.ITerminal>();
+        public IEventSource<CsCode.Core.Terminal.ITerminal?> ActiveChanged { get; } = new Emitter<CsCode.Core.Terminal.ITerminal?>();
+    }
+
+    /// <summary>
+    /// T45: run one's session ends late (js-debug's parent session ends after its program, later still under load) while run two already runs in
+    /// the same, reused terminal: ending run one must not kill run two (it got SIGHUP: exit 129, its output missing).
+    /// </summary>
+    [Fact]
+    public async Task Ending_a_session_late_never_kills_the_next_runs_debuggee_in_the_reused_terminal()
+    {
+        using var lane = new DebugLane("t45");
+        var terminal = new ReusedTerminal();
+        var service = new OneTerminalService(terminal);
+        var runOne = new DebuggeeLauncher(lane, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, (_, _) => { }, () => service);
+        var runTwo = new DebuggeeLauncher(lane, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, (_, _) => { }, () => service);
+        var args = new CsCode.Dap.Protocol.DapRunInTerminalArguments { Kind = "integrated", Title = "Launch App", Args = ["node", "app.js"] };
+
+        var first = await runOne.LaunchAsync(args, "Launch App", Ct);
+        terminal.HasExited = true; // run one's program ended
+        var second = await runTwo.LaunchAsync(args, "Launch App", Ct); // the idle terminal is reused
+        Assert.NotEqual(first.ProcessId, second.ProcessId);
+
+        runOne.Dispose(); // run one's session ends now
+        Assert.Equal(0, terminal.Kills);
+        runTwo.Dispose(); // its own session still ends its debuggee
+        Assert.Equal(1, terminal.Kills);
+    }
+
     // ------------------------------------------------------------------ debug-10: an adapter's error answer to stackTrace
 
     [Fact]
