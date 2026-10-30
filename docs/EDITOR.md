@@ -219,6 +219,14 @@ the pure `Editing/ClipboardOperations.cs` and applied as ONE undo unit:
 * **No waiting**: the UI thread starts a read and continues; a paste lands when the clipboard owner answered (the shell's service bounds the wait).
   A 10 MB paste goes in whole (one `ApplyEdits`), one Ctrl+Z removes it. Copies and pastes of remote documents use the local clipboard.
 * Without the shell's `IClipboardService` (standalone), `Fallbacks/LocalClipboardService` uses the window's clipboard and an in-memory ring.
+* **Copy with Formatting** (`editor.action.clipboardCopyWithSyntaxHighlightingAction`, VS Code's id; right-click menu, the shell's Edit menu;
+  `IEditorViewController.CopyWithFormattingAsync`, additive): the plain copy plus `ClipboardText.Html`, an HTML fragment
+  (`Editing/HtmlClipboard.cs`) in VS Code's shape: an outer `div` with the theme's `editor.background` / `editor.foreground`, the editor font and
+  size, `white-space: pre`, one `div` per line and one `span` per run of equal style (colour, background, bold, italic, underline). The colours
+  are the highlighter's published token rows (TextMate or tree-sitter: both publish into the session's token store) resolved against the
+  current theme, so the paste looks like the editor; a line not highlighted yet is plain. The UI thread only gathers the lines and token rows;
+  styles are resolved and the HTML written on a worker. Above 64K characters (`HtmlClipboard.MaxChars`, VS Code's limit) only the text is
+  copied. Plain Copy stays text only (VS Code's `editor.copyWithSyntaxHighlighting` is not read).
 
 **Right-click menu** (`View/EditorMenus.cs`): the editor contributes its menu to the shell through `IContributionRegistry` (`editor/context`), in
 Visual Studio 2022's wording and order: Quick Actions and Refactorings... (Ctrl+.), Rename... | Peek Definition, Go To Definition, Go To Declaration,

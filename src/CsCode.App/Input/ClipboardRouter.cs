@@ -29,6 +29,8 @@ public sealed class ClipboardRouter : IDisposable
     public const string CanPasteKey = "cscode.edit.canPaste";
     /// <summary>True when the focused clipboard target is a writable editor (Edit > Cycle Clipboard Ring).</summary>
     public const string EditorPasteKey = "cscode.edit.editorCanPaste";
+    /// <summary>True when the focused clipboard target is an editor that can copy (Edit > Copy with Formatting).</summary>
+    public const string EditorCopyKey = "cscode.edit.editorCanCopy";
 
     private readonly IContextKeyService _keys;
     private readonly DocumentWell _well;
@@ -110,6 +112,7 @@ public sealed class ClipboardRouter : IDisposable
         _keys.Set(CanCopyKey, target?.CanCopy ?? false);
         _keys.Set(CanPasteKey, target?.CanPaste ?? false);
         _keys.Set(EditorPasteKey, target is EditorTarget { CanPaste: true });
+        _keys.Set(EditorCopyKey, target is EditorTarget { CanCopy: true });
     }
 
     public void Dispose() => _subs.Dispose();

@@ -173,6 +173,7 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
     public bool CanPaste => !_disposed && view.Clipboard.CanPaste;
     public Task CutAsync() => _disposed ? Task.CompletedTask : view.Clipboard.CutAsync();
     public Task CopyAsync() => _disposed ? Task.CompletedTask : view.Clipboard.CopyAsync();
+    public Task CopyWithFormattingAsync() => _disposed ? Task.CompletedTask : view.Clipboard.CopyAsync(withFormatting: true);
     public Task PasteAsync() => _disposed ? Task.CompletedTask : view.Clipboard.PasteAsync();
     public Avalonia.Rect GetCaretBounds() => _disposed ? default : view.CaretBounds();
     public void PrepareContextMenu()

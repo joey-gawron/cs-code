@@ -72,10 +72,92 @@ internal sealed class EditorClipboard : IDisposable
 
     // ------------------------------------------------------------------ commands
 
-    public async Task CopyAsync()
+    public Task CopyAsync() => CopyAsync(withFormatting: false);
+
+    /// <summary>
+    /// Copy, or Copy with Formatting: the same text, plus an HTML rendition with the theme's syntax colours (<see cref="HtmlClipboard"/>) that the
+    /// clipboard service offers as <c>text/html</c>. The UI thread only takes the copied lines and their published token rows (no tokenising: a
+    /// line the highlighter has not reached yet is plain); styles are resolved and the HTML written on a worker. Above
+    /// <see cref="HtmlClipboard.MaxChars"/> characters only the text is copied.
+    /// </summary>
+    public async Task CopyAsync(bool withFormatting)
     {
-        if (_disposed || ClipboardOperations.Copy(_v.Document, CurrentSelection(), _v.GetEditingContext(), _v.Settings.EmptySelectionClipboard) is not { } clip) return;
+        var selection = CurrentSelection();
+        if (_disposed || ClipboardOperations.Copy(_v.Document, selection, _v.GetEditingContext(), _v.Settings.EmptySelectionClipboard) is not { } clip) return;
+        if (withFormatting && clip.Text.Length <= HtmlClipboard.MaxChars)
+        {
+            var capture = CaptureForHtml(selection);
+            var html = await Task.Run(capture.Build).ConfigureAwait(true);
+            if (_disposed) return;
+            clip = clip with { Html = html };
+        }
         await Clipboard.WriteAsync(clip).ConfigureAwait(true);
+    }
+
+    /// <summary>The copied lines (text, start column, the published token row) and the theme, taken on the UI thread; cheap (at most 64K characters).</summary>
+    private HtmlCapture CaptureForHtml(SelectionSet selection)
+    {
+        var doc = _v.Document;
+        var store = _v.Tokens?.Store;
+        var lines = new List<(string Text, int StartColumn, int[]? Tokens)>();
+        void Add(int line, int from, int to)
+        {
+            var text = doc.GetLineText(line);
+            from = Math.Clamp(from, 0, text.Length);
+            to = Math.Clamp(to, from, text.Length);
+            lines.Add((text[from..to], from, store?.GetTokens(line)));
+        }
+        if (selection.IsBlock)
+            foreach (var row in selection.Ranges) Add(row.Start.Line, row.Start.Character, row.End.Character);
+        else if (selection.Ranges.Count > 0 && selection.Ranges[0] is var range)
+        {
+            if (range.IsEmpty) Add(range.Start.Line, 0, int.MaxValue); // the whole line (editor.emptySelectionClipboard)
+            else
+                for (var l = range.Start.Line; l <= range.End.Line; l++)
+                {
+                    if (l == range.End.Line && range.End.Character == 0 && l > range.Start.Line) break; // ends at a line break
+                    Add(l, l == range.Start.Line ? range.Start.Character : 0, l == range.End.Line ? range.End.Character : int.MaxValue);
+                }
+        }
+        var themes = _v.Factory.Themes;
+        var settings = _v.Settings;
+        var style = new HtmlClipboardStyle(themes.GetColor("editor.background"), themes.GetColor("editor.foreground"), _v.Editor.FontFamily.ToString(),
+            settings.FontSize, Math.Round(_v.TextArea.TextView.DefaultLineHeight, 2), settings.TabSize);
+        return new HtmlCapture(lines, themes.Current, style, _v.Tokens?.Interner);
+    }
+
+    private sealed record HtmlCapture(List<(string Text, int StartColumn, int[]? Tokens)> Lines, Core.Theming.ColorTheme Theme, HtmlClipboardStyle Style,
+        TextMate.ScopeInterner? Interner)
+    {
+        /// <summary>Worker: resolves each token's style (cached per scope stack) and writes the fragment.</summary>
+        public string Build()
+        {
+            var resolver = new Theming.TokenColorResolver(Theme, Style.Foreground);
+            var styles = new Dictionary<int, Theming.ResolvedTokenStyle>();
+            var result = new List<HtmlClipboardLine>(Lines.Count);
+            foreach (var (text, startColumn, tokens) in Lines)
+            {
+                var runs = new List<HtmlClipboardRun>();
+                if (tokens is not null && Interner is not null)
+                {
+                    var count = tokens.Length / 2;
+                    for (var i = 0; i < count; i++)
+                    {
+                        var from = tokens[i * 2] - startColumn;
+                        var to = (i + 1 < count ? tokens[(i + 1) * 2] : int.MaxValue / 2) - startColumn;
+                        from = Math.Max(0, from);
+                        to = Math.Min(text.Length, to);
+                        if (to <= from) continue;
+                        var scope = tokens[i * 2 + 1];
+                        if (!styles.TryGetValue(scope, out var s)) styles[scope] = s = resolver.Resolve(Interner.Scopes(scope));
+                        var plain = s.IsPlain || (s.Foreground == Style.Foreground && s.Background is null && !s.Bold && !s.Italic && !s.Underline && !s.Strikethrough);
+                        if (!plain) runs.Add(new HtmlClipboardRun(from, to - from, s));
+                    }
+                }
+                result.Add(new HtmlClipboardLine(text, runs));
+            }
+            return HtmlClipboard.Build(result, Style);
+        }
     }
 
     public async Task CutAsync()

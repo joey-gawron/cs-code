@@ -84,6 +84,8 @@ public static class ShellMenus
             // Cut/Copy/Paste act on what has focus (editor, text box, a panel's selection): Input.ClipboardRouter sets these keys.
             M("Cu_t", "editor.action.clipboardCutAction", Input.ClipboardRouter.CanCutKey),
             M("_Copy", "editor.action.clipboardCopyAction", Input.ClipboardRouter.CanCopyKey, IconKey.Copy),
+            // The editor's copy with the theme's syntax colours as HTML (text/html), for documents and mail.
+            M("Copy wit_h Formatting", "editor.action.clipboardCopyWithSyntaxHighlightingAction", Input.ClipboardRouter.EditorCopyKey),
             M("_Paste", "editor.action.clipboardPasteAction", Input.ClipboardRouter.CanPasteKey, "clippy"),
             M("Cycle Clipboard _Ring", "cscode.editor.cycleClipboardRing", Input.ClipboardRouter.EditorPasteKey),
             M("Select _All", "editor.action.selectAll", "editorTextFocus"),

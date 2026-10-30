@@ -18,6 +18,8 @@ internal static class EditorMenus
     public const string ShowContextMenu = "editor.action.showContextMenu";
     public const string Cut = "editor.action.clipboardCutAction";
     public const string Copy = "editor.action.clipboardCopyAction";
+    /// <summary>VS Code's Copy With Syntax Highlighting: the text plus HTML with the theme's colours (<see cref="Editing.HtmlClipboard"/>).</summary>
+    public const string CopyWithFormatting = "editor.action.clipboardCopyWithSyntaxHighlightingAction";
     public const string Paste = "editor.action.clipboardPasteAction";
     public const string CycleClipboardRing = "cscode.editor.cycleClipboardRing";
     public const string RunToCursor = "editor.debug.action.runToCursor";
@@ -84,6 +86,7 @@ internal static class EditorMenus
 
             new(Menu, Cut, "5_cutcopypaste@1", CanCutCopyKey + " && " + Writable) { Title = "Cu_t" },
             new(Menu, Copy, "5_cutcopypaste@2", CanCutCopyKey) { Title = "_Copy", Icon = "copy" },
+            new(Menu, CopyWithFormatting, "5_cutcopypaste@2.5", CanCutCopyKey) { Title = "Copy wit_h Formatting" },
             new(Menu, Paste, "5_cutcopypaste@3", Writable)
             {
                 Title = "_Paste",

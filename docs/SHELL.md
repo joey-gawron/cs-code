@@ -379,8 +379,10 @@ Every other id has exactly one registration; the test fails when a new duplicate
   an empty paste, never a frozen window. CsCode remembers the shape of its last copy (whole lines, block, one piece per caret, the source line's
   indentation) and hands it back only while the clipboard still holds exactly that text: text another application put there reads as plain
   text. Copies always go to the LOCAL clipboard, also for documents of a remote workspace (the service is process-local; nothing goes through
-  `IFileSystem`). HTML (copy with formatting) is offered as `text/html` next to the text on Linux when a caller provides it (nothing provides it
-  yet, see *Known gaps*).
+  `IFileSystem`). HTML (copy with formatting) is offered as `text/html` next to the text on Linux when a caller provides it:
+  the editor's **Copy with Formatting** (Edit menu, the editor's right-click menu, `editor.action.clipboardCopyWithSyntaxHighlightingAction`,
+  enabled through `cscode.edit.editorCanCopy` while an editor that can copy has focus) writes the selection with the theme's syntax colours
+  (docs/EDITOR.md §7a); the ring keeps only the text.
 * **Clipboard ring** (Visual Studio's Ctrl+Shift+V, Edit > Cycle Clipboard Ring): the last 20 copies, newest first, each at most 1 MB of
   managed memory (512 K characters; a bigger copy still goes to the system clipboard, it is only left out of the ring), a repeated copy moves
   to the top; in memory only, never persisted (the service has no state storage).

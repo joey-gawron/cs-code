@@ -353,7 +353,7 @@ public class EditorClipboardViewTests
             "Pee_k Definition", "Go To _Definition", "Go To D_eclaration", "Go To _Implementation", "Find All Re_ferences",
             "(submenu)", "Run To C_ursor", "Add _Watch", "_QuickWatch...",
             "(submenu)",
-            "Cu_t", "_Copy", "_Paste",
+            "Cu_t", "_Copy", "Copy wit_h Formatting", "_Paste",
             "_Format Document", "Format _Selection", "Co_mment Selection", "_Uncomment Selection",
             "Command _Palette...",
         ], items);
