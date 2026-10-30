@@ -68,8 +68,14 @@ public sealed class TerminalPanelRuntime : IDisposable
         Service = services.GetRequiredService<TerminalService>();
         Ui = services.GetService<IUiDispatcher>() ?? new AvaloniaFallbackDispatcher();
         if (Commands is { } commands) _subs.Add(TerminalCommandSet.Register(commands, this));
+        // the task commands, when a task runner is composed (checked without building it: it is built with the debugger, later)
+        var hasTasks = services.GetService<IServiceProviderIsService>()?.IsService(typeof(Core.Tasks.ITaskService)) ?? false;
+        if (hasTasks && Commands is { } taskCommands) _subs.Add(TaskCommandSet.Register(taskCommands, this));
         if (services.GetService<IContributionRegistry>() is { } contributions)
+        {
             _subs.Add(contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory, TerminalCommandSet.Keybindings));
+            if (hasTasks) _subs.Add(contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory, TaskCommandSet.Keybindings));
+        }
         _subs.Add(Service.PresentationRequested.Subscribe(p => Dispatcher.UIThread.Post(() => OnPresentation(p))));
         if (Config is { } config)
             _subs.Add(config.Changed.Subscribe(e =>

@@ -88,7 +88,36 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
     /// <summary>The emulator: touched only on this session's worker (use <see cref="Post"/> / <see cref="InvokeAsync{T}"/>).</summary>
     internal VtEmulator Emulator { get; }
 
-    public string Title => _userTitle ?? Options.Name ?? _oscTitle ?? _processName ?? "Terminal";
+    public string Title => _userTitle ?? _name ?? Options.Name ?? _oscTitle ?? _processName ?? "Terminal";
+
+    private volatile string? _name;
+
+    /// <summary>A new creator's name (a task terminal reused for another task is named after that task).</summary>
+    internal void SetName(string name)
+    {
+        _name = name;
+        _titleChanged.Fire(this);
+    }
+
+    /// <summary>
+    /// The program's raw output as the PTY delivers it (reader thread, before the emulator sees it): a task's problem matchers read it.
+    /// Must return at once.
+    /// </summary>
+    internal Action<ReadOnlySpan<byte>>? OutputTap { get; set; }
+
+    /// <summary>What is written below the output when the program exits (null: VS Code's "[The terminal process exited with code N.]").</summary>
+    internal Func<int, string>? ExitMessage { get; set; }
+
+    /// <summary>VS Code's task terminals: once the program exited, any key closes the terminal ("press any key to close it").</summary>
+    internal bool CloseOnInputAfterExit { get; set; }
+
+    private readonly Emitter<TerminalSession> _closeRequested = new();
+
+    /// <summary>A key was pressed in an exited terminal that closes on input (<see cref="CloseOnInputAfterExit"/>).</summary>
+    internal IEventSource<TerminalSession> CloseRequested => _closeRequested;
+
+    /// <summary>Writes text into the terminal as if the program had (CsCode's own messages: a task's command line). Any thread.</summary>
+    internal void WriteLocal(string text) => Post(() => Emulator.Feed(text));
     public int? ProcessId => _processId > 0 ? _processId : null;
     public bool IsTransient => Options.IsTransient;
     public bool HasExited => _hasExited;
@@ -218,6 +247,12 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
     /// <summary>Keystrokes and pastes for the program: queued on the host's writer (never blocks); typing scrolls the view to the bottom.</summary>
     public bool Input(ReadOnlySpan<byte> bytes, bool urgent = false)
     {
+        if (_hasExited && CloseOnInputAfterExit && !_disposed && !bytes.IsEmpty)
+        {
+            CloseOnInputAfterExit = false;
+            _closeRequested.Fire(this);
+            return true;
+        }
         if (_disposed || _host is not { } host || _hasExited) return false;
         var ok = host.Write(bytes, urgent);
         Post(ScrollToBottomIfScrolled);
@@ -313,6 +348,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
 
     void IPtyListener.OnOutput(ReadOnlySpan<byte> data)
     {
+        OutputTap?.Invoke(data);
         while (!data.IsEmpty)
         {
             var n = Math.Min(data.Length, ChunkBytes);
@@ -341,7 +377,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
             Volatile.Write(ref _exitCode, exitCode);
             _hasExited = true;
             // VS Code's wording; the buffer stays so the user can read what happened.
-            Emulator.Feed($"\e[0m\r\n[The terminal process exited with code {exitCode}.]");
+            Emulator.Feed(ExitMessage?.Invoke(exitCode) ?? $"\e[0m\r\n[The terminal process exited with code {exitCode}.]");
             Publish();
             _exited.Fire(new TerminalExitedEventArgs(this, exitCode));
             _titleChanged.Fire(this);
@@ -452,6 +488,8 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
         _bell.Clear();
         _clipboardWrite.Clear();
         _commandFinished.Clear();
+        _closeRequested.Clear();
+        OutputTap = null;
     }
 
     /// <summary>Waits (tests) until the worker thread ended after <see cref="Dispose"/>.</summary>

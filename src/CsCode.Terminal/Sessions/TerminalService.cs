@@ -144,6 +144,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
         var subs = new DisposableStore();
         subs.Add(session.TitleChanged.Subscribe(s => _titleChanged.Fire(s)));
         subs.Add(session.Exited.Subscribe(e => _exited.Fire(e)));
+        subs.Add(session.CloseRequested.Subscribe(s => _ = KillAsync(s)));
         lock (_gate)
         {
             if (_disposed) { session.Dispose(); throw new ObjectDisposedException(nameof(TerminalService)); }
@@ -162,6 +163,30 @@ public sealed class TerminalService : ITerminalService, IDisposable
     }
 
     private TerminalSession[] Flatten() => _groups.SelectMany(g => g.Terminals).ToArray();
+
+    /// <summary>
+    /// Runs another program in an exited terminal (its buffer stays), as <paramref name="options"/> describe it: a task terminal reused for
+    /// the next task. Resolution and spawning run off the caller's thread; <paramref name="beforeStart"/> runs right before the spawn.
+    /// </summary>
+    /// <returns>False when the program cannot be found (the reason is written into the terminal, which stays exited).</returns>
+    internal async ValueTask<bool> RestartAsync(TerminalSession session, TerminalCreateOptions options, Action<TerminalSession>? beforeStart, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return await Task.Run(() =>
+        {
+            PtyStartInfo info;
+            try { info = Resolver.Resolve(options, session.Emulator.Columns, session.Emulator.Rows); }
+            catch (Exception ex) when (ex is PtySpawnException or IOException or UnauthorizedAccessException)
+            {
+                session.WriteLocal($"\e[31m{ex.Message}\e[0m\r\n");
+                return false;
+            }
+            beforeStart?.Invoke(session);
+            session.Restart(info);
+            Track(session);
+            return true;
+        }, ct).ConfigureAwait(false);
+    }
 
     /// <summary>How a split of <paramref name="parent"/> starts (reads /proc and settings: off the UI thread).</summary>
     internal TerminalCreateOptions SplitOptions(TerminalSession parent)
