@@ -67,7 +67,13 @@ view components (renderers, margins,        parsing + code colouring for hovers 
 * **Tokenisation** (`TextMate/`): per document one `TokenizationSession`, driven by attached views. Tokens are `int[]` (startColumn, scope-stack id) pairs per line, scope stacks interned
   (theme-independent ids: a theme switch re-colours without re-tokenising), rule-stack checkpoints every 8 lines (not one per line — that is the classic memory hog), a valid-prefix pointer,
   viewport-first slices of 6 ms, "island" tokenisation of the window when a huge file is opened far down, read-ahead of 3000 lines held back while the user is typing. `IMemoryTrimmable`;
-  everything is released when the last view goes away.
+  everything is released when the last view goes away. A slice resumes at the first viewport line still missing tokens and always gets at least one line past the
+  checkpoint it restarts from, so a slow grammar on a loaded machine cannot stall (it used to restart from the viewport top every slice).
+* **EXPERIMENTAL tree-sitter engine** (`editor.experimental.treeSitter`, default off, per language with `"[rust]": {…}`): for C#, TypeScript/TSX, JavaScript, Rust, Python,
+  Markdown (with injections), C/C++, HTML and CSS a session can be driven by tree-sitter instead of TextMate (`src/CsCode.Editor.TreeSitter`, `TreeSitter/`). It writes the same
+  token rows into the same `LineTokenStore` (capture names mapped onto TextMate scopes), so colouring, themes, `KindAt` and brackets are unchanged; parsing and queries run on the
+  editor worker, sliced and cancellable; any failure falls back to TextMate. `CodeEditorControl.SyntaxEngine` tells which engine colours a view. Evaluation, measurements and the
+  recommendation: `docs/TREE-SITTER-EVALUATION.md`.
 
 ## 3. What is implemented
 
@@ -162,7 +168,8 @@ Debug build, shared 22-core Linux machine; ranges are the spread of repeated run
 `editor.fontFamily`, `editor.fontSize`, `editor.lineHeightFactor`, `editor.tabSize`, `editor.insertSpaces`, `editor.wordWrap` (on/off), `editor.renderWhitespace` (`boundary` is treated as `all`), `editor.lineNumbers` (on/off), `editor.rulers`, `editor.mouseWheelZoom`, `editor.guides.indentation`,
 `editor.renderLineHighlight`, `editor.bracketPairColorization.enabled`, `editor.matchBrackets`, `editor.occurrencesHighlight`, `editor.folding`, `editor.quickSuggestions`, `editor.quickSuggestionsDelay`, `editor.suggestOnTriggerCharacters`, `editor.autoClosingBrackets/Quotes`, `editor.autoSurround`,
 `editor.formatOnSave/OnType/OnPaste`, `editor.hover.delay`, `editor.inlayHints.enabled`, `workbench.colorTheme`, `files.encoding`, `files.eol`, `files.insertFinalNewline`, `files.trimFinalNewlines`, `files.trimTrailingWhitespace`, `files.associations`, and the module's own `cscode.editor.undoLimit` (default 1000 groups),
-`cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB).
+`cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB), and the EXPERIMENTAL
+`editor.experimental.treeSitter` (false; registered with the configuration service; see docs/TREE-SITTER-EVALUATION.md).
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
 `sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.startFindReplace`, `workbench.action.gotoLine`, `editor.action.triggerSuggest`, `triggerParameterHints`, `quickFix`, `organizeImports`, `revealDefinition`, `goToDeclaration`, `goToTypeDefinition`,

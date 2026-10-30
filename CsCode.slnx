@@ -4,6 +4,7 @@
     <Project Path="src/CsCode.Core/CsCode.Core.csproj" />
     <Project Path="src/CsCode.Dap/CsCode.Dap.csproj" />
     <Project Path="src/CsCode.Editor/CsCode.Editor.csproj" />
+    <Project Path="src/CsCode.Editor.TreeSitter/CsCode.Editor.TreeSitter.csproj" />
     <Project Path="src/CsCode.Lsp/CsCode.Lsp.csproj" />
     <Project Path="src/CsCode.Panels.Debug/CsCode.Panels.Debug.csproj" />
     <Project Path="src/CsCode.Panels.Search/CsCode.Panels.Search.csproj" />

@@ -5,6 +5,7 @@ using CsCode.Core.Text;
 using CsCode.Editor.Documents;
 using CsCode.Editor.Theming;
 using CsCode.Editor.Threading;
+using CsCode.Editor.TreeSitter;
 using Microsoft.Extensions.Logging;
 using TextMateSharp.Grammars;
 using TextMateSharp.Internal.Grammars;
@@ -43,6 +44,14 @@ internal sealed class TokenizationSession : IDisposable
     private long _lastEditTimestamp;
     private int _readAheadPending;
 
+    // ---- EXPERIMENTAL tree-sitter engine (editor.experimental.treeSitter, docs/TREE-SITTER-EVALUATION.md) ----
+    // Decided on the UI thread (construction, Restart) from the setting; the engine itself is created and used on the worker only. When it
+    // cannot run (no runtime, no grammar...) the slice falls through to the TextMate path below, so TextMate is always the fallback.
+    private volatile bool _treeSitterWanted;
+    private volatile bool _treeSitterGaveUp; // this document parsed too slowly with tree-sitter: TextMate until the setting/language changes
+    private volatile TreeSitterHighlighter? _treeSitter;
+    private int _treeSitterGeneration;
+
     /// <summary>
     /// While the user is typing, only the viewport is kept tokenised after each edit (a few dozen lines); the read-ahead beyond it — thousands of
     /// lines — waits for this much quiet. Re-tokenising the whole window after every keystroke is what made typing in a big file allocate hundreds
@@ -56,6 +65,7 @@ internal sealed class TokenizationSession : IDisposable
         _doc = doc;
         Store = new LineTokenStore();
         Store.Reset(doc.LineCount, doc.Version);
+        _treeSitterWanted = owner.TreeSitter.IsEnabledFor(doc.LanguageId);
         _subscriptions.Add(doc.Changed.Subscribe(OnDocumentChanged));
         _subscriptions.Add(doc.LanguageIdChanged.Subscribe(_ => Restart()));
         // No work is scheduled until a view attaches (AttachView): nothing is tokenised for a document nobody sees.
@@ -86,6 +96,12 @@ internal sealed class TokenizationSession : IDisposable
         Volatile.Write(ref _lastEditTimestamp, Stopwatch.GetTimestamp());
         foreach (var c in e.Changes)
             Store.ApplyChange(c.Range.Start.Line, c.Range.End.Line - c.Range.Start.Line, CountBreaks(c.Text));
+        if (_treeSitterWanted)
+        {
+            // queued BEFORE the store's version moves on: a worker that sees the new version also sees this edit
+            TreeSitterEdits.Add(e.Version, e.Changes);
+            _treeSitter?.RequestCancel(); // the parse in flight (if any) is stale now
+        }
         Store.SetVersion(e.Version);
         if (Store.LineCount != _doc.LineCount) Store.Reset(_doc.LineCount, e.Version); // e.g. an edit that split a CRLF pair: resync instead of drifting
         Schedule(WorkPriority.Interactive);
@@ -108,6 +124,10 @@ internal sealed class TokenizationSession : IDisposable
         {
             Interlocked.Exchange(ref _views, 0);
             Store.Trim(aggressive: true, 0, 0);
+            // nobody sees the document: release the syntax tree too (rebuilt by a full parse when a view attaches again)
+            Interlocked.Increment(ref _treeSitterGeneration);
+            TreeSitterEdits.Clear();
+            ReleaseTreeSitter();
         }
     }
 
@@ -115,6 +135,9 @@ internal sealed class TokenizationSession : IDisposable
     {
         Store.Reset(_doc.LineCount, _doc.Version);
         _hasGrammar = false;
+        _treeSitterWanted = _owner.TreeSitter.IsEnabledFor(_doc.LanguageId) && !_treeSitterGaveUp;
+        Interlocked.Increment(ref _treeSitterGeneration); // the running engine (if any) is replaced on the worker
+        TreeSitterEdits.Clear();
         Schedule(WorkPriority.Visible);
         NotifyChanged(0, int.MaxValue);
     }
@@ -155,6 +178,7 @@ internal sealed class TokenizationSession : IDisposable
     private void RunSlice()
     {
         if (_disposed) return;
+        if (RunTreeSitterSlice()) return;
         var grammar = _owner.Grammars.GrammarForLanguage(_doc.LanguageId);
         _hasGrammar = grammar is not null;
         if (grammar is null) return;
@@ -171,7 +195,13 @@ internal sealed class TokenizationSession : IDisposable
 
         var viewportDone = Store.HasTokens(vFirst, vLast) && vLast < valid;
         int begin;
-        if (!viewportDone) begin = Math.Min(vFirst, valid);
+        if (!viewportDone)
+        {
+            // Resume at the first viewport line that still needs work, not at the viewport's top: under load a 6 ms slice may tokenise only a
+            // few lines, and restarting from the top every slice never got past the valid prefix (the "stalls under full-suite load" issue).
+            // Lines before `valid` keep a consistent chain, so starting anywhere up to it is correct.
+            begin = valid < vFirst ? valid : Math.Min(valid, FirstLineWithoutTokens(vFirst, Math.Min(vLast, valid - 1)) ?? valid);
+        }
         else if (valid <= target && vFirst - valid <= MaxCatchUpLines) begin = valid; // viewport is good: read ahead along the valid chain
         else
         {
@@ -202,11 +232,14 @@ internal sealed class TokenizationSession : IDisposable
             var text = snap.GetLineText(line);
             batch.Add(TokenizeLine(grammar, text, ref state));
 
-            var sliceOver = clock.Elapsed >= SliceBudget;
+            // the lines between the checkpoint and `begin` only rebuild the state: a slice always gets at least one line past them, so a slow
+            // grammar on a loaded machine still makes progress instead of redoing the same few lines every slice
+            var sliceOver = clock.Elapsed >= SliceBudget && line >= begin;
             if (batch.Count >= 16 || sliceOver || line == target)
             {
                 if (!Store.Publish(snap.Version, batchStart, batch, checkpoints, chain)) return; // stale: drop it, a newer job follows the newer version
                 NotifyChanged(batchStart, line);
+                if (line >= vLast && batchStart <= vLast) MarkViewportReady(snap.Version);
                 batchStart = line + 1;
                 batch.Clear();
                 checkpoints.Clear();
@@ -222,7 +255,111 @@ internal sealed class TokenizationSession : IDisposable
         if (!quiet && chain && target < Math.Min(lineCount - 1, vLast + ReadAheadLines)) ScheduleReadAheadLater();
     }
 
-    private void ScheduleReadAheadLater()
+    private int? FirstLineWithoutTokens(int first, int last)
+    {
+        for (var i = first; i <= last; i++)
+            if (Store.GetTokens(i) is null) return i;
+        return null;
+    }
+
+    // ---- tree-sitter engine plumbing (worker) ----
+
+    /// <summary>Edits recorded for the tree-sitter engine (UI thread adds, worker drains).</summary>
+    internal TreeSitterEditQueue TreeSitterEdits { get; } = new();
+
+    /// <summary>The engine driving this document, or null (TextMate). Worker-owned; exposed for tests and benchmarks.</summary>
+    internal TreeSitterHighlighter? TreeSitter => _treeSitter;
+
+    /// <summary>Approximate native bytes of this document's syntax tree (0 on TextMate).</summary>
+    internal long TreeSitterBytes => _treeSitter?.EstimatedBytes ?? 0;
+
+    internal (int First, int Last) Viewport => (Volatile.Read(ref _viewFirst), Volatile.Read(ref _viewLast));
+
+    /// <summary>True once the user has not typed for <see cref="ReadAheadQuietPeriod"/>.</summary>
+    internal bool IsQuiet => Stopwatch.GetElapsedTime(Volatile.Read(ref _lastEditTimestamp)) >= ReadAheadQuietPeriod;
+
+    internal void ScheduleSlice(WorkPriority priority) => Schedule(priority);
+
+    /// <summary>
+    /// When the visible lines were last brought up to date, and for which document version (both engines; benchmarks measure keystroke →
+    /// re-coloured viewport with it). Written on the worker, read anywhere.
+    /// </summary>
+    internal ViewportReadyMark? ViewportReady => Volatile.Read(ref _viewportReady);
+    private ViewportReadyMark? _viewportReady;
+
+    internal void MarkViewportReady(int version) => Volatile.Write(ref _viewportReady, new ViewportReadyMark(version, Stopwatch.GetTimestamp()));
+
+    /// <summary>UI thread: the setting now asks for a different engine than the one this session runs (a restart switches it).</summary>
+    internal bool TreeSitterWantedChanged()
+    {
+        var wanted = _owner.TreeSitter.IsEnabledFor(_doc.LanguageId);
+        if (!wanted) _treeSitterGaveUp = false; // switching the setting off (or to another language) forgets an earlier give-up
+        return (wanted && !_treeSitterGaveUp) != _treeSitterWanted;
+    }
+
+    /// <summary>True when tree-sitter gave up on this document (too slow to parse) and TextMate colours it.</summary>
+    internal bool TreeSitterGaveUp => _treeSitterGaveUp;
+
+    internal void NotifyTokensChanged(int first, int last) => NotifyChanged(first, last);
+
+    /// <summary>Runs a tree-sitter slice when the engine is wanted and usable; false = take the TextMate path.</summary>
+    private bool RunTreeSitterSlice()
+    {
+        var engine = _treeSitter;
+        var generation = Volatile.Read(ref _treeSitterGeneration);
+        if (engine is not null && (!_treeSitterWanted || engine.Generation != generation || engine.LanguageId != _doc.LanguageId))
+        {
+            _treeSitter = null;
+            engine.Dispose();
+            engine = null;
+        }
+        if (!_treeSitterWanted) return false;
+        if (engine is null)
+        {
+            engine = TreeSitterHighlighter.TryCreate(_owner.TreeSitter, _doc.LanguageId, generation);
+            if (engine is null)
+            {
+                _treeSitterWanted = false; // logged once by the service; TextMate colours this document
+                return false;
+            }
+            _treeSitter = engine;
+            if (_disposed)
+            {
+                _treeSitter = null;
+                engine.Dispose();
+                return true;
+            }
+        }
+        _hasGrammar = true;
+        engine.RunSlice(this);
+        if (engine.GaveUp)
+        {
+            _owner.Log.LogWarning("tree-sitter spent {Seconds:0.0} s parsing {Uri} without a result (grammar error recovery?); TextMate colours it instead",
+                engine.ParseTimeSinceTree.TotalSeconds, _doc.Uri);
+            _treeSitterGaveUp = true;
+            _treeSitter = null;
+            engine.Dispose();
+            _owner.Ui.Post(() =>
+            {
+                if (!_disposed) Restart();
+            });
+        }
+        return true;
+    }
+
+    /// <summary>Disposes the engine on the worker (where its native objects live); any thread.</summary>
+    private void ReleaseTreeSitter()
+    {
+        var engine = _treeSitter;
+        if (engine is null) return;
+        _owner.Worker.Post(WorkPriority.Interactive, null, _ =>
+        {
+            if (ReferenceEquals(_treeSitter, engine)) _treeSitter = null;
+            engine.Dispose();
+        });
+    }
+
+    internal void ScheduleReadAheadLater()
     {
         if (Interlocked.Exchange(ref _readAheadPending, 1) == 1) return;
         _ = Task.Delay(ReadAheadQuietPeriod + TimeSpan.FromMilliseconds(20)).ContinueWith(_ =>
@@ -322,6 +459,11 @@ internal sealed class TokenizationSession : IDisposable
         _subscriptions.Dispose();
         _tokensChanged.Clear();
         Store.Clear();
+        TreeSitterEdits.Clear();
+        ReleaseTreeSitter();
         _owner.Remove(this);
     }
 }
+
+/// <summary>The viewport was up to date for document <paramref name="Version"/> at <paramref name="Timestamp"/> (<see cref="Stopwatch"/> ticks).</summary>
+internal sealed record ViewportReadyMark(int Version, long Timestamp);

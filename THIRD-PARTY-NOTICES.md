@@ -59,3 +59,11 @@ Colour ids (`editor.background`, `statusBar.background`, ...) and command ids (`
 convention so that users' existing theme JSON and keybindings keep working. No Visual Studio Code or Visual Studio source code, icons or
 artwork is included, and the application icon (`src/CsCode.App/Views/AppIcon.cs`) is original artwork. "Visual Studio" is a trademark of
 Microsoft Corporation; the theme names "Visual Studio Dark/Blue/Light" describe a colour palette only and imply no affiliation.
+
+## Tree-sitter (EXPERIMENTAL engine, nothing bundled)
+
+The experimental syntax engine behind `editor.experimental.treeSitter` (`src/CsCode.Editor.TreeSitter`, docs/TREE-SITTER-EVALUATION.md)
+calls the tree-sitter C library through its own P/Invoke declarations. **No tree-sitter code, grammar or query file is redistributed with
+CsCode**: the runtime (`libtree-sitter`, MIT), the compiled grammars (the prototype's are all MIT) and the highlight/injection queries
+(nvim-treesitter's, Apache-2.0) are found on the user's machine at run time. If they are ever shipped, this section must list each
+grammar with its licence and the nvim-treesitter NOTICE (see the licence survey in docs/TREE-SITTER-EVALUATION.md §8).
