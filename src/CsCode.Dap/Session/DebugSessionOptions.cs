@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using CsCode.Core.Debugging;
 using CsCode.Core.Diagnostics;
+using CsCode.Core.Terminal;
 using CsCode.Dap.Client;
 using CsCode.Dap.Transport;
 using Microsoft.Extensions.Logging;
@@ -48,6 +49,8 @@ public sealed record DebugSessionOptions(
     public IMemoryMonitor? Memory { get; init; }
     /// <summary>What the adapter of this session's debug type does differently (GDB's native DAP); <see cref="DebugAdapterQuirks.None"/> by default.</summary>
     public DebugAdapterQuirks Quirks { get; init; } = DebugAdapterQuirks.None;
+    /// <summary>The integrated terminal for <c>runInTerminal</c> (null, or null returned: the debuggee runs piped into the Debug Console).</summary>
+    public Func<ITerminalService?>? Terminals { get; init; }
 }
 
 /// <summary>A <c>variablesReference</c>/frame id was used after the debuggee resumed (handles only live while stopped).</summary>

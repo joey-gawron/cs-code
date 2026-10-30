@@ -186,8 +186,10 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
         if (!Emulator.FollowOutput) Emulator.ScrollViewportToBottom();
     }
 
-    /// <summary>Kills the program (SIGHUP to its group, SIGKILL to its session after the grace period).</summary>
-    public void KillProcess(TimeSpan? grace = null) => _host?.Kill(grace);
+    /// <summary>Kills the program (SIGHUP to its group, SIGKILL to its session after the grace period); the terminal stays.</summary>
+    public void KillProcess(TimeSpan? grace) => _host?.Kill(grace);
+
+    public void KillProcess() => KillProcess(TimeSpan.FromSeconds(1));
 
     /// <summary>Name of the foreground process (/proc): call off the UI thread.</summary>
     public string? ForegroundProcessName() => _host?.GetForegroundProcessName();

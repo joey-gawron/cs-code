@@ -163,10 +163,14 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
                 : configuration.GetString("program") is { Length: > 0 } program ? Path.GetDirectoryName(program) : null;
             if (root is not null) props["__workspaceFolder"] = JsonSerializer.SerializeToElement(root);
         }
-        // CsCode has no terminal for debuggees: a runInTerminal launch pipes the program's streams into the Debug Console, and js-debug ALSO
-        // reports every console.* call itself, so each console.log line would show twice. A terminal launch runs in the console instead, with
-        // js-debug capturing the program's streams (outputCapture "std"): every line once, process.stdout.write included, as a terminal shows it.
-        if (!configuration.IsAttach && configuration.GetString("console") is "integratedTerminal" or "externalTerminal")
+        // console "integratedTerminal" with the integrated terminal composed: js-debug asks us to run the program (runInTerminal) and it runs
+        // in a Terminal tab named after the launch configuration, as in VS Code. Without a terminal (and for "externalTerminal", which CsCode
+        // does not open), a runInTerminal launch would pipe the program's streams into the Debug Console while js-debug ALSO reports every
+        // console.* call, so each console.log line would show twice: such a launch runs in the console instead, with js-debug capturing the
+        // program's streams (outputCapture "std"): every line once, process.stdout.write included, as a terminal shows it.
+        var console = configuration.GetString("console");
+        var inTerminal = console == "integratedTerminal" && _p.Terminals?.Invoke() is not null;
+        if (!configuration.IsAttach && !inTerminal && console is "integratedTerminal" or "externalTerminal")
         {
             props["console"] = JsonSerializer.SerializeToElement("internalConsole");
             if (!props.ContainsKey("outputCapture")) props["outputCapture"] = JsonSerializer.SerializeToElement("std");

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using CsCode.Core.Terminal;
 using CsCode.Dap.Client;
 using CsCode.Dap.Protocol;
 using Microsoft.Extensions.Logging;
@@ -7,9 +8,12 @@ using Microsoft.Extensions.Logging;
 namespace CsCode.Dap.Session;
 
 /// <summary>
-/// Answers the adapter's <c>runInTerminal</c> reverse request. There is no terminal UI yet, so the debuggee is spawned here (kind
-/// <c>integrated</c>/<c>external</c> alike) with its stdout/stderr wired to the Debug Console; stdin is closed (EOF). Every spawned
-/// process (tree) is killed when the session ends, so a debuggee can never outlive its session.
+/// Answers the adapter's <c>runInTerminal</c> reverse request. With the integrated terminal composed (<see cref="ITerminalService"/>), kind
+/// <c>integrated</c> runs the debuggee in a terminal tab named after the launch configuration, started without a shell in between (the
+/// process id returned is the debuggee's), and reused for the next run once its program has exited, as VS Code reuses its debug terminal.
+/// Otherwise (no terminal, or kind <c>external</c>: CsCode opens no external terminal window) the debuggee is spawned here with its
+/// stdout/stderr wired to the Debug Console; stdin is closed (EOF). Every spawned process (tree) and every terminal debuggee is killed when the
+/// session ends, so a debuggee can never outlive its session (the terminal stays, with the program's output and its exit code).
 /// </summary>
 internal sealed class DebuggeeLauncher : IDisposable
 {
@@ -17,14 +21,17 @@ internal sealed class DebuggeeLauncher : IDisposable
     private readonly ILogger _logger;
     private readonly Action<string, string> _output; // (category, text) — called on the lane
     private readonly List<Process> _processes = new();
+    private readonly List<ITerminal> _terminals = new();
+    private readonly Func<ITerminalService?>? _terminalService;
     private readonly object _gate = new();
     private bool _disposed;
 
-    public DebuggeeLauncher(DebugLane lane, ILogger logger, Action<string, string> output)
+    public DebuggeeLauncher(DebugLane lane, ILogger logger, Action<string, string> output, Func<ITerminalService?>? terminals = null)
     {
         _lane = lane;
         _logger = logger;
         _output = output;
+        _terminalService = terminals;
     }
 
     public IReadOnlyList<int> LiveProcessIds
@@ -35,10 +42,12 @@ internal sealed class DebuggeeLauncher : IDisposable
         }
     }
 
-    public async Task<DapRunInTerminalResponse> LaunchAsync(DapRunInTerminalArguments a)
+    public async Task<DapRunInTerminalResponse> LaunchAsync(DapRunInTerminalArguments a, string? sessionName = null, CancellationToken ct = default)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(DebuggeeLauncher));
         if (a.Args.Count == 0) throw new ArgumentException("runInTerminal without a command line");
+        if (!string.Equals(a.Kind, "external", StringComparison.OrdinalIgnoreCase) && _terminalService?.Invoke() is { } terminals)
+            return await LaunchInTerminalAsync(terminals, a, sessionName, ct);
         var psi = new ProcessStartInfo(a.Args[0])
         {
             RedirectStandardInput = true,
@@ -72,6 +81,32 @@ internal sealed class DebuggeeLauncher : IDisposable
         var pumps = Task.WhenAll(PumpAsync(process, process.StandardOutput, stdout), PumpAsync(process, process.StandardError, stderr));
         _ = WatchExitAsync(process, pumps);
         return new DapRunInTerminalResponse { ProcessId = pid, ShellProcessId = pid };
+    }
+
+    private async Task<DapRunInTerminalResponse> LaunchInTerminalAsync(ITerminalService terminals, DapRunInTerminalArguments a, string? sessionName, CancellationToken ct)
+    {
+        var terminal = await terminals.CreateAsync(new TerminalCreateOptions
+        {
+            Name = string.IsNullOrWhiteSpace(a.Title) ? sessionName ?? "Debug" : a.Title,
+            ShellPath = a.Args[0],
+            ShellArgs = a.Args.Skip(1).ToArray(),
+            Cwd = string.IsNullOrEmpty(a.Cwd) ? null : a.Cwd,
+            Env = a.Env,
+            IsTransient = true,
+            ReuseWhenIdle = true,
+            Show = true,
+            PreserveFocus = true, // the editor keeps the keyboard: the user is about to hit a breakpoint there
+        }, ct).ConfigureAwait(false);
+        if (terminal.ProcessId is not { } pid || terminal.HasExited)
+            throw new InvalidOperationException($"Could not start '{a.Args[0]}' in the terminal.");
+        lock (_gate)
+        {
+            if (_disposed) { terminal.KillProcess(); throw new ObjectDisposedException(nameof(DebuggeeLauncher)); }
+            _terminals.RemoveAll(t => t.HasExited);
+            _terminals.Add(terminal);
+        }
+        _logger.LogDebug("Debuggee {Program} runs in terminal {Terminal} (pid {Pid})", a.Args[0], terminal.Id, pid);
+        return new DapRunInTerminalResponse { ProcessId = pid };
     }
 
     private async Task PumpAsync(Process process, StreamReader reader, BoundedTextPump pump)
@@ -118,11 +153,16 @@ internal sealed class DebuggeeLauncher : IDisposable
     public void KillAll()
     {
         Process[] all;
+        ITerminal[] terminals;
         lock (_gate)
         {
             all = [.. _processes];
             _processes.Clear();
+            terminals = [.. _terminals];
+            _terminals.Clear();
         }
+        foreach (var t in terminals)
+            if (!t.HasExited) t.KillProcess(); // the terminal stays (its buffer and exit code); only the debuggee goes
         foreach (var p in all)
         {
             SafeKill(p); // SIGKILL to the whole tree; the runtime reaps the child asynchronously (never block the lane waiting for it)

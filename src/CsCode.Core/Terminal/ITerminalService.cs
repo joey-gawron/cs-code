@@ -76,6 +76,12 @@ public interface ITerminal
     /// <paramref name="addNewLine"/>. Never blocks: the bytes are queued for the terminal's writer thread.
     /// </summary>
     ValueTask SendTextAsync(string text, bool addNewLine = true, CancellationToken ct = default);
+
+    /// <summary>
+    /// Ends the terminal's program (SIGHUP to its process group, SIGKILL to its session after a grace period) and keeps the terminal with its
+    /// buffer, as a debuggee's terminal stays after the debug session ended it. Returns at once.
+    /// </summary>
+    void KillProcess();
 }
 
 public sealed record TerminalExitedEventArgs(ITerminal Terminal, int? ExitCode);

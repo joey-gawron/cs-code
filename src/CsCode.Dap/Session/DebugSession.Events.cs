@@ -230,7 +230,7 @@ public sealed partial class DebugSession
     private async Task<object?> OnRunInTerminalAsync(JsonElement args, CancellationToken ct)
     {
         var a = DapJson.Deserialize<DapRunInTerminalArguments>(args) ?? throw new ArgumentException("runInTerminal without arguments");
-        return await _debuggees.LaunchAsync(a);
+        return await _debuggees.LaunchAsync(a, Name, ct);
     }
 
     private async Task<object?> OnStartDebuggingAsync(JsonElement args, CancellationToken ct)
