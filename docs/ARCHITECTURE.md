@@ -138,12 +138,14 @@ dispatcher latency p99 ≤ 16 ms / max ≤ 50 ms, typing latency p99 ≤ 20 ms, 
 
 ## 11. Background mode & saved sessions (wave 3, see `docs/briefs/background-sessions.md`)
 
-CsCode can stay resident: **one process per session** (plus a pre-started *warm spare*), coordinated by the `cscode` launcher over
-per-user local IPC (Unix sockets in `$XDG_RUNTIME_DIR/cscode`, named pipes on Windows). Closing a window hides it; `cscode --session NAME`
-re-shows it in < 150 ms with documents, undo, layout, view state and language servers intact. Sessions (folders, editors, view state, layout,
-hot-exit backups of unsaved buffers) persist to `{UserDataDir}/sessions`. Hidden sessions trim memory, stop idle language servers and idle at
-~0 % CPU; the number of resident sessions is capped (LRU eviction). Chosen over multi-window-per-process because Core services are
-workspace-scoped singletons and per-process isolation matches §6.
+CsCode can stay resident: **one process per session**, coordinated by the `cscode` launcher over per-user local IPC (Unix sockets in
+`$XDG_RUNTIME_DIR/cscode`, named pipes on Windows). A pre-started *warm spare* process is opt-in (`cscode.background.warmSpare`, **off** by
+default: it costs an idle process of ≈100-130 MB, and resident sessions are shown just as fast without it). Closing a window hides it;
+`cscode --session NAME` re-shows it in < 150 ms with documents, undo, layout, view state and language servers intact. Sessions (folders,
+editors, view state, layout, hot-exit backups of unsaved buffers) persist to `{UserDataDir}/sessions`, and each session's lock (one writer)
+lives there too. Hidden sessions trim memory, stop idle language servers and idle at ~0 % CPU; the number of resident sessions is capped (LRU
+eviction of sessions that can quit without asking). Chosen over multi-window-per-process because Core services are workspace-scoped
+singletons and per-process isolation matches §6. Details: `docs/SESSIONS.md`.
 
 ## 12. Roadmap
 
