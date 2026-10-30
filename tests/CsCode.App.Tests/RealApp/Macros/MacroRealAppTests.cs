@@ -107,7 +107,7 @@ public class MacroRealAppTests(ITestOutputHelper output)
     }
 
     [AvaloniaFact(Timeout = 300_000)]
-    public async Task Playback_in_the_real_editor_stays_within_the_ui_budget()
+    public async Task Playing_ten_thousand_times_in_the_real_editor_stays_within_the_ui_budget()
     {
         await using var app = await MacroApp.StartAsync("start");
         app.RecordKey();
@@ -133,7 +133,7 @@ public class MacroRealAppTests(ITestOutputHelper output)
                 }
             }) { IsBackground = true, Name = "macro-heartbeat" };
             heartbeat.Start();
-            var playing = app.Host.Get<ICommandService>().ExecuteAsync(MacroCommands.PlayLast, 1500).AsTask();
+            var playing = app.Host.Get<ICommandService>().ExecuteAsync(MacroCommands.PlayLast, 10_000).AsTask();
             // pump like a real dispatcher loop: jobs as soon as they are queued (a Task.Delay between pumps would count as dispatcher latency)
             var sw = Stopwatch.StartNew();
             while (!playing.IsCompleted && sw.Elapsed < TimeSpan.FromMinutes(2))
@@ -304,6 +304,51 @@ public class MacroRealAppTests(ITestOutputHelper output)
         Assert.Equal("def", app.Text);
         Assert.Equal([new TextStep("12"), new CommandStep("vim.toggle")], app.Service.Last!.Steps);
         Assert.Contains(app.Notifications, n => n.StartsWith("Recording stopped: Vim emulation was switched on."));
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_macro_never_records_its_own_playback()
+    {
+        await using var app = await MacroApp.StartAsync("abc");
+        app.RecordKey();
+        app.Type("1");
+        app.RecordKey();
+        app.RecordKey();                         // a second recording...
+        app.Type("2");
+        app.Press(Key.M, MacroApp.Ctrl);         // ...tries to play the last macro (Ctrl+M, Ctrl+Enter): refused, not recorded
+        app.Press(Key.Enter, MacroApp.Ctrl);
+        await app.SettleAsync();
+        app.RecordKey();
+
+        Assert.Equal([new TextStep("2")], app.Service.Last!.Steps);
+        Assert.Equal("12abc", app.Text);
+        Assert.Contains(app.Notifications, n => n.Contains("stop recording first"));
+    }
+
+    private const string StopMacros = """
+        { "macros": [
+            { "name": "vim", "steps": [ { "text": "a" }, { "command": "vim.toggle" }, { "text": "b" } ] },
+            { "name": "close", "steps": [ { "command": "workbench.action.files.save" }, { "command": "workbench.action.closeActiveEditor" }, { "text": "z" } ] }
+        ] }
+        """;
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task Closing_the_editor_or_switching_vim_on_during_playback_stops_it_with_the_reason()
+    {
+        await using var app = await MacroApp.StartAsync("abc", seed: h => h.Home.WriteFile("data/macros.json", StopMacros));
+        Assert.True(await RealAppHost.WaitFor(() => app.Host.Get<ICommandService>().Has("macro.run.close")));
+
+        await app.Host.RunAsync("macro.run.vim");
+        Assert.True(app.Host.Shell.Vim!.Enabled);
+        Assert.Equal("aabc", app.Text);
+        Assert.Contains(app.Notifications, n => n.StartsWith("Macro 'vim' stopped at step 3 of 3") && n.Contains("Vim emulation is on"));
+
+        await app.Host.RunAsync("vim.toggle");
+        await app.FocusAsync();
+        await app.Host.RunAsync("macro.run.close");
+        Assert.True(await RealAppHost.WaitFor(() => app.Well.ActiveEditor is null));
+        Assert.Contains(app.Notifications, n => n.StartsWith("Macro 'close' stopped at step 3 of 3") && n.Contains("No editor is open"));
+        Assert.Equal("aabc", await File.ReadAllTextAsync(app.Host.Files.Combine("test.txt")));
     }
 
     [AvaloniaFact(Timeout = 180_000)]

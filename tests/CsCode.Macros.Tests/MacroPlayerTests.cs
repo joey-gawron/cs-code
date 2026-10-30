@@ -398,10 +398,10 @@ public sealed class MacroPlayerTests : IDisposable
 
         Assert.Equal(MacroPlayStatus.Completed, result.Status);
         var slices = player.SliceDurations;
-        Assert.Equal(1.5, MacroLimits.Default.SliceBudget.TotalMilliseconds);
-        Assert.InRange(slices.Count, 99, 102); // three 0.5 ms steps per slice: a fourth would take it past the 1.5 ms target
-        Assert.All(slices, s => Assert.InRange(s, 0, 1.5001));
-        Assert.True(_ui.Posted - posted >= 99);
+        Assert.Equal(1, MacroLimits.Default.SliceBudget.TotalMilliseconds);
+        Assert.InRange(slices.Count, 149, 152); // two 0.5 ms steps per slice: a third would take it past the 1 ms target
+        Assert.All(slices, s => Assert.InRange(s, 0, 1.0001));
+        Assert.True(_ui.Posted - posted >= 149);
     }
 
     [Fact]

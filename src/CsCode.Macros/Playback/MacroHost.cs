@@ -108,9 +108,10 @@ public sealed record MacroLimits
     /// Target time on the UI thread per dispatcher callback. The player stops a slice before a step whose cost (the most expensive of the recent
     /// steps) would take the slice past it. Well below the 4 ms callback budget (docs/ARCHITECTURE.md §6): a real editor's keystroke cost varies
     /// (a collection, rebuilding the visual lines after an edit) and the margin keeps such a step within the budget. Measured in the real editor
-    /// (headless, load average 2-3): slices p99 3.4-3.6 ms with this target, 3.8-5.1 ms with 2 ms, 5.6-5.9 ms with 3 ms.
+    /// playing a typing macro 10,000 times (headless, load average 2-3): slices p99 3.6-3.8 ms with this target, 4.1-4.4 ms with 1.5 ms,
+    /// 3.8-5.1 ms with 2 ms, 5.6-5.9 ms with 3 ms. A slice still runs at least one step, so one step that alone takes longer is not split.
     /// </summary>
-    public TimeSpan SliceBudget { get; init; } = TimeSpan.FromMilliseconds(1.5);
+    public TimeSpan SliceBudget { get; init; } = TimeSpan.FromMilliseconds(1);
 
     public static readonly MacroLimits Default = new();
 }
