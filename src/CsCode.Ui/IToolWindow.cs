@@ -83,7 +83,8 @@ public static class ToolWindowFocus
     /// screen (a recycled row, a control of a row rebuilt, the rename box once hidden): not when something else has taken the keyboard
     /// meanwhile, nor when the list left the screen (its window hidden), nor when the element is still on screen, which is how Avalonia leaves
     /// it when another of the app's windows activates with nothing focused in it (a tool window floated) — taking it back then sent the keys
-    /// typed in that window to this list (Down moved the Explorer's selection, Delete asked to delete the file).
+    /// typed in that window to this list (Down moved the Explorer's selection, Delete asked to delete the file). A restore that finds the keyboard
+    /// elsewhere, or the list off screen, gives the list up until the keyboard comes back to it, so a later change of its rows leaves it alone.
     /// </summary>
     public static void KeepOnRows(ListBox list)
     {
@@ -112,9 +113,16 @@ public static class ToolWindowFocus
 
         void Restore() => Dispatcher.UIThread.Post(() =>
         {
-            if (!inside || !list.IsAttachedToVisualTree() || !list.IsEffectivelyVisible || TopLevel.GetTopLevel(list)?.FocusManager is not { } focus) return;
+            if (!inside) return;
+            // Not taken back (the list left the screen, or the keyboard is somewhere else by now): the keyboard is no longer the list's to keep, and
+            // a later change of its items must not take it back (from another window activated meanwhile with nothing focused in it).
+            if (!list.IsAttachedToVisualTree() || !list.IsEffectivelyVisible || TopLevel.GetTopLevel(list)?.FocusManager is not { } focus) { inside = false; return; }
             var current = focus.GetFocusedElement();
-            if (current is not (null or TopLevel) && !(heldByList && ReferenceEquals(current, list))) return; // it is somewhere: leave it there
+            if (current is not (null or TopLevel) && !(heldByList && ReferenceEquals(current, list)))
+            {
+                if (!(current is Avalonia.Visual v && (ReferenceEquals(v, list) || list.IsVisualAncestorOf(v)))) inside = false; // somewhere else: leave it there
+                return; // on a row already: leave it there
+            }
             list.UpdateLayout(); // the rows of the new items
             if (item is not null && list.ContainerFromItem(item) is { IsEffectivelyVisible: true } same && same.Focus()) return; // the row it was on
             if (FocusRow(list) || ReferenceEquals(current, list)) return;
@@ -122,7 +130,7 @@ public static class ToolWindowFocus
             // doing what it did (nothing). A list focusable of its own (Find in Files' results) stays so.
             if (list.Focusable) { list.Focus(); return; }
             list.Focusable = heldByList = true;
-            if (!list.Focus()) list.Focusable = heldByList = false;
+            if (!list.Focus()) { list.Focusable = heldByList = false; inside = false; }
         }, DispatcherPriority.Loaded);
     }
 }
