@@ -111,7 +111,7 @@ public sealed class FakeDebugSession : IDebugSession
     public DebugConfiguration Configuration { get; } = new("fake", "launch", "Fake", new Dictionary<string, JsonElement>());
     public DebugSessionState State { get; set; } = DebugSessionState.Stopped;
     public IDebugSession? Parent => null;
-    public DebugCapabilities Capabilities { get; } = new(SupportsEvaluateForHovers: true);
+    public DebugCapabilities Capabilities { get; } = new(SupportsConditionalBreakpoints: true, SupportsEvaluateForHovers: true);
     public int? FocusedThreadId => 1;
     public Func<string, int?, string, DebugEvaluateResult> Evaluate { get; set; } = (e, _, _) => new DebugEvaluateResult("42", "int");
     public List<(string Expression, string Context)> Evaluations { get; } = new();

@@ -118,6 +118,7 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
     internal async Task EditConditionAsync(int line)
     {
         var existing = BreakpointAt(line);
+        if (existing?.Condition is null && DebugCapabilityGate.ConditionUnsupported(_debug) is { } why) { await TellAsync(why).ConfigureAwait(true); return; }
         var text = await Ask("Edit Condition", "Expression must evaluate to true for the breakpoint to be hit", existing?.Condition).ConfigureAwait(true);
         if (text is null) return;
         var condition = string.IsNullOrWhiteSpace(text) ? null : text;
@@ -190,9 +191,9 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
     internal void ShowContextMenu(int line, Control anchor) => BuildContextMenu(line).Open(anchor);
 
     /// <summary>
-    /// The glyph margin's menu. Hit counts and logpoints are offered only when the active debug adapter supports them (netcoredbg has neither,
-    /// js-debug both; known from the running session, else from the last session of the selected configuration's type, else assumed): an
-    /// unsupported entry is disabled and says why. One the breakpoint already has can still be edited (cleared).
+    /// The glyph margin's menu. Conditions, hit counts and logpoints are offered only when the active debug adapter supports them (netcoredbg
+    /// has conditions only, js-debug all three; known from the running session, else from the last session of the selected configuration's
+    /// type, else assumed): an unsupported entry is disabled and says why. One the breakpoint already has can still be edited (cleared).
     /// </summary>
     internal ContextMenu BuildContextMenu(int line)
     {
@@ -209,19 +210,20 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
             m.Click += (_, _) => run();
             return m;
         }
+        var noCondition = DebugCapabilityGate.ConditionUnsupported(_debug);
         var noHitCount = DebugCapabilityGate.HitCountUnsupported(_debug);
         var noLogPoint = DebugCapabilityGate.LogPointUnsupported(_debug);
         if (existing is null)
         {
             menu.Items.Add(Item("Add Breakpoint", () => Toggle(line)));
-            menu.Items.Add(Item("Add Conditional Breakpoint…", () => _ = EditConditionAsync(line)));
+            menu.Items.Add(Item("Add Conditional Breakpoint…", () => _ = EditConditionAsync(line), noCondition));
             menu.Items.Add(Item("Add Logpoint…", () => _ = EditLogMessageAsync(line), noLogPoint));
         }
         else
         {
             menu.Items.Add(Item("Remove Breakpoint", () => Remove(line)));
             menu.Items.Add(Item(existing.Enabled ? "Disable Breakpoint" : "Enable Breakpoint", () => SetEnabled(line, !existing.Enabled)));
-            menu.Items.Add(Item("Edit Condition…", () => _ = EditConditionAsync(line)));
+            menu.Items.Add(Item("Edit Condition…", () => _ = EditConditionAsync(line), existing.Condition is null ? noCondition : null));
             menu.Items.Add(Item("Edit Hit Count…", () => _ = EditHitCountAsync(line), existing.HitCondition is null ? noHitCount : null));
             menu.Items.Add(Item("Edit Log Message…", () => _ = EditLogMessageAsync(line), existing.LogMessage is null ? noLogPoint : null));
         }

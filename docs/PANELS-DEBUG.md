@@ -143,10 +143,10 @@ IDebugService / IDebugSession events (any thread)
 
 Source / function / exception breakpoints with enable checkboxes, condition / hit-count / log-message badges and the adapter's verdict from
 `IBreakpointManager.GetStatus` (verified, unverified = hollow, moved-to-line note, failed message in red). Condition, hit count and log message
-are edited through `IWindowService.ShowInputBoxAsync` — hit counts and log messages only when the active adapter supports them
-(`DebugCapabilityGate`: the running session's capabilities, else the last ones of the selected configuration's type; netcoredbg has neither,
-js-debug both): otherwise the menu entry is disabled with "(not supported)" and the reason as tooltip, and the command says why instead of
-asking; Delete / Delete All / Enable All / Disable All / New Function Breakpoint; double-click or
+are edited through `IWindowService.ShowInputBoxAsync` — a source breakpoint's condition, hit count and log message only when the active
+adapter supports them (`DebugCapabilityGate`: the running session's capabilities, else the last ones of the selected configuration's type;
+netcoredbg has conditions but no hit counts or logpoints, js-debug all three): otherwise the menu entry is disabled with "(not supported)"
+and the reason as tooltip, and the command says why instead of asking (one the breakpoint already has can still be edited away); Delete / Delete All / Enable All / Disable All / New Function Breakpoint; double-click or
 Enter navigates (to the adapter-moved line when it moved). Rows update **in place** when only a status or flag changed. **Limit:** the manager
 contract cannot update a function breakpoint, so its checkbox is read-only.
 

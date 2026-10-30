@@ -314,7 +314,7 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 * Additive Core files: `Core/Tasks/ITaskService.cs`; `Core/Debugging/DebugExtras.cs` (`IDebugFrameFocus`, `IDebugOutputHistory`,
   `IDebugSourceContentProvider`, `IDebugSessionHealth`, `IActiveSelectionProvider`, `DebugSourceUri`); `Core/Debugging/DebugKnownCapabilities.cs`
   (`IDebugKnownCapabilities` — DebugService remembers each type's last capabilities — and `DebugCapabilityGate`, which the breakpoint editors use
-  to offer hit counts/logpoints only when supported); `Core/Debugging/DebugSessionPaging.cs` (`IDebugSessionVariablePaging`, filtered paging);
+  to offer conditions/hit counts/logpoints only when supported); `Core/Debugging/DebugSessionPaging.cs` (`IDebugSessionVariablePaging`, filtered paging);
   `Core/Debugging/DebugSessionModules.cs` (`IDebugSessionModules`: the module list, `GetModulesAsync`, and `ModulesChanged`, fired once per
   burst of `module` events by posting behind them on the lane); `Core/Debugging/DebugSessionFrames.cs` (`IDebugSessionFrames.FrameGeneration`);
   `DebugVariable.IsLazy` (DAP `presentationHint.lazy`). They are *new interfaces/members* rather than changed signatures, so existing implementers

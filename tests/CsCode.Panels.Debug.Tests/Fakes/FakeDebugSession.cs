@@ -32,7 +32,7 @@ public class FakeDebugSession : IDebugSession, IDebugSessionFrames
         Id = id;
         Name = name;
         Configuration = new DebugConfiguration("fake", "launch", name, new Dictionary<string, JsonElement>());
-        Capabilities = new DebugCapabilities(SupportsSetVariable: true, SupportsCompletionsRequest: true, SupportsEvaluateForHovers: true, SupportsExceptionInfo: true);
+        Capabilities = new DebugCapabilities(SupportsConditionalBreakpoints: true, SupportsSetVariable: true, SupportsCompletionsRequest: true, SupportsEvaluateForHovers: true, SupportsExceptionInfo: true);
     }
 
     public string Id { get; }
