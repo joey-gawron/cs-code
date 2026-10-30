@@ -106,9 +106,11 @@ public sealed record MacroLimits
     public int MaxDepth { get; init; } = 8;
     /// <summary>
     /// Target time on the UI thread per dispatcher callback. The player stops a slice before a step whose cost (the most expensive of the recent
-    /// steps) would take the slice past it, so callbacks stay within the 4 ms budget of docs/ARCHITECTURE.md §6 unless one step alone is slower.
+    /// steps) would take the slice past it. Well below the 4 ms callback budget (docs/ARCHITECTURE.md §6): a real editor's keystroke cost varies
+    /// (a collection, rebuilding the visual lines after an edit) and the margin keeps such a step within the budget. Measured in the real editor
+    /// (headless, load average 2-3): slices p99 3.4-3.6 ms with this target, 3.8-5.1 ms with 2 ms, 5.6-5.9 ms with 3 ms.
     /// </summary>
-    public TimeSpan SliceBudget { get; init; } = TimeSpan.FromMilliseconds(3);
+    public TimeSpan SliceBudget { get; init; } = TimeSpan.FromMilliseconds(1.5);
 
     public static readonly MacroLimits Default = new();
 }

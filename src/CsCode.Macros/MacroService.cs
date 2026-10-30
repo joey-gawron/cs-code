@@ -38,6 +38,12 @@ public sealed class MacroService : IDisposable
     /// <summary>The commands that open the palette or Quick Open: a command they run for the user counts as the user's own.</summary>
     public static readonly IReadOnlySet<string> Launchers = new HashSet<string>(StringComparer.Ordinal) { KnownCommands.CommandPalette, KnownCommands.QuickOpen };
 
+    /// <summary>
+    /// Commands that only open an input for the user (the editor's find panel): what the user then does there is recorded instead (Enter or F3
+    /// in the find panel becomes a search step), so replaying the command itself would only leave the panel open.
+    /// </summary>
+    public static readonly IReadOnlySet<string> NotRecorded = new HashSet<string>(StringComparer.Ordinal) { KnownCommands.Find, KnownCommands.Replace };
+
     private const int MaxInputWindows = 32;
 
     private readonly ICommandService _commands;
@@ -265,7 +271,7 @@ public sealed class MacroService : IDisposable
     private bool ShouldRecord(CommandExecuted e)
     {
         if (e.StartedTimestamp < _recordingStarted) return false; // started before Record (and finished after)
-        if (MacroCommands.IsMacroCommand(e.Id) || Launchers.Contains(e.Id)) return false;
+        if (MacroCommands.IsMacroCommand(e.Id) || Launchers.Contains(e.Id) || NotRecorded.Contains(e.Id)) return false;
         foreach (var caller in e.Callers)
             if (!Launchers.Contains(caller)) return false; // a command's own work, not the user's
         if (_inputOpen && e.StartedTimestamp >= _inputStart) return false; // the editor is still handling the key that started it

@@ -391,15 +391,16 @@ public sealed class MacroPlayerTests : IDisposable
     {
         var clock = new StepClock();
         var (player, host) = Rig(clock: clock);
-        host.VirtualCost = TimeSpan.FromMilliseconds(1);
+        host.VirtualCost = TimeSpan.FromMilliseconds(0.5);
         var posted = _ui.Posted;
 
         var result = await Play(player, M(K("left")), new MacroPlayOptions(MacroRepeat.Times, 300));
 
         Assert.Equal(MacroPlayStatus.Completed, result.Status);
         var slices = player.SliceDurations;
-        Assert.InRange(slices.Count, 99, 102); // three 1 ms steps per 3 ms slice
-        Assert.All(slices, s => Assert.InRange(s, 0, 3.0001));
+        Assert.Equal(1.5, MacroLimits.Default.SliceBudget.TotalMilliseconds);
+        Assert.InRange(slices.Count, 99, 102); // three 0.5 ms steps per slice: a fourth would take it past the 1.5 ms target
+        Assert.All(slices, s => Assert.InRange(s, 0, 1.5001));
         Assert.True(_ui.Posted - posted >= 99);
     }
 
