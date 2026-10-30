@@ -32,6 +32,12 @@ internal sealed class VimClipboard(IClipboardService service)
         public Task? Refresh;
     }
 
+    /// <summary>
+    /// How long a write waits for the one before it, and a read for the writes before it: a platform clipboard that never finishes a write must
+    /// not stop every later write and read (the cache still answers the engine).
+    /// </summary>
+    internal static readonly TimeSpan WriteWait = TimeSpan.FromSeconds(2);
+
     private readonly Slot _clipboard = new(), _selection = new();
     private Task _writes = Task.CompletedTask;
 
@@ -67,8 +73,8 @@ internal sealed class VimClipboard(IClipboardService service)
 
     private async Task WriteAfterAsync(Task previous, Content content, string eol)
     {
-        try { await previous.ConfigureAwait(false); }
-        catch (Exception) { /* the previous write failed on its own */ }
+        try { await previous.WaitAsync(WriteWait).ConfigureAwait(false); }
+        catch (Exception) { /* the previous write failed, or still hangs: this one goes ahead */ }
         try
         {
             // a register holds up to vim.maxRegisterChars: its line ends are converted on the pool, not inside the key
@@ -120,8 +126,8 @@ internal sealed class VimClipboard(IClipboardService service)
         {
             if (!selection)
             {
-                try { await pendingWrites.ConfigureAwait(false); }
-                catch (Exception) { /* failed writes leave the clipboard as it was */ }
+                try { await pendingWrites.WaitAsync(WriteWait).ConfigureAwait(false); }
+                catch (Exception) { /* failed (or hanging) writes leave the clipboard as it was */ }
             }
             Content? content;
             if (selection)
