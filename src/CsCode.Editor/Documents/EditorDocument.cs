@@ -239,14 +239,30 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
     /// Opens an undo group (UI thread): every change until the matching <see cref="EndUndoGroup"/> becomes ONE undo step; with
     /// <paramref name="continueLast"/> they join the last step instead (when the history allows it). Groups nest. Undo/Redo must not be
     /// called while one is open (the buffer throws). Used by modal editing layers to make one Vim change one undo step.
+    /// <para>
+    /// A step never continues across a save: when the text is the saved text, the changes start a step of their own (VS Code also ends the
+    /// undo stop at a save). AvaloniaEdit's saved-marker arithmetic assumes the step a continued group joins was counted after the marker, so
+    /// joining the step the file was saved after reported the document clean while its text differed from the file (T50: closing it did not
+    /// prompt and the edit was lost). Returns whether continuation still applies: false when it was not asked for or a save made the group a
+    /// step of its own, so a caller that labels steps (the Vim layer) counts one more group for its step.
+    /// </para>
     /// </summary>
-    public void BeginUndoGroup(bool continueLast)
+    public bool BeginUndoGroup(bool continueLast)
     {
+        if (continueLast && AtSavedMarker()) continueLast = false;
         HeldGroupStarting(continueLast);
         if (continueLast) _text.UndoStack.StartContinuedUndoGroup();
         else _text.UndoStack.StartUndoGroup();
         _explicitGroups++;
+        return continueLast;
     }
+
+    /// <summary>
+    /// The saved state is the top of the undo history (AvaloniaEdit's marker is exact between groups), so the next outermost group would join
+    /// the step the file was saved after. Inside a group or update only the outermost group decides (AvaloniaEdit ignores continuation of nested
+    /// ones); inside a held group its own history decides (see <see cref="MarkSaved"/>).
+    /// </summary>
+    private bool AtSavedMarker() => _explicitGroups == 0 && !_text.IsInUpdate && _held is null && _text.UndoStack.IsOriginalFile;
 
     public void EndUndoGroup()
     {

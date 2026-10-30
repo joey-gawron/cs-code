@@ -222,8 +222,8 @@ internal sealed class EditorClipboard : IDisposable
             // Whole lines replaced by an in-line entry keep the line ending they replace, so the next line is not joined.
             var replacingLines = range.End.Character == 0 && range.End.Line > range.Start.Line;
             if (replacingLines && !EndsWithLineBreak(entry.Text)) entry = entry with { Text = entry.Text + doc.EndOfLine };
-            var stack = doc.Buffer.UndoStack;
-            stack.StartContinuedUndoGroup();
+            // Through the document: the cycle joins the paste's undo step unless a save came between (T50), and a held group sees the step.
+            doc.BeginUndoGroup(continueLast: true);
             try
             {
                 var result = ClipboardOperations.Paste(doc, SelectionSet.Single(range), entry with { Shape = ClipboardTextShape.Normal }, _v.GetEditingContext(), _v.Settings.AutoIndentOnPaste);
@@ -234,7 +234,7 @@ internal sealed class EditorClipboard : IDisposable
             }
             finally
             {
-                stack.EndUndoGroup();
+                doc.EndUndoGroup();
             }
             FeatureSupport.Status(_v, $"Clipboard ring: {index + 1} of {ring.Count}");
             return Task.CompletedTask;
