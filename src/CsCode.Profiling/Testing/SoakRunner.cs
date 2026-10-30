@@ -16,6 +16,8 @@ public sealed record SoakOptions
     public int WarmupIterations { get; init; } = 20;
     /// <summary>Time between samples (taken between iterations).</summary>
     public TimeSpan SampleInterval { get; init; } = TimeSpan.FromSeconds(1);
+    /// <summary>Also sample every this many iterations (fast scenarios finish many iterations between two time-based samples).</summary>
+    public int? SampleEveryIterations { get; init; }
     /// <summary>Full collection before each sample, so the heap series is the LIVE heap (what a leak grows). Off: the series is what a user would see.</summary>
     public bool CollectBeforeSample { get; init; } = true;
     /// <summary>CSV/JSON output directory; null = <c>{repo}/.scratch/soak</c> (or the temp directory outside a checkout); "" = write nothing.</summary>
@@ -24,8 +26,8 @@ public sealed record SoakOptions
     public Func<long>? ChildBytes { get; init; }
 }
 
-/// <summary>One point of the soak time series.</summary>
-public sealed record SoakSample(
+/// <summary>One point of the soak time series (a value type, kept in a pre-sized list: the series itself must not show up as heap growth).</summary>
+public readonly record struct SoakSample(
     int Iteration, double Seconds, long WorkingSet, long PrivateBytes, long GcLiveBytes, long GcCommitted, long Gen0, long Gen1, long Gen2,
     int Threads, int FileDescriptors, long AllocatedBytes, long ChildBytes);
 
@@ -130,7 +132,7 @@ public static class SoakRunner
             for (var i = 0; i < options.WarmupIterations; i++) await scenario.RunIterationAsync(i, ct);
             FullGc.Collect();
             var before = ResourceCensus.Capture();
-            var samples = new List<SoakSample>();
+            var samples = new List<SoakSample>(16_384);
             var clock = Stopwatch.StartNew();
             var iteration = 0;
             samples.Add(Take(0, clock, options));
@@ -141,7 +143,7 @@ public static class SoakRunner
                 if (options.Duration is { } duration && clock.Elapsed >= duration) break;
                 await scenario.RunIterationAsync(options.WarmupIterations + iteration, ct);
                 iteration++;
-                if (clock.Elapsed - lastSample >= options.SampleInterval)
+                if (clock.Elapsed - lastSample >= options.SampleInterval || (options.SampleEveryIterations is > 0 and var every && iteration % every == 0))
                 {
                     samples.Add(Take(iteration, clock, options));
                     lastSample = clock.Elapsed;
@@ -203,7 +205,7 @@ public static class SoakRunner
                 WorkingSetPeaksMb = new[] { report.WorkingSetPeaksMb.First, report.WorkingSetPeaksMb.Middle, report.WorkingSetPeaksMb.Last },
                 Gen2PerIteration = new[] { report.Gen2Rates.First, report.Gen2Rates.Second },
                 Before = before.ToString(), After = after.ToString(), Summary = report.Summary(),
-            }, new JsonSerializerOptions { WriteIndented = true }));
+            }, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
         }
         return report with { CsvPath = csv, JsonPath = json };
     }
