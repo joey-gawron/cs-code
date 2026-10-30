@@ -136,17 +136,30 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
         var service = _runtime.Service;
         var sessions = service.Sessions;
         var active = service.ActiveSession ?? sessions.FirstOrDefault();
-        _picker.Items.Clear();
-        foreach (var s in sessions)
+        static string Label(TerminalSession s) => $"{s.Id}: {s.Title}" + (s.HasExited ? $" (exited {s.ExitCode})" : "");
+        var items = _picker.Items.OfType<ComboBoxItem>().ToList();
+        if (items.Count == sessions.Count && items.Select(i => i.Tag).SequenceEqual(sessions))
         {
-            var label = $"{s.Id}: {s.Title}" + (s.HasExited ? $" (exited {s.ExitCode})" : "");
-            var item = new ComboBoxItem { Content = label, Tag = s };
-            _picker.Items.Add(item);
-            if (ReferenceEquals(s, active)) _picker.SelectedItem = item;
+            // the same terminals (a title changed, the program exited): relabel in place, no new controls
+            foreach (var item in items)
+                if (item.Tag is TerminalSession s && !Equals(item.Content, Label(s))) item.Content = Label(s);
+            var selected = items.FirstOrDefault(i => ReferenceEquals(i.Tag, active));
+            if (!ReferenceEquals(_picker.SelectedItem, selected)) _picker.SelectedItem = selected;
+        }
+        else
+        {
+            _picker.Items.Clear();
+            foreach (var s in sessions)
+            {
+                var item = new ComboBoxItem { Content = Label(s), Tag = s };
+                _picker.Items.Add(item);
+                if (ReferenceEquals(s, active)) _picker.SelectedItem = item;
+            }
         }
         _picker.IsVisible = sessions.Count > 0;
         Control.Session = active;
-        if (Dockable() is { } dockable) dockable.Title = sessions.Count > 1 ? $"Terminal ({sessions.Count})" : "Terminal";
+        var title = sessions.Count > 1 ? $"Terminal ({sessions.Count})" : "Terminal";
+        if (Dockable() is { } dockable && dockable.Title != title) dockable.Title = title;
     }
 
     private void OnFrameDrawn(TerminalSnapshot snap)

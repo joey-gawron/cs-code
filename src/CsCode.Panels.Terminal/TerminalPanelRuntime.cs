@@ -76,7 +76,12 @@ public sealed class TerminalPanelRuntime : IDisposable
                 if (e.Affects("terminal.integrated") || e.Affects("editor.fontFamily") || e.Affects("editor.fontSize")) _appearance.Fire(null);
             }));
         if (services.GetService<IColorThemeService>() is { } themes)
-            _subs.Add(themes.Changed.Subscribe(_ => { Service.Palette = new ThemePalette(); _appearance.Fire(null); }));
+            _subs.Add(themes.Changed.Subscribe(_ =>
+            {
+                // Changed may fire on any thread; the palette reads Avalonia brushes, which belong to the UI thread (after the applier's update).
+                Dispatcher.UIThread.Post(() => Service.Palette = new ThemePalette(), DispatcherPriority.Background);
+                _appearance.Fire(null);
+            }));
         Service.Palette = new ThemePalette();
         Keys?.Set(ProcessSupportedContextKey, true);
         _keyHandler = InputElement.KeyDownEvent.AddClassHandler<TopLevel>(OnTopLevelKeyDown, RoutingStrategies.Tunnel);
