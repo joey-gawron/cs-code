@@ -355,7 +355,9 @@ public class ManagerTests
         Assert.Null(ToolResolver.Resolve("not-executable", null, null, env)); // exists but is not executable
         Assert.Null(ToolResolver.Resolve("missing-tool-xyz", null, null, new Dictionary<string, string> { ["PATH"] = "/nonexistent" }));
         Assert.Equal(exe, ToolResolver.Resolve(exe, null, null, null));         // explicit path
-        Assert.Equal(exe, ToolResolver.Resolve("bin1/my-server", null, dir.Path, null)); // relative to the working directory
+        // lsp-core-1: never relative to the working directory (the server's root in the WORKSPACE would choose the program)
+        Assert.Null(ToolResolver.Resolve("bin1/my-server", null, dir.Path, null));
+        Assert.Null(ToolResolver.Resolve("./bin1/my-server", null, dir.Path, null));
 
         // {ToolsDir}/lsp/node_modules/.bin and {ToolsDir}/lsp/<tool>/bin
         var npm = dir.WriteFile("tools/lsp/node_modules/.bin/ts-ls", "#!/bin/sh\n");

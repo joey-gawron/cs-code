@@ -112,6 +112,11 @@ public sealed class ServerHost : IAsyncDisposable
         languages.Register();
         _handlers.Add(_languages = languages);
 
+        // Setting scopes (lsp-core-1): the terminal and debugger settings are registered by services this process never creates (TerminalService,
+        // DebugService). Register them here so a remote folder's .vscode/.cscode settings.json cannot choose the shell or debugger run on this host.
+        if (sp.GetService<IConfigurationService>() is { } config)
+            _handlers.Add(config.RegisterProperties([.. Terminal.Sessions.TerminalSettingKeys.Properties, .. Dap.Service.DebugService.SettingProperties()]));
+
         // R3: channels (terminals, debug adapters) and tasks
         Channels.Register();
         _handlers.Add(Channels);

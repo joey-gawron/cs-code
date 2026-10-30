@@ -594,13 +594,13 @@ public class ConfigurationServiceTests : IDisposable
     }
 
     [Fact]
-    public void Registering_after_the_file_was_read_makes_an_object_property_atomic_retroactively()
+    public void Object_settings_keep_member_names_whole_whether_registered_or_not()
     {
         _f.WriteUser("""{ "my.globs": { "**/*.cs": true } }""");
         using var svc = _f.Create();
-        // Unregistered: dotted names inside are split into nested objects (that is the documented trade-off)...
-        Assert.Null(svc.Get<Dictionary<string, bool>>("my.globs"));
-        // ...registering it as an object setting re-reads the same file with the glob left whole.
+        // lsp-core-2: only top-level keys are split (VS Code), so an unregistered object setting keeps its globs too (it used to be split)...
+        Assert.True(svc.Get<Dictionary<string, bool>>("my.globs")!["**/*.cs"]);
+        // ...and registering it later changes nothing.
         svc.RegisterProperties([new ConfigurationProperty("my.globs", JsonSerializer.SerializeToElement(new Dictionary<string, bool>()), "globs")]);
         Assert.True(svc.Get<Dictionary<string, bool>>("my.globs")!["**/*.cs"]);
     }

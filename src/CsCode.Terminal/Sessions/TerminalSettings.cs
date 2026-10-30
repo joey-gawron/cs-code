@@ -56,20 +56,24 @@ public static class TerminalSettingKeys
 
     private static JsonElement J<T>(T value) => JsonSerializer.SerializeToElement(value);
 
-    /// <summary>Every setting the terminal reads, with VS Code's default (for the schema-driven Settings page).</summary>
+    /// <summary>
+    /// Every setting the terminal reads, with VS Code's default (for the schema-driven Settings page). The profiles, the default profile and the
+    /// environment choose the program a terminal runs and what it sources (PROMPT_COMMAND, BASH_ENV…): machine-scoped (lsp-core-1), i.e. user
+    /// settings only — what VS Code enforces for an untrusted workspace. inheritEnv is application-scoped, as in VS Code.
+    /// </summary>
     public static IReadOnlyList<ConfigurationProperty> Properties { get; } =
     [
-        new(DefaultProfileLinux, null, "The default terminal profile on Linux (a name from terminal.integrated.profiles.linux). Default: $SHELL, else bash, zsh, fish, pwsh, sh."),
-        new(DefaultProfileOsx, null, "The default terminal profile on macOS."),
-        new(DefaultProfileWindows, null, "The default terminal profile on Windows."),
-        new(ProfilesLinux, null, "Terminal profiles on Linux: { \"name\": { \"path\", \"args\", \"env\", \"icon\" } } (null removes a detected profile)."),
-        new(ProfilesOsx, null, "Terminal profiles on macOS."),
-        new(ProfilesWindows, null, "Terminal profiles on Windows."),
-        new(EnvLinux, null, "Environment variables added to terminals on Linux (a null value removes a variable)."),
-        new(EnvOsx, null, "Environment variables added to terminals on macOS."),
-        new(EnvWindows, null, "Environment variables added to terminals on Windows."),
+        new(DefaultProfileLinux, null, "The default terminal profile on Linux (a name from terminal.integrated.profiles.linux). Default: $SHELL, else bash, zsh, fish, pwsh, sh. User settings only.") { Scope = ConfigurationScope.Machine },
+        new(DefaultProfileOsx, null, "The default terminal profile on macOS. User settings only.") { Scope = ConfigurationScope.Machine },
+        new(DefaultProfileWindows, null, "The default terminal profile on Windows. User settings only.") { Scope = ConfigurationScope.Machine },
+        new(ProfilesLinux, null, "Terminal profiles on Linux: { \"name\": { \"path\", \"args\", \"env\", \"icon\" } } (null removes a detected profile). User settings only.") { Scope = ConfigurationScope.Machine },
+        new(ProfilesOsx, null, "Terminal profiles on macOS. User settings only.") { Scope = ConfigurationScope.Machine },
+        new(ProfilesWindows, null, "Terminal profiles on Windows. User settings only.") { Scope = ConfigurationScope.Machine },
+        new(EnvLinux, null, "Environment variables added to terminals on Linux (a null value removes a variable). User settings only.") { Scope = ConfigurationScope.Machine },
+        new(EnvOsx, null, "Environment variables added to terminals on macOS. User settings only.") { Scope = ConfigurationScope.Machine },
+        new(EnvWindows, null, "Environment variables added to terminals on Windows. User settings only.") { Scope = ConfigurationScope.Machine },
         new(Cwd, J(""), "Where new terminals start (default: the workspace folder, else the home directory). ${workspaceFolder} and ~ are expanded."),
-        new(InheritEnv, J(true), "Whether new terminals inherit CsCode's environment."),
+        new(InheritEnv, J(true), "Whether new terminals inherit CsCode's environment. User settings only.") { Scope = ConfigurationScope.Application },
         new(Scrollback, J(1000), "Lines kept in a terminal's scrollback (a hard memory cap applies as well)."),
         new(AllowOsc52, J(false), "Let programs write the clipboard with OSC 52 (reading it is never allowed)."),
         new(Reflow, J(true), "Re-wrap lines when the terminal's width changes."),

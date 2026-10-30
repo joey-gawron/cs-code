@@ -24,24 +24,44 @@ public sealed partial class DebugService
     private void RegisterSettings()
     {
         if (_p.Configuration is not { } cfg) return;
+        _contributionTokens.Add(cfg.RegisterProperties(SettingProperties()));
+    }
+
+    /// <summary>
+    /// The debugger settings. Every one that names a program, its arguments or an adapter definition is machine-scoped (lsp-core-1): user settings
+    /// only, never a workspace's .vscode/.cscode settings.json. Public so the remote server, which runs the adapter factories without this service,
+    /// registers the same scopes.
+    /// </summary>
+    public static IReadOnlyList<ConfigurationProperty> SettingProperties()
+    {
         static JsonElement? Json(object? v) => JsonSerializer.SerializeToElement(v);
-        _contributionTokens.Add(cfg.RegisterProperties(
+        const ConfigurationScope machine = ConfigurationScope.Machine;
+        return
         [
             new ConfigurationProperty(DebuggersSetting, Json(Array.Empty<object>()),
-                "Debug adapters you configured (array of {type, label, program, runtime, args, languages, windows/linux/osx: {program}, initialConfigurations}). Replaces VS Code's debugger extensions."),
+                "Debug adapters you configured (array of {type, label, program, runtime, args, languages, windows/linux/osx: {program}, initialConfigurations}). Replaces VS Code's debugger extensions. User settings only.")
+            { Scope = machine },
             new ConfigurationProperty(NetCoreDbgAdapterFactory.SettingPath, Json(""),
-                "Path of the netcoredbg executable used for .NET debugging (empty: tools directory, then PATH, then an offer to download it)."),
+                "Path of the netcoredbg executable used for .NET debugging (empty: tools directory, then PATH, then an offer to download it). User settings only.")
+            { Scope = machine },
             new ConfigurationProperty(JsDebugAdapterFactory.SettingPath, Json(""),
-                "Path of Microsoft's js-debug adapter used for Node.js/TypeScript debugging: the js-debug directory or its src/dapDebugServer.js (empty: CSCODE_JSDEBUG, then the tools directory, then an offer to download it)."),
+                "Path of Microsoft's js-debug adapter used for Node.js/TypeScript debugging: the js-debug directory or its src/dapDebugServer.js (empty: CSCODE_JSDEBUG, then the tools directory, then an offer to download it). User settings only.")
+            { Scope = machine },
             new ConfigurationProperty(JsDebugAdapterFactory.NodeSettingPath, Json(""),
-                "Path of the Node.js executable that runs the js-debug adapter (empty: 'node' on PATH)."),
+                "Path of the Node.js executable that runs the js-debug adapter (empty: 'node' on PATH). User settings only.")
+            { Scope = machine },
             new ConfigurationProperty(GdbAdapterFactory.SettingPath, Json(""),
-                "Path of the GDB executable used for Rust, C and C++ debugging through GDB's own Debug Adapter Protocol support (gdb -i=dap, GDB 14 or newer). Empty: 'gdb' on PATH."),
+                "Path of the GDB executable used for Rust, C and C++ debugging through GDB's own Debug Adapter Protocol support (gdb -i=dap, GDB 14 or newer). Empty: 'gdb' on PATH. User settings only.")
+            { Scope = machine },
             new ConfigurationProperty(GdbAdapterFactory.ArgsSettingPath, Json(Array.Empty<string>()),
-                "Extra command-line arguments for GDB, before CsCode's own (for example [\"-nx\"] to skip your gdbinit files)."),
+                "Extra command-line arguments for GDB, before CsCode's own (for example [\"-nx\"] to skip your gdbinit files). User settings only.")
+            { Scope = machine },
+            new ConfigurationProperty(CodeLldbAdapterFactory.SettingPath, Json(""),
+                "Path of the CodeLLDB adapter (codelldb) for \"lldb\" debugging (empty: CSCODE_CODELLDB, then the tools directory, then 'codelldb' on PATH). User settings only.")
+            { Scope = machine },
             new ConfigurationProperty("cscode.debug.requestTimeoutSeconds", Json(10),
                 "Seconds a debug adapter may take to answer one request before the session reports it unresponsive."),
-        ]));
+        ];
     }
 
     private void InitializeContributions()

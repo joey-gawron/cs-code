@@ -43,6 +43,9 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
     public LanguageServerManager(LspServices services)
     {
         _services = services;
+        // Registered BEFORE the first read: the registration carries the machine scope of cscode.lsp.searchDirs and of the servers' launch members,
+        // so a workspace value is never seen, not even by this first read (lsp-core-1).
+        if (services.Configuration is { } config) _store.Add(config.RegisterProperties(LspSettings.Properties()));
         _settings = LspSettings.Read(services.Configuration);
         var logger = services.Loggers?.CreateLogger("CsCode.Lsp") ?? NullLogger.Instance;
         _queue = new LanguageWorkQueue(_settings.WorkerThreads, _settings.QueueCapacity) { OnUnhandled = ex => logger.LogError(ex, "Unhandled exception on the language lane") };
@@ -55,11 +58,7 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
             Logger = logger,
         };
 
-        if (services.Configuration is { } cfg)
-        {
-            _store.Add(cfg.RegisterProperties(LspSettings.Properties()));
-            _store.Add(cfg.Changed.Subscribe(OnConfigurationChanged));
-        }
+        if (services.Configuration is { } cfg) _store.Add(cfg.Changed.Subscribe(OnConfigurationChanged));
         if (services.Workspace is { } ws) _store.Add(ws.FoldersChanged.Subscribe(OnFoldersChanged));
 
         foreach (var d in BuiltinLanguageServers.All) AddDefinitionCore(d);

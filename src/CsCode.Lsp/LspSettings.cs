@@ -141,8 +141,17 @@ internal sealed record LspSettings
         yield return new(LspSettingKeys.BackgroundTimeoutMs, J(30000), "Timeout for background requests (semantic tokens, inlay hints, pull diagnostics...).");
         yield return new(LspSettingKeys.InitializeTimeoutMs, J(60000), "Timeout for the initialize handshake.");
         yield return new(LspSettingKeys.PositionEncoding, J("utf-16"), "utf-16 (default, zero-cost) or auto (negotiate utf-8/utf-32 when the server supports it).");
+        // Machine scope (lsp-core-1): where executables are searched for, and what a server runs, come from user settings only; a workspace's
+        // .vscode/.cscode settings.json may still tune a server (selector, settings, initializationOptions, rootMarkers, enabled, autoStart).
         yield return new(LspSettingKeys.SearchDirs, J(ToolResolver.DefaultSearchDirs),
-            "Directories searched for language-server executables after PATH and before the managed tools directory (~ = home directory). An editor started from a desktop launcher often lacks these in its PATH.");
-        yield return new(LspSettingKeys.LanguageServers, null, "Language server definitions keyed by id: { command, args, env, selector, initializationOptions, settings, enabled, rootMarkers }.");
+            "Directories searched for language-server executables after PATH and before the managed tools directory (~ = home directory). An editor started from a desktop launcher often lacks these in its PATH. User settings only.")
+        { Scope = ConfigurationScope.Machine };
+        yield return new(LspSettingKeys.LanguageServers, null,
+            "Language server definitions keyed by id: { command, args, env, workingDirectory, selector, initializationOptions, settings, enabled, autoStart, rootMarkers, restartAboveBytes }. "
+            + "command, args, env and workingDirectory are taken from user settings only.")
+        { MachineScopedMembers = MachineScopedServerMembers };
     }
+
+    /// <summary>The members of a <c>cscode.languageServers</c> entry that decide what is started: user settings only.</summary>
+    public static IReadOnlyList<string> MachineScopedServerMembers { get; } = ["*.command", "*.args", "*.env", "*.workingDirectory"];
 }
