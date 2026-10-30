@@ -184,6 +184,38 @@ public class SessionControllerTests
     }
 
     [AvaloniaFact(Timeout = 180_000)]
+    public async Task Renaming_a_newer_versions_session_keeps_it_and_goes_on_in_a_session_of_this_version()
+    {
+        // sessions-1: Rename deleted the newer CsCode's session file and its backups (and wrote nothing under the new name).
+        const string Newer = "{\"version\": 3, \"name\": \"x\", \"someNewField\": 1}";
+        var windows = new CsCode.TestDoubles.RecordingWindowService();
+        await using var s = await InProcessSession.StartAsync("x", seed: store =>
+        {
+            Directory.CreateDirectory(store.SessionsDir);
+            File.WriteAllText(store.PathOf("x"), Newer);
+        }, configure: services =>
+        {
+            services.RemoveAll<IWindowService>();
+            services.AddSingleton<IWindowService>(windows);
+        });
+        var file = s.WriteFile("f.txt", "original\n");
+        await s.MustAsync(Show(file));
+        await s.MustAsync(Edit(file, "EDIT "));
+
+        windows.InputResponses.Enqueue("y");
+        await s.Run.Services.GetRequiredService<ICommandService>().ExecuteAsync(SessionCommandIds.RenameSession);
+
+        Assert.Equal(Newer, File.ReadAllText(s.Store.PathOf("x")));
+        Assert.Equal(SessionLoadStatus.Loaded, s.Store.Load("y").Status);
+        var backup = Assert.Single(s.Store.Backups.List("y"));
+        Assert.Equal("EDIT original\n", s.Store.Backups.ReadText("y", backup.Id));
+        Assert.True(FileLock.IsHeldElsewhere(s.Store.LockPathOf("y")));
+        Assert.False(FileLock.IsHeldElsewhere(s.Store.LockPathOf("x")));
+        Assert.Contains(windows.Messages, m => m.Message.Contains("kept as it is", StringComparison.Ordinal));
+        Assert.Equal("y", s.Host.SessionName);
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
     public async Task Wait_returns_when_every_file_is_closed_or_the_window_is_closed()
     {
         // sessions-4: `cscode --wait a b` returned at once (only one file was waited for), and closing the window (hidden) never returned.
