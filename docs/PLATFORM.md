@@ -130,7 +130,8 @@ Layers, lowest to highest: **registered defaults → user `settings.json` → wo
   TypeScript for Vue, server-specific `settings` such as rust-analyzer's `check.overrideCommand`).
 * **Reads**: `Get<T>(key, default)` / `GetRaw(key)` / section reads (`GetRaw("editor")` returns the merged object). A registered default beats the caller's fallback; a value of the
   wrong type yields the fallback (never throws). Primitive reads allocate nothing after the first read of a key.
-* **Live reload**: the settings directories are watched — the primary folder's `.cscode/` and `.vscode/` and every additional folder's `.cscode/` (lsp-core-7), also when they are created after the folder was opened; a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
+* **Live reload**: the settings directories are watched — the primary folder's `.cscode/` and `.vscode/` and every additional folder's `.cscode/` (lsp-core-7), also when they are created after the folder was opened (once the folder's watch is armed, a directory missing when it was
+  looked for is looked for again, and the files are read again: one made while the watch was being armed was reported by no watch); a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
   setting reports itself). Rewriting a file with the same values (different comments/order) fires nothing, nor does the echo of our own write.
 * **`UpdateAsync` edits the file in place** with a small JSONC-aware minimal-edit writer: only the value span is replaced; a new key is inserted before the closing brace using the file's
   indentation (tab/spaces), EOL (LF/CRLF), comma style (a trailing-comma file stays one) and single-line/multi-line shape; flat dotted keys, nested objects and mixes are found; `null` removes the key
@@ -261,6 +262,19 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
   A failure is matched to the OS watch that reported it: a late report from a watch a re-check already replaced is ignored, and one that arrives while the watch is still being armed
   degrades it once it is in place. The polling watcher takes its baseline when it is armed, so a change right after `Ready` is reported.
 * Queue overflow reports a `Changed(root)` so consumers rescan.
+* **macOS** (`Watching/MacWatchBackends.cs`): FSEvents' item flags are sticky — a flag stays on a path until FSEvents has reported it, so `FileSystemWatcher` raises Changed and
+  Created for every new file, and for a write to a file made shortly before the stream, Changed+Created+Deleted for a file created and removed in one burst, and nothing when the
+  watched directory itself goes. So each reported path is classified again from `lstat` (and the name as the volume stores it: after a case-only rename on a case-insensitive
+  volume `lstat` of the old spelling still finds the file, which is reported deleted all the same) and what the watch knows (`FsEventsReconciler`, as VS Code's parcel watcher does): a name
+  snapshot of the tree taken when it is armed (default excludes pruned) plus every path reported since, ≤ 20,000 in all: past that the paths known longest are forgotten
+  to make room, and the "born after" line below moves past the birth of any forgotten path born after arming, so a file is never created twice. Unseen and not in the snapshot (or, where it does not reach,
+  born after arming) → Created, else Changed, once per change; gone → Deleted, except a path the snapshot proves was not there and the watch never saw (it came and went). A kqueue
+  vnode watch on the root reports its deletion or move (every path it knew deleted) and then announces what a directory back at the path holds, in that order whichever threads
+  report them, so a name the old and new trees share reads as replaced. FSEvents' rescan requests
+  (MustScanSubDirs, events dropped by the kernel or fseventsd, a mount below the root), which `FileSystemWatcher` raises as an `IOException`, report `Changed(root)` and keep the
+  stream (files-4). **Non-recursive** watches use kqueue, not FSEvents, whose streams are always the whole subtree (files-9: watching `~` for `~/.zshrc` would bring every event under
+  `~/Library` into the process): a vnode watch on the directory and one per file in it (≤ 256 per directory, ≤ 2,048 in all; files beyond are compared every poll interval),
+  diffed against a snapshot of the directory (name → inode, mtime, size). When the directory goes its entries are reported deleted and the path is polled until a directory is back.
 
 ## Workspace, search and fuzzy matching
 
