@@ -9,8 +9,8 @@ regression test that fails without the fix), and what is an adapter limitation.
 | Language | Adapter | Status |
 |---|---|---|
 | **TypeScript / JavaScript** | Microsoft **js-debug v1.140.0** (`js-debug-dap`, MIT), built in | **evaluated, defects fixed** — every row below |
-| **Rust** (default) | **GDB 18.1**'s native DAP (`gdb -i=dap`, no download), built in; GDB 16.3, which the brief assumed, was replaced by the system update | **evaluated, defects fixed** — [Rust through GDB](#rust-through-gdb) |
-| **Rust** | **CodeLLDB v1.12.3** (MIT, with its own LLDB; a pinned 56 MB download the app offers), built in as `lldb` | **evaluated, defects fixed** — [Rust through CodeLLDB](#rust-through-codelldb); [which one is the default](#which-rust-debugger-is-the-default) (GDB stays) |
+| **Rust** (default on Linux) | **GDB 18.1**'s native DAP (`gdb -i=dap`, no download), built in; GDB 16.3, which the brief assumed, was replaced by the system update | **evaluated, defects fixed** — [Rust through GDB](#rust-through-gdb) |
+| **Rust** (default on macOS) | **CodeLLDB v1.12.3** (MIT, with its own LLDB; a pinned 56 MB download the app offers, shipped in CsCode.app), built in as `lldb` | **evaluated, defects fixed** — [Rust through CodeLLDB](#rust-through-codelldb); [which one is the default](#which-rust-debugger-is-the-default) (GDB on Linux, CodeLLDB on macOS) |
 
 ## TypeScript / JavaScript through js-debug
 
@@ -251,8 +251,8 @@ temp directory; set `CSCODE_DAP_TEST_METRICS=<file>` to collect the evidence lin
 
 ## Rust through GDB
 
-Rust is debugged by default with **GDB's native Debug Adapter Protocol support** (`gdb -i=dap`), which needs nothing but the system's GDB
-(CodeLLDB, the alternative, is [below](#rust-through-codelldb)).
+On Linux, Rust is debugged by default with **GDB's native Debug Adapter Protocol support** (`gdb -i=dap`), which needs nothing but the system's GDB
+(CodeLLDB, the alternative and the default on macOS, where GDB cannot debug native arm64 programs, is [below](#rust-through-codelldb)).
 
 ### How it is wired (MUST 1)
 
@@ -629,7 +629,7 @@ default the user accepted stands. On macOS GDB cannot debug native arm64 program
 (tools/package-macos.sh); without it a session is offered the download, and the start fails with advice that names the bundle, not GDB. A
 missing GDB on a Mac points at CodeLLDB too.
 
-| | GDB 18.1 (default) | CodeLLDB v1.12.3 |
+| | GDB 18.1 (Linux default) | CodeLLDB v1.12.3 (macOS default) |
 |---|---|---|
 | Install | none (the system's GDB) | 56 MB download, 170 MB installed, offered on first use |
 | Start to the first stop | **273 ms** | 636–654 ms |
@@ -650,8 +650,9 @@ missing GDB on a Mac points at CodeLLDB too.
 * A user who prefers CodeLLDB on Linux sets `"cscode.debug.rustDebugger": "lldb"` (and `"gdb"` chooses GDB on a Mac, for a program GDB can
   debug there); CodeLLDB's own launch.json files (type `lldb`) work unchanged.
 
-Switching the default is the one line `RustDebugger()` in `src/CsCode.Dap/Service/DebugService.Commands.cs` (its fallback `GdbAdapterFactory.PrimaryType`)
-plus this section; the download offer would then appear on a Rust user's first F5. What would justify it: CodeLLDB draining the program's
+Switching the Linux default is the one line `DefaultRustDebugger(bool macOS)` in `src/CsCode.Dap/Service/DebugService.Commands.cs` (the setting's
+default and the choice F5 makes when the setting is unset both come from it) plus this section; the download offer would then appear on a Linux
+Rust user's first F5. What would justify it: CodeLLDB draining the program's
 output at exit (an upstream fix) and the end-of-flood hang never reappearing.
 
 F5 without a launch configuration also used to make a **.NET** launch.json for every folder (the first debugger in label order): it now picks the

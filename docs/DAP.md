@@ -2,7 +2,7 @@
 
 `src/CsCode.Dap` is a complete DAP client plus everything a Visual-Studio-style debugger UI binds to, with a working .NET story through
 Samsung **netcoredbg** (MIT), Node.js/TypeScript through Microsoft's **js-debug** and Rust (and C/C++) through **GDB's native DAP** (the
-default) or **CodeLLDB**. No Avalonia, no Newtonsoft, no extension host: the protocol layer is hand-written on `System.Text.Json`,
+default on Linux) or **CodeLLDB** (the default on macOS). No Avalonia, no Newtonsoft, no extension host: the protocol layer is hand-written on `System.Text.Json`,
 and customisation is native and file based (`launch.json`, `tasks.json`, the `cscode.debuggers` setting).
 
 > **Status in one paragraph.** Everything in the brief's MUST list is implemented and covered by **587 passing tests against scripted
@@ -19,7 +19,7 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
 > **CodeLLDB (wave 3)**: built in as `lldb` with a pinned installer that asks first, and **evaluated against the real CodeLLDB v1.12.3**: its
 > real-adapter suites pass (`RealCodeLldbRustTests` 19/19, `RealCodeLldbPanelsTests` 3/3; they skip until CodeLLDB is present,
 > `tools/fetch-codelldb.sh` or `CSCODE_CODELLDB`). Their first run found four session defects with this adapter, fixed through three new
-> quirk hooks and a completion mapping; GDB stays the Rust default. See [DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-codelldb).
+> quirk hooks and a completion mapping; GDB stays the Rust default on Linux, CodeLLDB is the default on macOS. See [DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-codelldb).
 
 ## Layout
 

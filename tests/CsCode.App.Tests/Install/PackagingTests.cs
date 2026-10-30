@@ -124,10 +124,6 @@ public sealed class PackagingTests
     }
 
     /// <summary>
-    /// The Windows launcher (cscode.cmd) passes every argument and adds the global .NET tools to PATH, and sets no DOTNET_ROOT (cross-branch
-    /// review C1, as tools/install.sh's launcher): the app chooses it per program it starts.
-    /// </summary>
-    /// <summary>
     /// Linux's desktop entry offers CsCode for plain text and folders as the Mac's Info.plist does (public.plain-text, public.folder; decided
     /// 2026-10-30): before, it listed source files only and "Open With" left CsCode out for a .txt file or a folder. Read from the template,
     /// so it is checked on every OS (InstallScriptTests checks the installed entry on Linux).
@@ -146,6 +142,10 @@ public sealed class PackagingTests
         Assert.Contains("<string>public.folder</string>", bundle, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The Windows launcher (cscode.cmd) passes every argument and adds the global .NET tools to PATH, and sets no DOTNET_ROOT (cross-branch
+    /// review C1, as tools/install.sh's launcher): the app chooses it per program it starts.
+    /// </summary>
     [Fact]
     public void The_Windows_launcher_passes_every_argument_and_leaves_DOTNET_ROOT_to_the_app()
     {
