@@ -226,7 +226,9 @@ internal sealed class TreeSitterHighlighter : IDisposable
         var started = Stopwatch.GetTimestamp();
         try
         {
-            if (_viewportDone != (vFirst, vLast, _syntax.Generation))
+            // the viewport again after a new tree or a scroll, and whenever its rows are gone (an Aggressive memory trim empties the whole store,
+            // the viewport included, while the tree and the viewport stay what they were)
+            if (_viewportDone != (vFirst, vLast, _syntax.Generation) || !store.HasTokens(vFirst, vLast))
             {
                 if (!Highlight(session, text, vFirst, vLast)) return;
                 _dirty.Take(vFirst, vLast);
