@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using CsCode.App.Docking;
 using CsCode.App.Startup;
 using CsCode.Platform;
@@ -14,6 +15,9 @@ public sealed record PreparedSession(string Name, bool IsUnnamed, SessionDocumen
 {
     /// <summary>The document's dock layout, parsed on the lane (never on the UI thread).</summary>
     public LayoutSnapshot? Layout { get; init; }
+
+    /// <summary>The session whose backup directory <see cref="Backups"/> were read from (<see cref="Name"/>, or the session a copy was seeded from).</summary>
+    public string? BackupSource { get; init; }
 }
 
 /// <summary>
@@ -28,9 +32,12 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     private readonly object _gate = new();
     private readonly TaskCompletionSource<SessionWindowController> _attached = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly CrashHandler _crash;
-    private FileLock? _sessionLock;
+    private SessionLock? _sessionLock;
     private IpcServer? _server;
     private volatile SessionWindowController? _controller;
+
+    /// <summary>The window side, once attached (tests).</summary>
+    internal SessionWindowController? Controller => _controller;
     private Task<PreparedSession>? _prepared;
     private string? _session;
     private bool _unnamed, _claimed;
@@ -65,6 +72,11 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     /// <summary>Answers hello's "debugging" (set by the controller once the services exist).</summary>
     internal Func<bool>? IsDebugging { get; set; }
 
+    private volatile bool _needsPrompt;
+
+    /// <summary>Hello's <c>needsPrompt</c>: quitting now would ask the user about unsaved changes (kept current by the controller on the UI thread).</summary>
+    internal bool NeedsPrompt { get => _needsPrompt; set => _needsPrompt = value; }
+
     /// <summary>
     /// Takes the session (or prepares to be the spare) and opens the endpoint. Returns null with <paramref name="refusedExitCode"/> set when this
     /// process must not run (3: another process owns the session; 2: invalid name), or null without it when background mode is unavailable here
@@ -74,8 +86,35 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     {
         SessionTrace.Mark("host: main");
         ProcessMemory.DetachFromTerminal();
-        return Start(options, crash, RuntimeDirectory.Resolve(), new SessionStore(new AppPaths().UserDataDir), out refusedExitCode);
+        var host = Start(options, crash, RuntimeDirectory.Resolve(), new SessionStore(new AppPaths().UserDataDir), out refusedExitCode);
+        if (host is not null && !OperatingSystem.IsWindows()) host._terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, host.OnTerminate);
+        return host;
     }
+
+    private PosixSignalRegistration? _terminate;
+
+    /// <summary>
+    /// SIGTERM (logout, <c>systemctl --user stop</c>, <c>kill</c>): the session quits the way Quit Session does, without asking anything (nobody is
+    /// there to answer): every unsaved change is backed up, beyond the backup size limit too. The runtime's default would end the process at once
+    /// and lose what changed since the last autosave. A process that is still starting has nothing to lose and ends as usual. If the UI thread does
+    /// not get the quit as far as its final save in time, the last captured snapshot is written and the process exits anyway.
+    /// </summary>
+    private void OnTerminate(PosixSignalContext context)
+    {
+        if (_controller is not { IsActive: true } controller) return;
+        context.Cancel = true;
+        SessionTrace.Mark("host: SIGTERM");
+        _ = controller.TerminateAsync();
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TerminateWatchdog).ConfigureAwait(false);
+            if (controller.QuitCommitted) return; // saved and closing: the orderly shutdown ends the process
+            controller.FlushOnCrash();
+            Environment.Exit(143); // 128 + SIGTERM
+        });
+    }
+
+    private static readonly TimeSpan TerminateWatchdog = TimeSpan.FromSeconds(15);
 
     /// <summary>The same with the runtime directory and store given (tests: a private directory, and no detaching of the test process).</summary>
     internal static BackgroundHost? Start(CommandLineOptions options, CrashHandler crash, RuntimeDirectory runtime, SessionStore store, out int? refusedExitCode)
@@ -97,14 +136,25 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
                 host.Dispose();
                 return null;
             }
-            if (name is null)
+            try
             {
-                name = host.TakeNewUnnamedSession();
+                if (name is null)
+                {
+                    name = host.TakeNewUnnamedSession();
+                }
+                else if (!host.TryTakeSession(name, options.Unnamed))
+                {
+                    Console.Error.WriteLine($"cscode: session '{name}' is owned by another CsCode process");
+                    refusedExitCode = 3;
+                    host.Dispose();
+                    return null;
+                }
             }
-            else if (!host.TryTakeSession(name, options.Unnamed))
+            catch (IOException ex)
             {
-                Console.Error.WriteLine($"cscode: session '{name}' is owned by another CsCode process");
-                refusedExitCode = 3;
+                // The data directory cannot hold the session's lock (read-only, another user's): no process could own a session here. The
+                // launcher finds this out first and runs the window in its own process; this is for a direct --host start.
+                Console.Error.WriteLine("cscode: background mode unavailable: " + ex.Message);
                 host.Dispose();
                 return null;
             }
@@ -128,7 +178,11 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         _server = server;
     }
 
-    private string TakeNewUnnamedSession()
+    /// <summary>
+    /// Takes the lock of the lowest free <c>window-N</c> and makes it this process's session. Ends: a name whose lock another process holds is
+    /// skipped, and a lock that cannot be taken at all throws (<see cref="IOException"/>) instead of trying name after name.
+    /// </summary>
+    internal string TakeNewUnnamedSession()
     {
         var taken = Store.List().Select(s => s.Name).ToList();
         while (true)
@@ -139,12 +193,15 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         }
     }
 
-    /// <summary>Takes the lock of <paramref name="name"/> and makes it this process's session (releasing the previous one). False when another process holds it.</summary>
+    /// <summary>
+    /// Takes the lock of <paramref name="name"/> and makes it this process's session (releasing the previous one). False when another process holds
+    /// it; throws <see cref="IOException"/> when the lock cannot be taken at all (<see cref="SessionLock.TryAcquire"/>).
+    /// </summary>
     internal bool TryTakeSession(string name, bool unnamed)
     {
-        var acquired = FileLock.TryAcquire(Runtime.SessionLockPath(name));
+        var acquired = SessionLock.TryAcquire(Store, Runtime, name);
         if (acquired is null) return false;
-        FileLock? previous;
+        SessionLock? previous;
         lock (_gate)
         {
             previous = _sessionLock;
@@ -174,9 +231,10 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         SessionTrace.Mark("host: start-up failed");
     }
 
-    private void ReleaseSessionLock()
+    /// <summary>Lets go of the session (start-up failed, or the quit committed and its last write is done); hello keeps naming it, as quitting.</summary>
+    internal void ReleaseSessionLock()
     {
-        FileLock? held;
+        SessionLock? held;
         lock (_gate)
         {
             held = _sessionLock;
@@ -213,7 +271,10 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         {
             if (Store.Backups.ReadText(source, info.Id) is { } text) backups.Add(new PreparedBackup(info, HotExitBackupStore.Check(info), text));
         }
-        return new PreparedSession(name, doc?.IsUnnamed ?? unnamed, doc, loaded.Status, loaded.Message, backups) { Layout = LayoutSerializer.Deserialize(doc?.Layout) };
+        return new PreparedSession(name, doc?.IsUnnamed ?? unnamed, doc, loaded.Status, loaded.Message, backups)
+        {
+            Layout = LayoutSerializer.Deserialize(doc?.Layout), BackupSource = source,
+        };
     });
 
     /// <summary>Called by the app session on the UI thread once the main window exists (not shown yet). Shows it unless this is the spare or <c>--hidden</c>.</summary>
@@ -246,6 +307,7 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
                 {
                     Type = IpcVerbs.Hello, Ok = true, ProtocolVersion = IpcMessage.ProtocolVersionCurrent, Pid = Environment.ProcessId, Session = SessionName,
                     State = _state, LastShownUnixMs = LastShown?.ToUnixTimeMilliseconds(), Debugging = SafeIsDebugging(), WorkingSetBytes = Environment.WorkingSet,
+                    NeedsPrompt = _needsPrompt ? true : null,
                 };
             case IpcVerbs.ListSessions:
                 var list = await Lane.RunAsync(Store.List).ConfigureAwait(false);
@@ -276,7 +338,14 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
             if (!Options.Spare || _claimed) return IpcMessage.Failure($"this process is not a free spare (state {_state})");
             _claimed = true;
         }
-        if (!TryTakeSession(name!, request.Unnamed == true))
+        bool took;
+        try { took = TryTakeSession(name!, request.Unnamed == true); }
+        catch (IOException ex)
+        {
+            lock (_gate) _claimed = false;
+            return IpcMessage.Failure(ex.Message);
+        }
+        if (!took)
         {
             lock (_gate) _claimed = false;
             return IpcMessage.Failure($"session '{name}' is owned by another CsCode process");
@@ -306,15 +375,10 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _terminate?.Dispose();
         _crash.Reported -= OnCrashReported;
         _server?.Dispose();
-        FileLock? held;
-        lock (_gate)
-        {
-            held = _sessionLock;
-            _sessionLock = null;
-        }
-        held?.Dispose();
-        Lane.Dispose();
+        Lane.Dispose(); // drains the writes still queued (a final save) while the session is still this process's
+        ReleaseSessionLock();
     }
 }

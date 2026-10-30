@@ -5,9 +5,11 @@ namespace CsCode.Sessions.Launcher;
 /// <summary>
 /// The launcher's decision table (pure: the same world and request always give the same plan; docs/SESSIONS.md has the table).
 /// <list type="number">
-/// <item>Which session: <c>--session NAME</c>; <c>--new-window</c> → a new unnamed one; a folder → the saved session whose primary folder it is,
-/// else a new unnamed one; files only or nothing → <c>cscode.sessions.default</c> (<c>last</c>: the session shown last; <c>new</c>; or a name).</item>
+/// <item>Which session: <c>--session NAME</c>; <c>--new-window</c> → a new unnamed one; a folder (local, else a remote <c>ssh://</c> one) → the saved
+/// session whose primary folder it is, else a new unnamed one; files only or nothing → <c>cscode.sessions.default</c> (<c>last</c>: the session
+/// shown last; <c>new</c>; or a name).</item>
 /// <item>A responsive process owns it → <see cref="LaunchAction.Show"/>.</item>
+/// <item>Its process is quitting and still holds the lock → <see cref="LaunchAction.AwaitQuit"/> (the launcher waits for it, then plans again).</item>
 /// <item>Its lock is held but no process answers (wedged) → <see cref="LaunchAction.Start"/> a new unnamed session seeded from it, with a warning.</item>
 /// <item>A warm spare answers → <see cref="LaunchAction.Claim"/> (and a new spare is started).</item>
 /// <item>Otherwise → <see cref="LaunchAction.Start"/> a session process (and a spare, if none exists).</item>
@@ -44,13 +46,18 @@ public static class LaunchPlanner
             };
         }
 
+        // Its process is quitting (hello says so) and still holds the lock for its final save: not wedged, just leaving. Wait for it to let go,
+        // then start the session afresh (never a copy, never a false warning).
+        if (!isNew && world.IsSessionLocked(name) && world.Processes.FirstOrDefault(p => p.IsLeaving(name)) is { } leaving)
+            return new LaunchPlan(LaunchAction.AwaitQuit) { Session = name, Pid = leaving.Pid };
+
         string? seedFrom = null;
         if (!isNew && world.IsSessionLocked(name))
         {
             // Its owner holds the lock but does not answer: never wait for it, never steal its session. Open a copy instead.
             seedFrom = name;
             var copy = SessionNames.NextUnnamed(TakenNames(world));
-            warnings.Add($"Session '{name}' is held by a CsCode process that does not respond; opened a copy of it as '{copy}'.");
+            warnings.Add($"Session '{name}' is held by a CsCode process that does not respond (or that this launch cannot reach); opened a copy of it as '{copy}'.");
             name = copy;
             isNew = true;
         }
@@ -88,6 +95,18 @@ public static class LaunchPlanner
             return match is not null ? (match.Name, false) : (SessionNames.NextUnnamed(TakenNames(world)), true);
         }
 
+        // A remote folder (cscode ssh://host/path) is a folder too: the saved session whose primary folder it is, else a new unnamed one. Never the
+        // last session, whose workspace the session's remote.openFolder would replace (as VS Code opens a remote folder in a window of its own).
+        if (request.RemoteTargets.FirstOrDefault() is { } remote)
+        {
+            var match = world.Saved
+                .Where(s => s.Folders.Count > 0 && SameRemoteFolder(s.Folders[0], remote))
+                .OrderByDescending(s => world.Processes.Any(p => p.OwnsSession(s.Name)))
+                .ThenByDescending(s => s.LastUsedUtc)
+                .FirstOrDefault();
+            return match is not null ? (match.Name, false) : (SessionNames.NextUnnamed(TakenNames(world)), true);
+        }
+
         var preference = settings.DefaultSession;
         if (string.Equals(preference, "new", StringComparison.Ordinal)) return (SessionNames.NextUnnamed(TakenNames(world)), true);
         if (!string.Equals(preference, "last", StringComparison.Ordinal) && SessionNames.IsValid(preference)) return (preference, false);
@@ -108,6 +127,24 @@ public static class LaunchPlanner
     public static string FolderUri(string path) => new Uri(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)) + "/").ToString();
 
     private static bool SameFolder(string a, string b) => string.Equals(a.TrimEnd('/'), b.TrimEnd('/'), OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Two remote folder URIs name the same folder: scheme and host compare case-insensitively, user and port exactly, the path after unescaping and
+    /// without its trailing '/' (a saved folder is <c>ssh://me@box/srv/app/</c> as the remote module writes it; the command line may say
+    /// <c>ssh://me@box/srv/app</c>).
+    /// </summary>
+    internal static bool SameRemoteFolder(string saved, string requested)
+    {
+        if (!Uri.TryCreate(saved, UriKind.Absolute, out var a) || !Uri.TryCreate(requested, UriKind.Absolute, out var b) || a.IsFile || b.IsFile) return false;
+        static string PathOf(Uri u) => Uri.UnescapeDataString(u.AbsolutePath).TrimEnd('/');
+        static string? UserOf(Uri u) => u.UserInfo.Length == 0 ? null : Uri.UnescapeDataString(u.UserInfo);
+        static int PortOf(Uri u) => u.IsDefaultPort ? -1 : u.Port;
+        return string.Equals(a.Scheme, b.Scheme, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(a.IdnHost, b.IdnHost, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(UserOf(a), UserOf(b), StringComparison.Ordinal)
+            && PortOf(a) == PortOf(b)
+            && string.Equals(PathOf(a), PathOf(b), StringComparison.Ordinal);
+    }
 
     private static LaunchPlan PlanQuit(LaunchRequest request, LaunchWorld world)
     {
@@ -145,7 +182,8 @@ public static class LaunchPlanner
 
 /// <summary>
 /// Which hidden sessions to quit so that at most <c>maxResidentSessions</c> stay resident: least recently shown first; never a shown window, a
-/// session with a running debug session (un-evictable), the warm spare (it does not count), or the session being opened.
+/// session with a running debug session (un-evictable), one that could only quit by asking the user (<see cref="ResidentProcess.NeedsPrompt"/>:
+/// an eviction never pops a window up), the warm spare (it does not count), or the session being opened.
 /// </summary>
 public static class ResidentPolicy
 {
@@ -155,7 +193,7 @@ public static class ResidentPolicy
         var excess = residents.Length - Math.Max(0, maxResident);
         if (excess <= 0) return [];
         return residents
-            .Where(p => p.State == ProcessStates.Hidden && !p.Debugging && p.Pid != keepPid)
+            .Where(p => p.State == ProcessStates.Hidden && !p.Debugging && !p.NeedsPrompt && p.Pid != keepPid)
             .OrderBy(p => p.LastShownUtc ?? DateTimeOffset.MinValue)
             .ThenBy(p => p.Pid)
             .Take(excess)

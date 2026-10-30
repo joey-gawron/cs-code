@@ -54,7 +54,8 @@ public sealed class SessionLauncher
     /// <summary>Runs the launcher on a pool thread (callers inside a CsCode process; never blocks the caller).</summary>
     public Task<LaunchOutcome> RunAsync(LaunchRequest request, CancellationToken ct = default) => Task.Run(() => Run(request), ct);
 
-    /// <summary>Exit code 0 on success, 1 when the request failed, 2 when IPC is unusable (the caller then runs the app in-process).</summary>
+    /// <summary>Exit code 0 on success, 1 when the request failed, 2 when background mode is unusable here (no usable runtime directory, or session
+    /// locks that cannot be written): the caller then runs the app in-process.</summary>
     public LaunchOutcome Run(LaunchRequest request)
     {
         var clock = Stopwatch.StartNew();
@@ -65,12 +66,30 @@ public sealed class SessionLauncher
         }
         var started = new List<int>();
         SessionTrace.Mark("launcher: start " + request.Kind);
-        var gate = FileLock.Acquire(_runtime.LauncherLockPath, _timeouts.LauncherLock);
+        // A second round only when the show reached a process that had begun to quit (between the discovery and the show).
+        for (var round = 0; ; round++)
+        {
+            if (RunRound(request, retryAllowed: round == 0, clock, started) is { } outcome) return outcome;
+        }
+    }
+
+    /// <summary>One discovery, plan and action under the launcher lock; null when the target turned out to be quitting (the caller runs again).</summary>
+    private LaunchOutcome? RunRound(LaunchRequest request, bool retryAllowed, Stopwatch clock, List<int> started)
+    {
+        var gate = FileLock.Acquire(_store.LauncherLockPath, _timeouts.LauncherLock, out var lockProblem);
+        if (lockProblem is not null)
+        {
+            // The data directory cannot hold locks (read-only, another user's): no session process could take its session either. As with an
+            // unusable runtime directory, opening a window then runs it in this process.
+            _err.WriteLine("cscode: background mode unavailable: " + lockProblem);
+            return new LaunchOutcome(2, new LaunchPlan(LaunchAction.Fail) { Error = lockProblem }, null, clock.Elapsed, started);
+        }
         if (gate is null) _err.WriteLine("cscode: another launcher is still busy; continuing without waiting for it");
         try
         {
             var world = Gather();
             var plan = LaunchPlanner.Plan(request, world, _settings);
+            if (plan.Action == LaunchAction.AwaitQuit) (world, plan) = AwaitQuit(request, plan);
             SessionTrace.Mark($"launcher: planned {plan.Action} {plan.Session} pid {plan.Pid} ({world.Processes.Count} processes)");
             foreach (var w in plan.Warnings) _err.WriteLine("cscode: " + w);
             switch (plan.Action)
@@ -125,6 +144,12 @@ public sealed class SessionLauncher
             SessionTrace.Mark("launcher: show sent");
             var reply = TryRequest(target.Value, show, show.Wait == true ? null : _timeouts.ShowReply);
             SessionTrace.Mark("launcher: show replied " + (reply.Ok == true ? "ok" : reply.Error));
+            if (reply.Error == IpcMessage.QuittingError && retryAllowed)
+            {
+                // Its window began to close after the discovery: let it finish, then open the session afresh.
+                WaitForRelease(session);
+                return null;
+            }
             var code = 0;
             if (reply is not { Ok: true })
             {
@@ -132,12 +157,41 @@ public sealed class SessionLauncher
                 code = 1;
             }
 
-            // After the window is up (none of this may delay it): a new spare, and the evictions beyond maxResidentSessions.
+            // After the window is up (none of this may delay it): a new spare, and the evictions beyond maxResidentSessions (which a session that
+            // would have to ask the user anything refuses: an eviction never pops a window up).
             if (plan.EnsureSpare && SpawnSpare() is { } newSpare) started.Add(newSpare);
-            foreach (var pid in plan.Evict) TryRequest(pid, new IpcMessage { Type = IpcVerbs.Quit, Force = false }, TimeSpan.FromSeconds(5));
+            foreach (var pid in plan.Evict) TryRequest(pid, new IpcMessage { Type = IpcVerbs.Quit, Force = false, Evict = true }, TimeSpan.FromSeconds(5));
             return new LaunchOutcome(code, plan, target, clock.Elapsed, started);
         }
         finally { gate?.Dispose(); }
+    }
+
+    /// <summary>
+    /// The session's process is quitting and still holds its lock: waits (at most <see cref="LauncherTimeouts.QuitWait"/>) until it lets go, then
+    /// plans again. A process that keeps the lock that long counts as wedged (the plan opens a copy, with the warning).
+    /// </summary>
+    private (LaunchWorld World, LaunchPlan Plan) AwaitQuit(LaunchRequest request, LaunchPlan plan)
+    {
+        SessionTrace.Mark($"launcher: waiting for pid {plan.Pid} to finish quitting '{plan.Session}'");
+        var released = WaitForRelease(plan.Session!);
+        var world = Gather();
+        var next = LaunchPlanner.Plan(request, world, _settings);
+        if (next.Action != LaunchAction.AwaitQuit) return (world, next);
+        if (released) SessionTrace.Mark("launcher: the session was taken again by a quitting process");
+        var wedged = world with { Processes = world.Processes.Select(p => p.IsLeaving(plan.Session!) ? p with { Responsive = false } : p).ToArray() };
+        return (wedged, LaunchPlanner.Plan(request, wedged, _settings));
+    }
+
+    /// <summary>True once nobody holds the session's lock (bounded by <see cref="LauncherTimeouts.QuitWait"/>).</summary>
+    private bool WaitForRelease(string session)
+    {
+        var clock = Stopwatch.StartNew();
+        while (SessionLock.IsHeldElsewhere(_store, _runtime, session))
+        {
+            if (clock.Elapsed >= _timeouts.QuitWait) return false;
+            Thread.Sleep(25);
+        }
+        return true;
     }
 
     private LaunchWorld Gather()
@@ -155,7 +209,7 @@ public sealed class SessionLauncher
                 return [];
             }
         });
-        return new LaunchWorld(found, saved, _store.ReadLastActive(), name => FileLock.IsHeldElsewhere(_runtime.SessionLockPath(name)));
+        return new LaunchWorld(found, saved, _store.ReadLastActive(), name => SessionLock.IsHeldElsewhere(_store, _runtime, name));
     }
 
     /// <summary>The reply, or a failure message describing why there was none.</summary>

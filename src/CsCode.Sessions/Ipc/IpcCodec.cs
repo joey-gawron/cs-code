@@ -26,6 +26,8 @@ public static class IpcCodec
             if (m.LastShownUnixMs is { } shown) w.WriteNumber("lastShownUnixMs", shown);
             if (m.WorkingSetBytes is { } ws) w.WriteNumber("workingSetBytes", ws);
             if (m.Debugging is { } debugging) w.WriteBoolean("debugging", debugging);
+            if (m.NeedsPrompt is { } needsPrompt) w.WriteBoolean("needsPrompt", needsPrompt);
+            if (m.Evict is { } evict) w.WriteBoolean("evict", evict);
             if (m.Paths is { } paths)
             {
                 w.WriteStartArray("paths");
@@ -90,7 +92,7 @@ public static class IpcCodec
             var r = new Utf8JsonReader(utf8);
             if (!r.Read() || r.TokenType != JsonTokenType.StartObject) throw new IpcProtocolException("a message must be a JSON object");
             string? type = null, error = null, session = null, state = null, uri = null, text = null;
-            bool? ok = null, debugging = null, wait = null, force = null, hidden = null, unnamed = null;
+            bool? ok = null, debugging = null, needsPrompt = null, evict = null, wait = null, force = null, hidden = null, unnamed = null;
             int? protocol = null, pid = null, line = null, column = null, count = null;
             long? shown = null, ws = null;
             List<IpcPath>? paths = null;
@@ -114,6 +116,8 @@ public static class IpcCodec
                     case "lastShownUnixMs": shown = r.GetInt64(); break;
                     case "workingSetBytes": ws = r.GetInt64(); break;
                     case "debugging": debugging = r.GetBoolean(); break;
+                    case "needsPrompt": needsPrompt = r.GetBoolean(); break;
+                    case "evict": evict = r.GetBoolean(); break;
                     case "paths": paths = ReadPaths(ref r); break;
                     case "remotes": remotes = ReadStrings(ref r); break;
                     case "wait": wait = r.GetBoolean(); break;
@@ -134,7 +138,7 @@ public static class IpcCodec
             return new IpcMessage
             {
                 Type = type, Ok = ok, Error = error, ProtocolVersion = protocol, Pid = pid, Session = session, State = state, LastShownUnixMs = shown,
-                WorkingSetBytes = ws, Debugging = debugging, Paths = paths, Remotes = remotes, Wait = wait, Force = force, Hidden = hidden, Unnamed = unnamed,
+                WorkingSetBytes = ws, Debugging = debugging, NeedsPrompt = needsPrompt, Evict = evict, Paths = paths, Remotes = remotes, Wait = wait, Force = force, Hidden = hidden, Unnamed = unnamed,
                 Sessions = sessions, Data = data, Uri = uri, Text = text, Line = line, Column = column, Count = count,
             };
         }

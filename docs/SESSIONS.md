@@ -20,7 +20,7 @@ chosen in `Main` before Avalonia is touched:
 |---|---|---|
 | **Launcher** (default) | `cscode [options] [paths]` | Talks to the running CsCode processes over IPC (show / claim / start / quit / list) and exits. No Avalonia, no services. |
 | **CsCode process** | `cscode --host --session NAME` or `--host --spare` (started by the launcher) | Takes the session's lock, opens its IPC endpoint at once, builds the services and the window, restores the session. |
-| **In-process window** | `cscode --foreground [paths]`, or automatically when background mode is unavailable (no private runtime directory) | The classic single-process run: the window opens in this process and closing it exits. |
+| **In-process window** | `cscode --foreground [paths]`, or automatically when background mode is unavailable (no private runtime directory, or a data directory that cannot hold the session locks) | The classic single-process run: the window opens in this process and closing it exits. |
 
 A process started by the launcher detaches from the launcher's terminal (`setsid`) and has no stdio; it logs to `{LogsDir}` as usual.
 
@@ -33,7 +33,7 @@ cscode [paths...]                 folder → workspace, file → editor; file:li
 cscode -g|--goto file:line[:col]
 cscode -s|--session NAME [paths]  the named session (shown at once when running; created when it does not exist)
 cscode -n|--new-window [paths]    a new unnamed session (window-1, window-2, ...)
-cscode -w|--wait FILE             returns when FILE's tab is closed (for $EDITOR / git)
+cscode -w|--wait FILE...          returns (exit 0) when every FILE's tab is closed, or the window is closed or the session quits ($EDITOR / git)
 cscode --list-sessions            saved and running sessions (state, pid, memory, last used, folder)
 cscode --background               start the warm spare (if on) and, with restoreOnLogin, the resident sessions, hidden; no window
 cscode --quit [NAME]              quit a session's process (default: the last active one)
@@ -43,8 +43,16 @@ cscode -h|--help, -v|--version
 ```
 
 Without `--session`: files open in the **last active** session; a **folder** opens the saved session whose primary folder it is (else a new
-unnamed session with it); no arguments follow `cscode.sessions.default` (`last` | `new` | a name). Exit codes: 0 success; 1 the request
-failed (message on stderr). Unknown switches are reported and ignored.
+unnamed session with it); a **remote folder** (`cscode ssh://[user@]host[:port]/path`) does the same with remote folders (VS Code opens a
+remote folder in a window of its own; before, it replaced the last session's folder); no arguments follow `cscode.sessions.default`
+(`last` | `new` | a name). Exit codes: 0 success; 1 the request failed (message on stderr). Unknown switches are reported and ignored. A
+relative `CSCODE_HOME` is made absolute against the launcher's working directory before anything uses it (the processes it starts run in the
+home directory).
+
+`--wait` follows VS Code: it waits for **every** file given (git's difftool and mergetool pass two or three), and closing the window
+(which hides it) or quitting the session ends the wait with exit code 0, so `git commit` never hangs on a window that is gone. Only a quit
+that is certain ends it: one the user cancels at a save prompt, or one that is refused (an eviction, a forced quit beyond the backup limit),
+leaves the window and the files open, and the wait goes on (VS Code keeps waiting when the window's close is cancelled).
 
 Internal switches (how the launcher starts processes; not part of the interface): `--host`, `--spare`, `--hidden`, `--unnamed`,
 `--seed-from NAME`, `--headless-test` (Avalonia headless platform + test-only IPC verbs; integration tests only).
@@ -56,32 +64,47 @@ Internal switches (how the launcher starts processes; not part of the interface)
 | A responsive process owns the session | **Show** it (open the paths there); reply comes after the window painted |
 | Not running, a warm spare answers | **Claim** the spare (it restores the session hidden, then the show makes it visible); start a new spare when `warmSpare` is on |
 | Not running, no spare (or the claim fails) | **Start** a session process, wait for its hello, then show; with `warmSpare` on, start a spare if none exists or is starting |
-| The session's lock is held but no process answers (wedged) | Never wait: **Start** a new unnamed session seeded from it, with a warning |
+| Its process answers `quitting` and still holds the lock (its final save) | **AwaitQuit**: wait (≤ the quit wait, 20 s) until it lets go, then plan again: a fresh **Start**, no copy, no warning. One that keeps the lock that long counts as wedged |
+| The session's lock is held but no process answers (wedged, or a process this launch cannot reach) | Never wait: **Start** a new unnamed session seeded from it, with a warning |
+| A show reaches a process that began to quit after the discovery | A quit still writing is awaited first; once it is certain the process answers `quitting` and the launcher waits for it to let go and runs once more (a fresh start); a quit that is refused lets the show go ahead. While the save prompts of a quit are up nothing is decided and the window is shown (hello: `shown`): the show goes ahead and opens its paths there, as VS Code opens a file into the window that is asking |
 | A spare is still starting | Not claimed, and no second spare is started |
-| More than `maxResidentSessions` would be resident | After the show, quit the least recently shown **hidden** sessions (never a shown window, a debugging session, the spare or the target) |
-| Two launches at once | Serialised by the launcher lock (`<runtime>/launcher.lock`); the lock is released as soon as the target owns the session (before `--wait` blocks) |
+| More than `maxResidentSessions` would be resident | After the show, quit the least recently shown **hidden** sessions (never a shown window, a debugging session, one that would have to ask about unsaved changes, the spare or the target); the quit is an eviction (`evict`), which a session refuses rather than show its window with save prompts |
+| Two launches at once | Serialised by the launcher lock (`{UserDataDir}/sessions/.locks/.launcher.lock`); the lock is released as soon as the target owns the session (before `--wait` blocks) |
 | Stale endpoint (dead pid, or a pid reused by another program) | Removed during discovery |
-| Runtime directory unusable | Exit code 2 internally → the window runs in-process |
+| Runtime directory unusable | Opening a window: exit code 2 internally → the window runs in-process. `--list-sessions`, `--quit` and `--background` print why and exit 1 (they never open a window) |
 
 ## IPC
 
-* **Runtime directory** (`RuntimeDirectory.Resolve`): Linux `$XDG_RUNTIME_DIR/cscode` (else `/tmp/cscode-<uid>`), macOS `$TMPDIR/cscode-<uid>`,
-  Windows `%LOCALAPPDATA%\CsCode\run` for lock files with named pipes `cscode-<hash>-<pid>`. With **`CSCODE_HOME`** set (portable installs and
+* **Runtime directory** (`RuntimeDirectory.Resolve`): Linux `$XDG_RUNTIME_DIR/cscode`, else `/run/user/<uid>/cscode` when that directory is
+  this user's (a shell that lost the variable, `su -`, `env -i`, still meets the desktop's processes), else `/tmp/cscode-<uid>`; macOS
+  `$TMPDIR/cscode-<uid>`; Windows `%LOCALAPPDATA%\CsCode\run` with named pipes `cscode-<hash>-<pid>`. With **`CSCODE_HOME`** set (portable installs and
   every test) it is `$CSCODE_HOME/run` — or, when that path is too long for a Unix socket (~108 bytes), `<per-user base>-h<hash of CSCODE_HOME>` —
-  so a test never talks to, locks against or signals the user's running CsCode. Created with mode 0700; a directory with looser permissions
-  that cannot be tightened is refused (background mode then falls back to an in-process window).
+  so a test never talks to or signals the user's running CsCode. Created with mode 0700; a symbolic link, another user's directory (the
+  chmod that makes it private fails for anyone but the owner) or one whose mode cannot be tightened is refused. Under the shared `/tmp`, a
+  name another user created first is skipped (`/tmp/cscode-<uid>-1`, … up to 7).
 * **One endpoint per process**: `<runtime>/<pid>.sock` (mode 0600). Every connection's peer credentials are checked on both sides (Linux
   `SO_PEERCRED`, macOS `LOCAL_PEERCRED`): a peer running as another user is disconnected before anything is read. Windows uses a
   current-user-only pipe ACL (`PipeOptions.CurrentUserOnly`; compiled, not tested here). No network listener, ever.
 * **Framing**: 4-byte little-endian length + UTF-8 JSON (≤ 4 MB), hand-written codec (`IpcCodec`, so a fresh launcher process does not build
   serializer metadata). One request → one reply; a connection may carry several.
-* **Verbs**: `hello` (pid, session, state `starting|spare|shown|hidden|quitting`, last shown, debugging, working set — answered without the UI
-  thread), `show {paths, wait}`, `hide`, `claim {session, hidden, unnamed}`, `listSessions`, `quit {force}`, `focusFile {paths}`. Test-only
+* **Verbs**: `hello` (pid, session, state `starting|spare|shown|hidden|quitting`, last shown, debugging, working set, `needsPrompt` —
+  answered without the UI thread), `show {paths, wait, remotes}`, `hide`, `claim {session, hidden, unnamed}`, `listSessions`,
+  `quit {force, evict}`, `focusFile {paths}`. A process whose quit is certain says `quitting` in hello from then on (also after save prompts,
+  which show the window) and answers `show`/`focusFile` with the `quitting` error; one whose quit is still writing makes them wait for the
+  outcome. The message format did not change with the lock move (new fields are optional), so the protocol version is still 1. Test-only
   (served only with `--headless-test`): `inspect`, `testEdit`, `testCaret`, `testFold`, `testCloseTab`, `testCloseWindow`.
 * **Timeouts**: connect + handshake 300 ms (past it a process counts as wedged and is never waited for), show reply 30 s (a cold restore),
   started-process hello 30 s, quit wait 20 s.
-* **Locks**: `<runtime>/locks/<session>.lock`, an exclusive `flock` held by the owning process (released by the kernel on kill -9). A second
-  process for the same session exits with code 3 and the launcher shows the owner instead.
+* **Locks**: `{UserDataDir}/sessions/.locks/<session>.lock`, an exclusive `flock` held by the owning process (released by the kernel on
+  kill -9). They live with the data they protect, not in the runtime directory: two launches whose environments resolve different runtime
+  directories still find the session taken (the second opens a copy, with a warning), so a session never has two writers. A second process
+  for the same session exits with code 3 and the launcher shows the owner instead. A quitting process releases its session's lock as soon as
+  its last write is done (the quit is certain: the window is closing), before its language servers and the rest shut down; from then on it
+  writes nothing. Builds before the move locked `<runtime>/locks/<session>.lock`: that lock is still taken by the owner and checked by the
+  launcher (`SessionLock`), so after an upgrade a process of the older build that is still running (resident, in the final save of its quit, or
+  wedged) is never joined by a second writer, and it finds this build's sessions taken. A lock that another process holds is told from one
+  that cannot be taken at all (a read-only or foreign data directory): then background mode is unavailable, at once (no 15 s wait, no
+  "owned by another CsCode process"), and opening a window runs it in the launcher's process.
 * The launcher is synchronous (blocking sockets on its one thread: no async socket engine or thread pool to start); CsCode processes accept on a
   dedicated thread and serve connections asynchronously, so a long `show --wait` never blocks a `hello`.
 
@@ -95,12 +118,17 @@ bounds and state (normal/maximized/fullscreen), and `wasResident`. Breakpoints a
 
 * **Atomic writes** (`AtomicFile`): temp file + flush + rename; the previous version is kept as `.bak`. A torn or corrupt file falls back to
   `.bak` (the user is told); both unreadable → the session starts empty and the damaged file is kept as `.corrupt`. A file written by a **newer** CsCode is never
-  loaded or overwritten (the window says so and does not autosave).
+  loaded or overwritten (the window says so and does not autosave), and neither are its backups. Unsaved changes made in that window cannot be
+  backed up, so they are never dropped silently: Quit Session asks to save them, a forced quit and an eviction are refused, SIGTERM puts them
+  into a new unnamed session, Save Session As / Rename go on in a session of this version (Rename keeps the newer one instead of deleting it).
 * **Migration**: `SessionSerializer.Migrate` upgrades step by step; v1 (development builds: folders, layout, a flat `openFiles` list) → v2.
 * **Autosave**: every change (tabs, active tab, edits of dirty documents, folders, tool windows) marks the session; it is written at most 1.5 s
   later even while typing (the timer is armed once per save, never pushed out), and on hide, quit and OS shutdown. Capture runs on the UI thread
-  and takes only snapshots; JSON and files are written on the session lane (a dedicated thread). A fatal crash writes the last captured
-  snapshot synchronously.
+  and takes only snapshots (a dirty document's immutable snapshot shares its rope: no text is built there); the text, JSON and files are made
+  and written on the session lane (a dedicated thread). A fatal crash writes the last captured snapshot synchronously. **SIGTERM** (`kill`,
+  and stopping the autostart unit: logout, `systemctl --user stop`) quits the session like Quit Session without asking anything: every unsaved change is backed up (beyond the
+  backup limit too: nobody can be asked), the session stays resident for `restoreOnLogin`, and if the UI thread cannot get that far within
+  15 s the last captured snapshot is written and the process exits.
 * **Session names**: letters, digits, space and `- _ . ( ) +`, 1–64 characters (they are file names).
 
 ## Hot exit (`files.hotExit`, default `onExitAndWindowClose`)
@@ -109,9 +137,16 @@ Unsaved text of every dirty document goes to `{UserDataDir}/backups/<session>/<i
 version, and the file's size/time/SHA-256 **at backup time**). Only documents whose version changed since their last backup are captured
 again. Restoring reopens the file and puts the unsaved text back (dirty, no prompt); when the file **changed on disk** meanwhile the user is
 asked (*Keep My Changes* / *Load Disk Version*); a **deleted** file's text comes back in an untitled buffer; untitled buffers come back as
-untitled buffers. The total per session is bounded by `cscode.sessions.maxBackupMb` (200): beyond it the user is warned once, those
+untitled buffers. A **remote** document's (`ssh://`, `docker://`, …) unsaved text goes back into the remote document itself once its file
+system answers (the restore never waits for the connection; the backup is kept until then), as VS Code restores a remote window's backups;
+when the file cannot be read any more, the text comes back in an untitled buffer of the document's language and the user is told which
+remote file it belongs to. The total per session is bounded by `cscode.sessions.maxBackupMb` (200): beyond it the user is warned once, those
 documents are not backed up, a normal quit prompts for them, and a forced quit (`--quit`) is refused for that session rather than lose them.
-Hot exit never writes the user's files. With `off` (or `onExit` for a window close) quitting prompts as before.
+Hot exit never writes the user's files. With `off` (or `onExit` for a window close) quitting prompts as before. The autosave backs up dirty
+documents whatever `files.hotExit` says (crash recovery, as VS Code does); after a quit with save prompts every document was saved or
+discarded, so the session's backups are deleted (as VS Code discards its backups after the shutdown prompts): "Don't Save" text never comes
+back. The backups of remote documents still waiting for their connection are the exception: they have no tab, nobody was asked about them,
+so they stay (and a rename writes them under the new name before the old session goes).
 
 ## Window lifecycle
 
@@ -127,9 +162,11 @@ Hot exit never writes the user's files. With `off` (or `onExit` for a window clo
 ## Hidden sessions: resource policy (`HiddenSessionPolicy`)
 
 * After `cscode.background.trimAfterSeconds` (30): every editor view is disposed (view state kept, so it comes back exactly as it was),
-  the registered trimmables run (`IMemoryMonitor.TrimNowAsync(Aggressive)`), then a compacting full GC including the large object heap and
-  `malloc_trim` (`ProcessMemory.TrimNow`). **The Profiling module is still parked**, so this is the minimal trim path the brief allows; when it
-  is merged, its monitor's aggressive trim slots in through the same `IMemoryMonitor` call.
+  then one trim: the memory monitor's `IMemoryMonitor.TrimNowAsync(Aggressive)` runs the registered trimmables, then a compacting full GC
+  including the large object heap and `malloc_trim`. (A second, process-level trim after it only paused every thread again; it is used alone
+  when there is no monitor.)
+* A hidden session that could only quit by asking (dirty documents with `files.hotExit` off, over the backup limit, or a session a newer
+  CsCode wrote) says so in `hello` (`needsPrompt`) and is never evicted; an eviction that reaches it anyway is refused, its window stays hidden.
 * After `cscode.background.idleServerTimeoutMinutes` (15; 0 = never) the running language servers are stopped and restarted when the window is
   shown again; a running debug session keeps them (and keeps the process from being evicted).
 * Before showing again, the active tab of each group gets its view back, so the first frame shows the editors.
@@ -181,7 +218,13 @@ The launcher reads the four launcher settings straight from `settings.json` (`La
 
 * Linux: `tools/autostart/install-linux.sh [--systemd | --xdg] [--cscode PATH] [--uninstall] [--dry-run]` — a systemd **user** unit
   `cscode-background.service` or an XDG autostart entry, both running `cscode --background`. In the app: *File ▸ Sessions ▸ Start in the
-  Background at Login…* writes/removes the XDG entry after a confirmation that names the file and the command (`AutostartEntry`).
+  Background at Login…* writes/removes the XDG entry after a confirmation that names the file and the command (`AutostartEntry`). The unit is
+  `Type=oneshot` with `RemainAfterExit=yes`: the launcher starts the processes and exits, and they stay in the unit's cgroup; without
+  `RemainAfterExit` systemd stopped the unit at once and killed everything it had started. Stopping the unit (logout through
+  `PartOf=graphical-session.target`, or `systemctl --user stop`) sends SIGTERM to every process in its cgroup (the default
+  `KillMode=control-group`, systemd.kill(5)): each session backs up its unsaved changes and quits (hot exit, within its own 15 s watchdog);
+  SIGKILL follows only after `TimeoutStopSec=30`. (`KillMode=process` would signal only the launcher, long gone, so the sessions would never
+  get the SIGTERM they save on.) Sessions started later from a terminal live in that terminal's cgroup, not the unit's.
 * macOS: `tools/autostart/install-macos.sh` (LaunchAgent). Windows: `tools/autostart/install-windows.ps1` (per-user Run key). Both untested here.
 
 ## Threading
@@ -275,9 +318,16 @@ with the crash log's path; quit ends it) and releases its session's lock.
 
 ## Publishing (`build/Publish.props`, `tools/publish-app.sh`)
 
-`tools/publish-app.sh [--rid RID] [--out DIR] [--artifacts DIR]` runs `dotnet publish src/CsCode.App -c Release -r linux-x64 --self-contained`
+`tools/publish-app.sh [--rid RID] [--out DIR] [--artifacts DIR] [--unpinned]` runs `dotnet publish src/CsCode.App -c Release -r linux-x64 --self-contained`
 (no build servers, intermediate files in `.scratch/publish-artifacts/`, output in `.scratch/publish/linux-x64/`) and refuses an output in which
 any native file refers to `/nix/store`. The install wave's `tools/install.sh` calls it and copies the output; nothing is installed by it.
+
+**The packs are pinned, and the publish path enforces it**: publish-app.sh first runs `tools/fetch-publish-packs.sh` (restore, then every
+pinned package's size, SHA-512 and SHA-256; no publish on a mismatch), passes the pinned version to the publish
+(`-p:CsCodePinnedRuntimeVersion`; `build/PinnedRuntimePacks.props` sets the runtime, apphost, targeting, crossgen2 and ILCompiler pack versions
+to it, whatever the SDK bundles: a newer SDK cannot quietly restore newer, unchecked packs), and refuses an output whose `cscode.deps.json` or
+`cscode-server.deps.json` does not name the pinned runtime pack. The pin is imported by the App (through `build/Publish.props`) and by
+`CsCode.Server.csproj`: the app's publish builds `cscode-server` as a project of its own and ships it next to `cscode`. Only linux-x64 is pinned; another runtime identifier needs `--unpinned` (the packs restore picks, unchecked).
 
 * `build/Publish.props` (imported by the App; only for a build with a runtime identifier): self-contained, ReadyToRun, composite, English
   satellite resources only. The self-contained switch must also be on the command line: the App references the `cscode-server` executable, and
@@ -298,8 +348,22 @@ any native file refers to `/nix/store`. The install wave's `tools/install.sh` ca
   file on disk, size bound, damaged metadata), runtime directory derivation (CSCODE_HOME isolation, socket path length, 0700), IPC (round trip,
   peer-credential rejection with a real `SO_PEERCRED`, test verbs refused, garbage frames, a slow request not blocking another connection,
   wedged-process timeout, stale sockets left by a dead process), file locks (released on kill -9 of the holder), the launcher decision table
-  row by row, the launcher against in-process fake processes (concurrent launches, wedged owner, failed start, eviction, list, quit, background),
-  autosave debouncing and the hidden-session policy with a manual clock, settings parsing, the serial lane, leak checks.
+  row by row, the launcher against in-process fake processes (concurrent launches, wedged owner, a quitting owner awaited and started afresh,
+  a show that finds the session quitting, failed start, eviction, list, quit, background), locks found through the data directory, a lock
+  held elsewhere told from one that cannot be taken (a read-only data directory falls back at once), older builds' runtime-directory locks
+  honoured (a quitting older process is awaited), the
+  runtime directory's ownership and link checks and its `/run/user` and `/tmp` fallbacks, autosave debouncing and the hidden-session policy
+  with a manual clock, settings parsing, the serial lane, leak checks.
+* `SessionControllerTests` — a session process's window side run in the test process (headless; save prompts answered by a fake): no backup
+  survives a quit with save prompts, a newer version's session asks before its unsaved changes go and refuses a forced quit or an eviction,
+  `--wait` with several files / a closed window / a quit, a hidden session that would prompt refuses an eviction, a committed quit releases
+  the session at once and answers a late show with `quitting`, the autosave capture builds no document text on the UI thread, remote backups
+  go back into their documents once the file system answers. After save prompts: a relaunch during the shutdown starts the session afresh
+  (the launcher against the real host), a show during the prompts goes ahead and one during the last write waits for the quit, a cancelled
+  or refused quit keeps `--wait` waiting, and the backups of remote documents waiting for their connection survive the discard and a rename.
+* `SessionFixProcessTests` — REAL processes: SIGTERM saves the unsaved changes, an unusable runtime directory never opens a window for
+  `--list-sessions`/`--quit`/`--background`, a relative `CSCODE_HOME`, reopening a session while its process waits for a language server that
+  ignores shutdown (a fresh start, no copy), two runtime directories over one data directory (one owner, the other launch opens a copy).
 * `tests/CsCode.App.Tests/Background` — REAL processes of the built `cscode` with `--headless-test` in a private `CSCODE_HOME` under /tmp:
   spare claim → edit, fold, caret → close (hides) → trim → show (same tabs, caret, folds, unsaved edit) → kill -9 → relaunch restores from
   autosave + backup → `--quit --all` leaves no process or socket; latency budgets; cold start; max-resident eviction; concurrent launches;

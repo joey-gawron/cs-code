@@ -4,21 +4,30 @@ using CsCode.Sessions.Ipc;
 namespace CsCode.Sessions;
 
 /// <summary>
-/// The minimal trim path of a hidden session (the Profiling module's <c>IMemoryMonitor.TrimNowAsync(Aggressive)</c> machinery is parked, so this
-/// stands in for its process-level part): a blocking, compacting full collection including the large object heap, then <c>malloc_trim</c> so the
-/// native heap returns freed pages too. Expensive (tens of milliseconds, all threads paused): only for hidden sessions and the warm spare, never on
-/// the UI thread of a visible window.
+/// The process-level trim: a blocking, compacting full collection including the large object heap, then <c>malloc_trim</c> so the native heap
+/// returns freed pages too. The memory monitor (CsCode.Profiling) does the same after its trimmables; this is for processes and paths without one
+/// (the warm spare before it is claimed, the shell's stand-in monitor). Expensive (tens of milliseconds, all threads paused): only for hidden
+/// sessions and the warm spare, never on the UI thread of a visible window.
 /// </summary>
 public static class ProcessMemory
 {
-    /// <summary>Returns the working set after the trim (bytes).</summary>
-    public static long TrimNow()
+    /// <summary>Compacts the heaps (<paramref name="aggressive"/>: the GC also decommits its free regions) and returns free native pages.</summary>
+    public static void Compact(bool aggressive)
     {
         GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
-        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-        GC.WaitForPendingFinalizers();
+        if (aggressive)
+        {
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+        }
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
         UnixNative.TryMallocTrim();
+    }
+
+    /// <summary>The aggressive <see cref="Compact"/>; returns the working set after it (bytes).</summary>
+    public static long TrimNow()
+    {
+        Compact(aggressive: true);
         using var self = System.Diagnostics.Process.GetCurrentProcess();
         return self.WorkingSet64;
     }

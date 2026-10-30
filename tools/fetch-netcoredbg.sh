@@ -1,75 +1,87 @@
 #!/usr/bin/env bash
 # Fetches Samsung's netcoredbg (MIT) into .scratch/tools/netcoredbg/ for the DAP integration tests and local development.
 #
-#   tools/fetch-netcoredbg.sh            # latest release, skipped if already present
+#   tools/fetch-netcoredbg.sh            # the pinned release; skipped when that release is already there
 #   tools/fetch-netcoredbg.sh --force    # re-download
-#   NETCOREDBG_TAG=3.2.0-1092 tools/fetch-netcoredbg.sh   # pin a release tag
+#   NETCOREDBG_ARCHIVE=/path/netcoredbg-linux-amd64.tar.gz tools/fetch-netcoredbg.sh   # a local copy of the pinned asset (no download)
+#   NETCOREDBG_TAG=<tag> NETCOREDBG_SHA256=<hex> tools/fetch-netcoredbg.sh   # another release: its asset's SHA-256 must be given with it
 #
-# The archive's SHA-256 is verified against the digest GitHub publishes for the release asset (API field "digest") before it is
-# extracted; extraction refuses entries that would land outside the target directory. NOT vsdbg (its licence forbids use outside
-# Microsoft products). The app itself does the same job at runtime through CsCode.Dap's NetCoreDbgInstaller (after asking the user).
+# Pinned: release 3.2.0-1092 (published 2026-06-25) and each platform asset's size and SHA-256 (the digests GitHub publishes for the release
+# assets; the linux-amd64 one was also checked against a download, 2026-10-30). The archive must match the pin before anything is extracted;
+# extraction refuses absolute paths, '..' components, links and special files. NOT vsdbg (its licence forbids use outside Microsoft products).
+# The app itself does the same job at runtime through CsCode.Dap's NetCoreDbgInstaller (after asking the user).
 set -euo pipefail
 
 repo="Samsung/netcoredbg"
+pinned_tag="3.2.0-1092"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dest="${root}/.scratch/tools/netcoredbg"
 force=0
 [[ "${1:-}" == "--force" ]] && force=1
 
 case "$(uname -s)-$(uname -m)" in
-  Linux-x86_64)         asset="netcoredbg-linux-amd64.tar.gz" ;;
-  Linux-aarch64|Linux-arm64) asset="netcoredbg-linux-arm64.tar.gz" ;;
-  Darwin-arm64)         asset="netcoredbg-osx-arm64.zip" ;;
-  MINGW*|MSYS*|CYGWIN*) asset="netcoredbg-win64.zip" ;;
+  Linux-x86_64)              asset="netcoredbg-linux-amd64.tar.gz"; size=3510717; pinned_sha256="080eb3b2d2152465f599d3b33d1ee6e747794e11cc0a3773ec689f5e5f2c5afa" ;;
+  Linux-aarch64|Linux-arm64) asset="netcoredbg-linux-arm64.tar.gz"; size=3424271; pinned_sha256="065ff49badec8a695dbea2de6ab6a330c774a191e426a217ab8cc05250627ccb" ;;
+  Darwin-arm64)              asset="netcoredbg-osx-arm64.zip";      size=3389504; pinned_sha256="f4fa33b3ff874910cc184b4bb3b9c56d0abdf5c6521cee0b144d7c6e4a6e59ea" ;;
+  MINGW*|MSYS*|CYGWIN*)      asset="netcoredbg-win64.zip";          size=3524161; pinned_sha256="3c410a45fa502415203a94fcb88654af65bf8e3dac158a5527a722e7a6b9274a" ;;
   *) echo "fetch-netcoredbg: no netcoredbg release build for $(uname -s)/$(uname -m)" >&2; exit 2 ;;
 esac
 
-exe="${dest}/netcoredbg"
-[[ "$asset" == *.zip && "$asset" == *win64* ]] && exe="${dest}/netcoredbg.exe"
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }  # not ${x,,}: macOS ships bash 3.2
 
-if [[ -x "$exe" && $force -eq 0 && -z "${NETCOREDBG_TAG:-}" ]]; then
-  echo "netcoredbg already present: $exe"
+tag="${NETCOREDBG_TAG:-$pinned_tag}"
+sha256="$pinned_sha256"
+if [[ "$tag" != "$pinned_tag" ]]; then
+  if [[ -z "${NETCOREDBG_SHA256:-}" ]]; then
+    echo "fetch-netcoredbg: ${tag} is not the pinned release (${pinned_tag}); give its ${asset}'s SHA-256 as NETCOREDBG_SHA256 too" >&2
+    exit 2
+  fi
+  sha256="$NETCOREDBG_SHA256"
+  size=""
+fi
+sha256="$(lower "$sha256")"
+
+exe="${dest}/netcoredbg"
+[[ "$asset" == *win64* ]] && exe="${dest}/netcoredbg.exe"
+
+if [[ -x "$exe" && $force -eq 0 && "$(cat "$dest/VERSION" 2>/dev/null || true)" == "$tag" ]]; then
+  echo "netcoredbg ${tag} already present: $exe"
   exit 0
 fi
-
-command -v curl >/dev/null || { echo "fetch-netcoredbg: curl is required" >&2; exit 2; }
-api="https://api.github.com/repos/${repo}/releases/latest"
-[[ -n "${NETCOREDBG_TAG:-}" ]] && api="https://api.github.com/repos/${repo}/releases/tags/${NETCOREDBG_TAG}"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-echo "Looking up ${asset} ..."
-curl -fsSL -H "Accept: application/vnd.github+json" -A "cscode-fetch" "$api" -o "$tmp/release.json"
-
-# Pull tag + the asset's digest out of the JSON without needing jq. GitHub answers with compact OR pretty-printed JSON depending on
-# headers, so split into one field per line first; each asset object lists "name" before its "digest".
-tr ',' '\n' < "$tmp/release.json" > "$tmp/release.lines"
-tag="$(sed -n 's/^ *{\? *"tag_name": *"\([^"]*\)".*/\1/p' "$tmp/release.lines" | head -1)"
-digest="$(grep -A40 "\"name\": *\"${asset}\"" "$tmp/release.lines" | grep -m1 '"digest": *"sha256:' | sed 's/.*"sha256:\([0-9a-fA-F]*\)".*/\1/' || true)"
-url="https://github.com/${repo}/releases/download/${tag}/${asset}"
-[[ -n "$tag" ]] || { echo "fetch-netcoredbg: could not read the release tag" >&2; exit 1; }
-
-echo "Downloading ${asset} (${tag}) ..."
-curl -fsSL -A "cscode-fetch" "$url" -o "$tmp/$asset"
-
-if [[ -n "$digest" ]]; then
-  actual="$( (sha256sum "$tmp/$asset" 2>/dev/null || shasum -a 256 "$tmp/$asset") | awk '{print $1}')"
-  if [[ "${actual,,}" != "${digest,,}" ]]; then
-    echo "fetch-netcoredbg: SHA-256 mismatch (got ${actual}, expected ${digest}) - refusing to extract" >&2
-    exit 1
-  fi
-  echo "SHA-256 verified: ${actual}"
+if [[ -n "${NETCOREDBG_ARCHIVE:-}" ]]; then
+  [[ -f "$NETCOREDBG_ARCHIVE" ]] || { echo "fetch-netcoredbg: NETCOREDBG_ARCHIVE '${NETCOREDBG_ARCHIVE}' does not exist" >&2; exit 2; }
+  echo "Using the local archive ${NETCOREDBG_ARCHIVE} (no download)"
+  cp "$NETCOREDBG_ARCHIVE" "$tmp/$asset"
 else
-  echo "fetch-netcoredbg: warning - GitHub published no digest for ${asset}; relying on archive integrity only" >&2
+  command -v curl >/dev/null || { echo "fetch-netcoredbg: curl is required (or set NETCOREDBG_ARCHIVE)" >&2; exit 2; }
+  echo "Downloading ${asset} (${tag}) ..."
+  curl -fsSL -A "cscode-fetch" "https://github.com/${repo}/releases/download/${tag}/${asset}" -o "$tmp/$asset"
 fi
 
-# Safe extraction: list first and reject absolute paths / '..' components (zip-slip) before unpacking anything.
+actual="$(lower "$( (sha256sum "$tmp/$asset" 2>/dev/null || shasum -a 256 "$tmp/$asset") | awk '{print $1}')")"
+if [[ "$actual" != "$sha256" ]]; then
+  echo "fetch-netcoredbg: SHA-256 mismatch (got ${actual}, expected ${sha256}) - refusing to extract" >&2
+  exit 1
+fi
+got_size="$(wc -c < "$tmp/$asset" | tr -d ' ')"
+if [[ -n "$size" && "$got_size" != "$size" ]]; then
+  echo "fetch-netcoredbg: size mismatch (got ${got_size} bytes, expected ${size})" >&2
+  exit 1
+fi
+echo "SHA-256 verified: ${actual} (${got_size} bytes)"
+
+# Safe extraction: list first and reject absolute paths, '..' components (tar/zip-slip) and any link or special file before unpacking anything.
 if [[ "$asset" == *.tar.gz ]]; then
   if tar -tzf "$tmp/$asset" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then echo "fetch-netcoredbg: archive contains unsafe paths" >&2; exit 1; fi
-  mkdir -p "$tmp/x"; tar -xzf "$tmp/$asset" -C "$tmp/x" --no-same-owner
+  if tar -tzvf "$tmp/$asset" | grep -Eq '^[lhcbp]'; then echo "fetch-netcoredbg: archive contains links or special files" >&2; exit 1; fi
+  mkdir -p "$tmp/x"; tar -xzf "$tmp/$asset" -C "$tmp/x" --no-same-owner --no-same-permissions
 else
   if unzip -Z1 "$tmp/$asset" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then echo "fetch-netcoredbg: archive contains unsafe paths" >&2; exit 1; fi
+  if unzip -Z "$tmp/$asset" | grep -Eq '^l'; then echo "fetch-netcoredbg: archive contains links" >&2; exit 1; fi
   mkdir -p "$tmp/x"; unzip -q "$tmp/$asset" -d "$tmp/x"
 fi
 

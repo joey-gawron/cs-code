@@ -44,13 +44,35 @@ public sealed partial class SessionWindowController : IDisposable
     private readonly ConcurrentDictionary<string, int> _backedUp = new(StringComparer.Ordinal);
     private readonly TaskCompletionSource _activated = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly List<(EditorTab Tab, PreparedBackup Backup)> _pendingConflicts = new();
+    /// <summary>Backups of remote documents waiting for their file system (the connection) to come up; kept on disk meanwhile (UI thread).</summary>
+    private readonly List<PreparedBackup> _pendingRemote = new();
+    /// <summary>
+    /// The session under whose name the <see cref="_pendingRemote"/> backups are on disk: the restored one, until a rename (or a copy seeded from
+    /// another session) makes the next write put them under the new name (written on the lane, read on the UI thread).
+    /// </summary>
+    private string? _pendingRemoteOnDisk;
+    private SessionDocument? _restoredDocument;
+    private bool _restoringRemote;
+    /// <summary>Pending <c>cscode --wait</c> requests (UI thread): completed when their files are closed, the window is closed or the session quits.</summary>
+    private readonly List<TaskCompletionSource> _waits = new();
     private readonly object _writeGate = new();
     private IReadOnlyList<string> _stoppedServers = [];
     private SessionWindow? _normalBounds;
     private Captured? _lastCaptured;
     private long _captureSeq, _writtenSeq, _lastTrimWorkingSet;
-    private int _trims;
+    private int _trims, _skippedBackups;
+    /// <summary>The quit is certain (the window is closing): the session's last write is done and its lock released; requests get <see cref="IpcMessage.QuittingError"/>.</summary>
+    private volatile bool _quitCommitted;
+    /// <summary>No more writes of this session (set under <see cref="_writeGate"/> when the quit commits, before the lock is released).</summary>
+    private bool _sealed;
     private bool _quitting, _disposed, _readOnly, _overLimitWarned, _wasResident = true, _subscribed;
+    /// <summary>
+    /// The save prompts of a quit are up (UI thread): the window is shown and nothing is decided, so a show goes ahead (VS Code opens a file into
+    /// the window that is asking; if the quit then goes ahead, the file closes with it).
+    /// </summary>
+    private bool _asking;
+    /// <summary>Completed (and replaced) whenever a quit under way starts asking, commits or is undone: what a show that arrived meanwhile waits for.</summary>
+    private TaskCompletionSource _quitPhase = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private IDisposable? _statusItem;
     private readonly TrayController? _tray;
 
@@ -86,19 +108,27 @@ public sealed partial class SessionWindowController : IDisposable
 
     internal async Task<IpcMessage> HandleAsync(IpcMessage request, CancellationToken ct)
     {
-        if (request.Type == IpcVerbs.Quit) return await OnUiAsync(() => QuitAsync(request.Force == true)).ConfigureAwait(false);
+        if (request.Type == IpcVerbs.Quit) return await OnUiAsync(() => QuitAsync(request.Force == true, evict: request.Evict == true)).ConfigureAwait(false);
         if (_host.IsUnclaimedSpare) return IpcMessage.Failure("the warm spare has no session yet (claim it first)");
         await _activated.Task.WaitAsync(ct).ConfigureAwait(false);
         switch (request.Type)
         {
             case IpcVerbs.Show:
+                // A window that is closing for good cannot be shown: the launcher waits for the process to end and opens the session afresh.
+                if (_quitCommitted) return IpcMessage.Failure(IpcMessage.QuittingError);
                 var targets = Classify(request.Paths);
                 var reply = await OnUiAsync(() => ShowAsync(targets, request.Wait == true, ct)).ConfigureAwait(false);
-                OpenRemoteTargets(request.Remotes);
+                if (reply.Ok == true) OpenRemoteTargets(request.Remotes);
                 return reply;
             case IpcVerbs.FocusFile:
+                if (_quitCommitted) return IpcMessage.Failure(IpcMessage.QuittingError);
                 var files = Classify(request.Paths);
-                return await OnUiAsync(async () => { await OpenPathsAsync(files).ConfigureAwait(true); return IpcMessage.Reply(); }).ConfigureAwait(false);
+                return await OnUiAsync(async () =>
+                {
+                    if (await ClosingForGoodAsync().ConfigureAwait(true)) return IpcMessage.Failure(IpcMessage.QuittingError);
+                    await OpenPathsAsync(files).ConfigureAwait(true);
+                    return IpcMessage.Reply();
+                }).ConfigureAwait(false);
             case IpcVerbs.Hide:
                 return await OnUiAsync(() => { Hide(); return Task.FromResult(IpcMessage.Reply()); }).ConfigureAwait(false);
             case IpcVerbs.Inspect:
@@ -155,6 +185,7 @@ public sealed partial class SessionWindowController : IDisposable
             finally { _shell.RestoreOverride = null; }
             SessionTrace.Mark("host: restored");
             SubscribeForAutosave();
+            UpdateNeedsPrompt();
             _autosave.MarkDirty(); // the session now exists on disk (WasResident) even if nothing changes
             if (hidden)
             {
@@ -172,6 +203,8 @@ public sealed partial class SessionWindowController : IDisposable
     {
         var well = _shell.Well;
         var doc = prepared.Document;
+        _restoredDocument = doc;
+        Volatile.Write(ref _pendingRemoteOnDisk, prepared.BackupSource);
         if (doc?.Folders.FirstOrDefault() is { } remoteFolder && Uri.TryCreate(remoteFolder, UriKind.Absolute, out var remoteUri)
             && CsCode.Remote.Shell.RemoteShellContributions.IsRemoteFolder(remoteUri) && _sp.GetService<ICommandService>() is { } commands)
         {
@@ -213,15 +246,24 @@ public sealed partial class SessionWindowController : IDisposable
             var tab = restored.GetValueOrDefault(active) ?? (Uri.TryCreate(active, UriKind.Absolute, out var au) ? well.Find(au) : null);
             if (tab is not null) well.Activate(tab, preserveFocus: true);
         }
+        if (_pendingRemote.Count > 0) _ = RestoreRemoteBackupsAsync();
     }
 
-    /// <summary>Puts a backup's unsaved text back into its document (opening it, or a new untitled buffer when it has no file any more).</summary>
+    /// <summary>
+    /// Puts a backup's unsaved text back into its document (opening it, or a new untitled buffer when it has no file any more). A remote document's
+    /// backup waits for its connection instead (<see cref="RestoreRemoteBackupsAsync"/>): the restore never waits for an ssh prompt.
+    /// </summary>
     private async Task<EditorTab?> RestoreBackupAsync(PreparedBackup backup)
     {
         var info = backup.Info;
         if (!Uri.TryCreate(info.Uri, UriKind.Absolute, out var uri)) return null;
         var well = _shell.Well;
         EditorTab tab;
+        if (IsRemote(uri))
+        {
+            _pendingRemote.Add(backup);
+            return null;
+        }
         if (backup.DiskState is BackupDiskState.Untitled or BackupDiskState.MissingOnDisk || !uri.IsFile)
         {
             tab = well.OpenUntitled(info.LanguageId);
@@ -229,11 +271,67 @@ public sealed partial class SessionWindowController : IDisposable
                 Notify(MessageSeverity.Warning, $"{uri.LocalPath} was deleted after your unsaved changes to it were backed up; they were restored into {tab.Title}.");
         }
         else tab = well.Find(uri) ?? await well.OpenAsync(uri, preview: false, preserveFocus: true).ConfigureAwait(true);
-        var d = tab.Doc;
-        if (d.Length != backup.Text.Length || d.GetText() != backup.Text)
-            d.ApplyEdits([new TextEdit(new TextRange(TextPosition.Zero, d.PositionAt(d.Length)), backup.Text)]);
+        ApplyBackupText(tab, backup.Text);
         if (backup.DiskState == BackupDiskState.ChangedOnDisk) _pendingConflicts.Add((tab, backup));
         return tab;
+    }
+
+    /// <summary>A document of another file system than the local one (<c>ssh:</c>, <c>docker:</c>, ...): neither a file nor an untitled buffer.</summary>
+    private static bool IsRemote(Uri uri) => !uri.IsFile && !string.Equals(uri.Scheme, "untitled", StringComparison.OrdinalIgnoreCase);
+
+    private static void ApplyBackupText(EditorTab tab, string text)
+    {
+        var d = tab.Doc;
+        if (d.Length != text.Length || d.GetText() != text)
+            d.ApplyEdits([new TextEdit(new TextRange(TextPosition.Zero, d.PositionAt(d.Length)), text)]);
+    }
+
+    /// <summary>
+    /// The unsaved changes of remote documents go back into the remote documents themselves (as VS Code restores a remote window's backups), once
+    /// their file system answers: opening waits for the connection the restore started. Until then their backups stay on disk (every autosave
+    /// keeps them, a rename takes them along, and a quit never discards them: nobody was asked about them). When a document cannot be opened (the
+    /// connection failed, the file is gone), its text goes into an untitled buffer of its language, and the user is told which remote file it
+    /// belongs to. A quit that begins meanwhile stops this (the rest stay on disk for the next start); a quit that is cancelled starts it again.
+    /// </summary>
+    private async Task RestoreRemoteBackupsAsync()
+    {
+        _ui.AssertUiThread();
+        if (_restoringRemote) return;
+        _restoringRemote = true;
+        try
+        {
+            foreach (var backup in _pendingRemote.ToArray())
+            {
+                if (_disposed || _quitting) return;
+                var uri = new Uri(backup.Info.Uri);
+                EditorTab tab;
+                string? problem = null;
+                try
+                {
+                    tab = _shell.Well.Find(uri) ?? await _shell.Well.OpenAsync(uri, preview: false, preserveFocus: true).ConfigureAwait(true);
+                    // A quit began while the connection came up: its save prompts asked only about the tabs it saw, so the text stays on disk.
+                    if (_disposed || _quitting || tab.IsDisposed) return;
+                    // Edited meanwhile (the tab came back with the layout): the newer text stays, the backup goes into a buffer of its own.
+                    if (tab.IsDirty) problem = "it was edited before they could be restored";
+                    else
+                    {
+                        ApplyBackupText(tab, backup.Text);
+                        if (_restoredDocument?.Editors.FirstOrDefault(e => e.Uri == backup.Info.Uri)?.ViewState is { } vs) ApplyViewState(tab, ToEditor(vs));
+                    }
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { problem = ex.Message; }
+                if (_disposed || _quitting) return;
+                if (problem is not null)
+                {
+                    tab = _shell.Well.OpenUntitled(backup.Info.LanguageId);
+                    ApplyBackupText(tab, backup.Text);
+                    Notify(MessageSeverity.Warning, $"Your unsaved changes to {uri} could not be put back into it ({problem}); they were restored into {tab.Title}.");
+                }
+                _pendingRemote.Remove(backup);
+                _autosave.MarkDirty(); // the document's own backup replaces the restored one now
+            }
+        }
+        finally { _restoringRemote = false; }
     }
 
     private static void ApplyViewState(EditorTab tab, EditorViewState state)
@@ -271,7 +369,8 @@ public sealed partial class SessionWindowController : IDisposable
                 Notify(MessageSeverity.Error, $"Session '{prepared.Name}' could not be read ({prepared.Message}); it starts empty. The damaged file was kept.");
                 break;
             case SessionLoadStatus.TooNew:
-                Notify(MessageSeverity.Error, $"Session '{prepared.Name}' was saved by a newer CsCode ({prepared.Message}); it opens empty and is not saved by this version.");
+                Notify(MessageSeverity.Error, $"Session '{prepared.Name}' was saved by a newer CsCode ({prepared.Message}); it opens empty and is not saved by this version. " +
+                    "Unsaved changes made in this window cannot be backed up: quitting asks to save them, or use Save Session As... to keep working in a session of this version.");
                 break;
         }
     }
@@ -280,6 +379,7 @@ public sealed partial class SessionWindowController : IDisposable
 
     private async Task<IpcMessage> ShowAsync(IReadOnlyList<(IpcPath Path, bool IsDirectory)> targets, bool wait, CancellationToken ct)
     {
+        if (await ClosingForGoodAsync().ConfigureAwait(true)) return IpcMessage.Failure(IpcMessage.QuittingError);
         await ShowWindowAsync().ConfigureAwait(true);
         var opened = await OpenPathsAsync(targets).ConfigureAwait(true);
         if (opened.Count > 0)
@@ -288,15 +388,35 @@ public sealed partial class SessionWindowController : IDisposable
             await WaitForPaintAsync().ConfigureAwait(true);
             SessionTrace.Mark("host: painted with the paths");
         }
-        if (wait && opened.Count == 1) await WaitForTabClosedAsync(opened[0], ct).ConfigureAwait(true);
+        if (wait && opened.Count > 0) await WaitForTabsClosedAsync(opened, ct).ConfigureAwait(true);
         return IpcMessage.Reply();
+    }
+
+    /// <summary>
+    /// Whether this window is closing for good, asked by a request that would show it or open paths in it (UI thread). A quit under way that is not
+    /// asking the user (its last write: milliseconds, seconds for huge backups) is awaited first: the request must neither open paths into a window
+    /// that is about to close and reply OK, nor be turned away by a quit that is then refused. While the save prompts are up nothing is decided
+    /// and the window is shown: the request goes ahead (<see cref="_asking"/>).
+    /// </summary>
+    private async Task<bool> ClosingForGoodAsync()
+    {
+        _ui.AssertUiThread();
+        while (_quitting && !_asking && !_quitCommitted && !_disposed) await _quitPhase.Task.ConfigureAwait(true);
+        return _quitCommitted || _disposed;
+    }
+
+    private void QuitPhaseChanged()
+    {
+        var reached = _quitPhase;
+        _quitPhase = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        reached.TrySetResult();
     }
 
     /// <summary>Makes the window visible and frontmost; completes once a frame with it was painted.</summary>
     internal async Task ShowWindowAsync()
     {
         _ui.AssertUiThread();
-        if (_quitting) return;
+        if ((_quitting && !_asking) || _disposed) return;
         var (serversWereStopped, _) = _policy.OnShown();
         SessionTrace.Mark("host: show");
         if (!_window.IsVisible)
@@ -319,9 +439,11 @@ public sealed partial class SessionWindowController : IDisposable
     {
         _ui.AssertUiThread();
         if (!_window.IsVisible || _quitting) return;
+        EndWaits(); // closing the window ends `cscode --wait` (VS Code: the window closed)
         CaptureBounds();
         _window.Hide();
         _shell.SetHidden(true);
+        UpdateNeedsPrompt(); // before the state says hidden: an eviction must know whether quitting would ask anything
         _host.SetState(ProcessStates.Hidden);
         _ = SaveNowAsync();
         _policy.OnHidden();
@@ -384,13 +506,30 @@ public sealed partial class SessionWindowController : IDisposable
         return opened;
     }
 
-    private async Task WaitForTabClosedAsync(Uri uri, CancellationToken ct)
+    /// <summary>
+    /// <c>cscode --wait</c> (VS Code's): returns once every one of <paramref name="uris"/> is closed, or the window was closed (hidden) or the
+    /// session quits (<see cref="EndWaits"/>), so a git commit never waits for a window that is gone.
+    /// </summary>
+    private async Task WaitForTabsClosedAsync(IReadOnlyList<Uri> uris, CancellationToken ct)
     {
         var well = _shell.Well;
-        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var sub = well.TabsChanged.Subscribe(_ => { if (well.Find(uri) is null || _quitting) closed.TrySetResult(); });
-        if (well.Find(uri) is null) closed.TrySetResult();
-        await closed.Task.WaitAsync(ct).ConfigureAwait(true);
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool AllClosed() => uris.All(u => well.Find(u) is null);
+        using var sub = well.TabsChanged.Subscribe(_ => { if (AllClosed()) done.TrySetResult(); });
+        if (AllClosed() || _quitCommitted || _disposed || !_window.IsVisible) done.TrySetResult();
+        _waits.Add(done);
+        try { await done.Task.WaitAsync(ct).ConfigureAwait(true); }
+        finally { _waits.Remove(done); }
+    }
+
+    /// <summary>
+    /// The window closed (hidden or closed) or the quit is certain: every pending <c>--wait</c> is answered. Never when a quit only began: one the
+    /// user cancels at a save prompt, or one that is refused, leaves the window and the files open, and git must go on waiting (VS Code keeps
+    /// waiting when the window's close is cancelled).
+    /// </summary>
+    private void EndWaits()
+    {
+        foreach (var wait in _waits.ToArray()) wait.TrySetResult();
     }
 
     // ------------------------------------------------------------------ closing and quitting
@@ -418,12 +557,16 @@ public sealed partial class SessionWindowController : IDisposable
     /// <summary>
     /// Quit Session: persists the session with hot-exit backups of every dirty document (no prompts) and ends the process. With
     /// <c>files.hotExit</c> off (or <c>onExit</c> for a window close) dirty documents are prompted for instead, unless <paramref name="force"/>.
-    /// Documents beyond the backup size limit are never dropped silently: a forced quit is refused for them, a normal one prompts.
+    /// Unsaved changes are never dropped silently: those beyond the backup size limit, and every one in a session written by a newer CsCode (which
+    /// this version must not write, backups included), make a forced quit refuse and a normal one prompt. An eviction (<paramref name="evict"/>,
+    /// more than <c>maxResidentSessions</c>) never prompts: it is refused instead, and the hidden window stays hidden.
     /// </summary>
-    internal async Task<IpcMessage> QuitAsync(bool force, bool windowClose = false)
+    internal async Task<IpcMessage> QuitAsync(bool force, bool windowClose = false, bool evict = false, bool terminate = false)
     {
         _ui.AssertUiThread();
+        // A quit already under way (SIGTERM during the save prompts included: the host's watchdog writes the last snapshot and ends the process).
         if (_quitting) return IpcMessage.Reply();
+        force |= terminate;
         _quitting = true;
         var previousState = _host.State;
         _host.SetState(ProcessStates.Quitting);
@@ -431,26 +574,50 @@ public sealed partial class SessionWindowController : IDisposable
         {
             if (_host.IsUnclaimedSpare || !IsActive)
             {
+                await CommitQuitAsync().ConfigureAwait(true);
                 _window.CloseWithoutPrompt();
                 return IpcMessage.Reply();
             }
-            _wasResident = false;
+            // A quit the user asked for leaves the session out of the next login's restore (restoreOnLogin); SIGTERM (logout) does not.
+            _wasResident = terminate;
             var hotExit = _config?.Get(BackgroundSettings.HotExit, BackgroundSettings.HotExitOnExitAndWindowClose) ?? BackgroundSettings.HotExitOnExitAndWindowClose;
             var backUp = force || hotExit == BackgroundSettings.HotExitOnExitAndWindowClose || (hotExit == BackgroundSettings.HotExitOnExit && !windowClose);
             var dirty = _shell.Well.EditorTabs.Any(t => t.IsDirty);
-            if (!backUp && dirty) return await QuitWithPromptsAsync(previousState).ConfigureAwait(true);
-
-            var result = await PersistAsync().ConfigureAwait(true);
-            if (result.Skipped.Count > 0)
+            if (dirty && _readOnly && terminate)
             {
-                if (force)
+                // Nobody can be asked, and the newer CsCode's session must not be written: its unsaved changes go to a new session of this
+                // version (window-N) instead, as Save Session As would put them.
+                var copy = await _host.Lane.RunAsync(_host.TakeNewUnnamedSession).ConfigureAwait(true);
+                lock (_writeGate) _readOnly = false;
+                _backedUp.Clear();
+                UpdateSessionIdentity();
+                SessionTrace.Mark("host: unsaved changes of a newer session kept as " + copy);
+            }
+            if (dirty && _readOnly)
+            {
+                if (force || evict)
                 {
                     Undo(previousState);
-                    return IpcMessage.Failure($"session '{_host.SessionName}' has unsaved changes beyond the backup limit ({string.Join(", ", result.Skipped)}); not quitting");
+                    return IpcMessage.Failure($"session '{_host.SessionName}' was saved by a newer CsCode, so this version cannot back up its unsaved changes; not quitting");
                 }
+                return await QuitWithPromptsAsync(previousState).ConfigureAwait(true);
+            }
+            if (!backUp && dirty)
+            {
+                if (evict) return Refuse(previousState, NotEvicted);
+                return await QuitWithPromptsAsync(previousState).ConfigureAwait(true);
+            }
+
+            // SIGTERM: no bound on the backups (keeping the text beats the disk limit when nobody can be asked to save it).
+            var result = await PersistAsync(maxBackupBytes: terminate ? long.MaxValue : null).ConfigureAwait(true);
+            if (result.Skipped.Count > 0)
+            {
+                if (evict) return Refuse(previousState, NotEvicted);
+                if (force) return Refuse(previousState, $"session '{_host.SessionName}' has unsaved changes beyond the backup limit ({string.Join(", ", result.Skipped)}); not quitting");
                 Notify(MessageSeverity.Warning, "Some unsaved changes exceed the backup limit (cscode.sessions.maxBackupMb): save or discard them.");
                 return await QuitWithPromptsAsync(previousState).ConfigureAwait(true);
             }
+            await CommitQuitAsync().ConfigureAwait(true);
             _window.CloseWithoutPrompt();
             return IpcMessage.Reply();
         }
@@ -462,15 +629,80 @@ public sealed partial class SessionWindowController : IDisposable
         }
     }
 
+    private const string NotEvicted = "not evicted: quitting would have to ask about unsaved changes";
+
+    /// <summary>The quit is certain and the session's last write done (the host's SIGTERM watchdog leaves the rest to the orderly shutdown).</summary>
+    internal bool QuitCommitted => _quitCommitted;
+
+    /// <summary>SIGTERM (any thread): Quit Session with hot exit and no questions (<see cref="QuitAsync"/> with <c>terminate</c>).</summary>
+    internal async Task TerminateAsync()
+    {
+        var reply = await OnUiAsync(() => QuitAsync(force: true, terminate: true)).ConfigureAwait(false);
+        if (reply.Ok != true) SessionTrace.Mark("host: SIGTERM quit failed: " + reply.Error);
+    }
+
+    private IpcMessage Refuse(string previousState, string reason)
+    {
+        Undo(previousState);
+        return IpcMessage.Failure(reason);
+    }
+
     private async Task<IpcMessage> QuitWithPromptsAsync(string previousState)
     {
         await PersistAsync(includeBackups: false).ConfigureAwait(true);
-        _quitting = false; // ShowWindowAsync does nothing while quitting
-        await ShowWindowAsync().ConfigureAwait(true);
-        _quitting = true;
-        if (await _window.RequestExitAsync().ConfigureAwait(true)) return IpcMessage.Reply();
+        bool exit;
+        _asking = true; // the window that asks is shown (hello says shown meanwhile), and shows that arrive go ahead
+        QuitPhaseChanged();
+        try
+        {
+            await ShowWindowAsync().ConfigureAwait(true);
+            exit = await _window.RequestExitAsync().ConfigureAwait(true);
+        }
+        finally { _asking = false; }
+        if (exit)
+        {
+            // Every document was saved or its changes discarded: the autosave's backups of them must not bring "Don't Save" text back next time
+            // (VS Code discards its backups after the shutdown prompts too). A newer CsCode's backups are never touched, nor those of remote
+            // documents still waiting for their connection (nobody was asked about them).
+            await CommitQuitAsync(discardBackups: !_readOnly).ConfigureAwait(true);
+            return IpcMessage.Reply();
+        }
         Undo(_window.IsVisible ? ProcessStates.Shown : previousState);
         return IpcMessage.Failure("the quit was cancelled");
+    }
+
+    /// <summary>
+    /// The quit is certain (the window closes next, or has just closed): no write of this session may follow, so it is sealed and its lock released
+    /// now, before the language servers and the rest shut down (seconds, with a slow server). Hello says quitting from here on (a quit with save
+    /// prompts showed the window, which made it say shown), so a launch of the session meanwhile starts it afresh, instead of showing a window
+    /// that is closing or taking this process for a wedged owner and opening a copy. Pending <c>--wait</c>s are answered: the window closes.
+    /// <paramref name="discardBackups"/>: after the save prompts.
+    /// </summary>
+    private async Task CommitQuitAsync(bool discardBackups = false)
+    {
+        _quitCommitted = true;
+        _host.SetState(ProcessStates.Quitting);
+        EndWaits();
+        QuitPhaseChanged();
+        var name = _host.SessionName;
+        var remote = name is null ? default : PendingRemoteBackups(name);
+        try
+        {
+            // On the lane, after any write queued before: it is the last thing done to the session's files.
+            await _host.Lane.RunAsync(() =>
+            {
+                lock (_writeGate) _sealed = true;
+                if (!discardBackups || name is null) return;
+                // Only the backups of remote documents that wait for their connection stay (written under this name if they are not yet).
+                if (remote.Write.Count == 0 && remote.Keep.Count == 0) _host.Store.Backups.DeleteAll(name);
+                else _host.Store.Backups.Write(name, remote.Write.Select(e => e.ToEntry()).ToArray(), remote.Keep, long.MaxValue);
+            }).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException)
+        {
+            lock (_writeGate) _sealed = true;
+        }
+        finally { _host.ReleaseSessionLock(); }
     }
 
     private void Undo(string state)
@@ -479,6 +711,9 @@ public sealed partial class SessionWindowController : IDisposable
         _wasResident = true;
         _host.SetState(state);
         _autosave.MarkDirty();
+        UpdateNeedsPrompt();
+        QuitPhaseChanged();
+        if (_pendingRemote.Count > 0 && !_disposed) _ = RestoreRemoteBackupsAsync(); // the quit stopped it
     }
 
     // ------------------------------------------------------------------ hidden-session policy
@@ -487,17 +722,27 @@ public sealed partial class SessionWindowController : IDisposable
     {
         if (_disposed || _window.IsVisible) return;
         foreach (var tab in _shell.Well.Tabs) tab.DisposeView(); // view state is captured first; the active tabs come back on show
+        var monitor = _sp.GetService<IMemoryMonitor>();
         _ = Task.Run(async () =>
         {
-            try
-            {
-                if (_sp.GetService<IMemoryMonitor>() is { } monitor) await monitor.TrimNowAsync(MemoryTrimLevel.Aggressive).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException) { /* a failing trimmable must not stop the process trim */ }
-            Interlocked.Exchange(ref _lastTrimWorkingSet, ProcessMemory.TrimNow());
+            Interlocked.Exchange(ref _lastTrimWorkingSet, await TrimHiddenProcessAsync(monitor).ConfigureAwait(false));
             Interlocked.Increment(ref _trims);
         });
     });
+
+    /// <summary>
+    /// One trim of a hidden session: the memory monitor's aggressive trim runs the trimmables, then compacts the heap (large object heap included)
+    /// and returns free pages to the OS (malloc_trim), as <see cref="IMemoryMonitor.TrimNowAsync"/> promises. A second, process-level trim after
+    /// it would only pause every thread twice for nothing. Without a monitor, or when it fails, the process-level trim alone. Returns the working set.
+    /// </summary>
+    internal static async Task<long> TrimHiddenProcessAsync(IMemoryMonitor? monitor, Func<long>? processTrim = null)
+    {
+        processTrim ??= ProcessMemory.TrimNow;
+        if (monitor is null) return processTrim();
+        try { await monitor.TrimNowAsync(MemoryTrimLevel.Aggressive).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { return processTrim(); } // the process still gives its memory back
+        return Environment.WorkingSet;
+    }
 
     private void StopServersFromTimer()
     {
@@ -540,7 +785,8 @@ public sealed partial class SessionWindowController : IDisposable
             var me = new ResidentProcess(Environment.ProcessId, "", _host.SessionName, ProcessStates.Hidden, _host.LastShown, IsDebugging(), null, true);
             foreach (var pid in ResidentPolicy.SelectEvictions(others.Append(me), max, keepPid: Environment.ProcessId))
             {
-                try { await IpcClient.RequestAsync(_host.Runtime.EndpointOf(pid), new IpcMessage { Type = IpcVerbs.Quit }, IpcClient.DefaultConnectTimeout, TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
+                // An eviction: a session that would have to ask the user anything refuses instead of popping its window up.
+                try { await IpcClient.RequestAsync(_host.Runtime.EndpointOf(pid), new IpcMessage { Type = IpcVerbs.Quit, Evict = true }, IpcClient.DefaultConnectTimeout, TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
                 catch (IpcException) { /* it went away or is wedged: nothing to do */ }
             }
         }
@@ -602,6 +848,8 @@ public sealed partial class SessionWindowController : IDisposable
         if (_disposed) return;
         _window.Closed -= OnWindowClosed;
         _disposed = true;
+        EndWaits();
+        QuitPhaseChanged();
         _policy.Dispose();
         _autosave.Dispose();
         _statusItem?.Dispose();

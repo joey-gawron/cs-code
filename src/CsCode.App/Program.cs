@@ -17,6 +17,7 @@ internal static class Program
     {
         // ssh runs `cscode --askpass "<prompt>"` (SSH_ASKPASS) during a remote connection: answer it through the running GUI and exit.
         if (args is ["--askpass", ..]) return CsCode.Remote.Askpass.AskpassClient.Run(string.Join(' ', args.Skip(1)), Console.Out, Console.Error);
+        AppStartup.NormalizeEnvironment(); // first: every path below derives from CSCODE_HOME, and the processes started inherit it
         AppStartup.ConfigureRuntime();
         var options = CommandLineOptions.Parse(args);
         if (options.ShowHelp) { Console.WriteLine(CommandLineOptions.HelpText); return 0; }

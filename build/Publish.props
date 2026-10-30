@@ -22,4 +22,7 @@
 
   <Import Project="NuGetRuntimePacks.props" />
 
+  <!-- The pack versions a publish uses are pinned (also imported by CsCode.Server.csproj, which this publish builds and ships). -->
+  <Import Project="PinnedRuntimePacks.props" />
+
 </Project>

@@ -15,6 +15,23 @@ public static class AppStartup
     public static void ConfigureRuntime() => GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
 
     /// <summary>
+    /// A relative <c>CSCODE_HOME</c> (a portable install started as <c>CSCODE_HOME=portable cscode</c>) is made absolute against the working directory,
+    /// once, before anything reads it: the launcher, the session processes it starts (in the user's home directory) and every path derived from
+    /// it (settings, sessions, the runtime directory) then mean the same directory. Without this the launcher and its session process each read a
+    /// different directory, and the launcher waited 30 s for a process it could not see.
+    /// </summary>
+    public static void NormalizeEnvironment()
+    {
+        var home = Environment.GetEnvironmentVariable(CsCode.Platform.AppPaths.HomeEnvironmentVariable);
+        if (AbsoluteHome(home, Environment.CurrentDirectory) is { } absolute)
+            Environment.SetEnvironmentVariable(CsCode.Platform.AppPaths.HomeEnvironmentVariable, absolute);
+    }
+
+    /// <summary>The absolute form of a relative <paramref name="home"/>; null when there is nothing to change.</summary>
+    internal static string? AbsoluteHome(string? home, string workingDirectory) =>
+        string.IsNullOrEmpty(home) || Path.IsPathFullyQualified(home) ? null : Path.GetFullPath(home, workingDirectory);
+
+    /// <summary>
     /// Builds the container on a pool thread and resolves there the services whose constructors read files synchronously (settings, state and
     /// keybindings read their small files once, when constructed; docs/PLATFORM.md), so the UI thread never waits for the disk. The caller creates
     /// the window on the UI thread once this completes. A resolution failure faults the task (the app then shows its crash window).

@@ -13,8 +13,14 @@ public sealed record ResidentProcess(
     long? WorkingSetBytes,
     bool Responsive)
 {
+    /// <summary>Quitting it now would ask the user something (hello's <c>needsPrompt</c>): never evicted.</summary>
+    public bool NeedsPrompt { get; init; }
+
     public bool IsSpare => Responsive && State == ProcessStates.Spare;
     public bool OwnsSession(string name) => Responsive && string.Equals(Session, name, StringComparison.Ordinal) && State != ProcessStates.Quitting;
+
+    /// <summary>Its session is <paramref name="name"/>, but it is quitting (it may still hold the session's lock for a moment).</summary>
+    public bool IsLeaving(string name) => Responsive && string.Equals(Session, name, StringComparison.Ordinal) && State == ProcessStates.Quitting;
 }
 
 /// <summary>
@@ -46,7 +52,10 @@ public static class ResidentDiscovery
             var hello = IpcClient.Request(endpoint, new IpcMessage { Type = IpcVerbs.Hello, ProtocolVersion = IpcMessage.ProtocolVersionCurrent }, timeout, timeout);
             if (hello.Ok == false) return new ResidentProcess(pid, endpoint, null, ProcessStates.Starting, null, false, null, Responsive: false);
             return new ResidentProcess(hello.Pid ?? pid, endpoint, hello.Session, hello.State ?? ProcessStates.Starting,
-                hello.LastShownUnixMs is { } ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null, hello.Debugging ?? false, hello.WorkingSetBytes, Responsive: true);
+                hello.LastShownUnixMs is { } ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null, hello.Debugging ?? false, hello.WorkingSetBytes, Responsive: true)
+            {
+                NeedsPrompt = hello.NeedsPrompt ?? false,
+            };
         }
         catch (IpcException ex) when (ex.Failure is IpcFailure.NoEndpoint) { return null; }
         catch (IpcException ex) when (ex.Failure is IpcFailure.WrongOwner) { return null; }

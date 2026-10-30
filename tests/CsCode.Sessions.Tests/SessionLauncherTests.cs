@@ -108,7 +108,7 @@ public class SessionLauncherTests
         using var rt = new TestRuntime();
         using var spawner = new FakeSpawner(rt.Runtime);
         rt.Store.Save(new SessionDocument { Name = "work" });
-        using var held = FileLock.TryAcquire(rt.Runtime.SessionLockPath("work")); // its (wedged) owner holds the lock
+        using var held = FileLock.TryAcquire(rt.Store.LockPathOf("work")); // its (wedged) owner holds the lock
         using var wedged = new FakeHost(rt.Runtime, "work", ProcessStates.Shown, pid: Environment.ProcessId) { Wedged = true };
         var error = new StringWriter();
         var clock = Stopwatch.StartNew();
@@ -120,6 +120,112 @@ public class SessionLauncherTests
         var start = Assert.Single(spawner.Spawned, a => !a.Contains("--spare"));
         Assert.Equal(["--host", "--session", "window-1", "--seed-from", "work", "--unnamed"], start);
         Assert.Contains("does not respond", error.ToString());
+    }
+
+    [Fact]
+    public async Task A_session_whose_process_is_quitting_is_started_afresh_once_it_lets_go_not_copied()
+    {
+        // sessions-3: the quitting owner still held the lock (its final save, a slow language server's shutdown): the launcher took it for a
+        // wedged one and opened a copy of the session, with a false "does not respond" warning.
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        rt.Store.Save(new SessionDocument { Name = "work" });
+        var held = FileLock.TryAcquire(rt.Store.LockPathOf("work"))!;
+        using var leaving = new FakeHost(rt.Runtime, "work", ProcessStates.Quitting);
+        var error = new StringWriter();
+        _ = Task.Run(async () => { await Task.Delay(400); held.Dispose(); }); // its last save is done
+
+        var outcome = await new SessionLauncher(rt.Runtime, rt.Store, new LaunchSettings(), spawner, new StringWriter(), error,
+            new LauncherTimeouts { Handshake = TimeSpan.FromMilliseconds(300), ShowReply = TimeSpan.FromSeconds(5), StartHello = TimeSpan.FromSeconds(5), QuitWait = TimeSpan.FromSeconds(10) })
+            .RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" });
+
+        Assert.Equal(0, outcome.ExitCode);
+        Assert.Equal(["--host", "--session", "work"], Assert.Single(spawner.Spawned));
+        Assert.DoesNotContain("does not respond", error.ToString());
+        held.Dispose();
+    }
+
+    [Fact]
+    public async Task A_session_an_older_build_still_holds_in_the_runtime_directory_is_awaited_never_given_a_second_writer()
+    {
+        // sessions-7: after an upgrade, a process of the older build is in the final save of its quit; it holds only <runtime>/locks/work.lock.
+        // The launcher saw the session as free and started a second writer next to it.
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        rt.Store.Save(new SessionDocument { Name = "work" });
+        var older = FileLock.TryAcquire(rt.Runtime.LegacySessionLockPath("work"))!;
+        using var leaving = new FakeHost(rt.Runtime, "work", ProcessStates.Quitting);
+        var error = new StringWriter();
+        _ = Task.Run(async () => { await Task.Delay(400); older.Dispose(); }); // its last save is done
+
+        var clock = Stopwatch.StartNew();
+        var outcome = await new SessionLauncher(rt.Runtime, rt.Store, new LaunchSettings(), spawner, new StringWriter(), error,
+            new LauncherTimeouts { Handshake = TimeSpan.FromMilliseconds(300), ShowReply = TimeSpan.FromSeconds(5), StartHello = TimeSpan.FromSeconds(5), QuitWait = TimeSpan.FromSeconds(10) })
+            .RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" });
+
+        Assert.Equal(0, outcome.ExitCode);
+        Assert.True(clock.ElapsedMilliseconds >= 350, "the session was started while the older process still held it");
+        Assert.Equal(["--host", "--session", "work"], Assert.Single(spawner.Spawned));
+        Assert.DoesNotContain("does not respond", error.ToString());
+        older.Dispose();
+    }
+
+    [Fact]
+    public async Task A_data_directory_that_cannot_hold_locks_falls_back_at_once_instead_of_waiting()
+    {
+        // sessions-7: a read-only data directory (a read-only portable CSCODE_HOME) made every launch wait 15 s for the launcher lock, then start
+        // a process that refused with "owned by another CsCode process": no window at all. Now the launcher says background mode is unavailable
+        // (exit 2: opening a window runs it in the launcher's process, as with an unusable runtime directory).
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        var ro = FileLockTests.ReadOnlyDirectory(rt.Store.SessionsDir);
+        if (ro is null) Assert.Skip("this user can write into a mode 0500 directory");
+        try
+        {
+            var error = new StringWriter();
+            var clock = Stopwatch.StartNew();
+            var outcome = await new SessionLauncher(rt.Runtime, rt.Store, new LaunchSettings(), spawner, new StringWriter(), error)
+                .RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" }); // the default 15 s launcher-lock wait
+
+            Assert.Equal(2, outcome.ExitCode);
+            Assert.True(clock.ElapsedMilliseconds < 5000, $"the launcher took {clock.ElapsedMilliseconds} ms");
+            Assert.Empty(spawner.Spawned);
+            Assert.Contains("background mode unavailable", error.ToString());
+        }
+        finally { FileLockTests.MakeWritable(ro); }
+    }
+
+    [Fact]
+    public async Task A_quitting_process_that_keeps_the_session_too_long_counts_as_wedged()
+    {
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        rt.Store.Save(new SessionDocument { Name = "work" });
+        using var held = FileLock.TryAcquire(rt.Store.LockPathOf("work"));
+        using var leaving = new FakeHost(rt.Runtime, "work", ProcessStates.Quitting);
+        var error = new StringWriter();
+
+        var outcome = await Launcher(rt, spawner, error: error).RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" }); // QuitWait 1 s
+
+        Assert.Equal(0, outcome.ExitCode);
+        Assert.Equal(["--host", "--session", "window-1", "--seed-from", "work", "--unnamed"], Assert.Single(spawner.Spawned));
+        Assert.Contains("does not respond", error.ToString());
+    }
+
+    [Fact]
+    public async Task A_show_that_finds_the_session_quitting_opens_it_afresh()
+    {
+        // sessions-3: a show that reached a quitting process replied OK and nothing appeared.
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        using var closing = new FakeHost(rt.Runtime, "work", ProcessStates.Shown) { QuitsBeforeShow = true };
+
+        var outcome = await Launcher(rt, spawner).RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" });
+
+        Assert.Equal(0, outcome.ExitCode);
+        var fresh = Assert.Single(spawner.Hosts, h => h.Session == "work");
+        Assert.Equal(fresh.Pid, outcome.TargetPid);
+        Assert.Contains(fresh.Received, m => m.Type == IpcVerbs.Show);
     }
 
     [Fact]
@@ -164,6 +270,7 @@ public class SessionLauncherTests
         var deadline = Stopwatch.StartNew();
         while (!a.QuitRequested && deadline.ElapsedMilliseconds < 3000) await Task.Delay(10);
         Assert.True(a.QuitRequested, "the least recently shown hidden session was asked to quit");
+        Assert.True(Assert.Single(a.Received, m => m.Type == IpcVerbs.Quit).Evict); // sessions-10: an eviction, refused rather than prompting
         Assert.False(b.QuitRequested);
         Assert.Equal("c", spare.Session);
     }

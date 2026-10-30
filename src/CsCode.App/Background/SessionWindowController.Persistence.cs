@@ -4,6 +4,7 @@ using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Editor;
+using CsCode.Editor.Documents;
 using CsCode.Sessions;
 using CsCode.Ui.Threading;
 
@@ -12,7 +13,7 @@ namespace CsCode.App.Background;
 public sealed partial class SessionWindowController
 {
     /// <summary>An immutable snapshot taken on the UI thread; turned into JSON and files on the lane.</summary>
-    private sealed record Captured(
+    internal sealed record Captured(
         long Seq,
         string Name,
         bool IsUnnamed,
@@ -23,10 +24,23 @@ public sealed partial class SessionWindowController
         LayoutSnapshot Layout,
         SessionWindow? Window,
         DateTimeOffset LastUsed,
-        IReadOnlyList<BackupEntry> Changed,
+        IReadOnlyList<ChangedText> Changed,
         IReadOnlyList<string> Keep,
         bool IncludeBackups,
         long MaxBackupBytes);
+
+    /// <summary>
+    /// A dirty document's text to back up, as captured on the UI thread: the document's immutable snapshot (O(1): it shares the rope), whose text
+    /// is materialised on the lane. Only documents that are not editor buffers (none in the app) give their text up front.
+    /// </summary>
+    internal sealed record ChangedText(string Id, string Uri, DocumentSnapshot? Snapshot, string? Text, string Encoding, string EndOfLine, string? LanguageId, int DocumentVersion)
+    {
+        /// <summary>A remote document's backup that waits for its connection (no tab): written again only under a new session name.</summary>
+        public bool IsPendingRemote { get; init; }
+
+        // GetText(0, Length), not GetText(): the snapshot caches its whole text, and it stays the document's latest one while the user is idle.
+        public BackupEntry ToEntry() => new(Id, Uri, Text ?? Snapshot!.GetText(0, Snapshot.Length), Encoding, EndOfLine, LanguageId, DocumentVersion);
+    }
 
     private static readonly BackupWriteResult NothingWritten = new([], [], 0, false);
 
@@ -60,7 +74,11 @@ public sealed partial class SessionWindowController
             if (_tabSubs.ContainsKey(tab) || tab.IsDisposed) continue;
             var store = new DisposableStore();
             var doc = tab.Doc;
-            store.Add(tab.DirtyStateChanged.Subscribe(_ => _autosave.MarkDirty()));
+            store.Add(tab.DirtyStateChanged.Subscribe(_ =>
+            {
+                _autosave.MarkDirty();
+                UpdateNeedsPrompt();
+            }));
             // Typing into a dirty document: one volatile write per keystroke (the saver arms its timer once per save).
             store.Add(doc.Changed.Subscribe(_ => { if (doc.IsDirty) _autosave.MarkDirty(); }));
             _tabSubs[tab] = store;
@@ -68,17 +86,18 @@ public sealed partial class SessionWindowController
     }
 
     /// <summary>
-    /// The session as it is now (UI thread, cheap): tab list, view states, the layout model, bounds, and the text of dirty documents whose version
-    /// changed since their last backup (unchanged ones are only listed as "keep").
+    /// The session as it is now (UI thread, cheap): tab list, view states, the layout model, bounds, and a snapshot of each dirty document whose
+    /// version changed since its last backup (unchanged ones are only listed as "keep"). No document text is built here: a snapshot shares the
+    /// buffer's rope, and its text is materialised on the lane.
     /// </summary>
-    private Captured Capture(bool includeBackups)
+    internal Captured Capture(bool includeBackups, long? maxBackupBytes = null)
     {
         _ui.AssertUiThread();
         var well = _shell.Well;
         var factory = _shell.Factory;
         var groups = factory.DocumentGroups().ToList();
         var editors = new List<SessionEditor>();
-        var changed = new List<BackupEntry>();
+        var changed = new List<ChangedText>();
         var keep = new List<string>();
         var order = 0;
         foreach (var tab in well.EditorTabs)
@@ -92,7 +111,13 @@ public sealed partial class SessionWindowController
             {
                 backupId = HotExitBackupStore.IdFor(uri);
                 if (_backedUp.TryGetValue(backupId, out var version) && version == doc.Version) keep.Add(backupId);
-                else changed.Add(new BackupEntry(backupId, uri, doc.GetText(), doc.EncodingName, doc.EndOfLine, doc.IsUntitled ? doc.LanguageId : null, doc.Version));
+                else
+                {
+                    // The snapshot is the document's latest published one (published before every change event), so it is at doc.Version.
+                    var snapshot = doc is EditorDocument editor ? editor.Snapshot() : null;
+                    changed.Add(new ChangedText(backupId, uri, snapshot, snapshot is null ? doc.GetText() : null, doc.EncodingName, doc.EndOfLine, doc.LanguageId,
+                        snapshot?.Version ?? doc.Version));
+                }
             }
             var group = factory.GroupOf(tab) is { } g ? groups.IndexOf(g) : 0;
             var view = tab.Controller?.GetViewState() ?? tab.SavedViewState;
@@ -102,11 +127,42 @@ public sealed partial class SessionWindowController
                 LanguageId = doc.IsUntitled ? doc.LanguageId : null, ViewState = view is null ? null : ToSession(view), BackupId = backupId,
             });
         }
+        // Backups of remote documents that wait for their connection are kept as they are (written again only under a new name).
+        var remote = PendingRemoteBackups(_host.SessionName ?? "");
+        keep.AddRange(remote.Keep.Where(id => !keep.Contains(id) && !changed.Any(c => c.Id == id)));
+        changed.AddRange(remote.Write.Where(r => !keep.Contains(r.Id) && !changed.Any(c => c.Id == r.Id)));
         var captured = new Captured(Interlocked.Increment(ref _captureSeq), _host.SessionName ?? "", _host.IsUnnamed, _wasResident,
             _workspace?.Folders.Select(f => f.ToString()).ToArray() ?? [], editors, well.ActiveEditor?.Uri.ToString(), _shell.Layout.Capture(), CurrentBounds(),
-            _window.IsVisible ? DateTimeOffset.UtcNow : _host.LastShown ?? DateTimeOffset.UtcNow, changed, keep, includeBackups, BackgroundSettings.MaxBackupBytes(_config));
+            _window.IsVisible ? DateTimeOffset.UtcNow : _host.LastShown ?? DateTimeOffset.UtcNow, changed, keep, includeBackups, maxBackupBytes ?? BackgroundSettings.MaxBackupBytes(_config));
         _lastCaptured = captured;
+        UpdateNeedsPrompt();
         return captured;
+    }
+
+    /// <summary>
+    /// The backups of remote documents still waiting for their connection, as a write of session <paramref name="name"/> must leave them (UI thread):
+    /// kept when they are on disk under that name already, otherwise to be written there (after a rename, or in a copy seeded from another
+    /// session, whose directory they were read from). They have no tab, so this is the only place that keeps them.
+    /// </summary>
+    private (IReadOnlyList<ChangedText> Write, IReadOnlyList<string> Keep) PendingRemoteBackups(string name)
+    {
+        if (_pendingRemote.Count == 0) return ([], []);
+        if (string.Equals(Volatile.Read(ref _pendingRemoteOnDisk), name, StringComparison.Ordinal)) return ([], _pendingRemote.Select(b => b.Info.Id).ToArray());
+        return (_pendingRemote.Select(b => new ChangedText(b.Info.Id, b.Info.Uri, null, b.Text, b.Info.Encoding, b.Info.EndOfLine, b.Info.LanguageId, b.Info.DocumentVersion)
+            { IsPendingRemote = true }).ToArray(), []);
+    }
+
+    /// <summary>
+    /// Whether quitting now would have to ask the user (UI thread; answered by hello without the UI thread): dirty documents that cannot be backed
+    /// up because <c>files.hotExit</c> is off, the last backup skipped some (over <c>cscode.sessions.maxBackupMb</c>), or the session was written
+    /// by a newer CsCode. Such a session is never evicted.
+    /// </summary>
+    private void UpdateNeedsPrompt()
+    {
+        if (_disposed) return;
+        var dirty = _shell.Well.EditorTabs.Any(t => t.IsDirty);
+        var hotExitOff = _config?.Get(BackgroundSettings.HotExit, BackgroundSettings.HotExitOnExitAndWindowClose) == BackgroundSettings.HotExitOff;
+        _host.NeedsPrompt = dirty && (hotExitOff || _readOnly || Volatile.Read(ref _skippedBackups) > 0);
     }
 
     private void CaptureBounds()
@@ -122,12 +178,15 @@ public sealed partial class SessionWindowController
         return (_normalBounds ?? new SessionWindow(_window.Position.X, _window.Position.Y, _window.Width, _window.Height, "normal")) with { State = state };
     }
 
-    /// <summary>Writes a snapshot (lane). Snapshots are written in capture order: an older one arriving late is dropped.</summary>
+    /// <summary>
+    /// Writes a snapshot (lane). Snapshots are written in capture order: an older one arriving late is dropped. Nothing is written once the quit
+    /// committed (the lock is about to be released), nor for a session a newer CsCode wrote.
+    /// </summary>
     private BackupWriteResult Write(Captured c)
     {
         lock (_writeGate)
         {
-            if (c.Seq <= _writtenSeq || string.IsNullOrEmpty(c.Name) || _readOnly) return NothingWritten;
+            if (c.Seq <= _writtenSeq || string.IsNullOrEmpty(c.Name) || _readOnly || _sealed) return NothingWritten;
             _writtenSeq = c.Seq;
         }
         var doc = new SessionDocument
@@ -141,9 +200,13 @@ public sealed partial class SessionWindowController
             Interlocked.CompareExchange(ref _lastCaptured, null, c);
             return NothingWritten;
         }
-        var result = _host.Store.Backups.Write(c.Name, c.Changed, c.Keep, c.MaxBackupBytes);
+        var result = _host.Store.Backups.Write(c.Name, c.Changed.Select(e => e.ToEntry()).ToArray(), c.Keep, c.MaxBackupBytes);
+        Volatile.Write(ref _skippedBackups, result.Skipped.Count);
+        // The pending remote backups are under this name now (all of them, or they are written again next time).
+        var remote = c.Changed.Where(e => e.IsPendingRemote).ToArray();
+        if (remote.Length > 0 && remote.All(e => result.Written.Contains(e.Id))) Volatile.Write(ref _pendingRemoteOnDisk, c.Name);
         var live = new HashSet<string>(c.Keep, StringComparer.Ordinal);
-        foreach (var entry in c.Changed.Where(e => result.Written.Contains(e.Id)))
+        foreach (var entry in c.Changed.Where(e => !e.IsPendingRemote && result.Written.Contains(e.Id)))
         {
             _backedUp[entry.Id] = entry.DocumentVersion;
             live.Add(entry.Id);
@@ -175,9 +238,9 @@ public sealed partial class SessionWindowController
     }
 
     /// <summary>Captures now and writes on the lane (quit).</summary>
-    private async Task<BackupWriteResult> PersistAsync(bool includeBackups = true)
+    private async Task<BackupWriteResult> PersistAsync(bool includeBackups = true, long? maxBackupBytes = null)
     {
-        var captured = Capture(includeBackups);
+        var captured = Capture(includeBackups, maxBackupBytes);
         return await _host.Lane.RunAsync(() => Write(captured)).ConfigureAwait(true);
     }
 
