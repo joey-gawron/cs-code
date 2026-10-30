@@ -259,9 +259,10 @@ public sealed record DapMessage
 
 public sealed record DapInitializeArguments
 {
-    public string? ClientId { get; init; }
+    // DAP spells these two "ID", not camelCase "Id"; strict adapters (CodeLLDB) refuse an initialize without "adapterID"
+    [JsonPropertyName("clientID")] public string? ClientId { get; init; }
     public string? ClientName { get; init; }
-    public string AdapterId { get; init; } = "";
+    [JsonPropertyName("adapterID")] public string AdapterId { get; init; } = "";
     public string? Locale { get; init; }
     public bool? LinesStartAt1 { get; init; }
     public bool? ColumnsStartAt1 { get; init; }

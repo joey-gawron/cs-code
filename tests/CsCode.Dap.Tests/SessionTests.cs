@@ -26,6 +26,20 @@ public class SessionHandshakeTests
     }
 
     [Fact]
+    public async Task Initialize_sends_the_spec_names_clientID_and_adapterID()
+    {
+        var h = new SessionHarness();
+        h.Create(Cfg.Make());
+        await using var _ = h;
+        await h.Session.StartAsync(Ct);
+        var args = h.Adapter.RequestsOf("initialize").Single().Arguments;
+        Assert.Equal("cscode", args.GetProperty("clientID").GetString());
+        Assert.Equal(Cfg.Make().Type, args.GetProperty("adapterID").GetString());
+        Assert.False(args.TryGetProperty("adapterId", out var _adapterId));
+        Assert.False(args.TryGetProperty("clientId", out var _clientId));
+    }
+
+    [Fact]
     public async Task Without_breakpoints_only_initialize_launch_filters_and_configurationDone_are_sent()
     {
         await using var h = await SessionHarness.StartAsync();
