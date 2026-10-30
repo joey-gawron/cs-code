@@ -381,6 +381,9 @@ next one). The blocking provider never ran on the UI thread (handling p99 14 ms,
 Avalonia, no Skia): **within budget** — diagnostics flood (2,000 publishes/s × 500): dispatcher p99 0.45 ms, max 1.6 ms, typing p99 0.30 ms;
 emitter fan-out (2,000 fires/s to 1,000 subscribers = 5.9M deliveries, coalesced to 5.1M UI jobs): p99 4.5 ms, max 13 ms, typing p99 13 ms.
 
+A later rerun at load 7–12 (23:04–23:06): baseline best attempt dispatcher p99 29 ms / max 39 ms with typing p99 7.5 ms (typing within budget);
+diagnostics flood typing p99 14.8 ms, dispatcher p99 46.6 ms — the dispatcher p99 still misses with nothing hostile running.
+
 To do on a quiet machine (and on a desktop, where Skia rasterises on the render thread): rerun `--filter AppHostileMatrixTests` with
 `/proc/loadavg` < 4, and look at why the baseline sees 4 gen2 collections a second (finding 3).
 
