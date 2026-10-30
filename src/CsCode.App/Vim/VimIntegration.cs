@@ -474,9 +474,10 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
 
     /// <summary>
     /// The read a put has to wait for: p / P (gp, ]p, Visual p...) put the unnamed register, which 'clipboard' unnamedplus / unnamed or
-    /// vim.useSystemClipboard make the clipboard register; while that register is being read (the window was just activated, the editor just
+    /// vim.useSystemClipboard make a clipboard register; while that register is being read (the window was just activated, the editor just
     /// focused, Vim just switched on), the put waits for the read instead of putting what was known before. Null: nothing to wait for (no read
-    /// in flight, or this one was already waited for as long as keys wait).
+    /// in flight, or this one was already waited for as long as keys wait). Without those options a plain p never waits: it puts Vim's own
+    /// register, and a slow clipboard owner must not delay it.
     /// </summary>
     private Task? PendingClipboardRead(VimView v, string? text)
     {
