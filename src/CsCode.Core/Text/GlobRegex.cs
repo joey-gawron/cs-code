@@ -203,6 +203,9 @@ public sealed class GlobRegex
 
         var parser = new Parser(pattern, start, end);
         var ast = parser.ParseAll();
+        // In a regex "^a|b$" the anchors bind to one branch each; stripping them would mean "^(a|b)$". No translator emits that: refuse it.
+        if ((anchoredStart || anchoredEnd) && parser.TopLevelAlternation)
+            throw new ArgumentException($"An anchored top-level alternation is not supported (group it): \"{pattern}\"", nameof(pattern));
         var builder = new Builder();
         builder.Emit(ast, parser.Classes);
         builder.Add(Op.Match);
@@ -350,7 +353,11 @@ public sealed class GlobRegex
     private sealed class Parser(string pattern, int start, int end)
     {
         private int _i = start;
+        private int _depth;
         public List<CharClass> Classes { get; } = new();
+
+        /// <summary>A '|' outside every group was seen.</summary>
+        public bool TopLevelAlternation { get; private set; }
 
         public Node ParseAll()
         {
@@ -366,6 +373,7 @@ public sealed class GlobRegex
             var first = ParseCat();
             if (_i >= end || pattern[_i] != '|') return first;
             var branches = new List<Node> { first };
+            if (_depth == 0) TopLevelAlternation = true;
             while (_i < end && pattern[_i] == '|')
             {
                 _i++;
@@ -416,7 +424,9 @@ public sealed class GlobRegex
                         if (_i + 1 < end && pattern[_i + 1] == ':') _i += 2;
                         else throw Error("Only (?:…) groups are supported");
                     }
+                    _depth++;
                     var inner = ParseAlt();
+                    _depth--;
                     if (_i >= end || pattern[_i] != ')') throw Error("Not enough )'s");
                     _i++;
                     return inner;

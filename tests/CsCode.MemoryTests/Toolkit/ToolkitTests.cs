@@ -135,8 +135,11 @@ public sealed class ToolkitTests
     {
         using var output = new TempDirectory("cscode-soak-test-");
         var leaked = new List<byte[]>();
+        // T56: a sample every 20 iterations, not after every one. Each sample is two compacting full collections of the WHOLE test process: 800 of
+        // them took 39 s in the full MemoryTests run (the heap left by the app tests), long enough for whatever earlier tests left running to move
+        // the process-wide live heap by more than the 1.4 KB/iteration this range allows. 21 exact live-heap samples fit the same slope in ~1 s.
         var report = await SoakRunner.RunAsync(Scenario.Create("leak", _ => leaked.Add(new byte[16 * 1024])),
-            new SoakOptions { Iterations = 400, WarmupIterations = 10, SampleInterval = TimeSpan.Zero, OutputDirectory = output.Path });
+            new SoakOptions { Iterations = 400, WarmupIterations = 10, SampleInterval = TimeSpan.FromHours(1), SampleEveryIterations = 20, OutputDirectory = output.Path });
         Assert.InRange(report.HeapPerIteration.Slope, 15 * 1024, 18 * 1024);
         Assert.True(report.HeapMbPerHour > 1);
         var ex = Assert.Throws<MemoryAssertionException>(() => report.AssertStable(new SoakThresholds { MaxHeapBytesPerIteration = 1024 }));
@@ -147,7 +150,7 @@ public sealed class ToolkitTests
         GC.KeepAlive(leaked);
 
         var flat = await SoakRunner.RunAsync(Scenario.Create("flat", _ => GC.KeepAlive(new byte[16 * 1024])),
-            new SoakOptions { Iterations = 400, WarmupIterations = 10, SampleInterval = TimeSpan.Zero, OutputDirectory = "" });
+            new SoakOptions { Iterations = 400, WarmupIterations = 10, SampleInterval = TimeSpan.FromHours(1), SampleEveryIterations = 20, OutputDirectory = "" });
         flat.AssertStable(new SoakThresholds { MaxHeapBytesPerIteration = 256, ThreadTolerance = 6, FdTolerance = 6 });
         Assert.Null(flat.CsvPath);
     }

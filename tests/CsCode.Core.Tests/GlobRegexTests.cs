@@ -184,6 +184,7 @@ public sealed class GlobRegexTests
     [InlineData(@"[z-a]")]
     [InlineData(@"[a-[b]]")]
     [InlineData(@"a\")]
+    [InlineData(@"^a|b$")]
     public void Constructs_outside_the_subset_are_refused_at_compile_time(string pattern)
     {
         Assert.ThrowsAny<ArgumentException>(() => GlobRegex.Compile(pattern));
