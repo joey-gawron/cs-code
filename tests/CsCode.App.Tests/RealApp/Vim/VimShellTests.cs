@@ -74,6 +74,37 @@ public class VimShellTests
         Assert.Equal(0, app.Vim.EngineCount);
     }
 
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task Write_all_save_as_reload_new_buffer_and_delete_buffer()
+    {
+        await using var app = await VimApp.StartAsync("one\n", settings: Quiet);
+        var first = app.Host.Files.Combine("test.txt");
+        app.Keys("x");
+        var second = await app.OpenAsync("two.txt", "two\n");
+        app.Keys("x");
+        await app.KeysAsync(":wa<CR>", 10);                               // every dirty editor
+        Assert.True(await RealAppHost.WaitFor(() => File.ReadAllText(first) == "ne\n" && File.ReadAllText(app.Host.Files.Combine("two.txt")) == "wo\n"));
+
+        app.Keys("x");
+        await app.KeysAsync(":e!<CR>", 10);                               // re-read: the change is gone
+        Assert.True(await RealAppHost.WaitFor(() => app.Text == "wo\n"), app.Describe());
+
+        await app.KeysAsync(":sav saved.txt<CR>", 10);                    // the buffer becomes the new file
+        Assert.True(await RealAppHost.WaitFor(() => File.Exists(app.Host.Files.Combine("saved.txt"))), "no saved.txt");
+        Assert.True(await RealAppHost.WaitFor(() => app.View.Document.Uri.LocalPath.EndsWith("saved.txt", StringComparison.Ordinal)), app.View.Document.Uri.ToString());
+
+        await app.KeysAsync(":enew<CR>", 10);
+        Assert.True(await RealAppHost.WaitFor(() => app.Well.EditorTabs.Count == 3 && app.Well.ActiveEditor!.Doc.IsUntitled));
+        await app.FocusAsync();
+        await app.KeysAsync(":bd<CR>", 10);                               // an untouched buffer closes without a prompt
+        Assert.True(await RealAppHost.WaitFor(() => app.Well.EditorTabs.Count == 2));
+        await app.FocusAsync();
+        app.Keys("x");
+        await app.KeysAsync(":x<CR>", 10);                                // write and close
+        Assert.True(await RealAppHost.WaitFor(() => app.Well.EditorTabs.Count == 1));
+        _ = second;
+    }
+
     /// <summary>
     /// Skipped: splitting itself fails in the shell (also View > Split Editor Right, without Vim): the document well's data template for editor
     /// tabs also matches the close-button presenters of Dock's tab strip (PART_ClosePresenter / PART_CompactClosePresenter), which then take an

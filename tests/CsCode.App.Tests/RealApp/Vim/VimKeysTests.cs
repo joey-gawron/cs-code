@@ -5,6 +5,7 @@ using AvaloniaEdit.Editing;
 using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.App.Vim;
+using CsCode.Core.Languages;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Editor.View;
@@ -300,5 +301,64 @@ public class VimKeysTests
         Assert.True(modal.TryGetClosedFold(25, out _, out _));
         app.Keys("zR");
         Assert.False(modal.TryGetClosedFold(25, out _, out _));
+    }
+
+    private sealed class UpperCaseFormatter : CsCode.Core.Languages.IDocumentFormattingProvider
+    {
+        public ValueTask<IReadOnlyList<TextEdit>?> FormatDocumentAsync(ITextDocument document, CsCode.Core.Languages.FormattingOptions options, CancellationToken ct) =>
+            ValueTask.FromResult<IReadOnlyList<TextEdit>?>(null);
+
+        public ValueTask<IReadOnlyList<TextEdit>?> FormatRangeAsync(ITextDocument document, TextRange range, CsCode.Core.Languages.FormattingOptions options, CancellationToken ct)
+        {
+            var text = document.GetText(range);
+            return ValueTask.FromResult<IReadOnlyList<TextEdit>?>([new TextEdit(range, text.ToUpperInvariant())]);
+        }
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task Language_hooks_comment_tokens_the_formatter_yank_flash_wrapping_and_mapping_timeouts()
+    {
+        await using var app = await VimApp.StartAsync("class C\n{\n    int x;\n}\n", "c.cs",
+            Quiet + ",\n\"vim.insertModeKeyBindings\": [{ \"before\": [\"j\", \"k\"], \"after\": [\"<Esc>\"] }]");
+        app.Keys("jjgcc");                                                 // the language configuration's line comment
+        Assert.Equal("class C\n{\n    // int x;\n}\n", app.Text);
+        app.Keys("u");
+
+        using (app.Host.Get<CsCode.Core.Languages.ILanguageFeatureRegistry>().Register<CsCode.Core.Languages.IDocumentFormattingProvider>(DocumentSelector.All, new UpperCaseFormatter()))
+        {
+            app.Keys("gg==");                                              // = goes to the language's formatter (asynchronously)
+            Assert.True(await RealAppHost.WaitFor(() => app.Text.StartsWith("CLASS C\n", StringComparison.Ordinal)), app.Describe());
+        }
+        app.Keys("u");
+        Assert.Equal("class C\n{\n    int x;\n}\n", app.Text);       // the formatter's edit is an undo step of its own
+
+        app.Keys("yiw");
+        Assert.NotNull(app.View.Modal.FlashedRange);                      // highlightedyank
+        Assert.True(await RealAppHost.WaitFor(() => app.View.Modal.FlashedRange is null, 3000));
+
+        app.Keys("Aab");                                                 // "jk" mapped to <Esc> in Insert mode: j waits for timeoutlen...
+        app.Keys("j");
+        Assert.Equal("-- INSERT --", app.ModeText);
+        app.Keys("k");                                                   // ...and jk is the mapping
+        Assert.Equal("-- NORMAL --", app.ModeText);
+        Assert.Equal("class Cab", app.Text.Split('\n')[0]);
+        app.Keys("Aj");                                                  // a lone j is typed once the timeout passes (real time, dispatcher timer)
+        Assert.True(await RealAppHost.WaitFor(() => app.Text.Split('\n')[0] == "class Cabj", 5000), app.Describe());
+        app.Keys("<Esc>");
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task Display_line_motions_follow_the_editors_word_wrap()
+    {
+        var longLine = string.Join(" ", Enumerable.Range(0, 120).Select(i => "word" + i));
+        await using var app = await VimApp.StartAsync(longLine + "\nnext\n", settings: Quiet + ",\n\"editor.wordWrap\": \"on\"");
+        var modal = app.View.Modal;
+        Assert.True(await RealAppHost.WaitFor(() => modal.DisplayRowsOf(0) > 1), "the long line did not wrap");
+        Assert.True(modal.WrapColumns > 0);
+        app.Keys("gj");                                                  // the next display row of the same line
+        Assert.Equal(0, app.Caret.Line);
+        Assert.True(app.Caret.Character > 0);
+        app.Keys("j");                                                   // j still moves by buffer lines
+        Assert.Equal(1, app.Caret.Line);
     }
 }
