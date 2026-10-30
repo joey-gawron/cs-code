@@ -16,7 +16,8 @@ public enum DirectoryOwner
 /// <summary>
 /// Where this user's CsCode processes meet: their IPC endpoints (one per process) and the tray lock. The session locks and the launcher lock are
 /// not here: they live with the data they protect (<see cref="SessionStore.LockPathOf"/>), so two launches that resolve different runtime
-/// directories (a shell without <c>XDG_RUNTIME_DIR</c>, <c>su -</c>, <c>env -i</c>) still cannot both own one session.
+/// directories (a shell without <c>XDG_RUNTIME_DIR</c>, <c>su -</c>, <c>env -i</c>) still cannot both own one session. Only the session locks of
+/// older builds are still here, taken and honoured for processes of such a build that outlive an upgrade (<see cref="LegacySessionLockPath"/>).
 /// <list type="bullet">
 /// <item>Linux: <c>$XDG_RUNTIME_DIR/cscode</c> (per-user tmpfs, cleared at logout); without it <c>/run/user/&lt;uid&gt;/cscode</c> when that directory
 /// exists (the same tmpfs: a shell that lost the variable still meets the desktop's processes); else <c>/tmp/cscode-&lt;uid&gt;</c>.</item>
