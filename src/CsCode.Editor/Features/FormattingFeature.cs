@@ -65,6 +65,9 @@ internal sealed class FormattingFeature : IFormattingFeature, IDisposable
         await FormatRangeAsync(selection, TimeSpan.FromSeconds(15)).ConfigureAwait(true);
     }
 
+    /// <summary>Formats a line range (the modal surface's = and gq); no-op without a formatter.</summary>
+    internal Task FormatLinesAsync(TextRange range) => _disposed || _v.Document.IsReadOnly ? Task.CompletedTask : FormatRangeAsync(range, TimeSpan.FromSeconds(15));
+
     private async Task FormatRangeAsync(TextRange range, TimeSpan timeout)
     {
         var doc = _v.Document;

@@ -106,6 +106,7 @@ public sealed class MainWindow : Window, IWindowChrome
         });
 
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
         AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
         AddHandler(GotFocusEvent, OnGotFocus, RoutingStrategies.Bubble | RoutingStrategies.Tunnel);
         _disposables.Add(_shell.ContextMenus.Attach(this));
@@ -181,8 +182,15 @@ public sealed class MainWindow : Window, IWindowChrome
             return;
         }
         if (_switcherActive && e.Key == Key.Escape) { HideSwitcher(commit: false); e.Handled = true; return; }
+        // Vim sees an editor's keys before the key bindings (it decides which are its own: docs/VIM.md, "Keys")
+        if (_shell.KeyInterceptor?.OnKeyDown(e) == true) { e.Handled = true; return; }
         if (!AvaloniaKeyMapper.TryMap(e.Key, e.KeyModifiers, out var stroke)) return;
         if (_shell.Keyboard.Handle(stroke) == KeyDispatch.Handled) e.Handled = true;
+    }
+
+    private void OnPreviewTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (_shell.KeyInterceptor?.OnTextInput(e) == true) e.Handled = true;
     }
 
     private void OnPreviewKeyUp(object? sender, KeyEventArgs e)

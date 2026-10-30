@@ -165,7 +165,8 @@ internal sealed class HighlightFeature : IThemeAware, ISettingsAware, IDisposabl
         public void Draw(TextView textView, DrawingContext context)
         {
             var ranges = owner._ranges;
-            if (ranges.Count == 0 || !textView.VisualLinesValid) return;
+            // a view with no height yet (a new split being laid out) has valid but no visual lines
+            if (ranges.Count == 0 || !textView.VisualLinesValid || textView.VisualLines.Count == 0) return;
             var palette = owner._v.Palette;
             var first = textView.VisualLines[0].FirstDocumentLine.Offset;
             var last = textView.VisualLines[^1].LastDocumentLine.EndOffset;

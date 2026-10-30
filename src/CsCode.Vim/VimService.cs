@@ -11,7 +11,7 @@ public interface IVimService
 {
     VimSession Session { get; }
 
-    /// <summary>True while Vim emulation is on (setting <c>vim.enabled</c>, or the last <c>vim.toggle</c>).</summary>
+    /// <summary>True while Vim emulation is on (settings <c>vim.enable</c> / <c>vim.enabled</c>, or the last <c>vim.toggle</c>).</summary>
     bool Enabled { get; }
 
     IEventSource<bool> EnabledChanged { get; }
@@ -48,7 +48,7 @@ public sealed class VimService : IVimService, IDisposable
         Session = session;
         _output = output;
         _configuration = _disposables.Add(new VimConfiguration(session, config, state, paths));
-        _disposables.Add(commands.Register(ToggleCommand, _ => Run(() => SetEnabled(!Enabled)), new CommandMetadata(ToggleCommand, "Toggle Vim Emulation", "Vim")));
+        _disposables.Add(commands.Register(ToggleCommand, _ => Run(() => SetEnabled(!Enabled)), new CommandMetadata(ToggleCommand, "Toggle Vim Mode", "Vim")));
         _disposables.Add(commands.Register(EnableCommand, _ => Run(() => SetEnabled(true)), new CommandMetadata(EnableCommand, "Enable Vim Emulation", "Vim")));
         _disposables.Add(commands.Register(DisableCommand, _ => Run(() => SetEnabled(false)), new CommandMetadata(DisableCommand, "Disable Vim Emulation", "Vim")));
         _disposables.Add(commands.Register(CheatSheetCommand, _ => Run(ShowCheatSheet), new CommandMetadata(CheatSheetCommand, "Show Vim Cheat Sheet", "Vim")));

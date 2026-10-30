@@ -19,6 +19,7 @@ using CsCode.Platform;
 using CsCode.Profiling;
 using CsCode.Remote;
 using CsCode.Ui;
+using CsCode.Vim;
 using CsCode.Ui.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -33,7 +34,7 @@ public sealed class WindowHolder
 }
 
 /// <summary>
-/// The composition root. <see cref="Build"/> registers the real modules (<c>AddCsCodeCore/Platform/Lsp/Dap/Editor/Profiling</c>), the shell
+/// The composition root. <see cref="Build"/> registers the real modules (<c>AddCsCodeCore/Platform/Lsp/Dap/Editor/Vim/Profiling</c>), the shell
 /// services and the Debug and Search/Settings panels, then lets the caller replace any registration (dev host, tests) through <c>configure</c>. There are deliberately no silent
 /// fallbacks here: a missing module registration surfaces as a resolution failure when the shell needs it.
 /// </summary>
@@ -48,6 +49,7 @@ public static class AppServices
         services.AddCsCodeLsp();
         services.AddCsCodeDap();
         services.AddCsCodeEditor();
+        services.AddCsCodeVim(); // engine + session; the shell's adapter (Vim/VimIntegration) connects it to the editor views
         services.AddCsCodeProfiling();
         services.AddCsCodeShell(args);
         services.AddCsCodeDebugPanels();

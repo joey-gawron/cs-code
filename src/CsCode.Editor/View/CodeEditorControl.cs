@@ -37,7 +37,8 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     private readonly List<IDisposable> _components = new();
     private TextMateColorizer? _colorizer;
     private ScopeStyleTable? _styleTable;
-    private bool _disposed;
+    private EditorModalSurface? _modal;
+    private bool _disposed, _disposing;
 
     internal CodeEditorControl(EditorViewFactory factory, EditorDocument document)
     {
@@ -106,6 +107,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
             Editor.PointerWheelChanged -= OnPointerWheel;
         }));
         factory.Register(this);
+        factory.NotifyOpened(this);
     }
 
     public EditorDocument Document { get; }
@@ -142,6 +144,25 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     }
 
     private void OnContextRequested(object? sender, ContextRequestedEventArgs e) => EditorMenus.PrepareContextKeys(this);
+
+    /// <summary>
+    /// Hooks for a modal editing layer (the shell's Vim adapter): typing path, caret shape, viewport, folds, popup state, highlights. Created on
+    /// first use, disposed with the view; nothing changes in the editor until a layer calls <see cref="EditorModalSurface.Attach"/>.
+    /// </summary>
+    public EditorModalSurface Modal
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _modal ??= new EditorModalSurface(this);
+        }
+    }
+
+    /// <summary>True while a modal layer is attached (typing bursts then never continue an undo group: the layer groups its changes).</summary>
+    internal bool ModalAttached => _modal?.IsAttached == true;
+
+    /// <summary>The attached layer's undo/redo, offered the editor's Undo/Redo first (true = handled).</summary>
+    internal Func<bool, bool>? ModalUndoRedo => _modal?.UndoRedoHandler;
 
     // ---- helpers used by components ----
 
@@ -224,7 +245,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         Editor.SearchResultsBrush = p.FindMatch;
         TextArea.SelectionBrush = p.Selection;
         TextArea.SelectionForeground = null;
-        TextArea.CaretBrush = p.Caret;
+        TextArea.CaretBrush = _modal?.HidesNativeCaret == true ? Brushes.Transparent : p.Caret;
         TextView.CurrentLineBackground = p.CurrentLine;
         TextView.CurrentLineBorder = new Pen(p.CurrentLineBorder.Brush, 1);
         TextView.NonPrintableCharacterBrush = p.Whitespace;
@@ -323,9 +344,12 @@ public sealed class CodeEditorControl : UserControl, IDisposable
 
     public void Dispose()
     {
-        if (_disposed) return;
+        if (_disposed || _disposing) return;
+        _disposing = true;
+        _factory.Unregister(this); // first, while the view is intact: listeners (the modal layer) tear their state down against a live view
         _disposed = true;
-        _factory.Unregister(this);
+        _modal?.Dispose();
+        _modal = null;
         for (var i = _components.Count - 1; i >= 0; i--) _components[i].Dispose();
         _components.Clear();
         if (_colorizer is not null)

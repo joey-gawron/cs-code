@@ -185,7 +185,9 @@ public sealed partial class VimEngine
                 if (c.Key2 == 'g' || c.Key2 == 7) { if (!Next(out var k3)) return ParseResult.NeedMore; c.NChar = k3; }
                 return ParseResult.Complete;
             }
-            if (!Next(out var key2)) return ParseResult.NeedMore;
+            // Vim reads the second key of g z Z [ ] without mappings (normal.c: no_mapping for the command character): "nmap gi ..."
+            // must not turn "ggi" into "g" + "gi" once the first g has been taken as a command
+            if (!Next(out var key2)) return NeedMoreArg(true);
             c.Key2 = key2;
             if (key2 == Keys.Esc) return ParseResult.Cancelled;
             if (!PrefixValid(k, key2)) return ParseResult.Invalid;
@@ -247,7 +249,7 @@ public sealed partial class VimEngine
         if (Keys.IsSpecial(k) || k is Keys.Esc or Keys.CR or Keys.NL or Keys.Tab or Keys.CtrlH) return Kind.Cmd;
         return k switch
         {
-            1 or 2 or 3 or 4 or 5 or 6 or 7 or 12 or 15 or 17 or 18 or 20 or 21 or 22 or 24 or 25 or 29 or 30 or 31 => Kind.Cmd,
+            1 or 2 or 3 or 4 or 5 or 6 or 7 or 10 or 12 or 14 or 15 or 16 or 17 or 18 or 20 or 21 or 22 or 24 or 25 or 29 or 30 or 31 => Kind.Cmd, // 10 14 16: ^J ^N ^P move like j j k
             _ => Kind.Invalid,
         };
     }

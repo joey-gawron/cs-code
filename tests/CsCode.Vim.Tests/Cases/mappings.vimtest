@@ -2983,3 +2983,29 @@ ex: nnoremap Q dd
 keys: xQ<C-r>
 < ‸four five six
 < seven
+
+=== mappings-320
+ex: nnoremap gi x
+> one
+> ‸two
+keys: ggiZ<Esc>
+< ‸Zone
+< two
+
+=== mappings-321
+ex: nnoremap gi x
+> one
+> ‸two
+keys: gi
+< one
+< ‸wo
+
+=== mappings-322
+ex: nnoremap zx dd
+> one
+> ‸two
+> three
+keys: zzx
+< one
+< ‸wo
+< three

@@ -57,7 +57,8 @@ internal sealed class TypingBehaviors : IDisposable, ISettingsAware
             _groupOpen = false;
         }
         var isNewline = text is "\n" or "\r" or "\r\n";
-        var continues = !isNewline && _expectedCaret == _v.Editor.CaretOffset && _expectedVersion == _v.Document.Version && _v.Editor.SelectionLength == 0;
+        // A modal layer (Vim) groups its own changes into undo steps: typing must never extend a group the layer closed.
+        var continues = !isNewline && !_v.ModalAttached && _expectedCaret == _v.Editor.CaretOffset && _expectedVersion == _v.Document.Version && _v.Editor.SelectionLength == 0;
         if (continues) stack.StartContinuedUndoGroup();
         else stack.StartUndoGroup();
         _groupOpen = true;

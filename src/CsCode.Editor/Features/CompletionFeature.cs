@@ -472,7 +472,7 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
         }
     }
 
-    private void MoveSelection(int delta)
+    internal void MoveSelection(int delta)
     {
         var s = _session;
         if (s is null) return;

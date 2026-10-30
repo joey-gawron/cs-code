@@ -12,8 +12,8 @@ namespace CsCode.Editor.Documents;
 /// entries scroll off the undo limit. With a shell that destroys the views of inactive tabs while their documents stay open, that is exactly the
 /// "memory is not flat" leak this module must not have.
 ///
-/// On disposal of a view the entries it created are scrubbed: their selection reference is cleared (they then restore nothing, which is right — the
-/// view is gone; the weak reference to the text area is dead or about to be). Done with reflection against the known private layout of
+/// On disposal of a view the entries it created are scrubbed: their selection and text-area references are cleared (they then restore nothing,
+/// which is right — the view is gone), so undoing them later, in another view of the document, neither pins nor touches the destroyed one. Done with reflection against the known private layout of
 /// AvaloniaEdit 12.0.0; if the layout is different the scrub silently does nothing (and the leak test in this module's suite says so).
 /// </summary>
 internal static class UndoStackScrubber
@@ -63,6 +63,9 @@ internal static class UndoStackScrubber
         var selection = type.GetField("_selection", Flags);
         if (selection is null) return 0;
         selection.SetValue(operation, null);
+        // The text area may live on for a while (until the GC): undoing the entry then must not hand it the cleared selection (AvaloniaEdit
+        // throws for a null selection). Without a target the entry restores nothing.
+        reference.Target = null;
         return 1;
     }
 }

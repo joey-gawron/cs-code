@@ -90,8 +90,12 @@ internal sealed class UndoTree
         return n;
     }
 
+    /// <summary>Incremented whenever the history is discarded (step numbers start again from 1 afterwards).</summary>
+    public int Generation { get; private set; }
+
     public void Clear()
     {
+        Generation++;
         Root = new UndoHeader { Seq = 0 };
         Current = Root;
         LastSeq = 0;

@@ -117,6 +117,34 @@ public sealed partial class VimEngine : IDisposable
     public string? LastMessage { get; private set; }
     public string? LastError { get; private set; }
 
+    /// <summary>Number of the undo step the buffer is at (0 = no change yet). Edits the engine makes belong to this step once it has started.</summary>
+    public int UndoSequence => _bs?.Undo.Current.Seq ?? 0;
+
+    /// <summary>
+    /// True while the step <see cref="UndoSequence"/> still receives changes (an Insert session in progress, a change being made): the next
+    /// change joins it. False when the next change starts a new step. Hosts that mirror steps in their own history use it to decide whether
+    /// their next undo group continues the last one.
+    /// </summary>
+    public bool IsUndoStepOpen => _bs is not null && !_bs.Undo.Synced;
+
+    /// <summary>
+    /// The undo step the next change will belong to: <see cref="UndoSequence"/> while it is open (<see cref="IsUndoStepOpen"/>), else the number
+    /// the next step will get. A host labels its own undo groups with it before the change happens.
+    /// </summary>
+    public int NextChangeUndoSequence => _bs is null ? 0 : !_bs.Undo.Synced ? _bs.Undo.Current.Seq : _bs.Undo.LastSeq + 1;
+
+    /// <summary>Changes whenever the buffer's undo history is discarded (a change the buffer could not describe): step numbers restart then.</summary>
+    public int UndoHistoryGeneration => _bs?.Undo.Generation ?? 0;
+
+    /// <summary>True while the engine undoes or redoes a step (its edits then belong to no new step).</summary>
+    public bool IsApplyingUndo { get; private set; }
+
+    /// <summary>Whether <c>u</c> has a change to undo (false at the oldest change).</summary>
+    public bool CanUndo => _bs?.Undo.Current.Parent is not null;
+
+    /// <summary>Whether <c>Ctrl-R</c> has a change to redo.</summary>
+    public bool CanRedo => _bs?.Undo.Current.Preferred is not null;
+
     public IEventSource<VimMode> ModeChanged => _modeChanged;
     public IEventSource<string> MessageChanged => _messageChanged;
     public IEventSource<char?> RecordingChanged => _recordingChanged;
@@ -278,9 +306,10 @@ public sealed partial class VimEngine : IDisposable
             _pend.Clear();
             _sentCaret = new TextPosition(-1, -1);
         }
-        else if (_buf.Version != _bs.KnownVersion)
+        else if (_buf.Version != _bs.KnownVersion && !AdoptExternal())
         {
-            // A change we did not make (LSP edit, formatter, paste outside Vim): our undo history no longer describes the buffer.
+            // A change we did not make (LSP edit, formatter, paste outside Vim) that the buffer cannot describe: our undo history no longer
+            // describes the buffer.
             _bs.Undo.Clear();
             _bs.ClampMarks(_buf.LineCount);
             _bs.KnownVersion = _buf.Version;
@@ -293,7 +322,42 @@ public sealed partial class VimEngine : IDisposable
             _col = hc.Character;
             _setCurswant = true;
             CheckCursor();
+            // the host's caret is where the user put it: a command that moves back to where we last were must still move the host's caret
+            _sentCaret = hc;
         }
+    }
+
+    private readonly List<VimExternalChange> _external = [];
+
+    /// <summary>
+    /// Records the changes others made (reported by the buffer) as undo entries, like Vim's u_save would have before them: group 0 joins the
+    /// change in progress, every other group becomes an undo step of its own. Marks follow the inserted and deleted lines. False when the
+    /// buffer does not report changes (or reported none although its version moved): the caller then treats the edit as untrackable.
+    /// </summary>
+    private bool AdoptExternal()
+    {
+        _external.Clear();
+        if (!_buf.TryTakeExternalChanges(_external) || _external.Count == 0)
+        {
+            _external.Clear();
+            return false;
+        }
+        var group = 0;
+        foreach (var ch in _external)
+        {
+            if (ch.Group != 0 && ch.Group != group) _bs.Undo.Synced = true;   // a separate change: a new undo step
+            group = ch.Group;
+            SaveUndoExternal(ch.StartLine, ch.OldLines, ch.NewLineCount);
+            var delta = ch.NewLineCount - ch.OldLines.Length;
+            if (delta < 0) _bs.MarkAdjust(ch.StartLine + ch.NewLineCount, ch.StartLine + ch.OldLines.Length - 1, 0, delta, delete: true);
+            else if (delta > 0) _bs.MarkAdjust(ch.StartLine + ch.OldLines.Length, int.MaxValue / 2, delta, 0, delete: false);
+            NoteChange(Math.Min(ch.StartLine, _buf.LineCount - 1), 0);
+        }
+        if (group != 0) _bs.Undo.Synced = true;   // what follows a separate change starts a step of its own
+        _external.Clear();
+        _bs.KnownVersion = _buf.Version;
+        _bs.ULineNr = -1;
+        return true;
     }
 
     private void FlushHost()
@@ -433,7 +497,20 @@ public sealed partial class VimEngine : IDisposable
             _inPump = false;
             if (_host is not null)
             {
-                if (_bs is not null) _bs.KnownVersion = _buf.Version;
+                if (_bs is not null)
+                {
+                    // Changes the editor made as a side effect of this key (a snippet's mirrored placeholders...) join its change, when the
+                    // buffer reports them; otherwise the version is simply accepted as ours, as before.
+                    if (_buf.Version != _bs.KnownVersion) AdoptExternal();
+                    _bs.KnownVersion = _buf.Version;
+                    if (_historyLost)
+                    {
+                        _historyLost = false;
+                        _bs.Undo.Clear();
+                        _bs.ClampMarks(_buf.LineCount);
+                        _bs.ULineNr = -1;
+                    }
+                }
                 FlushHost();
                 var pending = (_work is not null && !_awaitKey) || _stuff.Count > 0 || _typed.Count > 0;
                 if (pending != wasPending) _workPending.Fire(pending);
@@ -530,6 +607,17 @@ public sealed partial class VimEngine : IDisposable
     {
         while (_mapBuf.Count > 0)
         {
+            if (_argPending || _noMap > 0)
+            {
+                // the command now waits for an argument character: the next key is not mapped (as it would not be had it come later)
+                var arg = _mapBuf[0];
+                var argTyped = _mapTyped[0];
+                MapBufRemoveFirst();
+                StopMapTimer();
+                Feed(arg, argTyped);
+                if (_host is null) return;
+                continue;
+            }
             var mode = CurrentMapMode();
             var (exact, longer) = _s.Mappings.Lookup(mode, CollectionsMarshal.AsSpan(_mapBuf));
             if (exact is not null && (!longer || exact.NoWait || timedOut))
@@ -617,14 +705,23 @@ public sealed partial class VimEngine : IDisposable
         Pump(_sliceTicks);
     }
 
+    /// <summary>True while the key being executed was typed by the user (not a mapping expansion, macro, dot-repeat or count replay).</summary>
+    private bool _feedingTyped;
+
     private void Feed(int key, bool typed)
     {
-        switch (_mode)
+        var was = _feedingTyped;
+        _feedingTyped = typed;
+        try
         {
-            case VimMode.Insert or VimMode.Replace: InsertKey(key); break;
-            case VimMode.CommandLine: CmdLineKey(key); break;
-            default: NormalKey(key); break;
+            switch (_mode)
+            {
+                case VimMode.Insert or VimMode.Replace: InsertKey(key); break;
+                case VimMode.CommandLine: CmdLineKey(key); break;
+                default: NormalKey(key); break;
+            }
         }
+        finally { _feedingTyped = was; }
     }
 
     /// <summary>Pushes keys to be processed before anything typed (macro bodies, dot-repeat, mapping expansions).</summary>

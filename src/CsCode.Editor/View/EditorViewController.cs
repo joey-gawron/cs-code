@@ -54,8 +54,18 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
     public bool CanUndo => view.Document.CanUndo;
     public bool CanRedo => view.Document.CanRedo;
 
-    public void Undo() => view.Editor.Undo();
-    public void Redo() => view.Editor.Redo();
+    // A modal layer (Vim) owns the undo history while it is attached: the editor's Undo/Redo go through it so both always agree.
+    public void Undo()
+    {
+        if (view.ModalUndoRedo?.Invoke(false) == true) return;
+        view.Editor.Undo();
+    }
+
+    public void Redo()
+    {
+        if (view.ModalUndoRedo?.Invoke(true) == true) return;
+        view.Editor.Redo();
+    }
 
     public void ShowFind(bool replace)
     {

@@ -120,6 +120,21 @@ public class EditorViewTests
     }
 
     [AvaloniaFact]
+    public async Task Undoing_an_edit_made_in_a_destroyed_view_works_while_that_view_is_still_in_memory()
+    {
+        using var host = ViewHost.Create();
+        var (doc, view, window) = await host.OpenAsync("abc");
+        Type(view, "x");
+        host.Factory.DisposeView(view);                 // its undo entries are scrubbed; the text area itself is not collected yet
+        var again = host.Factory.CreateView(doc);
+        window.Content = again;
+        ViewHost.Pump();
+        doc.Undo();                                     // used to throw: the scrubbed entry handed the live text area a null selection
+        Assert.Equal("abc", doc.GetText());
+        GC.KeepAlive(view);
+    }
+
+    [AvaloniaFact]
     public async Task A_closer_the_user_typed_themselves_is_not_swallowed()
     {
         using var host = ViewHost.Create();
