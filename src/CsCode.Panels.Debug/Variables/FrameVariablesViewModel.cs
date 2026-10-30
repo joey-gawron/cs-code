@@ -26,6 +26,12 @@ public static partial class ScopeSelector
 
     /// <summary>A scope that holds the return value of the function the debuggee just left.</summary>
     public static bool IsReturnValue(DebugScope scope) => scope.PresentationHint == "returnValue";
+
+    /// <summary>
+    /// A return value an adapter lists among the frame's own variables instead of in a scope of its own: CodeLLDB's <c>[return value]</c> (the
+    /// first row of "Local" after a step out) and js-debug's <c>Return value</c>. Autos lifts it as it lifts GDB's <c>returnValue</c> scope.
+    /// </summary>
+    public static bool IsReturnValueVariable(DebugVariable variable) => variable.Name is "[return value]" or "Return value";
 }
 
 /// <summary>
