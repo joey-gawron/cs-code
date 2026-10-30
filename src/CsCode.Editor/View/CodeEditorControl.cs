@@ -362,7 +362,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
 
     private void OnPointerWheel(object? sender, PointerWheelEventArgs e)
     {
-        if (!Settings.MouseWheelZoom || (e.KeyModifiers & KeyModifiers.Control) == 0) return;
+        if (!Settings.MouseWheelZoom || !EditorKeys.HasCommand(e.KeyModifiers)) return; // Ctrl+wheel, ⌘+wheel on macOS
         Editor.FontSize = Math.Clamp(Editor.FontSize + (e.Delta.Y > 0 ? 1 : -1), 6, 72); // zoom is per view and not persisted
         RebuildStyleTable();
         e.Handled = true;
