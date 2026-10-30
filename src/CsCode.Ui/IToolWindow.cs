@@ -75,12 +75,16 @@ public static class ToolWindowFocus
     /// <see cref="Collections.BulkObservableCollection{T}"/> raises for every range it inserts or removes) recycles every realized row, the
     /// focused one too, and Avalonia then leaves the keyboard on nothing, where the arrows, Enter and typing go nowhere: in the Explorer, each
     /// folder expanded or collapsed (clicked, or loading its children after View &gt; Tool Windows put the keyboard on the root) did that. Once
-    /// the rows are laid out again, <see cref="FocusRow"/> gives it back: the selected row, else the first on screen. Not when something else
-    /// has taken the keyboard meanwhile, nor when the list left the screen (its window hidden): only a row that lost it to nothing.
+    /// the rows are laid out again, <see cref="FocusRow"/> gives it back: the selected row, else the first on screen. Only for an element that
+    /// lost it to nothing by leaving the screen (a recycled row, the rename box once hidden): not when something else has taken the keyboard
+    /// meanwhile, nor when the list left the screen (its window hidden), nor when the element is still on screen, which is how Avalonia leaves
+    /// it when another of the app's windows activates with nothing focused in it (a tool window floated) — taking it back then sent the keys
+    /// typed in that window to this list (Down moved the Explorer's selection, Delete asked to delete the file).
     /// </summary>
     public static void KeepOnRows(ListBox list) => list.LostFocus += (_, e) =>
     {
         if (e.NewFocusedElement is not (null or TopLevel)) return; // moved on: the user's or a command's doing
+        if (e.Source is Avalonia.Visual lost && lost.IsAttachedToVisualTree() && lost.IsEffectivelyVisible) return; // still on screen: another window activated
         Dispatcher.UIThread.Post(() =>
         {
             if (!list.IsAttachedToVisualTree() || TopLevel.GetTopLevel(list)?.FocusManager is not { } focus || focus.GetFocusedElement() is not (null or TopLevel)) return;

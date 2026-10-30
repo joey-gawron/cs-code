@@ -247,6 +247,44 @@ public class MenuBarTests
         Assert.False(editor.Controller.IsFocused);
     }
 
+    // Found in review: the Explorer's keeper took the keyboard back whenever its row lost it to nothing, which is also what Avalonia does when
+    // another of the app's windows activates with nothing focused in it (a tool window floated): the keys typed in that window then went to the
+    // Explorer's row in the main window (Down moved its selection, Delete asked to delete the file). A row still on screen is left alone.
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task Floating_a_tool_window_never_sends_the_keys_typed_in_it_to_the_Explorer_row_that_had_the_keyboard()
+    {
+        await using var host = RealAppHost.Create(h => { h.Files.WriteFile("a.txt", "alpha\n"); h.Files.WriteFile("c.txt", "gamma\n"); h.Files.WriteFile("d.txt", "delta\n"); });
+        await host.StartAsync([host.Files.Path]);
+        var explorer = host.Shell.Tools.Get("explorer")!;
+        ListBoxItem? Row(string name) => explorer.LiveView?.GetVisualDescendants().OfType<ListBoxItem>()
+            .FirstOrDefault(r => r.IsEffectivelyVisible && r.DataContext is ToolWindows.Explorer.ExplorerNode { Name: var n } && n == name);
+        Assert.True(await RealAppHost.WaitFor(() => Row("c.txt") is not null), "the folder's files never showed");
+        await DevScene.SettleAsync(10);
+        var model = ((ToolWindows.Explorer.ExplorerView)explorer.LiveView!).Model;
+        model.Selected = (ToolWindows.Explorer.ExplorerNode)Row("a.txt")!.DataContext!;
+        await DevScene.SettleAsync(3);
+        Assert.True(Row("a.txt")!.Focus());
+        await DevScene.SettleAsync(3);
+
+        host.Shell.Tools.Float("output");
+        await DevScene.SettleAsync(20);
+        var floating = TopLevel.GetTopLevel(host.Shell.Tools.Get("output")!.LiveView) as Window;
+        Assert.True(floating is not null && floating != host.Window, "Output did not float into a window of its own");
+        foreach (var (key, physical) in new[] { (Avalonia.Input.Key.Down, Avalonia.Input.PhysicalKey.ArrowDown), (Avalonia.Input.Key.Delete, Avalonia.Input.PhysicalKey.Delete) })
+        {
+            floating!.KeyPress(key, Avalonia.Input.RawInputModifiers.None, physical, null);
+            floating.KeyRelease(key, Avalonia.Input.RawInputModifiers.None, physical, null);
+            await DevScene.SettleAsync(10);
+        }
+
+        Assert.Equal("a.txt", model.Selected?.Name);
+        var dialogs = host.Get<CsCode.App.Notifications.DialogHostViewModel>();
+        var asked = dialogs.IsVisible;
+        if (asked) dialogs.Choose("Cancel");
+        Assert.False(asked, "Delete typed in the floating window asked to delete the Explorer's file");
+        Assert.True(File.Exists(host.Files.Combine("a.txt")));
+    }
+
     // Found in review: with no line (an empty channel, or after Clear Output) the Output window has no row to take the keyboard, and tab order
     // put it on the channel picker, where Down switched the channel and a letter searched the channels. Visual Studio puts it in the window.
     [AvaloniaFact(Timeout = 60_000)]
