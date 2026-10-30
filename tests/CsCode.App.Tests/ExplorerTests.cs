@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CsCode.App.Notifications;
@@ -131,6 +133,47 @@ public class ExplorerTests
         Dispatcher.UIThread.RunJobs();
         Assert.Null(Row("inner.txt"));
         Assert.Same(Row("a"), window.FocusManager!.GetFocusedElement());
+    }
+
+    [AvaloniaFact]
+    public async Task Cmd_Backspace_deletes_the_selected_file_on_macOS_only_and_never_while_it_is_being_renamed()
+    {
+        // The Mac 'delete' key is Backspace (forward Delete needs Fn): ⌘⌫ asks to move the file to the Trash there, as Finder. Elsewhere Meta+Back
+        // does nothing in the Explorer. With the rename box open it never deletes, from the box or from the row. The dialog is declined, so
+        // nothing reaches the real Trash; that it was asked is the delete.
+        var mac = OperatingSystem.IsMacOS();
+        using var rig = new Rig();
+        rig.Dir.WriteFile("x.txt", "");
+        await rig.OpenAsync();
+        var view = new ExplorerView(rig.Vm, new RecordingWindowService());
+        var window = new Window { Width = 300, Height = 400, Content = view };
+        using var close = CsCode.Core.Lifecycle.Disposable.Create(window.Close);
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        ListBoxItem? Row(string name) => view.GetVisualDescendants().OfType<ListBoxItem>()
+            .FirstOrDefault(r => r.IsEffectivelyVisible && r.DataContext is ExplorerNode n && n.Name == name);
+        void CmdBackspace() { window.KeyPress(Key.Back, RawInputModifiers.Meta, PhysicalKey.Backspace, null); Dispatcher.UIThread.RunJobs(); }
+        var x = rig.Vm.Rows.Single(r => r.Name == "x.txt");
+        rig.Vm.Selected = x;
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(Row("x.txt")?.Focus());
+
+        rig.Dialogs.Answers.Enqueue("Cancel");
+        CmdBackspace();
+        Assert.Equal(mac ? 1 : 0, rig.Dialogs.Shown.Count);
+        Assert.Equal(mac ? "Delete" : null, rig.Dialogs.Shown.SingleOrDefault().Title);
+        rig.Dialogs.Answers.Clear();
+        rig.Dialogs.Shown.Clear();
+
+        rig.Vm.BeginRename(x);
+        Dispatcher.UIThread.RunJobs();
+        Assert.IsType<TextBox>(window.FocusManager!.GetFocusedElement()); // the rename box takes the keyboard
+        CmdBackspace();
+        Assert.True(x.IsEditing);
+        Assert.True(Row("x.txt")?.Focus()); // the row again, rename box still open: the guard, not the box, stops it
+        CmdBackspace();
+        Assert.Empty(rig.Dialogs.Shown);
+        Assert.True(File.Exists(rig.P("x.txt")));
     }
 
     [AvaloniaFact]
