@@ -221,6 +221,28 @@ public sealed class TaskTerminalHostTests : IDisposable
     }
 
     [Fact]
+    public async Task Finished_and_closed_task_terminals_retain_no_run_or_session()
+    {
+        await LeakAssert.NotRetainedAsync(async () =>
+        {
+            var objects = new List<object>();
+            for (var i = 0; i < 10; i++)
+            {
+                var run = await _host.StartAsync(Sh($"t{i}", "echo x", new TaskPresentation { Panel = TaskPanelKind.New, Close = i % 2 == 0 }));
+                await run.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+                objects.Add(run);
+                objects.Add(SessionOf(run));
+                if (i % 2 == 1) await _service.KillAsync(SessionOf(run)); // the others closed themselves (close: true)
+            }
+            var sw = Stopwatch.StartNew();
+            while (_service.Terminals.Count > 0 && sw.ElapsedMilliseconds < 10_000) await Task.Delay(20);
+            Assert.Empty(_service.Terminals);
+            return objects.ToArray();
+        });
+        Assert.Empty(_host.Running);
+    }
+
+    [Fact]
     public async Task A_program_that_does_not_exist_completes_with_minus_one_and_says_why()
     {
         var run = await _host.StartAsync(new TaskTerminalRequest("missing", "/no/such/program", [], _sandbox.Home, new Dictionary<string, string?>(), new TaskPresentation()));

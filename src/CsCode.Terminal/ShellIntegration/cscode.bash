@@ -19,9 +19,11 @@ __cscode_nonce=${CSCODE_NONCE:-}
 builtin unset CSCODE_BASH_BOOTSTRAP CSCODE_SHELL_LOGIN CSCODE_BASH_NOPROFILE CSCODE_BASH_RCFILE CSCODE_NONCE CSCODE_INJECTION
 
 if [ -n "$__cscode_bootstrap" ]; then
-    # sourced by the first prompt's PROMPT_COMMAND: bash has done its own startup; the variable must not reach child shells
+    # sourced by the first prompt's PROMPT_COMMAND: bash has done its own startup; the variable must not reach child shells, and the
+    # PROMPT_COMMAND the environment had before CsCode borrowed it comes back
     builtin export -n PROMPT_COMMAND
-    PROMPT_COMMAND=
+    PROMPT_COMMAND=${CSCODE_BASH_PROMPT_COMMAND:-}
+    builtin unset CSCODE_BASH_PROMPT_COMMAND
 elif [ -n "$__cscode_login" ]; then
     if [ -z "$__cscode_noprofile" ]; then
         if [ -r /etc/profile ]; then . /etc/profile; fi

@@ -151,6 +151,52 @@ public sealed class SplitPanelTests
     }
 }
 
+/// <summary>Split panes (their view, control and screen-reader peer) and the terminals in them are not retained once closed.</summary>
+public sealed class SplitLeakTests
+{
+    [AvaloniaFact]
+    public async Task Closed_split_panes_retain_no_pane_control_peer_or_session()
+    {
+        await using var rig = await new PanelRig(1000, 400).ReadyAsync();
+        var weak = await SplitAndKill(rig);
+        for (var i = 0; i < 10 && weak.Any(w => w.Ref.TryGetTarget(out _)); i++)
+        {
+            await PanelRig.Pump(() => false, 30);
+            GC.Collect(2, GCCollectionMode.Forced, true, true);
+            GC.WaitForPendingFinalizers();
+        }
+        var alive = weak.Where(w => w.Ref.TryGetTarget(out _)).Select(w => w.Name).ToList();
+        Assert.True(alive.Count == 0, "still reachable: " + string.Join(", ", alive));
+        Assert.Single(rig.View.Panes);
+        Assert.Single(rig.Service.Groups);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static async Task<List<(string Name, WeakReference<object> Ref)>> SplitAndKill(PanelRig rig)
+    {
+        var weak = new List<(string, WeakReference<object>)>();
+        for (var i = 0; i < 10; i++)
+        {
+            await rig.Commands.ExecuteAsync(TerminalCommandSet.Split);
+            Assert.True(await PanelRig.Pump(() => rig.View.Panes.Count == 2 && rig.View.Panes[1].Control.Snapshot is not null));
+            var pane = rig.View.Panes[1];
+            weak.Add(($"pane {i}", new WeakReference<object>(pane)));
+            weak.Add(($"control {i}", new WeakReference<object>(pane.Control)));
+            weak.Add(($"peer {i}", new WeakReference<object>(Avalonia.Automation.Peers.ControlAutomationPeer.CreatePeerForElement(pane.Control))));
+            weak.Add(($"session {i}", new WeakReference<object>(pane.Session!)));
+            await rig.Commands.ExecuteAsync(TerminalCommandSet.Split); // a second split in the same group, then both closed
+            Assert.True(await PanelRig.Pump(() => rig.View.Panes.Count == 3));
+            weak.Add(($"group member {i}", new WeakReference<object>(rig.View.Panes[2].Session!)));
+            await rig.Commands.ExecuteAsync(TerminalCommandSet.Kill);
+            Assert.True(await PanelRig.Pump(() => rig.View.Panes.Count == 2));
+            await rig.Commands.ExecuteAsync(TerminalCommandSet.Kill);
+            Assert.True(await PanelRig.Pump(() => rig.View.Panes.Count == 1));
+        }
+        await PanelRig.Pump(() => false, 100);
+        return weak;
+    }
+}
+
 internal static class VisualExtensions
 {
     public static IEnumerable<T> GetVisualDescendantsOfType<T>(this Avalonia.Visual root) =>

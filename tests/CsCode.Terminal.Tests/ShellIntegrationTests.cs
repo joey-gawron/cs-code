@@ -348,6 +348,18 @@ public sealed class ShellIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task A_prompt_command_from_the_environment_survives_the_norc_bootstrap()
+    {
+        // --norc: the script comes in through PROMPT_COMMAND, which must give back the one the environment had
+        var t = (TerminalSession)await _service.CreateAsync(Bash() with { Env = new Dictionary<string, string?> { ["PROMPT_COMMAND"] = "own_pc=$((own_pc+1))" } });
+        await WaitScreenAsync(t, "$");
+        await RunAsync(t, "true");
+        var check = await RunAsync(t, "echo \"own=$((own_pc > 0)) exported=$(env | grep -c '^PROMPT_COMMAND=')\"");
+        Assert.Equal("own=1 exported=0", check.OutputTail);
+        Assert.Equal("true", (await RunAsync(t, "true")).Command.CommandLine);
+    }
+
+    [Fact]
     public async Task With_shell_integration_off_bash_runs_as_configured_and_reports_nothing()
     {
         _config.Set(TerminalSettingKeys.ShellIntegrationEnabled, false);

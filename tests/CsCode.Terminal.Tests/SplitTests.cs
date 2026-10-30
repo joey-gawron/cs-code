@@ -156,6 +156,30 @@ public sealed class SplitTests : IDisposable
     }
 
     [Fact]
+    public async Task Closed_splits_and_groups_are_not_retained()
+    {
+        var keep = (TerminalSession)await _service.CreateAsync(Bash("keep"));
+        await LeakAssert.NotRetainedAsync(async () =>
+        {
+            var objects = new List<object>();
+            for (var i = 0; i < 5; i++)
+            {
+                var a = (TerminalSession)await _service.CreateAsync(Bash());
+                var b = await _service.SplitAsync(a);
+                var c = await _service.SplitAsync(b);
+                objects.Add(_service.GroupOf(a)!);
+                objects.AddRange([a, b, c]);
+                _service.Unsplit(c);
+                objects.Add(_service.GroupOf(c)!);
+                foreach (var s in new[] { b, a, c }) await _service.KillAsync(s);
+            }
+            return objects.ToArray();
+        });
+        Assert.Equal([keep], _service.Sessions);
+        Assert.Single(_service.Groups);
+    }
+
+    [Fact]
     public async Task A_split_of_a_debuggee_terminal_runs_the_default_profile()
     {
         _config.Set(TerminalSettingKeys.DefaultProfileLinux, "sandboxed");

@@ -96,6 +96,8 @@ public static class ShellIntegrationInjector
                         ["CSCODE_BASH_BOOTSTRAP"] = "1",
                         ["PROMPT_COMMAND"] = "builtin source '" + script.Replace("'", "'\\''", StringComparison.Ordinal) + "'",
                     };
+                    // a PROMPT_COMMAND the environment already had is handed over and kept (the script restores it)
+                    if (environment.GetValueOrDefault("PROMPT_COMMAND") is { Length: > 0 } own) bootstrap["CSCODE_BASH_PROMPT_COMMAND"] = own;
                     return new Injection(kind, [.. args], bootstrap);
                 }
                 // A login shell ignores --init-file: CsCode starts it as an interactive shell and the script reads the profile files. Note
