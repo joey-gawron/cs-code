@@ -490,4 +490,12 @@ public class EditorClipboardViewTests
         ViewHost.Pump();
         window.Content = null;
     }
+
+    [Fact]
+    public void Every_Ctrl_key_the_editor_contributes_has_a_Mac_key()
+    {
+        var missing = EditorMenus.Keybindings.Where(k => KeyStrokeParser.ParseChord(k.Key).Any(s => s.Ctrl) && k.Mac is null).Select(k => $"{k.Key} → {k.Command}");
+        Assert.Empty(missing);
+        Assert.Contains(EditorMenus.Keybindings, k => k.Command == EditorMenus.CycleClipboardRing && k.Mac == "cmd+shift+v");
+    }
 }
