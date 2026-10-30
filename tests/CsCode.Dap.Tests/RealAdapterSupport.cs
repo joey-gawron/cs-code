@@ -100,6 +100,19 @@ public static class RealAdapterSupport
         return null;
     }
 
+    /// <summary><paramref name="path"/> with every symbolic link along it resolved (macOS's /var and /tmp are links into /private).</summary>
+    public static string PhysicalPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var current = Path.GetPathRoot(full)!;
+        foreach (var part in full[current.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, part);
+            if (new DirectoryInfo(current).ResolveLinkTarget(returnFinalTarget: true) is { } target) current = target.FullName;
+        }
+        return current;
+    }
+
     public sealed record SampleBuild(string Directory, string Dll, string SourcePath);
 
     private static readonly SemaphoreSlim BuildGate = new(1, 1);
@@ -116,10 +129,14 @@ public static class RealAdapterSupport
             var dotnet = FindDotnet() ?? throw new InvalidOperationException("dotnet not found on PATH");
             _dir = new TempDirectory("dapreal-");
             _dir.WriteFile("Sample.csproj", ProjectFile);
-            var source = _dir.WriteFile("Program.cs", ProgramSource);
+            _dir.WriteFile("Program.cs", ProgramSource);
+            // The compiler records the build's physical directory in the PDB, and netcoredbg binds a breakpoint only to that exact path: on a
+            // Mac the temp dir (/var/folders/...) is behind the /var -> /private/var link, so the tests use the physical path throughout.
+            var dir = PhysicalPath(_dir.Path);
+            var source = Path.Combine(dir, "Program.cs");
             var psi = new ProcessStartInfo(dotnet)
             {
-                WorkingDirectory = _dir.Path, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+                WorkingDirectory = dir, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
             };
             foreach (var a in new[] { "build", "Sample.csproj", "-c", "Debug", "-o", "out", "--nologo", "-v", "q" }) psi.ArgumentList.Add(a);
             psi.Environment["DOTNET_NOLOGO"] = "1";
@@ -130,7 +147,7 @@ public static class RealAdapterSupport
             var stderr = p.StandardError.ReadToEndAsync(ct);
             await p.WaitForExitAsync(ct);
             if (p.ExitCode != 0) throw new InvalidOperationException($"dotnet build of the sample failed ({p.ExitCode}):\n{await stdout}\n{await stderr}");
-            _built = new SampleBuild(_dir.Path, Path.Combine(_dir.Path, "out", "Sample.dll"), source);
+            _built = new SampleBuild(dir, Path.Combine(dir, "out", "Sample.dll"), source);
             return _built;
         }
         finally { BuildGate.Release(); }
