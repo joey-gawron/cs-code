@@ -580,6 +580,25 @@ public class LocalFileSystemTests : IDisposable
         Assert.Equal(distinct, FileSystemNative.IsCaseSensitive(_f.P("not/yet/there.txt"))); // asks the nearest existing ancestor
     }
 
+    // files-8: the watcher compared every macOS path case-insensitively, so on a case-sensitive APFS volume "Foo" and "foo" were one root.
+    [Fact]
+    public void Paths_differing_only_in_case_are_one_path_only_on_a_case_insensitive_volume()
+    {
+        var asked = new List<string>();
+        var sensitive = new VolumePathComparer(p => { asked.Add(p); return true; });
+        var insensitive = new VolumePathComparer(_ => false);
+
+        Assert.False(sensitive.Equals("/v/Foo", "/v/foo"));
+        Assert.True(insensitive.Equals("/v/Foo", "/v/foo"));
+        Assert.True(sensitive.Equals("/v/foo", "/v/foo"));
+        Assert.False(insensitive.Equals("/v/foo", "/v/bar"));
+        Assert.False(insensitive.Equals("/v/foo", null));
+        Assert.Equal(insensitive.GetHashCode("/v/Foo"), insensitive.GetHashCode("/v/foo"));
+        Assert.Equal(["/v/Foo"], asked); // only a pair that differs in nothing but case costs a question to the volume
+        Assert.Equal(2, new HashSet<string>(["/v/Foo", "/v/foo"], sensitive).Count);
+        Assert.Single(new HashSet<string>(["/v/Foo", "/v/foo"], insensitive));
+    }
+
     [Fact]
     public void Entries_are_the_same_only_when_device_and_inode_match()
     {
@@ -675,13 +694,17 @@ public class LocalFileSystemTests : IDisposable
     [Fact]
     public async Task Cancelling_a_big_copy_leaves_no_partial_file()
     {
-        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS copies every file with File.Copy (a clone, keeping xattrs): cancellation is checked between files");
         File.WriteAllBytes(_f.P("big.bin"), Bytes(6_000_000));
         using var cts = new CancellationTokenSource();
+        _f.Fs.CloneCopies = false; // macOS: the data is copied, as on a volume that cannot clone (a clone takes no time to cancel)
         _f.Fs.ChunkHook = () => cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await _f.Fs.CopyAsync(_f.U("big.bin"), _f.U("big.copy"), ct: cts.Token));
         Assert.False(File.Exists(_f.P("big.copy")));
-        Assert.Equal(["big.bin"], Directory.GetFiles(_f.Temp.Path).Select(f => Path.GetFileName(f)!).ToArray());
+        // The caller's task completes as soon as the token is cancelled; the lane thread removes the temp file right after (on macOS once
+        // copyfile has returned), so it is given a moment.
+        string[] Files() => Directory.GetFiles(_f.Temp.Path).Select(f => Path.GetFileName(f)!).ToArray();
+        for (var wait = Stopwatch.StartNew(); Files().Length > 1 && wait.Elapsed < TimeSpan.FromSeconds(5);) await Task.Delay(10, Ct);
+        Assert.Equal(["big.bin"], Files());
     }
 
     // gap-11: Finder tags, quarantine and other extended attributes survived a copy only for files up to 4 MiB; big files and folders lost them.
@@ -695,9 +718,13 @@ public class LocalFileSystemTests : IDisposable
 
         await _f.Fs.CopyAsync(_f.U("big.bin"), _f.U("big.copy"), ct: Ct);
         await _f.Fs.CopyAsync(_f.U("tree"), _f.U("tree copy"), ct: Ct);
+        _f.Fs.CloneCopies = false; // as on a volume that cannot clone
+        await _f.Fs.CopyAsync(_f.U("big.bin"), _f.U("big.data-copy"), ct: Ct);
 
         Assert.Equal(File.ReadAllBytes(_f.P("big.bin")), File.ReadAllBytes(_f.P("big.copy")));
+        Assert.Equal(File.ReadAllBytes(_f.P("big.bin")), File.ReadAllBytes(_f.P("big.data-copy")));
         Assert.Equal("big.bin", MacXattr.Get(_f.P("big.copy"), "com.example.cscode"));
+        Assert.Equal("big.bin", MacXattr.Get(_f.P("big.data-copy"), "com.example.cscode"));
         Assert.Equal("tree", MacXattr.Get(_f.P("tree copy"), "com.example.cscode"));
         Assert.Equal("tree/sub", MacXattr.Get(_f.P("tree copy/sub"), "com.example.cscode"));
     }

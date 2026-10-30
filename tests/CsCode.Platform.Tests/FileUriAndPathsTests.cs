@@ -150,6 +150,18 @@ public class AppPathsTests
         Assert.NotEqual(AppPaths.StableHash(new Uri("file:///work/Proj"), false), AppPaths.StableHash(new Uri("file:///work/proj"), false));
     }
 
+    // files-8: on macOS every workspace hash was case-folded, so "Foo" and "foo" on a case-sensitive APFS volume shared their saved state.
+    [Fact]
+    public void On_macos_the_workspace_hash_folds_case_only_on_a_case_insensitive_volume()
+    {
+        var sensitive = new AppPaths(Env(), HostOs.MacOs, "/Users/ann", isCaseSensitive: p => p.StartsWith("/Volumes/Dev", StringComparison.Ordinal));
+        Assert.NotEqual(sensitive.WorkspaceStorageDir(new Uri("file:///Volumes/Dev/Foo")), sensitive.WorkspaceStorageDir(new Uri("file:///Volumes/Dev/foo")));
+        Assert.Equal(sensitive.WorkspaceStorageDir(new Uri("file:///Users/ann/Foo")), sensitive.WorkspaceStorageDir(new Uri("file:///Users/ann/foo")));
+        // The hash of a folder on the default (case-insensitive) volume is unchanged, or every such workspace would lose its saved state.
+        Assert.Equal(AppPaths.StableHash(new Uri("file:///Users/ann/Foo"), true), Path.GetFileName(sensitive.WorkspaceStorageDir(new Uri("file:///Users/ann/Foo"))));
+        Assert.Equal(AppPaths.StableHash(new Uri("ssh://box/Foo"), true), Path.GetFileName(sensitive.WorkspaceStorageDir(new Uri("ssh://box/Foo"))));
+    }
+
     [Fact]
     public void Install_dir_is_the_application_base_directory()
     {

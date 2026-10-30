@@ -1,8 +1,10 @@
+using System.Text;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CsCode.App.Docking;
 using CsCode.App.Notifications;
 using CsCode.App.Services;
+using CsCode.Core.Languages;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
@@ -380,20 +382,64 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
                 reopen.Add((tab.Uri, new Uri(to.AbsoluteUri.TrimEnd('/') + (rel.Length > 0 ? "/" + rel : ""))));
             }
         IReadOnlyList<(Uri, Uri)> renamed = [(from, to)];
+        IReadOnlyList<(Uri Uri, string Text)> before = [];
         if (_participants is not null && await _participants.WillRenameAsync(renamed).ConfigureAwait(true) is { } edit && _navigation is not null)
+        {
+            before = await TextsAsync(edit.Changes.Keys).ConfigureAwait(true);
             await _navigation.ApplyWorkspaceEditAsync(edit, $"Rename {NameOf(from)}").ConfigureAwait(true); // declined or failed: the move still happens
+        }
         try
         {
             await _fs.RenameAsync(from, to).ConfigureAwait(true);
         }
         catch
         {
-            // Nothing moved (a target in the way, a volume that refuses): the tabs closed for the move come back where they were (files-1).
+            // Nothing moved (a target in the way, a volume that refuses): the imports and references rewritten for the new path are put back, and
+            // the tabs closed for the move come back where they were (files-1).
+            await RevertTextsAsync(before, $"Undo Rename {NameOf(from)}").ConfigureAwait(true);
             if (_navigation is not null) foreach (var (o, _) in reopen) await _navigation.OpenAsync(o).ConfigureAwait(true);
             throw;
         }
         if (_participants is not null) await _participants.DidRenameAsync(renamed).ConfigureAwait(true);
         if (_navigation is not null) foreach (var (_, n) in reopen) await _navigation.OpenAsync(n).ConfigureAwait(true);
+    }
+
+    /// <summary>The current text of each file (the open editor's, else the file's on disk); a file that cannot be read is left out.</summary>
+    private async Task<IReadOnlyList<(Uri Uri, string Text)>> TextsAsync(IEnumerable<Uri> uris)
+    {
+        var texts = new List<(Uri, string)>();
+        foreach (var uri in uris)
+        {
+            if (_navigation?.OpenDocuments.FirstOrDefault(d => d.Uri == uri) is { } open) { texts.Add((uri, open.GetText())); continue; }
+            try { texts.Add((uri, NavigationService.Decode(await _fs.ReadFileAsync(uri).ConfigureAwait(true)).Text)); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DecoderFallbackException) { }
+        }
+        return texts;
+    }
+
+    /// <summary>
+    /// Puts back the text of every file that changed since <paramref name="before"/> was taken, as one workspace edit (an undo step in an open
+    /// editor). Only the will-rename edit ran in between, so a file it did not reach is equal and untouched.
+    /// </summary>
+    private async Task RevertTextsAsync(IReadOnlyList<(Uri Uri, string Text)> before, string label)
+    {
+        if (before.Count == 0 || _navigation is null) return;
+        var now = (await TextsAsync(before.Select(b => b.Uri)).ConfigureAwait(true)).ToDictionary(t => t.Uri, t => t.Text);
+        var changes = new Dictionary<Uri, IReadOnlyList<TextEdit>>();
+        foreach (var (uri, original) in before)
+            if (now.TryGetValue(uri, out var current) && current != original) changes[uri] = [Restore(uri, current, original)];
+        if (changes.Count > 0) await _navigation.ApplyWorkspaceEditAsync(new WorkspaceEdit(changes), label).ConfigureAwait(true);
+    }
+
+    /// <summary>One edit that turns <paramref name="current"/> back into <paramref name="original"/>: the span between their common prefix and suffix.</summary>
+    private static TextEdit Restore(Uri uri, string current, string original)
+    {
+        var prefix = 0;
+        while (prefix < current.Length && prefix < original.Length && current[prefix] == original[prefix]) prefix++;
+        var suffix = 0;
+        while (suffix < current.Length - prefix && suffix < original.Length - prefix && current[^(suffix + 1)] == original[^(suffix + 1)]) suffix++;
+        var doc = new InMemoryTextDocument(uri, "plaintext", current);
+        return new TextEdit(new TextRange(doc.PositionAt(prefix), doc.PositionAt(current.Length - suffix)), original[prefix..(original.Length - suffix)]);
     }
 
     private static string NameOf(Uri uri) => Uri.UnescapeDataString(uri.AbsolutePath.TrimEnd('/').Split('/')[^1]);

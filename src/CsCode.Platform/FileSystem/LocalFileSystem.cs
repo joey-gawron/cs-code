@@ -45,6 +45,12 @@ public sealed class LocalFileSystem : IFileSystem
     internal Action? ChunkHook { get; set; }
 
     /// <summary>
+    /// macOS: big copies are APFS clones where the volume can make one. False copies the data block by block, as on a volume that cannot clone,
+    /// so a test can cancel one mid-file.
+    /// </summary>
+    internal bool CloneCopies { get; set; } = true;
+
+    /// <summary>
     /// Whether the volume holding a path tells names apart by case (files-8: asked per volume on macOS, where APFS can be either). Settable so a
     /// test on a case-sensitive Linux file system can drive the case-insensitive paths.
     /// </summary>
@@ -276,14 +282,21 @@ public sealed class LocalFileSystem : IFileSystem
 
         var file = (FileInfo)entry;
         if (!overwrite && (File.Exists(target) || Directory.Exists(target))) throw new IOException($"Cannot copy: '{target}' already exists");
-        // File.Copy keeps the mode, and on macOS also the ACL, extended attributes and quarantine, cloning the data on APFS (O(1)): it is used for
-        // every size there (gap-11), at the price of cancellation only between files on volumes that cannot clone.
-        if (file.Length <= ChunkedCopyThreshold || OperatingSystem.IsMacOS()) { File.Copy(file.FullName, target, overwrite); return; }
+        // File.Copy keeps the mode, and on macOS also the ACL, extended attributes and quarantine, cloning the data on APFS (O(1)).
+        if (file.Length <= ChunkedCopyThreshold) { File.Copy(file.FullName, target, overwrite); return; }
 
         // Big file: chunked so cancellation takes effect mid-copy; written via a temp file so a cancelled copy leaves nothing behind.
         var temp = target + "." + Guid.NewGuid().ToString("N")[..8] + ".tmp";
         try
         {
+            if (OperatingSystem.IsMacOS())
+            {
+                // copyfile, as File.Copy does, so a big file keeps its ACL, extended attributes and quarantine and is cloned where it can be
+                // (gap-11); a copy that is not a clone still stops mid-file on cancellation.
+                FileSystemNative.CopyFile(file.FullName, temp, CloneCopies, ChunkHook, ct);
+                File.Move(temp, target, overwrite);
+                return;
+            }
             using (var input = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.SequentialScan))
             using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1))
             {

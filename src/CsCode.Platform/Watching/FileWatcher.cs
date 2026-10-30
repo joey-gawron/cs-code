@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using CsCode.Core.Platform;
+using CsCode.Platform.FileSystem;
 using CsCode.Platform.Io;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -58,8 +59,8 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
     // Bounds the bookkeeping, not the leak: each tracked path stands for at least one lost OS watch, so the OS limit is reached long before.
     private const int MaxTrackedLossPaths = 4096;
 
-    private static readonly StringComparer PathComparer =
-        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    // Per volume on macOS (files-8): on a case-sensitive APFS volume "Foo" and "foo" are two roots, whose events must not be taken for each other's.
+    private static readonly IEqualityComparer<string> PathComparer = VolumePathComparer.Current;
 
     private sealed class Source(string root, bool recursive)
     {
