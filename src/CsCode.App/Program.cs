@@ -34,6 +34,8 @@ internal static class Program
 
     private static int RunApp(string[] args, CommandLineOptions options)
     {
+        // macOS, started from Finder/the Dock (lsp-1): the login shell's PATH and the rest, in the background; children wait for it
+        if (!options.HeadlessTest) CsCode.Core.Platform.LoginShellEnvironment.Start();
         var crash = new CrashHandler(CrashHandler.DefaultLogDirectory());
         crash.Install();
         App.Crash = crash;

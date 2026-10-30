@@ -404,6 +404,8 @@ public sealed partial class TaskService : ITaskService, IDisposable
     private async Task<TaskResult> ExecuteAsync(TaskModel task, Uri? folder, VariableResolver resolver, IOutputChannel? channel, TaskInstance instance, string key,
         CancellationToken ct)
     {
+        // the task's shell or program inherits CsCode's environment: the login shell's on a Mac started from the Dock (lsp-6)
+        await LoginShellEnvironment.WaitAsync(ct);
         var command = await resolver.ResolveAsync(task.Command!, ct);
         var args = new List<string>();
         foreach (var a in task.Args) args.Add(await resolver.ResolveAsync(a, ct));
