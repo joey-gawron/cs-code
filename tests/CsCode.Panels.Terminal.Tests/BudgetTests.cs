@@ -238,6 +238,227 @@ public sealed class BudgetTests
         return (ok, report);
     }
 
+    /// <summary>
+    /// The brief's input budget: a keystroke costs the UI thread under 1 ms up to the PTY write (it is only queued for the writer thread), and
+    /// the echo is on screen within one frame plus the PTY's own echo latency at p99. Measured with <c>cat</c> in the shell (the kernel's line
+    /// discipline echoes, as for any program reading a line), frames at a precise 60 Hz and each key typed at a random phase of the frame;
+    /// "the PTY's own latency" is the p99 of the same echo through a bare PTY host with no terminal behind it, measured in the same attempt.
+    /// The echo is on screen at the first frame after the session published the snapshot with it, plus the terminal's drawing, counted from
+    /// the moment the UI thread handles the key: the headless compositor rasterises invalidated areas in software on the UI thread (desktops
+    /// do it on the render thread), which holds up some frames and keys here whatever caused the invalidation — the report shows it for an
+    /// idle terminal and for one only invalidated, how long keys waited for the UI thread, and the echo as drawn here.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task A_keystroke_costs_the_ui_thread_under_a_millisecond_and_its_echo_is_drawn_within_a_frame()
+    {
+        var failures = new List<string>();
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var (ok, report) = await WithLowLatencyGc(() => EchoLatencyOnce(attempt));
+            Note(report);
+            if (ok) return;
+            failures.Add(report);
+        }
+        Assert.Fail("budgets missed on every attempt:\n" + string.Join('\n', failures));
+    }
+
+    private sealed class EchoListener : CsCode.Terminal.Pty.IPtyListener
+    {
+        private long _bytes;
+        public long Bytes => Interlocked.Read(ref _bytes);
+        public void OnOutput(ReadOnlySpan<byte> data) => Interlocked.Add(ref _bytes, data.Length);
+        public void OnExited(int exitCode) { }
+    }
+
+    /// <summary>p99 of a one-byte echo through a bare PTY running <c>cat</c> (write to the master, kernel echo, read on the host's reader thread).</summary>
+    private static async Task<(double Median, double P99)> BarePtyEchoAsync(string cat, string cwd)
+    {
+        using var host = CsCode.Terminal.Pty.PtyHosts.Create();
+        var listener = new EchoListener();
+        var env = new Dictionary<string, string> { ["PATH"] = "/usr/bin:/bin", ["TERM"] = "xterm-256color", ["HOME"] = cwd, ["LANG"] = "C.UTF-8" };
+        host.Start(new CsCode.Terminal.Pty.PtyStartInfo(cat, [], cwd, env, 80, 24), listener);
+        try
+        {
+            await Task.Delay(100);
+            var samples = new List<double>();
+            for (var i = 0; i < 200; i++)
+            {
+                if (i % 40 == 39) { host.Write("\r"u8); await Task.Delay(20); continue; } // a line at a time, as typed
+                var before = listener.Bytes;
+                var t0 = Stopwatch.GetTimestamp();
+                host.Write([(byte)('a' + i % 26)]);
+                while (listener.Bytes == before && Stopwatch.GetElapsedTime(t0).TotalMilliseconds < 2000) Thread.SpinWait(20);
+                samples.Add(Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
+                await Task.Delay(Random.Shared.Next(1, 8));
+            }
+            samples.Sort();
+            return (samples[samples.Count / 2], samples[(int)(samples.Count * 0.99)]);
+        }
+        finally { host.Kill(TimeSpan.Zero); }
+    }
+
+    private static async Task<(bool, string)> EchoLatencyOnce(int attempt)
+    {
+        await using var app = await StartWithShellAsync();
+        var session = app.Terminals.ActiveSession!;
+        var control = app.View!.Control;
+        var cat = Support.Which("cat");
+        Assert.NotNull(cat);
+        var (ptyMedian, ptyP99) = await BarePtyEchoAsync(cat, app.Sandbox.Combine("home"));
+
+        await session.SendTextAsync("cat");
+        await TerminalAppHost.SettleAsync(20);
+        Assert.True(await TerminalAppHost.WaitFor(() => ProcessTable.SessionMembers(session.ProcessId!.Value).Any(p => ProcessTable.Name(p) == "cat")), "cat did not start");
+        control.Focus();
+        Assert.True(await TerminalAppHost.WaitFor(() => control.IsKeyboardFocusWithin));
+        await TerminalAppHost.SettleAsync(10);
+
+        // Frames at a precise 60 Hz (a render loop's vsync): each draws the control, as the UI thread does per frame, and notes when the
+        // expected echo is on it. Nothing below uses the host's WaitFor/Settle: their render ticks rasterise the window on the UI thread.
+        const double FrameMs = 1000.0 / 60;
+        var expectedX = -1;
+        var expectedY = -1L; // absolute row (the screen scrolls as cat prints)
+        long drawnAt = 0, publishedAt = 0, frameStart = 0, keyAt = 0, drawCost = 0;
+        var lateFrames = 0;
+        var framesRun = 0;
+        var renderCost = new List<double>();
+        long Deadline(long start, long n) => start + (long)(n * FrameMs * Stopwatch.Frequency / 1000);
+        using var stop = new CancellationTokenSource();
+        var frames = new Thread(() =>
+        {
+            var start = Stopwatch.GetTimestamp();
+            Volatile.Write(ref frameStart, start);
+            for (var n = 1L; !stop.IsCancellationRequested; n++)
+            {
+                var deadline = Deadline(start, n);
+                while (Stopwatch.GetTimestamp() < deadline - Stopwatch.Frequency / 1000) Thread.Sleep(1);
+                while (Stopwatch.GetTimestamp() < deadline) Thread.SpinWait(20);
+                Dispatcher.UIThread.Post(() =>
+                {
+                    var t0 = Stopwatch.GetTimestamp();
+                    framesRun++;
+                    if ((t0 - deadline) * 1000.0 / Stopwatch.Frequency > 3) lateFrames++;
+                    if (!control.IsEffectivelyVisible) return;
+                    var group = new Avalonia.Media.DrawingGroup();
+                    var r0 = Stopwatch.GetTimestamp();
+                    using (var ctx = group.Open()) control.Render(ctx);
+                    var r1 = Stopwatch.GetTimestamp();
+                    renderCost.Add((r1 - r0) * 1000.0 / Stopwatch.Frequency);
+                    if (control.Snapshot is { } s && s.CursorX == Volatile.Read(ref expectedX) && s.ViewportTop + s.CursorY == Volatile.Read(ref expectedY)
+                        && Interlocked.CompareExchange(ref drawnAt, r1, 0) == 0)
+                        Interlocked.Exchange(ref drawCost, r1 - r0);
+                }, DispatcherPriority.Render);
+            }
+        }) { IsBackground = true, Name = "60 Hz frames" };
+        // The first frame (deadline) at or after a moment: when a snapshot published then is drawn by a render loop that is not held up.
+        long FrameAfter(long t)
+        {
+            var start = Volatile.Read(ref frameStart);
+            var n = (long)Math.Ceiling((t - start) * 1000.0 / (FrameMs * Stopwatch.Frequency));
+            while (Deadline(start, n) < t) n++;
+            return Deadline(start, n);
+        }
+        // when the worker published the snapshot with the echo (the terminal's part; after it, the echo waits for the next frame)
+        using var published = session.FrameReady.Subscribe(s =>
+        {
+            if (s.LatestSnapshot is { } snap && snap.CursorX == Volatile.Read(ref expectedX) && snap.ViewportTop + snap.CursorY == Volatile.Read(ref expectedY))
+                Interlocked.CompareExchange(ref publishedAt, Stopwatch.GetTimestamp(), 0);
+        });
+
+        var handling = new List<double>();
+        var dispatch = new List<double>();
+        var toSnapshot = new List<double>();
+        var toFrame = new List<double>();
+        var drawn = new List<double>();
+        var missing = 0;
+        var perLine = Math.Min(40, control.Snapshot!.Columns - 2);
+        (int Late, int Frames) idle, invalidated, typing;
+        frames.Start();
+        try
+        {
+            // Controls: a second of frames with nothing happening, then a second of the terminal merely invalidated (no input, no output) at
+            // the typing rate — the headless compositor re-rasterises the invalidated area on the UI thread, which is what delays frames here.
+            await Task.Delay(200);
+            (lateFrames, framesRun) = (0, 0);
+            await Task.Delay(1000);
+            idle = (lateFrames, framesRun);
+            (lateFrames, framesRun) = (0, 0);
+            for (var sw = Stopwatch.StartNew(); sw.ElapsedMilliseconds < 1000;)
+            {
+                control.InvalidateVisual();
+                await Task.Delay(TimeSpan.FromMilliseconds(8 + Random.Shared.NextDouble() * FrameMs));
+            }
+            invalidated = (lateFrames, framesRun);
+            (lateFrames, framesRun) = (0, 0);
+            renderCost.Clear();
+
+            for (var line = 0; line < 5; line++)
+            {
+                var snap = control.Snapshot!;
+                var (x, y) = (snap.CursorX, snap.ViewportTop + snap.CursorY);
+                for (var i = 0; i < perLine; i++)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(Random.Shared.NextDouble() * FrameMs)); // a random phase of the frame
+                    var ch = (char)('a' + (line * perLine + i) % 26);
+                    Volatile.Write(ref expectedY, y);
+                    Volatile.Write(ref expectedX, x + i + 1);
+                    Interlocked.Exchange(ref drawnAt, 0);
+                    Interlocked.Exchange(ref publishedAt, 0);
+                    Interlocked.Exchange(ref keyAt, 0);
+                    Interlocked.Exchange(ref drawCost, 0);
+                    var posted = Stopwatch.GetTimestamp();
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        // as the platform delivers a printable key: KeyDown (routed from the window, precedence handler included), then its text
+                        var t0 = Stopwatch.GetTimestamp();
+                        Interlocked.Exchange(ref keyAt, t0);
+                        dispatch.Add((t0 - posted) * 1000.0 / Stopwatch.Frequency);
+                        var down = new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.A + (ch - 'a'), KeySymbol = ch.ToString(), Source = control };
+                        control.RaiseEvent(down);
+                        if (!down.Handled) control.RaiseEvent(new TextInputEventArgs { RoutedEvent = InputElement.TextInputEvent, Text = ch.ToString() });
+                        handling.Add(Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
+                    }, DispatcherPriority.Input);
+                    var wait = Stopwatch.StartNew();
+                    while (Interlocked.Read(ref drawnAt) == 0 && wait.ElapsedMilliseconds < 2000) await Task.Delay(1);
+                    var (pub, at, key, cost) = (Interlocked.Read(ref publishedAt), Interlocked.Read(ref drawnAt), Interlocked.Read(ref keyAt), Interlocked.Read(ref drawCost));
+                    if (pub == 0 || at == 0) { missing++; continue; }
+                    // from the moment the UI thread has the key (how long the key waited for the UI thread is reported as dispatch)
+                    toSnapshot.Add((pub - key) * 1000.0 / Stopwatch.Frequency);
+                    toFrame.Add((FrameAfter(pub) + cost - key) * 1000.0 / Stopwatch.Frequency);
+                    drawn.Add((at - key) * 1000.0 / Stopwatch.Frequency);
+                }
+                // Enter: cat prints the line back; wait for the cursor at the start of a fresh line
+                Volatile.Write(ref expectedX, -1);
+                Dispatcher.UIThread.Post(() => control.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, Source = control }), DispatcherPriority.Input);
+                bool Settled() => control.Snapshot is { CursorX: 0 } s2 && s2.ViewportTop + s2.CursorY == y + 2;
+                for (var settle = Stopwatch.StartNew(); !Settled() && settle.ElapsedMilliseconds < 5000;) await Task.Delay(5);
+                Assert.True(Settled(), "cat did not print the line: " + app.ScreenText());
+                await Task.Delay(50);
+            }
+            typing = (lateFrames, framesRun);
+        }
+        finally
+        {
+            stop.Cancel();
+            frames.Join();
+        }
+        Dispatcher.UIThread.Post(() => control.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.D, KeyModifiers = KeyModifiers.Control, KeySymbol = "d", Source = control }), DispatcherPriority.Input);
+        await TerminalAppHost.SettleAsync(10);
+
+        static double P(List<double> v, double q) { if (v.Count == 0) return double.NaN; v.Sort(); return v[Math.Min(v.Count - 1, (int)(v.Count * q))]; }
+        var renderP99 = P(renderCost, 0.99);
+        // echo on screen = the first frame after the snapshot was published + the terminal's own drawing of it
+        var echoP99 = P(toFrame, 0.99);
+        var budget = FrameMs + ptyP99;
+        var report = $"echo attempt {attempt}: keystroke on the UI thread median {P(handling, 0.5):F3} ms, p99 {P(handling, 0.99):F3} ms, max {P(handling, 1):F3} ms ({handling.Count} keys; dispatch p99 {P(dispatch, 0.99):F2} ms); " +
+            $"key to snapshot median {P(toSnapshot, 0.5):F2} ms, p99 {P(toSnapshot, 0.99):F2} ms (bare PTY echo median {ptyMedian:F2} ms, p99 {ptyP99:F2} ms); " +
+            $"echo on screen median {P(toFrame, 0.5):F1} ms, p99 {echoP99:F2} ms (budget one frame + PTY = {budget:F2} ms; terminal's draw p99 {renderP99:F2} ms); " +
+            $"{missing} keys not drawn; headless frames held up >3 ms: idle {idle.Late}/{idle.Frames}, terminal only invalidated {invalidated.Late}/{invalidated.Frames}, " +
+            $"typing {typing.Late}/{typing.Frames} (echo as drawn here, including those: median {P(drawn, 0.5):F1} ms, p99 {P(drawn, 0.99):F1} ms)";
+        var ok = missing == 0 && toFrame.Count == 5 * perLine && P(handling, 0.99) < 1 && echoP99 < budget;
+        return (ok, report);
+    }
+
     [AvaloniaFact]
     public async Task Cat_of_a_100_mb_file_on_screen_keeps_the_ui_responsive_and_memory_bounded()
     {
