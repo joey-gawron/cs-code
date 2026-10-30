@@ -261,7 +261,9 @@ connection that created or reattached it, so the replay always comes before newe
   Acknowledgements are stream offsets: output that fell out of the 2 MB ring while the link was down counts as consumed, so the program is never left
   waiting for a window that cannot open (remote-2). Every re-armed watch delivers a rescan — `Changed(root)` and, for a watch of one directory,
   `Changed` for each entry — so an open editor, which watches its file's directory for its own URI, checks its file again and a later save does not
-  overwrite what changed on the server during the outage (remote-1). After resynchronising, `chan/keep`, `watch/keep` and `task/keep` name what the
+  overwrite what changed on the server during the outage (remote-1). The rescan's listings (one `fs/readDir` per watched directory, at most 20,000
+  entries) go out once the reconnected session is published, so terminal output, debug streams and file operations never wait for them; a rescan
+  and the live batches of one watch are never delivered at the same time. After resynchronising, `chan/keep`, `watch/keep` and `task/keep` name what the
   client still has on every connect, also a first connect to a server that was there before (a restarted client, or one that gave up and connects
   again): the server ends the rest.
 * **Persistence across a client restart**: a saved session whose folder is remote reconnects when it is restored (`remote.openFolder`; the editors load

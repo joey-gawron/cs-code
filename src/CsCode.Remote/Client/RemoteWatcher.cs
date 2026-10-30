@@ -10,11 +10,12 @@ namespace CsCode.Remote.Client;
 /// <summary>
 /// The <c>ssh:</c> file watcher. Each <see cref="Watch"/> becomes a server-side Platform watch (recursive, debounced, exclude-aware, a missing root
 /// waits for it); its batches come back as <c>watch/changes</c> and are delivered, mapped to <c>ssh:</c> URIs, on the connection's single handler
-/// thread (in order, never concurrently per subscription). Watches survive reconnects: they are re-armed on the new session, and the subscriber gets
-/// a "rescan" then, since events during the outage were lost: <c>Changed(root)</c> and, for a watch of one directory (not a tree), <c>Changed</c>
-/// for each of its entries, so a subscriber that looks for its own file (an open editor checks the disk for it) sees it. Then the server is told
-/// which watches the client still has (<c>watch/keep</c>): one stopped while disconnected, or left by a previous client process, ends there.
-/// Changes invalidate the directory cache before the callback runs.
+/// thread (in order, never concurrently per subscription). Watches survive reconnects: they are re-armed on the new session and the server is told
+/// which watches the client still has (<c>watch/keep</c>): one stopped while disconnected, or left by a previous client process, ends there. Since
+/// events during the outage were lost, each re-armed subscriber then gets a "rescan": <c>Changed(root)</c> and, for a watch of one directory (not a
+/// tree), <c>Changed</c> for each of its entries, so a subscriber that looks for its own file (an open editor checks the disk for it) sees it. The
+/// rescan's listings go out once the reconnected session is published, never on the reconnect's own path (terminal output, debug streams and file
+/// operations resume first). Changes invalidate the directory cache before the callback runs.
 /// </summary>
 public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
 {
@@ -45,6 +46,8 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
         public SshUriMapper Mapper { get; } = mapper;
         public RemoteSession? ArmedOn;
         public bool WasArmed;
+        /// <summary>Held while delivering: the handler thread's batches and a rescan never reach the subscriber at the same time.</summary>
+        public readonly object Delivering = new();
         public readonly TaskCompletionSource FirstArmed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
@@ -71,7 +74,7 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
         var path = mapper.ToRemotePath(root);
         var sub = new Subscription(Guid.NewGuid().ToString("N"), root, path, recursive, excludeGlobs, onChanges, mapper);
         _subs[sub.Id] = sub;
-        if (session is not null) _ = ArmAsync(sub, session, listings: null);
+        if (session is not null) _ = ArmAsync(sub, session, reconnect: false);
         return new Handle(() =>
         {
             if (!_subs.TryRemove(sub.Id, out _)) return;
@@ -81,22 +84,44 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
         }, sub.FirstArmed.Task);
     }
 
-    /// <param name="listings">Directory listings of one reconnect's rescans (several editors watch the same directory); null: a first arm, no rescan.</param>
-    private async Task ArmAsync(Subscription sub, RemoteSession session, Dictionary<string, Task<ReadDirResult?>>? listings)
+    /// <param name="reconnect">Armed again after a reconnect (else: a first arm).</param>
+    /// <returns>Whether the subscriber is due a rescan: it was armed before the connection dropped, so it missed the outage's events.</returns>
+    private async Task<bool> ArmAsync(Subscription sub, RemoteSession session, bool reconnect)
     {
         try
         {
             await session.Peer.InvokeAsync<WatchStartParams, Empty>(RemoteMethods.WatchStart, new WatchStartParams(sub.Id, sub.Path, sub.Recursive, sub.Excludes)).ConfigureAwait(false);
-            var rescan = listings is not null && sub.WasArmed;
+            var rescan = reconnect && sub.WasArmed;
             sub.ArmedOn = session;
             sub.WasArmed = true;
-            if (!_subs.ContainsKey(sub.Id)) { session.Peer.Fire(RemoteMethods.WatchStop, new WatchStopParams(sub.Id)); return; } // disposed meanwhile
+            if (!_subs.ContainsKey(sub.Id)) { session.Peer.Fire(RemoteMethods.WatchStop, new WatchStopParams(sub.Id)); return false; } // disposed meanwhile
             sub.FirstArmed.TrySetResult();
-            if (rescan) Deliver(sub, await RescanAsync(sub, session, listings!).ConfigureAwait(false));
+            return rescan;
         }
         catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException)
         {
             _log.LogWarning("Could not watch {Root} on the remote: {Error}", sub.Root, ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The rescans of one reconnect, once its session is published (the reconnect does not wait for them: each listing is a round trip plus up to
+    /// <see cref="MaxRescanEntries"/> entries). A session dropped again meanwhile is left alone: the next reconnect rescans.
+    /// </summary>
+    private async Task RescanAfterPublishAsync(RemoteSession session, IReadOnlyList<Subscription> due)
+    {
+        try
+        {
+            var (published, _) = await _endpoint.ResolveAsync(due[0].Root, CancellationToken.None).ConfigureAwait(false);
+            if (!ReferenceEquals(published, session)) return;
+        }
+        catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException) { return; }
+        var listings = new Dictionary<string, Task<ReadDirResult?>>(StringComparer.Ordinal); // several editors watch the same directory: one listing
+        foreach (var sub in due)
+        {
+            if (!_subs.ContainsKey(sub.Id) || !session.IsOpen) continue;
+            Deliver(sub, await RescanAsync(sub, session, listings).ConfigureAwait(false));
         }
     }
 
@@ -144,15 +169,16 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
     async Task IRemoteParticipant.OnConnectedAsync(RemoteSession session, CancellationToken ct)
     {
         var authority = (session.Mapper as SshUriMapper)?.Authority;
-        var listings = new Dictionary<string, Task<ReadDirResult?>>(StringComparer.Ordinal);
+        var due = new List<Subscription>();
         foreach (var sub in _subs.Values.ToArray())
-            if (sub.Mapper.Authority == authority)
-                await ArmAsync(sub, session, listings).ConfigureAwait(false);
+            if (sub.Mapper.Authority == authority && await ArmAsync(sub, session, reconnect: true).ConfigureAwait(false))
+                due.Add(sub);
         // The server stops every watch we no longer have: one disposed while we were disconnected (its watch/stop could not be sent), or all of a
         // previous client process's (a restarted client reattaching to the server a crashed one left running).
         var keep = _subs.Values.Where(s => s.Mapper.Authority == authority).Select(s => s.Id).ToArray();
         try { await session.Peer.InvokeAsync<WatchKeepParams, Empty>(RemoteMethods.WatchKeep, new WatchKeepParams(keep), ct).ConfigureAwait(false); }
         catch (RemoteException ex) when (ex.Code == RpcErrorCodes.MethodNotFound) { _log.LogDebug("The server cannot drop unclaimed watches: {Error}", ex.Message); }
+        if (due.Count > 0) _ = RescanAfterPublishAsync(session, due);
     }
 
     void IRemoteParticipant.OnDisconnected()
@@ -163,7 +189,10 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
 
     private void Deliver(Subscription sub, IReadOnlyList<FileChange> changes)
     {
-        try { sub.OnChanges?.Invoke(changes); }
-        catch (Exception ex) { _log.LogWarning(ex, "A watcher callback for {Root} failed", sub.Root); } // keeps receiving, like the local watcher
+        lock (sub.Delivering)
+        {
+            try { sub.OnChanges?.Invoke(changes); }
+            catch (Exception ex) { _log.LogWarning(ex, "A watcher callback for {Root} failed", sub.Root); } // keeps receiving, like the local watcher
+        }
     }
 }
