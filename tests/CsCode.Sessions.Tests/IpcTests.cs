@@ -88,7 +88,7 @@ public class IpcTests
     [Fact]
     public void Peer_credentials_report_this_process()
     {
-        if (!OperatingSystem.IsLinux()) Assert.Skip("SO_PEERCRED is Linux-only (macOS uses LOCAL_PEERCRED).");
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) Assert.Skip("peer credentials: SO_PEERCRED (Linux) and LOCAL_PEERCRED/LOCAL_PEERPID (macOS)");
         var (a, b) = SocketPair();
         using (a)
         using (b)
@@ -211,6 +211,25 @@ public class IpcTests
         var ex = await Assert.ThrowsAsync<IpcException>(() =>
             IpcClient.RequestAsync(server.Endpoint, new IpcMessage { Type = IpcVerbs.Hello }, TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(300)));
         Assert.Contains(ex.Failure, new[] { IpcFailure.NoEndpoint, IpcFailure.Timeout });
+    }
+
+    [Fact]
+    public async Task Dispose_returns_while_the_accept_thread_is_waiting_for_a_connection()
+    {
+        // macOS: closing a listener that a thread is blocked in accept() on never woke that thread, and .NET's close retried the wake-up forever,
+        // so disposing a started server hung (the app on quit; the launcher tests' fake hosts).
+        using var rt = new TestRuntime();
+        var server = new IpcServer(rt.Runtime.EndpointOf(Environment.ProcessId), new EchoHandler());
+        server.Start();
+        // One request served: the accept thread is back waiting for the next connection.
+        Assert.True((await IpcClient.RequestAsync(server.Endpoint, new IpcMessage { Type = IpcVerbs.Hello }, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2))).Ok);
+        await Task.Delay(100);
+
+        var dispose = Task.Factory.StartNew(server.Dispose, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        var finished = await Task.WhenAny(dispose, Task.Delay(TimeSpan.FromSeconds(10)));
+
+        Assert.True(finished == dispose, "Dispose did not return within 10 s");
+        await dispose;
     }
 
     [Fact]

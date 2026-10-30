@@ -90,12 +90,20 @@ public sealed class IpcServer : IDisposable
         while (!_stop.IsCancellationRequested)
         {
             Socket client;
-            try { client = _listener!.Accept(); }
-            catch (Exception ex) when (ex is SocketException or ObjectDisposedException) { return; } // disposed
+            try { client = AcceptNext(_listener!); }
+            catch (Exception ex) when (ex is SocketException or ObjectDisposedException or OperationCanceledException) { return; } // disposed
             if (!_slots.Wait(0)) { client.Dispose(); continue; }
             _ = Task.Run(() => ServeSocketAsync(client));
         }
     }
+
+    /// <summary>
+    /// The next connection, waited for on the accept thread. On macOS shutdown() does not wake a thread blocked in accept(), and .NET's close of a
+    /// socket that is in a blocking call retries that wake-up until the call returns: disposing the server hung forever (the app on quit, the
+    /// launcher tests). There the wait is an async accept, which the stop token cancels; Linux keeps the blocking accept that closing wakes.
+    /// </summary>
+    private Socket AcceptNext(Socket listener) =>
+        OperatingSystem.IsMacOS() ? listener.AcceptAsync(_stop.Token).AsTask().GetAwaiter().GetResult() : listener.Accept();
 
     private async Task ServeSocketAsync(Socket client)
     {
