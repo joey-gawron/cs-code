@@ -368,10 +368,12 @@ working: the next close starts over, Save prompts included (the user may have ed
 module's own close again; the layout saved when the held close began stands until the user changes the layout, then the debounced saves resume
 (`ShellController.CloseEnd.Held`; `ConfirmOnExitWindowTests`). A held close is not a cancel, and the window reports it as such to background
 mode, whose quits drive the window's close: `RequestCloseAsync` (the Save prompts, then the close) and `CloseWithoutPrompt` return the
-`CloseEnd`, `CloseProceeding` is raised when a confirmed close goes ahead (also a held one the module repeats), and `ForgetHeldClose` drops a
-held close whose quit was given up, so the module's repeat is a new close (background mode's hide first). The quit commits on
-`CloseProceeding` and waits while the close is held (SESSIONS.md, "A quit commits when its window really closes"). Reset Window Layout docks
-everything. Not done: dragging a tab out of the window to float it relies on Dock's own drag
+`CloseEnd`, `CloseProceeding` is raised when a confirmed close goes ahead (also a held one the module repeats), `SettleHeldCloseAsync` waits
+(bounded, not blocking the UI thread) until a held close either goes ahead or shows a question (a notification with actions shown since the
+close was confirmed; "hasChildProcesses" holds every close while it looks for programs and closes again without a word when only shells
+run), and `ForgetHeldClose` drops a held close whose quit was given up and withdraws (dismisses) its question, so a later answer cannot close
+or hide the window. The quit commits on `CloseProceeding` and waits while the close is held (SESSIONS.md, "A quit commits when its window
+really closes"). Reset Window Layout docks everything. Not done: dragging a tab out of the window to float it relies on Dock's own drag
 (not tested), and a floating window holds either tools or documents (Dock gives a floating root one kind of dock), never both.
 
 **Layout.** `LayoutPersistence`: tool placement, visibility, Auto Hide (`ToolLayout.AutoHide`: an auto-hidden tool is on its well's edge strip again after a
