@@ -339,6 +339,24 @@ public class ConfigurationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_settings_directory_made_while_the_folder_watch_was_being_armed_is_found_and_read()
+    {
+        // The folder's watch arms on the IO lane after the look for .cscode: a directory made in between is reported by no watch, so it is
+        // looked for again once the watch is armed (this was missed on every platform whenever arming was slow).
+        var arm = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _f.Watcher.Arming = root => root == _f.WorkspaceDir ? arm.Task : null;
+        using var svc = _f.Create();
+        await _f.OpenWorkspace(svc);
+
+        _f.WriteWorkspace(".cscode", """{ "editor.tabSize": 6 }""");
+        arm.SetResult();
+
+        for (var i = 0; i < 250 && svc.Get<int>("editor.tabSize") != 6; i++) await Task.Delay(20, Ct);
+        Assert.Equal(6, svc.Get<int>("editor.tabSize"));
+        Assert.Contains(_f.Watcher.ActiveRoots, r => r.EndsWith("/.cscode")); // and it is watched for edits from now on
+    }
+
+    [Fact]
     public async Task Reopening_a_folder_replaces_the_workspace_watches()
     {
         using var svc = _f.Create();

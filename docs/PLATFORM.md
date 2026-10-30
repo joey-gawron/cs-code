@@ -130,7 +130,8 @@ Layers, lowest to highest: **registered defaults → user `settings.json` → wo
   TypeScript for Vue, server-specific `settings` such as rust-analyzer's `check.overrideCommand`).
 * **Reads**: `Get<T>(key, default)` / `GetRaw(key)` / section reads (`GetRaw("editor")` returns the merged object). A registered default beats the caller's fallback; a value of the
   wrong type yields the fallback (never throws). Primitive reads allocate nothing after the first read of a key.
-* **Live reload**: the settings directories are watched — the primary folder's `.cscode/` and `.vscode/` and every additional folder's `.cscode/` (lsp-core-7), also when they are created after the folder was opened; a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
+* **Live reload**: the settings directories are watched — the primary folder's `.cscode/` and `.vscode/` and every additional folder's `.cscode/` (lsp-core-7), also when they are created after the folder was opened (once the folder's watch is armed, a directory missing when it was
+  looked for is looked for again, and the files are read again: one made while the watch was being armed was reported by no watch); a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
   setting reports itself). Rewriting a file with the same values (different comments/order) fires nothing, nor does the echo of our own write.
 * **`UpdateAsync` edits the file in place** with a small JSONC-aware minimal-edit writer: only the value span is replaced; a new key is inserted before the closing brace using the file's
   indentation (tab/spaces), EOL (LF/CRLF), comma style (a trailing-comma file stays one) and single-line/multi-line shape; flat dotted keys, nested objects and mixes are found; `null` removes the key

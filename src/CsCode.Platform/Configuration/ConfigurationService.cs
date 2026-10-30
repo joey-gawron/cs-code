@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Platform.Io;
+using CsCode.Platform.Watching;
 using CsCode.Platform.Workspace;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -509,7 +510,10 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
 
     /// <summary>
     /// Watches every folder that contributes a layer: the primary one's .cscode and .vscode directories, every other folder's .cscode directory
-    /// (lsp-core-7: only the primary folder used to be watched, so edits to an added folder's settings were never applied).
+    /// (lsp-core-7: only the primary folder used to be watched, so edits to an added folder's settings were never applied). The watches arm on
+    /// the IO lane after this returns: once they have, a settings directory missing a moment ago is looked for again (made in between, the
+    /// folder's watch never reported it, so it was neither watched nor read), and the files are read again (one written after they were read
+    /// and before its directory's watch was armed was reported by nobody).
     /// </summary>
     private void ArmWorkspaceWatchers(IReadOnlyList<Uri> folders)
     {
@@ -519,6 +523,8 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
         if (_watcher is null || folders.Count == 0 || _disposed) return;
 
         var store = new DisposableStore();
+        var armed = new List<Task>();
+        var missing = new List<string>();
         for (var i = 0; i < folders.Count; i++)
         {
             var folder = folders[i];
@@ -527,11 +533,12 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
             {
                 var root = FileUri.ToPath(folder);
                 // The folder itself (non-recursive) tells us when .cscode/.vscode appear or vanish; each existing dir is watched for its files.
-                store.Add(_watcher.Watch(FileUri.FromDirectoryPath(root), recursive: false, excludeGlobs: [], changes => OnFilesChanged(changes, root)));
+                armed.Add(ReadyOf(store.Add(_watcher.Watch(FileUri.FromDirectoryPath(root), recursive: false, excludeGlobs: [], changes => OnFilesChanged(changes, root)))));
                 foreach (var sub in i == 0 ? new[] { ".cscode", ".vscode" } : [".cscode"])
                 {
                     var d = Path.Combine(root, sub);
-                    if (Directory.Exists(d)) store.Add(_watcher.Watch(FileUri.FromDirectoryPath(d), recursive: false, excludeGlobs: [], changes => OnFilesChanged(changes, null)));
+                    if (Directory.Exists(d)) armed.Add(ReadyOf(store.Add(_watcher.Watch(FileUri.FromDirectoryPath(d), recursive: false, excludeGlobs: [], changes => OnFilesChanged(changes, null)))));
+                    else missing.Add(d);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
@@ -540,8 +547,27 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
             }
         }
         lock (_gate) _workspaceWatches = store;
-        if (_disposed) store.Dispose();
+        if (_disposed) { store.Dispose(); return; }
+        Task.WhenAll(armed).ContinueWith(_ => _lane.Post(() => OnWorkspaceWatchersArmed(store, missing),
+                ex => _log.LogDebug(ex, "Looking for workspace settings directories again failed")),
+            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
+
+    // On the IO lane, once the watches one ArmWorkspaceWatchers made are armed (unless they were replaced since: their replacement looks again).
+    private void OnWorkspaceWatchersArmed(DisposableStore store, List<string> missing)
+    {
+        IReadOnlyList<Uri> folders;
+        lock (_gate)
+        {
+            if (_disposed || !ReferenceEquals(_workspaceWatches, store)) return;
+            folders = _folders;
+        }
+        if (missing.Any(Directory.Exists)) ArmWorkspaceWatchers(folders); // which reloads once that one is watched too
+        else ScheduleReload();
+    }
+
+    // A watch of FileWatcher is armed on the IO lane after Watch returns; other watchers' handles are taken as armed.
+    private static Task ReadyOf(IDisposable watch) => watch is FileWatchHandle h ? h.Ready : Task.CompletedTask;
 
     private void OnFilesChanged(IReadOnlyList<FileChange> changes, string? workspaceRoot)
     {

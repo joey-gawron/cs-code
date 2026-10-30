@@ -23,13 +23,20 @@ public sealed class FakeFileWatcher : IFileWatcher
 
     public IReadOnlyList<string> ActiveRoots { get { lock (_watches) return _watches.Select(w => w.Root).ToArray(); } }
 
+    /// <summary>
+    /// When set, a watch whose root this gives a task for is armed (its handle's <see cref="CsCode.Platform.Watching.FileWatchHandle.Ready"/>
+    /// completes) when that task does, as FileWatcher's are on the IO lane some time after Watch returns. Null: armed at once.
+    /// </summary>
+    public Func<string, Task?>? Arming { get; set; }
+
     public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges)
     {
         var w = new Registration(FileUri.ToPath(root), recursive, onChanges);
         lock (_watches) _watches.Add(w);
         Interlocked.Increment(ref _totalCreated);
         // Like a real watcher, a disposed watch must stop referencing its callback (otherwise it would pin the subscriber).
-        return CsCode.Core.Lifecycle.Disposable.Create(() => { lock (_watches) { w.Disposed = true; _watches.Remove(w); } });
+        void Dispose() { lock (_watches) { w.Disposed = true; _watches.Remove(w); } }
+        return Arming?.Invoke(w.Root) is { } armed ? new CsCode.Platform.Watching.FileWatchHandle(armed, Dispose) : CsCode.Core.Lifecycle.Disposable.Create(Dispose);
     }
 
     /// <summary>Delivers <paramref name="path"/> to every live watch that covers it, on the calling thread.</summary>
