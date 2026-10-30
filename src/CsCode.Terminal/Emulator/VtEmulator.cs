@@ -154,6 +154,31 @@ public sealed partial class VtEmulator : IVtHandler
 
     public void ScrollViewportBy(long delta) => ScrollViewportTo((FollowOutput ? ScreenTop : ViewportTop) + delta);
 
+    /// <summary>
+    /// VS Code's Terminal: Clear (xterm.js <c>clear()</c>): the scrollback and the screen go, the cursor's line (the prompt) becomes the first
+    /// line. On the alternate screen only the screen is cleared around it.
+    /// </summary>
+    public void ClearKeepingCursorLine()
+    {
+        var s = _screen;
+        if (s.CursorY > 0)
+        {
+            (s.Lines[0], s.Lines[s.CursorY]) = (s.Lines[s.CursorY], s.Lines[0]);
+            s.Lines[0].Wrapped = false;
+            s.Lines[0].Touch();
+            s.CursorY = 0;
+        }
+        for (var r = 1; r < s.Rows; r++) s.Lines[r].Clear(Cell.Blank);
+        if (!IsAlternateScreen)
+        {
+            var pushed = Scrollback.TotalPushed;
+            Scrollback.Replace([], pushed);
+        }
+        FollowOutput = true;
+        ViewportTop = ScreenTop;
+        ChangeCount++;
+    }
+
     public void ScrollViewportToBottom() => ScrollViewportTo(ScreenTop);
 
     private void SyncViewport()

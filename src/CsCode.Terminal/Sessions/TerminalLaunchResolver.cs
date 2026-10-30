@@ -154,6 +154,7 @@ public sealed partial class TerminalLaunchResolver(IConfigurationService? config
             var path = ExpandHome(Substitute(candidate, env), env);
             if (!System.IO.Path.IsPathRooted(path)) path = System.IO.Path.Combine(WorkspaceFolder() ?? home, path);
             if (Directory.Exists(path)) return path;
+            if (File.Exists(path) && System.IO.Path.GetDirectoryName(path) is { } parent && Directory.Exists(parent)) return parent; // "Open in Terminal" on a file
         }
         return Directory.Exists(home) ? home : "/";
     }
