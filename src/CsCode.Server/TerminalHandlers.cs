@@ -51,7 +51,8 @@ internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILog
         // newest workspace folders yet when the terminal is created right after opening one.
         if (options.Cwd is null && p.Folder is { IsFile: true } folder && string.IsNullOrWhiteSpace(_config?.Get<string>(TerminalSettingKeys.Cwd)))
             options = options with { Cwd = folder.LocalPath.Length > 1 ? folder.LocalPath.TrimEnd('/') : folder.LocalPath };
-        var task = taskTag is { Length: > 0 } ? tasks?.Claim(taskTag) : null;
+        var task = taskTag is null ? null
+            : tasks?.Claim(taskTag) ?? throw new IOException("The task this terminal was opened for is no longer waiting for it on the remote host (it started elsewhere, failed or was cancelled).");
         PtyStartInfo info;
         try { info = _resolver.Resolve(options, columns, rows); } // PtySpawnException → an error answer with the reason
         catch (PtySpawnException)

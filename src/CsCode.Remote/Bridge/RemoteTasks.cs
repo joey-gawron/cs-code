@@ -91,31 +91,69 @@ public sealed class RemoteTaskService(ITaskService local, RemoteConnectionManage
 public sealed class RemoteTaskTerminals(Func<ITaskTerminalHost?> host, ILogger? log = null) : IRemoteParticipant
 {
     private const int MaxTracked = 256;
-    private readonly ConcurrentDictionary<string, ITaskTerminalRun> _runs = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Task<ITaskTerminalRun>> _starts = new(StringComparer.Ordinal);
     private readonly ILogger _log = log ?? NullLogger.Instance;
 
-    /// <summary>Task terminals whose program still runs (bookkeeping, tests).</summary>
-    public int Count => _runs.Count;
+    /// <summary>Task terminals started or starting whose program still runs (bookkeeping, tests).</summary>
+    public int Count => _starts.Count;
 
     void IRemoteParticipant.Attach(RpcPeer peer)
     {
         peer.OnRequest<TaskTerminalParams, Empty>(RemoteMethods.TaskTerminal, async (p, ct) =>
         {
-            var terminals = host() ?? throw new NotSupportedException("This client cannot show tasks in terminals.");
-            var env = new Dictionary<string, string?>(p.Environment, StringComparer.Ordinal) { [TaskTerminalTag.Variable] = p.Tag };
-            var run = await terminals.StartAsync(new TaskTerminalRequest(p.Label, p.FileName, p.Arguments, p.WorkingDirectory, env, p.Presentation)
-                { CommandLine = p.CommandLine }, ct).ConfigureAwait(false);
-            if (_runs.Count < MaxTracked)
+            // The server asks again when the connection went away with its request or the answer: the start already made (or still being made)
+            // answers it, unless its terminal could not start (then this is the retry).
+            while (true)
             {
-                _runs[p.Tag] = run;
-                _ = run.Completion.ContinueWith(_ => _runs.TryRemove(p.Tag, out var _), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                var created = new Lazy<Task<ITaskTerminalRun>>(() => StartAsync(p));
+                var start = _starts.Count < MaxTracked ? _starts.GetOrAdd(p.Tag, _ => created.Value) : created.Value;
+                ITaskTerminalRun run;
+                try { run = await start.WaitAsync(ct).ConfigureAwait(false); }
+                catch (Exception) when (!ct.IsCancellationRequested && !created.IsValueCreated && start.IsCompleted)
+                {
+                    _starts.TryRemove(new KeyValuePair<string, Task<ITaskTerminalRun>>(p.Tag, start)); // an earlier attempt failed: start again
+                    continue;
+                }
+                if (!created.IsValueCreated && run.Completion is { IsCompleted: true, Result.ExitCode: -1 })
+                {
+                    _starts.TryRemove(new KeyValuePair<string, Task<ITaskTerminalRun>>(p.Tag, start)); // its terminal did not start: start again
+                    continue;
+                }
+                return Empty.Value;
             }
-            return Empty.Value;
         });
         peer.OnNotification<TaskTagParams>(RemoteMethods.TaskReveal, p =>
         {
-            if (_runs.TryGetValue(p.Tag, out var run)) _ = RevealAsync(run);
+            if (_starts.TryGetValue(p.Tag, out var start) && start.IsCompletedSuccessfully) _ = RevealAsync(start.Result);
         });
+    }
+
+    /// <summary>
+    /// Opens the task's terminal (not bound to the asking connection: a start under way when the connection drops goes on, and the server's next
+    /// request for the same tag waits for it). The terminal's program runs on the server: the tag goes into its <c>term/create</c>.
+    /// </summary>
+    private Task<ITaskTerminalRun> StartAsync(TaskTerminalParams p)
+    {
+        var tag = p.Tag;
+        var start = Task.Run(async () =>
+        {
+            var terminals = host() ?? throw new NotSupportedException("This client cannot show tasks in terminals.");
+            var env = new Dictionary<string, string?>(p.Environment, StringComparer.Ordinal) { [TaskTerminalTag.Variable] = tag };
+            var run = await terminals.StartAsync(new TaskTerminalRequest(p.Label, p.FileName, p.Arguments, p.WorkingDirectory, env, p.Presentation)
+                { CommandLine = p.CommandLine }).ConfigureAwait(false);
+            // Forgotten when its program ends (a later request for the tag is a stale one).
+            _ = run.Completion.ContinueWith(_ => Forget(tag), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            return run;
+        });
+        _ = start.ContinueWith(_ => Forget(tag), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return start;
+    }
+
+    private void Forget(string tag)
+    {
+        // Kept a little while after the end, so a repeated request that crossed the end does not start the task a second time.
+        _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(_ => _starts.TryRemove(tag, out var _), TaskScheduler.Default);
     }
 
     private async Task RevealAsync(ITaskTerminalRun run)

@@ -50,47 +50,67 @@ internal sealed class ServerTaskTerminals : ITaskTerminalHost
         ArgumentNullException.ThrowIfNull(request);
         var tag = Guid.NewGuid().ToString("N");
         var run = new Run(this, tag, request.Output);
+        var ask = new TaskTerminalParams(tag, request.Label, request.FileName, request.Arguments, request.WorkingDirectory, request.Environment,
+            request.Presentation, request.CommandLine);
         _unclaimed[tag] = run;
-        // Forgotten if no terminal ever claims it (the client failed before its term/create): bounded bookkeeping.
-        _ = Task.Delay(ClaimTimeout, CancellationToken.None).ContinueWith(_ => _unclaimed.TryRemove(tag, out var _), TaskScheduler.Default);
-        // A start that fails or is cancelled stays known until the timer above: a terminal that still comes for it is ended at once, so a task
-        // nobody waits for never runs.
+        // Every way out but a claim forgets the tag: a terminal that still comes for it is refused (Claim), so a task nobody waits for never runs.
         try
         {
-            await _link.InvokeAsync<TaskTerminalParams, Empty>(RemoteMethods.TaskTerminal, new TaskTerminalParams(tag, request.Label, request.FileName, request.Arguments,
-                request.WorkingDirectory, request.Environment, request.Presentation, request.CommandLine), ct, ClaimTimeout).ConfigureAwait(false);
+            var deadline = DateTime.UtcNow + ReconnectWindow;
+            while (true)
+            {
+                try
+                {
+                    await _link.InvokeAsync<TaskTerminalParams, Empty>(RemoteMethods.TaskTerminal, ask, ct, ClaimTimeout).ConfigureAwait(false);
+                    break;
+                }
+                catch (Exception ex) when (ex is RemoteDisconnectedException or TimeoutException)
+                {
+                    // The connection went away with the request or its answer. The client may go on (its terminal's term/create can come after the
+                    // reconnect), or not: whichever comes first decides — the terminal, or the next connection, which is asked again (the client
+                    // answers a repeated tag with the start it already made).
+                    var left = deadline - DateTime.UtcNow;
+                    if (left <= TimeSpan.Zero) throw new InvalidOperationException("the connection to the client was lost before its terminal started: " + ex.Message, ex);
+                    using var attached = NextConnection(out var connection);
+                    var first = _link.IsClosed ? await Task.WhenAny(run.TerminalStarted, connection, Task.Delay(left, ct)).ConfigureAwait(false) : connection;
+                    ct.ThrowIfCancellationRequested();
+                    if (first == run.TerminalStarted) break;
+                    if (first != connection) throw new InvalidOperationException("the connection to the client was lost before its terminal started: " + ex.Message, ex);
+                }
+                catch (IOException ex) // the client's own answer: it could not open the terminal
+                {
+                    throw new InvalidOperationException("the client could not show it: " + ex.Message, ex);
+                }
+            }
+            if (!run.Claimed) throw new InvalidOperationException("its terminal did not start on the remote host");
+            return run;
         }
-        catch (OperationCanceledException)
+        catch when (!run.Claimed)
         {
-            run.Terminate();
+            _unclaimed.TryRemove(tag, out _);
             throw;
         }
-        catch (Exception ex) when (ex is RemoteDisconnectedException or TimeoutException)
-        {
-            // The connection went away with the answer. The client goes on (its terminal's term/create may come after the reconnect): the
-            // terminal decides, not the lost answer.
-            try { await run.TerminalStarted.WaitAsync(ClaimTimeout, ct).ConfigureAwait(false); }
-            catch (Exception wait) when (wait is TimeoutException or OperationCanceledException)
-            {
-                run.Terminate();
-                if (wait is OperationCanceledException) throw;
-                throw new InvalidOperationException("the connection to the client was lost before its terminal started: " + ex.Message, ex);
-            }
-        }
-        catch (IOException ex) // the client's answer: it could not open the terminal
-        {
-            run.Terminate();
-            throw new InvalidOperationException("the client could not show it: " + ex.Message, ex);
-        }
-        if (!run.Claimed)
-        {
-            run.Terminate();
-            throw new InvalidOperationException("its terminal did not start on the remote host");
-        }
-        return run;
     }
 
-    /// <summary>A tagged <c>term/create</c>: the run waiting for this terminal, or null (unknown or stale tag: an ordinary terminal).</summary>
+    /// <summary>How long a task start keeps asking a reconnecting client for its terminal (the client waits that long for a lost task too).</summary>
+    private static readonly TimeSpan ReconnectWindow = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// <paramref name="next"/> completes when the next client connection is attached (never, for a link that is not a reconnectable slot); dispose
+    /// the result when no longer waiting. A request sent then is read by the new connection like any other (the client's handlers are registered
+    /// before it reads).
+    /// </summary>
+    private IDisposable NextConnection(out Task next)
+    {
+        var attached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        next = attached.Task;
+        return _link is RpcPeerSlot slot ? slot.Attached.Subscribe(_ => attached.TrySetResult()) : Core.Lifecycle.Disposable.Empty;
+    }
+
+    /// <summary>
+    /// A tagged <c>term/create</c>: the run waiting for this terminal; null when no run waits for that tag (it was claimed already, or its start
+    /// failed or was cancelled): the terminal must then not run the task's program at all.
+    /// </summary>
     public Run? Claim(string tag)
     {
         if (!_unclaimed.TryRemove(tag, out var run)) return null;

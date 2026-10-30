@@ -137,18 +137,59 @@ public class ReconnectReclaimTests
         await TestEnv.WaitUntilAsync(() => TestEnv.ProcessesWithMarker(sleep).Count == 0, TimeSpan.FromSeconds(15), "the cancelled task's process to end on the server");
     }
 
+    /// <summary>The client's task presentation, except that the link drops while the first task's terminal is being opened.</summary>
+    private sealed class CuttingTaskTerminals(ITaskTerminalHost inner, Func<Task> cut) : ITaskTerminalHost
+    {
+        private int _calls;
+        public int Calls => Volatile.Read(ref _calls);
+
+        public async ValueTask<ITaskTerminalRun> StartAsync(TaskTerminalRequest request, CancellationToken ct = default)
+        {
+            if (Interlocked.Increment(ref _calls) == 1) await cut();
+            return await inner.StartAsync(request, ct);
+        }
+    }
+
+    [Fact]
+    public async Task A_task_whose_terminal_is_being_opened_when_the_link_drops_runs_once_and_reports_its_exit_code()
+    {
+        var control = new CuttableTransport.Control();
+        RemoteTestHost? self = null;
+        CuttingTaskTerminals? cutting = null;
+        await using var host = new RemoteTestHost(o => o.Reconnect = new ReconnectPolicy(10, () => 0.5),
+            services: sc => sc.AddSingleton<ITaskTerminalHost>(sp => cutting = new CuttingTaskTerminals(sp.GetRequiredService<Terminal.Tasks.TaskTerminalHost>(), async () =>
+            {
+                await control.CutAsync();
+                await TestEnv.WaitUntilAsync(() => self!.Manager.Session is null, TimeSpan.FromSeconds(10), "the client to notice the drop");
+            })),
+            wrap: t => new CuttableTransport(t, control), r3: true, persistent: Grace);
+        self = host;
+        Directory.CreateDirectory(Path.Combine(host.Workspace.Path, ".vscode"));
+        File.WriteAllText(Path.Combine(host.Workspace.Path, ".vscode", "tasks.json"),
+            """{ "version": "2.0.0", "tasks": [ { "label": "once", "type": "shell", "command": "echo run >> runs.txt; exit 4" } ] }""");
+        await host.ConnectAsync();
+        await host.OpenWorkspaceAsync();
+        var result = await host.Services.GetRequiredService<ITaskService>().RunAsync("once", null, Ct).AsTask().WaitAsync(TimeSpan.FromSeconds(90), Ct);
+        Assert.True(control.Connects >= 2, "the link was not cut");
+        Assert.Equal(4, result.ExitCode);
+        Assert.Null(result.Error);
+        Assert.Equal(["run"], File.ReadAllLines(Path.Combine(host.Workspace.Path, "runs.txt"))); // asked twice, run once
+        Assert.Equal(1, cutting!.Calls);
+    }
+
     [Fact]
     public async Task A_task_still_waited_for_keeps_running_across_the_reconnect()
     {
         var control = new CuttableTransport.Control();
         await using var host = Persistent(control, r3: true);
+        var sleep = UniqueSleep(3);
         Directory.CreateDirectory(Path.Combine(host.Workspace.Path, ".vscode"));
         File.WriteAllText(Path.Combine(host.Workspace.Path, ".vscode", "tasks.json"),
-            """{ "version": "2.0.0", "tasks": [ { "label": "long", "type": "shell", "command": "sleep 3; exit 7" } ] }""");
+            $$"""{ "version": "2.0.0", "tasks": [ { "label": "long", "type": "shell", "command": "sleep {{sleep}}; exit 7" } ] }""");
         await host.ConnectAsync();
         await host.OpenWorkspaceAsync();
         var run = host.Services.GetRequiredService<ITaskService>().RunAsync("long", null, Ct).AsTask();
-        await TestEnv.WaitUntilAsync(() => host.Manager.TaskRuns.Count == 1, TimeSpan.FromSeconds(30), "the run");
+        await TestEnv.WaitUntilAsync(() => host.Manager.TaskRuns.Count == 1 && TestEnv.ProcessesWithMarker(sleep).Count > 0, TimeSpan.FromSeconds(30), "the run");
         await DropAsync(host, control);
         await RestoreAsync(host, control); // task/keep claims it
         var result = await run.WaitAsync(TimeSpan.FromSeconds(60), Ct);
