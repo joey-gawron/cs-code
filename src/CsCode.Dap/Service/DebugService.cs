@@ -208,6 +208,8 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
     {
         try
         {
+            // the adapters, the preLaunchTask and the debuggee inherit CsCode's environment: the login shell's on a Mac started from the Dock (dbg-4)
+            await LoginShellEnvironment.WaitAsync(pending.Cancellation.Token).ConfigureAwait(false);
             return await _lane.RunAsync(() => StartCoreAsync(configuration, null, pending.Cancellation.Token), pending.Cancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (pending.Stopped && !ct.IsCancellationRequested)

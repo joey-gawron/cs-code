@@ -70,6 +70,27 @@ public sealed class TerminalServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_terminal_created_while_the_login_shell_environment_is_read_starts_its_shell_only_after_it()
+    {
+        // lsp-1: a Mac app just started from the Dock; the shell must inherit the merged environment
+        var resolution = new TaskCompletionSource<CsCode.Core.Platform.LoginShellEnvironment.Resolution?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            Task<ITerminal> create;
+            using (CsCode.Core.Platform.LoginShellEnvironment.PendForTests(resolution.Task))
+            {
+                create = _service.CreateAsync(Bash()).AsTask();
+                await Task.Delay(300, TestContext.Current.CancellationToken);
+                Assert.False(create.IsCompleted);
+                Assert.Empty(_service.Terminals);
+                resolution.SetResult(null);
+            }
+            Assert.NotNull(((TerminalSession)await create).ProcessId);
+        }
+        finally { resolution.TrySetResult(null); }
+    }
+
+    [Fact]
     public async Task Create_does_not_block_the_calling_thread()
     {
         var sw = Stopwatch.StartNew();

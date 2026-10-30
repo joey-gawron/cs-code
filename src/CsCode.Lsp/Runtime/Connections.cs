@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Net.Sockets;
 using System.Text;
 using CsCode.Core.Languages;
+using CsCode.Core.Platform;
 
 namespace CsCode.Lsp.Runtime;
 
@@ -142,6 +143,7 @@ public sealed class DefaultLspConnectionFactory : ILspConnectionFactory
         {
             case LspEndpointKind.Process:
             {
+                await LoginShellEnvironment.WaitAsync(ct).ConfigureAwait(false); // the child inherits CsCode's environment (lsp-1)
                 var resolved = ServerLaunch.Resolve(request) ?? throw new ServerNotFoundException(ServerLaunch.Describe(request));
                 if (resolved.UsedAlternative)
                 {
@@ -308,6 +310,10 @@ internal sealed class ProcessConnection : ILspConnection
         if (def.Env is not null)
             foreach (var (k, v) in def.Env) psi.Environment[k] = v;
         DotnetLaunchEnvironment.Apply(psi.Environment, def, command, request.SearchDirs, request.OnStderrLine);
+        // macOS (lsp-2): a server found outside PATH also runs what is installed beside it, and what is in the search dirs, unless its env sets PATH
+        if (OperatingSystem.IsMacOS() && def.Env?.ContainsKey("PATH") != true)
+            psi.Environment["PATH"] = ToolResolver.ExtendPath(psi.Environment.TryGetValue("PATH", out var path) ? path : null, command,
+                request.SearchDirs?.Where(Directory.Exists).ToArray());
         psi.Environment[MarkerVariable] = marker;
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
