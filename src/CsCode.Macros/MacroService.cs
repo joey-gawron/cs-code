@@ -19,7 +19,8 @@ public sealed record MacroBlock(string Message, string? ActionTitle = null, stri
 /// chord, a menu item, a toolbar button or a palette pick ran, recorded as the command itself), and the keys and text the shell's taps report
 /// (<see cref="RecordKey"/>, <see cref="RecordText"/>, <see cref="RecordCommand"/>). Only commands the user started are recorded: nothing a command
 /// ran itself, nothing that started while the editor was handling a recorded key or text (<see cref="BeginEditorInput"/>: a completion's own
-/// command), no <c>macro.*</c> command, not the palette itself.</item>
+/// command), no <c>macro.*</c> command, not the palette itself. Nothing at all is recorded while the integrated terminal has the keyboard
+/// (<see cref="MacroCommands.RecordingPausedWhen"/>): neither what is typed there nor the commands started there (paste, clear, scroll...).</item>
 /// <item><b>Playback</b> (<see cref="MacroPlayer"/>): sliced on the UI thread, Esc / <c>macro.stop</c> cancel, abort on error, runaway guards.
 /// While recording nothing plays (a macro could otherwise record itself); while playing nothing records.</item>
 /// <item><b>Storage</b> (<see cref="MacroStore"/>): saved macros live in macros.json and each becomes the command <c>macro.run.&lt;name&gt;</c>
@@ -62,6 +63,12 @@ public sealed class MacroService : IDisposable
     private readonly Emitter<MacroState> _stateChanged = new();
     private readonly (long Start, long End)[] _inputWindows = new (long, long)[MaxInputWindows];
     private int _inputWindowCount;
+    // while the terminal has the keyboard nothing records: since when (Stopwatch timestamp, -1: not now) and the recent such spans, for
+    // commands that report after they ran (a command started in the terminal must not count when it completes after focus moved)
+    private readonly (long Start, long End)[] _pausedWindows = new (long, long)[MaxInputWindows];
+    private int _pausedWindowCount;
+    private long _pausedSince = -1;
+    private IDisposable? _pauseSubscription;
     private IDisposable? _keyContributions;
     private IDisposable? _executedSubscription;
     private IDisposable? _statusItem;
@@ -169,12 +176,66 @@ public sealed class MacroService : IDisposable
         _recorder = new MacroRecorder(Setting(MacroSettings.MaxRecordedSteps, MacroSettings.DefaultMaxRecordedSteps), pauses, _time);
         _recordingStarted = System.Diagnostics.Stopwatch.GetTimestamp(); // the clock of CommandExecuted.StartedTimestamp
         _inputWindowCount = 0;
+        _pausedWindowCount = 0;
+        _pausedSince = PausedNow() ? _recordingStarted : -1;
         _executedSubscription = _commands.Executed.Subscribe(OnExecuted);
+        _pauseSubscription = _keys?.Changed.Subscribe(OnContextKeysChanged);
         ClearMessage();
-        _statusItem = _status?.Set(new StatusBarItemModel(MacroCommands.RecordingStatusId, "$(record) Recording macro…",
-            "Recording a macro: what you type and the commands you run are recorded. Click (or run Stop) to stop.", MacroCommands.Stop, StatusBarAlignment.Left, Priority: 1000));
+        ShowRecordingStatus();
         NotifyState();
         return true;
+    }
+
+    private void ShowRecordingStatus()
+    {
+        var paused = _pausedSince >= 0;
+        _statusItem?.Dispose(); // first: the old registration removes the item by id
+        _statusItem = _status?.Set(new StatusBarItemModel(MacroCommands.RecordingStatusId,
+            paused ? "$(record) Recording macro… (paused in the terminal)" : "$(record) Recording macro…",
+            paused
+                ? "Recording a macro: nothing is recorded while the terminal has the keyboard. Click (or run Stop) to stop."
+                : "Recording a macro: what you type and the commands you run are recorded. Click (or run Stop) to stop.",
+            MacroCommands.Stop, StatusBarAlignment.Left, Priority: 1000));
+    }
+
+    /// <summary>Whether recording is paused now: the terminal has the keyboard.</summary>
+    private bool PausedNow() => _keys?.Evaluate(MacroCommands.RecordingPausedWhen) == true;
+
+    /// <summary>Recording pauses while the terminal has the keyboard (any thread: the time of the change is taken here, the rest on the UI thread).</summary>
+    private void OnContextKeysChanged(IReadOnlyCollection<string> keys)
+    {
+        if (!keys.Contains(MacroCommands.RecordingPausedWhen)) return;
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (_scheduler.IsUiThread) UpdatePause(now);
+        else _scheduler.Post(() => UpdatePause(now));
+    }
+
+    private void UpdatePause(long now)
+    {
+        if (_recorder is not { } recorder) return;
+        var paused = PausedNow();
+        if (paused == _pausedSince >= 0) return;
+        if (paused) _pausedSince = now;
+        else
+        {
+            _pausedWindows[_pausedWindowCount++ % MaxInputWindows] = (_pausedSince, now);
+            _pausedSince = -1;
+            recorder.RestartPauseClock(); // time spent in the terminal is not a pause of the macro
+        }
+        ShowRecordingStatus();
+    }
+
+    /// <summary>Whether a command that started at <paramref name="started"/> started while recording was paused.</summary>
+    private bool StartedWhilePaused(long started)
+    {
+        if (_pausedSince >= 0 && started >= _pausedSince) return true;
+        var n = Math.Min(_pausedWindowCount, MaxInputWindows);
+        for (var i = 0; i < n; i++)
+        {
+            var (start, end) = _pausedWindows[i];
+            if (started >= start && started <= end) return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -187,6 +248,9 @@ public sealed class MacroService : IDisposable
         _recorder = null;
         _executedSubscription?.Dispose();
         _executedSubscription = null;
+        _pauseSubscription?.Dispose();
+        _pauseSubscription = null;
+        _pausedSince = -1;
         _statusItem?.Dispose();
         _statusItem = null;
         var steps = recorder.ToSteps();
@@ -207,20 +271,25 @@ public sealed class MacroService : IDisposable
     /// <summary>A key the editor handled itself (no binding): recorded as a key step (UI thread).</summary>
     public void RecordKey(KeyStroke key)
     {
-        if (_recorder is { } r && !r.AddKey(key)) RecordingFull();
+        if (_recorder is { } r && !Paused && !r.AddKey(key)) RecordingFull();
     }
 
     /// <summary>Text the user typed into the editor (UI thread).</summary>
     public void RecordText(string text)
     {
-        if (_recorder is { } r && !r.AddText(text)) RecordingFull();
+        if (_recorder is { } r && !Paused && !r.AddText(text)) RecordingFull();
     }
 
     /// <summary>A step the shell recognised itself (a search in the editor's find panel: <see cref="MacroCommands.Find"/>).</summary>
     public void RecordCommand(string id, params JsonElement[] args)
     {
-        if (_recorder is { } r && !r.AddCommand(id, args)) RecordingFull();
+        if (_recorder is { } r && !Paused && !r.AddCommand(id, args)) RecordingFull();
     }
+
+    /// <summary>Recording is paused (the terminal has the keyboard): nothing is recorded (also read live, in case a change was not seen yet).</summary>
+    public bool IsRecordingPaused => _recorder is not null && Paused;
+
+    private bool Paused => _pausedSince >= 0 || PausedNow();
 
     /// <summary>
     /// The editor starts handling a recorded key or text input (UI thread; paired with <see cref="EndEditorInput"/>). Commands that start
@@ -271,6 +340,7 @@ public sealed class MacroService : IDisposable
     private bool ShouldRecord(CommandExecuted e)
     {
         if (e.StartedTimestamp < _recordingStarted) return false; // started before Record (and finished after)
+        if (StartedWhilePaused(e.StartedTimestamp) || PausedNow()) return false; // the terminal had the keyboard (paste, clear, scroll...)
         if (MacroCommands.IsMacroCommand(e.Id) || Launchers.Contains(e.Id) || NotRecorded.Contains(e.Id)) return false;
         foreach (var caller in e.Callers)
             if (!Launchers.Contains(caller)) return false; // a command's own work, not the user's
@@ -736,6 +806,7 @@ public sealed class MacroService : IDisposable
         {
             _recorder = null;
             _executedSubscription?.Dispose();
+            _pauseSubscription?.Dispose();
         }
         _statusItem?.Dispose();
         ClearMessage();

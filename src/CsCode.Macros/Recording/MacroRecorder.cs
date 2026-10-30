@@ -55,6 +55,9 @@ public sealed class MacroRecorder
         return true;
     }
 
+    /// <summary>The time until now is not a pause: the user was where nothing is recorded (the terminal), not waiting inside the macro.</summary>
+    public void RestartPauseClock() => _lastStep = _time.GetTimestamp();
+
     private bool Add(MacroStep step)
     {
         if (IsFull) return false;
