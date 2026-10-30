@@ -202,6 +202,20 @@ public sealed class TaskTerminalHostTests : IDisposable
     }
 
     [Fact]
+    public async Task A_run_is_no_longer_running_when_its_completion_is_observed()
+    {
+        // whoever awaits Completion (the task runner, a re-run of the same task) must find the run's terminal free, not still busy with it
+        var stillRunning = 0;
+        for (var i = 0; i < 40; i++)
+        {
+            var run = await _host.StartAsync(Sh("quick", "true", new TaskPresentation { Panel = TaskPanelKind.Shared }));
+            var observed = run.Completion.ContinueWith(_ => _host.Running.Contains(run), TaskScheduler.Default);
+            if (await observed.WaitAsync(TimeSpan.FromSeconds(10))) stillRunning++;
+        }
+        Assert.Equal(0, stillRunning);
+    }
+
+    [Fact]
     public async Task Terminate_ends_the_process_group_and_killing_the_terminal_ends_its_task()
     {
         var pidFile = _sandbox.Dir.Combine("child.pid");

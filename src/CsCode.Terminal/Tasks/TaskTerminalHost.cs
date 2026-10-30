@@ -196,6 +196,7 @@ public sealed class TaskTerminalHost : ITaskTerminalHost, IDisposable
         private char[] _chars = new char[4096];
         private IDisposable? _exitSub;
         private volatile bool _terminated;
+        private int _completing;
 
         internal Run(TaskTerminalHost host, TaskTerminalRequest request)
         {
@@ -234,15 +235,17 @@ public sealed class TaskTerminalHost : ITaskTerminalHost, IDisposable
 
         internal void Complete(int exitCode, bool terminated = false)
         {
-            if (!_completion.TrySetResult(new TaskTerminalExit(exitCode, terminated || _terminated))) return;
+            if (Interlocked.Exchange(ref _completing, 1) != 0) return;
             _exitSub?.Dispose();
             if (Session is { } s && s.OutputTap == OnOutput) s.OutputTap = null;
+            // the slot is free before anyone awaiting Completion runs: a run that has completed is never among Running, and a re-run can reuse it
             _host.Finished(this);
+            _completion.TrySetResult(new TaskTerminalExit(exitCode, terminated || _terminated));
         }
 
         public void Terminate()
         {
-            if (_completion.Task.IsCompleted) return;
+            if (Volatile.Read(ref _completing) != 0) return;
             _terminated = true;
             if (Session is { IsDisposed: false } s) s.KillProcess(TimeSpan.FromSeconds(1));
             else Complete(-1, terminated: true);
