@@ -28,6 +28,9 @@ internal sealed class StickyScrollFeature : ISettingsAware, IThemeAware, IDispos
     private readonly StackPanel _panel;
     private readonly DisposableStore _d = new();
     private readonly List<int> _lines = new();
+    private readonly List<string> _texts = new(); // what each pinned row shows (the line's text when it was built)
+    private bool _textsStale;
+    private bool _updatePosted;
     private IBrush _background = Brushes.Transparent;
     private IBrush _hover = Brushes.Transparent;
     private IBrush _border = Brushes.Transparent;
@@ -52,8 +55,25 @@ internal sealed class StickyScrollFeature : ISettingsAware, IThemeAware, IDispos
             view.TextView.ScrollOffsetChanged -= OnViewChanged;
             view.TextView.VisualLinesChanged -= OnViewChanged;
         }));
+        // A pinned header is above the first visible line, so it is edited from elsewhere (another split view, Replace All, a rename, undo, a
+        // macro) without the set of pinned line numbers changing: after an edit the rows compare their text too. The typing path only sets a
+        // flag; the check is posted once (coalesced) and reads at most MaxLines lines.
+        _d.Add(view.Document.Changed.Subscribe(_ => OnDocumentChanged()));
         ApplyBrushes();
         Update();
+    }
+
+    private void OnDocumentChanged()
+    {
+        if (_disposed || _lines.Count == 0) return;
+        _textsStale = true;
+        if (_updatePosted) return;
+        _updatePosted = true;
+        _v.Post(() =>
+        {
+            _updatePosted = false;
+            Update();
+        });
     }
 
     /// <summary>The document lines pinned right now, outermost first (tests, diagnostics).</summary>
@@ -68,7 +88,7 @@ internal sealed class StickyScrollFeature : ISettingsAware, IThemeAware, IDispos
     {
         if (_disposed) return;
         var wanted = Compute();
-        if (wanted.SequenceEqual(_lines))
+        if (wanted.SequenceEqual(_lines) && !TextsChanged())
         {
             Place();
             return;
@@ -112,9 +132,22 @@ internal sealed class StickyScrollFeature : ISettingsAware, IThemeAware, IDispos
         return _v.Document.GetLineText(start - 1).AsSpan().Trim().Length > 0 ? start - 1 : start;
     }
 
+    /// <summary>After an edit: whether a pinned row's line reads differently now (the flag is cleared; at most <see cref="MaxLines"/> lines read).</summary>
+    private bool TextsChanged()
+    {
+        if (!_textsStale) return false;
+        _textsStale = false;
+        var lineCount = _v.Document.LineCount;
+        for (var i = 0; i < _lines.Count; i++)
+            if (i >= _texts.Count || _lines[i] >= lineCount || !string.Equals(_texts[i], _v.Document.GetLineText(_lines[i]), StringComparison.Ordinal)) return true;
+        return false;
+    }
+
     private void Rebuild()
     {
         _panel.Children.Clear();
+        _texts.Clear();
+        _textsStale = false;
         if (_lines.Count == 0)
         {
             _panel.IsVisible = false;
@@ -126,7 +159,9 @@ internal sealed class StickyScrollFeature : ISettingsAware, IThemeAware, IDispos
         for (var i = 0; i < _lines.Count; i++)
         {
             var line = _lines[i];
-            var text = _v.Document.GetLineText(line).Replace("\t", new string(' ', tab), StringComparison.Ordinal);
+            var raw = _v.Document.GetLineText(line);
+            _texts.Add(raw);
+            var text = raw.Replace("\t", new string(' ', tab), StringComparison.Ordinal);
             var block = new TextBlock
             {
                 Text = text,

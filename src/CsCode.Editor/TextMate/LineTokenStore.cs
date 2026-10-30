@@ -113,17 +113,33 @@ internal sealed class LineTokenStore
     /// <paramref name="version"/>. <paramref name="checkpoints"/> are (line, stateAtStartOfLine); <paramref name="chain"/> = the run continues
     /// the valid prefix (not an approximate island), so the valid prefix may grow over it.
     /// </summary>
-    public bool Publish(int version, int firstLine, IReadOnlyList<int[]> lines, IReadOnlyList<(int Line, IStateStack State)> checkpoints, bool chain)
+    public bool Publish(int version, int firstLine, IReadOnlyList<int[]> lines, IReadOnlyList<(int Line, IStateStack State)> checkpoints, bool chain) =>
+        Publish(version, firstLine, lines, checkpoints, chain, out _);
+
+    /// <summary>
+    /// Publish, also saying which of the lines actually changed (<paramref name="changed"/> null: every row was identical to the stored one, so nothing needs a redraw).
+    /// </summary>
+    public bool Publish(int version, int firstLine, IReadOnlyList<int[]> lines, IReadOnlyList<(int Line, IStateStack State)> checkpoints, bool chain,
+        out (int First, int Last)? changed)
     {
+        changed = null;
         lock (_gate)
         {
             if (_version != version || firstLine < 0 || firstLine + lines.Count > _lines.Count) return false;
+            int first = -1, last = -1;
             for (var i = 0; i < lines.Count; i++)
             {
-                _tokenInts -= _lines[firstLine + i]?.Length ?? 0;
+                var old = _lines[firstLine + i];
+                if (old is null || !old.AsSpan().SequenceEqual(lines[i]))
+                {
+                    if (first < 0) first = firstLine + i;
+                    last = firstLine + i;
+                }
+                _tokenInts -= old?.Length ?? 0;
                 _lines[firstLine + i] = lines[i];
                 _tokenInts += lines[i].Length;
             }
+            if (first >= 0) changed = (first, last);
             if (!chain) return true;
             foreach (var (line, state) in checkpoints)
             {

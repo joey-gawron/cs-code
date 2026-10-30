@@ -226,12 +226,21 @@ internal sealed class TreeSitterHighlighter : IDisposable
         var started = Stopwatch.GetTimestamp();
         try
         {
-            if (_viewportDone != (vFirst, vLast, _syntax.Generation))
+            // the viewport again after a new tree or a scroll, and whenever its rows are gone (an Aggressive memory trim empties the whole store,
+            // the viewport included, while the tree and the viewport stay what they were)
+            if (_viewportDone != (vFirst, vLast, _syntax.Generation) || !store.HasTokens(vFirst, vLast))
             {
                 if (!Highlight(session, text, vFirst, vLast)) return;
                 _dirty.Take(vFirst, vLast);
-                _viewportDone = (vFirst, vLast, _syntax.Generation);
                 session.MarkViewportReady(snap.Version);
+                if (_syntax.LastHighlightDeferred)
+                {
+                    // injected regions left for the next pass (an earlier one spent the pass's time; it is not parsed again): the viewport
+                    // again in the next slice. A pass that keeps running out of time counts towards MaxQueryOverruns, which ends this.
+                    session.ScheduleSlice(WorkPriority.Visible);
+                    return;
+                }
+                _viewportDone = (vFirst, vLast, _syntax.Generation);
             }
             // dirty lines nearest the viewport first (below, then above)
             while (!_dirty.IsEmpty && Stopwatch.GetTimestamp() < deadline)

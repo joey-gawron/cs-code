@@ -90,8 +90,27 @@ internal sealed class TokenizationSession : IDisposable
     {
         Volatile.Write(ref _viewFirst, Math.Max(0, firstLine));
         Volatile.Write(ref _viewLast, Math.Max(firstLine, lastLine));
-        if (!Store.HasTokens(firstLine, lastLine) || lastLine >= Store.ValidLines) Schedule(WorkPriority.Visible);
+        // Every layout pass reports the viewport. A viewport coloured by a finished island is done too (it is never on the valid chain): without
+        // this, each island publish redrew, the redraw reported the viewport, and the report scheduled the island again, forever.
+        if (!Store.HasTokens(firstLine, lastLine)) Schedule(WorkPriority.Visible);
+        else if (lastLine >= Store.ValidLines && !IslandCovers(firstLine, lastLine, Store.Version)) Schedule(WorkPriority.Visible);
     }
+
+    // ---- islands (TextMate) ----
+    // An island is the viewport tokenised from a fresh state, far below the valid chain. Its progress is kept across slices (a slice that cannot
+    // cover it all resumes where it stopped, with the rule state it reached, instead of starting over at the top: under load the viewport was
+    // never reached), and once it covers the viewport for a version it is done: nothing schedules it again until an edit or a scroll.
+    private sealed record IslandProgress(int Version, int Start, int Next, IStateStack? State);
+
+    private IslandProgress? _island; // worker writes, the UI reads (SetViewport)
+
+    /// <summary>True when the island of <paramref name="version"/> already covers lines [first, last].</summary>
+    private bool IslandCovers(int first, int last, int version) =>
+        Volatile.Read(ref _island) is { } island && island.Version == version && island.Start <= first && island.Next > last;
+
+    /// <summary>Lane slices that tokenised island lines (tests: a finished island costs nothing while idle).</summary>
+    internal int IslandSlices => Volatile.Read(ref _islandSlices);
+    private int _islandSlices;
 
     private void OnDocumentChanged(TextDocumentChangedEventArgs e)
     {
@@ -126,6 +145,7 @@ internal sealed class TokenizationSession : IDisposable
         {
             Interlocked.Exchange(ref _views, 0);
             Store.Trim(aggressive: true, 0, 0);
+            Volatile.Write(ref _island, null);
             // nobody sees the document: release the syntax tree too (rebuilt by a full parse when a view attaches again)
             Interlocked.Increment(ref _treeSitterGeneration);
             TreeSitterEdits.Clear();
@@ -136,6 +156,7 @@ internal sealed class TokenizationSession : IDisposable
     private void Restart()
     {
         Store.Reset(_doc.LineCount, _doc.Version);
+        Volatile.Write(ref _island, null);
         _hasGrammar = false;
         _treeSitterWanted = _owner.TreeSitter.IsEnabledFor(_doc.LanguageId, _doc.Uri) && !_treeSitterGaveUp;
         Interlocked.Increment(ref _treeSitterGeneration); // the running engine (if any) is retired: its rows are refused from now on
@@ -210,6 +231,9 @@ internal sealed class TokenizationSession : IDisposable
         var target = Math.Min(lineCount - 1, vLast + (quiet ? ReadAheadLines : 0));
 
         var viewportDone = Store.HasTokens(vFirst, vLast) && vLast < valid;
+        // a finished island over the viewport: nothing to do until an edit (new version) or a scroll away from it (the chain is far above, so
+        // there is no read-ahead along it either)
+        if (!viewportDone && IslandCovers(vFirst, vLast, snap.Version) && Store.HasTokens(vFirst, vLast)) return;
         int begin;
         if (!viewportDone)
         {
@@ -227,12 +251,28 @@ internal sealed class TokenizationSession : IDisposable
         }
         var (start, state) = Store.ResumePoint(begin);
         var chain = true;
+        var islandStart = -1;
         if (vFirst - start > MaxCatchUpLines && !viewportDone)
         {
-            start = Math.Max(0, vFirst - IslandOverscanLines) / LineTokenStore.CheckpointInterval * LineTokenStore.CheckpointInterval;
-            state = null;
             chain = false;
             target = vLast; // an island is just the window
+            // carry on with the island in progress when it still leads to this viewport (same text, it starts above it, not too far, and the
+            // lines it already did are still there); otherwise a new one from a fresh state a little above the viewport
+            if (Volatile.Read(ref _island) is { } island && island.Version == snap.Version && island.Start <= vFirst && vFirst - island.Start <= MaxCatchUpLines
+                && island.Next <= vLast && Store.HasTokens(Math.Max(island.Start, vFirst), island.Next - 1))
+            {
+                islandStart = island.Start;
+                start = island.Next;
+                state = island.State;
+            }
+            else
+            {
+                islandStart = Math.Max(0, vFirst - IslandOverscanLines) / LineTokenStore.CheckpointInterval * LineTokenStore.CheckpointInterval;
+                start = islandStart;
+                state = null;
+            }
+            begin = start;
+            Interlocked.Increment(ref _islandSlices);
         }
         if (start > target) return;
 
@@ -253,8 +293,9 @@ internal sealed class TokenizationSession : IDisposable
             var sliceOver = clock.Elapsed >= SliceBudget && line >= begin;
             if (batch.Count >= 16 || sliceOver || line == target)
             {
-                if (!Store.Publish(snap.Version, batchStart, batch, checkpoints, chain)) return; // stale: drop it, a newer job follows the newer version
-                NotifyChanged(batchStart, line);
+                if (!Store.Publish(snap.Version, batchStart, batch, checkpoints, chain, out var changed)) return; // stale: drop it, a newer job follows the newer version
+                if (changed is var (first, last)) NotifyChanged(first, last); // rows identical to the stored ones need no redraw
+                if (islandStart >= 0) Volatile.Write(ref _island, new IslandProgress(snap.Version, islandStart, line + 1, state));
                 if (line >= vLast && batchStart <= vLast) MarkViewportReady(snap.Version);
                 batchStart = line + 1;
                 batch.Clear();
@@ -500,10 +541,19 @@ internal sealed class TokenizationSession : IDisposable
     }
 
     /// <summary>Memory trimming for this session (called by the manager from the memory monitor's thread: everything here is thread-safe).</summary>
-    internal long Trim(MemoryTrimLevel level) =>
-        level == MemoryTrimLevel.Idle
-            ? 0
-            : Store.Trim(level == MemoryTrimLevel.Aggressive, Math.Max(0, Volatile.Read(ref _viewFirst) - 500), Volatile.Read(ref _viewLast) + 500);
+    internal long Trim(MemoryTrimLevel level)
+    {
+        if (level == MemoryTrimLevel.Idle) return 0;
+        var aggressive = level == MemoryTrimLevel.Aggressive;
+        var freed = Store.Trim(aggressive, Math.Max(0, Volatile.Read(ref _viewFirst) - 500), Volatile.Read(ref _viewLast) + 500);
+        if (aggressive)
+        {
+            // everything went, the visible lines too: colour them again now rather than when something happens to redraw them (plain until then)
+            Volatile.Write(ref _island, null);
+            Schedule(WorkPriority.Visible);
+        }
+        return freed;
+    }
 
     public void Dispose()
     {

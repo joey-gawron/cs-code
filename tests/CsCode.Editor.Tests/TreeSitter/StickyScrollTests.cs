@@ -58,6 +58,33 @@ public class StickyScrollTests
         await ViewHost.WaitFor(() => sticky.PinnedLines.Count == 0, "unpinned when off");
     }
 
+    /// <summary>
+    /// editor-11: a pinned header sits above the first visible line, so it is changed from elsewhere (another split view, Replace All, a rename,
+    /// undo, a macro) while the set of pinned line numbers stays the same. The row used to keep the old text until a scroll changed that set.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task A_pinned_line_changed_from_elsewhere_shows_its_new_text()
+    {
+        using var host = ViewHost.Create();
+        host.Config.Set("editor.stickyScroll.enabled", true);
+        var text = Methods(3, 40);
+        var (doc, view, _) = await host.OpenAsync(text, "Big.cs", 900, 400);
+        var sticky = view.Feature<StickyScrollFeature>()!;
+        await ViewHost.WaitFor(() => view.Feature<FoldingFeature>()!.RangeCount >= 5, "folds");
+        var method1 = text.Split('\n').ToList().FindIndex(l => l.Contains("Method1", StringComparison.Ordinal));
+        await ScrollToLineAsync(view, method1 + 10);
+        await ViewHost.WaitFor(() => sticky.PinnedTexts.Any(t => t.Contains("Method1()", StringComparison.Ordinal)), $"pinned: {string.Join(" | ", sticky.PinnedTexts)}");
+        var pinned = sticky.PinnedLines.ToArray();
+
+        // the rename lands through the document (as from another view), nowhere near this view's caret
+        var column = doc.GetLineText(method1).IndexOf("Method1", StringComparison.Ordinal);
+        Assert.True(doc.ApplyEdits([new CsCode.Core.Text.TextEdit(new CsCode.Core.Text.TextRange(new CsCode.Core.Text.TextPosition(method1, column),
+            new CsCode.Core.Text.TextPosition(method1, column + "Method1".Length)), "Renamed1")]));
+        await ViewHost.WaitFor(() => sticky.PinnedTexts.Any(t => t.Contains("Renamed1()", StringComparison.Ordinal)), $"pinned: {string.Join(" | ", sticky.PinnedTexts)}");
+        Assert.Equal(pinned, sticky.PinnedLines);
+        Assert.DoesNotContain(sticky.PinnedTexts, t => t.Contains("Method1()", StringComparison.Ordinal));
+    }
+
     [AvaloniaFact]
     public async Task Off_by_default_and_cheap_on_the_UI_thread_when_on()
     {

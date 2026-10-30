@@ -131,7 +131,8 @@ public sealed class GrammarRegistry : IDisposable
 
     private readonly GrammarLocator _locator;
     private readonly Func<string, string?> _rootScopeFor;
-    private readonly Dictionary<string, (LanguageBundle? Bundle, string? Error)> _byName = new(StringComparer.Ordinal);
+    // per grammar: the bundle, or why there is none (with the build the quarantine refused, when that was the reason)
+    private readonly Dictionary<string, (LanguageBundle? Bundle, string? Error, string? Quarantined)> _byName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IntPtr> _injectionParsers = new(StringComparer.Ordinal);
     private bool _disposed;
 
@@ -155,13 +156,34 @@ public sealed class GrammarRegistry : IDisposable
     {
         if (_byName.TryGetValue(grammar, out var known))
         {
-            error = known.Error;
-            return known.Bundle;
+            // A refusal by the quarantine holds only while the quarantine still says so: another process sharing it may have cleared it (its
+            // Reason re-reads the file when it changed; a stat otherwise). Every other answer stays until ForgetFailures.
+            if (known.Quarantined is not { } refused || Quarantine?.Reason(grammar, refused) is not null)
+            {
+                error = known.Error;
+                return known.Bundle;
+            }
+            _byName.Remove(grammar);
         }
-        var bundle = LoadUncached(grammar, out error);
-        _byName[grammar] = (bundle, error);
+        // Validated against the installed grammars BEFORE anything else: the name may come from document text (an injection), and an
+        // unknown name must neither reach a path or the native loader nor be remembered (the cache stays bounded by what is installed).
+        // Names from document text are checked by IsKnown (below) before they get here; what reaches this unknown is a document's own
+        // language, so a grammar installed since the listing is looked for at once (the listing is taken again if a search root changed).
+        if (!_locator.IsKnown(grammar, throttled: false))
+        {
+            error = GrammarLocator.IsValidName(grammar) ? $"no compiled tree-sitter grammar '{grammar}' was found" : "not a grammar name";
+            return null;
+        }
+        var bundle = LoadUncached(grammar, out error, out var quarantined);
+        _byName[grammar] = (bundle, error, quarantined);
         return bundle;
     }
+
+    /// <summary>True when <paramref name="grammar"/> is the name of a grammar the locator can find (<see cref="GrammarLocator.IsKnown"/>).</summary>
+    public bool IsKnown(string grammar) => _byName.TryGetValue(grammar, out var known) ? known.Bundle is not null : _locator.IsKnown(grammar);
+
+    /// <summary>Grammar names this registry has looked up (tests: bounded by what is installed, whatever the documents ask for).</summary>
+    internal int CachedNames => _byName.Count;
 
     /// <summary>Forgets the grammars that could not be loaded (they are tried again on next use): after the quarantine was cleared.</summary>
     public void ForgetFailures()
@@ -169,9 +191,18 @@ public sealed class GrammarRegistry : IDisposable
         foreach (var name in _byName.Where(kv => kv.Value.Bundle is null).Select(kv => kv.Key).ToArray()) _byName.Remove(name);
     }
 
-    private LanguageBundle? LoadUncached(string grammar, out string? error)
+    /// <summary>Forgets the grammars the quarantine refused (they are tried again on next use). True when there were any.</summary>
+    public bool ForgetQuarantined()
+    {
+        var refused = _byName.Where(kv => kv.Value.Quarantined is not null).Select(kv => kv.Key).ToArray();
+        foreach (var name in refused) _byName.Remove(name);
+        return refused.Length > 0;
+    }
+
+    private LanguageBundle? LoadUncached(string grammar, out string? error, out string? quarantined)
     {
         error = null;
+        quarantined = null;
         if (!TsRuntime.Load())
         {
             error = TsRuntime.FailureReason;
@@ -184,9 +215,10 @@ public sealed class GrammarRegistry : IDisposable
             return null;
         }
         var identity = GrammarIdentity.Of(files);
-        if (Quarantine?.Reason(grammar, identity) is { } quarantined)
+        if (Quarantine?.Reason(grammar, identity) is { } reason)
         {
-            error = $"{grammar} is quarantined: {quarantined}";
+            error = $"{grammar} is quarantined: {reason}";
+            quarantined = identity;
             return null;
         }
         var root = _rootScopeFor(grammar) ?? "source." + grammar.Replace('_', '-');
@@ -302,12 +334,15 @@ public static class InjectionLanguages
     /// <summary>Injection targets that are deliberately not parsed: Neovim's "comment" grammar (TODO/FIXME tags inside every comment) costs a parse per comment for a highlight VS Code does not have.</summary>
     private static readonly HashSet<string> Ignored = new(StringComparer.Ordinal) { "comment", "luap", "printf" };
 
-    /// <summary>The grammar name for <paramref name="name"/>, or null when it is ignored or empty.</summary>
+    /// <summary>
+    /// The grammar name for <paramref name="name"/>, or null when it is ignored, empty or not a grammar name at all (<see cref="GrammarLocator.IsValidName"/>:
+    /// the text may come from the document, e.g. <c>.. code-block:: /some/path</c>, and must never become a path).
+    /// </summary>
     public static string? Resolve(string name)
     {
         var n = name.Trim();
-        if (n.Length == 0) return null;
+        if (n.Length == 0 || n.Length > 64) return null;
         var grammar = Aliases.TryGetValue(n, out var g) ? g : n.ToLowerInvariant();
-        return Ignored.Contains(grammar) ? null : grammar;
+        return Ignored.Contains(grammar) || !GrammarLocator.IsValidName(grammar) ? null : grammar;
     }
 }

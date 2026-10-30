@@ -106,7 +106,10 @@ view components (renderers, margins,        parsing + code colouring for hovers 
   (theme-independent ids: a theme switch re-colours without re-tokenising), rule-stack checkpoints every 8 lines (not one per line — that is the classic memory hog), a valid-prefix pointer,
   viewport-first slices of 6 ms, "island" tokenisation of the window when a huge file is opened far down, read-ahead of 3000 lines held back while the user is typing. `IMemoryTrimmable`;
   everything is released when the last view goes away. A slice resumes at the first viewport line still missing tokens and always gets at least one line past the
-  checkpoint it restarts from, so a slow grammar on a loaded machine cannot stall (it used to restart from the viewport top every slice).
+  checkpoint it restarts from, so a slow grammar on a loaded machine cannot stall (it used to restart from the viewport top every slice). An island keeps its progress
+  (line and rule state) across slices and, once it covers the viewport for a version, is done: neither a layout pass nor a slice schedules it again until an edit or a
+  scroll (each island publish used to redraw, the redraw reported the viewport, the report scheduled the island again, forever). Rows identical to the stored ones are not
+  redrawn. An Aggressive memory trim colours the viewport again at once (both engines).
 * **Tree-sitter engine** (`editor.syntaxEngine` = `auto` | `textmate` | `treesitter`, per language with `"[rust]": {…}`; `auto` = tree-sitter only for the
   languages TextMate has no grammar for): a session can be driven by tree-sitter instead of TextMate (`src/CsCode.Editor.TreeSitter`, `TreeSitter/`), with the grammars the
   app bundles. It writes the same token rows into the same `LineTokenStore` (capture names mapped onto TextMate scopes), so colouring, themes, `KindAt` and brackets are
@@ -190,6 +193,18 @@ AvaloniaEdit 12.0.0 (`Avalonia.AvaloniaEdit`):
 * `TextEditor.ScrollToVerticalOffset` does nothing for absolute positions on a fresh view; restoring a scroll offset goes through `((IScrollable)TextArea).Offset`, re-applied on `LayoutUpdated` until the extent exists.
 * `AbstractMargin` margins are placed through `TextArea.LeftMargins`; toggling line numbers re-inserts the line-number margin at index 0, so the breakpoint margin re-pins itself leftmost. `TextArea.TextPasted` fires after a paste (the pasted range is taken from the last document change).
 * `EnableHyperlinks` makes AvaloniaEdit start the browser itself; the editor turns it off and opens URLs through `IWindowService`.
+* **The stock search panel searched the whole document on the UI thread on every edit while open**, without a result limit, with a regex that
+  had no match timeout. `FindSearch` (reflection against the 12.0.0 layout; the stock panel stays when it differs) gives it VS Code's find-widget
+  behaviour: at most 19,999 matches held and highlighted (the panel says when there are more), a 1 s regex match timeout (the panel says the
+  pattern was stopped; such a pattern is not re-run after edits), and after an edit the matches move with it while the re-search waits for
+  100 ms of quiet and runs on the editor worker from a snapshot, in 64 K-character chunks a slice at a time, stopped by a newer edit. A new
+  pattern or option still searches at once on the UI thread, bounded, so Enter right after typing finds the match. The panel uses its held
+  matches for highlighting, navigation AND Replace All, so the limit must not reach further: Find Next / Previous (F3, Shift+F3, Enter,
+  Shift+Enter) past the last held match search the text from the caret (wrapping over the whole document), a new pattern selects the match
+  after the caret wherever it is, and Replace / Replace All search the CURRENT text (every match, one undo step; a timed-out pattern replaces
+  nothing) instead of the held matches, which after an edit are only moved until the re-search lands: VS Code does the same (a model search
+  past `MATCHES_LIMIT` decorations, `replaceAll` searching the model again). These are command bindings placed before the panel's own, which
+  decline whenever the held matches answer the command exactly, and a tunnelling Enter handler on the panel.
 * **AvaloniaEdit allocates in proportion to the document's line count on every edit** (≈ 90 B per line per keystroke: 19 KB for a 50-line file, 538 KB for 6000 lines, measured on a bare themed `TextEditor`), and keeps ≈ 130 B per line per view for its height tree. Nothing in this module can change that.
 
 TextMateSharp 2.0.3:
@@ -198,6 +213,10 @@ TextMateSharp 2.0.3:
 * `Theme.Match` ignores parent scopes, so the module implements vscode-textmate's matching itself (`TokenColorResolver`: specificity, inheritance, parent scopes, comment/string/regex kinds). The built-in Monokai has no `name` and `light_vs` has no `type`: kind is inferred from the background's luminance.
 * `IStateStack.Equals` is **not** structural across independent runs, and the concrete `StateStack` is internal — so "stop re-tokenising once the state converges" (what VS Code does) is not available. The module instead tokenises only the viewport after each edit and defers the read-ahead until typing pauses (250 ms).
 * `TextMateSharp.Grammars` embeds VS Code's built-in grammars and themes (this is where Dark+/Light+ and the ~40 languages come from).
+* **It keeps every grammar's raw JSON tree after compiling it** (the registry's tree of each grammar in the include closure, plus a deep copy per
+  compiled grammar of its own and of each included one), though the rule graph is built whole on the first line and never reads them again.
+  `RawGrammarRelease` compiles each grammar when it is loaded and drops the trees (a grammar compiled later re-reads its closure from the sources):
+  C#, Markdown, JSON and shell retain 18.9 MB instead of 43.8 MB (T37; reflection against 2.0.3, a no-op if the layout differs).
 
 ## 6. Measured performance and memory
 

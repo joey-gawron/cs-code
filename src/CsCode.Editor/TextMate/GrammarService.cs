@@ -51,6 +51,7 @@ internal sealed class GrammarService
         {
             _registry ??= new Registry(new Options(this));
             grammar = _registry.LoadGrammar(scope);
+            if (grammar is not null && ReleaseRawGrammars) RawGrammarRelease.Compile(_registry, grammar);
         }
         catch (Exception ex)
         {
@@ -59,6 +60,12 @@ internal sealed class GrammarService
         _byScope[scope] = grammar;
         return grammar;
     }
+
+    /// <summary>Tests: compare the heap with and without <see cref="RawGrammarRelease"/>.</summary>
+    internal static bool ReleaseRawGrammars { get; set; } = true;
+
+    /// <summary>The registry, for tests (worker only).</summary>
+    internal Registry? RegistryForTests => _registry;
 
     /// <summary>Drops every compiled grammar (grammar contributions changed); the next lookup recompiles from the current sources.</summary>
     public void Reset()

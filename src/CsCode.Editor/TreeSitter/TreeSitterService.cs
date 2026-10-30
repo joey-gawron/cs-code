@@ -204,34 +204,60 @@ internal sealed class TreeSitterService : IDisposable
         return new LaneState(lane, new InternerScopeStacks(Interner));
     }
 
+    /// <summary>Where the flight recorder and the quarantine live: the test override, else <c>{UserDataDir}/tree-sitter</c>; null without either.</summary>
+    private string? IsolationDirectory =>
+        IsolationDirectoryOverride ?? (_services.AppPaths?.UserDataDir is { } d ? Path.Combine(d, "tree-sitter") : null);
+
+    /// <summary>Tests: runs (on the lane) while the isolation state is set up, i.e. while its files are read and written.</summary>
+    internal Action? IsolationSetupHookForTests { get; set; }
+
     /// <summary>Lane only (it reads and writes files and loads the native runtime).</summary>
     private GrammarRegistry CreateRegistry()
     {
         RegistryCreatedOnThread = Environment.CurrentManagedThreadId;
         var userDir = _services.AppPaths?.UserDataDir is { } d ? Path.Combine(d, "tree-sitter") : null;
-        GrammarQuarantine quarantine;
+        GrammarQuarantine? quarantine;
         FlightRecorder? recorder;
         lock (_gate)
         {
-            if (_quarantine is null)
-            {
-                var isolationDir = IsolationDirectoryOverride ?? userDir;
-                _quarantine = new GrammarQuarantine(isolationDir is null ? null : Path.Combine(isolationDir, "quarantine.json"));
-                if (isolationDir is not null)
-                {
-                    // processes that died inside a grammar since the last start (their flight files are left behind), then this process's own recorder
-                    foreach (var (grammar, identity) in FlightRecorder.CollectCrashes(Path.Combine(isolationDir, "flight")))
-                    {
-                        _log.LogWarning("an earlier CsCode process ended while running the tree-sitter grammar {Grammar} ({Identity})", grammar, identity);
-                        if (_quarantine.RecordCrash(grammar, identity)) Tell($"CsCode closed unexpectedly while colouring with the tree-sitter grammar '{grammar}', more than once. Files that need it are coloured by TextMate now (Clear Quarantined Tree-sitter Grammars tries it again).");
-                    }
-                    _recorder = FlightRecorder.Open(Path.Combine(isolationDir, "flight"));
-                }
-                else _recorder = FlightRecorder.InMemory();
-                _watchdog ??= new Timer(_ => Watch(), null, WatchdogPeriod, WatchdogPeriod);
-            }
             quarantine = _quarantine;
             recorder = _recorder;
+        }
+        if (quarantine is null)
+        {
+            // The file and process work happens OUTSIDE _gate: the UI thread takes that lock for every schedule of a tree-sitter document (Lane),
+            // exactly while the first one lays out, and must never wait for this I/O. The results are published under the lock afterwards.
+            IsolationSetupHookForTests?.Invoke();
+            var isolationDir = IsolationDirectory;
+            var newQuarantine = new GrammarQuarantine(isolationDir is null ? null : Path.Combine(isolationDir, "quarantine.json"));
+            FlightRecorder newRecorder;
+            if (isolationDir is not null)
+            {
+                // processes that died inside a grammar since the last start (their flight files are left behind), then this process's own recorder
+                foreach (var (grammar, identity) in FlightRecorder.CollectCrashes(Path.Combine(isolationDir, "flight")))
+                {
+                    _log.LogWarning("an earlier CsCode process ended while running the tree-sitter grammar {Grammar} ({Identity})", grammar, identity);
+                    if (newQuarantine.RecordCrash(grammar, identity)) Tell($"CsCode closed unexpectedly while colouring with the tree-sitter grammar '{grammar}', more than once. Files that need it are coloured by TextMate now (Clear Quarantined Tree-sitter Grammars tries it again).");
+                }
+                newRecorder = FlightRecorder.Open(Path.Combine(isolationDir, "flight"));
+            }
+            else newRecorder = FlightRecorder.InMemory();
+            var generation = newQuarantine.Generation; // (a stat: before the lock)
+            var lost = false;
+            lock (_gate)
+            {
+                if (_quarantine is null && !_disposed)
+                {
+                    _quarantine = newQuarantine;
+                    _recorder = newRecorder;
+                    _quarantineGeneration = generation;
+                    _watchdog ??= new Timer(_ => Watch(), null, WatchdogPeriod, WatchdogPeriod);
+                }
+                else lost = true; // set up meanwhile (or shut down): keep the published state
+                quarantine = _quarantine;
+                recorder = _recorder;
+            }
+            if (lost) newRecorder.Dispose();
         }
         TsRuntime.Load(userDir is null ? null : [userDir, Path.Combine(userDir, "lib")]);
         var locator = LocatorOverride ?? GrammarLocator.CreateDefault(userDir is null ? null : Path.Combine(userDir, "grammars"));
@@ -262,42 +288,109 @@ internal sealed class TreeSitterService : IDisposable
         lock (_reported) _reported.Clear();
     }
 
-    /// <summary>Forgets every quarantined grammar (they are tried again on the next document that needs them). Any thread.</summary>
-    public void ClearQuarantine()
+    /// <summary>
+    /// Forgets every quarantined grammar (they are tried again on the next document that needs them), in this process and, through the file,
+    /// in every other one. Any thread; the file work never runs on the caller's. The task completes once the file is cleared (tests).
+    /// </summary>
+    public Task ClearQuarantine()
     {
         LaneState? state;
-        lock (_gate) state = _lane;
+        lock (_gate)
+        {
+            if (_disposed) return Task.CompletedTask;
+            state = _lane;
+        }
         if (state is null)
         {
-            // no lane yet (nothing on tree-sitter in this process): the file is cleared off the caller's thread, the next start reads it clean
-            if (_quarantine is { } quarantine) _ = Task.Run(quarantine.Clear);
-            return;
+            // no lane yet (nothing on tree-sitter in this process so far, so nothing has loaded the quarantine): clear the file itself, so the
+            // first tree-sitter document reads it clean
+            return Task.Run(ClearQuarantineFile);
         }
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         state.Lane.Post(WorkPriority.Interactive, null, _ =>
         {
-            _quarantine?.Clear(); // a file write: on the lane, not the caller's (UI) thread
-            state.Registry?.ForgetFailures();
-            ForgetReports();
+            try
+            {
+                ClearQuarantineFile(); // a file write: on the lane, not the caller's (UI) thread
+                state.Registry?.ForgetFailures();
+                ForgetReports();
+            }
+            finally
+            {
+                done.TrySetResult();
+            }
             LaneReplaced?.Invoke(); // documents re-evaluate their engine
         });
+        return done.Task;
+    }
+
+    /// <summary>Clears the quarantine: the loaded one, or (before the engine first loaded it, its registry not created yet) the file directly.</summary>
+    private void ClearQuarantineFile()
+    {
+        GrammarQuarantine? quarantine;
+        lock (_gate) quarantine = _quarantine;
+        if (quarantine is not null)
+        {
+            quarantine.Clear();
+            return;
+        }
+        if (IsolationDirectory is { } dir) new GrammarQuarantine(Path.Combine(dir, "quarantine.json")).Clear();
     }
 
     // ---- the watchdog ----
 
+    private int _watching;
+    private int _quarantineGeneration; // the quarantine's clear count this process last acted on
+
     private void Watch()
     {
-        if (_recorder is not { } recorder) return;
-        var (inside, grammar, identity, elapsed) = recorder.Current;
-        if (!inside || elapsed < HangThreshold || grammar is null) return;
-        LaneState? hung;
+        // one check at a time (timer callbacks overlap when one is slow: the file work below)
+        if (Interlocked.Exchange(ref _watching, 1) == 1) return;
+        try
+        {
+            WatchOnce();
+        }
+        finally
+        {
+            Volatile.Write(ref _watching, 0);
+        }
+    }
+
+    private void WatchOnce()
+    {
+        FlightRecorder? recorder;
+        GrammarQuarantine? quarantine;
         lock (_gate)
         {
             if (_disposed) return;
-            hung = _lane;
-            _lane = null; // the next use creates a fresh lane; everything on the hung one is abandoned (never touched again)
-            _recorder = null; // the hung thread may still write into the old recorder: it stays mapped (and its file behind) until the process exits
-            _quarantine?.RecordHang(grammar, identity ?? "", $"a call did not return for {elapsed.TotalSeconds:0} s");
-            _recorder = FlightRecorderAfterHang();
+            recorder = _recorder;
+            quarantine = _quarantine;
+        }
+        if (quarantine is not null) HonourClearElsewhere(quarantine);
+        if (recorder is null) return;
+        var (inside, grammar, identity, elapsed) = recorder.Current;
+        if (!inside || elapsed < HangThreshold || grammar is null) return;
+        // The file work (the quarantine's read and write, the new recorder's file and mapping) is done OUTSIDE _gate, which the UI thread takes
+        // to schedule tree-sitter documents. The hang is recorded BEFORE the lane is replaced: no new lane can load the grammar before it lands.
+        quarantine?.RecordHang(grammar, identity ?? "", $"a call did not return for {elapsed.TotalSeconds:0} s");
+        var fresh = FlightRecorderAfterHang();
+        LaneState? hung;
+        lock (_gate)
+        {
+            if (_disposed || !ReferenceEquals(_recorder, recorder)) hung = null;
+            else
+            {
+                hung = _lane;
+                _lane = null; // the next use creates a fresh lane; everything on the hung one is abandoned (never touched again)
+                // the hung thread may still write into the old recorder: it stays mapped (and its file behind) until the process exits
+                _recorder = fresh;
+                fresh = null;
+            }
+        }
+        if (fresh is not null)
+        {
+            fresh.Dispose(); // shut down meanwhile
+            return;
         }
         Interlocked.Increment(ref _abandonedLanes);
         ForgetReports();
@@ -307,9 +400,29 @@ internal sealed class TreeSitterService : IDisposable
         LaneReplaced?.Invoke();
     }
 
+    /// <summary>
+    /// Watchdog thread, once a tick (a stat of the quarantine file; it is read only when it changed). When another process sharing the file
+    /// cleared it (Clear Quarantined Tree-sitter Grammars there), the grammars this process refused are forgotten and the documents re-evaluate
+    /// their engine, as this process's own clear does: without it, open documents stayed on TextMate until this process ran the command itself
+    /// or restarted. (This process's own clear finds nothing left to forget by the time its lane job runs.)
+    /// </summary>
+    private void HonourClearElsewhere(GrammarQuarantine quarantine)
+    {
+        var generation = quarantine.Generation;
+        if (Interlocked.Exchange(ref _quarantineGeneration, generation) == generation) return;
+        LaneState? state;
+        lock (_gate) state = _disposed ? null : _lane;
+        state?.Lane.Post(WorkPriority.Interactive, null, _ =>
+        {
+            if (state.Registry?.ForgetQuarantined() != true) return; // nothing refused here: no document to move back
+            ForgetReports();
+            LaneReplaced?.Invoke(); // documents re-evaluate their engine
+        });
+    }
+
     private FlightRecorder FlightRecorderAfterHang()
     {
-        var dir = IsolationDirectoryOverride ?? (_services.AppPaths?.UserDataDir is { } d ? Path.Combine(d, "tree-sitter") : null);
+        var dir = IsolationDirectory;
         // a second file for the new lane (the old one keeps "inside <hung grammar>": if the process is killed now, that is counted too)
         return dir is null ? FlightRecorder.InMemory() : FlightRecorder.Open(Path.Combine(dir, "flight"), "lane" + (_abandonedLanes + 2));
     }

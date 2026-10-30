@@ -77,6 +77,8 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         Clipboard = new EditorClipboard(this);
         _components.Add(Clipboard);
         _components.Add(new EditorChromeRenderers(this));
+        // the find panel's search: bounded, and re-run after edits only once the typing pauses, off the UI thread (editor-4)
+        _components.Add(new FindSearch(this));
         foreach (var feature in _factory.CreateFeatures(this)) _components.Add(feature);
 
         // live updates: theme, settings, language, read-only

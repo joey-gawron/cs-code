@@ -17,6 +17,12 @@ namespace CsCode.Editor.TreeSitter.Isolation;
 /// One file per process (<c>&lt;dir&gt;/&lt;pid&gt;.flight</c>; background mode runs several CsCode processes), deleted on a clean exit. Writes come
 /// from the tree-sitter lane only; <see cref="Current"/> may be read from any thread (a torn read during a switch is harmless: the watchdog
 /// acts only on a state that has not changed for seconds).
+///
+/// Whose file is whose: the owner keeps its file open with a SHARED lock (<c>flock</c>; on Windows, the open handle itself) for as long as
+/// it lives, and the kernel drops that lock when the process ends, however it ends. Another process collects a file only when it can take
+/// the EXCLUSIVE lock, i.e. when its owner is gone. (Comparing the pid's start time does not work across processes on Linux: .NET derives
+/// it from a boot time each process computes for itself, so a live process always looked dead to another one, which deleted its file and
+/// counted a crash against a healthy grammar.)
 /// </summary>
 public sealed unsafe class FlightRecorder : IDisposable
 {
@@ -28,6 +34,7 @@ public sealed unsafe class FlightRecorder : IDisposable
 
     private readonly MemoryMappedFile? _file;
     private readonly MemoryMappedViewAccessor? _view;
+    private readonly FileStream? _owner; // held open (and locked) for the recorder's life: "my process is alive"
     private readonly byte[]? _memory;
     private GCHandle _pin;
     private readonly byte* _p;
@@ -37,11 +44,12 @@ public sealed unsafe class FlightRecorder : IDisposable
     private string? _current;
     private volatile bool _disposed;
 
-    private FlightRecorder(string? path, MemoryMappedFile? file, MemoryMappedViewAccessor? view)
+    private FlightRecorder(string? path, MemoryMappedFile? file, MemoryMappedViewAccessor? view, FileStream? owner = null)
     {
         _path = path;
         _file = file;
         _view = view;
+        _owner = owner;
         if (view is not null)
         {
             byte* p = null;
@@ -70,6 +78,7 @@ public sealed unsafe class FlightRecorder : IDisposable
     /// </summary>
     public static FlightRecorder Open(string directory, string? suffix = null)
     {
+        FileStream? owner = null;
         try
         {
             Directory.CreateDirectory(directory);
@@ -77,13 +86,16 @@ public sealed unsafe class FlightRecorder : IDisposable
             var instance = Interlocked.Increment(ref _instances);
             if (suffix is null && File.Exists(Path.Combine(directory, Environment.ProcessId + ".flight"))) suffix = "i" + instance;
             var path = Path.Combine(directory, Environment.ProcessId + (suffix is null ? "" : "-" + suffix) + ".flight");
-            using (var fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite)) fs.SetLength(Size);
-            var file = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, Size, MemoryMappedFileAccess.ReadWrite);
+            owner = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite);
+            owner.SetLength(Size);
+            OwnerLock.HoldShared(owner);
+            var file = MemoryMappedFile.CreateFromFile(owner, null, Size, MemoryMappedFileAccess.ReadWrite, HandleInheritability.None, leaveOpen: true);
             var view = file.CreateViewAccessor(0, Size, MemoryMappedFileAccess.ReadWrite);
-            return new FlightRecorder(path, file, view);
+            return new FlightRecorder(path, file, view, owner);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
+            owner?.Dispose();
             return InMemory();
         }
     }
@@ -178,20 +190,26 @@ public sealed unsafe class FlightRecorder : IDisposable
         {
             try
             {
-                var bytes = File.ReadAllBytes(file);
-                if (bytes.Length < Size) continue;
+                var bytes = new byte[Size];
+                bool ownerCertainlyGone;
+                using (var stream = OwnerLock.OpenIfOwnerGone(file, out ownerCertainlyGone))
+                {
+                    if (stream is null) continue; // its owner holds it: a live process
+                    if (stream.ReadAtLeast(bytes, Size, throwOnEndOfStream: false) < Size) continue;
+                }
                 int pid, state;
-                long start;
                 (string?, string?) name;
                 fixed (byte* p = bytes)
                 {
                     if (*(int*)(p + OffMagic) != Magic || *(int*)(p + OffVersion) != FormatVersion) continue;
                     pid = *(int*)(p + OffPid);
                     state = *(int*)(p + OffState);
-                    start = *(long*)(p + OffProcessStart);
                     name = ReadName(p);
                 }
-                if (pid == Environment.ProcessId || IsAlive(pid, start)) continue;
+                if (pid == Environment.ProcessId) continue;
+                // where locks cannot say (a file system without them), a file whose pid runs is left alone: a crash counted late at worst,
+                // never a live process's file taken away
+                if (!ownerCertainlyGone && PidExists(pid)) continue;
                 if (state != 0 && name is (string g, string id)) crashes.Add((g, id));
                 File.Delete(file);
             }
@@ -203,12 +221,12 @@ public sealed unsafe class FlightRecorder : IDisposable
         return crashes;
     }
 
-    private static bool IsAlive(int pid, long startTicks)
+    private static bool PidExists(int pid)
     {
         try
         {
             using var process = Process.GetProcessById(pid);
-            return process.StartTime.ToUniversalTime().Ticks == startTicks || startTicks == 0;
+            return !process.HasExited;
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
         {
@@ -245,6 +263,7 @@ public sealed unsafe class FlightRecorder : IDisposable
             _view.SafeMemoryMappedViewHandle.ReleasePointer();
             _view.Dispose();
             _file!.Dispose();
+            _owner?.Dispose(); // releases the owner's lock; the file goes right after
             try
             {
                 if (_path is not null) File.Delete(_path);
@@ -260,5 +279,69 @@ public sealed unsafe class FlightRecorder : IDisposable
     public readonly struct Scope(FlightRecorder? owner, string? previous) : IDisposable
     {
         public void Dispose() => owner?.Restore(previous);
+    }
+}
+
+/// <summary>
+/// "Is the process that owns this flight file still alive?", answered by the kernel: the owner holds a shared <c>flock</c> on its file for its
+/// whole life (dropped by the kernel when the process ends, crash or not; descriptors are close-on-exec, so no child process inherits it), and
+/// a collector may take the file only with an exclusive one. On Windows the owner's open handle plays the lock (a collector opens without
+/// sharing).
+/// </summary>
+internal static partial class OwnerLock
+{
+    private const int LockShared = 1, LockExclusive = 2, LockNonBlocking = 4;
+
+    [LibraryImport("libc", EntryPoint = "flock", SetLastError = true)]
+    private static partial int Flock(int fd, int operation);
+
+    private static int WouldBlock => OperatingSystem.IsLinux() ? 11 : 35; // EWOULDBLOCK (= EAGAIN): Linux 11, macOS/BSD 35
+
+    /// <summary>The owner's side: a shared lock on its open file (.NET takes one too on most file systems; this makes it explicit).</summary>
+    public static void HoldShared(FileStream owner)
+    {
+        if (OperatingSystem.IsWindows()) return; // the handle itself
+        try
+        {
+            _ = Flock((int)owner.SafeFileHandle.DangerousGetHandle(), LockShared | LockNonBlocking);
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// The collector's side: <paramref name="file"/> opened for reading when its owner is gone, or null while the owner lives.
+    /// <paramref name="certain"/> is false when the file system could not say (no locks there): the caller then checks the pid.
+    /// </summary>
+    public static FileStream? OpenIfOwnerGone(string file, out bool certain)
+    {
+        certain = true;
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                return new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.None);
+            }
+            catch (IOException)
+            {
+                return null; // open by its (live) owner
+            }
+        }
+        var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        try
+        {
+            if (Flock((int)stream.SafeFileHandle.DangerousGetHandle(), LockExclusive | LockNonBlocking) == 0) return stream;
+            if (Marshal.GetLastPInvokeError() == WouldBlock)
+            {
+                stream.Dispose();
+                return null;
+            }
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+        }
+        certain = false;
+        return stream;
     }
 }

@@ -71,6 +71,7 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
     public void ShowFind(bool replace)
     {
         var panel = view.Editor.SearchPanel;
+        view.Feature<FindSearch>()?.Attach(); // bound before the panel's first search
         panel.IsReplaceMode = replace;
         panel.Open();
         // AvaloniaEdit's Open focuses the find box only when the panel's template is already applied, which it is not the first time the panel
