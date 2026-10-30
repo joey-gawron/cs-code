@@ -39,6 +39,14 @@ public interface IFileSystem
 public interface IFileWatcher
 {
     IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges);
+
+    /// <summary>
+    /// <see cref="Watch(Uri, bool, IReadOnlyList{string}?, Action{IReadOnlyList{FileChange}})"/>, plus paths below <paramref name="root"/> the
+    /// subscriber wants watched and reported although excluded (<see cref="FileWatchWants"/>). Additive: a watcher that cannot honour them
+    /// (remote ones) ignores them.
+    /// </summary>
+    IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges, FileWatchWants? wants) =>
+        Watch(root, recursive, excludeGlobs, onChanges);
 }
 
 public sealed record WorkspaceFoldersChangedEventArgs(IReadOnlyList<Uri> Added, IReadOnlyList<Uri> Removed);

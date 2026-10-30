@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using CsCode.Core.Platform;
 using CsCode.Platform.Io;
@@ -9,9 +10,11 @@ using Xunit;
 namespace CsCode.Platform.Tests;
 
 /// <summary>
-/// The Linux backend on its own (synthetic events, watch counts read from the kernel, fd and thread release) and through the
-/// <see cref="FileWatcher"/> (what a directory every subscription excludes costs; subscriptions that join with fewer excludes).
-/// Runs with the other watcher tests, alone: it counts process-wide inotify watches and fds.
+/// The Linux backend on its own (synthetic events, watch counts read from the kernel, fd and thread release, the walk running ahead of the
+/// event queue, overflows) and through the <see cref="FileWatcher"/> (what a directory every subscription excludes costs, cache tags, wanted
+/// paths, subscriptions that join with fewer excludes, roots that go). Runs with the other watcher tests, alone: it counts process-wide inotify
+/// watches and fds. A backend made without its reader thread is driven by hand (<see cref="InotifyBackend.Pump"/>), so a test can let the
+/// disk run ahead of the queue, or lose events, on purpose.
 /// </summary>
 [Collection("Watchers")]
 public class InotifyBackendTests
@@ -37,10 +40,16 @@ public class InotifyBackendTests
         }
 
         public Task WaitFor(RawKind kind, string path) => WaitFor(s => s.Any(e => e.Kind == kind && e.Path == path), $"{kind} {path}");
+
+        public int RootLost;
+        public int Fatal;
     }
 
-    private static InotifyBackend Backend(string root, RawCollector raw, Func<string, bool>? isPruned = null, bool recursive = true) =>
-        new(root, recursive, isPruned ?? (_ => false), raw.Add, ex => raw.Add(RawKind.Changed, "FATAL: " + ex.Message, null));
+    private static InotifyBackend Backend(string root, RawCollector raw, Func<string, bool>? isPruned = null, bool recursive = true, bool startReader = true,
+        RawSink? sink = null) =>
+        new(root, recursive, d => isPruned?.Invoke(d) == true ? WatchVerdict.Prune : WatchVerdict.Watch, sink ?? raw.Add,
+            ex => { Interlocked.Increment(ref raw.Fatal); raw.Add(RawKind.Changed, "FATAL: " + ex.Message, null); },
+            () => Interlocked.Increment(ref raw.RootLost), startReader);
 
     private static async Task WaitUntil(Func<bool> condition, string what, int timeoutMs = 10_000)
     {
@@ -121,7 +130,7 @@ public class InotifyBackendTests
         Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
         using var t = new TempDirectory("cscode-inotify-");
         var raw = new RawCollector();
-        using var b = Backend(t.Path, raw);
+        using var b = Backend(t.Path, raw, startReader: false); // no reader to flush a pending FROM between the calls below
         var wd = b.RootWd;
         string P(string name) => Path.Join(t.Path, name);
 
@@ -190,34 +199,43 @@ public class InotifyBackendTests
         Assert.DoesNotContain(raw.Snapshot(), e => e.Path.Contains("out.o", StringComparison.Ordinal));
     }
 
+    private const string CacheTag = "Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by cargo.\n";
+
     [Fact]
-    public async Task A_tree_with_a_big_excluded_target_directory_costs_only_its_wanted_directories_in_watches()
+    public async Task A_tree_with_a_big_cache_tagged_target_directory_costs_only_its_wanted_directories_in_watches()
     {
         // The bug: one window on a Rust + JS monorepo held 75,892 inotify watches, 56,489 of them in target/. Through the FileWatcher with
-        // the default excludes, the excluded directories must cost nothing (a FileSystemWatcher put a watch on each of the 213 here).
+        // the default excludes, the excluded and cache-tagged directories must cost nothing (a FileSystemWatcher put a watch on each of the 213
+        // here), while a source folder that is merely called target/ is watched.
         Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fdinfo");
         using var f = new WatchFixture();
-        var wanted = new[] { "src/a", "src/b", "docs", ".git/refs" };                                       // + the root, src, .git: 7 directories
+        var wanted = new[] { "src/a", "src/b", "docs", ".git/refs", "src/target/sub" };                    // + the root, src, .git, src/target: 9
         foreach (var d in wanted) Directory.CreateDirectory(f.P(d));
         for (var i = 0; i < 200; i++) Directory.CreateDirectory(f.P($"target/debug/build/d{i:D3}"));     // 203 directories
+        File.WriteAllText(f.P("target/CACHEDIR.TAG"), CacheTag);
         Directory.CreateDirectory(f.P("node_modules/pkg/lib"));                                             // 3
         Directory.CreateDirectory(f.P(".git/objects/ab"));                                                  // 2
         Directory.CreateDirectory(f.P("crates/x/target/debug/incremental"));                               // 2 wanted (crates, crates/x), 3 not
+        File.WriteAllText(f.P("crates/x/target/CACHEDIR.TAG"), CacheTag);
         File.WriteAllText(f.P("target/debug/build/d000/out.o"), "");
 
         var baseline = ProcessWatches();
         var (events, h) = f.Start();                                                                         // null: files.watcherExclude, else the built-ins
         await h.Ready;
         var cost = ProcessWatches() - baseline;
-        Assert.True(cost <= 9, $"{cost} inotify watches for a tree with 9 wanted directories");
-        Assert.Equal(9, cost);
+        Assert.True(cost <= 11, $"{cost} inotify watches for a tree with 11 wanted directories");
+        Assert.Equal(11, cost);
 
         File.WriteAllText(f.P("target/debug/build/d000/out.o"), "rebuilt");
         File.WriteAllText(f.P("crates/x/target/debug/incremental/q.bin"), "");
+        File.WriteAllText(f.P("src/target/sub/kept.rs"), "");                                               // a source folder called target
         File.WriteAllText(f.P("src/b/lib.rs"), "");
-        await events.WaitForKind("lib.rs", FileChangeKind.Created, Ct);
+        await events.WaitFor(s => s.Any(c => Collector.Name(c) == "lib.rs") && s.Any(c => Collector.Name(c) == "kept.rs"), "lib.rs and kept.rs", Ct);
         await Task.Delay(150, Ct);
         Assert.DoesNotContain(events.Snapshot(), c => Collector.Name(c) is "out.o" or "q.bin");
+
+        Directory.Delete(f.P("target"), recursive: true);                                                   // cargo clean: the folder itself is reported
+        await events.WaitForKind("target", FileChangeKind.Deleted, Ct);
         h.Dispose();
     }
 
@@ -246,12 +264,17 @@ public class InotifyBackendTests
         Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
         using var t = new TempDirectory("cscode-inotify-");
         var raw = new RawCollector();
-        using var b = Backend(t.Path, raw);
+        // A new directory is reported only once it is watched (the FileWatcher's listing of it relies on that): a file written the instant
+        // `fresh` is reported — on the reader thread, inside the sink — must be reported too.
+        var fresh = t.Combine("fresh");
+        using var b = Backend(t.Path, raw, sink: (kind, path, old) =>
+        {
+            raw.Add(kind, path, old);
+            if (kind == RawKind.Created && path == fresh) File.WriteAllText(Path.Join(fresh, "inner.txt"), "x");
+        });
 
-        Directory.CreateDirectory(t.Combine("fresh"));
-        await raw.WaitFor(RawKind.Created, t.Combine("fresh"));                                             // reported only once it is watched
-        File.WriteAllText(t.Combine("fresh", "inner.txt"), "x");
-        await raw.WaitFor(RawKind.Created, t.Combine("fresh", "inner.txt"));
+        Directory.CreateDirectory(fresh);
+        await raw.WaitFor(RawKind.Created, Path.Join(fresh, "inner.txt"));
 
         Directory.CreateDirectory(t.Combine("a", "b", "c"));                                                // mkdir -p: one event, three directories
         await WaitUntil(() => b.WatchCount == 5, "a, a/b and a/b/c to be watched");
@@ -518,9 +541,9 @@ public class InotifyBackendTests
         using var walked = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
         var first = 1;
-        using var f = new WatchFixture(factory: (root, recursive, isPruned, sink, fatal) =>
+        using var f = new WatchFixture(factory: (root, recursive, verdict, sink, fatal, rootLost) =>
         {
-            var backend = FileWatcher.DefaultBackend(root, recursive, isPruned, sink, fatal);
+            var backend = FileWatcher.DefaultBackend(root, recursive, verdict, sink, fatal, rootLost);
             if (Interlocked.Exchange(ref first, 0) == 1)
             {
                 walked.Set();                                                                                // walked (gen skipped), not yet in place
@@ -540,5 +563,237 @@ public class InotifyBackendTests
         await wide.WaitForKind("x.txt", FileChangeKind.Created, Ct);
         h1.Dispose();
         h2.Dispose();
+    }
+
+    // ---- the walk ahead of the queue, lost events ----------------------------------------------------------------------------------
+
+    [DllImport("libc", EntryPoint = "renameat2", SetLastError = true)]
+    private static extern int RenameAt2(int olddirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string oldpath, int newdirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string newpath, uint flags);
+
+    [Fact]
+    public void A_name_reused_before_its_events_are_read_leaves_each_watch_under_the_path_of_its_own_directory()
+    {
+        // mkdir X; mv X Y; mkdir X — all before the backend reads one event, so its walk of the new X sees the second directory while the
+        // queue still describes the first: the rename must not move the second directory's watch to Y.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var t = new TempDirectory("cscode-inotify-");
+        var raw = new RawCollector();
+        using var b = Backend(t.Path, raw, startReader: false);
+        Directory.CreateDirectory(t.Combine("X"));
+        Directory.Move(t.Combine("X"), t.Combine("Y"));
+        Directory.CreateDirectory(t.Combine("X"));
+        b.Pump();
+        Assert.Equal([t.Path, t.Combine("X"), t.Combine("Y")], b.WatchedDirectories.Order(StringComparer.Ordinal));
+        Assert.Equal(b.WatchCount, KernelWatches(b.Fd));
+
+        raw.Clear();
+        File.WriteAllText(t.Combine("X", "in-x.txt"), "x");
+        File.WriteAllText(t.Combine("Y", "in-y.txt"), "y");
+        b.Pump();
+        Assert.Contains(raw.Snapshot(), e => e.Kind == RawKind.Created && e.Path == t.Combine("X", "in-x.txt"));
+        Assert.Contains(raw.Snapshot(), e => e.Kind == RawKind.Created && e.Path == t.Combine("Y", "in-y.txt"));
+    }
+
+    [Fact]
+    public void Two_watched_directories_exchanged_keep_reporting_each_under_its_new_path()
+    {
+        // `mv --exchange src src-alt` (renameat2 RENAME_EXCHANGE): two renames whose targets are both watched.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var t = new TempDirectory("cscode-inotify-");
+        Directory.CreateDirectory(t.Combine("src", "inner-a"));
+        Directory.CreateDirectory(t.Combine("src-alt", "inner-b"));
+        var raw = new RawCollector();
+        using var b = Backend(t.Path, raw, startReader: false);
+        const int AtFdCwd = -100;
+        const uint RenameExchange = 2;
+        Assert.SkipWhen(RenameAt2(AtFdCwd, t.Combine("src"), AtFdCwd, t.Combine("src-alt"), RenameExchange) != 0, "the file system cannot exchange directories");
+        b.Pump();
+        Assert.Equal(new[] { t.Path, t.Combine("src"), t.Combine("src", "inner-b"), t.Combine("src-alt"), t.Combine("src-alt", "inner-a") }.Order(StringComparer.Ordinal),
+            b.WatchedDirectories.Order(StringComparer.Ordinal));
+        Assert.Equal(b.WatchCount, KernelWatches(b.Fd));
+
+        raw.Clear();
+        File.WriteAllText(t.Combine("src", "inner-b", "f.txt"), "x");
+        File.WriteAllText(t.Combine("src-alt", "inner-a", "g.txt"), "x");
+        b.Pump();
+        Assert.Contains(raw.Snapshot(), e => e.Kind == RawKind.Created && e.Path == t.Combine("src", "inner-b", "f.txt"));
+        Assert.Contains(raw.Snapshot(), e => e.Kind == RawKind.Created && e.Path == t.Combine("src-alt", "inner-a", "g.txt"));
+    }
+
+    [Fact]
+    public void An_overflow_resync_removes_the_watches_of_directories_that_left_the_tree_while_events_were_lost()
+    {
+        // During a burst that overflows the queue, one directory is moved out of the tree (its watches stay alive in the kernel) and one deleted
+        // (the kernel frees its watches; their IN_IGNORED is lost). The walk after the overflow must leave neither mapped under its old path.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var t = new TempDirectory("cscode-inotify-");
+        using var outside = new TempDirectory("cscode-outside-");
+        Directory.CreateDirectory(t.Combine("a", "sub"));
+        Directory.CreateDirectory(t.Combine("b", "sub"));
+        Directory.CreateDirectory(t.Combine("c"));
+        var raw = new RawCollector();
+        using var b = Backend(t.Path, raw, startReader: false);
+        Assert.Equal(6, b.WatchCount);
+        Directory.Move(t.Combine("a"), outside.Combine("a"));
+        Directory.Delete(t.Combine("b"), recursive: true);
+
+        b.Process(Bytes(Ev(-1, InotifyBackend.InQOverflow)), endOfBurst: true); // all that arrives of the burst
+        Assert.Equal([t.Path, t.Combine("c")], b.WatchedDirectories.Order(StringComparer.Ordinal));
+        Assert.Equal(b.WatchCount, KernelWatches(b.Fd));
+        Assert.Contains(raw.Snapshot(), e => e.Kind == RawKind.Changed && e.Path == t.Path);
+
+        raw.Clear();
+        File.WriteAllText(outside.Combine("a", "sub", "elsewhere.txt"), "x");
+        File.WriteAllText(t.Combine("c", "marker.txt"), "x");
+        b.Pump(); // (the events queued before the overflow come too: harmless)
+        Assert.Contains(raw.Snapshot(), e => e.Path == t.Combine("c", "marker.txt"));
+        Assert.DoesNotContain(raw.Snapshot(), e => e.Path.Contains("elsewhere", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Running_out_of_watches_on_a_new_directory_still_reports_it_and_the_rest_of_the_read_then_a_rescan()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var t = new TempDirectory("cscode-inotify-");
+        var raw = new RawCollector();
+        using var b = Backend(t.Path, raw, startReader: false);
+        b.AddWatchFault = path => path.EndsWith("/boom", StringComparison.Ordinal) ? InotifyBackend.Enospc : 0;
+        Directory.CreateDirectory(t.Combine("boom"));
+        File.WriteAllText(t.Combine("after.txt"), "x");
+        Directory.CreateDirectory(t.Combine("later"));
+        b.Pump();
+
+        var seen = raw.Snapshot().Where(e => !e.Path.StartsWith("FATAL", StringComparison.Ordinal)).ToArray();
+        Assert.Contains((RawKind.Created, t.Combine("boom"), (string?)null), seen);
+        Assert.Contains((RawKind.Created, t.Combine("after.txt"), (string?)null), seen);
+        Assert.Contains((RawKind.Created, t.Combine("later"), (string?)null), seen);
+        Assert.Equal((RawKind.Changed, t.Path, (string?)null), seen[^1]);                                  // what the missing watches would have said: rescan
+        Assert.Equal(1, raw.Fatal);                                                                          // the FileWatcher replaces the backend
+        Assert.Equal(1, b.WatchCount);                                                                       // and no watch is added after the failure
+    }
+
+    // ---- roots that go ------------------------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_root_moved_away_or_deleted_is_reported_lost()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var t = new TempDirectory("cscode-inotify-");
+        var moved = new RawCollector();
+        Directory.CreateDirectory(t.Combine("one", "sub"));
+        using var b1 = Backend(t.Combine("one"), moved);
+        Directory.Move(t.Combine("one"), t.Combine("one-moved"));
+        await WaitUntil(() => Volatile.Read(ref moved.RootLost) == 1, "the moved root to be reported lost");
+        Assert.Equal(0, b1.WatchCount);
+
+        var deleted = new RawCollector();
+        Directory.CreateDirectory(t.Combine("two"));                                                        // empty: no event below it
+        using var b2 = Backend(t.Combine("two"), deleted);
+        Directory.Delete(t.Combine("two"));
+        await WaitUntil(() => Volatile.Read(ref deleted.RootLost) == 1, "the deleted root to be reported lost");
+    }
+
+    [Fact]
+    public async Task A_watched_folder_inside_an_unwatched_one_that_is_moved_away_and_replaced_is_watched_again()
+    {
+        // Go to definition opened node_modules/@types/node/fs.d.ts, so the editor watches that folder. `npm install` renames the package folder
+        // away and extracts the new version in its place. Nothing watches node_modules (every subscription excludes it), so no parent reports
+        // the swap: the folder's own watch must.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var f = new WatchFixture();
+        Directory.CreateDirectory(f.P("node_modules/@types/node"));
+        File.WriteAllText(f.P("node_modules/@types/node/fs.d.ts"), "old");
+        var (_, workspace) = f.Start();
+        var events = new Collector();
+        var doc = (FileWatchHandle)f.Watcher.Watch(FileUri.FromDirectoryPath(f.P("node_modules/@types/node")), false, null, events.Add);
+        await Task.WhenAll(workspace.Ready, doc.Ready);
+
+        Directory.Move(f.P("node_modules/@types/node"), f.P("node_modules/@types/.node-old"));
+        Directory.CreateDirectory(f.P("node_modules/@types/node"));
+        File.WriteAllText(f.P("node_modules/@types/node/fs.d.ts"), "new");
+        await events.WaitForPresent("fs.d.ts", Ct);                                                          // the new folder's content, announced
+        await Task.Delay(150, Ct);
+        File.WriteAllText(f.P("node_modules/@types/node/later.d.ts"), "x");                                // and watched from then on
+        await events.WaitForKind("later.d.ts", FileChangeKind.Created, Ct);
+        doc.Dispose();
+        workspace.Dispose();
+    }
+
+    [Fact]
+    public void A_backend_without_a_reader_closes_its_fds_on_dispose()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fd");
+        using var t = new TempDirectory("cscode-inotify-");
+        var inotifyBefore = WatchFixture.InotifyFds();
+        var b = Backend(t.Path, new RawCollector(), startReader: false);
+        Assert.Null(b.ReaderThread);
+        b.Dispose();
+        Assert.True(b.IsClosed);
+        Assert.True(WatchFixture.InotifyFds() <= inotifyBefore, "the inotify fd is still open");
+    }
+
+    // ---- cache directories and wanted paths ----------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_cache_tag_drops_the_watches_in_its_directory_whether_it_comes_first_like_cargo_or_later()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fdinfo");
+        using var f = new WatchFixture();
+        var baseline = ProcessWatches();
+        var (events, h) = f.Start();
+        await h.Ready;
+        Assert.Equal(1, ProcessWatches() - baseline);
+
+        // Cargo: a temporary directory gets the tag, then is renamed into place; the build fills it afterwards.
+        Directory.CreateDirectory(f.P(".tmpQx3"));
+        File.WriteAllText(f.P(".tmpQx3/CACHEDIR.TAG"), CacheTag);
+        Directory.Move(f.P(".tmpQx3"), f.P("target"));
+        Directory.CreateDirectory(f.P("target/debug/deps"));
+        File.WriteAllText(f.P("target/debug/deps/libx.rlib"), "x");
+        await events.WaitForKind("target", FileChangeKind.Created, Ct);                                    // the folder itself is reported
+        await WaitUntil(() => ProcessWatches() - baseline == 1, "no watch in target/");
+
+        // Another tool: the directory first, its tag later.
+        Directory.CreateDirectory(f.P("cache/a/b"));
+        await WaitUntil(() => ProcessWatches() - baseline == 4, "cache, cache/a and cache/a/b to be watched");
+        File.WriteAllText(f.P("cache/CACHEDIR.TAG"), CacheTag);
+        await WaitUntil(() => ProcessWatches() - baseline == 1, "the watches in cache/ to be dropped");
+        File.WriteAllText(f.P("cache/a/b/late.bin"), "x");
+        File.WriteAllText(f.P("marker.txt"), "x");
+        await events.WaitForKind("marker.txt", FileChangeKind.Created, Ct);
+        await Task.Delay(150, Ct);
+        Assert.DoesNotContain(events.Snapshot(), c => Collector.Name(c) is "libx.rlib" or "deps" or "late.bin");
+        h.Dispose();
+    }
+
+    [Fact]
+    public async Task A_wanted_tree_inside_a_cache_directory_is_watched_alone_reported_and_let_go_when_no_longer_wanted()
+    {
+        // rust-analyzer watches a build script's OUT_DIR, target/debug/build/<crate>/out: the language client asks for it as a wanted tree.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fdinfo");
+        using var f = new WatchFixture();
+        Directory.CreateDirectory(f.P("target/debug/build/foo-1/out/nested"));
+        Directory.CreateDirectory(f.P("target/debug/deps"));
+        for (var i = 0; i < 50; i++) Directory.CreateDirectory(f.P($"target/debug/build/other-{i}/out"));
+        File.WriteAllText(f.P("target/CACHEDIR.TAG"), CacheTag);
+        var baseline = ProcessWatches();
+        var outDir = f.P("target/debug/build/foo-1/out");
+        var wants = new FileWatchWants([], [FileUri.FromDirectoryPath(outDir)]);
+        var events = new Collector();
+        var h = (FileWatchHandle)f.Watcher.Watch(f.Root, true, null, events.Add, wants);
+        await h.Ready;
+        Assert.Equal(7, ProcessWatches() - baseline);                                                        // the root, target, debug, build, foo-1, out, out/nested
+
+        File.WriteAllText(f.P("target/debug/build/foo-1/out/gen.rs"), "x");
+        File.WriteAllText(f.P("target/debug/build/foo-1/out/nested/more.rs"), "x");
+        File.WriteAllText(f.P("target/debug/foo.d"), "x");                                                 // in a directory watched only on the way
+        File.WriteAllText(f.P("target/debug/build/other-0/out/no.rs"), "x");
+        await events.WaitFor(s => s.Any(c => Collector.Name(c) == "gen.rs") && s.Any(c => Collector.Name(c) == "more.rs"), "the OUT_DIR files", Ct);
+        await Task.Delay(150, Ct);
+        Assert.DoesNotContain(events.Snapshot(), c => Collector.Name(c) is "foo.d" or "no.rs");
+
+        await wants.SetAsync([], []);                                                                        // no longer wanted: let go
+        Assert.Equal(1, ProcessWatches() - baseline);
+        h.Dispose();
     }
 }

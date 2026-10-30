@@ -5,6 +5,8 @@ using CsCode.App.Notifications;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.App.ToolWindows.Explorer;
 using CsCode.Core.Platform;
+using CsCode.Platform.Io;
+using CsCode.Platform.Watching;
 using CsCode.TestDoubles;
 using CsCode.Ui.Threading;
 using Xunit;
@@ -280,10 +282,10 @@ public class ExplorerTests
     }
 
     [AvaloniaFact]
-    public async Task The_live_refresh_watches_past_watcher_excluded_and_explorer_excluded_folders_but_still_shows_the_former()
+    public async Task The_folder_watch_excludes_watcher_excluded_and_explorer_excluded_folders_but_still_shows_the_former()
     {
         // The Explorer's subscription shares the folder's OS watch with the language servers and EditorConfig (files.watcherExclude); a folder
-        // every subscription excludes costs no OS watch. With files.exclude alone it kept target/ and node_modules/ watched for everyone.
+        // every subscription excludes costs no OS watch. With files.exclude alone it kept node_modules/, bin/ and obj/ watched for everyone.
         using var rig = new Rig();
         rig.Dir.WriteFile("target/debug/app", "");
         rig.Dir.WriteFile("src/main.rs", "");
@@ -308,9 +310,100 @@ public class ExplorerTests
         await rig.OpenAsync();
         var excludes = Assert.Single(rig.Watcher.ActiveExcludes);
         Assert.NotNull(excludes);
-        Assert.Contains("**/target/**", excludes);
+        Assert.Contains("**/bin/**", excludes);
         Assert.Contains("**/node_modules/**", excludes);
         Assert.Contains("**/.git", excludes);
+        Assert.DoesNotContain("**/target/**", excludes); // left out by its cache tag instead: a source folder may be called target/
+    }
+
+    /// <summary>The Explorer over a real folder watch (the OS backend), for what refreshes live.</summary>
+    private sealed class LiveRig : IDisposable
+    {
+        public TempDirectory Dir { get; } = new("cscode-explorer-live-");
+        public IoLane Lane { get; } = new("test.explorer.watch", 2);
+        public FileWatcher Watcher { get; }
+        public FakeWorkspaceService Workspace { get; }
+        public TestConfigurationService Config { get; } = new();
+        public ExplorerViewModel Vm { get; }
+
+        public LiveRig()
+        {
+            Watcher = new FileWatcher(Lane);
+            Workspace = new FakeWorkspaceService(new DiskFileSystem(), Watcher);
+            Vm = new ExplorerViewModel(Workspace, AvaloniaUiDispatcher.Instance, null, Config, new InMemoryStateStorage(), new FakeModalDialogs());
+        }
+
+        public async Task OpenAsync()
+        {
+            await Workspace.OpenFolderAsync(Dir.Uri);
+            await Vm.RefreshCompleted;
+        }
+
+        public string[] Names => Vm.Rows.Select(r => new string(' ', r.Depth) + r.Name).ToArray();
+        public string P(string rel) => Dir.Combine(rel.Split('/'));
+        public ExplorerNode Row(string name) => Vm.Rows.Single(r => r.Name == name);
+
+        public async Task Until(Func<string[], bool> condition, string what)
+        {
+            var sw = Stopwatch.StartNew();
+            while (!condition(Names))
+            {
+                if (sw.ElapsedMilliseconds > 10_000) throw new TimeoutException($"Timed out waiting for {what}. Rows: {string.Join(" | ", Names)}");
+                await Task.Delay(20);
+            }
+        }
+
+        public void Dispose() { Vm.Dispose(); Watcher.Dispose(); Lane.Dispose(); Dir.Dispose(); }
+    }
+
+    [AvaloniaFact]
+    public async Task Build_output_folders_appearing_and_going_under_an_expanded_folder_show_up_and_leave_live()
+    {
+        // `dotnet build` creates bin/ and obj/ in an expanded project folder, `git clean -xdf` removes them: the folders themselves are reported
+        // (an event is excluded by its own path only), so neither is missing after a build nor left behind as a ghost after a clean.
+        using var rig = new LiveRig();
+        rig.Dir.WriteFile("src/App/Program.cs", "");
+        rig.Dir.WriteFile("src/Lib/obj/project.assets.json", "");                                // present when the folder opens
+        await rig.OpenAsync();
+        await rig.Vm.ToggleAsync(rig.Row("src"));
+        await rig.Vm.ToggleAsync(rig.Row("App"));
+        await rig.Vm.ToggleAsync(rig.Row("Lib"));
+        await rig.Vm.WantsApplied;
+
+        Directory.CreateDirectory(rig.P("src/App/bin/Debug"));
+        File.WriteAllText(rig.P("src/App/bin/Debug/App.dll"), "x");
+        await rig.Until(n => n.Contains("   bin"), "bin/ to show up");
+
+        Directory.Delete(rig.P("src/App/bin"), recursive: true);
+        Directory.Delete(rig.P("src/Lib/obj"), recursive: true);
+        await rig.Until(n => !n.Contains("   bin") && !n.Contains("   obj"), "bin/ and obj/ to leave");
+    }
+
+    [AvaloniaFact]
+    public async Task An_expanded_folder_inside_a_watcher_excluded_one_refreshes_live_and_is_read_again_when_expanded_after_a_collapse()
+    {
+        // bin/ is excluded from the folder's watch (files.watcherExclude), so it costs no OS watch; but a folder the user expands there is asked
+        // for, its entries refresh live — Rust's src/bin/ and a Node CLI's bin/ are source. Collapsed it is not watched: expanding it again reads
+        // the disk instead of showing what was cached.
+        using var rig = new LiveRig();
+        rig.Dir.WriteFile("src/bin/tool.rs", "");
+        await rig.OpenAsync();
+        await rig.Vm.ToggleAsync(rig.Row("src"));
+        await rig.Vm.ToggleAsync(rig.Row("bin"));
+        await rig.Vm.WantsApplied;
+        Assert.Contains("   tool.rs", rig.Names);
+
+        File.WriteAllText(rig.P("src/bin/other.rs"), "");
+        await rig.Until(n => n.Contains("   other.rs"), "the new file in the expanded bin/ to show up");
+
+        rig.Vm.Collapse(rig.Row("bin"));
+        await rig.Vm.WantsApplied;
+        File.WriteAllText(rig.P("src/bin/while-collapsed.rs"), "");
+        File.Delete(rig.P("src/bin/tool.rs"));
+        await Task.Delay(400);
+        await rig.Vm.ToggleAsync(rig.Row("bin"));
+        Assert.Contains("   while-collapsed.rs", rig.Names);
+        Assert.DoesNotContain("   tool.rs", rig.Names);
     }
 
     [AvaloniaFact]

@@ -155,7 +155,7 @@ Built-in defaults (all in `BuiltInSettings.All`; every key in `SettingKeys` has 
 | `cscode.editor.largeFileThresholdBytes` | `5242880` (5 MB) |
 | `files.autoSave` | `"off"` |
 | `files.exclude` | `**/.git`, `**/.svn`, `**/.hg`, `**/CVS`, `**/.DS_Store`, `**/Thumbs.db` → `true` |
-| `files.watcherExclude` | `**/.git/objects/**`, `**/.git/subtree-cache/**`, `**/.hg/store/**`, `**/node_modules/**`, `**/bin/**`, `**/obj/**`, `**/target/**` → `true` (`BuiltInSettings.WatcherExcludes`) |
+| `files.watcherExclude` | `**/.git/objects/**`, `**/.git/subtree-cache/**`, `**/.hg/store/**`, `**/node_modules/**`, `**/bin/**`, `**/obj/**` → `true` (`WatchExclusion.DefaultExcludes`; Cargo's `target/` is left out by its `CACHEDIR.TAG`, see File watching) |
 | `workbench.colorTheme` / `workbench.startupEditor` | `"Visual Studio Dark"` / `"welcomePage"` |
 | `cscode.memory.budgetMb` / `cscode.memory.trimOnIdle` | `0` / `true` |
 | `cscode.keymap` | `"visualstudio"` (or `"vscode"`) |
@@ -224,24 +224,42 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
 `FileWatcher`: one OS watch per (root, recursive), **shared** by every subscription on that root (each costs an inotify instance on Linux — the per-user limit is often 128) and disposed with the last one.
 On Linux the OS watch is an `InotifyBackend` (inotify via P/Invoke, one watch per directory, added one directory at a time); elsewhere a `FileSystemWatcher`.
 `Watch()` and disposal return immediately (the tree walk that arms inotify happens on the lane; `FileWatchHandle.Ready` completes when armed — events before that are not reported).
-* **Excluded directories cost no watch** (Linux): a directory that every subscription on the root excludes is never watched — not when the root is armed, not when it appears later — and
+* **What is left out** (`WatchExclusion`): exclude globs (`files.watcherExclude` unless an explicit list is passed; `[]` = none) match root-relative paths. An *event* is dropped when the
+  glob matches its own path, so a folder like `bin/` or `node_modules/` appearing, going or being renamed is reported while what is in it is not; a *directory's contents* are left out when
+  the glob matches its path or its path with a trailing `/`. A directory holding a valid `CACHEDIR.TAG` (`Signature: 8a477f597d28d172789f06886806bc55`, <https://bford.info/cachedir/>;
+  Cargo writes one in every `target/`) has its contents left out for every subscription whatever its name — a source folder called `target/` without the tag is watched like any other.
+  Tags are found where the watcher walks the disk: the Linux walk (also for a tag that appears later, written or renamed into a watched directory — its watches are then dropped; Cargo
+  renames a temporary directory with the tag already inside into place, so its `target/` never gets any), the polling fallback and the scan of a new directory.
+* **Left out costs no watch** (Linux): a directory whose contents every subscription on the root leaves out is never watched — not when the root is armed, not when it appears later — and
   never entered. Before, a `FileSystemWatcher` (IncludeSubdirectories) put an inotify watch on every directory below the root and dropped the excluded events afterwards: one window on a
   Rust + JS monorepo held 75,892 watches against `fs.inotify.max_user_watches` = 90,112 (56,489 in `target/`, ~7,500 in `node_modules/`), starving every other program, and a second
-  window got ENOSPC and fell back to polling. A subscription that joins with fewer excludes (the Explorer excludes `files.exclude` on top of `files.watcherExclude`, EditorConfig and the
-  language servers do not; some callers pass `[]`) has the skipped directories it wants watched before its `Ready` — in place, without a second instance or a re-announcement.
-  `InotifyBackend` pairs `IN_MOVED_FROM`/`IN_MOVED_TO` by cookie into one rename (an unpaired FROM is a deletion, an unpaired TO a creation; a FROM ending a read waits 10 ms for its TO),
+  window got ENOSPC and fell back to polling. A subscription that joins with fewer excludes (EditorConfig and the language servers exclude `files.watcherExclude`, the Explorer that and
+  `files.exclude`; some callers pass `[]`) has the directories it wants watched before its `Ready` — in place, without a second instance or a re-announcement.
+* **Wanted paths** (`FileWatchWants`, the additive `IFileWatcher.Watch(…, wants)`): a subscription can name paths below its root that it wants despite its excludes, the defaults and
+  cache tags — a *directory* (its direct entries) or a *tree* (its whole subtree). The walk goes down to them (the directories on the way are watched, their other entries' events are
+  not delivered), watches them, and delivers their events to that subscription; all through the root's one OS watch. Live: `SetAsync` completes once the OS watch follows, and
+  directories watched only for a want that is gone lose their watches. The Explorer wants each expanded folder that lies where its watch leaves things out; a language client wants
+  the base of each `RelativePattern` registration that does (rust-analyzer's build-script `OUT_DIR`, `target/debug/build/<crate>/out`, as a tree). On Windows and macOS wants only
+  change which events are delivered (`FileSystemWatcher` watches everything anyway); remote watches ignore them (the remote protocol does not carry them).
+* **`InotifyBackend`** pairs `IN_MOVED_FROM`/`IN_MOVED_TO` by cookie into one rename (an unpaired FROM is a deletion, an unpaired TO a creation; a FROM ending a read waits 10 ms for its TO),
   watches a directory that is created or moved in (with its subtree) before reporting it, keeps the watches of a directory renamed inside the tree (only their paths change), drops those
-  of one moved out (and all of them when the root itself moves away, so nothing is reported under the old path), never follows symlinked directories, and after `IN_Q_OVERFLOW` reports
-  `Changed(root)` and walks the tree again for directories it missed. Running out of watches, instances or kernel memory while arming throws (→ polling, one warning); later, while
-  adding a new directory, it degrades the root the same way. `Dispose` wakes its reader thread through an eventfd and waits for it to close both fds.
+  of one moved out, and never follows symlinked directories. Its walk reads the disk as it is now while the queue may still describe the past (`mkdir X; mv X Y; mkdir X` read in one
+  go; `mv --exchange`): before a watch is moved to a new path, inotify itself is asked which directory the path names (adding a watch answers with that directory's descriptor). After
+  `IN_Q_OVERFLOW` it reports `Changed(root)` and walks the tree again: missed directories get watches, and watches the walk does not reach (directories deleted or moved out while events
+  were lost) are removed. Running out of watches, instances or kernel memory while arming throws (→ polling, one warning); later, while adding a new directory, it still reports every
+  event of that read, adds `Changed(root)` for consumers to rescan, and degrades the root the same way. `Dispose` wakes its reader thread through an eventfd and waits for it to close
+  both fds.
 * **Roots that do not exist yet** (`.cscode/` / `.vscode/` of a folder opened without them — the settings service and DAP's `launch.json` watch both watch them) are not an error:
   the watch waits through a non-recursive watch on the nearest existing ancestor (shared like any other, so usually the folder's own — no extra inotify instance), arms when the directory appears
   and reports what is already inside as created; `Ready` completes once the wait is armed. Before this, the watch failed (`Cannot watch '…': it is not a directory`) and stayed in the shared
   table dead, so every later subscriber of that directory — the settings service re-watching when `.cscode` appeared — joined a watch that never fired: settings created after opening a folder
   were ignored until a restart.
-* **Roots that go away**: an OS watch dies silently with its directory (no error on Linux; a `FileSystemWatcher` on a moved directory keeps reporting it under the old path). A root is re-checked when a watched parent
-  reports it deleted, renamed or (re-)created, after deletions below it, and when another subscriber joins it: a deleted root goes back to waiting, a re-created one is re-armed on the new directory
-  (announcing its content). Not detected: a root replaced — or an empty one removed — while nothing watches its parent and nobody re-watches it.
+* **Roots that go away**: a `FileSystemWatcher` dies silently with its directory (no error on Linux; one on a moved directory keeps reporting it under the old path). `InotifyBackend`
+  sees its root move away or its root watch removed by the kernel (deleted, unmounted), drops its watches and tells the watcher — which matters for a root inside a folder nobody watches
+  (an open file's folder in `node_modules/`, swapped by `npm install`). A root is also re-checked when a watched parent reports it deleted, renamed or (re-)created, after deletions below
+  it, and when another subscriber joins it: a deleted root goes back to waiting, a re-created one is re-armed on the new directory (announcing its content; what the new OS watch reports
+  meanwhile is held until the announcement is out, so a file found there is reported created rather than changed). Not detected with a `FileSystemWatcher`: a root replaced — or an
+  empty one removed — while nothing watches its parent and nobody re-watches it.
 * **Roots that keep going away**: on Linux a `FileSystemWatcher` whose directory was deleted can never be released — its reader thread blocks on an inotify instance with no watch left, and
   `Dispose` only removes watches (measured on .NET 10: +1 inotify fd and +1 thread per watcher disposed after its directory was deleted; none when disposed before, or after a move).
   `InotifyBackend` does not leak (its reader polls an eventfd too), so its losses are not counted (`IWatchBackend.LeaksWhenItsRootIsDeleted`) and its root is re-armed every time; the
@@ -251,14 +269,15 @@ On Linux the OS watch is an `InotifyBackend` (inotify via P/Invoke, one watch pe
   directory went and watches the path again — is **polled** from then on (every 2 s, logged once at Information). Polling follows the path: a missing root is an empty snapshot, so
   deletions and re-creations are reported like any other change at no OS cost. Two, not one, because the same creation reported late by a second watched parent looks like a
   replacement. Identity checks cannot replace the counting: on ext4 a directory re-created at once reuses the deleted one's inode number and usually its 4 ms birth-time tick.
-* Excludes (`files.watcherExclude` unless an explicit list is passed; `[]` = none) are matched on root-relative paths and drop events before they cost memory; a directory every
-  subscription excludes is not watched at all on Linux (above). On Windows and macOS `FileSystemWatcher` still watches it and only the events are dropped.
+* Excluded events are dropped before they cost memory. On Windows and macOS `FileSystemWatcher` watches every directory and only the events are dropped (cache tags are seen there
+  only by the scan of a new directory).
 * Debounce 75 ms after the last event, never later than 500 ms after the burst began; batches ≤ 1000 changes, delivered on lane threads, never concurrently per subscription; a throwing callback keeps receiving.
 * Coalescing: Created+Changed → Created · Created+Deleted → nothing · Changed+Deleted → Deleted · Deleted+Created → Changed · Renamed → Deleted+Created; events below a deleted directory are dropped;
   more than 100,000 distinct paths in one window collapse to a single `Changed(root)` "rescan" event.
 * When a **directory appears**, the watcher lists it and announces what is already inside (no OS watch sees children created before its own watch is armed — `mkdir -p a/b/c` reports only `a`);
   the backend arms the new directory's watches before it reports it, so whatever the listing comes too early for is reported by the OS.
-* **OS watch limit exhausted** (at arming or later): that root degrades to a polling watcher (every 2 s, ≤ 50,000 entries, default excludes pruned) and logs one warning per root.
+* **OS watch limit exhausted** (at arming or later): that root degrades to a polling watcher (every 2 s, ≤ 50,000 entries; it does not enter what the configured excludes or a cache
+  tag leave out unless a subscription wants a path there, and reports those folders' own appearance and removal) and logs one warning per root.
   A failure is matched to the OS watch that reported it: a late report from a watch a re-check already replaced is ignored, and one that arrives while the watch is still being armed
   degrades it once it is in place. The polling watcher takes its baseline when it is armed, so a change right after `Ready` is reported.
 * Queue overflow reports a `Changed(root)` so consumers rescan.
@@ -308,9 +327,14 @@ Stated plainly — what is **not** done or **not verified**:
 * **Windows and macOS code paths were not run** (this repository's runs are Linux-only): the recycle-bin P/Invoke (`SHFileOperationW`, both 32/64-bit struct layouts), macOS `~/.Trash` moves, Windows path/UNC handling of `FileSystemWatcher`
   and `AtomicFile`'s rename semantics. The Windows/macOS *path layouts* and URI mapping are unit-tested through injected flags; the OS calls themselves are not.
 * On Windows and macOS excluded directories are still watched at OS level by `FileSystemWatcher` (events are filtered). On Linux they cost nothing, but a huge tree that is *not* excluded can
-  still exhaust `fs.inotify.max_user_watches`; the polling fallback then takes over. A directory that only a departed subscription wanted stays watched until the root is re-armed.
-* With `files.watcherExclude` part of its watch, the Explorer does not refresh live inside a watcher-excluded folder, nor when such a folder itself appears or goes (`target/` after the
-  first build); expanding or refreshing the parent reads the disk (as in VS Code).
+  still exhaust `fs.inotify.max_user_watches`; the polling fallback then takes over. A directory that only a departed subscription wanted (by its excludes, not by `FileWatchWants`) stays
+  watched until the root is re-armed.
+* **Explorer and excluded folders**: its watch leaves out `files.watcherExclude` ∪ `files.exclude` and cache-tagged folders. Live: everything else, those folders themselves appearing,
+  going or being renamed, and the entries of every *expanded* folder in there (it asks the watch for them). Not live: a *collapsed* folder in there — its watch is let go on collapse, and
+  it is read from the disk again whenever it is expanded (as are the expanded folders below it that expanding shows again).
+* Wanted paths are not carried by the remote watch protocol: on an `ssh:` folder the Explorer does not refresh live inside excluded folders, and a language server's `RelativePattern` base
+  in a cache directory (`OUT_DIR`) is not watched. A language client decides at registration whether a base is in an excluded part: a `target/` created (with its tag) after the
+  registration is not seen as one until the server registers again.
 * Polling fallback is coarse (2 s) and capped at 50,000 entries per root.
 * Cycle detection for directory symlinks compares real paths built from the walk root; if the root itself lives below a symlinked directory (e.g. macOS `/tmp`) a link back to that ancestor may be followed once more before being detected.
 * `ConfigurationTarget.Workspace` and `WorkspaceFolder` both write the primary folder; there is no per-resource folder scoping, so additional folders' settings are overlaid in order rather than applying to their own files only.
@@ -334,10 +358,12 @@ Suites: when-clause (~200 cases) and context keys · JSONC parser/editor golden 
 keybindings (chords, timeouts via a manual clock, precedence/negatives/platforms, presets, user file, contributions) · local file system (atomicity stress, fault injection, symlinks, trash, cancellation via chunk hooks) ·
 file watcher (real inotify and `FileSystemWatcher` + inotify fd accounting, coalescing, excludes, polling fallback by fault injection, roots created/deleted/replaced/moved after watching, ten
 delete/re-create cycles costing ≤ 2 inotify instances with a `FileSystemWatcher` and none with inotify, stale and early failure reports, a root back before its dead watch is replaced) ·
-inotify backend (`InotifyBackendTests`: watch counts read from `/proc/self/fdinfo` — 213 excluded directories cost none, nor do ones created in them later —, synthetic `inotify_event` bytes
-for rename pairing, unpaired moves, overflow and `IN_IGNORED`, directories created, renamed, moved in and out, symlinks, a random churn of directory operations after which exactly the
-wanted directories are watched under their current paths, fd/eventfd/thread release after the root was deleted, subscriptions that join with fewer excludes, also while the tree is
-being walked) · workspace/gitignore/walker · fuzzy matcher (oracle + benchmark) · state, logging, editorconfig, language scopes · DI container (incl. workspace settings
+inotify backend (`InotifyBackendTests`: watch counts read from `/proc/self/fdinfo` — 213 excluded or cache-tagged directories cost none, nor do ones created in them later —, synthetic
+`inotify_event` bytes for rename pairing, unpaired moves, overflow and `IN_IGNORED`, on a backend without its reader thread; directories created (a file written from inside the sink
+the instant one is reported), renamed, moved in and out, exchanged, a name reused before its events are read, an overflow while directories left the tree, running out of watches
+partway through a read, symlinks, a random churn of directory operations after which exactly the wanted directories are watched under their current paths, roots that move away or are
+deleted (also one inside an unwatched `node_modules/`), fd/eventfd/thread release, cache tags that come first or later, wanted trees in a cache directory, subscriptions that join with
+fewer excludes, also while the tree is being walked) · the backend-agnostic watcher tests run twice, over the default backend and over `FileSystemWatcher` · workspace/gitignore/walker · fuzzy matcher (oracle + benchmark) · state, logging, editorconfig, language scopes · DI container (incl. workspace settings
 created after opening a folder while another module watches the missing directories). The same scenarios through the real app composition (settings + DAP `launch.json`; `.vscode/` deleted and
 re-created five times, ≤ 2 inotify instances lost) are in `tests/CsCode.App.Tests/WorkspaceSettingsWatchTests.cs`.
 Conventions: a test needing an unavailable feature **skips with a reason** (`Assert.SkipWhen/SkipUnless`: Windows-only, root, non-Linux fd counting); no test touches `~/.cscode`, `~/.config/cscode`, `~/.vscode*` or `~/.ssh`, mutates the process environment,

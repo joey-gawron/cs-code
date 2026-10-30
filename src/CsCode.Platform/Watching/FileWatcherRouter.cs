@@ -28,10 +28,13 @@ public sealed class FileWatcherRouter : IFileWatcher
 
     public IFileWatcher Local => _local;
 
-    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges)
+    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges) =>
+        Watch(root, recursive, excludeGlobs, onChanges, null);
+
+    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges, FileWatchWants? wants)
     {
         ArgumentNullException.ThrowIfNull(root);
-        if (!root.IsAbsoluteUri || root.IsFile) return _local.Watch(root, recursive, excludeGlobs, onChanges);
-        return _providers.Value.TryGetValue(root.Scheme, out var p) ? p.Watch(root, recursive, excludeGlobs, onChanges) : Disposable.Empty;
+        if (!root.IsAbsoluteUri || root.IsFile) return _local.Watch(root, recursive, excludeGlobs, onChanges, wants);
+        return _providers.Value.TryGetValue(root.Scheme, out var p) ? p.Watch(root, recursive, excludeGlobs, onChanges, wants) : Disposable.Empty;
     }
 }

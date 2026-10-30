@@ -6,7 +6,6 @@ using CsCode.App.Services;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
-using CsCode.Platform.Configuration;
 using CsCode.Ui.Collections;
 using CsCode.Ui.Threading;
 
@@ -16,7 +15,9 @@ namespace CsCode.App.ToolWindows.Explorer;
 /// The Explorer model. The tree is stored as nodes with lazily loaded children and <i>displayed</i> as a flat list of visible rows
 /// (<see cref="Rows"/>), so the list control virtualises it and 20k siblings cost one bulk collection change. Directory reads, sorting
 /// and diffing happen on workers; the UI thread only splices already-built node arrays into <see cref="Rows"/>. File-system changes
-/// arrive batched from <see cref="IFileWatcher"/> and are diffed against the loaded subtree by name: the tree is never rebuilt.
+/// arrive batched from <see cref="IFileWatcher"/> and are diffed against the loaded subtree by name: the tree is never rebuilt. The watch leaves
+/// out what <c>files.watcherExclude</c> or a cache tag excludes (see <see cref="WatchExcludeGlobs"/>), except the expanded folders there, which
+/// it is asked for (<see cref="FileWatchWants"/>) and which are read from the disk again whenever they are expanded.
 /// All file operations go through <see cref="IFileSystem"/> (async; delete uses the trash), with the file-operation participants around them
 /// (language servers: will-rename edits are applied before a rename or move, did-create/rename/delete follow). UI-thread object.
 /// </summary>
@@ -41,6 +42,10 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     private readonly object _pendingGate = new();
     private readonly HashSet<Uri> _dirtyDirs = new();
     private bool _flushScheduled;
+    private readonly Dictionary<Uri, FileWatchWants> _wants = new();   // per root folder: the folders its watch is asked for
+    private readonly HashSet<ExplorerNode> _wantedNodes = new();       // expanded folders in a part of the tree the watch leaves out
+    private IReadOnlyList<string> _watchExcludes = [];
+    private Task _wantsApplied = Task.CompletedTask;
     private ExplorerNode? _selected;
     private string _filter = "";
     private (List<Uri> Uris, bool Cut)? _clipboard;
@@ -68,6 +73,9 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     /// <summary>The most recently started root refresh (completes when roots and restored expansion are loaded).</summary>
     public Task RefreshCompleted => _refresh;
 
+    /// <summary>The most recent change of the folders the watches are asked for (completes when the OS watches follow it).</summary>
+    public Task WantsApplied => _wantsApplied;
+
     public BulkObservableCollection<ExplorerNode> Rows { get; } = new();
     public bool HasFolder => _roots.Count > 0;
     public ExplorerNode? Selected { get => _selected; set => SetProperty(ref _selected, value); }
@@ -90,8 +98,11 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         var generation = ++_loadGeneration;
         foreach (var w in _watches) w.Dispose();
         _watches.Clear();
+        _wants.Clear();
+        _wantedNodes.Clear();
         _roots.Clear();
         Rows.Clear();
+        _watchExcludes = WatchExcludeGlobs();
 
         var restored = _state?.Get<List<string>>(ExpandedStateKey, StorageScope.Workspace) ?? [];
         foreach (var s in restored) if (Uri.TryCreate(s, UriKind.Absolute, out var u)) _expandedUris.Add(u);
@@ -101,7 +112,9 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
             var name = Path.GetFileName(folder.LocalPath.TrimEnd('/', '\\'));
             var root = new ExplorerNode(folder, name.Length > 0 ? name : folder.LocalPath, true, 0, null, isRoot: true);
             _roots.Add(root);
-            _watches.Add(_workspace.Watcher.Watch(folder, true, WatchExcludeGlobs(), OnWatcherChanges));
+            var wants = new FileWatchWants();
+            _wants[folder] = wants;
+            _watches.Add(_workspace.Watcher.Watch(folder, true, _watchExcludes, OnWatcherChanges, wants));
         }
         OnPropertyChanged(nameof(HasFolder));
         Rows.AddRange(_roots);
@@ -145,6 +158,11 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     {
         _ui.AssertUiThread();
         if (!node.IsDirectory || node.IsExpanded) return;
+        // The folder, and the expanded ones it shows again, that lie where the watch leaves out are asked for first; what they hold is then read
+        // from the disk, since nothing reported their changes while they were out of sight.
+        var outOfWatch = await WantShownAsync(node).ConfigureAwait(true);
+        if (node.IsExpanded) return; // expanded meanwhile
+        if (node.Children is not null && outOfWatch.Contains(node)) await ReloadDirectoryAsync(node).ConfigureAwait(true);
         if (node.Children is null)
         {
             node.IsLoading = true;
@@ -159,6 +177,8 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
             }
             finally { node.IsLoading = false; }
         }
+        foreach (var shown in ExpandedBelow(node))
+            if (outOfWatch.Contains(shown) && shown.Children is not null) await ReloadDirectoryAsync(shown).ConfigureAwait(true); // not in Rows yet: only its children change
         node.IsExpanded = true;
         _expandedUris.Add(node.Uri);
         var index = Rows.IndexOf(node);
@@ -180,6 +200,64 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         if (index >= 0 && count > 0) Rows.RemoveRange(index + 1, count);
         if (Selected is { } s && s != node && IsDescendantOf(s, node)) Selected = node;
         PersistExpanded();
+        // Out of sight: the watch need not keep the folders below it that it would otherwise leave out (re-read when shown again).
+        if (_wantedNodes.RemoveWhere(n => n == node || IsDescendantOf(n, node)) > 0 && RootOf(node) is { } root) _ = ApplyWantsAsync(root.Uri);
+    }
+
+    private static ExplorerNode? RootOf(ExplorerNode node)
+    {
+        var n = node;
+        while (n.Parent is not null) n = n.Parent;
+        return n.IsRoot ? n : null;
+    }
+
+    /// <summary>The expanded folders below <paramref name="node"/> that expanding it shows again (their parents expanded too), top-down.</summary>
+    private static List<ExplorerNode> ExpandedBelow(ExplorerNode node)
+    {
+        var list = new List<ExplorerNode>();
+        Add(node);
+        return list;
+
+        void Add(ExplorerNode n)
+        {
+            if (n.Children is null) return;
+            foreach (var c in n.Children)
+            {
+                if (!c.IsDirectory || !c.IsExpanded) continue;
+                list.Add(c);
+                Add(c);
+            }
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="node"/> and the expanded folders it shows again, those of them that lie where the folder's watch leaves things out
+    /// (<see cref="WatchExclusion.IsInExcludedArea"/>: watcher-excluded, or in a cache directory): asks the watch for them (each one's own entries,
+    /// not what is below) and returns them once the OS watch is in place. Empty for the rest — the watch reports their changes anyway.
+    /// </summary>
+    private async Task<HashSet<ExplorerNode>> WantShownAsync(ExplorerNode node)
+    {
+        var outOfWatch = new HashSet<ExplorerNode>();
+        if (node.IsRoot || RootOf(node) is not { } root || !root.Uri.IsFile || !_wants.TryGetValue(root.Uri, out var wants)) return outOfWatch;
+        List<ExplorerNode> candidates = [node, .. ExpandedBelow(node)];
+        var rootPath = root.Uri.LocalPath;
+        var excludes = _watchExcludes;
+        var paths = candidates.Select(static n => n.Uri.LocalPath).ToArray();
+        var excluded = await Task.Run(() => paths.Select(p => WatchExclusion.IsInExcludedArea(rootPath, p, excludes)).ToArray()).ConfigureAwait(true);
+        if (!_wants.TryGetValue(root.Uri, out var current) || !ReferenceEquals(current, wants)) return outOfWatch; // the folders were refreshed meanwhile
+        for (var i = 0; i < candidates.Count; i++)
+            if (excluded[i]) outOfWatch.Add(candidates[i]);
+        if (outOfWatch.Count == 0) return outOfWatch;
+        _wantedNodes.UnionWith(outOfWatch);
+        await ApplyWantsAsync(root.Uri).ConfigureAwait(true);
+        return outOfWatch;
+    }
+
+    private Task ApplyWantsAsync(Uri root)
+    {
+        if (!_wants.TryGetValue(root, out var wants)) return Task.CompletedTask;
+        var directories = _wantedNodes.Where(n => RootOf(n)?.Uri == root).Select(static n => n.Uri).ToArray();
+        return _wantsApplied = wants.SetAsync(directories, []);
     }
 
     private static bool IsDescendantOf(ExplorerNode n, ExplorerNode ancestor)
@@ -221,15 +299,17 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         _config?.GetRaw(SettingKeys.FilesExclude) is { ValueKind: JsonValueKind.Object } obj ? EnabledGlobs(obj) : DefaultExcludes;
 
     /// <summary>
-    /// What the live refresh does not watch: <c>files.watcherExclude</c> ∪ <c>files.exclude</c>. The subscription shares the folder's OS watch
-    /// with the language servers' and EditorConfig's (<c>files.watcherExclude</c>), and a directory that every subscription excludes costs no
-    /// OS watch; with <c>files.exclude</c> alone it kept <c>target/</c> and <c>node_modules/</c> watched for everyone — tens of thousands of
-    /// inotify watches on a Rust or JS tree. As in VS Code, a watcher-excluded folder is not refreshed live (neither is the folder itself
-    /// appearing or going); expanding or refreshing reads the disk. What is shown is still filtered by <c>files.exclude</c> alone.
+    /// What the folder's watch leaves out: <c>files.watcherExclude</c> ∪ <c>files.exclude</c>. Its subscription shares the folder's OS watch with
+    /// the language servers' and EditorConfig's (<c>files.watcherExclude</c>), and a directory whose contents every subscription excludes costs no
+    /// OS watch; with <c>files.exclude</c> alone it kept <c>node_modules/</c>, <c>bin/</c> and <c>obj/</c> watched for everyone — tens of
+    /// thousands of inotify watches on a big tree. What refreshes live: everything outside those folders, the folders themselves appearing,
+    /// going or being renamed (an event is excluded by its own path only), and the entries of every expanded folder inside them — the Explorer
+    /// asks the watch for those (<see cref="WantShownAsync"/>). Not live: a collapsed folder in there (re-read when expanded). What is shown is
+    /// still filtered by <c>files.exclude</c> alone.
     /// </summary>
     private IReadOnlyList<string> WatchExcludeGlobs()
     {
-        var watcher = _config?.GetRaw(SettingKeys.FilesWatcherExclude) is { ValueKind: JsonValueKind.Object } obj ? EnabledGlobs(obj) : BuiltInSettings.WatcherExcludes;
+        var watcher = _config?.GetRaw(SettingKeys.FilesWatcherExclude) is { ValueKind: JsonValueKind.Object } obj ? EnabledGlobs(obj) : WatchExclusion.DefaultExcludes;
         return watcher.Union(ExcludeGlobs(), StringComparer.Ordinal).ToArray();
     }
 
@@ -605,6 +685,8 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         _filterCts?.Cancel();
         foreach (var w in _watches) w.Dispose();
         _watches.Clear();
+        _wants.Clear();
+        _wantedNodes.Clear();
         _subs.Dispose();
         Rows.Clear();
         _roots.Clear();
