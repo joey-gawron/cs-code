@@ -20,6 +20,7 @@
     <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
     <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
     <ProjectReference Include="../../src/CsCode.Editor/CsCode.Editor.csproj" />
+    <ProjectReference Include="../../src/CsCode.Platform/CsCode.Platform.csproj" />
   </ItemGroup>
 
 </Project>
