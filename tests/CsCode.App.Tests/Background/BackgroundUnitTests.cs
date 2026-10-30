@@ -128,6 +128,24 @@ public class AutostartEntryTests
     }
 
     [Fact]
+    public void The_confirmation_says_what_starts_at_login_and_nothing_with_the_defaults()
+    {
+        Assert.StartsWith("nothing yet", AutostartEntry.WhatStartsAtLogin(new LaunchSettings()));
+        Assert.Contains(LaunchSettings.WarmSpareKey, AutostartEntry.WhatStartsAtLogin(new LaunchSettings()));
+        Assert.StartsWith("the warm spare;", AutostartEntry.WhatStartsAtLogin(new LaunchSettings { WarmSpare = true }));
+        Assert.StartsWith("the sessions that were running", AutostartEntry.WhatStartsAtLogin(new LaunchSettings { RestoreOnLogin = true }));
+        Assert.StartsWith("the warm spare and the sessions", AutostartEntry.WhatStartsAtLogin(new LaunchSettings { WarmSpare = true, RestoreOnLogin = true }));
+    }
+
+    [Fact]
+    public void The_registered_warm_spare_setting_defaults_to_off()
+    {
+        var property = Assert.Single(BackgroundSettings.Properties, p => p.Key == BackgroundSettings.WarmSpare);
+        Assert.Equal(System.Text.Json.JsonValueKind.False, property.Default!.Value.ValueKind);
+        Assert.False(new LaunchSettings().WarmSpare); // the launcher's own default agrees
+    }
+
+    [Fact]
     public void A_relative_xdg_config_home_is_ignored()
     {
         if (!OperatingSystem.IsLinux()) Assert.Skip("Linux XDG autostart");

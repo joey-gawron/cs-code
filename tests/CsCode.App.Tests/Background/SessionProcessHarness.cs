@@ -41,8 +41,17 @@ public sealed class SessionProcessHarness : IDisposable
             """);
         Runtime = RuntimeDirectory.Resolve(name => name == "CSCODE_HOME" ? Home : Environment.GetEnvironmentVariable(name));
         Store = new SessionStore(Path.Combine(Home, "data"));
-        Executable = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "cscode.exe" : "cscode");
+        Executable = ExecutableUnderTest;
     }
+
+    /// <summary>
+    /// The <c>cscode</c> these tests run: the one built next to the tests, or <c>CSCODE_TEST_EXECUTABLE</c> (an absolute path) to measure another
+    /// build with the same tests, e.g. the ReadyToRun publish of build/Publish.props (docs/SESSIONS.md, "Start-up performance").
+    /// </summary>
+    public static string ExecutableUnderTest =>
+        Environment.GetEnvironmentVariable("CSCODE_TEST_EXECUTABLE") is { Length: > 0 } other && Path.IsPathRooted(other)
+            ? other
+            : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "cscode.exe" : "cscode");
 
     public string Home { get; }
     public string Workspace { get; }

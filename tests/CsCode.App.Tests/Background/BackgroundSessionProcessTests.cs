@@ -35,6 +35,9 @@ public class BackgroundSessionProcessTests
         // line 20
         """;
 
+    /// <summary>The warm spare is off by default (docs/briefs/wave-3.md): the tests that use one turn it on.</summary>
+    private const string SpareOn = "\"cscode.background.warmSpare\": true";
+
     private static async Task<int> SpareAsync(SessionProcessHarness h)
     {
         var background = await h.RunAsync("--background");
@@ -54,7 +57,7 @@ public class BackgroundSessionProcessTests
     [Fact]
     public async Task Spare_claim_edit_hide_trim_show_and_hot_exit_across_kill_9()
     {
-        using var h = new SessionProcessHarness("\"cscode.background.trimAfterSeconds\": 1");
+        using var h = new SessionProcessHarness("\"cscode.background.trimAfterSeconds\": 1, " + SpareOn);
         var file = h.WriteFile("Widget.cs", Source);
         var uri = new Uri(file).ToString();
         var sparePid = await SpareAsync(h);
@@ -143,7 +146,7 @@ public class BackgroundSessionProcessTests
     [Fact]
     public async Task Latency_resident_show_and_warm_spare_claim_are_within_budget()
     {
-        using var h = new SessionProcessHarness(trace: false);
+        using var h = new SessionProcessHarness(SpareOn, trace: false);
         h.WriteFile("Widget.cs", Source);
         await SpareAsync(h);
 
@@ -168,14 +171,28 @@ public class BackgroundSessionProcessTests
     [Fact]
     public async Task Cold_start_without_a_spare_opens_the_session_and_reports_its_latency()
     {
-        using var h = new SessionProcessHarness("\"cscode.background.warmSpare\": false");
+        using var h = new SessionProcessHarness(); // the default settings: no warm spare
         var file = h.WriteFile("notes.txt", "hello\n");
         var cold = await h.RunAsync("--session", "C", file);
         Assert.True(cold.ExitCode == 0, cold.Error);
         TestContext.Current.SendDiagnosticMessage($"cold start invocation→painted: {cold.Elapsed.TotalMilliseconds:0} ms");
         var c = Owner(h, "C");
         Assert.Equal(new Uri(file).ToString(), Assert.Single(h.Inspect(c.Pid).Tabs).Uri);
-        Assert.DoesNotContain(h.Discover(), p => p.IsSpare); // warmSpare: false
+        // A spare would have been started by the launcher before it exited: give one time to show up, then check there is none.
+        await Task.Delay(1500);
+        Assert.DoesNotContain(h.Discover(), p => p.IsSpare || p.Session is null);
+        Assert.Equal([c.Pid], h.ProcessesOfThisHome());
+    }
+
+    [Fact]
+    public async Task Background_with_the_default_settings_starts_no_process()
+    {
+        using var h = new SessionProcessHarness();
+        var background = await h.RunAsync("--background");
+        Assert.True(background.ExitCode == 0, background.Error);
+        Assert.Contains("nothing to start in the background", background.Output);
+        await Task.Delay(1500);
+        Assert.Empty(h.ProcessesOfThisHome());
     }
 
     [Fact]

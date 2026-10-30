@@ -39,7 +39,7 @@ public class SessionLauncherTests
         using var spare = new FakeHost(rt.Runtime, null, ProcessStates.Spare);
         rt.Store.Save(new SessionDocument { Name = "work" });
 
-        var outcome = await Launcher(rt, spawner).RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" });
+        var outcome = await Launcher(rt, spawner, new LaunchSettings { WarmSpare = true }).RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" });
 
         Assert.Equal(0, outcome.ExitCode);
         Assert.Equal(spare.Pid, outcome.TargetPid);
@@ -55,7 +55,7 @@ public class SessionLauncherTests
         using var rt = new TestRuntime();
         using var spawner = new FakeSpawner(rt.Runtime);
 
-        var outcome = await Launcher(rt, spawner).RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" });
+        var outcome = await Launcher(rt, spawner, new LaunchSettings { WarmSpare = true }).RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" });
 
         Assert.Equal(0, outcome.ExitCode);
         var started = Assert.Single(spawner.Spawned, a => !a.Contains("--spare"));
@@ -184,15 +184,46 @@ public class SessionLauncherTests
     }
 
     [Fact]
-    public async Task Background_starts_only_the_spare_by_default()
+    public async Task Cold_start_with_the_default_settings_starts_no_spare()
+    {
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+
+        var outcome = await Launcher(rt, spawner).RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" });
+
+        Assert.Equal(0, outcome.ExitCode);
+        Assert.Equal((1, 0), (spawner.SessionStarts, spawner.SpareStarts));
+        Assert.Equal(["--host", "--session", "work"], Assert.Single(spawner.Spawned));
+    }
+
+    [Fact]
+    public async Task Background_starts_nothing_by_default_and_says_why()
     {
         using var rt = new TestRuntime();
         using var spawner = new FakeSpawner(rt.Runtime);
         rt.Store.Save(new SessionDocument { Name = "r", WasResident = true });
+        var output = new StringWriter();
 
-        var outcome = await Launcher(rt, spawner).RunAsync(new LaunchRequest(LaunchKind.Background));
+        var outcome = await Launcher(rt, spawner, output: output).RunAsync(new LaunchRequest(LaunchKind.Background));
+
+        Assert.Equal(0, outcome.ExitCode);
+        Assert.Empty(spawner.Spawned);
+        Assert.Contains("nothing to start in the background", output.ToString());
+        Assert.Contains(LaunchSettings.WarmSpareKey, output.ToString());
+    }
+
+    [Fact]
+    public async Task Background_starts_only_the_spare_with_the_warm_spare_on()
+    {
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        rt.Store.Save(new SessionDocument { Name = "r", WasResident = true });
+        var output = new StringWriter();
+
+        var outcome = await Launcher(rt, spawner, new LaunchSettings { WarmSpare = true }, output: output).RunAsync(new LaunchRequest(LaunchKind.Background));
         Assert.Equal(0, outcome.ExitCode);
         Assert.Equal((0, 1), (spawner.SessionStarts, spawner.SpareStarts));
+        Assert.DoesNotContain("nothing to start", output.ToString());
 
         using var spawner2 = new FakeSpawner(rt.Runtime);
         await Launcher(rt, spawner2, new LaunchSettings { RestoreOnLogin = true, WarmSpare = false }).RunAsync(new LaunchRequest(LaunchKind.Background));

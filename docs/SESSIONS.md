@@ -5,12 +5,12 @@ CsCode can stay running in the background so a window with a saved session comes
 decision logic), `src/CsCode.App/Background/` (the window side), `src/CsCode.App/Program.cs` (the three roles of the executable),
 `tools/autostart/`. Tests: `tests/CsCode.Sessions.Tests/` (unit, in-process IPC) and `tests/CsCode.App.Tests/Background/` (real processes).
 
-## Architecture: one process per session, plus a warm spare
+## Architecture: one process per session, plus an optional warm spare
 
 ```
  cscode (CLI / desktop entry / tray) ──local IPC──► session process "work"  (window shown or hidden)
                                      ──local IPC──► session process "oss"   (hidden, trimmed)
-                                     ──local IPC──► warm spare              (no session; claimed on demand, then replaced)
+                                     ──local IPC──► warm spare              (opt-in; no session; claimed on demand, then replaced)
 ```
 
 Core services are process-wide singletons bound to one workspace, so a session is a process. The `cscode` executable has three roles,
@@ -35,7 +35,7 @@ cscode -s|--session NAME [paths]  the named session (shown at once when running;
 cscode -n|--new-window [paths]    a new unnamed session (window-1, window-2, ...)
 cscode -w|--wait FILE             returns when FILE's tab is closed (for $EDITOR / git)
 cscode --list-sessions            saved and running sessions (state, pid, memory, last used, folder)
-cscode --background               start the warm spare (+ resident sessions, hidden, with restoreOnLogin); no window
+cscode --background               start the warm spare (if on) and, with restoreOnLogin, the resident sessions, hidden; no window
 cscode --quit [NAME]              quit a session's process (default: the last active one)
 cscode --quit --all               quit every CsCode process of this user
 cscode --foreground [paths]       run the window in this process, without background mode
@@ -54,8 +54,8 @@ Internal switches (how the launcher starts processes; not part of the interface)
 | Situation | Action |
 |---|---|
 | A responsive process owns the session | **Show** it (open the paths there); reply comes after the window painted |
-| Not running, a warm spare answers | **Claim** the spare (it restores the session hidden, then the show makes it visible); start a new spare |
-| Not running, no spare (or the claim fails) | **Start** a session process, wait for its hello, then show; start a spare if none exists or is starting |
+| Not running, a warm spare answers | **Claim** the spare (it restores the session hidden, then the show makes it visible); start a new spare when `warmSpare` is on |
+| Not running, no spare (or the claim fails) | **Start** a session process, wait for its hello, then show; with `warmSpare` on, start a spare if none exists or is starting |
 | The session's lock is held but no process answers (wedged) | Never wait: **Start** a new unnamed session seeded from it, with a warning |
 | A spare is still starting | Not claimed, and no second spare is started |
 | More than `maxResidentSessions` would be resident | After the show, quit the least recently shown **hidden** sessions (never a shown window, a debugging session, the spare or the target) |
@@ -139,7 +139,13 @@ Hot exit never writes the user's files. With `off` (or `onExit` for a window clo
 * At most `cscode.background.maxResidentSessions` (3) sessions stay resident: beyond it the least recently shown hidden session persists and
   exits (checked by the launcher after each open and by a session when it is hidden).
 
-## The warm spare (`cscode.background.warmSpare`, default true)
+## The warm spare (`cscode.background.warmSpare`, default **false**)
+
+Off by default (the user's decision, docs/briefs/wave-3.md): a spare is a whole idle CsCode process (≈100-130 MB) kept for every user just to
+make the first open of a session that is not running faster, while a resident session is shown just as fast without it. With it off, the
+launcher never starts a spare (a spare left running from when it was on is still claimed, and not replaced), and `cscode --background` starts
+nothing unless `restoreOnLogin` is on (it prints why). *Start in the Background at Login…* says in its confirmation what would start with the
+current settings. Turned on, the spare works as below.
 
 A process with services and the main window built but no session. After start-up it lays the hidden window out and renders it once into an
 off-screen bitmap (templates, styles, layout, Skia and their JIT), then trims. A claim takes the session's lock, restores the session into the
@@ -163,7 +169,7 @@ work. The menu model (`TrayMenuModel`) is unit-tested; the icon itself was not e
 | `cscode.background.trimAfterSeconds` | `30` | Hidden → views disposed + memory trimmed |
 | `cscode.background.idleServerTimeoutMinutes` | `15` | Hidden → language servers stopped (0 = never) |
 | `cscode.background.maxResidentSessions` | `3` | LRU eviction of hidden sessions |
-| `cscode.background.warmSpare` | `true` | Keep a pre-started process |
+| `cscode.background.warmSpare` | `false` | Keep a pre-started process (≈100-130 MB idle) |
 | `cscode.background.restoreOnLogin` | `false` | `--background` also restarts the sessions that were resident (hidden) |
 | `cscode.sessions.default` | `"last"` | `last`, `new` or a session name |
 | `cscode.sessions.maxBackupMb` | `200` | Hot-exit backup bound per session |

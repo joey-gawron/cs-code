@@ -41,7 +41,11 @@ public sealed record LaunchSettings
 
     /// <summary><c>last</c> (the session shown last), <c>new</c> (a new unnamed session) or a session name.</summary>
     public string DefaultSession { get; init; } = "last";
-    public bool WarmSpare { get; init; } = true;
+    /// <summary>
+    /// Keep a pre-started process to claim. Off by default (the user's decision, docs/briefs/wave-3.md): it costs a whole idle process (≈100-130 MB)
+    /// for every user to make the first open of a session that is not running faster; resident sessions are shown just as fast without it.
+    /// </summary>
+    public bool WarmSpare { get; init; }
     public int MaxResidentSessions { get; init; } = 3;
     public bool RestoreOnLogin { get; init; }
 
