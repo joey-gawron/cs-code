@@ -269,8 +269,9 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   with their positions put back at the caret. Templates like GDB's. Evaluation:
   [docs/DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-codelldb).
 * **The Rust default**: F5 with no launch configuration offers "Create launch.json" for the folder's debugger — `Cargo.toml` → the Rust debugger
-  (`cscode.debug.rustDebugger`: `gdb`, the default, or `lldb`), a .NET project or solution → `coreclr`, `tsconfig.json`/`package.json` →
-  `pwa-node`, else a "Select debugger" pick (it used to take the first debugger in label order, .NET, for every folder). Why GDB:
+  (`cscode.debug.rustDebugger`: `gdb` or `lldb`; the default is `lldb`, CodeLLDB, on macOS, where GDB cannot debug native arm64 programs,
+  and `gdb` on Linux), a .NET project or solution → `coreclr`, `tsconfig.json`/`package.json` → `pwa-node`, else a "Select debugger" pick (it
+  used to take the first debugger in label order, .NET, for every folder). Why:
   [docs/DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#which-rust-debugger-is-the-default).
 * `${command:pickProcess}` is a built-in command (`pickProcess`) listing processes through `IWindowService.ShowQuickPickAsync` (enumeration runs
   off the caller thread; never lists the editor itself).
@@ -289,7 +290,7 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   `debuggerAvailable`, `focusedSessionIsAttach`, `breakpointsExist`.
 * Settings registered with `IConfigurationService`: `cscode.debuggers`, `cscode.debug.netcoredbgPath`, `cscode.debug.jsDebugPath`,
   `cscode.debug.nodePath`, `cscode.debug.gdbPath`, `cscode.debug.gdbArgs` (extra GDB arguments, e.g. `["-nx"]`), `cscode.debug.codelldbPath`,
-  `cscode.debug.rustDebugger` (`gdb` | `lldb` | `codelldb`), `lldb.consoleMode` (VS Code's CodeLLDB setting: `commands` | `evaluate` |
+  `cscode.debug.rustDebugger` (`gdb` | `lldb` | `codelldb`; default `lldb` on macOS, `gdb` elsewhere), `lldb.consoleMode` (VS Code's CodeLLDB setting: `commands` | `evaluate` |
   `split`), `cscode.debug.requestTimeoutSeconds`. `DebugService.SettingsRead` lists them; a test checks every key the module's sources name is
   registered.
 * Environment: CsCode's own `DOTNET_ROOT_<ARCH>` (set by `dotnet run`/`dotnet test`) is folded into `DOTNET_ROOT` for the programs the
@@ -427,4 +428,4 @@ symlink, size-limit and setuid refusals, cancellation; `The_real_pinned_package_
 download offer accepted/declined/failed/concurrent, the provider, templates, DI), `CodeLldbQuirksTests` (fake adapters shaped like CodeLLDB's
 sources and its observed traffic: the panic filter's breakpoint stop as an exception, filter options, hit counts, `-exec`, frames, `noDebug`,
 paging, the SIGSTOP pause, renumbered frames, completions) and `DefaultDebuggerTests`
-(the launch.json F5 creates per folder and the `cscode.debug.rustDebugger` setting).
+(the launch.json F5 creates per folder, the `cscode.debug.rustDebugger` setting and its per-OS default).

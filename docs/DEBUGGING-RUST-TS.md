@@ -275,7 +275,7 @@ Rust is debugged by default with **GDB's native Debug Adapter Protocol support**
   `Err("invalid digit found in string")`), bounded (depth 2, 100 elements, 200 characters), never raising, and only while the frame's language
   is Rust; strings, slices and arrays keep GDB's printers, and the children are the ones GDB's DAP shows anyway.
 * **Lookup**: setting `cscode.debug.gdbPath` → `gdb` on PATH; otherwise the start fails with "GDB was not found… (GDB 14 or newer speaks the
-  Debug Adapter Protocol)". Extra arguments: `cscode.debug.gdbArgs` (e.g. `["-nx"]`, which every test uses so the user's gdbinit files are
+  Debug Adapter Protocol)", which on macOS adds that GDB cannot debug native arm64 programs there and names CodeLLDB. Extra arguments: `cscode.debug.gdbArgs` (e.g. `["-nx"]`, which every test uses so the user's gdbinit files are
   never read). Nothing is downloaded.
 * **Configuration provider**: `env` is moved aside and turned into `set environment` / `unset environment` commands (GDB's own `env` REPLACES
   the program's whole environment — PATH, HOME… gone — where VS Code's means "add these"; a value with a line break is refused with a
@@ -621,10 +621,13 @@ the adapter-crash test then kills the script rather than codelldb, so run that o
 
 ## Which Rust debugger is the default
 
-**GDB stays the default** (`cscode.debug.rustDebugger`: `"gdb"`, the default, or `"lldb"` for CodeLLDB; `"codelldb"` is accepted too). The
-setting decides which debugger a Rust folder's launch.json is created for when F5 finds no launch configuration (a `Cargo.toml` at the folder's
-root); an existing launch.json names its own type, and both debuggers stay available. Revisited in wave 3 (W7b) from both evaluated matrices:
-CodeLLDB is better in some rows and worse in others, not clearly better, so the default the user accepted stands.
+**GDB on Linux, CodeLLDB on macOS** (`cscode.debug.rustDebugger`: `"gdb"` or `"lldb"` for CodeLLDB; `"codelldb"` is accepted too; decided
+2026-10-30, docs/handoff/decisions.md). The setting decides which debugger a Rust folder's launch.json is created for when F5 finds no launch
+configuration (a `Cargo.toml` at the folder's root); an existing launch.json names its own type, and both debuggers stay available. On Linux,
+revisited in wave 3 (W7b) from both evaluated matrices below: CodeLLDB is better in some rows and worse in others, not clearly better, so the
+default the user accepted stands. On macOS GDB cannot debug native arm64 programs, so the default there is CodeLLDB, which CsCode.app ships
+(tools/package-macos.sh); without it a session is offered the download, and the start fails with advice that names the bundle, not GDB. A
+missing GDB on a Mac points at CodeLLDB too.
 
 | | GDB 18.1 (default) | CodeLLDB v1.12.3 |
 |---|---|---|
@@ -644,7 +647,8 @@ CodeLLDB is better in some rows and worse in others, not clearly better, so the 
   matters most for a debugger whose console shows the program's output by default.
 * For CodeLLDB: exact hit counts, a fast in-adapter restart, the toolchain's own formatters, Vec indexing in Watch and a much faster console
   flood.
-* A user who prefers CodeLLDB sets `"cscode.debug.rustDebugger": "lldb"`; CodeLLDB's own launch.json files (type `lldb`) work unchanged.
+* A user who prefers CodeLLDB on Linux sets `"cscode.debug.rustDebugger": "lldb"` (and `"gdb"` chooses GDB on a Mac, for a program GDB can
+  debug there); CodeLLDB's own launch.json files (type `lldb`) work unchanged.
 
 Switching the default is the one line `RustDebugger()` in `src/CsCode.Dap/Service/DebugService.Commands.cs` (its fallback `GdbAdapterFactory.PrimaryType`)
 plus this section; the download offer would then appear on a Rust user's first F5. What would justify it: CodeLLDB draining the program's

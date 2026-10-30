@@ -5,6 +5,9 @@ Everything below is already built one way (my pick first). Say a number and "swi
 ## Your call (real trade-offs)
 
 1. **Rust debugger default**: GDB (pick; works today, CodeLLDB loses a crashing program's last output lines, an upstream bug) or CodeLLDB (better Rust value formatting).
+   **Decided 2026-10-30**: CodeLLDB on macOS (GDB cannot debug native arm64 macOS programs), GDB on Linux. Done: `cscode.debug.rustDebugger`
+   defaults to `lldb` on a Mac and `gdb` on Linux (the setting still chooses either); a missing CodeLLDB on a Mac says it is the Mac's debugger
+   and where the app ships it, not "use GDB" (docs/DEBUGGING-RUST-TS.md, "Which Rust debugger is the default").
 2. **Background warm spare**: keep it OFF (pick). With it on, a new window opens in 0.5-1.3 s instead of the 500 ms target, because the first frame and first editor can't be pre-warmed without side effects. The alternative is more work on it.
 3. **Install size**: one installed version is 437 MB (app 248, CodeLLDB 166, grammars 47, remote server bundles 14), and the previous version is kept for rollback (up to 2x).
    - (a) bundle CodeLLDB (pick) vs leave it out (-166 MB; Rust uses GDB, CodeLLDB is offered as a download on first use);

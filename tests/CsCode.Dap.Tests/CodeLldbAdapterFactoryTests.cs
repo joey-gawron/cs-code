@@ -123,14 +123,31 @@ public class CodeLldbAdapterFactoryTests
     }
 
     [Fact]
-    public async Task Without_codelldb_and_without_a_window_the_start_fails_with_advice_that_names_gdb()
+    public async Task Without_codelldb_and_without_a_window_the_start_fails_with_this_oss_advice()
     {
         using var paths = new TestAppPaths();
         var ex = await Assert.ThrowsAsync<DebugSessionStartException>(async () => await Make(paths: paths).CreateDescriptorAsync(Cfg(new { type = "lldb", request = "launch", name = "r" }), Ct));
-        Assert.Contains("fetch-codelldb.sh", ex.Message, StringComparison.Ordinal);
-        Assert.Contains(CodeLldbAdapterFactory.SettingPath, ex.Message, StringComparison.Ordinal);
-        Assert.Contains(CodeLldbAdapterFactory.EnvironmentVariable, ex.Message, StringComparison.Ordinal);
-        Assert.Contains("GDB", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(CodeLldbAdapterFactory.NotFoundMessage(OperatingSystem.IsMacOS()), ex.Message);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void The_missing_codelldb_advice_names_gdb_on_linux_and_the_app_bundle_on_macos(bool macOS)
+    {
+        var message = CodeLldbAdapterFactory.NotFoundMessage(macOS);
+        Assert.Contains("fetch-codelldb.sh", message, StringComparison.Ordinal);
+        Assert.Contains(CodeLldbAdapterFactory.SettingPath, message, StringComparison.Ordinal);
+        Assert.Contains(CodeLldbAdapterFactory.EnvironmentVariable, message, StringComparison.Ordinal);
+        Assert.Contains("download offer", message, StringComparison.Ordinal);
+        if (macOS)
+        {
+            // GDB is no alternative there (before, the Mac was told "GDB (type 'gdb') debugs Rust without a download")
+            Assert.DoesNotContain("type 'gdb'", message, StringComparison.Ordinal);
+            Assert.Contains("GDB cannot debug native arm64 macOS programs", message, StringComparison.Ordinal);
+            Assert.Contains("CsCode.app", message, StringComparison.Ordinal);
+        }
+        else Assert.Contains("GDB (type 'gdb') debugs Rust without a download", message, StringComparison.Ordinal);
     }
 
     // ------------------------------------------------------------------ download offer

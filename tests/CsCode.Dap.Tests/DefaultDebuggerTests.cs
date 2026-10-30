@@ -9,8 +9,8 @@ namespace CsCode.Dap.Tests;
 
 /// <summary>
 /// F5 without a launch configuration offers "Create launch.json": the launch.json is made for the folder's debugger — a cargo package gets the
-/// Rust debugger (GDB by default, CodeLLDB with <c>cscode.debug.rustDebugger</c>: "lldb") — and the user picks when the folder does not tell.
-/// Before, the first debugger in label order (.NET) was used for every folder.
+/// Rust debugger (by default CodeLLDB on macOS, where GDB cannot debug native arm64 programs, and GDB elsewhere; <c>cscode.debug.rustDebugger</c>
+/// chooses either) — and the user picks when the folder does not tell. Before, the first debugger in label order (.NET) was used for every folder.
 /// </summary>
 public class DefaultDebuggerTests
 {
@@ -38,12 +38,36 @@ public class DefaultDebuggerTests
     }
 
     [Fact]
-    public async Task A_cargo_package_gets_a_gdb_launch_json_by_default()
+    public async Task A_cargo_package_gets_this_oss_default_rust_debugger_codelldb_on_macos_and_gdb_elsewhere()
     {
         await using var h = Harness();
         CargoPackage(h);
-        Assert.Equal(["gdb", "gdb", "gdb"], await CreateViaF5Async(h));
+        var expected = OperatingSystem.IsMacOS() ? "lldb" : "gdb"; // GDB cannot debug native arm64 macOS programs (before, GDB everywhere)
+        Assert.Equal([expected, expected, expected], await CreateViaF5Async(h));
         Assert.Contains("cargo: build", File.ReadAllText(Path.Combine(h.Dir.Path, ".cscode", "tasks.json")), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null, true, "lldb")]
+    [InlineData("", true, "lldb")]
+    [InlineData(null, false, "gdb")]
+    [InlineData("  ", false, "gdb")]
+    [InlineData("gdb", true, "gdb")] // the user's choice wins on either OS
+    [InlineData("codelldb", false, "lldb")]
+    [InlineData("LLDB", false, "lldb")]
+    public void The_rust_debugger_default_is_codelldb_on_macos_and_gdb_on_linux_and_the_setting_wins(string? setting, bool macOS, string expected)
+    {
+        Assert.Equal(expected, DebugService.RustDebugType(setting, macOS));
+        Assert.Equal(macOS ? "lldb" : "gdb", DebugService.DefaultRustDebugger(macOS));
+    }
+
+    [Fact]
+    public async Task With_the_rust_debugger_set_to_gdb_a_cargo_package_gets_a_gdb_launch_json_also_on_macos()
+    {
+        await using var h = Harness();
+        CargoPackage(h);
+        h.Settings.Set(DebugService.RustDebuggerSetting, "gdb");
+        Assert.Equal(["gdb", "gdb", "gdb"], await CreateViaF5Async(h));
     }
 
     [Theory]

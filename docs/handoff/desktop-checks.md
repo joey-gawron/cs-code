@@ -23,8 +23,8 @@ The first launch uses your real settings folders (~/.config/cscode, ~/.local/sha
 11. Set `"terminal.integrated.confirmOnExit": "always"`, open a terminal, and close the window: it asks; Cancel keeps everything working.
 
 ## Debugging (5 min, optional)
-12. A small Rust project: F5 with GDB (the default), set a breakpoint, step, check that the Locals show values.
-13. Same with `"cscode.debug.rustDebugger": "lldb"` (CodeLLDB is bundled).
+12. A small Rust project: F5 with GDB (the default on Linux), set a breakpoint, step, check that the Locals show values.
+13. Same with `"cscode.debug.rustDebugger": "lldb"` (CodeLLDB is bundled; the default on a Mac, where CsCode.app ships it).
 
 ## Not checkable here
 - ssh/remote: needs a host you choose (I never touch ~/.ssh). `cscode ssh://host/path` against a real host.

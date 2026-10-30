@@ -224,10 +224,16 @@ public sealed partial class DebugService
     }
 
     /// <summary>
-    /// Setting: the debugger a Rust folder's launch.json is created for — <c>"gdb"</c> (the default: evaluated, nothing to download) or
-    /// <c>"lldb"</c> (CodeLLDB, a download). See docs/DEBUGGING-RUST-TS.md, "Which Rust debugger is the default".
+    /// Setting: the debugger a Rust folder's launch.json is created for — <c>"gdb"</c> or <c>"lldb"</c> (CodeLLDB); the default is
+    /// <see cref="DefaultRustDebugger"/>. See docs/DEBUGGING-RUST-TS.md, "Which Rust debugger is the default".
     /// </summary>
     public const string RustDebuggerSetting = "cscode.debug.rustDebugger";
+
+    /// <summary>
+    /// <see cref="RustDebuggerSetting"/>'s default: <c>"lldb"</c> (CodeLLDB) on macOS, where GDB cannot debug native arm64 programs, and
+    /// <c>"gdb"</c> elsewhere (evaluated, the system's own debugger). Decided 2026-10-30 (docs/handoff/decisions.md).
+    /// </summary>
+    internal static string DefaultRustDebugger(bool macOS) => macOS ? "lldb" : "gdb";
 
     /// <summary>The folder's default debugger (<see cref="DefaultDebugTypeAsync"/>), else the user picks one ("Select debugger", as VS Code asks).</summary>
     private async Task<string?> PickDebugTypeAsync(IWindowService window, Uri? folder, CancellationToken ct)
@@ -267,12 +273,18 @@ public sealed partial class DebugService
         return types.Count == 1 ? types[0].Type : null;
     }
 
-    /// <summary>The Rust debugger's debug type from <see cref="RustDebuggerSetting"/> (<c>codelldb</c> names CodeLLDB's <c>lldb</c> too).</summary>
-    private string RustDebugger() =>
-        _p.Configuration?.Get<string>(RustDebuggerSetting)?.Trim() is { } chosen
-        && (string.Equals(chosen, "lldb", StringComparison.OrdinalIgnoreCase) || string.Equals(chosen, "codelldb", StringComparison.OrdinalIgnoreCase))
+    /// <summary>The Rust debugger's debug type from <see cref="RustDebuggerSetting"/>, else this OS's default.</summary>
+    private string RustDebugger() => RustDebugType(_p.Configuration?.Get<string>(RustDebuggerSetting), OperatingSystem.IsMacOS());
+
+    /// <summary>The debug type <paramref name="setting"/> names (<c>codelldb</c> names CodeLLDB's <c>lldb</c> too); unset or empty: the OS's
+    /// default (<see cref="DefaultRustDebugger"/>).</summary>
+    internal static string RustDebugType(string? setting, bool macOS)
+    {
+        var chosen = setting?.Trim() is { Length: > 0 } s ? s : DefaultRustDebugger(macOS);
+        return string.Equals(chosen, "lldb", StringComparison.OrdinalIgnoreCase) || string.Equals(chosen, "codelldb", StringComparison.OrdinalIgnoreCase)
             ? Adapters.CodeLldbAdapterFactory.PrimaryType
             : Adapters.GdbAdapterFactory.PrimaryType;
+    }
 
     /// <summary><c>${command:pickProcess}</c>: lists processes in a quick pick; returns the chosen PID as text (null = cancelled).</summary>
     private async ValueTask<object?> PickProcessAsync(CancellationToken ct)

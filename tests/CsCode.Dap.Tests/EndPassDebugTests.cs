@@ -546,7 +546,7 @@ public class EndPassDebugTests
         Assert.NotEmpty(literals);
         foreach (var key in literals) Assert.True(registered.ContainsKey(key), $"'{key}' appears in src/CsCode.Dap but is not registered");
 
-        Assert.Equal("gdb", registered[DebugService.RustDebuggerSetting].Default!.Value.GetString());
+        Assert.Equal(OperatingSystem.IsMacOS() ? "lldb" : "gdb", registered[DebugService.RustDebuggerSetting].Default!.Value.GetString()); // the OS's default
         Assert.Equal(["gdb", "lldb", "codelldb"], registered[DebugService.RustDebuggerSetting].Schema!.Value.GetProperty("enum").EnumerateArray().Select(e => e.GetString()));
         Assert.Equal(["commands", "evaluate", "split"], registered[CodeLldbAdapterFactory.ConsoleModeSetting].Schema!.Value.GetProperty("enum").EnumerateArray().Select(e => e.GetString()));
         Assert.All(registered.Values, p => Assert.False(string.IsNullOrEmpty(p.Description)));
