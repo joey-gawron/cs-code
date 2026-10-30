@@ -13,8 +13,8 @@ public enum EditorPopups { None = 0, Completion = 1, SignatureHelp = 2, Snippet 
 
 /// <summary>
 /// Ownership of the keys that arrive as key presses (characters arrive as text input and always go to Vim), resolved the way VSCodeVim resolves
-/// them: Vim owns its Ctrl keys in Normal, Visual and Operator-pending mode, application chords (Ctrl+Shift+…, Alt+…, F-keys, Ctrl+S…) keep
-/// working everywhere, Insert mode leaves the editor's IntelliSense, snippet and editing keys alone, and <c>vim.handleKeys</c> overrides any key.
+/// them: Vim owns its Ctrl keys in Normal, Visual and Operator-pending mode, application chords (Ctrl+Shift+…, Alt+…, F-keys, Ctrl+S…) and
+/// the clipboard keys Ctrl+C, Ctrl+Insert, Shift+Insert and Shift+Delete keep working everywhere, Insert mode leaves the editor's IntelliSense, snippet and editing keys alone, and <c>vim.handleKeys</c> overrides any key.
 /// Pure and allocation-free per key (the handleKeys table is parsed when the setting changes).
 /// </summary>
 public static class VimKeyPolicy
@@ -49,6 +49,9 @@ public static class VimKeyPolicy
             if (mode == VimMode.CommandLine) return CommandLineAppCtrlKeys.Contains(c) ? VimKeyOwner.App : VimKeyOwner.Vim;
             return NormalCtrlKeys.Contains(c) ? VimKeyOwner.Vim : VimKeyOwner.App;
         }
+
+        // Shift+Insert / Shift+Delete are the editor's paste and cut (the shell's clipboard keys); Vim's command line keeps them
+        if (key.Shift && key.Key is "insert" or "delete" && mode != VimMode.CommandLine) return VimKeyOwner.App;
 
         if (insert)
         {

@@ -1,5 +1,6 @@
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using CsCode.App.Notifications;
 using CsCode.App.QuickInput;
 using CsCode.App.Tests.Hosting;
@@ -266,6 +267,45 @@ public class VimShellTests
         app.Keys("<C-w>");                                                // Insert mode Ctrl-W deletes the word before the cursor
         app.Keys("<Esc>");
         Assert.Equal(executed + 2, keyboard.ExecutedCount);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task Ctrl_v_is_visual_block_outside_insert_mode_and_the_clipboard_keys_reach_the_editor()
+    {
+        // the shell binds Ctrl+C/X/V, Ctrl+Insert, Shift+Insert, Shift+Delete to the editor (when editorTextFocus); Vim takes its keys first
+        await using var app = await VimApp.StartAsync("alpha beta\ngamma\n", settings: Quiet);
+        var clipboard = app.Host.Window.Clipboard!;
+        await clipboard.SetTextAsync("PASTED");
+        await DevScene.SettleAsync(2);
+
+        app.Keys("<C-v>");                                                // Normal mode: visual block, not the editor's paste
+        Assert.Equal("-- VISUAL BLOCK --", app.ModeText);
+        app.Keys("<Esc>");
+        Assert.Equal("alpha beta\ngamma\n", app.Text);
+
+        await app.KeysAsync("A <C-v>", 10);                               // Insert mode: Ctrl+V is the editor's paste
+        Assert.Equal("alpha beta PASTED\ngamma\n", app.Text);
+        Assert.Equal("-- INSERT --", app.ModeText);
+        await app.KeysAsync("<S-Insert>", 10);                            // and so is Shift+Insert
+        Assert.Equal("alpha beta PASTEDPASTED\ngamma\n", app.Text);
+        app.Keys("<Esc>");
+        Assert.Equal("-- NORMAL --", app.ModeText);
+        app.Keys("u");                                                    // the pastes belong to the insert's undo step
+        Assert.Equal("alpha beta\ngamma\n", app.Text);
+
+        app.Keys("j0vll");                                                // Visual "gam": Ctrl+C and Ctrl+Insert copy the selection
+        await app.KeysAsync("<C-c>", 5);
+        Assert.Equal("gam", await clipboard.TryGetTextAsync());
+        await clipboard.SetTextAsync("other");
+        await app.KeysAsync("<C-Insert>", 5);
+        Assert.Equal("gam", await clipboard.TryGetTextAsync());
+        await clipboard.SetTextAsync("other");
+        await app.KeysAsync("<S-Del>", 10);                               // Shift+Delete cuts it (Vim's own <Del> would not touch the clipboard)
+        Assert.Equal("alpha beta\nma\n", app.Text);
+        Assert.Equal("gam", await clipboard.TryGetTextAsync());
+        await app.KeysAsync("<Esc>");
+        Assert.Equal("-- NORMAL --", app.ModeText);
+        Assert.Equal("alpha beta\nma\n", app.Text);
     }
 
     [AvaloniaFact(Timeout = 120_000)]

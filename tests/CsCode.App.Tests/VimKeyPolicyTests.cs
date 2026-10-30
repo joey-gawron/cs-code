@@ -35,6 +35,20 @@ public class VimKeyPolicyTests
     }
 
     [Fact]
+    public void The_clipboard_keys_shift_insert_shift_delete_and_ctrl_insert_are_the_applications_except_on_the_command_line()
+    {
+        foreach (var mode in new[] { VimMode.Normal, VimMode.Visual, VimMode.VisualLine, VimMode.VisualBlock, VimMode.Insert, VimMode.Replace, VimMode.OperatorPending })
+            foreach (var key in new[] { "shift+insert", "shift+delete", "ctrl+insert", "ctrl+shift+v" })
+                Assert.Equal(VimKeyOwner.App, Owner(key, mode));
+        Assert.Equal(VimKeyOwner.Vim, Owner("shift+insert", VimMode.CommandLine));
+        Assert.Equal(VimKeyOwner.Vim, Owner("shift+delete", VimMode.CommandLine));
+        // the plain keys stay Vim's (Insert toggles Replace mode, Delete is x)
+        Assert.Equal(VimKeyOwner.Vim, Owner("insert", VimMode.Insert));
+        Assert.Equal(VimKeyOwner.Vim, Owner("delete", VimMode.Normal));
+        Assert.Equal(VimKeyOwner.Vim, Owner("shift+delete", VimMode.Normal, handleKeys: "{\"<S-Del>\": true}"));
+    }
+
+    [Fact]
     public void Insert_mode_keeps_the_editors_paste_select_all_and_quick_open_and_takes_vims_editing_keys()
     {
         foreach (var key in new[] { "ctrl+v", "ctrl+a", "ctrl+x", "ctrl+p", "ctrl+e", "ctrl+y", "ctrl+f" }) Assert.Equal(VimKeyOwner.App, Owner(key, VimMode.Insert));

@@ -27,7 +27,10 @@ bar in Insert mode and an underline in Replace and Operator-pending mode.
   not run there. In Insert mode Vim takes `Esc Ctrl-[ Ctrl-W U H T D R O N` and leaves `Ctrl+V` (paste), `Ctrl+A`, `Ctrl+X`, `Ctrl+C`, `Ctrl+F`
   and **`Ctrl+P` (Quick Open)** to the editor; with the completion list open `Ctrl-N`/`Ctrl-P` move through it. The command line takes every
   Ctrl+letter except `Ctrl+S`/`Ctrl+Q`. Everywhere the application keeps `Ctrl+Shift+…` chords (`Ctrl+Shift+P` the palette), `Alt+…` (menus),
-  F-keys (debugging, F12...), `Ctrl+S`, `Ctrl+Z` (which is Vim's `u`, see below), `Ctrl+K`/`Ctrl+M` chords, `Ctrl+Space`, `Ctrl+Tab`.
+  F-keys (debugging, F12...), `Ctrl+S`, `Ctrl+Z` (which is Vim's `u`, see below), `Ctrl+K`/`Ctrl+M` chords, `Ctrl+Space`, `Ctrl+Tab`, and the
+  clipboard keys `Ctrl+C`/`Ctrl+Insert` (copy), `Shift+Delete` (cut) and `Shift+Insert` (paste; not on Vim's command line). `Ctrl+X` and `Ctrl+V`
+  are Vim's (decrement, visual block) outside Insert mode; in Insert mode they cut and paste. `Ctrl+Shift+V` (paste from the clipboard ring)
+  is the application's.
   Decision on Ctrl+P: it is Vim's (`k`) in Normal/Visual mode as the brief's list says, and Quick Open in Insert mode (outside the completion
   list), where Vim's own `Ctrl-P` is the least used; `Ctrl+Q` (the palette, plain text = go to file) works everywhere.
 * **`vim.handleKeys`** (VSCodeVim format) gives any key to the editor or to Vim: `"vim.handleKeys": { "<C-d>": false, "<C-p>": false, "<C-c>": true }`.
