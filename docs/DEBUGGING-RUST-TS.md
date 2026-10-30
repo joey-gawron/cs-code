@@ -53,9 +53,11 @@ what was fixed (each with a regression test that fails without the fix), and wha
   directory and moved into place atomically. `tools/fetch-js-debug.sh` does exactly the same for tests and development
   (`JSDEBUG_ARCHIVE=<file>` installs from an archive you already have without any download; `JSDEBUG_DEST=<dir>` installs elsewhere).
 * **Configuration provider**: fills in `__workspaceFolder` (see the quirks below), leaves child configurations alone, never overrides the
-  user — except `console: "integratedTerminal"`/`"externalTerminal"` on a launch: CsCode has no terminal for debuggees, so such a launch runs in
-  the Debug Console with js-debug capturing the program's streams (`console: "internalConsole"`, `outputCapture: "std"` unless the user set a
-  capture): every line once, `process.stdout.write` included, as a terminal would show it. Templates (*Add Configuration* / *Create
+  user — except `console: "externalTerminal"` on a launch (CsCode opens no external terminal window), and `"integratedTerminal"` when no
+  integrated terminal is composed: such a launch runs in the Debug Console with js-debug capturing the program's streams
+  (`console: "internalConsole"`, `outputCapture: "std"` unless the user set a capture): every line once, `process.stdout.write` included, as a
+  terminal would show it. With the integrated terminal (the app), `"integratedTerminal"` is kept: js-debug sends `runInTerminal` and the
+  program runs in a Terminal tab named after the launch configuration (docs/TERMINAL.md, docs/DAP.md). Templates (*Add Configuration* / *Create
   launch.json*): **TypeScript: Launch (tsc build)** (`program: ${workspaceFolder}/src/<entry>.ts`, `preLaunchTask: "tsc: build"`, `outFiles` from
   tsconfig's `outDir` as tsconfig means it — `../build` in a monorepo package, `.out`, an absolute path; an `outDir` outside the folder is also
   added to `resolveSourceMapLocations`; no `outDir` → `${workspaceFolder}/**/*.js` next to the sources — `sourceMaps: true`,
@@ -214,7 +216,7 @@ Each was shown to fail with its fix reverted (temporarily, in the source).
 * `debug:` sources: selecting a skipped `<node_internals>` frame opens a read-only `debug:/…` document with the adapter's source (by design).
 * The Exception window's stack trace is js-debug's raw JavaScript stack (`out/main.js:13:11`), not mapped to `.ts`.
 * `outputCapture: "console"` (js-debug's default, kept in the templates as in VS Code) does not show `process.stdout.write` output; users who
-  need it set `outputCapture: "std"` or `console: "integratedTerminal"` (which now means exactly that, in the Debug Console).
+  need it set `outputCapture: "std"`, or `console: "integratedTerminal"` (the program then runs in the integrated terminal, its output there).
 * Debug-lane stalls of ~100–160 ms during output floods (32 frames per yield, whatever their size); the UI budget is unaffected, but other
   sessions on the lane can wait that long. A byte-based yield would bound it.
 * **The program's own Node.js inspector listens on a loopback TCP port.** js-debug's server no longer opens a TCP port (it listens on the

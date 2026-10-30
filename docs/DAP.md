@@ -97,8 +97,12 @@ The tests that read process-wide counters or latency budgets run in a non-parall
   `supportsProgressReporting`, `supportsInvalidatedEvent`, and `supportsStartDebuggingRequest` **only when a child-session starter is wired**.
   It does not claim `supportsMemoryEvent` or `supportsArgsCanBeInterpretedByShell`.
 * The whole resolved launch object goes to the adapter untouched (plus `noDebug`; `__restart` on adapter-requested restarts).
-* Reverse requests: `runInTerminal` (the debuggee is spawned by the session — kinds `integrated` and `external` alike, there is no terminal UI yet —
-  with stdout/stderr wired to the Debug Console, stdin closed, `env` entries with `null` removing variables, returns `processId`) and
+* Reverse requests: `runInTerminal` — kind `integrated` with the integrated terminal composed (`ITerminalService`, `DapPlatform.Terminals`, resolved
+  lazily): the debuggee runs in a Terminal tab named after the request's `title` (else the session's name), started without a shell in between
+  (the `processId` returned is the debuggee's), reused for the next run once its program exited (as VS Code reuses its debug terminal), and
+  killed (the tab stays, with its output and exit code) when the session ends; otherwise (no terminal, or kind `external`, for which CsCode opens
+  no window) the debuggee is spawned by the session with stdout/stderr wired to the Debug Console, stdin closed, `env` entries with `null`
+  removing variables, returns `processId` — and
   `startDebugging` (asks `DebugService` for a child session, `Parent` set, type inherited). A child of a session connected to an adapter **server**
   (`DebugAdapterServerProcess` on its private socket, `debugServer` over TCP, a named pipe) opens its own connection to that same server
   (`DebugSession.AdapterEndpoint`, a `DebugAdapterNamedPipe` or `DebugAdapterServer` descriptor) instead of asking
@@ -257,8 +261,10 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   "This debug adapter does not support …" and never stop the program. Conditional breakpoints work.
 * `serverReadyAction` (open a URL when an output pattern appears) is not implemented; the connect-retry loop of `TcpTransport` covers "wait for the port".
 * `${selectedText}` needs the shell's `IActiveSelectionProvider`; `INavigationService` exposes only the caret.
-* `runInTerminal` has no terminal UI: debuggee stdin is closed (EOF) and output is plain text in the Debug Console. A `console: "externalTerminal"` window is not opened.
-  js-debug terminal launches do not use it at all (they run in the console with `outputCapture: "std"`, or every `console.log` would show twice).
+* `runInTerminal` `kind: external` (and `integrated` when no terminal is composed) has no terminal: debuggee stdin is closed (EOF) and output is
+  plain text in the Debug Console. A `console: "externalTerminal"` window is not opened. js-debug's `console: "integratedTerminal"` runs the program
+  in the integrated terminal (docs/TERMINAL.md); `externalTerminal`, or `integratedTerminal` without a terminal, runs in the console with
+  `outputCapture: "std"` (else every `console.log` would show twice).
 * js-debug's server listens on a private Unix socket, but the program's own Node.js inspector, which js-debug's bootloader opens inside the
   debuggee, listens on a random loopback TCP port while it is debugged (as in VS Code; see docs/DEBUGGING-RUST-TS.md, known gaps).
 * A socket directory survives only a CsCode that was killed outright (`kill -9`, a crash): it is removed the next time a js-debug session
