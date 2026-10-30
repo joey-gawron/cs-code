@@ -55,7 +55,8 @@ public sealed class RunInTerminalTests
 
         // the next run reuses the idle terminal, as VS Code does
         Assert.NotNull(await debug.StartAsync(Config("two")));
-        Assert.True(await TerminalAppHost.WaitFor(() => Screen(terminal).Contains("run=two", StringComparison.Ordinal), 30_000), Screen(terminal));
+        Assert.True(await TerminalAppHost.WaitFor(() => Screen(terminal).Contains("run=two", StringComparison.Ordinal), 30_000), Screen(terminal)
+            + "\n--- terminals: " + string.Join(" | ", app.Terminals.Sessions.Select(s => $"{s.Id} '{s.Title}' exited={s.HasExited} code={s.ExitCode} pid={s.ProcessId}: {Screen(s).Replace('\n', '/')}")));
         Assert.Single(app.Terminals.Sessions, s => s.Title == "Launch App");
         Assert.Contains("run=one", Screen(terminal)); // the previous run's output stays above
         Assert.True(await TerminalAppHost.WaitFor(() => terminal.HasExited, 30_000));

@@ -214,6 +214,8 @@ public sealed class PanelTests
     public async Task Find_highlights_every_match_in_view_counts_them_and_takes_regex_whole_word_and_wrapped_lines()
     {
         await using var rig = await new PanelRig(600, 300).ReadyAsync();
+        // the grid must have its final width before the wrapped line is written (under load the view's resize can come late)
+        Assert.True(await PanelRig.Pump(() => rig.Control.Snapshot is { } s && s.Columns == rig.Control.GridSize.Columns));
         var columns = rig.Control.Snapshot!.Columns;
         // a word cut by the right margin: "needle" starts in the last 3 columns of a soft-wrapped line
         var wrapped = new string('-', columns - 3) + "needle tail";

@@ -231,7 +231,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
         var old = _host;
         _host = null;
         old?.Dispose();
-        Post(() => Emulator.Feed("\e[!p\e[?1049l\e[?25h\r\n")); // whatever the last program left on: soft reset, primary screen, visible cursor
+        Post(Emulator.PrepareForNextProgram); // whatever the last program left on: primary screen, modes, visible cursor; a fresh line
         Volatile.Write(ref _exitCode, -1);
         _hasExited = false;
         Start(info);

@@ -343,6 +343,8 @@ public sealed class RealAppTerminalTests
         var work = app.Sandbox.Combine("left");
         Directory.CreateDirectory(work);
         await first.SendTextAsync($"cd '{work}'");
+        // the shell has really changed directory (shell integration reports it) before the split looks
+        Assert.True(await TerminalAppHost.WaitFor(() => first.CurrentDirectory == work), $"cwd {first.CurrentDirectory}");
         Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Control.IsKeyboardFocusWithin));
 
         app.Window.KeyPress(Key.D5, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.Digit5, "%");

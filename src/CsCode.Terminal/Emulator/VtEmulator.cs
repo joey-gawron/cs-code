@@ -180,6 +180,18 @@ public sealed partial class VtEmulator : IVtHandler
 
     public void ScrollViewportToBottom() => ScrollViewportTo(ScreenTop);
 
+    /// <summary>
+    /// A reused terminal (the next debug run, the next task) is about to run another program: whatever the last one left on is undone (the
+    /// alternate screen, modes, a hidden cursor) and the next output starts on a fresh line below the previous one (a blank line only when
+    /// the cursor was not at the start of one).
+    /// </summary>
+    internal void PrepareForNextProgram()
+    {
+        if (IsAlternateScreen) Feed("\e[?1049l");
+        Feed("\e[!p\e[?25h");
+        if (_screen.CursorX > 0 || _screen.PendingWrap) Feed("\r\n");
+    }
+
     private void SyncViewport()
     {
         if (FollowOutput || IsAlternateScreen) ViewportTop = ScreenTop;
