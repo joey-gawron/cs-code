@@ -116,22 +116,31 @@ public sealed class RealAppTerminalTests
         app.Get<QuickInputViewModel>().Cancel();
         await TerminalAppHost.SettleAsync(5);
 
+        // On macOS the removal is checked with showCommands' other key, F1: Cmd+Shift+P has no terminal encoding, so the shell would get nothing
+        // with or without the removal. F1 is in commandsToSkipShell through showCommands too: the palette opens and the shell gets nothing.
+        var (removedKey, removedCode, removedMods, removedText, sent) = mac
+            ? (Key.F1, PhysicalKey.F1, RawInputModifiers.None, (string?)null, "\x1bOP")
+            : (Key.P, PhysicalKey.P, palette, (string?)"P", "\x10");
+        if (mac)
+        {
+            app.View!.Control.Focus();
+            await TerminalAppHost.WaitFor(() => app.View.Control.IsKeyboardFocusWithin);
+            host.ClearWritten();
+            app.Window.KeyPress(removedKey, removedMods, removedCode, removedText);
+            Assert.True(await TerminalAppHost.WaitFor(() => app.Get<QuickInputViewModel>().IsVisible), "F1 did not open the palette");
+            Assert.Equal("", host.Written);
+            app.Get<QuickInputViewModel>().Cancel();
+            await TerminalAppHost.SettleAsync(5);
+        }
+
         // the user can send it to the shell after all
         app.View!.Control.Focus();
         await TerminalAppHost.WaitFor(() => app.View.Control.IsKeyboardFocusWithin);
         await app.Get<IConfigurationService>().UpdateAsync("terminal.integrated.commandsToSkipShell", new[] { "-workbench.action.showCommands" });
         host.ClearWritten();
-        app.Window.KeyPress(Key.P, palette, PhysicalKey.P, "P");
+        app.Window.KeyPress(removedKey, removedMods, removedCode, removedText);
         await TerminalAppHost.SettleAsync(5);
-        if (mac)
-        {
-            // A Cmd key has no terminal encoding (as in Terminal.app, the shell never sees one): nothing reaches the shell, and the key is left
-            // to the window, whose binding still opens the palette.
-            Assert.Equal("", host.Written);
-            Assert.True(await TerminalAppHost.WaitFor(() => app.Get<QuickInputViewModel>().IsVisible), "Cmd+Shift+P did nothing");
-            return;
-        }
-        Assert.Equal("\x10", host.Written);
+        Assert.Equal(sent, host.Written);
         Assert.False(app.Get<QuickInputViewModel>().IsVisible);
     }
 
