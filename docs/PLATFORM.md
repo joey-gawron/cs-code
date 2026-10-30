@@ -302,6 +302,7 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
 `StateStorage`: key/value JSON in `Application` and `Workspace` scopes; reads/writes are in-memory; flush is debounced (500 ms, never later than 5 s after the first unsaved change), on `FlushAsync` and on dispose.
 Atomic writes; the last good file is copied to `.bak` before replacement (never from a file not known good); a corrupt file is recovered from the `.bak` (kept as `.corrupt`), else state starts empty — never throws.
 `Set` serialises immediately (so later mutation of the object cannot change what is saved); null removes the key; an identical value does not dirty the state. Without an open folder the workspace scope is in-memory only.
+`IWorkspaceStateScope.TrySetForFolder(folder, key, value)` (Core, optional) writes the workspace scope only while it still belongs to that primary folder, atomically with the swap: the scope changes before `FoldersChanged` fires (the other dependents are awaited in between), so a service that saves per-folder state on its own (the Watch list) uses it to never write the old folder's values into the new folder.
 `Dispose()` flushes **synchronously on the calling thread** (shutdown path); prefer `DisposeAsync`.
 
 `FileLoggerProvider`: `{LogsDir}/cscode.log`, rotated by size to `cscode.1.log …` — at most **5 files × 5 MB** (`FileLoggerOptions`); line format `2026-10-28T12:34:56.789Z [INF] Category: message` (exceptions and continuation lines indented);

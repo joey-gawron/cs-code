@@ -70,6 +70,22 @@ public interface IStateStorage
 
 public enum StorageScope { Application = 0, Workspace = 1 }
 
+/// <summary>
+/// Optional companion of <see cref="IStateStorage"/> (Platform's storage implements it): writes that must reach one folder's workspace scope.
+/// The storage swaps that scope when another folder opens, before <see cref="IWorkspaceService.Folders"/> changes and
+/// <see cref="IWorkspaceService.FoldersChanged"/> fires, so a service that saves per-folder state on its own schedule (the Watch list) could
+/// otherwise write the old folder's values into the new folder's scope in between.
+/// </summary>
+public interface IWorkspaceStateScope
+{
+    /// <summary>
+    /// Sets (a null value removes) <paramref name="key"/> in the <see cref="StorageScope.Workspace"/> scope only while that scope belongs to
+    /// <paramref name="folder"/> (the primary folder; null for no folder), atomically with a swap. False, writing nothing, once it belongs
+    /// to another folder.
+    /// </summary>
+    bool TrySetForFolder<T>(Uri? folder, string key, T? value);
+}
+
 /// <summary>Well-known filesystem locations (resolved by Platform; honours CSCODE_HOME for portable/test installs).</summary>
 public interface IAppPaths
 {

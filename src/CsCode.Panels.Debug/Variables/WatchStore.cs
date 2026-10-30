@@ -11,7 +11,10 @@ namespace CsCode.Panels.Debug.Variables;
 /// <para>
 /// The service's list is app-wide but the saved list is per workspace, so when another folder is opened in the same window the service's
 /// list is replaced by that folder's saved one (the storage has already switched its workspace scope by then, so nothing is saved in
-/// between: saving would write the old folder's list into the new folder).
+/// between: saving would write the old folder's list into the new folder). The storage swaps its scope before the workspace service
+/// announces the change (and the other workspace dependents may take a while), so an edit in that window is saved only through
+/// <see cref="IWorkspaceStateScope"/>, which refuses once the scope belongs to another folder: the edit then stays in the old folder's list
+/// on screen until the switch replaces it, and is not saved anywhere (the old folder's scope is gone).
 /// </para>
 /// </summary>
 public sealed class WatchStore : IDisposable
@@ -160,7 +163,12 @@ public sealed class WatchStore : IDisposable
     private void Save()
     {
         if (_state is null) return;
-        try { _state.Set(StateKey, _debug.Watches.Select(w => w.Expression).ToList(), StorageScope.Workspace); }
+        var expressions = _debug.Watches.Select(w => w.Expression).ToList();
+        try
+        {
+            if (_workspace is not null && _state is IWorkspaceStateScope scoped) scoped.TrySetForFolder(_loadedFolder, StateKey, expressions); // refused mid-switch
+            else _state.Set(StateKey, expressions, StorageScope.Workspace);
+        }
         catch (Exception ex) when (ex is InvalidOperationException or IOException) { /* persistence is best effort; the list itself is intact */ }
     }
 

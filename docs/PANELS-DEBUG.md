@@ -117,7 +117,9 @@ IDebugService / IDebugSession events (any thread)
 * **Watch**: expressions live in `IDebugService.Watches` (so they survive the window being hidden) and are persisted per workspace in
   `IStateStorage` (`debug.watches`, restored when the service has none). `Variables/WatchStore` loads the saved list before the first edit,
   wherever it comes from (Locals' Add Watch, the command), and follows `IWorkspaceService.FoldersChanged`: when the primary folder changes the
-  service's list is replaced by the new folder's saved one (nothing is saved in between). Evaluated with context `watch` in the focused frame on every stop/step/frame
+  service's list is replaced by the new folder's saved one (nothing is saved in between). The storage swaps its workspace scope before that
+  event (and other workspace dependents may take a while in between), so the list is saved through `IWorkspaceStateScope.TrySetForFolder`
+  for the folder it was loaded from: an edit made in that window is refused rather than written over the new folder's list. Evaluated with context `watch` in the focused frame on every stop/step/frame
   switch; errors are red with the adapter's message; results with `variablesReference` expand; values stay (dimmed) while running.
   Edit inline, Delete, Alt+↑/↓ or **drag and drop** to reorder (the service has no reorder operation, so the list is rebuilt in the new order).
 

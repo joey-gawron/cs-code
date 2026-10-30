@@ -9,7 +9,7 @@ using CsCode.Ui.Threading;
 namespace CsCode.Panels.Debug.Tests.Fakes;
 
 /// <summary>Round-trips values through JSON like the real storage does; the workspace scope is per <see cref="Workspace"/> (switched like the real one).</summary>
-public sealed class InMemoryStateStorage : IStateStorage
+public sealed class InMemoryStateStorage : IStateStorage, IWorkspaceStateScope
 {
     private readonly Dictionary<(string, StorageScope, string), string> _values = new();
 
@@ -24,11 +24,20 @@ public sealed class InMemoryStateStorage : IStateStorage
     public void Set<T>(string key, T? value, StorageScope scope = StorageScope.Application) => _values[Key(key, scope)] = JsonSerializer.Serialize(value, CoreJson.Options);
     public void Remove(string key, StorageScope scope = StorageScope.Application) => _values.Remove(Key(key, scope));
     public Task FlushAsync() => Task.CompletedTask;
+
+    public bool TrySetForFolder<T>(Uri? folder, string key, T? value)
+    {
+        if (Workspace != (folder?.AbsoluteUri ?? "default")) return false;
+        if (value is null) Remove(key, StorageScope.Workspace);
+        else Set(key, value, StorageScope.Workspace);
+        return true;
+    }
 }
 
 /// <summary>
 /// Folder switching like the Platform's WorkspaceService: the state storage's workspace scope is swapped first (it is an IWorkspaceBound
 /// there), then <see cref="FoldersChanged"/> fires. Nothing else of the workspace is used by the panels.
+/// <see cref="SlowDependent"/> plays the other dependents the real service awaits in between (workspace settings, .editorconfig).
 /// </summary>
 public sealed class FakeWorkspaceService(InMemoryStateStorage state) : IWorkspaceService
 {
@@ -51,14 +60,17 @@ public sealed class FakeWorkspaceService(InMemoryStateStorage state) : IWorkspac
 
     public ValueTask CloseFolderAsync(CancellationToken ct = default) => Apply([]);
 
-    private ValueTask Apply(List<Uri> folders)
+    /// <summary>Awaited after the state's scope was swapped and before <see cref="Folders"/> changes and <see cref="FoldersChanged"/> fires.</summary>
+    public Func<Task>? SlowDependent { get; set; }
+
+    private async ValueTask Apply(List<Uri> folders)
     {
+        state.Workspace = folders.Count > 0 ? folders[0].AbsoluteUri : "default";
+        if (SlowDependent is { } dependent) await dependent();
         var removed = _folders.Except(folders).ToList();
         var added = folders.Except(_folders).ToList();
         _folders = folders;
-        state.Workspace = folders.Count > 0 ? folders[0].AbsoluteUri : "default";
         _changed.Fire(new WorkspaceFoldersChangedEventArgs(added, removed));
-        return ValueTask.CompletedTask;
     }
 }
 
