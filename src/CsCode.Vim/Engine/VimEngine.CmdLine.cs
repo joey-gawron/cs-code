@@ -213,7 +213,7 @@ public sealed partial class VimEngine
             while (e < s.Length && O.Keywords.IsKeyword(s[e])) e++;
             return s.Substring(st, e - st);
         }
-        var r = _s.Registers.ForRead(reg == '"' ? 0 : reg, () => Host.ReadClipboard());
+        var r = _s.Registers.ForRead(reg == '"' ? 0 : reg, ReadSystemRegister);
         if (r is null || r.IsEmpty) return null;
         var text = r.ToText();
         if (text.EndsWith('\n')) text = text[..^1];

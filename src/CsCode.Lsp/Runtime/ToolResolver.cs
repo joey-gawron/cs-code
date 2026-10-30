@@ -111,7 +111,7 @@ public static class ToolResolver
         return null;
     }
 
-    private static bool IsExecutableFile(string path)
+    internal static bool IsExecutableFile(string path)
     {
         try
         {

@@ -363,6 +363,8 @@ Every other id has exactly one registration; the test fails when a new duplicate
   offers its selection lazily (a provider over an immutable document snapshot, run on the X thread only when someone pastes). Under KDE Plasma
   on Wayland CsCode runs through XWayland and KWin bridges X11 PRIMARY to the Wayland primary selection; a native Wayland backend (Avalonia 12
   has none) would need `zwp_primary_selection`. Without `$DISPLAY` there is no PRIMARY (`IsPrimarySelectionSupported` false).
+* **Vim registers** (`Vim/VimClipboard.cs`, docs/VIM.md): `"+` goes through this service (ring, shape metadata, the document's line ends),
+  `"*` through PRIMARY where it is supported and through the clipboard elsewhere.
 * **Edit menu routing** (`ClipboardRouter`): Cut / Copy / Paste act on what has keyboard focus, as in Visual Studio: the editor, a text box (its
   own Cut/Copy/Paste), or a view that copies its selection (`CsCode.Ui.Menus.IClipboardTarget`: Error List, Output, Find Results, Explorer files,
   Call Stack, Locals/Autos/Watch, Debug Console, Find in Files). Focus moving into a menu or popup does not count, so Edit > Copy and a context

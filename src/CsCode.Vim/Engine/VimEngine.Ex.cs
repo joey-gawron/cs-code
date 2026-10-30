@@ -854,7 +854,7 @@ public sealed partial class VimEngine
         if (reg == '@' && _s.Search.LastMacroRegister == '\0') { ExError("E748: No previously used register"); return false; }
         if (reg == '@') reg = _s.Search.LastMacroRegister;
         if (reg == ':') { var last = _s.Registers.LastCommandLine; if (last.Length == 0) { ExError("E30: No previous command line"); return false; } ExecuteExLine(last); return true; }
-        var r = _s.Registers.ForRead(reg == '"' ? 0 : reg, () => Host.ReadClipboard());
+        var r = _s.Registers.ForRead(reg == '"' ? 0 : reg, ReadSystemRegister);
         if (r is null || r.IsEmpty) { Beep(); return true; }
         _s.Search.LastMacroRegister = reg;
         // :@a executes the register as Ex commands, one per line

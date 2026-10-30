@@ -1002,7 +1002,7 @@ public sealed partial class VimEngine
                 else if (r == ':') piece = _s.Registers.LastCommandLine;
                 else
                 {
-                    var reg = _s.Registers.ForRead(r == '"' ? 0 : r, () => Host.ReadClipboard());
+                    var reg = _s.Registers.ForRead(r == '"' ? 0 : r, ReadSystemRegister);
                     piece = reg is null ? "" : reg.ToText();
                 }
                 i += 2;

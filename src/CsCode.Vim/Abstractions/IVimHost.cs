@@ -64,8 +64,27 @@ public interface IVimHost
 
     // ---------------------------------------------------------------- clipboard (registers + and *)
 
+    /// <summary>The system clipboard, for a host that does not tell <c>+</c> and <c>*</c> apart. The engine calls <see cref="ReadClipboard(char)"/>.</summary>
     string? ReadClipboard() => null;
+    /// <summary>Writes the system clipboard, for a host that does not tell <c>+</c> and <c>*</c> apart. The engine calls <see cref="WriteClipboard(char, string, VimRegisterType)"/>.</summary>
     void WriteClipboard(string text, VimRegisterType type) { }
+
+    /// <summary>
+    /// Register <paramref name="register"/>: <c>'+'</c> (the clipboard) or <c>'*'</c> (the selection: PRIMARY on X11; the clipboard where there is
+    /// none). Text with <c>'\n'</c> line ends; null or empty when it holds nothing (the engine then uses the unnamed register). The read is
+    /// synchronous, inside key handling: a host whose clipboard reads asynchronously answers from what it last read. Defaults to <see cref="ReadClipboard()"/>.
+    /// </summary>
+    string? ReadClipboard(char register) => ReadClipboard();
+
+    /// <summary>
+    /// How the text <see cref="ReadClipboard(char)"/> returned for <paramref name="register"/> was copied, when the host knows it (a Vim yank of its
+    /// own, an editor copy of whole lines or a box); null makes the engine decide from the text (a final newline means linewise), as Vim does
+    /// for another application's text.
+    /// </summary>
+    VimRegisterType? ReadClipboardType(char register) => null;
+
+    /// <summary>Writes register <c>'+'</c> or <c>'*'</c> (text with <c>'\n'</c> line ends). Defaults to <see cref="WriteClipboard(string, VimRegisterType)"/>.</summary>
+    void WriteClipboard(char register, string text, VimRegisterType type) => WriteClipboard(text, type);
 
     // ---------------------------------------------------------------- windows, buffers, files
 

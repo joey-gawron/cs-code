@@ -54,6 +54,16 @@ Tests: `ProtocolRoundTripTests` (spec shapes, unions, optional/null handling, un
   64-line ring and the bounded server log, below-normal priority, whole tree killed on dispose. Every child gets an environment marker
   (`CSCODE_LSP_SESSION`); on Linux a kill also finds **re-parented descendants** (server `kill -9`ed, grandchild orphaned) by scanning `/proc/*/environ`
   for that marker and waits (≤ 2 s) until they are really gone. Only processes carrying our own marker are ever killed.
+* .NET servers (`DotnetLaunchEnvironment`, applied after the definition's `env`): a framework-dependent .NET program (csharp-ls from
+  `dotnet tool install -g`, fsautocomplete, …) finds its runtime through `DOTNET_ROOT_<ARCH>`, then `DOTNET_ROOT`, then the default install
+  locations, and a dotnet from Nix, `~/.dotnet` or a tarball is in none of them. (1) The arch-specific variable of CsCode's own architecture is
+  folded into `DOTNET_ROOT` (moved when `DOTNET_ROOT` is unset, dropped when both name the same directory, left alone when they differ):
+  `dotnet run` and `dotnet test` set it for CsCode's own apphost, and since it outranks `DOTNET_ROOT` it overrode the `DOTNET_ROOT` nixpkgs'
+  marksman wrapper sets for the .NET 9 runtime marksman needs (the T2/T11 failure). (2) When `DOTNET_ROOT` is still unset and the server is a
+  .NET program (a known command: csharp-ls, marksman, fsautocomplete, omnisharp, Microsoft.CodeAnalysis.LanguageServer, dotnet; an apphost
+  with its `.dll` or `.runtimeconfig.json` beside it, also through symlinks; a `dotnet tool` shim beside `.store/`), it gets the root
+  (the directory with `host/fxr`) of the dotnet on the server's PATH, then in `cscode.lsp.searchDirs`, then `~/.dotnet`, then the shared
+  runtime CsCode runs on, and the server log says so. A definition whose `env` sets either variable is never changed.
 * Per-message size guard (`FramingGuardStream`, `cscode.lsp.maxMessageBytes`, default 64 MB): a header announcing more drops the connection (the
   session is then restarted by the normal crash path). Parsing rents ~9× a message's size from shared pools, so this bounds a hostile payload.
 
@@ -219,7 +229,10 @@ built-in definitions against servers found in the Nix store (marksman, docker-la
 alternatives nixd, protols and elp), reached only through `cscode.lsp.searchDirs`: initialize, launch line, priority, diagnostics where the server checks
 syntax on open, shutdown, no process left; each skips when its package is not in the store. `BuiltinServerTests` cover every built-in
 definition without running it (launch line, alternatives, search directories, install hints, the not-found path through the real process factory, root
-detection per server layout, initialization options). The fake-server tests use an
+detection per server layout, initialization options). `DotnetLaunchEnvironmentTests` cover the .NET launch rules on fake installations, through
+the real process factory (the server's `/proc/<pid>/environ`), and for real: csharp-ls installed as a dotnet tool started with neither
+`DOTNET_ROOT` nor a dotnet on PATH (as from the desktop menu; a control run shows the shim alone fails), and nixpkgs' marksman started by a CsCode
+that inherited `DOTNET_ROOT_<ARCH>`. The fake-server tests use an
 independent in-proc peer (`Harness/FakeLspServer`: own framing over `System.IO.Pipelines`, document mirror applying real LSP change semantics).
 
 ## 12. Known limits

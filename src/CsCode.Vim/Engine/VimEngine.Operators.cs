@@ -195,6 +195,12 @@ public sealed partial class VimEngine
 
     private bool IsClipboardReg(int reg) => reg is '+' or '*' || (reg == 0 && (_s.UseSystemClipboard || O.UnnamedClip || O.UnnamedPlusClip));
 
+    /// <summary>
+    /// The register the unnamed register stands for with vim.useSystemClipboard: the clipboard (<c>+</c>), which is what "the system clipboard" means
+    /// to the user (VSCodeVim's setting); <c>*</c> is the X11 selection where the host has one.
+    /// </summary>
+    private const int SystemClipboardRegister = '+';
+
     private string[] CollectLines(OpArgs oap, out VimRegisterType type, out int width)
     {
         width = 0;
@@ -250,7 +256,7 @@ public sealed partial class VimEngine
         if (!deleting)
         {
             var reg = oap.Reg;
-            if (reg == 0 && _s.UseSystemClipboard) reg = '*';
+            if (reg == 0 && _s.UseSystemClipboard) reg = SystemClipboardRegister;
             if (reg != 0 && (!RegisterFile.IsValidName(reg) || reg is '.' or ':' or '%' or '#' or '=')) { Beep(); return false; }
             target = _s.Registers.ForWrite(reg, out append);
             if (target is null) return true;
@@ -285,18 +291,39 @@ public sealed partial class VimEngine
             if (_s.Plugins.HighlightedYank) Host.OnYankHighlight(start, end, type == VimRegisterType.Line);
         }
         if (regForClipboard is { } rc && IsClipboardReg(rc))
-            SyncClipboardFrom(target!);
+            SyncClipboardFrom(target!, rc);
         var n = oap.LineCount;
         if (!deleting && n > O.Report) Message($"{n} lines yanked");
         return true;
     }
 
-    private void SyncClipboardFrom(Register r) => Host.WriteClipboard(r.ToText(), r.Type);
+    /// <summary>
+    /// Mirrors <paramref name="r"/> to the system register(s) <paramref name="reg"/> stands for: <c>+</c> or <c>*</c> themselves; the unnamed
+    /// register with 'clipboard' unnamedplus (or vim.useSystemClipboard) is <c>+</c>, with 'clipboard' unnamed <c>*</c>.
+    /// </summary>
+    private void SyncClipboardFrom(Register r, int reg)
+    {
+        var text = r.ToText();
+        if (reg is '+' or '*')
+        {
+            Host.WriteClipboard((char)reg, text, r.Type);
+            return;
+        }
+        if (O.UnnamedPlusClip || _s.UseSystemClipboard) Host.WriteClipboard('+', text, r.Type);
+        if (O.UnnamedClip) Host.WriteClipboard('*', text, r.Type);
+    }
+
+    /// <summary>Register <c>+</c> or <c>*</c> from the host: null when it holds nothing; typed when the host knows how the text was copied.</summary>
+    private Register? ReadSystemRegister(char name)
+    {
+        var text = Host.ReadClipboard(name);
+        return string.IsNullOrEmpty(text) ? null : Register.FromText(text, Host.ReadClipboardType(name));
+    }
 
     private void YankForDelete(OpArgs oap)
     {
         if (oap.Reg == '_') return;
-        var reg = oap.Reg == 0 && _s.UseSystemClipboard ? '*' : oap.Reg;
+        var reg = oap.Reg == 0 && _s.UseSystemClipboard ? SystemClipboardRegister : oap.Reg;
         var appended = false;
         if (reg != 0)
         {
@@ -315,10 +342,11 @@ public sealed partial class VimEngine
             var small = _s.Registers.SmallDelete();
             OpYank(oap, deleting: true, small, false, null);
         }
-        if (IsClipboardReg(reg) || (_s.UseSystemClipboard && reg == '*'))
+        // "+d / "*d were mirrored by the OpYank above; the unnamed register mirrored by 'clipboard' is mirrored here, after the delete ring moved
+        if (reg == 0 && IsClipboardReg(reg))
         {
             var cur = _s.Registers.ForRead(0);
-            if (cur is not null) SyncClipboardFrom(cur);
+            if (cur is not null) SyncClipboardFrom(cur, reg);
         }
     }
 
@@ -797,14 +825,14 @@ public sealed partial class VimEngine
         if (reg is null)
         {
             var name = regname;
-            if (name == 0 && _s.UseSystemClipboard) name = '*';
+            if (name == 0 && _s.UseSystemClipboard) name = SystemClipboardRegister;
             if (name == '.')
             {
                 // the last inserted text is put as typed
                 var text = Keys.Decode(_s.Registers.LastInserted ?? "");
                 reg = Register.FromText(new string(text.Where(k => k is >= 32 or '\t' or '\n').Select(k => (char)(k & 0xFFFF)).ToArray()), VimRegisterType.Character);
             }
-            else reg = _s.Registers.ForRead(name, () => Host.ReadClipboard());
+            else reg = _s.Registers.ForRead(name, ReadSystemRegister);
         }
         if (reg is null || reg.IsEmpty)
         {

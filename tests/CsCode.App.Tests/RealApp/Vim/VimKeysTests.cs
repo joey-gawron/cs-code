@@ -149,9 +149,10 @@ public class VimKeysTests
         await DevScene.SettleAsync(2);
         await app.KeysAsync("G\"+P", 10);                           // the keys after "+ wait for the clipboard read
         Assert.Equal("first line\nsecond line\nfirst line\nFROM-OUTSIDE", app.Text);
-        app.Keys("\"*yy");                                         // "* is the clipboard as well
+        app.Keys("\"*yy");                                         // "* is the PRIMARY selection (the host's in-process one here)
         await DevScene.SettleAsync(5);
-        Assert.Equal("FROM-OUTSIDE\n", (await clipboard.TryGetTextAsync())?.Replace("\r\n", "\n"));
+        Assert.Equal("FROM-OUTSIDE\n", (await app.Host.Get<IClipboardService>().ReadPrimarySelectionAsync())?.Replace("\r\n", "\n"));
+        Assert.Equal("FROM-OUTSIDE", await clipboard.TryGetTextAsync()); // and the clipboard keeps what it had
         app.Keys(":reg a<CR>");                                    // several lines: the status bar shows the first, the Vim output channel all
         Assert.Contains("lines in Output", app.CommandLineText);
         Assert.Contains("first line", app.Host.Get<IOutputService>().GetOrCreate(VimIntegration.OutputChannel).GetText());

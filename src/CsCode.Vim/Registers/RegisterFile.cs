@@ -100,6 +100,14 @@ public sealed class RegisterFile
     }
 
     /// <summary>
+    /// As <see cref="ForRead(int, Func{string?}?)"/>, with the clipboard registers read by name: <paramref name="clipboard"/> gets <c>'+'</c> or
+    /// <c>'*'</c> and returns that register as the host has it (typed when the host knows how it was copied), or null when it is empty (the
+    /// unnamed register is read instead).
+    /// </summary>
+    public Register? ForRead(int name, Func<char, Register?> clipboard) =>
+        name is '+' or '*' ? clipboard((char)name) is { IsEmpty: false } r ? r : _previous ?? _regs[0] : ForRead(name);
+
+    /// <summary>
     /// Register to WRITE for <paramref name="name"/>; remembers it as the target of the unnamed register.
     /// <paramref name="append"/> is true for A-Z. Returns null for the black hole.
     /// </summary>
