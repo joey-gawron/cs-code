@@ -54,17 +54,21 @@ public sealed class AppSession
     private readonly CrashHandler _crash;
     private readonly Action<IServiceCollection>? _configure;
     private readonly TimeSpan _deadline;
+    private readonly Background.BackgroundHost? _background;
     private readonly TaskCompletionSource<ShutdownReport?> _ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private ServiceProvider? _container;
     private int _exitCode;
     private int _shuttingDown;
 
-    public AppSession(IDesktopHost desktop, CrashHandler crash, Action<IServiceCollection>? configure, TimeSpan deadline)
+    /// <param name="background">Background mode (a session process or the warm spare): the host decides when the window is shown; closing it may
+    /// only hide it (<see cref="Background.SessionWindowController"/>). Null: the window shows at once and closing it ends the run.</param>
+    public AppSession(IDesktopHost desktop, CrashHandler crash, Action<IServiceCollection>? configure, TimeSpan deadline, Background.BackgroundHost? background = null)
     {
         _desktop = desktop;
         _crash = crash;
         _configure = configure;
         _deadline = deadline;
+        _background = background;
     }
 
     public IServiceProvider? Services => _container;
@@ -94,6 +98,14 @@ public sealed class AppSession
         try
         {
             _container = await pending.ConfigureAwait(true);
+            if (_background is { } background)
+            {
+                var main = new MainWindow(_container);
+                Present(main, show: false);
+                _crash.Reported += OnCrashReported;
+                await background.AttachAsync(main, _container).ConfigureAwait(true); // shows it, unless it is the spare or started hidden
+                return;
+            }
             Present(new MainWindow(_container));
             _crash.Reported += OnCrashReported; // from now on failures are shown in the main window
             return;
@@ -118,11 +130,11 @@ public sealed class AppSession
     }
 
     /// <summary>Makes <paramref name="window"/> the session's window; the run ends when it closes (only once it was shown).</summary>
-    private void Present(Window window)
+    private void Present(Window window, bool show = true)
     {
         Window = window;
         _desktop.MainWindow = window;
-        window.Show();
+        if (show) window.Show();
         window.Closed += (_, _) => _ = ShutdownAsync();
     }
 

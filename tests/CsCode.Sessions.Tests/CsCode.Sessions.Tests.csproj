@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- See tests/CsCode.App.Tests: every API here takes an optional token; passing TestContext's to each arrange step adds only noise. -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
+    <ProjectReference Include="../../src/CsCode.Sessions/CsCode.Sessions.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -19,6 +19,7 @@
     <ProjectReference Include="../CsCode.Profiling/CsCode.Profiling.csproj" />
     <ProjectReference Include="../CsCode.Panels.Debug/CsCode.Panels.Debug.csproj" />
     <ProjectReference Include="../CsCode.Panels.Search/CsCode.Panels.Search.csproj" />
+    <ProjectReference Include="../CsCode.Sessions/CsCode.Sessions.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,6 +27,9 @@
     <PackageReference Include="Avalonia.Desktop" />
     <PackageReference Include="Avalonia.Themes.Fluent" />
     <PackageReference Include="Avalonia.Fonts.Inter" />
+    <!-- The headless-test switch of cscode (integration tests of real session processes without a display); docs/SESSIONS.md. -->
+    <PackageReference Include="Avalonia.Headless" />
+    <PackageReference Include="Avalonia.Skia" />
     <PackageReference Include="Dock.Avalonia" />
     <PackageReference Include="Dock.Model.Mvvm" />
     <PackageReference Include="Dock.Avalonia.Themes.Fluent" />
