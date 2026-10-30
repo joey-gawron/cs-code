@@ -276,7 +276,7 @@ public sealed partial class VimEngine
     private void InsertRegister(int name, int kind)
     {
         if (name == Keys.Esc) { FinishLiteral([]); return; }
-        var reg = _s.Registers.ForRead(name == 0 ? '"' : name, () => Host.ReadClipboard());
+        var reg = _s.Registers.ForRead(name == 0 ? '"' : name, ReadSystemRegister);
         if (reg is null || reg.IsEmpty) { FinishLiteral([]); Beep(); return; }
         var text = reg.ToText();
         var produced = new List<int>();

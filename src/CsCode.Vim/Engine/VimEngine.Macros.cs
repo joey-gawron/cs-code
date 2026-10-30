@@ -133,7 +133,7 @@ public sealed partial class VimEngine
         if (reg is '%' or '#' || !RegisterFile.IsValidName(reg) || reg == '_') { Error($"E354: Invalid register name: '{Keys.SafeString(reg)}'"); return; }
         Register? r;
         if (reg == '.') r = _s.Registers.ForRead('.');
-        else r = _s.Registers.ForRead(reg == '"' ? 0 : reg, () => Host.ReadClipboard());
+        else r = _s.Registers.ForRead(reg == '"' ? 0 : reg, ReadSystemRegister);
         _s.Search.LastMacroRegister = (char)reg;
         if (r is null || r.IsEmpty) { Beep(); return; }
         _macroAborted = false;
