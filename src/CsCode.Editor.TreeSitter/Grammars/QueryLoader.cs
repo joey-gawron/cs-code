@@ -44,7 +44,7 @@ public static partial class QueryLoader
         string? text;
         if (path is null)
         {
-            // no file anywhere: CsCode's own query of that kind, if it writes one (outline symbols, Vim text objects)
+            // no file anywhere: CsCode's own query of that kind, if it writes one (the outline symbols)
             text = OwnQueries.Read(name, kind);
             if (text is null) return false;
             path = $"cscode:{name}/{kind}.scm";

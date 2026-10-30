@@ -3,8 +3,8 @@ using System.Reflection;
 namespace CsCode.Editor.TreeSitter.Grammars;
 
 /// <summary>
-/// Queries CsCode writes itself (<c>OwnQueries/&lt;grammar&gt;/&lt;kind&gt;.scm</c>, embedded in this assembly, MIT like the rest of CsCode): the
-/// outline (<c>symbols.scm</c>, in the tags format) for grammars whose project ships no <c>tags.scm</c>, and the Vim text objects. They are
+/// Queries CsCode writes itself (<c>OwnQueries/&lt;grammar&gt;/&lt;kind&gt;.scm</c>, embedded in this assembly, part of CsCode itself): the
+/// outline (<c>symbols.scm</c>, in the tags format) for grammars whose project ships no <c>tags.scm</c> (more kinds can follow, e.g. Vim text objects). They are
 /// read when no query directory has a file of that name, so the bundle (or a user's query folder) can still override them.
 /// </summary>
 public static class OwnQueries

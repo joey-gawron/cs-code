@@ -14,7 +14,7 @@ public readonly record struct SyntaxSymbol(string Kind, int NameStart, int NameE
 
 /// <summary>
 /// The STRUCTURAL side of a document's tree (docs/TREE-SITTER.md, "Structure"): what Expand/Shrink Selection, folding, the outline and
-/// breadcrumbs without a language server, and Vim's syntax text objects read. Same confinement as the rest of the class (the syntax lane), the
+/// breadcrumbs without a language server, and sticky scroll (through folding) read. Same confinement as the rest of the class (the syntax lane), the
 /// same flight-recorder scope and the same query guard (<see cref="MaxQueryTime"/>). All results are character offsets into the text of the
 /// current tree; the caller passes that text (it must be the tree's) and maps offsets to lines.
 /// </summary>

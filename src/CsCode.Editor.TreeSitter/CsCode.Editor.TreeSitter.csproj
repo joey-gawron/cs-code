@@ -2,8 +2,8 @@
 
   <!-- The tree-sitter engine for syntax colouring and the structural features (docs/TREE-SITTER.md): a thin own P/Invoke layer over the
        tree-sitter C API (libtree-sitter 0.25+, grammar ABI 13-15), grammar and query discovery (the app's bundled grammars first), query
-       predicates, capture -> TextMate scope mapping and the per-document parser/highlighter. No Avalonia and no UI thread: everything here
-       is called on the editor worker. -->
+       predicates, capture -> TextMate scope mapping, the per-document parser/highlighter, the structural queries and the crash/hang
+       isolation. No Avalonia and no UI thread: everything here runs on the editor's syntax lane. -->
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
@@ -11,10 +11,9 @@
   <ItemGroup>
     <InternalsVisibleTo Include="CsCode.Editor" />
     <InternalsVisibleTo Include="CsCode.Editor.Tests" />
-    <InternalsVisibleTo Include="CsCode.App.Tests" />
   </ItemGroup>
 
-  <!-- CsCode's own queries (outline symbols, Vim text objects): OwnQueries/<grammar>/<kind>.scm -->
+  <!-- CsCode's own queries (the outline's symbols.scm for grammars without tags.scm): OwnQueries/<grammar>/<kind>.scm -->
   <ItemGroup>
     <EmbeddedResource Include="OwnQueries/**/*.scm" LogicalName="cscode.queries/$([System.String]::Copy('%(RecursiveDir)').Replace('\','/'))%(Filename)%(Extension)" />
   </ItemGroup>
