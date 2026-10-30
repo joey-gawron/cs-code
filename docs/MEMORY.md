@@ -412,11 +412,17 @@ matrix above apply them:
    waits behind queued work, which is exactly what the budget is about.
 2. **Do not pump from the measuring code.** `Dispatcher.UIThread.RunJobs()` inside the measured window runs the queue on the test's schedule;
    let the headless test's own loop run it (`await Task.Delay`), and measure with `ResponsivenessProbe(a => Dispatcher.UIThread.Post(a))`.
-3. **Report the headless rasteriser separately.** The headless platform renders only when ticked (`AvaloniaHeadlessPlatform.ForceRenderTimerTick`)
-   and then rasterises the invalidated area with software Skia **on the UI thread** (4–10 ms a frame, 15–25 gen2 collections a second while
-   something keeps changing — triage item 23); a desktop rasterises on its render thread. Budget windows run without ticks (or, like the
-   terminal, record only the control's own `Render` into a `DrawingGroup`, which is the UI thread's per-frame share on a desktop); a second window
-   with 60 Hz ticks is reported as "with headless rasterisation", never budgeted.
+3. **Report the headless rasteriser separately.** The headless platform rasterises the invalidated area with software Skia (4–40 ms a frame)
+   and, with its default `ShouldRenderOnUIThread = true`, does so **on the UI thread** — triage item 23; a desktop rasterises on its render
+   thread. **Avalonia 12 ticks that renderer by itself** (`HeadlessRenderTimer`: a `DispatcherTimer` at `Fps` = 60 on the UI thread, not only on
+   `ForceRenderTimerTick`), so a window "without ticks" still rasterised every dirty frame on the UI thread: in the matrix's baseline row that was
+   1.4–2.2 s of a 4.8 s typing window, the whole of T55's no-load miss. The memory tests therefore run with `ShouldRenderOnUIThread = false`
+   (`HeadlessSetup`): frames rasterise on a render thread, the UI thread keeps a desktop's share (input, layout, the composition commit), and
+   `ForceRenderTimerTick` still drives a frame (commit + wait). The terminal's tests record only the control's own `Render` into a
+   `DrawingGroup` instead. A second window with 60 Hz ticks is still reported, never budgeted. Each attempt's report now also says what the UI
+   thread did in the measured window (`ThreadActivityRecorder`: its CPU time and run-queue wait from `schedstat`, Avalonia's own
+   `avalonia.ui.measure/arrange/render.time` instruments, enabled by the `Avalonia.Diagnostics.Diagnostic.IsEnabled` switch) and the GC pauses of
+   that window alone — so a miss reads as machine load, GC, or real UI-thread work.
 4. **Run the app's GC mode** (`GCSettings.LatencyMode = SustainedLowLatency`, `AppStartup.ConfigureRuntime`) and put a `GcPauseRecorder` report
    next to the numbers.
 5. **Best of three attempts, every attempt reported with the load average**; on this shared machine rerun a miss alone with
