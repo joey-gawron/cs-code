@@ -228,6 +228,14 @@ public class LaunchPlannerTests
         var plan = LaunchPlanner.Plan(Open("../etc"), World(), Defaults);
         Assert.Equal(LaunchAction.Fail, plan.Action);
         Assert.Contains("Invalid session name", plan.Error);
+
+        // --quit NAME too: its lock-file probe must never be built from such a name
+        var probed = new List<string>();
+        var world = World() with { IsSessionLocked = n => { probed.Add(n); return false; } };
+        var quit = LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Quit) { Session = "../etc" }, world, Defaults);
+        Assert.Equal(LaunchAction.Fail, quit.Action);
+        Assert.Contains("Invalid session name", quit.Error);
+        Assert.Empty(probed);
     }
 
     [Fact]

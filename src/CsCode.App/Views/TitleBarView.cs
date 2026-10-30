@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls.Documents;
 using Avalonia.Controls.Primitives;
 using Avalonia.Styling;
@@ -53,11 +54,11 @@ public sealed class TitleBarView : Border
 
         if (showCaptionButtons)
         {
-            _maxButton = CaptionButton(_maxIcon, () => _window.WindowState = _window.WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized);
+            _maxButton = CaptionButton(_maxIcon, "Maximize", () => _window.WindowState = _window.WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized);
             _captionButtons = new StackPanel { Orientation = Orientation.Horizontal };
-            _captionButtons.Children.Add(CaptionButton(new Icon(IconKey.WindowMin, 10), () => _window.WindowState = WindowState.Minimized));
+            _captionButtons.Children.Add(CaptionButton(new Icon(IconKey.WindowMin, 10), "Minimize", () => _window.WindowState = WindowState.Minimized));
             _captionButtons.Children.Add(_maxButton);
-            _captionButtons.Children.Add(CaptionButton(new Icon(IconKey.WindowClose, 10), _window.Close, danger: true));
+            _captionButtons.Children.Add(CaptionButton(new Icon(IconKey.WindowClose, 10), "Close", _window.Close, danger: true));
         }
         else _maxButton = new Button();
 
@@ -133,26 +134,39 @@ public sealed class TitleBarView : Border
     }
 
     /// <summary>
-    /// The restore or maximise glyph on our own maximise button; with native decorations, the traffic lights' room, which full screen gives
+    /// The restore or maximise glyph and name on our own maximise button; with native decorations, the traffic lights' room, which full screen gives
     /// back (macOS hides them there).
     /// </summary>
     private void OnWindowStateChanged()
     {
-        if (_captionButtons is not null) _maxIcon.Kind = _window.WindowState == WindowState.Maximized ? IconKey.WindowRestore : IconKey.WindowMax;
+        if (_captionButtons is not null)
+        {
+            var maximized = _window.WindowState == WindowState.Maximized;
+            _maxIcon.Kind = maximized ? IconKey.WindowRestore : IconKey.WindowMax;
+            NameCaptionButton(_maxButton, maximized ? "Restore Down" : "Maximize");
+        }
         else _row.LeftInset = _window.WindowState == WindowState.FullScreen ? 0 : NativeCaptionButtonsInset;
     }
 
     /// <summary>
     /// A window control. Not focusable, like the native ones: Tab and Shift+Tab never stop on it, a click leaves the keyboard where it was (in
-    /// the editor, not on the button), and the window manager's keys (Alt+F4, Super+arrows) are the keyboard's way to the window's state.
+    /// the editor, not on the button), and the window manager's keys (Alt+F4, Super+arrows) are the keyboard's way to the window's state. Named
+    /// as Windows names its own (tooltip and screen-reader name): an icon alone gives a screen reader nothing to read.
     /// </summary>
-    private Button CaptionButton(Icon icon, Action onClick, bool danger = false)
+    private static Button CaptionButton(Icon icon, string name, Action onClick, bool danger = false)
     {
         icon.Foreground = ThemeBrushes.Get("titleBar.activeForeground");
         var b = new Button { Content = icon, Width = 46, Height = 30, Padding = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, CornerRadius = new CornerRadius(0), BorderThickness = new Thickness(0), Background = Brushes.Transparent, MinHeight = 0, MinWidth = 0, Focusable = false };
         b.Classes.Add(danger ? "captionclose" : "captionbutton");
         b.Click += (_, _) => onClick();
+        NameCaptionButton(b, name);
         return b;
+    }
+
+    private static void NameCaptionButton(Button button, string name)
+    {
+        AutomationProperties.SetName(button, name);
+        ToolTip.SetTip(button, name);
     }
 
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)

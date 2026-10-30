@@ -34,7 +34,7 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
     private readonly object _gate = new();
     private readonly DisposableStore _subscriptions = new();
     private readonly long _createdAt = Stopwatch.GetTimestamp();
-    private long _growthGraceFrom; // GrowthGraceStart
+    private long _growthGraceFrom; // Stopwatch timestamp the growth grace runs from (creation, or the last RestartGrowthGrace)
     private IMemoryTrimmable[] _trimmables = [];
     private Child[] _children = [];
     private MemorySnapshot? _current;

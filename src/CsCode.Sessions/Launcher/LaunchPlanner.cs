@@ -189,13 +189,16 @@ public static class LaunchPlanner
                 .Select(p => $"CsCode process {p.Pid} does not respond; it was not asked to quit.").ToArray();
             return new LaunchPlan(LaunchAction.Quit) { QuitPids = world.Processes.Where(p => p.Responsive).Select(p => p.Pid).ToArray(), Warnings = warnings };
         }
+        // A named quit probes the session's lock file when no process owns it: never for a name that is not a session name (../x).
+        if (request.Session is { } explicitName && SessionNames.Validate(explicitName) is { } invalid)
+            return new LaunchPlan(LaunchAction.Fail) { Error = $"Invalid session name '{explicitName}': {invalid}" };
         var name = request.Session ?? HeldLastActive(world);
         if (name is null)
         {
             if (MostRecentlyShown(world, shownOnly: true) is { Session: { } shown } window)
                 return new LaunchPlan(LaunchAction.Quit) { Session = shown, QuitPids = [window.Pid] };
             return world.LastActive is { } gone
-                ? new LaunchPlan(LaunchAction.Quit) { Session = gone, Warnings = [$"Session '{gone}' is not running."] }
+                ? new LaunchPlan(LaunchAction.Quit) { Session = gone, Warnings = [$"Session '{gone}' is not running, and no other session's window is shown (name one, or use --all)."] }
                 : new LaunchPlan(LaunchAction.Quit) { Warnings = ["No session to quit (name one, or use --all)."] };
         }
         if (world.Processes.FirstOrDefault(p => p.OwnsSession(name)) is { } owner)

@@ -57,7 +57,9 @@ below, and `--quit` says the session does not respond (or is already quitting) a
 stays behind) does an open go to the session shown most recently that still runs, a hidden one too (showing it loses nothing), and only then
 start the saved last one; `--quit` without a name then quits only a session whose window is **shown** now (the one shown most recently),
 never a hidden or starting one (a forced quit also drops that session from restore-on-login), and prints which session it asked to quit
-(stdout). With no window shown it says the last active session is not running and quits nothing.
+(stdout). With no window shown it says the last active session is not running and quits nothing (hidden sessions are left running: name
+one, or use `--all`); with no last active session at all it says there is no session to quit. A name that is not a valid session name fails,
+as it does when opening.
 
 `--wait` follows VS Code: it waits for **every** file given (git's difftool and mergetool pass two or three), and closing the window
 (which hides it) or quitting the session ends the wait with exit code 0, so `git commit` never hangs on a window that is gone. Only a quit

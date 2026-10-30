@@ -76,7 +76,7 @@ public sealed class FileLoggerProvider : ILoggerProvider
 
     private string LockFilePath => Path.Combine(_dir, "." + _options.BaseName + ".lock");
 
-    /// <summary>Entries discarded because the writer could not keep up.</summary>
+    /// <summary>Entries discarded because the writer could not keep up, or dropped at exit while another process held the log's lock past the deadline.</summary>
     public long DroppedCount => Interlocked.Read(ref _dropped);
 
     public ILogger CreateLogger(string categoryName) => new FileLogger(this, categoryName);
@@ -168,7 +168,7 @@ public sealed class FileLoggerProvider : ILoggerProvider
                 var dropped = Interlocked.Read(ref _dropped);
                 if (dropped > _droppedReported)
                 {
-                    WriteLine(_clock.GetUtcNow().UtcDateTime, LogLevel.Warning, "CsCode.Logging", $"{dropped - _droppedReported} log entries were dropped because the log writer could not keep up");
+                    WriteLine(_clock.GetUtcNow().UtcDateTime, LogLevel.Warning, "CsCode.Logging", $"{dropped - _droppedReported} log entries were dropped (the log writer could not keep up, or another CsCode process held the log at exit)");
                     _droppedReported = dropped;
                 }
 

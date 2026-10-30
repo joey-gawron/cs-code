@@ -11,7 +11,8 @@ namespace CsCode.App.Services;
 /// thread and the "Memory" output channel), and reports the user's input — keys, text, pointer — as activity, so the idle trim
 /// (<c>cscode.memory.trimOnIdle</c>) waits until the user has stopped. The handlers are tunnel handlers on every shell window (the main one and each
 /// floating one: input is routed through the window that holds the focused control) that also see handled events and cost one timestamp write
-/// per event. Disposing removes them and stops the channel writer; the container stops the monitor.
+/// per event. Starting also restarts the monitor's growth grace whenever the workspace's folders change. Disposing removes the handlers, that
+/// subscription and the channel writer; the container stops the monitor.
 /// </summary>
 internal static class ProfilingShell
 {

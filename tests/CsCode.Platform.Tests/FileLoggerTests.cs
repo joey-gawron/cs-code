@@ -290,15 +290,17 @@ public class FileLoggerTests : IDisposable
     }
 
     [Fact]
-    public async Task Disposing_waits_for_another_process_s_batch_that_ends_in_time_and_then_writes_everything()
+    public void Disposing_waits_for_another_process_s_batch_that_ends_in_time_and_then_writes_everything()
     {
         var provider = Create();
         var logger = provider.CreateLogger("c");
         var held = HoldLock();
         logger.LogInformation("written at exit");
-        var release = Task.Run(async () => { await Task.Delay(100, Ct); held.Dispose(); }, Ct);
+        // A thread of its own, not the pool: other test classes starving the pool past the 1 s deadline would drop the batch.
+        var release = new Thread(() => { Thread.Sleep(100); held.Dispose(); }) { IsBackground = true };
+        release.Start();
         provider.Dispose();
-        await release;
+        release.Join();
         Assert.Contains("c: written at exit", File.ReadAllText(Log));
         Assert.Equal(0, provider.DroppedCount);
     }

@@ -24,7 +24,8 @@ public sealed record MemoryMonitorOptions
     /// </summary>
     public TimeSpan ChildTreeRescanInterval { get; init; } = TimeSpan.FromSeconds(10);
     /// <summary>
-    /// Sustained growth is not logged this soon after start: opening a folder, loading grammars and starting language servers grow the
+    /// Sustained growth is not logged this soon after start, or after <see cref="MemoryMonitor.RestartGrowthGrace"/> (a session restored,
+    /// a warm spare claimed, the workspace's folders changed): opening a folder, loading grammars and starting language servers grow the
     /// working set steadily by design, and the warning used to fire about a minute into every session.
     /// </summary>
     public TimeSpan GrowthLogGrace { get; init; } = TimeSpan.FromMinutes(3);

@@ -131,6 +131,27 @@ public class TitleBarLayoutTests
         Assert.True(doc.Controller.IsFocused, $"the click moved the keyboard to {host.Window.FocusManager?.GetFocusedElement()}");
     }
 
+    /// <summary>The window controls are icons only: a screen reader reads, and the tooltip shows, the names Windows gives its own.</summary>
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task The_window_controls_are_named_for_screen_readers_and_maximise_follows_the_window_state()
+    {
+        await using var host = RealAppHost.Create(h => h.Files.WriteFile("a.txt", "x\n"));
+        await host.StartAsync();
+        var bar = host.Window.GetVisualDescendants().OfType<TitleBarView>().Single();
+        var buttons = (bar.CaptionButtons ?? throw new InvalidOperationException("custom chrome expected off macOS")).GetVisualDescendants().OfType<Button>().ToArray();
+        string[] Names() => buttons.Select(b => ControlAutomationPeer.CreatePeerForElement(b).GetName() ?? "").ToArray();
+
+        Assert.Equal(new[] { "Minimize", "Maximize", "Close" }, Names());
+        Assert.Equal("Maximize", ToolTip.GetTip(buttons[1]));
+        host.Window.WindowState = WindowState.Maximized;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(new[] { "Minimize", "Restore Down", "Close" }, Names());
+        Assert.Equal("Restore Down", ToolTip.GetTip(buttons[1]));
+        host.Window.WindowState = WindowState.Normal;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Maximize", Names()[1]);
+    }
+
     /// <summary>
     /// macOS keeps its own window controls (<c>showCaptionButtons = false</c>, the client area extended under the native title bar): the traffic
     /// lights end 70 to 78 px from the left and used to cover the logo and the File menu. Full screen hides them, and the title bar starts at the
