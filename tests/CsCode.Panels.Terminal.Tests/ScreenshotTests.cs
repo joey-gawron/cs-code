@@ -64,7 +64,8 @@ public sealed class ScreenshotTests
         await using var app = await TallTerminalAsync();
         var session = app.Terminals.ActiveSession!;
         await session.SendTextAsync($"GIT_PAGER=less LESS=R GIT_CONFIG_NOSYSTEM=1 git -C '{repo}' log --color=always --decorate --graph --oneline -n 200");
-        Assert.True(await app.WaitForScreenAsync("terminal"), app.ScreenText());
+        // --decorate always prints HEAD on the first commit; the subjects change with the history
+        Assert.True(await app.WaitForScreenAsync("HEAD"), app.ScreenText());
         await TerminalAppHost.SettleAsync(30);
         app.Capture("terminal-git-log");
         await session.SendTextAsync("q", addNewLine: false);
