@@ -19,7 +19,8 @@ eight other agents built and tested on the same machine (load average 10–36): 
 ```
 
 Composition: `AppServices.Build` already calls `services.AddCsCodeProfiling()`; the shell starts it (`ShellController.Initialize` →
-`ProfilingShell.Attach`: `StartCsCodeProfiling()`, input handlers for the idle clock). The shell's `ShellMemoryMonitor` wraps the registered
+`ProfilingShell.Start`: `StartCsCodeProfiling()`) and registers `ProfilingShell.AttachWindow` as a per-window hook (`ShellController.AttachWindow`,
+run for the main window and every floating one: the input handlers for the idle clock). The shell's `ShellMemoryMonitor` wraps the registered
 monitor for its exit path (`ChildProcessTracker`), so every module keeps resolving `IMemoryMonitor` as before.
 
 ## 1. The memory monitor (MUST 1)
