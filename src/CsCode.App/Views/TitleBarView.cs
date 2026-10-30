@@ -18,15 +18,19 @@ namespace CsCode.App.Views;
 /// the workspace name beside it (Visual Studio's solution name badge) and window controls. Dragging the empty area moves the window (the platform's
 /// own move, so snapping works), double-click toggles maximise. On platforms that keep native decorations (<c>showCaptionButtons = false</c>)
 /// the caption buttons are omitted.
+/// <para>Narrow windows: the caption buttons are laid out first and always get their width, then the menu (clipped if even that does not fit),
+/// then <see cref="TitleCenterPanel"/> shrinks the middle into what is left. Nothing draws under the window controls.</para>
 /// </summary>
 public sealed class TitleBarView : Border
 {
     private readonly Window _window;
     private readonly Button _maxButton;
     private readonly Icon _maxIcon = new(IconKey.WindowMax, 10);
-    private readonly TextBlock _title = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
+    private readonly TextBlock _title = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly TextBlock _workspace = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
     private readonly Border _workspaceBadge;
+    private readonly Border _quickLaunch;
+    private readonly StackPanel? _captionButtons;
 
     public TitleBarView(Window window, MenuModel menus, ICommandService commands, bool showCaptionButtons)
     {
@@ -35,27 +39,45 @@ public sealed class TitleBarView : Border
         Background = ThemeBrushes.Get("titleBar.activeBackground");
         TextElement.SetForeground(this, ThemeBrushes.Get("titleBar.activeForeground"));
 
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto") };
+        // Docked in priority order (a DockPanel measures its children in order, each in the room the earlier ones left): logo, caption
+        // buttons, menu, and the middle fills the rest.
+        var dock = new DockPanel();
 
         var logo = new Border { Width = 30, Height = 30, Child = new AppLogo { Width = 16, Height = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
-        grid.Children.Add(logo);
+        DockPanel.SetDock(logo, Avalonia.Controls.Dock.Left);
+        dock.Children.Add(logo);
 
-        var menu = new ShellMenuBar(menus);
+        if (showCaptionButtons)
+        {
+            _maxButton = CaptionButton(_maxIcon, () => _window.WindowState = _window.WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized);
+            _captionButtons = new StackPanel { Orientation = Orientation.Horizontal };
+            _captionButtons.Children.Add(CaptionButton(new Icon(IconKey.WindowMin, 10), () => _window.WindowState = WindowState.Minimized));
+            _captionButtons.Children.Add(_maxButton);
+            _captionButtons.Children.Add(CaptionButton(new Icon(IconKey.WindowClose, 10), _window.Close, danger: true));
+            DockPanel.SetDock(_captionButtons, Avalonia.Controls.Dock.Right);
+            dock.Children.Add(_captionButtons);
+            window.PropertyChanged += (_, e) =>
+            {
+                if (e.Property == Window.WindowStateProperty) _maxIcon.Kind = _window.WindowState == WindowState.Maximized ? IconKey.WindowRestore : IconKey.WindowMax;
+            };
+        }
+        else _maxButton = new Button();
+
+        var menu = new ShellMenuBar(menus) { ClipToBounds = true };
         menu.Styles.Add(new Style(x => x.OfType<MenuItem>().Class(":selected")) { Setters = { new Setter(BackgroundProperty, ThemeBrushes.Get("menubar.selectionBackground")) } });
-        Grid.SetColumn(menu, 1);
-        grid.Children.Add(menu);
+        DockPanel.SetDock(menu, Avalonia.Controls.Dock.Left);
+        dock.Children.Add(menu);
 
         // Centre: the Quick Launch box, then the workspace name.
-        var center = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        var quick = new Border
+        var searchGlyph = ViewHelpers.Glyph(IconKey.Search, 12, "descriptionForeground");
+        searchGlyph.Margin = new Thickness(0, 0, 6, 0);
+        DockPanel.SetDock(searchGlyph, Avalonia.Controls.Dock.Left);
+        var quick = _quickLaunch = new Border
         {
-            Width = 360, Height = 22, CornerRadius = new CornerRadius(2), BorderThickness = new Thickness(1),
+            Height = 22, CornerRadius = new CornerRadius(2), BorderThickness = new Thickness(1), ClipToBounds = true,
             Background = ThemeBrushes.Get("commandCenter.background"), BorderBrush = ThemeBrushes.Get("commandCenter.border"), Cursor = new Cursor(StandardCursorType.Hand),
-            Child = new StackPanel
-            {
-                Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center,
-                Children = { ViewHelpers.Glyph(IconKey.Search, 12, "descriptionForeground"), _title },
-            },
+            // A DockPanel, not a StackPanel: the placeholder gets the box's width and trims ("Search (Ctr…") when the box narrows.
+            Child = new DockPanel { Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center, Children = { searchGlyph, _title } },
         };
         _title.Foreground = ThemeBrushes.Get("descriptionForeground");
         _title.Text = "Search";
@@ -66,39 +88,29 @@ public sealed class TitleBarView : Border
             try { await commands.ExecuteAsync(KnownCommands.CommandPalette).ConfigureAwait(true); } catch (CommandNotFoundException) { }
         };
         ToolTip.SetTip(quick, "Search commands, files and symbols");
-        center.Children.Add(quick);
         _workspaceBadge = new Border
         {
-            Padding = new Thickness(8, 2), CornerRadius = new CornerRadius(2), VerticalAlignment = VerticalAlignment.Center, IsVisible = false,
+            Padding = new Thickness(8, 2), CornerRadius = new CornerRadius(2), VerticalAlignment = VerticalAlignment.Center, IsVisible = false, ClipToBounds = true,
             Background = ThemeBrushes.Get("commandCenter.background"), Child = _workspace,
         };
-        center.Children.Add(_workspaceBadge);
-        Grid.SetColumn(center, 2);
-        grid.Children.Add(center);
+        dock.Children.Add(new TitleCenterPanel(quick, _workspaceBadge));
 
-        if (showCaptionButtons)
-        {
-            _maxButton = CaptionButton(_maxIcon, () => _window.WindowState = _window.WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized);
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal };
-            buttons.Children.Add(CaptionButton(new Icon(IconKey.WindowMin, 10), () => _window.WindowState = WindowState.Minimized));
-            buttons.Children.Add(_maxButton);
-            buttons.Children.Add(CaptionButton(new Icon(IconKey.WindowClose, 10), _window.Close, danger: true));
-            Grid.SetColumn(buttons, 3);
-            grid.Children.Add(buttons);
-            window.PropertyChanged += (_, e) =>
-            {
-                if (e.Property == Window.WindowStateProperty) _maxIcon.Kind = _window.WindowState == WindowState.Maximized ? IconKey.WindowRestore : IconKey.WindowMax;
-            };
-        }
-        else _maxButton = new Button();
-
-        Child = grid;
+        Child = dock;
         PointerPressed += OnPointerPressed;
         DoubleTapped += OnDoubleTapped;
     }
 
     /// <summary>Placeholder of the Quick Launch box.</summary>
     public string QuickLaunchText => _title.Text ?? "";
+
+    /// <summary>The Quick Launch box (for layout tests: it narrows, then hides, in narrow windows).</summary>
+    internal Control QuickLaunchBox => _quickLaunch;
+
+    /// <summary>The workspace name badge (for layout tests).</summary>
+    internal Control WorkspaceBadge => _workspaceBadge;
+
+    /// <summary>Minimise, maximise and close; null where the platform draws them.</summary>
+    internal Control? CaptionButtons => _captionButtons;
 
     /// <summary>The workspace name shown beside the Quick Launch box (null when no folder is open).</summary>
     public string? WorkspaceName => _workspaceBadge.IsVisible ? _workspace.Text : null;
@@ -141,6 +153,57 @@ public sealed class TitleBarView : Border
     {
         if (e.Source is Visual v && v.FindAncestorOfType<Button>() is not null) return;
         _window.WindowState = _window.WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+    }
+}
+
+/// <summary>
+/// The middle of the title bar: the Quick Launch box and the workspace badge, centred in the width the menu and the caption buttons leave.
+/// Short of room, the box narrows first (from <see cref="QuickLaunchWidth"/> down to <see cref="MinQuickLaunchWidth"/>), then the badge
+/// goes, then the box: a hidden child is arranged empty and both clip, so neither can draw outside this panel (a fixed-width box used to run
+/// under minimise and maximise, and the badge past the close button, in a half-screen window at 170 % scaling).
+/// </summary>
+internal sealed class TitleCenterPanel : Panel
+{
+    public const double QuickLaunchWidth = 360, MinQuickLaunchWidth = 120, Spacing = 10;
+
+    private readonly Control _quick;
+    private readonly Control _badge;
+
+    public TitleCenterPanel(Control quick, Control badge)
+    {
+        _quick = quick;
+        _badge = badge;
+        Children.Add(quick);
+        Children.Add(badge);
+        ClipToBounds = true;
+    }
+
+    /// <summary>The widths the box and the badge get in <paramref name="available"/> (0 = hidden). The badge must have been measured.</summary>
+    internal (double Quick, double Badge) WidthsFor(double available)
+    {
+        var badge = _badge.IsVisible ? _badge.DesiredSize.Width : 0;
+        if (badge > 0 && available >= MinQuickLaunchWidth + Spacing + badge) return (Math.Min(QuickLaunchWidth, available - Spacing - badge), badge);
+        if (available >= MinQuickLaunchWidth) return (Math.Min(QuickLaunchWidth, available), 0);
+        return (0, 0);
+    }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        _badge.Measure(Size.Infinity);
+        var (quick, badge) = WidthsFor(availableSize.Width);
+        _quick.Measure(new Size(quick, availableSize.Height));
+        return new Size(quick + (badge > 0 ? Spacing + badge : 0), Math.Max(_quick.DesiredSize.Height, _badge.DesiredSize.Height));
+    }
+
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        var (quick, badge) = WidthsFor(finalSize.Width);
+        var x = Math.Max(0, (finalSize.Width - quick - (badge > 0 ? Spacing + badge : 0)) / 2);
+        var qh = _quick.DesiredSize.Height;
+        _quick.Arrange(quick > 0 ? new Rect(x, (finalSize.Height - qh) / 2, quick, qh) : default);
+        var bh = _badge.DesiredSize.Height;
+        _badge.Arrange(badge > 0 ? new Rect(x + quick + Spacing, (finalSize.Height - bh) / 2, badge, bh) : default);
+        return finalSize;
     }
 }
 
