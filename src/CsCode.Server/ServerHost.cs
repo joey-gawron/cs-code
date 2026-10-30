@@ -80,6 +80,10 @@ public sealed class ServerHost : IAsyncDisposable
         // R3: the debug adapter factories and the task runner (the debug service itself, and its UI, stay on the client).
         services.AddCsCodeDap();
         services.AddSingleton(link);
+        // T49: the task runner shows a task in a terminal of the client (running on a PTY here) while the connected client offers that; else the
+        // runner pipes the task's output into its output channel. Transient: asked per task run (null while the client cannot show one).
+        services.AddSingleton(sp => new ServerTaskTerminals(link, sp.GetRequiredService<ILoggerFactory>().CreateLogger("CsCode.Server.Tasks")));
+        services.AddTransient<ITaskTerminalHost>(sp => sp.GetRequiredService<ServerTaskTerminals>() is { Available: true } terminals ? terminals : null!);
         ClientServices.Add(services);
         configure?.Invoke(services);
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
@@ -115,7 +119,7 @@ public sealed class ServerHost : IAsyncDisposable
         // R3: channels (terminals, debug adapters) and tasks
         Channels.Register();
         _handlers.Add(Channels);
-        _terminals = new TerminalHandlers(sp, Channels, _loggers.CreateLogger("CsCode.Server.Terminals"));
+        _terminals = new TerminalHandlers(sp, Channels, _loggers.CreateLogger("CsCode.Server.Terminals"), sp.GetRequiredService<ServerTaskTerminals>());
         _terminals.Register(_link);
         _debug = new DebugHandlers(sp, Channels, _loggers.CreateLogger("CsCode.Server.Debug"));
         _debug.Register(_link);
@@ -157,6 +161,7 @@ public sealed class ServerHost : IAsyncDisposable
         if (p.ProtocolVersion != RemoteProtocol.Version)
             throw new RemoteException(RpcErrorCodes.InvalidRequest, $"Protocol mismatch: client speaks v{p.ProtocolVersion}, this server v{RemoteProtocol.Version}");
         _clientGzip = p.Capabilities.Contains(RemoteProtocol.Capabilities.Gzip);
+        _services.GetRequiredService<ServerTaskTerminals>().OnHello(p.Capabilities);
         _log.LogInformation("Client {Version} connected (mode {Mode}, connection {N})", p.ClientVersion, p.Mode, Connections);
         List<string> capabilities = [RemoteProtocol.Capabilities.Gzip, RemoteProtocol.Capabilities.Watch, RemoteProtocol.Capabilities.Search, RemoteProtocol.Capabilities.Languages,
             RemoteProtocol.Capabilities.Debug, RemoteProtocol.Capabilities.Tasks];

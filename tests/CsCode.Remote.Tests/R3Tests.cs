@@ -151,29 +151,37 @@ public class R3Tests
         await terminals.KillAsync(t, Ct);
     }
 
+    private const string RemoteTasksJson = """
+        {
+          "version": "2.0.0",
+          "tasks": [
+            { "label": "build", "type": "shell", "command": "echo built-by-$PPID > built.txt; echo task-output-line; exit 3", "group": { "kind": "build", "isDefault": true } },
+            { "label": "slow", "type": "shell", "command": "sleep 300" },
+            { "label": "lint", "type": "shell", "command": "printf 'src/a.c:3:5: error: remote problem\\n'; exit 1",
+              "problemMatcher": { "owner": "remote-lint", "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": { "regexp": "^(.*):(\\d+):(\\d+): (error|warning): (.*)$", "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5 } } }
+          ]
+        }
+        """;
+
     [Fact]
-    public async Task Tasks_of_a_remote_folder_run_on_the_server_with_exit_codes_output_and_cancellation()
+    public async Task Tasks_of_a_remote_folder_run_in_remote_terminals_with_exit_codes_reuse_problem_matchers_and_cancellation()
     {
+        // T49: as in VS Code, a remote folder's task runs in a terminal named after it whose program runs on the server; the server's task runner
+        // (tasks.json, variables, problem matchers next to the files) gets the output and the exit code
         await using var host = new RemoteTestHost(r3: true);
         Directory.CreateDirectory(Path.Combine(host.Workspace.Path, ".vscode"));
-        File.WriteAllText(Path.Combine(host.Workspace.Path, ".vscode", "tasks.json"), """
-            {
-              "version": "2.0.0",
-              "tasks": [
-                { "label": "build", "type": "shell", "command": "echo built-by-$PPID > built.txt; echo task-output-line; exit 3", "group": { "kind": "build", "isDefault": true } },
-                { "label": "slow", "type": "shell", "command": "sleep 300" }
-              ]
-            }
-            """);
+        File.WriteAllText(Path.Combine(host.Workspace.Path, ".vscode", "tasks.json"), RemoteTasksJson);
         await host.ConnectAsync();
         await host.OpenWorkspaceAsync();
         var tasks = host.Services.GetRequiredService<ITaskService>();
         Assert.IsType<RemoteTaskService>(tasks);
 
         var list = await tasks.GetTasksAsync(null, Ct);
-        Assert.Equal(["build", "slow"], list.Select(t => t.Label).Order());
+        Assert.Equal(["build", "lint", "slow"], list.Select(t => t.Label).Order());
         Assert.True(list.Single(t => t.Label == "build").IsDefaultBuild);
 
+        var terminals = host.Services.GetRequiredService<TerminalService>();
         var result = await tasks.RunAsync("build", null, Ct);
         Assert.Equal(3, result.ExitCode);
         Assert.Null(result.Error);
@@ -181,8 +189,25 @@ public class R3Tests
         // the task's shell was started by the server (its parent is a descendant of the server process)
         var parent = int.Parse(built["built-by-".Length..], System.Globalization.CultureInfo.InvariantCulture);
         Assert.Contains(parent, TestEnv.Descendants(host.Manager.Session!.Server.ProcessId).Append(host.Manager.Session!.Server.ProcessId));
-        await TestEnv.WaitUntilAsync(() => host.Output.Text("Remote: Tasks").Contains("task-output-line", StringComparison.Ordinal), TimeSpan.FromSeconds(10),
-            "the task's output in the forwarded Tasks channel");
+        var terminal = Assert.Single(terminals.Sessions, s => s.Options.Name == "build");
+        Assert.True(terminal.IsTransient);
+        await TerminalProbe.WaitForTextAsync(terminal, "task-output-line");
+        await TerminalProbe.WaitForTextAsync(terminal, "Terminal will be reused by tasks");
+
+        // run again: the idle task terminal is reused (presentation.panel shared), and its program again runs on the server
+        File.Delete(Path.Combine(host.Workspace.Path, "built.txt"));
+        var again = await tasks.RunAsync("build", null, Ct);
+        Assert.Equal(3, again.ExitCode);
+        Assert.True(File.Exists(Path.Combine(host.Workspace.Path, "built.txt")));
+        Assert.Same(terminal, Assert.Single(terminals.Sessions, s => s.Options.Name == "build"));
+
+        // the problem matcher runs on the server and reads the terminal's output there; its problem reaches this client's diagnostics
+        var lint = await tasks.RunAsync("lint", null, Ct);
+        Assert.Equal(1, lint.ExitCode);
+        var diagnostics = host.Services.GetRequiredService<Core.Languages.IDiagnosticService>();
+        var source = host.Remote("src/a.c");
+        await TestEnv.WaitUntilAsync(() => diagnostics.Get(source).Any(d => d.Message == "remote problem" && d.Range.Start.Line == 2), TimeSpan.FromSeconds(15),
+            "the task's problem in the Error List");
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var sw = Stopwatch.StartNew();
@@ -191,6 +216,32 @@ public class R3Tests
         Assert.InRange(sw.Elapsed.TotalSeconds, 1, 30);
         await TestEnv.WaitUntilAsync(() => !TestEnv.Descendants(host.Manager.Session!.Server.ProcessId).Any(p => Cmdline(p).Contains("sleep 300", StringComparison.Ordinal)),
             TimeSpan.FromSeconds(15), "the cancelled task's process tree to end on the server");
+    }
+
+    [Fact]
+    public async Task A_terminal_for_a_servers_task_never_runs_on_this_machine()
+    {
+        await using var host = new RemoteTestHost(r3: true);
+        var provider = host.Services.GetRequiredService<ITerminalBackendProvider>();
+        var tagged = new TerminalCreateOptions { ShellPath = "/bin/sh", ShellArgs = ["-c", "true"], Env = new Dictionary<string, string?> { [Protocol.TaskTerminalTag.Variable] = "tag" } };
+        Assert.Throws<InvalidOperationException>(() => provider.TryCreate(tagged)); // no host: refused, never a local PTY
+        await host.ConnectAsync(); // the workspace stays local: no remote folder is open
+        using (var backend = provider.TryCreate(tagged)) Assert.IsType<RemoteTerminalBackend>(backend);
+        Assert.Null(provider.TryCreate(tagged with { Env = null })); // an ordinary terminal of a local workspace stays local
+    }
+
+    [Fact]
+    public async Task Without_an_integrated_terminal_a_remote_task_is_piped_into_the_forwarded_tasks_channel()
+    {
+        await using var host = new RemoteTestHost(r3: true, terminals: false);
+        Directory.CreateDirectory(Path.Combine(host.Workspace.Path, ".vscode"));
+        File.WriteAllText(Path.Combine(host.Workspace.Path, ".vscode", "tasks.json"), RemoteTasksJson);
+        await host.ConnectAsync();
+        await host.OpenWorkspaceAsync();
+        var result = await host.Services.GetRequiredService<ITaskService>().RunAsync("build", null, Ct);
+        Assert.Equal(3, result.ExitCode);
+        await TestEnv.WaitUntilAsync(() => host.Output.Text("Remote: Tasks").Contains("task-output-line", StringComparison.Ordinal), TimeSpan.FromSeconds(10),
+            "the task's output in the forwarded Tasks channel");
     }
 
     [Fact]

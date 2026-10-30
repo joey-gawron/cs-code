@@ -289,7 +289,7 @@ public sealed class RemoteTestHost : IAsyncDisposable
     /// <param name="persistent">R4: the loopback server is a persistent one (a relay to a daemon with this grace period).</param>
     public RemoteTestHost(Action<RemoteOptions>? options = null, Action<IServiceCollection>? services = null, Func<IRemoteTransport, IRemoteTransport>? wrap = null,
         bool loopback = true, string? userSettings = null, IWindowService? window = null, bool r3 = false, TimeSpan? persistent = null, TempDirectory? clientHome = null,
-        string? serverDataDir = null, string? marker = null)
+        string? serverDataDir = null, string? marker = null, bool terminals = true)
     {
         _sharedServerData = serverDataDir; // another (crashed) client's server: its data dir holds the persistent server's socket
         if (clientHome is not null)
@@ -340,7 +340,7 @@ public sealed class RemoteTestHost : IAsyncDisposable
         if (r3)
         {
             sc.AddCsCodeDap();
-            sc.AddCsCodeTerminalService();
+            if (terminals) sc.AddCsCodeTerminalService(); // without it, a remote task is piped into "Remote: Tasks"
         }
         sc.AddCsCodeRemote();
         services?.Invoke(sc);

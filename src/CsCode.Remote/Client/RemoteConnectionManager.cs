@@ -3,6 +3,7 @@ using CsCode.Core.Languages;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Remote;
+using CsCode.Core.Tasks;
 using CsCode.Core.Text;
 using CsCode.Remote.Askpass;
 using CsCode.Remote.Bridge;
@@ -201,14 +202,21 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
         var attempts = RemoteSettings.For(config, host, RemoteSettings.ReconnectAttempts, 8);
         var grace = _options.GracePeriod is { } g ? (int)g.TotalSeconds : RemoteSettings.For(config, host, RemoteSettings.ReconnectGracePeriod, 10800);
         var serverSession = grace > 0 ? _options.ServerSession ?? _sessions.Claim(authority.Root.AbsoluteUri) : null;
+        // T49: with the integrated terminal composed, the remote folder's tasks run in terminals (on the server's PTYs), as local tasks do.
+        var taskTerminals = Get<ITaskTerminalHost>() is not null;
         var client = new RemoteClient(host, () => CreateTransport(host, authority, serverSession, grace), mapper, "ssh", _options.Reconnect ?? new ReconnectPolicy(attempts),
-            _options.Time, _log, Log, authority.Root) { CallTimeout = _options.CallTimeout };
+            _options.Time, _log, Log, authority.Root)
+        {
+            CallTimeout = _options.CallTimeout,
+            Capabilities = taskTerminals ? [RemoteProtocol.Capabilities.TaskTerminals] : [],
+        };
         var owned = new DisposableStore();
         var channels = new RemoteChannels(_log);
         owned.Add(channels);
         client.AddParticipant(Watcher);
         client.AddParticipant(channels); // early: terminal output and debug streams resume first after a reconnect
         client.AddParticipant(TaskRuns);
+        if (taskTerminals) client.AddParticipant(new RemoteTaskTerminals(Get<ITaskTerminalHost>, _log));
         AddParticipants(client, mapper, owned, "remote:" + host, "Remote: ");
         owned.Add(client.StatusChanged.Subscribe(s =>
         {

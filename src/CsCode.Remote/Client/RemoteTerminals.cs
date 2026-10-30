@@ -11,13 +11,19 @@ namespace CsCode.Remote.Client;
 /// R3 remote terminals: the <see cref="ITerminalBackendProvider"/> the Terminal module asks for every new terminal. While the workspace is remote
 /// (its primary folder is on the configured host) terminals run on the server (<c>term/create</c>: the server resolves the shell, environment and
 /// directory and runs a PTY); otherwise the answer is null and the terminal is local. Debuggees started with <c>runInTerminal</c> and anything else
-/// that creates terminals follow the same rule.
+/// that creates terminals follow the same rule. A terminal the server asked for to show one of its tasks (tagged) always runs on the server: its
+/// program and paths are the server's, never this machine's.
 /// </summary>
 public sealed class RemoteTerminals(RemoteConnectionManager manager, Func<IWorkspaceService?> workspace) : ITerminalBackendProvider
 {
     public ITerminalBackend? TryCreate(TerminalCreateOptions options)
     {
-        if (workspace()?.PrimaryFolder is not { } folder || manager.MapperFor(folder) is null || manager.Channels is not { } channels) return null;
+        var folder = workspace()?.PrimaryFolder is { } primary && manager.MapperFor(primary) is not null ? primary : null;
+        if (options.Env?.ContainsKey(TaskTerminalTag.Variable) == true)
+            return manager.Channels is { } hostChannels
+                ? new RemoteTerminalBackend(manager, hostChannels, manager.Logger) { Folder = folder }
+                : throw new InvalidOperationException("The remote host of this task is not connected.");
+        if (folder is null || manager.Channels is not { } channels) return null;
         return new RemoteTerminalBackend(manager, channels, manager.Logger) { Folder = folder };
     }
 }

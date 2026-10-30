@@ -185,7 +185,13 @@ public sealed class TerminalService : ITerminalService, IDisposable
         return await Task.Run(() =>
         {
             PtyStartInfo info;
-            try { info = Resolver.Resolve(options, session.Emulator.Columns, session.Emulator.Rows); }
+            // A terminal that runs elsewhere (a remote workspace's) runs the next program there too, never on this machine.
+            try
+            {
+                info = _backends.TryGetValue(session, out var backend)
+                    ? backend.Start(session.Emulator.Columns, session.Emulator.Rows, options)
+                    : Resolver.Resolve(options, session.Emulator.Columns, session.Emulator.Rows);
+            }
             catch (Exception ex) when (ex is PtySpawnException or IOException or UnauthorizedAccessException)
             {
                 session.WriteLocal($"\e[31m{ex.Message}\e[0m\r\n");
@@ -256,7 +262,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
 
     private PtyStartInfo? Resolve(TerminalCreateOptions options, int columns, int rows, TerminalSession session)
     {
-        try { return _backends.TryGetValue(session, out var backend) ? backend.Start(columns, rows) : Resolver.Resolve(options, columns, rows); }
+        try { return _backends.TryGetValue(session, out var backend) ? backend.Start(columns, rows, options) : Resolver.Resolve(options, columns, rows); }
         catch (Exception ex) when (ex is PtySpawnException or IOException or UnauthorizedAccessException)
         {
             // Shown in the terminal itself: a program that cannot be found makes a terminal that exited at once, with the reason.

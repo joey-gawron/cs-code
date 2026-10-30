@@ -86,6 +86,9 @@ public sealed class RemoteClient : IAsyncDisposable
     /// <summary>Per-call timeout for the RPC peer (tests shorten it).</summary>
     public TimeSpan CallTimeout { get; init; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>What this client offers the server beyond gzip (handshake capabilities, e.g. task terminals).</summary>
+    public IReadOnlyList<string> Capabilities { get; init; } = [];
+
     public void AddParticipant(IRemoteParticipant participant)
     {
         lock (_participants) _participants.Add(participant);
@@ -145,7 +148,7 @@ public sealed class RemoteClient : IAsyncDisposable
         var progress = new Progress(this);
         var participants = Participants;
         var session = await RemoteSession.ConnectAsync(_transport(), Mapper, _mode, peer => { foreach (var p in participants) p.Attach(peer); },
-            progress, _log, ct, CallTimeout).ConfigureAwait(false);
+            progress, _log, ct, CallTimeout, Capabilities).ConfigureAwait(false);
         session.Resumed = session.Server.InstanceId is { } instance && instance == Volatile.Read(ref _lastInstance);
         Volatile.Write(ref _lastInstance, session.Server.InstanceId);
         try

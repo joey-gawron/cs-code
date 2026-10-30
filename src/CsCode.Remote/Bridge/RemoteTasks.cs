@@ -81,6 +81,53 @@ public sealed class RemoteTaskService(ITaskService local, RemoteConnectionManage
 }
 
 /// <summary>
+/// T49, the client side of remote tasks in remote terminals (VS Code's behaviour): the server's task runner asks for a terminal for a task
+/// (<c>task/terminal</c>) and this client's own task presentation (<see cref="ITaskTerminalHost"/>: a terminal named after the task, reused,
+/// revealed, the command line echoed) opens one. The request is tagged, so that terminal always runs on the server (never on this machine) and the
+/// server connects its PTY to the task (output to the problem matchers there, exit to the result). Closing the terminal ends the task there.
+/// </summary>
+public sealed class RemoteTaskTerminals(Func<ITaskTerminalHost?> host, ILogger? log = null) : IRemoteParticipant
+{
+    private const int MaxTracked = 256;
+    private readonly ConcurrentDictionary<string, ITaskTerminalRun> _runs = new(StringComparer.Ordinal);
+    private readonly ILogger _log = log ?? NullLogger.Instance;
+
+    /// <summary>Task terminals whose program still runs (bookkeeping, tests).</summary>
+    public int Count => _runs.Count;
+
+    void IRemoteParticipant.Attach(RpcPeer peer)
+    {
+        peer.OnRequest<TaskTerminalParams, Empty>(RemoteMethods.TaskTerminal, async (p, ct) =>
+        {
+            var terminals = host() ?? throw new NotSupportedException("This client cannot show tasks in terminals.");
+            var env = new Dictionary<string, string?>(p.Environment, StringComparer.Ordinal) { [TaskTerminalTag.Variable] = p.Tag };
+            var run = await terminals.StartAsync(new TaskTerminalRequest(p.Label, p.FileName, p.Arguments, p.WorkingDirectory, env, p.Presentation)
+                { CommandLine = p.CommandLine }, ct).ConfigureAwait(false);
+            if (_runs.Count < MaxTracked)
+            {
+                _runs[p.Tag] = run;
+                _ = run.Completion.ContinueWith(_ => _runs.TryRemove(p.Tag, out var _), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
+            return Empty.Value;
+        });
+        peer.OnNotification<TaskTagParams>(RemoteMethods.TaskReveal, p =>
+        {
+            if (_runs.TryGetValue(p.Tag, out var run)) _ = RevealAsync(run);
+        });
+    }
+
+    private async Task RevealAsync(ITaskTerminalRun run)
+    {
+        try { await run.RevealAsync().ConfigureAwait(false); }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or OperationCanceledException) { _log.LogDebug("Revealing a remote task's terminal failed: {Error}", ex.Message); }
+    }
+
+    Task IRemoteParticipant.OnConnectedAsync(RemoteSession session, CancellationToken ct) => Task.CompletedTask;
+
+    void IRemoteParticipant.OnDisconnected() { }
+}
+
+/// <summary>
 /// The remote task runs this client still waits for. After every (re)connect the server is told which ones they are (<c>task/keep</c>) and cancels
 /// every other run: one cancelled while the connection was down (its <c>task/cancel</c> could not be sent), and every run of a previous client
 /// process of the session (a restarted client reattaching to the server a crashed one left running). Thread-safe.

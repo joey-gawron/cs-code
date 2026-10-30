@@ -45,12 +45,15 @@ internal sealed class BackendLauncher(ITerminalBackendProvider provider, Termina
         new BackendPtyHost(Interlocked.Exchange(ref _started, null) ?? throw new PtySpawnException("The remote terminal was not started."));
 
     /// <summary>Starts a backend on the other side (blocking: called off the UI thread) and describes it for the session.</summary>
-    public PtyStartInfo Start(int columns, int rows)
+    /// <param name="next">What to run: the options of the program a reused terminal runs now (the next task's, the next debuggee's); null: the
+    /// terminal's first program.</param>
+    public PtyStartInfo Start(int columns, int rows, TerminalCreateOptions? next = null)
     {
-        var backend = Interlocked.Exchange(ref _first, null) ?? provider.TryCreate(options)
+        var current = next ?? options;
+        var backend = Interlocked.Exchange(ref _first, null) ?? provider.TryCreate(current)
                       ?? throw new PtySpawnException("The terminal's remote workspace is no longer connected.");
         TerminalBackendStarted started;
-        try { started = backend.Start(options, columns, rows); }
+        try { started = backend.Start(current, columns, rows); }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or TimeoutException)
         {
             backend.Dispose();
@@ -58,6 +61,6 @@ internal sealed class BackendLauncher(ITerminalBackendProvider provider, Termina
         }
         Interlocked.Exchange(ref _started, backend)?.Dispose();
         // The shell-integration variables the other side gave the shell: the emulator trusts the command lines reported with that nonce.
-        return new PtyStartInfo(started.Program, options.ShellArgs ?? [], started.WorkingDirectory, started.Environment ?? NoEnvironment, columns, rows);
+        return new PtyStartInfo(started.Program, current.ShellArgs ?? [], started.WorkingDirectory, started.Environment ?? NoEnvironment, columns, rows);
     }
 }
