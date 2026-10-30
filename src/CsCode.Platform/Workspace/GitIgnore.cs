@@ -11,20 +11,27 @@ namespace CsCode.Platform.Workspace;
 /// <c>*</c> and <c>?</c> never cross a <c>/</c> · <c>**</c> as a leading <c>**/</c>, a trailing <c>/**</c> or a middle <c>/**/</c> spans directories ·
 /// <c>[a-z]</c> classes · backslash escapes · the LAST matching rule wins.
 /// "A parent directory that is excluded cannot be re-included" is what the walker implements by not descending into excluded directories.
+/// With <c>core.ignorecase</c> (<see cref="RepositoryIgnoresCase"/>; a Mac's default) rules match whatever the case of the name, as git's do.
 /// </summary>
 internal sealed class GitIgnoreFile
 {
     private readonly record struct Rule(bool Negate, bool DirOnly, string? Literal, GlobRegex? Pattern);
 
+    private const int StackPathChars = 512;
+
     private readonly Rule[] _rules;
 
-    private GitIgnoreFile(Rule[] rules) => _rules = rules;
+    private GitIgnoreFile(Rule[] rules, bool ignoreCase) { _rules = rules; IgnoreCase = ignoreCase; }
 
     public int RuleCount => _rules.Length;
 
-    public static GitIgnoreFile Parse(string text)
+    /// <summary>Rules match case-insensitively (rules and paths are both compared lower-cased, invariant culture).</summary>
+    public bool IgnoreCase { get; }
+
+    public static GitIgnoreFile Parse(string text, bool ignoreCase = false)
     {
         var rules = new List<Rule>();
+        if (ignoreCase) text = text.ToLowerInvariant();
         foreach (var raw in text.Split('\n'))
         {
             var line = raw.TrimEnd('\r');
@@ -61,7 +68,7 @@ internal sealed class GitIgnoreFile
             catch (ArgumentException) { /* a pattern we cannot express: ignore that one line, as git ignores malformed ones */ }
             catch (NotSupportedException) { }
         }
-        return new GitIgnoreFile([.. rules]);
+        return new GitIgnoreFile([.. rules], ignoreCase);
     }
 
     private static bool IsPlain(string p) => p.IndexOfAny(['*', '?', '[', '\\']) < 0;
@@ -122,6 +129,14 @@ internal sealed class GitIgnoreFile
     /// <param name="relPath">Path relative to this file's directory, '/' separated, no leading slash.</param>
     public bool TryMatch(string relPath, bool isDir, out bool ignored)
     {
+        if (!IgnoreCase) return TryMatch(relPath.AsSpan(), isDir, out ignored);
+        var lower = relPath.Length <= StackPathChars ? stackalloc char[relPath.Length] : new char[relPath.Length];
+        relPath.AsSpan().ToLowerInvariant(lower);
+        return TryMatch(lower, isDir, out ignored);
+    }
+
+    private bool TryMatch(ReadOnlySpan<char> relPath, bool isDir, out bool ignored)
+    {
         for (var i = _rules.Length - 1; i >= 0; i--)
         {
             ref readonly var r = ref _rules[i];
@@ -136,10 +151,39 @@ internal sealed class GitIgnoreFile
         return false;
     }
 
-    private static bool NameEquals(string rel, string name)
+    private static bool NameEquals(ReadOnlySpan<char> rel, string name)
     {
         if (rel.Length < name.Length || !rel.EndsWith(name, StringComparison.Ordinal)) return false;
         return rel.Length == name.Length || rel[rel.Length - name.Length - 1] == '/';
+    }
+
+    /// <summary>
+    /// <c>core.ignorecase</c> of the repository <paramref name="directory"/> is in (looking up from it for <c>.git</c>: a directory, or a linked
+    /// worktree's file naming its git directory), else <see cref="GitIgnoreCase.PlatformDefault"/>. Never throws.
+    /// </summary>
+    public static bool RepositoryIgnoresCase(string directory)
+    {
+        const string GitDirPrefix = "gitdir:";
+        try
+        {
+            for (var dir = new DirectoryInfo(directory); dir is not null; dir = dir.Parent)
+            {
+                var dotGit = Path.Combine(dir.FullName, ".git");
+                string gitDir;
+                if (Directory.Exists(dotGit)) gitDir = dotGit;
+                else if (File.Exists(dotGit) && File.ReadAllText(dotGit).Trim() is var pointer && pointer.StartsWith(GitDirPrefix, StringComparison.Ordinal))
+                {
+                    gitDir = Path.GetFullPath(pointer[GitDirPrefix.Length..].Trim(), dir.FullName);
+                    var common = Path.Combine(gitDir, "commondir"); // a linked worktree: the config is the main repository's
+                    if (File.Exists(common)) gitDir = Path.GetFullPath(File.ReadAllText(common).Trim(), gitDir);
+                }
+                else continue;
+                var config = Path.Combine(gitDir, "config");
+                return (File.Exists(config) ? GitIgnoreCase.Parse(File.ReadAllText(config)) : null) ?? GitIgnoreCase.PlatformDefault;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { /* unreadable: the platform's rule */ }
+        return GitIgnoreCase.PlatformDefault;
     }
 }
 

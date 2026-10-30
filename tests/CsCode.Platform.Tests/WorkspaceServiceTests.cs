@@ -400,6 +400,33 @@ public class FindFilesTests : IDisposable
     }
 
     [Fact]
+    public async Task Gitignore_rules_follow_the_repositorys_core_ignorecase()
+    {
+        // files-10: git on a Mac sets core.ignorecase=true and then ignores Build/ and Debug.LOG; a repository that says false matches by case
+        _f.Write(".gitignore", "build/\n*.log\n");
+        _f.Write("Build/out.dll"); _f.Write("Debug.LOG"); _f.Write("a.cs");
+        _f.Write(".git/config", "[core]\n\tignorecase = true\n");
+        await Open();
+        Assert.Equal([".gitignore", "a.cs"], await _f.Find(ct: Ct));
+
+        _f.Write(".git/config", "[core]\n\tignorecase = false\n");
+        Assert.Equal([".gitignore", "Build/out.dll", "Debug.LOG", "a.cs"], await _f.Find(ct: Ct));
+    }
+
+    [Fact]
+    public async Task Default_files_exclude_hides_macos_clutter_on_a_mac_only()
+    {
+        // files-14: AppleDouble files on non-HFS volumes and the folders macOS keeps at a volume's root
+        _f.Write("real.txt"); _f.Write("._real.txt"); _f.Write(".fseventsd/x"); _f.Write(".Spotlight-V100/y"); _f.Write(".Trashes/z");
+        _f.Write(".TemporaryItems/t"); _f.Write(".DocumentRevisions-V100/d");
+        await Open();
+        Assert.Equal(OperatingSystem.IsMacOS()
+            ? ["real.txt"]
+            : [".DocumentRevisions-V100/d", ".Spotlight-V100/y", ".TemporaryItems/t", ".Trashes/z", "._real.txt", ".fseventsd/x", "real.txt"],
+            await _f.Find(ct: Ct));
+    }
+
+    [Fact]
     public async Task Nested_gitignore_files_apply_to_their_subtree_with_negations()
     {
         _f.Write(".gitignore", "*.log\n");
@@ -459,6 +486,45 @@ public class FindFilesTests : IDisposable
         await Open();
         var found = await _f.Find(ct: Ct).WaitAsync(TimeSpan.FromSeconds(20), Ct);
         Assert.Equal(["a/b/deep.txt", "a/file.txt"], found);
+    }
+
+    [Fact]
+    public async Task A_link_back_to_a_root_opened_through_a_link_is_not_followed()
+    {
+        // files-15: on macOS a folder under /tmp or /var is reached through a link (/private/...); the root's real path must be the one a link
+        // back to it resolves to, or the walk goes one level round the loop before it sees it.
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "symlink creation needs privileges on Windows");
+        _f.Write("a.txt");
+        Directory.CreateSymbolicLink(_f.P("loop"), _f.Root);                 // loop -> project
+        var alias = _f.Temp.Combine("alias");
+        Directory.CreateSymbolicLink(alias, _f.Root);                        // alias -> project: the root as the walk is given it
+
+        using var walker = new FileWalker(_f.Lane, [alias], new WalkOptions(null, [], true, true, Degree: 2, MaxResults: int.MaxValue), Ct);
+        var found = new List<string>();
+        var reader = walker.Reader;
+        while (await reader.WaitToReadAsync(Ct))
+        {
+            while (reader.TryRead(out var u)) found.Add(Path.GetRelativePath(alias, FileUri.ToPath(u)).Replace('\\', '/'));
+            walker.Resume();
+        }
+        Assert.Equal(["a.txt"], found);
+    }
+
+    [Fact]
+    public void RealPath_resolves_every_link_on_the_way_and_keeps_a_missing_rest()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "symlink creation needs privileges on Windows");
+        _f.Write("dir/sub/f.txt");
+        var root = FileWalker.RealPath(_f.Root);
+        Directory.CreateSymbolicLink(_f.P("abs"), _f.P("dir"));             // absolute target
+        Directory.CreateSymbolicLink(_f.P("dir/rel"), "sub");               // relative target
+        Directory.CreateSymbolicLink(_f.P("chain"), Path.Combine("abs", "rel")); // a link through links
+        Directory.CreateSymbolicLink(_f.P("self"), _f.P("self"));           // a loop
+
+        Assert.Equal(Path.Combine(root, "dir"), FileWalker.RealPath(_f.P("abs")));
+        Assert.Equal(Path.Combine(root, "dir", "sub", "f.txt"), FileWalker.RealPath(_f.P("chain/f.txt")));
+        Assert.Equal(Path.Combine(root, "dir", "nowhere", "x"), FileWalker.RealPath(_f.P("abs/nowhere/x")));
+        Assert.EndsWith("self", FileWalker.RealPath(_f.P("self")));
     }
 
     [Fact]
