@@ -224,15 +224,22 @@ software Skia **on the UI thread** — that is reported separately and is not a 
 | same, headless rasterisation on the UI thread | (reported) | p99 26-28 ms, ticks median ~10 ms |
 | Ctrl+C during the `yes` flood → `yes` gone | < 100 ms | 1-25 ms |
 | `cat` of a 100 MB file | p99 < 16 ms, max < 50 ms; memory under the cap | 2.1 s (48 MB/s), p99 13.8 ms, max 21.9 ms, heap +7 MB |
-| keystroke → PTY write (UI thread) | < 1 ms | median well under 1 ms incl. Avalonia's routing (`PanelTests`) |
+| keystroke → PTY write (UI thread), `cat` echoing | < 1 ms | median 0.07 ms, p99 0.13-0.8 ms (KeyDown with the precedence handler, then the text) |
+| keystroke → echo on screen, `cat` echoing | p99 < one frame + the PTY's own echo p99 | p99 16.8-17.0 ms against 17.0-17.5 ms; median 8.5-10.4 ms; key → snapshot median 0.23-0.33 ms (bare PTY echo median 0.05-0.19 ms) |
 | render of a frame (control) | | 0.12-0.23 ms average, longest 2-12 ms |
 | 50 terminals created and killed (views toggled) | nothing retained | no session, view or control; no process; descriptors and threads back to baseline |
 | hidden window, idle | ≈ 0 % | 0.4 % for the whole process |
 | baseline (frames, no output) | | p99 0.4 ms |
 
+The echo is counted from the moment the UI thread has the key to the first 60 Hz frame after the session published the snapshot with it,
+plus the terminal's drawing of that frame; the PTY's own latency is a bare `UnixPtyHost` running `cat`, measured in the same attempt. Because
+a key lands at a random point of the frame, the budget leaves the terminal well under a millisecond at p99. The headless compositor holds up
+frames and keys whatever invalidates the window (an idle terminal: 0 of 60 frames held up > 3 ms; the terminal merely invalidated at the typing
+rate, no input or output: 15-21 of 60), so the echo *as drawn here* (p99 ~25 ms) is reported, not budgeted.
+
 Known noise: while the terminal view is visible and changing, the composed app shows ~15-25 *induced* (non-forced) gen2 collections per second
 on the headless platform; a bare `TerminalService` under the same workload shows none, and they stop when the view is hidden, so they belong to
-the headless compositor's rasterisation (framebuffer memory pressure), not to the terminal. The flood scenarios get three attempts.
+the headless compositor's rasterisation (framebuffer memory pressure), not to the terminal. The flood and echo scenarios get three attempts.
 
 ## Tests
 
