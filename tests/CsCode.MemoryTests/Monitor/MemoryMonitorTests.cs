@@ -49,7 +49,7 @@ public sealed class MemoryMonitorTests
         Assert.InRange(s.WorkingSetBytes, rss / 2, rss * 2);
         Assert.True(s.PrivateBytes > 0 && s.PrivateBytes <= s.WorkingSetBytes + monitor.CurrentDetails.SwapBytes, $"private {s.PrivateBytes}, rss {s.WorkingSetBytes}");
         Assert.InRange(s.ThreadCount, Directory.GetDirectories("/proc/self/task").Length - 3, Directory.GetDirectories("/proc/self/task").Length + 3);
-        Assert.True(s.GcHeapBytes > 0 && s.GcCommittedBytes >= 0 && s.AllocatedBytesTotal > 0);
+        Assert.True(s.GcHeapBytes > 0 && s.GcCommittedBytes >= 0 && s.AllocatedBytesTotal > 0, $"heap {s.GcHeapBytes}, committed {s.GcCommittedBytes}, allocated {s.AllocatedBytesTotal}");
         Assert.Equal(GC.CollectionCount(2), s.Gen2Collections);
         var d = monitor.CurrentDetails;
         Assert.True(d.AnonymousBytes > 0 && d.FileBackedBytes > 0 && d.PeakWorkingSetBytes >= d.WorkingSetBytes, d.ToString());
@@ -441,7 +441,7 @@ public sealed class MemoryMonitorTests
         listener.Start();
         listener.RecordObservableInstruments();
         Assert.True(seen["cscode.memory.working_set"] > 10 * 1024 * 1024);
-        Assert.True(seen["cscode.memory.gc_heap"] > 0);
+        Assert.True(seen["cscode.memory.gc_heap"] > 0, $"gc_heap {seen["cscode.memory.gc_heap"]}");
         Assert.True(seen["cscode.threads"] > 0);
         Assert.True(seen["cscode.gc.allocated"] > 0);
         Assert.Contains("cscode.memory.private", seen.Keys);
@@ -492,7 +492,7 @@ public sealed class MemoryMonitorTests
         Thread.Sleep(1100);
         monitor.SampleNow();
         var text = output.Text(MemoryLog.ChannelName);
-        Assert.Matches(@"working set \d+ MB \(anon \d+, file \d+, shmem \d+\).* GC heap \d+ MB.*alloc [\d.]+ MB/s.*\d+ threads", text);
+        Assert.Matches(@"working set \d+ MB \(anon \d+, file \d+, shmem \d+(, swap \d+)?\).* GC heap \d+ MB.*alloc [\d.]+ MB/s.*\d+ threads", text);
     }
 
     [Fact]

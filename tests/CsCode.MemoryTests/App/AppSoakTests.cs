@@ -44,7 +44,7 @@ public sealed class AppSoakTests(ITestOutputHelper output)
 
     [AvaloniaFact(Timeout = 600_000)]
     public Task Opening_and_closing_twenty_documents() =>
-        SoakAsync(h => new TabsScenario(h, AppWorkspace.Seed(h.Files)), warmup: 2, iterations: 6);
+        SoakAsync(h => new TabsScenario(h, AppWorkspace.Seed(h.Files)), warmup: 4, iterations: 8);
 
     [AvaloniaFact(Timeout = 600_000)]
     public Task Scrolling_a_twenty_thousand_line_file() =>

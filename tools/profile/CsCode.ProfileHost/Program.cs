@@ -54,6 +54,7 @@ public static class Program
             case "soak": return Headless(() => SoakAsync(options.Double("minutes", 12)));
             case "trim-effect": return Headless(TrimEffectAsync);
             case "hold": return Headless(() => HoldAsync(options.Int("documents", 20), options.Int("seconds", 120)));
+            case "census": return Headless(() => CensusAsync(options.String("scenario", "scroll"), options.Int("iterations", 20)));
             case "bench":
                 // In-process (the tool's assembly name is not its project's, which BenchmarkDotNet's per-benchmark project generation needs).
                 BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args.Skip(1).ToArray(),
@@ -227,6 +228,30 @@ public static class Program
         await MemoryAppHost.SettleAsync(200);
         Console.WriteLine($"READY {Environment.ProcessId}");
         for (var waited = 0; waited < seconds * 10; waited++) await MemoryAppHost.SettleAsync(10, frames: false);
+        return 0;
+    }
+
+    // ------------------------------------------------------------------ census (does a scenario's live heap plateau?)
+
+    /// <summary>Runs one app scenario N times and prints the live heap (full GC) after each iteration: growth that stops is a cache, growth that does not is a leak.</summary>
+    private static async Task<int> CensusAsync(string name, int iterations)
+    {
+        await using var host = await MemoryAppHost.StartAsync();
+        IScenario scenario = name switch
+        {
+            "scroll" => new ScrollScenario(host, AppWorkspace.Big(host.Files)),
+            "tabs" => new TabsScenario(host, AppWorkspace.Seed(host.Files)),
+            "typing" => new TypingScenario(host, AppWorkspace.Seed(host.Files, 1)[0]),
+            _ => throw new ArgumentException("unknown scenario " + name),
+        };
+        await scenario.InitializeAsync(default);
+        for (var i = 0; i < iterations; i++)
+        {
+            await scenario.RunIterationAsync(i, default);
+            FullGc.Collect();
+            Console.WriteLine(FormattableString.Invariant($"CENSUS {name} {i} live {GC.GetTotalMemory(false) / 1024.0 / 1024.0:F1} MB rss {RunMetrics.Mb(host.Get<MemoryMonitor>().SampleNow().WorkingSetBytes)} MB"));
+        }
+        await scenario.DisposeAsync();
         return 0;
     }
 

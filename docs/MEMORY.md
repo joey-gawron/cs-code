@@ -376,11 +376,51 @@ matrix above apply them:
   JIT code, stacks). The split is an estimate: the GC's regions are anonymous mappings smaps cannot tell apart. Windows/macOS: totals only.
 * Windows/macOS paths compile (`OperatingSystem` guards); untested here.
 
-<!--ANALYZERS-->
+### Appendix: analyzer configuration proposal (IDisposable and event hygiene)
+
+Proposed, **not enabled** (enabling rules is a repository-wide decision for the end pass; their counts on this code base were not measured — measure
+with `dotnet build CsCode.slnx -p:TreatWarningsAsErrors=false -p:AnalysisModeReliability=All -p:AnalysisModeUsage=All 2>&1 | grep -c CA2000`):
+
+```ini
+# .globalconfig (repository root) — stage 1: visible in the IDE, not in the build
+dotnet_diagnostic.CA2000.severity = suggestion   # dispose objects before losing scope (noisy with DI-owned and ownership-transferring factories)
+dotnet_diagnostic.CA2213.severity = warning      # disposable fields not disposed — the "own your lifetime" rule (ARCHITECTURE §8.2); few false positives
+dotnet_diagnostic.CA1001.severity = warning      # types owning disposable fields are disposable (already on in the default set for public types)
+dotnet_diagnostic.CA2215.severity = warning      # Dispose calls base.Dispose
+```
+
+`static event` cannot be banned with the banned-API analyzer (it bans symbols, not declarations): `EventHygiene.StaticEvents` (Profiling.Testing)
+scans assemblies by reflection, and `HygieneTests.No_CsCode_assembly_declares_a_new_static_event` runs it over every CsCode assembly. For `+=` on
+singletons, the banned-API list can name the long-lived events that must never be subscribed from short-lived objects
+(e.g. `E:Avalonia.Threading.Dispatcher.ShutdownStarted`, `E:System.AppDomain.ProcessExit`) — a per-module list, proposed for the end pass.
 
 ## 12. Findings for the end pass
 
-<!--FINDINGS-->
+Measured here, owned elsewhere — for the end pass (nothing below was changed outside this module):
+
+1. **TextMateSharp keeps every grammar's raw JSON tree** after compiling it: ≈ 15–20 MB of the 66 MB the app's managed heap grows by with 20
+   documents (`Parser.Raw`, `Dictionary<string, object>` entries, strings; section 7). Dropping the raw grammar after compilation (Editor module,
+   W1's highlighting seam) is the largest single saving found.
+2. **NonBacktracking regexes keep ~150 KB of caches each** once used. Fixed for Core's `Glob` (section 6); the same pattern is in
+   `Platform/Workspace/GitIgnore.cs`, `Platform/EditorConfig/EditorConfigParser.cs`, `Editor/Documents/EditorConfig.cs` and
+   `Panels.Search/Engine/TextMatcher.cs` (the last one on purpose: user regexes need linear time; the glob translations do not).
+3. **GC pauses in the app under load**: the hostile-matrix runs record 3–6 gen2 collections a second while typing with a load running, most of them
+   `induced_noforce` (the GC's own response to `GC.AddMemoryPressure`, which SkiaSharp calls for its native surfaces) and `alloc_small`, with p99
+   GC pauses of 45–155 ms — the main reason the headless budgets miss (with triage item 23's software rasteriser). Worth a desktop check
+   (`tools/profile/counters.sh PID` on a real window: `cscode.gc.gen2_collections`, `cscode.gc.pause_time`).
+4. **Trimmables have little to give** in a normal state (section 2: 0–1 KB at every level with 20 documents open): the big re-creatable state
+   is already released when the document well disposes background views. `GCCollectionMode.Aggressive` is what returns memory (−26 MB).
+5. **Hidden sessions trim twice**: `SessionWindowController.TrimFromTimer` calls `IMemoryMonitor.TrimNowAsync(Aggressive)` (which now compacts
+   and runs `malloc_trim`) and then `Sessions.ProcessMemory.TrimNow()` (the same again). W5 can drop the second call now that the monitor exists.
+6. `tests/CsCode.App.Tests/LifecycleTests.The_app_memory_monitor_records_child_processes_and_stands_in_while_profiling_registers_none` still passes
+   but its name is no longer true: profiling now registers a monitor (the shell wraps it).
+7. **Language servers dominate the footprint**: typescript-language-server on a 2-file project ≈ 550 MB in 4 node processes; a remote session
+   starts its own TypeScript server on the remote host for a remote `.js` file (≈ 700 MB more on this loopback "remote"). Caps exist per server
+   (`LanguageServerDefinition.RestartAboveBytes` → `TrackChildProcess` over-budget callbacks); none of the built-ins sets one.
+8. The scroll soak's live heap grew ~4 MB per iteration over its first iterations (a 20k-line file scrolled end to end: the TextMate token state of
+   the whole file filling in, which the tokenizer keeps and trims under pressure); the fast test now warms up 4 iterations — see the long soak.
+9. The language-feature registry soak shows ~24 B/iteration of live-heap growth in 400 fast iterations (inside the 64 B threshold, cause not
+   identified; likely run-time warm-up) — the long variant (`CSCODE_SOAK=1`) decides.
 
 ## 13. Tests
 

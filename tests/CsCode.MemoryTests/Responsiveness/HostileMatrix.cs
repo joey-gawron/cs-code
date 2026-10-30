@@ -39,6 +39,7 @@ public static class HostileMatrix
 
     public static readonly IReadOnlyList<HostileLoad> Loads =
     [
+        new("baseline", "no hostile load: the control row (what this host measures for typing alone)", (c, ct) => new AsyncAction(() => { })),
         new("diagnostics-flood", "200 publishes/s of 500 diagnostics each, over 20 files including the one being typed in", (c, ct) =>
         {
             var files = Enumerable.Range(0, 19).Select(i => new Uri($"file:///hostile/f{i}.cs")).Append(c.Document).ToArray();

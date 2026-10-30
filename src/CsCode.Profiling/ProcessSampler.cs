@@ -46,7 +46,7 @@ internal sealed class ProcessSampler : IDisposable
     private readonly ProcFile? _status;
     private readonly Process? _self;
     private long _gcKey = -1;
-    private long _committed, _fragmented, _loh, _poh;
+    private long _committed, _fragmented, _loh, _poh, _heapAfterLastGc;
     private double _pausePercent;
 
     public ProcessSampler()
@@ -86,9 +86,12 @@ internal sealed class ProcessSampler : IDisposable
                 threads = self.Threads.Count;
             }
             RefreshGcInfoIfCollected();
+            // Never publish a non-positive heap size (the status bar and the budget logic would show nonsense): fall back to the last GC's figure.
+            var heap = GC.GetTotalMemory(forceFullCollection: false);
+            if (heap <= 0) heap = _heapAfterLastGc;
             return new ProcessMemorySample(
                 Stopwatch.GetTimestamp(), rss, peak, anon, file, shmem, swap,
-                GC.GetTotalMemory(forceFullCollection: false), _committed, _fragmented, _loh, _poh,
+                heap, _committed, _fragmented, _loh, _poh,
                 GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), GC.GetTotalAllocatedBytes(precise: false),
                 GC.GetTotalPauseDuration(), _pausePercent, threads);
         }
@@ -111,6 +114,7 @@ internal sealed class ProcessSampler : IDisposable
         _gcKey = key;
         var info = GC.GetGCMemoryInfo(GCKind.Any);
         _committed = info.TotalCommittedBytes;
+        _heapAfterLastGc = Math.Max(0, info.HeapSizeBytes - info.FragmentedBytes);
         _fragmented = info.FragmentedBytes;
         var generations = info.GenerationInfo;
         _loh = generations.Length > 3 ? generations[3].SizeAfterBytes : 0;
