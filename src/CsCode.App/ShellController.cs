@@ -59,6 +59,8 @@ public sealed class ShellController : IDisposable
 
     public ThemeApplier? Theme { get; private set; }
     public PaletteController Palette { get; private set; } = null!;
+    /// <summary>Saved sessions (Welcome page, Quick Launch's <c>session:</c> mode).</summary>
+    public SessionCatalog Sessions { get; private set; } = null!;
     public KeyboardPipeline Keyboard { get; private set; } = null!;
     public ContextKeyTracker ContextKeys { get; private set; } = null!;
     public MenuModel Menus { get; private set; } = null!;
@@ -117,8 +119,10 @@ public sealed class ShellController : IDisposable
         var workspace = _sp.GetService<IWorkspaceService>();
         var state = _sp.GetService<IStateStorage>();
 
+        // Saved sessions for the Welcome page and Quick Launch's session: mode (opened through File > Sessions, which session processes register).
+        Sessions = new SessionCatalog(commands, _sp.GetService<IAppPaths>()?.UserDataDir, () => (chrome as MainWindow)?.SessionName);
         Palette = new PaletteController(quick, new PaletteContext(commands, nav, well, keys, _sp.GetService<IKeybindingService>(), workspace, state,
-            _sp.GetService<ILanguageFeatureRegistry>(), _sp.GetService<IMemoryMonitor>()), _ui, window);
+            _sp.GetService<ILanguageFeatureRegistry>(), _sp.GetService<IMemoryMonitor>(), Sessions), _ui, window);
         _disposables.Add(Palette);
 
         ContextKeys = new ContextKeyTracker(keys, well, _ui, quick, workspace, debug);
@@ -132,7 +136,7 @@ public sealed class ShellController : IDisposable
             commands, well, Tools, Palette, window, _sp.GetRequiredService<IModalDialogs>(), nav, workspace, config, themes, _sp.GetService<IKeybindingService>(),
             _sp.GetRequiredService<FindResultsViewModel>(), _sp.GetRequiredService<NotificationCenter>(), chrome,
             ResetLayoutAsync, RefreshExplorerAsync, specs,
-            () => new WelcomeView(commands, workspace, state), () => new KeyboardReferenceView(_sp.GetService<IKeybindingService>(), commands),
+            () => new WelcomeView(commands, workspace, state, Sessions), () => new KeyboardReferenceView(_sp.GetService<IKeybindingService>(), commands),
             _sp.GetService<ILanguageService>(), _sp.GetService<ShellViewActivator>(), _ui)));
 
         // Remote editing: Connect to Host / Open Remote Folder / disconnect... commands and the remote indicator in the status bar.

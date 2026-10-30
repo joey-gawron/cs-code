@@ -322,7 +322,10 @@ The default (and reset) layout shows exactly `ShellController.DefaultLayoutTools
 `ToolWindowLocation.Document` windows (Settings, Keyboard Shortcuts) never enter a tool well: they open on demand as singleton document tabs (through `IViewActivator`) and are not restored at startup.
 
 **Palette / Quick Launch** (`PaletteSource`; the title bar box reads "Search (Ctrl+Q)", with the palette's real shortcut, and the workspace name stands beside it as Visual Studio's solution name does): plain = go to file (fuzzy over a trimmable, bounded workspace index, ranked on a worker, top 100; a failed index build is not cached, the next query builds again), `>` **every** command, as VS Code (title, category, keybinding badge, recent first, `Enablement` honoured; no row cap: the 100-row cap hid 'Preferences:' and 'Search:' commands behind the macro ones; the list is a virtualised `ListBox`, 17 of 176 rows realised in the real app; ranked on the UI thread up to `PaletteSource.SyncCommandLimit` = 1,000 commands, on a worker beyond),
-`:` go to line[:column], `@` document symbols, `#` workspace symbols, `?` help. Cheap modes answer synchronously (first paint needs no dispatcher turn); stale async results are dropped. Also drives `ShowQuickPick`/`ShowInputBox`.
+`:` go to line[:column], `@` document symbols, `#` workspace symbols, `session:` saved sessions (background mode, docs/SESSIONS.md: the other saved
+sessions, most recently used first, fuzzy over the name and the folder's name, read off the UI thread; Enter opens one through File > Sessions >
+Open Session with its name; a `--foreground` window says sessions need background mode), `?` help. The **Welcome page** lists the same saved
+sessions under *Sessions* (eight, then *More sessions...*, the Open Session picker; `SessionCatalog`). Cheap modes answer synchronously (first paint needs no dispatcher turn); stale async results are dropped. Also drives `ShowQuickPick`/`ShowInputBox`.
 Theme picker (`workbench.action.selectTheme`) lists the themes grouped Dark / Light / High contrast, previews live while arrowing (throttled, nothing persisted) and reverts on Esc.
 
 **Saving and file operations with language servers** (`FileParticipants`, docs/LSP.md). Every save of the shell (Save, Save As, Save All, the Save

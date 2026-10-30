@@ -235,8 +235,11 @@ bash .scratch/notes/with-nix-env.sh dotnet test tests/CsCode.App.Tests --filter 
 * The automated tests use the headless platform. The real-X11 path (show/hide, animation-frame paint wait, bounds) was exercised by hand on a
   private Xvfb with screenshots, not by a test; the tray icon was not exercised at all (no StatusNotifier host on Xvfb).
 * Only the primary workspace folder is restored (`IWorkspaceService` has no multi-root add in Core).
-* The Welcome page does not list saved sessions yet (Shell's `StartPages.cs`), and Quick Launch has no `session:` mode; use *Switch Session…*
-  (Ctrl+Alt+S, also in the command palette), *Open Session…* or `cscode --list-sessions`.
+* The Welcome page lists the other saved sessions (most recently used first, eight of them, then *More sessions…*) and Quick Launch has a
+  `session:` mode (fuzzy over the name and the folder's name); both open a session through *Open Session…*, which takes the session's name as
+  an argument (`cscode.sessions.open "work"`; no argument shows the picker). docs/SHELL.md, *Palette / Quick Launch*. A window run with
+  `--foreground` has no background mode to open a session in: the Welcome page shows no Sessions list there and `session:` says why. The
+  name argument was tested through the shell with a stand-in command, not in a real session process.
 * Hot-exit restore reopens the file and replaces its text with one edit (no `IEditorViewFactory.OpenDocumentFromBackupAsync` was added): the
   restored text is dirty as it should be, and one Undo goes back to the disk version.
 * Idle language-server stop/restart is wired to `ILanguageServerManager.StopAsync/StartAsync` but no test ran it with a real server.

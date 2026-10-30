@@ -21,11 +21,13 @@ public sealed record PaletteContext(
     IWorkspaceService? Workspace = null,
     IStateStorage? State = null,
     ILanguageFeatureRegistry? Languages = null,
-    IMemoryMonitor? Memory = null);
+    IMemoryMonitor? Memory = null,
+    SessionCatalog? Sessions = null);
 
 /// <summary>
 /// The command palette / Quick Launch as a quick-pick source. The first character selects the mode: none = go to file,
-/// <c>&gt;</c> commands, <c>:</c> go to line, <c>@</c> symbols in the active file, <c>#</c> workspace symbols, <c>?</c> help.
+/// <c>&gt;</c> commands, <c>:</c> go to line, <c>@</c> symbols in the active file, <c>#</c> workspace symbols, <c>session:</c> saved sessions
+/// (background mode, docs/SESSIONS.md), <c>?</c> help.
 /// Cheap modes answer synchronously (first paint is instant); file search and symbol queries rank on a worker and only the top
 /// <see cref="MaxResults"/> immutable entries reach the UI thread. Command mode lists <b>every</b> command, as VS Code does (a few hundred rows; the
 /// quick-input list is virtualised): synchronously up to <see cref="SyncCommandLimit"/> commands, on a worker beyond that.
@@ -40,6 +42,8 @@ public sealed class PaletteSource : IQuickPickSource
     public const int SyncCommandLimit = 1_000;
     public const string RecentFilesKey = "shell.recentFiles";
     public const string RecentCommandsKey = "shell.recentCommands";
+    /// <summary>Quick Launch's saved-session mode: <c>session:</c> then a filter.</summary>
+    public const string SessionPrefix = "session:";
     private const int MaxRecent = 30;
 
     private readonly PaletteContext _ctx;
@@ -51,11 +55,12 @@ public sealed class PaletteSource : IQuickPickSource
         _files = sharedIndex ?? new FileIndex(context.Workspace);
     }
 
-    public string? Placeholder => "Type '?' for help, '>' for commands, ':' for line, '@' for symbols, '#' for workspace symbols";
+    public string? Placeholder => "Type '?' for help, '>' for commands, ':' for line, '@' for symbols, '#' for workspace symbols, 'session:' for sessions";
     public FileIndex Index => _files;
 
     public IReadOnlyList<QuickPickEntry>? TryQuerySync(string text)
     {
+        if (IsSessionQuery(text)) return null; // the saved sessions are read from disk, off the UI thread
         if (text.Length > 0)
         {
             switch (text[0])
@@ -72,6 +77,7 @@ public sealed class PaletteSource : IQuickPickSource
 
     public async Task<IReadOnlyList<QuickPickEntry>> QueryAsync(string text, CancellationToken ct)
     {
+        if (IsSessionQuery(text)) return await Sessions(text[SessionPrefix.Length..].Trim(), ct).ConfigureAwait(false);
         if (text.Length > 0 && text[0] == '@') return await DocumentSymbols(text[1..].TrimStart(), ct).ConfigureAwait(false);
         if (text.Length > 0 && text[0] == '#') return await WorkspaceSymbols(text[1..].TrimStart(), ct).ConfigureAwait(false);
         if (text.Length > 0 && text[0] == '>')
@@ -180,6 +186,35 @@ public sealed class PaletteSource : IQuickPickSource
         }).ToArray();
     }
 
+    // ------------------------------------------------------------------ saved sessions
+
+    private static bool IsSessionQuery(string text) => text.StartsWith(SessionPrefix, StringComparison.OrdinalIgnoreCase);
+
+    private async Task<IReadOnlyList<QuickPickEntry>> Sessions(string query, CancellationToken ct)
+    {
+        if (_ctx.Sessions is not { } catalog || !catalog.CanOpen)
+            return [new QuickPickEntry("Sessions are opened by CsCode's background mode") { Description = "this window runs with --foreground" }];
+        var sessions = await catalog.ListAsync(ct).ConfigureAwait(false);
+        if (sessions.Count == 0) return [new QuickPickEntry("No other saved sessions") { Description = "File > Sessions > Save Session As... names this one" }];
+        var scored = new List<(SavedSession Session, int Score)>();
+        foreach (var s in sessions)
+        {
+            var score = query.Length == 0 ? 0 : FuzzyMatcher.Score(query, s.Name);
+            // A session is also found by its folder's name (not the whole path: every path would match a short query).
+            if (score < 0 && query.Length > 0 && s.Folder is { } folder) score = FuzzyMatcher.Score(query, Path.GetFileName(folder.TrimEnd('/', '\\'))) - 5;
+            if (score >= 0) scored.Add((s, score));
+        }
+        if (query.Length > 0) scored.Sort(static (a, b) => b.Score.CompareTo(a.Score)); // else most recently used first, as listed
+        return scored.Select(x => new QuickPickEntry(x.Session.Name)
+        {
+            Description = x.Session.Detail.Length > 0 ? x.Session.Detail : x.Session.IsUnnamed ? "unnamed" : null,
+            IconKey = "window",
+            LabelMatches = query.Length == 0 ? [] : FuzzyMatcher.Positions(query, x.Session.Name),
+            Tag = x.Session,
+            Accept = () => catalog.OpenAsync(x.Session.Name),
+        }).ToArray();
+    }
+
     // ------------------------------------------------------------------ go to line
 
     private IReadOnlyList<QuickPickEntry> GotoLine(string text)
@@ -277,6 +312,7 @@ public sealed class PaletteSource : IQuickPickSource
         new QuickPickEntry(":") { Description = "Go to line / column in the active editor" },
         new QuickPickEntry("@") { Description = "Go to symbol in the active editor" },
         new QuickPickEntry("#") { Description = "Go to symbol in the workspace" },
+        new QuickPickEntry(SessionPrefix) { Description = "Open a saved session" },
     ];
 
     /// <summary>Bounded top-K by score (insertion into a tiny sorted array): no allocation per candidate, no full sort of 200k hits.</summary>
