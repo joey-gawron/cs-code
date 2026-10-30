@@ -9,6 +9,9 @@
     <TrimMode>partial</TrimMode>
   </PropertyGroup>
 
+  <!-- GC and runtime defaults chosen by the GC matrix (docs/MEMORY.md section 3) -->
+  <Import Project="../../build/MemoryDefaults.props" />
+
   <ItemGroup>
     <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
     <ProjectReference Include="../CsCode.Platform/CsCode.Platform.csproj" />
