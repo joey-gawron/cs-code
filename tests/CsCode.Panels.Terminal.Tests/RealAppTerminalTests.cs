@@ -236,6 +236,30 @@ public sealed class RealAppTerminalTests
     }
 
     [AvaloniaFact]
+    public async Task Ctrl_f_in_a_real_shell_highlights_every_match_and_counts_them()
+    {
+        await using var app = await TerminalAppHost.StartAsync();
+        await app.RunAsync(TerminalCommandSet.Focus);
+        Assert.True(await app.WaitForScreenAsync("$"), "no prompt: " + app.ScreenText());
+        var session = app.Terminals.ActiveSession!;
+        await session.SendTextAsync("for i in 1 2 3 4 5; do echo \"step $i: needle, haystack, needles\"; done");
+        Assert.True(await app.WaitForScreenAsync("step 5"), app.ScreenText());
+        var view = app.View!;
+        view.Control.Focus();
+        Assert.True(await TerminalAppHost.WaitFor(() => view.Control.IsKeyboardFocusWithin));
+        app.Window.KeyPress(Key.F, RawInputModifiers.Control, PhysicalKey.F, "f");
+        Assert.True(await TerminalAppHost.WaitFor(() => view.IsFindVisible && view.FindBox.IsKeyboardFocusWithin), "Ctrl+F did not open the find bar");
+        app.Window.KeyTextInput("needle");
+        // 5 lines x ("needle" + "needles"), plus the command line itself (once each); the rows in view have theirs highlighted
+        Assert.True(await TerminalAppHost.WaitFor(() => view.FindCountText == "12 of 12" && view.Control.FindMatches is { Count: > 2 } shown
+            && shown.Count == view.Control.Snapshot!.Rows.Sum(r => System.Text.RegularExpressions.Regex.Matches(r.GetText(), "needle").Count)),
+            $"{view.FindCountText} / {view.Control.FindMatches?.Count}");
+        app.Capture("terminal-find");
+        app.Window.KeyPress(Key.W, RawInputModifiers.Alt, PhysicalKey.W, "w");
+        Assert.True(await TerminalAppHost.WaitFor(() => view.FindCountText == "6 of 6"), view.FindCountText);
+    }
+
+    [AvaloniaFact]
     public async Task Confirm_on_exit_asks_after_the_main_windows_own_close_handling_and_closes_on_terminate()
     {
         await using var app = await TerminalAppHost.StartAsync(settings: new() { ["terminal.integrated.confirmOnExit"] = "always" });

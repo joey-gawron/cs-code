@@ -210,6 +210,53 @@ public sealed class PanelTests
         Assert.True(await PanelRig.Pump(() => rig.View.FindStatus == "No results"), "no 'No results' for a missing text");
     }
 
+    [AvaloniaFact]
+    public async Task Find_highlights_every_match_in_view_counts_them_and_takes_regex_whole_word_and_wrapped_lines()
+    {
+        await using var rig = await new PanelRig(600, 300).ReadyAsync();
+        var columns = rig.Control.Snapshot!.Columns;
+        // a word cut by the right margin: "needle" starts in the last 3 columns of a soft-wrapped line
+        var wrapped = new string('-', columns - 3) + "needle tail";
+        await rig.OutputAsync(string.Concat(Enumerable.Range(0, 30).Select(i => $"row {i} needle needles\r\n")) + wrapped + "\r\nend", "end");
+        await rig.Commands.ExecuteAsync(TerminalCommandSet.FocusFind);
+        Assert.True(await PanelRig.Pump(() => rig.View.FindBox.IsKeyboardFocusWithin));
+
+        rig.View.FindBox.Text = "needle";
+        // 30 rows x 2 ("needle" and the start of "needles") + the wrapped one; the last (the wrapped one) is the current, across two rows
+        Assert.True(await PanelRig.Pump(() => rig.View.FindCountText == "61 of 61"), rig.View.FindCountText);
+        Assert.True(await PanelRig.Pump(() => rig.Control.CurrentMatch is { } m && m.EndLine == m.Line + 1), $"{rig.Control.CurrentMatch}");
+        var current = rig.Control.CurrentMatch!.Value;
+        Assert.Equal((columns - 3, 2), (current.StartColumn, current.EndColumn));
+        Assert.Equal((current.Line, current.EndLine), (rig.Control.Selection!.Start.Line, rig.Control.Selection.End.Line)); // the selection spans both rows
+        // every match in view is highlighted, not just the current one
+        Assert.True(await PanelRig.Pump(() => rig.Control.FindMatches is { Count: > 4 }), $"{rig.Control.FindMatches?.Count}");
+        var snap = rig.Control.Snapshot!;
+        Assert.All(rig.Control.FindMatches!, m => Assert.True(m.EndLine >= snap.ViewportTop && m.Line < snap.ViewportTop + snap.RowCount));
+        Assert.Contains(current, rig.Control.FindMatches!);
+        rig.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.True(await PanelRig.Pump(() => rig.View.FindCountText == "60 of 61"), rig.View.FindCountText);
+
+        // whole word (Alt+W): "needles" no longer counts
+        rig.Window.KeyPress(Key.W, RawInputModifiers.Alt, PhysicalKey.W, "w");
+        Assert.True(rig.View.WholeWordToggle.IsChecked);
+        Assert.True(await PanelRig.Pump(() => rig.View.FindCountText == "31 of 31"), rig.View.FindCountText);
+        // regular expression (Alt+R)
+        rig.View.WholeWordToggle.IsChecked = false;
+        rig.Window.KeyPress(Key.R, RawInputModifiers.Alt, PhysicalKey.R, "r");
+        rig.View.FindBox.Text = @"row \d+ ne+dle";
+        Assert.True(await PanelRig.Pump(() => rig.View.FindCountText == "30 of 30"), rig.View.FindCountText);
+        Assert.True(await PanelRig.Pump(() => rig.Control.CurrentMatch is { StartColumn: 0 } m && m.EndColumn >= 12));
+        rig.View.FindBox.Text = "(unclosed";
+        Assert.True(await PanelRig.Pump(() => rig.View.FindStatus == "Invalid regular expression"));
+        Assert.Null(rig.Control.FindMatches);
+
+        // closing the find bar removes the highlights
+        rig.View.FindBox.Text = "needle";
+        Assert.True(await PanelRig.Pump(() => rig.Control.FindMatches is { Count: > 0 }));
+        rig.Window.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        Assert.True(await PanelRig.Pump(() => !rig.View.IsFindVisible && rig.Control.FindMatches is null));
+    }
+
     /// <summary>Waits until the selection is on screen on a "line N" row other than <paramref name="after"/>: the selected text and N.</summary>
     private static async Task<(string Text, int SourceLine)> Selected(PanelRig rig, int after = -1)
     {

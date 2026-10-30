@@ -80,6 +80,8 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
             _snapshot = null;
             _selection = null;
             _hoverLink = null;
+            _findMatches = null;
+            _currentMatch = null;
             if (value is not null)
             {
                 _sessionSubs = new DisposableStore();
@@ -146,7 +148,8 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
             using (context.PushTransform(Matrix.CreateTranslation(PaddingLeft, PaddingTop)))
             {
                 var linkOverlay = _hoverLink is { } l && _hoverRow >= 0 ? (_hoverRow, l.StartColumn, l.EndColumn) : ((int, int, int)?)null;
-                _painter.Paint(context, snap, _colors, new TerminalPainter.Overlay(SelectionColumns, linkOverlay, _cursorOn, IsKeyboardFocusWithin, _runtime.CursorStyle, _runtime.CommandDecorations),
+                _painter.Paint(context, snap, _colors, new TerminalPainter.Overlay(SelectionColumns, linkOverlay, _cursorOn, IsKeyboardFocusWithin, _runtime.CursorStyle,
+                        _runtime.CommandDecorations, _findMatches, _currentMatch),
                     new Size(Math.Max(0, bounds.Width), Math.Max(0, bounds.Height)));
                 if (_preedit is { Length: > 0 } preedit && snap.CursorY >= 0) DrawPreedit(context, snap, preedit);
             }
@@ -588,12 +591,28 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
         InvalidateVisual();
     }
 
-    /// <summary>Find: selects a match and scrolls it into view (to the middle when it is off screen).</summary>
+    /// <summary>Find: selects a match (it may continue on the next rows) and scrolls it into view (to the middle when it is off screen).</summary>
     internal void ShowMatch(TerminalMatch match)
     {
-        SetSelection(new TerminalSelection(new GridPoint(match.Line, match.StartColumn), new GridPoint(match.Line, match.EndColumn), SelectionMode.Character));
-        if (_snapshot is { } snap && (match.Line < snap.ViewportTop || match.Line >= snap.ViewportTop + snap.RowCount))
+        _currentMatch = match;
+        SetSelection(new TerminalSelection(new GridPoint(match.Line, match.StartColumn), new GridPoint(match.EndLine, match.EndColumn), SelectionMode.Character));
+        if (_snapshot is { } snap && (match.Line < snap.ViewportTop || match.EndLine >= snap.ViewportTop + snap.RowCount))
             ScrollTo(Math.Max(snap.ScrollbackTop, match.Line - snap.RowCount / 2));
+    }
+
+    private IReadOnlyList<TerminalMatch>? _findMatches;
+    private TerminalMatch? _currentMatch;
+
+    /// <summary>Find's matches in view, highlighted (null: Find is closed).</summary>
+    internal IReadOnlyList<TerminalMatch>? FindMatches => _findMatches;
+
+    internal TerminalMatch? CurrentMatch => _currentMatch;
+
+    internal void SetFindMatches(IReadOnlyList<TerminalMatch>? matches, TerminalMatch? current)
+    {
+        _findMatches = matches;
+        _currentMatch = current;
+        InvalidateVisual();
     }
 
     /// <summary>Sets the selection (tests, Find).</summary>

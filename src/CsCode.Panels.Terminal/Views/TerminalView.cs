@@ -49,7 +49,12 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
     private readonly Border _findBar;
     private readonly TextBox _findBox;
     private readonly ToggleButton _matchCase;
+    private readonly ToggleButton _wholeWord;
+    private readonly ToggleButton _regex;
     private readonly TextBlock _findStatus;
+    private int _highlightSeq;
+    private bool _highlightPending;
+    private (long ViewportTop, long Sequence, int Rows) _highlighted;
     private TerminalMatch? _match;
     private int _findSeq;
     private double? _restoreProportion;
@@ -79,19 +84,21 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
         SetDock(header, DockSide.Top);
         Children.Add(header);
 
-        // Find (VS Code's terminal find widget): Enter searches up the output, Shift+Enter down, Escape closes
+        // Find (VS Code's terminal find widget): Enter searches up the output, Shift+Enter down, Escape closes; Alt+C/W/R toggle the options
         _findBox = new TextBox { Width = 220, MinHeight = 22, Padding = new Thickness(4, 1), PlaceholderText = "Find", VerticalContentAlignment = VerticalAlignment.Center };
         Avalonia.Automation.AutomationProperties.SetName(_findBox, "Find in terminal");
         _findBox.KeyDown += OnFindKeyDown;
         _findBox.TextChanged += (_, _) => { _match = null; _ = FindAsync(backward: true); };
-        _matchCase = new ToggleButton { Content = new Icon("case-sensitive", 16), Padding = new Thickness(3), VerticalAlignment = VerticalAlignment.Center };
-        ToolTip.SetTip(_matchCase, "Match Case");
-        Avalonia.Automation.AutomationProperties.SetName(_matchCase, "Match Case");
-        _matchCase.IsCheckedChanged += (_, _) => { _match = null; _ = FindAsync(backward: true); };
+        _matchCase = FindToggle("case-sensitive", "Match Case (Alt+C)");
+        _wholeWord = FindToggle("whole-word", "Match Whole Word (Alt+W)");
+        _regex = FindToggle("regex", "Use Regular Expression (Alt+R)");
         _findStatus = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0), MinWidth = 70 };
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(_findStatus, Avalonia.Automation.AutomationLiveSetting.Polite);
         var findRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 2), HorizontalAlignment = HorizontalAlignment.Right };
         findRow.Children.Add(_findBox);
         findRow.Children.Add(_matchCase);
+        findRow.Children.Add(_wholeWord);
+        findRow.Children.Add(_regex);
         findRow.Children.Add(_findStatus);
         findRow.Children.Add(Button("arrow-up", "Previous Match (Enter)", null, () => _ = FindAsync(backward: true)));
         findRow.Children.Add(Button("arrow-down", "Next Match (Shift+Enter)", null, () => _ = FindAsync(backward: false)));
@@ -161,13 +168,32 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
     {
         _findBar.IsVisible = false;
         _match = null;
+        _findSeq++;
         _findStatus.Text = "";
+        foreach (var p in _panes) p.Control.SetFindMatches(null, null);
         Control.Focus();
     }
+
+    private ToggleButton FindToggle(string icon, string tip)
+    {
+        var toggle = new ToggleButton { Content = new Icon(icon, 16), Padding = new Thickness(3), VerticalAlignment = VerticalAlignment.Center, Focusable = false };
+        ToolTip.SetTip(toggle, tip);
+        Avalonia.Automation.AutomationProperties.SetName(toggle, tip[..tip.IndexOf(" (", StringComparison.Ordinal)]);
+        toggle.IsCheckedChanged += (_, _) => { _match = null; _ = FindAsync(backward: true); };
+        return toggle;
+    }
+
+    /// <summary>What the find bar looks for.</summary>
+    public TerminalFindOptions FindOptions => new(_findBox.Text ?? "", _matchCase.IsChecked == true, _wholeWord.IsChecked == true, _regex.IsChecked == true);
+
+    internal ToggleButton MatchCaseToggle => _matchCase;
+    internal ToggleButton WholeWordToggle => _wholeWord;
+    internal ToggleButton RegexToggle => _regex;
 
     private void OnFindKeyDown(object? sender, KeyEventArgs e)
     {
         var shift = (e.KeyModifiers & KeyModifiers.Shift) != 0;
+        var alt = (e.KeyModifiers & KeyModifiers.Alt) != 0;
         switch (e.Key)
         {
             case Key.Enter or Key.F3:
@@ -179,37 +205,93 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
                 HideFind();
                 e.Handled = true;
                 break;
+            case Key.C or Key.W or Key.R when alt:
+                var toggle = e.Key switch { Key.C => _matchCase, Key.W => _wholeWord, _ => _regex };
+                toggle.IsChecked = toggle.IsChecked != true;
+                e.Handled = true;
+                break;
         }
     }
 
-    /// <summary>The next match above (<paramref name="backward"/>) or below the current one (none yet: from the bottom), selected and scrolled into view.</summary>
+    /// <summary>
+    /// The next match above (<paramref name="backward"/>) or below the current one (none yet: from the bottom), selected and scrolled into
+    /// view; then "N of M" and every match in view highlighted. The searching runs on the terminal's worker.
+    /// </summary>
     public async Task FindAsync(bool backward)
     {
         if (Control.Session is not { } session) return;
         var control = Control;
-        var query = _findBox.Text ?? "";
-        var matchCase = _matchCase.IsChecked == true;
+        var options = FindOptions;
         var seq = ++_findSeq;
-        if (query.Length == 0)
+        if (options.Query.Length == 0)
         {
             _match = null;
             _findStatus.Text = "";
+            control.SetFindMatches(null, null);
+            return;
+        }
+        if (options.IsInvalid)
+        {
+            _match = null;
+            _findStatus.Text = "Invalid regular expression";
+            control.SetFindMatches(null, null);
             return;
         }
         var (fromLine, fromColumn) = _match is { } m ? (m.Line, m.StartColumn) : backward ? (long.MaxValue, 0) : (long.MinValue, 0);
-        TerminalMatch? found;
-        try { found = await session.InvokeAsync(e => e.Find(query, fromLine, fromColumn, backward, matchCase)).ConfigureAwait(true); }
+        (TerminalMatch? Found, TerminalFindCount Count) result;
+        try
+        {
+            result = await session.InvokeAsync(e =>
+            {
+                var found = e.Find(options, fromLine, fromColumn, backward);
+                return (found, found is null ? default : e.CountMatches(options, found));
+            }).ConfigureAwait(true);
+        }
         catch (ObjectDisposedException) { return; }
         catch (TaskCanceledException) { return; }
         if (seq != _findSeq || IsDisposed) return; // typed on meanwhile
-        _match = found;
-        if (found is not { } match)
+        _match = result.Found;
+        if (result.Found is not { } match)
         {
             _findStatus.Text = "No results";
+            control.SetFindMatches(null, null);
             return;
         }
-        _findStatus.Text = "";
+        var count = result.Count;
+        _findStatus.Text = count.Total == 0 ? "" : $"{(count.Index > 0 ? count.Index.ToString(System.Globalization.CultureInfo.InvariantCulture) : "?")} of {count.Total}{(count.Capped ? "+" : "")}";
         control.ShowMatch(match);
+        _highlighted = default;
+        await RefreshHighlightsAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>The status line of the find bar ("3 of 12", "No results").</summary>
+    internal string FindCountText => _findStatus.Text ?? "";
+
+    /// <summary>
+    /// Highlights every match in view (the logical lines touching the visible rows), after the find, a scroll or new output; one request in
+    /// flight at a time, the newest view wins.
+    /// </summary>
+    private async Task RefreshHighlightsAsync()
+    {
+        if (!_findBar.IsVisible || _match is null || Control is not { Session: { } session, Snapshot: { } snap } control) return;
+        var key = (snap.ViewportTop, snap.Sequence, snap.RowCount);
+        if (key == _highlighted) return;
+        if (_highlightPending) return; // the running request re-checks when it is done
+        _highlightPending = true;
+        _highlighted = key;
+        var options = FindOptions;
+        var seq = ++_highlightSeq;
+        var findSeq = _findSeq;
+        try
+        {
+            var matches = await session.InvokeAsync(e => e.FindAll(options, snap.ViewportTop, snap.ViewportTop + snap.RowCount - 1, 2000)).ConfigureAwait(true);
+            if (seq == _highlightSeq && findSeq == _findSeq && !IsDisposed && _findBar.IsVisible && ReferenceEquals(control.Session, session))
+                control.SetFindMatches(matches, _match);
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or TaskCanceledException) { }
+        finally { _highlightPending = false; }
+        // the view moved on while this ran
+        if (!IsDisposed && Control.Snapshot is { } now && (now.ViewportTop, now.Sequence, now.RowCount) != _highlighted) _ = RefreshHighlightsAsync();
     }
 
     /// <summary>On screen (the tool window is shown and this is its visible tab).</summary>
@@ -407,7 +489,11 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
         FocusTerminal();
     }
 
-    private void OnPaneFrameDrawn(TerminalSnapshot snap) => UpdateAltBuffer();
+    private void OnPaneFrameDrawn(TerminalSnapshot snap)
+    {
+        UpdateAltBuffer();
+        if (_findBar.IsVisible && ReferenceEquals(snap, Control.Snapshot)) _ = RefreshHighlightsAsync();
+    }
 
     /// <summary><c>terminalAltBufferActive</c> follows the active pane's screen.</summary>
     private void UpdateAltBuffer()
