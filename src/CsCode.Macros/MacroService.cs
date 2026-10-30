@@ -18,7 +18,7 @@ public sealed record MacroBlock(string Message, string? ActionTitle = null, stri
 /// <item><b>Recording.</b> <see cref="StartRecording"/> collects what the user does: commands from <see cref="ICommandService.Executed"/> (what a key
 /// chord, a menu item, a toolbar button or a palette pick ran, recorded as the command itself), and the keys and text the shell's taps report
 /// (<see cref="RecordKey"/>, <see cref="RecordText"/>, <see cref="RecordCommand"/>). Only commands the user started are recorded: nothing a command
-/// ran itself, nothing that started while the editor was handling a recorded key or text (<see cref="MarkEditorInput"/>: a completion's own
+/// ran itself, nothing that started while the editor was handling a recorded key or text (<see cref="BeginEditorInput"/>: a completion's own
 /// command), no <c>macro.*</c> command, not the palette itself.</item>
 /// <item><b>Playback</b> (<see cref="MacroPlayer"/>): sliced on the UI thread, Esc / <c>macro.stop</c> cancel, abort on error, runaway guards.
 /// While recording nothing plays (a macro could otherwise record itself); while playing nothing records.</item>
@@ -161,7 +161,7 @@ public sealed class MacroService : IDisposable
         }
         var pauses = _config?.Get(MacroSettings.RecordPauses, false) == true ? TimeSpan.FromMilliseconds(250) : (TimeSpan?)null;
         _recorder = new MacroRecorder(Setting(MacroSettings.MaxRecordedSteps, MacroSettings.DefaultMaxRecordedSteps), pauses, _time);
-        _recordingStarted = _time.GetTimestamp();
+        _recordingStarted = System.Diagnostics.Stopwatch.GetTimestamp(); // the clock of CommandExecuted.StartedTimestamp
         _inputWindowCount = 0;
         _executedSubscription = _commands.Executed.Subscribe(OnExecuted);
         ClearMessage();
@@ -217,14 +217,27 @@ public sealed class MacroService : IDisposable
     }
 
     /// <summary>
-    /// The editor handled a recorded key or text input between these <see cref="System.Diagnostics.Stopwatch"/> timestamps: commands that
-    /// started meanwhile (a completion item's command) are part of that input and are not recorded (UI thread).
+    /// The editor starts handling a recorded key or text input (UI thread; paired with <see cref="EndEditorInput"/>). Commands that start
+    /// until the input is done (a completion item's own command, run when Enter accepts it) are part of that input and are not recorded.
     /// </summary>
-    public void MarkEditorInput(long start, long end)
+    public void BeginEditorInput()
     {
         if (_recorder is null) return;
-        _inputWindows[_inputWindowCount++ % MaxInputWindows] = (start, end);
+        _inputStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        _inputOpen = true;
     }
+
+    /// <summary>The editor finished the input <see cref="BeginEditorInput"/> announced (the end of the key event's route).</summary>
+    public void EndEditorInput()
+    {
+        if (!_inputOpen) return;
+        _inputOpen = false;
+        if (_recorder is null) return;
+        _inputWindows[_inputWindowCount++ % MaxInputWindows] = (_inputStart, System.Diagnostics.Stopwatch.GetTimestamp());
+    }
+
+    private long _inputStart;
+    private bool _inputOpen;
 
     private void RecordingFull()
     {
@@ -255,6 +268,7 @@ public sealed class MacroService : IDisposable
         if (MacroCommands.IsMacroCommand(e.Id) || Launchers.Contains(e.Id)) return false;
         foreach (var caller in e.Callers)
             if (!Launchers.Contains(caller)) return false; // a command's own work, not the user's
+        if (_inputOpen && e.StartedTimestamp >= _inputStart) return false; // the editor is still handling the key that started it
         var n = Math.Min(_inputWindowCount, MaxInputWindows);
         for (var i = 0; i < n; i++)
         {
@@ -296,12 +310,7 @@ public sealed class MacroService : IDisposable
     public async Task<MacroPlayResult> PlayAsync(Macro macro, MacroPlayOptions? options = null, CancellationToken ct = default)
     {
         options ??= MacroPlayOptions.Once;
-        if (_recorder is not null)
-        {
-            var refused = new MacroPlayResult(MacroPlayStatus.Refused, 0, 0, "Macros do not play while a macro is being recorded: stop recording first.");
-            Report(macro, options, refused);
-            return refused;
-        }
+        if (RefusedWhileRecording() is { } refused) return refused;
         MacroPlayResult result;
         try { result = await Player.PlayAsync(macro, options, ct).ConfigureAwait(true); }
         catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -311,6 +320,15 @@ public sealed class MacroService : IDisposable
         }
         Report(macro, options, result);
         return result;
+    }
+
+    /// <summary>Nothing plays while recording (the recording would record its own playback): the refusal, reported, or null.</summary>
+    private MacroPlayResult? RefusedWhileRecording()
+    {
+        if (_recorder is null) return null;
+        const string text = "Macros do not play while a macro is being recorded: stop recording first.";
+        _ = _window?.ShowMessageAsync(MessageSeverity.Info, text);
+        return new MacroPlayResult(MacroPlayStatus.Refused, 0, 0, text);
     }
 
     /// <summary>Stops recording, or the macro that is playing.</summary>
@@ -438,6 +456,7 @@ public sealed class MacroService : IDisposable
 
     private async ValueTask<object?> RunNamedAsync(string name, CommandInvocation inv)
     {
+        if (RefusedWhileRecording() is not null) return null;
         if (_named.FirstOrDefault(m => m.Name == name) is not { } macro)
         {
             ShowStatus($"Macro '{name}' no longer exists.");
@@ -476,6 +495,7 @@ public sealed class MacroService : IDisposable
 
     private async ValueTask<object?> PlayLastAsync(CommandInvocation inv)
     {
+        if (RefusedWhileRecording() is not null) return null;
         if (Last is not { } last)
         {
             ShowStatus("No macro has been recorded yet: Tools > Macros > Record Macro records one.");
@@ -487,6 +507,7 @@ public sealed class MacroService : IDisposable
 
     private async ValueTask<object?> PlayNamedAsync(CommandInvocation inv)
     {
+        if (RefusedWhileRecording() is not null) return null;
         var name = inv.Args.Count > 0 ? inv.Arg<string>(0) : null;
         var macro = name is not null ? _named.FirstOrDefault(m => m.Name == name) : await PickAsync(includeLast: false).ConfigureAwait(true);
         if (macro is null)
@@ -500,6 +521,7 @@ public sealed class MacroService : IDisposable
     /// <summary><c>macro.play</c>: which macro and how are taken from the argument or asked (see <see cref="MacroCommands.Play"/>).</summary>
     private async ValueTask<object?> PlayCommandAsync(CommandInvocation inv)
     {
+        if (RefusedWhileRecording() is not null) return null;
         var (name, mode, times) = ParsePlayArgument(inv.Args.Count > 0 ? inv.Args[0] : null);
         Macro? macro;
         if (name is not null) macro = name.Length == 0 ? Last : _named.FirstOrDefault(m => m.Name == name);
@@ -712,6 +734,7 @@ public sealed class MacroService : IDisposable
         _statusItem?.Dispose();
         ClearMessage();
         _keyContributions?.Dispose();
+        if (Store is { } store) store.MaxStepsPerMacro = static () => MacroSettings.DefaultMaxRecordedSteps; // the store may outlive this service
         foreach (var r in _runCommands.Values) r.Dispose();
         _runCommands.Clear();
         _disposables.Dispose();
