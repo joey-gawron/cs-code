@@ -101,7 +101,8 @@ the focused text area, not the event's source (without that, a replayed key coul
   may be split across slices. A command that does not complete synchronously ends the slice; the next starts on the UI thread when it completes.
   Measured in the real editor (headless, machine shared with other builds, load average 2-3), a typing macro played 10,000 times: slices p50
   0.9-1.0 ms, **p99 3.6-3.8 ms** (max 13-14 ms: one step's own cost, e.g. a collection); dispatcher heartbeat p99 14-17 ms, max 20-30 ms (headless
-  layout included). With a 2 ms target slices reached p99 3.8-5.1 ms, with 3 ms 5.6-5.9 ms, hence 1 ms.
+  layout included). With a 2 ms target slices reached p99 3.8-5.1 ms, with 3 ms 5.6-5.9 ms, hence 1 ms. During a full App test run beside
+  other builds the same test measured slices p99 4.3-4.6 ms and failed (wall clock: the UI thread is preempted mid-slice); alone it passes.
 * **Esc** (with the keyboard focus in an editor), `macro.stop` or a click on the status item stop playback between two steps; a command that is
   still running is no longer waited for. While a macro plays, other keys and typing aimed at an editor are swallowed (they would interleave
   with the macro's); keys for a prompt a step waits for (palette, input box, dialog) work normally. Mouse input is not blocked.
