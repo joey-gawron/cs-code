@@ -46,6 +46,7 @@ public sealed class OutputView : UserControl, IDisposable, IClipboardTarget, ITo
         vm.Lines.CollectionChanged += OnLinesChanged;
         _list.KeyDown += OnListKeyDown;
         _list.ContextRequested += OnContextRequested;
+        ToolWindowFocus.KeepOnRows(_list); // a batch of lines, the oldest trimmed, a line completed, Clear All or Word Wrap replaces the rows
 
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*"), Background = ThemeBrushes.Get("panel.background") };
         root.Children.Add(bar);

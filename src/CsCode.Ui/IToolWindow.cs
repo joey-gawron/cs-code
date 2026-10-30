@@ -72,24 +72,37 @@ public static class ToolWindowFocus
 
     /// <summary>
     /// Keeps the keyboard on <paramref name="list"/>'s rows when a change of its items takes it away. A bulk change (one Reset, which
-    /// <see cref="Collections.BulkObservableCollection{T}"/> raises for every range it inserts or removes) recycles every realized row, the
-    /// focused one too, and Avalonia then leaves the keyboard on nothing, where the arrows, Enter and typing go nowhere: in the Explorer, each
-    /// folder expanded or collapsed (clicked, or loading its children after View &gt; Tool Windows put the keyboard on the root) did that. Once
-    /// the rows are laid out again, <see cref="FocusRow"/> gives it back: the selected row, else the first on screen. Only for an element that
-    /// lost it to nothing by leaving the screen (a recycled row, the rename box once hidden): not when something else has taken the keyboard
-    /// meanwhile, nor when the list left the screen (its window hidden), nor when the element is still on screen, which is how Avalonia leaves
-    /// it when another of the app's windows activates with nothing focused in it (a tool window floated) — taking it back then sent the keys
-    /// typed in that window to this list (Down moved the Explorer's selection, Delete asked to delete the file).
+    /// <see cref="Collections.BulkObservableCollection{T}"/> raises for every range it inserts or removes, or a new ItemsSource) recycles every
+    /// realized row, the focused one too, and Avalonia then leaves the keyboard on nothing, where the arrows, Enter and typing go nowhere: in the
+    /// Explorer each folder expanded or collapsed (clicked, or loading its children after View &gt; Tool Windows put the keyboard on the root),
+    /// in the Error List each diagnostics update, in Find Results each search, in the Output window each batch of lines, in the debug windows
+    /// each stop. Once the rows are laid out again, <see cref="FocusRow"/> gives it back: the selected row, else the first on screen; with no row
+    /// left (Clear All) the list itself takes it, so it stays in the window, as View &gt; Tool Windows leaves it in a window with nothing but
+    /// chrome. Only for an element that lost it to nothing by leaving the screen (a recycled row, the rename box once hidden): not when something
+    /// else has taken the keyboard meanwhile, nor when the list left the screen (its window hidden), nor when the element is still on screen,
+    /// which is how Avalonia leaves it when another of the app's windows activates with nothing focused in it (a tool window floated) — taking it
+    /// back then sent the keys typed in that window to this list (Down moved the Explorer's selection, Delete asked to delete the file).
     /// </summary>
     public static void KeepOnRows(ListBox list) => list.LostFocus += (_, e) =>
     {
+        if (ReferenceEquals(e.Source, list)) list.Focusable = false; // see FocusList
         if (e.NewFocusedElement is not (null or TopLevel)) return; // moved on: the user's or a command's doing
         if (e.Source is Avalonia.Visual lost && lost.IsAttachedToVisualTree() && lost.IsEffectivelyVisible) return; // still on screen: another window activated
         Dispatcher.UIThread.Post(() =>
         {
-            if (!list.IsAttachedToVisualTree() || TopLevel.GetTopLevel(list)?.FocusManager is not { } focus || focus.GetFocusedElement() is not (null or TopLevel)) return;
+            if (!list.IsAttachedToVisualTree() || !list.IsEffectivelyVisible || TopLevel.GetTopLevel(list)?.FocusManager is not { } focus || focus.GetFocusedElement() is not (null or TopLevel)) return;
             list.UpdateLayout(); // the rows of the new items
-            FocusRow(list);
+            if (!FocusRow(list)) FocusList(list);
         }, DispatcherPriority.Loaded);
     };
+
+    /// <summary>
+    /// The list itself takes the keyboard when it has no row: focusable only until the keyboard leaves it (<see cref="KeepOnRows"/>), so a click
+    /// on its blank space keeps doing what it did (nothing).
+    /// </summary>
+    private static void FocusList(ListBox list)
+    {
+        list.Focusable = true;
+        if (!list.Focus()) list.Focusable = false;
+    }
 }
