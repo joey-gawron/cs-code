@@ -77,7 +77,7 @@ public sealed partial class EditorDocument
     /// <summary>A new empty "Untitled-N" buffer; registered with the document manager. Must be called on the UI thread.</summary>
     internal static EditorDocument CreateUntitled(EditorServices svc, int number, string languageId, Func<Uri, string?, string> detectLanguage)
     {
-        var settings = FileSettings.Read(svc.Config);
+        var settings = FileSettings.Read(svc.Config, languageId);
         var doc = new EditorDocument(new Uri($"untitled:Untitled-{number}"), languageId, CreateBuffer(string.Empty, svc.Ui), svc.Ui, settings.UndoLimit)
         {
             _svc = svc,
@@ -212,7 +212,7 @@ public sealed partial class EditorDocument
         await _ioGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var settings = FileSettings.Read(svc.Config);
+            var settings = FileSettings.Read(svc.Config, LanguageId);
             var ec = target.IsFile ? await svc.EditorConfig.ResolveAsync(target, ct).ConfigureAwait(false) : EditorConfigProperties.None;
             await FormatOnSaveAsync(settings, ec, ct).ConfigureAwait(false);
             DocumentSnapshot snap = await ApplySaveParticipantsAsync(settings, ec, ct).ConfigureAwait(false);
@@ -350,7 +350,7 @@ public sealed partial class EditorDocument
     private async Task ApplyDiskContentAsync(byte[] bytes, FileStat stat, FileEncoding? forced, CancellationToken ct)
     {
         var svc = _svc!;
-        var settings = FileSettings.Read(svc.Config);
+        var settings = FileSettings.Read(svc.Config, LanguageId);
         var ec = await svc.EditorConfig.ResolveAsync(Uri, ct).ConfigureAwait(false);
         for (var attempt = 0; attempt < MaxSaveParticipantRetries; attempt++)
         {
