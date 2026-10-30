@@ -5,6 +5,7 @@ using Xunit;
 namespace CsCode.Vim.Tests;
 
 /// <summary>Per-key time and allocation budgets on a 1 MB buffer, large-operation slicing and bounded memory. Budgets are generous (CI noise, unoptimised test build); the measured numbers are in docs/VIM.md.</summary>
+[Collection(SerialCollection.Name)] // a budget measured while the rest of the assembly runs in parallel times the other tests' GCs too
 public class PerformanceTests
 {
     private static string BigText(int lines, int width = 49)
