@@ -39,7 +39,7 @@ public sealed partial class ConsoleView : UserControl, IDisposable, IClipboardTa
     {
         var model = _model;
         var menu = new ContextMenu();
-        menu.Items.Add(new MenuItem { Header = "Copy", InputGesture = KeyGesture.Parse("Ctrl+C"), IsEnabled = CanCopy, Command = new UiCommand(CopyAsync) });
+        menu.Items.Add(new MenuItem { Header = "Copy", InputGesture = KeyGesture.Parse(CommandKeys.Gesture("C")), IsEnabled = CanCopy, Command = new UiCommand(CopyAsync) });
         menu.Items.Add(new MenuItem { Header = "Copy All", IsEnabled = model is { Lines.Count: > 0 }, Command = new UiCommand(() => model?.CopyAsync(model.Lines) ?? Task.CompletedTask) });
         menu.Items.Add(new Separator());
         menu.Items.Add(new MenuItem { Header = "Clear All", IsEnabled = model is { Lines.Count: > 0 }, Command = new UiCommand(() => model?.Clear()) });

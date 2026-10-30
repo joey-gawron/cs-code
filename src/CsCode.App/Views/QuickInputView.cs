@@ -137,6 +137,8 @@ public sealed class QuickInputView : Grid
             case Key.Enter: _vm.Accept(); e.Handled = true; break;
             case Key.Escape: _vm.Cancel(); e.Handled = true; break;
             case Key.Tab: _vm.MoveSelection(e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : +1); e.Handled = true; break;
+            // Control on macOS too: ⌘Space is Spotlight's and never reaches the app (as VS Code's Ctrl+Space suggest). Unchecked on a Mac: ⌃Space is
+            // also macOS's 'Select the previous input source', which takes it with two input sources (the row's check box still works by mouse).
             case Key.Space when e.KeyModifiers == KeyModifiers.Control: _vm.ToggleChecked(); e.Handled = true; break;
         }
     }

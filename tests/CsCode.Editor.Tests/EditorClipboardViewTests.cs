@@ -33,6 +33,9 @@ public class EditorClipboardViewTests
         return (ViewHost.Create(s => { s.AddSingleton<IClipboardService>(clipboard); more?.Invoke(s); }), clipboard);
     }
 
+    /// <summary>The clipboard keys' modifier: Ctrl, ⌘ on macOS.</summary>
+    private static RawInputModifiers Command => OperatingSystem.IsMacOS() ? RawInputModifiers.Meta : RawInputModifiers.Control;
+
     private static void Key(Avalonia.Controls.Window w, Key key, RawInputModifiers m = RawInputModifiers.None)
     {
         w.KeyPress(key, m, PhysicalKey.None, null);
@@ -46,12 +49,12 @@ public class EditorClipboardViewTests
         using var _ = host;
         var (doc, view, window) = await host.OpenAsync("alpha\nbeta\ngamma\n");
         view.Controller.SetSelection(TextRange.At(0, 2));
-        Key(window, Avalonia.Input.Key.C, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.C, Command);
         Assert.Equal("alpha\n", clipboard.Content?.Text);
         Assert.Equal(ClipboardTextShape.FullLines, clipboard.Content?.Shape);
 
         view.Controller.SetSelection(TextRange.At(2, 3));
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.V, Command);
         await ViewHost.WaitFor(() => doc.GetText() == "alpha\nbeta\nalpha\ngamma\n", "line pasted above");
         Assert.Equal(new TextPosition(3, 3), view.Controller.Caret); // still on "gamma"
 
@@ -66,7 +69,7 @@ public class EditorClipboardViewTests
         using var _ = host;
         var (doc, view, window) = await host.OpenAsync("one\ntwo\nthree\n");
         view.Controller.SetSelection(TextRange.At(1, 1));
-        Key(window, Avalonia.Input.Key.X, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.X, Command);
         Assert.Equal("one\nthree\n", doc.GetText());
         Assert.Equal("two\n", clipboard.Content?.Text);
         view.Controller.Undo();
@@ -162,13 +165,13 @@ public class EditorClipboardViewTests
         Assert.Equal(["three", "two", "one"], clipboard.Ring.Select(r => r.Text));
 
         view.Controller.SetSelection(TextRange.At(1, 0));
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         Assert.Equal("one two three\nthree\n", doc.GetText());
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         Assert.Equal("one two three\ntwo\n", doc.GetText());
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         Assert.Equal("one two three\none\n", doc.GetText());
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         Assert.Equal("one two three\nthree\n", doc.GetText()); // wraps around
 
         view.Controller.Undo();
@@ -176,9 +179,9 @@ public class EditorClipboardViewTests
 
         // Typing in between ends the cycle: the next Ctrl+Shift+V pastes the newest entry again.
         view.Controller.SetSelection(TextRange.At(1, 0));
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         ViewTestHelpers.Type(view, "!");
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         Assert.Equal("one two three\nthree!three\n", doc.GetText());
     }
 
@@ -300,11 +303,11 @@ public class EditorClipboardViewTests
         var (doc, view, window) = await host.OpenAsync("keep\n");
         doc.IsReadOnly = true;
         view.Controller.SetSelection(TextRange.FromLines(0, 0, 0, 4));
-        Key(window, Avalonia.Input.Key.X, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.X, Command);
         Assert.Equal("keep\n", doc.GetText());
-        Key(window, Avalonia.Input.Key.C, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.C, Command);
         Assert.Equal("keep", clipboard.Content?.Text);
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.V, Command);
         ViewHost.Pump();
         Assert.Equal("keep\n", doc.GetText());
         Assert.False(view.Controller.CanCut);

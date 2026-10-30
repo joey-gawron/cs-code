@@ -162,10 +162,11 @@ public class ShouldHaveFeatureTests
         ViewHost.Pump();
         Assert.Empty(external.OpenedExternally);
 
-        window.MouseMove(point, RawInputModifiers.Control);
+        var command = OperatingSystem.IsMacOS() ? RawInputModifiers.Meta : RawInputModifiers.Control; // ⌘-click on macOS
+        window.MouseMove(point, command);
         await ViewHost.WaitFor(() => view.Editor.Cursor is not null, "hand cursor over the URL while Ctrl is held");
-        window.MouseDown(point, MouseButton.Left, RawInputModifiers.Control);
-        window.MouseUp(point, MouseButton.Left, RawInputModifiers.Control);
+        window.MouseDown(point, MouseButton.Left, command);
+        window.MouseUp(point, MouseButton.Left, command);
         await ViewHost.WaitFor(() => external.OpenedExternally.Count == 1, "URL opened");
         Assert.Equal(new Uri("https://example.com/docs?x=1"), external.OpenedExternally[0]);
     }

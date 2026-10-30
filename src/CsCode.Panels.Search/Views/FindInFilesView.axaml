@@ -102,17 +102,17 @@
             <TextBox Grid.ColumnSpan="2" x:Name="QueryBox" Classes="field" Text="{Binding Query, Mode=TwoWay}" PlaceholderText="Search" Padding="6,2,92,2"
                      AutomationProperties.Name="Search" />
             <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,3,0" VerticalAlignment="Center">
-              <ToggleButton Classes="opt" IsChecked="{Binding MatchCase, Mode=TwoWay}" ToolTip.Tip="Match Case (Alt+C)" AutomationProperties.Name="Match case"><ic:Icon Kind="case-sensitive" Size="16" /></ToggleButton>
-              <ToggleButton Classes="opt" IsChecked="{Binding WholeWord, Mode=TwoWay}" ToolTip.Tip="Match Whole Word (Alt+W)" AutomationProperties.Name="Match whole word"><ic:Icon Kind="whole-word" Size="16" /></ToggleButton>
-              <ToggleButton Classes="opt" IsChecked="{Binding IsRegex, Mode=TwoWay}" ToolTip.Tip="Use Regular Expression (Alt+R)" AutomationProperties.Name="Use regular expression"><ic:Icon Kind="regex" Size="16" /></ToggleButton>
+              <ToggleButton Classes="opt" IsChecked="{Binding MatchCase, Mode=TwoWay}" ToolTip.Tip="{x:Static v:FindInFilesView.MatchCaseTip}" AutomationProperties.Name="Match case"><ic:Icon Kind="case-sensitive" Size="16" /></ToggleButton>
+              <ToggleButton Classes="opt" IsChecked="{Binding WholeWord, Mode=TwoWay}" ToolTip.Tip="{x:Static v:FindInFilesView.WholeWordTip}" AutomationProperties.Name="Match whole word"><ic:Icon Kind="whole-word" Size="16" /></ToggleButton>
+              <ToggleButton Classes="opt" IsChecked="{Binding IsRegex, Mode=TwoWay}" ToolTip.Tip="{x:Static v:FindInFilesView.RegexTip}" AutomationProperties.Name="Use regular expression"><ic:Icon Kind="regex" Size="16" /></ToggleButton>
             </StackPanel>
           </Grid>
           <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding ReplaceVisible}">
             <TextBox Grid.ColumnSpan="2" x:Name="ReplaceBox" Classes="field" Text="{Binding ReplaceText, Mode=TwoWay}" PlaceholderText="Replace" Padding="6,2,60,2"
                      AutomationProperties.Name="Replace" />
             <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,3,0" VerticalAlignment="Center">
-              <ToggleButton Classes="opt" IsChecked="{Binding PreserveCase, Mode=TwoWay}" ToolTip.Tip="Preserve Case (Alt+P)" AutomationProperties.Name="Preserve case"><TextBlock Text="AB" FontSize="11" FontWeight="SemiBold" /></ToggleButton>
-              <Button Classes="tool" Command="{Binding ReplaceAllCommand}" ToolTip.Tip="Replace All (Ctrl+Alt+Enter)" AutomationProperties.Name="Replace all"><ic:Icon Kind="replace-all" Size="16" /></Button>
+              <ToggleButton Classes="opt" IsChecked="{Binding PreserveCase, Mode=TwoWay}" ToolTip.Tip="{x:Static v:FindInFilesView.PreserveCaseTip}" AutomationProperties.Name="Preserve case"><TextBlock Text="AB" FontSize="11" FontWeight="SemiBold" /></ToggleButton>
+              <Button Classes="tool" Command="{Binding ReplaceAllCommand}" ToolTip.Tip="{x:Static v:FindInFilesView.ReplaceAllTip}" AutomationProperties.Name="Replace all"><ic:Icon Kind="replace-all" Size="16" /></Button>
             </StackPanel>
           </Grid>
         </StackPanel>
@@ -163,7 +163,7 @@
               <!-- Only with the replace UI open: in plain Find the replacement is "" and one click would delete every match of the file. -->
               <Button Classes="tool" Width="20" Height="20" Click="OnReplaceFileClick" ToolTip.Tip="Replace All in this file" AutomationProperties.Name="Replace in file"
                       IsVisible="{Binding $parent[ListBox].((vm:FindInFilesViewModel)DataContext).ReplaceVisible, FallbackValue=False}"><ic:Icon Kind="replace-all" Size="14" /></Button>
-              <Button Classes="tool" Width="20" Height="20" Click="OnDismissClick" ToolTip.Tip="Dismiss (Del)" AutomationProperties.Name="Dismiss"><ic:Icon Kind="close" Size="14" /></Button>
+              <Button Classes="tool" Width="20" Height="20" Click="OnDismissClick" ToolTip.Tip="{x:Static v:FindInFilesView.DismissTip}" AutomationProperties.Name="Dismiss"><ic:Icon Kind="close" Size="14" /></Button>
             </StackPanel>
             <Border Grid.Column="4" Margin="6,0,0,0" CornerRadius="9" MinWidth="18" Height="16" Padding="5,0" VerticalAlignment="Center" Background="{DynamicResource ResourceKey='vsc:badge.background'}">
               <TextBlock Text="{Binding MatchCount}" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource ResourceKey='vsc:badge.foreground'}" />
@@ -179,7 +179,7 @@
             <StackPanel Grid.Column="2" Classes="actions" Orientation="Horizontal" Spacing="1" VerticalAlignment="Center">
               <Button Classes="tool" Width="20" Height="20" Click="OnReplaceMatchClick" ToolTip.Tip="Replace" AutomationProperties.Name="Replace match"
                       IsVisible="{Binding $parent[ListBox].((vm:FindInFilesViewModel)DataContext).ReplaceVisible, FallbackValue=False}"><ic:Icon Kind="replace" Size="14" /></Button>
-              <Button Classes="tool" Width="20" Height="20" Click="OnDismissClick" ToolTip.Tip="Dismiss (Del)" AutomationProperties.Name="Dismiss"><ic:Icon Kind="close" Size="14" /></Button>
+              <Button Classes="tool" Width="20" Height="20" Click="OnDismissClick" ToolTip.Tip="{x:Static v:FindInFilesView.DismissTip}" AutomationProperties.Name="Dismiss"><ic:Icon Kind="close" Size="14" /></Button>
             </StackPanel>
           </Grid>
         </DataTemplate>

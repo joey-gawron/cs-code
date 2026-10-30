@@ -27,7 +27,7 @@ public static class ClipboardKeys
 {
     public static ClipboardAction Classify(Key key, KeyModifiers modifiers)
     {
-        var command = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
+        var command = CommandKeys.Command;
         return (key, modifiers) switch
         {
             (Key.C, var m) when m == command => ClipboardAction.Copy,
