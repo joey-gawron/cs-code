@@ -239,7 +239,8 @@ connection that created or reattached it, so the replay always comes before newe
   terminal gets the old presentation: the output piped into "Remote: Tasks". `task/start` + `task/wait` (long poll): a run outlives the connection
   that started it and the client waits for it again after a reconnect to the same server (a task's terminal is a channel like any other); after each
   (re)connect `task/keep` names the runs the client still waits for and the server cancels the others (one cancelled while the link was down, or a
-  crashed client's). preLaunchTask/postDebugTask of a remote debug session go the same way. The Error List is not brought forward by a remote task's
+  crashed client's). A cancel while `task/start`'s answer is still on its way does not abandon the run the server started: it is cancelled as soon
+  as its id arrives. preLaunchTask/postDebugTask of a remote debug session go the same way. The Error List is not brought forward by a remote task's
   `revealProblems` (the server has no views).
 * **Find in Files** (`ITextSearchProvider`): when every searched folder is remote, the panel's engine sends the query (pattern, case, whole word,
   `files.exclude` + `search.exclude` for pruning, ignore files, the result cap, the file size limit) and reads no remote file itself; matches come back

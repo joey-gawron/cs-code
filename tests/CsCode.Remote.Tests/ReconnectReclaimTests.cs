@@ -179,15 +179,22 @@ public class ReconnectReclaimTests
     }
 
     /// <summary>
-    /// Holds what the server sends to the client (the link stays up, nothing arrives) until <see cref="Drop"/>: the held bytes are lost with the
-    /// connection, as when the network fails right after the server answered.
+    /// Holds what the server sends to the client (the link stays up, nothing arrives) until <see cref="Drop"/> — the held bytes are lost with the
+    /// connection, as when the network fails right after the server answered — or <see cref="Release"/>: they arrive late (a slow link).
     /// </summary>
     private sealed class InboundHold
     {
         private readonly ManualResetEventSlim _dropped = new(false);
+        private readonly ManualResetEventSlim _released = new(false);
         public volatile bool Holding;
 
         public void Drop() => _dropped.Set();
+
+        public void Release()
+        {
+            Holding = false;
+            _released.Set();
+        }
 
         public IRemoteTransport Wrap(IRemoteTransport inner) => new HeldTransport(inner, this);
 
@@ -207,8 +214,8 @@ public class ReconnectReclaimTests
                 var n = inner.Read(buffer);
                 if (n > 0 && hold.Holding)
                 {
-                    hold._dropped.Wait(TimeSpan.FromSeconds(60));
-                    return 0; // the connection ends here: what was held never arrives
+                    WaitHandle.WaitAny([hold._dropped.WaitHandle, hold._released.WaitHandle], TimeSpan.FromSeconds(60));
+                    if (hold._dropped.IsSet) return 0; // the connection ends here: what was held never arrives
                 }
                 return n;
             }
@@ -279,6 +286,41 @@ public class ReconnectReclaimTests
         await TerminalProbe.WaitForTextAsync(terminal, "hello-from-the-task"); // the output from before the drop, replayed into the client's terminal
         await TestEnv.WaitUntilAsync(() => terminal.HasExited, TimeSpan.FromSeconds(10), "the client's terminal to show the end");
         Assert.Equal(4, terminal.ExitCode);
+    }
+
+    [Fact]
+    public async Task A_task_cancelled_before_the_server_answered_its_start_is_cancelled_on_the_server()
+    {
+        // A slow link (or a loaded machine): Stop is pressed while task/start's answer is on its way. The server started the run all the same; it
+        // must not go on (its terminal would run unseen, with nobody left to stop it).
+        var hold = new InboundHold();
+        await using var host = new RemoteTestHost(wrap: hold.Wrap, r3: true);
+        var sleep = UniqueSleep(53);
+        Directory.CreateDirectory(Path.Combine(host.Workspace.Path, ".vscode"));
+        File.WriteAllText(Path.Combine(host.Workspace.Path, ".vscode", "tasks.json"),
+            $$"""{ "version": "2.0.0", "tasks": [ { "label": "serve", "type": "shell", "command": "sleep {{sleep}}" } ] }""");
+        await host.ConnectAsync();
+        await host.OpenWorkspaceAsync();
+        var terminals = host.Services.GetRequiredService<TerminalService>();
+        using var cts = new CancellationTokenSource();
+        hold.Holding = true;
+        var run = host.Services.GetRequiredService<ITaskService>().RunAsync("serve", null, cts.Token).AsTask();
+        await TestEnv.WaitUntilAsync(() => host.Dump().Contains("Task 'serve' started", StringComparison.Ordinal), TimeSpan.FromSeconds(30),
+            "the server to start the run (its answer held back)");
+        cts.Cancel();
+        Assert.True((await run.WaitAsync(TimeSpan.FromSeconds(10), Ct)).Cancelled);
+
+        hold.Release(); // the answer arrives late (and the server's request for the task's terminal, when it asked already)
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while ((await StatusAsync(host)).RunningTasks != 0)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the run was not cancelled on the server");
+            await Task.Delay(50, Ct);
+        }
+        await TestEnv.WaitUntilAsync(() => TestEnv.ProcessesWithMarker(sleep).Count == 0, TimeSpan.FromSeconds(15), "no program of the cancelled task on the server");
+        await Task.Delay(1000, Ct);
+        Assert.Empty(TestEnv.ProcessesWithMarker(sleep));
+        Assert.All(terminals.Sessions.Where(s => s.Options.Name == "serve"), s => Assert.True(s.HasExited)); // a terminal it got, if any, ran nothing
     }
 
     [Fact]

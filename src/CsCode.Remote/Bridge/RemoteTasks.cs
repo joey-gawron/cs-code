@@ -42,15 +42,26 @@ public sealed class RemoteTaskService(ITaskService local, RemoteConnectionManage
         if (RemoteFolder(folder) is not { } remote) return await local.RunAsync(taskLabel, folder, ct).ConfigureAwait(false);
         RemoteSession session;
         TaskRunParams run;
+        Task<TaskRunParams?>? starting = null;
         try
         {
             session = await manager.WaitForSessionAsync(TimeSpan.FromSeconds(60), ct).ConfigureAwait(false);
             if (!session.Server.Capabilities.Contains(RemoteProtocol.Capabilities.Tasks))
                 return new TaskResult(taskLabel, -1, Error: $"The server on {manager.HostName} cannot run tasks (reinstall it).");
-            run = await session.Peer.InvokeAsync<TaskStartParams, TaskRunParams>(RemoteMethods.TaskStart, new TaskStartParams(taskLabel, remote), ct).ConfigureAwait(false)
-                  ?? throw new IOException("The server did not start the task.");
+            // Not cancelled with ct: once sent, the server starts the run whatever happens to the request, so its answer is still wanted.
+            starting = session.Peer.InvokeAsync<TaskStartParams, TaskRunParams>(RemoteMethods.TaskStart, new TaskStartParams(taskLabel, remote), CancellationToken.None);
+            run = await starting.WaitAsync(ct).ConfigureAwait(false) ?? throw new IOException("The server did not start the task.");
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return new TaskResult(taskLabel, -1, Cancelled: true); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Cancelled before the run's id came back: the server may have started it, and nobody would ever cancel it (its terminal would run
+            // on unseen). It is cancelled as soon as the id arrives; if the connection drops first, task/keep cancels it after the reconnect.
+            _ = starting?.ContinueWith(t =>
+            {
+                if (t.Result is { } started) manager.Session?.Peer.Fire(RemoteMethods.TaskCancel, started);
+            }, CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            return new TaskResult(taskLabel, -1, Cancelled: true);
+        }
         catch (IOException ex) { return new TaskResult(taskLabel, -1, Error: ex.Message); }
 
         // A cancel while the connection is down cannot be sent: the run is no longer claimed (task/keep) when the client reconnects, so the server
