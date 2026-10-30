@@ -42,7 +42,10 @@ public class TreeSitterGuardTests
             var (_, small, _) = await host.OpenAsync(TreeSitterViewTests.CSharp, "Small.cs");
             await TreeSitterViewTests.WaitForTreeSitter(small);
 
-            var body = string.Concat(Enumerable.Range(0, 3000).Select(i => $"public class C{i} {{ int F{i}(int a) {{ return a * {i}; }} }}\n"));
+            // The explosion is not deterministic under slicing: unsliced, this parse takes ~4 s; in the engine's 6 ms slices (each halt and
+            // resume changes the error-recovery work) 3,000 classes took 90-876 ms over 8 runs, twice under the 150 ms limit (the parse then
+            // simply completes and the test failed: "parse time 0 ms" with a finished tree), and 10,000 classes took 272-952 ms (W1b, T16).
+            var body = string.Concat(Enumerable.Range(0, 10_000).Select(i => $"public class C{i} {{ int F{i}(int a) {{ return a * {i}; }} }}\n"));
             var (_, view, _) = await host.OpenAsync(Unparsable + body, "Pathological.cs");
             var clock = System.Diagnostics.Stopwatch.StartNew();
             while (!(view.Tokens is { TreeSitterGaveUp: true } t && t.TreeSitter is null && t.Store.ValidLines > 10))

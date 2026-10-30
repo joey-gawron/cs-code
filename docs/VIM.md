@@ -96,6 +96,7 @@ document change, so the editor's features react once, not once per line.
 | `ReadClipboard(char)`, `ReadClipboardType(char)`, `WriteClipboard(char, …)` | `VimClipboard` over the shell's `IClipboardService`. `+` is the clipboard, written as the editor's Copy writes it: into the clipboard ring, with CsCode's shape metadata (linewise = whole lines, blockwise = a block, one piece per row) and the document's line ends; read back with `\n` line ends and the type when known (CsCode's own yank exactly, the editor's whole-line and box copies; other applications' text: a final newline means linewise, as in Vim). `*` is the PRIMARY selection where the platform has one (Linux X11, also under XWayland; offered lazily) and the clipboard elsewhere, as in Vim. `vim.useSystemClipboard` and `clipboard=unnamedplus` mirror the unnamed register to `+`, `clipboard=unnamed` to `*`. Reads come from a cache: both registers on window activation, `+` on editor focus, and the named one after `"+`/`"*` (the following keys wait — at most 500 ms — for the read). The older `ReadClipboard()`/`WriteClipboard(text, type)` members, which hosts without the register name implement, are the defaults of the new ones |
 | `PerformAction` | the document well, after the key (`VimShellActions`, table below) |
 | `ExecuteCommand` | `ICommandService`, after the key, fire and forget; after a navigation the cursor goes to the start of the target in Normal mode |
+| `RequestSyntaxRanges` | the document's tree-sitter tree: `EditorModalSurface.RequestSyntaxObjects` runs nvim-treesitter-textobjects' query on the syntax lane and the answer comes back as an engine call of its own (`VimIntegration.PostToEngine`); false at once for a TextMate document |
 | `GetCommentTokens`, `FormatLines`, `RequestCompletion` | the language configuration's comment tokens; the language server's range formatter (asynchronous: the result is a change of its own; without one the engine re-indents); the editor's IntelliSense (`Ctrl-N/P`) |
 | `Timer` | `ThreadingVimTimer` posting to the UI dispatcher (`timeoutlen`) |
 | `RunPendingWork` | Background-priority dispatcher callbacks of 3 ms engine time while `HasPendingWork` |
@@ -140,6 +141,18 @@ and the Neovim-blessed expectations, a 300-editor open/edit/close retention test
   (`ThreadingTests` verifies it from a worker thread). The engine starts no threads, tasks or timers; the only asynchrony is the host's `IVimTimer`
   for `timeoutlen`. No file or network I/O, nothing is awaited. `ExecuteCommand` is fire-and-forget; nothing waits for language servers.
 * Typed keys that arrive while work is pending are queued and run, in order, after it.
+* **Syntax text objects and motions** (`af if ac ic aa ia ]m [m ]M [M`) need the document's syntax tree, which lives on the editor's syntax lane:
+  `IVimHost.RequestSyntaxRanges` is asynchronous. The engine suspends the command as sliced work that waits for the host's answer instead of for
+  time (nothing blocks; `HasPendingWork` stays false meanwhile, so nothing polls), queues the keys typed meanwhile and runs them after it, in
+  order; the answer (on the UI thread) resumes the command. No answer within `VimEngine.SyntaxRequestTimeout` (3 s), or a text that changed
+  meanwhile, ends it with a message; `Ctrl-C` abandons it. The object is the count-th smallest enclosing the cursor (Visual mode: enclosing more
+  than the selection, so repeating grows it); when none encloses the cursor, the next one after it (nvim-treesitter-textobjects'
+  `lookahead`). The ranges are nvim-treesitter-textobjects' `@function`, `@class` and `@parameter` captures (`.outer` for `a`, `.inner` for `i`;
+  the queries are bundled with the grammars, docs/TREE-SITTER.md), so what an object covers per language is that project's choice (Kotlin's
+  `]m` stops at a primary constructor; its `aa` on a declared parameter takes no comma, on a call argument it does). As in Vim, a delete from
+  the indentation to a line end over several lines takes the whole lines. On a TextMate document they fail with one message (a macro stops
+  there). Inside `:normal` and `:g` nothing can wait (they run their keys to completion within one command): the real editor's answer is
+  always later, so there they fail with a message (macros, mappings and `.` are fine).
 * Big operations are cooperative: `:s` (also with `c`), `:g`, `:v`, `:sort` and their work generators yield every few milliseconds
   (`SliceBudget`, default 3 ms; the first slice runs inside the key that started it). `dG`, `:%s` and `gg=G` compute against the buffer and apply
   ONE batched `ApplyEdits`. Measured on a 100k-line buffer (unoptimised test build, one developer machine): `:%s/a/b/g` longest call 36 ms in 17 calls;
@@ -188,7 +201,8 @@ then) and turns `autoindent` on before the vimrc is applied.
 | Counts, registers | counts before and inside operators; `" 0 1-9 - a-z A-Z _ . : / % + *`, shift rules, linewise/charwise/blockwise types, `:registers` |
 | Motions | `h j k l w W b B e E ge gE 0 ^ $ g_ \| gm gM f F t T ; , % ( ) { } [[ ]] [] ][ H M L gg G {n}G {n}% + - _ <CR> <BS> <Space>`, marks, `/ ? n N * # g* g#` with counts and offsets, `gj gk g0 g$`, `gn gN`, `go`, `Ctrl-O/Ctrl-I`, `g; g,`; `o_v o_V o_CTRL-V` forcing and the exclusive/linewise rules |
 | Operators | `d c y > < = g~ gu gU g? gq gw zf` (+ doubled forms), `x X D C s S Y p P gp gP ]p [p J gJ ~ r R .`, `u Ctrl-R U`, `Ctrl-A/Ctrl-X` (decimal/hex/octal/binary, visual `g Ctrl-A`), `& g&` |
-| Text objects | `iw aw iW aW is as ip ap`, brackets, quotes, `it at`, counts, nesting, Visual extension |
+| Text objects | `iw aw iW aW is as ip ap`, brackets, quotes, `it at`, counts, nesting, Visual extension; from the syntax tree (tree-sitter documents, below): `af if` function, `ac ic` class, `aa ia` argument/parameter |
+| Syntax motions | `]m [m` next/previous function start, `]M [M` next/previous function end (counts, after operators, in Visual mode; jumps) |
 | Visual | `v V Ctrl-V gv o O`, operators, block `I A c $ r J > <` incl. ragged lines, `v_p`, `:` with `'<,'>`, `{count}v` / `{count}V` |
 | Insert | `i a I A o O gi gI`, counts, `Ctrl-W U H R{reg} O V K(digraphs) T D [ A @ E Y`, completion hook, autoindent/smartindent basics, Replace-mode backspace, `.` register, undo granularity like Vim (`Ctrl-G u`, cursor keys) |
 | Undo | undo tree: `u Ctrl-R U :undo N g- g+ :earlier :later`; the Visual area and marks are restored with undo |

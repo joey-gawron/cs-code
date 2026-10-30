@@ -338,6 +338,11 @@ public sealed partial class VimEngine
             var oap = _oap;
             oap.ResetForMotion(OpType.None, 0);
             var before = new TextPosition(_line, _col);
+            if (IsSyntaxObject(c) || IsSyntaxMotion(c))
+            {
+                StartSyntaxPlain(c, count0); // from the host's syntax tree, when its answer arrives
+                return;
+            }
             bool ok;
             if (c.Key is 'a' or 'i') ok = RunTextObject(c, count0, oap);
             else ok = RunMotion(c, count0, oap);
@@ -608,8 +613,8 @@ public sealed partial class VimEngine
                 return true;
             case 'z':
                 return true;
-            case 'c' or 'm' or 'M' or 'd' or 'D' or 'i' or 'I' or '#' or '*' or '/':
-                return true;
+            case 'c' or 'd' or 'D' or 'i' or 'I' or '#' or '*' or '/':
+                return true; // (]m [m ]M [M are motions: the syntax tree's functions)
         }
         return false;
     }

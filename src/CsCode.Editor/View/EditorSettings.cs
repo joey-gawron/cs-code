@@ -6,8 +6,9 @@ namespace CsCode.Editor.View;
 
 /// <summary>
 /// The rendering/behaviour settings of one editor view, read from <see cref="IConfigurationService"/> with per-language overrides
-/// (<c>"[csharp]": { "editor.tabSize": 2 }</c>) and <c>.editorconfig</c> on top (indent style/size win over settings, as in VS Code with the
-/// EditorConfig extension). Immutable; a settings change builds a new one and the view diffs it.
+/// (<c>"[csharp]": { "editor.tabSize": 2 }</c>, flat or nested as the settings service hands it back: every key here, the object- and array-valued
+/// ones too) and <c>.editorconfig</c> on top (indent style/size win over settings, as in VS Code with the EditorConfig extension). Immutable; a
+/// settings change builds a new one and the view diffs it.
 /// </summary>
 public sealed record EditorSettings
 {
@@ -71,13 +72,13 @@ public sealed record EditorSettings
             WordWrap = wrap is "on" or "wordWrapColumn" or "bounded",
             RenderWhitespace = G(SettingKeys.EditorRenderWhitespace, defaults.RenderWhitespace),
             LineNumbers = G("editor.lineNumbers", defaults.LineNumbers),
-            Rulers = ReadRulers(cfg.GetRaw("editor.rulers")),
+            Rulers = ReadRulers(cfg.GetRawFor("editor.rulers", languageId)),
             CursorStyle = G("editor.cursorStyle", defaults.CursorStyle),
             MouseWheelZoom = G("editor.mouseWheelZoom", defaults.MouseWheelZoom),
             BracketPairColorization = G(SettingKeys.EditorBracketPairColorization, defaults.BracketPairColorization),
             IndentGuides = G("editor.guides.indentation", defaults.IndentGuides),
             HighlightActiveLine = G("editor.renderLineHighlight", "line") is "line" or "all",
-            QuickSuggestions = ReadQuickSuggestions(cfg.GetRaw(SettingKeys.EditorQuickSuggestions)),
+            QuickSuggestions = ReadQuickSuggestions(cfg.GetRawFor(SettingKeys.EditorQuickSuggestions, languageId)),
             SuggestOnTriggerCharacters = G(SettingKeys.EditorSuggestOnTriggerCharacters, defaults.SuggestOnTriggerCharacters),
             FormatOnType = G(EditorSettingKeys.FormatOnType, defaults.FormatOnType),
             FormatOnPaste = G(EditorSettingKeys.FormatOnPaste, defaults.FormatOnPaste),

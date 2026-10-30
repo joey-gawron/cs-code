@@ -122,6 +122,46 @@ public sealed unsafe partial class SyntaxDocument
         return result;
     }
 
+    /// <summary>The query kind of the syntax text objects (nvim-treesitter-textobjects' <c>textobjects.scm</c>, bundled per grammar).</summary>
+    public const string TextObjectsQuery = "textobjects";
+
+    /// <summary>
+    /// The ranges the grammar's <c>textobjects.scm</c> captures as <paramref name="capture"/> (<c>function.outer</c>, <c>class.inner</c>,
+    /// <c>parameter.outer</c>…; Vim's <c>af</c>, <c>ic</c>, <c>aa</c>), in document order (by start, larger first), duplicates removed, at most
+    /// <see cref="MaxStructuralResults"/>. As nvim-treesitter-textobjects reads them: every node one match captures under that name belongs to ONE
+    /// range, from the first to the last (<c>"," @parameter.outer . (_) @parameter.inner @parameter.outer</c> is the argument with the comma
+    /// before it), after the pattern's <c>#offset!</c>. Null when the grammar has no textobjects query; empty without a tree.
+    /// </summary>
+    public IReadOnlyList<SyntaxSpan>? TextObjectRanges(ITextInput text, string capture)
+    {
+        ThrowIfDisposed();
+        if (Language.Query(TextObjectsQuery, out _) is not { } query) return null;
+        var result = new List<SyntaxSpan>();
+        if (_tree == IntPtr.Zero) return result;
+        var index = IndexOfCapture(query, capture);
+        if (index < 0) return result;
+        RunQuery(query, text, 0, text.Length, (in TSQueryMatch m, PatternInfo pattern) =>
+        {
+            int start = int.MaxValue, end = -1;
+            for (var k = 0; k < m.CaptureCount; k++)
+            {
+                var cap = m.Captures[k];
+                if ((int)cap.Index != index) continue;
+                var cs = (int)(TsApi.ts_node_start_byte(cap.Node) / 2);
+                var ce = (int)Math.Min(TsApi.ts_node_end_byte(cap.Node) / 2, (uint)text.Length);
+                if (pattern.Offsets is { } offsets && offsets.TryGetValue(index, out var d)) (cs, ce) = Offset(cs, ce, d);
+                start = Math.Min(start, cs);
+                end = Math.Max(end, ce);
+            }
+            if (end > start) result.Add(new SyntaxSpan(start, end, capture));
+            return result.Count < MaxStructuralResults;
+        });
+        result.Sort(static (a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : b.End.CompareTo(a.End));
+        for (var i = result.Count - 1; i > 0; i--)
+            if (result[i].Start == result[i - 1].Start && result[i].End == result[i - 1].End) result.RemoveAt(i);
+        return result;
+    }
+
     /// <summary>Kinds of <c>locals.scm</c> definitions an outline shows (variables, parameters, fields and imports are left out).</summary>
     private static readonly HashSet<string> OutlineLocalKinds = new(StringComparer.Ordinal)
     {

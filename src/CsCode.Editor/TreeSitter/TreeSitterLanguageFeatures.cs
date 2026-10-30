@@ -13,9 +13,10 @@ namespace CsCode.Editor.TreeSitter;
 /// (<see cref="ISelectionRangeProvider"/>: the enclosing nodes), folding (<see cref="IFoldingRangeProvider"/>: the grammar's <c>folds.scm</c>) and
 /// the outline/breadcrumbs (<see cref="IDocumentSymbolProvider"/>: CsCode's <c>symbols.scm</c>, the grammar's <c>tags.scm</c> or its
 /// <c>locals.scm</c>). Registered once with <see cref="DocumentSelector.All"/>, whose score (5) ranks it after any language server's providers
-/// (10), so a server that offers the feature wins; it is also SILENT while another provider of the same feature exists for the document, so
-/// consumers that merge every provider (Go to Symbol in File) never see an entry twice, and for every document tree-sitter does not colour (it
-/// answers null at once, without leaving the caller's thread): the editor's own fallbacks (indentation folding, the word/bracket expander) apply.
+/// (10), so a server that offers the feature wins; for selection and symbols it is also SILENT while another provider of the same feature exists
+/// for the document, so consumers that merge every provider (Go to Symbol in File) never see an entry twice (folding answers anyway: the editor
+/// merges folding providers by start line, VS Code's rule), and it is silent for every document tree-sitter does not colour (it answers null at
+/// once, without leaving the caller's thread): the editor's own fallbacks (indentation folding, the word/bracket expander) apply.
 ///
 /// Threading: the tree belongs to the syntax lane, so every answer is computed there (<see cref="EditorWorker.RunAsync{T}"/>) from the tree of
 /// the document's current version, waiting briefly (at most <see cref="TreeWait"/>) while a parse is still under way; the caller only awaits.
@@ -54,9 +55,12 @@ internal sealed partial class TreeSitterLanguageFeatures(TokenizationManager man
 
     // ---- folding ----
 
+    /// <summary>
+    /// Not silent while a server offers folding too: the editor merges every provider's ranges (VS Code's rule, the server's first on a shared
+    /// start line), so the tree still folds when the server answers nothing (starting, failed) and fills in what it leaves out.
+    /// </summary>
     public async ValueTask<IReadOnlyList<FoldingRange>?> ProvideFoldingRangesAsync(ITextDocument document, CancellationToken ct)
     {
-        if (Others<IFoldingRangeProvider>(document)) return null;
         return await OnTreeAsync(document, ct, (syntax, text) =>
         {
             if (syntax.FoldNodes(text) is not { } nodes) return null; // no folds.scm: the editor's indentation folding stays
@@ -158,6 +162,37 @@ internal sealed partial class TreeSitterLanguageFeatures(TokenizationManager man
         _ => SymbolKind.Variable,
     };
 
+    // ---- syntax text objects (a modal layer's af/if, ac/ic, aa/ia and ]m [m: EditorModalSurface.RequestSyntaxObjects) ----
+
+    /// <summary>
+    /// The ranges of <paramref name="capture"/> in the grammar's <c>textobjects.scm</c> for the document's version at this call. Null at once
+    /// (on the caller's thread) when tree-sitter does not parse the document; otherwise computed on the syntax lane (the caller only gets a task),
+    /// completing with null when no tree of that version arrives in time, the text changes meanwhile or the grammar has no text objects.
+    /// </summary>
+    internal Task<IReadOnlyList<TextRange>?>? TextObjectRangesAsync(ITextDocument document, string capture)
+    {
+        if (manager.SessionFor(document) is not { TreeSitterWanted: true }) return null;
+        var version = document.Version;
+        return Task.Run(async () =>
+        {
+            try
+            {
+                var ranges = await OnTreeAsync(document, CancellationToken.None, (syntax, text) =>
+                {
+                    if (text.Snapshot.Version != version) return null; // the tree of a later version: the caller's positions are stale
+                    return syntax.TextObjectRanges(text, capture) is { } spans
+                        ? (IReadOnlyList<TextRange>)spans.Select(s => ToRange(text.Snapshot, s.Start, s.End)).ToList()
+                        : null;
+                }).ConfigureAwait(false);
+                return document.Version == version ? ranges : null;
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+            {
+                return null;
+            }
+        });
+    }
+
     // ---- plumbing ----
 
     private bool Others<T>(ITextDocument document) where T : class, ILanguageProvider =>
@@ -173,43 +208,74 @@ internal sealed partial class TreeSitterLanguageFeatures(TokenizationManager man
     {
         if (manager.SessionFor(document) is not { TreeSitterWanted: true } session) return null;
         var version = document.Version;
-        var deadline = DateTime.UtcNow + TreeWait;
-        var delay = 10;
-        while (true)
+        var answered = false;
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            if (!session.TreeSitterWanted) return null;
-            EditorWorker lane;
-            try
+            var deadline = DateTime.UtcNow + TreeWait;
+            var delay = 10;
+            while (true)
             {
-                lane = manager.TreeSitter.Lane;
-            }
-            catch (ObjectDisposedException)
-            {
-                return null;
-            }
-            var remaining = deadline - DateTime.UtcNow;
-            if (remaining <= TimeSpan.Zero) return null;
-            (Outcome, T?) answer;
-            try
-            {
-                // bounded: a lane that is shutting down (or was given up after a hang) never runs the job
-                answer = await lane.RunAsync(WorkPriority.Interactive, _ =>
+                ct.ThrowIfCancellationRequested();
+                if (!session.TreeSitterWanted) return null;
+                EditorWorker lane;
+                try
                 {
-                    if (session.TreeSitter is not { } engine || !session.IsCurrentEngine(engine)) return (Outcome.NoEngine, default(T));
-                    if (engine.TreeVersion < version || engine.TreeText is not { } text) return (Outcome.NotReady, default(T));
-                    return (Outcome.Ready, compute(engine.Syntax, text));
-                }, ct).WaitAsync(remaining, ct).ConfigureAwait(false);
+                    lane = manager.TreeSitter.Lane;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return null;
+                }
+                var remaining = deadline - DateTime.UtcNow;
+                if (remaining <= TimeSpan.Zero) return null;
+                (Outcome, T?) answer;
+                try
+                {
+                    // bounded: a lane that is shutting down (or was given up after a hang) never runs the job
+                    answer = await lane.RunAsync(WorkPriority.Interactive, _ =>
+                    {
+                        if (session.TreeSitter is not { } engine || !session.IsCurrentEngine(engine)) return (Outcome.NoEngine, default(T));
+                        if (engine.TreeVersion < version || engine.TreeText is not { } text) return (Outcome.NotReady, default(T));
+                        return (Outcome.Ready, compute(engine.Syntax, text));
+                    }, ct).WaitAsync(remaining, ct).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    return null;
+                }
+                var (outcome, value) = answer;
+                if (outcome == Outcome.Ready)
+                {
+                    answered = true;
+                    return value;
+                }
+                if (DateTime.UtcNow >= deadline) return null;
+                await Task.Delay(delay, ct).ConfigureAwait(false);
+                delay = Math.Min(delay * 2, 100);
             }
-            catch (TimeoutException)
-            {
-                return null;
-            }
-            var (outcome, value) = answer;
-            if (outcome == Outcome.Ready) return value;
-            if (DateTime.UtcNow >= deadline) return null;
-            await Task.Delay(delay, ct).ConfigureAwait(false);
-            delay = Math.Min(delay * 2, 100);
+        }
+        finally
+        {
+            if (!answered) MissedTree(session, version);
+        }
+    }
+
+    /// <summary>
+    /// The request ended without the tree (too slow a first parse, a busy lane, the caller gave up): the session says so when the tree lands
+    /// (<see cref="TokenizationManager.SyntaxTreeArrived"/>), and folding asks again then instead of keeping its fallback until the next edit. A
+    /// tree that landed meanwhile is caught by the check posted to the lane behind it.
+    /// </summary>
+    private void MissedTree(TokenizationSession session, int version)
+    {
+        if (!session.TreeSitterWanted) return;
+        session.StructureMissedTree();
+        try
+        {
+            manager.TreeSitter.Lane.Post(WorkPriority.Background, null, _ => session.CheckTreeArrived(version));
+        }
+        catch (ObjectDisposedException)
+        {
+            // shutting down
         }
     }
 }

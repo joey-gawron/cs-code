@@ -118,7 +118,9 @@ Layers, lowest to highest: **registered defaults → user `settings.json` → wo
   The file is re-read inside the update, so an external edit not yet seen by the watcher is not clobbered.
 * **Errors**: a malformed file keeps the last good values; `LastError` holds the problem and `ErrorChanged` fires **once** (and with `null` when fixed).
 * **Language-scoped**: `"[csharp]": { "editor.tabSize": 2 }`; read with `config.Get<int>("editor.tabSize", "csharp", 4)`, `HasLanguageOverride`, and use
-  `e.Affects("editor.tabSize", "csharp")` on change events (`[csharp].editor.tabSize` is the affected key).
+  `e.Affects("editor.tabSize", "csharp")` on change events (`[csharp].editor.tabSize` is the affected key). `GetRaw("[csharp]")` hands the
+  section back with its dotted keys expanded (`{"editor": {"tabSize": 2}}`): a consumer that reads the section itself must read that shape
+  (the flat one too, for other configuration services); the editor does since T30 (docs/EDITOR.md §7).
 * `Properties` returns everything registered (incl. enum/description schema) for a future settings UI.
 
 Built-in defaults (all in `BuiltInSettings.All`; every key in `SettingKeys` has one):

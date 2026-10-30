@@ -110,7 +110,35 @@ public sealed class ScrollScenario(MemoryAppHost host, string bigFile) : AppScen
 {
     private readonly Uri _uri = new(bigFile);
 
-    public override Task InitializeAsync(CancellationToken ct) => EditorAsync();
+    /// <summary>
+    /// How many lines of the file have their syntax tokens (the editor's token store), when the caller can tell (the memory tests can; the
+    /// profiling host's census leaves it null and so measures the fill as well).
+    /// </summary>
+    public Func<CsCode.Editor.View.CodeEditorControl, int?>? TokenLines { get; init; }
+
+    /// <summary>
+    /// Opens the file and, with <see cref="TokenLines"/>, reads it through once, slowly enough for its syntax tokens to fill. The token store is a
+    /// cache bounded by the file's lines (and <c>IMemoryTrimmable</c>); the TextMate chain follows the viewport with a few thousand lines of
+    /// read-ahead, so fast passes fill it only ~1,200 lines a pass and a 20,000-line file takes ~15 passes to reach its plateau (a 40-pass census
+    /// after the T36 fix: 26.3 MB live, growing to 28.9 MB at pass 14, then flat). Filled here, the soak measures what scrolling itself keeps,
+    /// which is what it is for.
+    /// </summary>
+    public override async Task InitializeAsync(CancellationToken ct)
+    {
+        var editor = await EditorAsync();
+        if (TokenLines is not { } tokenLines) return;
+        var view = Host.Shell.Well.EditorTabs.FirstOrDefault(t => t.Uri == _uri)?.LiveView as CsCode.Editor.View.CodeEditorControl;
+        if (view is null || tokenLines(view) is null) return; // no grammar: nothing to fill
+        var lines = editor.Document.LineCount;
+        var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(2);
+        for (var line = 1; line < lines && DateTime.UtcNow < deadline; line += 1000)
+        {
+            editor.ScrollToLine(line);
+            while ((tokenLines(view) ?? lines) < Math.Min(lines, line + 1000) && DateTime.UtcNow < deadline) await MemoryAppHost.SettleAsync(2);
+        }
+        editor.ScrollToLine(1);
+        await MemoryAppHost.SettleAsync(5);
+    }
 
     /// <summary>The big file's editor, (re)opened when another scenario closed it in the meantime.</summary>
     private async Task<AvaloniaEdit.TextEditor> EditorAsync()

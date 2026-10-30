@@ -418,6 +418,17 @@ public sealed class EditorModalSurface : IDisposable
     public int TabSize => _v.Settings.TabSize;
     public bool InsertSpaces => _v.Settings.InsertSpaces;
 
+    /// <summary>
+    /// The ranges the document's syntax tree captures as <paramref name="capture"/> in nvim-treesitter-textobjects' <c>textobjects.scm</c>
+    /// (<c>function.outer</c>, <c>class.inner</c>, <c>parameter.outer</c>…): a modal layer's syntax text objects. Null at once (on the UI
+    /// thread, without leaving it) when the document has no tree-sitter tree (TextMate colours it). Otherwise a task computed on the syntax lane
+    /// from the tree of the document's version at this call, which completes off the UI thread (the caller hops back itself; nothing waits for
+    /// it) with the ranges in document order, or with null when no tree of that version arrived in time, the text changed meanwhile, or the
+    /// grammar has no text objects.
+    /// </summary>
+    public Task<IReadOnlyList<TextRange>?>? RequestSyntaxObjects(string capture) =>
+        _disposed ? null : _v.Factory.Tokens.Structure.TextObjectRangesAsync(_v.Document, capture);
+
     /// <summary>True when a formatter is registered for the document's language.</summary>
     public bool CanFormat => !_v.Document.IsLargeFile && _v.Services.Features.GetProviders<IDocumentFormattingProvider>(_v.Document).Count > 0;
 

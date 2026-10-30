@@ -216,8 +216,9 @@ internal sealed class EditorVimBuffer : IVimBuffer, IDisposable
             if (label == _groupLabel) return;
             CloseGroup(); // a second step within one key (typeahead): a group of its own
         }
-        var continued = label >= 0 && Ledger.TopLabel == label;
-        _doc.BeginUndoGroup(continued);
+        // A save since the step's last group makes this one a group of its own (the document never continues a step across a save, T50): the
+        // ledger then counts one more group for the step, and u still undoes all of them.
+        var continued = _doc.BeginUndoGroup(label >= 0 && Ledger.TopLabel == label);
         _groupOpen = true;
         _groupContinued = continued;
         _groupChanged = false;

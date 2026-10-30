@@ -134,12 +134,16 @@ public sealed partial class EditorDocument
         _heldTopLevelUpdate = false;
     }
 
-    /// <summary>The text was saved (UI thread, the save's version is still current).</summary>
+    /// <summary>
+    /// The text was saved (UI thread, the save's version is still current). The next typed run starts a step of its own: outside a held group
+    /// <see cref="BeginUndoGroup"/> sees the marker on top; inside one its own history stops continuing here (as a save outside it does).
+    /// </summary>
     private void MarkSaved()
     {
         _text.UndoStack.MarkAsOriginalFile();
         if (_held is not { } held) return;
         held.SavedVersion = Version;
+        held.CanContinue = false;
         UpdateDirty(false); // the stack may think it was clean all along (it is not recomputed while the group is open): no event comes
     }
 

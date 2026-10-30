@@ -150,4 +150,37 @@ public sealed class InMemoryVimHost : IVimHost
     public VimCommentTokens GetCommentTokens() => CommentTokens;
     public bool FormatLines(int startLine, int endLine) => Formatter?.Invoke(startLine, endLine) ?? false;
     public void RequestCompletion(VimCompletionKind kind) => CompletionRequests.Add(kind);
+
+    // ---------------------------------------------------------------- syntax objects
+
+    /// <summary>The syntax ranges this host answers with (kind, inner); null = the buffer has no syntax tree.</summary>
+    public Func<VimSyntaxObjectKind, bool, IReadOnlyList<VimSyntaxRange>?>? SyntaxRanges { get; set; }
+
+    /// <summary>When true, answers wait in <see cref="PendingSyntaxAnswers"/> until <see cref="AnswerSyntaxRequests"/> (an asynchronous host).</summary>
+    public bool DeferSyntaxAnswers { get; set; }
+
+    /// <summary>Requests made (kind, inner), in order.</summary>
+    public List<(VimSyntaxObjectKind Kind, bool Inner)> SyntaxRequests { get; } = [];
+
+    public int PendingSyntaxAnswers => _syntaxAnswers.Count;
+
+    private readonly List<Action> _syntaxAnswers = [];
+
+    public bool RequestSyntaxRanges(VimSyntaxObjectKind kind, bool inner, Action<IReadOnlyList<VimSyntaxRange>?> answer)
+    {
+        if (SyntaxRanges is not { } provider) return false;
+        SyntaxRequests.Add((kind, inner));
+        var ranges = provider(kind, inner);
+        if (DeferSyntaxAnswers) _syntaxAnswers.Add(() => answer(ranges));
+        else answer(ranges);
+        return true;
+    }
+
+    /// <summary>Delivers the deferred answers (on the caller's thread, as a host's posted callback would).</summary>
+    public void AnswerSyntaxRequests()
+    {
+        var answers = _syntaxAnswers.ToArray();
+        _syntaxAnswers.Clear();
+        foreach (var a in answers) a();
+    }
 }

@@ -137,14 +137,14 @@ Numbers refer to the brief's MUST list.
 9. **IntelliSense UI** — completion (virtualised list, fuzzy filter/sort on the worker, kind badges, documentation panel, commit characters, `isIncomplete` re-query, `resolve` on selection, `textEdit`/`additionalTextEdits`, snippets, quick suggestions, trigger characters, Ctrl+Space, merge of several providers);
    hover (300 ms dwell, Markdown with TextMate-coloured fences, diagnostics + Quick Fix link, debugger value while stopped, hidden text of a collapsed region); signature help (trigger/retrigger characters, bold active parameter, ↑/↓ overloads); squiggles in four severities + faded
    "unnecessary" code; lightbulb + Ctrl+. via `IWindowService` quick pick, edits through `INavigationService.ApplyWorkspaceEditAsync`, commands through `ICommandService`, `source.organizeImports`; go to definition (F12; Ctrl+Click underlines the symbol), references, rename (prepare → input box → apply);
-   document highlights (provider, else word occurrences); folding (indentation + language-configuration markers + `IFoldingRangeProvider`, +/- glyphs, collapsed-region hover); bracket matching + setting-gated pair colourisation. Everything is cancellable, debounced, latest-wins, and **never shows a result for older text**.
+   document highlights (provider, else word occurrences); folding (every `IFoldingRangeProvider` at once, each with its own 2 s deadline, merged as VS Code merges them — ranked, one range per start line, nesting kept — plus the language configuration's `#region` markers; indentation + markers only when no provider has anything; a tree-sitter document whose tree arrives after the first request is folded again when it lands; +/- glyphs, collapsed-region hover); bracket matching + setting-gated pair colourisation. Everything is cancellable, debounced, latest-wins, and **never shows a result for older text**.
 10. **Debug integration** (all null-safe without a debugger) — breakpoint glyph margin (click toggles; right-click: condition / hit count / logpoint / enable / remove; red filled = verified, hollow grey = disabled or unverified; conditional and logpoint shapes; tooltips with the adapter's message; ghost dot on hover),
     execution arrow + line highlight with auto-reveal, breakpoints that follow edits, hover-evaluate (`EvaluateAsync(expr, frameId, "hover")`).
 11. `AddCsCodeEditor`, this document.
 
 12. **Clipboard and the right-click menu** (clipboard wave, `docs/briefs/clipboard-and-context-menus.md`): see §7a.
 
-SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
+SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version and per set of symbol providers: a language server that starts after the file was opened is asked at the next request, without an edit), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
 ## 4. Threading rules and how they are verified
 
@@ -174,7 +174,17 @@ AvaloniaEdit 12.0.0 (`Avalonia.AvaloniaEdit`):
 * A `TextEditor` is **inert without its theme** (`avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml`): no template, no TextView, no handlers. `EditorStyles.Ensure()` adds it to the application's styles on first use. (A "plain editor" benchmark without the theme measures nothing.)
 * `TextDocument` is single-thread-owned (`SetOwnerThread`). A document can be *built* on a worker and handed to the UI thread, which is how a 50 MB file opens without freezing the UI. `CreateSnapshot()` is a cheap rope clone; wrapping it in a `RopeTextSource` **without** the version object avoids retaining the whole edit history through the version chain.
 * Events: `Changing` runs before the mutation (use it to express ranges against the previous state), `Changed` after, `UpdateFinished` once per outermost update group. `NewLineFinder` recognises only `\r`, `\n`, `\r\n` (same as Core).
-* `UndoStack`: `IsOriginalFile`/`MarkAsOriginalFile` give dirty tracking; `StartContinuedUndoGroup` lets a typing burst be one step.
+* `UndoStack`: `IsOriginalFile`/`MarkAsOriginalFile` give dirty tracking; `StartContinuedUndoGroup` lets a typing burst be one step. **Its saved-marker
+  arithmetic assumes the step a continued group joins came after the marker**: continuing the step the file was saved after reported the document
+  clean for different text (T50: type, save, type at the same caret, close without a prompt, edit lost). `EditorDocument.BeginUndoGroup` therefore
+  never continues across a save (VS Code also ends the undo stop at a save) and returns whether it continued, so a modal layer that labels its steps
+  (Vim: an Insert session across a save is two groups of one Vim step, still one `u`) counts the extra group; the clipboard ring's cycle goes
+  through it too. Inside a held group (macro playback) a save ends the typed run as well.
+* **The folding margin keeps every marker it ever made** (T36): on each visual-line change `FoldingMargin` makes a `FoldingMarginMarker` per
+  visible fold and removes the old ones from its visual children, but stays their logical — and so property-inheritance — parent, whose
+  inheritance-children list holds them with their visual lines, text lines and glyph runs: scrolling a 20k-line file kept ~3 MB per end-to-end
+  pass until the tab closed. `FoldingFeature` replaces the installed margin with `DetachingFoldingMargin`, which detaches the markers it replaces
+  (`FoldingMarginLeakTests`; the memory soak `AppSoakTests.Scrolling_a_twenty_thousand_line_file`).
 * **The undo history pins the text area.** Each edit pushes a `RestoreCaretAndSelectionUndoAction` that keeps its `TextArea` weakly but its `Selection` object strongly, and `Selection` holds the `TextArea`. A document that outlives a view therefore retains the whole destroyed view
   (renderers, visual lines, popups) until the entry scrolls off the undo limit. `UndoStackScrubber` clears those selections for the disposed view's entries (reflection against the 12.0.0 layout; a no-op if the layout differs). Found with `RetentionPath` (below).
 * `TextEditor.ScrollToVerticalOffset` does nothing for absolute positions on a fresh view; restoring a scroll offset goes through `((IScrollable)TextArea).Offset`, re-applied on `LayoutUpdated` until the extent exists.
@@ -205,7 +215,11 @@ Debug build, shared 22-core Linux machine; ranges are the spread of repeated run
 
 ## 7. Settings, commands, large files
 
-**Settings read live** (`IConfigurationService.Changed`; per-language `"[lang]": {…}` overrides through `GetRaw`; `.editorconfig` indent style/size win over settings as in VS Code):
+**Settings read live** (`IConfigurationService.Changed`; per-language `"[lang]": {…}` overrides for every key below, read in each shape a section
+comes in — dotted keys as written, `{"editor.tabSize": 2}`, the nested form the Platform settings service hands back, `{"editor": {"tabSize": 2}}`,
+or a mix (T30: only the flat form was read, so in the real app every per-language editor setting was ignored); a wrongly typed override falls
+back to the global value; `files.*` and `editor.formatOnSave` per language at save; the size limits are global; `.editorconfig` indent style/size
+win over settings as in VS Code):
 `editor.fontFamily`, `editor.fontSize`, `editor.lineHeightFactor`, `editor.tabSize`, `editor.insertSpaces`, `editor.wordWrap` (on/off), `editor.renderWhitespace` (`boundary` is treated as `all`), `editor.lineNumbers` (on/off), `editor.rulers`, `editor.mouseWheelZoom`, `editor.guides.indentation`,
 `editor.renderLineHighlight`, `editor.bracketPairColorization.enabled`, `editor.matchBrackets`, `editor.occurrencesHighlight`, `editor.folding`, `editor.quickSuggestions`, `editor.quickSuggestionsDelay`, `editor.suggestOnTriggerCharacters`, `editor.autoClosingBrackets/Quotes`, `editor.autoSurround`,
 `editor.formatOnSave/OnType/OnPaste`, `editor.emptySelectionClipboard`, `editor.selectionClipboard`, `editor.autoIndentOnPaste`, `editor.autoIndent`, `editor.hover.delay`, `editor.inlayHints.enabled`, `workbench.colorTheme`, `files.encoding`, `files.eol`, `files.insertFinalNewline`, `files.trimFinalNewlines`, `files.trimTrailingWhitespace`, `files.associations`, and the module's own `cscode.editor.undoLimit` (default 1000 groups),

@@ -74,5 +74,11 @@ public enum VimEditorAction
 
 public readonly record struct VimActionArgs(string? Argument = null, bool Bang = false, int? Count = null);
 
+/// <summary>The syntax objects of <see cref="IVimHost.RequestSyntaxRanges"/>: <c>f</c>unction, <c>c</c>lass and <c>a</c>rgument/parameter.</summary>
+public enum VimSyntaxObjectKind { Function, Class, Parameter }
+
+/// <summary>One syntax object of the buffer: [<paramref name="Start"/>, <paramref name="End"/>), the end exclusive.</summary>
+public readonly record struct VimSyntaxRange(Core.Text.TextPosition Start, Core.Text.TextPosition End);
+
 /// <summary>Comment delimiters of the buffer's language, for the built-in commentary emulation.</summary>
 public readonly record struct VimCommentTokens(string? Line, string? BlockOpen, string? BlockClose);

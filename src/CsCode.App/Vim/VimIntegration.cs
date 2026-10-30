@@ -404,6 +404,19 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         if (!_disposed) action();
     });
 
+    /// <summary>
+    /// Any thread: runs <paramref name="action"/> on the UI thread as an engine call of <paramref name="v"/> (a host's late answer, e.g. the syntax
+    /// ranges), unless the view is gone by then.
+    /// </summary>
+    internal void PostToEngine(VimView v, Action action) => _ui.Post(() =>
+    {
+        if (!_disposed && !v.IsDisposed) Run(v, () =>
+        {
+            action();
+            return VimKeyResult.Handled;
+        });
+    });
+
     /// <summary>The editor's tab settings are the source of truth (as in VSCodeVim); <c>:set ts</c> lasts until another view takes the keys.</summary>
     private void SyncOptions(VimView v)
     {

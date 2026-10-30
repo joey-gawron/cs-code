@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds CsCode's tree-sitter bundle from the pinned sources (tools/treesitter/manifest.json, downloaded and verified by fetch-grammars.sh):
-# the runtime library, one shared library per grammar, nvim-treesitter's queries, the licences and a NOTICE, plus bundle.json (what was
+# the runtime library, one shared library per grammar, nvim-treesitter's queries and nvim-treesitter-textobjects' textobjects.scm (Vim's syntax
+# text objects), the licences and a NOTICE, plus bundle.json (what was
 # built, from which commit, each file's SHA-256 and grammar ABI) that the app checks before it loads anything (docs/TREE-SITTER.md).
 #
 #   tools/treesitter/build-grammars.sh [--target RID] [--out DIR] [--dir DOWNLOADS] [--jobs N]
@@ -93,6 +94,7 @@ unpack() { # <jq path>
 }
 unpack .runtime
 unpack .queries
+unpack .textobjects
 count=$(jq '.sources | length' "$manifest")
 for ((i = 0; i < count; i++)); do unpack ".sources[$i]"; done
 
@@ -139,6 +141,17 @@ for name in $(jq -r '.grammars[].name' "$manifest"); do
     [ -f "$tmp/grammars/queries/$name/highlights.scm" ] || { echo "build-grammars: no highlights.scm for $name" >&2; exit 1; }
 done
 
+# 5a. nvim-treesitter-textobjects' textobjects.scm for every grammar (and query-only name) it has one for: Vim's af/if, ac/ic, aa/ia, ]m [m
+to="$work/nvim-treesitter-textobjects/queries"
+textobjects=0
+for name in $(jq -r '.grammars[].name, .queryOnly[]' "$manifest"); do
+    [ -f "$to/$name/textobjects.scm" ] || continue
+    [ -f "$tmp/grammars/queries/$name/textobjects.scm" ] && { echo "build-grammars: $name already has a textobjects.scm" >&2; exit 1; }
+    cp "$to/$name/textobjects.scm" "$tmp/grammars/queries/$name/"
+    textobjects=$((textobjects + 1))
+done
+echo "build-grammars: textobjects queries for $textobjects names"
+
 # 5b. the grammar's own tags.scm (definitions for the outline when no language server runs), as its tree-sitter.json lists them; a path into
 #     node_modules/tree-sitter-X/ is that grammar's source here (TypeScript's tags = its own + JavaScript's). nvim-treesitter ships no tags.
 jq -r '.grammars[] | "\(.name) \(.source)"' "$manifest" | while read -r name source; do
@@ -165,12 +178,14 @@ grammars_json=$(for name in $(jq -r '.grammars[].name' "$manifest"); do
         --arg f "grammars/$name.$ext" --arg h "$(sha256sum "$tmp/grammars/$name.$ext" | cut -d' ' -f1)" --argjson a "$abi" \
         --argjson z "$(wc -c <"$tmp/grammars/$name.$ext" | tr -d ' ')" '{name: $n, source: $s, file: $f, abi: $a, size: $z, sha256: $h}'
 done | jq -s .)
-sources_json=$(jq '[.runtime, .queries] + .sources | map({name, url, revision, commit, license})' "$manifest")
+sources_json=$(jq '[.runtime, .queries, .textobjects] + .sources | map({name, url, revision, commit, license})' "$manifest")
 jq -n --arg t "$target" --arg rf "lib/$runtime_file" --arg rh "$(sha256sum "$tmp/lib/$runtime_file" | cut -d' ' -f1)" \
     --arg rv "$(jq -r .runtime.revision "$manifest")" --arg rc "$(jq -r .runtime.commit "$manifest")" --arg qc "$(jq -r .queries.commit "$manifest")" \
+    --arg tc "$(jq -r .textobjects.commit "$manifest")" \
     --arg cc "$($CC --version 2>/dev/null | head -n1)" --argjson g "$grammars_json" --argjson s "$sources_json" \
     '{format: 1, target: $t, compiler: $cc, abi: {min: 13, max: 15},
       runtime: {version: $rv, commit: $rc, file: $rf, sha256: $rh}, queries: {source: "nvim-treesitter", commit: $qc},
+      textobjects: {source: "nvim-treesitter-textobjects", commit: $tc},
       grammars: $g, sources: $s}' >"$tmp/bundle.json"
 cp "$here/NOTICE" "$tmp/NOTICE"
 

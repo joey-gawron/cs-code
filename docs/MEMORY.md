@@ -482,7 +482,11 @@ Measured here, owned elsewhere — for the end pass (nothing below was changed o
    still children of the open editor's `FoldingMargin` (root: `TextArea.LeftMargins` → `FoldingMargin` → marker), and with them +2,749 visual
    lines' drawing visuals, text lines and glyph runs (`VisualLineDrawingVisual`, `TextLineImpl`, `GlyphRun` ×11k, `SKTextBlob` ×9.6k). The
    folding margin adds markers on each visual-line change without removing the old ones. The most important finding of this work: a user who
-   scrolls a big file for an hour grows by hundreds of megabytes until the tab is closed.
+   scrolls a big file for an hour grows by hundreds of megabytes until the tab is closed. **Fixed (T36, W1b):** the removed markers keep the
+   margin as their logical, and so property-inheritance, parent, whose inheritance-children list held them; the editor's own margin
+   (`FoldingFeature.DetachingFoldingMargin`) detaches them. After the fix a 40-pass census grows 26.3 → 28.9 MB over the first 14 passes and is
+   flat after (the file's syntax-token store filling a few thousand lines per pass: a cache bounded by the file, `IMemoryTrimmable`), against
+   30.5 → 85.8 MB over 16 before; the soak test fills that cache before measuring and passes (live heap 10 ± 11 KB/iteration at load 5).
 9. The language-feature registry soak shows ~24 B/iteration of live-heap growth in 400 fast iterations (inside the 64 B threshold, cause not
    identified; likely run-time warm-up) — the long variant (`CSCODE_SOAK=1`) decides.
 

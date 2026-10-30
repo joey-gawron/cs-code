@@ -87,8 +87,9 @@ public sealed class ShellStatusItems : IDisposable
         }
         var caret = _nav.ActiveCaret ?? TextPosition.Zero;
         Put(new StatusBarItemModel("editor.position", $"Ln {caret.Line + 1}, Col {caret.Character + 1}", "Go to Line/Column", "workbench.action.gotoLine", StatusBarAlignment.Right, 100));
-        var tab = _config?.Get(SettingKeys.EditorTabSize, 4) is > 0 and var configured ? configured : 4;
-        var spaces = _config?.Get(SettingKeys.EditorInsertSpaces, true) ?? true;
+        // the document's language section first (T30: "[csharp]": { "editor.tabSize": 2 }), as the editor reads it
+        var tab = _config?.Get(SettingKeys.EditorTabSize, doc.LanguageId, 4) is > 0 and var configured ? configured : 4;
+        var spaces = _config?.Get(SettingKeys.EditorInsertSpaces, doc.LanguageId, true) ?? true;
         Put(new StatusBarItemModel("editor.indent", $"{(spaces ? "Spaces" : "Tab Size")}: {tab}", "Select Indentation", null, StatusBarAlignment.Right, 90));
         Put(new StatusBarItemModel("editor.encoding", doc.EncodingName.ToUpperInvariant(), "Select Encoding", null, StatusBarAlignment.Right, 80));
         Put(new StatusBarItemModel("editor.eol", doc.EndOfLine switch { "\r\n" => "CRLF", "\r" => "CR", _ => "LF" }, "Select End of Line Sequence", null, StatusBarAlignment.Right, 70));

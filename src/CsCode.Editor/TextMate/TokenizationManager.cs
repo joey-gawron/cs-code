@@ -40,7 +40,8 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
                 OnEngineSettingChanged();
         }));
         // Expand Selection, folding and the outline from the tree, for documents tree-sitter colours (a language server's providers rank first)
-        _subscriptions.Add(services.Features.Register(Core.Text.DocumentSelector.All, new TreeSitterLanguageFeatures(this, services.Features), "tree-sitter"));
+        Structure = new TreeSitterLanguageFeatures(this, services.Features);
+        _subscriptions.Add(services.Features.Register(Core.Text.DocumentSelector.All, Structure, "tree-sitter"));
         if (services.Commands is { } commands && !commands.Has(ClearQuarantineCommand))
             _subscriptions.Add(commands.Register(ClearQuarantineCommand, _ =>
             {
@@ -62,6 +63,9 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
 
     /// <summary>The tree-sitter engine's shared state (<c>editor.syntaxEngine</c>, its syntax lane, the isolation).</summary>
     internal TreeSitterService TreeSitter { get; }
+
+    /// <summary>The structural features from the tree (registered as providers) and the modal layer's syntax text objects.</summary>
+    internal TreeSitterLanguageFeatures Structure { get; }
 
     public int SessionCount
     {
@@ -152,6 +156,20 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
     /// quarantine): a view without a tokenisation session asks again (<c>CodeEditorControl</c>).
     /// </summary>
     internal IEventSource<bool> GrammarAvailabilityChanged => _availability;
+
+    private readonly Emitter<EditorDocument> _treeArrived = new();
+
+    /// <summary>
+    /// Fires on the UI thread when a document's syntax tree arrived after a structural request (folding, the outline, Expand Selection) gave up
+    /// waiting for it, e.g. the first parse of a big file: those features ask again instead of keeping their fallback until the next edit.
+    /// </summary>
+    internal IEventSource<EditorDocument> SyntaxTreeArrived => _treeArrived;
+
+    /// <summary>Any thread (the syntax lane): see <see cref="SyntaxTreeArrived"/>.</summary>
+    internal void NotifySyntaxTreeArrived(EditorDocument document) => Ui.Post(() =>
+    {
+        if (!_disposed) _treeArrived.Fire(document);
+    });
 
     // ---- IMemoryTrimmable ----
 

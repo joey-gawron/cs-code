@@ -108,7 +108,7 @@ public sealed partial class VimEngine
     /// <summary>After the single Normal command that followed Insert-mode Ctrl-O completes, go back to Insert mode.</summary>
     private void MaybeResumeInsert()
     {
-        if (_mode == VimMode.InsertNormal && _insert is not null && _pend.Count == 0 && _cmdline is null && !VisualActive && !_searchPendingOp && !_opPendingShown)
+        if (_mode == VimMode.InsertNormal && _insert is not null && _pend.Count == 0 && _cmdline is null && !VisualActive && !_searchPendingOp && !_opPendingShown && !AwaitingHost)
             ResumeInsert();
     }
 
@@ -376,7 +376,7 @@ public sealed partial class VimEngine
             case Keys.CR or Keys.BS or 8 or Keys.Up or Keys.Down or Keys.Left or Keys.Right or Keys.Home or Keys.End or Keys.Delete or Keys.NL: return true;
             case 14 or 16 or 10: return true; // ^N ^P ^J
             case 'g': return m.Key2 is 'g' or '_' or 'j' or 'k' or '0' or '^' or '$' or 'm' or 'M' or 'e' or 'E' or 'o' or '\'' or '`' or 'n' or 'N' or '*' or '#' or 'D' or 'd';
-            case '[' or ']': return m.Key2 is '[' or ']' or '(' or ')' or '{' or '}' or '\'' or '`';
+            case '[' or ']': return m.Key2 is '[' or ']' or '(' or ')' or '{' or '}' or '\'' or '`' or 'm' or 'M';
         }
         return false;
     }

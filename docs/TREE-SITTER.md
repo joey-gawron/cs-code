@@ -48,21 +48,26 @@ explodes (evaluation §1, B1c); the give-up guard (§4) protects users who opt i
 
 **Pinned manifest** — `tools/treesitter/manifest.json`: the runtime (tree-sitter v0.26.11), nvim-treesitter at commit `1a4f47b0` (its
 `lua/nvim-treesitter/parsers.lua` pins every grammar revision; its `runtime/queries` are the queries) and 38 grammar repositories at exactly
-those revisions; for each: URL (github.com only), revision, the commit id, the SHA-256 and size of the GitHub source archive, the licence
-(SPDX) and licence file; then the 42 grammars built from them (name, source, sub-directory, role: auto / opt-in / injection). Licences: MIT,
-except tree-sitter-elixir, tree-sitter-erlang, tree-sitter-hcl and nvim-treesitter (Apache-2.0). No GPL/EUPL/MPL source is used.
+those revisions, and nvim-treesitter-textobjects at commit `5c7b0263` (the head of its `main` branch, which follows nvim-treesitter's `main`,
+before the nvim-treesitter pin: its `queries/<lang>/textobjects.scm` are Vim's syntax text objects, §5); for each: URL (github.com only),
+revision, the commit id, the SHA-256 and size of the GitHub source archive (GitHub publishes no digest: the SHA-256 is recorded at the first
+download and the pinned commit is checked against the archive's pax header), the licence (SPDX) and licence file; then the 42 grammars built
+from them (name, source, sub-directory, role: auto / opt-in / injection). Licences: MIT, except tree-sitter-elixir, tree-sitter-erlang,
+tree-sitter-hcl, nvim-treesitter and nvim-treesitter-textobjects (Apache-2.0). No GPL/EUPL/MPL source is used.
 
 **Fetch** — `tools/treesitter/fetch-grammars.sh` downloads each archive (`<url>/archive/<revision>.tar.gz`) into its own new directory
 `<main checkout>/.scratch/downloads/<name>/<revision>/` (git-ignored, shared by the worktrees; `--dir` or `CSCODE_DOWNLOADS` to change), and
 checks the size, the SHA-256 and the commit id git wrote into the archive's pax header (so a moved tag or a swapped archive is refused).
 `--offline` verifies without downloading, `--only NAME` checks one source, `--pin` records the digests of entries that have none (maintainers,
-when a revision changes: clear the entry's `sha256`, run, review the licence guess and the diff). 40 archives, 20.1 MB in all.
+when a revision changes: clear the entry's `sha256`, run, review the licence guess and the diff). 41 archives, 20.1 MB in all
+(nvim-treesitter-textobjects: 52,907 bytes, SHA-256 `703e09b80b1c6d1ac0d08e9c3caece95079fdaf2ba6a21be625ed23ea47b30d8`).
 
 **Build** — `tools/treesitter/build-grammars.sh [--target RID] [--out DIR] [--jobs N]` verifies the downloads (fetching what is missing),
 unpacks each into its own directory, refuses a licence outside MIT/Apache-2.0/ISC/BSD/0BSD/CC0 or a `tree-sitter.json` that declares another
 licence than the manifest, compiles the runtime (`lib/src/lib.c` with the flags of tree-sitter's Makefile) and each grammar
 (`parser.c` + `scanner.c`, `-O2 -std=c11 -fPIC`, stripped), copies nvim-treesitter's queries (plus `tags.scm` from the grammar projects that
-have one, as their `tree-sitter.json` lists them) and writes `bundle.json`, `NOTICE` and `licenses/<source>.txt`. Nothing downloaded is executed;
+have one, as their `tree-sitter.json` lists them, and nvim-treesitter-textobjects' `textobjects.scm` for the 35 names that have one) and
+writes `bundle.json`, `NOTICE` and `licenses/<source>.txt`. Nothing downloaded is executed;
 the output appears atomically (`<out>.tmp` renamed). Default output: `artifacts/tree-sitter/<rid>/` (git-ignored). linux-x64 here: 12 s
 with 6 jobs, 47 MB (grammars 46.8 MB — Kotlin, C++, C# 5.3–5.8 MB each; OCaml, Scala, Haskell 3.9–4.8 MB; the runtime 224 KB). Other targets:
 `linux-arm64` (`CC=aarch64-linux-gnu-gcc`), `win-x64` (`CC=x86_64-w64-mingw32-gcc`, `.dll`), `osx-x64`/`osx-arm64` (`CC="clang -target … -isysroot
@@ -140,8 +145,9 @@ crash loop. Revisit if user-supplied grammars are ever loaded (unvetted native c
 
 `SyntaxDocument.Structure.cs` (engine) and `TreeSitterLanguageFeatures` (editor), registered once in the shared `ILanguageFeatureRegistry`
 with `DocumentSelector.All`: score 5, below any language server's providers (score 10), so **a server that offers a feature wins**; the
-tree's provider is also **silent while another provider of the same feature exists** (Go to Symbol merges all providers: nothing appears
-twice) and for every document tree-sitter does not colour (answered at once, on the caller's thread). Answers are computed on the syntax lane
+tree's selection and symbol providers are also **silent while another provider of the same feature exists** (Go to Symbol merges all
+providers: nothing appears twice; folding answers anyway, below) and every provider is silent for a document tree-sitter does not colour
+(answered at once, on the caller's thread). Answers are computed on the syntax lane
 from the tree of the document's current version, waiting up to 2 s for a parse in progress.
 
 * **Expand/Shrink Selection** (`editor.action.smartSelect.expand/shrink`, `ISelectionRangeProvider`): the named nodes that contain the
@@ -150,7 +156,16 @@ from the tree of the document's current version, waiting up to 2 s for a parse i
 * **Folding** (`IFoldingRangeProvider`): the grammar's `folds.scm` (nvim-treesitter; `@fold`, a quantified capture such as `(use_declaration)+`
   is one fold), VS Code style: the first line stays, trailing blank lines are left out, a last line that is only a closer (`}`, `)`, `end…`)
   stays visible; one fold per start line; comment and import kinds. Grammars without `folds.scm` (rst, graphql, asm, nasm, csv) keep the
-  indentation folding. Region markers (`#region`) are not merged into tree folds.
+  indentation folding. The editor merges every folding provider as VS Code does (T32: ranked, one range per start line, the server's first)
+  with the language's region markers, so the tree's folds fill in what a server leaves out and fold the document while the server answers
+  nothing. A request that gives up waiting for the tree (a first parse over 2 s) leaves a mark on the document's session; when the next tree
+  lands the manager raises `SyntaxTreeArrived` and folding (and the breadcrumbs' cache) ask again, without an edit.
+* **Vim text objects and motions** (`af if ac ic aa ia ]m [m ]M [M`, docs/VIM.md): `SyntaxDocument.TextObjectRanges` runs the bundled
+  `textobjects.scm` and returns the ranges of one capture (`function.outer`, `class.inner`, `parameter.outer`…) as nvim-treesitter-textobjects
+  reads them — every node one match captures under that name is one range, from the first to the last, after `#offset!` (so `aa` takes the
+  comma). `EditorModalSurface.RequestSyntaxObjects` (null at once without a tree) computes them on the syntax lane for the document's version
+  at the call and completes off the UI thread (null when the text changed meanwhile); the Vim host hands them to the engine as an engine call
+  of its own.
 * **Outline / breadcrumbs** (`IDocumentSymbolProvider`): from the first query the grammar has of CsCode's own `symbols.scm` (embedded,
   `src/CsCode.Editor.TreeSitter/OwnQueries/<grammar>/symbols.scm`: Markdown headings by section, rst titles, TOML tables and keys, YAML and
   JSON keys, GraphQL types/fields/operations, HCL/Terraform blocks with their labels, CMake functions/macros, Erlang module/functions/records,
@@ -200,14 +215,14 @@ Run: `dotnet test tests/CsCode.Editor.Tests --filter "FullyQualifiedName~TreeSit
 
 ## 8. Limits and what is not done
 
-* **Vim text objects** (`af`/`if`, `ac`/`ic`, `aa`/`ia`) are not built: they need an asynchronous host call from the Vim engine (`IVimHost`,
-  whose module another builder is changing in this wave; the trees live on the syntax lane) and the nvim-treesitter-textobjects queries
-  (another download). They fit on `SyntaxDocument.EnclosingNodes` and a `textobjects` query through `LanguageBundle.Query`.
 * Sticky scroll is off by default (VS Code turns it on) and its pinned lines are not syntax-coloured.
 * Structural features use only the host tree: inside an injection (a Markdown code fence, a Vue `<script>`) selection and outline see the host's
   node for the whole block.
-* Folds from the tree replace indentation and region markers for that document; a first parse slower than 2 s leaves indentation folds until
-  the next edit.
+* Folds from the tree replace indentation folding for that document (region markers are merged in, as are a language server's folds, the
+  server's first on a shared start line); a first parse slower than the 2 s wait folds by indentation until the tree lands, then by the tree.
+* Vim's syntax text objects use nvim-treesitter-textobjects' queries as they are: 35 of the bundle's names have one (not asm, csv, erlang,
+  graphql, jsdoc, markdown_inline, ocaml_interface, proto, regex); the objects each query defines (e.g. TOML has only parameters) are that
+  project's.
 * Out-of-process parsing: not done, by decision (§4). A crash inside a grammar still takes the process down once (twice before quarantine).
 * Only linux-x64 bundles were built; the other targets' compiler flags are written but untried. Windows/macOS library names are coded, untested.
 * First colours of a big file still wait for its first parse (evaluation §12).
