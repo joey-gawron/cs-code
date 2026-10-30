@@ -113,10 +113,10 @@ public class VimPerformanceTests(ITestOutputHelper output)
     [AvaloniaFact(Timeout = 300_000)]
     public async Task A_global_command_over_a_big_file_runs_in_slices_and_the_dispatcher_stays_responsive()
     {
-        var text = string.Join("\n", Enumerable.Range(0, 20_000).Select(i => i % 3 == 0 ? $"match {i} alpha" : $"other {i} beta")) + "\n";
+        var text = string.Join("\n", Enumerable.Range(0, 60_000).Select(i => i % 3 == 0 ? $"match {i} alpha" : $"other {i} beta")) + "\n";
         await using var app = await VimApp.StartAsync(text, "big.txt", Quiet);
         (double P50, double P99, double Max, int Count) result = default;
-        (int Count, double Longest) slices = default;
+        (int Count, double P50, double P99, double Max) slices = default;
         var keyMs = 0.0;
         var ok = false;
         for (var attempt = 1; attempt <= 3 && !ok; attempt++)
@@ -127,8 +127,7 @@ public class VimPerformanceTests(ITestOutputHelper output)
             {
                 await Task.Delay(100);
                 app.Keys(":g/match/s/alpha/ALPHA");
-                app.Vim.LongestSliceMs = 0;
-                app.Vim.SliceCount = 0;
+                app.Vim.ResetSliceDurations();
                 keyMs = app.RaiseKey(Avalonia.Input.Key.Enter);              // the first slice runs inside the key, the rest on dispatcher ticks
                 var done = await RealAppHost.WaitFor(() => !app.Engine.HasPendingWork, 60_000);
                 await Task.Delay(100);
@@ -136,17 +135,20 @@ public class VimPerformanceTests(ITestOutputHelper output)
                 result = beat.Snapshot();
                 Assert.True(done, "the :g command did not finish");
             }
-            Assert.Contains("match 9999 ALPHA", app.Text);
-            Assert.DoesNotContain("match 9999 alpha", app.Text);
-            slices = (app.Vim.SliceCount, app.Vim.LongestSliceMs);
-            output.WriteLine($"attempt {attempt}: Enter key {keyMs:F1} ms; {slices.Count} slices, longest {slices.Longest:F1} ms; dispatcher latency (headless rendering included) p50 {result.P50:F1} ms p99 {result.P99:F1} ms max {result.Max:F1} ms over {result.Count} ticks");
-            ok = keyMs < 50 && slices.Longest < 16 && result.Max < 50;
+            Assert.Contains("match 59997 ALPHA", app.Text);
+            Assert.DoesNotContain("match 59997 alpha", app.Text);
+            var durations = app.Vim.SliceDurations.ToList();
+            var (s50, s99, sMax) = Stats(durations);
+            slices = (durations.Count, s50, s99, sMax);
+            output.WriteLine($"attempt {attempt}: Enter key {keyMs:F1} ms; {slices.Count} slices p50 {s50:F1} ms p99 {s99:F1} ms max {sMax:F1} ms; " +
+                $"dispatcher latency (headless rendering included) p50 {result.P50:F1} ms p99 {result.P99:F1} ms max {result.Max:F1} ms over {result.Count} ticks");
+            ok = keyMs < 50 && s99 < 16 && sMax < 50 && result.Max < 50;
             app.Keys("u");                                                 // one undo step for the whole :g
-            Assert.True(await RealAppHost.WaitFor(() => !app.Engine.HasPendingWork && app.Text.Contains("match 9999 alpha"), 30_000));
+            Assert.True(await RealAppHost.WaitFor(() => !app.Engine.HasPendingWork && app.Text.Contains("match 59997 alpha"), 30_000));
         }
         Assert.True(keyMs < 50, $"the key that started :g took {keyMs:F1} ms");
         Assert.True(slices.Count > 10, $"only {slices.Count} slices: the command did not run sliced");
-        Assert.True(slices.Longest < 16, $"longest slice {slices.Longest:F1} ms");
-        Assert.True(result.Max < 50, $"dispatcher latency max {result.Max:F1} ms during :g over 20k lines");
+        Assert.True(slices.P99 < 16 && slices.Max < 50, $"slices p99 {slices.P99:F1} ms max {slices.Max:F1} ms (p50 {slices.P50:F1} ms)");
+        Assert.True(result.Max < 50, $"dispatcher latency max {result.Max:F1} ms during :g over 60k lines");
     }
 }

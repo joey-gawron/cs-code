@@ -41,7 +41,8 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     /// <summary>Origin of the key bindings the integration adds (gD gi ]d [d g.); a vimrc or settings binding of the same keys replaces them.</summary>
     public const string IntegrationOrigin = "cscode.integration";
 
-    public static readonly TimeSpan SliceBudget = TimeSpan.FromMilliseconds(3);
+    /// <summary>Engine time per slice of long work; with the editor's reaction to the slice's changes a callback stays around 4 ms.</summary>
+    public static readonly TimeSpan SliceBudget = TimeSpan.FromMilliseconds(2);
     internal static readonly TimeSpan YankFlashDuration = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan ClipboardWait = TimeSpan.FromMilliseconds(500);
 
@@ -108,9 +109,12 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
 
     internal EditorVimBuffer? BufferOf(EditorDocument document) => _buffers.GetValueOrDefault(document);
 
-    /// <summary>Longest dispatcher callback that ran an engine's sliced work, and how many ran (diagnostics, tests).</summary>
-    public double LongestSliceMs { get; set; }
-    public int SliceCount { get; set; }
+    private readonly List<double> _sliceMs = [];
+
+    /// <summary>Durations of the recent dispatcher callbacks that ran an engine's sliced work, in ms (diagnostics, tests; bounded).</summary>
+    public IReadOnlyList<double> SliceDurations => _sliceMs;
+
+    public void ResetSliceDurations() => _sliceMs.Clear();
 
     /// <summary>The Vim state of a view (tests).</summary>
     internal VimView? ViewOf(Control view) => view is CodeEditorControl c ? _views.GetValueOrDefault(c) : null;
@@ -199,6 +203,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         surface.Attach(redo => UndoRedo(vimView, redo));
         buffer.SetActiveEngine(null);
         var engine = _vim.CreateEngine(host);
+        engine.SliceBudget = SliceBudget; // also the first slice, which runs inside the key
         vimView.Engine = engine;
         _views[view] = vimView;
         vimView.Subscriptions.Add(engine.PendingWorkChanged.Subscribe(pending => { if (pending) SchedulePump(vimView); }));
@@ -418,8 +423,8 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
                 return VimKeyResult.Handled;
             });
             var ms = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            if (ms > LongestSliceMs) LongestSliceMs = ms;
-            SliceCount++;
+            if (_sliceMs.Count >= 4096) _sliceMs.RemoveRange(0, 1024);
+            _sliceMs.Add(ms);
         }, UiPriority.Background);
     }
 
