@@ -44,6 +44,10 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         public object? Value { get; } = value;
         public ConfigurationTarget Target { get; } = target;
         public Task Completion { get; set; } = completion;
+        private int _claimed;
+
+        /// <summary>Exactly one of the debounced write, a flush and a superseding edit takes the write: the first to claim it.</summary>
+        public bool TryClaim() => Interlocked.Exchange(ref _claimed, 1) == 0;
     }
 
     public SettingsViewModel(SearchServices services, int debounceMs = 400)
@@ -317,7 +321,11 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     {
         if (_disposed || _s.Configuration is null) return;
         var target = IsWorkspaceAvailable && _scope == SettingsScope.Workspace ? ConfigurationTarget.Workspace : ConfigurationTarget.User;
-        if (_pending.Remove(item.Key, out var old)) old.Cts.Cancel();
+        if (_pending.Remove(item.Key, out var old))
+        {
+            old.TryClaim(); // superseded: it writes nothing unless its write already started
+            old.Cts.Cancel();
+        }
         var cts = new CancellationTokenSource();
         var pending = new PendingWrite(cts, value, target, Task.CompletedTask);
         _pending[item.Key] = pending;
@@ -333,7 +341,8 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
                 try { await Task.Delay(_debounceMs, pending.Cts.Token); }
                 catch (OperationCanceledException) { return; } // superseded by a newer edit (or flushed: see FlushAsync)
             }
-            else if (pending.Cts.IsCancellationRequested) return;
+            // the delay may have ended just before a flush or a newer edit took the write: then it is theirs
+            if (pending.Cts.IsCancellationRequested || !pending.TryClaim()) return;
             await _s.Configuration!.UpdateAsync(item.Key, pending.Value, pending.Target);
             item.IsModified = true;
         }
@@ -356,6 +365,11 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         foreach (var (pending, item, key) in work)
         {
             pending.Cts.Cancel();
+            if (!pending.TryClaim())
+            {
+                await pending.Completion; // its debounced write is already under way: wait for it rather than write the value twice
+                continue;
+            }
             if (item is null || _s.Configuration is null) continue;
             try { await _s.Configuration.UpdateAsync(key, pending.Value, pending.Target); item.IsModified = true; }
             catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException) { item.ReportError("Could not save: " + ex.Message); }

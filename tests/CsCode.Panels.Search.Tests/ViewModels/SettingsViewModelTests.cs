@@ -279,6 +279,22 @@ public class SettingsViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_flush_while_the_debounced_write_is_under_way_waits_for_it_and_writes_once()
+    {
+        var vm = Make(debounceMs: 10);
+        var inFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _f.Recording.BeforeWrite = () => { inFlight.TrySetResult(); return release.Task; };
+        ((NumberSettingViewModel)Item(vm, "editor.fontSize")).Text = "12";
+        await inFlight.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken); // past its debounce, writing
+        var flush = vm.FlushAsync();
+        Assert.False(flush.IsCompleted); // the flush waits for that write
+        release.SetResult();
+        await flush.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Single(_f.Recording.Writes);
+    }
+
+    [Fact]
     public async Task Integer_settings_reject_fractions()
     {
         var vm = Make(debounceMs: 10);

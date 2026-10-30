@@ -73,6 +73,10 @@ public sealed class RecordingConfiguration(TestConfigurationService inner, strin
 {
     public List<(string Key, object? Value, ConfigurationTarget Target)> Writes { get; } = new();
     public string UserSettingsPath { get; } = userSettingsPath;
+
+    /// <summary>Runs before each write is recorded (a test can hold a write in flight).</summary>
+    public Func<Task>? BeforeWrite { get; set; }
+
     public IReadOnlyList<ConfigurationProperty> Properties => inner.Properties;
     public IEventSource<ConfigurationChangedEventArgs> Changed => inner.Changed;
     public T Get<T>(string key, T defaultValue) => inner.Get(key, defaultValue);
@@ -80,10 +84,11 @@ public sealed class RecordingConfiguration(TestConfigurationService inner, strin
     public JsonElement? GetRaw(string key) => inner.GetRaw(key);
     public IDisposable RegisterProperties(IEnumerable<ConfigurationProperty> properties) => inner.RegisterProperties(properties);
 
-    public ValueTask UpdateAsync(string key, object? value, ConfigurationTarget target = ConfigurationTarget.User, CancellationToken ct = default)
+    public async ValueTask UpdateAsync(string key, object? value, ConfigurationTarget target = ConfigurationTarget.User, CancellationToken ct = default)
     {
+        if (BeforeWrite is { } before) await before();
         lock (Writes) Writes.Add((key, value, target));
-        return inner.UpdateAsync(key, value, target, ct);
+        await inner.UpdateAsync(key, value, target, ct);
     }
 }
 
