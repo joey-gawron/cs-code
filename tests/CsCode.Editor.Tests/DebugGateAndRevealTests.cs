@@ -148,50 +148,216 @@ public class DebugGateAndRevealTests
     [AvaloniaFact]
     public async Task The_lightbulb_never_covers_the_breakpoint_margin()
     {
-        var (debug, host) = DebugHost();
+        var (debug, host, view) = await BulbHost("function f() {\n        return total;\n}\nconst x = 1;\nconst y = 2;\n\nconst z = 3;\n", "a.ts");
         using var _ = host;
-        var (doc, view, _) = await host.OpenAsync("function f() {\n        return total;\n}\nconst x = 1;\nconst y = 2;\n\nconst z = 3;\n", "a.ts");
-        host.Factory.Services.Features.Register<CsCode.Core.Languages.ICodeActionProvider>(DocumentSelector.All,
-            new CsCode.Editor.Tests.Support.FakeCodeActionProvider((d, _, _, _) => Task.FromResult<IReadOnlyList<CsCode.Core.Languages.CodeAction>?>(
-                [new CsCode.Core.Languages.CodeAction("Fix it", "quickfix")])));
         var bulb = view.Feature<CodeActionFeature>()!;
-        var margins = view.TextArea.LeftMargins.OfType<Control>().ToArray();
-        var glyph = margins[0]; // the glyph margin is leftmost
-        Assert.IsNotType<AvaloniaEdit.Editing.LineNumberMargin>(glyph);
-        Rect InOverlay(Control c) => new(c.TranslatePoint(default, view.Overlay)!.Value, c.Bounds.Size);
-        double LineTop(int line) => OverlayPopup.AnchorFor(view, new TextPosition(line, 0)).Top.Y;
-        double TextLeft() => OverlayPopup.AnchorFor(view, new TextPosition(0, 0)).Top.X;
-        string Layout() => $"bulb {bulb.BulbBounds}; margins {string.Join(", ", margins.Select(m => $"{m.GetType().Name} {InOverlay(m)}"))}; text at {TextLeft()}";
-        async Task<Rect> BulbOn(int line, int column)
-        {
-            view.Controller.SetSelection(TextRange.At(line, column));
-            await ViewHost.WaitFor(() => bulb.BulbVisible, $"lightbulb for line {line}");
-            for (var i = 0; i < 3; i++) ViewHost.Pump();
-            var b = bulb.BulbBounds;
-            Assert.True(b.Left >= InOverlay(glyph).Right - 0.5, $"line {line}: over the breakpoint margin: {Layout()}");
-            if (margins.OfType<AvaloniaEdit.Editing.LineNumberMargin>().FirstOrDefault() is { } numbers)
-                Assert.True(b.Left >= InOverlay(numbers).Right - 0.5, $"line {line}: over the line numbers: {Layout()}");
-            return b;
-        }
 
         // an indented line: in its indentation
-        var indented = await BulbOn(1, 10);
-        Assert.True(indented.Right <= OverlayPopup.AnchorFor(view, new TextPosition(1, 8)).Top.X + 0.5, $"inside the indentation: {Layout()}");
-        Assert.InRange(indented.Top, LineTop(1) - 1, LineTop(1) + 4);
+        var indented = await BulbOn(view, 1, 10);
+        Assert.True(indented.Right <= OverlayPopup.AnchorFor(view, new TextPosition(1, 8)).Top.X + 0.5, $"inside the indentation: {Layout(view)}");
+        Assert.InRange(indented.Top, LineTop(view, 1) - 1, LineTop(view, 1) + 4);
 
         // a breakpoint there changes nothing: the bulb was never in its way
-        debug.Manager.Add(doc.Uri, 1);
+        debug.Manager.Add(view.Document.Uri, 1);
         await ViewHost.WaitFor(() => view.Feature<DebugFeature>()!.BreakpointAt(1) is not null, "breakpoint shown");
         Assert.Equal(indented, bulb.BulbBounds);
 
         // an unindented line under a blank one: on the blank line, where it covers no text
-        var underBlank = await BulbOn(6, 2);
-        Assert.InRange(underBlank.Top, LineTop(5) - 1, LineTop(5) + 4);
-        Assert.True(underBlank.Left >= TextLeft() - 0.5, $"in the text column: {Layout()}");
+        var underBlank = await BulbOn(view, 6, 2);
+        Assert.InRange(underBlank.Top, LineTop(view, 5) - 1, LineTop(view, 5) + 4);
+        Assert.True(underBlank.Left >= TextViewRect(view).Left - 0.5, $"in the text column: {Layout(view)}");
 
         // an unindented line between unindented ones: in the folding column, right against the text
-        var squeezed = await BulbOn(3, 2);
-        Assert.InRange(squeezed.Top, LineTop(3) - 1, LineTop(3) + 4);
-        Assert.True(squeezed.Right <= TextLeft() + 0.5, $"left of the text: {Layout()}");
+        var squeezed = await BulbOn(view, 3, 2);
+        Assert.InRange(squeezed.Top, LineTop(view, 3) - 1, LineTop(view, 3) + 4);
+        Assert.True(squeezed.Right <= TextViewRect(view).Left + 0.5, $"left of the text: {Layout(view)}");
+    }
+
+    /// <summary>
+    /// With word wrap off and the caret at the end of a long line the text is scrolled to the left, column 0 and the indentation with it: the
+    /// bulb is placed against the text view's edge, where the text shows, so it neither lands over the gutter nor leaves the editor (review: it
+    /// was placed from column 0's position, which had scrolled over the glyph column of the caret line and past the editor's left edge).
+    /// </summary>
+    [AvaloniaFact]
+    public async Task The_lightbulb_stays_out_of_the_gutter_when_the_text_is_scrolled_sideways()
+    {
+        var call = "        return " + string.Join(" + ", Enumerable.Range(0, 80).Select(i => "value" + i)) + ";";
+        var (_, host, view) = await BulbHost($"function f() {{\n    const a = 1;\n{call}\n    const b = 2;\n}}\n", "a.ts");
+        using var _ = host;
+        var end = OverlayPopup.AnchorFor(view, new TextPosition(2, call.Length)).Top.X - TextViewRect(view).Left;
+
+        var b = await BulbOn(view, 2, call.Length, new Vector(end - TextViewRect(view).Width / 2, 0)); // the line's end in view, as End leaves it
+        Assert.True(view.TextView.ScrollOffset.X > 200, $"scrolled sideways: {Layout(view)}");
+        // the indentation of the caret line and of its neighbours is scrolled away: the folding column, by the caret line
+        Assert.True(b.Right <= TextViewRect(view).Left + 0.5, $"left of the text: {Layout(view)}");
+        AssertOnRow(view, b, 2, "scrolled sideways");
+    }
+
+    /// <summary>
+    /// A line hidden in a collapsed fold is no place for the bulb: its position is its fold header's row, whose text the bulb covered (review:
+    /// Python's <c>for x in xs:</c> collapsed, the caret on <c>print(total)</c> under it). Opening the fold moves the caret line down a row with
+    /// the caret and the scroll offset unchanged: the bulb follows instead of staying over the text that is now where it was.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task The_lightbulb_is_never_put_on_a_line_hidden_in_a_collapsed_fold()
+    {
+        var (_, host, view) = await BulbHost("for x in xs:\n    total += x\nprint(total)\n", "a.py");
+        using var _ = host;
+        var bulb = view.Feature<CodeActionFeature>()!;
+        var folding = view.Feature<FoldingFeature>()!;
+        await ViewHost.WaitFor(() => folding.Ranges.Contains((0, 1)), "the loop's fold");
+        folding.FoldLines(EditorFoldAction.Close, 0, 0);
+        PumpLayout();
+        Assert.Equal([0], folding.FoldedStartLines);
+
+        var folded = await BulbOn(view, 2, 3);
+        var header = TextRect(view, 0);
+        Assert.False(folded.Intersects(header), $"over the fold header's text {header}: {Layout(view)}");
+
+        folding.UnfoldAll();
+        PumpLayout();
+        Assert.True(bulb.BulbVisible, $"still shown: {Layout(view)}");
+        var unfolded = AssertBulbClearOfTheGutter(view, "unfolded");
+        // the loop body is on screen again, right above the caret line: in its indentation
+        AssertOnRow(view, unfolded, 1, "unfolded");
+        Assert.True(unfolded.Right <= OverlayPopup.AnchorFor(view, new TextPosition(1, 4)).Top.X + 0.5, $"inside the indentation: {Layout(view)}");
+    }
+
+    /// <summary>
+    /// The caret line is the first row in view: the blank line above it, where the bulb would go, is scrolled out, so the bulb goes on the blank
+    /// line below (review: it went above the view, clipped, and still counted as shown).
+    /// </summary>
+    [AvaloniaFact]
+    public async Task The_lightbulb_is_never_put_on_a_row_outside_the_view()
+    {
+        // blank lines between the statements: line 101 is "const v50 = 50;", lines 100 and 102 are blank
+        var (_, host, view) = await BulbHost(string.Concat(Enumerable.Range(0, 100).Select(i => $"\nconst v{i} = {i};\n")), "a.ts");
+        using var _ = host;
+
+        var b = await BulbOn(view, 101, 2, new Vector(0, view.TextView.GetVisualTopByDocumentLine(102)));
+        Assert.InRange(LineTop(view, 101), TextViewRect(view).Top - 0.5, TextViewRect(view).Top + 0.5);
+        Assert.True(b.Top >= TextViewRect(view).Top - 0.5 && b.Bottom <= TextViewRect(view).Bottom + 0.5, $"inside the view: {Layout(view)}");
+        AssertOnRow(view, b, 102, "first row");
+    }
+
+    /// <summary>
+    /// Turning line numbers off or on, or a new font size, lays the text out again with the caret and the scroll offset unchanged: the bulb in
+    /// the folding column follows the text and the caret line's row (review: it stayed where it was, over the text once the numbers went, over
+    /// the numbers once they came back).
+    /// </summary>
+    [AvaloniaFact]
+    public async Task The_lightbulb_follows_the_text_when_line_numbers_or_the_font_size_change()
+    {
+        var (_, host, view) = await BulbHost("const x = 1;\nconst y = 2;\nconst z = 3;\n", "a.ts");
+        using var _ = host;
+        var bulb = view.Feature<CodeActionFeature>()!;
+        var before = await BulbOn(view, 1, 2);
+        Assert.True(before.Right <= TextViewRect(view).Left + 0.5, $"left of the text: {Layout(view)}");
+
+        host.Config.Set("editor.lineNumbers", "off");
+        PumpLayout();
+        Assert.Empty(view.TextArea.LeftMargins.OfType<AvaloniaEdit.Editing.LineNumberMargin>());
+        Assert.True(bulb.BulbVisible, $"still shown: {Layout(view)}");
+        var off = AssertBulbClearOfTheGutter(view, "line numbers off");
+        var glyphRight = InOverlay(view, view.Feature<DebugFeature>()!.Margin).Right;
+        Assert.True(Math.Abs(off.Left - Math.Max(TextViewRect(view).Left - off.Width, glyphRight)) < 0.5, $"against the text, or the breakpoint margin: {Layout(view)}");
+        AssertOnRow(view, off, 1, "line numbers off");
+
+        host.Config.Set("editor.lineNumbers", "on");
+        PumpLayout();
+        var on = AssertBulbClearOfTheGutter(view, "line numbers on again");
+        Assert.True(Math.Abs(on.Left - before.Left) < 0.5, $"back where it was ({before}): {Layout(view)}");
+
+        host.Config.Set("editor.fontSize", 28);
+        PumpLayout();
+        var larger = AssertBulbClearOfTheGutter(view, "larger font");
+        Assert.True(larger.Right <= TextViewRect(view).Left + 0.5, $"left of the text: {Layout(view)}");
+        AssertOnRow(view, larger, 1, "larger font");
+    }
+
+    /// <summary>
+    /// With line numbers off and a small font the folding column is narrower than the 18 px bulb: the bulb stops at the breakpoint margin's
+    /// right edge instead of reaching into the glyph column (review: "right against the text" alone put it over the glyph column's last pixels).
+    /// </summary>
+    [AvaloniaFact]
+    public async Task The_lightbulb_stops_at_the_breakpoint_margin_when_the_folding_column_is_narrower_than_the_bulb()
+    {
+        var (_, host, view) = await BulbHost("const x = 1;\nconst y = 2;\nconst z = 3;\n", "a.ts", new() { ["editor.lineNumbers"] = "off", ["editor.fontSize"] = 8 });
+        using var _ = host;
+        var glyphRight = InOverlay(view, view.Feature<DebugFeature>()!.Margin).Right;
+        Assert.True(TextViewRect(view).Left - glyphRight < 18, $"a folding column narrower than the bulb: {Layout(view)}");
+
+        var b = await BulbOn(view, 1, 2);
+        Assert.True(Math.Abs(b.Left - glyphRight) < 0.5, $"against the breakpoint margin: {Layout(view)}");
+        AssertOnRow(view, b, 1, "small font");
+    }
+
+    // ---- the lightbulb's surroundings ----
+
+    /// <summary>A view with the breakpoint glyph margin and a code-action provider that always has an action: the bulb shows wherever the caret settles.</summary>
+    private static async Task<(FakeDebugService Debug, ViewHost Host, CodeEditorControl View)> BulbHost(string text, string fileName, Dictionary<string, object>? settings = null)
+    {
+        var (debug, host) = DebugHost();
+        foreach (var (key, value) in settings ?? []) host.Config.Set(key, value);
+        var (_, view, _) = await host.OpenAsync(text, fileName);
+        host.Factory.Services.Features.Register<CsCode.Core.Languages.ICodeActionProvider>(DocumentSelector.All,
+            new FakeCodeActionProvider((_, _, _, _) => Task.FromResult<IReadOnlyList<CsCode.Core.Languages.CodeAction>?>(
+                [new CsCode.Core.Languages.CodeAction("Fix it", "quickfix")])));
+        return (debug, host, view);
+    }
+
+    /// <summary>
+    /// Puts the caret at (<paramref name="line"/>, <paramref name="column"/>), revealed or with the view scrolled to <paramref name="scrollTo"/>
+    /// instead, and returns where the bulb shows, checked to be clear of the gutter.
+    /// </summary>
+    private static async Task<Rect> BulbOn(CodeEditorControl view, int line, int column, Vector? scrollTo = null)
+    {
+        var bulb = view.Feature<CodeActionFeature>()!;
+        view.Controller.SetSelection(TextRange.At(line, column), reveal: scrollTo is null);
+        if (scrollTo is { } offset) ((Avalonia.Controls.Primitives.IScrollable)view.TextArea).Offset = offset; // (TextEditor.ScrollToVerticalOffset ignores absolute positions)
+        await ViewHost.WaitFor(() => bulb.BulbVisible, $"lightbulb for line {line}");
+        PumpLayout();
+        return AssertBulbClearOfTheGutter(view, $"line {line}");
+    }
+
+    /// <summary>The bulb is right of the breakpoint margin and of the line numbers; returns where it is.</summary>
+    private static Rect AssertBulbClearOfTheGutter(CodeEditorControl view, string when)
+    {
+        var b = view.Feature<CodeActionFeature>()!.BulbBounds;
+        Assert.True(b.Left >= InOverlay(view, view.Feature<DebugFeature>()!.Margin).Right - 0.5, $"{when}: over the breakpoint margin: {Layout(view)}");
+        if (view.TextArea.LeftMargins.OfType<AvaloniaEdit.Editing.LineNumberMargin>().FirstOrDefault() is { } numbers)
+            Assert.True(b.Left >= InOverlay(view, numbers).Right - 0.5, $"{when}: over the line numbers: {Layout(view)}");
+        return b;
+    }
+
+    /// <summary>The bulb's middle is on <paramref name="line"/>'s row.</summary>
+    private static void AssertOnRow(CodeEditorControl view, Rect bulb, int line, string when)
+    {
+        var (top, bottom) = OverlayPopup.AnchorFor(view, new TextPosition(line, 0));
+        Assert.True(bulb.Center.Y >= top.Y && bulb.Center.Y <= bottom.Y, $"{when}: not on line {line}'s row ({top.Y}..{bottom.Y}): {Layout(view)}");
+    }
+
+    /// <summary>A layout pass and what it posts (the bulb is placed after the text view's layout).</summary>
+    private static void PumpLayout()
+    {
+        for (var i = 0; i < 5; i++) ViewHost.Pump();
+    }
+
+    private static Rect InOverlay(CodeEditorControl view, Control c) => new(c.TranslatePoint(default, view.Overlay)!.Value, c.Bounds.Size);
+
+    /// <summary>The text view in overlay coordinates: where text shows, however far it is scrolled.</summary>
+    private static Rect TextViewRect(CodeEditorControl view) => InOverlay(view, view.TextView);
+
+    private static double LineTop(CodeEditorControl view, int line) => OverlayPopup.AnchorFor(view, new TextPosition(line, 0)).Top.Y;
+
+    /// <summary>The text of <paramref name="line"/> on screen, from column 0 to its end.</summary>
+    private static Rect TextRect(CodeEditorControl view, int line) =>
+        new(OverlayPopup.AnchorFor(view, new TextPosition(line, 0)).Top, OverlayPopup.AnchorFor(view, new TextPosition(line, view.Document.GetLineText(line).Length)).Bottom);
+
+    private static string Layout(CodeEditorControl view)
+    {
+        var bulb = view.Feature<CodeActionFeature>()!;
+        var margins = view.TextArea.LeftMargins.OfType<Control>().Select(m => $"{m.GetType().Name} {InOverlay(view, m)}");
+        return $"bulb {bulb.BulbBounds} (shown: {bulb.BulbVisible}); margins {string.Join(", ", margins)}; text view {TextViewRect(view)} scrolled {view.TextView.ScrollOffset}";
     }
 }
