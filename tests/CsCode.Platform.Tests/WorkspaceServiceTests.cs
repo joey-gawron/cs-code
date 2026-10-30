@@ -528,6 +528,23 @@ public class FindFilesTests : IDisposable
     }
 
     [Fact]
+    public void RealPath_applies_a_dot_dot_after_the_link_before_it_is_resolved()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "symlink creation needs privileges on Windows");
+        using var outside = new TempDirectory("cscode-outside-");
+        outside.WriteFile("deep/f.txt", "x");
+        var elsewhere = FileWalker.RealPath(outside.Path);
+        _f.Write("dir/sub/f.txt");
+        var root = FileWalker.RealPath(_f.Root);
+        Directory.CreateSymbolicLink(_f.P("sibling"), Path.Combine(outside.Path, "deep"));
+        Directory.CreateSymbolicLink(_f.P("dir/up"), Path.Combine("..", "sibling", "..")); // up -> ../sibling/.. : the parent of deep, not the project
+
+        Assert.Equal(elsewhere, FileWalker.RealPath(_f.P("dir/up")));                         // in a link's target (as text: the project)
+        Assert.Equal(elsewhere, FileWalker.RealPath(_f.P("sibling") + "/.."));                // and in the path given
+        Assert.Equal(Path.Combine(root, "dir"), FileWalker.RealPath(_f.P("dir/sub/../.")));  // without links ".." and "." are as before
+    }
+
+    [Fact]
     public async Task A_link_to_a_directory_elsewhere_is_followed_unless_disabled_and_dangling_links_are_skipped()
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "symlink creation needs privileges on Windows");

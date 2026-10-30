@@ -315,18 +315,20 @@ internal sealed class FileWalker : IDisposable
     /// <summary>
     /// <paramref name="path"/> with every link in it resolved, as realpath(3) gives it. The ancestors' real paths and a link's target must be
     /// compared in the same form: a root reached through a link (on macOS /tmp and /var are links to /private/...) never equalled a target, so a
-    /// link back to the root was followed one level before the loop was seen (files-15). A part that is not there, cannot be read or loops keeps
-    /// its unresolved rest. Never throws.
+    /// link back to the root was followed one level before the loop was seen (files-15). A ".." is applied to what is resolved so far, never to
+    /// the text: in a target "other/.." where other is a link, it leaves the directory other leads to, not the one holding other. A part that
+    /// is not there, cannot be read or loops keeps its unresolved rest. Never throws.
     /// </summary>
     internal static string RealPath(string path)
     {
-        var full = Path.GetFullPath(path);
-        var root = Path.GetPathRoot(full) ?? "";
-        var real = root;
+        var full = Path.IsPathRooted(path) ? path : Path.Combine(Environment.CurrentDirectory, path); // not GetFullPath: it collapses ".." as text
+        var real = Path.GetPathRoot(full) ?? "";
         var hops = 0;
-        var rest = new Queue<string>(full[root.Length..].Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Where(p => p.Length > 0));
+        var rest = new Queue<string>(Parts(full, real.Length));
         while (rest.TryDequeue(out var part))
         {
+            if (part == ".") continue;
+            if (part == "..") { real = Path.GetDirectoryName(real) ?? real; continue; } // the root's parent is the root
             var next = Path.Combine(real, part);
             string? link;
             try { link = new DirectoryInfo(next).LinkTarget; }
@@ -334,12 +336,14 @@ internal sealed class FileWalker : IDisposable
             if (link is null) { real = next; continue; }
             if (++hops > 40) return Path.Combine([next, .. rest]); // ELOOP: leave the rest as it is
             // the link's target replaces it: an absolute one from its own root, a relative one from the (resolved) directory holding the link
-            var target = Path.GetFullPath(link, real);
-            var targetRoot = Path.GetPathRoot(target) ?? "";
-            rest = new Queue<string>(target[targetRoot.Length..].Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Where(p => p.Length > 0).Concat(rest));
-            real = targetRoot;
+            var targetRoot = Path.IsPathRooted(link) ? Path.GetPathRoot(link) ?? "" : "";
+            rest = new Queue<string>(Parts(link, targetRoot.Length).Concat(rest));
+            if (targetRoot.Length > 0) real = targetRoot;
         }
         return real;
+
+        static IEnumerable<string> Parts(string p, int skip) =>
+            p[skip..].Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Where(x => x.Length > 0);
     }
 
     private static bool LinkTargetExists(string path)

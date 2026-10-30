@@ -55,9 +55,8 @@ internal sealed class TerminalFont
         size = Math.Clamp(size, 4, 100);
         // The font manager answers a missing family with its default face, so a candidate counts only when the face it returns is that
         // family (or, for the generic "monospace", any fixed-pitch face).
-        foreach (var raw in families.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Append("DejaVu Sans Mono").Append("Noto Sans Mono").Append("Liberation Mono").Append("monospace"))
+        foreach (var name in Candidates(families, OperatingSystem.IsMacOS()))
         {
-            var name = raw.Trim('\'', '"');
             var family = new FontFamily(name);
             if (Face(family, FontWeight.Normal, FontStyle.Normal) is not { } face || Lookup(face, 'M') == 0) continue;
             var matches = name.Equals("monospace", StringComparison.OrdinalIgnoreCase)
@@ -69,6 +68,15 @@ internal sealed class TerminalFont
         var regular = Face(fallback, FontWeight.Normal, FontStyle.Normal) ?? throw new InvalidOperationException("No font is available.");
         return new TerminalFont(fallback, regular, size, lineHeight, letterSpacing);
     }
+
+    /// <summary>
+    /// The names <see cref="Create"/> tries, in order: <paramref name="families"/> unquoted, then the usual monospace faces. A stock Mac has
+    /// none of DejaVu/Noto/Liberation and CoreText answers "monospace" with Helvetica (not fixed-pitch), so there Menlo and Monaco come first.
+    /// </summary>
+    internal static IEnumerable<string> Candidates(string families, bool macOS) =>
+        families.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(raw => raw.Trim('\'', '"'))
+            .Concat(macOS ? ["Menlo", "Monaco"] : [])
+            .Concat(["DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "monospace"]);
 
     private static GlyphTypeface? Face(FontFamily family, FontWeight weight, FontStyle style) =>
         FontManager.Current.TryGetGlyphTypeface(new Typeface(family, style, weight), out var face) ? face : null;
