@@ -34,8 +34,12 @@ public sealed class VimApp : IAsyncDisposable
     public string? CommandLineText => Vim.StatusText(VimIntegration.CommandLineItemId);
     public string? ShowCommandText => Vim.StatusText(VimIntegration.ShowCommandItemId);
 
-    /// <summary>Starts the app with <paramref name="text"/> in <paramref name="fileName"/>, opened from the command line, its editor focused.</summary>
-    public static async Task<VimApp> StartAsync(string text, string fileName = "test.txt", string? settings = null, Action<RealAppHost>? seed = null)
+    /// <summary>
+    /// Starts the app with <paramref name="text"/> in <paramref name="fileName"/>, opened from the command line, its editor focused;
+    /// <paramref name="configure"/> may replace services (it runs after the host's own test registrations).
+    /// </summary>
+    public static async Task<VimApp> StartAsync(string text, string fileName = "test.txt", string? settings = null, Action<RealAppHost>? seed = null,
+        Action<Microsoft.Extensions.DependencyInjection.IServiceCollection>? configure = null)
     {
         var host = RealAppHost.Create(h =>
         {
@@ -48,7 +52,7 @@ public sealed class VimApp : IAsyncDisposable
             }
             seed?.Invoke(h);
         });
-        await host.StartAsync([host.Files.Combine(fileName)]);
+        await host.StartAsync([host.Files.Combine(fileName)], configure);
         var app = new VimApp(host);
         await app.FocusAsync();
         return app;

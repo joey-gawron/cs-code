@@ -56,6 +56,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     private readonly IOutputService? _output;
     private readonly IDocumentManager? _documents;
     private readonly WindowHolder _windowHolder;
+    private readonly Services.ClipboardService? _ownedClipboard;
     private readonly DisposableStore _subscriptions = new();
     private readonly Dictionary<CodeEditorControl, VimView> _views = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<EditorDocument, EditorVimBuffer> _buffers = new(ReferenceEqualityComparer.Instance);
@@ -84,7 +85,14 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         _output = sp.GetService<IOutputService>();
         _documents = sp.GetService<IDocumentManager>();
         _windowHolder = sp.GetRequiredService<WindowHolder>();
-        Clipboard = new VimClipboard(() => _windowHolder.Window);
+        // The shell's clipboard service (ring, shape metadata, PRIMARY); a composition without one gets a clipboard-only service of its own.
+        var clipboard = sp.GetService<IClipboardService>();
+        if (clipboard is null)
+        {
+            _ownedClipboard = new Services.ClipboardService(_ui, Services.AvaloniaPlatformClipboard.Of(() => _windowHolder.Window), () => null);
+            clipboard = _ownedClipboard;
+        }
+        Clipboard = new VimClipboard(clipboard);
         Actions = new VimShellActions(this, _well, sp.GetRequiredService<ShellDockFactory>(), sp.GetService<IWindowService>(), sp.GetService<IWorkspaceService>());
     }
 
@@ -149,8 +157,9 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         }
         if (_windowHolder.Window is WindowBase window)
         {
-            // Text copied in another application reaches "+p / "*p: the clipboard is read when the window becomes active (and on editor focus).
-            void OnActivated(object? s, EventArgs e) => _ = Clipboard.RefreshAsync();
+            // Text copied or selected in another application reaches "+p / "*p (and <C-r>+, @+, :put + ...): both are read when the window becomes
+            // active; the clipboard also on editor focus.
+            void OnActivated(object? s, EventArgs e) => _ = Clipboard.RefreshAllAsync();
             window.Activated += OnActivated;
             _subscriptions.Add(Disposable.Create(() => window.Activated -= OnActivated));
         }
@@ -429,18 +438,21 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     }
 
     /// <summary>
-    /// After <c>"+</c> or <c>"*</c> the next key reads the system clipboard, which Avalonia only reads asynchronously: the keys that follow wait
-    /// (in order, at most <see cref="ClipboardWait"/>) until the read completes, instead of the UI thread ever blocking on it.
+    /// After <c>"+</c> or <c>"*</c> the next key reads the clipboard or the PRIMARY selection, which the platform only reads asynchronously: the keys
+    /// that follow wait (in order, at most <see cref="ClipboardWait"/>) until the read completes, instead of the UI thread ever blocking on it.
     /// </summary>
     private void HoldForClipboard(VimView v)
     {
         var pending = v.Engine.PendingKeys;
-        if (!(pending.EndsWith("\"+", StringComparison.Ordinal) || pending.EndsWith("\"*", StringComparison.Ordinal))) return;
+        char register;
+        if (pending.EndsWith("\"+", StringComparison.Ordinal)) register = '+';
+        else if (pending.EndsWith("\"*", StringComparison.Ordinal)) register = '*';
+        else return;
         var generation = ++_holdGeneration;
         _held.Enqueue((v, null, null)); // sentinel: keys queue behind it
         async Task ReleaseAsync()
         {
-            try { await Clipboard.RefreshAsync().WaitAsync(ClipboardWait).ConfigureAwait(true); }
+            try { await Clipboard.RefreshAsync(register).WaitAsync(ClipboardWait).ConfigureAwait(true); }
             catch (TimeoutException) { }
             catch (Exception) { /* an unreadable clipboard reads as the last known text */ }
             if (generation != _holdGeneration) return;
@@ -526,7 +538,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     {
         if (v.IsDisposed || ReferenceEquals(_current, v)) return;
         _current = v;
-        _ = Clipboard.RefreshAsync();
+        _ = Clipboard.RefreshAsync('+');
         UpdateStatus();
     }
 
@@ -734,6 +746,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         _statusTexts.Clear();
         _held.Clear();
         _vim.Session.Mappings.RemoveOrigin(IntegrationOrigin);
+        _ownedClipboard?.Dispose();
     }
 }
 

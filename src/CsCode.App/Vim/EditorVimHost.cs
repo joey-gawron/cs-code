@@ -204,9 +204,16 @@ internal sealed class EditorVimHost : IVimHost
 
     // ---------------------------------------------------------------- clipboard, windows, commands
 
-    public string? ReadClipboard() => _owner.Clipboard.Text;
+    // + is the clipboard (with the ring, shape metadata and this document's line ends), * the PRIMARY selection where there is one (VimClipboard)
+    public string? ReadClipboard(char register) => _owner.Clipboard.Text(register);
 
-    public void WriteClipboard(string text, VimRegisterType type) => _owner.Clipboard.Write(text);
+    public VimRegisterType? ReadClipboardType(char register) => _owner.Clipboard.Type(register);
+
+    public void WriteClipboard(char register, string text, VimRegisterType type) => _owner.Clipboard.Write(register, text, type, _surface.Document.EndOfLine);
+
+    public string? ReadClipboard() => ReadClipboard('+');
+
+    public void WriteClipboard(string text, VimRegisterType type) => WriteClipboard('+', text, type);
 
     public bool PerformAction(VimEditorAction action, in VimActionArgs args) => View is { } v && _owner.Actions.Perform(v, action, args);
 
