@@ -54,6 +54,13 @@ public sealed class RuntimeDirectory
 
     public string TrayLockPath => System.IO.Path.Combine(Path, "tray.lock");
 
+    /// <summary>
+    /// Where builds before the session locks moved to the data directory locked session <paramref name="name"/> (<c>&lt;runtime&gt;/locks/&lt;name&gt;.lock</c>).
+    /// Still honoured and taken by <see cref="SessionLock"/>: a process of such a build that is still running after an upgrade (quitting, or
+    /// wedged) keeps its session, and it sees a session this build owns as taken.
+    /// </summary>
+    public string LegacySessionLockPath(string name) => System.IO.Path.Combine(Path, "locks", name + ".lock");
+
     /// <summary>The endpoint of process <paramref name="pid"/>: a socket path, or a pipe name on Windows.</summary>
     public string EndpointOf(int pid) => OperatingSystem.IsWindows()
         ? PipePrefix + pid.ToString(System.Globalization.CultureInfo.InvariantCulture)

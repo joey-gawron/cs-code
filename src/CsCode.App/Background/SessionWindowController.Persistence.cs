@@ -35,6 +35,9 @@ public sealed partial class SessionWindowController
     /// </summary>
     internal sealed record ChangedText(string Id, string Uri, DocumentSnapshot? Snapshot, string? Text, string Encoding, string EndOfLine, string? LanguageId, int DocumentVersion)
     {
+        /// <summary>A remote document's backup that waits for its connection (no tab): written again only under a new session name.</summary>
+        public bool IsPendingRemote { get; init; }
+
         // GetText(0, Length), not GetText(): the snapshot caches its whole text, and it stays the document's latest one while the user is idle.
         public BackupEntry ToEntry() => new(Id, Uri, Text ?? Snapshot!.GetText(0, Snapshot.Length), Encoding, EndOfLine, LanguageId, DocumentVersion);
     }
@@ -95,8 +98,7 @@ public sealed partial class SessionWindowController
         var groups = factory.DocumentGroups().ToList();
         var editors = new List<SessionEditor>();
         var changed = new List<ChangedText>();
-        // Backups of remote documents that wait for their connection are kept as they are.
-        var keep = _pendingRemote.Select(b => b.Info.Id).ToList();
+        var keep = new List<string>();
         var order = 0;
         foreach (var tab in well.EditorTabs)
         {
@@ -125,12 +127,29 @@ public sealed partial class SessionWindowController
                 LanguageId = doc.IsUntitled ? doc.LanguageId : null, ViewState = view is null ? null : ToSession(view), BackupId = backupId,
             });
         }
+        // Backups of remote documents that wait for their connection are kept as they are (written again only under a new name).
+        var remote = PendingRemoteBackups(_host.SessionName ?? "");
+        keep.AddRange(remote.Keep.Where(id => !keep.Contains(id) && !changed.Any(c => c.Id == id)));
+        changed.AddRange(remote.Write.Where(r => !keep.Contains(r.Id) && !changed.Any(c => c.Id == r.Id)));
         var captured = new Captured(Interlocked.Increment(ref _captureSeq), _host.SessionName ?? "", _host.IsUnnamed, _wasResident,
             _workspace?.Folders.Select(f => f.ToString()).ToArray() ?? [], editors, well.ActiveEditor?.Uri.ToString(), _shell.Layout.Capture(), CurrentBounds(),
             _window.IsVisible ? DateTimeOffset.UtcNow : _host.LastShown ?? DateTimeOffset.UtcNow, changed, keep, includeBackups, maxBackupBytes ?? BackgroundSettings.MaxBackupBytes(_config));
         _lastCaptured = captured;
         UpdateNeedsPrompt();
         return captured;
+    }
+
+    /// <summary>
+    /// The backups of remote documents still waiting for their connection, as a write of session <paramref name="name"/> must leave them (UI thread):
+    /// kept when they are on disk under that name already, otherwise to be written there (after a rename, or in a copy seeded from another
+    /// session, whose directory they were read from). They have no tab, so this is the only place that keeps them.
+    /// </summary>
+    private (IReadOnlyList<ChangedText> Write, IReadOnlyList<string> Keep) PendingRemoteBackups(string name)
+    {
+        if (_pendingRemote.Count == 0) return ([], []);
+        if (string.Equals(Volatile.Read(ref _pendingRemoteOnDisk), name, StringComparison.Ordinal)) return ([], _pendingRemote.Select(b => b.Info.Id).ToArray());
+        return (_pendingRemote.Select(b => new ChangedText(b.Info.Id, b.Info.Uri, null, b.Text, b.Info.Encoding, b.Info.EndOfLine, b.Info.LanguageId, b.Info.DocumentVersion)
+            { IsPendingRemote = true }).ToArray(), []);
     }
 
     /// <summary>
@@ -183,8 +202,11 @@ public sealed partial class SessionWindowController
         }
         var result = _host.Store.Backups.Write(c.Name, c.Changed.Select(e => e.ToEntry()).ToArray(), c.Keep, c.MaxBackupBytes);
         Volatile.Write(ref _skippedBackups, result.Skipped.Count);
+        // The pending remote backups are under this name now (all of them, or they are written again next time).
+        var remote = c.Changed.Where(e => e.IsPendingRemote).ToArray();
+        if (remote.Length > 0 && remote.All(e => result.Written.Contains(e.Id))) Volatile.Write(ref _pendingRemoteOnDisk, c.Name);
         var live = new HashSet<string>(c.Keep, StringComparer.Ordinal);
-        foreach (var entry in c.Changed.Where(e => result.Written.Contains(e.Id)))
+        foreach (var entry in c.Changed.Where(e => !e.IsPendingRemote && result.Written.Contains(e.Id)))
         {
             _backedUp[entry.Id] = entry.DocumentVersion;
             live.Add(entry.Id);

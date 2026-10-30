@@ -15,6 +15,9 @@ public sealed record PreparedSession(string Name, bool IsUnnamed, SessionDocumen
 {
     /// <summary>The document's dock layout, parsed on the lane (never on the UI thread).</summary>
     public LayoutSnapshot? Layout { get; init; }
+
+    /// <summary>The session whose backup directory <see cref="Backups"/> were read from (<see cref="Name"/>, or the session a copy was seeded from).</summary>
+    public string? BackupSource { get; init; }
 }
 
 /// <summary>
@@ -29,7 +32,7 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     private readonly object _gate = new();
     private readonly TaskCompletionSource<SessionWindowController> _attached = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly CrashHandler _crash;
-    private FileLock? _sessionLock;
+    private SessionLock? _sessionLock;
     private IpcServer? _server;
     private volatile SessionWindowController? _controller;
 
@@ -133,14 +136,25 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
                 host.Dispose();
                 return null;
             }
-            if (name is null)
+            try
             {
-                name = host.TakeNewUnnamedSession();
+                if (name is null)
+                {
+                    name = host.TakeNewUnnamedSession();
+                }
+                else if (!host.TryTakeSession(name, options.Unnamed))
+                {
+                    Console.Error.WriteLine($"cscode: session '{name}' is owned by another CsCode process");
+                    refusedExitCode = 3;
+                    host.Dispose();
+                    return null;
+                }
             }
-            else if (!host.TryTakeSession(name, options.Unnamed))
+            catch (IOException ex)
             {
-                Console.Error.WriteLine($"cscode: session '{name}' is owned by another CsCode process");
-                refusedExitCode = 3;
+                // The data directory cannot hold the session's lock (read-only, another user's): no process could own a session here. The
+                // launcher finds this out first and runs the window in its own process; this is for a direct --host start.
+                Console.Error.WriteLine("cscode: background mode unavailable: " + ex.Message);
                 host.Dispose();
                 return null;
             }
@@ -164,7 +178,10 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         _server = server;
     }
 
-    /// <summary>Takes the lock of the lowest free <c>window-N</c> and makes it this process's session.</summary>
+    /// <summary>
+    /// Takes the lock of the lowest free <c>window-N</c> and makes it this process's session. Ends: a name whose lock another process holds is
+    /// skipped, and a lock that cannot be taken at all throws (<see cref="IOException"/>) instead of trying name after name.
+    /// </summary>
     internal string TakeNewUnnamedSession()
     {
         var taken = Store.List().Select(s => s.Name).ToList();
@@ -176,12 +193,15 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         }
     }
 
-    /// <summary>Takes the lock of <paramref name="name"/> and makes it this process's session (releasing the previous one). False when another process holds it.</summary>
+    /// <summary>
+    /// Takes the lock of <paramref name="name"/> and makes it this process's session (releasing the previous one). False when another process holds
+    /// it; throws <see cref="IOException"/> when the lock cannot be taken at all (<see cref="SessionLock.TryAcquire"/>).
+    /// </summary>
     internal bool TryTakeSession(string name, bool unnamed)
     {
-        var acquired = FileLock.TryAcquire(Store.LockPathOf(name));
+        var acquired = SessionLock.TryAcquire(Store, Runtime, name);
         if (acquired is null) return false;
-        FileLock? previous;
+        SessionLock? previous;
         lock (_gate)
         {
             previous = _sessionLock;
@@ -214,7 +234,7 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     /// <summary>Lets go of the session (start-up failed, or the quit committed and its last write is done); hello keeps naming it, as quitting.</summary>
     internal void ReleaseSessionLock()
     {
-        FileLock? held;
+        SessionLock? held;
         lock (_gate)
         {
             held = _sessionLock;
@@ -251,7 +271,10 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         {
             if (Store.Backups.ReadText(source, info.Id) is { } text) backups.Add(new PreparedBackup(info, HotExitBackupStore.Check(info), text));
         }
-        return new PreparedSession(name, doc?.IsUnnamed ?? unnamed, doc, loaded.Status, loaded.Message, backups) { Layout = LayoutSerializer.Deserialize(doc?.Layout) };
+        return new PreparedSession(name, doc?.IsUnnamed ?? unnamed, doc, loaded.Status, loaded.Message, backups)
+        {
+            Layout = LayoutSerializer.Deserialize(doc?.Layout), BackupSource = source,
+        };
     });
 
     /// <summary>Called by the app session on the UI thread once the main window exists (not shown yet). Shows it unless this is the spare or <c>--hidden</c>.</summary>
@@ -315,7 +338,14 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
             if (!Options.Spare || _claimed) return IpcMessage.Failure($"this process is not a free spare (state {_state})");
             _claimed = true;
         }
-        if (!TryTakeSession(name!, request.Unnamed == true))
+        bool took;
+        try { took = TryTakeSession(name!, request.Unnamed == true); }
+        catch (IOException ex)
+        {
+            lock (_gate) _claimed = false;
+            return IpcMessage.Failure(ex.Message);
+        }
+        if (!took)
         {
             lock (_gate) _claimed = false;
             return IpcMessage.Failure($"session '{name}' is owned by another CsCode process");

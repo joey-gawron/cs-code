@@ -54,7 +54,8 @@ public sealed class SessionLauncher
     /// <summary>Runs the launcher on a pool thread (callers inside a CsCode process; never blocks the caller).</summary>
     public Task<LaunchOutcome> RunAsync(LaunchRequest request, CancellationToken ct = default) => Task.Run(() => Run(request), ct);
 
-    /// <summary>Exit code 0 on success, 1 when the request failed, 2 when IPC is unusable (the caller then runs the app in-process).</summary>
+    /// <summary>Exit code 0 on success, 1 when the request failed, 2 when background mode is unusable here (no usable runtime directory, or session
+    /// locks that cannot be written): the caller then runs the app in-process.</summary>
     public LaunchOutcome Run(LaunchRequest request)
     {
         var clock = Stopwatch.StartNew();
@@ -75,7 +76,14 @@ public sealed class SessionLauncher
     /// <summary>One discovery, plan and action under the launcher lock; null when the target turned out to be quitting (the caller runs again).</summary>
     private LaunchOutcome? RunRound(LaunchRequest request, bool retryAllowed, Stopwatch clock, List<int> started)
     {
-        var gate = FileLock.Acquire(_store.LauncherLockPath, _timeouts.LauncherLock);
+        var gate = FileLock.Acquire(_store.LauncherLockPath, _timeouts.LauncherLock, out var lockProblem);
+        if (lockProblem is not null)
+        {
+            // The data directory cannot hold locks (read-only, another user's): no session process could take its session either. As with an
+            // unusable runtime directory, opening a window then runs it in this process.
+            _err.WriteLine("cscode: background mode unavailable: " + lockProblem);
+            return new LaunchOutcome(2, new LaunchPlan(LaunchAction.Fail) { Error = lockProblem }, null, clock.Elapsed, started);
+        }
         if (gate is null) _err.WriteLine("cscode: another launcher is still busy; continuing without waiting for it");
         try
         {
@@ -178,8 +186,7 @@ public sealed class SessionLauncher
     private bool WaitForRelease(string session)
     {
         var clock = Stopwatch.StartNew();
-        var path = _store.LockPathOf(session);
-        while (FileLock.IsHeldElsewhere(path))
+        while (SessionLock.IsHeldElsewhere(_store, _runtime, session))
         {
             if (clock.Elapsed >= _timeouts.QuitWait) return false;
             Thread.Sleep(25);
@@ -202,7 +209,7 @@ public sealed class SessionLauncher
                 return [];
             }
         });
-        return new LaunchWorld(found, saved, _store.ReadLastActive(), name => FileLock.IsHeldElsewhere(_store.LockPathOf(name)));
+        return new LaunchWorld(found, saved, _store.ReadLastActive(), name => SessionLock.IsHeldElsewhere(_store, _runtime, name));
     }
 
     /// <summary>The reply, or a failure message describing why there was none.</summary>

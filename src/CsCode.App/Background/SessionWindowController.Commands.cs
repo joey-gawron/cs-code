@@ -74,7 +74,13 @@ public sealed partial class SessionWindowController
             return;
         }
         var wasUnnamed = _host.IsUnnamed;
-        var took = await _host.Lane.RunAsync(() => _host.TryTakeSession(chosen, unnamed: false)).ConfigureAwait(true);
+        bool took;
+        try { took = await _host.Lane.RunAsync(() => _host.TryTakeSession(chosen, unnamed: false)).ConfigureAwait(true); }
+        catch (IOException ex)
+        {
+            Notify(MessageSeverity.Error, $"Could not take session '{chosen}': {ex.Message}");
+            return;
+        }
         if (!took)
         {
             Notify(MessageSeverity.Error, $"Session '{chosen}' is open in another CsCode window.");
@@ -142,7 +148,7 @@ public sealed partial class SessionWindowController
     {
         var self = _host.SessionName;
         var candidates = await _host.Lane.RunAsync(() => _host.Store.List()
-            .Where(s => s.Name != self && !FileLock.IsHeldElsewhere(_host.Store.LockPathOf(s.Name))).ToArray()).ConfigureAwait(true);
+            .Where(s => s.Name != self && !SessionLock.IsHeldElsewhere(_host.Store, _host.Runtime, s.Name)).ToArray()).ConfigureAwait(true);
         if (candidates.Length == 0)
         {
             Notify(MessageSeverity.Info, "There is no saved session to delete (running sessions must be quit first).");
@@ -154,14 +160,19 @@ public sealed partial class SessionWindowController
         var answer = await Windows.ShowMessageAsync(MessageSeverity.Warning, $"Delete session '{name}'? Its backups of unsaved changes are deleted too.",
             [new MessageAction("Delete"), new MessageAction("Cancel", IsCloseAffordance: true)]).ConfigureAwait(true);
         if (answer != "Delete") return;
-        var deleted = await _host.Lane.RunAsync(() =>
+        string? refused;
+        try
         {
-            using var held = FileLock.TryAcquire(_host.Store.LockPathOf(name));
-            if (held is null) return false; // it was started meanwhile
-            _host.Store.Delete(name);
-            return true;
-        }).ConfigureAwait(true);
-        if (!deleted) Notify(MessageSeverity.Error, $"Session '{name}' is running; quit it first.");
+            refused = await _host.Lane.RunAsync<string?>(() =>
+            {
+                using var held = SessionLock.TryAcquire(_host.Store, _host.Runtime, name);
+                if (held is null) return $"Session '{name}' is running; quit it first."; // it was started meanwhile
+                _host.Store.Delete(name);
+                return null;
+            }).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { refused = $"Could not delete session '{name}': {ex.Message}"; }
+        if (refused is not null) Notify(MessageSeverity.Error, refused);
     }
 
     /// <summary>Installs or removes the login autostart entry, after the user confirmed exactly what is written where.</summary>
