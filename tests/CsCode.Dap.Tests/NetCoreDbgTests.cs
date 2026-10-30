@@ -322,6 +322,36 @@ public class NetCoreDbgInstallerTests
     }
 
     [Fact]
+    public void Only_the_intel_mac_asset_is_pinned_to_its_last_release()
+    {
+        var pin = NetCoreDbgInstaller.PinnedRelease("netcoredbg-osx-amd64.tar.gz");
+        Assert.NotNull(pin);
+        Assert.Equal("3.1.3-1062", pin.Tag);
+        Assert.Equal("https://github.com/Samsung/netcoredbg/releases/download/3.1.3-1062/netcoredbg-osx-amd64.tar.gz", pin.DownloadUrl.ToString());
+        Assert.Equal(3479468, pin.Size);
+        Assert.Equal("49459b066836b6a452f418501d7ecab57bcd7e60d8464faac21ff70b496b8634", pin.Sha256);
+        foreach (var asset in new[] { "netcoredbg-linux-amd64.tar.gz", "netcoredbg-linux-arm64.tar.gz", "netcoredbg-osx-arm64.zip", "netcoredbg-win64.zip" })
+            Assert.Null(NetCoreDbgInstaller.PinnedRelease(asset));
+    }
+
+    /// <summary>
+    /// An Intel Mac downloads the pinned release without asking the API for the latest one (which has no osx-amd64 asset), and the pinned
+    /// digest is checked: the fake's archive is not the real one, so it is refused before anything is extracted.
+    /// </summary>
+    [Fact]
+    public async Task An_intel_mac_downloads_the_pinned_release_and_checks_it_against_the_pinned_digest()
+    {
+        var (archive, _) = MakeArchive();
+        var gh = new FakeGitHub(archive, "netcoredbg-osx-amd64.tar.gz", Sha(archive));
+        using var tools = new TempDirectory();
+        var installer = new NetCoreDbgInstaller(gh) { PlatformAsset = () => "netcoredbg-osx-amd64.tar.gz" };
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(async () => await installer.InstallAsync(tools.Path, null, Ct));
+        Assert.Contains("49459b066836b6a452f418501d7ecab57bcd7e60d8464faac21ff70b496b8634", ex.Message);
+        Assert.Equal(["https://github.com/Samsung/netcoredbg/releases/download/3.1.3-1062/netcoredbg-osx-amd64.tar.gz"], gh.Requests);
+        Assert.Empty(Directory.GetFileSystemEntries(tools.Path));
+    }
+
+    [Fact]
     public async Task Cancellation_stops_the_download()
     {
         var (archive, asset) = MakeArchive();
@@ -437,6 +467,23 @@ public class NetCoreDbgFactoryTests
         Assert.Contains(window.Messages, m => m.Severity == CsCode.Core.Platform.MessageSeverity.Error && m.Message.Contains("Could not install netcoredbg"));
     }
 
+    /// <summary>A release without this machine's asset (as the latest one has none for Intel Macs) is a message, not an unhandled exception.</summary>
+    [Fact]
+    public async Task A_release_without_this_machines_asset_tells_the_user_and_aborts()
+    {
+        using var paths = new TestAppPaths();
+        var window = new RecordingWindowService();
+        window.MessageActionResponses.Enqueue("Download");
+        var installer = new NetCoreDbgInstaller(new OfferGitHub(MakeArchiveForOffer(), "netcoredbg-some-other-os.zip"))
+        {
+            PlatformAsset = () => "netcoredbg-linux-amd64.tar.gz", // an asset that is not pinned: the latest release is looked up
+        };
+        await Assert.ThrowsAsync<DebugSessionStartException>(async () => await Make(paths: paths, window: window, installer: installer).CreateDescriptorAsync(Cfg(), Ct));
+        Assert.Contains(window.Messages, m => m.Severity == CsCode.Core.Platform.MessageSeverity.Error
+            && m.Message.Contains("Could not install netcoredbg") && m.Message.Contains("netcoredbg-linux-amd64.tar.gz"));
+        Assert.False(Directory.Exists(Path.Combine(paths.ToolsDir, "netcoredbg")));
+    }
+
     [Fact]
     public async Task Concurrent_starts_trigger_one_offer_and_one_download()
     {
@@ -549,9 +596,10 @@ public class NetCoreDbgFactoryTests
         var asset = NetCoreDbgInstaller.CurrentPlatformAsset()!;
         if (asset.EndsWith(".zip", StringComparison.Ordinal))
         {
-            using var zip = new ZipArchive(ms, ZipArchiveMode.Create, true);
-            using var w = new StreamWriter(zip.CreateEntry("netcoredbg/netcoredbg.exe").Open());
-            w.Write("x");
+            // The executable's name on this OS (macOS's arm64 build is a zip too), and the zip closed before its bytes are taken.
+            using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            using (var w = new StreamWriter(zip.CreateEntry("netcoredbg/" + NetCoreDbgAdapterFactory.ExecutableName).Open()))
+                w.Write("x");
         }
         else
         {

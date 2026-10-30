@@ -17,12 +17,18 @@ public sealed class UnsafeArchiveException(string message) : IOException(message
 /// Downloads Samsung's netcoredbg (MIT) from its GitHub releases into <c>{ToolsDir}/netcoredbg</c>. The archive's SHA-256 is verified
 /// against the digest GitHub publishes for the release asset before anything is extracted; extraction refuses entries that escape the
 /// destination (zip-slip, absolute paths, symlinks pointing outside); the main binary is made executable. NOT vsdbg: its licence
-/// forbids use outside Microsoft products.
+/// forbids use outside Microsoft products. The latest release is installed, except for an asset that the latest release no longer has
+/// (<see cref="PinnedRelease"/>: Intel Macs), which comes from its last release, with the size and SHA-256 pinned here.
 /// </summary>
 public sealed class NetCoreDbgInstaller
 {
     public const string Repository = "Samsung/netcoredbg";
     public const string ReleasesApi = "https://api.github.com/repos/" + Repository + "/releases/latest";
+
+    /// <summary>What a machine without a netcoredbg release build (<see cref="CurrentPlatformAsset"/> null) is told.</summary>
+    public static string NoBuildMessage =>
+        $"Samsung publishes no netcoredbg build for {RuntimeInformation.OSDescription} on {RuntimeInformation.OSArchitecture}: build it from source "
+        + "(github.com/Samsung/netcoredbg) and set 'cscode.debug.netcoredbgPath', or put it on PATH.";
 
     private readonly HttpClient _http;
     private readonly ILogger _logger;
@@ -36,17 +42,35 @@ public sealed class NetCoreDbgInstaller
         _logger = logger ?? NullLogger.Instance;
     }
 
-    /// <summary>Release asset suffix for this machine (linux-amd64, linux-arm64, osx-arm64, win64), or null when netcoredbg has no build for it.</summary>
+    /// <summary>Release asset for this machine (linux-amd64, linux-arm64, osx-arm64, osx-amd64, win64), or null when netcoredbg has no build for it.</summary>
     public static string? CurrentPlatformAsset()
     {
         var arch = RuntimeInformation.OSArchitecture;
         if (OperatingSystem.IsLinux()) return arch switch { Architecture.X64 => "netcoredbg-linux-amd64.tar.gz", Architecture.Arm64 => "netcoredbg-linux-arm64.tar.gz", _ => null };
-        if (OperatingSystem.IsMacOS()) return arch == Architecture.Arm64 ? "netcoredbg-osx-arm64.zip" : null;
+        if (OperatingSystem.IsMacOS()) return arch switch { Architecture.Arm64 => "netcoredbg-osx-arm64.zip", Architecture.X64 => IntelMacAsset, _ => null };
         if (OperatingSystem.IsWindows()) return arch == Architecture.X64 ? "netcoredbg-win64.zip" : null;
         return null;
     }
 
+    private const string IntelMacAsset = "netcoredbg-osx-amd64.tar.gz";
+
+    /// <summary>The asset this machine downloads (<see cref="CurrentPlatformAsset"/>); a seam for tests of another platform's asset.</summary>
+    internal Func<string?> PlatformAsset { get; init; } = CurrentPlatformAsset;
+
     public sealed record ReleaseAsset(string Tag, string Name, Uri DownloadUrl, long Size, string? Sha256);
+
+    /// <summary>
+    /// The pinned release of an asset that the latest release does not have, or null for one it has. Samsung's last osx-amd64 build is
+    /// 3.1.3-1062 (3.2.0-1092 ships osx-arm64 only): its size and SHA-256 as GitHub publishes them, checked against a download (2026-10-30);
+    /// tools/fetch-netcoredbg.sh pins the same.
+    /// </summary>
+    public static ReleaseAsset? PinnedRelease(string assetName) => assetName switch
+    {
+        IntelMacAsset => new ReleaseAsset("3.1.3-1062", IntelMacAsset,
+            new Uri("https://github.com/" + Repository + "/releases/download/3.1.3-1062/" + IntelMacAsset), 3479468,
+            "49459b066836b6a452f418501d7ecab57bcd7e60d8464faac21ff70b496b8634"),
+        _ => null,
+    };
 
     public async Task<ReleaseAsset> ResolveLatestAsync(string assetName, CancellationToken ct)
     {
@@ -69,9 +93,13 @@ public sealed class NetCoreDbgInstaller
     /// <summary>Downloads, verifies and extracts into <c>{toolsDir}/netcoredbg</c>; returns the path of the netcoredbg executable.</summary>
     public async Task<string> InstallAsync(string toolsDir, IProgressReporter? progress, CancellationToken ct, ReleaseAsset? release = null)
     {
-        var assetName = CurrentPlatformAsset() ?? throw new PlatformNotSupportedException("netcoredbg has no release build for this OS/architecture.");
-        progress?.Report("Looking up the latest netcoredbg release…");
-        release ??= await ResolveLatestAsync(assetName, ct).ConfigureAwait(false);
+        var assetName = PlatformAsset() ?? throw new PlatformNotSupportedException(NoBuildMessage);
+        release ??= PinnedRelease(assetName);
+        if (release is null)
+        {
+            progress?.Report("Looking up the latest netcoredbg release…");
+            release = await ResolveLatestAsync(assetName, ct).ConfigureAwait(false);
+        }
 
         Directory.CreateDirectory(toolsDir);
         var staging = Path.Combine(toolsDir, ".netcoredbg-" + Guid.NewGuid().ToString("N")[..8]);

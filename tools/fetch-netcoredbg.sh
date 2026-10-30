@@ -7,7 +7,8 @@
 #   NETCOREDBG_TAG=<tag> NETCOREDBG_SHA256=<hex> tools/fetch-netcoredbg.sh   # another release: its asset's SHA-256 must be given with it
 #
 # Pinned: release 3.2.0-1092 (published 2026-06-25) and each platform asset's size and SHA-256 (the digests GitHub publishes for the release
-# assets; the linux-amd64 one was also checked against a download, 2026-10-30). The archive must match the pin before anything is extracted;
+# assets; the linux-amd64 one was also checked against a download, 2026-10-30); on an Intel Mac, release 3.1.3-1062, the last with an
+# osx-amd64 build. Runs on macOS's bash 3.2 and BSD tools. The archive must match the pin before anything is extracted;
 # extraction refuses absolute paths, '..' components, links and special files. NOT vsdbg (its licence forbids use outside Microsoft products).
 # The app itself does the same job at runtime through CsCode.Dap's NetCoreDbgInstaller (after asking the user).
 set -euo pipefail
@@ -23,8 +24,12 @@ case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)              asset="netcoredbg-linux-amd64.tar.gz"; size=3510717; pinned_sha256="080eb3b2d2152465f599d3b33d1ee6e747794e11cc0a3773ec689f5e5f2c5afa" ;;
   Linux-aarch64|Linux-arm64) asset="netcoredbg-linux-arm64.tar.gz"; size=3424271; pinned_sha256="065ff49badec8a695dbea2de6ab6a330c774a191e426a217ab8cc05250627ccb" ;;
   Darwin-arm64)              asset="netcoredbg-osx-arm64.zip";      size=3389504; pinned_sha256="f4fa33b3ff874910cc184b4bb3b9c56d0abdf5c6521cee0b144d7c6e4a6e59ea" ;;
+  # Intel Macs: 3.2.0-1092 has no osx-amd64 build; its last one is 3.1.3-1062 (checked against a download, 2026-10-30; as NetCoreDbgInstaller pins).
+  Darwin-x86_64)             asset="netcoredbg-osx-amd64.tar.gz";   size=3479468; pinned_sha256="49459b066836b6a452f418501d7ecab57bcd7e60d8464faac21ff70b496b8634"
+                             pinned_tag="3.1.3-1062"
+                             echo "fetch-netcoredbg: Samsung no longer builds netcoredbg for Intel Macs; using its last Intel build, ${pinned_tag}" >&2 ;;
   MINGW*|MSYS*|CYGWIN*)      asset="netcoredbg-win64.zip";          size=3524161; pinned_sha256="3c410a45fa502415203a94fcb88654af65bf8e3dac158a5527a722e7a6b9274a" ;;
-  *) echo "fetch-netcoredbg: no netcoredbg release build for $(uname -s)/$(uname -m)" >&2; exit 2 ;;
+  *) echo "fetch-netcoredbg: Samsung publishes no netcoredbg build for $(uname -s)/$(uname -m); build it from source (github.com/${repo}) and set cscode.debug.netcoredbgPath" >&2; exit 2 ;;
 esac
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }  # not ${x,,}: macOS ships bash 3.2
