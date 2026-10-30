@@ -302,8 +302,9 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
 
     /// <summary>
     /// One undo step per editor for a playback: <see cref="Enter"/> (before each step) holds an undo group of the active editor's document open
-    /// the first time the playback acts on it, and makes the step an undo step of its own inside it. Groups close when the playback ends, when their document closes, and all at once when Vim is
-    /// switched on (with Vim on none opens: Vim groups its own changes, and the editor's Undo runs Vim's u). UI thread.
+    /// the first time the playback acts on it, and makes the step an undo step of its own inside it. Groups close when the playback ends, when
+    /// their document closes, and all at once when Vim is switched on (with Vim on none opens: Vim groups its own changes, and the editor's Undo
+    /// runs Vim's u). UI thread.
     /// </summary>
     private sealed class PlaybackUndo : IMacroUndoScope
     {

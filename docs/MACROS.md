@@ -59,8 +59,10 @@ item's own command); commands that started before recording; keys and text a mod
 palette's text box, the find box, tree views); mouse actions (clicks, drags, scrolling) and Ctrl+Tab tab switching; **anything while the
 integrated terminal has the keyboard** (context key `terminalFocus`, `MacroCommands.RecordingPausedWhen`): what is typed into the shell never
 reaches the editor's taps anyway, and the terminal's commands are left out too, whether run by their keys (paste, select all, scroll, the
-`commandsToSkipShell` keys), from a menu or the palette: a command that started while the terminal had the keyboard, or that completes while it
-has it (Toggle Terminal pressed in the editor moves the keyboard there), is not recorded. Recording goes on: the status item reads
+`commandsToSkipShell` keys), from a menu or the palette: a command that started while the terminal had the keyboard, or that completes after
+the keyboard moved there, is not recorded (Toggle Terminal pressed in the editor normally is not: the terminal has the keyboard when it
+completes; the main window's focus tracking briefly clears `terminalFocus` after the terminal sets it, end-pass item T22, so a command that
+completes in exactly that moment would still be recorded). Recording goes on: the status item reads
 "Recording macro… (paused in the terminal)" meanwhile, the next step after returning to the editor joins the macro as if nothing happened in
 between, and the time spent in the terminal is not recorded as a pause (`macros.recordPauses`). Ctrl+M, Ctrl+R works in the terminal too (a
 chord reaches the key bindings, docs/TERMINAL.md), so recording can be started or stopped there. A command whose arguments
