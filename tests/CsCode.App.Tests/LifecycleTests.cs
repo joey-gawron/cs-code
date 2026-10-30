@@ -149,10 +149,12 @@ public class LifecycleTests
     }
 
     [Fact]
-    public void The_app_memory_monitor_records_child_processes_and_stands_in_while_profiling_registers_none()
+    public void The_app_memory_monitor_wraps_the_profiling_monitor_and_records_child_processes()
     {
         using var sp = AppServices.Build([]);
         var monitor = sp.GetRequiredService<IMemoryMonitor>();
+        Assert.IsType<ShellMemoryMonitor>(monitor);
+        Assert.NotNull(sp.GetService<CsCode.Profiling.MemoryMonitor>()); // CsCode.Profiling registers the real one, which the shell's wraps
         var tracker = sp.GetRequiredService<ChildProcessTracker>();
         var token = monitor.TrackChildProcess("lsp:x", Environment.ProcessId);
         Assert.Equal([("lsp:x", Environment.ProcessId)], tracker.Tracked);

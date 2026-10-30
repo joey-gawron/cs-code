@@ -190,19 +190,11 @@ public class MacroRealAppTests(ITestOutputHelper output)
         Assert.Contains("played 3 times", app.StatusText(MacroCommands.MessageStatusId));
     }
 
-    /// <summary>
-    /// The find panel focuses its text box when it opens; in the headless platform its template may not be applied by then (no layout pass yet),
-    /// so the test puts the focus where a click would.
-    /// </summary>
-    private async Task FocusFindBoxAsync(MacroApp app)
+    /// <summary>The find panel focuses its text box when it opens (T20: also before its first layout pass), as Ctrl+F does for a user.</summary>
+    private static async Task FocusFindBoxAsync(MacroApp app)
     {
         static bool InFindPanel(object? e) => (e as Avalonia.Visual)?.FindAncestorOfType<AvaloniaEdit.Search.SearchPanel>() is not null;
-        if (await RealAppHost.WaitFor(() => InFindPanel(app.Host.Window.FocusManager?.GetFocusedElement()), 2000)) return;
-        output.WriteLine("the find panel did not focus its text box by itself (headless): focusing it");
-        var box = app.View.GetVisualDescendants().OfType<AvaloniaEdit.Search.SearchPanel>().SelectMany(p => p.GetVisualDescendants().OfType<Avalonia.Controls.TextBox>()).FirstOrDefault()
-            ?? throw new InvalidOperationException("the find panel did not open");
-        box.Focus();
-        Assert.True(await RealAppHost.WaitFor(() => InFindPanel(app.Host.Window.FocusManager?.GetFocusedElement())));
+        Assert.True(await RealAppHost.WaitFor(() => InFindPanel(app.Host.Window.FocusManager?.GetFocusedElement())), "the find panel did not focus its text box");
     }
 
     [AvaloniaFact(Timeout = 180_000)]

@@ -192,8 +192,8 @@ public sealed class TerminalPanelRuntime : IDisposable
     public TerminalControl? FocusedControl => _focused is not null && _focused.TryGetTarget(out var c) && c.IsKeyboardFocusWithin ? c : null;
 
     /// <summary>
-    /// The control marks the <c>terminalFocus</c> context key itself (the shell classifies tool windows as <c>panelFocus</c>); the shell's own
-    /// tracker clears it when focus moves to another area.
+    /// The control marks the <c>terminalFocus</c> context key itself; the shell's own tracker, whose window-level GotFocus handler runs after the
+    /// control's, classifies a focused terminal as a terminal too (so the key holds synchronously), and clears it when focus moves to another area.
     /// </summary>
     internal void SetTerminalFocus(bool focused, TerminalControl control)
     {
@@ -202,13 +202,6 @@ public sealed class TerminalPanelRuntime : IDisposable
             _focused = new WeakReference<TerminalControl>(control);
             Keys?.Set(FocusContextKey, true);
             Keys?.Set("panelFocus", true);
-            // The main window classifies focus in its own GotFocus handler, which runs after the control's and resets the key for a
-            // "panel": set it again once the event is done (Normal priority runs before any pending input).
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (_focused is not null && _focused.TryGetTarget(out var still) && ReferenceEquals(still, control) && control.IsKeyboardFocusWithin)
-                    Keys?.Set(FocusContextKey, true);
-            });
             return;
         }
         // Only the control that holds the key clears it (a view disposed without ever having focus must not).
