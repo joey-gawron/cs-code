@@ -87,6 +87,8 @@ public class R4Tests
         var second = host.Manager.Session!.Server;
         Assert.Equal(first.InstanceId, second.InstanceId); // the same server process: resumed
         Assert.Equal(first.ProcessId, second.ProcessId);
+        Assert.True(host.Manager.Session!.Resumed);
+        Assert.Contains("resumed", host.Manager.Status.Message, StringComparison.Ordinal);
 
         var screen = await TerminalProbe.WaitForTextAsync(t, "\ngot-typed-while-down", TimeSpan.FromSeconds(60)); // the output, not the echo
         var lines = Regex.Matches(screen, @"^line-(\d+)$", RegexOptions.Multiline).Select(m => int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).ToArray();

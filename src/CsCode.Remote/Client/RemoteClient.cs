@@ -57,6 +57,7 @@ public sealed class RemoteClient : IAsyncDisposable
     private RemoteSession? _session;
     private CancellationTokenSource? _lifetime;
     private int _generation;
+    private string? _lastInstance;
 
     public RemoteClient(string host, Func<IRemoteTransport> transport, UriMapper mapper, string mode, ReconnectPolicy? policy = null,
         TimeProvider? time = null, ILogger? log = null, Action<string>? logLine = null, Uri? authority = null)
@@ -145,6 +146,8 @@ public sealed class RemoteClient : IAsyncDisposable
         var participants = Participants;
         var session = await RemoteSession.ConnectAsync(_transport(), Mapper, _mode, peer => { foreach (var p in participants) p.Attach(peer); },
             progress, _log, ct, CallTimeout).ConfigureAwait(false);
+        session.Resumed = session.Server.InstanceId is { } instance && instance == Volatile.Read(ref _lastInstance);
+        Volatile.Write(ref _lastInstance, session.Server.InstanceId);
         try
         {
             foreach (var p in participants) await p.OnConnectedAsync(session, ct).ConfigureAwait(false);
@@ -152,7 +155,8 @@ public sealed class RemoteClient : IAsyncDisposable
         catch
         {
             foreach (var p in participants) Safe(p.OnDisconnected);
-            await session.DisposeAsync().ConfigureAwait(false);
+            // Resynchronising failed half-way: drop this connection but leave a persistent server running (the next attempt reattaches to it).
+            await session.DetachAsync().ConfigureAwait(false);
             throw;
         }
         var generation = Interlocked.Increment(ref _generation);
@@ -161,7 +165,7 @@ public sealed class RemoteClient : IAsyncDisposable
         session.Peer.Closed.Subscribe(reason => _ = OnLostAsync(generation, reason));
         if (session.Peer.IsClosed) _ = OnLostAsync(generation, null);
         SetStatus(new RemoteConnectionStatus(RemoteConnectionState.Connected, Host, Authority,
-            $"Connected to {Host} (server {session.Server.ServerVersion}, {session.Server.Os} {session.Server.Arch})"));
+            $"Connected to {Host} (server {session.Server.ServerVersion}, {session.Server.Os} {session.Server.Arch}{(session.Resumed ? "; resumed: terminals, debug sessions and tasks kept" : "")})"));
         _sessionChanged.Fire(session);
     }
 
@@ -189,7 +193,7 @@ public sealed class RemoteClient : IAsyncDisposable
             var old = Interlocked.Exchange(ref _session, null);
             foreach (var p in Participants) Safe(p.OnDisconnected);
             _sessionChanged.Fire(null);
-            if (old is not null) await old.DisposeAsync().ConfigureAwait(false);
+            if (old is not null) await old.DetachAsync().ConfigureAwait(false); // lost, not closed: a persistent server waits for the reconnect
             _log.LogWarning("Connection to {Host} lost: {Reason}", Host, reason?.Message ?? "closed");
 
             for (var attempt = 1; ; attempt++)

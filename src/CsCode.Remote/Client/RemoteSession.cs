@@ -64,10 +64,21 @@ public sealed class RemoteSession : IAsyncDisposable
     public static string ClientVersion =>
         typeof(RemoteSession).Assembly.GetName().Version?.ToString(3) ?? "dev";
 
-    public async ValueTask DisposeAsync()
+    /// <summary>Whether this connection reached the same server process as the one before it (a persistent server, R4).</summary>
+    public bool Resumed { get; internal set; }
+
+    public ValueTask DisposeAsync() => CloseAsync(shutdownServer: true);
+
+    /// <summary>
+    /// Drops this connection WITHOUT asking the server to shut down: a persistent server keeps its terminals, debug adapters and tasks for the
+    /// next connection (a reconnect attempt that failed half-way, a link given up as dead). A deliberate disconnect uses <see cref="DisposeAsync"/>.
+    /// </summary>
+    public ValueTask DetachAsync() => CloseAsync(shutdownServer: false);
+
+    private async ValueTask CloseAsync(bool shutdownServer)
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        if (!Peer.IsClosed)
+        if (shutdownServer && !Peer.IsClosed)
         {
             try { await Peer.InvokeAsync<Empty, Empty>(RemoteMethods.Shutdown, Empty.Value, CancellationToken.None, TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
             catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException) { /* it is going away either way */ }
