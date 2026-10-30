@@ -484,7 +484,8 @@ Measured here, owned elsewhere — for the end pass (nothing below was changed o
    `Platform/Workspace/GitIgnore.cs`, `Platform/EditorConfig/EditorConfigParser.cs` and `Editor/Documents/EditorConfig.cs` (all on `GlobRegex`
    now); `Panels.Search/Engine/TextMatcher.cs` keeps NonBacktracking on purpose (user regexes need the full syntax in linear time).
 3. **GC pauses in the app under load**: the hostile-matrix runs record 3–6 gen2 collections a second while typing with a load running, most of them
-   `induced_noforce` (the GC's own response to `GC.AddMemoryPressure`, which SkiaSharp calls for its native surfaces) and `alloc_small`, with p99
+   `induced_noforce` (the GC's own response to `GC.AddMemoryPressure` — end pass, T55: not SkiaSharp, which never calls it, but Avalonia's
+   `BitmapMemory`, i.e. the headless window's new 4 MB `WriteableBitmap` per rendered frame; item 10) and `alloc_small`, with p99
    GC pauses of 45–155 ms — the main reason the headless budgets miss (with triage item 23's software rasteriser). Worth a desktop check
    (`tools/profile/counters.sh PID` on a real window: `cscode.gc.gen2_collections`, `cscode.gc.pause_time`).
 4. **Trimmables have little to give** in a normal state (section 2: 0–1 KB at every level with 20 documents open): the big re-creatable state
@@ -508,6 +509,17 @@ Measured here, owned elsewhere — for the end pass (nothing below was changed o
    scrolls a big file for an hour grows by hundreds of megabytes until the tab is closed.
 9. The language-feature registry soak shows ~24 B/iteration of live-heap growth in 400 fast iterations (inside the 64 B threshold, cause not
    identified; likely run-time warm-up) — the long variant (`CSCODE_SOAK=1`) decides.
+10. **T55, end pass: what the UI thread does per keystroke** (hostile matrix, rasterisation on the render thread, `ThreadActivityRecorder` +
+   Avalonia's diagnostic activities, 80 keys typed into a 2-line C# file with no language server): 1.0–2.2 s of UI-thread CPU in a 4.2 s window,
+   of which layout (`avalonia.ui.measure.time`) 0.5–1.5 s over ~400 measure passes (~5 per key; single passes up to 20–40 ms). Created while
+   typing (Loaded events): the **status bar rebuilds its item buttons on every caret move** (326 `Button`s for 80 keys: `StatusBarView.Rebuild`
+   creates a new element when an item's text changes and `SyncChildren` then clears and re-adds every child of the panel — shell area); the
+   **editor's suggestion list is created anew each time it opens** (20 `ListBox`es, 40 `ScrollViewer`s, 250 `ListBoxItem`s, 750 `TextBlock`s
+   inside `CodeEditorControl`'s canvas — editor area); 166 `FoldingMarginMarker`s (item 8). Updating a status item's content in place and
+   reusing the suggestion list are what would bring the dispatcher p99 (23–47 ms in the loaded rows at load 10–17; typing p99 mostly 3–20 ms)
+   under 16 ms; the rest is GC (in-window p99 16–30 ms; the headless window allocates a new 4 MB `WriteableBitmap` per frame, whose
+   `AddMemoryPressure` drives the `induced_noforce` gen2s — headless only). The baseline row passed (load 16.6: dispatcher p99 15.5 ms, typing
+   p99 3.0 ms) once frames stopped rasterising on the UI thread.
 
 ## 13. Tests
 
