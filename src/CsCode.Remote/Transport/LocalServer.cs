@@ -32,11 +32,13 @@ public static class LocalServer
     /// <summary>The launch line of a local server over stdio.</summary>
     /// <param name="dataDir">Its data directory (settings, state, logs).</param>
     /// <param name="belowNormal">Run the whole server tree (and the language servers it starts) below normal priority.</param>
+    /// <param name="persist">R4: relay to the persistent server of this session id (started when it does not run), with its grace period in seconds.</param>
     public static ProcessLaunch Launch(string serverAssembly, string dataDir, string? marker = null, bool belowNormal = true,
-        IReadOnlyDictionary<string, string?>? environment = null)
+        IReadOnlyDictionary<string, string?>? environment = null, (string Session, int GraceSeconds)? persist = null)
     {
         List<string> args = [serverAssembly, "--stdio", "--data-dir", dataDir];
         if (marker is not null) args.AddRange(["--marker", marker]);
+        if (persist is { } p) args.AddRange(["--persist", p.Session, "--grace", p.GraceSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
         return new ProcessLaunch(FindDotnetHost(), args) { BelowNormalPriority = belowNormal, Environment = environment };
     }
 }

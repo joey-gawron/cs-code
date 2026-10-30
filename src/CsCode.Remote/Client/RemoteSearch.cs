@@ -21,7 +21,7 @@ public sealed class RemoteSearch(IRemoteEndpoint endpoint) : IFileSearchProvider
 
     public async IAsyncEnumerable<Uri> FindFilesAsync(Uri folder, FileSearchOptions options, [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var (session, mapper) = endpoint.Resolve(folder);
+        var (session, mapper) = await endpoint.ResolveAsync(folder, ct).ConfigureAwait(false);
         var request = new SearchFilesParams(mapper.ToRemotePath(folder), options.IncludeGlob, options.ExcludeGlobs, options.UseIgnoreFiles, options.FollowSymlinks, options.MaxResults);
         await foreach (var batch in PullAsync(session, RemoteMethods.SearchFiles, request, ct).ConfigureAwait(false))
             foreach (var path in batch.Paths ?? [])
@@ -32,7 +32,7 @@ public sealed class RemoteSearch(IRemoteEndpoint endpoint) : IFileSearchProvider
     public async IAsyncEnumerable<RemoteTextMatch> SearchTextAsync(IReadOnlyList<Uri> folders, SearchTextParams query, [EnumeratorCancellation] CancellationToken ct = default)
     {
         if (folders.Count == 0) yield break;
-        var (session, mapper) = endpoint.Resolve(folders[0]);
+        var (session, mapper) = await endpoint.ResolveAsync(folders[0], ct).ConfigureAwait(false);
         var request = query with { Folders = folders.Select(mapper.ToRemotePath).ToArray() };
         await foreach (var batch in PullAsync(session, RemoteMethods.SearchText, request, ct).ConfigureAwait(false))
             foreach (var m in batch.Matches ?? [])

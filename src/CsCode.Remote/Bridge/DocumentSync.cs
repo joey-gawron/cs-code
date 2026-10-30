@@ -112,6 +112,8 @@ public sealed class DocumentSync : IRemoteParticipant, IDisposable
         _sent.Clear();
         foreach (var doc in _documents.Documents)
             if (_mapper.Handles(doc.Uri)) Open(doc);
+        // A persistent server we reconnected to may still hold documents closed meanwhile: it closes every one not re-sent (ordered after the opens).
+        session.Peer.Notify(RemoteMethods.DocKeep, new DocKeepParams(_sent.Keys.ToArray()));
         return true;
     });
 

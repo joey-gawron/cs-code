@@ -1,6 +1,9 @@
+using CsCode.Core.Debugging;
 using CsCode.Core.Languages;
 using CsCode.Core.Platform;
 using CsCode.Core.Remote;
+using CsCode.Core.Tasks;
+using CsCode.Core.Terminal;
 using CsCode.Remote.Bridge;
 using CsCode.Remote.Client;
 using CsCode.Remote.Shell;
@@ -15,6 +18,9 @@ public static class ServiceCollectionExtensions
     /// Registers remote editing: <see cref="IRemoteConnectionManager"/>, the <c>ssh:</c> <see cref="IFileSystemProvider"/> / <see cref="IFileWatcherProvider"/> /
     /// <see cref="IFileSearchProvider"/> (picked up by Platform's routing file system, watcher and workspace search), will-save/file-operation
     /// participants for remote documents, and <see cref="RemoteShellContributions"/> (call its <c>Start()</c> once from the shell).
+    /// <para>R3: a remote workspace's terminals run on its server (<see cref="ITerminalBackendProvider"/>), its debug adapters too
+    /// (<see cref="IDebugPathMapper"/> + the factory/provider <see cref="RemoteShellContributions.Start"/> registers with the debug service), and its
+    /// tasks (the <see cref="ITaskService"/> registrations made so far are wrapped: remote folders go to the server).</para>
     /// <para>Call AFTER <c>AddCsCodeLsp()</c>: with <c>cscode.languageHost = process</c> the language-server manager registrations made so far (and the
     /// will-save/file-operation participants that resolve it) are redirected to the out-of-process <see cref="ProcessLanguageHost"/>, so the in-process
     /// language client is never constructed. The setting is read when the manager is first resolved (it applies on restart).</para>
@@ -28,6 +34,7 @@ public static class ServiceCollectionExtensions
         RedirectToProcessHost<ILanguageServerManager>(services);
         RedirectToProcessHost<IWillSaveParticipant>(services);
         RedirectToProcessHost<IFileOperationParticipant>(services);
+        DecorateTaskService(services);
 
         services.TryAddSingleton(new RemoteOptions());
         services.TryAddSingleton(sp => new LanguageHostMode(sp));
@@ -40,7 +47,24 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWillSaveParticipant>(sp => sp.GetRequiredService<RemoteConnectionManager>().SaveParticipant);
         services.AddSingleton<IFileOperationParticipant>(sp => sp.GetRequiredService<RemoteConnectionManager>().SaveParticipant);
         services.TryAddSingleton(sp => new RemoteShellContributions(sp));
+        services.TryAddSingleton<ITerminalBackendProvider>(sp => new RemoteTerminals(sp.GetRequiredService<RemoteConnectionManager>(), sp.GetService<IWorkspaceService>));
+        services.TryAddSingleton(sp => new RemoteDebugging(sp.GetRequiredService<RemoteConnectionManager>(), sp.GetService<IWorkspaceService>,
+            sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger("CsCode.Remote.Debug")));
+        services.TryAddSingleton<IDebugPathMapper>(sp => sp.GetRequiredService<RemoteDebugging>());
         return services;
+    }
+
+    /// <summary>Wraps the task service registrations made so far (the Dap module's): tasks of a remote folder run on its server.</summary>
+    private static void DecorateTaskService(IServiceCollection services)
+    {
+        var existing = services.Where(d => d.ServiceType == typeof(ITaskService) && !d.IsKeyedService && d.Lifetime == ServiceLifetime.Singleton).ToArray();
+        foreach (var d in existing)
+        {
+            services.Remove(d);
+            var original = d;
+            services.AddSingleton<ITaskService>(sp => new RemoteTaskService(Create<ITaskService>(sp, original), sp.GetRequiredService<RemoteConnectionManager>(),
+                sp.GetService<IWorkspaceService>, sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger("CsCode.Remote.Tasks")));
+        }
     }
 
     /// <summary>Wraps every existing <typeparamref name="T"/> registration: in process mode it resolves to the <see cref="ProcessLanguageHost"/> instead.</summary>

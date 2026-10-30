@@ -46,6 +46,9 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
             _store.Add(commands.Register(ShowLog, _ => Run(ShowLogAsync()), new CommandMetadata(ShowLog, "Show Log", "Remote")));
             if (sp.GetService<IConfigurationService>() is { } config) _store.Add(config.RegisterProperties(RemoteSettings.Properties()));
         }
+        // R3: sessions of a remote workspace start their adapter on the server (asked before the built-in, local factories).
+        if (sp.GetService<CsCode.Core.Debugging.IDebugService>() is { } debug && sp.GetService<Bridge.RemoteDebugging>() is { } remoteDebug)
+            _store.Add(remoteDebug.RegisterWith(debug));
         if (sp.GetService<IStatusBarService>() is { } statusBar)
         {
             // Resolving the manager here is cheap (everything it needs is resolved lazily) and makes the indicator follow it from the start.

@@ -91,6 +91,10 @@ public sealed record ServerLaunchOptions
     /// <summary>Upper bound for "server greeted us" (covers ssh authentication, which may wait for the user at an askpass prompt).</summary>
     public TimeSpan StartTimeout { get; init; } = TimeSpan.FromMinutes(3);
     public TimeSpan InstallTimeout { get; init; } = TimeSpan.FromMinutes(10);
+    /// <summary>R4: the persistent server's session id (32 hex digits); null = the server ends with the connection.</summary>
+    public string? PersistSession { get; init; }
+    /// <summary>R4: seconds the persistent server waits for its client to come back.</summary>
+    public int GraceSeconds { get; init; } = 10800;
 }
 
 /// <summary>
@@ -111,7 +115,8 @@ public sealed class ShellServerTransport(IRemoteShell shell, ServerLaunchOptions
         {
             progress?.Report(attempt == 0 ? $"Starting the server ({Shell.Description})" : "Starting the installed server");
             var hashes = Options.Bundles?.CandidateHashes ?? [];
-            var launch = Shell.Launch(ServerScripts.Start, [Options.InstallRoot ?? "", Options.DataDir ?? "", Options.Marker ?? "", force ? "force" : "", .. hashes]);
+            var launch = Shell.Launch(ServerScripts.Start, [Options.InstallRoot ?? "", Options.DataDir ?? "", Options.Marker ?? "", force ? "force" : "",
+                Options.PersistSession ?? "", Options.PersistSession is null ? "" : Options.GraceSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), .. hashes]);
             var start = await Greeting.StartAsync(launch, Shell.Description, Options.StartTimeout, ct).ConfigureAwait(false);
             if (start.Channel is { } channel) return channel;
             if (start.ProbeOutput is null)

@@ -9,6 +9,8 @@ public interface IRemoteEndpoint
 {
     /// <summary>The session serving <paramref name="uri"/> and its mapper; throws <see cref="RemoteDisconnectedException"/> (an IOException) when that host is not connected.</summary>
     (RemoteSession Session, SshUriMapper Mapper) Resolve(Uri uri);
+    /// <summary>Like <see cref="Resolve"/>, but while the host is connecting or reconnecting it waits (bounded) for the connection instead of failing.</summary>
+    ValueTask<(RemoteSession Session, SshUriMapper Mapper)> ResolveAsync(Uri uri, CancellationToken ct);
     /// <summary>The mapper of the host <paramref name="uri"/> belongs to when it is the configured/connecting one (even while disconnected), else null.</summary>
     SshUriMapper? MapperFor(Uri uri);
     DirectoryCache Directories { get; }
@@ -35,9 +37,9 @@ public sealed class RemoteFileSystem : IFileSystemProvider
 
     public string Scheme => SshUriMapper.Scheme;
 
-    private (RpcPeer Peer, string Path, RemoteSession Session) Target(Uri uri)
+    private async ValueTask<(RpcPeer Peer, string Path, RemoteSession Session)> TargetAsync(Uri uri, CancellationToken ct)
     {
-        var (session, mapper) = _endpoint.Resolve(uri);
+        var (session, mapper) = await _endpoint.ResolveAsync(uri, ct).ConfigureAwait(false);
         return (session.Peer, mapper.ToRemotePath(uri), session);
     }
 
@@ -46,13 +48,13 @@ public sealed class RemoteFileSystem : IFileSystemProvider
     /// <summary>Stat plus the etag (mtime/size) for <see cref="WriteFileAsync(Uri, ReadOnlyMemory{byte}, string?, bool, CancellationToken)"/>.</summary>
     public async ValueTask<WireStat?> StatWithEtagAsync(Uri uri, CancellationToken ct = default)
     {
-        var (peer, path, _) = Target(uri);
+        var (peer, path, _) = await TargetAsync(uri, ct).ConfigureAwait(false);
         return await peer.InvokeAsync<PathParams, WireStat?>(RemoteMethods.FsStat, new PathParams(path), ct).ConfigureAwait(false);
     }
 
     public async ValueTask<IReadOnlyList<DirectoryEntry>> ReadDirectoryAsync(Uri uri, CancellationToken ct = default)
     {
-        var (peer, path, _) = Target(uri);
+        var (peer, path, _) = await TargetAsync(uri, ct).ConfigureAwait(false);
         if (_endpoint.Directories.TryGet(path, out var cached)) return cached;
         var r = await peer.InvokeAsync<PathParams, ReadDirResult>(RemoteMethods.FsReadDir, new PathParams(path), ct).ConfigureAwait(false);
         var entries = r?.Entries ?? [];
@@ -62,7 +64,7 @@ public sealed class RemoteFileSystem : IFileSystemProvider
 
     public async ValueTask<byte[]> ReadFileAsync(Uri uri, CancellationToken ct = default)
     {
-        var (peer, path, _) = Target(uri);
+        var (peer, path, _) = await TargetAsync(uri, ct).ConfigureAwait(false);
         for (var attempt = 0; ; attempt++)
         {
             var first = await peer.InvokeAsync<ReadParams, ReadResult>(RemoteMethods.FsRead, new ReadParams(path, 0, Payload.ChunkSize), ct).ConfigureAwait(false)
@@ -117,7 +119,7 @@ public sealed class RemoteFileSystem : IFileSystemProvider
 
     private async Task<WireStat?> WriteCoreAsync(Uri uri, ReadOnlyMemory<byte> content, string? expectedEtag, bool createParents, CancellationToken ct)
     {
-        var (peer, path, session) = Target(uri);
+        var (peer, path, session) = await TargetAsync(uri, ct).ConfigureAwait(false);
         await new PoolHop(); // encoding/compressing chunks is CPU work: never on the caller's (UI) thread
         try
         {
@@ -156,22 +158,22 @@ public sealed class RemoteFileSystem : IFileSystemProvider
 
     public async ValueTask CreateDirectoryAsync(Uri uri, CancellationToken ct = default)
     {
-        var (peer, path, _) = Target(uri);
+        var (peer, path, _) = await TargetAsync(uri, ct).ConfigureAwait(false);
         try { await peer.InvokeAsync<PathParams, Empty>(RemoteMethods.FsMkdir, new PathParams(path), ct).ConfigureAwait(false); }
         finally { _endpoint.Directories.InvalidatePath(path); }
     }
 
     public async ValueTask DeleteAsync(Uri uri, bool recursive = false, bool useTrash = true, CancellationToken ct = default)
     {
-        var (peer, path, _) = Target(uri);
+        var (peer, path, _) = await TargetAsync(uri, ct).ConfigureAwait(false);
         try { await peer.InvokeAsync<DeleteParams, Empty>(RemoteMethods.FsDelete, new DeleteParams(path, recursive, useTrash), ct).ConfigureAwait(false); }
         finally { _endpoint.Directories.InvalidateTree(path); }
     }
 
     public async ValueTask RenameAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default)
     {
-        var (peer, from, _) = Target(source);
-        var (_, to, _) = Target(target);
+        var (peer, from, _) = await TargetAsync(source, ct).ConfigureAwait(false);
+        var (_, to, _) = await TargetAsync(target, ct).ConfigureAwait(false);
         try { await peer.InvokeAsync<MoveParams, Empty>(RemoteMethods.FsRename, new MoveParams(from, to, overwrite), ct).ConfigureAwait(false); }
         finally
         {
@@ -182,8 +184,8 @@ public sealed class RemoteFileSystem : IFileSystemProvider
 
     public async ValueTask CopyAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default)
     {
-        var (peer, from, _) = Target(source);
-        var (_, to, _) = Target(target);
+        var (peer, from, _) = await TargetAsync(source, ct).ConfigureAwait(false);
+        var (_, to, _) = await TargetAsync(target, ct).ConfigureAwait(false);
         try { await peer.InvokeAsync<MoveParams, Empty>(RemoteMethods.FsCopy, new MoveParams(from, to, overwrite), ct).ConfigureAwait(false); }
         finally { _endpoint.Directories.InvalidateTree(to); }
     }
