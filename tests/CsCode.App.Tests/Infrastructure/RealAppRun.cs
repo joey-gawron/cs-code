@@ -17,11 +17,13 @@ public sealed class RealAppHome : IDisposable
 {
     private readonly string? _previous = Environment.GetEnvironmentVariable("CSCODE_HOME");
     private readonly string? _previousData = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+    private readonly string? _previousTrash = Environment.GetEnvironmentVariable("CSCODE_TRASH_DIR");
 
     public RealAppHome()
     {
         Environment.SetEnvironmentVariable("CSCODE_HOME", Home.Path);
-        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Home.Combine("xdg-data")); // the Platform trash lives here: deletes never reach the user's real Trash
+        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Home.Combine("xdg-data")); // nothing the app starts writes to the user's ~/.local/share
+        Environment.SetEnvironmentVariable("CSCODE_TRASH_DIR", Home.Combine("trash")); // the Platform trash on every OS: deletes never reach the user's real Trash
     }
 
     public TempDirectory Home { get; } = new("cscode-life-home-");
@@ -42,6 +44,7 @@ public sealed class RealAppHome : IDisposable
     {
         Environment.SetEnvironmentVariable("CSCODE_HOME", _previous);
         Environment.SetEnvironmentVariable("XDG_DATA_HOME", _previousData);
+        Environment.SetEnvironmentVariable("CSCODE_TRASH_DIR", _previousTrash);
         Home.Dispose();
         Workspace.Dispose();
         CrashLogs.Dispose();
