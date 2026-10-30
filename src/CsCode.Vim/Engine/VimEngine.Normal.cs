@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using CsCode.Core.Text;
 
@@ -118,6 +119,83 @@ public sealed partial class VimEngine
         _argPending = false;
         _noMap = 0;
     }
+
+    // ------------------------------------------------------------------------------------------------------------
+    // clipboard reads ahead of a key
+    // ------------------------------------------------------------------------------------------------------------
+
+    private Cmd? _probe;
+
+    /// <summary>
+    /// The clipboard register (<c>'+'</c> or <c>'*'</c>) that the command completed by typing <paramref name="key"/> now would read: a put without
+    /// a register name (p P gp gP ]p [p ]P [P, in Normal, Visual and Insert-Normal mode) while 'clipboard' (or vim.useSystemClipboard) makes the
+    /// unnamed register a clipboard register (<see cref="VimSession.UnnamedClipboardRegister"/>), or a <c>.</c> that repeats a put of a clipboard
+    /// register. A host whose clipboard reads are asynchronous reads that register before it passes the key on, as Vim's do_put reads the
+    /// clipboard (may_get_selection) before it puts.
+    /// <para>
+    /// Null for every other key: a register name, mark, motion argument or text object that happens to be p, a put of a register the keys name
+    /// (<c>"+p</c>: <see cref="PendingKeys"/> shows <c>"+</c> when it is typed, the time to read it), and whenever the parser alone cannot tell:
+    /// a mapping may take the key, or keys or sliced work are queued before it. The engine's state is left as it was.
+    /// </para>
+    /// </summary>
+    public char? ClipboardRegisterReadBy(string text) => text is [var c] ? ClipboardRegisterReadBy(c) : null;
+
+    /// <inheritdoc cref="ClipboardRegisterReadBy(string)"/>
+    public char? ClipboardRegisterReadBy(int key)
+    {
+        if (_host is null || !_s.Enabled || key is not ('p' or 'P' or '.')) return null;
+        if (key != '.' && _s.UnnamedClipboardRegister is null) return null;
+        if (_mode is not (VimMode.Normal or VimMode.Visual or VimMode.VisualLine or VimMode.VisualBlock or VimMode.InsertNormal)) return null;
+        if (_inPump || _work is not null || _awaitKey || _stuff.Count > 0 || _typed.Count > 0 || _cmdline is not null || _opCmdForSearch is not null || _opPendingShown)
+            return null;
+        // the keys waiting for a mapping decision, then this one: a mapping that takes them decides what runs (MapKey / ResolveMap)
+        var mode = CurrentMapMode();
+        Span<int> keys = stackalloc int[_mapBuf.Count + 1];
+        CollectionsMarshal.AsSpan(_mapBuf).CopyTo(keys);
+        keys[^1] = key;
+        if (_noMap == 0 && !_argPending && _s.Mappings.Items.Count > 0 && _s.Mappings.Any(mode))
+        {
+            var (exact, longer) = _s.Mappings.Lookup(mode, keys);
+            if (exact is not null || longer) return null;
+            for (var len = keys.Length - 1; len >= 1; len--)
+                if (_s.Mappings.Lookup(mode, keys[..len]).Exact is not null) return null;
+        }
+        // parse what the command would be, on a scratch command, and put the parser's state back
+        var saved = (_pp, _argPending, _opPendingShown, _tagCancelled);
+        var pending = _pend.Count;
+        foreach (var k in keys) _pend.Add(k);
+        int register;
+        try
+        {
+            var c = _probe ??= new Cmd();
+            if (TryParse(c) != ParseResult.Complete || _pp != _pend.Count || c.Op != OpType.None) return null;
+            if (c.Key == '.')
+            {
+                // a repeat puts the register the repeated put named (RepeatLast)
+                if (_redo is not { IsVisual: false } redo || !IsPutKeys(redo.Keys)) return null;
+                register = redo.Reg;
+            }
+            else if (c.Key is 'p' or 'P' || c.Key is 'g' or '[' or ']' && c.Key2 is 'p' or 'P')
+            {
+                if (c.Reg != 0) return null;
+                register = 0;
+            }
+            else return null;
+        }
+        finally
+        {
+            _pend.RemoveRange(pending, _pend.Count - pending);
+            (_pp, _argPending, _opPendingShown, _tagCancelled) = saved;
+        }
+        return register == 0 ? _s.UnnamedClipboardRegister : register is '+' or '*' ? (char)register : null;
+    }
+
+    private static bool IsPutKeys(List<int> keys) => keys switch
+    {
+        ['p' or 'P'] => true,
+        ['g' or '[' or ']', 'p' or 'P'] => true,
+        _ => false,
+    };
 
     // ------------------------------------------------------------------------------------------------------------
     // parser

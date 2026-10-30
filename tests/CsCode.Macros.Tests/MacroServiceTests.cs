@@ -311,6 +311,53 @@ public sealed class MacroServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_macro_played_by_a_playing_macro_is_reported_once_by_the_outer_one()
+    {
+        // vim-macros-clipboard-7: macro.run.inner from a step of outer joins outer's playback; only outer reports (no per-run status churn, one toast)
+        var r = await CreateAsync("x");
+        await _ui.Run(() => r.Commands.Register("noop.cmd", _ => Done()));
+        File.WriteAllText(r.Store.FilePath, """
+            { "macros": [
+                { "name": "inner", "steps": [ { "command": "noop.cmd" } ] },
+                { "name": "outer", "steps": [ { "command": "macro.run.inner" } ] },
+                { "name": "badinner", "steps": [ { "command": "no.such.command" } ] },
+                { "name": "badouter", "steps": [ { "command": "macro.run.badinner" } ] }
+            ] }
+            """);
+        Assert.True(await RealWait(() => r.Commands.Has("macro.run.badouter")), "the watcher did not pick up macros.json");
+        await _ui.DrainAsync();
+
+        var innerMessages = 0;
+        using (r.Status.Changed.Subscribe(items => { if (items.Any(i => i.Id == MacroCommands.MessageStatusId && i.Text.Contains("'inner'"))) Interlocked.Increment(ref innerMessages); }))
+            await Exec(r, "macro.run.outer", 50);
+        Assert.Equal(0, Volatile.Read(ref innerMessages));
+        Assert.Contains("'outer'", r.Service.StatusMessage);
+        Assert.Contains("50", r.Service.StatusMessage);
+
+        await Exec(r, "macro.run.badouter");
+        var warnings = r.Window.Messages.Where(m => m.Severity == MessageSeverity.Warning).Select(m => m.Message).ToArray();
+        var warning = Assert.Single(warnings);
+        Assert.Contains("'badouter'", warning);
+        Assert.Contains("no.such.command", warning);
+    }
+
+    [Fact]
+    public async Task Saving_into_a_file_whose_last_property_ends_in_a_line_comment_keeps_it_valid()
+    {
+        // vim-macros-clipboard-8
+        var r = await CreateAsync("abc");
+        File.WriteAllText(r.Store.FilePath, "{\n  \"version\": 1 // mine\n}");
+        await r.Store.ReloadAsync();
+        await _ui.Run(() => { r.Service.StartRecording(); r.Service.RecordText(";"); r.Service.StopRecording(); });
+        Assert.True(await _ui.RunAsync(() => r.Service.SaveLastAsync("m")));
+        await _ui.DrainAsync();
+        var text = await File.ReadAllTextAsync(r.Store.FilePath);
+        Assert.Empty(MacroJson.ParseFile(text).Errors);
+        Assert.Contains("// mine", text);
+        Assert.True(r.Commands.Has("macro.run.m"));
+    }
+
+    [Fact]
     public async Task Play_takes_the_macro_and_the_mode_from_its_argument_or_asks()
     {
         var r = await CreateAsync("a\nb\nc\nd");
@@ -479,6 +526,19 @@ public sealed class MacroServiceTests : IAsyncDisposable
 
         Assert.StartsWith("// CsCode macros", await File.ReadAllTextAsync(r.Store.FilePath));
         Assert.Equal(r.Store.FileUri, Assert.Single(r.Navigation.Opened).Uri);
+    }
+
+    [Fact]
+    public async Task A_save_whose_result_would_not_load_the_macro_is_refused_and_the_file_left_alone()
+    {
+        var store = Own(new MacroStore(_paths, new LocalFileSystem(_lane)) { MaxStepsPerMacro = () => 1 });
+        const string original = "{ \"macros\": [ { \"name\": \"a\", \"steps\": [ { \"text\": \"1\" } ] } ] }";
+        Directory.CreateDirectory(Path.GetDirectoryName(store.FilePath)!);
+        File.WriteAllText(store.FilePath, original);
+        var tooLong = new Macro("b", [new TextStep("1"), new TextStep("2")]); // over the limit: the saved file would not load it
+        var ex = await Assert.ThrowsAsync<MacroFileException>(() => store.SaveAsync(tooLong));
+        Assert.Contains("was not changed", ex.Message);
+        Assert.Equal(original, File.ReadAllText(store.FilePath));
     }
 
     [Fact]

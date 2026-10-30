@@ -94,7 +94,8 @@ fails*). The find panel's own Find Next wraps; a macro's does not.
   Problems are reported (a toast), never fatal: a macro with a bad step is skipped as a whole (a partial macro would do something else),
   a bad `key` loads the macro without it, a duplicate name keeps the later macro. At most 1,000 macros, 16 MB.
 * **Saving** (`macro.save`) rewrites only that macro's object in the file (comments, layout and other macros stay as written; a trailing comment
-  stays with its line); a file with JSON errors is never overwritten (fix it first). Reading, parsing, formatting and writing happen off the UI
+  stays with its line); a file with JSON errors is never overwritten (fix it first), and the changed text is parsed before it is written: a save
+  that would not load the saved macro is refused and leaves the file as it was. Reading, parsing, formatting and writing happen off the UI
   thread (I/O through `IFileSystem`, i.e. the IO lane, atomic writes).
 * **Floating windows**: an editor floated into a window of its own records and plays like one in the main window. The recorder's end-of-input
   handler and the player's typing guard are on every shell window (`MacroIntegration.AttachWindow`): a key or text event is routed through
@@ -124,7 +125,8 @@ the focused text area, not the event's source (without that, a replayed key coul
 * **Abort on error**: a command that throws or is not registered, a search that finds nothing, a key or text the editor cannot take (no editor,
   a read-only file, Vim switched on meanwhile) stops playback at that step; a toast says which macro, step and run, and why.
 * **Runaway guard**: at most `macros.maxPlaybackSteps` steps (5,000,000) and `macros.maxPlaybackSeconds` (600) per playback, nested macros
-  included; macros nest at most 8 deep (`macro.run.x` steps join the running playback: same guards, Esc stops all); a macro that runs itself,
+  included; macros nest at most 8 deep (`macro.run.x` steps join the running playback: same guards, Esc stops all, and only the outermost
+  macro reports how it ended: one status message or toast per playback); a macro that runs itself,
   directly or through others, is stopped. While recording nothing plays (it would record its own playback); while playing nothing records.
 * **Targets**: each step resolves the active editor anew (no editor reference is kept); a macro whose command switches the editor continues in
   the new one, one that closes the last editor stops at its next key or text step ("No editor is open").
@@ -172,7 +174,8 @@ Vim emulation is **on by default**, so by default users get Vim's `q`/`@` macros
 * **Replay of a macro that types (key or text steps) is refused** while Vim is on ("... Vim would read the macro's keys as Vim commands. Use
   Vim's own macros (q and @), or turn Vim off"); Vim switched on during playback stops it at the next typing step. Replaying through Vim's
   interception was rejected: a macro recorded without Vim replays as Normal-mode commands (`dd`, `x`...) and destroys text.
-* **Command-only macros play** with Vim on (`vim.*` commands included), so saved macros of commands stay usable.
+* **Command-only macros play** with Vim on (`vim.*` commands included), so saved macros of commands stay usable. While one plays, Vim takes
+  no keys (`VimIntegration.PassKeysThrough`): Esc stops the macro and the user's keys (Delete, Ctrl+D, `dd`...) are swallowed, as with Vim off.
 
 ## Hooks added to other modules (additive)
 

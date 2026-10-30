@@ -11,6 +11,8 @@ namespace CsCode.App.Services;
 public interface IPrimarySelectionBackend : IDisposable
 {
     bool IsAvailable { get; }
+    /// <summary>Whether this process owns the selection (the last <see cref="SetOwner"/> provider answers reads), until another client takes it.</summary>
+    bool IsOwner { get; }
     void SetOwner(Func<string>? provider);
     Task<string?> ReadAsync(TimeSpan timeout, CancellationToken ct);
 }
@@ -73,6 +75,7 @@ public sealed class X11PrimarySelection : IPrimarySelectionBackend
     public static X11PrimarySelection? TryCreate(string? display = null) => X11SelectionClient.TryStart("PRIMARY", display) is { } c ? new X11PrimarySelection(c) : null;
 
     public bool IsAvailable => _client.IsAlive;
+    public bool IsOwner => _client.IsOwner;
     public void SetOwner(Func<string>? provider) => _client.SetOwner(provider);
     public Task<string?> ReadAsync(TimeSpan timeout, CancellationToken ct) => _client.ReadAsync(timeout, ct);
     public void Dispose() => _client.Dispose();
@@ -98,6 +101,7 @@ public sealed class ClipboardService : IClipboardService, IDisposable
     private readonly Func<IPlatformClipboard?> _platform;
     private readonly Lazy<IPrimarySelectionBackend?> _primary;
     private readonly Emitter<ClipboardText> _ringChanged = new();
+    private readonly Emitter<ClipboardText> _written = new();
     private readonly object _gate = new();
     private readonly LinkedList<ClipboardText> _ring = new();
     private ClipboardText? _last;
@@ -135,6 +139,7 @@ public sealed class ClipboardService : IClipboardService, IDisposable
         ArgumentNullException.ThrowIfNull(content);
         Volatile.Write(ref _last, content);
         AddToRing(content);
+        _written.Fire(content);
         if (_disposed) return;
         // Setting the clipboard makes CsCode its owner; no other process is involved until someone pastes, so this does not wait on anyone.
         var set = await _ui.InvokeAsync(() => SetOnUi(content)).ConfigureAwait(false);
@@ -177,6 +182,12 @@ public sealed class ClipboardService : IClipboardService, IDisposable
 
     public IEventSource<ClipboardText> RingChanged => _ringChanged;
 
+    /// <summary>
+    /// Fires for every write, on the writer's thread, before the platform clipboard is set: also for the copies the ring leaves out (empty, over
+    /// 1 MB). For caches of what the clipboard holds (Vim's <c>+</c> register), which must follow every copy CsCode makes.
+    /// </summary>
+    public IEventSource<ClipboardText> Written => _written;
+
     private void AddToRing(ClipboardText content)
     {
         if ((long)content.Text.Length * sizeof(char) > ClipboardLimits.RingEntryMaxBytes || content.Text.Length == 0) return;
@@ -213,6 +224,14 @@ public sealed class ClipboardService : IClipboardService, IDisposable
     /// <summary>The provider CsCode last offered as PRIMARY (tests).</summary>
     internal Func<string>? PrimaryProvider => Volatile.Read(ref _pendingPrimary);
 
+    /// <summary>
+    /// The provider CsCode offered as PRIMARY, while CsCode still owns the selection: a read of PRIMARY returns its text. Null when another
+    /// application has taken the selection since (or CsCode offered none). Right after an offer the claim may still be on its way to the X
+    /// server; a reader that checks again once its read completed sees it then.
+    /// </summary>
+    public Func<string>? OwnPrimaryOffer =>
+        !_disposed && _primary.IsValueCreated && _primary.Value is { IsAvailable: true, IsOwner: true } ? Volatile.Read(ref _pendingPrimary) : null;
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -220,6 +239,7 @@ public sealed class ClipboardService : IClipboardService, IDisposable
         if (_primary.IsValueCreated) _primary.Value?.Dispose();
         lock (_gate) _ring.Clear();
         _ringChanged.Clear();
+        _written.Clear();
     }
 }
 
@@ -230,6 +250,7 @@ public sealed class InMemoryPrimarySelection : IPrimarySelectionBackend
     private string? _external;
 
     public bool IsAvailable => true;
+    public bool IsOwner => _provider is not null;
     public void SetOwner(Func<string>? provider) { _provider = provider; _external = null; }
 
     /// <summary>Simulates another application taking PRIMARY with <paramref name="text"/>.</summary>

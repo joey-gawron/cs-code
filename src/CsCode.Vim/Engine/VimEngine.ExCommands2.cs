@@ -821,7 +821,7 @@ public sealed partial class VimEngine
             if (r == '/') { _s.Registers.LastSearch = val; _s.Search.Pattern = val; return true; }
             if (op == ".=")
             {
-                var cur = _s.Registers.ForRead(r == '"' ? 0 : r);
+                var cur = _s.Registers.ForRead(r == '"' ? 0 : r, ReadSystemRegister);
                 val = (cur is null ? "" : string.Join('\n', cur.Lines)) + val;
             }
             var target = _s.Registers.ForWrite(r, out var append, updatePrevious: false);
@@ -830,6 +830,7 @@ public sealed partial class VimEngine
             var type = val.EndsWith('\n') ? VimRegisterType.Line : VimRegisterType.Character;
             var body = type == VimRegisterType.Line ? val[..^1] : val;
             RegisterFile.Store(target, body.Split('\n'), type, 0, append && op != ".=");
+            if (r is '+' or '*') Host.WriteClipboard(r, target.ToText(), target.Type); // :let @+ = ... sets the clipboard, as in Vim
             NotifyNamedRegisterChange();
             return true;
         }

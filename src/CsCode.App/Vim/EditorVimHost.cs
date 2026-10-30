@@ -209,6 +209,10 @@ internal sealed class EditorVimHost : IVimHost
 
     public VimRegisterType? ReadClipboardType(char register) => _owner.Clipboard.Type(register);
 
+    // the engine's read: text and type of one snapshot (a refresh may publish between two separate reads)
+    public (string? Text, VimRegisterType? Type) ReadClipboardRegister(char register) =>
+        _owner.Clipboard.Read(register) is { } content ? (content.Text, content.Type) : (null, null);
+
     public void WriteClipboard(char register, string text, VimRegisterType type) => _owner.Clipboard.Write(register, text, type, _surface.Document.EndOfLine);
 
     public string? ReadClipboard() => ReadClipboard('+');
