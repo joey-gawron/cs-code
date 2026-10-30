@@ -41,7 +41,7 @@ public class RealAppWordingTests
         var bar = host.Window.GetVisualDescendants().OfType<TitleBarView>().Single();
         var folder = Path.GetFileName(host.Files.Path.TrimEnd('/'));
         Assert.True(await RealAppHost.WaitFor(() => bar.WorkspaceName == folder), bar.WorkspaceName);
-        Assert.Equal("Search (Ctrl+Q)", bar.QuickLaunchText); // it used to show the folder name instead
+        Assert.Equal(PlatformKeys.Label("Search (Ctrl+Q)", "Search (⇧⌘A)"), bar.QuickLaunchText); // it used to show the folder name instead
     }
 
     [AvaloniaFact(Timeout = 60_000)]

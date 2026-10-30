@@ -37,7 +37,7 @@ public class MacroFloatingRealAppTests
         app.RecordKey();
         Assert.True(app.Service.IsRecording);
         app.Type("foo");
-        app.Press(Key.S, MacroApp.Ctrl);    // Save: a command, after typing
+        app.Press(Key.S, MacroApp.Command); // Save: a command, after typing
         await app.SettleAsync();
         Assert.False(app.Tab.IsDirty);
         app.Press(Key.Home);

@@ -213,6 +213,27 @@ public class IpcTests
         Assert.Contains(ex.Failure, new[] { IpcFailure.NoEndpoint, IpcFailure.Timeout });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Dispose_returns_while_the_accept_thread_waits_for_a_connection(bool endpointGone)
+    {
+        // macOS: closing the listening socket did not end the accept blocked on it, and the runtime's close waited for that call, so Dispose
+        // (and every quit of a session process) hung for good. Also when the endpoint file is gone by then (its CSCODE_HOME was removed first):
+        // nothing can connect to wake the accept.
+        using var rt = new TestRuntime();
+        var server = new IpcServer(rt.Runtime.EndpointOf(Environment.ProcessId), new EchoHandler());
+        server.Start();
+        // A served request: the accept thread is back in accept, waiting for the next connection.
+        await IpcClient.RequestAsync(server.Endpoint, new IpcMessage { Type = IpcVerbs.Hello }, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+        await Task.Delay(200);
+        if (endpointGone && !OperatingSystem.IsWindows()) File.Delete(server.Endpoint);
+
+        var disposed = Task.Run(server.Dispose);
+        Assert.Same(disposed, await Task.WhenAny(disposed, Task.Delay(TimeSpan.FromSeconds(10))));
+        if (!OperatingSystem.IsWindows()) Assert.False(File.Exists(server.Endpoint));
+    }
+
     [Fact]
     public async Task Discovery_lists_live_processes_removes_stale_sockets_and_flags_wedged_ones()
     {

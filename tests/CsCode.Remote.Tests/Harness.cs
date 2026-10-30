@@ -177,130 +177,21 @@ public static class TestEnv
         };
 
     /// <summary>PIDs of live processes whose command line contains <paramref name="marker"/> (Linux /proc; macOS ps).</summary>
-    public static IReadOnlyList<int> ProcessesWithMarker(string marker)
-    {
-        var pids = new List<int>();
-        if (OperatingSystem.IsMacOS())
-            return Ps("-A", "-ww", "-o", "pid=,stat=,command=").Where(r => r.Tail.Contains(marker, StringComparison.Ordinal) && !r.Stat.StartsWith('Z'))
-                .Select(r => r.Pid).ToList();
-        if (!OperatingSystem.IsLinux()) return pids;
-        foreach (var dir in Directory.EnumerateDirectories("/proc"))
-        {
-            if (!int.TryParse(Path.GetFileName(dir), out var pid)) continue;
-            try
-            {
-                var cmd = File.ReadAllText(Path.Combine(dir, "cmdline"));
-                if (cmd.Contains(marker, StringComparison.Ordinal) && !IsZombie(dir)) pids.Add(pid);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        }
-        return pids;
-    }
+    public static IReadOnlyList<int> ProcessesWithMarker(string marker) => ProcessTable.WithMarker(marker);
 
     /// <summary>Every live descendant of <paramref name="pid"/> (Linux /proc parent links; macOS ps), e.g. the language servers a server started.</summary>
-    public static IReadOnlyList<int> Descendants(int pid)
-    {
-        var parents = new Dictionary<int, int>();
-        if (OperatingSystem.IsMacOS())
-        {
-            foreach (var r in Ps("-A", "-o", "pid=,stat=,ppid="))
-                if (!r.Stat.StartsWith('Z') && int.TryParse(r.Tail, System.Globalization.CultureInfo.InvariantCulture, out var parent)) parents[r.Pid] = parent;
-        }
-        else if (!OperatingSystem.IsLinux()) return [];
-        else foreach (var dir in Directory.EnumerateDirectories("/proc"))
-        {
-            if (!int.TryParse(Path.GetFileName(dir), out var p)) continue;
-            try
-            {
-                var stat = File.ReadAllText(Path.Combine(dir, "stat"));
-                var close = stat.LastIndexOf(')');
-                var fields = stat[(close + 2)..].Split(' ');
-                if (fields[0] != "Z") parents[p] = int.Parse(fields[1], System.Globalization.CultureInfo.InvariantCulture);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException) { }
-        }
-        var result = new List<int>();
-        var frontier = new Queue<int>([pid]);
-        while (frontier.TryDequeue(out var cur))
-            foreach (var (child, parent) in parents)
-                if (parent == cur) { result.Add(child); frontier.Enqueue(child); }
-        return result;
-    }
+    public static IReadOnlyList<int> Descendants(int pid) => ProcessTable.Descendants(pid).ToList();
 
-    public static bool IsAlive(int pid)
-    {
-        if (OperatingSystem.IsMacOS()) return Ps("-o", "pid=,stat=", "-p", pid.ToString(System.Globalization.CultureInfo.InvariantCulture)) is [var r] && !r.Stat.StartsWith('Z');
-        try
-        {
-            var stat = File.ReadAllText($"/proc/{pid}/stat");
-            return stat[(stat.LastIndexOf(')') + 2)] != 'Z';
-        }
-        catch (IOException) { return false; }
-    }
+    public static bool IsAlive(int pid) => ProcessTable.IsAlive(pid);
 
     /// <summary>The parent of a process (Linux /proc; macOS ps), or 0 when it is gone.</summary>
-    public static int ParentOf(int pid)
-    {
-        if (OperatingSystem.IsMacOS())
-            return Ps("-o", "pid=,stat=,ppid=", "-p", pid.ToString(System.Globalization.CultureInfo.InvariantCulture)) is [var r]
-                && int.TryParse(r.Tail, System.Globalization.CultureInfo.InvariantCulture, out var parent) ? parent : 0;
-        var stat = File.ReadAllText($"/proc/{pid}/stat");
-        return int.Parse(stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[1], System.Globalization.CultureInfo.InvariantCulture);
-    }
+    public static int ParentOf(int pid) => ProcessTable.ParentOf(pid);
 
-    /// <summary>A process's command line, arguments separated by spaces (Linux /proc; macOS ps), or "" when it is gone.</summary>
-    public static string Cmdline(int pid)
-    {
-        if (OperatingSystem.IsMacOS())
-            return Ps("-ww", "-o", "pid=,stat=,command=", "-p", pid.ToString(System.Globalization.CultureInfo.InvariantCulture)) is [var r] ? r.Tail : "";
-        try { return File.ReadAllText($"/proc/{pid}/cmdline").Replace('\0', ' '); }
-        catch (IOException) { return ""; }
-    }
+    /// <summary>A process's command line, arguments separated by spaces (Linux /proc; macOS ps).</summary>
+    public static string Cmdline(int pid) => ProcessTable.CommandLine(pid);
 
-    /// <summary>
-    /// <paramref name="path"/> with every symbolic link among its directories resolved (realpath): what a shell started there reports as its
-    /// directory (macOS's temp directory is under /var, a link to /private/var).
-    /// </summary>
-    public static string PhysicalPath(string path)
-    {
-        var full = Path.GetFullPath(path);
-        var result = Path.GetPathRoot(full)!;
-        foreach (var part in full[result.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
-        {
-            result = Path.Combine(result, part);
-            if (new DirectoryInfo(result).ResolveLinkTarget(returnFinalTarget: true) is { } target) result = target.FullName;
-        }
-        return result;
-    }
-
-    /// <summary>Rows of macOS's <c>ps</c> for <c>-o pid=,stat=,…</c>: the pid, the state and the rest of the line (ps itself left out).</summary>
-    private static List<(int Pid, string Stat, string Tail)> Ps(params string[] args)
-    {
-        var psi = new ProcessStartInfo("/bin/ps") { RedirectStandardOutput = true, UseShellExecute = false };
-        foreach (var a in args) psi.ArgumentList.Add(a);
-        using var ps = Process.Start(psi)!;
-        var text = ps.StandardOutput.ReadToEnd();
-        ps.WaitForExit();
-        var rows = new List<(int, string, string)>();
-        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var parts = line.Trim().Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2 && int.TryParse(parts[0], System.Globalization.CultureInfo.InvariantCulture, out var pid) && pid != ps.Id)
-                rows.Add((pid, parts[1], parts.Length > 2 ? parts[2].Trim() : ""));
-        }
-        return rows;
-    }
-
-    private static bool IsZombie(string procDir)
-    {
-        try
-        {
-            var stat = File.ReadAllText(Path.Combine(procDir, "stat"));
-            var close = stat.LastIndexOf(')');
-            return close > 0 && close + 2 < stat.Length && stat[close + 2] == 'Z';
-        }
-        catch (IOException) { return false; }
-    }
+    /// <inheritdoc cref="TempDirectory.PhysicalPath"/>
+    public static string PhysicalPath(string path) => TempDirectory.PhysicalPath(path);
 
     /// <summary>Waits until no process carries the marker (servers exit asynchronously after their stdin closes).</summary>
     public static async Task AssertNoProcessesAsync(string marker, TimeSpan? within = null)

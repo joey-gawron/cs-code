@@ -53,7 +53,7 @@ public class RealAppViewTests
 
         // The other routes: Ctrl+Shift+F through the real keymap, the View > Tool Windows entry, Find in Folder.
         tools.Hide(SearchPanelsHost.FindViewId);
-        Assert.Equal(KeyDispatch.Handled, host.Shell.Keyboard.Handle(KeyStrokeParser.ParseStroke("ctrl+shift+f")));
+        Assert.Equal(KeyDispatch.Handled, host.Shell.Keyboard.Handle(KeyStrokeParser.ParseStroke(PlatformKeys.Stroke("ctrl+shift+f", "cmd+shift+f"))));
         Assert.True(await RealAppHost.WaitFor(() => tools.IsVisible(SearchPanelsHost.FindViewId)));
         tools.Hide(SearchPanelsHost.FindViewId);
         host.Shell.Menus.Refresh();
@@ -87,7 +87,7 @@ public class RealAppViewTests
         Assert.Equal("again", host.Get<SearchPanelsHost>().LiveFind?.Query);
 
         await ClickCloseAsync(host, find);
-        Assert.Equal(KeyDispatch.Handled, host.Shell.Keyboard.Handle(KeyStrokeParser.ParseStroke("ctrl+shift+f")));
+        Assert.Equal(KeyDispatch.Handled, host.Shell.Keyboard.Handle(KeyStrokeParser.ParseStroke(PlatformKeys.Stroke("ctrl+shift+f", "cmd+shift+f"))));
         await AssertOnScreenAsync(host, find);
 
         await ClickCloseAsync(host, find);

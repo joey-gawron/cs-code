@@ -193,6 +193,7 @@ public class SessionFixProcessTests
 
     private static List<int> PidsWith(string needle)
     {
+        if (OperatingSystem.IsMacOS()) return TestDoubles.ProcessTable.WithEnvironment(needle[..needle.IndexOf('=')], needle[(needle.IndexOf('=') + 1)..]);
         var result = new List<int>();
         var bytes = Encoding.UTF8.GetBytes(needle + "\0");
         foreach (var dir in Directory.EnumerateDirectories("/proc"))

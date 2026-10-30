@@ -163,6 +163,7 @@ public sealed class VimApp : IAsyncDisposable
                 'C' => RawInputModifiers.Control,
                 'S' => RawInputModifiers.Shift,
                 'A' or 'M' => RawInputModifiers.Alt,
+                'D' => RawInputModifiers.Meta, // Vim's Command key (macOS)
                 _ => RawInputModifiers.None,
             };
             inner = inner[2..];

@@ -250,14 +250,14 @@ public class VimShellTests
         app.Keys("<C-a>");
         Assert.StartsWith("line 1\n", app.Text);                          // Ctrl-A increments, not Select All
 
-        app.Keys("<C-S-p>");                                              // the command palette
+        app.Keys(OperatingSystem.IsMacOS() ? "<D-S-p>" : "<C-S-p>");      // the command palette
         Assert.True(await RealAppHost.WaitFor(() => app.Host.Get<QuickInputViewModel>().IsVisible));
         app.Host.Get<QuickInputViewModel>().Cancel();
         await DevScene.SettleAsync(3);
         await app.FocusAsync();
         Assert.Equal(executed + 1, keyboard.ExecutedCount);
 
-        app.Keys("i<C-p>");                                               // Insert mode: Ctrl+P is Quick Open
+        app.Keys(OperatingSystem.IsMacOS() ? "i<D-p>" : "i<C-p>");        // Insert mode: Ctrl+P (Cmd+P) is Quick Open
         Assert.True(await RealAppHost.WaitFor(() => app.Host.Get<QuickInputViewModel>().IsVisible));
         app.Host.Get<QuickInputViewModel>().Cancel();
         await DevScene.SettleAsync(3);
@@ -282,7 +282,7 @@ public class VimShellTests
         app.Keys("<Esc>");
         Assert.Equal("alpha beta\ngamma\n", app.Text);
 
-        await app.KeysAsync("A <C-v>", 10);                               // Insert mode: Ctrl+V is the editor's paste
+        await app.KeysAsync(OperatingSystem.IsMacOS() ? "A <D-v>" : "A <C-v>", 10); // Insert mode: Ctrl+V (Cmd+V) is the editor's paste
         Assert.Equal("alpha beta PASTED\ngamma\n", app.Text);
         Assert.Equal("-- INSERT --", app.ModeText);
         await app.KeysAsync("<S-Insert>", 10);                            // and so is Shift+Insert
@@ -293,7 +293,7 @@ public class VimShellTests
         Assert.Equal("alpha beta\ngamma\n", app.Text);
 
         app.Keys("j0vll");                                                // Visual "gam": Ctrl+C and Ctrl+Insert copy the selection
-        await app.KeysAsync("<C-c>", 5);
+        await app.KeysAsync(OperatingSystem.IsMacOS() ? "<D-c>" : "<C-c>", 5);
         Assert.Equal("gam", await clipboard.TryGetTextAsync());
         await clipboard.SetTextAsync("other");
         await app.KeysAsync("<C-Insert>", 5);
@@ -310,7 +310,9 @@ public class VimShellTests
     [AvaloniaFact(Timeout = 120_000)]
     public async Task Handle_keys_gives_a_key_back_to_the_application()
     {
-        await using var app = await VimApp.StartAsync("one\ntwo\nthree\n", settings: Quiet + ",\n\"vim.handleKeys\": { \"<C-f>\": false, \"<C-h>\": true }");
+        // macOS's preset binds Find to Cmd+F: Ctrl+F is bound as on Linux, so the key given back has a binding to reach
+        await using var app = await VimApp.StartAsync("one\ntwo\nthree\n", settings: Quiet + ",\n\"vim.handleKeys\": { \"<C-f>\": false, \"<C-h>\": true }",
+            seed: h => { if (OperatingSystem.IsMacOS()) h.Home.WriteFile("config/keybindings.json", """[ { "key": "ctrl+f", "command": "actions.find" } ]"""); });
         var keyboard = app.Host.Shell.Keyboard;
         var executed = keyboard.ExecutedCount;
         app.Keys("<C-f>");                                                // the editor's Find (VS keymap), not Vim's page down

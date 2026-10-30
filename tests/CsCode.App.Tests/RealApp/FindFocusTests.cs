@@ -38,8 +38,8 @@ public class FindFocusTests
 
         tab.Controller.Focus();
         Assert.False(InFindBox(host));
-        host.Window.KeyPress(Key.F, RawInputModifiers.Control, PhysicalKey.F, "f");
-        host.Window.KeyRelease(Key.F, RawInputModifiers.Control, PhysicalKey.F, "f");
+        host.Window.KeyPress(Key.F, PlatformKeys.Command, PhysicalKey.F, "f"); // Cmd+F on macOS
+        host.Window.KeyRelease(Key.F, PlatformKeys.Command, PhysicalKey.F, "f");
         Dispatcher.UIThread.RunJobs(); // the bound command runs asynchronously
         Assert.True(InFindBox(host), "Ctrl+F did not put the keyboard in the find box");
         host.Window.KeyTextInput("beta");

@@ -276,7 +276,7 @@ public class VimClipboardRegisterTests
         await EventuallyAsync(() => ClipboardAsync(app), c => c?.Text == "one\n", "yy on the clipboard");
         app.Keys("jviw");
         Assert.Equal("-- VISUAL --", app.ModeText);
-        app.Keys("<C-c>");                                        // an application key in Visual mode: the editor's Copy
+        app.Keys(OperatingSystem.IsMacOS() ? "<D-c>" : "<C-c>"); // an application key in Visual mode: the editor's Copy
         await EventuallyAsync(() => ClipboardAsync(app), c => c?.Text == "two", "the editor's copy on the clipboard");
         await app.KeysAsync("<Esc>p", 3);
         Assert.Equal("one\ntwotwo\n", app.Text);
@@ -378,6 +378,7 @@ public class VimClipboardRegisterTests
     {
         // The editor offers its selection as PRIMARY (editor.selectionClipboard: a middle-click elsewhere pastes it), Vim's Visual mode too. As
         // in Vim without 'autoselect', and VS Code, selecting text does not change "*: yank, select, p replaces the selection with the yank.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "editor.selectionClipboard (the editor's PRIMARY offer) is Linux-only, as in VS Code (EditorSettings)");
         var primary = new GatedPrimarySelection();
         await using var app = await VimApp.StartAsync("one two three\n", settings: Quiet, configure: Clipboard(primary));
         app.Keys(":set clipboard=unnamed<CR>");

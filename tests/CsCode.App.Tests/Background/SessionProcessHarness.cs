@@ -167,9 +167,10 @@ public sealed class SessionProcessHarness : IDisposable
         catch (IOException) { return "(trace unreadable)"; }
     }
 
-    /// <summary>The PIDs of every process running with this harness's <c>CSCODE_HOME</c> (Linux: from /proc/&lt;pid&gt;/environ).</summary>
+    /// <summary>The PIDs of every process running with this harness's <c>CSCODE_HOME</c> (Linux: from /proc/&lt;pid&gt;/environ; macOS: ps -E).</summary>
     public IReadOnlyList<int> ProcessesOfThisHome()
     {
+        if (OperatingSystem.IsMacOS()) return TestDoubles.ProcessTable.WithEnvironment("CSCODE_HOME", Home);
         var pids = new List<int>();
         if (!OperatingSystem.IsLinux()) return pids;
         var needle = Encoding.UTF8.GetBytes("CSCODE_HOME=" + Home + "\0");

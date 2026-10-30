@@ -278,7 +278,8 @@ public class FocusContextKeyTests
         Assert.True(b.IsDirty);
 
         var dialogs = host.Get<Notifications.DialogHostViewModel>();
-        host.Window.KeyPress(Key.F4, RawInputModifiers.Control, PhysicalKey.F4, null);
+        var closeEditor = OperatingSystem.IsMacOS() ? RawInputModifiers.Meta : RawInputModifiers.Control; // Ctrl+F4, Cmd+F4 on macOS
+        host.Window.KeyPress(Key.F4, closeEditor, PhysicalKey.F4, null);
         Assert.True(await RealAppHost.WaitFor(() => dialogs.IsVisible), "no Save prompt");
         dialogs.Choose("Don't Save");
         Assert.True(await RealAppHost.WaitFor(() => !well.Tabs.Contains(b)));
@@ -287,7 +288,7 @@ public class FocusContextKeyTests
 
         // A cancelled prompt gives the keyboard back to the editor that asked.
         a.Doc.ApplyEdits([new Core.Text.TextEdit(Core.Text.TextRange.At(0, 0), "dirty ")]);
-        host.Window.KeyPress(Key.F4, RawInputModifiers.Control, PhysicalKey.F4, null);
+        host.Window.KeyPress(Key.F4, closeEditor, PhysicalKey.F4, null);
         Assert.True(await RealAppHost.WaitFor(() => dialogs.IsVisible), "no Save prompt");
         Assert.False(a.Controller!.IsFocused);
         dialogs.Choose("Cancel");

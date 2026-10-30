@@ -6,6 +6,7 @@ using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.Core.Platform;
 using CsCode.Remote;
+using CsCode.TestDoubles;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -57,23 +58,8 @@ public class ContainerDisposalTests
 
     private static string NewMarker() => "cscode-dispose-" + Guid.NewGuid().ToString("N")[..12];
 
-    /// <summary>Live (non-zombie) processes whose command line carries <paramref name="marker"/> (Linux /proc).</summary>
-    private static bool ProcessesWithMarker(string marker)
-    {
-        if (!OperatingSystem.IsLinux()) return false;
-        foreach (var dir in Directory.EnumerateDirectories("/proc"))
-        {
-            if (!int.TryParse(Path.GetFileName(dir), out _)) continue;
-            try
-            {
-                if (File.ReadAllText(Path.Combine(dir, "cmdline")).Contains(marker, StringComparison.Ordinal)
-                    && !File.ReadAllText(Path.Combine(dir, "stat")).Contains(") Z ", StringComparison.Ordinal)) return true;
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
-        return false;
-    }
+    /// <summary>Live (non-zombie) processes whose command line carries <paramref name="marker"/> (Linux /proc; macOS ps).</summary>
+    private static bool ProcessesWithMarker(string marker) => ProcessTable.WithMarker(marker).Count > 0;
 
     private static async Task AssertNoLanguageHostLeftAsync(string marker) =>
         Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "a cscode-server language host outlived the container");

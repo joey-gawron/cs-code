@@ -104,8 +104,8 @@ public class FloatingWindowTests
         floating.KeyTextInput("X");
         Assert.True(await RealAppHost.WaitFor(() => b.Doc.GetText().Contains('X')), b.Doc.GetText());
         Assert.True(b.IsDirty);
-        floating.KeyPress(Key.S, RawInputModifiers.Control, PhysicalKey.S, "s");
-        floating.KeyRelease(Key.S, RawInputModifiers.Control, PhysicalKey.S, "s");
+        floating.KeyPress(Key.S, PlatformKeys.Command, PhysicalKey.S, "s"); // Cmd+S on macOS
+        floating.KeyRelease(Key.S, PlatformKeys.Command, PhysicalKey.S, "s");
         Assert.True(await RealAppHost.WaitFor(() => !b.IsDirty), "Ctrl+S in the floating window did not save");
         Assert.Contains("X", File.ReadAllText(host.Files.Combine("b.txt")));
 
@@ -311,7 +311,7 @@ public class FloatingWindowTests
         var quick = host.Get<QuickInput.QuickInputViewModel>();
 
         // Ctrl+Shift+P in the floating editor: the palette is in the floating window, takes the keyboard there, and Esc gives it back.
-        floating.KeyPress(Key.P, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.P, null);
+        floating.KeyPress(Key.P, PlatformKeys.Command | RawInputModifiers.Shift, PhysicalKey.P, null);
         Assert.True(await RealAppHost.WaitFor(() => quick.IsVisible), "no palette");
         Assert.Same(floating, WindowOf(quickView));
         Assert.True(await RealAppHost.WaitFor(() => quickView.GetVisualDescendants().OfType<TextBox>().Any(t => t.IsFocused)), "the palette's box has no focus");
@@ -377,7 +377,7 @@ public class FloatingWindowTests
 
         async Task PaletteFitsAsync()
         {
-            floating.KeyPress(Key.P, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.P, null);
+            floating.KeyPress(Key.P, PlatformKeys.Command | RawInputModifiers.Shift, PhysicalKey.P, null);
             Assert.True(await RealAppHost.WaitFor(() => quick.IsVisible && quick.Items.Count > 0), "no palette");
             Assert.Same(floating, WindowOf(quickView));
             await DevScene.SettleAsync(3);
