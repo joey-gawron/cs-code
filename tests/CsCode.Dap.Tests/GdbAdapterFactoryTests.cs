@@ -103,6 +103,17 @@ public class GdbAdapterFactoryTests
         Assert.Contains("cscode.debug.gdbPath", missing.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void The_missing_gdb_advice_points_a_mac_at_codelldb(bool macOS)
+    {
+        var message = GdbAdapterFactory.NotFoundMessage(macOS);
+        Assert.Contains("GDB was not found", message, StringComparison.Ordinal);
+        Assert.Contains("cscode.debug.gdbPath", message, StringComparison.Ordinal);
+        Assert.Equal(macOS, message.Contains("CodeLLDB (type 'lldb'", StringComparison.Ordinal)); // GDB cannot debug native arm64 macOS programs
+    }
+
     // ------------------------------------------------------------------ provider
 
     [Fact]

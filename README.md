@@ -93,11 +93,16 @@ tools/package-macos.sh --rid osx-arm64 --rid osx-x64   # both runtimes, each in 
 
 * It publishes the app (`tools/publish-app.sh --unpinned`: the osx runtime packs are the ones restore picks from nuget.org, unchecked;
   only linux-x64's are pinned), builds the remote server bundles (`tools/publish-server.sh`, shipped in `Contents/MacOS/server-bundles`;
-  `--no-server-bundles` or `--server-bundles DIR` instead) and assembles `CsCode.app` (`tools/macos/make-app-bundle.sh`): Info.plist
+  `--no-server-bundles` or `--server-bundles DIR` instead), bundles the debug adapters as `tools/install.sh` does on Linux (netcoredbg,
+  js-debug and CodeLLDB, the Mac's Rust/C/C++ debugger, about 155 MB, in `Contents/Resources/debug-adapters`: from `--netcoredbg`,
+  `--js-debug`, `--codelldb` or `CSCODE_NETCOREDBG`/`CSCODE_JSDEBUG`/`CSCODE_CODELLDB`, else the main checkout's `.scratch/tools`, where the
+  `tools/fetch-*.sh` scripts fetch the pinned versions, digests checked, when they are missing; `--no-adapters` ships none and the app offers
+  each download when a session needs it) and assembles `CsCode.app` (`tools/macos/make-app-bundle.sh`): Info.plist
   (`local.cscode.CsCode`, macOS 12 or later, Retina), an `.icns` built from `assets/branding` with `sips` and `iconutil`, and document types
   so Finder's *Open With* lists CsCode for text, source files and folders (never as their default app). Opening a file that way starts
   CsCode but does not open the file yet (no file-activation handling: docs/handoff/macos-audit.md, pkg-3).
-* The bundle is signed ad hoc (`codesign --sign -`), checked with `plutil -lint` and `codesign --verify --deep --strict`. That is enough for
+* The bundle is signed ad hoc (`codesign --sign -`; each debug adapter's executables and libraries first, on their own), checked with
+  `plutil -lint` and `codesign --verify --deep --strict`. That is enough for
   the Mac that built it; a copy given to another Mac is stopped by Gatekeeper until it is signed with a Developer ID and notarized
   (not done: pkg-2).
 * `--install` copies the app to `~/Applications/CsCode.app` (`--app-dir /Applications` for every user, with an administrator account)

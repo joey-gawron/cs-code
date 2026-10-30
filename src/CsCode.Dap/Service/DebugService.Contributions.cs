@@ -58,8 +58,8 @@ public sealed partial class DebugService
             { Scope = machine },
             new ConfigurationProperty(RequestTimeoutSetting, Json(10),
                 "Seconds a debug adapter may take to answer one request before the session reports it unresponsive."),
-            new ConfigurationProperty(RustDebuggerSetting, Json("gdb"),
-                "The debugger a Rust folder's launch.json is created for: 'gdb' (GDB's own Debug Adapter Protocol support, the default) or 'lldb' (CodeLLDB, downloaded on first use; 'codelldb' is accepted too).",
+            new ConfigurationProperty(RustDebuggerSetting, Json(DefaultRustDebugger(OperatingSystem.IsMacOS())),
+                "The debugger a Rust folder's launch.json is created for: 'gdb' (GDB's own Debug Adapter Protocol support, the default on Linux) or 'lldb' (CodeLLDB, the default on macOS, where GDB cannot debug native arm64 programs; 'codelldb' is accepted too).",
                 Schema("""{"type":"string","enum":["gdb","lldb","codelldb"],"enumDescriptions":["GDB (gdb -i=dap, GDB 14 or newer).","CodeLLDB.","CodeLLDB (same as 'lldb')."]}""")),
             new ConfigurationProperty(CodeLldbAdapterFactory.SettingPath, Json(""),
                 "Path of the CodeLLDB adapter used for Rust, C and C++ debugging through LLDB: the adapter executable or the extension directory (empty: CSCODE_CODELLDB, then the tools directory, then PATH, then an offer to download it). User settings only.")

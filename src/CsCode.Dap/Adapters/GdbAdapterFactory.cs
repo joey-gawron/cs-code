@@ -67,11 +67,15 @@ public sealed class GdbAdapterFactory : IDebugAdapterFactory, IDebugConfiguratio
 
     // ------------------------------------------------------------------ adapter
 
+    /// <summary>Why a session cannot start without GDB; on macOS it points at CodeLLDB (GDB cannot debug native arm64 macOS programs).</summary>
+    internal static string NotFoundMessage(bool macOS) =>
+        "GDB was not found. Install it (GDB 14 or newer speaks the Debug Adapter Protocol: 'gdb -i=dap'), put 'gdb' on PATH, or set 'cscode.debug.gdbPath'."
+        + (macOS ? " On macOS GDB cannot debug native arm64 programs: debug Rust, C and C++ with CodeLLDB (type 'lldb', which CsCode.app ships)." : "");
+
     public async ValueTask<DebugAdapterDescriptor?> CreateDescriptorAsync(DebugConfiguration configuration, CancellationToken ct)
     {
         if (!Types.Contains(configuration.Type, StringComparer.OrdinalIgnoreCase)) return null;
-        var gdb = Locate() ?? throw new DebugSessionStartException(
-            "GDB was not found. Install it (GDB 14 or newer speaks the Debug Adapter Protocol: 'gdb -i=dap'), put 'gdb' on PATH, or set 'cscode.debug.gdbPath'.");
+        var gdb = Locate() ?? throw new DebugSessionStartException(NotFoundMessage(OperatingSystem.IsMacOS()));
         var folder = configuration.WorkspaceFolder ?? _p.PrimaryFolder;
         var cwd = folder is { IsFile: true } f && Directory.Exists(f.LocalPath) ? DapPlatform.NormalizeDir(f.LocalPath) : null;
 

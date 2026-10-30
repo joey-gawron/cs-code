@@ -71,8 +71,7 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
     public async ValueTask<DebugAdapterDescriptor?> CreateDescriptorAsync(DebugConfiguration configuration, CancellationToken ct)
     {
         if (!Types.Contains(configuration.Type, StringComparer.OrdinalIgnoreCase)) return null;
-        var adapter = Locate() ?? await OfferInstallAsync(ct) ?? throw new DebugSessionStartException(
-            "CodeLLDB was not found. Install it with tools/fetch-codelldb.sh, set 'cscode.debug.codelldbPath' or CSCODE_CODELLDB to its adapter (extension/adapter/codelldb), or accept the download offer. GDB (type 'gdb') debugs Rust without a download.");
+        var adapter = Locate() ?? await OfferInstallAsync(ct) ?? throw new DebugSessionStartException(NotFoundMessage(OperatingSystem.IsMacOS()));
         var folder = configuration.WorkspaceFolder ?? _p.PrimaryFolder;
         // rustc (for the Rust formatters) runs in the adapter's directory: the folder's, so rustup honours a rust-toolchain file there.
         var cwd = folder is { IsFile: true } f && Directory.Exists(f.LocalPath) ? DapPlatform.NormalizeDir(f.LocalPath) : null;
@@ -88,6 +87,12 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
             RemoveEnv = RemovedEnvironment,
         };
     }
+
+    /// <summary>Why a session cannot start without CodeLLDB, and what to do. On macOS it is the native debugger (GDB cannot debug arm64 macOS
+    /// programs) and CsCode.app ships it, so the advice names the bundle instead of GDB.</summary>
+    internal static string NotFoundMessage(bool macOS) => macOS
+        ? "CodeLLDB was not found. On macOS it is the debugger for Rust, C and C++ (GDB cannot debug native arm64 macOS programs) and CsCode.app ships it in Contents/Resources/debug-adapters (tools/package-macos.sh); accept the download offer, install it with tools/fetch-codelldb.sh, or set 'cscode.debug.codelldbPath' or CSCODE_CODELLDB to its adapter (extension/adapter/codelldb)."
+        : "CodeLLDB was not found. Install it with tools/fetch-codelldb.sh, set 'cscode.debug.codelldbPath' or CSCODE_CODELLDB to its adapter (extension/adapter/codelldb), or accept the download offer. GDB (type 'gdb') debugs Rust without a download.";
 
     /// <summary>The configuration's <c>sourceLanguages</c>, else Rust (what this adapter is built in for).</summary>
     internal static IReadOnlyList<string> SourceLanguages(DebugConfiguration configuration) =>

@@ -5,7 +5,8 @@
 # and the layout, Info.plist and .icns are checked on Linux (tests/CsCode.App.Tests, PackagingTests). tools/package-macos.sh runs this on a Mac
 # with the publish, the remote server bundles and the install of the app and the `cscode` command.
 #
-#   tools/macos/make-app-bundle.sh [--rid osx-arm64|osx-x64] (--from DIR | --unpinned) [--out DIR] [--server-bundles DIR] [--no-sign]
+#   tools/macos/make-app-bundle.sh [--rid osx-arm64|osx-x64] (--from DIR | --unpinned) [--out DIR] [--server-bundles DIR] [--debug-adapters DIR]
+#                                  [--no-sign]
 #
 #   --rid             the macOS runtime (default: this Mac's; osx-arm64 elsewhere)
 #   --from            an existing publish for that runtime
@@ -14,16 +15,20 @@
 #   --out             where CsCode.app is written (default: .scratch/macos); an earlier CsCode.app there is replaced
 #   --server-bundles  the remote server bundles (tools/publish-server.sh's output) to ship in Contents/MacOS/server-bundles, where the app
 #                     looks for them next to its program (src/CsCode.Remote, ServerBundles)
+#   --debug-adapters  a folder of debug adapters laid out as the app reads them (netcoredbg/, js-debug/<version>/js-debug,
+#                     codelldb/<version>/extension: src/CsCode.Dap/Adapters/BundledAdapters.cs) to ship in Contents/Resources/debug-adapters, where
+#                     the app looks from its program in Contents/MacOS (there codesign would take a dotted folder such as codelldb/v1.12.3 for a
+#                     nested bundle and refuse the app); tools/package-macos.sh assembles it. Each Mach-O file in it is signed ad hoc before the bundle
 #   --no-sign         skip the ad-hoc signature (codesign --sign -), which Apple silicon needs for a bundle built or changed locally
 #
 # Install: tools/package-macos.sh --install, or drag CsCode.app to /Applications (or ~/Applications). The tree-sitter bundle needs a macOS
-# build (tools/treesitter/build-grammars.sh --target <rid> with a macOS compiler); without it the app colours with TextMate. Debug adapters
-# are offered for download by the app when a session needs one.
+# build (tools/treesitter/build-grammars.sh --target <rid> with a macOS compiler); without it the app colours with TextMate. A debug adapter
+# the bundle lacks is offered for download by the app when a session needs one.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
-rid=""; from=""; out="$repo/.scratch/macos"; sign=1; unpinned=0; servers=""
+rid=""; from=""; out="$repo/.scratch/macos"; sign=1; unpinned=0; servers=""; adapters=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --rid) rid=$2; shift 2 ;;
@@ -31,6 +36,7 @@ while [ $# -gt 0 ]; do
         --unpinned) unpinned=1; shift ;;
         --out) out=$2; shift 2 ;;
         --server-bundles) servers=$2; shift 2 ;;
+        --debug-adapters) adapters=$2; shift 2 ;;
         --no-sign) sign=0; shift ;;
         -h|--help) sed -n '2,/^[^#]/p' "$0" | sed -e '/^[^#]/d'; exit 0 ;; # the header comment
         *) echo "make-app-bundle.sh: unknown argument '$1'" >&2; exit 2 ;;
@@ -47,6 +53,10 @@ if [ -z "$from" ] && [ "$unpinned" != 1 ]; then
 fi
 if [ -n "$servers" ] && [ ! -f "$servers/manifest.json" ]; then
     echo "make-app-bundle.sh: --server-bundles $servers: no manifest.json there (tools/publish-server.sh writes it)" >&2
+    exit 2
+fi
+if [ -n "$adapters" ] && [ ! -d "$adapters" ]; then
+    echo "make-app-bundle.sh: --debug-adapters $adapters is not a directory" >&2
     exit 2
 fi
 # The .icns: Apple's iconutil on a Mac, else the standard-library writer.
@@ -74,6 +84,10 @@ chmod 755 "$tmp/Contents/MacOS/cscode"
 if [ -n "$servers" ]; then
     mkdir -p "$tmp/Contents/MacOS/server-bundles"
     cp -a "$servers/." "$tmp/Contents/MacOS/server-bundles/"
+fi
+if [ -n "$adapters" ]; then
+    mkdir -p "$tmp/Contents/Resources/debug-adapters"
+    cp -a "$adapters/." "$tmp/Contents/Resources/debug-adapters/"
 fi
 
 if [ "$iconutil" = 1 ]; then
@@ -172,6 +186,16 @@ mv "$tmp" "$app"
 if [ "$sign" = 1 ] && command -v codesign >/dev/null 2>&1; then
     # Ad hoc (no identity): enough for this Mac, and what Apple silicon requires of a bundle built or changed locally. A copy downloaded
     # from elsewhere is still stopped by Gatekeeper; that needs a Developer ID signature and notarization (docs/handoff/macos-audit.md, pkg-2).
+    # The debug adapters' executables and libraries first, each on its own (in Contents/Resources the bundle's signature seals them as
+    # files, it does not sign them), keeping whatever entitlements and flags their own signature had; then the bundle, which seals them.
+    # One `file -b` per file: parsing `file`'s list breaks on a universal binary, whose description holds colons of its own.
+    if [ -d "$app/Contents/Resources/debug-adapters" ]; then
+        find "$app/Contents/Resources/debug-adapters" -type f -print0 | while IFS= read -r -d '' bin; do
+            case "$(file -b "$bin")" in Mach-O*) ;; *) continue ;; esac
+            codesign --force --sign - --preserve-metadata=entitlements,flags,runtime "$bin" 2>/dev/null || codesign --force --sign - "$bin"
+            codesign --verify --strict "$bin"
+        done
+    fi
     codesign --force --deep --sign - "$app"
     codesign --verify --deep --strict "$app"
 fi

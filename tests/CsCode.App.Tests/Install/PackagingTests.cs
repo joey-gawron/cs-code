@@ -63,8 +63,14 @@ public sealed class PackagingTests
         var publish = box.FakePublish();
         File.WriteAllText(Path.Combine(publish, "cscode.deps.json"), "{\n  \"targets\": {\n    \".NETCoreApp,Version=v10.0/osx-arm64\": {\n      \"cscode/1.2.3\": {\n");
         var out1 = Path.Combine(box.Root, "out");
-        Ok(await box.ScriptAsync(Tool("macos", "make-app-bundle.sh"), ["--from", publish, "--out", out1, "--no-sign"]));
+        var adapters = Path.Combine(box.Root, "adapters"); // as tools/package-macos.sh stages them
+        Directory.CreateDirectory(Path.Combine(adapters, "codelldb", "v1.12.3", "extension", "adapter"));
+        File.WriteAllText(Path.Combine(adapters, "codelldb", "v1.12.3", "extension", "adapter", "codelldb"), "#!/bin/sh\n");
+        Ok(await box.ScriptAsync(Tool("macos", "make-app-bundle.sh"), ["--from", publish, "--out", out1, "--debug-adapters", adapters, "--no-sign"]));
         var app = Path.Combine(out1, "CsCode.app", "Contents");
+        // in Resources, where the app looks from Contents/MacOS: below Contents/MacOS codesign takes the dotted v1.12.3 for a nested bundle
+        Assert.True(File.Exists(Path.Combine(app, "Resources", "debug-adapters", "codelldb", "v1.12.3", "extension", "adapter", "codelldb")));
+        Assert.False(Directory.Exists(Path.Combine(app, "MacOS", "debug-adapters")));
         Assert.True(File.GetUnixFileMode(Path.Combine(app, "MacOS", "cscode")).HasFlag(UnixFileMode.UserExecute));
         Assert.True(File.Exists(Path.Combine(app, "MacOS", "nested", "data.txt")), "the whole publish is in Contents/MacOS");
         Assert.Equal("APPL????", File.ReadAllText(Path.Combine(app, "PkgInfo")));
@@ -115,6 +121,25 @@ public sealed class PackagingTests
         Assert.True(File.Exists(Path.Combine(out1, "CsCode.app", "Contents", "MacOS", "cscode.dll")), "the publish is in the bundle");
         // a publish without cscode.deps.json (this stand-in) gets version 0.0.0, not a silent exit under pipefail
         Assert.Contains("<string>0.0.0</string>", File.ReadAllText(Path.Combine(out1, "CsCode.app", "Contents", "Info.plist")));
+    }
+
+    /// <summary>
+    /// Linux's desktop entry offers CsCode for plain text and folders as the Mac's Info.plist does (public.plain-text, public.folder; decided
+    /// 2026-10-30): before, it listed source files only and "Open With" left CsCode out for a .txt file or a folder. Read from the template,
+    /// so it is checked on every OS (InstallScriptTests checks the installed entry on Linux).
+    /// </summary>
+    [Fact]
+    public void The_linux_desktop_entry_offers_plain_text_and_folders_as_the_mac_bundle_does()
+    {
+        var template = DesktopEntry.Parse(File.ReadAllText(Path.Combine(InstallSandbox.RepoRoot(), "packaging", "linux", "cscode.desktop.in")));
+        var mime = template["Desktop Entry"]["MimeType"].Split(';', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Contains("text/plain", mime);
+        Assert.Contains("inode/directory", mime);
+        Assert.Contains("text/x-csharp", mime);
+        Assert.Equal(mime.Length, mime.Distinct(StringComparer.Ordinal).Count());
+        var bundle = File.ReadAllText(Tool("macos", "make-app-bundle.sh"));
+        Assert.Contains("<string>public.plain-text</string>", bundle, StringComparison.Ordinal);
+        Assert.Contains("<string>public.folder</string>", bundle, StringComparison.Ordinal);
     }
 
     /// <summary>

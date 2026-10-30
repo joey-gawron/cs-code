@@ -5,6 +5,7 @@
 #   tools/fetch-netcoredbg.sh --force    # re-download
 #   NETCOREDBG_ARCHIVE=/path/netcoredbg-linux-amd64.tar.gz tools/fetch-netcoredbg.sh   # a local copy of the pinned asset (no download)
 #   NETCOREDBG_TAG=<tag> NETCOREDBG_SHA256=<hex> tools/fetch-netcoredbg.sh   # another release: its asset's SHA-256 must be given with it
+#   NETCOREDBG_DEST=/some/dir tools/fetch-netcoredbg.sh   # install into /some/dir instead (tools/package-macos.sh's shared cache)
 #
 # Pinned: release 3.2.0-1092 (published 2026-06-25) and each platform asset's size and SHA-256 (the digests GitHub publishes for the release
 # assets; the linux-amd64 one was also checked against a download, 2026-10-30); on an Intel Mac, release 3.1.3-1062, the last with an
@@ -16,7 +17,7 @@ set -euo pipefail
 repo="Samsung/netcoredbg"
 pinned_tag="3.2.0-1092"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-dest="${root}/.scratch/tools/netcoredbg"
+dest="${NETCOREDBG_DEST:-${root}/.scratch/tools/netcoredbg}"
 force=0
 [[ "${1:-}" == "--force" ]] && force=1
 

@@ -5,15 +5,27 @@ Everything below is already built one way (my pick first). Say a number and "swi
 ## Your call (real trade-offs)
 
 1. **Rust debugger default**: GDB (pick; works today, CodeLLDB loses a crashing program's last output lines, an upstream bug) or CodeLLDB (better Rust value formatting).
+   **Decided 2026-10-30**: CodeLLDB on macOS (GDB cannot debug native arm64 macOS programs), GDB on Linux. Done: `cscode.debug.rustDebugger`
+   defaults to `lldb` on a Mac and `gdb` on Linux (the setting still chooses either); a missing CodeLLDB on a Mac says it is the Mac's debugger
+   and where the app ships it, not "use GDB" (docs/DEBUGGING-RUST-TS.md, "Which Rust debugger is the default").
 2. **Background warm spare**: keep it OFF (pick). With it on, a new window opens in 0.5-1.3 s instead of the 500 ms target, because the first frame and first editor can't be pre-warmed without side effects. The alternative is more work on it.
 3. **Install size**: one installed version is 437 MB (app 248, CodeLLDB 166, grammars 47, remote server bundles 14), and the previous version is kept for rollback (up to 2x).
    - (a) bundle CodeLLDB (pick) vs leave it out (-166 MB; Rust uses GDB, CodeLLDB is offered as a download on first use);
    - (b) keep one previous version (pick) vs none.
+
+   **Decided 2026-10-30**: debug adapters (netcoredbg, js-debug, CodeLLDB) are BUNDLED on both OSes; the download on first use stays as the
+   fallback for one a package lacks. Done: tools/package-macos.sh bundles them into CsCode.app as tools/install.sh does on Linux (from
+   `--netcoredbg`/`--js-debug`/`--codelldb` or `CSCODE_*`, else fetched by the pinned tools/fetch-*.sh into the shared `.scratch/tools`), in
+   `Contents/Resources/debug-adapters` (codesign refuses dotted folders such as `codelldb/v1.12.3` below `Contents/MacOS`), each executable and
+   library signed ad hoc before the bundle; the app finds them from its program in `Contents/MacOS`. The Mac app grows by about 155 MB.
 4. **Startup build**: ReadyToRun composite, 198 MB, 0.87 s cold start (pick), or per-assembly, 157 MB, 1.27 s. A tiny NativeAOT launcher would save another ~25 ms per `cscode` call: not done unless you want it.
 5. **Copy**: Ctrl+C copies plain text and "Copy with Formatting" copies HTML (pick), or every Ctrl+C also carries HTML like VS Code (`editor.copyWithSyntaxHighlighting`).
 6. **Sticky scroll**: off by default (pick; VS Code has it on). It is implemented and costs < 16 ms per scroll step.
 7. **Icon at 16 px**: your artwork as is (pick); the navy tile almost merges with the dark title bar at 16 px. A higher-contrast 16 px variant would need a new drawing from you.
 8. **Desktop entry**: opens CsCode for 37 source-file types, not plain .txt or folders (pick). Say if .txt files or folders should offer CsCode.
+   **Decided 2026-10-30**: offer CsCode for plain text and folders too, as the Mac's Info.plist does. Done: the desktop entry's MimeType list
+   (packaging/linux/cscode.desktop.in) starts with `text/plain;inode/directory;`. A desktop entry has no "alternate" rank: whether CsCode
+   becomes the default for them is the desktop's choice (mimeapps.list), as for the source types.
 
 ## Done the VS Code way (FYI; say if you object)
 
@@ -39,4 +51,5 @@ Everything below is already built one way (my pick first). Say a number and "swi
 - "Open Remote Settings" command / a Remote tab in Settings (the remote machine settings file is edited by path for now).
 - A close-veto API so the terminal can say "asking / declined / proceeding" instead of the 3 s settle the background quit uses.
 - The status bar's indentation ignores `.editorconfig`.
-- Windows installer and macOS bundle scripts are written but untested (Linux only here).
+- Windows installer and macOS bundle scripts are written but untested (Linux only here). (The macOS scripts have since run on a Mac:
+  docs/handoff/macos-audit.md.)

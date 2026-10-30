@@ -402,7 +402,7 @@ pinned, checked one).
 | `$XDG_DATA_HOME/cscode/current` | relative symlink to the installed version. The version before is kept for rollback (`ln -sfn <previous> current`); older ones are removed, except a version a running process still executes from (kept until a later install) |
 | `$XDG_DATA_HOME/cscode/install-manifest.tsv` | `current`, `previous`, the kept `version`s, the `link`, every `file` outside the versions with its SHA-256, every `dir` the installs created |
 | `~/.local/bin/cscode` | the launcher: `exec`s `current/cscode` with every argument (so it is background mode's launcher); appends `~/.dotnet/tools` to PATH for the processes the app starts (`csharp-ls` from the start menu). It sets no `DOTNET_ROOT` (a user's own passes through): the app chooses one per .NET language server, only when the .NET host's own lookup would not find the framework the server needs (docs/LSP.md, `DotnetLaunchEnvironment`); one exported by the launcher made that rule step aside for every server and reached every terminal, task and debuggee (cross-branch review C1) |
-| `$XDG_DATA_HOME/applications/cscode.desktop` | from `packaging/linux/cscode.desktop.in`: Name, GenericName, `Exec=<launcher> %F` and `TryExec` by absolute path (the menu works even when the desktop session's PATH lacks `~/.local/bin`), `Icon=cscode`, `StartupWMClass=cscode` (the X11 window's class, so KDE matches the window, its taskbar entry and Alt+Tab icon to this entry), `Categories=Development;IDE;TextEditor;`, a MimeType list of source files (never `inode/directory` or `text/plain`, so CsCode does not become the default for folders or plain text), a New Window action (`--new-window %F`). Checked with `desktop-file-validate` before it is installed |
+| `$XDG_DATA_HOME/applications/cscode.desktop` | from `packaging/linux/cscode.desktop.in`: Name, GenericName, `Exec=<launcher> %F` and `TryExec` by absolute path (the menu works even when the desktop session's PATH lacks `~/.local/bin`), `Icon=cscode`, `StartupWMClass=cscode` (the X11 window's class, so KDE matches the window, its taskbar entry and Alt+Tab icon to this entry), `Categories=Development;IDE;TextEditor;`, a MimeType list of source files, plain text and folders (`text/plain`, `inode/directory`: offered as the Mac's Info.plist offers them, decided 2026-10-30; a desktop entry has no rank, so which app is the default stays the desktop's choice), a New Window action (`--new-window %F`). Checked with `desktop-file-validate` before it is installed |
 | `$XDG_DATA_HOME/icons/hicolor/{16,32,48,64,128,256,512}x…/apps/cscode.png`, `scalable/apps/cscode.svg` | the committed artwork, byte for byte |
 
 * Idempotent: the version folder is named `<app version>-g<commit>` (plus `-dirty.<time>` with uncommitted changes), or `<app version>-<content
@@ -439,9 +439,11 @@ desktop always has one, so the test provides its own.
 Windows (`tools/install.ps1`, untested): `%LOCALAPPDATA%\Programs\CsCode\<version>` with a `current` junction, `bin\cscode.cmd` on the user's
 PATH (it sets no `DOTNET_ROOT` either), a Start Menu shortcut, `install-manifest.json`, `-Uninstall`. macOS (`tools/package-macos.sh`, on a
 Mac: the publish with the osx packs restore picks, which are not pinned, and the server bundles, then `tools/macos/make-app-bundle.sh`):
-`CsCode.app` with the publish in `Contents/MacOS` (the server bundles in `Contents/MacOS/server-bundles`), `Info.plist` with the document
-types and `Resources/cscode.icns` (iconutil on a Mac; elsewhere `make-icns.py`: the committed PNGs as PNG icon types), signed ad hoc and
-verified; `--install` copies it to `~/Applications` and writes a `cscode` script that execs the bundle's binary into a directory on PATH
+`CsCode.app` with the publish in `Contents/MacOS` (the server bundles in `Contents/MacOS/server-bundles`), the debug adapters in
+`Contents/Resources/debug-adapters` (laid out as on Linux; `BundledAdapters` looks there from a program in `Contents/MacOS`, because codesign
+takes a dotted folder such as `codelldb/v1.12.3` below `Contents/MacOS` for a nested bundle), `Info.plist` with the document types and
+`Resources/cscode.icns` (iconutil on a Mac; elsewhere `make-icns.py`: the committed PNGs as PNG icon types), signed ad hoc (the adapters'
+executables and libraries one by one, then the bundle) and verified; `--install` copies it to `~/Applications` and writes a `cscode` script that execs the bundle's binary into a directory on PATH
 (README, "macOS").
 
 ## Tests

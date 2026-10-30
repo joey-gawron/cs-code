@@ -78,8 +78,8 @@ public sealed class InstallScriptTests
         var mime = main["MimeType"].Split(';', StringSplitOptions.RemoveEmptyEntries);
         foreach (var source in new[] { "text/x-csharp", "text/rust", "text/x-c++src", "text/x-python", "text/javascript", "application/json", "text/markdown" })
             Assert.Contains(source, mime);
-        Assert.DoesNotContain("inode/directory", mime); // never the default for folders
-        Assert.DoesNotContain("text/plain", mime); // nor for plain text
+        Assert.Contains("text/plain", mime); // offered for plain text and folders, as the Mac's Info.plist offers them (decided 2026-10-30)
+        Assert.Contains("inode/directory", mime);
         // Exec: the launcher by its absolute path, quoted and escaped as the Desktop Entry Specification asks; then the file list.
         Assert.Equal([box.Launcher, "%F"], DesktopEntry.ExecArguments(main["Exec"]));
         Assert.Equal(box.Launcher, main["TryExec"]);
