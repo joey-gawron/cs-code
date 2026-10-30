@@ -252,10 +252,20 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
     {
         if (_hasExited && CloseOnInputAfterExit && !_disposed && !bytes.IsEmpty)
         {
+            // a finished task's terminal: the key closes it
             CloseOnInputAfterExit = false;
             _closeRequested.Fire(this);
             return true;
         }
+        return Report(bytes, urgent);
+    }
+
+    /// <summary>
+    /// Bytes the terminal reports on its own (mouse and focus reports, the wheel's cursor keys): like <see cref="Input"/>, but never the key
+    /// that closes a finished task's terminal (moving the mouse over it must not close it).
+    /// </summary>
+    public bool Report(ReadOnlySpan<byte> bytes, bool urgent = false)
+    {
         if (_disposed || _host is not { } host || _hasExited) return false;
         var ok = host.Write(bytes, urgent);
         Post(ScrollToBottomIfScrolled);

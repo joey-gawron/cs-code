@@ -173,6 +173,10 @@ public sealed class TaskTerminalHostTests : IDisposable
         await ScreenAsync(session, "press any key to close it");
         var removed = new TaskCompletionSource<ITerminal>();
         using var sub = _service.Removed.Subscribe(t => removed.TrySetResult(t));
+        // a mouse or focus report (the pointer moving over it, a click into it) does not close it
+        Assert.False(session.Report("\e[I"u8));
+        await Task.Delay(100);
+        Assert.False(removed.Task.IsCompleted);
         Assert.True(session.Input("x"u8));
         Assert.Same(session, await removed.Task.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Empty(_service.Terminals);

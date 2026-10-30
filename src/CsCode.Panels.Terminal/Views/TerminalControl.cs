@@ -287,7 +287,7 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
         _runtime.SetTerminalFocus(true, this);
         // clicking (or tabbing) into a split pane makes its terminal the active one: keys, commands and Find act on it
         if (_session is { IsDisposed: false } focused && !ReferenceEquals(_runtime.Service.ActiveSession, focused)) _runtime.Service.SetActive(focused);
-        if (_session is { } s && s.Modes.FocusEvents) s.Input(KeyEncoder.Focus(true));
+        if (_session is { } s && s.Modes.FocusEvents) s.Report(KeyEncoder.Focus(true));
         StartBlink();
         InvalidateVisual();
     }
@@ -296,7 +296,7 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
     {
         base.OnLostFocus(e);
         _runtime.SetTerminalFocus(false, this);
-        if (_session is { } s && s.Modes.FocusEvents) s.Input(KeyEncoder.Focus(false));
+        if (_session is { } s && s.Modes.FocusEvents) s.Report(KeyEncoder.Focus(false));
         StopBlink();
         InvalidateVisual();
     }
@@ -367,7 +367,7 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
             _mouseButton = button;
             _mouseButtonHeld = true;
             if (MouseEncoder.Encode(s.Modes, MouseAction.Press, button, col, row, false, (mods & KeyModifiers.Alt) != 0, (mods & KeyModifiers.Control) != 0, true) is { } report)
-                s.Input(report);
+                s.Report(report);
             e.Pointer.Capture(this);
             e.Handled = true;
             return;
@@ -460,7 +460,7 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
         if (_session is { } s && MouseReporting(mods) && !_selecting)
         {
             if (MouseEncoder.Encode(s.Modes, MouseAction.Move, _mouseButton, col, row, false, (mods & KeyModifiers.Alt) != 0, (mods & KeyModifiers.Control) != 0, _mouseButtonHeld) is { } report)
-                s.Input(report);
+                s.Report(report);
             return;
         }
         if (_selecting && _selection is { } sel && _snapshot is { } snap)
@@ -494,7 +494,7 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
         {
             _mouseButtonHeld = false;
             if (MouseEncoder.Encode(s.Modes, MouseAction.Release, _mouseButton, col, row, false, (e.KeyModifiers & KeyModifiers.Alt) != 0, (e.KeyModifiers & KeyModifiers.Control) != 0, false) is { } report)
-                s.Input(report);
+                s.Report(report);
             e.Pointer.Capture(null);
             return;
         }
@@ -532,14 +532,14 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
         {
             for (var i = 0; i < Math.Abs(notches); i++)
                 if (MouseEncoder.Encode(s.Modes, notches > 0 ? MouseAction.WheelUp : MouseAction.WheelDown, 0, col, row, false, false, (e.KeyModifiers & KeyModifiers.Control) != 0, false) is { } report)
-                    s.Input(report);
+                    s.Report(report);
             return;
         }
         if (s.Modes.AlternateScreen && s.Modes.AlternateScroll)
         {
             // xterm.js: on the alternate screen (less, vim) the wheel sends cursor keys
             var key = notches > 0 ? (s.Modes.ApplicationCursorKeys ? "\eOA" : "\e[A") : (s.Modes.ApplicationCursorKeys ? "\eOB" : "\e[B");
-            s.Input(System.Text.Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat(key, Math.Abs(notches) * 3))));
+            s.Report(System.Text.Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat(key, Math.Abs(notches) * 3))));
             return;
         }
         ScrollLines(-notches * 3);
