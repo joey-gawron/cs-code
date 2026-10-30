@@ -20,6 +20,11 @@ namespace CsCode.Editor.Documents;
 /// group cannot be reached by undo any more). A reload from disk (clean document, file changed outside) clears the history and keeps the group
 /// open with the reloaded text as its start.
 /// </para>
+/// <para>
+/// Bounded: one held group keeps at most <see cref="HeldUndoChangeLimit"/> changes (AvaloniaEdit keeps every operation of a group, and a
+/// playback can run millions of steps); the group closes when it reaches that many, and the changes after it are undone step by step as usual.
+/// The steps kept for Undo inside the group follow the editor's undo limit and share the changed text with AvaloniaEdit's own history.
+/// </para>
 /// UI thread only (the buffer's thread), like every write.
 /// </summary>
 public sealed partial class EditorDocument
@@ -29,6 +34,9 @@ public sealed partial class EditorDocument
     private int _explicitGroups;  // BeginUndoGroup nesting (typing bursts, modal layers), held or not
     private HeldHistory? _held;
     private bool _heldTopLevelUpdate;
+
+    /// <summary>The most changes one held group keeps before it closes (memory bound; see the class remarks).</summary>
+    internal int HeldUndoChangeLimit { get; set; } = 100_000;
 
     /// <summary>Whether an undo group is held open (<see cref="OpenUndoGroup"/>).</summary>
     public bool HasOpenUndoGroup => _held is not null;
@@ -147,6 +155,12 @@ public sealed partial class EditorDocument
     {
         if (_held is not { Applying: false } h || _explicitGroups != h.Base || _text.IsInUpdate) return;
         h.EndStep();
+        CloseHeldGroupWhenFull(h);
+    }
+
+    private void CloseHeldGroupWhenFull(HeldHistory h)
+    {
+        if (h.Changes >= HeldUndoChangeLimit) CloseHeldUndoGroup();
     }
 
     private void HeldUpdateStarted()
@@ -160,18 +174,19 @@ public sealed partial class EditorDocument
     private void HeldUpdateFinished(bool changed)
     {
         if (_held is null) return;
+        if (changed && !_isDirty) UpdateDirty(true); // AvaloniaEdit says so only when the group closes
         if (_heldTopLevelUpdate)
         {
             _heldTopLevelUpdate = false;
             _held.EndStep();
+            CloseHeldGroupWhenFull(_held);
         }
-        if (changed && !_isDirty) UpdateDirty(true); // AvaloniaEdit says so only when the group closes
     }
 
     private void HeldChanging(DocumentChangeEventArgs e)
     {
         if (_held is not { Applying: false } h) return;
-        h.Add(new HeldChange(e.Offset, e.RemovalLength == 0 ? string.Empty : e.RemovedText.Text, e.InsertedText.Text), _text.UndoStack.SizeLimit);
+        h.Add(new HeldChange(e.Offset, e.RemovedText, e.InsertedText), _text.UndoStack.SizeLimit); // immutable sources AvaloniaEdit's history shares
     }
 
     /// <summary>
@@ -194,8 +209,8 @@ public sealed partial class EditorDocument
             {
                 foreach (var c in step.Changes)
                 {
-                    _text.Replace(c.Offset, c.Removed.Length, c.Inserted);
-                    caret = c.Offset + c.Inserted.Length;
+                    _text.Replace(c.Offset, c.Removed.TextLength, c.Inserted);
+                    caret = c.Offset + c.Inserted.TextLength;
                 }
             }
             else
@@ -203,8 +218,8 @@ public sealed partial class EditorDocument
                 for (var i = step.Changes.Count - 1; i >= 0; i--)
                 {
                     var c = step.Changes[i];
-                    _text.Replace(c.Offset, c.Inserted.Length, c.Removed);
-                    caret = c.Offset + c.Removed.Length;
+                    _text.Replace(c.Offset, c.Inserted.TextLength, c.Removed);
+                    caret = c.Offset + c.Removed.TextLength;
                 }
             }
         }
@@ -219,7 +234,7 @@ public sealed partial class EditorDocument
     }
 
     /// <summary>One change as AvaloniaEdit reported it (sequential: its offset is against the text the change applied to).</summary>
-    private readonly record struct HeldChange(int Offset, string Removed, string Inserted);
+    private readonly record struct HeldChange(int Offset, ITextSource Removed, ITextSource Inserted);
 
     private sealed class HeldStep
     {
@@ -242,6 +257,8 @@ public sealed partial class EditorDocument
         public bool Applying { get; set; }
         /// <summary>The version saved inside the group, if any.</summary>
         public int? SavedVersion { get; set; }
+        /// <summary>Changes made inside the group (its own undo and redo not counted).</summary>
+        public int Changes { get; private set; }
 
         public void StartStep(bool continueLast)
         {
@@ -265,6 +282,7 @@ public sealed partial class EditorDocument
                 if (Undo.Count > Math.Max(1, limit)) Undo.RemoveAt(0); // the oldest step cannot be undone inside the group any more
             }
             _current.Changes.Add(change);
+            Changes++;
             Redo.Clear();
         }
     }

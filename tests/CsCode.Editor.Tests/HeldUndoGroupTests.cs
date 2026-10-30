@@ -202,6 +202,52 @@ public class HeldUndoGroupTests
     }
 
     [AvaloniaFact]
+    public async Task A_group_closes_when_it_holds_as_many_changes_as_its_bound_and_later_changes_undo_step_by_step()
+    {
+        using var host = ViewHost.Create();
+        var (doc, view, window) = await host.OpenAsync("", "a.txt");
+        doc.HeldUndoChangeLimit = 5;
+        var c = view.Controller;
+        var group = c.OpenUndoGroup();
+        for (var i = 0; i < 4; i++) doc.ApplyEdits([new TextEdit(TextRange.At(0, i), i.ToString())]);
+        Assert.True(doc.HasOpenUndoGroup);
+        c.SetSelection(TextRange.At(0, 4));
+        Type(window, "ab");              // the 5th change closes the group (when its step ends): "b" is a step of its own
+        Assert.False(doc.HasOpenUndoGroup);
+        doc.ApplyEdits([new TextEdit(TextRange.At(0, 6), "!")]);
+        group.Dispose();                 // a stale handle: nothing happens
+        Assert.Equal("0123ab!", Text(doc));
+
+        c.Undo();
+        Assert.Equal("0123ab", Text(doc));
+        c.Undo();
+        Assert.Equal("0123a", Text(doc));
+        c.Undo();
+        Assert.Equal("", Text(doc));     // the bounded group: one step
+        Assert.False(c.CanUndo);
+    }
+
+    [AvaloniaFact]
+    public async Task Undo_inside_the_group_restores_large_removed_text_exactly()
+    {
+        using var host = ViewHost.Create();
+        var big = string.Join("\n", Enumerable.Range(0, 2000).Select(i => "line " + i));
+        var (doc, view, _) = await host.OpenAsync(big, "a.txt");
+        var c = view.Controller;
+        using (c.OpenUndoGroup())
+        {
+            doc.ApplyEdits([new TextEdit(new TextRange(TextPosition.Zero, new TextPosition(1999, 9)), "gone")]); // a rope-backed removal
+            Assert.Equal("gone", Text(doc));
+            c.Undo();
+            Assert.Equal(big, Text(doc));
+            c.Redo();
+            Assert.Equal("gone", Text(doc));
+        }
+        c.Undo();
+        Assert.Equal(big, Text(doc));
+    }
+
+    [AvaloniaFact]
     public async Task Closing_the_document_closes_its_held_group()
     {
         using var host = ViewHost.Create();
