@@ -38,7 +38,8 @@ public class RuntimeDirectoryTests
         if (!OperatingSystem.IsLinux()) Assert.Skip("Linux layout");
         DirectoryOwner Taken(string path) => path == "/tmp/cscode-1000" ? DirectoryOwner.Other : DirectoryOwner.Missing;
         Assert.Equal("/tmp/cscode-1000-1", RuntimeDirectory.Resolve(Env(), 1000, Taken).Path);
-        DirectoryOwner TwoTaken(string path) => path is "/tmp/cscode-1000" or "/tmp/cscode-1000-1" ? DirectoryOwner.Other : DirectoryOwner.ThisUser;
+        DirectoryOwner TwoTaken(string path) => path is "/tmp/cscode-1000" or "/tmp/cscode-1000-1" ? DirectoryOwner.Other
+            : path.StartsWith("/tmp/", StringComparison.Ordinal) ? DirectoryOwner.ThisUser : DirectoryOwner.Missing;
         Assert.Equal("/tmp/cscode-1000-2", RuntimeDirectory.Resolve(Env(), 1000, TwoTaken).Path);
         // All taken: the first name, which Ensure rejects (background mode is unavailable rather than shared with a stranger).
         Assert.Equal("/tmp/cscode-1000", RuntimeDirectory.Resolve(Env(), 1000, _ => DirectoryOwner.Other).Path);
