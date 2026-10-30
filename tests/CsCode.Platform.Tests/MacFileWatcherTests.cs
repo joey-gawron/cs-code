@@ -145,6 +145,41 @@ public class MacFileWatcherTests : IDisposable
     }
 
     [Fact]
+    public async Task A_tree_moved_to_a_lost_roots_path_after_the_loss_was_reported_is_announced_without_any_later_event()
+    {
+        // The loss is reported while nothing is at the path yet; then a tree is moved there and left alone. The stream says nothing about a
+        // directory moved to its own path, so only the root watch can see it arrive.
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "the kqueue root watch");
+        Directory.CreateDirectory(_f.P("cfg"));
+        File.WriteAllText(_f.P("cfg/a.json"), "old");
+        using var outside = new TempDirectory("cscode-outside-");
+        outside.WriteFile("built/a.json", "new");
+        outside.WriteFile("built/sub/new.json", "x");
+        var root = _f.P("cfg");
+        var seen = new List<(RawKind Kind, string Path)>();
+        using var watch = new MacRootWatch(root, (k, p, _) => { lock (seen) seen.Add((k, Path.GetRelativePath(root, p))); });
+
+        Directory.Move(root, _f.P("cfg.bak"));
+        for (var i = 0; i < 250; i++)
+        {
+            lock (seen) if (seen.Contains((RawKind.Deleted, "a.json"))) break;
+            await Task.Delay(20, Ct);
+        }
+        lock (seen) Assert.Contains((RawKind.Deleted, "a.json"), seen);
+        Directory.Move(outside.Combine("built"), root);
+        for (var i = 0; i < 250; i++)
+        {
+            lock (seen) if (seen.Contains((RawKind.Created, "sub")) && seen.Contains((RawKind.Created, "a.json"))) break;
+            await Task.Delay(20, Ct);
+        }
+        lock (seen)
+        {
+            Assert.True(seen.Contains((RawKind.Created, "sub")) && seen.Contains((RawKind.Created, "a.json")), string.Join(", ", seen));
+            Assert.Equal(0, KqueueHub.WatchesOn(Path.GetDirectoryName(root)!)); // the parent is watched only while nothing is at the path
+        }
+    }
+
+    [Fact]
     public void A_stream_that_cannot_be_made_releases_its_root_watch()
     {
         // The root watch is armed before the stream: a root replaced by a file meanwhile (the stream's constructor throws) must not leave it
