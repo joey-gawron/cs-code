@@ -220,6 +220,26 @@ public class MenuBarTests
         Assert.False(editor.Controller.IsFocused);
     }
 
+    // With no folder open the Explorer has no row, only its empty state's Open Folder button; the shell fell back to tab order, which skips the
+    // toolbar's buttons and put the keyboard in the filter box (a filter with nothing to filter). Enter now opens a folder, as the window offers.
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task View_Tool_Windows_Explorer_with_no_folder_open_puts_the_keyboard_on_Open_Folder()
+    {
+        await using var host = RealAppHost.Create(h => h.Files.WriteFile("a.txt", "alpha beta\n"));
+        await host.StartAsync([]);
+        var editor = await host.Shell.Well.OpenAsync(new Uri(host.Files.Combine("a.txt")));
+        Assert.True(await RealAppHost.WaitFor(() => editor.Controller is not null && editor.LiveView!.IsAttachedToVisualTree()));
+        editor.Controller!.Focus();
+
+        await ClickToolWindowItemAsync(host, "Explorer");
+
+        var explorer = host.Shell.Tools.Get("explorer")!;
+        Assert.True(await RealAppHost.WaitFor(() => explorer.LiveView?.IsKeyboardFocusWithin == true), $"the keyboard stayed on {Focused(host)}");
+        await DevScene.SettleAsync(5);
+        Assert.True(host.Window.FocusManager?.GetFocusedElement() is Button { Content: "Open Folder" }, $"the keyboard is on {Focused(host)}");
+        Assert.False(editor.Controller.IsFocused);
+    }
+
     // Found in review: reopening a closed Explorer, the item's main use, left the keyboard nowhere. Dock lays the new view out a pass later, by
     // when the folder's root row is there and takes the keyboard; then the root's children arrive as one bulk change (a Reset), which recycles
     // every row, the focused one too, and Avalonia moves the keyboard to nothing: the arrows, Enter and typing went nowhere, where before the
