@@ -220,6 +220,19 @@ public class VimClipboardTests
         Assert.Equal("now", clipboard.Text('+'));
     }
 
+    [Fact]
+    public void A_disposed_clipboard_is_not_retained_by_the_service_it_listened_to()
+    {
+        var service = new ControlledClipboard();
+        CsCode.TestDoubles.LeakAssert.NotRetained(() =>
+        {
+            var clipboard = new VimClipboard(service);
+            clipboard.Dispose();
+            return [clipboard];
+        });
+        _ = service.WriteAsync(ClipboardText.Plain("after")); // nobody listens any more
+    }
+
     // ------------------------------------------------------------------ Vim switched off (vim-macros-clipboard-6)
 
     [Fact]

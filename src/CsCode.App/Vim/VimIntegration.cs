@@ -185,11 +185,12 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
             return;
         }
         _enabled = on;
-        // off: the '+' / '*' caches are dropped and nothing is read any more (window activation, editor focus); on: read afresh
+        // off: the '+' / '*' caches are dropped and nothing is read any more (window activation, editor focus); on: read afresh (at startup the
+        // window's activation does it)
         Clipboard.Enabled = on;
         if (on)
         {
-            _ = Clipboard.RefreshAllAsync();
+            if (_windowHolder.Window is WindowBase { IsActive: true }) _ = Clipboard.RefreshAllAsync();
             foreach (var view in _editors.Views) Attach(view);
         }
         else
