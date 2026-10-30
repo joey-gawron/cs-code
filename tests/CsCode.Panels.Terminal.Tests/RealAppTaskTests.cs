@@ -63,7 +63,7 @@ public sealed class RealAppTaskTests
         var terminalMenu = app.Shell.Menus.Roots.Single(r => r.Header.Replace("_", "", StringComparison.Ordinal) == "Terminal");
         var buildItem = terminalMenu.Children.Single(c => c.CommandId == TaskCommandSet.Build);
         Assert.True(buildItem.IsEnabled && terminalMenu.Children.Single(c => c.CommandId == TaskCommandSet.RunTask).IsEnabled);
-        Assert.Equal("Ctrl+Shift+B", buildItem.Gesture);
+        Assert.Equal(TerminalAppHost.KeyLabel("ctrl+shift+b"), buildItem.Gesture);
 
         app.Window.KeyPress(Key.B, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.B, "B");
         TerminalSession? build = null;
@@ -77,10 +77,10 @@ public sealed class RealAppTaskTests
         // the Terminal window shows it (reveal: always), without taking the keyboard from where it was (focus: false)
         Assert.True(await TerminalAppHost.WaitFor(() => app.View is { IsShown: true } v && ReferenceEquals(v.Control.Session, build)));
 
-        // $gcc found the error: the Error List's diagnostics have it
+        // $gcc found the error: the Error List's diagnostics have it (at the path the task's bash printed: $PWD from getcwd, without symbolic links)
         var diagnostics = app.Get<IDiagnosticService>();
-        Assert.True(await TerminalAppHost.WaitFor(() => diagnostics.GetAll().Any(d => d.Uri.LocalPath == Path.Combine(folder, "main.c"))), "no problem reached the diagnostics");
-        var problem = diagnostics.GetAll().Single(d => d.Uri.LocalPath == Path.Combine(folder, "main.c")).Diagnostic;
+        Assert.True(await TerminalAppHost.WaitFor(() => diagnostics.GetAll().Any(d => d.Uri.LocalPath == Path.Combine(Support.PhysicalPath(folder), "main.c"))), "no problem reached the diagnostics");
+        var problem = diagnostics.GetAll().Single(d => d.Uri.LocalPath == Path.Combine(Support.PhysicalPath(folder), "main.c")).Diagnostic;
         Assert.Equal(("expected ';' before 'return'", 2, 6, DiagnosticSeverity.Error), (problem.Message, problem.Range.Start.Line, problem.Range.Start.Character, problem.Severity));
         app.Capture("terminal-task-build");
 

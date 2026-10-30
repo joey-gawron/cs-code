@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using CsCode.Core.Platform;
+using CsCode.Platform.FileSystem;
 using CsCode.Platform.Io;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -33,8 +34,8 @@ public sealed class FileWatchHandle : IDisposable
 /// skips it), and the events of a cache directory's contents are dropped for everyone. A subscription can name paths it wants despite all
 /// that (<see cref="FileWatchWants"/>): the walk goes down to them and their events are delivered to it, through the same OS watch. A
 /// subscription that joins with fewer excludes, or whose wants change, has what it wants watched before its <see cref="FileWatchHandle.Ready"/>
-/// (or its <see cref="FileWatchWants.SetAsync"/>) completes. Elsewhere <see cref="FileSystemWatcher"/> watches the whole tree and only the
-/// events are filtered (cache tags are seen only where the watcher scans a new directory).</item>
+/// (or its <see cref="FileWatchWants.SetAsync"/>) completes. Elsewhere <see cref="FileSystemWatcher"/> watches the whole tree (kqueue the
+/// one directory of a non-recursive watch on macOS, <see cref="OsWatchBackend"/>) and only the events are filtered (cache tags are seen only where the watcher scans a new directory).</item>
 /// <item><b>Handles</b>: one OS watch (one inotify instance on Linux) is shared by every subscription on the same root and disposed with
 /// the last one. When the OS watch limit is exhausted that root degrades to a coarse polling watcher (logged once per root).</item>
 /// <item><b>Roots that come and go</b>: a root that does not exist yet (<c>.cscode/</c> of a folder opened without one) waits through a
@@ -69,8 +70,8 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
     // Bounds the bookkeeping, not the leak: each tracked path stands for at least one lost OS watch, so the OS limit is reached long before.
     private const int MaxTrackedLossPaths = 4096;
 
-    private static readonly StringComparer PathComparer =
-        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    // Per volume on macOS (files-8): on a case-sensitive APFS volume "Foo" and "foo" are two roots, whose events must not be taken for each other's.
+    private static readonly IEqualityComparer<string> PathComparer = VolumePathComparer.Current;
 
     private sealed class Source(string root, bool recursive)
     {
@@ -156,12 +157,17 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
         _config = config;
         _options = options ?? new PlatformOptions();
         _log = logger ?? NullLogger<FileWatcher>.Instance;
-        _backendFactory = backendFactory ?? DefaultBackend;
+        _backendFactory = backendFactory ?? ((root, recursive, verdict, sink, fatal, rootLost) => DefaultBackend(root, recursive, verdict, sink, fatal, rootLost, _options.PollInterval));
     }
 
-    /// <summary>inotify one directory at a time on Linux (excluded directories cost no watch), <see cref="FileSystemWatcher"/> elsewhere.</summary>
-    internal static IWatchBackend DefaultBackend(string root, bool recursive, DirectoryVerdict verdict, RawSink sink, Action<Exception> onFatal, Action onRootLost) =>
-        OperatingSystem.IsLinux() ? new InotifyBackend(root, recursive, verdict, sink, onFatal, onRootLost) : new FswBackend(root, recursive, sink, onFatal);
+    /// <summary>
+    /// inotify one directory at a time on Linux (excluded directories cost no watch); elsewhere <see cref="OsWatchBackend"/>: a
+    /// <see cref="FileSystemWatcher"/>, except kqueue for a non-recursive watch on macOS (which polls the files it cannot watch every
+    /// <paramref name="pollInterval"/>). The macOS backends report a lost root as the deletion of what it held, not through <paramref name="onRootLost"/>.
+    /// </summary>
+    internal static IWatchBackend DefaultBackend(string root, bool recursive, DirectoryVerdict verdict, RawSink sink, Action<Exception> onFatal, Action onRootLost,
+        TimeSpan pollInterval) =>
+        OperatingSystem.IsLinux() ? new InotifyBackend(root, recursive, verdict, sink, onFatal, onRootLost) : OsWatchBackend.Create(root, recursive, sink, onFatal, pollInterval);
 
     /// <summary>The setting the watcher needs, read from <paramref name="configuration"/> (tests combine it with a backend factory).</summary>
     internal static IConfigurationServiceRead ConfigReadOf(IConfigurationService configuration) => new ConfigRead(configuration);

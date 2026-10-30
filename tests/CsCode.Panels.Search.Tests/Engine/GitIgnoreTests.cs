@@ -201,4 +201,26 @@ public class GitIgnoreTests : IDisposable
 
     [Fact]
     public void An_empty_file_has_no_rules() => Assert.Equal(0, IgnoreRules.Parse("\n# nothing\n").Count);
+
+    [Fact]
+    public void With_ignore_case_rules_match_whatever_the_case()
+    {
+        Assert.True(IgnoreRules.Parse("build/", ignoreCase: true).Evaluate("Build", true));
+        Assert.True(IgnoreRules.Parse("*.LOG", ignoreCase: true).Evaluate("dir/a.log", false));
+        Assert.True(IgnoreRules.Parse("/Docs/[A-C]x", ignoreCase: true).Evaluate("docs/bX", false));
+        Assert.False(IgnoreRules.Parse("*.log\n!Keep.log", ignoreCase: true).Evaluate("KEEP.LOG", false));
+        Assert.Null(IgnoreRules.Parse("build/").Evaluate("Build", true));
+    }
+
+    [Fact]
+    public async Task The_walker_follows_the_repositorys_core_ignorecase()
+    {
+        // files-10: git on a Mac sets core.ignorecase=true and then ignores Debug.LOG for "*.log"; a repository that says false matches by case
+        _h.Write(".gitignore", "*.log\n");
+        _h.Write("Debug.LOG", "needle"); _h.Write("keep.txt", "needle");
+        _h.Write(".git/config", "[core]\n\tignorecase = true\n");
+        Assert.Equal(["keep.txt"], await Names());
+        _h.Write(".git/config", "[core]\n\tignorecase = false\n");
+        Assert.Equal(["Debug.LOG", "keep.txt"], await Names());
+    }
 }

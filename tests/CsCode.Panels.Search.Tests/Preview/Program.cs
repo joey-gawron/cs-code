@@ -30,7 +30,7 @@ internal static class Program
 {
     [STAThread]
     public static int Main(string[] args) =>
-        AppBuilder.Configure<PreviewApp>().UsePlatformDetect().LogToTrace().StartWithClassicDesktopLifetime(args);
+        AppBuilder.Configure<PreviewApp>().UsePlatformDetect().WithCodeFonts().LogToTrace().StartWithClassicDesktopLifetime(args);
 }
 
 /// <summary>Hosts the panels' <see cref="IToolWindow"/>s in tabs, the way the shell will host them, and implements <see cref="IViewActivator"/> over the tabs.</summary>

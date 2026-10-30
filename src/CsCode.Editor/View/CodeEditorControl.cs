@@ -12,6 +12,7 @@ using CsCode.Editor.Languages;
 using CsCode.Core.Languages;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Text;
+using CsCode.Core.Theming;
 using CsCode.Editor.Documents;
 using CsCode.Editor.Editing;
 using CsCode.Editor.TextMate;
@@ -77,6 +78,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         Clipboard = new EditorClipboard(this);
         _components.Add(Clipboard);
         _components.Add(new EditorChromeRenderers(this));
+        _components.Add(new EditorFontFeatures(this)); // editor.fontLigatures: on unless turned off
         // the find panel's search: bounded, and re-run after edits only once the typing pauses, off the UI thread (editor-4)
         _components.Add(new FindSearch(this));
         foreach (var feature in _factory.CreateFeatures(this)) _components.Add(feature);
@@ -287,7 +289,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     private void ApplySettings(bool initial)
     {
         var s = Settings;
-        Editor.FontFamily = new FontFamily(s.FontFamily);
+        Editor.FontFamily = new FontFamily(FontFamilies.Normalize(s.FontFamily)); // 'Quoted' names and generic ones as settings write them
         Editor.FontSize = s.FontSize;
         Editor.WordWrap = s.WordWrap;
         Editor.ShowLineNumbers = s.ShowLineNumbers;
@@ -362,7 +364,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
 
     private void OnPointerWheel(object? sender, PointerWheelEventArgs e)
     {
-        if (!Settings.MouseWheelZoom || (e.KeyModifiers & KeyModifiers.Control) == 0) return;
+        if (!Settings.MouseWheelZoom || !EditorKeys.HasCommand(e.KeyModifiers)) return; // Ctrl+wheel, ⌘+wheel on macOS
         Editor.FontSize = Math.Clamp(Editor.FontSize + (e.Delta.Y > 0 ? 1 : -1), 6, 72); // zoom is per view and not persisted
         RebuildStyleTable();
         e.Handled = true;

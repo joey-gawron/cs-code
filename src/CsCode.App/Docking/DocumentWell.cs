@@ -391,6 +391,129 @@ public sealed class DocumentWell : IDisposable
     public void SplitRight(ShellDocument tab) => _factory.NewHorizontalDocumentDock(tab);
     public void SplitDown(ShellDocument tab) => _factory.NewVerticalDocumentDock(tab);
 
+    // ---------------------------------------------------------------- moving between editor groups (Ctrl+W h j k l w W p o, Vim's Ctrl-W)
+
+    /// <summary>A new untitled editor, moved into a new group below the current one (<paramref name="right"/>: to its right): Vim's <c>:new</c> / <c>:vnew</c>.</summary>
+    public EditorTab OpenUntitledSplit(bool right = false)
+    {
+        var opened = OpenUntitled();
+        if (right) SplitRight(opened); else SplitDown(opened);
+        return opened;
+    }
+
+    /// <summary>
+    /// The tabs in front of the document groups that are shown, each with its window (0: the main window, then the floating windows in group
+    /// order) and its on-screen centre in that window.
+    /// </summary>
+    private List<GroupFront> GroupFronts()
+    {
+        var list = new List<GroupFront>();
+        var floating = new List<TopLevel>();
+        foreach (var g in _factory.DocumentGroups())
+        {
+            if (g.ActiveDockable is not ShellDocument { IsDisposed: false, LiveView: { } v } t || TopLevel.GetTopLevel(v) is not { } top) continue;
+            if (v.TranslatePoint(new Point(v.Bounds.Width / 2, v.Bounds.Height / 2), top) is not { } centre) continue;
+            var window = 0;
+            if (_factory.IsFloating(t))
+            {
+                window = floating.IndexOf(top);
+                if (window < 0) { floating.Add(top); window = floating.Count - 1; }
+                window++;
+            }
+            list.Add(new GroupFront(t, window, centre));
+        }
+        return list;
+    }
+
+    private readonly record struct GroupFront(ShellDocument Tab, int Window, Point Centre);
+
+    /// <summary>
+    /// Puts the keyboard in the nearest editor group in <paramref name="direction"/> from the group of <paramref name="from"/>, in the same window
+    /// (VS Code's Focus Left / Right / Above / Below Editor Group, Vim's Ctrl-W h l k j). <paramref name="from"/> may be a tab that is not an
+    /// editor (Welcome, Settings); a group whose front tab is not an editor is not a Vim window and is never the target. False when there is
+    /// none that way.
+    /// </summary>
+    public bool FocusGroup(ShellDocument? from, GroupDirection direction)
+    {
+        if (from is null) return false;
+        var fronts = GroupFronts();
+        var origin = fronts.FirstOrDefault(f => ReferenceEquals(f.Tab, from));
+        if (origin.Tab is null) return false;
+        var best = fronts.Where(f => f.Tab is EditorTab && f.Window == origin.Window && !ReferenceEquals(f.Tab, from)).Select(f =>
+        {
+            var dx = f.Centre.X - origin.Centre.X;
+            var dy = f.Centre.Y - origin.Centre.Y;
+            var ok = direction switch
+            {
+                GroupDirection.Left => dx < -1 && Math.Abs(dy) <= Math.Abs(dx) * 2,
+                GroupDirection.Right => dx > 1 && Math.Abs(dy) <= Math.Abs(dx) * 2,
+                GroupDirection.Up => dy < -1 && Math.Abs(dx) <= Math.Abs(dy) * 2,
+                _ => dy > 1 && Math.Abs(dx) <= Math.Abs(dy) * 2,
+            };
+            return (Tab: (EditorTab)f.Tab, Distance: ok ? dx * dx + dy * dy : double.MaxValue);
+        }).Where(e => e.Distance < double.MaxValue).OrderBy(e => e.Distance).FirstOrDefault();
+        if (best.Tab is null) return false;
+        FocusEditor(best.Tab);
+        return true;
+    }
+
+    /// <summary>
+    /// Puts the keyboard in another editor group in reading order: the main window's groups top to bottom, left to right, then each floating
+    /// window's. <see cref="GroupCycle.Next"/> and <see cref="GroupCycle.Previous"/> step from the group of <paramref name="from"/> and wrap around
+    /// (VS Code's Focus Next / Previous Editor Group, Vim's Ctrl-W w W p), so a floating window's last group leads back to the main window; from a
+    /// tab that is not an editor (Welcome) they step from where its group is, and from no shown tab Next is the first group and Previous the last.
+    /// First and Last are the main window's top-left and bottom-right editors (Vim's Ctrl-W t b; any window's when the main one shows none).
+    /// False when there is no editor group.
+    /// </summary>
+    public bool FocusGroup(ShellDocument? from, GroupCycle step)
+    {
+        var order = GroupFronts().Where(f => f.Tab is EditorTab || ReferenceEquals(f.Tab, from))
+            .OrderBy(f => f.Window).ThenBy(f => f.Centre.Y).ThenBy(f => f.Centre.X).ToList();
+        var editors = order.Where(f => f.Tab is EditorTab).ToList();
+        if (editors.Count == 0) return false;
+        EditorTab? target;
+        if (step is GroupCycle.First or GroupCycle.Last)
+        {
+            var main = editors.Where(f => f.Window == 0).ToList();
+            if (main.Count == 0) main = editors;
+            target = (EditorTab)(step == GroupCycle.First ? main[0] : main[^1]).Tab;
+        }
+        else
+        {
+            var i = order.FindIndex(f => ReferenceEquals(f.Tab, from));
+            var delta = step == GroupCycle.Previous ? -1 : 1;
+            if (i < 0) target = (EditorTab)(delta > 0 ? editors[0] : editors[^1]).Tab;
+            else
+            {
+                target = from as EditorTab; // the only group: it keeps the keyboard
+                for (var k = 1; k < order.Count; k++)
+                    if (order[((i + delta * k) % order.Count + order.Count) % order.Count].Tab is EditorTab e) { target = e; break; }
+                if (target is null) return false;
+            }
+        }
+        FocusEditor(target);
+        return true;
+    }
+
+    /// <summary>Makes <paramref name="tab"/> the active tab and puts the keyboard in its editor.</summary>
+    public void FocusEditor(EditorTab tab)
+    {
+        Activate(tab);
+        tab.Controller?.Focus();
+    }
+
+    /// <summary>
+    /// Closes every tab of the other document groups, so the group of <paramref name="keep"/> is the only one left (VS Code's Close Editors in
+    /// Other Groups, Vim's <c>:only</c> / Ctrl-W o). A dirty editor asks first; Cancel stops there. False when cancelled.
+    /// </summary>
+    public async ValueTask<bool> CloseOtherGroupsAsync(ShellDocument? keep)
+    {
+        var group = keep is null ? null : _factory.GroupOf(keep);
+        foreach (var t in Tabs.Where(t => _factory.GroupOf(t) is { } g && !ReferenceEquals(g, group)).ToArray())
+            if (!await CloseAsync(t)) return false;
+        return true;
+    }
+
     /// <summary>Moves a tab into the next document group (wraps), as "Move to next group".</summary>
     public bool MoveToNextGroup(ShellDocument tab)
     {
@@ -543,3 +666,9 @@ public sealed class DocumentWell : IDisposable
         _tabsChanged.Clear();
     }
 }
+
+/// <summary>A direction from one editor group to its neighbour (<see cref="DocumentWell.FocusGroup(ShellDocument?, GroupDirection)"/>).</summary>
+public enum GroupDirection { Left, Right, Up, Down }
+
+/// <summary>A step through the editor groups in reading order (<see cref="DocumentWell.FocusGroup(ShellDocument?, GroupCycle)"/>).</summary>
+public enum GroupCycle { Next, Previous, First, Last }

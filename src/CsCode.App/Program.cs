@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Headless;
 using CsCode.App.Background;
 using CsCode.App.Startup;
+using CsCode.Ui.Theming;
 
 namespace CsCode.App;
 
@@ -34,6 +35,8 @@ internal static class Program
 
     private static int RunApp(string[] args, CommandLineOptions options)
     {
+        // macOS, started from Finder/the Dock (lsp-1): the login shell's PATH and the rest, in the background; children wait for it
+        if (!options.HeadlessTest) CsCode.Core.Platform.LoginShellEnvironment.Start();
         var crash = new CrashHandler(CrashHandler.DefaultLogDirectory());
         crash.Install();
         App.Crash = crash;
@@ -62,10 +65,10 @@ internal static class Program
 
     // Also used by the headless test harness and the XAML previewer.
     public static AppBuilder BuildAvaloniaApp() =>
-        AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().LogToTrace();
+        AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().WithCodeFonts().LogToTrace();
 
     /// <summary><paramref name="headless"/>: the Avalonia headless platform with Skia rendering (<c>--headless-test</c>: integration tests of real processes, no display).</summary>
     public static AppBuilder BuildAvaloniaApp(bool headless) => headless
-        ? AppBuilder.Configure<App>().UseSkia().UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false }).WithInterFont().LogToTrace()
+        ? AppBuilder.Configure<App>().UseSkia().UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false }).WithInterFont().WithCodeFonts().LogToTrace()
         : BuildAvaloniaApp();
 }

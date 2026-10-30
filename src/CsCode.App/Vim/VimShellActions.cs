@@ -1,5 +1,3 @@
-using Avalonia;
-using Avalonia.Controls;
 using CsCode.App.Docking;
 using CsCode.Core.Platform;
 using CsCode.Vim;
@@ -17,7 +15,7 @@ namespace CsCode.App.Vim;
 /// file opens in the new group and the current editor stays.</item>
 /// </list>
 /// </summary>
-internal sealed class VimShellActions(VimIntegration owner, DocumentWell well, ShellDockFactory dock, IWindowService? windows, IWorkspaceService? workspace)
+internal sealed class VimShellActions(VimIntegration owner, DocumentWell well, IWindowService? windows, IWorkspaceService? workspace)
 {
     public bool Perform(VimView view, VimEditorAction action, in VimActionArgs args)
     {
@@ -112,18 +110,25 @@ internal sealed class VimShellActions(VimIntegration owner, DocumentWell well, S
                 Split(tab, arg, vertical: action is VimEditorAction.VSplit or VimEditorAction.NewVSplit, untitled: action is VimEditorAction.NewSplit or VimEditorAction.NewVSplit);
                 return;
             case VimEditorAction.Only:
-                Run(async () =>
-                {
-                    var group = tab is null ? null : dock.GroupOf(tab);
-                    foreach (var t in well.Tabs.Where(t => dock.GroupOf(t) is { } g && !ReferenceEquals(g, group)).ToArray())
-                        if (!await well.CloseAsync(t).ConfigureAwait(true)) return;
-                });
+                Run(() => well.CloseOtherGroupsAsync(tab).AsTask());
                 return;
             case VimEditorAction.FocusLeft or VimEditorAction.FocusRight or VimEditorAction.FocusUp or VimEditorAction.FocusDown:
-                FocusDirection(tab, action);
+                well.FocusGroup(tab, action switch
+                {
+                    VimEditorAction.FocusLeft => GroupDirection.Left,
+                    VimEditorAction.FocusRight => GroupDirection.Right,
+                    VimEditorAction.FocusUp => GroupDirection.Up,
+                    _ => GroupDirection.Down,
+                });
                 return;
             case VimEditorAction.FocusNext or VimEditorAction.FocusPrevious or VimEditorAction.FocusTop or VimEditorAction.FocusBottom or VimEditorAction.FocusLast:
-                FocusCycle(tab, action);
+                well.FocusGroup(tab, action switch
+                {
+                    VimEditorAction.FocusTop => GroupCycle.First,
+                    VimEditorAction.FocusBottom => GroupCycle.Last,
+                    VimEditorAction.FocusPrevious or VimEditorAction.FocusLast => GroupCycle.Previous,
+                    _ => GroupCycle.Next,
+                });
                 return;
             case VimEditorAction.Help:
                 if (windows is not null) Run(() => windows.OpenExternalAsync(new Uri("https://vimhelp.org/" + (string.IsNullOrEmpty(arg) ? "" : "search.html#q=" + Uri.EscapeDataString(arg)))).AsTask());
@@ -220,7 +225,12 @@ internal sealed class VimShellActions(VimIntegration owner, DocumentWell well, S
         {
             Run(async () =>
             {
-                EditorTab? opened = untitled ? well.OpenUntitled() : Resolve(fileName!, tab) is { } uri ? await well.OpenAsync(uri).ConfigureAwait(true) : null;
+                if (untitled)
+                {
+                    well.OpenUntitledSplit(right: vertical);
+                    return;
+                }
+                var opened = Resolve(fileName!, tab) is { } uri ? await well.OpenAsync(uri).ConfigureAwait(true) : null;
                 if (opened is null || ReferenceEquals(opened, tab)) return;
                 if (vertical) well.SplitRight(opened); else well.SplitDown(opened);
             });
@@ -228,61 +238,6 @@ internal sealed class VimShellActions(VimIntegration owner, DocumentWell well, S
         }
         if (tab is null) return;
         if (vertical) well.SplitRight(tab); else well.SplitDown(tab);
-    }
-
-    /// <summary>The active editors of the document groups with their on-screen centres (for Ctrl-W h/j/k/l).</summary>
-    private List<(EditorTab Tab, Point Centre)> GroupEditors()
-    {
-        var list = new List<(EditorTab, Point)>();
-        var root = owner.Window;
-        foreach (var t in well.EditorTabs)
-        {
-            if (dock.GroupOf(t) is not { } g || !ReferenceEquals(g.ActiveDockable, t) || t.LiveView is not { } v || root is null) continue;
-            if (v.TranslatePoint(new Point(v.Bounds.Width / 2, v.Bounds.Height / 2), root) is { } centre) list.Add((t, centre));
-        }
-        return list;
-    }
-
-    private void FocusDirection(EditorTab? tab, VimEditorAction action)
-    {
-        var editors = GroupEditors();
-        var from = editors.FirstOrDefault(e => ReferenceEquals(e.Tab, tab));
-        if (from.Tab is null) return;
-        var best = editors.Where(e => !ReferenceEquals(e.Tab, tab)).Select(e =>
-        {
-            var dx = e.Centre.X - from.Centre.X;
-            var dy = e.Centre.Y - from.Centre.Y;
-            var ok = action switch
-            {
-                VimEditorAction.FocusLeft => dx < -1 && Math.Abs(dy) <= Math.Abs(dx) * 2,
-                VimEditorAction.FocusRight => dx > 1 && Math.Abs(dy) <= Math.Abs(dx) * 2,
-                VimEditorAction.FocusUp => dy < -1 && Math.Abs(dx) <= Math.Abs(dy) * 2,
-                _ => dy > 1 && Math.Abs(dx) <= Math.Abs(dy) * 2,
-            };
-            return (e.Tab, Distance: ok ? dx * dx + dy * dy : double.MaxValue);
-        }).Where(e => e.Distance < double.MaxValue).OrderBy(e => e.Distance).FirstOrDefault();
-        if (best.Tab is not null) Focus(best.Tab);
-    }
-
-    private void FocusCycle(EditorTab? tab, VimEditorAction action)
-    {
-        var editors = GroupEditors().OrderBy(e => e.Centre.Y).ThenBy(e => e.Centre.X).Select(e => e.Tab).ToList();
-        if (editors.Count == 0) return;
-        var i = tab is null ? -1 : editors.FindIndex(t => ReferenceEquals(t, tab));
-        var target = action switch
-        {
-            VimEditorAction.FocusTop => editors[0],
-            VimEditorAction.FocusBottom => editors[^1],
-            VimEditorAction.FocusPrevious or VimEditorAction.FocusLast => editors[((i - 1) % editors.Count + editors.Count) % editors.Count],
-            _ => editors[(i + 1) % editors.Count],
-        };
-        Focus(target);
-    }
-
-    private void Focus(EditorTab tab)
-    {
-        well.Activate(tab);
-        tab.Controller?.Focus();
     }
 
     private void Run(Func<Task> work)

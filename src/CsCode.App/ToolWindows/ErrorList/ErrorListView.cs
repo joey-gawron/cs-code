@@ -10,6 +10,7 @@ using Avalonia.Media;
 using Avalonia.VisualTree;
 using CsCode.App.Views;
 using CsCode.Core.Platform;
+using CsCode.Ui;
 using CsCode.Ui.Controls;
 using CsCode.Ui.Menus;
 using CsCode.Ui.Icons;
@@ -21,7 +22,7 @@ namespace CsCode.App.ToolWindows.ErrorList;
 /// The Error List view: severity chips with live counts, a search box, group-by-file, a column header and a virtualised list.
 /// The model hands over a finished immutable row array about ten times a second at most; this view only displays it.
 /// </summary>
-public sealed class ErrorListView : UserControl, IDisposable, IClipboardTarget
+public sealed class ErrorListView : UserControl, IDisposable, IClipboardTarget, IToolWindowFocus
 {
     private const string Columns = "24,90,*,220,60";
     private readonly ErrorListViewModel _vm;
@@ -84,6 +85,9 @@ public sealed class ErrorListView : UserControl, IDisposable, IClipboardTarget
     }
 
     private ErrorRow? Selected => _list.SelectedItem as ErrorRow;
+
+    /// <summary>View &gt; Tool Windows &gt; Error List: the keyboard on a row (Enter goes to it), not on the first filter button; none without rows.</summary>
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(_list);
 
     // ---- clipboard and the row menu (Visual Studio: Copy, Go To Location, Show Error Help)
 

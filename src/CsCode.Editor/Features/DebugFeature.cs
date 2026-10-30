@@ -53,6 +53,8 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
 
     internal IDebugService Debug => _debug;
     internal CodeEditorControl View => _v;
+    /// <summary>The breakpoint glyph margin: the code-action lightbulb never goes left of its right edge (<see cref="CodeActionFeature"/>).</summary>
+    internal Control Margin => _margin;
     internal bool IsFileDocument => _v.Document.Uri.IsFile;
 
     public void OnThemeChanged() => _margin.InvalidateVisual();

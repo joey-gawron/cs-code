@@ -44,7 +44,7 @@ internal sealed class ProcessSampler : IDisposable
     private readonly object _gate = new();
     private readonly byte[] _buffer = new byte[8192];
     private readonly ProcFile? _status;
-    private readonly Process? _self;
+    private Process? _self;
     private long _gcKey = -1;
     private long _committed, _fragmented, _loh, _poh, _heapAfterLastGc;
     private double _pausePercent;
@@ -128,6 +128,7 @@ internal sealed class ProcessSampler : IDisposable
         {
             _status?.Dispose();
             _self?.Dispose();
+            _self = null; // a sample after disposal (a trim finishing late) reads a fresh Process, as the Linux reader falls back to one
         }
     }
 }

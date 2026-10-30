@@ -19,4 +19,8 @@ public static class ThemeBrushes
     /// <summary>The code font (<c>ui:CodeFontFamily</c>, from the editor font setting) for code-built views such as Output.</summary>
     public static FontFamily CodeFont =>
         Application.Current?.Resources.TryGetResource("ui:CodeFontFamily", null, out var value) == true && value is FontFamily f ? f : FontFamily.Default;
+
+    /// <summary>The code font's OpenType features (<c>ui:CodeFontFeatures</c>, from <c>editor.fontLigatures</c>: ligatures on by default).</summary>
+    public static FontFeatureCollection? CodeFontFeatures =>
+        Application.Current?.Resources.TryGetResource("ui:CodeFontFeatures", null, out var value) == true ? value as FontFeatureCollection : null;
 }

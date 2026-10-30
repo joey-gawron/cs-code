@@ -15,7 +15,8 @@ namespace CsCode.Platform.Keybindings;
 /// Keybinding resolution with a chord state machine. Sources, lowest to highest precedence:
 /// preset (embedded, <c>visualstudio</c> or <c>vscode</c>) &lt; <see cref="KeybindingContribution"/>s from the contribution registry
 /// (built-in ones, then <see cref="ContributionSources.User"/> ones) &lt; the user's <c>keybindings.json</c>.
-/// Later entries win; <c>"-command"</c> entries remove matching earlier ones; <c>mac</c>/<c>linux</c>/<c>win</c> replace <c>key</c>.
+/// Later entries win; <c>"-command"</c> entries remove matching earlier ones; <c>mac</c>/<c>linux</c>/<c>win</c> replace <c>key</c> (an entry
+/// with no <c>key</c> binds only on the platforms it names).
 /// <para>
 /// <see cref="Resolve"/> runs on every keystroke on the UI thread: the resolved index is an immutable snapshot, results are preallocated
 /// per binding, the chord buffer is fixed and <c>when</c> clauses go through the allocation-free context evaluator — it allocates nothing.
@@ -371,6 +372,8 @@ public sealed class KeybindingService : IKeybindingService, IDisposable
             var command = Str("command");
             if (string.IsNullOrWhiteSpace(command)) { warnings.Add($"{origin}: entry #{n} has no \"command\""); continue; }
             var key = _os switch { HostOs.MacOs => Str("mac"), HostOs.Linux => Str("linux"), _ => Str("win") } ?? Str("key");
+            // An entry with only another platform's key ({"mac": "cmd+,", ...}) binds nothing here; it is not a keyless (negative) entry.
+            if (key is null && (Str("mac") ?? Str("linux") ?? Str("win")) is not null) continue;
             var when = Str("when");
             JsonElement? args = null;
             if (o.Members.LastOrDefault(m => m.Name == "args") is { } argMember && JsoncParser.ToJsonNode(argMember.Value) is { } argNode)

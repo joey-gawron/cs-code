@@ -17,6 +17,7 @@
 #
 # win-x64 holds cscode-server.exe; the client does not bootstrap Windows remotes yet (POSIX start/install scripts), so it is built for the
 # record and for a future PowerShell installer. macOS apphosts are signed ad hoc by the SDK on this Linux host (no Apple tooling needed).
+# Runs on Linux and on macOS (its bash 3.2, bsdtar and shasum): the archives list the same sorted entries, owned by 0:0, either way.
 # On a Nix-provided dotnet, run it as `bash .scratch/notes/with-nix-env.sh tools/publish-server.sh` (or source tools/nix-dev-env.sh first).
 set -euo pipefail
 
@@ -46,16 +47,31 @@ mkdir -p "$out"
 version=$(git -C "$repo" describe --always --dirty 2>/dev/null || echo dev)
 manifest_entries=()
 
+# sha256 <file>: lower-case hex. sha256sum on Linux, shasum on macOS (which has no sha256sum), as the remote install script does.
+sha256() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1; }
+
+# tarball <dir> <archive>: the same archive on GNU tar and on macOS's bsdtar: entries sorted by name, owned by 0:0, no extended attributes.
+tarball() {
+  if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+    tar -C "$1" -czf "$2" --owner=0 --group=0 --numeric-owner --sort=name .
+  else
+    # bsdtar has no --sort: the names are listed sorted (the directories too, as GNU tar's '.' adds them) and not recursed into. No
+    # AppleDouble ._ files or quarantine/provenance attributes (COPYFILE_DISABLE, --no-mac-metadata), which a Linux remote would unpack.
+    (cd "$1" && find . | LC_ALL=C sort) > "$work/tar-list"
+    COPYFILE_DISABLE=1 tar -C "$1" -czf "$2" --uid 0 --gid 0 --numeric-owner --no-mac-metadata --no-xattrs -n -T "$work/tar-list"
+  fi
+}
+
 # bundle <flavour> <rid> <dir> <file> <runtime>
 bundle() {
   local flavour=$1 rid=$2 dir=$3 file=$4 runtime=$5 exe=cscode-server
   case "$rid" in win-*) exe=cscode-server.exe ;; esac
   [ -f "$dir/$exe" ] || { echo "publish-server.sh: $dir has no $exe" >&2; exit 1; }
   chmod 755 "$dir/$exe"
-  tar -C "$dir" -czf "$out/$file.tmp" --owner=0 --group=0 --numeric-owner --sort=name .
+  tarball "$dir" "$out/$file.tmp"
   mv "$out/$file.tmp" "$out/$file"
   local sum
-  sum=$(sha256sum "$out/$file" | cut -d' ' -f1)
+  sum=$(sha256 "$out/$file")
   local runtime_json=""
   [ -n "$runtime" ] && runtime_json=", \"runtime\": \"$runtime\""
   manifest_entries+=("    { \"flavour\": \"$flavour\", \"rid\": \"$rid\", \"file\": \"$file\", \"sha256\": \"$sum\", \"hash\": \"${sum:0:16}\"$runtime_json }")

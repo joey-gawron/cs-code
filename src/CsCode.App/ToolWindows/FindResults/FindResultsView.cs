@@ -8,13 +8,14 @@ using Avalonia.Media;
 using Avalonia.VisualTree;
 using CsCode.App.Views;
 using CsCode.Core.Platform;
+using CsCode.Ui;
 using CsCode.Ui.Menus;
 using CsCode.Ui.Theming;
 
 namespace CsCode.App.ToolWindows.FindResults;
 
 /// <summary>Find Results: a title line and a virtualised list grouped by file. Preview text loads lazily as rows scroll into view.</summary>
-public sealed class FindResultsView : UserControl, IClipboardTarget
+public sealed class FindResultsView : UserControl, IClipboardTarget, IToolWindowFocus
 {
     private readonly FindResultsViewModel _vm;
     private readonly ListBox _list;
@@ -55,6 +56,9 @@ public sealed class FindResultsView : UserControl, IClipboardTarget
         var path = row.Location.Uri.IsFile ? row.Location.Uri.LocalPath : row.Location.Uri.ToString();
         return row.IsHeader ? path : $"{path}({row.Line},{row.Column}): {row.Preview?.Trim()}";
     }
+
+    /// <summary>View &gt; Tool Windows &gt; Find Results: the keyboard on a result (Enter goes to it); none without results.</summary>
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(_list);
 
     public bool CanCopy => Selected is not null && _window is not null;
 
@@ -101,6 +105,7 @@ public sealed class FindResultsView : UserControl, IClipboardTarget
         var preview = ViewHelpers.Label("", "foreground");
         preview.TextTrimming = TextTrimming.CharacterEllipsis;
         preview.FontFamily = ThemeBrushes.CodeFont;
+        preview.FontFeatures = ThemeBrushes.CodeFontFeatures;
         preview.Bind(TextBlock.TextProperty, new Binding(nameof(FindResultRow.Preview)) { Source = row });
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Height = 22, Background = Brushes.Transparent, Children = { line, preview } };
         panel.AttachedToVisualTree += async (_, _) => await _vm.LoadPreviewAsync(row).ConfigureAwait(true);

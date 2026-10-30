@@ -155,7 +155,8 @@ public class ClipboardServiceTests
     [AvaloniaFact]
     public async Task Without_an_X_display_there_is_no_PRIMARY_and_the_calls_are_harmless()
     {
-        Assert.Null(Environment.GetEnvironmentVariable("DISPLAY")); // the test run has no display (it must never use the user's)
+        // the test run has no display (it must never use the user's); macOS never connects to X (XQuartz's launchd agent sets DISPLAY there)
+        if (OperatingSystem.IsLinux()) Assert.Null(Environment.GetEnvironmentVariable("DISPLAY"));
         var service = new ClipboardService(AvaloniaUiDispatcher.Instance, () => null);
         using var _ = service;
         Assert.False(service.IsPrimarySelectionSupported);

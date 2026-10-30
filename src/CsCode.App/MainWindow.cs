@@ -66,7 +66,8 @@ public sealed class MainWindow : Window, IWindowChrome
         MinWidth = 640;
         MinHeight = 400;
         var useCustomChrome = !OperatingSystem.IsMacOS();
-        if (useCustomChrome) WindowDecorations = WindowDecorations.None; else { ExtendClientAreaToDecorationsHint = true; }
+        // macOS: the client area runs under the native title bar, as tall as ours, so the traffic lights sit centred in it.
+        if (useCustomChrome) WindowDecorations = WindowDecorations.None; else { ExtendClientAreaToDecorationsHint = true; ExtendClientAreaTitleBarHeightHint = 30; }
         _sp.GetRequiredService<WindowHolder>().Window = this;
 
         var ui = _sp.GetRequiredService<Ui.Threading.IUiDispatcher>();
@@ -75,7 +76,9 @@ public sealed class MainWindow : Window, IWindowChrome
 
         var commands = _sp.GetRequiredService<ICommandService>();
         var keys = _sp.GetRequiredService<IContextKeyService>();
-        _titleBar = new TitleBarView(this, _shell.Menus, commands, showCaptionButtons: useCustomChrome);
+        _titleBar = new TitleBarView(this, _shell.Menus, commands, showCaptionButtons: useCustomChrome, inWindowMenu: !OperatingSystem.IsMacOS());
+        // macOS: the application menu (About, Settings...) runs this window's commands; each window's menu bar comes with its shell input.
+        if (App.ApplicationMenu is { } appMenu) _disposables.Add(appMenu.Connect(_sp));
         _toolbar = new ToolbarView(commands, keys, ui, _sp.GetService<IKeybindingService>(), _sp.GetService<IDebugService>(), _sp.GetService<IConfigurationService>());
         _status = new StatusBarView(_sp.GetRequiredService<IStatusBarService>(), commands, keys, ui, _sp.GetService<IWindowService>(),
             new Ui.Menus.MenuServices(commands, keys, _sp.GetService<IKeybindingService>(), _sp.GetService<Core.Contributions.IContributionRegistry>()));
@@ -167,8 +170,16 @@ public sealed class MainWindow : Window, IWindowChrome
         var menus = _shell.ContextMenus.Attach(window);
         var clipboard = _shell.Clipboard.Attach(window);
         window.Deactivated += OnShellWindowDeactivated;
+        // macOS shows the menu bar of the window that has the keyboard: a floating window gets its own (its Window menu minimises it).
+        Menus.NativeMenuExport? menuBar = null;
+        if (OperatingSystem.IsMacOS())
+        {
+            menuBar = Menus.NativeMenuExport.BuildWindowMenu(_shell.Menus, window, _sp.GetService<IKeybindingService>(), _sp.GetRequiredService<Ui.Threading.IUiDispatcher>());
+            NativeMenu.SetMenu(window, menuBar.Menu);
+        }
         return Disposable.Create(() =>
         {
+            menuBar?.Dispose();
             window.RemoveHandler(KeyDownEvent, OnPreviewKeyDown);
             window.RemoveHandler(TextInputEvent, OnPreviewTextInput);
             window.RemoveHandler(KeyUpEvent, OnPreviewKeyUp);
@@ -342,6 +353,7 @@ public sealed class MainWindow : Window, IWindowChrome
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
+        _swallowTextUntil = 0;
         // Ctrl+Tab / Ctrl+Shift+Tab: MRU editor switcher overlay (committed when Ctrl is released).
         if (e.Key == Key.Tab && e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Alt))
         {
@@ -354,11 +366,36 @@ public sealed class MainWindow : Window, IWindowChrome
         // Vim sees an editor's keys before the key bindings (it decides which are its own: docs/VIM.md, "Keys")
         if (_shell.KeyInterceptor?.OnKeyDown(e) == true) { e.Handled = true; return; }
         if (!AvaloniaKeyMapper.TryMap(e.Key, e.KeyModifiers, out var stroke)) return;
-        if (_shell.Keyboard.Handle(stroke) == KeyDispatch.Handled) e.Handled = true;
+        if (_shell.Keyboard.Handle(stroke) == KeyDispatch.Handled)
+        {
+            e.Handled = true;
+            // A character key the pipeline took (the second key of a chord: Ctrl+W v, Ctrl+K S, or a dead one) is not typing: a platform that
+            // sends the character as text input after the key press anyway must not get it into the editor. Only that key's own text input, which
+            // follows at once: a platform that sends none for a handled key must not lose later text input with no key press, such
+            // as dictation or a character picked in the Character Viewer.
+            _swallowTextUntil = Vim.VimKeyPolicy.IsTextKey(stroke) ? Environment.TickCount64 + SwallowTextMs : 0;
+        }
     }
+
+    /// <summary>
+    /// Until this tick (<see cref="Environment.TickCount64"/>; 0: none) the next single-character text input belongs to the character key the key
+    /// pipeline just handled and goes nowhere.
+    /// </summary>
+    private long _swallowTextUntil;
+    private const int SwallowTextMs = 200;
 
     private void OnPreviewTextInput(object? sender, TextInputEventArgs e)
     {
+        if (_swallowTextUntil != 0)
+        {
+            var own = Environment.TickCount64 <= _swallowTextUntil && e.Text is { } text && new System.Globalization.StringInfo(text).LengthInTextElements == 1;
+            _swallowTextUntil = 0;
+            if (own)
+            {
+                e.Handled = true;
+                return;
+            }
+        }
         if (_shell.KeyInterceptor?.OnTextInput(e) == true) e.Handled = true;
     }
 
@@ -580,6 +617,33 @@ public sealed class MainWindow : Window, IWindowChrome
     public ShellController.CloseEnd CloseWithoutPrompt() => CloseConfirmed(HeldClose.WithoutPrompt);
 
     public async Task<bool> RequestExitAsync() => await CloseWithPromptsAsync().ConfigureAwait(true) == ShellController.CloseEnd.Closed;
+
+    /// <summary>An editor has changes not saved yet (what the Save prompts of a close would ask about).</summary>
+    public bool HasUnsavedChanges => _shell.Well.EditorTabs.Any(t => t.IsDirty);
+
+    /// <summary>
+    /// The desktop session ends (macOS log out with nothing unsaved): the layout is saved, as for any close, so the next start restores the tabs,
+    /// and the window closes without prompts. <see cref="ShellController.CloseEnd.Held"/> when a module holds the close with a question.
+    /// </summary>
+    public ShellController.CloseEnd CloseForSystemShutdown()
+    {
+        _shell.BeginClose();
+        var end = ShellController.CloseEnd.Cancelled;
+        try { end = CloseWithoutPrompt(); }
+        finally { _shell.EndClose(end); }
+        return end;
+    }
+
+    /// <summary>Shows the window (restored when minimised) and activates it: the system asked for the app (macOS Dock icon, documents opened).</summary>
+    public void BringToFront()
+    {
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        if (!IsVisible) Show();
+        Activate();
+    }
+
+    /// <summary>Opens paths handed over after the start (macOS file activation) as the command line's are opened (<see cref="ShellController.OpenTargets"/>).</summary>
+    public void OpenTargets(IReadOnlyList<Startup.StartupTarget> targets) => _shell.OpenTargets(targets);
 
     /// <summary>
     /// The Save prompts, then the close (background mode's quit with prompts): how it ended. <see cref="ShellController.CloseEnd.Held"/> is not a

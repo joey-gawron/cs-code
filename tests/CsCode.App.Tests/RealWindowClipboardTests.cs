@@ -10,6 +10,7 @@ using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
+using CsCode.Ui.Theming;
 
 namespace CsCode.App.Tests;
 
@@ -107,7 +108,7 @@ public class RealWindowClipboardTests
         var handshake = Environment.GetEnvironmentVariable("CSCODE_TEST_HANDSHAKE")!;
         var shot = Environment.GetEnvironmentVariable("CSCODE_SHOT")!;
         Exception? failure = null;
-        var exit = AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont()
+        var exit = AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().WithCodeFonts()
             .AfterSetup(_ => Dispatcher.UIThread.Post(async () =>
             {
                 var lifetime = (IClassicDesktopStyleApplicationLifetime)Application.Current!.ApplicationLifetime!;

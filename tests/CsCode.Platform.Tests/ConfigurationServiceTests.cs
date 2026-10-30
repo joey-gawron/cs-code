@@ -72,7 +72,7 @@ public class ConfigurationServiceTests : IDisposable
     public void Defaults_match_the_documented_vs_code_like_values()
     {
         using var svc = _f.Create();
-        Assert.Equal("Cascadia Code, Consolas, 'Courier New', monospace", svc.Get<string>(SettingKeys.EditorFontFamily));
+        Assert.Equal(OperatingSystem.IsMacOS() ? "Fira Code, Menlo, SF Mono, Monaco, monospace" : "Fira Code, Cascadia Code, Consolas, monospace", svc.Get<string>(SettingKeys.EditorFontFamily));
         Assert.Equal(14, svc.Get<int>(SettingKeys.EditorFontSize));
         Assert.Equal(4, svc.Get<int>(SettingKeys.EditorTabSize));
         Assert.True(svc.Get<bool>(SettingKeys.EditorInsertSpaces));
@@ -336,6 +336,24 @@ public class ConfigurationServiceTests : IDisposable
         Assert.Equal(7, svc.Get<int>("editor.tabSize"));
         for (var i = 0; i < 100 && !_f.Watcher.ActiveRoots.Any(r => r.EndsWith("/.cscode")); i++) await Task.Delay(20, Ct); // re-arm runs on the lane
         Assert.Contains(_f.Watcher.ActiveRoots, r => r.EndsWith("/.cscode")); // and it is now watched for edits
+    }
+
+    [Fact]
+    public async Task A_settings_directory_made_while_the_folder_watch_was_being_armed_is_found_and_read()
+    {
+        // The folder's watch arms on the IO lane after the look for .cscode: a directory made in between is reported by no watch, so it is
+        // looked for again once the watch is armed (this was missed on every platform whenever arming was slow).
+        var arm = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _f.Watcher.Arming = root => root == _f.WorkspaceDir ? arm.Task : null;
+        using var svc = _f.Create();
+        await _f.OpenWorkspace(svc);
+
+        _f.WriteWorkspace(".cscode", """{ "editor.tabSize": 6 }""");
+        arm.SetResult();
+
+        for (var i = 0; i < 250 && svc.Get<int>("editor.tabSize") != 6; i++) await Task.Delay(20, Ct);
+        Assert.Equal(6, svc.Get<int>("editor.tabSize"));
+        Assert.Contains(_f.Watcher.ActiveRoots, r => r.EndsWith("/.cscode")); // and it is watched for edits from now on
     }
 
     [Fact]

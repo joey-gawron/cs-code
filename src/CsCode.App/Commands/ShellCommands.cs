@@ -61,6 +61,15 @@ public static class ShellCommands
     public const string FloatEditor = "workbench.action.moveEditorToNewWindow";
     /// <summary>VS Code's "Restore Editors into Main Window": every floating document is docked back (Visual Studio's Dock as Tabbed Document).</summary>
     public const string DockEditor = "workbench.action.restoreEditorsToMainWindow";
+    // Moving between editor groups: VS Code's ids (Ctrl+W h l k j w W/p o); the untitled split below (Ctrl+W n, Vim's :new) is CsCode's own.
+    public const string FocusLeftGroup = "workbench.action.focusLeftGroup";
+    public const string FocusRightGroup = "workbench.action.focusRightGroup";
+    public const string FocusAboveGroup = "workbench.action.focusAboveGroup";
+    public const string FocusBelowGroup = "workbench.action.focusBelowGroup";
+    public const string FocusNextGroup = "workbench.action.focusNextGroup";
+    public const string FocusPreviousGroup = "workbench.action.focusPreviousGroup";
+    public const string CloseEditorsInOtherGroups = "workbench.action.closeEditorsInOtherGroups";
+    public const string NewUntitledFileBelow = "cscode.shell.newUntitledFileBelow";
 
     public static IDisposable Register(ShellCommandContext c)
     {
@@ -131,6 +140,15 @@ public static class ShellCommands
         Run("workbench.action.splitEditorRight", "Split Editor Right", "View", () => { if (c.Well.Active is { } t) c.Well.SplitRight(t); return Task.CompletedTask; });
         Run("workbench.action.splitEditorDown", "Split Editor Down", "View", () => { if (c.Well.Active is { } t) c.Well.SplitDown(t); return Task.CompletedTask; });
         Run("workbench.action.moveEditorToNextGroup", "Move Editor into Next Group", "View", () => { if (c.Well.Active is { } t) c.Well.MoveToNextGroup(t); return Task.CompletedTask; });
+        // Moving between editor groups (Ctrl+W h j k l w W p o n with the editor focused and Vim off; Vim's own Ctrl-W does the same through the well)
+        Run(FocusLeftGroup, "Focus Left Editor Group", "View", () => { c.Well.FocusGroup(c.Well.Active, GroupDirection.Left); return Task.CompletedTask; });
+        Run(FocusRightGroup, "Focus Right Editor Group", "View", () => { c.Well.FocusGroup(c.Well.Active, GroupDirection.Right); return Task.CompletedTask; });
+        Run(FocusAboveGroup, "Focus Editor Group Above", "View", () => { c.Well.FocusGroup(c.Well.Active, GroupDirection.Up); return Task.CompletedTask; });
+        Run(FocusBelowGroup, "Focus Editor Group Below", "View", () => { c.Well.FocusGroup(c.Well.Active, GroupDirection.Down); return Task.CompletedTask; });
+        Run(FocusNextGroup, "Focus Next Editor Group", "View", () => { c.Well.FocusGroup(c.Well.Active, GroupCycle.Next); return Task.CompletedTask; });
+        Run(FocusPreviousGroup, "Focus Previous Editor Group", "View", () => { c.Well.FocusGroup(c.Well.Active, GroupCycle.Previous); return Task.CompletedTask; });
+        Run(CloseEditorsInOtherGroups, "Close Editors in Other Groups", "View", async () => { await c.Well.CloseOtherGroupsAsync(c.Well.Active).ConfigureAwait(true); });
+        Run(NewUntitledFileBelow, "New Untitled File in Group Below", "File", () => { c.Well.OpenUntitledSplit(); return Task.CompletedTask; });
         Run(FloatEditor, "Move Editor into New Window", "View", () => { if (c.Well.Active is { } t) c.Well.Float(t); return Task.CompletedTask; });
         Run(DockEditor, "Restore Editors into Main Window", "View", () =>
         {
@@ -171,10 +189,17 @@ public static class ShellCommands
                 Run(toggle, "Toggle " + tool.Title, "View", () => { c.Tools.Toggle(id); return Task.CompletedTask; });
         }
         Run(ShowErrorList, "Show Error List", "View", () => { c.Tools.Show("errorlist"); return Task.CompletedTask; });
-        Hidden(ShellMenus.ShowToolWindow, inv =>
+        // View > Tool Windows: Visual Studio's View menu shows, activates AND focuses the window, so what the user types next goes there. A tool
+        // whose module shows itself its own way (ShowCommandId: Terminal creates a terminal, Find in Files seeds its query) runs that before the
+        // shell shows it: shown first, the Terminal's view would attach while the command's terminal is still starting and create a second one.
+        // Every other tool gets the keyboard in its view once Dock has laid it out.
+        Hidden(ShellMenus.ShowToolWindow, async inv =>
         {
-            if (inv.Arg<string>(0) is { } id) c.Tools.Show(id);
-            return Task.CompletedTask;
+            if (inv.Arg<string>(0) is not { } id || c.Tools.Get(id) is not { } tool) return;
+            var own = tool.Spec.ShowCommandId is { } show && c.Commands.Has(show) ? show : null;
+            if (own is not null) await c.Commands.ExecuteAsync(own).ConfigureAwait(true);
+            c.Tools.Show(id); // also after the tool's own command, so the window is in front whatever that command does
+            if (own is null) c.Tools.FocusView(id);
         });
 
         // Status-bar language picker.

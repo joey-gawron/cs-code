@@ -78,6 +78,7 @@ public static class SettingKeys
 {
     public const string EditorFontFamily = "editor.fontFamily";
     public const string EditorFontSize = "editor.fontSize";
+    public const string EditorFontLigatures = "editor.fontLigatures";
     public const string EditorTabSize = "editor.tabSize";
     public const string EditorInsertSpaces = "editor.insertSpaces";
     public const string EditorWordWrap = "editor.wordWrap";

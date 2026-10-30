@@ -70,6 +70,27 @@ public sealed class TerminalServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_terminal_created_while_the_login_shell_environment_is_read_starts_its_shell_only_after_it()
+    {
+        // lsp-1: a Mac app just started from the Dock; the shell must inherit the merged environment
+        var resolution = new TaskCompletionSource<CsCode.Core.Platform.LoginShellEnvironment.Resolution?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            Task<ITerminal> create;
+            using (CsCode.Core.Platform.LoginShellEnvironment.PendForTests(resolution.Task))
+            {
+                create = _service.CreateAsync(Bash()).AsTask();
+                await Task.Delay(300, TestContext.Current.CancellationToken);
+                Assert.False(create.IsCompleted);
+                Assert.Empty(_service.Terminals);
+                resolution.SetResult(null);
+            }
+            Assert.NotNull(((TerminalSession)await create).ProcessId);
+        }
+        finally { resolution.TrySetResult(null); }
+    }
+
+    [Fact]
     public async Task Create_does_not_block_the_calling_thread()
     {
         var sw = Stopwatch.StartNew();
@@ -123,7 +144,8 @@ public sealed class TerminalServiceTests : IDisposable
         var arch = Core.Platform.InheritedDotnetRoot.ArchRootVariable;
         var sdk = _sandbox.Dir.Combine("sdk");
         using var service = new TerminalService(_config, environment: () => _sandbox.Environment(new Dictionary<string, string> { [arch] = sdk }));
-        var t = (TerminalSession)await service.CreateAsync(Bash());
+        // wide enough that the sandbox path (long under macOS's /var/folders temp directory) is not wrapped
+        var t = (TerminalSession)await service.CreateAsync(Bash() with { InitialSize = (250, 24) });
         await t.SendTextAsync($"echo \"[${{{arch}-unset}}|$DOTNET_ROOT]\"");
         await WaitScreenAsync(t, $"[unset|{sdk}]");
     }

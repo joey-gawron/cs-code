@@ -71,8 +71,9 @@ else
 fi
 
 actual_size="$(wc -c < "$tmp/$asset" | tr -d ' ')"
-actual="$( (sha256sum "$tmp/$asset" 2>/dev/null || shasum -a 256 "$tmp/$asset") | awk '{print $1}')"
-if [[ "${actual,,}" != "${sha256}" ]]; then
+# Lower-cased with tr, not ${actual,,}: macOS ships bash 3.2.
+actual="$( (sha256sum "$tmp/$asset" 2>/dev/null || shasum -a 256 "$tmp/$asset") | awk '{print $1}' | tr '[:upper:]' '[:lower:]')"
+if [[ "$actual" != "${sha256}" ]]; then
   echo "fetch-codelldb: SHA-256 mismatch (got ${actual}, expected ${sha256}) - refusing to extract" >&2
   exit 1
 fi

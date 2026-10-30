@@ -30,7 +30,7 @@ This is the foundation every other module's runtime leans on, so correctness and
    precedence **user > default**, later entry in the same source wins, negative bindings (`"-command"`) remove matching lower entries, platform-specific key overrides (`mac`/`linux`/`win` in contributions),
    user `keybindings.json` (JSONC array `{key, command, when, args}`) live-reloaded, `GetLabel` formatting per OS (`Ctrl+K, Ctrl+C`; macOS `⌘S`), `GetBindingsFor`.
    Ship two **embedded-resource default presets**: `visualstudio` (default — F5, Ctrl+F5, Shift+F5, Ctrl+Shift+F5, F9, F10, F11, Shift+F11, F12, Shift+F12, F2, Ctrl+K Ctrl+D, Ctrl+K Ctrl+C/U, Ctrl+. , Ctrl+Space, Ctrl+Shift+Space,
-   Ctrl+Q quick launch, Ctrl+T/Ctrl+, go to all, Ctrl+Shift+P palette, Ctrl+P quick open, Ctrl+Shift+F find in files, Ctrl+F/H, Ctrl+G, Ctrl+S, Ctrl+Shift+S, Ctrl+Tab, Ctrl+W/F4 close, Ctrl+Alt+L explorer,
+   Ctrl+Q quick launch, Ctrl+T/Ctrl+, go to all, Ctrl+Shift+P palette, Ctrl+P quick open, Ctrl+Shift+F find in files, Ctrl+F/H, Ctrl+G, Ctrl+S, Ctrl+Shift+S, Ctrl+Tab, Ctrl+F4 close (Ctrl+W starts Vim's window chords: docs/PLATFORM.md), Ctrl+Alt+L explorer,
    Ctrl+Alt+O output, Ctrl+\\ Ctrl+E error list, Ctrl+` terminal, Alt+Up/Down move line, Ctrl+D duplicate? (VS: Ctrl+D), Ctrl+L delete line, Ctrl+/ comment toggle …) and `vscode` (the VS Code defaults). Use the command ids in `KnownCommands`
    plus the standard VS Code ids (`editor.action.*`, `workbench.action.*`). Preset persisted via `IStateStorage`/setting `cscode.keymap`.
 6. **`LocalFileSystem : IFileSystem`** (`file:` scheme; others → `NotSupportedException`): stat (follow symlinks, report `SymbolicLink` flag), readdir (no recursion), read, **atomic write** (temp file + fsync + rename; preserve permissions;

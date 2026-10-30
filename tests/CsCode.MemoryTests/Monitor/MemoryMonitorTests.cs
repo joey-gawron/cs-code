@@ -7,6 +7,7 @@ using CsCode.Profiling;
 using CsCode.Profiling.Testing;
 using CsCode.TestDoubles;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace CsCode.MemoryTests.Monitor;
@@ -38,6 +39,7 @@ public sealed class MemoryMonitorTests
     [Fact]
     public void A_sample_reads_the_resident_set_threads_and_runtime_counters_and_is_published()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "private, anonymous and file-backed memory and the thread count come from /proc/self/status (.NET reports no private bytes on macOS)");
         using var monitor = new MemoryMonitor();
         MemorySnapshot? published = null;
         using var sub = monitor.Sampled.Subscribe(s => published = s);
@@ -58,6 +60,7 @@ public sealed class MemoryMonitorTests
     [Fact]
     public void The_sampler_allocates_nothing_and_a_monitor_sample_only_its_published_snapshot()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "the allocation-free sampler reads /proc/self/status; elsewhere a refreshed Process allocates (ProcessSampler)");
         using var sampler = new ProcessSampler();
         Assert.True(sampler.IsProcfs);
         using var child = Process.Start(new ProcessStartInfo("sleep", "30") { UseShellExecute = false })!;
@@ -86,6 +89,7 @@ public sealed class MemoryMonitorTests
     [Fact]
     public async Task Child_processes_are_accounted_while_alive_and_dropped_when_they_exit_or_are_untracked()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "a child's resident set is read from /proc/<pid>/status; macOS falls back to Process.WorkingSet64, which reports 32 KB for a 1.2 MB sleep");
         using var monitor = new MemoryMonitor();
         using var child = Process.Start(new ProcessStartInfo("sleep", "30") { UseShellExecute = false })!;
         try
@@ -389,6 +393,74 @@ public sealed class MemoryMonitorTests
         Assert.Empty(cache.Calls);
     }
 
+    /// <summary>Counts the monitor's "growing steadily" warnings.</summary>
+    private sealed class GrowthWarnings : ILoggerFactory, ILogger
+    {
+        private int _count;
+        public int Count => Volatile.Read(ref _count);
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning && formatter(state, exception).StartsWith("Memory is growing steadily", StringComparison.Ordinal)) Interlocked.Increment(ref _count);
+        }
+    }
+
+    // From review: a warm spare's monitor starts with the process, but the spare restores its session (folder, editors, grammars, language servers)
+    // when it is claimed, minutes or hours later; that ramp was logged as a leak because the grace only counted from the monitor's creation.
+    [Fact]
+    public async Task Restarting_the_growth_grace_holds_the_steady_growth_warning_off_for_another_grace()
+    {
+        var grace = TimeSpan.FromSeconds(2);
+        var options = new MemoryMonitorOptions
+        {
+            GrowthLogGrace = grace,
+            // Any two samples half a second apart are steady growth: the test is about when it is logged, not about what growth is.
+            Policy = new MemoryPolicyOptions
+            {
+                GrowthWindow = TimeSpan.FromSeconds(1), GrowthMinSamples = 2, GrowthMinRSquared = 0, GrowthBytesPerMinuteWithoutBudget = long.MinValue,
+            },
+        };
+        var warnings = new GrowthWarnings();
+        var sinceCreation = Stopwatch.StartNew(); // started first, so never shorter than the monitor's own count (the same below)
+        using var monitor = new MemoryMonitor(options, loggers: warnings);
+
+        await TickUntilAsync(() => warnings.Count == 1);
+        Assert.True(sinceCreation.Elapsed >= grace, $"logged {sinceCreation.ElapsedMilliseconds} ms after the monitor's creation");
+
+        var sinceRestart = Stopwatch.StartNew();
+        var restartedAt = Stopwatch.GetTimestamp();
+        monitor.RestartGrowthGrace();
+        Assert.True(monitor.GrowthGraceStart >= restartedAt, "the grace still counts from the monitor's creation");
+        await TickUntilAsync(() => warnings.Count == 2);
+        // Once per growth window would have logged it again a second after the first warning: the restart holds it off for a whole grace.
+        Assert.True(sinceRestart.Elapsed >= grace, $"logged again {sinceRestart.ElapsedMilliseconds} ms after the restart");
+
+        async Task TickUntilAsync(Func<bool> logged)
+        {
+            var clock = Stopwatch.StartNew();
+            while (!logged())
+            {
+                Assert.True(clock.Elapsed < TimeSpan.FromSeconds(30), "the steady growth was never logged");
+                monitor.Tick();
+                await Task.Delay(50);
+            }
+        }
+    }
+
+    // From review: the grace was measured as nowMs - _createdAt * 1000 / Stopwatch.Frequency, and a nanosecond timestamp times 1000 overflows a long
+    // once the machine has been up ~106 days: a monitor created a minute before that moment counted minus 213 days four minutes later.
+    [Fact]
+    public void Elapsed_milliseconds_do_not_overflow_on_a_machine_up_for_months()
+    {
+        var created = long.MaxValue / 1000 - 60 * Stopwatch.Frequency; // a minute before a timestamp times 1000 overflows
+        Assert.Equal(4 * 60_000, MemoryMonitor.ElapsedMs(created, created + 4 * 60 * Stopwatch.Frequency));
+    }
+
     [Fact]
     public async Task Sampling_slows_down_when_idle_and_input_brings_it_back_at_once()
     {
@@ -420,7 +492,8 @@ public sealed class MemoryMonitorTests
         monitor.Dispose();
         Assert.True(sw.ElapsedMilliseconds < 50, $"Dispose took {sw.ElapsedMilliseconds} ms");
         await trim;
-        Assert.True(SpinWait.SpinUntil(() => !ThreadNames().Contains("cscode-memory"), 3000), "the sampling thread is still running");
+        Assert.True(SpinWait.SpinUntil(() => OperatingSystem.IsLinux() ? !ThreadNames().Contains("cscode-memory") : !monitor.IsThreadAlive, 3000),
+            "the sampling thread is still running");
         monitor.Dispose(); // idempotent
     }
 
@@ -498,6 +571,7 @@ public sealed class MemoryMonitorTests
     [Fact]
     public void The_breakdown_splits_resident_memory_into_managed_native_and_file_backed_parts()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "the breakdown reads /proc/self/smaps; elsewhere only the runtime's totals are filled in (MemoryBreakdown)");
         var b = MemoryBreakdown.Capture();
         Assert.True(b.ResidentBytes > 0 && b.AnonymousBytes > 0 && b.FileBackedBytes > 0);
         Assert.Equal(b.AnonymousBytes, b.ManagedBytes + b.NativeAnonymousBytes);

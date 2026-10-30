@@ -270,8 +270,12 @@ internal sealed class WatchFixture : IDisposable
     };
     public FileWatcher Watcher { get; }
 
-    /// <summary>OS watches that are FileSystemWatchers (the backend everywhere but Linux; on Linux the one that leaks).</summary>
-    public static readonly BackendFactory FswFactory = (root, recursive, _, sink, fatal, _) => new FswBackend(root, recursive, sink, fatal);
+    /// <summary>
+    /// OS watches that are FileSystemWatchers on Linux (the one that leaks); elsewhere the OS backend itself (a FileSystemWatcher, but kqueue for a
+    /// non-recursive watch on macOS), as the default backend is there.
+    /// </summary>
+    public static readonly BackendFactory FswFactory = (root, recursive, _, sink, fatal, _) =>
+        OperatingSystem.IsLinux() ? new FswBackend(root, recursive, sink, fatal) : OsWatchBackend.Create(root, recursive, sink, fatal, TimeSpan.FromMilliseconds(50));
 
     public WatchFixture(BackendFactory? factory = null, IConfigurationService? config = null)
     {

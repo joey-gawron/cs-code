@@ -34,6 +34,7 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
     private readonly object _gate = new();
     private readonly DisposableStore _subscriptions = new();
     private readonly long _createdAt = Stopwatch.GetTimestamp();
+    private long _growthGraceFrom; // Stopwatch timestamp the growth grace runs from (creation, or the last RestartGrowthGrace)
     private IMemoryTrimmable[] _trimmables = [];
     private Child[] _children = [];
     private MemorySnapshot? _current;
@@ -89,6 +90,7 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
         _policy = new MemoryPressurePolicy(_options.Policy);
         _idleTrimAfter = _options.IdleTrimAfter;
         _lastActivity = _createdAt;
+        _growthGraceFrom = _createdAt;
     }
 
     // ------------------------------------------------------------------ IMemoryMonitor
@@ -126,6 +128,9 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
     public int TrimCount => Volatile.Read(ref _trims);
 
     public bool IsStarted => Volatile.Read(ref _thread) is not null;
+
+    /// <summary>The sampling thread still runs (tests).</summary>
+    internal bool IsThreadAlive => Volatile.Read(ref _thread) is { IsAlive: true };
 
     public IReadOnlyList<IMemoryTrimmable> Trimmables => Volatile.Read(ref _trimmables);
 
@@ -197,6 +202,17 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
     }
 
     public TimeSpan IdleTime => Stopwatch.GetElapsedTime(Volatile.Read(ref _lastActivity));
+
+    /// <summary>
+    /// Starts the steady-growth grace (<see cref="MemoryMonitorOptions.GrowthLogGrace"/>) over from now. The host calls it where a ramp begins long
+    /// after the monitor was created: a warm spare (<c>cscode.background.warmSpare</c>) starts its monitor with the process but restores its
+    /// session (folder, layout, editors, grammars, language servers) when it is claimed, minutes or hours later, and a window opens a folder
+    /// whenever the user does; that ramp was logged as a leak. Thread-safe; one timestamp write.
+    /// </summary>
+    public void RestartGrowthGrace() => Volatile.Write(ref _growthGraceFrom, Stopwatch.GetTimestamp());
+
+    /// <summary>The <see cref="Stopwatch"/> timestamp the steady-growth grace counts from: creation, then the last <see cref="RestartGrowthGrace"/> (diagnostics, tests).</summary>
+    public long GrowthGraceStart => Volatile.Read(ref _growthGraceFrom);
 
     // ------------------------------------------------------------------ lifecycle
 
@@ -280,10 +296,11 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
         EnsureConfiguration();
         if (Interlocked.Exchange(ref _configDirty, 0) != 0) ReadConfiguration();
         var snapshot = Sample();
-        var nowMs = NowMs();
+        var now = Stopwatch.GetTimestamp();
+        var nowMs = ElapsedMs(_createdAt, now);
         MemoryPressureDecision decision;
         lock (_policyGate) decision = _policy.Evaluate(nowMs, snapshot.WorkingSetBytes, Interlocked.Read(ref _budgetBytes));
-        if (ShouldLogGrowth(decision, nowMs - _createdAt * 1000 / Stopwatch.Frequency, nowMs - _growthLoggedAt, _options))
+        if (ShouldLogGrowth(decision, ElapsedMs(Volatile.Read(ref _growthGraceFrom), now), nowMs - _growthLoggedAt, _options))
         {
             _growthLoggedAt = nowMs;
             _log?.LogWarning("Memory is growing steadily: working set {WorkingSetMb} MB ({Reason})", snapshot.WorkingSetBytes / 1024 / 1024, decision.Reason);
@@ -298,11 +315,11 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
 
     /// <summary>
     /// Whether a sample's sustained growth goes to the log: not when the policy acts on it anyway (a trim is logged), not within
-    /// <see cref="MemoryMonitorOptions.GrowthLogGrace"/> of start, and at most once per growth window.
+    /// <see cref="MemoryMonitorOptions.GrowthLogGrace"/> of start or of the last <see cref="RestartGrowthGrace"/>, and at most once per growth window.
     /// </summary>
-    internal static bool ShouldLogGrowth(MemoryPressureDecision decision, long sinceStartMs, long sinceLastLoggedMs, MemoryMonitorOptions options) =>
+    internal static bool ShouldLogGrowth(MemoryPressureDecision decision, long sinceGraceStartMs, long sinceLastLoggedMs, MemoryMonitorOptions options) =>
         decision.SustainedGrowth && decision.Level is null
-        && sinceStartMs >= options.GrowthLogGrace.TotalMilliseconds
+        && sinceGraceStartMs >= options.GrowthLogGrace.TotalMilliseconds
         && sinceLastLoggedMs > options.Policy.GrowthWindow.TotalMilliseconds;
 
     private MemorySnapshot Sample()
@@ -541,5 +558,13 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
         _idleTrimAfter = seconds == defaultSeconds ? _options.IdleTrimAfter : TimeSpan.FromSeconds(Math.Max(10, seconds));
     }
 
-    private static long NowMs() => Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency;
+    /// <summary>The policy's clock: milliseconds since creation (monotonic, from 0).</summary>
+    private long NowMs() => ElapsedMs(_createdAt, Stopwatch.GetTimestamp());
+
+    /// <summary>
+    /// Milliseconds between two <see cref="Stopwatch"/> timestamps, through their difference: a timestamp itself times 1000 overflows a long once
+    /// the machine has been up ~106 days (Linux counts nanoseconds since boot), and a process running across that moment saw its clock jump back
+    /// ~213 days, which held the growth log and, after a first trim, the policy's trims off for that long.
+    /// </summary>
+    internal static long ElapsedMs(long fromTimestamp, long toTimestamp) => (long)Stopwatch.GetElapsedTime(fromTimestamp, toTimestamp).TotalMilliseconds;
 }

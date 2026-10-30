@@ -92,10 +92,11 @@ Mechanics worth knowing:
 | `LogsDir` | `$XDG_STATE_HOME/cscode/logs` (`~/.local/state/cscode/logs`) | `%LOCALAPPDATA%\CsCode\Logs` | `~/Library/Logs/CsCode` |
 | `GlobalStorageDir` / `ToolsDir` | `{UserDataDir}/globalStorage`, `{UserDataDir}/tools` | | |
 | application state | `{GlobalStorageDir}/state.json` (+ `.bak`, `.corrupt`) | | |
-| per-workspace state | `{UserDataDir}/workspaceStorage/<hash>/state.json`; `<hash>` = first 32 hex of SHA-256 of the folder URI (no trailing slash; case-folded on Windows/macOS) | | |
-| trash | `$XDG_DATA_HOME/Trash/{files,info}` | recycle bin (`SHFileOperationW`) | `~/.Trash` |
+| per-workspace state | `{UserDataDir}/workspaceStorage/<hash>/state.json`; `<hash>` = first 32 hex of SHA-256 of the folder URI (no trailing slash; case-folded on Windows and, for local folders, on case-insensitive macOS volumes) | | |
+| trash | `$XDG_DATA_HOME/Trash/{files,info}` | recycle bin (`SHFileOperationW`) | Finder's Trash (`NSFileManager trashItemAtURL:`; a same-volume rename into `~/.Trash` only as fallback) |
 
 `CSCODE_HOME` overrides everything (portable installs and tests): `$CSCODE_HOME/{config,data,cache,logs}`. Relative `XDG_*` values are ignored per the spec.
+An absolute `CSCODE_TRASH_DIR` replaces the trash on every OS with a freedesktop-style one there; the test harnesses set it so no test reaches the user's real Trash.
 Core's contribution comment says `settings.json`/`keybindings.json` live in `UserDataDir`; they live in `ConfigDir` (identical on Windows/macOS, different on Linux) —
 only Platform reads them, and it exposes `IConfigurationService.UserSettingsPath` and `KeybindingService.UserKeybindingsPath`.
 
@@ -129,7 +130,8 @@ Layers, lowest to highest: **registered defaults → user `settings.json` → wo
   TypeScript for Vue, server-specific `settings` such as rust-analyzer's `check.overrideCommand`).
 * **Reads**: `Get<T>(key, default)` / `GetRaw(key)` / section reads (`GetRaw("editor")` returns the merged object). A registered default beats the caller's fallback; a value of the
   wrong type yields the fallback (never throws). Primitive reads allocate nothing after the first read of a key.
-* **Live reload**: the settings directories are watched — the primary folder's `.cscode/` and `.vscode/` and every additional folder's `.cscode/` (lsp-core-7), also when they are created after the folder was opened; a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
+* **Live reload**: the settings directories are watched — the primary folder's `.cscode/` and `.vscode/` and every additional folder's `.cscode/` (lsp-core-7), also when they are created after the folder was opened (once the folder's watch is armed, a directory missing when it was
+  looked for is looked for again, and the files are read again: one made while the watch was being armed was reported by no watch); a 50 ms debounce coalesces bursts; `Changed` lists exactly the keys whose merged value changed (leaf paths; a registered object
   setting reports itself). Rewriting a file with the same values (different comments/order) fires nothing, nor does the echo of our own write.
 * **`UpdateAsync` edits the file in place** with a small JSONC-aware minimal-edit writer: only the value span is replaced; a new key is inserted before the closing brace using the file's
   indentation (tab/spaces), EOL (LF/CRLF), comma style (a trailing-comma file stays one) and single-line/multi-line shape; flat dotted keys, nested objects and mixes are found; `null` removes the key
@@ -146,7 +148,8 @@ Built-in defaults (all in `BuiltInSettings.All`; every key in `SettingKeys` has 
 
 | key | default |
 |---|---|
-| `editor.fontFamily` | `Cascadia Code, Consolas, 'Courier New', monospace` |
+| `editor.fontFamily` | `Fira Code, Cascadia Code, Consolas, monospace`; on macOS `Fira Code, Menlo, SF Mono, Monaco, monospace`. Fira Code ships with CsCode (assets/fonts/fira-code, embedded in CsCode.Ui and registered by `CodeFonts.WithCodeFonts`), so it needs nothing installed; quotes are stripped, generic names mapped per OS and "Fira Code" pointed at the bundled faces (`fonts:CsCode#Fira Code`) when the font is built: `FontFamilies.Normalize`. Its ligatures are on unless `editor.fontLigatures` turns them off |
+| `editor.fontLigatures` | `true` (VS Code defaults to `false`; the bundled Fira Code is chosen for its ligatures): the font's ligatures are drawn in the editor and the code panels (`ui:CodeFontFeatures`), and Fira Code's keep one glyph per character, so carets and selections stay on columns; `false` draws `!=` and `=>` as their characters (`-liga, -calt`), a string is a CSS font-feature-settings list (`"'ss01', 'zero'"`) that also turns them on. `FontFamilies.LigatureFeatures` |
 | `editor.fontSize` / `editor.tabSize` | `14` / `4` |
 | `editor.insertSpaces` / `editor.wordWrap` | `true` / `"off"` |
 | `editor.minimap.enabled` / `editor.formatOnSave` | `true` / `false` |
@@ -154,8 +157,8 @@ Built-in defaults (all in `BuiltInSettings.All`; every key in `SettingKeys` has 
 | `editor.quickSuggestions` | `{"other":"on","comments":"off","strings":"off"}` |
 | `cscode.editor.largeFileThresholdBytes` | `5242880` (5 MB) |
 | `files.autoSave` | `"off"` |
-| `files.exclude` | `**/.git`, `**/.svn`, `**/.hg`, `**/CVS`, `**/.DS_Store`, `**/Thumbs.db` → `true` |
-| `files.watcherExclude` | `**/.git/objects/**`, `**/.git/subtree-cache/**`, `**/.hg/store/**`, `**/node_modules/**`, `**/bin/**`, `**/obj/**` → `true` (`WatchExclusion.DefaultExcludes`; Cargo's `target/` is left out by its `CACHEDIR.TAG`, see File watching) |
+| `files.exclude` | `**/.git`, `**/.svn`, `**/.hg`, `**/CVS`, `**/.DS_Store`, `**/Thumbs.db` → `true`; on macOS also `**/._*`, `**/.Spotlight-V100`, `**/.fseventsd`, `**/.Trashes`, `**/.TemporaryItems`, `**/.DocumentRevisions-V100` |
+| `files.watcherExclude` | `**/.git/objects/**`, `**/.git/subtree-cache/**`, `**/.hg/store/**`, `**/node_modules/**`, `**/bin/**`, `**/obj/**` → `true` (`WatchExclusion.DefaultExcludes`; Cargo's `target/` is left out by its `CACHEDIR.TAG`, see File watching); on macOS also the five volume folders above, as `**/<name>/**` |
 | `workbench.colorTheme` / `workbench.startupEditor` | `"Visual Studio Dark"` / `"welcomePage"` |
 | `cscode.memory.budgetMb` / `cscode.memory.trimOnIdle` | `0` / `true` |
 | `cscode.keymap` | `"visualstudio"` (or `"vscode"`) |
@@ -165,7 +168,8 @@ Built-in defaults (all in `BuiltInSettings.All`; every key in `SettingKeys` has 
 
 Sources, lowest → highest precedence: embedded preset → `KeybindingContribution`s in the contribution registry (built-in, then `ContributionSources.User`) → user `keybindings.json`.
 Later entries win; `{"command":"-foo"}` removes **earlier** entries of that command with the same key (a key-less negative removes all of them; when-clauses must match when both sides have one);
-`mac`/`linux`/`win` replace `key` on that platform (in presets, user file and contributions).
+`mac`/`linux`/`win` replace `key` on that platform (in presets, user file and contributions); an entry with no `key` binds only on the platforms it names
+(`{"mac": "cmd+,", ...}` binds nothing on Linux and, as a removal, removes nothing there).
 
 * **Chords**: a prefix yields `Pending`; the next stroke completes it, or an unknown stroke / Escape / timeout (default 5 s, checked lazily on the next stroke, no timer) resets it and returns `None`.
   The first matching binding by precedence whose `when` holds decides — a user single-stroke binding on `Ctrl+K` therefore disables the `Ctrl+K …` chords.
@@ -178,8 +182,18 @@ Later entries win; `{"command":"-foo"}` removes **earlier** entries of that comm
   Visual Studio preset: F5 start / continue (when `inDebugMode`), Ctrl+F5 run, Shift+F5 stop, Ctrl+Shift+F5 restart, F9 breakpoint, F10/F11/Shift+F11 step, F12 definition, Shift+F12 references,
   Ctrl+F12 implementation, F2 and Ctrl+R Ctrl+R rename, Ctrl+K Ctrl+D format document, Ctrl+K Ctrl+C/U comment/uncomment, Ctrl+/ toggle comment, Ctrl+. quick fix, Ctrl+Space / Ctrl+Shift+Space suggest / parameter hints,
   Ctrl+Q and Ctrl+Shift+P palette (Quick Launch opens the palette), Ctrl+T and Ctrl+, go to all, Ctrl+P quick open, Ctrl+Shift+F find in files, Ctrl+F / Ctrl+H / Ctrl+G, Ctrl+S / Ctrl+Shift+S (save all),
-  Ctrl+Tab MRU, Ctrl+W / Ctrl+F4 close, Ctrl+Alt+L explorer, Ctrl+Alt+O output, Ctrl+\ Ctrl+E error list, Ctrl+\` terminal, Alt+Up/Down move lines, Ctrl+D duplicate, Ctrl+L delete line, folding chords.
+  Ctrl+Tab MRU, Ctrl+F4 close, Ctrl+Alt+L explorer, Ctrl+Alt+O output, Ctrl+\ Ctrl+E error list, Ctrl+\` terminal, Alt+Up/Down move lines, Ctrl+D duplicate, Ctrl+L delete line, folding chords.
   VS Code preset: the VS Code defaults for the same feature set (e.g. Shift+Alt+F format — Ctrl+Shift+I on Linux, Ctrl+Shift+K delete line, Ctrl+Shift+E/U/M views, Ctrl+K S save all).
+  Both presets: Vim's window commands with Vim off, only while an editor has the keyboard (`editorTextFocus && !vim.active`; the terminal keeps Ctrl+W, and with Vim on
+  the engine's own Ctrl-W does the same through the shell): Ctrl+W then `v` split right, `s`/`S` split down, `h`/`j`/`k`/`l` focus the group left / below / above / right,
+  `w` next group (wraps), `W`/`p` previous group, `o` close the editors of the other groups (`:only`), `c`/`q` close the editor (with the save prompt), `n` a new untitled editor
+  in a group below; the second key also with Ctrl (Ctrl+W Ctrl+V == Ctrl+W v) except `c`/`W`. Control on a Mac too (`⌃W ⌃V`). Ctrl+W alone therefore closes nothing off the
+  Mac: Ctrl+F4 closes the editor (Cmd+W and Cmd+F4 on a Mac). An unbound second key ends the chord, says so in the status bar and is not typed.
+  Next / previous group run through the main window's groups (top to bottom, left to right) and then each floating window's, wrapping, so a floating
+  window leads back to the main one; `h`/`j`/`k`/`l` stay in the window; from a tab that is not an editor (Welcome, Settings) they step from that tab's group.
+  macOS: every Ctrl binding of both presets has a `mac` key (a test enforces it): Cmd in Ctrl's place (Visual Studio for Mac, VS Code for Mac), VS Code for Mac's key where Cmd+key
+  belongs to macOS (folding on Cmd+K chords, block comment Shift+Alt+A, pause F6, Find Next/Previous Cmd+G/Cmd+Shift+G, Quick Launch Cmd+Shift+A), and Control kept where VS Code for Mac
+  keeps it (Ctrl+Space, Ctrl+Tab, Ctrl+\`, Ctrl+G, Ctrl+-). Cmd+, opens Settings in both presets (Visual Studio's has no Settings key elsewhere).
   Command ids are `KnownCommands` or standard VS Code ids; **a key only works if the owning module registers the command** (some ids the presets use, e.g. `editor.action.addCommentLine`,
   `workbench.action.showAllSymbols`, `workbench.action.gotoLine`, are not in `KnownCommands`; the shell's keyboard pipeline should check `ICommandService.Has` before swallowing a key).
 
@@ -215,14 +229,15 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
   it over the target — that rename dropped the executable bit on every save in the app and broke hard links.
 * `DeleteAsync`: recursive flag for non-empty directories; `useTrash` moves to the OS trash and **fails loudly** (`IOException`, original untouched) if it cannot — it never silently deletes permanently.
   Linux follows the freedesktop Trash spec (home trash; unique names `a.2.txt`; `.trashinfo` with percent-encoded `Path=` and local `DeletionDate=`, claimed atomically with `CreateNew`; cross-device = copy then delete).
+  macOS uses Finder's Trash through Foundation (`trashItemAtURL:`, P/Invoke through `objc_msgSend`): items on other volumes go to that volume's trash and keep "Put Back"; when Foundation fails, only a same-volume rename into `~/.Trash` is tried, never a copy.
   Symlinks are trashed/deleted as links; recursive delete never follows directory links (cycles are harmless).
-* `RenameAsync`/`CopyAsync`: `overwrite` flag; refuse moving/copying a directory into itself; case-only rename works; copies recreate symlinks instead of following them; files above 4 MB copy chunked and cancellable (via temp file).
+* `RenameAsync`/`CopyAsync`: `overwrite` flag; refuse moving/copying a directory into itself; case-only rename works (files and folders); whether names differing only in case are one entry is asked per volume (`pathconf(_PC_CASE_SENSITIVE)` on macOS; Linux sensitive, Windows insensitive) and two entries with different (device, inode) are never treated as one; copies recreate symlinks instead of following them; files above 4 MB copy chunked and cancellable (via temp file) — on macOS through `copyfile(COPYFILE_ALL | COPYFILE_CLONE)` instead (an APFS clone where possible; keeps ACL/xattrs/quarantine, as `File.Copy` does for smaller files), whose progress callback stops a data copy mid-file on cancellation — and copied folders get their metadata with `copyfile(COPYFILE_METADATA)` on macOS. Path comparisons (watcher roots, the workspace-state hash of local folders) follow the volume's case sensitivity on macOS too.
 * `FileUri` maps `file:` URIs ⇄ paths correctly for spaces, `#`, `?`, `%`, unicode, Windows drive letters and UNC (OS-specific parts take a flag so they are tested on Linux).
 
 ## File watching
 
 `FileWatcher`: one OS watch per (root, recursive), **shared** by every subscription on that root (each costs an inotify instance on Linux — the per-user limit is often 128) and disposed with the last one.
-On Linux the OS watch is an `InotifyBackend` (inotify via P/Invoke, one watch per directory, added one directory at a time); elsewhere a `FileSystemWatcher`.
+On Linux the OS watch is an `InotifyBackend` (inotify via P/Invoke, one watch per directory, added one directory at a time); elsewhere a `FileSystemWatcher` (on macOS kqueue for a non-recursive watch, see macOS below; `OsWatchBackend`).
 `Watch()` and disposal return immediately (the tree walk that arms inotify happens on the lane; `FileWatchHandle.Ready` completes when armed — events before that are not reported).
 * **What is left out** (`WatchExclusion`): exclude globs (`files.watcherExclude` unless an explicit list is passed; `[]` = none) match root-relative paths. An *event* is dropped when the
   glob matches its own path, so a folder like `bin/` or `node_modules/` appearing, going or being renamed is reported while what is in it is not; a *directory's contents* are left out when
@@ -295,6 +310,19 @@ On Linux the OS watch is an `InotifyBackend` (inotify via P/Invoke, one watch pe
   A failure is matched to the OS watch that reported it: a late report from a watch a re-check already replaced is ignored, and one that arrives while the watch is still being armed
   degrades it once it is in place. The polling watcher takes its baseline when it is armed, so a change right after `Ready` is reported.
 * Queue overflow reports a `Changed(root)` so consumers rescan.
+* **macOS** (`Watching/MacWatchBackends.cs`): FSEvents' item flags are sticky — a flag stays on a path until FSEvents has reported it, so `FileSystemWatcher` raises Changed and
+  Created for every new file, and for a write to a file made shortly before the stream, Changed+Created+Deleted for a file created and removed in one burst, and nothing when the
+  watched directory itself goes. So each reported path is classified again from `lstat` (and the name as the volume stores it: after a case-only rename on a case-insensitive
+  volume `lstat` of the old spelling still finds the file, which is reported deleted all the same) and what the watch knows (`FsEventsReconciler`, as VS Code's parcel watcher does): a name
+  snapshot of the tree taken when it is armed (default excludes pruned) plus every path reported since, ≤ 20,000 in all: past that the paths known longest are forgotten
+  to make room, and the "born after" line below moves past the birth of any forgotten path born after arming, so a file is never created twice. Unseen and not in the snapshot (or, where it does not reach,
+  born after arming) → Created, else Changed, once per change; gone → Deleted, except a path the snapshot proves was not there and the watch never saw (it came and went). A kqueue
+  vnode watch on the root reports its deletion or move (every path it knew deleted) and then announces what a directory back at the path holds, in that order whichever threads
+  report them, so a name the old and new trees share reads as replaced. FSEvents' rescan requests
+  (MustScanSubDirs, events dropped by the kernel or fseventsd, a mount below the root), which `FileSystemWatcher` raises as an `IOException`, report `Changed(root)` and keep the
+  stream (files-4). **Non-recursive** watches use kqueue, not FSEvents, whose streams are always the whole subtree (files-9: watching `~` for `~/.zshrc` would bring every event under
+  `~/Library` into the process): a vnode watch on the directory and one per file in it (≤ 256 per directory, ≤ 2,048 in all; files beyond are compared every poll interval),
+  diffed against a snapshot of the directory (name → inode, mtime, size). When the directory goes its entries are reported deleted and the path is polled until a directory is back.
 
 ## Workspace, search and fuzzy matching
 
@@ -308,6 +336,7 @@ On Linux the OS watch is an `InotifyBackend` (inotify via P/Invoke, one watch pe
 * **gitignore** (`GitIgnoreFile`, golden-tested): comments/blank lines · trailing unescaped spaces · `!` negation (last match wins; nearest file wins across nested files) · trailing `/` = directory only · a `/` at the start or middle anchors to the file's directory ·
   `*` `?` `[a-z]` `[!x]` never cross `/` · `**/x`, `a/**/b`, `a/**` · backslash escapes. Files in `.gitignore` apply even outside a Git repo; `.git/info/exclude` is read at the root; the global excludes file is not.
   A file inside an ignored directory cannot be re-included (the directory is never entered), as in Git. Ignore files > 1 MB are skipped. `search.useIgnoreFiles` turns it off.
+  Rules match case-insensitively when the root's repository has `core.ignorecase=true`, or has no such key on macOS/Windows (`GitIgnoreFile.RepositoryIgnoresCase`; a linked worktree's config is the main repository's), as git does.
 * `FuzzyMatcher` (VS Code quick-open style): subsequence match, case-insensitive; the score rewards consecutive runs (a run keeps the start bonus it began with), word starts (after space `_ - .`), camelCase humps and digit runs,
   characters after a path separator (`/` or `\`), the first character, and exact case; gaps are penalised (3 to open, 1 per extra char). `Score` is the allocation-free ranking path (vectorised prefilter, DP over match positions only);
   `Match`/`MatchPath` also return the matched indices; `ScorePath` adds a file-name bonus; `Rank` keeps the best N with a heap (ties: shorter text first). The DP is fuzz-tested against a brute-force oracle
@@ -326,6 +355,10 @@ Atomic writes; the last good file is copied to `.bak` before replacement (never 
 `FileLoggerProvider`: `{LogsDir}/cscode.log`, rotated by size to `cscode.1.log …` — at most **5 files × 5 MB** (`FileLoggerOptions`); line format `2026-10-28T12:34:56.789Z [INF] Category: message` (exceptions and continuation lines indented);
 default level Information. Callers only enqueue into a bounded ring (8192 entries); when it overflows the **oldest** entries are dropped, counted (`DroppedCount`) and reported by a warning line in the log. The writer thread swallows
 any failure (an unwritable log location never reaches the caller), rotation is checked per line, dispose drains the queue.
+Several CsCode processes share the file: each batch is written under an exclusive lock on `.cscode.lock` beside it (readers of the logs folder
+read `*.log` only). A batch waits for another process's batch as long as that takes, never writing without the lock (a holder stalled mid-batch
+would overwrite it); while stopping the wait ends 1 s after `Dispose` began and what is still queued is dropped (counted). A lock that cannot be
+taken at all (read-only or full disk, I/O error) is not waited for: the batch is written without it.
 
 ## EditorConfig
 
@@ -357,9 +390,9 @@ Stated plainly — what is **not** done or **not verified**:
 * `ConfigurationTarget.Workspace` and `WorkspaceFolder` both write the primary folder; there is no per-resource folder scoping, so additional folders' settings are overlaid in order rather than applying to their own files only.
 * Settings, state and keybinding files are read synchronously **once, in their constructors** (see Registration); every later read, reload and write is on the IO lane.
 * `FileSystem.StatAsync` of a symlink chain resolves the final target only; `ReadDirectoryAsync` marks entry types but not link targets.
-* The `.gitignore` engine does not read the global `core.excludesFile`, is case-sensitive (no `core.ignorecase`), and ignores POSIX `[:alpha:]` classes.
+* The `.gitignore` engine does not read the global `core.excludesFile` or the global/system `core.ignorecase` (only the repository's), and ignores POSIX `[:alpha:]` classes.
 * Events carry no ordering guarantee between different services.
-* The Windows recycle bin and macOS trash do not write "put back" metadata.
+* The Windows recycle bin does not write "put back" metadata (macOS's Foundation trash does; its `~/.Trash` fallback does not).
 
 There is no extension system (ARCHITECTURE §1). Its last remnants (`IAppPaths.ExtensionsDir`, the extension command ids, the `ExtensionId` members of Core records, extension-host wording)
 were removed at integration; `NoExtensionSystemTests` keeps them from coming back.

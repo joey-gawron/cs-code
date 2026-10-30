@@ -543,7 +543,7 @@ public class InotifyBackendTests
         var first = 1;
         using var f = new WatchFixture(factory: (root, recursive, verdict, sink, fatal, rootLost) =>
         {
-            var backend = FileWatcher.DefaultBackend(root, recursive, verdict, sink, fatal, rootLost);
+            var backend = FileWatcher.DefaultBackend(root, recursive, verdict, sink, fatal, rootLost, TimeSpan.FromSeconds(1));
             if (Interlocked.Exchange(ref first, 0) == 1)
             {
                 walked.Set();                                                                                // walked (gen skipped), not yet in place

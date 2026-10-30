@@ -5,15 +5,23 @@ using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using CsCode.Panels.Debug.Breakpoints;
 using CsCode.Panels.Debug.Infrastructure;
+using CsCode.Ui;
+using CsCode.Ui.Menus;
 
 namespace CsCode.Panels.Debug.Views;
 
 /// <summary>
-/// Breakpoints window: checkbox enables, double-click / Enter navigates, Space toggles, Delete removes, context menu edits the condition,
+/// Breakpoints window: checkbox enables, double-click / Enter navigates, Space toggles, Delete (⌘⌫ on macOS) removes, context menu edits the condition,
 /// hit count and log message.
 /// </summary>
-public sealed partial class BreakpointsView : UserControl, IDisposable
+public sealed partial class BreakpointsView : UserControl, IDisposable, IToolWindowFocus
 {
+    /// <summary>
+    /// View &gt; Tool Windows &gt; Breakpoints: the keyboard on a breakpoint (the selected one, else one on screen), where Enter goes to it, Space
+    /// toggles it and Delete removes it. Not on New Function Breakpoint, which leads the tab order and which Enter would press.
+    /// </summary>
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(this.FindControl<ListBox>("Rows")!);
+
     public BreakpointsView()
     {
         InitializeComponent();
@@ -58,6 +66,7 @@ public sealed partial class BreakpointsView : UserControl, IDisposable
                 model.ToggleEnabled(row);
                 break;
             case Key.Delete:
+            case Key.Back when CommandKeys.IsMacDelete(e):
                 e.Handled = true;
                 model.Delete(row);
                 break;
@@ -87,7 +96,7 @@ public sealed partial class BreakpointsView : UserControl, IDisposable
             if (row.CanToggle)
                 menu.Items.Add(new MenuItem { Header = row.IsEnabled ? "Disable" : "Enable", InputGesture = KeyGesture.Parse("Space"), Command = new UiCommand(() => model.ToggleEnabled(row)) });
             if (row.IsBreakpoint)
-                menu.Items.Add(new MenuItem { Header = "Delete", InputGesture = KeyGesture.Parse("Delete"), Command = new UiCommand(() => model.Delete(row)) });
+                menu.Items.Add(new MenuItem { Header = "Delete", InputGesture = KeyGesture.Parse(CommandKeys.DeleteGesture), Command = new UiCommand(() => model.Delete(row)) });
             menu.Items.Add(new Separator());
         }
         menu.Items.Add(new MenuItem { Header = "Enable All Breakpoints", Command = model.EnableAllCommand });

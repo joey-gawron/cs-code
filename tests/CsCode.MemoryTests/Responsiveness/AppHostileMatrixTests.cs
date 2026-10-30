@@ -117,7 +117,7 @@ public sealed class AppHostileMatrixTests(ITestOutputHelper output)
         return await probe.StopAsync();
     }
 
-    private static string LoadAverage() => File.ReadAllText("/proc/loadavg").Split(' ')[0];
+    private static string LoadAverage() => Responsiveness.LoadAverage.OneMinute();
 
     private void Note(string text)
     {

@@ -7,7 +7,8 @@ namespace CsCode.Platform;
 public enum HostOs { Linux, Windows, MacOs }
 
 /// <summary>
-/// Per-OS well-known directories. Pure: computing a path never touches the disk (consumers create what they write).
+/// Per-OS well-known directories. Pure: computing a path never touches the disk (consumers create what they write), except that on macOS the
+/// volume of a workspace folder is asked whether it is case-sensitive.
 /// <list type="bullet">
 /// <item>Linux (XDG): config <c>~/.config/cscode</c> (settings.json, keybindings.json), data <c>~/.local/share/cscode</c>
 /// (<c>themes/</c>, <c>grammars/</c>, <c>snippets/</c>, tools, global/workspace storage), cache <c>~/.cache/cscode</c>,
@@ -22,14 +23,18 @@ public sealed class AppPaths : IAppPaths
     public const string HomeEnvironmentVariable = "CSCODE_HOME";
 
     private readonly HostOs _os;
+    private readonly Func<string, bool> _isCaseSensitive;
 
     /// <param name="getEnv">Environment lookup (defaults to the process environment); injectable so tests never mutate process state.</param>
     /// <param name="os">Target OS (defaults to the current one); injectable so the Windows/macOS layouts are testable on Linux.</param>
     /// <param name="userHome">The user's home directory (defaults to the OS profile).</param>
-    public AppPaths(Func<string, string?>? getEnv = null, HostOs? os = null, string? userHome = null)
+    /// <param name="isCaseSensitive">Whether the volume holding a local folder tells names apart by case (macOS only; defaults to asking the
+    /// volume on a Mac, and to case-insensitive for a macOS layout computed elsewhere).</param>
+    public AppPaths(Func<string, string?>? getEnv = null, HostOs? os = null, string? userHome = null, Func<string, bool>? isCaseSensitive = null)
     {
         getEnv ??= Environment.GetEnvironmentVariable;
         _os = os ?? (OperatingSystem.IsWindows() ? HostOs.Windows : OperatingSystem.IsMacOS() ? HostOs.MacOs : HostOs.Linux);
+        _isCaseSensitive = isCaseSensitive ?? (OperatingSystem.IsMacOS() ? FileSystem.FileSystemNative.IsCaseSensitive : static _ => false);
         var home = userHome ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (string.IsNullOrEmpty(home)) home = Path.GetTempPath();
         var sep = _os == HostOs.Windows ? '\\' : '/';
@@ -90,8 +95,17 @@ public sealed class AppPaths : IAppPaths
     {
         if (workspaceFolder is null) return null;
         var sep = _os == HostOs.Windows ? "\\" : "/";
-        return WorkspaceStorageRoot + sep + StableHash(workspaceFolder, _os != HostOs.Linux);
+        return WorkspaceStorageRoot + sep + StableHash(workspaceFolder, FoldsCase(workspaceFolder));
     }
+
+    // Windows folds case and Linux does not; on macOS a local folder's volume decides (files-8: a case-sensitive APFS volume holds "Foo" and
+    // "foo" as two workspaces, which must not share their state), and every other URI is folded as before.
+    private bool FoldsCase(Uri folder) => _os switch
+    {
+        HostOs.Linux => false,
+        HostOs.MacOs when folder.IsAbsoluteUri && folder.IsFile => !_isCaseSensitive(folder.LocalPath),
+        _ => true,
+    };
 
     /// <summary>First 32 hex chars of SHA-256 over the normalised URI (no trailing slash; case-folded on case-insensitive file systems).</summary>
     public static string StableHash(Uri folder, bool caseInsensitive)

@@ -117,7 +117,8 @@ public class FindInFilesViewTests
             Assert.Null(Visible("Replace match"));
 
             view.FindControl<TextBox>("QueryBox")!.Focus();
-            window.KeyPress(Key.Enter, RawInputModifiers.Control | RawInputModifiers.Alt, PhysicalKey.Enter, null);
+            var command = OperatingSystem.IsMacOS() ? RawInputModifiers.Meta : RawInputModifiers.Control; // Replace All is ⌥⌘↩ on macOS
+            window.KeyPress(Key.Enter, command | RawInputModifiers.Alt, PhysicalKey.Enter, null);
             await Task.Delay(300, TestContext.Current.CancellationToken);
             UiSupport.Pump();
             Assert.Empty(f.Navigation.AppliedEdits);
@@ -146,6 +147,37 @@ public class FindInFilesViewTests
             Assert.True(vm.MatchCase && vm.WholeWord && vm.IsRegex);
             vm.MatchCase = false;
             Assert.False(byName["Match case"].IsChecked);
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Alt_C_W_R_P_toggle_the_options_and_on_macOS_Option_letters_type_into_the_box_instead()
+    {
+        // On macOS Option+C types ç (and W ∑, R ®, P π): the toggles are ⌥⌘C/W/R/P there, as in VS Code, and their tooltips say so.
+        var mac = OperatingSystem.IsMacOS();
+        var (f, vm, view, window) = await OpenAsync(query: null);
+        using (f)
+        {
+            vm.ReplaceVisible = true;
+            UiSupport.Pump();
+            view.FindControl<TextBox>("QueryBox")!.Focus();
+            UiSupport.Pump();
+            var toggle = mac ? RawInputModifiers.Meta | RawInputModifiers.Alt : RawInputModifiers.Alt;
+            window.KeyPress(Key.C, toggle, PhysicalKey.C, null);
+            window.KeyPress(Key.W, toggle, PhysicalKey.W, null);
+            window.KeyPress(Key.R, toggle, PhysicalKey.R, null);
+            window.KeyPress(Key.P, toggle, PhysicalKey.P, null);
+            UiSupport.Pump();
+            Assert.True(vm.MatchCase && vm.WholeWord && vm.IsRegex && vm.PreserveCase);
+
+            window.KeyPress(Key.C, RawInputModifiers.Alt, PhysicalKey.C, null);
+            UiSupport.Pump();
+            Assert.Equal(mac, vm.MatchCase); // a plain Option+C leaves Match Case alone on macOS
+
+            var tips = view.Descendants<ToggleButton>().Where(t => t.Classes.Contains("opt")).Select(t => ToolTip.GetTip(t) as string).ToList();
+            Assert.Contains(mac ? "Match Case (⌥⌘C)" : "Match Case (Alt+C)", tips);
+            Assert.Contains(mac ? "Preserve Case (⌥⌘P)" : "Preserve Case (Alt+P)", tips);
             window.Close();
         }
     }
@@ -211,6 +243,17 @@ public class FindInFilesViewTests
             Assert.Equal(match.Match.Range, f.Navigation.Opened[0].Selection);
             window.KeyPress(Key.Delete, RawInputModifiers.None, PhysicalKey.Delete, null);
             Assert.Equal(before - 1, vm.TotalMatches);
+
+            // The Mac 'delete' key (Backspace), alone or with ⌘, dismisses too; elsewhere Backspace does nothing in the results.
+            vm.SelectedRow = vm.Rows.OfType<MatchRow>().First();
+            UiSupport.Pump();
+            window.KeyPress(Key.Back, RawInputModifiers.None, PhysicalKey.Backspace, null);
+            UiSupport.Pump();
+            vm.SelectedRow = vm.Rows.OfType<MatchRow>().First();
+            UiSupport.Pump();
+            window.KeyPress(Key.Back, RawInputModifiers.Meta, PhysicalKey.Backspace, null);
+            UiSupport.Pump();
+            Assert.Equal(OperatingSystem.IsMacOS() ? before - 3 : before - 1, vm.TotalMatches);
             window.Close();
         }
     }

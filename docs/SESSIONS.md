@@ -36,7 +36,7 @@ cscode -n|--new-window [paths]    a new unnamed session (window-1, window-2, ...
 cscode -w|--wait FILE...          returns (exit 0) when every FILE's tab is closed, or the window is closed or the session quits ($EDITOR / git)
 cscode --list-sessions            saved and running sessions (state, pid, memory, last used, folder)
 cscode --background               start the warm spare (if on) and, with restoreOnLogin, the resident sessions, hidden; no window
-cscode --quit [NAME]              quit a session's process (default: the last active one)
+cscode --quit [NAME]              quit a session's process (default: the last active one, else the window shown last; see below)
 cscode --quit --all               quit every CsCode process of this user
 cscode --foreground [paths]       run the window in this process, without background mode
 cscode -h|--help, -v|--version
@@ -48,6 +48,18 @@ remote folder in a window of its own; before, it replaced the last session's fol
 (`last` | `new` | a name). Exit codes: 0 success; 1 the request failed (message on stderr). Unknown switches are reported and ignored. A
 relative `CSCODE_HOME` is made absolute against the launcher's working directory before anything uses it (the processes it starts run in the
 home directory).
+
+**The last active session** (`{UserDataDir}/sessions/last-active`, written when a window is shown) is what files only, no arguments (with
+`last`) and `--quit` without a name aim at while it is still there: a process owns it, or its lock is held — its process is wedged, misses
+the 300 ms hello (paused in a debugger, a long garbage collection, a loaded machine) or is in the final save of its quit. Such a session is
+never passed over for another: an open waits for the quit (**AwaitQuit**, then plans again) or opens a copy with a warning, as in the table
+below, and `--quit` says the session does not respond (or is already quitting) and quits nothing. Only once it has really quit (the marker
+stays behind) does an open go to the session shown most recently that still runs, a hidden one too (showing it loses nothing), and only then
+start the saved last one; `--quit` without a name then quits only a session whose window is **shown** now (the one shown most recently),
+never a hidden or starting one (a forced quit also drops that session from restore-on-login), and prints which session it asked to quit
+(stdout). With no window shown it says the last active session is not running and quits nothing (hidden sessions are left running: name
+one, or use `--all`); with no last active session at all it says there is no session to quit. A name that is not a valid session name fails,
+as it does when opening.
 
 `--wait` follows VS Code: it waits for **every** file given (git's difftool and mergetool pass two or three), and closing the window
 (which hides it) or quitting the session ends the wait with exit code 0, so `git commit` never hangs on a window that is gone. Only a quit
@@ -425,10 +437,12 @@ Without a session bus, D-Bus would autolaunch daemons (`dbus-launch --autolaunch
 desktop always has one, so the test provides its own.
 
 Windows (`tools/install.ps1`, untested): `%LOCALAPPDATA%\Programs\CsCode\<version>` with a `current` junction, `bin\cscode.cmd` on the user's
-PATH (it sets no `DOTNET_ROOT` either), a Start Menu shortcut, `install-manifest.json`, `-Uninstall`. macOS (`tools/macos/make-app-bundle.sh`,
-untested on a Mac; `--from DIR`, or `--unpinned` to publish now with the osx packs restore picks: they are not pinned): `CsCode.app` with
-the publish in `Contents/MacOS`, `Info.plist` and `Resources/cscode.icns` (`make-icns.py`: the committed PNGs as PNG icon types), signed ad hoc
-when `codesign` exists.
+PATH (it sets no `DOTNET_ROOT` either), a Start Menu shortcut, `install-manifest.json`, `-Uninstall`. macOS (`tools/package-macos.sh`, on a
+Mac: the publish with the osx packs restore picks, which are not pinned, and the server bundles, then `tools/macos/make-app-bundle.sh`):
+`CsCode.app` with the publish in `Contents/MacOS` (the server bundles in `Contents/MacOS/server-bundles`), `Info.plist` with the document
+types and `Resources/cscode.icns` (iconutil on a Mac; elsewhere `make-icns.py`: the committed PNGs as PNG icon types), signed ad hoc and
+verified; `--install` copies it to `~/Applications` and writes a `cscode` script that execs the bundle's binary into a directory on PATH
+(README, "macOS").
 
 ## Tests
 

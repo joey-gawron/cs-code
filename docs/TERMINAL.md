@@ -39,18 +39,18 @@ which also registers `TaskTerminalHost` as `ITaskTerminalHost`). The tool window
   write queue (16 MB) into the master and waits for POLLOUT when the program does not read — a full PTY never blocks the UI or the caller; when
   the queue is full a write is refused, except an *urgent* one (Ctrl+C, Ctrl+\, Ctrl+Z jump the queue); the terminal's *worker* parses.
 * **Kill**: SIGHUP (+ SIGCONT) to the process group, then after a grace period (2 s; 1 s for a debuggee; 0.5 s on dispose) SIGKILL to every
-  process still in the terminal's session (`/proc/*/stat`), so background jobs in their own process groups go too. A program that called
+  process still in the terminal's session (`/proc/*/stat`; macOS: libproc and `getsid`), so background jobs in their own process groups go too. A program that called
   `setsid` itself (a daemon) is deliberately left alone. Disposing the service kills every terminal. Once the program has been reaped its pid
   is only a number the kernel hands out again when nothing uses it (pids wrap in about a day here): killing or reusing an exited terminal
   (a finished task's, hours later) signals its session only when a member it had when the program was reaped (same pid, same start time,
   noted by the reader at the reap) still carries the session id, so the number never was free; never `kill(-pid)` blindly. That `/proc`
   scan runs on the pool, never on the caller's (UI) thread. Checked
   with a real pid reuse in a private pid namespace (`CSCODE_PIDNS_TEST=1 unshare -Urpfm --mount-proc dotnet test ... --filter
-  FullyQualifiedName~private_pid_namespace`). Without `/proc` (macOS) the members cannot be noted: there the grace timer of a hang-up sent
-  while the program ran still SIGKILLs its process group (the program was reaped within the grace, and macOS hands out pids in sequence, so
+  FullyQualifiedName~private_pid_namespace`). Without a process table the members cannot be noted: there the grace timer of a hang-up sent
+  while the program ran still SIGKILLs its process group (the program was reaped within the grace, and pids are handed out in sequence, so
   a number freed that recently does not come back), which ends a job in the group that ignored the hang-up; killing or disposing a terminal
   whose program had already been reaped signals nothing by its number there (VS Code never signals an exited terminal's group either).
-  Tested on Linux with the process table switched off.
+  Tested with the process table switched off.
 * **Start races** (end pass): a size the view measured before the program could start (a split pane laid out during a remote round trip) is
   the PTY's size from the start, and one that arrives while the host is spawning is passed on once it exists; a terminal closed while it was
   being created or reused starts nothing (a host spawned meanwhile is disposed at once). A remote terminal's program is started by the server
@@ -59,7 +59,7 @@ which also registers `TaskTerminalHost` as `ITaskTerminalHost`). The tool window
   waits to reap its program (one ignoring the hang-up, until the SIGKILL) reaches its session only through a listener detached on dispose,
   so it neither delivers to nor keeps alive a closed terminal.
 * **Windows** (`ConPtyHost`): `CreatePseudoConsole` over two pipes, the process in a kill-on-close job object, same thread layout. **Written,
-  never run** (development and tests are Linux only). macOS: written for, untested; known problems below.
+  never run** (development and tests are Linux only). macOS: the Unix host, tested on Apple arm64 (see known gaps).
 * The shell is tracked with `IMemoryMonitor.TrackChildProcess` (the shell's exit path kills anything left) and keeps normal priority (it is
   interactive).
 
@@ -250,9 +250,11 @@ output flows).
   buttons (no shell API exists for them).
 * **Renderer** (`TerminalPainter`): only visible rows; per row, runs of equal rendition become one background rectangle and glyph runs built
   without shaping (each glyph advances exactly one or two cells, as terminals draw; grapheme clusters are shaped on their own); built runs are
-  cached per `TerminalRow` instance. Font: `terminal.integrated.fontFamily`, else the editor's, else Cascadia/Consolas/DejaVu/Liberation/Noto
-  Mono (the first family the system really has: the font manager answers a missing family with its default face, so the returned face is
-  checked), `fontSize` (else `editor.fontSize`), `lineHeight`, `letterSpacing`; system fallback per character (CJK, emoji) with a bounded cache.
+  cached per `TerminalRow` instance. Font: `terminal.integrated.fontFamily`, else the editor's, else `FontFamilies.DefaultCode`
+  (the bundled Fira Code, then Menlo/SF Mono/Monaco on macOS and Cascadia/Consolas/DejaVu/Liberation elsewhere), with Menlo/Monaco (macOS) and DejaVu/Noto/Liberation Mono appended as last
+  resorts (the first family the system really has: the font manager answers a missing family with its default face, so the returned face is
+  checked; "Fira Code" is looked up in the app's own collection, so it needs nothing installed; being unshaped, the terminal draws no ligatures),
+  `fontSize` (else `editor.fontSize`), `lineHeight`, `letterSpacing`; system fallback per character (CJK, emoji) with a bounded cache.
   `drawBoldTextInBrightColors`, `minimumContrastRatio` (4.5), cursor block/underline/bar (`cursorStyle`, DECSCUSR wins), blinking
   (`cursorBlinking`, DECSET 12) only while focused in an active window, a hollow block when unfocused. Colours from the theme's `terminal.*` keys,
   read per frame, so a theme switch repaints at once. IME: the candidate window at the cursor, the preedit drawn there. Screen readers: see
@@ -462,9 +464,11 @@ Screenshots (headless, git-ignored): `.scratch/screenshots/terminal/terminal-ls-
   shell-integration scripts are local files — a remote PTY host must set `TerminalLaunchResolver.ScriptsDirectory = null` or ship them);
   image protocols (no).
 * zsh's integration is written but never run (no zsh here, no official Linux build to fetch). pwsh reports success/failure, not exit codes.
-* Windows ConPTY: written, never run. macOS: `posix_spawn` cannot make the slave the controlling terminal there (BSD needs `TIOCSCTTY`), so job
-  control and Ctrl+C would not work; the variadic `ioctl`/`fcntl` declarations are not valid on Apple arm64. Linux (glibc ≥ 2.29; 2.34+ for
-  `closefrom`, 2.36+ for pidfd) is the supported platform.
+* Windows ConPTY: written, never run. macOS: the slave opened by the new session's leader becomes its controlling terminal there too (Ctrl+C
+  and job control are tested); a size set on the master is lost when the slave is first opened, so the host holds the slave open, sized,
+  until the child has its own; the variadic `ioctl`/`fcntl` pass their argument on the stack on Apple arm64 (`UnixNative`). The process
+  table (names, session members, working directory) comes from libproc. Linux (glibc ≥ 2.29; 2.34+ for `closefrom`, 2.36+ for pidfd) is the
+  main platform.
 * `confirmOnExit` hooks the window that shows the Terminal view, or the main window that owns its floating window (`Window.Closing`, after the
   main window's handler; a floating window's close only hides the terminals, and the main window's close does not raise it): terminals created with
   `Show = false` in a window that never showed the view are not counted. `confirmOnKill` asks only for `panel`/`always` (panel terminals with

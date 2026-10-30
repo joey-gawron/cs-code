@@ -11,7 +11,7 @@ public sealed record ProcessTreeEntry(int Pid, int ParentPid, string Name, long 
 }
 
 /// <summary>
-/// The processes below a pid (Linux <c>/proc</c>: every process's <c>stat</c> parent field), with their resident sets — so a budget can count the
+/// The processes below a pid (Linux <c>/proc</c>: every process's <c>stat</c> parent field; macOS: libproc), with their resident sets — so a budget can count the
 /// language servers, debug adapters, debuggees, shells and remote servers the app started, including their own children (tsserver under
 /// typescript-language-server). Read-only: never signals anything.
 /// </summary>
@@ -19,9 +19,14 @@ public static class ProcessTree
 {
     public static IReadOnlyList<ProcessTreeEntry> Descendants(int rootPid)
     {
-        if (!OperatingSystem.IsLinux()) return [];
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return [];
         var parents = new Dictionary<int, (int Parent, string Name)>();
-        foreach (var dir in Directory.EnumerateDirectories("/proc"))
+        if (OperatingSystem.IsMacOS())
+        {
+            foreach (var pid in MacProcesses.AllPids())
+                if (MacProcesses.Info(pid) is { } info) parents[pid] = info;
+        }
+        else foreach (var dir in Directory.EnumerateDirectories("/proc"))
         {
             if (!int.TryParse(Path.GetFileName(dir), out var pid)) continue;
             try
@@ -62,9 +67,10 @@ public static class ProcessTree
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    /// <summary>VmRSS of a process (bytes), 0 when it is gone or a zombie.</summary>
+    /// <summary>VmRSS of a process (bytes; macOS: libproc's resident size), 0 when it is gone or a zombie.</summary>
     public static long Resident(int pid)
     {
+        if (OperatingSystem.IsMacOS()) return MacProcesses.Resident(pid);
         try
         {
             foreach (var line in File.ReadLines($"/proc/{pid}/status"))

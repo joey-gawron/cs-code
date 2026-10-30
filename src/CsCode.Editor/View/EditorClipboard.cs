@@ -18,7 +18,8 @@ namespace CsCode.Editor.View;
 /// the selection is offered as PRIMARY and a middle-click pastes PRIMARY at the click (<c>editor.selectionClipboard</c>). A right-click moves the
 /// caret to the click unless it lands inside the selection, as in Visual Studio.
 /// <para>
-/// Keys: Ctrl+C / Ctrl+Insert copy, Ctrl+X / Shift+Delete cut, Ctrl+V / Shift+Insert paste, Ctrl+Shift+V cycles the ring. The shell's keymap
+/// Keys: Ctrl+C / Ctrl+Insert copy, Ctrl+X / Shift+Delete cut, Ctrl+V / Shift+Insert paste, Ctrl+Shift+V cycles the ring (⌘ for Ctrl on macOS,
+/// where AvaloniaEdit's own bindings use ⌘ too). The shell's keymap
 /// normally runs these as commands (the same methods) before the key reaches the view; the handler here covers a view hosted without a keymap
 /// and a user who removed the binding. Clipboard reads are awaited, never blocked on: the UI thread keeps running while the owner answers.
 /// </para>
@@ -121,7 +122,9 @@ internal sealed class EditorClipboard : IDisposable
         }
         var themes = _v.Factory.Themes;
         var settings = _v.Settings;
-        var style = new HtmlClipboardStyle(themes.GetColor("editor.background"), themes.GetColor("editor.foreground"), _v.Editor.FontFamily.ToString(),
+        // the font list as the setting names it: the view's FontFamily names the bundled Fira Code by its collection (fonts:CsCode#Fira Code),
+        // which no other application knows
+        var style = new HtmlClipboardStyle(themes.GetColor("editor.background"), themes.GetColor("editor.foreground"), settings.FontFamily,
             settings.FontSize, Math.Round(_v.TextArea.TextView.DefaultLineHeight, 2), settings.TabSize);
         return new HtmlCapture(lines, themes.Current, style, _v.Tokens?.Interner);
     }
@@ -261,12 +264,16 @@ internal sealed class EditorClipboard : IDisposable
             _v.ShowContextMenu();
             return;
         }
+        var command = EditorKeys.Command;
         Func<Task>? run = (e.Key, m) switch
         {
-            (Key.C, KeyModifiers.Control) or (Key.Insert, KeyModifiers.Control) => CopyAsync,
-            (Key.X, KeyModifiers.Control) or (Key.Delete, KeyModifiers.Shift) => CutAsync,
-            (Key.V, KeyModifiers.Control) or (Key.Insert, KeyModifiers.Shift) => PasteAsync,
-            (Key.V, KeyModifiers.Control | KeyModifiers.Shift) => CycleRingAsync,
+            (Key.C, var c) when c == command => CopyAsync,
+            (Key.Insert, KeyModifiers.Control) => CopyAsync,
+            (Key.X, var c) when c == command => CutAsync,
+            (Key.Delete, KeyModifiers.Shift) => CutAsync,
+            (Key.V, var c) when c == command => PasteAsync,
+            (Key.Insert, KeyModifiers.Shift) => PasteAsync,
+            (Key.V, var c) when c == (command | KeyModifiers.Shift) => CycleRingAsync,
             _ => null,
         };
         if (run is null) return;

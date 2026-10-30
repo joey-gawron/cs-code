@@ -252,7 +252,7 @@ public class R4Tests
 
         // the owner died (a crashed client): its id is taken over
         var file = Directory.GetFiles(dir.Path).Single();
-        using (var dead = Process.Start(new ProcessStartInfo("/bin/true") { UseShellExecute = false })!) { dead.WaitForExit(); File.WriteAllText(file, $$"""{"Id":"{{mine}}","Pid":{{dead.Id}},"StartTicks":1}"""); }
+        using (var dead = Process.Start(new ProcessStartInfo("true") { UseShellExecute = false })!) { dead.WaitForExit(); File.WriteAllText(file, $$"""{"Id":"{{mine}}","Pid":{{dead.Id}},"StartTicks":1}"""); }
         Assert.Equal(mine, new ServerSessionRegistry(dir.Path).Claim("ssh://me@box/"));
         Assert.NotEqual(mine, new ServerSessionRegistry(dir.Path).Claim("ssh://other/")); // another host: its own
     }

@@ -89,6 +89,7 @@ public class RealAppTypeScriptDebugTests
     public async Task Disposing_the_host_while_stopped_at_a_breakpoint_leaves_no_js_debug_server_or_program_running()
     {
         Assert.SkipWhen(JsDebugToolchain.SkipReason() is not null, JsDebugToolchain.SkipReason() ?? "");
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "process discovery by environment (ProcessTable.WithEnvironment) reads /proc");
         var host = CreateHost();
         var serverPid = 0;
         string? marker = null;

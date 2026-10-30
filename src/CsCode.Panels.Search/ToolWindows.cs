@@ -16,6 +16,8 @@ public sealed class FindInFilesToolWindow(SearchPanelsHost host) : IToolWindow
     public string? IconKey => "search";
     public ToolWindowLocation DefaultLocation => ToolWindowLocation.Left;
     public string? ToggleCommandId => SearchPanelsHost.FindInFiles;
+    /// <summary>View &gt; Tool Windows &gt; Find in Files does what the command does: the query seeded from the selection, the query box focused.</summary>
+    public string? ShowCommandId => SearchPanelsHost.FindInFiles;
     public string? AutoShowWhen => null;
 
     public Control CreateView(IServiceProvider services) => new FindInFilesView(host.CreateFindViewModel(), host.ReleaseFindViewModel);

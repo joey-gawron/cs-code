@@ -43,7 +43,8 @@ public static class AppStartup
         Sessions.SessionTrace.Mark("startup: container built");
         try
         {
-            _ = services.GetService<ILoggerFactory>(); // the file logger: creates its directory and writer thread
+            var loggers = services.GetService<ILoggerFactory>(); // the file logger: creates its directory and writer thread
+            LogLoginShellEnvironment(loggers);
             _ = services.GetService<IConfigurationService>();
             _ = services.GetService<IStateStorage>();
             _ = services.GetService<IKeybindingService>();
@@ -60,4 +61,17 @@ public static class AppStartup
             throw;
         }
     });
+
+    /// <summary>Writes the outcome of the login-shell environment resolution (lsp-1) to the log once it is known; nothing when none was started.</summary>
+    private static void LogLoginShellEnvironment(ILoggerFactory? loggers)
+    {
+        if (loggers is null) return;
+        _ = LogAsync();
+
+        async Task LogAsync()
+        {
+            if (await LoginShellEnvironment.Pending.ConfigureAwait(false) is { } resolution) // never faults
+                loggers.CreateLogger("CsCode.Startup").LogInformation("{Description}", resolution.Description);
+        }
+    }
 }

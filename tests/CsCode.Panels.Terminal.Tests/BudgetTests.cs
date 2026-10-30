@@ -539,7 +539,8 @@ public sealed class BudgetTests
         await TerminalAppHost.SettleAsync(20);
         _ = ProcessTable.SessionMembers(1);
         GC.Collect();
-        var fds = Directory.GetFileSystemEntries("/proc/self/fd").Length;
+        var fdDir = OperatingSystem.IsMacOS() ? "/dev/fd" : "/proc/self/fd"; // one entry per open descriptor
+        var fds = Directory.GetFileSystemEntries(fdDir).Length;
         var threads = Process.GetCurrentProcess().Threads.Count;
         var pids = new List<int>();
         var weak = await CreateAndKill(app, pids);
@@ -551,11 +552,11 @@ public sealed class BudgetTests
         }
         var alive = weak.Where(w => w.Ref.TryGetTarget(out _)).Select(w => w.Name).ToList();
         Assert.True(alive.Count == 0, "still reachable: " + string.Join(", ", alive));
-        foreach (var pid in pids) Assert.True(await TerminalAppHost.WaitFor(() => !Directory.Exists($"/proc/{pid}"), 5000), $"process {pid} left behind");
+        foreach (var pid in pids) Assert.True(await TerminalAppHost.WaitFor(() => ProcessTable.Stat(pid) is null, 5000), $"process {pid} left behind");
         var sw = Stopwatch.StartNew();
-        while (sw.ElapsedMilliseconds < 5000 && (Directory.GetFileSystemEntries("/proc/self/fd").Length > fds + 4 || Process.GetCurrentProcess().Threads.Count > threads + 4))
+        while (sw.ElapsedMilliseconds < 5000 && (Directory.GetFileSystemEntries(fdDir).Length > fds + 4 || Process.GetCurrentProcess().Threads.Count > threads + 4))
             await TerminalAppHost.SettleAsync(5);
-        Assert.True(Directory.GetFileSystemEntries("/proc/self/fd").Length <= fds + 4, $"descriptors {fds} -> {Directory.GetFileSystemEntries("/proc/self/fd").Length}");
+        Assert.True(Directory.GetFileSystemEntries(fdDir).Length <= fds + 4, $"descriptors {fds} -> {Directory.GetFileSystemEntries(fdDir).Length}");
         Assert.True(Process.GetCurrentProcess().Threads.Count <= threads + 4, $"threads {threads} -> {Process.GetCurrentProcess().Threads.Count}");
         Assert.Empty(app.Terminals.Terminals);
     }

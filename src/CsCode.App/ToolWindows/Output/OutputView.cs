@@ -10,6 +10,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using CsCode.App.Views;
 using CsCode.Core.Platform;
+using CsCode.Ui;
 using CsCode.Ui.Icons;
 using CsCode.Ui.Menus;
 using CsCode.Ui.Theming;
@@ -17,7 +18,7 @@ using CsCode.Ui.Theming;
 namespace CsCode.App.ToolWindows.Output;
 
 /// <summary>The Output panel: channel dropdown, clear, and a virtualised monospace line list that follows the tail while the user is at the bottom.</summary>
-public sealed class OutputView : UserControl, IDisposable, IClipboardTarget
+public sealed class OutputView : UserControl, IDisposable, IClipboardTarget, IToolWindowFocus
 {
     private readonly OutputViewModel _vm;
     private readonly ListBox _list;
@@ -59,6 +60,7 @@ public sealed class OutputView : UserControl, IDisposable, IClipboardTarget
     {
         var t = new TextBlock { Text = text, Margin = new Thickness(8, 0), TextWrapping = wrap ? TextWrapping.Wrap : TextWrapping.NoWrap };
         t.FontFamily = ThemeBrushes.CodeFont;
+        t.FontFeatures = ThemeBrushes.CodeFontFeatures;
         return t;
     }
 
@@ -76,6 +78,13 @@ public sealed class OutputView : UserControl, IDisposable, IClipboardTarget
             ScrollViewer.SetHorizontalScrollBarVisibility(_list, value ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto);
         }
     }
+
+    /// <summary>
+    /// View &gt; Tool Windows &gt; Output: the keyboard on a line (the selected one, else one on screen), not on the channel picker, where Down
+    /// switches the channel. With no line (an empty channel, or after Clear Output) there is none, and the shell's fallback passes the picker by
+    /// for the window itself.
+    /// </summary>
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(_list);
 
     public bool CanCopy => _list.SelectedItems?.Count > 0 && _window is not null;
 

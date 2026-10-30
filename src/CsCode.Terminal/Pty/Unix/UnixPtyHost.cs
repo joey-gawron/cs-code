@@ -52,10 +52,10 @@ public sealed unsafe class UnixPtyHost : IPtyHost
     }
 
     /// <summary>
-    /// The process table can be read (Linux's /proc): who holds a reaped program's number is then known. Not on macOS, where the grace timer
-    /// alone decides (<see cref="KillSession"/>). Tests switch it off to run that rule on Linux.
+    /// The process table can be read (Linux's /proc, macOS's libproc): who holds a reaped program's number is then known. Without it the grace
+    /// timer alone decides (<see cref="KillSession"/>). Tests switch it off to run that rule.
     /// </summary>
-    internal bool HasProcessTable { get; init; } = OperatingSystem.IsLinux();
+    internal bool HasProcessTable { get; init; } = ProcessTable.IsAvailable;
 
     public int ProcessId => Volatile.Read(ref _pid);
     public bool HasExited => _exited;
@@ -76,8 +76,10 @@ public sealed unsafe class UnixPtyHost : IPtyHost
             if (_master >= 0) throw new InvalidOperationException("The PTY host was already started.");
             _listener = listener;
             OpenPair(info.Columns, info.Rows);
+            var slave = -1;
             try
             {
+                if (!IsLinux) slave = HoldSlave(info.Columns, info.Rows);
                 _pid = Spawn(info);
             }
             catch
@@ -85,6 +87,10 @@ public sealed unsafe class UnixPtyHost : IPtyHost
                 close(_master);
                 _master = -1;
                 throw;
+            }
+            finally
+            {
+                if (slave >= 0) close(slave); // the child has its own descriptors once posix_spawn returned
             }
             (_readerWakeRead, _readerWakeWrite) = WakePipe();
             (_writerWakeRead, _writerWakeWrite) = WakePipe();
@@ -117,6 +123,23 @@ public sealed unsafe class UnixPtyHost : IPtyHost
         SetFlags(master, O_NONBLOCK);
         _master = master;
         SetSize(columns, rows); // before the child starts: its first query sees the real size
+    }
+
+    /// <summary>
+    /// macOS: a window size set on the master while no slave is open is lost when the slave is first opened, so the child's first query would
+    /// see 0x0. The slave is opened here (without becoming this process's controlling terminal), given the size, and held open until the
+    /// child has opened its own.
+    /// </summary>
+    private int HoldSlave(int columns, int rows)
+    {
+        var path = Utf8z(_slavePath!);
+        int slave;
+        try { slave = open(path, O_RDWR | O_NOCTTY | O_CLOEXEC); }
+        finally { NativeMemory.Free(path); }
+        if (slave < 0) throw new PtySpawnException("Could not open the pseudo-terminal's slave.", Marshal.GetLastPInvokeError());
+        var size = new WinSize { Columns = (ushort)Math.Clamp(columns, 1, ushort.MaxValue), Rows = (ushort)Math.Clamp(rows, 1, ushort.MaxValue) };
+        ioctl(slave, TIOCSWINSZ, &size);
+        return slave;
     }
 
     private int Spawn(PtyStartInfo info)
@@ -436,7 +459,7 @@ public sealed unsafe class UnixPtyHost : IPtyHost
     /// <summary>
     /// SIGKILL to every process still in the child's session (its jobs, which have their own process groups) and its group. Once the child has
     /// been reaped its pid is only a number that the kernel hands out again as soon as nothing uses it as a pid, process group or session id: then
-    /// only <see cref="OrphansToKill"/> are signalled. Without a process table (macOS) that cannot be known: the grace timer of a hang-up sent
+    /// only <see cref="OrphansToKill"/> are signalled. Without a process table that cannot be known: the grace timer of a hang-up sent
     /// while the program ran (<paramref name="afterHangUp"/>) still kills the group, since the leader was reaped within the grace and a number
     /// freed that recently is not handed out again there (pids are assigned in sequence, wrapping only after the whole range); a terminal killed
     /// or disposed after its program had already been reaped kills nothing by its number (VS Code never signals an exited terminal's group).

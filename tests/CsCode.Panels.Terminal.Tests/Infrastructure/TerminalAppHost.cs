@@ -34,7 +34,7 @@ public sealed class TerminalAppHost : IAsyncDisposable
         {
             ["cscode.languageServers"] = BuiltinServers.ToDictionary(s => s, _ => (object)new { enabled = false }),
             ["workbench.startupEditor"] = "none",
-            ["terminal.integrated.profiles.linux"] = new Dictionary<string, object>
+            [CsCode.Terminal.Sessions.TerminalSettingKeys.ProfilesKey] = new Dictionary<string, object>
             {
                 ["sandboxed"] = new
                 {
@@ -55,7 +55,7 @@ public sealed class TerminalAppHost : IAsyncDisposable
                     },
                 },
             },
-            ["terminal.integrated.defaultProfile.linux"] = "sandboxed",
+            [CsCode.Terminal.Sessions.TerminalSettingKeys.DefaultProfileKey] = "sandboxed",
             ["terminal.integrated.cwd"] = Sandbox.Combine("home"),
         };
         if (extraSettings is not null) foreach (var (k, v) in extraSettings) settings[k] = v;
@@ -89,6 +89,10 @@ public sealed class TerminalAppHost : IAsyncDisposable
         await SettleAsync(40);
         return host;
     }
+
+    /// <summary>The label a menu shows for <paramref name="keys"/> on this OS ("Ctrl+Shift+B" on Linux, "⌃⇧B" on macOS).</summary>
+    public static string KeyLabel(string keys) => CsCode.Platform.Keybindings.KeyBindingFormatter.Format(KeyStrokeParser.ParseChord(keys),
+        OperatingSystem.IsMacOS() ? CsCode.Platform.HostOs.MacOs : OperatingSystem.IsWindows() ? CsCode.Platform.HostOs.Windows : CsCode.Platform.HostOs.Linux);
 
     /// <summary>Pumps the UI loop until <paramref name="condition"/> holds.</summary>
     public static async Task<bool> WaitFor(Func<bool> condition, int timeoutMs = 10_000)
@@ -177,5 +181,21 @@ public static class Support
         for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
             if (File.Exists(Path.Combine(d.FullName, "CsCode.slnx"))) return d.FullName;
         return null;
+    }
+
+    /// <summary>
+    /// <paramref name="path"/> with every symbolic link among its directories resolved (realpath): what the kernel reports as a process's
+    /// directory and what a shell started there takes as $PWD. The temp directory is under one on macOS (/var is /private/var).
+    /// </summary>
+    public static string PhysicalPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var result = Path.GetPathRoot(full)!;
+        foreach (var part in full[result.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            result = Path.Combine(result, part);
+            if (new DirectoryInfo(result).ResolveLinkTarget(returnFinalTarget: true) is { } target) result = target.FullName;
+        }
+        return result;
     }
 }

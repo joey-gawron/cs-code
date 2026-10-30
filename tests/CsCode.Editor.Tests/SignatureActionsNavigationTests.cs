@@ -371,10 +371,11 @@ public class SignatureActionsNavigationTests
         var (_, view, window) = await host.OpenAsync("Target t;", "a.cs");
         ViewHost.Pump();
         var point = PointOf(window, view, 2);
-        window.MouseMove(point, RawInputModifiers.Control);
+        var command = OperatingSystem.IsMacOS() ? RawInputModifiers.Meta : RawInputModifiers.Control; // ⌘-click on macOS
+        window.MouseMove(point, command);
         await ViewHost.WaitFor(() => view.Editor.Cursor is not null, "link state while Ctrl is held");
-        window.MouseDown(point, MouseButton.Left, RawInputModifiers.Control);
-        window.MouseUp(point, MouseButton.Left, RawInputModifiers.Control);
+        window.MouseDown(point, MouseButton.Left, command);
+        window.MouseUp(point, MouseButton.Left, command);
         await ViewHost.WaitFor(() => host.Navigation.Opened.Count == 1, "navigated");
         Assert.Equal(target, host.Navigation.Opened[0].Uri);
     }

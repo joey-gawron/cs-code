@@ -110,6 +110,61 @@ public class GitIgnoreTests
     }
 
     [Fact]
+    public void With_ignore_case_rules_match_whatever_the_case_and_without_it_only_the_same_case()
+    {
+        // files-10: git on a Mac (core.ignorecase=true) ignores Build/ and DEBUG.LOG for "build/" and "*.log"
+        static bool Folded(string rules, string path, bool isDir = false) =>
+            IgnoreChain.IsIgnored(new IgnoreChain(GitIgnoreFile.Parse(rules, ignoreCase: true), "", null), path, isDir);
+        Assert.True(Folded("build/", "Build", isDir: true));
+        Assert.True(Folded("*.log", "src/DEBUG.LOG"));
+        Assert.True(Folded("/Docs/[A-C]*.md", "docs/b.MD"));
+        Assert.True(Folded("SECRET.txt", "a/secret.TXT"));
+        Assert.False(Folded("*.log\n!Keep.log", "keep.LOG"));
+        Assert.True(Folded("*.log", new string('A', 600) + ".LOG")); // longer than the stack buffer
+        Assert.False(Ignored("build/", "Build", isDir: true));
+        Assert.False(Ignored("*.log", "src/DEBUG.LOG"));
+        Assert.False(Ignored("SECRET.txt", "a/secret.TXT"));
+    }
+
+    [Theory]
+    [InlineData("[core]\n\tignorecase = true\n", true)]
+    [InlineData("[core]\n\trepositoryformatversion = 0\n\tignoreCase = false\n", false)]
+    [InlineData("[Core]\n\tIgnoreCase\n", true)]                                   // a bare key is true
+    [InlineData("[core]\n\tignorecase = yes ; set by git init\n", true)]
+    [InlineData("[core]\n\tignorecase = true\n[core]\n\tignorecase = off\n", false)] // the last one wins
+    [InlineData("[remote \"origin\"]\n\tignorecase = true\n", null)]               // another section
+    [InlineData("[core]\n\tbare = false\n", null)]
+    [InlineData("", null)]
+    public void Core_ignorecase_is_read_from_a_git_config(string config, bool? expected) =>
+        Assert.Equal(expected, CsCode.Core.Text.GitIgnoreCase.Parse(config));
+
+    [Fact]
+    public void A_repository_without_core_ignorecase_and_a_folder_outside_any_follow_the_platform()
+    {
+        using var temp = new CsCode.TestDoubles.TempDirectory("cscode-ignorecase-");
+        var repo = temp.Combine("repo");
+        Directory.CreateDirectory(Path.Combine(repo, ".git"));
+        Directory.CreateDirectory(Path.Combine(repo, "src"));
+        File.WriteAllText(Path.Combine(repo, ".git", "config"), "[core]\n\tbare = false\n");
+        Assert.Equal(OperatingSystem.IsMacOS() || OperatingSystem.IsWindows(), GitIgnoreFile.RepositoryIgnoresCase(Path.Combine(repo, "src")));
+
+        File.WriteAllText(Path.Combine(repo, ".git", "config"), "[core]\n\tignorecase = true\n");
+        Assert.True(GitIgnoreFile.RepositoryIgnoresCase(Path.Combine(repo, "src")));      // looked up from a subfolder
+        File.WriteAllText(Path.Combine(repo, ".git", "config"), "[core]\n\tignorecase = false\n");
+        Assert.False(GitIgnoreFile.RepositoryIgnoresCase(repo));
+
+        // a linked worktree's .git file names its git directory; the config is the main repository's (commondir)
+        var linked = Path.Combine(repo, ".git", "worktrees", "wt");
+        Directory.CreateDirectory(linked);
+        File.WriteAllText(Path.Combine(linked, "commondir"), "../..\n");
+        var wt = temp.Combine("wt");
+        Directory.CreateDirectory(wt);
+        File.WriteAllText(Path.Combine(wt, ".git"), "gitdir: " + linked + "\n");
+        File.WriteAllText(Path.Combine(repo, ".git", "config"), "[core]\n\tignorecase = true\n");
+        Assert.True(GitIgnoreFile.RepositoryIgnoresCase(wt));
+    }
+
+    [Fact]
     public void Malformed_lines_are_skipped_not_fatal()
     {
         var file = GitIgnoreFile.Parse("*.log\n[\n\\\n!\n/\n");

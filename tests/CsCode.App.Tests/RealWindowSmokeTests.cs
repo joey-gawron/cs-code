@@ -8,6 +8,7 @@ using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
+using CsCode.Ui.Theming;
 
 namespace CsCode.App.Tests;
 
@@ -23,6 +24,7 @@ public class RealWindowSmokeTests
     [Fact]
     public async Task The_real_window_starts_renders_and_exits_cleanly_under_x11()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "an X11 window: elsewhere Avalonia's platform is not X11 (macOS: see The_real_app_starts_on_avalonia_native_and_keeps_running_on_macos)");
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY"))) Assert.Skip("DISPLAY is not set: no X server to open a real window on.");
         var dll = typeof(RealWindowSmokeTests).Assembly.Location;
         var home = Path.Combine(Path.GetTempPath(), "cscode-realwin-" + Guid.NewGuid().ToString("N")[..8]);
@@ -58,6 +60,46 @@ public class RealWindowSmokeTests
         finally { try { Directory.Delete(home, true); } catch (IOException) { } }
     }
 
+    /// <summary>
+    /// macOS (pkg-14): the built <c>cscode</c> apphost in the foreground (no background processes) on Avalonia.Native, with a sandboxed
+    /// CSCODE_HOME and a folder to open, as a user starts it: the window must come up on the process's real main thread and the app keep running
+    /// without a crash report. The test child above cannot do this: xUnit runs it off the main thread, which AppKit refuses. Ended by SIGTERM: the
+    /// app has no exit-after-first-frame switch yet, so neither a screenshot nor the orderly shutdown is checked here.
+    /// </summary>
+    [Fact]
+    public async Task The_real_app_starts_on_avalonia_native_and_keeps_running_on_macos()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "the Avalonia.Native window is macOS's");
+        var configuration = Path.GetFileName(Path.GetDirectoryName(AppContext.BaseDirectory.TrimEnd('/'))!); // bin/<Debug, Release>/net10.0
+        var apphost = Path.Combine(Background.PublishedAppFixture.RepoRoot(), "src", "CsCode.App", "bin", configuration, "net10.0", "cscode");
+        Assert.SkipUnless(File.Exists(apphost), $"the app is not built ({apphost})");
+        using var home = new CsCode.TestDoubles.TempDirectory("cscode-macwin-");
+        using var workspace = new CsCode.TestDoubles.TempDirectory("cscode-macwin-ws-");
+        workspace.WriteFile("hello.txt", "hello\n");
+
+        var psi = new ProcessStartInfo(apphost) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        psi.ArgumentList.Add("--foreground");
+        psi.ArgumentList.Add(workspace.Path);
+        psi.Environment["CSCODE_HOME"] = home.Path; // never touch the real ~/.cscode
+        using var app = Process.Start(psi)!;
+        var stdout = app.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var stderr = app.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            var crashed = app.WaitForExit(15_000); // services, the main window, the folder: all up well within this
+            var log = crashed ? await stdout + await stderr : "";
+            Assert.False(crashed, $"the app exited with {(crashed ? app.ExitCode : 0)} instead of showing its window\n{log}");
+        }
+        finally
+        {
+            if (!app.HasExited) app.Kill(); // only the PID this test started (SIGKILL: no orderly shutdown is checked)
+            await app.WaitForExitAsync(TestContext.Current.CancellationToken);
+        }
+        var logs = Path.Combine(home.Path, "logs");
+        var crashLogs = Directory.Exists(logs) ? Directory.GetFiles(logs, "crash-*.log") : [];
+        Assert.True(crashLogs.Length == 0, "the app reported a crash:\n" + string.Join("\n", crashLogs.Select(File.ReadAllText)));
+    }
+
     /// <summary>Runs only in the child process. Starts the real app, waits, captures, exits 0 (or throws).</summary>
     [Fact]
     public void Child()
@@ -69,7 +111,7 @@ public class RealWindowSmokeTests
         App.ConfigureServices = host.ApplyTo;
         var shot = Environment.GetEnvironmentVariable("CSCODE_SHOT")!;
         Exception? failure = null;
-        var exit = AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont()
+        var exit = AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().WithCodeFonts()
             .AfterSetup(_ => Dispatcher.UIThread.Post(async () =>
             {
                 // Runs on the real UI thread once the desktop lifetime is running and the shell has built its main window.
@@ -106,6 +148,7 @@ public class RealWindowSmokeTests
     [Fact]
     public async Task The_real_app_with_every_module_starts_and_shuts_down_cleanly_under_x11()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "an X11 window: elsewhere Avalonia's platform is not X11 (macOS: see The_real_app_starts_on_avalonia_native_and_keeps_running_on_macos)");
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY"))) Assert.Skip("DISPLAY is not set: no X server to open a real window on.");
         using var env = new RealAppHome();
         var python = FakeLanguageServer.Python;
@@ -153,7 +196,7 @@ public class RealWindowSmokeTests
         var file = Environment.GetEnvironmentVariable("CSCODE_TEST_OPEN")!;
         var pidFile = Environment.GetEnvironmentVariable("CSCODE_TEST_PIDFILE");
         Exception? failure = null;
-        var exit = AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont()
+        var exit = AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().WithCodeFonts()
             .AfterSetup(_ => Dispatcher.UIThread.Post(async () =>
             {
                 var lifetime = (IClassicDesktopStyleApplicationLifetime)Application.Current!.ApplicationLifetime!;

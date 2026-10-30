@@ -70,6 +70,22 @@ public sealed class TaskTerminalHostTests : IDisposable
 
     private static TerminalSession SessionOf(ITaskTerminalRun run) => ((TaskTerminalHost.Run)run).Session!;
 
+    /// <summary>
+    /// Runs a task where it is queued. A continuation of a task completed with <see cref="TaskCreationOptions.RunContinuationsAsynchronously"/>
+    /// (a run's Completion) is never inlined, but it is still queued to its scheduler by the thread that completes the task, inside that call:
+    /// with this scheduler it sees the state at the moment of completion, not whatever it is by the time a pool worker gets to it.
+    /// </summary>
+    private sealed class InlineScheduler : TaskScheduler
+    {
+        public static readonly InlineScheduler Instance = new();
+
+        protected override void QueueTask(Task task) => TryExecuteTask(task);
+
+        protected override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued) => TryExecuteTask(task);
+
+        protected override IEnumerable<Task> GetScheduledTasks() => [];
+    }
+
     [Fact]
     public async Task A_task_runs_in_a_terminal_named_after_it_with_its_command_line_output_and_exit_code()
     {
@@ -204,15 +220,20 @@ public sealed class TaskTerminalHostTests : IDisposable
     [Fact]
     public async Task A_run_is_no_longer_running_when_its_completion_is_observed()
     {
-        // whoever awaits Completion (the task runner, a re-run of the same task) must find the run's terminal free, not still busy with it
-        var stillRunning = 0;
-        for (var i = 0; i < 40; i++)
+        // whoever awaits Completion (the task runner, a re-run of the same task) must find the run's terminal free, not still busy with it. Looked
+        // at inside the completing call (InlineScheduler), not from a pool worker that wakes after the terminal's thread has freed it either way;
+        // the task waits for a line until the check is in place, so it cannot complete before. The first run creates the terminal, the second
+        // reuses it. (The check's own continuations run asynchronously: this test never resumes on the terminal's thread, inside its exit event.)
+        for (var i = 0; i < 2; i++)
         {
-            var run = await _host.StartAsync(Sh("quick", "true", new TaskPresentation { Panel = TaskPanelKind.Shared }));
-            var observed = run.Completion.ContinueWith(_ => _host.Running.Contains(run), TaskScheduler.Default);
-            if (await observed.WaitAsync(TimeSpan.FromSeconds(10))) stillRunning++;
+            var run = await _host.StartAsync(Sh("quick", "read line", new TaskPresentation { Panel = TaskPanelKind.Shared }));
+            var observed = run.Completion.ContinueWith(_ => _host.Running.Contains(run), CancellationToken.None,
+                TaskContinuationOptions.RunContinuationsAsynchronously, InlineScheduler.Instance);
+            Assert.True(SessionOf(run).Input("\r"u8));
+            Assert.Equal(0, (await run.Completion.WaitAsync(TimeSpan.FromSeconds(10))).ExitCode);
+            Assert.False(await observed.WaitAsync(TimeSpan.FromSeconds(10)), $"run {i + 1} was still running when its completion was observed");
         }
-        Assert.Equal(0, stillRunning);
+        Assert.Single(_service.Terminals); // the re-run found the terminal free
     }
 
     [Fact]

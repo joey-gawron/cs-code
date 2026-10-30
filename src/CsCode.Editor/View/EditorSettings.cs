@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CsCode.Core.Platform;
+using CsCode.Core.Theming;
 using CsCode.Editor.Documents;
 
 namespace CsCode.Editor.View;
@@ -12,8 +13,13 @@ namespace CsCode.Editor.View;
 /// </summary>
 public sealed record EditorSettings
 {
-    public string FontFamily { get; init; } = "Cascadia Code, Cascadia Mono, Consolas, DejaVu Sans Mono, Liberation Mono, monospace";
+    public string FontFamily { get; init; } = FontFamilies.DefaultCode; // the bundled Fira Code, then the OS's own monospace faces
     public double FontSize { get; init; } = 14;
+    /// <summary>
+    /// <c>editor.fontLigatures</c> as OpenType features (<see cref="FontFamilies.LigatureFeatures"/>, comma-separated): empty by default, so the
+    /// bundled Fira Code draws its ligatures (<c>!=</c>, <c>=&gt;</c>); <c>-liga, -calt</c> when the setting turns them off.
+    /// </summary>
+    public string FontFeatures { get; init; } = "";
     public double LineHeightFactor { get; init; } = 1.0;
     public int TabSize { get; init; } = 4;
     public bool InsertSpaces { get; init; } = true;
@@ -65,6 +71,7 @@ public sealed record EditorSettings
         return new EditorSettings
         {
             FontFamily = G(SettingKeys.EditorFontFamily, defaults.FontFamily),
+            FontFeatures = string.Join(", ", FontFamilies.LigatureFeatures(cfg.GetRawFor(SettingKeys.EditorFontLigatures, languageId))),
             FontSize = Math.Clamp(G(SettingKeys.EditorFontSize, defaults.FontSize), 6, 72),
             LineHeightFactor = Math.Clamp(G("editor.lineHeightFactor", defaults.LineHeightFactor), 0.8, 3),
             TabSize = Math.Clamp(tabSize, 1, 16),

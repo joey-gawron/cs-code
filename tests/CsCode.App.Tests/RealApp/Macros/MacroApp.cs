@@ -113,5 +113,8 @@ public sealed class MacroApp : IAsyncDisposable
 
     public static RawInputModifiers Ctrl => RawInputModifiers.Control;
 
+    /// <summary>The application keys' modifier: Ctrl, Cmd on macOS (Save, Undo, Find...).</summary>
+    public static RawInputModifiers Command => PlatformKeys.Command;
+
     public ValueTask DisposeAsync() => Host.DisposeAsync();
 }

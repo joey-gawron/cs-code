@@ -53,6 +53,7 @@
   </Style>
   <Style Selector="TextBlock.code">
     <Setter Property="FontFamily" Value="{DynamicResource ui:CodeFontFamily}" />
+    <Setter Property="FontFeatures" Value="{DynamicResource ui:CodeFontFeatures}" />
   </Style>
   <Style Selector="TextBlock.changed">
     <Setter Property="Foreground" Value="{DynamicResource vsc:errorForeground}" />

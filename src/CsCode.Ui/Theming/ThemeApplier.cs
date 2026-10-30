@@ -62,7 +62,7 @@ public sealed class ThemeApplier : IDisposable
         if (config is not null)
             _subs.Add(config.Changed.Subscribe(e =>
             {
-                if (e.Affects(SettingKeys.EditorFontFamily)) _ui.Post(() => SetCodeFont(config));
+                if (e.Affects(SettingKeys.EditorFontFamily) || e.Affects(SettingKeys.EditorFontLigatures)) _ui.Post(() => SetCodeFont(config));
             }));
         ApplyNow(themes.Current);
     }
@@ -243,7 +243,7 @@ public sealed class ThemeApplier : IDisposable
     private void SetTokens(IConfigurationService? config)
     {
         var r = _app.Resources;
-        r["ui:FontFamily"] = new FontFamily("Segoe UI, Inter, Noto Sans, sans-serif");
+        r["ui:FontFamily"] = new FontFamily(FontFamilies.Normalize(OperatingSystem.IsMacOS() ? FontFamilies.MacUi : "Segoe UI, Inter, Noto Sans, sans-serif"));
         r["ui:FontSize"] = 12.0;
         r["ui:FontSizeSmall"] = 11.0;
         r["ui:FontSizeLarge"] = 14.0;
@@ -264,7 +264,22 @@ public sealed class ThemeApplier : IDisposable
     private void SetCodeFont(IConfigurationService? config)
     {
         var family = config?.Get<string>(SettingKeys.EditorFontFamily);
-        _app.Resources["ui:CodeFontFamily"] = new FontFamily(string.IsNullOrWhiteSpace(family) ? "Cascadia Code, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" : family);
+        if (string.IsNullOrWhiteSpace(family))
+            family = FontFamilies.DefaultCode;
+        _app.Resources["ui:CodeFontFamily"] = new FontFamily(FontFamilies.Normalize(family));
+        _app.Resources["ui:CodeFontFeatures"] = CodeFontFeatures(FontFamilies.LigatureFeatures(config?.GetRaw(SettingKeys.EditorFontLigatures)));
+    }
+
+    /// <summary><paramref name="features"/> (<see cref="FontFamilies.LigatureFeatures"/>) as the collection a text control takes; ill-formed ones are skipped.</summary>
+    public static FontFeatureCollection CodeFontFeatures(IReadOnlyList<string> features)
+    {
+        var collection = new FontFeatureCollection();
+        foreach (var f in features)
+        {
+            try { collection.Add(FontFeature.Parse(f)); }
+            catch (Exception e) when (e is FormatException or ArgumentException) { }
+        }
+        return collection;
     }
 
     public void Dispose()

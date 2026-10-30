@@ -24,6 +24,11 @@ public class FileLoggerTests : IDisposable
 
     private string Log => Path.Combine(_dir.Path, "cscode.log");
 
+    private string LockFile => Path.Combine(_dir.Path, ".cscode.lock");
+
+    // Another process's batch in progress: the lock file held exactly as the provider takes it (a separate handle, so an flock of its own).
+    private FileStream HoldLock() => new(LockFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, bufferSize: 1);
+
     // ---- format ------------------------------------------------------------------------------------------------------------------
 
     [Fact]
@@ -243,6 +248,95 @@ public class FileLoggerTests : IDisposable
         Assert.Contains("B: entry 0199", current);
     }
 
+    // A holder stalled mid-batch (a process stopped in a debugger) writes the rest of its batch at the offset it opened the file at once it goes on:
+    // lines written meanwhile without the lock would be overwritten, or cut in half. So a running provider waits, however long, and loses nothing
+    // the bounded queue keeps.
+    [Fact]
+    public async Task A_batch_waits_for_another_process_holding_the_lock_instead_of_writing_without_it()
+    {
+        using var provider = Create();
+        var logger = provider.CreateLogger("c");
+        Task flushed;
+        using (HoldLock())
+        {
+            for (var i = 0; i < 10; i++) logger.LogInformation("waited {I}", i);
+            flushed = provider.FlushAsync();
+            await Task.Delay(FileLoggerProvider.LockTimeout + TimeSpan.FromMilliseconds(500), Ct);
+            Assert.False(File.Exists(Log), "a batch was written while another process held the lock:\n" + (File.Exists(Log) ? File.ReadAllText(Log) : ""));
+            Assert.False(flushed.IsCompleted);
+        }
+        await flushed.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+        Assert.Equal(Enumerable.Range(0, 10).Select(i => $"c: waited {i}"), File.ReadAllLines(Log).Select(l => l[(l.IndexOf("] ", StringComparison.Ordinal) + 2)..]));
+        Assert.Equal(0, provider.DroppedCount);
+    }
+
+    // At exit the wait is bounded (Dispose must not hang on a stalled holder): what is still queued then is dropped, never written without the lock.
+    [Fact]
+    public void Disposing_while_another_process_keeps_the_lock_stays_bounded_and_drops_the_rest_instead_of_writing_it_unlocked()
+    {
+        var provider = Create();
+        var logger = provider.CreateLogger("c");
+        using (HoldLock())
+        {
+            logger.LogInformation("queued at exit 1");
+            logger.LogInformation("queued at exit 2");
+            var clock = Stopwatch.StartNew();
+            provider.Dispose();
+            clock.Stop();
+            Assert.True(clock.Elapsed < FileLoggerProvider.LockTimeout + TimeSpan.FromSeconds(2), $"Dispose took {clock.Elapsed.TotalMilliseconds:F0} ms");
+            Assert.False(File.Exists(Log), "the batch was written without the lock:\n" + (File.Exists(Log) ? File.ReadAllText(Log) : ""));
+            Assert.Equal(2, provider.DroppedCount);
+        }
+    }
+
+    [Fact]
+    public void Disposing_waits_for_another_process_s_batch_that_ends_in_time_and_then_writes_everything()
+    {
+        var provider = Create();
+        var logger = provider.CreateLogger("c");
+        var held = HoldLock();
+        logger.LogInformation("written at exit");
+        // A thread of its own, not the pool: other test classes starving the pool past the 1 s deadline would drop the batch.
+        var release = new Thread(() => { Thread.Sleep(100); held.Dispose(); }) { IsBackground = true };
+        release.Start();
+        provider.Dispose();
+        release.Join();
+        Assert.Contains("c: written at exit", File.ReadAllText(Log));
+        Assert.Equal(0, provider.DroppedCount);
+    }
+
+    // Waiting only helps against another process's batch. A lock that cannot be taken at all (a read-only or full file system, a lock file this user
+    // cannot open, a broken link) is given up at once, and the lines are written without it as before; retrying would cost every batch, and the
+    // exit, the whole wait.
+    [Theory]
+    [InlineData("dangling")]   // a link into a folder that does not exist: ENOENT (a DirectoryNotFoundException), an IOException that is not contention
+    [InlineData("loop")]       // a link to itself: ELOOP, a plain IOException
+    [InlineData("read-only")]  // a lock file left by another user: EACCES
+    public async Task A_lock_that_cannot_be_taken_at_all_is_not_waited_for_and_the_lines_are_still_written(string kind)
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "symlink creation needs privileges on Windows");
+        Assert.SkipWhen(kind == "read-only" && Environment.UserName == "root", "permission bits are not enforced for root");
+        switch (kind)
+        {
+            case "dangling": File.CreateSymbolicLink(LockFile, Path.Combine(_dir.Path, "missing", "cscode.lock")); break;
+            case "loop": File.CreateSymbolicLink(LockFile, Path.GetFileName(LockFile)); break;
+            default: File.WriteAllText(LockFile, ""); if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(LockFile, UnixFileMode.UserRead); break;
+        }
+        using var provider = Create();
+        var logger = provider.CreateLogger("c");
+        var clock = Stopwatch.StartNew();
+        for (var i = 0; i < 3; i++)
+        {
+            logger.LogInformation("line {I}", i);
+            await provider.FlushAsync().WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        }
+        logger.LogInformation("line 3");
+        provider.Dispose();
+        clock.Stop();
+        Assert.True(clock.Elapsed < FileLoggerProvider.LockTimeout, $"four batches took {clock.Elapsed.TotalMilliseconds:F0} ms");
+        Assert.Equal(4, File.ReadAllLines(Log).Length);
+    }
+
     [Fact]
     public void Dispose_drains_the_queue_before_closing()
     {
@@ -276,6 +370,27 @@ public class FileLoggerTests : IDisposable
         await provider.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5), Ct);   // and the writer thread survives
         logger.LogError("still alive");
         await provider.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5), Ct);
+    }
+
+    // A batch whose writing fails part-way still completes every flush request in it, also those queued after the line that failed: a full disk
+    // fails the write of the line that spills the file's 16 KB buffer, in the middle of the batch. /dev/full fails every write with ENOSPC.
+    [Fact]
+    public async Task A_flush_completes_even_when_its_batch_fails_before_reaching_it()
+    {
+        Assert.SkipUnless(File.Exists("/dev/full"), "needs /dev/full");
+        File.CreateSymbolicLink(Log, "/dev/full");
+        using var provider = Create();
+        using var gate = new ManualResetEventSlim();
+        using var stalled = new ManualResetEventSlim();
+        provider.WriteHook = () => { stalled.Set(); gate.Wait(); };
+        var logger = provider.CreateLogger("c");
+        logger.LogInformation("trigger");                        // the writer takes it and stalls, so the next entry and the flush form one batch
+        Assert.True(stalled.Wait(TimeSpan.FromSeconds(5), Ct));
+        logger.LogInformation("fails {Padding}", new string('x', 20_000));
+        var flushed = provider.FlushAsync();
+        provider.WriteHook = null;
+        gate.Set();
+        await flushed.WaitAsync(TimeSpan.FromSeconds(5), Ct);
     }
 
     [Fact]

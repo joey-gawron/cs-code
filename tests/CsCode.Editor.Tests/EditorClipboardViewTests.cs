@@ -11,6 +11,10 @@ using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Editor.Tests.Support;
 using CsCode.Editor.View;
+using CsCode.Platform;
+using CsCode.Platform.Context;
+using CsCode.Platform.Io;
+using CsCode.Platform.Keybindings;
 using CsCode.TestDoubles;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -29,6 +33,9 @@ public class EditorClipboardViewTests
         return (ViewHost.Create(s => { s.AddSingleton<IClipboardService>(clipboard); more?.Invoke(s); }), clipboard);
     }
 
+    /// <summary>The clipboard keys' modifier: Ctrl, ⌘ on macOS.</summary>
+    private static RawInputModifiers Command => OperatingSystem.IsMacOS() ? RawInputModifiers.Meta : RawInputModifiers.Control;
+
     private static void Key(Avalonia.Controls.Window w, Key key, RawInputModifiers m = RawInputModifiers.None)
     {
         w.KeyPress(key, m, PhysicalKey.None, null);
@@ -42,12 +49,12 @@ public class EditorClipboardViewTests
         using var _ = host;
         var (doc, view, window) = await host.OpenAsync("alpha\nbeta\ngamma\n");
         view.Controller.SetSelection(TextRange.At(0, 2));
-        Key(window, Avalonia.Input.Key.C, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.C, Command);
         Assert.Equal("alpha\n", clipboard.Content?.Text);
         Assert.Equal(ClipboardTextShape.FullLines, clipboard.Content?.Shape);
 
         view.Controller.SetSelection(TextRange.At(2, 3));
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.V, Command);
         await ViewHost.WaitFor(() => doc.GetText() == "alpha\nbeta\nalpha\ngamma\n", "line pasted above");
         Assert.Equal(new TextPosition(3, 3), view.Controller.Caret); // still on "gamma"
 
@@ -62,7 +69,7 @@ public class EditorClipboardViewTests
         using var _ = host;
         var (doc, view, window) = await host.OpenAsync("one\ntwo\nthree\n");
         view.Controller.SetSelection(TextRange.At(1, 1));
-        Key(window, Avalonia.Input.Key.X, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.X, Command);
         Assert.Equal("one\nthree\n", doc.GetText());
         Assert.Equal("two\n", clipboard.Content?.Text);
         view.Controller.Undo();
@@ -158,13 +165,13 @@ public class EditorClipboardViewTests
         Assert.Equal(["three", "two", "one"], clipboard.Ring.Select(r => r.Text));
 
         view.Controller.SetSelection(TextRange.At(1, 0));
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         Assert.Equal("one two three\nthree\n", doc.GetText());
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         Assert.Equal("one two three\ntwo\n", doc.GetText());
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         Assert.Equal("one two three\none\n", doc.GetText());
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         Assert.Equal("one two three\nthree\n", doc.GetText()); // wraps around
 
         view.Controller.Undo();
@@ -172,9 +179,9 @@ public class EditorClipboardViewTests
 
         // Typing in between ends the cycle: the next Ctrl+Shift+V pastes the newest entry again.
         view.Controller.SetSelection(TextRange.At(1, 0));
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         ViewTestHelpers.Type(view, "!");
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Key(window, Avalonia.Input.Key.V, Command | RawInputModifiers.Shift);
         Assert.Equal("one two three\nthree!three\n", doc.GetText());
     }
 
@@ -225,6 +232,7 @@ public class EditorClipboardViewTests
     [AvaloniaFact]
     public async Task Selecting_offers_the_text_as_PRIMARY_and_a_middle_click_pastes_PRIMARY_at_the_click()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "editor.selectionClipboard (PRIMARY, middle-click paste) is Linux-only, as in VS Code (EditorSettings)");
         var (host, clipboard) = Host();
         using var h = host;
         host.Config.Set("editor.selectionClipboard", true);
@@ -295,11 +303,11 @@ public class EditorClipboardViewTests
         var (doc, view, window) = await host.OpenAsync("keep\n");
         doc.IsReadOnly = true;
         view.Controller.SetSelection(TextRange.FromLines(0, 0, 0, 4));
-        Key(window, Avalonia.Input.Key.X, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.X, Command);
         Assert.Equal("keep\n", doc.GetText());
-        Key(window, Avalonia.Input.Key.C, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.C, Command);
         Assert.Equal("keep", clipboard.Content?.Text);
-        Key(window, Avalonia.Input.Key.V, RawInputModifiers.Control);
+        Key(window, Avalonia.Input.Key.V, Command);
         ViewHost.Pump();
         Assert.Equal("keep\n", doc.GetText());
         Assert.False(view.Controller.CanCut);
@@ -489,5 +497,44 @@ public class EditorClipboardViewTests
         other.Focus();
         ViewHost.Pump();
         window.Content = null;
+    }
+
+    [Fact]
+    public void Every_Ctrl_key_the_editor_contributes_has_a_Mac_key()
+    {
+        var missing = EditorMenus.Keybindings.Where(k => KeyStrokeParser.ParseChord(k.Key).Any(s => s.Ctrl) && k.Mac is null).Select(k => $"{k.Key} → {k.Command}");
+        Assert.Empty(missing);
+        Assert.Contains(EditorMenus.Keybindings, k => k.Command == EditorMenus.CycleClipboardRing && k.Mac == "cmd+shift+v");
+    }
+
+    public static TheoryData<string> PresetNames => [.. KeybindingService.Presets];
+
+    /// <summary>
+    /// On macOS the presets' Cmd keys and the editor's contributed Cmd keys share one keyboard: two commands on the same keys whose `when`
+    /// clauses can hold together make one unreachable, and a key that is also the first stroke of a chord makes the chord unreachable (or
+    /// the key, depending on precedence). Two `when` clauses exclude each other only when one negates a term of the other.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(PresetNames))]
+    public async Task On_macOS_no_preset_key_clashes_with_a_key_the_editor_contributes(string preset)
+    {
+        using var temp = new TempDirectory("cscode-kb-");
+        using var lane = new IoLane("test.kb", 1);
+        var registry = new ContributionRegistry();
+        using var _ = registry.Contribute(ContributionSources.Builtin, "", EditorMenus.Keybindings);
+        var paths = new AppPaths(k => k == "CSCODE_HOME" ? temp.Combine("home") : null, HostOs.MacOs, "/Users/test");
+        using var mac = new KeybindingService(new ContextKeyService(), paths, lane, registry, os: HostOs.MacOs);
+        await mac.SetPresetAsync(preset, TestContext.Current.CancellationToken);
+        Assert.Contains(mac.All, b => b.Command == EditorMenus.SurroundWithSnippet && b.Chord.SequenceEqual(KeyStrokeParser.ParseChord("cmd+k cmd+s")));
+
+        static string[] Terms(string? when) => when is null ? [] : [.. when.Split("&&", StringSplitOptions.TrimEntries)];
+        static bool Exclusive(string? a, string? b) => Terms(a).Any(t => Terms(b).Contains(t.StartsWith('!') ? t[1..] : "!" + t));
+        var all = mac.All.Where(b => !b.IsNegative).ToArray();
+        var clashes = (from x in all
+                       from y in all
+                       where x.Command != y.Command && x.Chord.Count <= y.Chord.Count && !(x.Chord.Count == y.Chord.Count && string.CompareOrdinal(x.Command, y.Command) > 0)
+                             && x.Chord.SequenceEqual(y.Chord.Take(x.Chord.Count)) && !Exclusive(x.When, y.When)
+                       select $"{string.Join(' ', x.Chord)} → {x.Command} [{x.When}] / {string.Join(' ', y.Chord)} → {y.Command} [{y.When}]").Distinct().ToArray();
+        Assert.True(clashes.Length == 0, $"{preset}: {string.Join("; ", clashes)}");
     }
 }

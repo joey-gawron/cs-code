@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Source me (do not execute) when `dotnet` comes from Nix on a non-NixOS host.
+# Linux only. Source me (do not execute) when `dotnet` comes from Nix on a non-NixOS Linux host. On macOS it does nothing: Avalonia there
+# uses the system's own frameworks, with no X11 or fontconfig libraries to point at (Nix on a Mac included).
 #
 # The Nix dotnet runs against Nix's glibc, so it cannot see the distro's libfontconfig/libX11/... that SkiaSharp and
 # Avalonia's X11 backend dlopen at runtime. This points LD_LIBRARY_PATH at the matching builds already in /nix/store.
@@ -14,6 +15,12 @@ _libs=(
   libXcursor.so.1 libXext.so.6 libXi.so.6 libXrandr.so.2 libXrender.so.1 libXfixes.so.3
   libGL.so.1 libEGL.so.1 libGLdispatch.so.0 libxkbcommon.so.0
 )
+
+if [[ "$(uname -s)" == Darwin ]]; then
+  echo "nix-dev-env: macOS needs no library path, nothing to do" >&2
+  unset _libs
+  return 0 2>/dev/null || exit 0
+fi
 
 if [[ ! -d /nix/store ]]; then
   echo "nix-dev-env: no /nix/store, nothing to do" >&2

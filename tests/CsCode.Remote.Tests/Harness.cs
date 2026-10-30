@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using CsCode.Core;
 using CsCode.Core.Platform;
@@ -175,69 +176,22 @@ public static class TestEnv
             ["CSCODE_HOME"] = null,
         };
 
-    /// <summary>PIDs of live processes whose command line contains <paramref name="marker"/> (Linux /proc).</summary>
-    public static IReadOnlyList<int> ProcessesWithMarker(string marker)
-    {
-        var pids = new List<int>();
-        if (!OperatingSystem.IsLinux()) return pids;
-        foreach (var dir in Directory.EnumerateDirectories("/proc"))
-        {
-            if (!int.TryParse(Path.GetFileName(dir), out var pid)) continue;
-            try
-            {
-                var cmd = File.ReadAllText(Path.Combine(dir, "cmdline"));
-                if (cmd.Contains(marker, StringComparison.Ordinal) && !IsZombie(dir)) pids.Add(pid);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        }
-        return pids;
-    }
+    /// <summary>PIDs of live processes whose command line contains <paramref name="marker"/> (Linux /proc; macOS ps).</summary>
+    public static IReadOnlyList<int> ProcessesWithMarker(string marker) => ProcessTable.WithMarker(marker);
 
-    /// <summary>Every live descendant of <paramref name="pid"/> (Linux /proc parent links), e.g. the language servers a server started.</summary>
-    public static IReadOnlyList<int> Descendants(int pid)
-    {
-        var parents = new Dictionary<int, int>();
-        if (!OperatingSystem.IsLinux()) return [];
-        foreach (var dir in Directory.EnumerateDirectories("/proc"))
-        {
-            if (!int.TryParse(Path.GetFileName(dir), out var p)) continue;
-            try
-            {
-                var stat = File.ReadAllText(Path.Combine(dir, "stat"));
-                var close = stat.LastIndexOf(')');
-                var fields = stat[(close + 2)..].Split(' ');
-                if (fields[0] != "Z") parents[p] = int.Parse(fields[1], System.Globalization.CultureInfo.InvariantCulture);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException) { }
-        }
-        var result = new List<int>();
-        var frontier = new Queue<int>([pid]);
-        while (frontier.TryDequeue(out var cur))
-            foreach (var (child, parent) in parents)
-                if (parent == cur) { result.Add(child); frontier.Enqueue(child); }
-        return result;
-    }
+    /// <summary>Every live descendant of <paramref name="pid"/> (Linux /proc parent links; macOS ps), e.g. the language servers a server started.</summary>
+    public static IReadOnlyList<int> Descendants(int pid) => ProcessTable.Descendants(pid).ToList();
 
-    public static bool IsAlive(int pid)
-    {
-        try
-        {
-            var stat = File.ReadAllText($"/proc/{pid}/stat");
-            return stat[(stat.LastIndexOf(')') + 2)] != 'Z';
-        }
-        catch (IOException) { return false; }
-    }
+    public static bool IsAlive(int pid) => ProcessTable.IsAlive(pid);
 
-    private static bool IsZombie(string procDir)
-    {
-        try
-        {
-            var stat = File.ReadAllText(Path.Combine(procDir, "stat"));
-            var close = stat.LastIndexOf(')');
-            return close > 0 && close + 2 < stat.Length && stat[close + 2] == 'Z';
-        }
-        catch (IOException) { return false; }
-    }
+    /// <summary>The parent of a process (Linux /proc; macOS ps), or 0 when it is gone.</summary>
+    public static int ParentOf(int pid) => ProcessTable.ParentOf(pid);
+
+    /// <summary>A process's command line, arguments separated by spaces (Linux /proc; macOS ps).</summary>
+    public static string Cmdline(int pid) => ProcessTable.CommandLine(pid);
+
+    /// <inheritdoc cref="TempDirectory.PhysicalPath"/>
+    public static string PhysicalPath(string path) => TempDirectory.PhysicalPath(path);
 
     /// <summary>Waits until no process carries the marker (servers exit asynchronously after their stdin closes).</summary>
     public static async Task AssertNoProcessesAsync(string marker, TimeSpan? within = null)
@@ -396,16 +350,21 @@ public sealed class RemoteTestHost : IAsyncDisposable
 
     public static string Text(byte[] bytes) => Encoding.UTF8.GetString(bytes);
 
-    /// <summary>The client's Remote log and the tail of the server's own log (failure messages).</summary>
+    /// <summary>
+    /// The client's Remote log and the tail of each of the server's own logs (failure messages). Tests poll it while the server works, so only the
+    /// <c>*.log</c> files are read (beside them the file logger's <c>.cscode.lock</c> is held exclusively by the server during each batch, and
+    /// reading it throws), and a log that cannot be read at this moment (rotated away under the listing) is named, not thrown.
+    /// </summary>
     public string Dump()
     {
         var sb = new StringBuilder("--- Remote output ---\n").Append(Output.Text(RemoteConnectionManager.OutputChannel));
         var logs = Path.Combine(ServerDataDir, "logs");
         if (Directory.Exists(logs))
-            foreach (var f in Directory.GetFiles(logs))
+            foreach (var f in Directory.GetFiles(logs, "*.log"))
             {
-                var lines = File.ReadAllLines(f);
-                sb.Append("--- ").Append(Path.GetFileName(f)).Append(" ---\n").AppendJoin('\n', lines.TakeLast(60));
+                sb.Append("--- ").Append(Path.GetFileName(f)).Append(" ---\n");
+                try { sb.AppendJoin('\n', File.ReadAllLines(f).TakeLast(60)).Append('\n'); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { sb.Append("(not readable now: ").Append(ex.Message).Append(")\n"); }
             }
         return sb.ToString();
     }

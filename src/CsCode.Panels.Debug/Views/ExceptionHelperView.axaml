@@ -33,7 +33,7 @@
               <StackPanel Margin="{Binding Indent}" Spacing="2">
                 <TextBlock Text="{Binding Heading}" TextWrapping="Wrap" FontWeight="SemiBold" />
                 <TextBlock Text="{Binding StackTrace}" IsVisible="{Binding HasStack}" Classes="dim"
-                           FontFamily="{DynamicResource ui:CodeFontFamily}" FontSize="{DynamicResource ui:FontSizeSmall}" TextWrapping="NoWrap" />
+                           FontFamily="{DynamicResource ui:CodeFontFamily}" FontFeatures="{DynamicResource ui:CodeFontFeatures}" FontSize="{DynamicResource ui:FontSizeSmall}" TextWrapping="NoWrap" />
               </StackPanel>
             </DataTemplate>
           </ItemsControl.ItemTemplate>

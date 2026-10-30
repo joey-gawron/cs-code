@@ -24,7 +24,10 @@ public class StickyScrollTests
 
     private static async Task ScrollToLineAsync(CodeEditorControl view, int line)
     {
-        ((Avalonia.Controls.Primitives.IScrollable)view.TextArea).Offset = new Avalonia.Vector(0, line * view.TextView.DefaultLineHeight); // (TextEditor.ScrollToVerticalOffset ignores absolute positions)
+        // Half a pixel into the line (TextEditor.ScrollToVerticalOffset ignores absolute positions): with a fractional line height (Fira Code at
+        // 14 is 17.2307…) line * DefaultLineHeight, or the line's summed top, can land a rounding step above the line, which then counts the
+        // line before it as the first visible one.
+        ((Avalonia.Controls.Primitives.IScrollable)view.TextArea).Offset = new Avalonia.Vector(0, line * view.TextView.DefaultLineHeight + 0.5);
         ViewHost.Pump();
         await ViewHost.WaitFor(() => view.TextView.VisualLinesValid && view.TextView.GetDocumentLineByVisualTop(view.TextView.ScrollOffset.Y)?.LineNumber - 1 == line, $"scrolled to {line}");
         ViewHost.Pump();

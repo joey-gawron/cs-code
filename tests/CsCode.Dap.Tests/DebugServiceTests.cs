@@ -117,6 +117,9 @@ public class DebugServiceStartTests
         Assert.Null(await h.Service.StartAsync(ServiceHarness.Config(folder: h.Dir.Uri), Ct));
         Assert.Contains(h.Window.Messages, m => m.Message.Contains("program not found: /x"));
         await SessionHarness.Eventually(() => h.Service.Sessions.Count == 0);
+        // The state is recomputed on the debug lane after the start returned (its pending start ends in the start's finally): under load the
+        // test thread got here first and read the "initializing" of the start.
+        await SessionHarness.Eventually(() => h.Service.State == DebugState.Inactive, what: "the debug state after the failed start");
         Assert.Equal(DebugState.Inactive, h.Service.State);
         Assert.Null(h.Service.ActiveSession);
     }

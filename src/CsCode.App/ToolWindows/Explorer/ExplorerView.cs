@@ -10,6 +10,7 @@ using CsCode.App.Menus;
 using CsCode.App.Views;
 using CsCode.Core.Contributions;
 using CsCode.Core.Platform;
+using CsCode.Ui;
 using CsCode.Ui.Controls;
 using CsCode.Ui.Icons;
 using CsCode.Ui.Menus;
@@ -21,7 +22,7 @@ namespace CsCode.App.ToolWindows.Explorer;
 /// The Explorer view: header actions, a filter box and a virtualised list of the model's flat visible rows. The view owns no tree logic;
 /// it forwards clicks, keys and context-menu commands to <see cref="ExplorerViewModel"/>. Disposed (with its view-model) when the tool window hides.
 /// </summary>
-public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget
+public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, IToolWindowFocus
 {
     private readonly ExplorerViewModel _vm;
     private readonly IWindowService _window;
@@ -64,6 +65,7 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget
         _list.DoubleTapped += (_, e) => { if (_list.SelectedItem is ExplorerNode n && !n.IsDirectory) _ = _vm.OpenAsync(n, preview: false); };
         _list.Tapped += OnTapped;
         _list.ContextRequested += OnContextRequested;
+        ToolWindowFocus.KeepOnRows(_list); // every expand and collapse replaces the rows (one Reset), the focused one too
 
         var empty = EmptyState();
         empty.Bind(IsVisibleProperty, new Avalonia.Data.Binding(nameof(ExplorerViewModel.HasFolder)) { Converter = Avalonia.Data.Converters.BoolConverters.Not });
@@ -180,11 +182,22 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget
             case Key.Right when node.IsDirectory: e.Handled = true; if (!node.IsExpanded) await _vm.ExpandAsync(node).ConfigureAwait(true); break;
             case Key.Left: e.Handled = true; if (node.IsDirectory && node.IsExpanded) _vm.Collapse(node); else if (node.Parent is { } p) _vm.Selected = p; break;
             case Key.F2: e.Handled = true; if (!node.IsRoot) _vm.BeginRename(node); break;
-            // Shift+Delete is Cut (below), not Delete.
-            case Key.Delete when e.KeyModifiers == KeyModifiers.None: e.Handled = true; await _vm.DeleteAsync(node).ConfigureAwait(true); break;
+            // Shift+Delete is Cut (below), not Delete. ⌘⌫ deletes too on macOS (Finder's Move to Trash), but not from the rename box.
+            case Key.Delete or Key.Back when CommandKeys.IsDelete(e) && !node.IsEditing: e.Handled = true; await _vm.DeleteAsync(node).ConfigureAwait(true); break;
             default: ClipboardKeys.TryHandle(e, this); break; // Ctrl+C/X/V, Ctrl+Insert, Shift+Insert, Shift+Delete: the files
         }
     }
+
+    /// <summary>
+    /// View &gt; Tool Windows &gt; Explorer, as Solution Explorer: the keyboard on the selected row (else one on screen), where the arrows, Enter and
+    /// F2 work, not on the New File button that leads the tab order. Without a folder there is no row (the shell falls back to tab order). An
+    /// Explorer just reopened has no row at first (<see cref="ContentPending"/>), then its root row: the folder's rows replace it as they load,
+    /// and the keyboard stays on them (<see cref="ToolWindowFocus.KeepOnRows"/>).
+    /// </summary>
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(_list);
+
+    /// <summary>The folder's rows load after the view's first frame (<see cref="ExplorerToolWindow"/>): until then there is no row to focus.</summary>
+    public bool ContentPending => _vm.RootsPending;
 
     // ---- clipboard: like Solution Explorer, Cut/Copy/Paste move and copy the FILES (Copy Path puts the path on the system clipboard)
 
@@ -263,7 +276,7 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget
             [
                 new MenuEntry("Rena_me", () => { _vm.BeginRename(node); return Task.CompletedTask; }) { Gesture = "F2", IsEnabled = !node.IsRoot },
                 new MenuEntry("D_uplicate", () => _vm.DuplicateAsync(node)) { IsEnabled = !node.IsRoot },
-                new MenuEntry("_Delete", () => _vm.DeleteAsync(node)) { Gesture = "Del", Icon = IconKey.Trash, IsEnabled = !node.IsRoot },
+                new MenuEntry("_Delete", () => _vm.DeleteAsync(node)) { Gesture = CommandKeys.DeleteText, Icon = IconKey.Trash, IsEnabled = !node.IsRoot },
             ],
             // Contributed items get the node's URI, as VS Code's explorer/context commands do.
             _menus is null ? null : MenuContributions.Resolve(_menus, ContributedMenus.ExplorerContext, [uri.ToString()]));

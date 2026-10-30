@@ -139,7 +139,7 @@ public class DependencyInjectionTests : IDisposable
     public void Without_Core_the_keybinding_service_still_works_it_just_has_no_contributions()
     {
         _f.Services.AddCsCodePlatform();
-        Assert.Equal("workbench.action.files.save", _f.Get<IKeybindingService>().Resolve(KeyStrokeParser.ParseStroke("ctrl+s")).Binding!.Command);
+        Assert.Equal("workbench.action.files.save", _f.Get<IKeybindingService>().Resolve(KeyStrokeParser.ParseStroke(OperatingSystem.IsMacOS() ? "cmd+s" : "ctrl+s")).Binding!.Command);
     }
 
     // ---- end to end through the container ----------------------------------------------------------------------------------------

@@ -3,6 +3,7 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using CsCode.App.Tests.Hosting;
 using Xunit;
+using CsCode.Ui.Theming;
 
 [assembly: AvaloniaTestApplication(typeof(CsCode.App.Tests.TestAppBuilder))]
 // The responsiveness tests assert wall-clock latency budgets, so no other test may be burning CPU alongside them.
@@ -15,7 +16,8 @@ public static class TestAppBuilder
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<CsCode.App.App>()
             .UseSkia()
-            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false });
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            .WithCodeFonts();
 }
 
 public class HeadlessSmokeTests

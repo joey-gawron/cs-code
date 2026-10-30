@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Xunit;
+using CsCode.Ui.Theming;
 
 [assembly: AvaloniaTestApplication(typeof(CsCode.MemoryTests.TestAppBuilder))]
 // Memory measurements are process-wide (heap, resident set, threads, descriptors) and CSCODE_HOME is an environment variable: one test at a time.
@@ -21,7 +22,8 @@ public static class TestAppBuilder
         // keeps what it does on a desktop: input, layout, the composition commit. ForceRenderTimerTick still drives a frame (commit + wait).
         return AppBuilder.Configure<CsCode.App.App>()
             .UseSkia()
-            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false, ShouldRenderOnUIThread = false });
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false, ShouldRenderOnUIThread = false })
+            .WithCodeFonts();
     }
 }
 

@@ -312,6 +312,48 @@ public class SessionLauncherTests
     }
 
     [Fact]
+    public async Task Quit_without_a_name_after_the_last_active_session_quit_asks_the_shown_window_and_says_which()
+    {
+        // The last active session has quit (its marker stays behind); a hidden session was shown more recently than the window still open.
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        rt.Store.Save(new SessionDocument { Name = "b" });
+        rt.Store.WriteLastActive("b");
+        using var window = new FakeHost(rt.Runtime, "a", ProcessStates.Shown) { LastShown = DateTimeOffset.UtcNow.AddMinutes(-5) };
+        using var hidden = new FakeHost(rt.Runtime, "h", ProcessStates.Hidden) { LastShown = DateTimeOffset.UtcNow.AddMinutes(-1) };
+        var output = new StringWriter();
+
+        var outcome = await Launcher(rt, spawner, output: output).RunAsync(new LaunchRequest(LaunchKind.Quit));
+
+        Assert.Equal(0, outcome.ExitCode);
+        Assert.True(window.QuitRequested);
+        Assert.False(hidden.QuitRequested);
+        Assert.Contains($"cscode: quitting session 'a' (pid {window.Pid})", output.ToString());
+    }
+
+    [Fact]
+    public async Task Quit_without_a_name_never_quits_another_session_in_place_of_a_last_active_one_that_does_not_answer()
+    {
+        // Review: the last active session's process missed the hello (paused in a debugger) and counted as quit, so --quit force-quit the
+        // other window (and dropped it from restore-on-login) without a word.
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        rt.Store.Save(new SessionDocument { Name = "b" });
+        rt.Store.WriteLastActive("b");
+        using var held = FileLock.TryAcquire(rt.Store.LockPathOf("b")); // its (paused) owner holds the lock
+        using var paused = new FakeHost(rt.Runtime, "b", ProcessStates.Shown, pid: Environment.ProcessId) { Wedged = true };
+        using var window = new FakeHost(rt.Runtime, "a", ProcessStates.Shown);
+        var output = new StringWriter();
+        var error = new StringWriter();
+
+        await Launcher(rt, spawner, output: output, error: error).RunAsync(new LaunchRequest(LaunchKind.Quit));
+
+        Assert.False(window.QuitRequested);
+        Assert.Contains("Session 'b' is held by a CsCode process that does not respond", error.ToString());
+        Assert.DoesNotContain("quitting session", output.ToString());
+    }
+
+    [Fact]
     public async Task Cold_start_with_the_default_settings_starts_no_spare()
     {
         using var rt = new TestRuntime();

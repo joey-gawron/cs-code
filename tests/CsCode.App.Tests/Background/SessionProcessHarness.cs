@@ -104,7 +104,8 @@ public sealed class SessionProcessHarness : IDisposable
         psi.ArgumentList.Add("--headless-test");
         foreach (var a in args) psi.ArgumentList.Add(a);
         psi.Environment["CSCODE_HOME"] = Home;
-        psi.Environment["XDG_DATA_HOME"] = Path.Combine(Home, "xdg-data"); // the Platform trash: never the user's real Trash
+        psi.Environment["XDG_DATA_HOME"] = Path.Combine(Home, "xdg-data");
+        psi.Environment["CSCODE_TRASH_DIR"] = Path.Combine(Home, "trash"); // the Platform trash on every OS: never the user's real Trash
         if (_trace) psi.Environment["CSCODE_SESSION_TRACE"] = TracePath;
         else psi.Environment.Remove("CSCODE_SESSION_TRACE");
         psi.Environment.Remove("DISPLAY");
@@ -166,9 +167,10 @@ public sealed class SessionProcessHarness : IDisposable
         catch (IOException) { return "(trace unreadable)"; }
     }
 
-    /// <summary>The PIDs of every process running with this harness's <c>CSCODE_HOME</c> (Linux: from /proc/&lt;pid&gt;/environ).</summary>
+    /// <summary>The PIDs of every process running with this harness's <c>CSCODE_HOME</c> (Linux: from /proc/&lt;pid&gt;/environ; macOS: ps -E).</summary>
     public IReadOnlyList<int> ProcessesOfThisHome()
     {
+        if (OperatingSystem.IsMacOS()) return TestDoubles.ProcessTable.WithEnvironment("CSCODE_HOME", Home);
         var pids = new List<int>();
         if (!OperatingSystem.IsLinux()) return pids;
         var needle = Encoding.UTF8.GetBytes("CSCODE_HOME=" + Home + "\0");

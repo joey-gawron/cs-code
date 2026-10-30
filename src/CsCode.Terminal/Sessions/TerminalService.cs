@@ -125,6 +125,8 @@ public sealed class TerminalService : ITerminalService, IDisposable
     {
         options ??= new TerminalCreateOptions();
         ObjectDisposedException.ThrowIf(_disposed, this);
+        // The shell inherits CsCode's environment: the login shell's on a Mac started from the Dock (lsp-1).
+        await LoginShellEnvironment.WaitAsync(ct).ConfigureAwait(false);
         // Resolution reads settings and the file system and spawning takes a fork/exec: never on the caller's (UI) thread.
         var session = await Task.Run(() => CreateCore(options, parent, beforeStart), ct).ConfigureAwait(false);
         if (options.Show) await ShowAsync(session, options.PreserveFocus, ct).ConfigureAwait(false);
@@ -193,6 +195,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
     internal async ValueTask<bool> RestartAsync(TerminalSession session, TerminalCreateOptions options, Action<TerminalSession>? beforeStart, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        await LoginShellEnvironment.WaitAsync(ct).ConfigureAwait(false); // as CreateSessionAsync
         return await Task.Run(() =>
         {
             PtyStartInfo info;

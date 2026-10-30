@@ -54,6 +54,19 @@ public sealed class SplitTests : IDisposable
         return screen;
     }
 
+    /// <summary><paramref name="path"/> with every symbolic link among its directories resolved (realpath).</summary>
+    private static string PhysicalPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var result = Path.GetPathRoot(full)!;
+        foreach (var part in full[result.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            result = Path.Combine(result, part);
+            if (new DirectoryInfo(result).ResolveLinkTarget(returnFinalTarget: true) is { } target) result = target.FullName;
+        }
+        return result;
+    }
+
     [Fact]
     public async Task A_split_joins_the_parents_group_right_of_it_and_becomes_active()
     {
@@ -87,13 +100,15 @@ public sealed class SplitTests : IDisposable
         await first.SendTextAsync($"cd '{work}' && echo moved-$((40+2))");
         await WaitScreenAsync(first, "moved-42");
         var split = await _service.SplitAsync(first);
+        split.Resize(250, 24); // macOS's temp paths are long: no wrapping inside the path
         await split.SendTextAsync("pwd");
-        await WaitScreenAsync(split, work);
+        await WaitScreenAsync(split, PhysicalPath(work)); // the kernel knows the directory without symbolic links (macOS: /var is one)
 
         _config.Set(TerminalSettingKeys.SplitCwd, "initial");
         var initial = await _service.SplitAsync(first);
+        initial.Resize(250, 24);
         await initial.SendTextAsync("echo \"[$PWD]\"");
-        await WaitScreenAsync(initial, $"[{_sandbox.Home}]");
+        await WaitScreenAsync(initial, $"[{PhysicalPath(_sandbox.Home)}]"); // bash takes $PWD from getcwd
     }
 
     [Fact]

@@ -141,7 +141,7 @@ public class KeybindingServiceTests : IDisposable
     [InlineData("ctrl+s", "workbench.action.files.save", "")]
     [InlineData("ctrl+shift+s", "workbench.action.files.saveAll", "")]
     [InlineData("ctrl+tab", "workbench.action.quickOpenPreviousRecentlyUsedEditorInGroup", "")]
-    [InlineData("ctrl+w", "workbench.action.closeActiveEditor", "")]
+    [InlineData("ctrl+w c", "workbench.action.closeActiveEditor", "")]
     [InlineData("ctrl+f4", "workbench.action.closeActiveEditor", "")]
     [InlineData("ctrl+alt+l", "workbench.view.explorer", "")]
     [InlineData("ctrl+alt+o", "workbench.action.output.toggleOutput", "")]
@@ -162,6 +162,100 @@ public class KeybindingServiceTests : IDisposable
     }
 
     private const string VisualStudioPresetName = "visualstudio";
+
+    // ---- Ctrl+W: Vim's window commands with Vim off ------------------------------------------------------------------------------
+
+    /// <summary>Every Ctrl+W chord: the second key with and without Ctrl, as in Vim (Ctrl+W v == Ctrl+W Ctrl+V).</summary>
+    private static readonly (string Chord, string Command)[] WindowChords =
+    {
+        ("ctrl+w v", "workbench.action.splitEditorRight"), ("ctrl+w ctrl+v", "workbench.action.splitEditorRight"),
+        ("ctrl+w s", "workbench.action.splitEditorDown"), ("ctrl+w shift+s", "workbench.action.splitEditorDown"), ("ctrl+w ctrl+s", "workbench.action.splitEditorDown"),
+        ("ctrl+w h", "workbench.action.focusLeftGroup"), ("ctrl+w ctrl+h", "workbench.action.focusLeftGroup"),
+        ("ctrl+w j", "workbench.action.focusBelowGroup"), ("ctrl+w ctrl+j", "workbench.action.focusBelowGroup"),
+        ("ctrl+w k", "workbench.action.focusAboveGroup"), ("ctrl+w ctrl+k", "workbench.action.focusAboveGroup"),
+        ("ctrl+w l", "workbench.action.focusRightGroup"), ("ctrl+w ctrl+l", "workbench.action.focusRightGroup"),
+        ("ctrl+w w", "workbench.action.focusNextGroup"), ("ctrl+w ctrl+w", "workbench.action.focusNextGroup"),
+        ("ctrl+w shift+w", "workbench.action.focusPreviousGroup"), ("ctrl+w p", "workbench.action.focusPreviousGroup"), ("ctrl+w ctrl+p", "workbench.action.focusPreviousGroup"),
+        ("ctrl+w o", "workbench.action.closeEditorsInOtherGroups"), ("ctrl+w ctrl+o", "workbench.action.closeEditorsInOtherGroups"),
+        ("ctrl+w n", "cscode.shell.newUntitledFileBelow"), ("ctrl+w ctrl+n", "cscode.shell.newUntitledFileBelow"),
+        ("ctrl+w c", "workbench.action.closeActiveEditor"), ("ctrl+w q", "workbench.action.closeActiveEditor"), ("ctrl+w ctrl+q", "workbench.action.closeActiveEditor"),
+    };
+
+    public static TheoryData<string, HostOs> PresetsOnLinuxAndMac =>
+        new() { { "visualstudio", HostOs.Linux }, { "visualstudio", HostOs.MacOs }, { "vscode", HostOs.Linux }, { "vscode", HostOs.MacOs } };
+
+    [Theory]
+    [MemberData(nameof(PresetsOnLinuxAndMac))]
+    public async Task Ctrl_W_chords_run_the_window_commands_in_the_editor_with_Vim_off(string preset, HostOs os)
+    {
+        using var svc = _f.Create(os);
+        await svc.SetPresetAsync(preset, Ct);
+        _f.Context.Set("editorTextFocus", true);
+        foreach (var (chord, command) in WindowChords)
+        {
+            Assert.Equal(KeyResolution.Pending, svc.Resolve(KeyStrokeParser.ParseStroke("ctrl+w")).Kind); // Control on a Mac too, as in Vim
+            Assert.Equal(command, Cmd(svc.Resolve(KeyStrokeParser.ParseChord(chord)[1])));
+            Assert.Empty(svc.PendingChord);
+        }
+        Assert.Equal(os == HostOs.MacOs ? "⌃W ⌃V" : "Ctrl+W, Ctrl+V", svc.GetLabel("workbench.action.splitEditorRight"));
+        Assert.Equal(os == HostOs.MacOs ? "⌃W ⌃H" : "Ctrl+W, Ctrl+H", svc.GetLabel("workbench.action.focusLeftGroup"));
+        Assert.Equal(os == HostOs.MacOs ? "⌘W" : "Ctrl+F4", svc.GetLabel(KnownCommands.CloseActiveEditor));
+        Assert.DoesNotContain(_f.Log.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Theory]
+    [MemberData(nameof(PresetsOnLinuxAndMac))]
+    public async Task Ctrl_W_starts_no_chord_outside_the_editor_or_with_Vim_on(string preset, HostOs os)
+    {
+        using var svc = _f.Create(os);
+        await svc.SetPresetAsync(preset, Ct);
+        // the integrated terminal has the keyboard: Ctrl+W (delete word) is the terminal's
+        _f.Context.Set("terminalFocus", true);
+        _f.Context.Set("editorTextFocus", false);
+        Assert.Equal(KeyResolution.None, svc.Resolve(KeyStrokeParser.ParseStroke("ctrl+w")).Kind);
+        Assert.Empty(svc.PendingChord);
+        // the editor with Vim on: the engine's own Ctrl-W does all of it
+        _f.Context.Set("terminalFocus", false);
+        _f.Context.Set("editorTextFocus", true);
+        _f.Context.Set("vim.active", true);
+        Assert.Equal(KeyResolution.None, svc.Resolve(KeyStrokeParser.ParseStroke("ctrl+w")).Kind);
+        Assert.Empty(svc.PendingChord);
+        _f.Context.Set("vim.active", false);
+        Assert.Equal(KeyResolution.Pending, svc.Resolve(KeyStrokeParser.ParseStroke("ctrl+w")).Kind);
+    }
+
+    [Theory]
+    [MemberData(nameof(PresetNames))]
+    public async Task Off_the_Mac_Ctrl_W_starts_the_chord_and_Ctrl_F4_closes_the_editor_on_the_Mac_Cmd_W_does(string preset)
+    {
+        using var linux = _f.Create(HostOs.Linux);
+        using var mac = _f.Create(HostOs.MacOs);
+        await linux.SetPresetAsync(preset, Ct);
+        await mac.SetPresetAsync(preset, Ct);
+        _f.Context.Set("editorTextFocus", true);
+        Assert.Equal(KnownCommands.CloseActiveEditor, Cmd(Press(linux, "ctrl+f4")));
+        Assert.Equal(KeyResolution.Pending, linux.Resolve(KeyStrokeParser.ParseStroke("ctrl+w")).Kind); // closes nothing at once
+        linux.ResetChord();
+        Assert.Equal(KnownCommands.CloseActiveEditor, Cmd(Press(mac, "cmd+w")));
+        Assert.Equal(KnownCommands.CloseActiveEditor, Cmd(Press(mac, "cmd+f4")));
+        Assert.DoesNotContain(linux.GetBindingsFor(KnownCommands.CloseActiveEditor), b => b.Chord.Count == 1 && b.Chord[0] == new KeyStroke("w", Ctrl: true));
+        // anywhere else (Explorer, a tool window) Ctrl+W is nothing at all off the Mac; Ctrl+F4 and Cmd+W still close
+        _f.Context.Set("editorTextFocus", false);
+        Assert.Equal(KeyResolution.None, linux.Resolve(KeyStrokeParser.ParseStroke("ctrl+w")).Kind);
+        Assert.Equal(KnownCommands.CloseActiveEditor, Cmd(Press(linux, "ctrl+f4")));
+        Assert.Equal(KnownCommands.CloseActiveEditor, Cmd(Press(mac, "cmd+w")));
+    }
+
+    [Fact]
+    public void An_unbound_second_key_after_Ctrl_W_ends_the_chord()
+    {
+        using var svc = _f.Create();
+        _f.Context.Set("editorTextFocus", true);
+        Assert.Equal(KeyResolution.Pending, svc.Resolve(KeyStrokeParser.ParseStroke("ctrl+w")).Kind);
+        Assert.Equal(KeyResolution.None, svc.Resolve(KeyStrokeParser.ParseStroke("x")).Kind);
+        Assert.Empty(svc.PendingChord);
+        Assert.Equal("workbench.action.files.save", Cmd(Press(svc, "ctrl+s")));
+    }
 
     [Fact]
     public void The_default_preset_is_visual_studio_and_the_command_ids_match_KnownCommands()
@@ -395,8 +489,15 @@ public class KeybindingServiceTests : IDisposable
         _f.WriteUser("""[ { "command": "-workbench.action.closeActiveEditor" } ]""");
         using var svc = _f.Create();
         Assert.Empty(svc.GetBindingsFor("workbench.action.closeActiveEditor"));
-        Assert.Equal(KeyResolution.None, Press(svc, "ctrl+w").Kind);
         Assert.Equal(KeyResolution.None, Press(svc, "ctrl+f4").Kind);
+        // Ctrl+W c / q / Ctrl+Q close the editor too (in the editor, Vim off): those go, Ctrl+W's other window chords stay
+        _f.Context.Set("editorTextFocus", true);
+        foreach (var chord in new[] { "ctrl+w c", "ctrl+w q", "ctrl+w ctrl+q" })
+        {
+            Assert.Equal(KeyResolution.None, Press(svc, chord).Kind);
+            Assert.Empty(svc.PendingChord);
+        }
+        Assert.Equal("workbench.action.splitEditorRight", Cmd(Press(svc, "ctrl+w v")));
     }
 
     [Fact]
@@ -471,6 +572,84 @@ public class KeybindingServiceTests : IDisposable
         Assert.Equal("x", Cmd(Press(win, "shift+9")));
         Assert.Equal("x", Cmd(Press(mac, "cmd+9")));
         Assert.Equal(KeyResolution.None, Press(linux, "ctrl+9").Kind);
+    }
+
+    [Fact]
+    public void An_entry_with_only_another_platforms_key_binds_nothing_here_and_is_not_a_keyless_removal()
+    {
+        _f.WriteUser("""
+            [ { "mac": "cmd+9", "command": "x" },
+              { "mac": "cmd+s", "command": "-workbench.action.files.save" } ]
+            """);
+        using var linux = _f.Create(HostOs.Linux);
+        using var mac = _f.Create(HostOs.MacOs);
+        Assert.Empty(linux.LoadWarnings);
+        Assert.Empty(linux.GetBindingsFor("x"));
+        Assert.Equal("workbench.action.files.save", Cmd(Press(linux, "ctrl+s"))); // the mac-only removal leaves Linux's Ctrl+S alone
+        Assert.Equal("x", Cmd(Press(mac, "cmd+9")));
+        Assert.Equal(KeyResolution.None, Press(mac, "cmd+s").Kind);
+    }
+
+    public static TheoryData<string> PresetNames => [.. KeybindingService.Presets];
+
+    /// <summary>
+    /// A Ctrl binding without a "mac" key leaves a Mac user pressing Control where every other Mac app wants Cmd (audit ui-3 / files-11). Keys
+    /// that stay on Control on a Mac (Ctrl+Space, Ctrl+Tab, Ctrl+`, ...) say so with an explicit "mac" key.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(PresetNames))]
+    public void Every_ctrl_binding_in_the_presets_has_a_mac_key(string preset)
+    {
+        using var stream = typeof(KeybindingService).Assembly.GetManifestResourceStream($"CsCode.Platform.Keymaps.{preset}.json")!;
+        var root = (JsoncArray)JsoncParser.Parse(new StreamReader(stream).ReadToEnd())!;
+        var missing = new List<string>();
+        foreach (var o in root.Items.Cast<JsoncObject>())
+        {
+            string? Str(string name) => (o.Members.LastOrDefault(m => m.Name == name)?.Value as JsoncPrimitive)?.StringValue;
+            if (Str("key") is { } key && KeyStrokeParser.ParseChord(key).Any(s => s.Ctrl) && Str("mac") is null)
+                missing.Add($"{key} → {Str("command")}");
+        }
+        Assert.True(missing.Count == 0, $"{preset}: Ctrl bindings without a \"mac\" key: {string.Join("; ", missing)}");
+    }
+
+    [Theory]
+    [MemberData(nameof(PresetNames))]
+    public async Task On_macOS_the_presets_bind_Cmd_open_settings_on_Cmd_comma_and_leave_the_system_keys_alone(string preset)
+    {
+        using var mac = _f.Create(HostOs.MacOs);
+        await mac.SetPresetAsync(preset, Ct);
+        Assert.Equal(KnownCommands.OpenSettings, Cmd(Press(mac, "cmd+,")));
+        Assert.Equal("⌘,", mac.GetLabel(KnownCommands.OpenSettings));
+        Assert.Equal("⌘S", mac.GetLabel(KnownCommands.Save));
+        Assert.Equal("workbench.action.findInFiles", Cmd(Press(mac, "cmd+shift+f")));
+        _f.Context.Set("editorTextFocus", true);
+        Assert.Equal("editor.action.addCommentLine", Cmd(Press(mac, "cmd+k cmd+c")));
+
+        // Cmd+H hides the app, Cmd+M minimizes, Cmd+Q quits, Cmd+` cycles windows, Cmd+Tab switches apps, Cmd+Space is Spotlight, Cmd+? is Help.
+        string[] system = ["cmd+h", "cmd+m", "cmd+q", "cmd+`", "cmd+tab", "cmd+space", "cmd+shift+/"];
+        var reserved = system.Select(KeyStrokeParser.ParseStroke).ToHashSet();
+        Assert.DoesNotContain(mac.All, b => reserved.Contains(b.Chord[0]));
+        // Keys that make another command unreachable (with the editor's contributed keys): EditorClipboardViewTests.On_macOS_no_preset_key_clashes_...
+        Assert.DoesNotContain(_f.Log.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public void Visual_Studios_preset_binds_no_settings_key_on_Linux()
+    {
+        using var linux = _f.Create(HostOs.Linux);
+        Assert.Empty(linux.GetBindingsFor(KnownCommands.OpenSettings));
+        Assert.Equal("workbench.action.showAllSymbols", Cmd(Press(linux, "ctrl+,")));
+        Assert.DoesNotContain(_f.Log.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task The_VS_Code_preset_binds_no_toggle_fold_on_Linux()
+    {
+        using var linux = _f.Create(HostOs.Linux);
+        await linux.SetPresetAsync(KeybindingService.VsCodePreset, Ct);
+        _f.Context.Set("editorTextFocus", true);
+        Assert.Empty(linux.GetBindingsFor("editor.toggleFold"));
+        Assert.Equal(KeyResolution.None, Press(linux, "ctrl+k ctrl+l").Kind);
     }
 
     [Fact]

@@ -7,6 +7,7 @@ using Avalonia.VisualTree;
 using Avalonia.Threading;
 using CsCode.Core.Lifecycle;
 using CsCode.Panels.Search.ViewModels;
+using CsCode.Ui.Menus;
 
 namespace CsCode.Panels.Search.Views;
 
@@ -103,18 +104,30 @@ public sealed partial class FindInFilesView : UserControl, IDisposable, CsCode.U
         if (Vm.ReplaceAllCommand.CanExecute(null)) Vm.ReplaceAllCommand.Execute(null);
     }
 
-    /// <summary>Shortcuts that work anywhere in the panel: F4 / Shift+F4, Alt+C/W/R/P toggles, Ctrl+Alt+Enter.</summary>
+    /// <summary>
+    /// Shortcuts that work anywhere in the panel: F4 / Shift+F4, Alt+C/W/R/P toggles, Ctrl+Alt+Enter. On macOS the toggles are ⌥⌘C/W/R/P (Option
+    /// alone types ç, ∑, ®, π into the boxes) and Replace All is ⌥⌘Enter, as in VS Code.
+    /// </summary>
     private void OnViewKeyDown(object? sender, KeyEventArgs e)
     {
         var m = e.KeyModifiers;
+        var toggle = CommandKeys.AltToggle;
         if (e.Key == Key.F4 && m == KeyModifiers.None) { _ = Vm.NextResultAsync(); e.Handled = true; }
         else if (e.Key == Key.F4 && m == KeyModifiers.Shift) { _ = Vm.PreviousResultAsync(); e.Handled = true; }
-        else if (m == KeyModifiers.Alt && e.Key == Key.C) { Vm.MatchCase = !Vm.MatchCase; e.Handled = true; }
-        else if (m == KeyModifiers.Alt && e.Key == Key.W) { Vm.WholeWord = !Vm.WholeWord; e.Handled = true; }
-        else if (m == KeyModifiers.Alt && e.Key == Key.R) { Vm.IsRegex = !Vm.IsRegex; e.Handled = true; }
-        else if (m == KeyModifiers.Alt && e.Key == Key.P) { Vm.PreserveCase = !Vm.PreserveCase; e.Handled = true; }
-        else if (m == (KeyModifiers.Control | KeyModifiers.Alt) && e.Key == Key.Enter) { ReplaceAll(); e.Handled = true; }
+        else if (m == toggle && e.Key == Key.C) { Vm.MatchCase = !Vm.MatchCase; e.Handled = true; }
+        else if (m == toggle && e.Key == Key.W) { Vm.WholeWord = !Vm.WholeWord; e.Handled = true; }
+        else if (m == toggle && e.Key == Key.R) { Vm.IsRegex = !Vm.IsRegex; e.Handled = true; }
+        else if (m == toggle && e.Key == Key.P) { Vm.PreserveCase = !Vm.PreserveCase; e.Handled = true; }
+        else if (m == (CommandKeys.Command | KeyModifiers.Alt) && e.Key == Key.Enter) { ReplaceAll(); e.Handled = true; }
     }
+
+    // The tooltips of the toggles, Replace All and Dismiss, with this platform's keys.
+    public static string MatchCaseTip => $"Match Case ({CommandKeys.AltToggleText("C")})";
+    public static string WholeWordTip => $"Match Whole Word ({CommandKeys.AltToggleText("W")})";
+    public static string RegexTip => $"Use Regular Expression ({CommandKeys.AltToggleText("R")})";
+    public static string PreserveCaseTip => $"Preserve Case ({CommandKeys.AltToggleText("P")})";
+    public static string ReplaceAllTip => CommandKeys.IsMac ? "Replace All (⌥⌘↩)" : "Replace All (Ctrl+Alt+Enter)";
+    public static string DismissTip => $"Dismiss ({CommandKeys.DeleteText})";
 
     private void OnResultsKeyDown(object? sender, KeyEventArgs e)
     {
@@ -126,6 +139,7 @@ public sealed partial class FindInFilesView : UserControl, IDisposable, CsCode.U
                 e.Handled = true;
                 break;
             case Key.Delete when row is not null:
+            case Key.Back when row is not null && CommandKeys.IsMac && (e.KeyModifiers == KeyModifiers.None || CommandKeys.IsMacDelete(e)): // the Mac 'delete' key, ⌘⌫ too
                 Vm.Dismiss(row);
                 e.Handled = true;
                 break;
@@ -197,7 +211,7 @@ public sealed partial class FindInFilesView : UserControl, IDisposable, CsCode.U
         }
         items.Add(Item("Open", () => _ = vm.OpenAsync(row)));
         items.Add(new Separator());
-        items.Add(Item("Copy", () => _ = CopyAsync(), gesture: "Ctrl+C"));
+        items.Add(Item("Copy", () => _ = CopyAsync(), gesture: CommandKeys.Gesture("C")));
         items.Add(Item("Copy Path", () => _ = vm.CopyPathAsync(row)));
         items.Add(Item("Copy All", () => _ = CopyAllAsync(), enabled: vm.Rows.Count > 0));
         if (vm.HasCommand("revealInExplorer")) items.Add(Item("Reveal in Explorer", () => _ = vm.RevealInExplorerAsync(row)));
@@ -209,7 +223,7 @@ public sealed partial class FindInFilesView : UserControl, IDisposable, CsCode.U
         }
         if (vm.ReplaceVisible)
             items.Add(Item("Replace", () => _ = row is FileRow rf ? vm.ReplaceFileAsync(rf) : vm.ReplaceMatchAsync((MatchRow)row)));
-        items.Add(Item("Dismiss", () => vm.Dismiss(row)));
+        items.Add(Item("Dismiss", () => vm.Dismiss(row), gesture: CommandKeys.IsMac ? CommandKeys.DeleteGesture : null)); // ⌘⌫: Fn+Delete is not obvious on a Mac
         var menu = new ContextMenu { ItemsSource = items };
         menu.Open(target);
         e.Handled = true;

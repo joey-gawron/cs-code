@@ -36,10 +36,10 @@ public class MacroSaveDirtyTests
         Assert.True(app.Tab.IsDirty);
 
         await app.FocusAsync();
-        app.Press(Key.Z, MacroApp.Ctrl);              // one Undo reverses the playback
+        app.Press(Key.Z, MacroApp.Command);            // one Undo reverses the playback
         Assert.Equal("x", app.Text);
         Assert.True(doc.IsDirty);                     // the file holds "ax"
-        app.Press(Key.Y, MacroApp.Ctrl);
+        app.Press(Key.Y, MacroApp.Command);
         Assert.Equal("abx", app.Text);
         Assert.True(doc.IsDirty);
 
@@ -68,10 +68,10 @@ public class MacroSaveDirtyTests
         app.Type("d");                                // the caret the playback left, the version of the save
         Assert.Equal("cdx", app.Text);
         Assert.True(doc.IsDirty);
-        app.Press(Key.Z, MacroApp.Ctrl);              // the typed run is a step of its own: back to the saved text
+        app.Press(Key.Z, MacroApp.Command);            // the typed run is a step of its own: back to the saved text
         Assert.Equal("cx", app.Text);
         Assert.False(doc.IsDirty);
-        app.Press(Key.Z, MacroApp.Ctrl);              // and the playback
+        app.Press(Key.Z, MacroApp.Command);            // and the playback
         Assert.Equal("x", app.Text);
         Assert.True(doc.IsDirty);
     }

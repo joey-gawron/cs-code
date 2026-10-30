@@ -85,13 +85,18 @@ public sealed class IpcServer : IDisposable
         _acceptThread.Start();
     }
 
+    /// <remarks>
+    /// macOS waits in a cancellable asynchronous accept: there, closing a listening socket does not end an <c>accept</c> blocked on it in another
+    /// thread, and the runtime's close waits for that call, so Dispose hung (and with it every quit of a session process). A connection of our
+    /// own cannot end it reliably either: the endpoint's directory may be gone by then.
+    /// </remarks>
     private void AcceptSockets()
     {
         while (!_stop.IsCancellationRequested)
         {
             Socket client;
-            try { client = _listener!.Accept(); }
-            catch (Exception ex) when (ex is SocketException or ObjectDisposedException) { return; } // disposed
+            try { client = OperatingSystem.IsMacOS() ? _listener!.AcceptAsync(_stop.Token).AsTask().GetAwaiter().GetResult() : _listener!.Accept(); }
+            catch (Exception ex) when (ex is SocketException or ObjectDisposedException or OperationCanceledException) { return; } // disposed
             if (!_slots.Wait(0)) { client.Dispose(); continue; }
             _ = Task.Run(() => ServeSocketAsync(client));
         }

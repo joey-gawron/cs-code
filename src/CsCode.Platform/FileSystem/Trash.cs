@@ -12,9 +12,17 @@ public interface ITrashService
 
 public static class PlatformTrash
 {
+    /// <summary>
+    /// An absolute directory that replaces the OS trash on EVERY system with a freedesktop-style trash there (pkg-15). Test harnesses set it so a
+    /// delete never reaches the user's real Trash: the macOS trash ignores <c>XDG_DATA_HOME</c>, and Windows has nothing like it.
+    /// </summary>
+    public const string DirectoryEnvironmentVariable = "CSCODE_TRASH_DIR";
+
     public static ITrashService Create(Func<string, string?>? getEnv = null)
     {
         getEnv ??= Environment.GetEnvironmentVariable;
+        var overridden = getEnv(DirectoryEnvironmentVariable);
+        if (!string.IsNullOrEmpty(overridden) && Path.IsPathRooted(overridden)) return new FreedesktopTrash(overridden);
         if (OperatingSystem.IsWindows()) return new WindowsRecycleBin();
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (OperatingSystem.IsMacOS()) return new MacTrash(Path.Combine(home, ".Trash"));
@@ -124,28 +132,96 @@ public sealed class FreedesktopTrash(string trashRoot, TimeProvider? clock = nul
         "/" + string.Join('/', path.TrimStart('/').Split('/').Select(Uri.EscapeDataString));
 }
 
-/// <summary>macOS: move into <c>~/.Trash</c> (Finder's "Put Back" metadata is not written).</summary>
-public sealed class MacTrash(string trashDir) : ITrashService
+/// <summary>
+/// macOS: Finder's Trash through <c>-[NSFileManager trashItemAtURL:resultingItemURL:error:]</c> (files-2): an item on any volume goes to that
+/// volume's trash, Finder can "Put Back" it, and nothing is ever copied. Only when Foundation cannot do it is an item on the same volume as
+/// <paramref name="trashDir"/> (<c>~/.Trash</c>) renamed into it, without "Put Back"; anything else fails and the caller decides what to do.
+/// <paramref name="useFoundation"/> false is the fallback alone (tests: Foundation always uses the user's real Trash).
+/// </summary>
+public sealed class MacTrash(string trashDir, bool useFoundation = true) : ITrashService
 {
     public void MoveToTrash(string path, CancellationToken ct = default)
     {
         path = Path.GetFullPath(path).TrimEnd('/');
         var isDir = Directory.Exists(path) && new FileInfo(path).LinkTarget is null;
         if (!isDir && !File.Exists(path) && new FileInfo(path).LinkTarget is null) throw new FileNotFoundException("Nothing to trash", path);
-        Directory.CreateDirectory(trashDir);
+        ct.ThrowIfCancellationRequested();
 
-        var name = Path.GetFileName(path);
-        var dot = isDir ? -1 : name.LastIndexOf('.');
-        var (stem, ext) = dot > 0 ? (name[..dot], name[dot..]) : (name, "");
-        var destination = Path.Combine(trashDir, name);
-        for (var n = 2; File.Exists(destination) || Directory.Exists(destination); n++) destination = Path.Combine(trashDir, $"{stem} {n}{ext}"); // Finder style: "name 2.ext"
+        string? foundationError = null;
+        if (useFoundation && OperatingSystem.IsMacOS())
+        {
+            try
+            {
+                if (Foundation.TrashItem(path, out foundationError)) return;
+            }
+            catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { foundationError = ex.Message; }
+        }
+
+        // The fallback is a rename only: Directory.Move cannot cross volumes and File.Move would copy, which is not what "Move to Trash" promises.
         try
         {
+            Directory.CreateDirectory(trashDir);
+            if (FileSystemNative.TryIdentity(Path.GetDirectoryName(path) ?? path) is not { } from || FileSystemNative.TryIdentity(trashDir) is not { } to
+                || from.Device != to.Device)
+                throw new IOException($"it is not on the same volume as '{trashDir}'");
+
+            var name = Path.GetFileName(path);
+            var dot = isDir ? -1 : name.LastIndexOf('.');
+            var (stem, ext) = dot > 0 ? (name[..dot], name[dot..]) : (name, "");
+            var destination = Path.Combine(trashDir, name);
+            for (var n = 2; File.Exists(destination) || Directory.Exists(destination) || new FileInfo(destination).LinkTarget is not null; n++)
+                destination = Path.Combine(trashDir, $"{stem} {n}{ext}"); // Finder style: "name 2.ext"
             if (isDir) Directory.Move(path, destination); else File.Move(path, destination);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            throw new IOException($"Could not move '{path}' to the trash: {ex.Message}", ex);
+            var why = foundationError is null ? "" : $" (Finder's Trash: {foundationError})";
+            throw new IOException($"Could not move '{path}' to the trash: {ex.Message}{why}", ex);
+        }
+    }
+
+    /// <summary>The Objective-C runtime calls for one <c>trashItemAtURL:</c>, inside an autorelease pool (the IO lane's threads have none).</summary>
+    private static class Foundation
+    {
+        private const string ObjC = "/usr/lib/libobjc.A.dylib";
+        private static readonly Lazy<IntPtr> Framework = new(() => NativeLibrary.Load("/System/Library/Frameworks/Foundation.framework/Foundation"));
+
+        [DllImport(ObjC, EntryPoint = "objc_getClass")] private static extern IntPtr GetClass([MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+        [DllImport(ObjC, EntryPoint = "sel_registerName")] private static extern IntPtr Selector([MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+        [DllImport(ObjC, EntryPoint = "objc_autoreleasePoolPush")] private static extern IntPtr PoolPush();
+        [DllImport(ObjC, EntryPoint = "objc_autoreleasePoolPop")] private static extern void PoolPop(IntPtr pool);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector, IntPtr arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.LPUTF8Str)] string arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern nint SendForInteger(IntPtr receiver, IntPtr selector);
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+        [return: MarshalAs(UnmanagedType.U1)]
+        private static extern bool SendTrash(IntPtr receiver, IntPtr selector, IntPtr url, IntPtr resultingUrl, out IntPtr error);
+
+        /// <summary>True when the item is in the trash; false with Foundation's reason when it is not (nothing was moved).</summary>
+        public static bool TrashItem(string path, out string? error)
+        {
+            _ = Framework.Value; // NSFileManager and NSURL live in Foundation, which a .NET process does not load by itself
+            error = null;
+            var pool = PoolPush();
+            try
+            {
+                var nsPath = Send(GetClass("NSString"), Selector("stringWithUTF8String:"), path);
+                var url = nsPath == IntPtr.Zero ? IntPtr.Zero : Send(GetClass("NSURL"), Selector("fileURLWithPath:"), nsPath);
+                var manager = Send(GetClass("NSFileManager"), Selector("defaultManager"));
+                if (url == IntPtr.Zero || manager == IntPtr.Zero) { error = "Foundation is not available"; return false; }
+                if (SendTrash(manager, Selector("trashItemAtURL:resultingItemURL:error:"), url, IntPtr.Zero, out var nsError)) return true;
+                if (nsError == IntPtr.Zero) { error = "unknown error"; return false; }
+                var description = Send(nsError, Selector("localizedDescription"));
+                var text = description == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(Send(description, Selector("UTF8String")));
+                error = $"{text ?? "unknown error"} (NSError {SendForInteger(nsError, Selector("code"))})";
+                return false;
+            }
+            finally
+            {
+                PoolPop(pool);
+            }
         }
     }
 }

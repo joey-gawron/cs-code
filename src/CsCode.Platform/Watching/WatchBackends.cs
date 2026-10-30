@@ -69,38 +69,64 @@ internal sealed class FswBackend : IWatchBackend
     public bool LeaksWhenItsRootIsDeleted => OperatingSystem.IsLinux();
 
     private readonly FileSystemWatcher _fsw;
+    private readonly MacRootWatch? _mac;
 
     public FswBackend(string root, bool recursive, RawSink sink, Action<Exception> onFatal)
     {
-        _fsw = new FileSystemWatcher(root)
+        // macOS: FSEvents' flags are sticky, so what FileSystemWatcher raises is classified again from the disk (MacWatchBackends.cs).
+        if (OperatingSystem.IsMacOS())
         {
-            IncludeSubdirectories = recursive,
-            NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
-            InternalBufferSize = 64 * 1024,
-        };
-        _fsw.Created += (_, e) => sink(RawKind.Created, e.FullPath, null);
-        _fsw.Changed += (_, e) => sink(RawKind.Changed, e.FullPath, null);
-        _fsw.Deleted += (_, e) => sink(RawKind.Deleted, e.FullPath, null);
-        _fsw.Renamed += (_, e) => sink(RawKind.Renamed, e.FullPath, e.OldFullPath);
-        _fsw.Error += (_, e) =>
-        {
-            var ex = e.GetException();
-            // Lost events (queue overflow): we cannot know what changed, so announce the root as changed and let consumers rescan.
-            if (ex is InternalBufferOverflowException) sink(RawKind.Changed, root, null);
-            else onFatal(ex);
-        };
+            _mac = new MacRootWatch(root, sink);
+            sink = _mac.Handle;
+        }
         try
         {
+            // (The root watch is armed already: whatever fails from here on, including the constructor on a root gone or replaced by a file
+            // meanwhile, must release it — its vnode watch would stay in the process-wide kqueue for good.)
+            _fsw = new FileSystemWatcher(root)
+            {
+                IncludeSubdirectories = recursive,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                InternalBufferSize = 64 * 1024,
+            };
+            _fsw.Created += (_, e) => sink(RawKind.Created, e.FullPath, null);
+            _fsw.Changed += (_, e) => sink(RawKind.Changed, e.FullPath, null);
+            _fsw.Deleted += (_, e) => sink(RawKind.Deleted, e.FullPath, null);
+            _fsw.Renamed += (_, e) => sink(RawKind.Renamed, e.FullPath, e.OldFullPath);
+            _fsw.Error += (_, e) => OnError(e.GetException(), root, sink, onFatal, _mac);
             _fsw.EnableRaisingEvents = true; // on Linux this walks the tree and adds inotify watches: may throw when the limit is hit
         }
         catch
         {
-            _fsw.Dispose();
+            _fsw?.Dispose();
+            _mac?.Dispose();
             throw;
         }
     }
 
-    public void Dispose() => _fsw.Dispose();
+    /// <summary>The stream itself (tests raise its errors).</summary>
+    internal FileSystemWatcher Watcher => _fsw;
+
+    private static void OnError(Exception ex, string root, RawSink sink, Action<Exception> onFatal, MacRootWatch? mac)
+    {
+        // Lost events (queue overflow): we cannot know what changed, so announce the root as changed and let consumers rescan.
+        if (ex is InternalBufferOverflowException) { mac?.Reconciler.Overflowed(); sink(RawKind.Changed, root, null); }
+        // macOS (files-4): FileSystemWatcher raises an IOException for every FSEvents event that asks for a rescan (events dropped by the kernel
+        // or fseventsd, MustScanSubDirs, a volume mounted or unmounted below the root). The stream is still alive: rescan, do not give up on it.
+        // A root that is gone is the root watch's business (FSEvents follows the path, so the stream reports a directory made there again).
+        else if (mac is not null && ex is IOException)
+        {
+            if (Directory.Exists(root)) { mac.Reconciler.Overflowed(); sink(RawKind.Changed, root, null); }
+            else mac.OnRootLost();
+        }
+        else onFatal(ex);
+    }
+
+    public void Dispose()
+    {
+        _fsw.Dispose();
+        _mac?.Dispose();
+    }
 }
 
 /// <summary>

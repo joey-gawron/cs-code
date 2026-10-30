@@ -14,7 +14,7 @@ using Microsoft.Extensions.Logging;
 namespace CsCode.Editor.Features;
 
 /// <summary>
-/// Go to definition (F12; Ctrl+Click with the symbol underlined while Ctrl is held), find references (Shift+F12) and rename (F2).
+/// Go to definition (F12; Ctrl+Click, ⌘-click on macOS, with the symbol underlined while the modifier is held), find references (Shift+F12) and rename (F2).
 /// Every request goes to the providers off the UI thread with a deadline; a result for text that has changed since is never applied.
 /// Several locations are offered through <see cref="IWindowService.ShowQuickPickAsync"/>; for references the command
 /// <c>cscode.references.show</c> (args: <c>IReadOnlyList&lt;Location&gt;</c>, title) is the extension point for the shell's Find Results panel —
@@ -224,7 +224,7 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
         if (_disposed) return;
-        if ((e.KeyModifiers & KeyModifiers.Control) == 0)
+        if (!EditorKeys.HasCommand(e.KeyModifiers))
         {
             ClearLink();
             return;
@@ -277,7 +277,7 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
 
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (_disposed || (e.KeyModifiers & KeyModifiers.Control) == 0) return;
+        if (_disposed || !EditorKeys.HasCommand(e.KeyModifiers)) return;
         if (!e.GetCurrentPoint(_v.Editor).Properties.IsLeftButtonPressed) return;
         if (_linkUrl is { } url)
         {
@@ -294,7 +294,7 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
 
     private void OnKeyUp(object? sender, KeyEventArgs e)
     {
-        if (e.Key is Key.LeftCtrl or Key.RightCtrl) ClearLink();
+        if (EditorKeys.IsCommandKey(e.Key)) ClearLink();
     }
 
     private void OnLostFocus(object? sender, RoutedEventArgs e) => ClearLink();

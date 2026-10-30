@@ -5,17 +5,25 @@ using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using CsCode.Panels.Debug.Infrastructure;
 using CsCode.Panels.Debug.Variables;
+using CsCode.Ui;
 using CsCode.Ui.Menus;
 
 namespace CsCode.Panels.Debug.Views;
 
 /// <summary>
 /// The Locals / Autos / Watch grid: header, virtualised rows, inline editors, context menu and the keyboard model
-/// (↑↓ move, → expand / into the children, ← collapse / to the parent, Enter edit or activate, F2 rename or edit, Delete remove,
-/// Ctrl+C / Ctrl+Insert copy the value, Alt+↑/↓ move a watch). Edit > Copy copies the selected row's value too (<see cref="IClipboardTarget"/>).
+/// (↑↓ move, → expand / into the children, ← collapse / to the parent, Enter edit or activate, F2 rename or edit, Delete (⌘⌫ on macOS) remove,
+/// Ctrl+C (⌘C) / Ctrl+Insert copy the value, Alt+↑/↓ move a watch). Edit > Copy copies the selected row's value too (<see cref="IClipboardTarget"/>).
 /// </summary>
-public sealed partial class VariablesTreeView : UserControl, IClipboardTarget
+public sealed partial class VariablesTreeView : UserControl, IClipboardTarget, IToolWindowFocus
 {
+    /// <summary>
+    /// View &gt; Tool Windows &gt; Locals, Autos or Watch: the keyboard on a row (the selected one, else one on screen), where the arrows walk and
+    /// expand the tree. Not on the Name column's splitter, which leads the tab order whether or not there are rows and which the arrows would
+    /// drag; with no row (no debug session) the shell focuses the window itself.
+    /// </summary>
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(RowsList);
+
     public bool CanCopy => Tree?.SelectedRow is { IsDataRow: true };
 
     public Task CopyAsync() => Tree is { SelectedRow: { IsDataRow: true } row } tree ? tree.CopyValueAsync(row) : Task.CompletedTask;
@@ -125,6 +133,7 @@ public sealed partial class VariablesTreeView : UserControl, IClipboardTarget
                     BeginEdit(tree, row);
                     break;
                 case Key.Delete:
+                case Key.Back when CommandKeys.IsMacDelete(e):
                     e.Handled = true;
                     tree.DeleteRequested?.Invoke(row);
                     break;
@@ -215,7 +224,7 @@ public sealed partial class VariablesTreeView : UserControl, IClipboardTarget
             if (row.HasChildren) AddSync(row.IsExpanded ? "Collapse" : "Expand", () => _ = tree.ToggleAsync(row), gesture: row.IsExpanded ? "Left" : "Right");
             if (row.Kind == VariableRowKind.Variable) AddSync("Edit Value", () => tree.BeginEditValue(row), tree.CanEditValue(row), "Enter");
             if (row.Kind == VariableRowKind.Watch) AddSync("Edit Expression", () => tree.BeginEditExpression(row), gesture: "F2");
-            Add("Copy Value", () => tree.CopyValueAsync(row), gesture: "Ctrl+C");
+            Add("Copy Value", () => tree.CopyValueAsync(row), gesture: CommandKeys.Gesture("C"));
             Add("Copy Name", () => tree.CopyNameAsync(row));
             Add("Copy Expression", () => tree.CopyExpressionAsync(row));
             if (row.Kind == VariableRowKind.Variable) AddSync("Add Watch", () => tree.AddToWatch(row));
@@ -228,7 +237,7 @@ public sealed partial class VariablesTreeView : UserControl, IClipboardTarget
             if (row.Kind == VariableRowKind.Watch)
             {
                 menu.Items.Add(new Separator());
-                AddSync("Delete Watch", () => tree.DeleteRequested?.Invoke(row), gesture: "Delete");
+                AddSync("Delete Watch", () => tree.DeleteRequested?.Invoke(row), gesture: CommandKeys.DeleteGesture);
                 AddSync("Move Up", () => tree.MoveRequested?.Invoke(row, -1), gesture: "Alt+Up");
                 AddSync("Move Down", () => tree.MoveRequested?.Invoke(row, +1), gesture: "Alt+Down");
             }
