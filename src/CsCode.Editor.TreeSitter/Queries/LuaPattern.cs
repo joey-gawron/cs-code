@@ -18,7 +18,16 @@ public static class LuaPattern
     public static Regex? Compile(string lua) =>
         TryTranslate(lua, out var pattern) ? new Regex(pattern, RegexOptions.CultureInvariant | RegexOptions.Singleline, MatchTimeout) : null;
 
-    public static bool TryTranslate(string lua, out string regex)
+    /// <summary>
+    /// Like <see cref="Compile"/>, but Lua's captures stay numbered groups (<c>%1</c> in a <c>#gsub!</c> replacement is group 1); null when the
+    /// pattern uses an untranslatable item or a position capture <c>()</c>.
+    /// </summary>
+    public static Regex? CompileWithCaptures(string lua) =>
+        TryTranslate(lua, out var pattern, capturing: true) ? new Regex(pattern, RegexOptions.CultureInvariant | RegexOptions.Singleline, MatchTimeout) : null;
+
+    public static bool TryTranslate(string lua, out string regex) => TryTranslate(lua, out regex, capturing: false);
+
+    private static bool TryTranslate(string lua, out string regex, bool capturing)
     {
         var sb = new StringBuilder(lua.Length + 8);
         regex = string.Empty;
@@ -59,7 +68,9 @@ public static class LuaPattern
             else if (c == '(' || c == ')')
             {
                 // Lua captures group like regex groups; an empty capture "()" (a position capture) has no regex equivalent that matters for matching
-                sb.Append(c == '(' ? "(?:" : ")");
+                // (it would for a replacement: refused there)
+                if (capturing && c == '(' && i + 1 < lua.Length && lua[i + 1] == ')') return false;
+                sb.Append(c == '(' ? capturing ? "(" : "(?:" : ")");
                 i++;
                 continue;
             }

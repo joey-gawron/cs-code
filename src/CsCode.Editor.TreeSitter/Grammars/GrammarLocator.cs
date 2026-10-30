@@ -64,8 +64,91 @@ public sealed class GrammarLocator
     /// <summary>True when the Nix store is searched after the roots (development only).</summary>
     public bool UsesNixStore => _useNixStore;
 
+    /// <summary>
+    /// True when <paramref name="name"/> has the shape of a grammar or query name (<c>c_sharp</c>, <c>markdown_inline</c>, <c>html_tags</c>):
+    /// ASCII lower-case letters, digits and underscores, at most 64 of them. Never a path: no separator, no dot, nothing rooted, so a name
+    /// built into <c>Path.Combine(root, name, …)</c> stays under that root. Names come from document text too (a Markdown fence, an rst
+    /// <c>code-block</c> argument, an HTML <c>&lt;script type&gt;</c>), so every lookup checks this first.
+    /// </summary>
+    public static bool IsValidName(string name)
+    {
+        if (name.Length is 0 or > 64) return false;
+        foreach (var c in name)
+            if (c is not ((>= 'a' and <= 'z') or (>= '0' and <= '9') or '_')) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// True when <paramref name="name"/> is a valid name (<see cref="IsValidName"/>) of a grammar this locator can find: one listed under a
+    /// search root (a directory or a library named after it) or, when the Nix store is searched, a grammar package there. The listing is
+    /// taken once per locator (on first use, on the calling lane), so a name the document invents never makes it probe the file system or
+    /// grow a cache: what a document can ask for is bounded by what is installed.
+    /// </summary>
+    public bool IsKnown(string name)
+    {
+        if (!IsValidName(name)) return false;
+        lock (_gate)
+        {
+            _known ??= ListKnown();
+            return _known.Contains(name);
+        }
+    }
+
+    private HashSet<string>? _known;
+
+    private HashSet<string> ListKnown()
+    {
+        var known = new HashSet<string>(StringComparer.Ordinal);
+        if (_bundle is not null)
+            foreach (var g in _bundle.Grammars)
+                if (IsValidName(g.Name)) known.Add(g.Name);
+        foreach (var root in _roots)
+        {
+            try
+            {
+                if (!Directory.Exists(root)) continue;
+                foreach (var entry in Directory.EnumerateFileSystemEntries(root))
+                {
+                    var file = Path.GetFileName(entry);
+                    if (file.EndsWith(LibraryExtension, StringComparison.Ordinal))
+                    {
+                        file = file[..^LibraryExtension.Length];
+                        if (file.StartsWith("libtree-sitter-", StringComparison.Ordinal)) file = file["libtree-sitter-".Length..];
+                    }
+                    if (IsValidName(file)) known.Add(file);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // an unreadable root contributes nothing
+            }
+        }
+        if (_useNixStore)
+        {
+            foreach (var dir in NixStore.Entries())
+            {
+                // <hash>-tree-sitter-<name>-<version>, the name possibly dashed ("c-sharp"); the version starts with a digit
+                var file = Path.GetFileName(dir);
+                var dash = file.IndexOf('-', StringComparison.Ordinal);
+                if (dash < 0 || file.EndsWith(".drv", StringComparison.Ordinal)) continue;
+                var rest = file.AsSpan(dash + 1);
+                if (!rest.StartsWith("tree-sitter-", StringComparison.Ordinal)) continue;
+                rest = rest["tree-sitter-".Length..];
+                for (var i = 1; i + 1 < rest.Length; i++)
+                {
+                    if (rest[i] != '-' || !char.IsAsciiDigit(rest[i + 1])) continue;
+                    var name = rest[..i].ToString().Replace('-', '_');
+                    if (IsValidName(name)) known.Add(name);
+                    break;
+                }
+            }
+        }
+        return known;
+    }
+
     public GrammarFiles? Find(string grammarName)
     {
+        if (!IsValidName(grammarName)) return null; // never a path: nothing is probed or cached for it
         lock (_gate)
         {
             if (_grammars.TryGetValue(grammarName, out var cached)) return cached;
@@ -78,6 +161,7 @@ public sealed class GrammarLocator
     /// <summary>Query directories for <paramref name="name"/> (which need not be a grammar: nvim-treesitter has query-only names like <c>ecma</c>, <c>jsx</c>, <c>html_tags</c>).</summary>
     public IReadOnlyList<string> QueryDirectories(string name)
     {
+        if (!IsValidName(name)) return [];
         lock (_gate)
         {
             if (_queryDirs.TryGetValue(name, out var cached)) return cached;

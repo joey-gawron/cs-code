@@ -158,10 +158,23 @@ public sealed class GrammarRegistry : IDisposable
             error = known.Error;
             return known.Bundle;
         }
+        // Validated against the installed grammars BEFORE anything else: the name may come from document text (an injection), and an
+        // unknown name must neither reach a path or the native loader nor be remembered (the cache stays bounded by what is installed).
+        if (!_locator.IsKnown(grammar))
+        {
+            error = GrammarLocator.IsValidName(grammar) ? $"no compiled tree-sitter grammar '{grammar}' was found" : "not a grammar name";
+            return null;
+        }
         var bundle = LoadUncached(grammar, out error);
         _byName[grammar] = (bundle, error);
         return bundle;
     }
+
+    /// <summary>True when <paramref name="grammar"/> is the name of a grammar the locator can find (<see cref="GrammarLocator.IsKnown"/>).</summary>
+    public bool IsKnown(string grammar) => _byName.TryGetValue(grammar, out var known) ? known.Bundle is not null : _locator.IsKnown(grammar);
+
+    /// <summary>Grammar names this registry has looked up (tests: bounded by what is installed, whatever the documents ask for).</summary>
+    internal int CachedNames => _byName.Count;
 
     /// <summary>Forgets the grammars that could not be loaded (they are tried again on next use): after the quarantine was cleared.</summary>
     public void ForgetFailures()
@@ -302,12 +315,15 @@ public static class InjectionLanguages
     /// <summary>Injection targets that are deliberately not parsed: Neovim's "comment" grammar (TODO/FIXME tags inside every comment) costs a parse per comment for a highlight VS Code does not have.</summary>
     private static readonly HashSet<string> Ignored = new(StringComparer.Ordinal) { "comment", "luap", "printf" };
 
-    /// <summary>The grammar name for <paramref name="name"/>, or null when it is ignored or empty.</summary>
+    /// <summary>
+    /// The grammar name for <paramref name="name"/>, or null when it is ignored, empty or not a grammar name at all (<see cref="GrammarLocator.IsValidName"/>:
+    /// the text may come from the document, e.g. <c>.. code-block:: /some/path</c>, and must never become a path).
+    /// </summary>
     public static string? Resolve(string name)
     {
         var n = name.Trim();
-        if (n.Length == 0) return null;
+        if (n.Length == 0 || n.Length > 64) return null;
         var grammar = Aliases.TryGetValue(n, out var g) ? g : n.ToLowerInvariant();
-        return Ignored.Contains(grammar) ? null : grammar;
+        return Ignored.Contains(grammar) || !GrammarLocator.IsValidName(grammar) ? null : grammar;
     }
 }

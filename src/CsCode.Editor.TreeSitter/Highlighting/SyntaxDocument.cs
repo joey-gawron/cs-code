@@ -32,6 +32,12 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
     public const int MaxInjectionDepth = 4;
     public const int MaxInjectionSitesPerCall = 400;
 
+    /// <summary>Longest <c>@injection.language</c> text considered (a language name; anything longer is not one).</summary>
+    public const int MaxInjectionLanguageChars = 128;
+
+    /// <summary>Largest injected region (characters, all its ranges) that is parsed: a bigger one stays in the host's colours.</summary>
+    public const int MaxInjectionChars = 1 << 20;
+
     [StructLayout(LayoutKind.Sequential)]
     private struct ParseControl
     {
@@ -77,10 +83,14 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
     private IntPtr _parser;
     private IntPtr _tree;
     private IntPtr _cursor;
-    // The parse-control block (deadline + cancel flag) lives in a PINNED managed array, not native memory: RequestCancel may run on the UI
-    // thread concurrently with Dispose on the worker, and writing into a still-reachable pinned array can never be a use-after-free.
-    private readonly long[] _controlStorage = GC.AllocateArray<long>(2, pinned: true);
+    // The parse-control blocks (deadline + cancel flag; the document's own parse, then injection parses) live in a PINNED managed array, not
+    // native memory: RequestCancel may run on the UI thread concurrently with Dispose on the worker, and writing into a still-reachable pinned
+    // array can never be a use-after-free.
+    private readonly long[] _controlStorage = GC.AllocateArray<long>(4, pinned: true);
     private ParseControl* _control;
+    private ParseControl* _injectionControl;
+    // per injected language: the smallest region (chars) whose parse ran out of time in this document; regions at least that big are not tried again
+    private readonly Dictionary<string, int> _slowInjections = new(StringComparer.Ordinal);
     // The query guard: the cursor's options (progress callback + payload) and its deadline, pinned for the cursor's whole iteration.
     private readonly long[] _queryStorage = GC.AllocateArray<long>(4, pinned: true);
     private TSQueryCursorOptions* _queryOptions;
@@ -124,6 +134,7 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
         // Bounds the query cursor's in-progress match state on pathological input (the default is unlimited).
         TsApi.ts_query_cursor_set_match_limit(_cursor, 2048);
         _control = (ParseControl*)Unsafe.AsPointer(ref _controlStorage[0]);
+        _injectionControl = (ParseControl*)Unsafe.AsPointer(ref _controlStorage[2]);
         _queryDeadline = (long*)Unsafe.AsPointer(ref _queryStorage[0]);
         _queryOptions = (TSQueryCursorOptions*)Unsafe.AsPointer(ref _queryStorage[2]);
         _queryOptions->Payload = _queryDeadline;
@@ -172,7 +183,14 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
     public bool RootHasError => _tree != IntPtr.Zero && TsApi.ts_node_has_error(TsApi.ts_tree_root_node(_tree)) != 0;
 
     /// <summary>Any thread: asks a running parse slice to stop at its next progress check (an edit made it stale).</summary>
-    public void RequestCancel() => Volatile.Write(ref ((ParseControl*)Unsafe.AsPointer(ref _controlStorage[0]))->Cancel, 1);
+    public void RequestCancel()
+    {
+        Volatile.Write(ref ((ParseControl*)Unsafe.AsPointer(ref _controlStorage[0]))->Cancel, 1);
+        Volatile.Write(ref ((ParseControl*)Unsafe.AsPointer(ref _controlStorage[2]))->Cancel, 1); // an injection parse of a highlight in flight
+    }
+
+    /// <summary>Injected regions whose parse was stopped by the highlight's time limit (tests, diagnostics).</summary>
+    public int InjectionParsesStopped { get; private set; }
 
     /// <summary>Applies one edit to the current tree (in order, each against the text produced by the previous). Abandons a halted parse.</summary>
     public void ApplyEdit(in TextEditInfo e)
@@ -290,6 +308,7 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
         _text = text;
         _layerCounter = 0;
         _injectionSitesThisCall = 0;
+        Volatile.Write(ref _injectionControl->Cancel, 0);
         StartQueryClock();
         try
         {
@@ -444,12 +463,18 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
             {
                 var cap = m.Captures[k];
                 var name = query.CaptureNames[(int)cap.Index];
-                if (name == "injection.language") languageName = NodeText(cap.Node, ref _scratchA).ToString();
+                if (name == "injection.language")
+                {
+                    // document text (a fence's info string, an rst directive argument, a script's type): rewritten by the query's #gsub!/#trim!,
+                    // then only ever used as a name of an INSTALLED grammar (Resolve and the registry refuse anything else before any lookup)
+                    var raw = NodeText(cap.Node, ref _scratchA);
+                    languageName = raw.Length > MaxInjectionLanguageChars ? null : pattern.CaptureText((int)cap.Index, raw.ToString());
+                }
                 else if (name == "injection.content") contentCount++;
             }
             if (contentCount == 0 || languageName is null) continue;
             if (InjectionLanguages.Resolve(languageName) is not { } grammar) continue;
-            if (_registry.Get(grammar, out _) is not { } sub) continue;
+            if (!_registry.IsKnown(grammar) || _registry.Get(grammar, out _) is not { } sub) continue;
 
             var combined = pattern.HasProperty("injection.combined");
             InjectionSite? site = null;
@@ -546,6 +571,15 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
     {
         var key = (site.Language.Name, site.Start, site.End, site.Ranges.Count);
         if (_injectionTrees.TryGetValue(key, out var cached)) return cached;
+        // The size of the region: one too big is not parsed at all, and one at least as big as a region of the same language that already ran
+        // out of time in this document is not tried again (after every edit it would cost the whole time limit again).
+        long chars = 0;
+        foreach (var r in site.Ranges) chars += (r.EndByte - r.StartByte) / 2;
+        if (chars > MaxInjectionChars || (_slowInjections.TryGetValue(site.Language.Name, out var slow) && chars >= slow))
+        {
+            _injectionTrees[key] = IntPtr.Zero;
+            return IntPtr.Zero;
+        }
         var parser = _registry.InjectionParser(site.Language);
         if (parser == IntPtr.Zero) return IntPtr.Zero;
         var ranges = CollectionsMarshal.AsSpan(site.Ranges);
@@ -559,14 +593,27 @@ public sealed unsafe partial class SyntaxDocument : IDisposable
         try
         {
             var input = new TSInput { Payload = (void*)GCHandle.ToIntPtr(handle), Read = &ReadInput, Encoding = TSInputEncoding.Utf16LE };
+            // An injection parse is bounded like the highlight it belongs to: the highlight's own time limit (MaxQueryTime, far below the hang
+            // watchdog) and the cancel an edit requests. Without a progress callback one slow block ran unbounded under the watchdog, which then
+            // quarantined a healthy grammar and abandoned the lane.
+            _injectionControl->Deadline = *_queryDeadline;
+            var options = new TSParseOptions { Payload = _injectionControl, ProgressCallback = &Progress };
             using (Record(site.Language))
-                tree = TsApi.ts_parser_parse_with_options(parser, IntPtr.Zero, input, default);
+                tree = TsApi.ts_parser_parse_with_options(parser, IntPtr.Zero, input, options);
         }
         finally
         {
             handle.Free();
             NativeMemory.Free(state.Buffer);
             TsApi.ts_parser_reset(parser);
+        }
+        if (tree == IntPtr.Zero)
+        {
+            if (Volatile.Read(ref _injectionControl->Cancel) != 0) return IntPtr.Zero; // an edit made this highlight stale: nothing to remember
+            // out of time: this highlight is partial (the query guard counts it), and the region stays in the host's colours
+            _queryDeadline[1] = 1;
+            InjectionParsesStopped++;
+            _slowInjections[site.Language.Name] = (int)Math.Min(chars, _slowInjections.GetValueOrDefault(site.Language.Name, int.MaxValue));
         }
         _injectionTrees[key] = tree;
         return tree;

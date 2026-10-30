@@ -107,18 +107,79 @@ internal enum PredicateKind : byte
 /// <summary>One parsed predicate. <see cref="Any"/>: for a quantified capture, ONE node satisfying it is enough (default: all nodes).</summary>
 internal sealed record Predicate(PredicateKind Kind, bool Negated, bool Any, int Capture, int OtherCapture, string[] Strings, Regex? Regex, HashSet<string>? Set);
 
-/// <summary>Per-pattern metadata: predicates, <c>#set!</c> properties (pattern-wide and per capture) and <c>#offset!</c> adjustments.</summary>
+/// <summary>
+/// A directive that rewrites a capture's TEXT (Neovim's <c>#gsub!</c> and <c>#trim!</c>), applied in query order. The highlighter uses the text of
+/// one capture only: <c>@injection.language</c> (Nix's <c>/* bash */ ''…''</c>, HTML's <c>&lt;script type="text/javascript"&gt;</c>).
+/// </summary>
+/// <param name="Pattern">For <c>gsub!</c>: the Lua pattern, translated WITH its captures; null for <c>trim!</c>.</param>
+/// <param name="Replacement">For <c>gsub!</c>: the Lua replacement (<c>%1</c>…<c>%9</c>, <c>%0</c> the whole match, <c>%%</c> a percent sign).</param>
+internal sealed record TextDirective(Regex? Pattern, string Replacement)
+{
+    public string Apply(string text)
+    {
+        if (Pattern is null) return text.Trim(); // trim!: the language name without the whitespace around it
+        try
+        {
+            return Pattern.Replace(text, m => Expand(m, Replacement));
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return text;
+        }
+    }
+
+    /// <summary>Lua's <c>string.gsub</c> replacement string for one match.</summary>
+    private static string Expand(Match m, string replacement)
+    {
+        if (!replacement.Contains('%', StringComparison.Ordinal)) return replacement;
+        var sb = new StringBuilder(replacement.Length + 16);
+        for (var i = 0; i < replacement.Length; i++)
+        {
+            var c = replacement[i];
+            if (c != '%' || i + 1 >= replacement.Length)
+            {
+                sb.Append(c);
+                continue;
+            }
+            var n = replacement[++i];
+            if (char.IsAsciiDigit(n))
+            {
+                var index = n - '0';
+                // Lua: %1 in a pattern without captures is the whole match
+                if (index == 0 || (index == 1 && m.Groups.Count == 1)) sb.Append(m.Value);
+                else if (index < m.Groups.Count) sb.Append(m.Groups[index].Value);
+            }
+            else sb.Append(n); // %% and any other escaped character: the character itself
+        }
+        return sb.ToString();
+    }
+}
+
+/// <summary>Per-pattern metadata: predicates, <c>#set!</c> properties (pattern-wide and per capture), <c>#offset!</c> adjustments and text directives.</summary>
 internal sealed class PatternInfo
 {
     public static readonly PatternInfo Empty = new([], null, null, null);
 
-    public PatternInfo(Predicate[] predicates, Dictionary<string, string?>? properties, Dictionary<(int Capture, string Key), string?>? captureProperties, Dictionary<int, int[]>? offsets)
+    public PatternInfo(Predicate[] predicates, Dictionary<string, string?>? properties, Dictionary<(int Capture, string Key), string?>? captureProperties, Dictionary<int, int[]>? offsets,
+        Dictionary<int, List<TextDirective>>? textDirectives = null)
     {
         Predicates = predicates;
         Properties = properties;
         CaptureProperties = captureProperties;
         Offsets = offsets;
+        TextDirectives = textDirectives;
         Priority = properties is not null && properties.TryGetValue("priority", out var p) && int.TryParse(p, out var v) ? v : DefaultPriority;
+    }
+
+    /// <summary>capture → its <c>#gsub!</c>/<c>#trim!</c> directives, in query order.</summary>
+    public Dictionary<int, List<TextDirective>>? TextDirectives { get; }
+
+    /// <summary><paramref name="text"/> of capture <paramref name="capture"/> after this pattern's text directives (unchanged when it has none).</summary>
+    public string CaptureText(int capture, string text)
+    {
+        if (TextDirectives is null || !TextDirectives.TryGetValue(capture, out var directives)) return text;
+        foreach (var d in directives) text = d.Apply(text);
+        return text;
     }
 
     public const int DefaultPriority = 100;
@@ -140,6 +201,13 @@ internal sealed class PatternInfo
         Dictionary<string, string?>? props = null;
         Dictionary<(int, string), string?>? captureProps = null;
         Dictionary<int, int[]>? offsets = null;
+        Dictionary<int, List<TextDirective>>? textDirectives = null;
+        void AddDirective(int capture, TextDirective directive)
+        {
+            textDirectives ??= new();
+            if (!textDirectives.TryGetValue(capture, out var list)) textDirectives[capture] = list = new();
+            list.Add(directive);
+        }
         var args = new List<TSQueryPredicateStep>();
         var i = 0;
         while (i < steps.Length)
@@ -180,8 +248,22 @@ internal sealed class PatternInfo
                             offsets[(int)rest[0].ValueId] = d;
                         }
                         break;
+                    case "gsub!":
+                        // #gsub! @capture "lua pattern" "replacement" rewrites the capture's text (Neovim); the highlighter reads @injection.language's
+                        if (rest.Length >= 3 && rest[0].Type == TSQueryPredicateStepType.Capture)
+                        {
+                            var source = Str(rest[1]);
+                            if (LuaPattern.CompileWithCaptures(source) is { } regex) AddDirective((int)rest[0].ValueId, new TextDirective(regex, Str(rest[2])));
+                            else warnings.Add($"#gsub! \"{source}\" could not be translated (the text is left as it is)");
+                        }
+                        break;
+                    case "trim!":
+                        // Neovim trims the capture's RANGE; for the one capture whose text is used (a language name) that is its text without
+                        // the whitespace around it
+                        if (rest.Length >= 1 && rest[0].Type == TSQueryPredicateStepType.Capture) AddDirective((int)rest[0].ValueId, new TextDirective(null, ""));
+                        break;
                     default:
-                        // gsub!, trim!, select-adjacent!, inject-language!... only change text/metadata the highlighter does not use
+                        // select-adjacent!, inject-language!, downcase!... only change text/metadata the highlighter does not use
                         break;
                 }
                 continue;
@@ -235,7 +317,7 @@ internal sealed class PatternInfo
                     break;
             }
         }
-        return new PatternInfo(predicates.ToArray(), props, captureProps, offsets);
+        return new PatternInfo(predicates.ToArray(), props, captureProps, offsets, textDirectives);
     }
 
     private static Predicate Regexp(PredicateKind kind, bool negated, bool any, int capture, string[] args, bool isLua, List<string> warnings, string op)
