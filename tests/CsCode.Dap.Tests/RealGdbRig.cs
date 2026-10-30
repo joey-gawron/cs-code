@@ -29,15 +29,22 @@ internal sealed class RealGdbRig : IAsyncDisposable
     public Uri MainUri => new(Sample.MainRs);
     public Uri UtilUri => new(Sample.UtilRs);
 
+    /// <summary>The debug type the rig's configurations use: <c>gdb</c>, or <c>lldb</c> for the same rig over the real CodeLLDB.</summary>
+    public string Type { get; init; } = GdbAdapterFactory.PrimaryType;
+
     /// <param name="sample">A sample of the test's own (a folder it writes into); null: the shared, already built one.</param>
-    public static async Task<RealGdbRig> CreateAsync(RustSample? sample = null, Action<ServiceHarness>? configure = null)
+    /// <param name="type"><c>gdb</c> (GDB's native DAP) or <c>lldb</c> (CodeLLDB, found by <see cref="CodeLldbToolchain"/>; never downloaded).</param>
+    public static async Task<RealGdbRig> CreateAsync(RustSample? sample = null, Action<ServiceHarness>? configure = null, string type = GdbAdapterFactory.PrimaryType)
     {
-        Assert.SkipWhen(GdbToolchain.SkipReason() is not null, GdbToolchain.SkipReason() ?? "");
+        var codeLldb = type == CodeLldbAdapterFactory.PrimaryType;
+        var skip = codeLldb ? CodeLldbToolchain.SkipReason() : GdbToolchain.SkipReason();
+        Assert.SkipWhen(skip is not null, skip ?? "");
         sample ??= await RustSample.SharedAsync(Ct);
-        var h = new ServiceHarness(moreBuiltins: p => GdbAdapterFactory.Builtins(new GdbAdapterFactory(p)));
-        h.Settings.Set(GdbAdapterFactory.ArgsSettingPath, new[] { "-nx" });
+        var h = new ServiceHarness(moreBuiltins: p => codeLldb ? CodeLldbAdapterFactory.Builtins(new CodeLldbAdapterFactory(p)) : GdbAdapterFactory.Builtins(new GdbAdapterFactory(p)));
+        if (codeLldb) h.Settings.Set(CodeLldbAdapterFactory.SettingPath, CodeLldbToolchain.FindAdapter()!); // the adapter under test: never the download offer
+        else h.Settings.Set(GdbAdapterFactory.ArgsSettingPath, new[] { "-nx" });
         configure?.Invoke(h);
-        var rig = new RealGdbRig { H = h, Sample = sample };
+        var rig = new RealGdbRig { H = h, Sample = sample, Type = type };
         h.Service.SessionStarted.Subscribe(s =>
         {
             lock (rig.Started) rig.Started.Add(s);
@@ -88,7 +95,7 @@ internal sealed class RealGdbRig : IAsyncDisposable
             ["cwd"] = Sample.Dir.Path,
         };
         if (extra is not null) foreach (var (k, v) in extra) d[k] = v;
-        return ServiceHarness.Config(name, "gdb", "launch", d, folder ?? Sample.Dir.Uri);
+        return ServiceHarness.Config(name, Type, "launch", d, folder ?? Sample.Dir.Uri);
     }
 
     public static DebugConfiguration Raw(object config, Uri folder) => DebugConfiguration.FromJson(JsonSerializer.SerializeToElement(config), folder);
@@ -150,7 +157,7 @@ internal sealed class RealGdbRig : IAsyncDisposable
     public async Task<Dictionary<string, DebugVariable>> LocalsAsync(int frameId, DebugSession session)
     {
         var scopes = await session.GetScopesAsync(frameId, Ct);
-        TestMetrics.Report("[gdb] scopes: " + string.Join(" | ", scopes.Select(s => $"{s.Name} hint={s.PresentationHint} expensive={s.Expensive} named={s.NamedVariables}")));
+        TestMetrics.Report($"[{Type}] scopes: " + string.Join(" | ", scopes.Select(s => $"{s.Name} hint={s.PresentationHint} expensive={s.Expensive} named={s.NamedVariables}")));
         var all = new Dictionary<string, DebugVariable>(StringComparer.Ordinal);
         foreach (var scope in scopes.Where(s => s.PresentationHint is "locals" or "arguments"))
             foreach (var v in await session.GetVariablesAsync(scope.VariablesReference, ct: Ct))
@@ -192,7 +199,7 @@ internal sealed class RealGdbRig : IAsyncDisposable
                 await Task.Delay(50);
                 left = Left();
             }
-            if (left.Count > 0) TestMetrics.Report("[gdb] rig cleanup killed what the test left running: " + string.Join("; ", left.Select(p => $"{p} {ProcessTable.CommandLine(p)}")));
+            if (left.Count > 0) TestMetrics.Report($"[{Type}] rig cleanup killed what the test left running: " + string.Join("; ", left.Select(p => $"{p} {ProcessTable.CommandLine(p)}")));
             foreach (var pid in left)
                 try { using var p = System.Diagnostics.Process.GetProcessById(pid); p.Kill(entireProcessTree: true); }
                 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
