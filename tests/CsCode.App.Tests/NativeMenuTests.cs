@@ -81,6 +81,14 @@ public class NativeMenuTests
         file.Menu!.RaiseNeedsUpdate();
         var recent = Items(export, "File").Single(i => i.Header == "Open Recent");
         Assert.Contains(recent.Menu!.Items.OfType<NativeMenuItem>(), i => i.Header?.Contains("/work/recent") == true);
+
+        rig.Workspace.Recents.Add(new Uri("file:///work/my_project/"));
+        rig.Workspace.Recents.Add(new Uri("file:///work/a__b/"));
+        file.Menu!.RaiseNeedsUpdate();
+        recent = Items(export, "File").Single(i => i.Header == "Open Recent");
+        var headers = recent.Menu!.Items.OfType<NativeMenuItem>().Select(i => i.Header).ToArray();
+        Assert.Contains(headers, h => h?.EndsWith("/work/my_project/") == true); // a path's underscores are not access keys
+        Assert.Contains(headers, h => h?.EndsWith("/work/a__b/") == true);
     }
 
     [AvaloniaFact]

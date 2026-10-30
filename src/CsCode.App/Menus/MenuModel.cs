@@ -146,7 +146,8 @@ public sealed class MenuModel : IDisposable
             {
                 var recents = _workspace?.RecentFolders.Take(10).ToArray() ?? [];
                 if (recents.Length == 0) return [Placeholder("(no recent folders)")];
-                return recents.Select((u, i) => CreateDynamic(new MenuNode($"_{i + 1} {Describe(u)}", ShellMenus.OpenRecent, Argument: u.ToString()))).ToArray();
+                // The path is text, not a header: its underscores are doubled so neither the in-window menu nor the macOS export reads them as access keys.
+                return recents.Select((u, i) => CreateDynamic(new MenuNode($"_{i + 1} {Describe(u).Replace("_", "__")}", ShellMenus.OpenRecent, Argument: u.ToString()))).ToArray();
             }
             case "toolWindows":
                 // Document views (Settings, Keyboard Shortcuts) are not tool windows: the Tools menu opens them. Each item shows its window
