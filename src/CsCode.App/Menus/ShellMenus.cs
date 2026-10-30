@@ -34,7 +34,11 @@ public static class ShellMenus
     public const string Welcome = "cscode.shell.showWelcome";
     public const string KeyboardReference = "cscode.shell.showKeyboardReference";
     public const string ToggleNotifications = "cscode.shell.toggleNotifications";
-    public const string ToggleToolWindow = "cscode.shell.toggleToolWindow";
+    /// <summary>
+    /// Shows and activates a tool window (argument: its id): what View &gt; Tool Windows runs. Never a hide, as in Visual Studio's View menu:
+    /// a toggle hid a window that was open as a background tab, the very one the user was asking to see.
+    /// </summary>
+    public const string ShowToolWindow = "cscode.shell.showToolWindow";
     /// <summary>Shows or hides a toolbar group (argument: the group id, <see cref="Views.ToolbarView.Groups"/>); persisted in its setting.</summary>
     public const string ToggleToolbar = "cscode.shell.toggleToolbar";
     /// <summary>The Keyboard Shortcuts editor (owned by the Settings panel; the item stays disabled without it).</summary>

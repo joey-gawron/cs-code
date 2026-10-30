@@ -335,7 +335,6 @@ public class MenuModelTests
         public FakeKeybindingService Bindings { get; }
         public FakeWorkspaceService Workspace { get; } = new();
         public List<IToolWindow> Tools { get; } = new();
-        public HashSet<string> Visible { get; } = new();
         public MenuModel Menu { get; }
 
         public Rig()
@@ -343,7 +342,7 @@ public class MenuModelTests
             Bindings = new FakeKeybindingService(Keys);
             foreach (var id in new[] { KnownCommands.NewUntitledFile, KnownCommands.Save, KnownCommands.OpenFolder, KnownCommands.CommandPalette, KnownCommands.Quit, "workbench.action.closeFolder" })
                 Commands.Register(id, _ => ValueTask.FromResult<object?>(null), new CommandMetadata(id));
-            Menu = new MenuModel(ShellMenus.Build(), Commands, Keys, Ui, Bindings, Workspace, () => Tools, id => Visible.Contains(id));
+            Menu = new MenuModel(ShellMenus.Build(), Commands, Keys, Ui, Bindings, Workspace, () => Tools);
         }
 
         public void Dispose() => Menu.Dispose();
@@ -368,8 +367,7 @@ public class MenuModelTests
         rig.Tools.Add(new FakeTool("explorer", "Explorer", "workbench.view.explorer"));
         var refreshes = rig.Menu.RefreshCount;
         rig.Keys.Set("anything", true); // schedules a coalesced refresh
-        rig.Menu.Dispose();             // the window closed (and the provider behind isToolVisible is gone) before it ran
-        rig.Visible.Clear();
+        rig.Menu.Dispose();             // the window closed (and the tool windows behind the View menu are gone) before it ran
         rig.Ui.RunPending();
         Assert.Equal(refreshes, rig.Menu.RefreshCount);
     }
@@ -445,22 +443,23 @@ public class MenuModelTests
         Assert.Contains("proj1", recent.Children[0].Header);
     }
 
+    // Visual Studio's View menu shows a tool window, it never hides one: a toggle hid a window open as a background tab, the one asked for.
     [Fact]
-    public void The_view_menu_lists_tool_windows_with_check_state_from_visibility()
+    public async Task The_view_menu_lists_tool_windows_and_each_item_shows_its_window()
     {
         using var rig = new Rig();
         rig.Tools.Add(new FakeTool("explorer", "Explorer", "workbench.view.explorer"));
         rig.Tools.Add(new FakeTool("output", "Output", "workbench.action.output.toggleOutput", ToolWindowLocation.Bottom));
         rig.Tools.Add(new FakeTool("hidden", "No Toggle", null));
-        rig.Commands.Register("workbench.view.explorer", _ => ValueTask.FromResult<object?>(null));
-        rig.Visible.Add("output");
+        var shown = new List<string?>();
+        rig.Commands.Register(ShellMenus.ShowToolWindow, inv => { shown.Add(inv.Arg<string>(0)); return ValueTask.FromResult<object?>(null); });
         rig.Menu.Refresh();
         var tools = rig.Root("View").Children.Single(c => c.Header.Contains("Tool Windows"));
         Assert.Equal(["Explorer", "Output"], tools.Children.Select(c => c.Header));
-        Assert.False(tools.Children[0].IsChecked);
-        Assert.True(tools.Children[1].IsChecked);
-        Assert.True(tools.Children[0].IsEnabled);
-        Assert.False(tools.Children[1].IsEnabled); // its toggle command is not registered
+        Assert.All(tools.Children, c => Assert.False(c.IsChecked));
+        Assert.All(tools.Children, c => Assert.True(c.IsEnabled));
+        await ((CommunityToolkit.Mvvm.Input.IAsyncRelayCommand)tools.Children[1].Command!).ExecuteAsync(null);
+        Assert.Equal(["output"], shown);
     }
 
     [Fact]

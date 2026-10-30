@@ -172,7 +172,7 @@ public sealed class ShellController : IDisposable
             _windowHooks.Add(macros.AttachWindow);
         }
 
-        Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs, id => Tools.IsVisible(id));
+        Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs);
         _disposables.Add(Menus);
         // Edit > Cut/Copy/Paste follow keyboard focus; right-click menus (editor, tabs, tool windows) are built from contributions.
         Clipboard = new ClipboardRouter(commands, keys, well, () => _sp.GetService<WindowHolder>()?.Window);

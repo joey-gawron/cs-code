@@ -39,7 +39,7 @@ public sealed class MenuItemVm : ObservableObject
 
 /// <summary>
 /// Builds menu view-models from definitions and keeps them current: enablement from `when` + command availability, shortcut labels from
-/// <see cref="IKeybindingService.GetLabel"/>, check state from context keys / tool-window visibility, dynamic bodies (recent folders,
+/// <see cref="IKeybindingService.GetLabel"/>, check state from context keys, dynamic bodies (recent folders,
 /// tool windows) regenerated on refresh. Refreshes are coalesced to one per UI turn when context keys or keybindings change.
 /// UI-thread object.
 /// </summary>
@@ -51,14 +51,13 @@ public sealed class MenuModel : IDisposable
     private readonly IWorkspaceService? _workspace;
     private readonly IUiDispatcher _ui;
     private readonly Func<IEnumerable<IToolWindow>> _toolWindows;
-    private readonly Func<string, bool> _isToolVisible;
     private readonly DisposableStore _subs = new();
     private readonly List<MenuItemVm> _all = new();
     private bool _disposed;
 
     public MenuModel(IReadOnlyList<MenuNode> definition, ICommandService commands, IContextKeyService keys, IUiDispatcher ui,
         IKeybindingService? bindings = null, IWorkspaceService? workspace = null,
-        Func<IEnumerable<IToolWindow>>? toolWindows = null, Func<string, bool>? isToolVisible = null)
+        Func<IEnumerable<IToolWindow>>? toolWindows = null)
     {
         _commands = commands;
         _keys = keys;
@@ -66,7 +65,6 @@ public sealed class MenuModel : IDisposable
         _workspace = workspace;
         _ui = ui;
         _toolWindows = toolWindows ?? (() => []);
-        _isToolVisible = isToolVisible ?? (_ => false);
         Roots = definition.Select(Create).ToArray();
         Refresh();
         _subs.Add(keys.Changed.Subscribe(_ => ScheduleRefresh()));
@@ -151,12 +149,12 @@ public sealed class MenuModel : IDisposable
                 return recents.Select((u, i) => CreateDynamic(new MenuNode($"_{i + 1} {Describe(u)}", ShellMenus.OpenRecent, Argument: u.ToString()))).ToArray();
             }
             case "toolWindows":
-                // Document views (Settings, Keyboard Shortcuts) are not tool windows: the Tools menu opens them.
+                // Document views (Settings, Keyboard Shortcuts) are not tool windows: the Tools menu opens them. Each item shows its window
+                // (ShellMenus.ShowToolWindow), as in Visual Studio: no check marks, no hiding from here.
                 return _toolWindows()
                     .Where(t => t.ToggleCommandId is not null && t.DefaultLocation != ToolWindowLocation.Document)
                     .OrderBy(t => t.DefaultLocation).ThenBy(t => t.Title, StringComparer.Ordinal)
-                    .Select(t => CreateDynamic(new MenuNode(t.Title, t.ToggleCommandId, IconKey: t.IconKey, Argument: null, CheckWhen: null))
-                        .WithChecked(_isToolVisible(t.Id)))
+                    .Select(t => CreateDynamic(new MenuNode(t.Title, ShellMenus.ShowToolWindow, IconKey: t.IconKey, Argument: t.Id)))
                     .ToArray();
             default:
                 return [];
@@ -190,14 +188,6 @@ public sealed class MenuModel : IDisposable
     }
 }
 
-internal static class MenuItemVmExtensions
-{
-    public static MenuItemVm WithChecked(this MenuItemVm item, bool value)
-    {
-        item.IsChecked = value;
-        return item;
-    }
-}
 
 /// <summary>Contributed menu items (setting-free, file-based): `commandPalette`, `editor/context`, `explorer/context`, `editor/title`.</summary>
 public static class ContributedMenus

@@ -171,6 +171,11 @@ public static class ShellCommands
                 Run(toggle, "Toggle " + tool.Title, "View", () => { c.Tools.Toggle(id); return Task.CompletedTask; });
         }
         Run(ShowErrorList, "Show Error List", "View", () => { c.Tools.Show("errorlist"); return Task.CompletedTask; });
+        Hidden(ShellMenus.ShowToolWindow, inv =>
+        {
+            if (inv.Arg<string>(0) is { } id) c.Tools.Show(id);
+            return Task.CompletedTask;
+        });
 
         // Status-bar language picker.
         Run(ChangeLanguageMode, "Change Language Mode", "Editor", async () =>
