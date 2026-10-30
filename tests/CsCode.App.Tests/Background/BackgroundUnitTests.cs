@@ -154,6 +154,52 @@ public class AutostartEntryTests
     }
 }
 
+public class SessionStartupFailureTests
+{
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_session_process_whose_start_up_failed_answers_with_the_reason_releases_its_session_and_quits_on_request()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Skip("Unix sockets");
+        using var env = new RealAppHome();
+        // A private runtime directory under the test's CSCODE_HOME: this host's endpoint and locks are the test's alone.
+        var runtime = RuntimeDirectory.Resolve(name => name == "CSCODE_HOME" ? env.Home.Path : null);
+        var store = new SessionStore(env.Home.Combine("data"));
+        var host = BackgroundHost.Start(CommandLineOptions.Parse(["--host", "--session", "F", "--headless-test"]), new CrashHandler(env.CrashLogs.Path), runtime, store, out var refused);
+        Assert.Null(refused);
+        Assert.NotNull(host);
+        var previous = App.Background;
+        App.Background = host;
+        try
+        {
+            Assert.True(FileLock.IsHeldElsewhere(runtime.SessionLockPath("F")));
+            await using var run = new RealAppRun(env, s => s.AddSingleton<CsCode.Core.Platform.IWorkspaceService>(_ => throw new InvalidOperationException("workspace module is broken")));
+            Assert.True(await DevHost.WaitFor(() => run.Session.Window is CrashWindow, 60_000), "no crash window");
+
+            // What the launcher sends: the reason comes back at once (not after the 30 s show timeout).
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var show = await Task.Run(() => IpcClient.Request(runtime.EndpointOf(Environment.ProcessId), new IpcMessage { Type = IpcVerbs.Show }, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(30)));
+            Assert.True(clock.ElapsedMilliseconds < 5000, $"the show reply took {clock.ElapsedMilliseconds} ms");
+            Assert.NotEqual(true, show.Ok);
+            Assert.Contains("CsCode could not start", show.Error);
+            Assert.Contains("workspace module is broken", show.Error);
+            var hello = await Task.Run(() => IpcClient.Request(runtime.EndpointOf(Environment.ProcessId), new IpcMessage { Type = IpcVerbs.Hello }, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5)));
+            Assert.Equal(ProcessStates.Quitting, hello.State);
+            // The next launch of F starts a fresh process instead of taking this one for a wedged owner.
+            Assert.False(FileLock.IsHeldElsewhere(runtime.SessionLockPath("F")));
+
+            var quit = await Task.Run(() => IpcClient.Request(runtime.EndpointOf(Environment.ProcessId), new IpcMessage { Type = IpcVerbs.Quit, Force = true }, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10)));
+            Assert.True(quit.Ok == true, quit.Error);
+            await run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal(1, run.Lifetime.ShutdownExitCode);
+        }
+        finally
+        {
+            App.Background = previous;
+            host.Dispose();
+        }
+    }
+}
+
 public class SessionShellTests
 {
     [Fact]

@@ -115,6 +115,8 @@ public sealed class AppSession
         // Startup failure (a module the shell needs is not registered, the windowing system refused the window, ...): never a silent exit, never a hang.
         _exitCode = 1;
         var log = _crash.Report(failure, fatal: true, source: "Startup");
+        // A session process (background mode): the launcher waiting for its window gets the reason now, and `cscode --quit` can end it.
+        _background?.StartupFailed(CrashHandler.Summarize(failure), log, () => Dispatcher.UIThread.Post(() => _ = ShutdownAsync()));
         DiscardFailedMainWindow();
         try
         {

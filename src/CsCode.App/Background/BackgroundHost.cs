@@ -37,6 +37,8 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     private volatile string _state = ProcessStates.Starting;
     private long _lastShownMs;
     private int _disposed;
+    private volatile string? _startupFailure;
+    private volatile Action? _quitAfterFailure;
 
     private BackgroundHost(CommandLineOptions options, RuntimeDirectory runtime, SessionStore store, CrashHandler crash)
     {
@@ -70,16 +72,21 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     /// </summary>
     public static BackgroundHost? Start(CommandLineOptions options, CrashHandler crash, out int? refusedExitCode)
     {
-        refusedExitCode = null;
         SessionTrace.Mark("host: main");
         ProcessMemory.DetachFromTerminal();
-        var runtime = RuntimeDirectory.Resolve();
+        return Start(options, crash, RuntimeDirectory.Resolve(), new SessionStore(new AppPaths().UserDataDir), out refusedExitCode);
+    }
+
+    /// <summary>The same with the runtime directory and store given (tests: a private directory, and no detaching of the test process).</summary>
+    internal static BackgroundHost? Start(CommandLineOptions options, CrashHandler crash, RuntimeDirectory runtime, SessionStore store, out int? refusedExitCode)
+    {
+        refusedExitCode = null;
         if (runtime.Ensure() is { } problem)
         {
             Console.Error.WriteLine("cscode: background mode unavailable: " + problem);
             return null;
         }
-        var host = new BackgroundHost(options, runtime, new SessionStore(new AppPaths().UserDataDir), crash);
+        var host = new BackgroundHost(options, runtime, store, crash);
         if (!options.Spare)
         {
             var name = options.Session;
@@ -151,6 +158,33 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
 
     internal void SetState(string state) => _state = state;
 
+    /// <summary>Why this process could not start (set once by <see cref="StartupFailed"/>); null while it runs normally.</summary>
+    internal string? StartupFailure => _startupFailure;
+
+    /// <summary>
+    /// Start-up failed (the app session shows its crash window): the process stays only until that window is closed or it is asked to quit. From
+    /// now on every request that needs the window fails at once with the reason (the launcher prints it instead of waiting 30 s for a show that
+    /// can never come), <c>quit</c> ends the process through <paramref name="quit"/>, and the session's lock is released, so the next launch of
+    /// the session starts a fresh process rather than taking this one for a wedged owner.
+    /// </summary>
+    internal void StartupFailed(string summary, string? logPath, Action quit)
+    {
+        _quitAfterFailure = quit;
+        _startupFailure = "CsCode could not start: " + summary + (logPath is null ? "" : $" (log: {logPath})");
+        _state = ProcessStates.Quitting;
+        _attached.TrySetException(new StartupFailedException(_startupFailure));
+        FileLock? held;
+        lock (_gate)
+        {
+            held = _sessionLock;
+            _sessionLock = null;
+        }
+        held?.Dispose();
+        SessionTrace.Mark("host: start-up failed");
+    }
+
+    private sealed class StartupFailedException(string message) : Exception(message);
+
     internal void MarkShown()
     {
         Interlocked.Exchange(ref _lastShownMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -208,8 +242,13 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
                 return IpcMessage.Reply() with { Sessions = list };
             case IpcVerbs.Claim:
                 return await ClaimAsync(request, ct).ConfigureAwait(false);
+            case IpcVerbs.Quit when _startupFailure is not null:
+                _quitAfterFailure?.Invoke();
+                return IpcMessage.Reply();
         }
-        var controller = await _attached.Task.WaitAsync(ct).ConfigureAwait(false);
+        SessionWindowController controller;
+        try { controller = await _attached.Task.WaitAsync(ct).ConfigureAwait(false); }
+        catch (StartupFailedException ex) { return IpcMessage.Failure(ex.Message); }
         return await controller.HandleAsync(request, ct).ConfigureAwait(false);
     }
 
@@ -238,7 +277,9 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         SessionTrace.Mark("host: claim " + name);
         var prepared = await PrepareAsync(name!, request.Unnamed == true).ConfigureAwait(false);
         SessionTrace.Mark("host: claim prepared");
-        var controller = await _attached.Task.WaitAsync(ct).ConfigureAwait(false);
+        SessionWindowController controller;
+        try { controller = await _attached.Task.WaitAsync(ct).ConfigureAwait(false); }
+        catch (StartupFailedException ex) { return IpcMessage.Failure(ex.Message); }
         await controller.ActivateOnUiAsync(prepared, hidden: request.Hidden == true).ConfigureAwait(false);
         SessionTrace.Mark("host: claim done");
         return IpcMessage.Reply();
