@@ -414,8 +414,9 @@ public sealed partial class SessionWindowController : IDisposable
     /// <summary>
     /// Whether this window is closing for good, asked by a request that would show it or open paths in it (UI thread). A quit under way that is not
     /// asking the user (its last write: milliseconds, seconds for huge backups) is awaited first: the request must neither open paths into a window
-    /// that is about to close and reply OK, nor be turned away by a quit that is then refused. While the save prompts are up nothing is decided
-    /// and the window is shown: the request goes ahead (<see cref="_asking"/>).
+    /// that is about to close and reply OK, nor be turned away by a quit that is then refused. While the save prompts are up, or a module's
+    /// question holds the quit's close, nothing is decided and the window is shown: the request goes ahead (<see cref="_asking"/>,
+    /// <see cref="_quitHeld"/>; paths it opens are the user working on, which declines a held quit).
     /// </summary>
     private async Task<bool> ClosingForGoodAsync()
     {
