@@ -35,11 +35,18 @@ public class PersistenceTests
     private static readonly TimeSpan Grace = TimeSpan.FromSeconds(60);
     private const string Session = "0123456789abcdef0123456789abcdef";
 
+    /// <summary>This process's user id as the socket directory's name has it (the longest one where it cannot be read).</summary>
+    private static string Uid =>
+        File.Exists("/proc/self/status") && File.ReadLines("/proc/self/status").FirstOrDefault(l => l.StartsWith("Uid:", StringComparison.Ordinal)) is { } line
+            ? line.Split('\t', StringSplitOptions.RemoveEmptyEntries)[2]
+            : "4294967295";
+
     [Fact]
     public void A_socket_path_too_long_for_the_data_dir_goes_to_the_runtime_dir_else_to_a_private_temp_dir()
     {
         using var temp = new TempDirectory("cp-");
-        Assert.SkipWhen(temp.Path.Length > 32, $"the temp directory's path is too long for a socket directory under it ({temp.Path})");
+        Assert.SkipWhen(System.Text.Encoding.UTF8.GetByteCount($"{temp.Path}/cscode-{Uid}-0123456789ab/{new string('0', 32)}-0123456789ab.agent") > 100,
+            $"the temp directory's path is too long for a socket directory under it ({temp.Path})");
         var longData = Path.Combine(temp.Path, new string('d', 80), "data");
         var runtime = Path.Combine(temp.Path, "xdg");
         Directory.CreateDirectory(runtime);
@@ -51,15 +58,19 @@ public class PersistenceTests
         var xdg = PersistencePaths.For(longData, Session, "0b0b0b0b", name => name == "XDG_RUNTIME_DIR" ? runtime : null);
         Assert.Equal(Path.Combine(runtime, "cscode-server"), xdg.Directory);
 
-        // no XDG_RUNTIME_DIR (docker exec, su, macOS, hosts without systemd): a cscode-<uid> directory in the temp directory, never a too-long path
+        // no XDG_RUNTIME_DIR (docker exec, su, macOS, hosts without systemd): a private directory in the temp directory, never a too-long path
+        Assert.SkipWhen(OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess, "root's sockets go to /run, never to the shared temp directory");
         var fallback = PersistencePaths.For(longData, Session, "0b0b0b0b", name => name == "TMPDIR" ? temp.Path : null);
         Assert.StartsWith(Path.Combine(temp.Path, "cscode-"), fallback.Directory, StringComparison.Ordinal);
         Assert.True(System.Text.Encoding.UTF8.GetByteCount(fallback.Agent) <= 100, fallback.Agent);
         fallback.EnsureDirectory();
         if (!OperatingSystem.IsWindows())
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(fallback.Directory));
+        var otherData = Path.Combine(temp.Path, new string('e', 80), "data");
         var tooLongTemp = Path.Combine(temp.Path, new string('t', 90));
-        Assert.StartsWith("/tmp/cscode-", PersistencePaths.For(longData, Session, "0b0b0b0b", name => name == "TMPDIR" ? tooLongTemp : null).Directory, StringComparison.Ordinal);
+        var inTmp = PersistencePaths.For(otherData, Session, "0b0b0b0b", name => name == "TMPDIR" ? tooLongTemp : null).Directory;
+        try { Assert.StartsWith("/tmp/cscode-", inTmp, StringComparison.Ordinal); }
+        finally { Directory.Delete(inTmp); }
 
         // somebody planted a link where the private directory goes: refused
         var planted = Path.Combine(temp.Path, "elsewhere");
@@ -67,6 +78,52 @@ public class PersistenceTests
         Directory.Delete(fallback.Directory, recursive: true);
         Directory.CreateSymbolicLink(fallback.Directory, planted);
         Assert.Throws<IOException>(fallback.EnsureDirectory);
+    }
+
+    [Fact]
+    public void The_shared_temp_socket_directory_has_a_name_nobody_could_prepare_and_one_that_is_not_ours_is_never_used()
+    {
+        // remote-8: a fixed name in /tmp (cscode-<uid>) could be made first by another user and keep this user's persistent server from ever
+        // starting; and the old check (no link, then chmod, which follows links) could be passed by swapping a directory for a link in between.
+        Assert.SkipWhen(OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess, "root's sockets go to /run");
+        using var temp = new TempDirectory("cp-");
+        var tmp = temp.Path;
+        Assert.SkipWhen(System.Text.Encoding.UTF8.GetByteCount($"{tmp}/cscode-{Uid}-0123456789ab/{Session}-0b0b0b0b.agent") > 100,
+            $"the temp directory's path is too long for a socket directory under it ({tmp})");
+        var data = Path.Combine(temp.Path, new string('d', 80), "data");
+        string? Env(string name) => name == "TMPDIR" ? tmp : null;
+        var record = PersistencePaths.SharedDirectoryRecord(data);
+
+        var first = PersistencePaths.For(data, Session, "0b0b0b0b", Env);
+        Assert.Matches("^cscode-[0-9]+-[0-9a-f]{12}$", Path.GetFileName(first.Directory));
+        Assert.Equal(first.Directory, File.ReadAllText(record).Trim());
+        // every relay and daemon of the data dir finds the same directory; another data dir gets its own
+        Assert.Equal(first.Directory, PersistencePaths.For(data, "fedcba9876543210fedcba9876543210", "0b0b0b0b", Env).Directory);
+        Assert.NotEqual(first.Directory, PersistencePaths.For(Path.Combine(temp.Path, new string('e', 80), "data"), Session, "0b0b0b0b", Env).Directory);
+
+        // gone (a reboot emptied the temp directory): made again under the recorded name
+        Directory.Delete(first.Directory);
+        Assert.Equal(first.Directory, PersistencePaths.For(data, Session, "0b0b0b0b", Env).Directory);
+        Assert.True(PersistencePaths.IsOwnDirectory(first.Directory));
+
+        // the recorded name was taken meanwhile by a link (here to a directory of ours: the swap that passed the old check): never used, replaced
+        Directory.Delete(first.Directory);
+        var mine = Path.Combine(temp.Path, "mine");
+        Directory.CreateDirectory(mine);
+        Directory.CreateSymbolicLink(first.Directory, mine);
+        Assert.False(PersistencePaths.IsOwnDirectory(first.Directory));
+        var replaced = PersistencePaths.For(data, Session, "0b0b0b0b", Env);
+        Assert.NotEqual(first.Directory, replaced.Directory);
+        Assert.StartsWith(tmp + "/cscode-", replaced.Directory, StringComparison.Ordinal);
+        Assert.Equal(replaced.Directory, File.ReadAllText(record).Trim());
+
+        // a recorded directory that is another user's (root's /): never used (nor chmod-ed), replaced
+        File.WriteAllText(record, "/");
+        Assert.False(PersistencePaths.IsOwnDirectory("/"));
+        var again = PersistencePaths.For(data, Session, "0b0b0b0b", Env);
+        Assert.NotEqual("/", again.Directory);
+        Assert.True(PersistencePaths.IsOwnDirectory(again.Directory));
+        again.EnsureDirectory();
     }
 
     [Fact]
@@ -87,7 +144,8 @@ public class PersistenceTests
     public async Task A_persistent_server_with_a_long_data_dir_and_no_XDG_RUNTIME_DIR_starts_and_is_reached()
     {
         using var temp = new TempDirectory("cp-");
-        Assert.SkipWhen(temp.Path.Length > 32, $"the temp directory's path is too long for a socket directory under it ({temp.Path})");
+        Assert.SkipWhen(System.Text.Encoding.UTF8.GetByteCount($"{temp.Path}/cscode-{Uid}-0123456789ab/{new string('0', 32)}-0123456789ab.agent") > 100,
+            $"the temp directory's path is too long for a socket directory under it ({temp.Path})");
         var data = Path.Combine(temp.Path, new string('d', 90), "data");
         Directory.CreateDirectory(data);
         var tmp = temp.Path; // the server's TMPDIR: its private cscode-<uid> socket directory goes there, not into this machine's /tmp

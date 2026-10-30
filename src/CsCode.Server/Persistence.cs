@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using CsCode.Remote.Protocol;
@@ -49,9 +50,11 @@ internal static partial class ServerBuild
 
 /// <summary>
 /// Where the persistent server of a session listens: a Unix socket (mode 0600) named after the session and the server build, in a private directory
-/// (0700) — the data dir's <c>run/</c>; when that path is too long for a socket address, <c>$XDG_RUNTIME_DIR/cscode-server</c>, else
-/// <c>cscode-&lt;uid&gt;</c> in the temp directory (<c>$TMPDIR</c>, or <c>/tmp</c> when that is too long too) — plus a lock file only the live daemon
-/// holds, the link to the newest connection's ssh agent, and the reason the daemon could not start (for the relay waiting for it).
+/// (0700) — the data dir's <c>run/</c>; when that path is too long for a socket address, <c>$XDG_RUNTIME_DIR/cscode-server</c>; else, for root,
+/// <c>/run/cscode-server</c>; else a directory with a random name in the shared temp directory (<c>$TMPDIR</c>, or <c>/tmp</c> when that is too
+/// long too), recorded in the data dir — plus a lock file only the live daemon holds, the link to the newest connection's ssh agent, and the
+/// reason the daemon could not start (for the relay waiting for it). A directory is used only while it is provably this user's own entry
+/// (<see cref="IsOwnDirectory"/>).
 /// </summary>
 internal sealed partial record PersistencePaths(string Directory, string Stem)
 {
@@ -76,6 +79,12 @@ internal sealed partial record PersistencePaths(string Directory, string Stem)
     [DllImport("libc")]
     private static extern uint geteuid();
 
+    [DllImport("libc", SetLastError = true)]
+    private static extern int lchown(string path, uint owner, uint group);
+
+    /// <summary>The file in the data dir that names the socket directory made in the shared temp directory.</summary>
+    internal static string SharedDirectoryRecord(string dataDir) => Path.Combine(dataDir, "run", "socket-dir");
+
     public static string ValidSession(string session) =>
         SessionPattern().IsMatch(session) ? session : throw new ArgumentException($"Invalid session id '{session}' (8-64 lower-case hex digits)");
 
@@ -84,33 +93,122 @@ internal sealed partial record PersistencePaths(string Directory, string Stem)
     public static PersistencePaths For(string dataDir, string session, string? build = null, Func<string, string?>? environment = null)
     {
         var stem = ValidSession(session) + "-" + (build ?? ServerBuild.Id);
-        foreach (var dir in Candidates(dataDir, environment ?? Environment.GetEnvironmentVariable))
-            if (Encoding.UTF8.GetByteCount(Path.Combine(dir, stem + ".agent")) <= MaxSocketPathBytes) return new PersistencePaths(dir, stem);
+        var env = environment ?? Environment.GetEnvironmentVariable;
+        foreach (var dir in PrivateCandidates(dataDir, env))
+            if (Fits(dir, stem)) return new PersistencePaths(dir, stem);
+        if (SharedDirectory(dataDir, stem, env, create: true) is { } shared) return new PersistencePaths(shared, stem);
         throw new IOException($"No directory for the server's socket has a path short enough (data dir {dataDir})");
     }
 
-    /// <summary>Where sockets of a data dir may be, preferred first.</summary>
-    internal static IEnumerable<string> Candidates(string dataDir, Func<string, string?> environment)
+    private static bool Fits(string dir, string stem) => Encoding.UTF8.GetByteCount(Path.Combine(dir, stem + ".agent")) <= MaxSocketPathBytes;
+
+    private static bool IsRoot => !OperatingSystem.IsWindows() && geteuid() == 0;
+
+    /// <summary>
+    /// Socket directories in places only this user (or root) can create entries in, preferred first: the data dir's <c>run/</c>, the user's runtime
+    /// dir, and for root <c>/run</c> (root's processes have no safe use for the shared temp directory, see <see cref="IsOwnDirectory"/>).
+    /// </summary>
+    private static IEnumerable<string> PrivateCandidates(string dataDir, Func<string, string?> environment)
     {
         yield return Path.Combine(dataDir, "run");
         if (environment("XDG_RUNTIME_DIR") is { Length: > 0 } runtime && Path.IsPathFullyQualified(runtime) && System.IO.Directory.Exists(runtime))
             yield return Path.Combine(runtime, "cscode-server");
-        var user = "cscode-" + (OperatingSystem.IsWindows() ? Environment.UserName : geteuid().ToString(CultureInfo.InvariantCulture));
-        if (environment("TMPDIR") is { Length: > 0 } temp && Path.IsPathFullyQualified(temp)) yield return Path.Combine(temp, user);
-        if (!OperatingSystem.IsWindows()) yield return Path.Combine("/tmp", user);
+        if (IsRoot && new[] { "/run", "/var/run" }.FirstOrDefault(System.IO.Directory.Exists) is { } run) yield return Path.Combine(run, "cscode-server");
     }
 
     /// <summary>
-    /// Creates the directory owner-only, or checks and tightens an existing one: in a shared parent (<c>/tmp</c>) it must be ours and not a symbolic
-    /// link somebody planted (chmod succeeds only for the owner). Nobody else can reach the socket.
+    /// The last resort: a directory in the shared temp directory (<c>$TMPDIR</c>, else <c>/tmp</c>) named at random — a fixed name could be made by
+    /// anybody first and would then keep this user's persistent server from ever starting — and recorded in the data dir
+    /// (<see cref="SharedDirectoryRecord"/>), so every relay and daemon of the data dir agrees on it. The recorded directory is used while it is
+    /// provably ours; when it is gone (a reboot emptied /tmp) it is made again under the same name, and when that name is somebody else's now, a new
+    /// directory replaces it (no daemon of ours can be in a directory that is not ours). Null for root (it has <c>/run</c>), on Windows, and when
+    /// nothing is recorded and <paramref name="create"/> is false.
+    /// </summary>
+    private static string? SharedDirectory(string dataDir, string stem, Func<string, string?> environment, bool create)
+    {
+        if (OperatingSystem.IsWindows() || IsRoot) return null;
+        var record = SharedDirectoryRecord(dataDir);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            string? recorded = null;
+            try { recorded = File.ReadAllText(record).Trim(); }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { }
+            if (recorded is { Length: > 0 } && Path.IsPathFullyQualified(recorded) && Fits(recorded, stem))
+            {
+                if (create && !System.IO.Directory.Exists(recorded))
+                {
+                    try { System.IO.Directory.CreateDirectory(recorded, Private); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                }
+                if (IsOwnDirectory(recorded)) return recorded;
+            }
+            if (!create) return null;
+            // 48 random bits: nobody makes the name before we do (short: the socket path must stay within sun_path)
+            var name = $"cscode-{geteuid().ToString(CultureInfo.InvariantCulture)}-{Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(6))}";
+            if (SharedRoots(environment).FirstOrDefault(r => Fits(Path.Combine(r, name), stem)) is not { } root) return null;
+            var made = Path.Combine(root, name);
+            System.IO.Directory.CreateDirectory(made, Private);
+            if (!IsOwnDirectory(made)) continue; // a name nobody could guess, taken all the same: another one
+            System.IO.Directory.CreateDirectory(Path.GetDirectoryName(record)!, Private);
+            var temp = record + "." + Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+            File.WriteAllText(temp, made + "\n");
+            try
+            {
+                // First one wins when there was none (two relays of the data dir starting at once): the other uses the winner's directory.
+                File.Move(temp, record, overwrite: recorded is not null);
+                return made;
+            }
+            catch (IOException)
+            {
+                File.Delete(temp);
+                System.IO.Directory.Delete(made);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The temp directories, preferred first: only those where other users cannot remove or rename our entries (sticky, or not writable by
+    /// everybody; a group-writable one is taken as the user's own private group's, as umask 002 makes them).
+    /// </summary>
+    private static IEnumerable<string> SharedRoots(Func<string, string?> environment)
+    {
+        if (OperatingSystem.IsWindows()) yield break;
+        string?[] roots = [environment("TMPDIR") is { Length: > 0 } temp && Path.IsPathFullyQualified(temp) ? temp : null, "/tmp"];
+        foreach (var root in roots)
+        {
+            if (root is null || !System.IO.Directory.Exists(root)) continue;
+            var mode = File.GetUnixFileMode(root);
+            if ((mode & UnixFileMode.OtherWrite) == 0 || (mode & UnixFileMode.StickyBit) != 0) yield return root;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> is a directory that is this user's own entry — not somebody else's, not a symbolic link to anything. The proof
+    /// is <c>lchown(path, euid, -1)</c>: a no-op the owner may do and anybody else is refused, on the entry itself (never a link's target), so it
+    /// cannot be fooled by swapping a directory for a link between two checks. And in a sticky directory nobody else can rename or remove an entry
+    /// of ours, so after the proof the path stays ours (then the link check is stable). Not a proof for root, which may chown anything: root uses
+    /// directories only it can create entries in.
+    /// </summary>
+    internal static bool IsOwnDirectory(string path)
+    {
+        if (OperatingSystem.IsWindows()) return System.IO.Directory.Exists(path);
+        if (lchown(path, geteuid(), uint.MaxValue) != 0) return false;
+        var info = new DirectoryInfo(path);
+        return info.LinkTarget is null && info.Exists;
+    }
+
+    /// <summary>
+    /// Creates the directory owner-only, or checks and tightens an existing one: it must be this user's own directory (<see cref="IsOwnDirectory"/>:
+    /// not another user's, not a symbolic link somebody planted). Nobody else can reach the socket.
     /// </summary>
     public void EnsureDirectory()
     {
         if (OperatingSystem.IsWindows()) { System.IO.Directory.CreateDirectory(Directory); return; }
         System.IO.Directory.CreateDirectory(Directory, Private);
-        if (new DirectoryInfo(Directory).LinkTarget is not null) throw new IOException($"{Directory} is a symbolic link: the server's socket does not go there");
-        try { File.SetUnixFileMode(Directory, Private); }
-        catch (UnauthorizedAccessException) { throw new IOException($"{Directory} belongs to another user: the server's socket does not go there"); }
+        if (!IsOwnDirectory(Directory))
+            throw new IOException($"{Directory} is not a directory of this user's (another user's, or a symbolic link): the server's socket does not go there");
+        File.SetUnixFileMode(Directory, Private);
     }
 
     /// <summary>A connection to the daemon, or null when none listens (no socket, a stale one, refused).</summary>
@@ -186,16 +284,13 @@ internal sealed partial record PersistencePaths(string Directory, string Stem)
     public IReadOnlyList<string> OtherBuilds(string dataDir, string session, Func<string, string?>? environment = null)
     {
         var found = new List<string>();
-        foreach (var dir in Candidates(dataDir, environment ?? Environment.GetEnvironmentVariable).Distinct(StringComparer.Ordinal))
+        var env = environment ?? Environment.GetEnvironmentVariable;
+        var dirs = PrivateCandidates(dataDir, env).Append(SharedDirectory(dataDir, Stem, env, create: false)).OfType<string>().Distinct(StringComparer.Ordinal);
+        foreach (var dir in dirs)
         {
             try
             {
-                if (!System.IO.Directory.Exists(dir)) continue;
-                if (!OperatingSystem.IsWindows())
-                {
-                    if (new DirectoryInfo(dir).LinkTarget is not null) continue;
-                    File.SetUnixFileMode(dir, Private); // ours (else: not looked at)
-                }
+                if (!System.IO.Directory.Exists(dir) || !IsOwnDirectory(dir)) continue; // only ours are looked at
                 foreach (var file in System.IO.Directory.EnumerateFiles(dir, session + "*.sock"))
                 {
                     var name = Path.GetFileName(file);
