@@ -553,7 +553,10 @@ cannot switch the repair off yet.
 * `tests/CsCode.App.Tests/RealApp/*` run the REAL composition (`AppServices.Build` with every module, `CSCODE_HOME` in a temp directory, all built-in language servers disabled;
   `Infrastructure/RealAppHost.cs`): view activation (also after a tool window was closed with its X, clicked), document windows, default layout, debug auto-show, command
   ownership (which module registered each duplicated id, in order), selection, Ln/Col, keys, wording, the Settings page's Color Theme dropdown and its absence from the main window (`ThemeDropdownTests`), theme
-  icons (`ThemeIconTests`), switching cost (`ThemeSwitchingCostTests`) and screenshots (`ThemeScreenshotTests`).
+  icons (`ThemeIconTests`), switching cost (`ThemeSwitchingCostTests`) and screenshots (`ThemeScreenshotTests`); wave 3: Split Editor (`SplitEditorTests`, and
+  Vim's `:vsp` / Ctrl-W), focus context keys (`FocusContextKeyTests`), the palette's every-command list (`PaletteRealAppTests`), floating windows
+  (`FloatingWindowTests`), Copy with Formatting (`RealAppCopyWithFormattingTests`), saved sessions (`SessionPickerTests`) and the find box's focus
+  (`FindFocusTests`).
 * **Themes**: `ShellController.PrepareThemes` gives the editor's `ColorThemeService` the shell's completion (`AppStartup` calls it on the start-up pool
   thread, so parsing the 21 embedded themes and completing the current one never runs on the UI thread before the first frame; the other themes are
   completed on a pool thread right after). The Settings page gets `IColorThemeService` through `SearchServices.Themes` (optional; without it the
