@@ -181,10 +181,24 @@ public sealed class TerminalPanelRuntime : IDisposable
     /// </summary>
     internal void SetTerminalFocus(bool focused, TerminalControl control)
     {
-        if (focused) _focused = new WeakReference<TerminalControl>(control);
-        else if (_focused is not null && _focused.TryGetTarget(out var c) && ReferenceEquals(c, control)) _focused = null;
-        Keys?.Set(FocusContextKey, focused);
-        if (focused) Keys?.Set("panelFocus", true);
+        if (focused)
+        {
+            _focused = new WeakReference<TerminalControl>(control);
+            Keys?.Set(FocusContextKey, true);
+            Keys?.Set("panelFocus", true);
+            // The main window classifies focus in its own GotFocus handler, which runs after the control's and resets the key for a
+            // "panel": set it again once the event is done (Normal priority runs before any pending input).
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_focused is not null && _focused.TryGetTarget(out var still) && ReferenceEquals(still, control) && control.IsKeyboardFocusWithin)
+                    Keys?.Set(FocusContextKey, true);
+            });
+            return;
+        }
+        // Only the control that holds the key clears it (a view disposed without ever having focus must not).
+        if (_focused is null || !_focused.TryGetTarget(out var c) || !ReferenceEquals(c, control)) return;
+        _focused = null;
+        Keys?.Set(FocusContextKey, false);
     }
 
     internal void SetAltBuffer(bool active) => Keys?.Set(AltBufferContextKey, active);

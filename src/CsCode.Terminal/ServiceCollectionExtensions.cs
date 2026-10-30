@@ -16,14 +16,18 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddCsCodeTerminalService(this IServiceCollection services)
     {
-        services.TryAddSingleton(sp => new TerminalService(
-            sp.GetService<IConfigurationService>(),
-            sp.GetService<IWorkspaceService>(),
-            new LazyViewActivator(sp),
-            sp.GetService<IMemoryMonitor>()));
+        services.TryAddSingleton(sp => CreateService(sp));
         services.TryAddSingleton<ITerminalService>(sp => sp.GetRequiredService<TerminalService>());
         return services;
     }
+
+    /// <summary>The service as the container builds it; a host (tests, the remote server later) may pass its own PTY factory.</summary>
+    public static TerminalService CreateService(IServiceProvider sp, Func<Pty.IPtyHost>? hostFactory = null) => new(
+        sp.GetService<IConfigurationService>(),
+        sp.GetService<IWorkspaceService>(),
+        new LazyViewActivator(sp),
+        sp.GetService<IMemoryMonitor>(),
+        hostFactory);
 
     /// <summary>The shell's view activator depends on the tool windows (which include the terminal's): resolved when first needed.</summary>
     private sealed class LazyViewActivator(IServiceProvider services) : IViewActivator

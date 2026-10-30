@@ -3,6 +3,7 @@
   <PropertyGroup>
     <!-- xUnit1051: our APIs take an optional CancellationToken everywhere; passing TestContext's to every arrange step adds noise only. -->
     <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
