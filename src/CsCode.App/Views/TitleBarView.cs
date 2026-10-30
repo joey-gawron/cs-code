@@ -123,13 +123,18 @@ public sealed class TitleBarView : Border
         _workspaceBadge.IsVisible = !string.IsNullOrEmpty(name);
     }
 
-    /// <summary>"Search (Ctrl+Q)": Visual Studio's wording with the palette's real shortcut, preferring Ctrl+Q (the Visual Studio keymap's Quick Launch key).</summary>
-    public static string PlaceholderFor(IKeybindingService? bindings)
+    /// <summary>
+    /// "Search (Ctrl+Q)": Visual Studio's wording with the palette's real shortcut, preferring Ctrl+Q (the Visual Studio keymap's Quick Launch key;
+    /// ⇧⌘A on macOS).
+    /// </summary>
+    public static string PlaceholderFor(IKeybindingService? bindings) => PlaceholderFor(bindings, OperatingSystem.IsMacOS());
+
+    internal static string PlaceholderFor(IKeybindingService? bindings, bool mac)
     {
         if (bindings is null) return "Search";
-        var quickLaunch = bindings.GetBindingsFor(KnownCommands.CommandPalette)
-            .Any(b => !b.IsNegative && b.Chord is [{ Key: "q", Ctrl: true, Shift: false, Alt: false, Meta: false }]);
-        var label = quickLaunch ? "Ctrl+Q" : bindings.GetLabel(KnownCommands.CommandPalette);
+        var quickLaunchKey = mac ? new KeyStroke("a", Shift: true, Meta: true) : new KeyStroke("q", Ctrl: true);
+        var quickLaunch = bindings.GetBindingsFor(KnownCommands.CommandPalette).Any(b => !b.IsNegative && b.Chord is [var s] && s == quickLaunchKey);
+        var label = quickLaunch ? (mac ? "⇧⌘A" : "Ctrl+Q") : bindings.GetLabel(KnownCommands.CommandPalette);
         return label is null ? "Search" : $"Search ({label})";
     }
 

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
+using CsCode.Platform;
+using CsCode.Platform.Keybindings;
 using CsCode.Ui.Threading;
 
 namespace CsCode.App.Input;
@@ -53,12 +55,13 @@ public sealed class KeyboardPipeline : IDisposable
     private readonly IUiDispatcher _ui;
     private readonly TimeProvider _time;
     private readonly TimeSpan _timeout;
+    private readonly HostOs _os;
     private IDisposable? _pendingStatus;
     private ITimer? _timer;
 
     /// <param name="context">Evaluates the `when` clauses of fallback bindings (see the class remarks); without it only unconditional ones qualify.</param>
     public KeyboardPipeline(IKeybindingService keys, ICommandService commands, IUiDispatcher ui, IStatusBarService? status = null,
-        IWindowService? window = null, TimeProvider? time = null, TimeSpan? chordTimeout = null, IContextKeyService? context = null)
+        IWindowService? window = null, TimeProvider? time = null, TimeSpan? chordTimeout = null, IContextKeyService? context = null, HostOs? os = null)
     {
         _keys = keys;
         _commands = commands;
@@ -68,6 +71,7 @@ public sealed class KeyboardPipeline : IDisposable
         _window = window;
         _time = time ?? TimeProvider.System;
         _timeout = chordTimeout ?? DefaultChordTimeout;
+        _os = os ?? (OperatingSystem.IsWindows() ? HostOs.Windows : OperatingSystem.IsMacOS() ? HostOs.MacOs : HostOs.Linux);
     }
 
     public bool IsChordPending => _keys.PendingChord.Count > 0;
@@ -181,7 +185,7 @@ public sealed class KeyboardPipeline : IDisposable
 
     private void ShowPending()
     {
-        var chord = string.Join(", ", _keys.PendingChord.Select(Format));
+        var chord = FormatChord(_keys.PendingChord);
         _pendingStatus?.Dispose();
         _pendingStatus = _status?.Set(new StatusBarItemModel(PendingStatusId, $"({chord}) was pressed. Waiting for second key of chord…", Priority: int.MaxValue));
         _timer?.Dispose();
@@ -202,7 +206,7 @@ public sealed class KeyboardPipeline : IDisposable
     private void ShowDead(KeyStroke last)
     {
         ClearDead();
-        var text = string.Join(", ", _lastChord.Append(last).Select(Format));
+        var text = FormatChord([.. _lastChord, last]);
         _deadStatus = _status?.Set(new StatusBarItemModel("keys.dead", $"The key combination ({text}) is not a command.", Priority: int.MaxValue));
         _deadTimer = _time.CreateTimer(_ => _ui.Post(ClearDead), null, TimeSpan.FromSeconds(3), Timeout.InfiniteTimeSpan);
     }
@@ -243,6 +247,10 @@ public sealed class KeyboardPipeline : IDisposable
             if (_window is not null) await _window.ShowMessageAsync(MessageSeverity.Error, $"Command '{binding.Command}' failed: {ex.Message}");
         }
     }
+
+    /// <summary>"Ctrl+K, Ctrl+C"; on macOS the Mac's own form ("⌘K ⌘C"), as the menus show it.</summary>
+    private string FormatChord(IReadOnlyList<KeyStroke> chord) =>
+        _os == HostOs.MacOs ? KeyBindingFormatter.Format(chord, _os) : string.Join(", ", chord.Select(Format));
 
     internal static string Format(KeyStroke s)
     {

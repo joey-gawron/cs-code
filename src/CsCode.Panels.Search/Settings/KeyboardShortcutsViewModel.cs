@@ -19,18 +19,35 @@ public sealed record ShortcutRow(string Command, string Title, string Keys, stri
     public bool HasTitle => Title != Command.TrimStart('-');
 }
 
-/// <summary>Formats key chords for display ("Ctrl+K, Ctrl+C").</summary>
+/// <summary>
+/// Formats key chords for display ("Ctrl+K, Ctrl+C"). On macOS the modifiers are the Mac's, named rather than drawn so the table's filter finds
+/// them, in the Mac's order: Ctrl, Option, Shift, Cmd ("Cmd+K, Cmd+C", "Option+Shift+A").
+/// </summary>
 public static class KeyLabel
 {
-    public static string Format(IEnumerable<KeyStroke> chord) => string.Join(", ", chord.Select(Format));
+    public static string Format(IEnumerable<KeyStroke> chord) => Format(chord, OperatingSystem.IsMacOS());
 
-    public static string Format(KeyStroke s)
+    public static string Format(IEnumerable<KeyStroke> chord, bool mac) => string.Join(", ", chord.Select(s => Format(s, mac)));
+
+    public static string Format(KeyStroke s) => Format(s, OperatingSystem.IsMacOS());
+
+    public static string Format(KeyStroke s, bool mac)
     {
-        var parts = new List<string>(4);
-        if (s.Ctrl) parts.Add("Ctrl");
-        if (s.Shift) parts.Add("Shift");
-        if (s.Alt) parts.Add("Alt");
-        if (s.Meta) parts.Add(OperatingSystem.IsMacOS() ? "Cmd" : "Win");
+        var parts = new List<string>(5);
+        if (mac)
+        {
+            if (s.Ctrl) parts.Add("Ctrl");
+            if (s.Alt) parts.Add("Option");
+            if (s.Shift) parts.Add("Shift");
+            if (s.Meta) parts.Add("Cmd");
+        }
+        else
+        {
+            if (s.Ctrl) parts.Add("Ctrl");
+            if (s.Shift) parts.Add("Shift");
+            if (s.Alt) parts.Add("Alt");
+            if (s.Meta) parts.Add("Win");
+        }
         parts.Add(KeyName(s.Key));
         return string.Join('+', parts);
     }

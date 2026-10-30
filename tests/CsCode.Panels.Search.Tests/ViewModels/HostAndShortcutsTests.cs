@@ -336,5 +336,14 @@ public class HostAndShortcutsTests : IDisposable
     [InlineData("pageup", "PageUp")]
     [InlineData("ctrl+/", "Ctrl+/")]
     [InlineData("shift+f11", "Shift+F11")]
-    public void Key_labels(string chord, string label) => Assert.Equal(label, KeyLabel.Format(KeyStrokeParser.ParseChord(chord)));
+    [InlineData("meta+k", "Win+K")]
+    public void Key_labels(string chord, string label) => Assert.Equal(label, KeyLabel.Format(KeyStrokeParser.ParseChord(chord), mac: false));
+
+    [Theory]
+    [InlineData("cmd+k cmd+c", "Cmd+K, Cmd+C")]
+    [InlineData("shift+alt+a", "Option+Shift+A")]
+    [InlineData("ctrl+alt+shift+cmd+f5", "Ctrl+Option+Shift+Cmd+F5")]
+    [InlineData("ctrl+`", "Ctrl+`")]
+    public void Key_labels_on_macOS_name_the_Macs_modifiers(string chord, string label) =>
+        Assert.Equal(label, KeyLabel.Format(KeyStrokeParser.ParseChord(chord), mac: true));
 }
