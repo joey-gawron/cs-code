@@ -104,14 +104,39 @@ public class TreeSitterLeakTests
         return [.. released];
     }
 
-    /// <summary>Engine disposal is posted to the editor worker: wait until it has run everything queued.</summary>
+    /// <summary>Engine disposal is posted to the syntax lane (and TextMate's to the editor worker): wait until both ran everything queued.</summary>
     private static async Task DrainWorker(ViewHost host)
     {
-        var worker = host.Factory.Worker;
         for (var i = 0; i < 3; i++)
         {
-            await worker.RunAsync(Editor.Threading.WorkPriority.Idle, _ => 0);
+            await host.Factory.Worker.RunAsync(Editor.Threading.WorkPriority.Idle, _ => 0);
+            await host.Factory.Tokens.TreeSitter.Lane.RunAsync(Editor.Threading.WorkPriority.Idle, _ => 0);
             ViewHost.Pump();
         }
+    }
+
+    /// <summary>Shutting the editor down with documents still open frees their syntax trees (the lane runs the queued disposals before it stops).</summary>
+    [AvaloniaFact]
+    public async Task Disposing_the_editor_with_open_tree_sitter_documents_frees_their_trees()
+    {
+        RequireGrammar("rust");
+        Assert.SkipUnless(TsRuntime.AllocationsTracked, "allocation tracking is off (CSCODE_TREESITTER_TRACK_ALLOC=0)");
+        var text = string.Concat(Enumerable.Range(0, 2000).Select(i => $"fn f{i}(a: i32) -> i32 {{ a * {i} }}\n"));
+        async Task<long> OpenAndDispose()
+        {
+            var host = ViewHost.Create();
+            host.Config.Set(TreeSitterService.SettingKey, TreeSitterService.TreeSitter);
+            var (_, view, _) = await host.OpenAsync(text, "open.rs");
+            await TreeSitterViewTests.WaitForTreeSitter(view);
+            var peak = TsRuntime.AllocatedBytes;
+            host.Dispose();
+            return peak;
+        }
+        await OpenAndDispose(); // warm-up: the grammar, its queries and the per-process caches
+        await Task.Delay(500);
+        var baseline = TsRuntime.AllocatedBytes;
+        var peak = await OpenAndDispose();
+        Assert.True(peak - baseline > 500_000, $"one open tree of ~70 K characters: baseline {baseline}, peak {peak}");
+        await ViewHost.WaitFor(() => TsRuntime.AllocatedBytes - baseline < 64 * 1024, $"trees freed after the editor was disposed (baseline {baseline}, now {TsRuntime.AllocatedBytes})");
     }
 }

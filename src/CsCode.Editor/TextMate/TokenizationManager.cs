@@ -180,9 +180,11 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
         if (_disposed) return;
         _disposed = true;
         _monitorRegistration?.Dispose();
-        _subscriptions.Dispose();
+        // the sessions first: their tree-sitter engines are freed by jobs on the syntax lane, which the service's own disposal (in the
+        // subscriptions) stops after the jobs already queued
         TokenizationSession[] all;
         lock (_gate) all = _sessions.ToArray();
         foreach (var s in all) s.Dispose();
+        _subscriptions.Dispose();
     }
 }
