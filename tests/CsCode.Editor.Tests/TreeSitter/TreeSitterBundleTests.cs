@@ -193,6 +193,15 @@ public partial class TreeSitterBundleTests
         Assert.Contains("Apache License", File.ReadAllText(Path.Combine(bundle.Directory, "licenses", "tree-sitter-elixir.txt")), StringComparison.Ordinal);
     }
 
+    /// <summary>docs/LANGUAGES.md says which languages fold by the tree from this list: it must be what the bundle really has.</summary>
+    [Fact]
+    public void The_documented_list_of_grammars_with_folds_matches_the_bundle()
+    {
+        var bundle = RequireBundle();
+        var withFolds = bundle.Grammars.Where(g => File.Exists(Path.Combine(bundle.GrammarsRoot, "queries", g.Name, "folds.scm"))).Select(g => g.Name).ToHashSet();
+        Assert.Equal(withFolds.Order(), TreeSitterLanguageSupport.GrammarsWithFolds.Order());
+    }
+
     [Fact]
     public void Every_bundled_grammar_loads_and_its_highlight_query_compiles()
     {

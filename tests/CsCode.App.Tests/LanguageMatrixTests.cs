@@ -4,6 +4,7 @@ using Avalonia.Headless.XUnit;
 using CsCode.Core.Debugging;
 using CsCode.Core.Languages;
 using CsCode.Editor.Languages;
+using CsCode.Editor.TreeSitter;
 using CsCode.Lsp.Manager;
 using CsCode.TestDoubles;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,7 +23,6 @@ public class LanguageMatrixTests
 {
     private const string Begin = "<!-- BEGIN GENERATED: LanguageMatrixTests (do not edit by hand) -->";
     private const string End = "<!-- END GENERATED -->";
-    private const string NoHighlighting = "none yet: waits for the tree-sitter decision";
 
     private sealed record Snapshot(
         IReadOnlyList<BuiltinLanguageSupportInfo> Languages,
@@ -82,11 +82,11 @@ public class LanguageMatrixTests
         foreach (var b in BuiltinLanguageServers.Catalog)
             foreach (var lang in Languages(b.Definition))
                 Assert.True(ids.Contains(lang), $"server {b.Definition.Id} serves '{lang}', which no built-in language detects");
-        // every language is detected by something, and is highlighted or says why not
+        // every language is detected by something, and highlighted (TextMate or tree-sitter) unless it is plain text
         foreach (var l in s.Languages)
         {
             Assert.True(Detection(l, s.LanguageService) != "-", $"{l.Id} cannot be detected");
-            if (l.GrammarScope is null) Assert.True(l.Id is "plaintext" || Highlighting(l) == NoHighlighting, l.Id);
+            Assert.True(l.Id is "plaintext" || l.GrammarScope is not null || TreeSitterLanguageSupport.IsDefaultFor(l.Id), $"{l.Id} is not highlighted");
         }
         // every language without highlighting still has comment/bracket behaviour of its own (B4), except formats that have no comments
         foreach (var l in s.Languages.Where(l => l.GrammarScope is null && l.Id is not ("plaintext" or "juliamarkdown")))
@@ -104,7 +104,9 @@ public class LanguageMatrixTests
         sb.Append('\n');
         sb.Append(CultureInfo.InvariantCulture, $"{s.Languages.Count} languages, {BuiltinLanguageServers.Catalog.Count} built-in language servers, ")
           .Append(CultureInfo.InvariantCulture, $"{s.Debuggers.Count} built-in debugger(s). ")
-          .Append(CultureInfo.InvariantCulture, $"Highlighted: {s.Languages.Count(l => l.GrammarScope is not null)}; ")
+          .Append(CultureInfo.InvariantCulture, $"Highlighted: {s.Languages.Count(l => l.GrammarScope is not null || TreeSitterLanguageSupport.IsDefaultFor(l.Id))} ")
+          .Append(CultureInfo.InvariantCulture, $"({s.Languages.Count(l => TreeSitterLanguageSupport.IsDefaultFor(l.Id))} of them by tree-sitter by default, ")
+          .Append(CultureInfo.InvariantCulture, $"{s.Languages.Count(l => l.GrammarScope is not null && TreeSitterLanguageSupport.GrammarFor(l.Id) is not null)} more with tree-sitter as an option); ")
           .Append(CultureInfo.InvariantCulture, $"with a language server: {s.Languages.Count(l => ServersFor(l.Id).Any())}.\n\n");
 
         sb.Append("### Support matrix\n\n");
@@ -119,7 +121,7 @@ public class LanguageMatrixTests
               .Append(" | ").Append(Cell(Highlighting(l)))
               .Append(" | ").Append(Cell(Configuration(l, config)))
               .Append(" | ").Append(l.HasBuiltinSnippets ? "built-in (VS Code)" : "user only")
-              .Append(" | ").Append(Cell(Folding(config, servers.Length > 0)))
+              .Append(" | ").Append(Cell(Folding(l.Id, config, servers.Length > 0)))
               .Append(" | ").Append(Cell(servers.Length == 0 ? "none built in" : string.Join("; ", servers.Select(Server))))
               .Append(" | ").Append(Cell(servers.Length == 0 ? "none" : string.Join("; ", servers.Select(b => b.Formatter))))
               .Append(" | ").Append(Cell(Debugger(l.Id, s.Debuggers)))
@@ -176,9 +178,13 @@ public class LanguageMatrixTests
     }
 
     private static string Highlighting(BuiltinLanguageSupportInfo l) =>
-        l.GrammarScope is { } scope ? $"TextMate `{scope}` (VS Code `{l.GrammarSource}`)"
-        : l.Id == "plaintext" ? "none (plain text)"
-        : NoHighlighting;
+        (TreeSitterLanguageSupport.GrammarFor(l.Id), l.GrammarScope) switch
+        {
+            (null, { } scope) => $"TextMate `{scope}` (VS Code `{l.GrammarSource}`)",
+            ({ } grammar, { } scope) => $"TextMate `{scope}` (VS Code `{l.GrammarSource}`); tree-sitter `{grammar}` as an option",
+            ({ } grammar, null) => $"tree-sitter `{grammar}` (default)",
+            _ => "none (plain text)",
+        };
 
     private static string Configuration(BuiltinLanguageSupportInfo l, LanguageConfiguration c)
     {
@@ -200,10 +206,18 @@ public class LanguageMatrixTests
         return origin + ": " + string.Join(", ", parts);
     }
 
-    private static string Folding(LanguageConfiguration c, bool hasServer)
+    private static string Folding(string languageId, LanguageConfiguration c, bool hasServer)
     {
-        var parts = new List<string> { c.OffsideFolding ? "indentation (off-side)" : "indentation" };
-        if (c.FoldingMarkersStart is not null && c.FoldingMarkersEnd is not null) parts.Add("region markers");
+        var parts = new List<string>();
+        // a document tree-sitter colours folds by the tree (folds.scm) instead of indentation and markers (docs/TREE-SITTER.md, "Structure")
+        var treeFolds = TreeSitterLanguageSupport.GrammarFor(languageId) is { } grammar && TreeSitterLanguageSupport.GrammarsWithFolds.Contains(grammar);
+        if (treeFolds && TreeSitterLanguageSupport.IsDefaultFor(languageId)) parts.Add("syntax tree");
+        else
+        {
+            parts.Add(c.OffsideFolding ? "indentation (off-side)" : "indentation");
+            if (c.FoldingMarkersStart is not null && c.FoldingMarkersEnd is not null) parts.Add("region markers");
+            if (treeFolds) parts.Add("syntax tree with tree-sitter");
+        }
         if (hasServer) parts.Add("server ranges");
         return string.Join(", ", parts);
     }
