@@ -26,6 +26,7 @@ internal static class EditorFeatures
             new Features.HighlightFeature(view),
             new Features.BreadcrumbFeature(view),
             new Features.InlayHintFeature(view),
+            new Features.StickyScrollFeature(view), // after folding: it pins the headers of folding's regions
         };
         // the breakpoint margin, stop-line arrow and breakpoint tracking exist only when a debugger is registered
         if (view.Services.Debug is { } debug) list.Add(new Features.DebugFeature(view, debug));
