@@ -225,6 +225,7 @@ public class EditorClipboardViewTests
     [AvaloniaFact]
     public async Task Selecting_offers_the_text_as_PRIMARY_and_a_middle_click_pastes_PRIMARY_at_the_click()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "editor.selectionClipboard (PRIMARY, middle-click paste) is Linux-only, as in VS Code (EditorSettings)");
         var (host, clipboard) = Host();
         using var h = host;
         host.Config.Set("editor.selectionClipboard", true);
