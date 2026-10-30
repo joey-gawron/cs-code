@@ -208,6 +208,38 @@ public class SessionStartupFailureTests
             host.Dispose();
         }
     }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_warm_spare_whose_start_up_failed_refuses_a_claim_without_keeping_the_session()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Skip("Unix sockets");
+        using var env = new RealAppHome();
+        var runtime = RuntimeDirectory.Resolve(name => name == "CSCODE_HOME" ? env.Home.Path : null);
+        var host = BackgroundHost.Start(CommandLineOptions.Parse(["--host", "--spare", "--headless-test"]), new CrashHandler(env.CrashLogs.Path), runtime, new SessionStore(env.Home.Combine("data")), out _);
+        Assert.NotNull(host);
+        var previous = App.Background;
+        App.Background = host;
+        try
+        {
+            await using var run = new RealAppRun(env, s => s.AddSingleton<CsCode.Core.Platform.IWorkspaceService>(_ => throw new InvalidOperationException("workspace module is broken")));
+            Assert.True(await DevHost.WaitFor(() => run.Session.Window is CrashWindow, 60_000), "no crash window");
+
+            // The launcher's claim fails with the reason, and the session is free for the fresh process the launcher starts instead.
+            var claim = await Task.Run(() => IpcClient.Request(runtime.EndpointOf(Environment.ProcessId), new IpcMessage { Type = IpcVerbs.Claim, Session = "S", Hidden = true }, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(30)));
+            Assert.NotEqual(true, claim.Ok);
+            Assert.Contains("workspace module is broken", claim.Error);
+            Assert.False(FileLock.IsHeldElsewhere(runtime.SessionLockPath("S")));
+
+            var quit = await Task.Run(() => IpcClient.Request(runtime.EndpointOf(Environment.ProcessId), new IpcMessage { Type = IpcVerbs.Quit, Force = true }, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10)));
+            Assert.True(quit.Ok == true, quit.Error);
+            await run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            App.Background = previous;
+            host.Dispose();
+        }
+    }
 }
 
 public class SessionShellTests

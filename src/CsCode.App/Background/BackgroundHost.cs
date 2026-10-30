@@ -158,9 +158,6 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
 
     internal void SetState(string state) => _state = state;
 
-    /// <summary>Why this process could not start (set once by <see cref="StartupFailed"/>); null while it runs normally.</summary>
-    internal string? StartupFailure => _startupFailure;
-
     /// <summary>
     /// Start-up failed (the app session shows its crash window): the process stays only until that window is closed or it is asked to quit. From
     /// now on every request that needs the window fails at once with the reason (the launcher prints it instead of waiting 30 s for a show that
@@ -173,6 +170,12 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         _startupFailure = "CsCode could not start: " + summary + (logPath is null ? "" : $" (log: {logPath})");
         _state = ProcessStates.Quitting;
         _attached.TrySetException(new StartupFailedException(_startupFailure));
+        ReleaseSessionLock();
+        SessionTrace.Mark("host: start-up failed");
+    }
+
+    private void ReleaseSessionLock()
+    {
         FileLock? held;
         lock (_gate)
         {
@@ -180,7 +183,14 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
             _sessionLock = null;
         }
         held?.Dispose();
-        SessionTrace.Mark("host: start-up failed");
+    }
+
+    /// <summary>The answer to a request that needed the window of a process whose start-up failed: quit ends it, anything else gets the reason.</summary>
+    private IpcMessage AfterStartupFailure(IpcMessage request, StartupFailedException failure)
+    {
+        if (request.Type != IpcVerbs.Quit) return IpcMessage.Failure(failure.Message);
+        _quitAfterFailure?.Invoke();
+        return IpcMessage.Reply();
     }
 
     private sealed class StartupFailedException(string message) : Exception(message);
@@ -242,13 +252,10 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
                 return IpcMessage.Reply() with { Sessions = list };
             case IpcVerbs.Claim:
                 return await ClaimAsync(request, ct).ConfigureAwait(false);
-            case IpcVerbs.Quit when _startupFailure is not null:
-                _quitAfterFailure?.Invoke();
-                return IpcMessage.Reply();
         }
         SessionWindowController controller;
         try { controller = await _attached.Task.WaitAsync(ct).ConfigureAwait(false); }
-        catch (StartupFailedException ex) { return IpcMessage.Failure(ex.Message); }
+        catch (StartupFailedException ex) { return AfterStartupFailure(request, ex); }
         return await controller.HandleAsync(request, ct).ConfigureAwait(false);
     }
 
@@ -263,6 +270,7 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     {
         var name = request.Session;
         if (SessionNames.Validate(name) is { } invalid) return IpcMessage.Failure(invalid);
+        if (_startupFailure is { } failed) return IpcMessage.Failure(failed);
         lock (_gate)
         {
             if (!Options.Spare || _claimed) return IpcMessage.Failure($"this process is not a free spare (state {_state})");
@@ -279,7 +287,11 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         SessionTrace.Mark("host: claim prepared");
         SessionWindowController controller;
         try { controller = await _attached.Task.WaitAsync(ct).ConfigureAwait(false); }
-        catch (StartupFailedException ex) { return IpcMessage.Failure(ex.Message); }
+        catch (StartupFailedException ex)
+        {
+            ReleaseSessionLock(); // taken by this claim after the failure: the launcher starts a fresh process for the session instead
+            return IpcMessage.Failure(ex.Message);
+        }
         await controller.ActivateOnUiAsync(prepared, hidden: request.Hidden == true).ConfigureAwait(false);
         SessionTrace.Mark("host: claim done");
         return IpcMessage.Reply();
