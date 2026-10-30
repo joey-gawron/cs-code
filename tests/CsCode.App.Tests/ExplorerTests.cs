@@ -322,6 +322,7 @@ public class ExplorerTests
         public TempDirectory Dir { get; } = new("cscode-explorer-live-");
         public IoLane Lane { get; } = new("test.explorer.watch", 2);
         public FileWatcher Watcher { get; }
+        public FileWatcherRouter Router { get; }
         public FakeWorkspaceService Workspace { get; }
         public TestConfigurationService Config { get; } = new();
         public ExplorerViewModel Vm { get; }
@@ -329,14 +330,22 @@ public class ExplorerTests
         public LiveRig()
         {
             Watcher = new FileWatcher(Lane);
-            Workspace = new FakeWorkspaceService(new DiskFileSystem(), Watcher);
+            Router = new FileWatcherRouter(Watcher); // as composed in the app: the Explorer's wants go through the router
+            Workspace = new FakeWorkspaceService(new DiskFileSystem(), Router);
             Vm = new ExplorerViewModel(Workspace, AvaloniaUiDispatcher.Instance, null, Config, new InMemoryStateStorage(), new FakeModalDialogs());
         }
 
+        /// <summary>Opens the folder and waits for its OS watch: a change before it is in place is not reported (by design).</summary>
         public async Task OpenAsync()
         {
             await Workspace.OpenFolderAsync(Dir.Uri);
             await Vm.RefreshCompleted;
+            var sw = Stopwatch.StartNew();
+            while (Watcher.ActiveBackends < 1)
+            {
+                if (sw.ElapsedMilliseconds > 10_000) throw new TimeoutException("the folder's OS watch was not armed");
+                await Task.Delay(10);
+            }
         }
 
         public string[] Names => Vm.Rows.Select(r => new string(' ', r.Depth) + r.Name).ToArray();
@@ -354,6 +363,99 @@ public class ExplorerTests
         }
 
         public void Dispose() { Vm.Dispose(); Watcher.Dispose(); Lane.Dispose(); Dir.Dispose(); }
+    }
+
+    [AvaloniaFact]
+    public async Task Collapsing_and_expanding_the_root_asks_again_for_the_expanded_excluded_folders_and_reads_them_again()
+    {
+        // A click on the root row collapses it: the folders inside excluded ones that were expanded below it are let go, so expanding the root
+        // again must ask for them and read them again, or they come back stale and stay so.
+        using var rig = new LiveRig();
+        rig.Dir.WriteFile("src/bin/tool.rs", "");
+        await rig.OpenAsync();
+        await rig.Vm.ToggleAsync(rig.Row("src"));
+        await rig.Vm.ToggleAsync(rig.Row("bin"));
+        await rig.Vm.WantsApplied;
+        var root = rig.Vm.Roots[0];
+
+        rig.Vm.Collapse(root);
+        await rig.Vm.WantsApplied;
+        File.WriteAllText(rig.P("src/bin/while-collapsed.rs"), "");
+        File.Delete(rig.P("src/bin/tool.rs"));
+        await Task.Delay(400);
+        await rig.Vm.ToggleAsync(root);
+        Assert.Contains("   while-collapsed.rs", rig.Names);
+        Assert.DoesNotContain("   tool.rs", rig.Names);
+
+        await rig.Vm.WantsApplied;
+        File.WriteAllText(rig.P("src/bin/later.rs"), "");
+        await rig.Until(n => n.Contains("   later.rs"), "src/bin/ to refresh live again");
+    }
+
+    [AvaloniaFact]
+    public async Task On_a_remote_folder_every_expanded_folder_is_asked_for_and_read_again_when_shown_again()
+    {
+        // The client cannot see a remote folder's cache tags: it asks for every expanded folder (the server watches anew only those it would
+        // leave out) and reads each one again when expanding shows it again.
+        using var rig = new Rig();
+        rig.Dir.WriteFile("bin/Debug/a.dll", "");
+        var remote = new Uri("ssh://box" + rig.Dir.Path.TrimEnd('/') + "/");
+        await rig.Workspace.OpenFolderAsync(remote);
+        await rig.Vm.RefreshCompleted;
+        await rig.Vm.ToggleAsync(rig.Vm.Rows.Single(r => r.Name == "bin"));
+        await rig.Vm.ToggleAsync(rig.Vm.Rows.Single(r => r.Name == "Debug"));
+        var wants = Assert.Single(rig.Watcher.ActiveWants);
+        Assert.NotNull(wants);
+        Assert.Equal([new Uri(remote, "bin/").AbsoluteUri, new Uri(remote, "bin/Debug/").AbsoluteUri], wants.Directories.Select(static u => u.AbsoluteUri).Order(StringComparer.Ordinal));
+
+        rig.Vm.Collapse(rig.Vm.Rows.Single(r => r.Name == "bin"));
+        Assert.Empty(wants.Directories);
+        File.WriteAllText(rig.P("bin/Debug/b.dll"), "");                                                     // nothing reports it
+        File.Delete(rig.P("bin/Debug/a.dll"));
+        await rig.Vm.ToggleAsync(rig.Vm.Rows.Single(r => r.Name == "bin"));
+        Assert.Contains("   b.dll", rig.Names);
+        Assert.DoesNotContain("   a.dll", rig.Names);
+    }
+
+    [AvaloniaFact]
+    public async Task A_wanted_folder_that_leaves_the_listing_is_no_longer_asked_for()
+    {
+        using var rig = new Rig();
+        rig.Config.Set(SettingKeys.FilesWatcherExclude, new Dictionary<string, bool> { ["**/gen/**"] = true });
+        rig.Dir.WriteFile("gen/foo/x.txt", "");
+        await rig.OpenAsync();
+        await rig.Vm.ToggleAsync(rig.Vm.Rows.Single(r => r.Name == "gen"));
+        await rig.Vm.ToggleAsync(rig.Vm.Rows.Single(r => r.Name == "foo"));
+        var wants = Assert.Single(rig.Watcher.ActiveWants)!;
+        Assert.Equal(2, wants.Directories.Count);
+
+        Directory.Delete(rig.P("gen/foo"), recursive: true);                                                 // rm -rf; npm install brings it back later
+        rig.Watcher.Raise(new FileChange(new Uri(rig.P("gen/foo")), FileChangeKind.Deleted));
+        await rig.Vm.FlushWatcherAsync();
+        Assert.Equal([new Uri(rig.P("gen") + "/").AbsoluteUri], wants.Directories.Select(static u => u.AbsoluteUri));
+        Directory.CreateDirectory(rig.P("gen/foo"));
+        rig.Watcher.Raise(new FileChange(new Uri(rig.P("gen/foo")), FileChangeKind.Created));
+        await rig.Vm.FlushWatcherAsync();
+        Assert.Single(wants.Directories);                                                                     // the new gen/foo is collapsed: not asked for
+    }
+
+    [AvaloniaFact]
+    public async Task The_watchers_rescan_marker_reads_every_loaded_folder_of_that_root_again_and_hidden_entries_change_nothing()
+    {
+        using var rig = new Rig();
+        rig.Dir.WriteFile("src/a.cs", "");
+        await rig.OpenAsync();
+        await rig.Vm.ToggleAsync(rig.Vm.Rows.Single(r => r.Name == "src"));
+
+        var reads = rig.Vm.DirectoryReads;
+        rig.Watcher.Raise(new FileChange(new Uri(rig.P(".DS_Store")), FileChangeKind.Created));             // files.exclude hides it
+        await rig.Vm.FlushWatcherAsync();
+        Assert.Equal(reads, rig.Vm.DirectoryReads);
+
+        rig.Dir.WriteFile("src/lost.cs", "");                                                                // its event was lost in an overflow …
+        rig.Watcher.Raise(new FileChange(new Uri(rig.Dir.Path.TrimEnd('/')), FileChangeKind.Changed));      // … and the watcher says so: rescan
+        await rig.Vm.FlushWatcherAsync();
+        Assert.Contains("  lost.cs", rig.Names);
     }
 
     [AvaloniaFact]

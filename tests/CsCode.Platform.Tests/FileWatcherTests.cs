@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using CsCode.Core.Platform;
 using CsCode.Platform.Io;
 using CsCode.Platform.Tests.Support;
@@ -27,6 +28,10 @@ public class ChangeCoalescerTests
     [InlineData("Deleted", "Created", FileChangeKind.Changed)]   // replaced
     [InlineData("Deleted", "Changed", FileChangeKind.Changed)]
     [InlineData("Deleted", "Deleted", FileChangeKind.Deleted)]
+    [InlineData("Changed", "Announced", FileChangeKind.Created)] // a new watch saw a write to a file the scan of its directory then found
+    [InlineData("Created", "Announced", FileChangeKind.Created)]
+    [InlineData("Deleted", "Announced", FileChangeKind.Changed)]
+    [InlineData("Announced", "Changed", FileChangeKind.Created)]
     public void Pairs_merge_per_the_documented_rules(string first, string second, FileChangeKind expected)
     {
         var r = Run((Enum.Parse<RawKind>(first), "/w/f", null), (Enum.Parse<RawKind>(second), "/w/f", null));
@@ -178,6 +183,43 @@ public class ExcludeMatcherTests
         Assert.False(WatchExclusion.IsInExcludedArea(t.Path, t.Combine("src", "binary"), ["**/bin/**"]));
         Assert.False(WatchExclusion.IsInExcludedArea(t.Path, t.Path, ["**/*"]));                            // the root never is
     }
+
+    [Fact]
+    public void A_tagged_python_virtual_environment_is_not_a_cache_directory()
+    {
+        // uv tags the .venv it creates; Pyright resolves imports from it, so its changes must reach the language server.
+        using var t = new TempDirectory("cscode-cachedir-");
+        t.WriteFile(".venv/CACHEDIR.TAG", "Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by uv.\n");
+        Assert.True(WatchExclusion.HasCacheDirTag(t.Combine(".venv")));
+        Assert.True(WatchExclusion.IsCacheDirectory(t.Combine(".venv")));                                   // uv writes the tag first …
+        t.WriteFile(".venv/pyvenv.cfg", "home = /usr/bin\n");
+        Assert.False(WatchExclusion.IsCacheDirectory(t.Combine(".venv")));                                  // … pyvenv.cfg makes it an environment
+        Assert.False(WatchExclusion.IsInExcludedArea(t.Path, t.Combine(".venv", "lib"), []));
+    }
+
+    [DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]
+    private static extern int MkFifo([MarshalAs(UnmanagedType.LPUTF8Str)] string path, uint mode);
+
+    [Fact]
+    public async Task A_fifo_or_a_symlink_named_like_the_cache_tag_is_never_read()
+    {
+        // Opening a FIFO without a writer, or reading a fresh /dev/ptmx, blocks for ever: the walk (and the reader holding its lock) would hang.
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "FIFOs and /dev/ptmx");
+        using var t = new TempDirectory("cscode-cachedir-");
+        Directory.CreateDirectory(t.Combine("fifo"));
+        Assert.Equal(0, MkFifo(t.Combine("fifo", "CACHEDIR.TAG"), 0x180));
+        Directory.CreateDirectory(t.Combine("tty"));
+        File.CreateSymbolicLink(t.Combine("tty", "CACHEDIR.TAG"), "/dev/ptmx");
+        t.WriteFile("real.tag", "Signature: 8a477f597d28d172789f06886806bc55\n");
+        Directory.CreateDirectory(t.Combine("link"));
+        File.CreateSymbolicLink(t.Combine("link", "CACHEDIR.TAG"), t.Combine("real.tag"));                 // the tag is a plain file, not a link
+
+        var looked = Task.Run(() => (WatchExclusion.HasCacheDirTag(t.Combine("fifo")), WatchExclusion.HasCacheDirTag(t.Combine("tty")), WatchExclusion.HasCacheDirTag(t.Combine("link"))));
+        var (fifo, tty, link) = await looked.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.False(fifo);
+        Assert.False(tty);
+        Assert.False(link);
+    }
 }
 
 internal sealed class WatchFixture : IDisposable
@@ -200,7 +242,7 @@ internal sealed class WatchFixture : IDisposable
     {
         Watcher = factory is null
             ? new FileWatcher(Lane, config, Options, Log)
-            : new FileWatcher(Lane, null, Options, Log, factory);
+            : new FileWatcher(Lane, config is null ? null : FileWatcher.ConfigReadOf(config), Options, Log, factory);
     }
 
     public string P(string rel) => Temp.Combine(rel.Split('/'));
@@ -286,7 +328,13 @@ public sealed class WatchersCollection;
 public abstract class FileWatcherTests : IDisposable
 {
     private readonly WatchFixture _f;
-    protected FileWatcherTests(bool fileSystemWatcher) => _f = new WatchFixture(fileSystemWatcher ? WatchFixture.FswFactory : null);
+    private readonly BackendFactory? _factory;
+
+    protected FileWatcherTests(bool fileSystemWatcher)
+    {
+        _factory = fileSystemWatcher ? WatchFixture.FswFactory : null;
+        _f = new WatchFixture(_factory);
+    }
     public void Dispose() => _f.Dispose();
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -465,7 +513,7 @@ public abstract class FileWatcherTests : IDisposable
     {
         var cfg = new TestConfigurationService();
         cfg.Set(SettingKeys.FilesWatcherExclude, new Dictionary<string, bool> { ["**/skipme/**"] = true, ["**/node_modules/**"] = false });
-        using var f = new WatchFixture(config: cfg);
+        using var f = new WatchFixture(_factory, cfg);
         Directory.CreateDirectory(f.P("skipme"));
         Directory.CreateDirectory(f.P("node_modules"));
         var (events, h) = f.Start();
@@ -1107,6 +1155,7 @@ public class FileWatcherFallbackTests
         public string? Root;
         public RawSink? Sink;
         public Action<Exception>? Fatal;
+        public Action? RootLost;
         public Action? OnDispose;
         public volatile bool Disposed;
         public void Dispose()
@@ -1118,9 +1167,9 @@ public class FileWatcherFallbackTests
 
     /// <summary>A fixture whose "OS watches" are fakes, added to <paramref name="backends"/> as created; <paramref name="onCreate"/> runs inside the factory.</summary>
     private static WatchFixture FakeFixture(List<FakeBackend> backends, Action<FakeBackend>? onCreate = null) =>
-        new(factory: (root, _, _, sink, fatal, _) =>
+        new(factory: (root, _, _, sink, fatal, rootLost) =>
         {
-            var b = new FakeBackend { Root = root, Sink = sink, Fatal = fatal };
+            var b = new FakeBackend { Root = root, Sink = sink, Fatal = fatal, RootLost = rootLost };
             lock (backends) backends.Add(b);
             onCreate?.Invoke(b);
             return b;
@@ -1263,5 +1312,133 @@ public class FileWatcherFallbackTests
         Assert.Equal(FileChangeKind.Changed, all[0].Kind);
         Assert.Equal(f.Temp.Path, FileUri.ToPath(all[0].Uri).TrimEnd('/'));
         h.Dispose();
+    }
+
+    [Fact]
+    public async Task What_a_re_armed_watch_reports_while_its_content_is_announced_comes_after_the_announcement()
+    {
+        // A file written while a re-created directory's watch is armed: the new watch sees the write (Changed) before the announcement of what
+        // the directory holds (Created) is out. Changed then Created would merge to Changed: the file must reach subscribers as created.
+        var backends = new List<FakeBackend>();
+        string? cfg = null;
+        using var f = FakeFixture(backends, b =>
+        {
+            if (cfg is { } dir && b.Root == dir && On(backends, dir).Length == 2) b.Sink!(RawKind.Changed, Path.Join(dir, "inside.json"), null); // the second arming
+        });
+        cfg = f.P("cfg");
+        Directory.CreateDirectory(cfg);
+        var (_, parent) = f.Start(recursive: false);
+        var events = new Collector();
+        var h = (FileWatchHandle)f.Watcher.Watch(FileUri.FromDirectoryPath(cfg), false, [], events.Add);
+        await Task.WhenAll(parent.Ready, h.Ready);
+        File.WriteAllText(Path.Join(cfg, "inside.json"), "{}");
+
+        Assert.Single(On(backends, f.Temp.Path)).Sink!(RawKind.Created, cfg, null);                      // the parent reports cfg re-created
+        await events.WaitFor(s => s.Any(c => Collector.Name(c) == "inside.json"), "inside.json", Ct);
+        await Task.Delay(200, Ct);
+        Assert.Equal([FileChangeKind.Created], events.Snapshot().Where(c => Collector.Name(c) == "inside.json").Select(c => c.Kind));
+        h.Dispose();
+        parent.Dispose();
+    }
+
+    [Fact]
+    public async Task A_root_lost_report_from_a_replaced_os_watch_leaves_its_successor_alone()
+    {
+        var backends = new List<FakeBackend>();
+        using var f = FakeFixture(backends);
+        Directory.CreateDirectory(f.P("cfg"));
+        var (_, parent) = f.Start(recursive: false);
+        var h = (FileWatchHandle)f.Watcher.Watch(FileUri.FromDirectoryPath(f.P("cfg")), false, [], _ => { });
+        await Task.WhenAll(parent.Ready, h.Ready);
+        var first = Assert.Single(On(backends, f.P("cfg")));
+        Assert.Single(On(backends, f.Temp.Path)).Sink!(RawKind.Created, f.P("cfg"), null);                // replaced
+        for (var i = 0; i < 250 && On(backends, f.P("cfg")).Length < 2; i++) await Task.Delay(20, Ct);
+        Assert.Equal(2, On(backends, f.P("cfg")).Length);
+
+        first.RootLost!();                                                                                    // late, from the replaced watch
+        await Task.Delay(300, Ct);
+        Assert.Equal(2, On(backends, f.P("cfg")).Length);                                                    // no third arming
+        Assert.False(On(backends, f.P("cfg"))[1].Disposed);
+        h.Dispose();
+        parent.Dispose();
+    }
+
+    [Fact]
+    public async Task Polling_leaves_cache_directories_out_but_walks_down_to_a_wanted_tree_in_them()
+    {
+        // Out of inotify watches on a Rust workspace: the polling fallback must neither walk target/ every poll nor lose rust-analyzer's OUT_DIR.
+        using var f = new WatchFixture(factory: (_, _, _, _, _, _) => throw LimitReached());
+        Directory.CreateDirectory(f.P("target/debug/build/x/out"));
+        Directory.CreateDirectory(f.P("target/debug/deps"));
+        File.WriteAllText(f.P("target/CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n");
+        var wants = new FileWatchWants([], [FileUri.FromDirectoryPath(f.P("target/debug/build/x/out"))]);
+        var events = new Collector();
+        var h = (FileWatchHandle)f.Watcher.Watch(f.Root, true, [], events.Add, wants);                   // a subscriber that excludes nothing
+        await h.Ready;
+        await Task.Delay(300, Ct);                                                                           // the baseline
+
+        File.WriteAllText(f.P("target/debug/deps/libx.rlib"), "x");
+        File.WriteAllText(f.P("target/debug/build/x/out/gen.rs"), "x");
+        File.WriteAllText(f.P("visible.txt"), "x");
+        await events.WaitFor(s => s.Any(c => Collector.Name(c) == "gen.rs") && s.Any(c => Collector.Name(c) == "visible.txt"), "gen.rs and visible.txt", Ct);
+        await Task.Delay(300, Ct);
+        Assert.DoesNotContain(events.Snapshot(), c => Collector.Name(c) == "libx.rlib");
+        h.Dispose();
+    }
+
+    [Fact]
+    public async Task Polling_prunes_the_configured_watcher_excludes_whatever_the_subscription_excludes()
+    {
+        var cfg = new TestConfigurationService();
+        cfg.Set(SettingKeys.FilesWatcherExclude, new Dictionary<string, bool> { ["**/skipme/**"] = true });
+        using var f = new WatchFixture((_, _, _, _, _, _) => throw LimitReached(), cfg);
+        Directory.CreateDirectory(f.P("skipme"));
+        var (events, h) = f.Start(excludes: []);
+        await h.Ready;
+        await Task.Delay(300, Ct);
+        File.WriteAllText(f.P("skipme/a.txt"), "x");
+        File.WriteAllText(f.P("seen.txt"), "x");
+        await events.WaitForKind("seen.txt", FileChangeKind.Created, Ct);
+        await Task.Delay(200, Ct);
+        Assert.DoesNotContain(events.Snapshot(), c => Collector.Name(c) == "a.txt");
+        h.Dispose();
+    }
+}
+
+/// <summary>The process-wide watcher routes by scheme: wanted paths must reach whichever watcher serves the root.</summary>
+public class FileWatcherRouterTests
+{
+    private class RecordingWatcher : IFileWatcher
+    {
+        public FileWatchWants? Wants;
+        public int Watches;
+        public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges) =>
+            Watch(root, recursive, excludeGlobs, onChanges, null);
+        public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges, FileWatchWants? wants)
+        {
+            Watches++;
+            Wants = wants;
+            return CsCode.Core.Lifecycle.Disposable.Empty;
+        }
+    }
+
+    private sealed class RecordingProvider(string scheme) : RecordingWatcher, IFileWatcherProvider
+    {
+        public string Scheme => scheme;
+    }
+
+    [Fact]
+    public void Wants_reach_the_local_watcher_and_the_provider_of_another_scheme()
+    {
+        var local = new RecordingWatcher();
+        var remote = new RecordingProvider("ssh");
+        IFileWatcher router = new FileWatcherRouter(local, () => [remote]);
+        var wants = new FileWatchWants([new Uri("file:///w/node_modules/pkg/")], []);
+        router.Watch(new Uri("file:///w/"), true, null, _ => { }, wants);
+        Assert.Same(wants, local.Wants);
+        var remoteWants = new FileWatchWants([new Uri("ssh://box/w/bin/")], []);
+        router.Watch(new Uri("ssh://box/w/"), true, null, _ => { }, remoteWants);
+        Assert.Same(remoteWants, remote.Wants);
+        Assert.Equal((1, 1), (local.Watches, remote.Watches));
     }
 }

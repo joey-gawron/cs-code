@@ -17,7 +17,8 @@ namespace CsCode.App.ToolWindows.Explorer;
 /// and diffing happen on workers; the UI thread only splices already-built node arrays into <see cref="Rows"/>. File-system changes
 /// arrive batched from <see cref="IFileWatcher"/> and are diffed against the loaded subtree by name: the tree is never rebuilt. The watch leaves
 /// out what <c>files.watcherExclude</c> or a cache tag excludes (see <see cref="WatchExcludeGlobs"/>), except the expanded folders there, which
-/// it is asked for (<see cref="FileWatchWants"/>) and which are read from the disk again whenever they are expanded.
+/// it is asked for (<see cref="FileWatchWants"/>) and which are read from the disk again whenever they are expanded. The watcher's
+/// <c>Changed(root)</c> — events were lost — re-reads every loaded folder of that root.
 /// All file operations go through <see cref="IFileSystem"/> (async; delete uses the trash), with the file-operation participants around them
 /// (language servers: will-rename edits are applied before a rename or move, did-create/rename/delete follow). UI-thread object.
 /// </summary>
@@ -43,7 +44,9 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     private readonly HashSet<Uri> _dirtyDirs = new();
     private bool _flushScheduled;
     private readonly Dictionary<Uri, FileWatchWants> _wants = new();   // per root folder: the folders its watch is asked for
-    private readonly HashSet<ExplorerNode> _wantedNodes = new();       // expanded folders in a part of the tree the watch leaves out
+    private readonly HashSet<Uri> _wanted = new();                     // expanded folders in a part of the tree the watch leaves out
+    private readonly HashSet<Uri> _rescanRoots = new();                // roots whose watch reported Changed(root): every loaded folder is re-read
+    private string[] _rootKeys = [];                                   // the roots' URIs without a trailing '/', read on the watcher's thread
     private IReadOnlyList<string> _watchExcludes = [];
     private Task _wantsApplied = Task.CompletedTask;
     private ExplorerNode? _selected;
@@ -99,7 +102,7 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         foreach (var w in _watches) w.Dispose();
         _watches.Clear();
         _wants.Clear();
-        _wantedNodes.Clear();
+        _wanted.Clear();
         _roots.Clear();
         Rows.Clear();
         _watchExcludes = WatchExcludeGlobs();
@@ -116,6 +119,7 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
             _wants[folder] = wants;
             _watches.Add(_workspace.Watcher.Watch(folder, true, _watchExcludes, OnWatcherChanges, wants));
         }
+        Volatile.Write(ref _rootKeys, _roots.Select(static r => r.Uri.AbsoluteUri.TrimEnd('/')).ToArray());
         OnPropertyChanged(nameof(HasFolder));
         Rows.AddRange(_roots);
         _restoring = true;
@@ -201,7 +205,14 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         if (Selected is { } s && s != node && IsDescendantOf(s, node)) Selected = node;
         PersistExpanded();
         // Out of sight: the watch need not keep the folders below it that it would otherwise leave out (re-read when shown again).
-        if (_wantedNodes.RemoveWhere(n => n == node || IsDescendantOf(n, node)) > 0 && RootOf(node) is { } root) _ = ApplyWantsAsync(root.Uri);
+        if (Unwant(node.Uri) && RootOf(node) is { } root) _ = ApplyWantsAsync(root.Uri);
+    }
+
+    /// <summary>Stops asking for <paramref name="folder"/> and every folder below it. True when something was asked for.</summary>
+    private bool Unwant(Uri folder)
+    {
+        var prefix = folder.AbsoluteUri.TrimEnd('/') + "/";
+        return _wanted.RemoveWhere(u => u.AbsoluteUri.StartsWith(prefix, StringComparison.Ordinal) || u.AbsoluteUri.TrimEnd('/') == prefix[..^1]) > 0;
     }
 
     private static ExplorerNode? RootOf(ExplorerNode node)
@@ -231,32 +242,56 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// <paramref name="node"/> and the expanded folders it shows again, those of them that lie where the folder's watch leaves things out
-    /// (<see cref="WatchExclusion.IsInExcludedArea"/>: watcher-excluded, or in a cache directory): asks the watch for them (each one's own entries,
-    /// not what is below) and returns them once the OS watch is in place. Empty for the rest — the watch reports their changes anyway.
+    /// <paramref name="node"/> (unless it is a root) and the expanded folders it shows again, those of them that lie where the folder's watch
+    /// leaves things out: asks the watch for them (each one's own entries, not what is below) and returns them — to be read from the disk —
+    /// once the OS watch is in place. On a local folder that is <see cref="WatchExclusion.IsInExcludedArea"/> (watcher-excluded, or in a cache
+    /// directory). On a remote one (ssh, docker, wsl) the client cannot see the server's cache tags, so every one of them is asked for (the
+    /// server watches anew only those it would leave out) and re-read. Empty for the rest — the watch reports their changes anyway.
     /// </summary>
     private async Task<HashSet<ExplorerNode>> WantShownAsync(ExplorerNode node)
     {
         var outOfWatch = new HashSet<ExplorerNode>();
-        if (node.IsRoot || RootOf(node) is not { } root || !root.Uri.IsFile || !_wants.TryGetValue(root.Uri, out var wants)) return outOfWatch;
-        List<ExplorerNode> candidates = [node, .. ExpandedBelow(node)];
-        var rootPath = root.Uri.LocalPath;
-        var excludes = _watchExcludes;
-        var paths = candidates.Select(static n => n.Uri.LocalPath).ToArray();
-        var excluded = await Task.Run(() => paths.Select(p => WatchExclusion.IsInExcludedArea(rootPath, p, excludes)).ToArray()).ConfigureAwait(true);
-        if (!_wants.TryGetValue(root.Uri, out var current) || !ReferenceEquals(current, wants)) return outOfWatch; // the folders were refreshed meanwhile
+        if (RootOf(node) is not { } root || !_wants.TryGetValue(root.Uri, out var wants)) return outOfWatch;
+        List<ExplorerNode> candidates = node.IsRoot ? ExpandedBelow(node) : [node, .. ExpandedBelow(node)];
+        if (candidates.Count == 0) return outOfWatch;
+        bool[] excluded;
+        if (root.Uri.IsFile)
+        {
+            var rootPath = root.Uri.LocalPath;
+            var excludes = _watchExcludes;
+            var paths = candidates.Select(static n => n.Uri.LocalPath).ToArray();
+            excluded = await Task.Run(() => paths.Select(p => WatchExclusion.IsInExcludedArea(rootPath, p, excludes)).ToArray()).ConfigureAwait(true);
+            if (!_wants.TryGetValue(root.Uri, out var current) || !ReferenceEquals(current, wants)) return outOfWatch; // the folders were refreshed meanwhile
+        }
+        else excluded = [.. candidates.Select(static _ => true)];
         for (var i = 0; i < candidates.Count; i++)
-            if (excluded[i]) outOfWatch.Add(candidates[i]);
+            if (excluded[i] && IsAttached(candidates[i], node)) outOfWatch.Add(candidates[i]); // (collapsed or dropped while the disk was looked at: not asked for)
         if (outOfWatch.Count == 0) return outOfWatch;
-        _wantedNodes.UnionWith(outOfWatch);
+        foreach (var n in outOfWatch) _wanted.Add(n.Uri);
         await ApplyWantsAsync(root.Uri).ConfigureAwait(true);
         return outOfWatch;
+    }
+
+    /// <summary>
+    /// <paramref name="n"/> is still in the tree (each ancestor lists it) and will be shown once <paramref name="expanding"/> is: every folder
+    /// between them is expanded, and so is every folder above <paramref name="expanding"/>.
+    /// </summary>
+    private bool IsAttached(ExplorerNode n, ExplorerNode expanding)
+    {
+        if (n != expanding && !n.IsExpanded) return false;
+        for (var c = n; c.Parent is { } p; c = p)
+        {
+            if (p.Children is not { } siblings || !siblings.Contains(c)) return false; // dropped from the listing
+            if (p != expanding && !p.IsExpanded) return false;                          // collapsed meanwhile
+        }
+        return RootOf(n) is { } root && _roots.Contains(root);
     }
 
     private Task ApplyWantsAsync(Uri root)
     {
         if (!_wants.TryGetValue(root, out var wants)) return Task.CompletedTask;
-        var directories = _wantedNodes.Where(n => RootOf(n)?.Uri == root).Select(static n => n.Uri).ToArray();
+        var prefix = root.AbsoluteUri.TrimEnd('/') + "/";
+        var directories = _wanted.Where(u => u.AbsoluteUri.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
         return _wantsApplied = wants.SetAsync(directories, []);
     }
 
@@ -593,11 +628,23 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
 
     private void OnWatcherChanges(IReadOnlyList<FileChange> changes)
     {
-        // Called on the watcher's thread: only record which directories changed, then flush once per debounce window.
+        // Called on the watcher's thread: only record which directories changed, then flush once per debounce window. Changed(root) is the
+        // watcher's rescan marker (events were lost: an overflow, a reconnect): every loaded folder of that root is re-read. An entry that
+        // files.exclude hides changes nothing shown (a wanted folder's events include those).
+        var roots = Volatile.Read(ref _rootKeys);
+        var hidden = ExcludeGlobs();
         lock (_pendingGate)
         {
             foreach (var c in changes)
             {
+                var key = c.Uri.AbsoluteUri.TrimEnd('/');
+                if (c.Kind == FileChangeKind.Changed && Array.IndexOf(roots, key) >= 0)
+                {
+                    _rescanRoots.Add(c.Uri);
+                    continue;
+                }
+                var name = Uri.UnescapeDataString(key[(key.LastIndexOf('/') + 1)..]);
+                if (name.Length > 0 && IsExcluded(name, hidden)) continue;
                 var dir = new Uri(c.Uri, ".");
                 _dirtyDirs.Add(dir);
                 if (c.Uri.AbsoluteUri.EndsWith('/')) _dirtyDirs.Add(new Uri(c.Uri, ".."));
@@ -611,13 +658,17 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     /// <summary>Applies all pending watcher notifications: re-reads only the affected, already-loaded directories and splices differences.</summary>
     public async Task FlushWatcherAsync()
     {
-        Uri[] dirs;
+        Uri[] dirs, rescans;
         lock (_pendingGate)
         {
             dirs = _dirtyDirs.ToArray();
             _dirtyDirs.Clear();
+            rescans = _rescanRoots.ToArray();
+            _rescanRoots.Clear();
             _flushScheduled = false;
         }
+        foreach (var rescan in rescans)
+            if (FindNode(rescan) is { IsRoot: true } root) await ReloadLoadedAsync(root).ConfigureAwait(true);
         foreach (var dir in dirs)
         {
             var node = FindNode(dir);
@@ -658,10 +709,15 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         var changed = old.Count != fresh.Count;
         foreach (var f in fresh)
         {
-            if (oldByName.TryGetValue(f.Name, out var existing) && existing.IsDirectory == f.IsDirectory) merged.Add(existing);
+            if (oldByName.Remove(f.Name, out var existing) && existing.IsDirectory == f.IsDirectory) merged.Add(existing);
             else { merged.Add(f); changed = true; }
         }
         if (!changed) return;
+        // Folders that left the listing (deleted, renamed, replaced) are no longer asked for, nor anything below them: a folder coming back at
+        // the same path is a new node, collapsed.
+        var unwanted = false;
+        foreach (var gone in oldByName.Values) if (gone.IsDirectory) unwanted |= Unwant(gone.Uri);
+        if (unwanted && RootOf(dir) is { } root) _ = ApplyWantsAsync(root.Uri);
         merged.Sort(CompareNodes);
         dir.Children = merged;
         if (!dir.IsExpanded) return;
@@ -686,7 +742,7 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         foreach (var w in _watches) w.Dispose();
         _watches.Clear();
         _wants.Clear();
-        _wantedNodes.Clear();
+        _wanted.Clear();
         _subs.Dispose();
         Rows.Clear();
         _roots.Clear();

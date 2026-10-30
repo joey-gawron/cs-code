@@ -24,6 +24,11 @@ public static class RemoteProtocol
         public const string Languages = "languages";
         public const string Search = "search";
         public const string Watch = "watch";
+        /// <summary>
+        /// The server's watches take wanted paths (<see cref="FileWatchWants"/>): in <c>watch/start</c> and, as they change, <c>watch/wants</c>.
+        /// A server without it watches as before and the client sends none.
+        /// </summary>
+        public const string WatchWants = "watchWants";
         /// <summary>Remote terminals (a PTY on the server), R3.</summary>
         public const string Terminals = "terminals";
         /// <summary>Debug adapters run on the server, their DAP stream tunnelled over the connection, R3.</summary>
@@ -69,6 +74,9 @@ public static class RemoteMethods
     public const string WatchKeep = "watch/keep";
     /// <summary>server → client notification</summary>
     public const string WatchChanges = "watch/changes";
+    /// <summary>client → server: a watch's wanted paths changed (<see cref="RemoteProtocol.Capabilities.WatchWants"/>); answered once the server's
+    /// OS watch follows them.</summary>
+    public const string WatchWants = "watch/wants";
 
     public const string SearchFiles = "search/files";
     public const string SearchText = "search/text";
@@ -225,7 +233,11 @@ public sealed record MoveParams(string Source, string Target, bool Overwrite);
 
 // ------------------------------------------------------------------------------------------------------------------- watch / search
 
-public sealed record WatchStartParams(string WatchId, string Root, bool Recursive, IReadOnlyList<string>? Excludes);
+/// <param name="WantDirectories">Server paths the watch wants with their direct entries although excluded (<see cref="FileWatchWants.Directories"/>).</param>
+/// <param name="WantTrees">Server paths the watch wants with their whole subtree (<see cref="FileWatchWants.Trees"/>).</param>
+public sealed record WatchStartParams(string WatchId, string Root, bool Recursive, IReadOnlyList<string>? Excludes,
+    IReadOnlyList<string>? WantDirectories = null, IReadOnlyList<string>? WantTrees = null);
+public sealed record WatchWantsParams(string WatchId, IReadOnlyList<string> Directories, IReadOnlyList<string> Trees);
 public sealed record WatchStopParams(string WatchId);
 public sealed record WatchKeepParams(IReadOnlyList<string> WatchIds);
 public sealed record WireFileChange(string Path, FileChangeKind Kind);

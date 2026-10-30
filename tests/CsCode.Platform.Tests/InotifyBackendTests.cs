@@ -206,7 +206,7 @@ public class InotifyBackendTests
     {
         // The bug: one window on a Rust + JS monorepo held 75,892 inotify watches, 56,489 of them in target/. Through the FileWatcher with
         // the default excludes, the excluded and cache-tagged directories must cost nothing (a FileSystemWatcher put a watch on each of the 213
-        // here), while a source folder that is merely called target/ is watched.
+        // here) — a cache directory one watch on itself, for its tag — while a source folder that is merely called target/ is watched.
         Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fdinfo");
         using var f = new WatchFixture();
         var wanted = new[] { "src/a", "src/b", "docs", ".git/refs", "src/target/sub" };                    // + the root, src, .git, src/target: 9
@@ -223,8 +223,8 @@ public class InotifyBackendTests
         var (events, h) = f.Start();                                                                         // null: files.watcherExclude, else the built-ins
         await h.Ready;
         var cost = ProcessWatches() - baseline;
-        Assert.True(cost <= 11, $"{cost} inotify watches for a tree with 11 wanted directories");
-        Assert.Equal(11, cost);
+        Assert.True(cost <= 13, $"{cost} inotify watches for a tree with 11 wanted directories and 2 cache directories");
+        Assert.Equal(13, cost);
 
         File.WriteAllText(f.P("target/debug/build/d000/out.o"), "rebuilt");
         File.WriteAllText(f.P("crates/x/target/debug/incremental/q.bin"), "");
@@ -751,13 +751,13 @@ public class InotifyBackendTests
         Directory.CreateDirectory(f.P("target/debug/deps"));
         File.WriteAllText(f.P("target/debug/deps/libx.rlib"), "x");
         await events.WaitForKind("target", FileChangeKind.Created, Ct);                                    // the folder itself is reported
-        await WaitUntil(() => ProcessWatches() - baseline == 1, "no watch in target/");
+        await WaitUntil(() => ProcessWatches() - baseline == 2, "target/ watched at its top only");
 
         // Another tool: the directory first, its tag later.
         Directory.CreateDirectory(f.P("cache/a/b"));
-        await WaitUntil(() => ProcessWatches() - baseline == 4, "cache, cache/a and cache/a/b to be watched");
+        await WaitUntil(() => ProcessWatches() - baseline == 5, "cache, cache/a and cache/a/b to be watched");
         File.WriteAllText(f.P("cache/CACHEDIR.TAG"), CacheTag);
-        await WaitUntil(() => ProcessWatches() - baseline == 1, "the watches in cache/ to be dropped");
+        await WaitUntil(() => ProcessWatches() - baseline == 3, "the watches below cache/ to be dropped");
         File.WriteAllText(f.P("cache/a/b/late.bin"), "x");
         File.WriteAllText(f.P("marker.txt"), "x");
         await events.WaitForKind("marker.txt", FileChangeKind.Created, Ct);
@@ -793,7 +793,153 @@ public class InotifyBackendTests
         Assert.DoesNotContain(events.Snapshot(), c => Collector.Name(c) is "foo.d" or "no.rs");
 
         await wants.SetAsync([], []);                                                                        // no longer wanted: let go
-        Assert.Equal(1, ProcessWatches() - baseline);
+        Assert.Equal(2, ProcessWatches() - baseline);                                                        // the root, and target/ at its top
+        h.Dispose();
+    }
+
+    // ---- labels the queue no longer describes ------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task An_overflow_after_names_were_reused_and_directories_exchanged_relabels_every_watch_and_ends()
+    {
+        // While events were lost: `mv X X.moved; mkdir X` for several names (so the walk meets both orders) and `mv --exchange ex1 ex2`.
+        // Reconciling the old labels path by path could relabel two watches back and forth for ever, inside the backend's lock.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var t = new TempDirectory("cscode-inotify-");
+        string[] names = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"];
+        foreach (var n in names) Directory.CreateDirectory(t.Combine(n, "sub"));
+        Directory.CreateDirectory(t.Combine("ex1", "in1"));
+        Directory.CreateDirectory(t.Combine("ex2", "in2"));
+        var raw = new RawCollector();
+        var b = Backend(t.Path, raw, startReader: false);
+        foreach (var n in names)
+        {
+            Directory.Move(t.Combine(n), t.Combine(n + ".moved"));
+            Directory.CreateDirectory(t.Combine(n, "fresh"));
+        }
+        const int AtFdCwd = -100;
+        const uint RenameExchange = 2;
+        _ = RenameAt2(AtFdCwd, t.Combine("ex1"), AtFdCwd, t.Combine("ex2"), RenameExchange); // (a file system that cannot exchange: the rest still holds)
+
+        var resync = Task.Run(() => b.Process(Bytes(Ev(-1, InotifyBackend.InQOverflow)), endOfBurst: true), Ct);
+        if (await Task.WhenAny(resync, Task.Delay(TimeSpan.FromSeconds(10), Ct)) != resync)
+            Assert.Fail("the walk after the overflow did not end (the backend is left undisposed: its reader holds the lock)");
+        try
+        {
+            string[] Tree() => [t.Path, .. Directory.GetDirectories(t.Path, "*", SearchOption.AllDirectories)];
+            Assert.Equal(Tree().Order(StringComparer.Ordinal), b.WatchedDirectories.Order(StringComparer.Ordinal));
+            Assert.Equal(b.WatchCount, KernelWatches(b.Fd));
+
+            b.Pump(); // the events queued before the overflow marker's walk come now: they describe the past
+            Assert.Equal(Tree().Order(StringComparer.Ordinal), b.WatchedDirectories.Order(StringComparer.Ordinal));
+            Assert.Equal(b.WatchCount, KernelWatches(b.Fd));
+            raw.Clear();
+            foreach (var dir in Tree()) File.WriteAllText(Path.Join(dir, "probe.txt"), "x");
+            b.Pump();
+            foreach (var dir in Tree())
+                Assert.Contains(raw.Snapshot(), e => e.Kind == RawKind.Created && e.Path == Path.Join(dir, "probe.txt")); // each under its own path
+        }
+        finally { b.Dispose(); }
+    }
+
+    [Fact]
+    public void A_directory_renamed_then_moved_out_before_its_events_are_read_reports_nothing_under_its_old_path()
+    {
+        // mv A B; mv B <outside>; mkdir B — all before the backend reads: the rename's probe finds the new B, and the moved directory must not
+        // keep its watch under the label A while it lives outside the tree.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var t = new TempDirectory("cscode-inotify-");
+        using var outside = new TempDirectory("cscode-outside-");
+        Directory.CreateDirectory(t.Combine("A"));
+        var raw = new RawCollector();
+        using var b = Backend(t.Path, raw, startReader: false);
+        Directory.Move(t.Combine("A"), t.Combine("B"));
+        Directory.Move(t.Combine("B"), outside.Combine("X"));
+        Directory.CreateDirectory(t.Combine("B"));
+        b.Pump();
+        Assert.Equal([t.Path, t.Combine("B")], b.WatchedDirectories.Order(StringComparer.Ordinal));
+        Assert.Equal(b.WatchCount, KernelWatches(b.Fd));
+
+        raw.Clear();
+        File.WriteAllText(outside.Combine("X", "notes.rs"), "x");
+        File.WriteAllText(t.Combine("B", "marker.txt"), "x");
+        b.Pump();
+        Assert.Contains(raw.Snapshot(), e => e.Path == t.Combine("B", "marker.txt"));
+        Assert.DoesNotContain(raw.Snapshot(), e => e.Path.StartsWith(t.Combine("A"), StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_directory_created_or_moved_in_just_before_its_parent_is_renamed_is_watched_under_the_new_name()
+    {
+        // mkdir X/new and mv <outside>/T X/T, then mv X Y — read late: X/new and X/T are not there any more when their events are handled.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var t = new TempDirectory("cscode-inotify-");
+        using var outside = new TempDirectory("cscode-outside-");
+        Directory.CreateDirectory(t.Combine("X"));
+        Directory.CreateDirectory(outside.Combine("T", "deep"));
+        var raw = new RawCollector();
+        using var b = Backend(t.Path, raw, startReader: false);
+        Directory.CreateDirectory(t.Combine("X", "new"));
+        Directory.Move(outside.Combine("T"), t.Combine("X", "T"));
+        Directory.Move(t.Combine("X"), t.Combine("Y"));
+        b.Pump();
+        Assert.Equal(new[] { t.Path, t.Combine("Y"), t.Combine("Y", "new"), t.Combine("Y", "T"), t.Combine("Y", "T", "deep") }.Order(StringComparer.Ordinal),
+            b.WatchedDirectories.Order(StringComparer.Ordinal));
+
+        raw.Clear();
+        File.WriteAllText(t.Combine("Y", "new", "f.txt"), "x");
+        File.WriteAllText(t.Combine("Y", "T", "deep", "g.txt"), "x");
+        b.Pump();
+        Assert.Contains(raw.Snapshot(), e => e.Kind == RawKind.Created && e.Path == t.Combine("Y", "new", "f.txt"));
+        Assert.Contains(raw.Snapshot(), e => e.Kind == RawKind.Created && e.Path == t.Combine("Y", "T", "deep", "g.txt"));
+    }
+
+    // ---- what a subscription takes with it, virtual environments --------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_subscription_that_goes_takes_the_watches_only_its_wants_kept()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fdinfo");
+        using var f = new WatchFixture();
+        Directory.CreateDirectory(f.P("node_modules/pkg/lib"));
+        var baseline = ProcessWatches();
+        var (_, plain) = f.Start();                                                                          // EditorConfig, say: no wants
+        var wants = new FileWatchWants([FileUri.FromDirectoryPath(f.P("node_modules/pkg"))], []);
+        var explorer = (FileWatchHandle)f.Watcher.Watch(f.Root, true, null, _ => { }, wants);
+        await Task.WhenAll(plain.Ready, explorer.Ready);
+        Assert.Equal(3, ProcessWatches() - baseline);                                                        // the root, node_modules, pkg
+
+        explorer.Dispose();                                                                                  // the Explorer closes; the folder stays watched
+        await WaitUntil(() => ProcessWatches() - baseline == 1, "the wanted folder's watches to go");
+        plain.Dispose();
+    }
+
+    [Fact]
+    public async Task A_tagged_python_virtual_environment_is_watched_and_reported_even_when_uv_writes_its_tag_first()
+    {
+        // uv tags the .venv it creates (CACHEDIR.TAG first, pyvenv.cfg last); Pyright resolves imports from it, so a package installed there
+        // must reach the language server.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var f = new WatchFixture();
+        Directory.CreateDirectory(f.P(".venv/lib/site-packages"));
+        File.WriteAllText(f.P(".venv/CACHEDIR.TAG"), CacheTag);
+        File.WriteAllText(f.P(".venv/pyvenv.cfg"), "home = /usr/bin\n");
+        var (events, h) = f.Start(excludes: []);
+        await h.Ready;
+        File.WriteAllText(f.P(".venv/lib/site-packages/httpx.py"), "x");
+        await events.WaitForKind("httpx.py", FileChangeKind.Created, Ct);
+
+        // `uv venv` with the folder open: the directory, its tag, the packages, pyvenv.cfg last.
+        Directory.CreateDirectory(f.P("env2"));
+        File.WriteAllText(f.P("env2/CACHEDIR.TAG"), CacheTag);                                             // (in the cache: not reported)
+        await Task.Delay(300, Ct);
+        Directory.CreateDirectory(f.P("env2/lib/site-packages"));
+        File.WriteAllText(f.P("env2/lib/site-packages/early.py"), "x");
+        File.WriteAllText(f.P("env2/pyvenv.cfg"), "home = /usr/bin\n");
+        await events.WaitForPresent("early.py", Ct);                                                         // announced once it is an environment
+        await Task.Delay(150, Ct);
+        File.WriteAllText(f.P("env2/lib/site-packages/later.py"), "x");                                    // and watched from then on
+        await events.WaitForKind("later.py", FileChangeKind.Created, Ct);
         h.Dispose();
     }
 }

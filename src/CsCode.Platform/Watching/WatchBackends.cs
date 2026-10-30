@@ -35,6 +35,12 @@ internal enum WatchVerdict
     WatchForWant,
     /// <summary>Nobody wants what is in it: watch neither it nor anything below it. Its own appearance and removal its parent's watch reports.</summary>
     Prune,
+    /// <summary>
+    /// A cache directory (<see cref="WatchExclusion.IsCacheDirectory"/>) that subscriptions would otherwise watch: watch the directory itself but
+    /// nothing below it, so that its tag going or a virtual environment's pyvenv.cfg arriving (uv writes the tag first) is seen and the
+    /// directory is looked at again. One watch per cache directory.
+    /// </summary>
+    Shallow,
 }
 
 /// <summary>The <see cref="WatchVerdict"/> for a directory below the root. May read the disk (a cache tag): called on a backend's walk and reader.</summary>

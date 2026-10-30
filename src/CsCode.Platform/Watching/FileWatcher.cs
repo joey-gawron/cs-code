@@ -113,7 +113,7 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
         public bool InCache(string dir)
         {
             if (InsideKnownCache(dir)) return true;
-            var tagged = WatchExclusion.HasCacheDirTag(dir);
+            var tagged = WatchExclusion.IsCacheDirectory(dir);
             if (!tagged && Array.IndexOf(Volatile.Read(ref _cacheDirs), dir) < 0) return false; // the common case: no tag, none known
             lock (_cacheGate)
             {
@@ -162,6 +162,9 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
     /// <summary>inotify one directory at a time on Linux (excluded directories cost no watch), <see cref="FileSystemWatcher"/> elsewhere.</summary>
     internal static IWatchBackend DefaultBackend(string root, bool recursive, DirectoryVerdict verdict, RawSink sink, Action<Exception> onFatal, Action onRootLost) =>
         OperatingSystem.IsLinux() ? new InotifyBackend(root, recursive, verdict, sink, onFatal, onRootLost) : new FswBackend(root, recursive, sink, onFatal);
+
+    /// <summary>The setting the watcher needs, read from <paramref name="configuration"/> (tests combine it with a backend factory).</summary>
+    internal static IConfigurationServiceRead ConfigReadOf(IConfigurationService configuration) => new ConfigRead(configuration);
 
     private sealed class ConfigRead(IConfigurationService config) : IConfigurationServiceRead
     {
@@ -357,6 +360,8 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
         }
         if (plain && !source.InCache(dir)) return WatchVerdict.Watch;
         if (wanted || (plain && subs.Any(s => s.KeepsForWant(dir)))) return WatchVerdict.WatchForWant;
+        // A cache directory itself is watched at its top (its tag or a virtual-environment marker may change); what lies below it is not.
+        if (plain && !source.InsideKnownCache(dir)) return WatchVerdict.Shallow;
         return WatchVerdict.Prune;
     }
 
@@ -369,12 +374,14 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
     }
 
     /// <summary>On the IO lane: the subscriptions' wants changed; the OS watch picks them up. Completes when it has.</summary>
-    private Task RevisitAsync(Source source) => _lane.RunAsync(_ =>
+    private Task RevisitAsync(Source source) => _lane.RunAsync(_ => Revisit(source));
+
+    private void Revisit(Source source)
     {
         IWatchBackend? backend;
         lock (_gate) backend = source.Closed ? null : source.Backend;
         backend?.RevisitPruned(); // none in place: it is being armed and revisits itself once it is (or the root is missing, and walks fresh)
-    });
+    }
 
     /// <summary>
     /// The backend of <paramref name="generation"/> saw its root go — moved away, or removed under it (for one inside a directory nobody else
@@ -565,6 +572,8 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
             }
         }
         if (close) CloseSource(source);
+        // The others keep the root watched: what only this one wanted is let go (FileWatchWants: "lets go of the ones no longer wanted").
+        else if (sub.HasWants) _lane.Post(() => Revisit(source), ex => _log.LogDebug(ex, "Revisiting the watch on {Root} failed", source.Root));
     }
 
     private void CloseSource(Source source)
@@ -690,7 +699,7 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
         {
             var dir = stack.Pop();
             if (source.Closed) return;
-            if (!PathComparer.Equals(dir, source.Root) && Verdict(source, dir) == WatchVerdict.Prune) continue; // nobody wants this subtree: do not even enumerate it
+            if (!PathComparer.Equals(dir, source.Root) && Verdict(source, dir) is WatchVerdict.Prune or WatchVerdict.Shallow) continue; // nobody wants this subtree: do not even enumerate it
             IEnumerable<string> entries;
             try { entries = Directory.EnumerateFileSystemEntries(dir, "*", options); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
@@ -698,7 +707,7 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
             foreach (var entry in entries)
             {
                 if (++seen > MaxScanEntries) { _log.LogDebug("Stopped scanning new directory {Root} after {Max} entries", root, MaxScanEntries); return; }
-                foreach (var sub in Volatile.Read(ref source.Subscriptions)) sub.Add(RawKind.Created, entry, null);
+                foreach (var sub in Volatile.Read(ref source.Subscriptions)) sub.Add(RawKind.Announced, entry, null);
                 if (!source.Recursive) continue;
                 var info = new FileInfo(entry);
                 if (info.LinkTarget is null && Directory.Exists(entry)) stack.Push(entry); // never follow symlinked directories
@@ -788,6 +797,9 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
 
         /// <summary>Its subscription to <see cref="FileWatchWants"/> changes, ended with it.</summary>
         public IDisposable? WantsSubscription;
+
+        /// <summary>It was given <see cref="FileWatchWants"/>: when it goes, the OS watch looks at what only it wanted.</summary>
+        public bool HasWants => _wantsSource is not null;
 
         /// <summary>Takes the current <see cref="FileWatchWants"/> (on the setter's thread, before the OS watch is told).</summary>
         public void RefreshWants() => Volatile.Write(ref _wants, WantSet.From(_root, _wantsSource));

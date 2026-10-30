@@ -111,8 +111,10 @@ internal sealed class InotifyBackend : IWatchBackend
     private readonly object _gate = new();                                       // guards everything below, and the fds' lifetime
     private readonly Dictionary<int, string> _dirs = new();                      // wd → the directory it watches
     private readonly Dictionary<string, int> _wds = new(StringComparer.Ordinal); // directory → wd
-    private readonly HashSet<string> _pruned = new(StringComparer.Ordinal);      // topmost directories left out: nobody wants what is in them
-    private readonly HashSet<string> _forWant = new(StringComparer.Ordinal);     // watched only because a subscription wants a path at or below
+    private readonly HashSet<string> _pruned = new(StringComparer.Ordinal);      // topmost directories left out (or not there when last tried)
+    // Watched directories whose verdict is not a plain Watch: WatchForWant (only because a subscription wants a path at or below) or Shallow
+    // (a cache directory: watched at its top only, so a tag or virtual-environment marker coming or going is seen).
+    private readonly Dictionary<string, WatchVerdict> _kept = new(StringComparer.Ordinal);
     private readonly int _fd;
     private readonly int _wakeFd;
     private readonly int _rootWd;
@@ -153,7 +155,7 @@ internal sealed class InotifyBackend : IWatchBackend
         {
             lock (_gate)
             {
-                AddTree(root, isRoot: true, forWant: false, visited: null);
+                AddTree(root, isRoot: true, WatchVerdict.Watch);
                 _rootWd = _wds[root];
             }
             if (startReader)
@@ -179,7 +181,12 @@ internal sealed class InotifyBackend : IWatchBackend
     internal string[] PrunedDirectories { get { lock (_gate) return _pruned.Order(StringComparer.Ordinal).ToArray(); } }
 
     /// <summary>The directories watched only for a want (tests and diagnostics).</summary>
-    internal string[] WatchedForWant { get { lock (_gate) return _forWant.Order(StringComparer.Ordinal).ToArray(); } }
+    internal string[] WatchedForWant { get { lock (_gate) return Kept(WatchVerdict.WatchForWant); } }
+
+    /// <summary>The cache directories watched at their top only (tests and diagnostics).</summary>
+    internal string[] ShallowDirectories { get { lock (_gate) return Kept(WatchVerdict.Shallow); } }
+
+    private string[] Kept(WatchVerdict verdict) => _kept.Where(kv => kv.Value == verdict).Select(static kv => kv.Key).Order(StringComparer.Ordinal).ToArray();
 
     /// <summary>The root's watch descriptor (tests feed <see cref="Process"/> synthetic events for it).</summary>
     internal int RootWd => _rootWd;
@@ -300,7 +307,7 @@ internal sealed class InotifyBackend : IWatchBackend
             _dirs.Clear();
             _wds.Clear();
             _pruned.Clear();
-            _forWant.Clear();
+            _kept.Clear();
             _pendingFrom = null;
         }
     }
@@ -381,7 +388,7 @@ internal sealed class InotifyBackend : IWatchBackend
             if (_wds.TryGetValue(gone, out var wd) && wd == e.Wd)
             {
                 _wds.Remove(gone);
-                _forWant.Remove(gone);
+                _kept.Remove(gone);
             }
             return e.Wd == _rootWd;
         }
@@ -394,7 +401,11 @@ internal sealed class InotifyBackend : IWatchBackend
                 var to = Path.Join(toDir, e.Name);
                 output.Add(new Output(RawKind.Renamed, to, from.Path));
                 if (from.IsDir) DirectoryRenamed(from.Path, to);
-                else if (IsCacheTag(e.Name, toDir)) CacheTagAppeared(toDir);
+                else
+                {
+                    if (IsMarker(Path.GetFileName(from.Path), Path.GetDirectoryName(from.Path)!)) MarkerChanged(Path.GetDirectoryName(from.Path)!, Path.GetFileName(from.Path), gone: true, output);
+                    if (IsMarker(e.Name, toDir)) MarkerChanged(toDir, e.Name, gone: false, output);
+                }
                 return false;
             }
             MovedOut(from, output);
@@ -417,23 +428,29 @@ internal sealed class InotifyBackend : IWatchBackend
         {
             output.Add(new Output(RawKind.Created, path, null));
             if (isDir) Appeared(path);
-            else if (IsCacheTag(e.Name, dir)) CacheTagAppeared(dir);
+            else if (IsMarker(e.Name, dir)) MarkerChanged(dir, e.Name, gone: false, output);
         }
         else if ((e.Mask & InDelete) != 0)
         {
             output.Add(new Output(RawKind.Deleted, path, null));
             if (isDir) ForgetPruned(path); // its own watch (if any) ends with IN_IGNORED
+            else if (IsMarker(e.Name, dir)) MarkerChanged(dir, e.Name, gone: true, output);
         }
         else if ((e.Mask & (InModify | InAttrib)) != 0)
         {
             output.Add(new Output(RawKind.Changed, path, null));
-            if (!isDir && (e.Mask & InModify) != 0 && IsCacheTag(e.Name, dir)) CacheTagAppeared(dir); // written after it was created
+            if (!isDir && (e.Mask & InModify) != 0 && IsMarker(e.Name, dir)) MarkerChanged(dir, e.Name, gone: false, output); // written after it was created
         }
         return false;
     }
 
-    private bool IsCacheTag(string name, string dir) =>
-        _recursive && string.Equals(name, WatchExclusion.CacheDirTagName, StringComparison.Ordinal) && !string.Equals(dir, _root, StringComparison.Ordinal);
+    private static bool HasMarker(string dir) =>
+        File.Exists(Path.Join(dir, WatchExclusion.CacheDirTagName)) || File.Exists(Path.Join(dir, WatchExclusion.VirtualEnvMarkerName));
+
+    // A file whose coming, going or content decides whether its directory is a cache: the tag, or a Python virtual environment's pyvenv.cfg.
+    private bool IsMarker(string name, string dir) =>
+        _recursive && (string.Equals(name, WatchExclusion.CacheDirTagName, StringComparison.Ordinal) || string.Equals(name, WatchExclusion.VirtualEnvMarkerName, StringComparison.Ordinal))
+        && !string.Equals(dir, _root, StringComparison.Ordinal);
 
     // Under _gate.
     private void FlushPendingMove(List<Output> output)
@@ -448,6 +465,7 @@ internal sealed class InotifyBackend : IWatchBackend
     {
         output.Add(new Output(RawKind.Deleted, from.Path, null));
         if (from.IsDir) Unwatch(from.Path);
+        else if (Path.GetDirectoryName(from.Path) is { } dir && IsMarker(Path.GetFileName(from.Path), dir)) MarkerChanged(dir, Path.GetFileName(from.Path), gone: true, output);
     }
 
     // Under _gate. A directory appeared below a watched one.
@@ -456,41 +474,62 @@ internal sealed class InotifyBackend : IWatchBackend
         if (!_recursive) return;
         var verdict = _verdict(path);
         if (verdict == WatchVerdict.Prune) _pruned.Add(path);
-        else AddTree(path, isRoot: false, forWant: verdict == WatchVerdict.WatchForWant, visited: null);
+        else AddTree(path, isRoot: false, verdict);
     }
 
-    // Under _gate. A cache tag appeared in watched directory `dir` (written, or renamed into place): what is in it is left out from now on.
-    private void CacheTagAppeared(string dir)
+    /// <summary>
+    /// Under _gate. Marker <paramref name="name"/> (a cache tag, or a virtual environment's pyvenv.cfg) came, went (<paramref name="gone"/>) or was
+    /// written in watched directory <paramref name="dir"/>: whether it is a cache directory may have changed. Becoming one (Cargo's tag renamed
+    /// into a fresh target/, or written after the first subdirectories; pyvenv.cfg going) drops the watches below it. Ceasing to be one —
+    /// pyvenv.cfg written after uv's tag — walks what is in it and reports the directory created, so the FileWatcher announces what it holds:
+    /// nothing reported it while it was left out. A tag that goes is not looked at: it goes first when the whole cache is deleted
+    /// (<c>cargo clean</c>, <c>rm -rf target</c>), and walking what is about to be deleted is the cost the tag exists to avoid.
+    /// </summary>
+    private void MarkerChanged(string dir, string name, bool gone, List<Output> output)
     {
         if (!_wds.ContainsKey(dir)) return;
-        var verdict = _verdict(dir); // looks at the tag afresh
-        if (verdict == WatchVerdict.Prune)
+        if (gone && string.Equals(name, WatchExclusion.CacheDirTagName, StringComparison.Ordinal)) return;
+        var now = _verdict(dir); // looks at the markers afresh
+        ApplyVerdict(dir, now, output);
+        if (now is WatchVerdict.Watch or WatchVerdict.WatchForWant && _wds.ContainsKey(dir))
         {
-            Unwatch(dir);
-            if (_wds.ContainsKey(Path.GetDirectoryName(dir)!)) _pruned.Add(dir);
-            return;
-        }
-        if (verdict == WatchVerdict.WatchForWant) _forWant.Add(dir);
-        // Kept for a want: what is below it is left out unless wanted too.
-        foreach (var below in _wds.Keys.Where(d => d.Length > dir.Length && IsAtOrBelow(d, dir)).OrderBy(static d => d.Length).ToArray())
-        {
-            if (!_wds.ContainsKey(below)) continue; // went with a directory above it
-            ApplyVerdict(below, _verdict(below));
+            // What is below may be left out now (a tag above it) or wanted back (the tag gone).
+            foreach (var below in _wds.Keys.Where(d => d.Length > dir.Length && IsAtOrBelow(d, dir)).OrderBy(static d => d.Length).ToArray())
+                if (_wds.ContainsKey(below)) ApplyVerdict(below, _verdict(below), null); // (gone with a directory above it otherwise)
+            Revisit(under: dir);
         }
     }
 
-    // Under _gate: a watched directory's verdict changed (or may have).
-    private void ApplyVerdict(string dir, WatchVerdict verdict)
+    /// <summary>
+    /// Under _gate: a watched directory's verdict changed (or may have). Left out: its watches go. Shallow: the watches below it go. Watched
+    /// again after being shallow: what is in it is walked, and <paramref name="output"/> (when given) gets the directory reported created.
+    /// </summary>
+    private void ApplyVerdict(string dir, WatchVerdict now, List<Output>? output)
     {
-        switch (verdict)
+        var was = _kept.GetValueOrDefault(dir, WatchVerdict.Watch);
+        switch (now)
         {
             case WatchVerdict.Prune:
                 Unwatch(dir);
                 if (_wds.ContainsKey(Path.GetDirectoryName(dir)!)) _pruned.Add(dir);
-                break;
-            case WatchVerdict.WatchForWant: _forWant.Add(dir); break;
-            default: _forWant.Remove(dir); break;
+                return;
+            case WatchVerdict.Shallow:
+                if (was != WatchVerdict.Shallow) UnwatchBelow(dir);
+                _kept[dir] = WatchVerdict.Shallow;
+                return;
+            default:
+                SetKept(dir, now);
+                if (was != WatchVerdict.Shallow) return;
+                AddTree(dir, isRoot: false, now); // its watch is in place: the walk lists it and goes down
+                output?.Add(new Output(RawKind.Created, dir, null));
+                return;
         }
+    }
+
+    private void SetKept(string dir, WatchVerdict verdict)
+    {
+        if (verdict == WatchVerdict.Watch) _kept.Remove(dir);
+        else _kept[dir] = verdict;
     }
 
     // Under _gate. A directory was renamed inside the tree (a paired FROM/TO).
@@ -516,16 +555,24 @@ internal sealed class InotifyBackend : IWatchBackend
             if (there == wd || errno is Enoent or Enotdir) // it is (or `to` is gone already: keep the label, later events correct it)
             {
                 Repath(from, to);
-                if (verdict == WatchVerdict.WatchForWant) _forWant.Add(to); else _forWant.Remove(to);
-                Revisit(under: to); // a pattern may have named the old path
+                ApplyVerdict(to, verdict, null); // renamed out of a cache, into a want, …: a shallow one is walked now, and the reverse
+                if (_wds.ContainsKey(to)) Revisit(under: to); // a pattern may have named the old path
                 return;
             }
             if (errno is Enospc or Enomem) throw new IOException(LimitMessage("watches", "max_user_watches", errno));
-            // Another directory is at `to` already (the walk read the disk ahead of this event): `from` keeps its watch until its own events
-            // come, and `to` is walked as the directory it is.
+            // Another directory is at `to` already (the walk read the disk ahead of this event), and `to` is walked as the directory it is.
+            // The watched one keeps its label only if it is still at `from` (mkdir X; mv X Y; mkdir X): if it moved on — maybe out of the
+            // tree — its watch would report under a path it does not have, so it goes; whatever is at `from` now is added by the event that
+            // put it there.
+            var atFrom = InotifyAddWatch(_fd, from, WatchMask | InDontFollow);
+            if (atFrom != wd)
+            {
+                Unwatch(from);
+                if (atFrom >= 0 && !_dirs.ContainsKey(atFrom)) InotifyRmWatch(_fd, atFrom); // only a probe
+            }
         }
         else Unwatch(from); // not watched (left out, or never seen): forget what was known below it
-        AddTree(to, isRoot: false, forWant: verdict == WatchVerdict.WatchForWant, visited: null);
+        AddTree(to, isRoot: false, verdict);
     }
 
     // Under _gate. The watches at and below `from` (and the left-out directories there) now belong to `to`.
@@ -539,31 +586,45 @@ internal sealed class InotifyBackend : IWatchBackend
             if (_wds.TryGetValue(dir, out var w) && w == wd) _wds.Remove(dir);
             _wds[moved] = wd;
         }
-        Move(_pruned, from, to);
-        Move(_forWant, from, to);
-
-        static void Move(HashSet<string> set, string from, string to)
+        foreach (var dir in _pruned.Where(d => IsAtOrBelow(d, from)).ToArray())
         {
-            foreach (var dir in set.Where(d => IsAtOrBelow(d, from)).ToArray())
-            {
-                set.Remove(dir);
-                set.Add(to + dir[from.Length..]);
-            }
+            _pruned.Remove(dir);
+            _pruned.Add(to + dir[from.Length..]);
+        }
+        foreach (var (dir, verdict) in _kept.Where(kv => IsAtOrBelow(kv.Key, from)).ToArray())
+        {
+            _kept.Remove(dir);
+            _kept[to + dir[from.Length..]] = verdict;
         }
     }
 
-    // Under _gate. Removes the watches of a directory and everything below it, and forgets the left-out directories there.
-    private void Unwatch(string path)
+    // Under _gate. Removes the watches of a directory and everything below it, and forgets the left-out directories there. `keep`: a
+    // descriptor whose label goes but whose kernel watch stays (the caller labels it again).
+    private void Unwatch(string path, int keep = -1)
     {
         foreach (var (wd, dir) in _dirs.ToArray())
         {
             if (!IsAtOrBelow(dir, path)) continue;
-            InotifyRmWatch(_fd, wd); // its IN_IGNORED finds nothing left to forget
+            if (wd != keep) InotifyRmWatch(_fd, wd); // its IN_IGNORED finds nothing left to forget
             _dirs.Remove(wd);
             if (_wds.TryGetValue(dir, out var w) && w == wd) _wds.Remove(dir);
         }
         ForgetPruned(path);
-        if (_forWant.Count > 0) _forWant.RemoveWhere(d => IsAtOrBelow(d, path));
+        foreach (var dir in _kept.Keys.Where(d => IsAtOrBelow(d, path)).ToArray()) _kept.Remove(dir);
+    }
+
+    // Under _gate: removes the watches strictly below `dir` and forgets what was known there; `dir`'s own watch stays.
+    private void UnwatchBelow(string dir)
+    {
+        foreach (var (wd, path) in _dirs.ToArray())
+        {
+            if (path.Length <= dir.Length || !IsAtOrBelow(path, dir)) continue;
+            InotifyRmWatch(_fd, wd);
+            _dirs.Remove(wd);
+            if (_wds.TryGetValue(path, out var w) && w == wd) _wds.Remove(path);
+        }
+        _pruned.RemoveWhere(d => d.Length > dir.Length && IsAtOrBelow(d, dir));
+        foreach (var path in _kept.Keys.Where(d => d.Length > dir.Length && IsAtOrBelow(d, dir)).ToArray()) _kept.Remove(path);
     }
 
     // Under _gate.
@@ -585,68 +646,103 @@ internal sealed class InotifyBackend : IWatchBackend
             var verdict = _verdict(dir);
             if (verdict == WatchVerdict.Prune) continue;
             _pruned.Remove(dir);
-            if (_wds.ContainsKey(Path.GetDirectoryName(dir)!)) AddTree(dir, isRoot: false, forWant: verdict == WatchVerdict.WatchForWant, visited: null); // else a stale entry
+            if (_wds.ContainsKey(Path.GetDirectoryName(dir)!)) AddTree(dir, isRoot: false, verdict); // else a stale entry
         }
-        foreach (var dir in _forWant.Where(d => under is null || IsAtOrBelow(d, under)).OrderBy(static d => d.Length).ToArray())
+        foreach (var dir in _kept.Keys.Where(d => under is null || IsAtOrBelow(d, under)).OrderBy(static d => d.Length).ToArray())
         {
-            if (!_wds.ContainsKey(dir)) { _forWant.Remove(dir); continue; } // went with a directory above it
-            ApplyVerdict(dir, _verdict(dir));
+            if (!_wds.ContainsKey(dir)) { _kept.Remove(dir); continue; } // went with a directory above it
+            ApplyVerdict(dir, _verdict(dir), null);
         }
     }
 
     /// <summary>
-    /// Under _gate. After an overflow: walks the tree again (watches already in place keep their descriptors, directories that appeared unseen
-    /// get theirs) and removes every watch the walk did not reach — a directory deleted while its IN_IGNORED was lost, one moved out of the
-    /// tree while its IN_MOVED_FROM was, or one nobody wants any more — so nothing is reported under a path it no longer has. True when the root
-    /// itself is gone.
+    /// Under _gate. After an overflow the labels may be anything — renames, exchanges, a name reused, all lost — so they are rebuilt, not
+    /// reconciled: the tree is walked into empty maps, each descriptor labelled with the path the walk reached it by (inotify answers with
+    /// the existing descriptor for a directory already watched, so nothing is watched twice), and every old descriptor the walk did not reach —
+    /// a directory deleted while its IN_IGNORED was lost, one moved out of the tree while its IN_MOVED_FROM was, or one nobody wants any more —
+    /// is removed, so nothing is reported under a path it no longer has. True when the root itself is gone or replaced.
     /// </summary>
     private bool Resync()
     {
         if (_outOfWatches) return false;
-        var visited = new HashSet<int>();
-        _pruned.Clear();  // the walk finds the left-out directories again
-        _forWant.Clear(); // … and those watched for a want
+        var old = _dirs.Keys.ToArray();
+        _dirs.Clear();
+        _wds.Clear();
+        _pruned.Clear();
+        _kept.Clear();
         var rootGone = false;
-        try { AddTree(_root, isRoot: true, forWant: false, visited); }
+        try { AddTree(_root, isRoot: true, WatchVerdict.Watch, resync: true); }
         catch (Exception ex) when (ex is DirectoryNotFoundException or UnauthorizedAccessException) { rootGone = true; }
+        finally
+        {
+            foreach (var wd in old)
+                if (!_dirs.ContainsKey(wd)) InotifyRmWatch(_fd, wd); // EINVAL for one the kernel freed already: harmless
+        }
         // Another directory at the root's path now (the old one moved or deleted while events were lost): the FileWatcher re-arms on it.
         if (!_wds.TryGetValue(_root, out var rootWd) || rootWd != _rootWd) rootGone = true;
-        foreach (var (wd, dir) in _dirs.ToArray())
-        {
-            if (visited.Contains(wd)) continue;
-            InotifyRmWatch(_fd, wd); // EINVAL for one the kernel freed already: harmless
-            _dirs.Remove(wd);
-            if (_wds.TryGetValue(dir, out var w) && w == wd) _wds.Remove(dir);
-        }
         return rootGone;
     }
 
     private static bool IsAtOrBelow(string path, string dir) =>
         path.StartsWith(dir, StringComparison.Ordinal) && (path.Length == dir.Length || path[dir.Length] == '/' || dir.EndsWith('/'));
 
+    /// <summary>One walk's state: what it still has to visit, how often each path was pushed, and whether it rebuilds the maps (<see cref="Resync"/>).</summary>
+    private sealed class Walk(bool resync)
+    {
+        public readonly Stack<(string Dir, WatchVerdict Verdict)> Stack = new();
+        private readonly Dictionary<string, int> _pushes = new(StringComparer.Ordinal);
+        public bool Resync { get; } = resync;
+
+        /// <summary>
+        /// Pushes <paramref name="dir"/> unless this walk pushed it twice already: a walk ends whatever the disk and the labels say (a path is
+        /// pushed again only when crossed labels were dropped and it must be walked afresh).
+        /// </summary>
+        public void Push(string dir, WatchVerdict verdict)
+        {
+            _pushes.TryGetValue(dir, out var n);
+            if (n >= 2) return;
+            _pushes[dir] = n + 1;
+            Stack.Push((dir, verdict));
+        }
+    }
+
     /// <summary>
-    /// Under _gate: watches <paramref name="top"/> and, for a recursive backend, every directory below it that someone wants — each one before it
-    /// is listed, so a subdirectory created meanwhile is either listed or reported. Symlinked directories are not entered. <paramref name="visited"/>
-    /// collects the descriptor of every directory reached. Throws an <see cref="IOException"/> when the OS is out of watches, and for the root
-    /// anything that keeps it from being watched. Adds nothing once the OS refused a watch.
+    /// Under _gate: watches <paramref name="top"/> (whose verdict is <paramref name="verdict"/>) and, for a recursive backend, every directory
+    /// below it that someone wants — each one before it is listed, so a subdirectory created meanwhile is either listed or reported. A shallow
+    /// directory is watched but not entered, nor is a symlinked one. <paramref name="resync"/>: the maps were emptied and are rebuilt from what
+    /// the walk finds. Throws an <see cref="IOException"/> when the OS is out of watches, and for the root anything that keeps it from being
+    /// watched. Adds nothing once the OS refused a watch.
     /// </summary>
-    private void AddTree(string top, bool isRoot, bool forWant, HashSet<int>? visited)
+    private void AddTree(string top, bool isRoot, WatchVerdict verdict, bool resync = false)
     {
         if (_outOfWatches) return;
         var options = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = true, RecurseSubdirectories = false, ReturnSpecialDirectories = false };
-        var stack = new Stack<(string Dir, bool ForWant)>();
-        stack.Push((top, forWant));
+        var walk = new Walk(resync);
+        walk.Push(top, verdict);
         var first = true;
-        while (stack.Count > 0)
+        while (walk.Stack.Count > 0)
         {
-            var (dir, wanted) = stack.Pop();
+            var (dir, dirVerdict) = walk.Stack.Pop();
             var asRoot = isRoot && first;
             first = false;
-            if (!AddWatch(dir, asRoot, visited, stack)) continue;
+            if (!AddWatch(dir, asRoot, walk)) continue;
             if (!asRoot)
             {
+                // A tag or pyvenv.cfg written between the verdict and the watch raised no event (`mkdir target; write the tag` read late):
+                // with the watch in place, a marker found now decides again.
+                if (_recursive && HasMarker(dir) && _verdict(dir) is var now && now != dirVerdict)
+                {
+                    if (now == WatchVerdict.Prune)
+                    {
+                        Unwatch(dir);
+                        if (_wds.ContainsKey(Path.GetDirectoryName(dir)!)) _pruned.Add(dir);
+                        continue;
+                    }
+                    dirVerdict = now;
+                }
                 _pruned.Remove(dir);
-                if (wanted) _forWant.Add(dir); else _forWant.Remove(dir);
+                SetKept(dir, dirVerdict);
+                if (dirVerdict == WatchVerdict.Shallow) continue; // a cache directory: its top only
             }
             if (!_recursive) continue;
 
@@ -662,53 +758,101 @@ internal sealed class InotifyBackend : IWatchBackend
 
             foreach (var sub in subdirs)
             {
-                var verdict = _verdict(sub);
-                if (verdict == WatchVerdict.Prune) _pruned.Add(sub);
-                else stack.Push((sub, verdict == WatchVerdict.WatchForWant));
+                var subVerdict = _verdict(sub);
+                if (subVerdict == WatchVerdict.Prune) _pruned.Add(sub);
+                else walk.Push(sub, subVerdict);
             }
         }
     }
 
     // Under _gate. False when there is nothing to watch (vanished, not a directory, unreadable) or the directory is already watched under another
     // path that names it too (a bind mount).
-    private bool AddWatch(string dir, bool isRoot, HashSet<int>? visited, Stack<(string Dir, bool ForWant)> stack)
+    private bool AddWatch(string dir, bool isRoot, Walk walk)
     {
-        // The root may be a symlink (a folder opened through one); below it, links are never followed.
-        var fault = AddWatchFault?.Invoke(dir) ?? 0;
-        var wd = fault != 0 ? -1 : InotifyAddWatch(_fd, dir, WatchMask | (isRoot ? 0 : InDontFollow));
-        if (wd < 0)
+        var wd = TryAddWatch(dir, isRoot);
+        if (wd < 0) return false;
+        if (walk.Resync)
         {
-            var errno = fault != 0 ? fault : Marshal.GetLastPInvokeError();
-            if (errno is Enospc or Enomem) throw new IOException(LimitMessage("watches", "max_user_watches", errno));
-            if (!isRoot) return false;
-            var message = $"Cannot watch '{dir}': {Marshal.GetPInvokeErrorMessage(errno)}";
-            throw errno switch
-            {
-                Enoent or Enotdir => new DirectoryNotFoundException(message),
-                Eacces => new UnauthorizedAccessException(message),
-                _ => new IOException(message),
-            };
+            // Rebuilding: the walk's path is the label. A descriptor labelled already in this walk is the same directory under two paths.
+            if (_dirs.TryGetValue(wd, out var seen) && !string.Equals(seen, dir, StringComparison.Ordinal)) return isRoot;
+            Label(wd, dir);
+            return true;
         }
-        visited?.Add(wd);
+
+        // inotify just said that `dir` is `wd`: another descriptor labelled `dir` is stale (its directory moved; the walk, or the rename event
+        // still queued, adds it under its real path). Two labels for one path would make every later relabelling move both.
+        if (_wds.TryGetValue(dir, out var holder) && holder != wd) Unwatch(dir, keep: wd);
+
         if (_dirs.TryGetValue(wd, out var known) && !string.Equals(known, dir, StringComparison.Ordinal))
         {
             // This directory is watched already, under another path. Which directory does that path name now? inotify answers with its descriptor.
             var there = InotifyAddWatch(_fd, known, WatchMask | InDontFollow);
             if (there == wd) return isRoot; // the same directory at both paths (a bind mount): watched once, never walked twice — a mount can loop
-            // The label was stale (a rename whose events are queued, or were lost in an overflow): the watch and those below it follow the directory,
-            // and whatever is at the old path now is walked as the directory it is.
+            if (there >= 0 && _dirs.ContainsKey(there))
+            {
+                // Crossed labels: the directory at `known` is watched too, under yet another label (an exchange, a swap through a third name, both
+                // still queued). Relabelling by prefix would move both and undo itself; drop both subtrees and walk both paths afresh.
+                Unwatch(known);
+                Unwatch(dir);
+                PushVerdict(known, walk);
+                wd = TryAddWatch(dir, isRoot); // `wd` itself went with `known`'s subtree
+                if (wd < 0) return false;
+                Label(wd, dir);
+                return true;
+            }
+            // The label is stale (a rename whose events are still queued): the watch and those below it follow the directory, and whatever is at
+            // the old path now is walked as the directory it is.
             Repath(known, dir);
-            if (there >= 0 && !_dirs.ContainsKey(there)) InotifyRmWatch(_fd, there); // the walk adds it properly
             if (there >= 0)
             {
-                var verdict = _verdict(known);
-                if (verdict == WatchVerdict.Prune) { if (_wds.ContainsKey(Path.GetDirectoryName(known)!)) _pruned.Add(known); }
-                else stack.Push((known, verdict == WatchVerdict.WatchForWant));
+                InotifyRmWatch(_fd, there); // only a probe: the walk adds it properly
+                PushVerdict(known, walk);
             }
         }
+        Label(wd, dir);
+        return true;
+    }
+
+    private void Label(int wd, string dir)
+    {
         _dirs[wd] = dir;
         _wds[dir] = wd;
-        return true;
+    }
+
+    // Under _gate: `dir` is to be walked (below a watched directory) unless its verdict leaves it out.
+    private void PushVerdict(string dir, Walk walk)
+    {
+        var verdict = _verdict(dir);
+        if (verdict != WatchVerdict.Prune) walk.Push(dir, verdict);
+        else if (_wds.ContainsKey(Path.GetDirectoryName(dir)!)) _pruned.Add(dir);
+    }
+
+    /// <summary>
+    /// Under _gate: adds a watch, or answers -1 when there is nothing to watch. A directory below the root that is not (or no longer) there is
+    /// remembered with the left-out ones: a rename of its parent still queued moves it with the others, and the revisit after it tries again
+    /// (<c>mkdir X/new; mv X Y</c> read late would otherwise leave <c>Y/new</c> unwatched for good). Throws when the OS is out of watches, and
+    /// for the root anything that keeps it from being watched.
+    /// </summary>
+    private int TryAddWatch(string dir, bool isRoot)
+    {
+        // The root may be a symlink (a folder opened through one); below it, links are never followed.
+        var fault = AddWatchFault?.Invoke(dir) ?? 0;
+        var wd = fault != 0 ? -1 : InotifyAddWatch(_fd, dir, WatchMask | (isRoot ? 0 : InDontFollow));
+        if (wd >= 0) return wd;
+        var errno = fault != 0 ? fault : Marshal.GetLastPInvokeError();
+        if (errno is Enospc or Enomem) throw new IOException(LimitMessage("watches", "max_user_watches", errno));
+        if (!isRoot)
+        {
+            if (errno is Enoent or Enotdir) _pruned.Add(dir);
+            return -1;
+        }
+        var message = $"Cannot watch '{dir}': {Marshal.GetPInvokeErrorMessage(errno)}";
+        throw errno switch
+        {
+            Enoent or Enotdir => new DirectoryNotFoundException(message),
+            Eacces => new UnauthorizedAccessException(message),
+            _ => new IOException(message),
+        };
     }
 
     private static IOException InitError(int errno) => errno is Emfile or Enfile or Enomem

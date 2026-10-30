@@ -11,7 +11,9 @@ namespace CsCode.Remote.Client;
 /// The <c>ssh:</c> file watcher. Each <see cref="Watch"/> becomes a server-side Platform watch (recursive, debounced, exclude-aware, a missing root
 /// waits for it); its batches come back as <c>watch/changes</c> and are delivered, mapped to <c>ssh:</c> URIs, on the connection's single handler
 /// thread (in order, never concurrently per subscription). Watches survive reconnects: they are re-armed on the new session and the server is told
-/// which watches the client still has (<c>watch/keep</c>): one stopped while disconnected, or left by a previous client process, ends there. Since
+/// which watches the client still has (<c>watch/keep</c>): one stopped while disconnected, or left by a previous client process, ends there.
+/// Wanted paths (<see cref="FileWatchWants"/>) go to a server that takes them (<see cref="RemoteProtocol.Capabilities.WatchWants"/>), with the
+/// watch and whenever they change, and the server serves them like local ones; an older server watches without them. Since
 /// events during the outage were lost, each re-armed subscriber then gets a "rescan": <c>Changed(root)</c> and, for a watch of one directory (not a
 /// tree), <c>Changed</c> for each of its entries, so a subscriber that looks for its own file (an open editor checks the disk for it) sees it. The
 /// rescan's listings go out once the reconnected session is published, never on the reconnect's own path (terminal output, debug streams and file
@@ -35,9 +37,12 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
     public string Scheme => SshUriMapper.Scheme;
     public int Count => _subs.Count;
 
-    private sealed class Subscription(string id, Uri root, string path, bool recursive, IReadOnlyList<string>? excludes, Action<IReadOnlyList<FileChange>> onChanges, SshUriMapper mapper)
+    private sealed class Subscription(string id, Uri root, string path, bool recursive, IReadOnlyList<string>? excludes, Action<IReadOnlyList<FileChange>> onChanges,
+        SshUriMapper mapper, FileWatchWants? wants)
     {
         public string Id { get; } = id;
+        public FileWatchWants? Wants { get; } = wants;
+        public IDisposable? WantsSubscription;
         public Uri Root { get; } = root;
         public string Path { get; } = path;
         public bool Recursive { get; } = recursive;
@@ -59,7 +64,10 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
         public void Dispose() => Interlocked.Exchange(ref _dispose, null)?.Invoke();
     }
 
-    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges)
+    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges) =>
+        Watch(root, recursive, excludeGlobs, onChanges, null);
+
+    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges, FileWatchWants? wants)
     {
         ArgumentNullException.ThrowIfNull(onChanges);
         SshUriMapper mapper;
@@ -72,12 +80,14 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
             else return Disposable.Empty;
         }
         var path = mapper.ToRemotePath(root);
-        var sub = new Subscription(Guid.NewGuid().ToString("N"), root, path, recursive, excludeGlobs, onChanges, mapper);
+        var sub = new Subscription(Guid.NewGuid().ToString("N"), root, path, recursive, excludeGlobs, onChanges, mapper, wants);
+        sub.WantsSubscription = wants?.Subscribe(() => SendWantsAsync(sub));
         _subs[sub.Id] = sub;
         if (session is not null) _ = ArmAsync(sub, session, reconnect: false);
         return new Handle(() =>
         {
             if (!_subs.TryRemove(sub.Id, out _)) return;
+            sub.WantsSubscription?.Dispose();
             sub.OnChanges = null; // a batch already queued is dropped, and the closure is not kept
             sub.FirstArmed.TrySetCanceled();
             if (sub.ArmedOn is { IsOpen: true } s) s.Peer.Fire(RemoteMethods.WatchStop, new WatchStopParams(sub.Id)); // fire and forget
@@ -90,7 +100,9 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
     {
         try
         {
-            await session.Peer.InvokeAsync<WatchStartParams, Empty>(RemoteMethods.WatchStart, new WatchStartParams(sub.Id, sub.Path, sub.Recursive, sub.Excludes)).ConfigureAwait(false);
+            var (directories, trees) = TakesWants(session) ? WantPaths(sub) : (null, null);
+            await session.Peer.InvokeAsync<WatchStartParams, Empty>(RemoteMethods.WatchStart,
+                new WatchStartParams(sub.Id, sub.Path, sub.Recursive, sub.Excludes, directories, trees)).ConfigureAwait(false);
             var rescan = reconnect && sub.WasArmed;
             sub.ArmedOn = session;
             sub.WasArmed = true;
@@ -150,6 +162,44 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
             _log.LogDebug("Rescanning {Root} after the reconnect failed: {Error}", sub.Root, ex.Message);
         }
         return changes;
+    }
+
+    private static bool TakesWants(RemoteSession session) => session.Server.Capabilities.Contains(RemoteProtocol.Capabilities.WatchWants);
+
+    /// <summary>A subscription's wanted paths as server paths (those not on its host are left out); nulls when it has none.</summary>
+    private static (IReadOnlyList<string>? Directories, IReadOnlyList<string>? Trees) WantPaths(Subscription sub)
+    {
+        if (sub.Wants is not { } wants) return (null, null);
+        return (Map(wants.Directories), Map(wants.Trees));
+
+        List<string> Map(IReadOnlyList<Uri> uris)
+        {
+            var paths = new List<string>(uris.Count);
+            foreach (var uri in uris)
+            {
+                try { paths.Add(sub.Mapper.ToRemotePath(uri)); }
+                catch (Exception ex) when (ex is NotSupportedException or ArgumentException) { } // another host's path
+            }
+            return paths;
+        }
+    }
+
+    /// <summary>
+    /// The subscription's wants changed: tell the server its watch is on (an older server, or none connected: nothing; the next arming sends
+    /// them). Completes once the server's OS watch follows them, or the server could not be reached.
+    /// </summary>
+    private async Task SendWantsAsync(Subscription sub)
+    {
+        if (sub.ArmedOn is not { IsOpen: true } session || !TakesWants(session)) return;
+        var (directories, trees) = WantPaths(sub);
+        try
+        {
+            await session.Peer.InvokeAsync<WatchWantsParams, Empty>(RemoteMethods.WatchWants, new WatchWantsParams(sub.Id, directories ?? [], trees ?? [])).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException or RemoteException)
+        {
+            _log.LogDebug("Could not send the wanted paths of {Root}: {Error}", sub.Root, ex.Message);
+        }
     }
 
     void IRemoteParticipant.Attach(RpcPeer peer) =>
