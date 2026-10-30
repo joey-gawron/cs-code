@@ -25,15 +25,17 @@ internal sealed class DebuggeeLauncher : IDisposable
     /// <summary>The terminals running this session's debuggees, with the debuggee's pid: a terminal is reused for the next run (another session's).</summary>
     private readonly List<(ITerminal Terminal, int Pid)> _terminals = new();
     private readonly Func<ITerminalService?>? _terminalService;
+    private readonly Func<bool>? _terminalsAreRemote;
     private readonly object _gate = new();
     private bool _disposed;
 
-    public DebuggeeLauncher(DebugLane lane, ILogger logger, Action<string, string> output, Func<ITerminalService?>? terminals = null)
+    public DebuggeeLauncher(DebugLane lane, ILogger logger, Action<string, string> output, Func<ITerminalService?>? terminals = null, Func<bool>? terminalsAreRemote = null)
     {
         _lane = lane;
         _logger = logger;
         _output = output;
         _terminalService = terminals;
+        _terminalsAreRemote = terminalsAreRemote;
     }
 
     public IReadOnlyList<int> LiveProcessIds
@@ -94,7 +96,9 @@ internal sealed class DebuggeeLauncher : IDisposable
             ShellPath = a.Args[0],
             ShellArgs = a.Args.Skip(1).ToArray(),
             Cwd = string.IsNullOrEmpty(a.Cwd) ? null : a.Cwd,
-            Env = WithDotnetRootFold(a.Env),
+            // A remote workspace's terminal runs on the remote host, from ITS environment: CsCode's own DOTNET_ROOT_<ARCH> means nothing there
+            // (DOTNET_ROOT=<this machine's path> would send the debuggee's apphost to a runtime directory of this machine).
+            Env = _terminalsAreRemote?.Invoke() == true ? a.Env : WithDotnetRootFold(a.Env),
             IsTransient = true,
             ReuseWhenIdle = true,
             Show = true,

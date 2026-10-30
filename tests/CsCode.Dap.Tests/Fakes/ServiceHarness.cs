@@ -133,18 +133,24 @@ public sealed class ServiceHarness : IAsyncDisposable
     public DebugService Service { get; }
     public FixedPortAdapterFactory FakeFactory { get; }
 
+    /// <param name="workspaceFolder">The workspace's (primary) folder: <see cref="Dir"/> unless a test needs another one (a remote workspace's).</param>
+    /// <param name="pathMapper">The Remote module's URI ⇄ adapter path mapper, for a remote workspace.</param>
+    /// <param name="terminals">The integrated terminal (<c>runInTerminal</c> kind integrated runs there).</param>
     public ServiceHarness(DebugLane? lane = null, INavigationService? navigation = null, bool withPlatform = true, Action<TcpFakeAdapterHost>? configureHost = null,
-        Func<DapPlatform, IEnumerable<BuiltinDebugAdapter>>? moreBuiltins = null)
+        Func<DapPlatform, IEnumerable<BuiltinDebugAdapter>>? moreBuiltins = null, Uri? workspaceFolder = null, IDebugPathMapper? pathMapper = null,
+        CsCode.Core.Terminal.ITerminalService? terminals = null)
     {
         Lane = lane ?? new DebugLane("svc-lane");
         configureHost?.Invoke(Host);
-        Workspace = new FakeWorkspace(Dir.Uri);
+        Workspace = new FakeWorkspace(workspaceFolder ?? Dir.Uri);
         Platform = new DapPlatform
         {
             Workspace = Workspace, State = withPlatform ? State : null, Configuration = withPlatform ? Settings : null,
             Window = withPlatform ? Window : null, Commands = withPlatform ? Commands : null, ContextKeys = withPlatform ? ContextKeys : null,
             Output = withPlatform ? Output : null, Contributions = withPlatform ? Contributions : null, Paths = withPlatform ? Paths : null,
             Navigation = navigation,
+            PathMappers = pathMapper is null ? null : () => pathMapper,
+            Terminals = terminals is null ? null : () => terminals,
         };
         Breakpoints = new BreakpointManager(Platform.State, Workspace);
         Tasks = new TaskService(Lane, Platform);

@@ -72,6 +72,14 @@ public sealed class DapPlatform
     /// <summary>Folder to use when a caller passes none: the first workspace folder.</summary>
     public Uri? PrimaryFolder => Workspace?.PrimaryFolder;
 
+    /// <summary>
+    /// Whether new terminals run on another machine: the workspace is remote (its primary folder is one the Remote module maps), which is the
+    /// rule of the Remote module's terminal backend (RemoteTerminals: every terminal, <c>runInTerminal</c> debuggees and tasks in terminals
+    /// included). Such a terminal starts from THAT machine's environment, so nothing derived from CsCode's own environment (the
+    /// <see cref="DotnetRootFold"/>) is sent to it.
+    /// </summary>
+    internal bool TerminalsAreRemote => PrimaryFolder is { IsFile: false } folder && PathMapper?.ToAdapterPath(folder) is not null;
+
     internal static string NormalizeDir(string path) => path.Length > 1 ? path.TrimEnd('/', '\\') : path;
 
     /// <summary>Builds the context variable substitution consults. <paramref name="inputs"/> are the launch.json/tasks.json <c>inputs[]</c> definitions.</summary>

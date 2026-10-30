@@ -292,7 +292,9 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   `split`), `cscode.debug.requestTimeoutSeconds`. `DebugService.SettingsRead` lists them; a test checks every key the module's sources name is
   registered.
 * Environment: CsCode's own `DOTNET_ROOT_<ARCH>` (set by `dotnet run`/`dotnet test`) is folded into `DOTNET_ROOT` for debug adapters (and so
-  the programs they launch), `runInTerminal` debuggees and tasks, as for language servers (`DotnetRootFold.cs`).
+  the programs they launch), `runInTerminal` debuggees and tasks, as for language servers (`DotnetRootFold.cs`). Not for a terminal of a
+  remote workspace (`DapPlatform.TerminalsAreRemote`, the Remote module's rule: every terminal runs on the remote host there): it starts
+  from the remote host's environment, so a `runInTerminal` debuggee or a task shown there gets only its own `env`.
 * Variables paging: an adapter that answers a later page with more than `count` children starting at the container's first child (it
   ignores `start`/`count`, as CodeLLDB does) is detected per container; that answer is kept as the container's whole list and its pages are cut
   by the session, as with the `IgnoresVariablePaging` quirk (no quirk needed: user adapters too). More than `count` alone is not taken as

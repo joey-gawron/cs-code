@@ -12,6 +12,7 @@ using CsCode.Dap.Client;
 using CsCode.Dap.Configuration;
 using CsCode.Dap.Service;
 using CsCode.Dap.Session;
+using CsCode.Dap.Tasks;
 using CsCode.Dap.Tests.Fakes;
 using CsCode.TestDoubles;
 using Microsoft.Extensions.DependencyInjection;
@@ -726,10 +727,12 @@ public class EndPassDebugTests
     private sealed class OneTerminalService(ReusedTerminal terminal) : CsCode.Core.Terminal.ITerminalService
     {
         private int _nextPid = 4000;
+        public CsCode.Core.Terminal.TerminalCreateOptions? LastOptions;
         public IReadOnlyList<CsCode.Core.Terminal.ITerminal> Terminals => [terminal];
         public CsCode.Core.Terminal.ITerminal? ActiveTerminal => terminal;
         public ValueTask<CsCode.Core.Terminal.ITerminal> CreateAsync(CsCode.Core.Terminal.TerminalCreateOptions? options = null, CancellationToken ct = default)
         {
+            LastOptions = options;
             // like TerminalService with ReuseWhenIdle: the idle terminal of that name is restarted with the new program
             terminal.ProcessId = Interlocked.Increment(ref _nextPid);
             terminal.HasExited = false;
@@ -826,6 +829,111 @@ public class EndPassDebugTests
         var line = string.Concat(output);
         Assert.Contains("arch=unset", line, StringComparison.Ordinal);
         Assert.DoesNotContain("root=unset", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>The Remote module's mapper as the debugger sees it: it handles <c>ssh://</c> URIs (a remote workspace's).</summary>
+    private sealed class SshMapper : IDebugPathMapper
+    {
+        public string? ToAdapterPath(Uri uri) => uri.Scheme == "ssh" ? uri.AbsolutePath : null;
+        public Uri? ToUri(string adapterPath, Uri? workspaceFolder) => null;
+    }
+
+    private static readonly Uri RemoteFolder = new("ssh://build-host/home/me/app");
+
+    [Fact]
+    public void Terminals_are_remote_exactly_when_the_workspace_is_one_the_remote_module_maps()
+    {
+        Assert.True(new DapPlatform { Workspace = new FakeWorkspace(RemoteFolder), PathMappers = () => new SshMapper() }.TerminalsAreRemote);
+        Assert.False(new DapPlatform { Workspace = new FakeWorkspace(new Uri("file:///home/me/app")), PathMappers = () => new SshMapper() }.TerminalsAreRemote);
+        Assert.False(new DapPlatform { Workspace = new FakeWorkspace(RemoteFolder) }.TerminalsAreRemote); // no remote module: nothing maps it
+        Assert.False(new DapPlatform { Workspace = new FakeWorkspace(new Uri("docker://other/app")), PathMappers = () => new SshMapper() }.TerminalsAreRemote);
+        Assert.False(new DapPlatform { Workspace = new FakeWorkspace(), PathMappers = () => new SshMapper() }.TerminalsAreRemote);
+    }
+
+    /// <summary>
+    /// A remote workspace's terminals run on the remote host, from ITS environment: a <c>runInTerminal</c> debuggee there gets the adapter's
+    /// environment only, never CsCode's DOTNET_ROOT_&lt;ARCH&gt; folded into a DOTNET_ROOT of this machine (end-pass review, T27). A local
+    /// terminal still gets the fold.
+    /// </summary>
+    [Fact]
+    public async Task A_terminal_debuggee_of_a_remote_workspace_gets_no_overrides_from_this_machines_environment()
+    {
+        Assert.SkipWhen(DotnetRootFold.Overrides(null).Count == 0, $"this test process has no {Arch} to fold (dotnet test sets it for the test host)");
+        using var lane = new DebugLane("t27-remote");
+        var service = new OneTerminalService(new ReusedTerminal());
+        var args = new CsCode.Dap.Protocol.DapRunInTerminalArguments
+        {
+            Kind = "integrated", Title = "App", Args = ["/home/me/app/bin/App"], Env = new Dictionary<string, string?> { ["ASPNETCORE_ENVIRONMENT"] = "Development" },
+        };
+        var remote = new DapPlatform { Workspace = new FakeWorkspace(RemoteFolder), PathMappers = () => new SshMapper() };
+        using (var launcher = new DebuggeeLauncher(lane, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, (_, _) => { }, () => service, () => remote.TerminalsAreRemote))
+            await launcher.LaunchAsync(args, "App", Ct);
+        Assert.Equal(args.Env, service.LastOptions!.Env); // the adapter's environment, nothing added or removed
+
+        var local = new DapPlatform { Workspace = new FakeWorkspace(new Uri("file:///home/me/app")), PathMappers = () => new SshMapper() };
+        using (var launcher = new DebuggeeLauncher(lane, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, (_, _) => { }, () => service, () => local.TerminalsAreRemote))
+            await launcher.LaunchAsync(args, "App", Ct);
+        Assert.True(service.LastOptions!.Env!.ContainsKey(Arch)); // a local terminal: folded (removed, or moved to DOTNET_ROOT)
+        Assert.Equal("Development", service.LastOptions.Env["ASPNETCORE_ENVIRONMENT"]);
+    }
+
+    /// <summary>The same through the debug service: the session started for a remote workspace tells its launcher so.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Through_the_debug_service_a_remote_workspaces_terminal_debuggee_gets_the_adapters_environment_only(bool remote)
+    {
+        Assert.SkipWhen(DotnetRootFold.Overrides(null).Count == 0, $"this test process has no {Arch} to fold (dotnet test sets it for the test host)");
+        var terminals = new OneTerminalService(new ReusedTerminal());
+        await using var h = remote
+            ? new ServiceHarness(workspaceFolder: RemoteFolder, pathMapper: new SshMapper(), terminals: terminals)
+            : new ServiceHarness(pathMapper: new SshMapper(), terminals: terminals);
+        await h.StartAsync(ServiceHarness.Config("App", folder: h.Dir.Uri));
+        await h.AdapterFor(0).RequestFromAdapterAsync("runInTerminal", new CsCode.Dap.Protocol.DapRunInTerminalArguments
+        {
+            Kind = "integrated", Title = "App", Args = ["/home/me/app/bin/App"], Env = new Dictionary<string, string?> { ["X"] = "1" },
+        });
+        var env = terminals.LastOptions!.Env!;
+        if (remote) Assert.Equal(["X"], env.Keys);
+        else Assert.True(env.ContainsKey(Arch));
+    }
+
+    /// <summary>The same for a task shown in a terminal while the workspace is remote (the terminal runs on the remote host).</summary>
+    [Fact]
+    public async Task A_task_in_a_terminal_of_a_remote_workspace_gets_no_overrides_from_this_machines_environment()
+    {
+        Assert.SkipWhen(DotnetRootFold.Overrides(null).Count == 0, $"this test process has no {Arch} to fold (dotnet test sets it for the test host)");
+        using var dir = new TempDirectory("t27-task-");
+        dir.WriteFile(".cscode/tasks.json", """{ "version": "2.0.0", "tasks": [ { "label": "build", "type": "process", "command": "make", "options": { "env": { "MODE": "x" } } } ] }""");
+        foreach (var (workspace, remote) in new[] { (RemoteFolder, true), (dir.Uri, false) })
+        {
+            using var lane = new DebugLane("t27-task");
+            var host = new RecordingTaskHost();
+            using var tasks = new TaskService(lane, new DapPlatform { Workspace = new FakeWorkspace(workspace), PathMappers = () => new SshMapper(), TaskTerminals = () => host });
+            Assert.True((await tasks.RunAsync("build", dir.Uri, Ct)).Succeeded);
+            var env = Assert.Single(host.Requests).Environment;
+            Assert.Equal("x", env["MODE"]);
+            if (remote) Assert.Equal(["MODE"], env.Keys);
+            else Assert.True(env.ContainsKey(Arch));
+        }
+    }
+
+    private sealed class RecordingTaskHost : CsCode.Core.Tasks.ITaskTerminalHost
+    {
+        public readonly ConcurrentQueue<CsCode.Core.Tasks.TaskTerminalRequest> Requests = new();
+
+        public ValueTask<CsCode.Core.Tasks.ITaskTerminalRun> StartAsync(CsCode.Core.Tasks.TaskTerminalRequest request, CancellationToken ct = default)
+        {
+            Requests.Enqueue(request);
+            return ValueTask.FromResult<CsCode.Core.Tasks.ITaskTerminalRun>(new DoneRun());
+        }
+
+        private sealed class DoneRun : CsCode.Core.Tasks.ITaskTerminalRun
+        {
+            public Task<CsCode.Core.Tasks.TaskTerminalExit> Completion { get; } = Task.FromResult(new CsCode.Core.Tasks.TaskTerminalExit(0, false));
+            public void Terminate() { }
+            public ValueTask RevealAsync(CancellationToken ct = default) => ValueTask.CompletedTask;
+        }
     }
 
     // ------------------------------------------------------------------ T53: an adapter (without a quirk) that ignores start and count
