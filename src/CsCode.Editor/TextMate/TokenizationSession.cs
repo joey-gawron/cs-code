@@ -21,7 +21,8 @@ namespace CsCode.Editor.TextMate;
 /// </summary>
 internal sealed class TokenizationSession : IDisposable
 {
-    public static readonly TimeSpan SliceBudget = TimeSpan.FromMilliseconds(6);
+    /// <summary>The longest a worker slice runs (settable for the T10 regression test, which makes it tiny to reproduce a loaded machine).</summary>
+    public static TimeSpan SliceBudget { get; internal set; } = TimeSpan.FromMilliseconds(6);
     public const int MaxCatchUpLines = 2000;
     public const int IslandOverscanLines = 200;
     public const int ReadAheadLines = 3000;
