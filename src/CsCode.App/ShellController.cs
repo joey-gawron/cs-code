@@ -303,11 +303,49 @@ public sealed class ShellController : IDisposable
     private async Task OpenCommandLineTargetsAsync()
     {
         var options = _sp.GetRequiredService<CommandLineOptions>();
-        var workspace = _sp.GetService<IWorkspaceService>();
-        var nav = _sp.GetRequiredService<INavigationService>();
         foreach (var remote in options.RemoteTargets) // cscode ssh://[user@]host[:port]/path: connect, then open the folder
             _ = _sp.GetRequiredService<ICommandService>().ExecuteAsync(CsCode.Remote.Shell.RemoteShellContributions.OpenFolder, remote).AsTask();
-        foreach (var t in options.Targets)
+        await OpenTargetsAsync(options.Targets).ConfigureAwait(true);
+        // Paths handed over meanwhile (macOS file activation at launch) open after the command line's, and so do those that arrive while they open.
+        while (_queuedTargets is { Count: > 0 } queued)
+        {
+            _queuedTargets = [];
+            await OpenTargetsAsync(queued).ConfigureAwait(true);
+        }
+        _queuedTargets = null;
+    }
+
+    /// <summary>Paths handed over before the command line's were opened (<see cref="OpenTargets"/>); null once they were.</summary>
+    private List<StartupTarget>? _queuedTargets = [];
+
+    /// <summary>
+    /// Opens paths as the command line's are opened (a folder as the workspace, files as editors at their positions), for paths handed over after
+    /// the start (macOS file activation: Finder's Open With, <c>open file</c>, a drop on the Dock icon). Before the deferred start has opened the
+    /// command line's they wait, so they open into the restored layout, not under it.
+    /// </summary>
+    public void OpenTargets(IReadOnlyList<StartupTarget> targets)
+    {
+        if (_disposed || targets.Count == 0) return;
+        if (_queuedTargets is { } queued)
+        {
+            queued.AddRange(targets);
+            return;
+        }
+        _ui.Post(() => _ = OpenHandedOverAsync(targets));
+    }
+
+    private async Task OpenHandedOverAsync(IReadOnlyList<StartupTarget> targets)
+    {
+        if (_disposed) return;
+        try { await OpenTargetsAsync(targets).ConfigureAwait(true); }
+        catch (Exception ex) { _sp.GetService<CrashHandler>()?.Report(ex, fatal: false, source: "Open"); }
+    }
+
+    private async Task OpenTargetsAsync(IReadOnlyList<StartupTarget> targets)
+    {
+        var workspace = _sp.GetService<IWorkspaceService>();
+        var nav = _sp.GetRequiredService<INavigationService>();
+        foreach (var t in targets)
         {
             try
             {

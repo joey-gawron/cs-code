@@ -27,7 +27,19 @@ public sealed class App : Application
 
     public IServiceProvider? Services => _session?.Services;
 
-    public override void Initialize() => AvaloniaXamlLoader.Load(this);
+    public override void Initialize()
+    {
+        AvaloniaXamlLoader.Load(this);
+        if (!OperatingSystem.IsMacOS()) return;
+        // macOS names the application menu and its Hide and Quit items after this (the executable's name otherwise), and reads the menu's own
+        // items as the app starts (Avalonia's "About Avalonia" otherwise): they run the commands of the run the main window connects.
+        Name = "CsCode";
+        ApplicationMenu = Menus.NativeMenuExport.BuildApplicationMenu();
+        NativeMenu.SetMenu(this, ApplicationMenu.Menu);
+    }
+
+    /// <summary>macOS: the application menu's own items (About CsCode, Settings...); null elsewhere.</summary>
+    internal static Menus.NativeMenuExport? ApplicationMenu { get; private set; }
 
     public override void OnFrameworkInitializationCompleted()
     {
@@ -38,7 +50,7 @@ public sealed class App : Application
                 Crash.Report(e.Exception, fatal: false, source: "UI");
                 e.Handled = true; // keep running: the user is told and the log is written
             };
-            Start(new AvaloniaDesktopHost(desktop));
+            Start(new AvaloniaDesktopHost(desktop, this.TryGetFeature<IActivatableLifetime>()));
         }
         base.OnFrameworkInitializationCompleted();
     }

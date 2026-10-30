@@ -38,6 +38,7 @@ public class ScreenshotTests
     [AvaloniaFact]
     public async Task File_menu_open()
     {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "the in-window menu bar; macOS shows the menus in the system menu bar");
         using var host = new DevHost().Build();
         await host.BuildAsync();
         var menu = host.Window.GetVisualDescendants().OfType<Views.ShellMenuBar>().Single();
