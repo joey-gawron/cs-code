@@ -64,6 +64,16 @@ public class BackgroundCommandLineTests
     }
 
     [Fact]
+    public void The_readme_says_background_mode_is_the_default_and_how_to_run_in_the_foreground()
+    {
+        var readme = File.ReadAllText(Path.Combine(PublishedAppFixture.RepoRoot(), "README.md"));
+        Assert.Contains("background mode is the default", readme);
+        Assert.Contains("dotnet run --project src/CsCode.App -- --foreground", readme);
+        foreach (var flag in new[] { "--session", "--list-sessions", "--quit", "--foreground" }) Assert.Contains(flag, readme);
+        Assert.Contains("tools/publish-app.sh", readme);
+    }
+
+    [Fact]
     public void The_help_text_documents_the_stable_interface()
     {
         foreach (var flag in new[] { "--session", "--new-window", "--wait", "--list-sessions", "--background", "--quit", "--all", "--foreground", "--version" })
