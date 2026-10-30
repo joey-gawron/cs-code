@@ -127,7 +127,7 @@ and buffer; `Dispose()` does both.
 with counts, operators and text objects, Visual char/line/block with block insert/append, `.`, `u`/`Ctrl-R` against the editor's Undo/Redo and the
 dirty marker, registers and `+`/`*`, `/ n N` with highlights, `:s///c`, macros incl. recursive, mode labels/showcmd/caret shapes, IME text, scrolling
 and folds), shell (`:w :e :b :ls :q :q!`, language keys through a fake provider, on/off live, Ctrl-key ownership and app chords, `vim.handleKeys`),
-IntelliSense and snippets in Insert mode, mouse selection, a cross-check of 72 table cases (four per group of eighteen) against the headless engine
+IntelliSense and snippets in Insert mode, mouse selection, a cross-check of 68 table cases (up to four per group of eighteen) against the headless engine
 and the Neovim-blessed expectations, a 300-editor open/edit/close retention test, view eviction with history kept, registers across restarts and
 `vim.vimrc.path`, typing latency on vs off and `:g` over 20k lines in slices.
 
