@@ -24,6 +24,12 @@ public sealed class RemoteTaskService(ITaskService local, RemoteConnectionManage
 
     public ITaskService Local => local;
 
+    /// <summary>A local folder's task: the local runner knows (a remote folder's tasks are the server's: not tracked here).</summary>
+    public bool IsActive(string taskLabel, Uri? folder = null) => RemoteFolder(folder) is null && local.IsActive(taskLabel, folder);
+
+    public ValueTask TerminateAsync(string taskLabel, Uri? folder = null, CancellationToken ct = default) =>
+        RemoteFolder(folder) is null ? local.TerminateAsync(taskLabel, folder, ct) : ValueTask.CompletedTask;
+
     private Uri? RemoteFolder(Uri? folder)
     {
         var f = folder ?? workspace()?.PrimaryFolder;

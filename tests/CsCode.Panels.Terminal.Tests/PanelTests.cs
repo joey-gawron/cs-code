@@ -55,6 +55,45 @@ public sealed class PanelTests
         Assert.True(rig.Keys.Get(TerminalPanelRuntime.FocusContextKey) is true);
     }
 
+    /// <summary>
+    /// terminal-3: the text a Ctrl/Alt key's platform may send along is swallowed only for that key (one character, before its release): an
+    /// input method's commit that arrives later without a KeyDown of its own (ibus/fcitx on Linux) reaches the program.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task After_a_ctrl_key_an_input_methods_commit_reaches_the_program()
+    {
+        await using var rig = await new PanelRig().ReadyAsync();
+        rig.Control.Focus();
+        await PanelRig.Pump(() => rig.Control.IsKeyboardFocusWithin);
+        rig.Host.ClearWritten();
+        rig.Window.KeyPress(Key.L, RawInputModifiers.Control, PhysicalKey.L, "l");
+        rig.Window.KeyRelease(Key.L, RawInputModifiers.Control, PhysicalKey.L, "l");
+        rig.Window.KeyTextInput("你"); // committed by the input method after Ctrl+L was released
+        rig.Window.KeyPress(Key.B, RawInputModifiers.Alt, PhysicalKey.B, "b");
+        rig.Window.KeyTextInput("∫"); // macOS: Option+B also sends its character: not typed
+        rig.Window.KeyPress(Key.R, RawInputModifiers.Control, PhysicalKey.R, "r");
+        rig.Window.KeyTextInput("世界"); // a commit of several characters is never a key's own text
+        await PanelRig.Pump(() => false, 30);
+        Assert.Equal("\x0c你\eb\x12世界", rig.Host.Written);
+    }
+
+    /// <summary>terminal-11: a focus report (DECSET 1004) is not the user's input: a scrolled-back view stays where the user was reading.</summary>
+    [AvaloniaFact]
+    public async Task Focus_reports_leave_a_scrolled_back_view_where_it_is()
+    {
+        await using var rig = await new PanelRig(900, 200).ReadyAsync();
+        await rig.OutputAsync("\e[?1004h" + string.Concat(Enumerable.Range(0, 100).Select(i => $"line {i}\r\n")) + "end", "end");
+        rig.Window.MouseWheel(rig.Cell(5, 2), new Avalonia.Vector(0, 2), RawInputModifiers.None);
+        Assert.True(await PanelRig.Pump(() => rig.Control.Snapshot is { IsAtBottom: false }), "the wheel did not scroll back");
+        var top = rig.Control.Snapshot!.ViewportTop;
+        rig.Host.ClearWritten();
+        rig.Control.Focus();
+        Assert.True(await PanelRig.Pump(() => rig.Host.Written.Contains("\e[I", StringComparison.Ordinal)), "no focus report");
+        await rig.OutputAsync("", null);
+        Assert.Equal(top, rig.Control.Snapshot!.ViewportTop);
+        Assert.False(rig.Control.Snapshot.IsAtBottom, "the focus report scrolled the view to the bottom");
+    }
+
     [AvaloniaFact]
     public async Task Confirm_on_exit_holds_the_window_close_until_the_user_agrees()
     {

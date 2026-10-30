@@ -2,9 +2,11 @@ using System.Text.Json;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using CsCode.App.Notifications;
 using CsCode.Core.Debugging;
 using CsCode.Core.Languages;
 using CsCode.Core.Platform;
+using CsCode.Core.Tasks;
 using CsCode.Panels.Terminal.Tests.Infrastructure;
 using CsCode.Terminal.Sessions;
 using Xunit;
@@ -110,5 +112,50 @@ public sealed class RealAppTaskTests
         Assert.NotNull(hello);
         Assert.True(await TerminalAppHost.WaitFor(() => Text(hello!).Contains("hello-from-42", StringComparison.Ordinal)), Text(hello!));
         Assert.Equal(0, hello!.ExitCode);
+    }
+
+    [AvaloniaFact]
+    public async Task A_background_task_that_cannot_be_tracked_runs_on_quietly_from_run_task_and_only_the_debugger_reports_it()
+    {
+        // T43: isBackground tasks without background patterns ("problemMatcher": [] or none: a dev server, `dotnet watch`) are common
+        var app = await TerminalAppHost.StartAsync();
+        await using var _ = app;
+        var folder = app.Sandbox.Combine("serve-project");
+        Directory.CreateDirectory(Path.Combine(folder, ".vscode"));
+        File.WriteAllText(Path.Combine(folder, ".vscode", "tasks.json"), """
+            {"version":"2.0.0","tasks":[
+              {"label":"serve","type":"shell","command":"echo serving-$((40+2)); exec sleep 1000","isBackground":true,"problemMatcher":[]},
+              {"label":"serve-pre","type":"shell","command":"echo pre-serving-$((40+2)); exec sleep 1000","isBackground":true}
+            ]}
+            """);
+        await app.Get<IWorkspaceService>().OpenFolderAsync(new Uri(folder));
+        await TerminalAppHost.SettleAsync(10);
+        var notifications = app.Get<NotificationCenter>();
+        var tasks = app.Get<ITaskService>();
+
+        await app.RunAsync(TaskCommandSet.RunTask, "serve");
+        var props = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>("""{"type":"cscode-test-no-adapter","request":"launch","name":"try","preLaunchTask":"serve-pre"}""")!;
+        var debug = app.Get<IDebugService>().StartAsync(new DebugConfiguration("cscode-test-no-adapter", "launch", "try", props, new Uri(folder), PreLaunchTask: "serve-pre")).AsTask();
+        TerminalSession? serve = null;
+        Assert.True(await TerminalAppHost.WaitFor(() => (serve = TaskTerminal(app, "serve")) is not null && Text(serve).Contains("serving-42", StringComparison.Ordinal), 15_000),
+            "the 'serve' task did not start in its terminal");
+
+        // the debugger waits for readiness: after five seconds VS Code's "cannot be tracked", with Debug Anyway / Abort
+        NotificationItem? asked = null;
+        Assert.True(await TerminalAppHost.WaitFor(() => (asked = notifications.History.FirstOrDefault(n => n.Message.Contains("cannot be tracked", StringComparison.Ordinal))) is not null, 20_000),
+            "the debugger did not report the preLaunchTask that cannot be tracked");
+        Assert.Contains("'serve-pre'", asked!.Message);
+        Assert.Equal(["Debug Anyway", "Abort"], asked.Actions.Select(a => a.Title));
+        asked.InvokeCommand.Execute(asked.Actions.Single(a => a.Title == "Abort"));
+        Assert.True(await TerminalAppHost.WaitFor(() => debug.IsCompleted, 10_000));
+        Assert.Null(await debug);
+
+        // Run Task's own run got the same result (a second run joins it: it returns once the first one has), and showed nothing
+        var joined = tasks.RunAsync("serve").AsTask(); // (the folder Run Task used: the primary one)
+        Assert.True(await TerminalAppHost.WaitFor(() => joined.IsCompleted, 20_000), "the running 'serve' never became ready or untracked");
+        await TerminalAppHost.SettleAsync(20);
+        Assert.DoesNotContain(notifications.History, n => n.Message.Contains("'serve'", StringComparison.Ordinal));
+        Assert.False(serve!.HasExited); // it runs on
+        Assert.True(tasks.IsActive("serve"));
     }
 }

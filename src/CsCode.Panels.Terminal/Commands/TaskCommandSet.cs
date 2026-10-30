@@ -75,15 +75,44 @@ public static class TaskCommandSet
             }
             if (label is null) return;
         }
+        if (tasks.IsActive(label))
+        {
+            // VS Code: a task runs once at a time (runOptions.instanceLimit) and a second run says so instead of starting it again
+            _ = PromptAlreadyActiveAsync(window, tasks, label);
+            return;
+        }
         _ = ReportAsync(window, tasks.RunAsync(label));
     }
 
-    /// <summary>A task that could not run at all (unknown, invalid tasks.json, a missing program) says why; its own failures show in its terminal.</summary>
+    public const string TerminateTaskAction = "Terminate Task";
+    public const string RestartTaskAction = "Restart Task";
+
+    /// <summary>VS Code's "The task 'build' is already active." with Terminate Task and Restart Task (the run is left alone otherwise).</summary>
+    private static async Task PromptAlreadyActiveAsync(IWindowService window, ITaskService tasks, string label)
+    {
+        string? choice;
+        try
+        {
+            choice = await window.ShowMessageAsync(MessageSeverity.Warning, $"The task '{label}' is already active.",
+                [new MessageAction(TerminateTaskAction), new MessageAction(RestartTaskAction)]).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or OperationCanceledException) { return; }
+        if (choice is not (TerminateTaskAction or RestartTaskAction)) return;
+        await tasks.TerminateAsync(label).ConfigureAwait(true);
+        if (choice == RestartTaskAction) _ = ReportAsync(window, tasks.RunAsync(label));
+    }
+
+    /// <summary>
+    /// A task that could not run at all (unknown, invalid tasks.json, a missing program) says why; its own failures show in its terminal. A
+    /// background task that cannot be tracked (no background patterns: common for a dev server or <c>dotnet watch</c>) is not a failure here:
+    /// it runs on in its terminal and nothing is shown, as in VS Code, where only the debugger's preLaunchTask reports it.
+    /// </summary>
     private static async Task ReportAsync(IWindowService window, ValueTask<TaskResult> run)
     {
         TaskResult result;
         try { result = await run.ConfigureAwait(true); }
         catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or OperationCanceledException) { return; }
+        if (result.NotTracked) return;
         if (result.Error is { } error) await window.ShowMessageAsync(MessageSeverity.Error, error).ConfigureAwait(true);
     }
 

@@ -40,7 +40,24 @@ which also registers `TaskTerminalHost` as `ITaskTerminalHost`). The tool window
   the queue is full a write is refused, except an *urgent* one (Ctrl+C, Ctrl+\, Ctrl+Z jump the queue); the terminal's *worker* parses.
 * **Kill**: SIGHUP (+ SIGCONT) to the process group, then after a grace period (2 s; 1 s for a debuggee; 0.5 s on dispose) SIGKILL to every
   process still in the terminal's session (`/proc/*/stat`), so background jobs in their own process groups go too. A program that called
-  `setsid` itself (a daemon) is deliberately left alone. Disposing the service kills every terminal.
+  `setsid` itself (a daemon) is deliberately left alone. Disposing the service kills every terminal. Once the program has been reaped its pid
+  is only a number the kernel hands out again when nothing uses it (pids wrap in about a day here): killing or reusing an exited terminal
+  (a finished task's, hours later) signals its session only when a member it had when the program was reaped (same pid, same start time,
+  noted by the reader at the reap) still carries the session id, so the number never was free; never `kill(-pid)` blindly. That `/proc`
+  scan runs on the pool, never on the caller's (UI) thread. Checked
+  with a real pid reuse in a private pid namespace (`CSCODE_PIDNS_TEST=1 unshare -Urpfm --mount-proc dotnet test ... --filter
+  FullyQualifiedName~private_pid_namespace`). Without `/proc` (macOS) the members cannot be noted: there the grace timer of a hang-up sent
+  while the program ran still SIGKILLs its process group (the program was reaped within the grace, and macOS hands out pids in sequence, so
+  a number freed that recently does not come back), which ends a job in the group that ignored the hang-up; killing or disposing a terminal
+  whose program had already been reaped signals nothing by its number there (VS Code never signals an exited terminal's group either).
+  Tested on Linux with the process table switched off.
+* **Start races** (end pass): a size the view measured before the program could start (a split pane laid out during a remote round trip) is
+  the PTY's size from the start, and one that arrives while the host is spawning is passed on once it exists; a terminal closed while it was
+  being created or reused starts nothing (a host spawned meanwhile is disposed at once). A remote terminal's program is started by the server
+  during the creation's round trip (`term/create`, before the session's start): when the terminal was closed meanwhile it is ended at once
+  (the backend is disposed, which ends the program on the server and the client's delivery thread). A disposed host whose reader thread still
+  waits to reap its program (one ignoring the hang-up, until the SIGKILL) reaches its session only through a listener detached on dispose,
+  so it neither delivers to nor keeps alive a closed terminal.
 * **Windows** (`ConPtyHost`): `CreatePseudoConsole` over two pipes, the process in a kill-on-close job object, same thread layout. **Written,
   never run** (development and tests are Linux only). macOS: written for, untested; known problems below.
 * The shell is tracked with `IMemoryMonitor.TrackChildProcess` (the shell's exit path kills anything left) and keeps normal priority (it is
@@ -86,7 +103,8 @@ Under `tools/nix-dev-env.sh` the terminal inherits that script's `LD_LIBRARY_PAT
   Command (Output). The view draws a mark left of each prompt (`terminalCommandDecoration.defaultBackground` / `successBackground` /
   `errorBackground`; `terminal.integrated.shellIntegration.decorationsEnabled`) and Ctrl+Up / Ctrl+Down bring the previous/next prompt to the
   top of the view. The marks come from the injected scripts (below).
-* **Scrollback**: `terminal.integrated.scrollback` lines (1000) and a hard cap of 32 MB, whichever comes first. Rows have stable absolute
+* **Scrollback**: `terminal.integrated.scrollback` lines (1000) and a hard cap of 32 MB, whichever comes first; the cap counts a line's cells
+  and the strings of its grapheme clusters and OSC 8 link targets (a line of 2,000-character links is ~320 KB). Rows have stable absolute
   numbers (selections and the viewport do not move while old rows fall off). Scrolling is allocation-free: the ring keeps the line objects
   themselves and the line that falls off the front is cleared and reused as the new bottom line; immutable `TerminalRow` copies are made only
   for rows somebody reads (a frame's visible rows, a selection). (The first version copied every scrolled line: 2.8 GB of garbage per 10 s of
@@ -106,7 +124,7 @@ shell finds them, and the script reads them first.
 
 | Shell | Started as | Reads first |
 |---|---|---|
-| bash | `bash --init-file cscode.bash` | what bash would have: `~/.bashrc`, or the profile's `--rcfile`; with `-l` (`--init-file` does not apply to a login shell, so the shell starts non-login) `/etc/profile` and the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`, unless `--noprofile`. bash itself still reads a system rc first where it is built with one (Debian's `/etc/bash.bashrc`). |
+| bash | `bash --init-file cscode.bash` | what bash would have: `~/.bashrc`, or the profile's `--rcfile` (a leading `~` or `~user` expanded, as bash does); with `-l` (`--init-file` does not apply to a login shell, so the shell starts non-login) `/etc/profile` and the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`, unless `--noprofile`. bash itself still reads a system rc first where it is built with one (Debian's `/etc/bash.bashrc`). |
 | bash `--norc` | its own arguments, unchanged | nothing (as asked); the first prompt sources the script through `PROMPT_COMMAND` (an inherited `PROMPT_COMMAND` is handed over in `CSCODE_BASH_PROMPT_COMMAND` and restored; the variable is un-exported) |
 | zsh | `ZDOTDIR=shellIntegration/zsh`, the user's `ZDOTDIR` (else `HOME`) in `CSCODE_USER_ZDOTDIR` | `.zshenv`, `.zprofile`, `.zshrc` are CsCode's: each sources the user's file with the user's `ZDOTDIR`; `.zshrc` then installs the hooks and hands `ZDOTDIR` back (unset again if the user had none), so `.zlogin` and child shells use the user's files |
 | fish | `fish --init-command "source 'cscode.fish'"` | fish's own configuration (config.fish, conf.d) — the init command runs after it |
@@ -165,13 +183,33 @@ tasks.json `presentation` (the top-level one merged under the task's), VS Code's
 **Problem matchers** (previously accepted and ignored) now feed the Error List, with or without a terminal: the task's output (from the
 terminal's PTY reader, or the process's pipes) is split into lines with escape sequences removed and `\r` overwrites resolved, and matched
 on the Dap lane; problems go to `IDiagnosticService` under the owner `task.<matcher owner>`, cleared when the task runs again, at most 2,000
-per run. Built in: `$msCompile`, `$tsc`/`$tsc-watch`, `$gcc`, `$rustc` (cargo's two-line form), `$eslint-compact`, `$eslint-stylish`
-(regular expressions written for CsCode); custom matchers with `owner`, `source`, `severity`, `fileLocation` (absolute/relative/autoDetect,
-with a base), `pattern` (one, several, `loop`, or a "$name"), `base`. Commands (registered when a task runner is composed):
-`workbench.action.tasks.runTask` (Run Task..., a pick or a label argument), `.build` (Run Build Task, **Ctrl+Shift+B**: the default build
-task, else a pick), `.test`, `.terminate` (Terminate Task...: the running task, a pick when several). Cancelling a run (or the app shutting
-down) ends the process group; closing a task's terminal while it runs cancels the task. Without a terminal (the remote server, tests) the
-runner pipes into the "Tasks" output channel as before. Not done: `isBackground` readiness (`background.beginsPattern/endsPattern`).
+per run. Every trailing CR goes before overwrites are resolved (a program's `\r\n` arrives through the PTY as `\r\r\n`), and a cursor move to
+another line or column 1 or an erase of the line/screen starts the visible text afresh. Built in: `$msCompile` (also the SDK terminal
+logger's indented diagnostics, which `dotnet build` prints in a terminal), `$tsc`, `$tsc-watch` (with its background patterns), `$gcc`,
+`$rustc` (cargo's two-line form), `$eslint-compact`, `$eslint-stylish` (regular expressions written for CsCode); custom matchers with
+`owner`, `source`, `severity`, `fileLocation` (absolute/relative/autoDetect, with a base), `pattern` (one, several, `loop`, or a "$name"),
+`base`, `background` (or the older `watching`: `activeBegins`, `beginsPattern`, `endsPattern`). Commands (registered when a task runner is
+composed): `workbench.action.tasks.runTask` (Run Task..., a pick or a label argument), `.build` (Run Build Task, **Ctrl+Shift+B**: the default
+build task, else a pick), `.test`, `.terminate` (Terminate Task...: the running task, a pick when several). Cancelling a run (or the app
+shutting down) ends the process group; closing a task's terminal while it runs cancels the task. Without a terminal (the remote server, tests)
+the runner pipes into the "Tasks" output channel as before. Task programs (and terminal shells) do not inherit the `DOTNET_ROOT_<ARCH>` that
+`dotnet run`/`dotnet test` give CsCode itself: it is folded into `DOTNET_ROOT` as for language servers (`InheritedDotnetRoot`).
+
+**One instance at a time** (VS Code's `runOptions.instanceLimit`, default 1): running a task that is already running starts nothing new. A
+user's Run Task / Ctrl+Shift+B shows VS Code's "The task 'build' is already active." with **Terminate Task** and **Restart Task**
+(`ITaskService.IsActive` / `TerminateAsync`); a preLaunchTask, a dependency two branches of a dependsOn graph share, or any other
+`RunAsync` waits for the running instance and gets its result. A remote folder's tasks are the server's (not tracked on the client).
+
+**Background tasks** (`isBackground: true`, a watch task): a run is *ready* — a preLaunchTask's `RunAsync` returns and the debugger starts —
+when the task's problem matchers' background patterns go idle (`endsPattern` after `beginsPattern`, or after the start with `activeBegins`:
+`$tsc-watch`'s "Found N errors. Watching for file changes."), not when the process exits, which it does not; the task keeps running in its
+terminal, each cycle's problems replace the last cycle's when it ends. A preLaunchTask that is already running and idle is ready at once; one
+that is compiling, at the end of that compilation. Readiness is followed from before the program starts: a fast watcher's whole first cycle
+can be printed while its terminal is still being shown. Without background patterns (no problem matcher, `"problemMatcher": []`, or one
+without `background`, such as `$msCompile` on `dotnet watch`) the task cannot be tracked: after 5 s the run returns VS Code's "cannot be
+tracked" error (`TaskResult.NotTracked`) and the task runs on. As in VS Code only the debugger's preLaunchTask reports it (Debug Anyway /
+Abort); Run Task and Ctrl+Shift+B show nothing. A process that exits before it was ready reports its exit. Unlike VS Code, the debugger does not ask about errors the matchers found when the exit code (or the readiness) says
+success (`debug.onTaskErrors` is not implemented).
 
 ## Screen readers
 
@@ -194,7 +232,9 @@ program is throttled by its full PTY), the worker parses and keeps the emulator 
 builds the next `TerminalSnapshot` (visible rows; unchanged rows are the same `TerminalRow` instances, which is the renderer's row-level dirty
 tracking) only when it changed and was asked for, and signals `FrameReady`. A flood therefore costs the UI one snapshot per rendered frame; a
 terminal nobody shows (hidden tool window, inactive terminal, hidden session window) costs the UI nothing. Synchronized output (DECSET 2026)
-holds frames until the program ends the update, for one second at most. Keystrokes go straight to the host's queue (no worker hop); typing
+holds frames until the program ends the update, for one second at most: an update still on after that second is ended by the terminal (as the
+2026 spec and other terminals do), so a program killed mid-update does not leave every later echo a second late; DECSTR (a reused task or
+debug terminal) and the program's exit end it too. Keystrokes go straight to the host's queue (no worker hop); typing
 scrolls back to the bottom. On exit the terminal keeps its buffer and shows `[The terminal process exited with code N.]`. The title is the
 user's rename, else the creator's name, else the program's (OSC 0/2), else the foreground process name (polled at most every 500 ms while
 output flows).
@@ -217,7 +257,10 @@ output flows).
 * **Input** (C3): xterm encodings (`KeyEncoder`): cursor keys normal/application, `CSI 1;m X` modifiers, F1-F12, Alt as Meta, Ctrl+letter and
   Ctrl+punctuation, Backspace = DEL, Shift+Tab = `CSI Z`, application keypad; text and IME commits as UTF-8; bracketed paste (end markers inside
   the text are removed); mouse reports X10/1000/1002/1003 in default/UTF-8/SGR/urxvt encoding (`MouseEncoder`), Shift bypasses them; focus
-  reports (1004); on the alternate screen the wheel sends cursor keys (xterm.js), elsewhere it scrolls three lines a notch.
+  reports (1004), which (as in xterm.js) never scroll a scrolled-back view to the bottom; on the alternate screen the wheel sends cursor keys
+  (xterm.js), elsewhere it scrolls three lines a notch. The character some platforms send along with a handled Ctrl/Alt key (macOS's Option+B
+  "∫") is swallowed only for that key: one character, before the key's release; an input method's commit that arrives afterwards without a
+  key of its own (ibus/fcitx) reaches the program.
 * **Keybinding precedence** (VS Code's): while a terminal has focus a key goes to the shell, except a key that starts a chord (`allowChords`,
   default true) or runs a command in `terminal.integrated.commandsToSkipShell` (VS Code's default list for the commands CsCode has, every terminal
   command, plus the user's entries; `-id` removes one), unless `sendKeybindingsToShell` (false). Ctrl+Tab stays with the editor switcher. It is
@@ -411,8 +454,8 @@ Screenshots (headless, git-ignored): `.scratch/screenshots/terminal/terminal-ls-
 ## Known gaps and limits
 
 * **Not done**: command hover/re-run menus and sticky scroll of shell integration; the tab list (VS Code's tabs beside the terminals: CsCode
-  keeps the dropdown, one entry per group); vertical splits (VS Code's panel splits are side by side, as here); `isBackground` task readiness;
-  a UI Automation text pattern and audio cues for screen readers; the remote terminal (R3, `IPtyHost` is ready for it; note the
+  keeps the dropdown, one entry per group); vertical splits (VS Code's panel splits are side by side, as here); `runOptions.instancePolicy`
+  (always VS Code's default, prompt) and `debug.onTaskErrors`; a UI Automation text pattern and audio cues for screen readers; the remote terminal (R3, `IPtyHost` is ready for it; note the
   shell-integration scripts are local files — a remote PTY host must set `TerminalLaunchResolver.ScriptsDirectory = null` or ship them);
   image protocols (no).
 * zsh's integration is written but never run (no zsh here, no official Linux build to fetch). pwsh reports success/failure, not exit codes.

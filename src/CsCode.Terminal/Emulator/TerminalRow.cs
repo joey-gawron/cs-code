@@ -114,6 +114,21 @@ internal sealed class Line
 
     public int Columns => Cells.Length;
 
+    /// <summary>
+    /// Managed bytes the line holds: its cells and the strings of its cluster and OSC 8 link tables (a line of 2,000-character links is
+    /// hundreds of KB, not its 24 bytes per cell). Shared link strings are counted per line: the cap errs on the safe side.
+    /// </summary>
+    public long EstimatedBytes()
+    {
+        var bytes = 64 + Cells.Length * 24L;
+        if (_clusters is { } clusters) foreach (var c in clusters) bytes += 24 + c.Length * 2L;
+        if (_links is { } links) foreach (var l in links) bytes += 24 + l.Length * 2L;
+        return bytes;
+    }
+
+    /// <summary>What the scrollback counted for this line when it took it (its tables cannot change while it is kept there).</summary>
+    public long AccountedBytes;
+
     /// <summary>Marks the line changed (drops the cached snapshot). Call after every mutation.</summary>
     public void Touch() => _snapshot = null;
 
@@ -299,7 +314,11 @@ internal sealed class Scrollback
     /// <summary>The kept line <paramref name="index"/> (0 = oldest), for reads that need no copy (marks).</summary>
     internal Line LineAt(int index) => _ring[(_start + index) % _ring.Length];
 
-    private static long SizeOf(Line line) => 64 + line.Cells.Length * 24L;
+    /// <summary>
+    /// What a kept line costs against <see cref="MaxBytes"/>: cells and the line's cluster and link strings, so output made of long OSC 8 links
+    /// or long grapheme clusters cannot hold hundreds of MB behind a 32 MB cap. Counted once when the line comes in (and subtracted as counted).
+    /// </summary>
+    private static long Account(Line line) => line.AccountedBytes = line.EstimatedBytes();
 
     /// <summary>
     /// Keeps <paramref name="line"/> (which left the screen) as the newest row. Returns a line the caller may reuse: one that fell off the
@@ -314,7 +333,7 @@ internal sealed class Scrollback
         if (Count == _ring.Length) Grow();
         _ring[(_start + Count) % _ring.Length] = line;
         Count++;
-        _bytes += SizeOf(line);
+        _bytes += Account(line);
         while (_bytes > MaxBytes && Count > 1)
         {
             var dropped = DropOldest();
@@ -332,14 +351,14 @@ internal sealed class Scrollback
         _ring[idx] = null!;
         Count--;
         TotalPushed--;
-        _bytes -= SizeOf(line);
+        _bytes -= line.AccountedBytes;
         return line;
     }
 
     private Line DropOldest()
     {
         var line = _ring[_start];
-        _bytes -= SizeOf(line);
+        _bytes -= line.AccountedBytes;
         _ring[_start] = null!;
         _start = (_start + 1) % _ring.Length;
         Count--;

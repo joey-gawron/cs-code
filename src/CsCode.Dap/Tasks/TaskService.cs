@@ -73,7 +73,7 @@ public sealed partial class TaskService : ITaskService, IDisposable
     private sealed record TaskModel(
         string Label, string Type, string? Command, IReadOnlyList<string> Args, string? Cwd, IReadOnlyDictionary<string, string> Env,
         string? ShellExecutable, IReadOnlyList<string> ShellArgs, IReadOnlyList<string> DependsOn, bool Sequence, string? Group, bool IsDefault, string? Detail,
-        JsonObject? Presentation = null, JsonNode? ProblemMatcher = null);
+        JsonObject? Presentation = null, JsonNode? ProblemMatcher = null, bool IsBackground = false, int InstanceLimit = 1);
 
     private sealed record TasksFile(IReadOnlyList<TaskModel> Tasks, IReadOnlyDictionary<string, JsonElement> Inputs);
 
@@ -157,7 +157,9 @@ public sealed partial class TaskService : ITaskService, IDisposable
                     group, isDefault,
                     t["detail"]?.GetValue<string>(),
                     MergePresentation(root["presentation"] as JsonObject, t["presentation"] as JsonObject),
-                    t["problemMatcher"]?.DeepClone()));
+                    t["problemMatcher"]?.DeepClone(),
+                    t["isBackground"] is JsonValue bg && bg.TryGetValue<bool>(out var background) && background,
+                    t["runOptions"] is JsonObject ro && ro["instanceLimit"] is JsonValue il && il.TryGetValue<int>(out var limit) && limit > 1 ? limit : 1));
             }
         return new TasksFile(tasks, inputs);
     }
@@ -189,11 +191,39 @@ public sealed partial class TaskService : ITaskService, IDisposable
         }
     }
 
-    private async Task<TaskResult> RunTaskAsync(TasksFile file, string label, Uri? folder, VariableResolver resolver, IOutputChannel? channel, HashSet<string> path, CancellationToken ct)
+    /// <summary>
+    /// Runs a task (its dependencies first), or joins the run of it already in progress: VS Code runs a task at most
+    /// <c>runOptions.instanceLimit</c> times at once (default 1), so a second Ctrl+Shift+B, a preLaunchTask that is already running and a
+    /// dependency two branches of a dependsOn graph share wait for the running instance instead of starting the same command again (two builds
+    /// writing the same obj/bin, two collectors clobbering each other's problems).
+    /// </summary>
+    private Task<TaskResult> RunTaskAsync(TasksFile file, string label, Uri? folder, VariableResolver resolver, IOutputChannel? channel, HashSet<string> path, CancellationToken ct)
     {
-        var task = file.Tasks.FirstOrDefault(t => t.Label == label)
-            ?? throw new InvalidOperationException($"There is no task named '{label}'.");
-        if (!path.Add(label)) return new TaskResult(label, -1, Error: $"Circular task dependency: {string.Join(" → ", path)} → {label}.");
+        var task = file.Tasks.FirstOrDefault(t => t.Label == label);
+        if (task is null) return Task.FromException<TaskResult>(new InvalidOperationException($"There is no task named '{label}'."));
+        if (path.Contains(label)) return Task.FromResult(new TaskResult(label, -1, Error: $"Circular task dependency: {string.Join(" → ", path)} → {label}."));
+        var key = KeyOf(folder, label);
+        TaskInstance instance;
+        lock (_active)
+        {
+            if (_active.TryGetValue(key, out var running) && running.Count >= task.InstanceLimit)
+                return JoinAsync(running[^1], ct);
+            instance = new TaskInstance(label, task.InstanceLimit, task.IsBackground && task.Command is not null);
+            if (running is null) _active[key] = running = [];
+            running.Add(instance);
+        }
+        instance.Result = RunInstanceAsync(key, instance, task, file, folder, resolver, channel, [.. path], ct);
+        return instance.Result;
+    }
+
+    private async Task<TaskResult> RunInstanceAsync(string key, TaskInstance instance, TaskModel task, TasksFile file, Uri? folder, VariableResolver resolver,
+        IOutputChannel? channel, HashSet<string> path, CancellationToken ct)
+    {
+        var label = task.Label;
+        // The caller's token stops the run until RunAsync returns (for a background task: until it is ready); Terminate Task stops it any time.
+        var stop = instance.Stop.Token;
+        using var link = ct.Register(static s => ((TaskInstance)s!).Terminate(), instance);
+        path.Add(label);
         try
         {
             // ---- dependencies first (parallel by default, like VS Code)
@@ -204,13 +234,13 @@ public sealed partial class TaskService : ITaskService, IDisposable
                 {
                     foreach (var dep in task.DependsOn)
                     {
-                        var r = await RunTaskAsync(file, dep, folder, resolver, channel, [.. path], ct);
+                        var r = await RunTaskAsync(file, dep, folder, resolver, channel, path, stop);
                         if (!r.Succeeded) { failure = r; break; }
                     }
                 }
                 else
                 {
-                    var results = await Task.WhenAll(task.DependsOn.Select(dep => RunTaskAsync(file, dep, folder, resolver, channel, [.. path], ct)));
+                    var results = await Task.WhenAll(task.DependsOn.Select(dep => RunTaskAsync(file, dep, folder, resolver, channel, path, stop)));
                     failure = results.FirstOrDefault(r => !r.Succeeded);
                 }
                 if (failure is not null)
@@ -218,12 +248,161 @@ public sealed partial class TaskService : ITaskService, IDisposable
             }
             if (task.Command is null) return new TaskResult(label, 0); // a pure "group" task made of dependencies
 
-            return await ExecuteAsync(task, folder, resolver, channel, ct);
+            return await ExecuteAsync(task, folder, resolver, channel, instance, key, stop);
         }
-        finally { path.Remove(label); }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            return new TaskResult(label, -1, Cancelled: true); // Terminate Task (the caller's own cancellation propagates as before)
+        }
+        finally
+        {
+            if (!instance.Ready) End(key, instance); // a background task that is ready ends with its process
+        }
     }
 
-    private async Task<TaskResult> ExecuteAsync(TaskModel task, Uri? folder, VariableResolver resolver, IOutputChannel? channel, CancellationToken ct)
+    // ------------------------------------------------------------------ running instances
+
+    /// <summary>Running instances per folder and label (VS Code's active tasks). Locked: <see cref="IsActive"/> reads it from any thread.</summary>
+    private readonly Dictionary<string, List<TaskInstance>> _active = new(StringComparer.Ordinal);
+
+    private string KeyOf(Uri? folder, string label) => (folder ?? _p.PrimaryFolder)?.ToString().TrimEnd('/') + "\n" + label;
+
+    /// <summary>One run of a task in progress, from its start until its process ended (a background task stays after it was ready).</summary>
+    private sealed class TaskInstance(string label, int limit, bool background)
+    {
+        public string Label => label;
+        public int Limit => limit;
+        public bool IsBackground => background;
+        public readonly CancellationTokenSource Stop = new();
+        public readonly TaskCompletionSource Ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>What RunAsync reports: the result, or for a background task its readiness.</summary>
+        public Task<TaskResult> Result = Task.FromResult(new TaskResult(label, -1));
+        /// <summary>A background task was ready (its matchers went idle, or it could not be tracked): RunAsync has returned, the process runs on.</summary>
+        public bool Ready;
+        /// <summary>A background task's current cycle of work (between its matchers' begin and end); null while idle. Touched on the lane only.</summary>
+        public TaskCompletionSource<TaskResult>? Cycle;
+
+        public void Terminate()
+        {
+            try { Stop.Cancel(); }
+            catch (AggregateException) { /* a registered kill threw: the process is going anyway */ }
+        }
+    }
+
+    /// <summary>What a second run of a running task waits for: its result; a background task that is ready: the end of its current cycle, if busy.</summary>
+    private static async Task<TaskResult> JoinAsync(TaskInstance running, CancellationToken ct)
+    {
+        var task = !running.IsBackground || !running.Ready ? running.Result
+            : running.Cycle is { } busy ? busy.Task
+            : Task.FromResult(new TaskResult(running.Label, 0));
+        return await task.WaitAsync(ct);
+    }
+
+    /// <summary>The instance's process is gone: another run starts afresh (removed before its result is seen, so Restart Task can rely on it).</summary>
+    private void End(string key, TaskInstance instance)
+    {
+        lock (_active)
+        {
+            if (_active.TryGetValue(key, out var list) && list.Remove(instance) && list.Count == 0) _active.Remove(key);
+        }
+        instance.Ended.TrySetResult();
+    }
+
+    public bool IsActive(string taskLabel, Uri? folder = null)
+    {
+        lock (_active) return _active.TryGetValue(KeyOf(folder, taskLabel), out var list) && list.Count > 0 && list.Count >= list[^1].Limit;
+    }
+
+    public async ValueTask TerminateAsync(string taskLabel, Uri? folder = null, CancellationToken ct = default)
+    {
+        TaskInstance[] running;
+        lock (_active) running = _active.TryGetValue(KeyOf(folder, taskLabel), out var list) ? [.. list] : [];
+        if (running.Length == 0) return;
+        // the kills run on the lane (killing a process tree reads /proc): never on the caller's (UI) thread
+        _lane.Post(() => { foreach (var r in running) r.Terminate(); });
+        await Task.WhenAll(running.Select(r => r.Ended.Task)).WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>A background task's readiness as its matchers report it (on the lane): followed from before its program starts.</summary>
+    private sealed class Readiness
+    {
+        public readonly TaskCompletionSource<TaskResult?> Ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>A cycle began: the task can be tracked (no "cannot be tracked" after five seconds).</summary>
+        public bool Tracked;
+    }
+
+    /// <summary>
+    /// A background task (<c>isBackground</c>) is ready for whoever waits on it (a preLaunchTask) when its problem matchers' background patterns
+    /// go idle (VS Code's "inactive": the watch task's first compilation ended), not when its process exits, which it does not. Installed before
+    /// the program starts: its first lines are matched while the start is still returning (a terminal's start waits for the UI to show it), and a
+    /// fast watcher can begin and end its first cycle then. Null for a task that is not a background one. On the lane.
+    /// </summary>
+    private static Readiness? TrackReadiness(TaskInstance instance, TaskModel task, ProblemCollector? problems)
+    {
+        if (!instance.IsBackground) return null;
+        var readiness = new Readiness();
+        if (problems is not { IsWatching: true }) return readiness;
+        problems.BackgroundBegan = () =>
+        {
+            readiness.Tracked = true;
+            instance.Cycle ??= new TaskCompletionSource<TaskResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        };
+        problems.BackgroundEnded = () =>
+        {
+            var idle = new TaskResult(task.Label, 0);
+            var cycle = instance.Cycle;
+            instance.Cycle = null;
+            cycle?.TrySetResult(idle);
+            readiness.Ready.TrySetResult(idle);
+        };
+        if (problems.IsBusy) problems.BackgroundBegan(); // activeBegins: busy from the start
+        return readiness;
+    }
+
+    /// <summary>
+    /// Completes when the background task is ready (<see cref="TrackReadiness"/>), with null when its process ended first. Without background
+    /// patterns it cannot be tracked: after five seconds without a begin VS Code's error is the result, marked <see cref="TaskResult.NotTracked"/>
+    /// (the debugger asks Debug Anyway / Abort; a plain Run Task shows nothing), and the task runs on. On the lane.
+    /// </summary>
+    private static Task<TaskResult?> WhenReadyAsync(Readiness readiness, TaskModel task, Task finished)
+    {
+        var ready = readiness.Ready;
+        _ = UntrackedAfterAsync();
+        _ = finished.ContinueWith(_ => ready.TrySetResult(null), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return ready.Task;
+
+        async Task UntrackedAfterAsync()
+        {
+            await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(5)), finished);
+            if (!readiness.Tracked && !finished.IsCompleted)
+                ready.TrySetResult(new TaskResult(task.Label, -1,
+                    Error: $"The task '{task.Label}' cannot be tracked: make sure to have a problem matcher with background patterns defined") { NotTracked = true });
+        }
+    }
+
+    /// <summary>
+    /// Waits for a run's process (<paramref name="finished"/>), or for a background task only until it is ready (<see cref="WhenReadyAsync"/>):
+    /// then the rest of the run (the process, its output and problems, the instance's end) carries on without the caller.
+    /// </summary>
+    private static async Task<TaskResult> AwaitRunAsync(TaskInstance instance, TaskModel task, Readiness? readiness, Task<TaskResult> finished)
+    {
+        if (readiness is null) return await finished;
+        var ready = await WhenReadyAsync(readiness, task, finished);
+        if (ready is null || finished.IsCompleted) return await finished;
+        instance.Ready = true;
+        return ready;
+    }
+
+    /// <summary>A background task's process ended: whoever waits on its current cycle gets its result.</summary>
+    private static void FinishCycle(TaskInstance instance, TaskResult result)
+    {
+        var cycle = instance.Cycle;
+        instance.Cycle = null;
+        cycle?.TrySetResult(result);
+    }
+
+    private async Task<TaskResult> ExecuteAsync(TaskModel task, Uri? folder, VariableResolver resolver, IOutputChannel? channel, TaskInstance instance, string key,
+        CancellationToken ct)
     {
         var command = await resolver.ResolveAsync(task.Command!, ct);
         var args = new List<string>();
@@ -242,6 +421,8 @@ public sealed partial class TaskService : ITaskService, IDisposable
             StandardErrorEncoding = Encoding.UTF8,
         };
         if (cwd is not null && Directory.Exists(cwd)) psi.WorkingDirectory = cwd;
+        // CsCode's own DOTNET_ROOT_<ARCH> (dotnet run/test) must not reach the task's .NET programs (T27); the task's env applies on top
+        InheritedDotnetRoot.Fold(psi.Environment);
         var taskEnv = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (var (k, v) in task.Env) psi.Environment[k] = taskEnv[k] = await resolver.ResolveAsync(v, ct);
 
@@ -267,8 +448,9 @@ public sealed partial class TaskService : ITaskService, IDisposable
         }
 
         var problems = StartProblemMatchers(task, folderPath, psi.WorkingDirectory is { Length: > 0 } wd ? wd : folderPath);
+        var readiness = TrackReadiness(instance, task, problems); // before the start: its first output may already be a whole cycle
         if (_p.TaskTerminals?.Invoke() is { } terminals)
-            return await ExecuteInTerminalAsync(terminals, task, psi, taskEnv, channel, problems, ct);
+            return await ExecuteInTerminalAsync(terminals, task, psi, taskEnv, channel, problems, readiness, instance, key, ct);
 
         channel?.AppendLine($"> Executing task: {task.Label} <");
         Process process;
@@ -278,11 +460,18 @@ public sealed partial class TaskService : ITaskService, IDisposable
             channel?.AppendLine($"The task '{task.Label}' could not be started: {ex.Message}");
             return new TaskResult(task.Label, -1, Error: $"Could not start '{command}': {ex.Message}");
         }
+        return await AwaitRunAsync(instance, task, readiness, RunProcessAsync(process, task, channel, problems, instance, key, ct));
+    }
 
+    /// <summary>The process path: its output to the "Tasks" channel and the matchers, until it exits (or is killed), then its result.</summary>
+    private async Task<TaskResult> RunProcessAsync(Process process, TaskModel task, IOutputChannel? channel, ProblemCollector? problems, TaskInstance instance,
+        string key, CancellationToken ct)
+    {
         using var owned = process;
         lock (_running) _running.Add(process);
         using var tracked = _p.Memory?.TrackChildProcess($"task ({task.Label})", process.Id);
         if (Volatile.Read(ref _disposed) != 0) KillTree(process); // shut down while it was starting
+        var result = new TaskResult(task.Label, -1, Cancelled: true);
         try
         {
             try { process.StandardInput.Close(); } catch (Exception ex) when (ex is IOException or InvalidOperationException) { }
@@ -304,6 +493,7 @@ public sealed partial class TaskService : ITaskService, IDisposable
                 KillTree(process);
                 channel?.AppendLine($"> Task '{task.Label}' was cancelled.");
                 try { await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)); } catch (TimeoutException) { }
+                if (instance.Ready) return result; // a background task terminated after it was ready: nobody awaits this any more
                 throw;
             }
             catch (TimeoutException) { /* a grandchild keeps the pipes open: the task itself has finished */ }
@@ -313,14 +503,19 @@ public sealed partial class TaskService : ITaskService, IDisposable
                 await DrainLaneAsync(); // the pumps' last flushes are queued on the lane: the matchers see all output first
                 problems.Complete();
             }
-            if (Volatile.Read(ref _disposed) != 0) return new TaskResult(task.Label, -1, Cancelled: true); // killed by the shutdown
+            if (Volatile.Read(ref _disposed) != 0) return result; // killed by the shutdown
             await RevealProblemsAsync(task, problems);
             channel?.AppendLine($"> Task '{task.Label}' finished with exit code {process.ExitCode}.");
-            return new TaskResult(task.Label, process.ExitCode);
+            return result = new TaskResult(task.Label, process.ExitCode);
         }
         finally
         {
             lock (_running) _running.Remove(process);
+            if (instance.IsBackground)
+            {
+                FinishCycle(instance, result);
+                End(key, instance);
+            }
         }
     }
 

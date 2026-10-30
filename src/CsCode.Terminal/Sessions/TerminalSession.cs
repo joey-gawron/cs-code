@@ -16,7 +16,7 @@ namespace CsCode.Terminal.Sessions;
 /// so a flood of output costs the UI one snapshot per rendered frame and a terminal nobody looks at (a hidden tool window, a hidden session,
 /// an inactive terminal) costs the UI nothing. Keystrokes go straight to the host's bounded writer queue (no worker hop).
 /// </summary>
-public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
+public sealed class TerminalSession : ITerminal, IDisposable
 {
     /// <summary>Output waiting for the worker before the PTY reader is made to wait.</summary>
     public const long MaxQueuedBytes = 256 * 1024;
@@ -28,6 +28,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
     private readonly object _gate = new();
     private readonly Queue<Work> _queue = new();
     private readonly Func<IPtyHost> _hostFactory;
+    private readonly Action? _discardPrepared;
     private readonly Thread _worker;
     private readonly Emitter<TerminalSession> _frameReady = new();
     private readonly Emitter<TerminalSession> _titleChanged = new();
@@ -64,11 +65,17 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
         public readonly Action? Action = action;
     }
 
-    internal TerminalSession(int id, TerminalCreateOptions options, Func<IPtyHost> hostFactory, EmulatorOptions emulatorOptions, int columns, int rows)
+    /// <param name="discardPrepared">
+    /// Ends a program started for the next <see cref="Start"/> before it (a remote terminal's: the server started it when the launch was
+    /// resolved) when the session turns out to be closed and <paramref name="hostFactory"/> will not take it.
+    /// </param>
+    internal TerminalSession(int id, TerminalCreateOptions options, Func<IPtyHost> hostFactory, EmulatorOptions emulatorOptions, int columns, int rows,
+        Action? discardPrepared = null)
     {
         Id = id;
         Options = options;
         _hostFactory = hostFactory;
+        _discardPrepared = discardPrepared;
         Emulator = new VtEmulator(columns, rows, emulatorOptions)
         {
             Respond = bytes => _host?.Write(bytes),
@@ -192,29 +199,93 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
 
     // ------------------------------------------------------------------ process
 
-    /// <summary>Spawns the program (on the calling thread: callers run it off the UI thread). Failures are written into the terminal and reported as an exit.</summary>
+    /// <summary>
+    /// Spawns the program (on the calling thread: callers run it off the UI thread). Failures are written into the terminal and reported as an
+    /// exit. A session disposed meanwhile (its terminal closed while it was being created or reused) starts nothing: a program spawned then
+    /// would run unseen and never be killed. A remote one, which the server started while the launch was resolved, is ended.
+    /// </summary>
     internal void Start(PtyStartInfo info)
     {
+        if (_disposed)
+        {
+            _discardPrepared?.Invoke();
+            return;
+        }
+        // The view may have measured the terminal before the program could start (a split pane's layout during a remote round trip): a local
+        // PTY opens at that size, so the program's first query already sees it. (A remote one was opened when the launch was resolved: the
+        // size is passed on below; resizing a PTY to the size it has is a no-op in the kernel, no SIGWINCH.)
+        var applied = ((long)info.Columns << 32) | (uint)info.Rows;
+        if (PendingSize() is { } pending) info = info with { Columns = pending.Columns, Rows = pending.Rows };
         var host = _hostFactory();
         // shell integration: the emulator trusts command lines reported with the nonce the shell was given (queued before any output)
         var nonce = info.Environment.GetValueOrDefault(ShellIntegrationInjector.NonceVariable);
         ShellIntegrationInjected = info.Environment.ContainsKey(ShellIntegrationInjector.InjectionVariable);
         Post(() => Emulator.ShellIntegrationNonce = nonce);
+        var listener = new Listener(this);
         try
         {
-            host.Start(info, this);
-            _host = host;
-            Volatile.Write(ref _processId, host.ProcessId);
-            _processName = Path.GetFileName(info.FileName);
-            _startName = host.GetForegroundProcessName() ?? _processName;
-            _cwd = info.WorkingDirectory;
-            StartDirectory = info.WorkingDirectory;
+            host.Start(info, listener);
         }
         catch (PtySpawnException ex)
         {
+            listener.Detach();
             host.Dispose();
             Fail(ex.Message);
+            return;
         }
+        var installed = false;
+        lock (_gate)
+        {
+            if (!_disposed)
+            {
+                _host = host;
+                _listener = listener;
+                installed = true;
+            }
+        }
+        if (!installed)
+        {
+            // disposed while the program was being spawned: Dispose did not see this host, so it goes here
+            listener.Detach();
+            host.Dispose();
+            return;
+        }
+        Volatile.Write(ref _processId, host.ProcessId);
+        _processName = Path.GetFileName(info.FileName);
+        _startName = host.GetForegroundProcessName() ?? _processName;
+        _cwd = info.WorkingDirectory;
+        StartDirectory = info.WorkingDirectory;
+        // A Resize that came in while the host was being spawned found no host to pass the size on to: give it the newest size now (a
+        // later Resize to the same size returns early). Repeated until stable, so a Resize racing with this one cannot leave an older size.
+        while (Volatile.Read(ref _pendingSize) is var size and >= 0 && size != applied)
+        {
+            host.Resize((int)(size >> 32), (int)(size & 0xffffffff));
+            applied = size;
+        }
+    }
+
+    /// <summary>The newest size <see cref="Resize"/> was given, or null before the first.</summary>
+    private (int Columns, int Rows)? PendingSize()
+    {
+        var size = Volatile.Read(ref _pendingSize);
+        return size < 0 ? null : ((int)(size >> 32), (int)(size & 0xffffffff));
+    }
+
+    private Listener? _listener;
+
+    /// <summary>
+    /// The host's view of this session. Detached when the session lets go of the host, so a disposed host's reader thread (alive until it has
+    /// reaped the program, which may ignore the hang-up for a while) neither reaches nor keeps alive a closed terminal.
+    /// </summary>
+    private sealed class Listener(TerminalSession session) : IPtyListener
+    {
+        private volatile TerminalSession? _session = session;
+
+        public void Detach() => _session = null;
+
+        public void OnOutput(ReadOnlySpan<byte> data) => _session?.OnOutput(data);
+
+        public void OnExited(int exitCode) => _session?.OnExited(exitCode);
     }
 
     /// <summary>The program could not be started: the reason is written into the terminal, which then counts as exited (code -1).</summary>
@@ -227,9 +298,20 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
     /// <summary>Runs another program in this exited terminal (its buffer stays): a transient terminal reused for the next debug run.</summary>
     internal void Restart(PtyStartInfo info)
     {
+        if (_disposed)
+        {
+            _discardPrepared?.Invoke(); // closed while it was being claimed for the next run: nothing starts (Start says so too)
+            return;
+        }
         if (!_hasExited) throw new InvalidOperationException("The terminal is still running.");
-        var old = _host;
-        _host = null;
+        IPtyHost? old;
+        lock (_gate)
+        {
+            old = _host;
+            _host = null;
+            _listener?.Detach();
+            _listener = null;
+        }
         old?.Dispose();
         Post(Emulator.PrepareForNextProgram); // whatever the last program left on: primary screen, modes, visible cursor; a fresh line
         Volatile.Write(ref _exitCode, -1);
@@ -262,13 +344,14 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
 
     /// <summary>
     /// Bytes the terminal reports on its own (mouse and focus reports, the wheel's cursor keys): like <see cref="Input"/>, but never the key
-    /// that closes a finished task's terminal (moving the mouse over it must not close it).
+    /// that closes a finished task's terminal (moving the mouse over it must not close it). <paramref name="scrollToBottom"/>: false for a
+    /// report that is not the user's input, which leaves a scrolled-back view where it is (focus reports, as xterm.js sends them).
     /// </summary>
-    public bool Report(ReadOnlySpan<byte> bytes, bool urgent = false)
+    public bool Report(ReadOnlySpan<byte> bytes, bool urgent = false, bool scrollToBottom = true)
     {
         if (_disposed || _host is not { } host || _hasExited) return false;
         var ok = host.Write(bytes, urgent);
-        Post(ScrollToBottomIfScrolled);
+        if (scrollToBottom) Post(ScrollToBottomIfScrolled);
         return ok;
     }
 
@@ -359,7 +442,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
 
     // ------------------------------------------------------------------ PTY callbacks (reader thread)
 
-    void IPtyListener.OnOutput(ReadOnlySpan<byte> data)
+    private void OnOutput(ReadOnlySpan<byte> data)
     {
         OutputTap?.Invoke(data);
         while (!data.IsEmpty)
@@ -380,8 +463,6 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
         }
     }
 
-    void IPtyListener.OnExited(int exitCode) => OnExited(exitCode);
-
     private void OnExited(int exitCode)
     {
         Post(() =>
@@ -389,6 +470,8 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
             if (_hasExited) return;
             Volatile.Write(ref _exitCode, exitCode);
             _hasExited = true;
+            // a synchronized update the program never ended (it was killed while drawing) ends with it
+            if (Emulator.SynchronizedOutput) EndSynchronizedOutput();
             // VS Code's wording; the buffer stays so the user can read what happened.
             Emulator.Feed(ExitMessage?.Invoke(exitCode) ?? $"\e[0m\r\n[The terminal process exited with code {exitCode}.]");
             Publish();
@@ -454,20 +537,45 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
         if (e.ChangeCount == _publishedChange || Volatile.Read(ref _frameRequested) == 0) return;
         if (e.SynchronizedOutput)
         {
-            // DECSET 2026: the program draws a frame in pieces; show it when it says so, or after a second at the latest.
+            // DECSET 2026: the program draws a frame in pieces; show it when it says so, or after a second at the latest. An update the
+            // program does not end within the second is ended here (as the 2026 spec and other terminals do): output after it is drawn as
+            // it comes, not held for a second at a time until a reset.
             if (_syncSince == 0) _syncSince = Stopwatch.GetTimestamp();
             if (Stopwatch.GetElapsedTime(_syncSince) < SynchronizedOutputLimit)
             {
-                _syncTimer ??= new Timer(_ => { _syncTimer?.Dispose(); _syncTimer = null; Post(Publish); }, null, SynchronizedOutputLimit, Timeout.InfiniteTimeSpan);
+                _syncTimer ??= new Timer(_ => Post(SynchronizedOutputExpired), null, SynchronizedOutputLimit, Timeout.InfiniteTimeSpan);
                 return;
             }
+            EndSynchronizedOutput();
         }
+        else if (_syncTimer is not null) EndSynchronizedOutput(); // ended by the program: a timer armed for it must not end a later update
         _syncSince = 0;
         var snapshot = e.CreateSnapshot(++_sequence);
         _publishedChange = e.ChangeCount;
         Volatile.Write(ref _latest, snapshot);
         Volatile.Write(ref _frameRequested, 0);
         _frameReady.Fire(this);
+    }
+
+    /// <summary>On the worker: the synchronized update's second is over (the timer fired; it may fire a hair early by the stopwatch's count).</summary>
+    private void SynchronizedOutputExpired()
+    {
+        if (Emulator.SynchronizedOutput && _syncSince != 0) EndSynchronizedOutput();
+        else
+        {
+            _syncTimer?.Dispose();
+            _syncTimer = null;
+        }
+        Publish();
+    }
+
+    /// <summary>On the worker: the synchronized update ends (timed out, or the program exited) and its timer goes.</summary>
+    private void EndSynchronizedOutput()
+    {
+        Emulator.EndSynchronizedOutput();
+        _syncTimer?.Dispose();
+        _syncTimer = null;
+        _syncSince = 0;
     }
 
     private void PollProcessName()
@@ -486,15 +594,18 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
 
     public void Dispose()
     {
+        IPtyHost? host;
         lock (_gate)
         {
             if (_disposed) return;
             _disposed = true;
             _stopping = true;
+            host = _host; // a host Start installs after this point is disposed by Start itself
+            _listener?.Detach();
             Monitor.PulseAll(_gate);
         }
         _syncTimer?.Dispose();
-        _host?.Dispose();
+        host?.Dispose();
         _frameReady.Clear();
         _titleChanged.Clear();
         _exited.Clear();

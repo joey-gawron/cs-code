@@ -83,8 +83,9 @@ public sealed class SplitTests : IDisposable
     {
         var work = Directory.CreateDirectory(_sandbox.Dir.Combine("work dir")).FullName;
         var first = (TerminalSession)await _service.CreateAsync(Bash());
-        await first.SendTextAsync($"cd '{work}' && echo moved");
-        await WaitScreenAsync(first, "moved");
+        // a marker only the command's output contains (the echoed command line shows "moved-$((40+2))"): the cd has run when it appears
+        await first.SendTextAsync($"cd '{work}' && echo moved-$((40+2))");
+        await WaitScreenAsync(first, "moved-42");
         var split = await _service.SplitAsync(first);
         await split.SendTextAsync("pwd");
         await WaitScreenAsync(split, work);
@@ -171,7 +172,15 @@ public sealed class SplitTests : IDisposable
                 objects.AddRange([a, b, c]);
                 _service.Unsplit(c);
                 objects.Add(_service.GroupOf(c)!);
-                foreach (var s in new[] { b, a, c }) await _service.KillAsync(s);
+                foreach (var s in new[] { b, a, c })
+                {
+                    var pid = s.ProcessId;
+                    await _service.KillAsync(s);
+                    // The kill is asynchronous (SIGHUP, the reap, the worker's end): wait for it, so what is checked is retention, not
+                    // whether a loaded machine has reaped the shell yet.
+                    Assert.True(s.JoinWorker(TimeSpan.FromSeconds(10)), "the terminal's worker did not end");
+                    if (pid is { } p) Assert.True(await ProcessChecks.WaitGoneAsync(p, 10_000), $"the killed shell {p} was not reaped");
+                }
             }
             return objects.ToArray();
         });

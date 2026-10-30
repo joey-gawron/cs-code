@@ -313,6 +313,166 @@ public sealed class UnixPtyHostTests : IDisposable
             return pid;
         }
     }
+
+    // ------------------------------------------------------------------ terminal-2: never kill a reaped leader's number
+
+    [Fact]
+    public async Task Disposing_an_exited_terminal_never_kills_a_process_that_took_its_number_later()
+    {
+        RequireLinux();
+        using var host = new UnixPtyHost();
+        var output = new RecordingPtyListener();
+        host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "exit 0"]), output);
+        await output.WaitExitAsync();
+        Assert.True(await ProcessChecks.WaitGoneAsync(host.ProcessId), "not reaped");
+
+        // An unrelated session leader started after the reap stands in for a process that was given the reaped pid: the kernel reuses a
+        // number once nothing holds it. (The real reuse was reproduced in a private pid namespace: docs/TERMINAL.md.)
+        using var stranger = new UnixPtyHost();
+        var strangerOutput = new RecordingPtyListener();
+        stranger.Start(_sandbox.Command("/bin/sh", ["-c", "echo up; exec sleep 30"]), strangerOutput);
+        Assert.True(await strangerOutput.WaitForAsync("up"));
+        var sid = stranger.ProcessId;
+        Assert.Contains(sid, ProcessTable.SessionMembers(sid));
+
+        host.KillSessionForTest(sid); // what the kill timer (or Dispose of the exited terminal) would do if that number were its pid
+        await Task.Delay(300);
+        Assert.True(ProcessChecks.IsAlive(sid), "a process that took the reaped number later was killed");
+        stranger.Kill(TimeSpan.FromMilliseconds(200));
+        await strangerOutput.WaitExitAsync(5_000);
+    }
+
+    [Fact]
+    public async Task Disposing_an_exited_terminal_still_kills_the_jobs_its_program_left_behind_off_the_callers_thread()
+    {
+        RequireLinux();
+        var host = new UnixPtyHost();
+        var output = new RecordingPtyListener();
+        // a background job that outlives the program: it keeps the session (and so the number) in use
+        host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "trap '' HUP; sleep 1000 & echo BG=$!; exit 0"]), output);
+        Assert.True(await output.WaitForAsync("BG="));
+        await output.WaitExitAsync();
+        var bg = int.Parse(System.Text.RegularExpressions.Regex.Match(output.Text, @"BG=(\d+)").Groups[1].Value);
+        Assert.True(ProcessChecks.IsAlive(bg));
+        Assert.Contains(bg, ProcessTable.SessionMembers(host.ProcessId));
+
+        var sw = Stopwatch.StartNew();
+        host.Dispose(); // (the /proc scan runs on the pool)
+        Assert.True(sw.ElapsedMilliseconds < 50, $"Dispose of an exited terminal took {sw.ElapsedMilliseconds} ms on the caller's thread");
+        Assert.True(await ProcessChecks.WaitGoneAsync(bg, 5_000), "the left-behind job survived");
+    }
+
+    /// <summary>
+    /// The real reuse, where it can be forced: in a private pid namespace (<c>CSCODE_PIDNS_TEST=1 unshare -Urpfm --mount-proc dotnet test ...
+    /// --filter FullyQualifiedName~private_pid_namespace</c>) the next pid can be chosen, so a new session leader gets the reaped terminal
+    /// program's pid. Skipped elsewhere (opt-in: it sets the namespace's next pid).
+    /// </summary>
+    [Fact]
+    public async Task In_a_private_pid_namespace_a_reused_pid_survives_disposing_the_exited_terminal()
+    {
+        RequireLinux();
+        const string lastPid = "/proc/sys/kernel/ns_last_pid";
+        Assert.SkipUnless(Environment.GetEnvironmentVariable("CSCODE_PIDNS_TEST") == "1" && CanWrite(lastPid),
+            "Needs a private pid namespace: CSCODE_PIDNS_TEST=1 unshare -Urpfm --mount-proc dotnet test ...");
+        var host = new UnixPtyHost();
+        var output = new RecordingPtyListener();
+        host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "exit 0"]), output);
+        await output.WaitExitAsync();
+        var pid = host.ProcessId;
+        Assert.True(await ProcessChecks.WaitGoneAsync(pid), "not reaped");
+
+        File.WriteAllText(lastPid, (pid - 1).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var stranger = new UnixPtyHost();
+        var strangerOutput = new RecordingPtyListener();
+        stranger.Start(_sandbox.Command("/bin/sh", ["-c", "echo up; exec sleep 30"]), strangerOutput);
+        Assert.SkipUnless(stranger.ProcessId == pid, $"another process took pid {pid} first");
+        Assert.True(await strangerOutput.WaitForAsync("up"));
+
+        host.Dispose();
+        await Task.Delay(500);
+        Assert.True(ProcessChecks.IsAlive(pid), "disposing the exited terminal killed the session leader that reused its pid");
+        stranger.Kill(TimeSpan.FromMilliseconds(200));
+        await strangerOutput.WaitExitAsync(5_000);
+
+        static bool CanWrite(string path)
+        {
+            // writing needs CAP_SYS_ADMIN over the namespace (the permission bits allow anyone to open it): write the value it has
+            try { File.WriteAllText(path, File.ReadAllText(path).Trim()); return true; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+        }
+    }
+
+    /// <summary>
+    /// macOS has no /proc: who holds a reaped program's number cannot be known there. The rule it follows is run here with the process table
+    /// switched off: a program in the terminal that dies of the hang-up is reaped before the grace timer, which still kills its group (a job in
+    /// it that ignores the hang-up); the number was freed within the grace, which a sequential allocator does not hand out again so soon.
+    /// </summary>
+    [Fact]
+    public async Task Without_a_process_table_the_grace_timer_still_kills_a_job_the_hung_up_program_left_in_its_group()
+    {
+        RequireLinux();
+        var host = new UnixPtyHost { HasProcessTable = false };
+        var output = new RecordingPtyListener();
+        // sh -c has no job control: the background job stays in the program's process group; it ignores SIGHUP, the program does not
+        host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "(trap '' HUP; exec sleep 1000) & echo BG=$!; exec sleep 999"]), output);
+        Assert.True(await output.WaitForAsync("BG="));
+        var bg = int.Parse(System.Text.RegularExpressions.Regex.Match(output.Text, @"BG=(\d+)").Groups[1].Value);
+        await Task.Delay(100);
+        Assert.Equal(host.ProcessId, ProcessTable.Stat(bg)!.Value.Group);
+
+        host.Kill(TimeSpan.FromSeconds(1)); // (Dispose does the same with half a second)
+        Assert.Equal(128 + 1, await output.WaitExitAsync(5_000)); // the program died of the hang-up and was reaped: the timer finds it exited
+        Assert.True(await ProcessChecks.WaitGoneAsync(bg, 5_000), "the job that ignored the hang-up survived the grace timer");
+        host.Dispose();
+    }
+
+    [Fact]
+    public async Task Without_a_process_table_disposing_a_terminal_whose_program_was_reaped_earlier_kills_nothing_by_its_number()
+    {
+        RequireLinux();
+        var host = new UnixPtyHost { HasProcessTable = false };
+        var output = new RecordingPtyListener();
+        host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "trap '' HUP; sleep 1000 & echo BG=$!; exit 0"]), output);
+        Assert.True(await output.WaitForAsync("BG="));
+        await output.WaitExitAsync();
+        var bg = int.Parse(System.Text.RegularExpressions.Regex.Match(output.Text, @"BG=(\d+)").Groups[1].Value);
+        try
+        {
+            // maybe hours later: without a process table the number cannot be shown to be the terminal's still, and nothing is killed by it
+            // (VS Code never signals an exited terminal's group); on Linux the members noted at the reap prove it, and the job goes
+            // (Disposing_an_exited_terminal_still_kills_the_jobs_its_program_left_behind_off_the_callers_thread)
+            host.Dispose();
+            await Task.Delay(700);
+            Assert.True(ProcessChecks.IsAlive(bg), "a job was killed by a number that may have been reused");
+        }
+        finally
+        {
+            try { System.Diagnostics.Process.GetProcessById(bg).Kill(); } catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { }
+            await ProcessChecks.WaitGoneAsync(bg, 5_000);
+        }
+    }
+
+    [Fact]
+    public void Only_a_session_that_kept_the_number_in_use_since_the_reap_is_killed()
+    {
+        (int, ulong)[] atReap = [(10, 990), (11, 995)];
+        // a member the session had at the reap is still in it: the number was never free, every member is the terminal's (also one started later)
+        Assert.Equal([10, 12], UnixPtyHost.OrphansToKill([(10, 990), (12, 1_500)], atReap));
+        // those members are gone (or their pids now name processes started later): the number may have been reused
+        Assert.Empty(UnixPtyHost.OrphansToKill([(13, 1_001), (14, 2_000)], atReap));
+        Assert.Empty(UnixPtyHost.OrphansToKill([(10, 1_700)], atReap)); // pid 10 reused by another process
+        Assert.Empty(UnixPtyHost.OrphansToKill([(15, 1)], [])); // nothing was left at the reap
+        Assert.Empty(UnixPtyHost.OrphansToKill([(15, 1)], null)); // the reap was not seen: nothing is killed by number
+    }
+
+    [Fact]
+    public void A_process_start_time_is_read_from_proc()
+    {
+        RequireLinux();
+        var self = ProcessTable.Stat(Environment.ProcessId)!.Value;
+        Assert.True(self.StartTicks > 0);
+        Assert.Equal(self.StartTicks, ProcessTable.Stat(Environment.ProcessId)!.Value.StartTicks);
+    }
 }
 
 [CollectionDefinition(Name, DisableParallelization = true)]

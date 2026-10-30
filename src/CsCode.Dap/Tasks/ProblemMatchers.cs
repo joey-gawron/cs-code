@@ -15,10 +15,18 @@ internal sealed record ProblemPattern(Regex Regex, int? File, int? Location, int
 
 /// <summary>
 /// A problem matcher (VS Code's <c>problemMatcher</c>): its owner (the Error List groups and clears problems by it), a default severity,
-/// where files are and one or several line patterns (a multi-line matcher's last pattern may <c>loop</c>).
+/// where files are and one or several line patterns (a multi-line matcher's last pattern may <c>loop</c>); for a background (watch) task its
+/// <see cref="Background"/> patterns.
 /// </summary>
 internal sealed record ProblemMatcher(string Owner, string? Source, DiagnosticSeverity Severity, FileLocationKind FileLocation, string? FileBase,
-    IReadOnlyList<ProblemPattern> Patterns);
+    IReadOnlyList<ProblemPattern> Patterns, ProblemBackground? Background = null);
+
+/// <summary>
+/// VS Code's <c>background</c> (formerly <c>watching</c>) of a problem matcher: a line matching <see cref="Begins"/> starts a cycle of work (a
+/// watch task's compilation: the task is busy), one matching <see cref="Ends"/> ends it (the task is idle, a preLaunchTask is ready);
+/// <see cref="ActiveBegins"/>: the task is busy from its start, before any line.
+/// </summary>
+internal sealed record ProblemBackground(Regex? Begins, Regex? Ends, bool ActiveBegins);
 
 /// <summary>
 /// tasks.json problem matchers: the built-in ones CsCode's languages need (<c>$msCompile</c>, <c>$tsc</c>/<c>$tsc-watch</c>, <c>$gcc</c>,
@@ -35,9 +43,10 @@ internal static class ProblemMatchers
         int? code = null, int? message = null, int? endLine = null, int? endColumn = null, bool loop = false) =>
         new(new Regex(regex, RegexOptions.CultureInvariant, RegexTimeout), file, location, line, column, endLine, endColumn, severity, code, message, loop);
 
-    // file(line[,col[,endLine,endCol]]): [fatal ]error|warning|info CODE: message (MSBuild, csc, the .NET SDK)
+    // file(line[,col[,endLine,endCol]]): [fatal ]error|warning|info CODE: message (MSBuild, csc, the .NET SDK). Indented too: in a terminal the
+    // SDK's terminal logger prints each diagnostic four spaces in, under its project ("    /src/Program.cs(5,17): error CS0103: ...").
     private static readonly ProblemPattern MsCompile = P(
-        @"^(?:\s*\d+>)?(\S.*?)(?:\((\d+|\d+,\d+|\d+,\d+,\d+,\d+)\))?\s*:\s+(?:(\S+)\s+)?((?:fatal +)?error|warning|info)\s+(\w+\d+)?\s*:\s*(.*?)(?:\s+\[[^\]]*\])?$",
+        @"^\s*(?:\d+>)?(\S.*?)(?:\((\d+|\d+,\d+|\d+,\d+,\d+,\d+)\))?\s*:\s+(?:(\S+)\s+)?((?:fatal +)?error|warning|info)\s+(\w+\d+)?\s*:\s*(.*?)(?:\s+\[[^\]]*\])?$",
         file: 1, location: 2, severity: 4, code: 5, message: 6);
 
     // file(line,col): error TS1234: message, or file:line:col - error TS1234: message (tsc --pretty)
@@ -66,10 +75,20 @@ internal static class ProblemMatchers
         P(@"^\s+(\d+):(\d+)\s+(error|warning|info)\s+(.+?)(?:\s\s+(.*))?$", line: 1, column: 2, severity: 3, message: 4, code: 5, loop: true),
     ];
 
+    // tsc --watch: "[12:00:00 PM] Starting compilation in watch mode..." / "File change detected. Starting incremental compilation..." begin a
+    // compilation, "[12:00:01 PM] Found 0 errors. Watching for file changes." ends it (VS Code's $tsc-watch, busy from the start)
+    private static readonly ProblemBackground TscWatch = new(
+        new Regex(@"^\s*(?:message TS6032:|\[?\D*\d{1,2}[:.]\d{1,2}[:.]\d{1,2}\D*(?:\]| -)) (?:Starting compilation in watch mode|File change detected\. Starting incremental compilation)\.\.\.",
+            RegexOptions.CultureInvariant, RegexTimeout),
+        new Regex(@"^\s*(?:message TS6042:|\[?\D*\d{1,2}[:.]\d{1,2}[:.]\d{1,2}\D*(?:\]| -)) (?:Compilation complete\.|Found \d+ errors?\.) Watching for file changes\.",
+            RegexOptions.CultureInvariant, RegexTimeout),
+        ActiveBegins: true);
+
     private static ProblemMatcher? Builtin(string name) => name.TrimStart('$') switch
     {
         "msCompile" => new("msCompile", "msCompile", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${workspaceFolder}", [MsCompile]),
-        "tsc" or "tsc-watch" => new("typescript", "ts", DiagnosticSeverity.Error, FileLocationKind.Relative, "${cwd}", [Tsc]),
+        "tsc" => new("typescript", "ts", DiagnosticSeverity.Error, FileLocationKind.Relative, "${cwd}", [Tsc]),
+        "tsc-watch" => new("typescript", "ts", DiagnosticSeverity.Error, FileLocationKind.Relative, "${cwd}", [Tsc], TscWatch),
         "gcc" => new("cpp", "gcc", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${workspaceFolder}", [Gcc]),
         "rustc" => new("rustc", "rustc", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${workspaceFolder}", Rustc),
         "eslint-compact" => new("eslint", "eslint", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${workspaceFolder}", [EslintCompact]),
@@ -131,7 +150,35 @@ internal static class ProblemMatchers
         var source = obj["source"] is JsonValue s && s.TryGetValue<string>(out var sourceName) ? sourceName : baseMatcher?.Source;
         var severity = obj["severity"] is JsonValue sv && sv.TryGetValue<string>(out var sevName) && SeverityOf(sevName) is { } sevValue
             ? sevValue : baseMatcher?.Severity ?? DiagnosticSeverity.Error;
-        return new ProblemMatcher(owner, source, severity, location, fileBase, patterns);
+        var background = BackgroundOf(obj["background"] ?? obj["watching"]) ?? baseMatcher?.Background;
+        return new ProblemMatcher(owner, source, severity, location, fileBase, patterns, background);
+    }
+
+    /// <summary>
+    /// <c>background</c>: <c>activeBegins</c>, <c>beginsPattern</c> and <c>endsPattern</c> (each an expression, or an object with
+    /// <c>regexp</c>). Null when it names none of them or an expression is not valid.
+    /// </summary>
+    private static ProblemBackground? BackgroundOf(JsonNode? node)
+    {
+        if (node is not JsonObject o) return null;
+        static bool? Flag(JsonNode? n) => n is JsonValue v && v.TryGetValue<bool>(out var b) ? b : null;
+        var activeBegins = Flag(o["activeBegins"]) ?? Flag(o["activeBegin"]) ?? false;
+        if (!TryRegex(o["beginsPattern"], out var begins) || !TryRegex(o["endsPattern"], out var ends)) return null;
+        return begins is null && ends is null && !activeBegins ? null : new ProblemBackground(begins, ends, activeBegins);
+
+        static bool TryRegex(JsonNode? n, out Regex? regex)
+        {
+            regex = null;
+            var text = n switch
+            {
+                JsonValue v when v.TryGetValue<string>(out var s) => s,
+                JsonObject p when p["regexp"] is JsonValue r && r.TryGetValue<string>(out var s) => s,
+                _ => null,
+            };
+            if (text is null) return n is null;
+            try { regex = new Regex(text, RegexOptions.CultureInvariant, RegexTimeout); return true; }
+            catch (ArgumentException) { return false; }
+        }
     }
 
     private static FileLocationKind Location(string kind) => kind switch
@@ -184,6 +231,7 @@ internal sealed class ProblemCollector
     private readonly Dictionary<(string Owner, Uri File), List<Diagnostic>> _found = new();
     private readonly (int Index, Dictionary<string, string> Data)?[] _state;
     private readonly HashSet<(string Owner, Uri File)> _dirty = new();
+    private readonly bool[] _active;
     private int _count;
 
     public ProblemCollector(IReadOnlyList<ProblemMatcher> matchers, IDiagnosticService diagnostics, string? workspaceFolder, string? cwd)
@@ -193,16 +241,30 @@ internal sealed class ProblemCollector
         _workspaceFolder = workspaceFolder;
         _cwd = cwd;
         _state = new (int, Dictionary<string, string>)?[matchers.Count];
+        _active = new bool[matchers.Count];
     }
 
     public int Errors { get; private set; }
     public int Warnings { get; private set; }
     public int Count => _count;
 
-    /// <summary>The task starts: the matchers' earlier problems go (they belong to the previous run).</summary>
+    /// <summary>A matcher has <c>background</c> patterns (VS Code's watching matcher): a background task's readiness can be followed.</summary>
+    public bool IsWatching => _matchers.Any(m => m.Background is not null);
+
+    /// <summary>A background matcher is between its begin and its end (the watch task is compiling).</summary>
+    public bool IsBusy => _active.Any(a => a);
+
+    /// <summary>A background cycle began (the task went from idle to busy). Runs on the caller's (the lane's) thread.</summary>
+    public Action? BackgroundBegan { get; set; }
+
+    /// <summary>Every background cycle ended (the task went idle: a preLaunchTask is ready). Runs on the caller's thread.</summary>
+    public Action? BackgroundEnded { get; set; }
+
+    /// <summary>The task starts: the matchers' earlier problems go (they belong to the previous run); <c>activeBegins</c> matchers are busy.</summary>
     public void Start()
     {
         foreach (var owner in _matchers.Select(m => Owner(m)).Distinct()) _diagnostics.Clear(owner);
+        for (var i = 0; i < _matchers.Count; i++) _active[i] = _matchers[i].Background is { ActiveBegins: true };
     }
 
     private static string Owner(ProblemMatcher m) => "task." + m.Owner;
@@ -237,13 +299,79 @@ internal sealed class ProblemCollector
     private void Line(string raw)
     {
         var line = Clean(raw);
+        if (Background(line)) return; // (VS Code: a begin or end line is not matched against the problem patterns)
         for (var m = 0; m < _matchers.Count; m++) Match(m, line);
     }
 
-    /// <summary>The text a terminal would show: escape sequences removed, the last carriage-return overwrite kept.</summary>
+    /// <summary>
+    /// VS Code's background tracking: a begins line opens a cycle (that matcher's problems of the last cycle are replaced by this cycle's when it
+    /// ends), an ends line closes it. Returns true when the line was one of them.
+    /// </summary>
+    private bool Background(string line)
+    {
+        var consumed = false;
+        for (var m = 0; m < _matchers.Count; m++)
+        {
+            if (_matchers[m].Background is not { } background) continue;
+            try
+            {
+                if (background.Begins?.IsMatch(line) == true)
+                {
+                    consumed = true;
+                    if (_active[m]) continue;
+                    var wasBusy = IsBusy;
+                    _active[m] = true;
+                    _state[m] = null;
+                    ForgetCycle(Owner(_matchers[m]));
+                    if (!wasBusy) BackgroundBegan?.Invoke();
+                }
+                else if (background.Ends?.IsMatch(line) == true)
+                {
+                    consumed = true;
+                    if (!_active[m]) continue;
+                    _active[m] = false;
+                    _state[m] = null;
+                    var owner = Owner(_matchers[m]);
+                    // the cycle's problems replace the last cycle's: files fixed in this cycle lose theirs
+                    Publish();
+                    _diagnostics.Clear(owner);
+                    foreach (var (key, list) in _found)
+                        if (key.Owner == owner) _diagnostics.Set(key.File, owner, list.ToArray());
+                    if (!IsBusy) BackgroundEnded?.Invoke();
+                }
+            }
+            catch (RegexMatchTimeoutException) { /* a pathological pattern on this line: not a begin or end */ }
+        }
+        return consumed;
+    }
+
+    /// <summary>A new cycle of <paramref name="owner"/>'s matcher begins: what it found so far no longer counts (still shown until the cycle ends).</summary>
+    private void ForgetCycle(string owner)
+    {
+        foreach (var key in _found.Keys.Where(k => k.Owner == owner).ToList())
+        {
+            _found.Remove(key);
+            _dirty.Remove(key);
+        }
+        _count = Errors = Warnings = 0;
+        foreach (var list in _found.Values)
+            foreach (var d in list)
+            {
+                _count++;
+                if (d.Severity == DiagnosticSeverity.Error) Errors++;
+                else if (d.Severity == DiagnosticSeverity.Warning) Warnings++;
+            }
+    }
+
+    /// <summary>
+    /// The text a terminal would show: escape sequences removed, the last carriage-return overwrite kept. Every trailing CR goes first: a
+    /// program's "\r\n" reaches a task's matchers through the PTY as "\r\r\n" (ONLCR), and a CR followed by nothing overwrites nothing. A cursor
+    /// movement to another line or column 1, or an erase of the line or screen, also starts the visible text afresh (a progress display redrawn
+    /// in place before the line).
+    /// </summary>
     internal static string Clean(string raw)
     {
-        var text = raw.EndsWith('\r') ? raw[..^1] : raw;
+        var text = raw.TrimEnd('\r');
         var cr = text.LastIndexOf('\r');
         if (cr >= 0) text = text[(cr + 1)..];
         if (text.IndexOf('\e') < 0) return text;
@@ -257,8 +385,10 @@ internal sealed class ProblemCollector
             if (next == '[')
             {
                 // CSI: parameters and intermediates, then a final byte 0x40-0x7E
+                var start = i + 2;
                 i += 2;
                 while (i < text.Length && !(text[i] >= '@' && text[i] <= '~')) i++;
+                if (i < text.Length && StartsLineAfresh(text[i], text.AsSpan(start, i - start))) sb.Clear();
             }
             else if (next is ']' or 'P' or '_' or '^')
             {
@@ -271,6 +401,19 @@ internal sealed class ProblemCollector
         }
         return sb.ToString();
     }
+
+    /// <summary>
+    /// CSI sequences after which nothing written before them on the line is visible where the next text goes: cursor to the next or previous
+    /// line (E, F), to a position (H, f), to column 1 (G), erase the whole line or its start (K 1/2), erase the screen (J 1/2/3).
+    /// </summary>
+    private static bool StartsLineAfresh(char final, ReadOnlySpan<char> parameters) => final switch
+    {
+        'E' or 'F' or 'H' or 'f' => true,
+        'G' => parameters.Length == 0 || parameters is "1" or "0",
+        'K' => parameters is "1" or "2",
+        'J' => parameters is "1" or "2" or "3",
+        _ => false,
+    };
 
     private void Match(int index, string line)
     {

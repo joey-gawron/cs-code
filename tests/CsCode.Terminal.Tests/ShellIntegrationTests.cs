@@ -233,6 +233,25 @@ public sealed class ShellIntegrationTests : IDisposable
         Assert.Equal("not-in-history", hidden.OutputTail);
     }
 
+    /// <summary>
+    /// terminal-8: a profile's <c>--rcfile ~/file</c> arrives without a shell to expand the tilde (bash expands it itself); the injected
+    /// script reads the same file bash would have.
+    /// </summary>
+    [Theory]
+    [InlineData("~/.config/bash/rc")]
+    [InlineData("--init-file")]
+    public async Task Bash_reads_a_profiles_rc_file_named_with_a_tilde(string form)
+    {
+        Directory.CreateDirectory(Path.Combine(_sandbox.Home, ".config", "bash"));
+        File.WriteAllText(Path.Combine(_sandbox.Home, ".config", "bash", "rc"), "PS1='$ '\nTILDE_RC_LOADED=yes\n");
+        var args = form == "--init-file" ? new[] { "--init-file", "~/.config/bash/rc" } : ["--rcfile", form];
+        var t = (TerminalSession)await _service.CreateAsync(Bash(args));
+        Assert.True(t.ShellIntegrationInjected);
+        await WaitScreenAsync(t, "$");
+        var check = await RunAsync(t, "echo \"rc=$TILDE_RC_LOADED\"");
+        Assert.Equal("rc=yes", check.OutputTail);
+    }
+
     [Fact]
     public async Task A_command_line_reported_without_the_nonce_is_ignored_and_nothing_leaks_to_child_processes()
     {
