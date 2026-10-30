@@ -415,10 +415,10 @@ Other modules (Vim mode, remote indicator) register their own through `IStatusBa
 ### Commands registered by the shell
 
 `workbench.action.showCommands`, `quickOpen`, `gotoLine`, `gotoSymbol`, `showAllSymbols`, `files.openFolder`, `files.openFile`, `files.newUntitledFile`, `files.save`, `files.saveAs`, `files.saveAll`,
-`closeActiveEditor`, `closeAllEditors`, `closeOtherEditors`, `reopenClosedEditor`, `nextEditor`, `previousEditor`, `pinEditor`, `splitEditorRight`, `splitEditorDown`, `moveEditorToNextGroup`, `moveEditorToNewWindow` (float), `restoreEditorsToMainWindow` (dock floating documents), `closeFolder`, `quit`, `reloadWindow`
+`closeActiveEditor`, `closeAllEditors`, `closeOtherEditors`, `reopenClosedEditor`, `nextEditor`, `previousEditor`, `pinEditor`, `splitEditorRight`, `splitEditorDown`, `focusLeftGroup`, `focusRightGroup`, `focusAboveGroup`, `focusBelowGroup`, `focusNextGroup`, `focusPreviousGroup` (Ctrl+W h l k j w W/p; Vim's Ctrl-W uses the same `DocumentWell.FocusGroup`), `closeEditorsInOtherGroups` (Ctrl+W o, Vim's `:only`), `moveEditorToNextGroup`, `moveEditorToNewWindow` (float), `restoreEditorsToMainWindow` (dock floating documents), `closeFolder`, `quit`, `reloadWindow`
 (refreshes menus only), `toggleFullScreen`, `toggleZenMode`, `selectTheme`, `workbench.view.explorer`, `workbench.action.output.toggleOutput`, `workbench.actions.view.problems`,
 `workbench.action.findResults.toggle`, the toggle of every tool window whose module did not register its `ToggleCommandId` (debug windows: `workbench.debug.action.toggle*`), `cscode.references.show`,
-`cscode.shell.{resetLayout,openRecent,about,showWelcome,showKeyboardReference,toggleNotifications,changeLanguageMode,showErrorList,toggleToolbar}`
+`cscode.shell.{resetLayout,openRecent,about,showWelcome,showKeyboardReference,toggleNotifications,changeLanguageMode,showErrorList,toggleToolbar,newUntitledFileBelow}`
 (`toggleToolbar` takes a toolbar group id: `standard`, `debug`; View > Toolbars). `gotoLine` also takes an optional `"line[:column]"` argument.
 `openSettings` / `openSettingsJson` are only fallbacks (they open settings.json) for a composition without the Settings panel.
 Clipboard and menus (`ShellContextMenus`, `ClipboardRouter`): `editor.action.clipboardCutAction` / `clipboardCopyAction` / `clipboardPasteAction`

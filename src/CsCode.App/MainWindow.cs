@@ -353,6 +353,7 @@ public sealed class MainWindow : Window, IWindowChrome
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
+        _swallowText = false;
         // Ctrl+Tab / Ctrl+Shift+Tab: MRU editor switcher overlay (committed when Ctrl is released).
         if (e.Key == Key.Tab && e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Alt))
         {
@@ -365,11 +366,26 @@ public sealed class MainWindow : Window, IWindowChrome
         // Vim sees an editor's keys before the key bindings (it decides which are its own: docs/VIM.md, "Keys")
         if (_shell.KeyInterceptor?.OnKeyDown(e) == true) { e.Handled = true; return; }
         if (!AvaloniaKeyMapper.TryMap(e.Key, e.KeyModifiers, out var stroke)) return;
-        if (_shell.Keyboard.Handle(stroke) == KeyDispatch.Handled) e.Handled = true;
+        if (_shell.Keyboard.Handle(stroke) == KeyDispatch.Handled)
+        {
+            e.Handled = true;
+            // A character key the pipeline took (the second key of a chord: Ctrl+W v, Ctrl+K S, or a dead one) is not typing: a platform that
+            // sends the character as text input after the key press anyway must not get it into the editor.
+            _swallowText = Vim.VimKeyPolicy.IsTextKey(stroke);
+        }
     }
+
+    /// <summary>The key press just handled by the key pipeline was a character key: its text input, if any follows, goes nowhere.</summary>
+    private bool _swallowText;
 
     private void OnPreviewTextInput(object? sender, TextInputEventArgs e)
     {
+        if (_swallowText)
+        {
+            _swallowText = false;
+            e.Handled = true;
+            return;
+        }
         if (_shell.KeyInterceptor?.OnTextInput(e) == true) e.Handled = true;
     }
 

@@ -23,8 +23,8 @@ bar in Insert mode and an underline in Replace and Operator-pending mode.
   session; the setting `"vim.enable": false` switches it off for good (`vim.enabled` is the older spelling and works too). Off means the plain
   editor at once: its caret, its keys and no Vim status items; on again creates engines for the open editors.
 * **Ctrl keys.** In Normal, Visual and Operator-pending mode Vim owns `Ctrl-D U F B E Y R O I V W A X N P [` and `Esc` (as VSCodeVim does), so
-  Visual Studio's bindings of those keys (Ctrl+D duplicate line, Ctrl+F find, Ctrl+O open, Ctrl+W close, Ctrl+N new, Ctrl+P quick open...) do
-  not run there. In Insert mode Vim takes `Esc Ctrl-[ Ctrl-W U H T D R O N` and leaves `Ctrl+V` (paste), `Ctrl+A`, `Ctrl+X`, `Ctrl+C`, `Ctrl+F`
+  Visual Studio's bindings of those keys (Ctrl+D duplicate line, Ctrl+F find, Ctrl+O open, Ctrl+N new, Ctrl+P quick open...) do
+  not run there. The shell's own Ctrl+W window chords (Ctrl+W v, h, l..., the same commands with Vim off) say `!vim.active`: with Vim on they never start. In Insert mode Vim takes `Esc Ctrl-[ Ctrl-W U H T D R O N` and leaves `Ctrl+V` (paste), `Ctrl+A`, `Ctrl+X`, `Ctrl+C`, `Ctrl+F`
   and **`Ctrl+P` (Quick Open)** to the editor; with the completion list open `Ctrl-N`/`Ctrl-P` move through it. The command line takes every
   Ctrl+letter except `Ctrl+S`/`Ctrl+Q`. Everywhere the application keeps `Ctrl+Shift+…` chords (`Ctrl+Shift+P` the palette), `Alt+…` (menus),
   F-keys (debugging, F12...), `Ctrl+S`, `Ctrl+Z` (which is Vim's `u`, see below), `Ctrl+K`/`Ctrl+M` chords, `Ctrl+Space`, `Ctrl+Tab`, and the
