@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.VisualTree;
 using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.Core.Languages;
@@ -99,5 +100,36 @@ public class VimIntelliSenseTests
         app.Keys("d");
         Assert.Equal("hello \nsecond\n", app.Text);
         Assert.Equal("-- NORMAL --", app.ModeText);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_click_in_visual_mode_ends_it_where_the_click_put_the_caret()
+    {
+        await using var app = await VimApp.StartAsync("hello world\nsecond line\n", settings: "\"editor.quickSuggestions\": false");
+        app.Keys("wvll");
+        Assert.Equal("-- VISUAL --", app.ModeText);
+        foreach (var button in new[] { MouseButton.Left, MouseButton.Right })   // a right-click outside the selection moves the caret too
+        {
+            var at = app.View.TranslatePoint(PointOf(app, 1, 3), app.Host.Window) ?? default;
+            app.Host.Window.MouseDown(at, button, RawInputModifiers.None);
+            app.Host.Window.MouseUp(at, button, RawInputModifiers.None);
+            await DevScene.SettleAsync(3);
+            if (button == MouseButton.Right) CsCode.Ui.Menus.ContextMenus.LastOpened?.Close();
+            await app.FocusAsync();
+            Assert.Equal("-- NORMAL --", app.ModeText);
+            Assert.Equal(new TextPosition(1, 3), app.Caret);
+            Assert.False(app.View.Modal.HasSelection);
+            app.Keys("x");                                                      // and the engine works from there
+            Assert.Equal(button == MouseButton.Left ? "hello world\nsecnd line\n" : "hello world\nsecd line\n", app.Text);
+            app.Keys("ggwvll");
+            Assert.Equal("-- VISUAL --", app.ModeText);
+        }
+    }
+
+    private static Point PointOf(VimApp app, int line, int column)
+    {
+        var tv = app.View.GetVisualDescendants().OfType<AvaloniaEdit.Editing.TextArea>().First().TextView;
+        var p = tv.GetVisualPosition(new AvaloniaEdit.TextViewPosition(line + 1, column + 1), AvaloniaEdit.Rendering.VisualYPosition.TextMiddle) - tv.ScrollOffset;
+        return tv.TranslatePoint(new Point(p.X + 1, p.Y), app.View) ?? p;
     }
 }

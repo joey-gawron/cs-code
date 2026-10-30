@@ -34,7 +34,11 @@ internal sealed class EditorVimHost : IVimHost
     public IVimBuffer Buffer => _buffer;
     public IVimTimer Timer { get; }
 
-    public TextPosition GetCaret() => _surface.Caret;
+    /// <summary>
+    /// The editor's caret. The engine reads it before every key and adopts it when the mouse (or anything but the engine) moved it, so it is
+    /// also where the caret goes back to when Visual mode ends.
+    /// </summary>
+    public TextPosition GetCaret() => _caret = _surface.Caret;
 
     private TextPosition _caret;
 
