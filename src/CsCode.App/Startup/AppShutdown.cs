@@ -19,7 +19,10 @@ public sealed record ShutdownReport(IReadOnlyList<string> TimedOut, IReadOnlyLis
 /// <item>flush state again: those disposals persist (breakpoints are written on dispose);</item>
 /// <item>hard-kill tracked child processes whose owner did not stop them in time;</item>
 /// <item>dispose the container synchronously on the UI thread (UI singletons must be disposed on their thread; an async container dispose would
-/// continue on a pool thread). The module singletons disposed in step 2 are no-ops by then, so nothing here waits for a server.</item>
+/// continue on a pool thread). The module singletons disposed in step 2 are no-ops by then, so nothing here waits for a server. The synchronous
+/// container Dispose throws on a singleton that is only <see cref="IAsyncDisposable"/> and skips every singleton created before it, so every
+/// IAsyncDisposable singleton of every module is also <see cref="IDisposable"/> (tests/CsCode.App.Tests/ContainerDisposalTests holds the real
+/// composition to that, in both language-host modes); the ones whose disposal is real asynchronous work are the step-2 participants.</item>
 /// </list>
 /// The awaited part never takes much longer than the deadline, whatever a language server or debug adapter does.
 /// </summary>
@@ -74,7 +77,13 @@ public static class AppShutdown
 
         // 5. The rest of the container, synchronously on this (UI) thread.
         try { services.Dispose(); }
-        catch (Exception ex) { failures.Add("disposing services: " + ex.Message); }
+        catch (Exception ex)
+        {
+            failures.Add("disposing services: " + ex.Message);
+            // the logger may be gone with the container already (the exception can come from any singleton's Dispose)
+            try { log?.LogWarning(ex, "Shutdown: disposing the services failed; the singletons created before the failing one were not disposed"); }
+            catch (Exception) { /* exiting anyway */ }
+        }
         return report with { Elapsed = clock.Elapsed };
     }
 

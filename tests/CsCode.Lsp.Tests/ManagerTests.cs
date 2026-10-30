@@ -235,6 +235,26 @@ public class ManagerTests
         Assert.All(env.Manager.Servers, s => Assert.Equal(LanguageServerState.Stopped, s.State));
     }
 
+    /// <summary>T6: a container disposed synchronously still stops the servers; after the shell's asynchronous disposal it is a no-op.</summary>
+    [Fact]
+    public async Task Synchronous_Dispose_stops_the_servers_and_after_DisposeAsync_returns_at_once()
+    {
+        await using var env = new LspTestEnv();
+        env.Manager.AddDefinition(LspTestEnv.FakeDef("one", "fake"));
+        env.Open("a.fake", "x");
+        var server = await env.Connections.WaitForServerAsync(0);
+        await server.WaitForAsync(P.LspMethods.Initialized);
+        await TestHelpers.EventuallyAsync(() => env.Manager.Servers.All(s => s.State == LanguageServerState.Running), "running");
+
+        await Task.Run(env.Manager.Dispose, Ct); // as a container's synchronous Dispose would (bounded; not on a UI thread here)
+        Assert.True(server.ExitReceived, "the synchronous Dispose shut the server down");
+
+        await env.Manager.DisposeAsync();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        env.Manager.Dispose();
+        Assert.True(clock.Elapsed < TimeSpan.FromMilliseconds(50), $"Dispose after disposal took {clock.Elapsed.TotalMilliseconds:F1} ms");
+    }
+
     [Fact]
     public void Builtin_definitions_cover_the_required_servers_with_markers_and_install_hints()
     {

@@ -372,5 +372,13 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         _changed.Clear();
     }
 
-    public void Dispose() => Task.Run(() => DisposeAsync().AsTask()).Wait(TimeSpan.FromSeconds(15));
+    /// <summary>
+    /// Synchronous disposal (a container disposed without <see cref="DisposeAsync"/>): bounded at 15 s. The shell's exit disposes this asynchronously
+    /// first, and then the container's synchronous Dispose returns at once instead of hopping to the pool and waiting on the UI thread.
+    /// </summary>
+    public void Dispose()
+    {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        Task.Run(() => DisposeAsync().AsTask()).Wait(TimeSpan.FromSeconds(15));
+    }
 }
