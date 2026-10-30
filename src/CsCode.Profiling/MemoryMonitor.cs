@@ -179,7 +179,11 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
     {
         Volatile.Write(ref _lastActivity, Stopwatch.GetTimestamp());
         // Back to fast sampling at once when the loop had slowed down (one event set per idle period, not per key).
-        if (Volatile.Read(ref _slow) != 0 && Interlocked.Exchange(ref _slow, 0) != 0) _wake.Set();
+        if (Volatile.Read(ref _slow) != 0 && Interlocked.Exchange(ref _slow, 0) != 0 && Volatile.Read(ref _disposed) == 0)
+        {
+            try { _wake.Set(); }
+            catch (ObjectDisposedException) { } // input arriving while the app shuts down
+        }
     }
 
     public TimeSpan IdleTime => Stopwatch.GetElapsedTime(Volatile.Read(ref _lastActivity));
@@ -263,6 +267,7 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
     /// <summary>One iteration of the sampling thread: sample, policy, idle trim, children. Internal so tests drive it without the thread.</summary>
     internal void Tick()
     {
+        EnsureConfiguration();
         if (Interlocked.Exchange(ref _configDirty, 0) != 0) ReadConfiguration();
         var snapshot = Sample();
         var nowMs = NowMs();

@@ -1,5 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- Memory, soak and responsiveness suites (docs/MEMORY.md). The default run executes only the fast variants (seconds each); the long soaks run
+       with CSCODE_SOAK=1 and CSCODE_SOAK_MINUTES=N. App/ holds the real-app host and scenarios, shared as linked source with tools/profile. -->
+  <PropertyGroup>
+    <!-- xUnit1051: our APIs take an optional CancellationToken everywhere; passing TestContext's to each arrange step adds noise (as App.Tests). -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
@@ -7,7 +14,6 @@
     <PackageReference Include="Avalonia.Headless.XUnit" />
     <PackageReference Include="Avalonia.Skia" />
     <PackageReference Include="Avalonia.Themes.Fluent" />
-    <PackageReference Include="BenchmarkDotNet" />
   </ItemGroup>
 
   <ItemGroup>
