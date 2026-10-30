@@ -573,7 +573,17 @@ public class RealCodeLldbRustTests
         var heapAfter = GC.GetTotalMemory(true);
         var history = rig.Service.GetOutputHistory();
         Note($"1M-line flood: {seconds:0.0} s, {rig.OutputEvents} output batches delivered, {session.DroppedOutputChars:N0} chars dropped by design, heap {heapBefore / 1024 / 1024.0:0.0} -> {heapAfter / 1024 / 1024.0:0.0} MB, last output '{rig.OutputOf("stdout")[^Math.Min(40, rig.OutputOf("stdout").Length)..].Replace("\n", "\\n")}'");
-        Assert.Contains(history, h => h.Output.Contains("flood done", StringComparison.Ordinal));
+        // CodeLLDB v1.12.3 sends "Process exited with code 0." after the last program output it forwards; it does NOT drain the program's
+        // output still buffered when the exit is reported (notify_process_terminated: console message, exited, terminated): in 4 of 11 runs
+        // recorded on the wire the adapter's stream ended early ("flood line 999942", "…985", "…987", "…994") without "flood done", and every
+        // time the console's last line was exactly the adapter's last. What CsCode owns: everything the adapter sent reached the history, in
+        // order, up to that final message.
+        var exitMessage = history.Select((h, i) => (h, i)).Last(e => e.h.Output.Contains("Process exited with code 0.", StringComparison.Ordinal)).i;
+        Assert.DoesNotContain(history.Skip(exitMessage + 1), h => h.Category == "stdout");
+        var stdout = string.Concat(history.Where(h => h.Category == "stdout").Select(h => h.Output)).TrimEnd();
+        var lastLine = stdout[(stdout.LastIndexOf('\n') + 1)..];
+        Note($"1M-line flood: the program's last line in the console '{lastLine}'" + (lastLine == "flood done" ? "" : " (CodeLLDB dropped the rest: it does not drain the program's output at exit)"));
+        Assert.Matches(@"^(flood done|flood line \d+)$", lastLine); // the history ends on a whole line the program printed
         Assert.InRange(heapAfter - heapBefore, long.MinValue, 64L * 1024 * 1024);
         await rig.AssertNothingLeftRunningAsync();
     }
