@@ -541,6 +541,14 @@ has been observed yet**. Tests: **D** = `tests/CsCode.Dap.Tests/RealCodeLldbRust
 | 1M lines | works (budget under load) | recorded by the test (time, batches, heap) | D `A_million_line_flood_…` |
 | 10-session soak | works | — | D `Ten_real_sessions_…` |
 
+### Known gaps (from CodeLLDB's sources; to confirm)
+
+* No DAP `process` event (it prints "Launched process <pid>" to the console instead): `DebugSession.DebuggeeProcessId` stays empty for `lldb`
+  sessions — informational only in CsCode (the real-adapter tests find the program under the adapter).
+* Its scopes carry no presentation hints: Locals relies on the name "Local"; the `[return value]` row is not lifted by Autos.
+* The program's stdout and stderr share LLDB's pseudo-terminal (expected to arrive as `stdout`, as with GDB's pipe).
+* The matrix itself: every CodeLLDB row above is unobserved.
+
 ### Running the suites (once CodeLLDB may run)
 
 ```bash
