@@ -9,6 +9,7 @@ using CsCode.App.Input;
 using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.Core.Platform;
+using CsCode.TestDoubles;
 using CsCode.Ui.Menus;
 using Dock.Avalonia.Controls;
 using Xunit;
@@ -247,5 +248,36 @@ public class FloatingWindowTests
         shell.Layout.ApplyPendingFloating();
         await DevScene.SettleAsync(10);
         Assert.Equal(2, factory.FloatingWindows.Count);
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task A_closed_floating_window_and_the_tab_it_held_are_released()
+    {
+        await using var host = await StartAsync();
+        var shell = host.Shell;
+        await LeakAssert.NotRetainedAsync(async () =>
+        {
+            var b = shell.Well.EditorTabs.Single(t => t.Title == "b.txt");
+            shell.Well.Float(b);
+            await DevScene.SettleAsync(10);
+            var window = (Window)shell.Factory.WindowOf(b)!.Host!;
+            var view = b.LiveView!;
+            var doc = b.Doc;
+            await shell.Well.CloseAsync(b);
+            await DevScene.SettleAsync(10);
+            Assert.Empty(shell.Factory.FloatingWindows);
+            Assert.False(window.IsVisible);
+            return [b, window, view, doc];
+        });
+        // A tool window floated and docked back leaves no window behind either.
+        await LeakAssert.NotRetainedAsync(async () =>
+        {
+            shell.Tools.Float("output");
+            await DevScene.SettleAsync(10);
+            var window = (Window)shell.Factory.WindowOf(shell.Tools.Get("output")!)!.Host!;
+            shell.Tools.Dock("output");
+            await DevScene.SettleAsync(10);
+            return [window];
+        });
     }
 }

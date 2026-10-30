@@ -151,7 +151,7 @@ public class PaletteTests
     {
         using var rig = new Rig();
         var help = rig.Source().TryQuerySync("?")!;
-        Assert.Equal(["[no prefix]", ">", ":", "@", "#"], help.Select(h => h.Label));
+        Assert.Equal(["[no prefix]", ">", ":", "@", "#", "session:"], help.Select(h => h.Label));
         Assert.Null(rig.Source().TryQuerySync("prog")); // file search is asynchronous
         Assert.Null(rig.Source().TryQuerySync("@"));
         Assert.Null(rig.Source().TryQuerySync("#x"));

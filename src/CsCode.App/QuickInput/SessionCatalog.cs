@@ -20,9 +20,11 @@ public sealed record SavedSession(string Name, bool IsUnnamed, DateTimeOffset La
 /// The saved sessions (docs/SESSIONS.md: <c>{UserDataDir}/sessions/*.json</c>) for the shell's pickers: the Welcome page's Sessions list and Quick
 /// Launch's <c>session:</c> mode. Listing reads files, so it runs on a pool thread; opening one runs File ▸ Sessions ▸ Open Session with its name
 /// (<see cref="SessionCommandIds.OpenSession"/>), which only session processes register: in a window run with <c>--foreground</c> there is no
-/// background mode to open a session in, and the shell offers none (<see cref="CanOpen"/>).
+/// background mode to open a session in, and the shell offers none (<see cref="CanOpen"/>). In a session process the store is read on its
+/// session lane (<paramref name="runOnLane"/>), where the process writes it, never beside a write.
 /// </summary>
-public sealed class SessionCatalog(ICommandService commands, string? userDataDir, Func<string?>? currentSession = null)
+public sealed class SessionCatalog(ICommandService commands, string? userDataDir, Func<string?>? currentSession = null,
+    Func<Func<IReadOnlyList<SavedSession>>, Task<IReadOnlyList<SavedSession>>>? runOnLane = null)
 {
     /// <summary>At most this many sessions are listed (most recently used first).</summary>
     public const int MaxListed = 50;
@@ -38,7 +40,7 @@ public sealed class SessionCatalog(ICommandService commands, string? userDataDir
     {
         if (userDataDir is null) return Task.FromResult<IReadOnlyList<SavedSession>>([]);
         var current = Current;
-        return Task.Run<IReadOnlyList<SavedSession>>(() =>
+        IReadOnlyList<SavedSession> List()
         {
             try
             {
@@ -49,7 +51,8 @@ public sealed class SessionCatalog(ICommandService commands, string? userDataDir
                     .ToArray();
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
-        }, ct);
+        }
+        return runOnLane is { } lane ? lane(List) : Task.Run(List, ct);
     }
 
     /// <summary>Opens (or shows) a saved session through File ▸ Sessions ▸ Open Session.</summary>

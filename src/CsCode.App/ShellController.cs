@@ -120,7 +120,8 @@ public sealed class ShellController : IDisposable
         var state = _sp.GetService<IStateStorage>();
 
         // Saved sessions for the Welcome page and Quick Launch's session: mode (opened through File > Sessions, which session processes register).
-        Sessions = new SessionCatalog(commands, _sp.GetService<IAppPaths>()?.UserDataDir, () => (chrome as MainWindow)?.SessionName);
+        Sessions = new SessionCatalog(commands, _sp.GetService<IAppPaths>()?.UserDataDir, () => (chrome as MainWindow)?.SessionName,
+            App.Background is { } background ? list => background.Lane.RunAsync(list) : null);
         Palette = new PaletteController(quick, new PaletteContext(commands, nav, well, keys, _sp.GetService<IKeybindingService>(), workspace, state,
             _sp.GetService<ILanguageFeatureRegistry>(), _sp.GetService<IMemoryMonitor>(), Sessions), _ui, window);
         _disposables.Add(Palette);
@@ -214,16 +215,24 @@ public sealed class ShellController : IDisposable
         _disposables.Add(well.TabsChanged.Subscribe(_ => ScheduleSaveLayout()));
         _disposables.Add(Tools.VisibilityChanged.Subscribe(_ => ScheduleSaveLayout()));
         void OnMoved(object? s, EventArgs e) => ScheduleSaveLayout();
-        Factory.DockableMoved += OnMoved;
-        Factory.DockableDocked += OnMoved;
-        Factory.DockablePinned += OnMoved;
-        Factory.DockableUnpinned += OnMoved;
+        var factory = Factory; // not resolved again at dispose: the container may be disposed by then
+        factory.DockableMoved += OnMoved;
+        factory.DockableDocked += OnMoved;
+        factory.DockablePinned += OnMoved;
+        factory.DockableUnpinned += OnMoved;
+        // Floating windows: one opening or going away, or the user moving one by Dock's grip.
+        factory.WindowOpened += OnMoved;
+        factory.WindowRemoved += OnMoved;
+        factory.WindowMoveDragEnd += OnMoved;
         _disposables.Add(Disposable.Create(() =>
         {
-            Factory.DockableMoved -= OnMoved;
-            Factory.DockableDocked -= OnMoved;
-            Factory.DockablePinned -= OnMoved;
-            Factory.DockableUnpinned -= OnMoved;
+            factory.DockableMoved -= OnMoved;
+            factory.DockableDocked -= OnMoved;
+            factory.DockablePinned -= OnMoved;
+            factory.DockableUnpinned -= OnMoved;
+            factory.WindowOpened -= OnMoved;
+            factory.WindowRemoved -= OnMoved;
+            factory.WindowMoveDragEnd -= OnMoved;
         }));
 
         if (config is not null)

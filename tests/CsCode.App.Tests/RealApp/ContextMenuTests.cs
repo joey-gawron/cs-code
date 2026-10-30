@@ -92,7 +92,7 @@ public class RealAppContextMenuTests
         [
             "Breakpoint", "Run To Cursor", "-",
             "Snippet", "-",
-            "Cut", "Copy", "Paste", "-",
+            "Cut", "Copy", "Copy with Formatting", "Paste", "-",
             "Comment Selection", "Uncomment Selection", "-",
             "Command Palette...",
         ], Headers(menu));
