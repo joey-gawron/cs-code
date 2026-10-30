@@ -20,6 +20,16 @@
     "license": "Apache-2.0",
     "licenseFile": "LICENSE"
   },
+  "textobjects": {
+    "name": "nvim-treesitter-textobjects",
+    "url": "https://github.com/nvim-treesitter/nvim-treesitter-textobjects",
+    "revision": "5c7b0263797dfd1bd6202f2b219f3b53a80b2187",
+    "commit": "5c7b0263797dfd1bd6202f2b219f3b53a80b2187",
+    "sha256": "703e09b80b1c6d1ac0d08e9c3caece95079fdaf2ba6a21be625ed23ea47b30d8",
+    "size": 52907,
+    "license": "Apache-2.0",
+    "licenseFile": "LICENSE"
+  },
   "sources": [
     {
       "name": "tree-sitter-asm",

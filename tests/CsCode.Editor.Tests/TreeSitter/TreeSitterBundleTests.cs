@@ -35,7 +35,8 @@ public partial class TreeSitterBundleTests
         return doc.RootElement.Clone();
     }
 
-    private static IEnumerable<JsonElement> Sources(JsonElement m) => new[] { m.GetProperty("runtime"), m.GetProperty("queries") }.Concat(m.GetProperty("sources").EnumerateArray());
+    private static IEnumerable<JsonElement> Sources(JsonElement m) =>
+        new[] { m.GetProperty("runtime"), m.GetProperty("queries"), m.GetProperty("textobjects") }.Concat(m.GetProperty("sources").EnumerateArray());
 
     [Fact]
     public void Every_source_in_the_manifest_is_pinned_licence_checked_and_from_GitHub()
@@ -58,6 +59,7 @@ public partial class TreeSitterBundleTests
             Assert.False(string.IsNullOrEmpty(s.GetProperty("licenseFile").GetString()), name);
         }
         Assert.Equal("Apache-2.0", m.GetProperty("queries").GetProperty("license").GetString()); // nvim-treesitter's queries: NOTICE required
+        Assert.Equal("Apache-2.0", m.GetProperty("textobjects").GetProperty("license").GetString()); // nvim-treesitter-textobjects' queries too
         foreach (var g in m.GetProperty("grammars").EnumerateArray())
             Assert.Contains(g.GetProperty("source").GetString()!, names);
     }
@@ -102,6 +104,7 @@ public partial class TreeSitterBundleTests
             Assert.Contains(shortName, notice, StringComparison.Ordinal);
         }
         Assert.Contains("nvim-treesitter", notice, StringComparison.Ordinal);
+        Assert.Contains("nvim-treesitter-textobjects", notice, StringComparison.Ordinal);
         Assert.Contains("Apache License, Version 2.0", notice, StringComparison.Ordinal);
         Assert.Contains("MIT License", notice, StringComparison.Ordinal);
     }
@@ -114,7 +117,7 @@ public partial class TreeSitterBundleTests
         var (ok, output) = Run(script, "--offline");
         Assert.SkipUnless(ok || !output.Contains("is missing", StringComparison.Ordinal), "the downloads are not on this machine (tools/treesitter/fetch-grammars.sh)");
         Assert.True(ok, output);
-        Assert.Contains("40 source(s) verified", output, StringComparison.Ordinal);
+        Assert.Contains("41 source(s) verified", output, StringComparison.Ordinal); // the runtime, the two query projects and 38 grammar repositories
 
         // a copy of one archive with one byte changed is refused (digest), and nothing is downloaded in its place
         using var dir = new TempDirectory("cscode-ts-fetch-");

@@ -24,5 +24,10 @@ has one, is in licenses/<source>.txt.
    distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
    specific language governing permissions and limitations under the License.
 
+4. Text object queries (grammars/queries/<name>/textobjects.scm, the Vim text objects af/if, ac/ic, aa/ia and the motions ]m [m ]M [M):
+   copied unmodified from nvim-treesitter-textobjects (https://github.com/nvim-treesitter/nvim-treesitter-textobjects, queries/) at the
+   commit named in bundle.json. Copyright The nvim-treesitter-textobjects contributors. Licensed under the Apache License, Version 2.0, as
+   in 3 (also in licenses/nvim-treesitter-textobjects.txt).
+
 CsCode reads these files at run time; it does not change them. No GPL-, LGPL-, EUPL- or otherwise copyleft-licensed source is part of the
 bundle (build-grammars.sh refuses any licence outside MIT, Apache-2.0, ISC, BSD-2-Clause, BSD-3-Clause, 0BSD and CC0-1.0).

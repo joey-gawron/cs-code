@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Downloads every pinned source of CsCode's tree-sitter bundle (tools/treesitter/manifest.json): the tree-sitter runtime, nvim-treesitter (the
-# queries) and each grammar repository, as GitHub source archives of the pinned revision. Every archive is checked against the SHA-256 and size
+# queries), nvim-treesitter-textobjects (the textobjects queries Vim's af/if, ac/ic, aa/ia use) and each grammar repository, as GitHub source
+# archives of the pinned revision. Every archive is checked against the SHA-256 and size
 # recorded in the manifest AND against the commit id git wrote into the archive's pax header, so a moved tag or a swapped archive is refused.
 #
 #   tools/treesitter/fetch-grammars.sh            download what is missing, verify everything (fails on any mismatch)
@@ -8,7 +9,7 @@
 #                                                 when a revision changes: clear the entry's sha256 first, then review the diff)
 #   --dir DIR                                     download root (default: CSCODE_DOWNLOADS, else <main checkout>/.scratch/downloads)
 #   --offline                                     never download: a missing archive is an error (verification only)
-#   --only NAME                                   just this source (e.g. tree-sitter-toml, tree-sitter, nvim-treesitter)
+#   --only NAME                                   just this source (e.g. tree-sitter-toml, tree-sitter, nvim-treesitter-textobjects)
 #
 # Layout: <root>/<name>/<revision>/<name>-<revision>.tar.gz, one new directory per download (shared by all worktrees of the repository).
 # Nothing downloaded is executed: build-grammars.sh only compiles the C sources with the host's compiler. Needs curl, jq, gzip, tar, sha256sum
@@ -164,6 +165,7 @@ echo "fetch-grammars: downloads in $root"
 checked=0
 fetch .runtime
 fetch .queries
+fetch .textobjects
 count=$(jq '.sources | length' "$updated")
 for ((i = 0; i < count; i++)); do fetch ".sources[$i]"; done
 if [ "$checked" = 0 ]; then

@@ -69,6 +69,7 @@ sources in `tools/treesitter/manifest.json` (GitHub archives at the commits nvim
 * the tree-sitter runtime (`lib/`), **MIT**, Copyright (c) 2018 Max Brunsfeld;
 * 42 grammars compiled from 38 grammar projects: **MIT** except tree-sitter-elixir, tree-sitter-erlang and tree-sitter-hcl (**Apache-2.0**);
 * nvim-treesitter's query files (`grammars/queries/`), copied unmodified, **Apache-2.0**, plus the grammar projects' own `tags.scm` (their licence).
+* nvim-treesitter-textobjects' `textobjects.scm` files (`grammars/queries/<name>/`, Vim's syntax text objects), copied unmodified, **Apache-2.0**.
 
 The folder carries a NOTICE (`tools/treesitter/NOTICE`) and the full licence text of every source (and tree-sitter-elixir's NOTICE) in
 `tree-sitter/licenses/`. The build refuses any licence outside MIT, Apache-2.0, ISC, BSD-2/3-Clause, 0BSD and CC0-1.0, so no GPL/LGPL/EUPL
