@@ -113,7 +113,7 @@ public sealed partial class CallStackView : UserControl, IDisposable, IClipboard
             menu.Items.Add(new MenuItem { Header = "Switch To Frame", InputGesture = KeyGesture.Parse("Enter"), Command = new UiCommand(() => model.ActivateAsync(row, takeFocus: true)) });
             menu.Items.Add(new Separator());
         }
-        if (model.SelectedRow is { Kind: CallStackRowKind.Frame }) menu.Items.Add(new MenuItem { Header = "Copy", InputGesture = KeyGesture.Parse("Ctrl+C"), Command = new UiCommand(CopyAsync) });
+        if (model.SelectedRow is { Kind: CallStackRowKind.Frame }) menu.Items.Add(new MenuItem { Header = "Copy", InputGesture = KeyGesture.Parse(CommandKeys.Gesture("C")), Command = new UiCommand(CopyAsync) });
         menu.Items.Add(new MenuItem { Header = "Copy Call Stack", Command = new UiCommand(model.CopyCallStackAsync) });
         menu.Items.Add(new MenuItem
         {

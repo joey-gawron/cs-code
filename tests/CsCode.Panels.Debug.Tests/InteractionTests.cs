@@ -23,8 +23,11 @@ public class InteractionTests
     {
         [Key.Up] = PhysicalKey.ArrowUp, [Key.Down] = PhysicalKey.ArrowDown, [Key.Left] = PhysicalKey.ArrowLeft, [Key.Right] = PhysicalKey.ArrowRight,
         [Key.Enter] = PhysicalKey.Enter, [Key.Escape] = PhysicalKey.Escape, [Key.F2] = PhysicalKey.F2, [Key.Delete] = PhysicalKey.Delete,
-        [Key.C] = PhysicalKey.C, [Key.Space] = PhysicalKey.Space, [Key.Tab] = PhysicalKey.Tab, [Key.End] = PhysicalKey.End,
+        [Key.C] = PhysicalKey.C, [Key.Space] = PhysicalKey.Space, [Key.Tab] = PhysicalKey.Tab, [Key.End] = PhysicalKey.End, [Key.Back] = PhysicalKey.Backspace,
     };
+
+    /// <summary>The command modifier: Ctrl, ⌘ on macOS (CommandKeys).</summary>
+    private static RawInputModifiers Command => OperatingSystem.IsMacOS() ? RawInputModifiers.Meta : RawInputModifiers.Control;
 
     private static async Task Settle(int ms = 60)
     {
@@ -139,7 +142,7 @@ public class InteractionTests
         var (sc, view, window, tree) = await LocalsHost();
         using var _ = sc;
         await Click(window, Rows(view), tree.Rows.Single(r => r.Name == "s"));
-        await Press(window, Key.C, RawInputModifiers.Control);
+        await Press(window, Key.C, Command); // ⌘C on macOS
         await PanelRig.Eventually(() => sc.Rig.Window.Clipboard.Count == 1);
         Assert.Equal("\"hello world\"", sc.Rig.Window.Clipboard[0]);
         window.Close();
@@ -307,6 +310,39 @@ public class InteractionTests
         await Press(window, Key.Delete);
         await PanelRig.Eventually(() => sc.Rig.Debug.FakeBreakpoints.SourceBreakpoints.Count == before - 1, what: "deleted");
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task Cmd_Backspace_removes_a_breakpoint_and_a_watch_on_macOS_only()
+    {
+        // The Mac 'delete' key is Backspace (forward Delete needs Fn): ⌘⌫ removes the row there, as Finder's Move to Trash. Elsewhere Meta+Back
+        // does nothing in these lists.
+        var mac = OperatingSystem.IsMacOS();
+        TestTheme.Apply(VsThemes.Dark);
+        using (var sc = new Scenario())
+        {
+            var view = sc.View("debug.breakpoints");
+            var window = Host(view, height: 360);
+            var model = (BreakpointsViewModel)view.DataContext!;
+            await PanelRig.Eventually(() => model.Rows.Count >= 10, what: "rows");
+            await Settle();
+            await Click(window, Rows(view), model.Rows.First(r => r.Kind == BreakpointRowKind.Source), xFraction: 0.4);
+            var before = sc.Rig.Debug.FakeBreakpoints.SourceBreakpoints.Count;
+            await Press(window, Key.Back, RawInputModifiers.Meta);
+            if (mac) await PanelRig.Eventually(() => sc.Rig.Debug.FakeBreakpoints.SourceBreakpoints.Count == before - 1, what: "deleted by ⌘⌫");
+            else Assert.Equal(before, sc.Rig.Debug.FakeBreakpoints.SourceBreakpoints.Count);
+            window.Close();
+        }
+
+        var (wsc, wview, wwindow, vm) = await WatchHost("a", "b");
+        using (wsc)
+        {
+            await Click(wwindow, Rows(wview), vm.Tree.Rows.First(r => r.Kind == VariableRowKind.Watch));
+            await Press(wwindow, Key.Back, RawInputModifiers.Meta);
+            if (mac) await PanelRig.Eventually(() => wsc.Rig.Debug.Watches.Count == 1, what: "watch deleted by ⌘⌫");
+            else Assert.Equal(2, wsc.Rig.Debug.Watches.Count);
+            wwindow.Close();
+        }
     }
 
     [AvaloniaFact]

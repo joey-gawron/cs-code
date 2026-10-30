@@ -182,8 +182,8 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
             case Key.Right when node.IsDirectory: e.Handled = true; if (!node.IsExpanded) await _vm.ExpandAsync(node).ConfigureAwait(true); break;
             case Key.Left: e.Handled = true; if (node.IsDirectory && node.IsExpanded) _vm.Collapse(node); else if (node.Parent is { } p) _vm.Selected = p; break;
             case Key.F2: e.Handled = true; if (!node.IsRoot) _vm.BeginRename(node); break;
-            // Shift+Delete is Cut (below), not Delete.
-            case Key.Delete when e.KeyModifiers == KeyModifiers.None: e.Handled = true; await _vm.DeleteAsync(node).ConfigureAwait(true); break;
+            // Shift+Delete is Cut (below), not Delete. ⌘⌫ deletes too on macOS (Finder's Move to Trash), but not from the rename box.
+            case Key.Delete or Key.Back when CommandKeys.IsDelete(e) && !node.IsEditing: e.Handled = true; await _vm.DeleteAsync(node).ConfigureAwait(true); break;
             default: ClipboardKeys.TryHandle(e, this); break; // Ctrl+C/X/V, Ctrl+Insert, Shift+Insert, Shift+Delete: the files
         }
     }
@@ -276,7 +276,7 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
             [
                 new MenuEntry("Rena_me", () => { _vm.BeginRename(node); return Task.CompletedTask; }) { Gesture = "F2", IsEnabled = !node.IsRoot },
                 new MenuEntry("D_uplicate", () => _vm.DuplicateAsync(node)) { IsEnabled = !node.IsRoot },
-                new MenuEntry("_Delete", () => _vm.DeleteAsync(node)) { Gesture = "Del", Icon = IconKey.Trash, IsEnabled = !node.IsRoot },
+                new MenuEntry("_Delete", () => _vm.DeleteAsync(node)) { Gesture = CommandKeys.DeleteText, Icon = IconKey.Trash, IsEnabled = !node.IsRoot },
             ],
             // Contributed items get the node's URI, as VS Code's explorer/context commands do.
             _menus is null ? null : MenuContributions.Resolve(_menus, ContributedMenus.ExplorerContext, [uri.ToString()]));
