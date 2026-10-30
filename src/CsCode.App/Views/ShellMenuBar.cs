@@ -35,8 +35,11 @@ public sealed class ShellMenuBar : Menu
             top.Resources["MenuFlyoutItemBackground"] = Brushes.Transparent;
             Populate(top, root);
             var captured = root;
-            top.SubmenuOpened += (_, _) =>
+            top.SubmenuOpened += (_, e) =>
             {
+                // SubmenuOpened bubbles: a nested submenu opening (View > Tool Windows) reaches this handler too, and rebuilding the menu
+                // then would detach the very item whose submenu is opening (nested submenus never showed).
+                if (e.Source != top) return;
                 _model.Refresh();
                 Populate(top, captured);
             };
