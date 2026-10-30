@@ -94,10 +94,17 @@ public static class ShellCommands
             var picked = await c.Window.ShowOpenDialogAsync(new OpenDialogOptions(CanSelectFiles: false, CanSelectFolders: true, Title: "Open Folder")).ConfigureAwait(true);
             if (picked is { Count: > 0 }) await c.Workspace.OpenFolderAsync(picked[0]).ConfigureAwait(true);
         });
-        Run(KnownCommands.OpenFile, "Open File...", "File", async () =>
+        // Takes an optional file URI (the Welcome page's recent files, macros, bound args): opened directly, without the dialog.
+        Reg(KnownCommands.OpenFile, "Open File...", "File", async inv =>
         {
+            if (inv.Args is [{ } arg, ..] && (arg as Uri ?? (Uri.TryCreate(arg.ToString(), UriKind.Absolute, out var parsed) ? parsed : null)) is { } given)
+            {
+                await c.Navigation.OpenAsync(given).ConfigureAwait(true);
+                return null;
+            }
             var picked = await c.Window.ShowOpenDialogAsync(new OpenDialogOptions(CanSelectMany: true, Title: "Open File")).ConfigureAwait(true);
             if (picked is not null) foreach (var u in picked) await c.Navigation.OpenAsync(u).ConfigureAwait(true);
+            return null;
         });
         Hidden(ShellMenus.OpenRecent, async inv =>
         {

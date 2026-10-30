@@ -19,33 +19,62 @@ public sealed class DialogHostView : Grid
     private readonly DialogHostViewModel _vm;
     private readonly TextBlock _title = new() { FontSize = 14, FontWeight = FontWeight.SemiBold };
     private readonly TextBlock _message = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 16) };
-    private readonly StackPanel _buttons = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8 };
+    // Right-aligned; in a narrow window they wrap onto another row rather than leave the card.
+    private readonly WrapPanel _buttons = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, ItemsAlignment = WrapPanelItemsAlignment.End, ItemSpacing = 8, LineSpacing = 8 };
+    private readonly Border _card;
+    private readonly OverlayFocus _focus;
 
-    public DialogHostView(DialogHostViewModel vm)
+    /// <param name="activeEditor">The active document tab (identity only), for giving the keyboard back when the prompt closes (<see cref="OverlayFocus"/>).</param>
+    /// <param name="focusActiveEditor">Puts the keyboard into the active editor.</param>
+    public DialogHostView(DialogHostViewModel vm, Func<object?>? activeEditor = null, Action? focusActiveEditor = null)
     {
         _vm = vm;
+        _focus = new OverlayFocus(this, activeEditor, focusActiveEditor);
         IsVisible = false;
         Background = new SolidColorBrush(Color.FromArgb(0x66, 0, 0, 0));
         Focusable = true;
-        var card = new Border
+        // The title and the buttons stay whole in a short window; the message scrolls between them.
+        _title.TextWrapping = TextWrapping.Wrap;
+        DockPanel.SetDock(_title, Avalonia.Controls.Dock.Top);
+        DockPanel.SetDock(_buttons, Avalonia.Controls.Dock.Bottom);
+        _card = new Border
         {
-            Width = 460, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(18),
+            Width = OverlaySizing.PromptMaxWidth, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(18),
             Background = ThemeBrushes.Get("editorWidget.background"), BorderBrush = ThemeBrushes.Get("editorWidget.border"), BorderThickness = new Thickness(1),
             BoxShadow = BoxShadows.Parse("0 8 24 0 #88000000"),
-            Child = new StackPanel { Children = { _title, _message, _buttons } },
+            Child = new DockPanel
+            {
+                LastChildFill = true,
+                Children = { _title, _buttons, new ScrollViewer { Content = _message, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled } },
+            },
         };
         _title.Foreground = ThemeBrushes.Get("editorWidget.foreground");
         _message.Foreground = ThemeBrushes.Get("editorWidget.foreground");
-        Children.Add(card);
+        Children.Add(_card);
         vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(DialogHostViewModel.IsVisible)) { IsVisible = vm.IsVisible; if (vm.IsVisible) Rebuild(); }
+            if (e.PropertyName != nameof(DialogHostViewModel.IsVisible)) return;
+            IsVisible = vm.IsVisible;
+            if (vm.IsVisible)
+            {
+                _focus.Opened();
+                Rebuild();
+            }
+            else _focus.Closed();
         };
         KeyDown += (_, e) =>
         {
             if (e.Key == Key.Escape) { vm.Choose(null); e.Handled = true; }
             else if (e.Key == Key.Enter && vm.Buttons.Count > 0) { vm.Choose(vm.Buttons[Math.Clamp(vm.DefaultIndex, 0, vm.Buttons.Count - 1)]); e.Handled = true; }
         };
+    }
+
+    /// <summary>The card fits the window it is in (<see cref="OverlaySizing"/>): this view fills that window.</summary>
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        if (double.IsFinite(availableSize.Width)) OverlaySizing.Set(_card, WidthProperty, Math.Min(OverlaySizing.PromptWidth(availableSize.Width), OverlaySizing.Inside(availableSize.Width)));
+        if (double.IsFinite(availableSize.Height)) OverlaySizing.Set(_card, MaxHeightProperty, OverlaySizing.Inside(availableSize.Height));
+        return base.MeasureOverride(availableSize);
     }
 
     private void Rebuild()

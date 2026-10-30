@@ -5,7 +5,8 @@ using Dock.Model.Core;
 
 namespace CsCode.App.Docking;
 
-public sealed record ToolLayout(string Id, string Dock, bool Visible, int Order);
+/// <summary>A tool window's place: its well, whether it is shown, its tab order, and whether it is auto-hidden (pinned to the well's edge strip).</summary>
+public sealed record ToolLayout(string Id, string Dock, bool Visible, int Order, bool AutoHide = false);
 public sealed record DocumentLayout(string Uri, bool Pinned, bool Preview, int Group);
 
 /// <summary>A floating window: where it is, and the tool windows (ids) and documents (URIs) it holds, in tab order.</summary>
@@ -101,6 +102,10 @@ public sealed class LayoutPersistence
         var floatingOrder = 500;
         foreach (var t in _tools.Tools.Where(t => _factory.IsFloating(t) && _tools.IsVisible(t.Spec.Id)))
             tools.Add(new ToolLayout(t.Spec.Id, DockName(_tools.HomeWell(t)), true, floatingOrder++));
+        // An auto-hidden tool sits on its well's edge strip, in none of the wells: shown, and auto-hidden again after a restart (Visual Studio).
+        var pinnedOrder = 700;
+        foreach (var t in _tools.Tools.Where(t => _tools.IsAutoHidden(t) && !tools.Any(x => x.Id == t.Spec.Id)))
+            tools.Add(new ToolLayout(t.Spec.Id, DockName(_tools.HomeWell(t)), true, pinnedOrder++, AutoHide: true));
         foreach (var t in _tools.Tools.Where(t => !tools.Any(x => x.Id == t.Spec.Id)))
             tools.Add(new ToolLayout(t.Spec.Id, DockName(t.OriginalOwner ?? t.Owner), false, 1000));
 
@@ -166,11 +171,12 @@ public sealed class LayoutPersistence
         {
             if (_tools.Get(layout.Id) is not { } tool) continue; // a tool that no longer exists
             var target = layout.Dock switch { "left" when _factory.IncludeLeftTools => _factory.LeftTools, "bottom" => _factory.BottomTools, _ => _factory.RightTools };
-            _tools.Unpin(tool); // a snapshot places every tool in a well (Reset Window Layout included)
+            _tools.Unpin(tool); // a snapshot places every tool in a well first (Reset Window Layout included), then auto-hides those it says
             var wasVisible = _tools.IsVisible(layout.Id);
             if (!wasVisible) _tools.Restore(tool);
             if (tool.Owner is IDock from && !ReferenceEquals(from, target)) _factory.MoveDockable(from, target, tool, null);
             if (!layout.Visible) _tools.Hide(layout.Id);
+            else if (layout.AutoHide) _tools.AutoHide(tool); // onto its well's edge strip
         }
         // A tool the snapshot does not know (its module was added after the layout was saved) gets its default visibility, not "visible".
         var known = snapshot.Tools.Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
@@ -252,13 +258,39 @@ public sealed class LayoutPersistence
             ?? LayoutSerializer.Deserialize(_state.Get<string>(StateKey, StorageScope.Application));
     }
 
-    /// <summary>Saves to the workspace scope and updates the global default (so a new workspace starts like the last one).</summary>
+    private readonly object _writeGate = new();
+    private long _saveSequence, _writtenSequence;
+
+    /// <summary>Saves to the workspace scope and updates the global default (so a new workspace starts like the last one). Synchronous: closing.</summary>
     public void Save()
     {
         if (_state is null) return;
-        var json = LayoutSerializer.Serialize(Capture());
-        _state.Set(StateKey, json, StorageScope.Workspace);
-        _state.Set(StateKey, json, StorageScope.Application);
+        var sequence = Interlocked.Increment(ref _saveSequence);
+        Write(sequence, LayoutSerializer.Serialize(Capture()));
+    }
+
+    /// <summary>
+    /// The debounced save: the snapshot is taken here (UI thread: a walk of the Dock model), the JSON is made and stored on a pool thread (the first
+    /// serialisation of the layout records costs the UI thread about 18 ms of JSON metadata work, ARCHITECTURE §6). A save that completes after a
+    /// newer one (this or <see cref="Save"/>) is dropped.
+    /// </summary>
+    public void SaveInBackground()
+    {
+        if (_state is null) return;
+        var snapshot = Capture();
+        var sequence = Interlocked.Increment(ref _saveSequence);
+        _ = Task.Run(() => Write(sequence, LayoutSerializer.Serialize(snapshot)));
+    }
+
+    private void Write(long sequence, string json)
+    {
+        lock (_writeGate)
+        {
+            if (sequence < _writtenSequence) return;
+            _writtenSequence = sequence;
+            _state!.Set(StateKey, json, StorageScope.Workspace); // (the state service is thread-safe)
+            _state.Set(StateKey, json, StorageScope.Application);
+        }
     }
 
     /// <summary>"Reset window layout": forgets saved layouts and restores the default tool placement and visibility.</summary>

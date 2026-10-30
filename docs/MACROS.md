@@ -60,9 +60,8 @@ palette's text box, the find box, tree views); mouse actions (clicks, drags, scr
 integrated terminal has the keyboard** (context key `terminalFocus`, `MacroCommands.RecordingPausedWhen`): what is typed into the shell never
 reaches the editor's taps anyway, and the terminal's commands are left out too, whether run by their keys (paste, select all, scroll, the
 `commandsToSkipShell` keys), from a menu or the palette: a command that started while the terminal had the keyboard, or that completes after
-the keyboard moved there, is not recorded (Toggle Terminal pressed in the editor normally is not: the terminal has the keyboard when it
-completes; the main window's focus tracking briefly clears `terminalFocus` after the terminal sets it, end-pass item T22, so a command that
-completes in exactly that moment would still be recorded). Recording goes on: the status item reads
+the keyboard moved there, is not recorded (Toggle Terminal pressed in the editor is not: the terminal has the keyboard when it completes, and
+`terminalFocus` holds from the moment it takes it, T22). Recording goes on: the status item reads
 "Recording macro… (paused in the terminal)" meanwhile, the next step after returning to the editor joins the macro as if nothing happened in
 between, and the time spent in the terminal is not recorded as a pause (`macros.recordPauses`). Ctrl+M, Ctrl+R works in the terminal too (a
 chord reaches the key bindings, docs/TERMINAL.md), so recording can be started or stopped there. A command whose arguments
@@ -97,6 +96,10 @@ fails*). The find panel's own Find Next wraps; a macro's does not.
 * **Saving** (`macro.save`) rewrites only that macro's object in the file (comments, layout and other macros stay as written; a trailing comment
   stays with its line); a file with JSON errors is never overwritten (fix it first). Reading, parsing, formatting and writing happen off the UI
   thread (I/O through `IFileSystem`, i.e. the IO lane, atomic writes).
+* **Floating windows**: an editor floated into a window of its own records and plays like one in the main window. The recorder's end-of-input
+  handler and the player's typing guard are on every shell window (`MacroIntegration.AttachWindow`): a key or text event is routed through
+  the window that holds the focused editor only (without them, every command after the first typed character was dropped from a recording made
+  in a floating editor, and typing there mixed with a playing macro).
 * **The last macro** (unsaved) is kept in `IStateStorage` (`macros.last`, up to 256 KB of JSON) and comes back after a restart.
 * **Palette**: every macro command has a title: "Macros: Record Macro (Start/Stop)", "Macros: Play Last Macro", "Macros: Run add-semicolon"...
 

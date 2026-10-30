@@ -75,7 +75,8 @@ public class ShellIntegrationTests
         var previous = well.MruOrder[1];
         Press(host, Key.Tab, RawInputModifiers.Control);
         await DevScene.SettleAsync(3);
-        Assert.Contains(host.Window.GetVisualDescendants().OfType<Border>(), b => b.IsVisible && b.Child is StackPanel sp && sp.Children.OfType<Border>().Count() >= 2);
+        Assert.Contains(host.Window.GetVisualDescendants().OfType<Border>(), b => b.IsVisible && b.Name == MainWindow.SwitcherName
+            && b.GetVisualDescendants().OfType<StackPanel>().Any(sp => sp.Children.OfType<Border>().Count() >= 2));
         host.Window.KeyRelease(Key.LeftCtrl, RawInputModifiers.None, PhysicalKey.None, null);
         await DevScene.SettleAsync(5);
         Assert.Same(previous, well.Active);

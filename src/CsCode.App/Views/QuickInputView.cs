@@ -26,10 +26,15 @@ public sealed class QuickInputView : Grid
     private readonly ListBox _list;
     private readonly TextBlock _title;
     private readonly TextBlock _validation;
+    private readonly Border _card;
+    private readonly OverlayFocus _focus;
 
-    public QuickInputView(QuickInputViewModel vm)
+    /// <param name="activeEditor">The active document tab (identity only), for giving the keyboard back when the overlay closes (<see cref="OverlayFocus"/>).</param>
+    /// <param name="focusActiveEditor">Puts the keyboard into the active editor.</param>
+    public QuickInputView(QuickInputViewModel vm, Func<object?>? activeEditor = null, Action? focusActiveEditor = null)
     {
         _vm = vm;
+        _focus = new OverlayFocus(this, activeEditor, focusActiveEditor);
         DataContext = vm;
         IsVisible = false;
 
@@ -51,7 +56,7 @@ public sealed class QuickInputView : Grid
         _validation.Bind(TextBlock.TextProperty, new Binding(nameof(QuickInputViewModel.Validation)));
         _validation.Bind(IsVisibleProperty, new Binding(nameof(QuickInputViewModel.Validation)) { Converter = new Avalonia.Data.Converters.FuncValueConverter<string?, bool>(s => !string.IsNullOrEmpty(s)) });
 
-        _list = new ListBox { ItemsSource = vm.Items, MaxHeight = 360, ItemTemplate = new FuncDataTemplate<QuickPickEntry>((e, _) => e is null ? new Panel() : RowFor(e), supportsRecycling: false), Focusable = false };
+        _list = new ListBox { ItemsSource = vm.Items, MaxHeight = OverlaySizing.QuickInputMaxListHeight, ItemTemplate = new FuncDataTemplate<QuickPickEntry>((e, _) => e is null ? new Panel() : RowFor(e), supportsRecycling: false), Focusable = false };
         _list.Bind(Avalonia.Controls.Primitives.SelectingItemsControl.SelectedIndexProperty, new Binding(nameof(QuickInputViewModel.SelectedIndex)) { Mode = BindingMode.TwoWay });
         _list.Tapped += (_, e) =>
         {
@@ -59,16 +64,36 @@ public sealed class QuickInputView : Grid
         };
         _list.Bind(IsVisibleProperty, new Binding(nameof(QuickInputViewModel.IsInput)) { Converter = Avalonia.Data.Converters.BoolConverters.Not });
 
-        var card = new Border
+        // The list fills what is left under the box (a short floating window): the box and title stay whole.
+        var body = new DockPanel { LastChildFill = true };
+        foreach (var top in new Control[] { _title, _input, _validation })
         {
-            Width = 620, VerticalAlignment = VerticalAlignment.Top, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 34, 0, 0),
+            DockPanel.SetDock(top, Avalonia.Controls.Dock.Top);
+            body.Children.Add(top);
+        }
+        body.Children.Add(_list);
+        _card = new Border
+        {
+            Width = OverlaySizing.QuickInputMaxWidth, VerticalAlignment = VerticalAlignment.Top, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 34, 0, 0),
             Background = ThemeBrushes.Get("quickInput.background"), BorderBrush = ThemeBrushes.Get("editorWidget.border"), BorderThickness = new Thickness(1),
             BoxShadow = BoxShadows.Parse("0 6 18 0 #66000000"),
-            Child = new StackPanel { Children = { _title, _input, _validation, _list } },
+            Child = body,
         };
-        Children.Add(card);
+        Children.Add(_card);
 
         vm.PropertyChanged += OnVmChanged;
+    }
+
+    /// <summary>The card fits the window it is in (<see cref="OverlaySizing"/>): this view fills that window, under its title bar.</summary>
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        if (double.IsFinite(availableSize.Width)) OverlaySizing.Set(_card, WidthProperty, OverlaySizing.QuickInputWidth(availableSize.Width));
+        if (double.IsFinite(availableSize.Height))
+        {
+            OverlaySizing.Set(_list, MaxHeightProperty, OverlaySizing.QuickInputListHeight(availableSize.Height));
+            OverlaySizing.Set(_card, MaxHeightProperty, Math.Max(0, availableSize.Height - _card.Margin.Top));
+        }
+        return base.MeasureOverride(availableSize);
     }
 
     private static T? Ancestor<T>(Visual v) where T : class
@@ -83,13 +108,17 @@ public sealed class QuickInputView : Grid
         {
             case nameof(QuickInputViewModel.IsVisible):
                 IsVisible = _vm.IsVisible;
-                if (_vm.IsVisible)
+                if (!_vm.IsVisible) _focus.Closed();
+                else
+                {
+                    _focus.Opened();
                     Dispatcher.UIThread.Post(() =>
                     {
                         _input.PasswordChar = _vm.IsPassword ? '•' : '\0';
                         _input.Focus();
                         _input.CaretIndex = _input.Text?.Length ?? 0;
                     }, DispatcherPriority.Input);
+                }
                 break;
             case nameof(QuickInputViewModel.SelectedIndex) when _vm.SelectedIndex >= 0:
                 _list.ScrollIntoView(_vm.SelectedIndex);

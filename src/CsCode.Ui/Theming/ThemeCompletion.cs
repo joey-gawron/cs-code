@@ -148,6 +148,9 @@ public static class ThemeCompletion
         Fg("statusBar.noFolderForeground", "statusBar.noFolderBackground", "statusBar.foreground"),
         F("statusBar.border", "contrastBorder"),
         F("statusBar.noFolderBorder", "statusBar.border"),
+        // The remote indicator's badge: VS Code's default text is the activity bar badge's (a theme that sets only the badge's background got the
+        // base's white, 1.5:1 on One Light's grey); the contrast check below repairs what is still too faint.
+        Fg("statusBarItem.remoteForeground", "statusBarItem.remoteBackground", "activityBarBadge.foreground", "statusBar.foreground"),
 
         // Inputs, buttons, lists, pickers, widgets.
         F("input.background", "dropdown.background", "editorWidget.background"),
@@ -244,6 +247,7 @@ public static class ThemeCompletion
         new("Status bar", "statusBar.foreground", "statusBar.background"),
         new("Status bar, debugging", "statusBar.debuggingForeground", "statusBar.debuggingBackground"),
         new("Status bar, no folder", "statusBar.noFolderForeground", "statusBar.noFolderBackground"),
+        new("Status bar, remote badge", "statusBarItem.remoteForeground", "statusBarItem.remoteBackground", "statusBar.background"),
         new("List selection", "list.activeSelectionForeground", "list.activeSelectionBackground", "sideBar.background"),
         new("List selection, unfocused", "list.inactiveSelectionForeground", "list.inactiveSelectionBackground", "sideBar.background"),
         new("Quick pick", "quickInput.foreground", "quickInput.background"),

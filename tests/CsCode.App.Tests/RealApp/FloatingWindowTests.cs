@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -174,6 +175,276 @@ public class FloatingWindowTests
     }
 
     [AvaloniaFact(Timeout = 60_000)]
+    public async Task Closing_the_main_window_with_floating_windows_saves_them_in_the_layout_and_closes_without_emptying_them()
+    {
+        // The main window's own X (title bar) and Alt+F4 are Window.Close(). Avalonia asked the owned floating windows first by default: one emptied
+        // itself (its documents closed, its tools hidden) and cancelled the main window's close, which then neither closed nor saved the layout.
+        await using var host = await StartAsync();
+        var shell = host.Shell;
+        var factory = shell.Factory;
+        var b = shell.Well.EditorTabs.Single(t => t.Title == "b.txt");
+        shell.Tools.Float("output");
+        shell.Well.Float(b);
+        await DevScene.SettleAsync(10);
+        Assert.Equal(2, factory.FloatingWindows.Count);
+        var closed = false;
+        host.Window.Closed += (_, _) => closed = true;
+
+        host.Window.Close();
+        Assert.True(await RealAppHost.WaitFor(() => closed), "the main window did not close");
+        Assert.Empty(factory.FloatingWindows);
+        // saved before anything closed: the next start floats them again
+        var saved = LayoutSerializer.Deserialize(host.Get<IStateStorage>().Get<string>(LayoutPersistence.StateKey, StorageScope.Application))!;
+        Assert.NotNull(saved.Floating);
+        Assert.Contains(saved.Floating, f => f.Tools.SequenceEqual(["output"]));
+        Assert.Contains(saved.Floating, f => f.Documents.SequenceEqual([b.Uri.ToString()]));
+        Assert.Contains(saved.Documents, d => d.Uri == b.Uri.ToString());
+        Assert.Contains(saved.Tools, t => t.Id == "output" && t.Visible);
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task In_background_mode_closing_the_main_window_hides_it_with_its_floating_windows_as_they_are()
+    {
+        await using var host = await StartAsync();
+        var shell = host.Shell;
+        var factory = shell.Factory;
+        var b = shell.Well.EditorTabs.Single(t => t.Title == "b.txt");
+        b.Doc.ApplyEdits([new Core.Text.TextEdit(Core.Text.TextRange.At(0, 0), "dirty ")]); // hot exit keeps it: no Save prompt
+        shell.Tools.Float("output");
+        shell.Well.Float(b);
+        await DevScene.SettleAsync(10);
+        var windows = factory.FloatingWindows.Select(w => (Window)w.Host!).ToArray();
+        Assert.Equal(2, windows.Length);
+        // What the session controller does: the close hides the window (docs/SESSIONS.md).
+        host.Window.CloseInterceptor = _ => { host.Window.Hide(); return true; };
+
+        host.Window.Close();
+        await DevScene.SettleAsync(10);
+        Assert.False(host.Window.IsVisible);
+        Assert.All(windows, w => Assert.False(w.IsVisible));
+        Assert.False(host.Get<Notifications.DialogHostViewModel>().IsVisible); // no Save prompt
+        Assert.True(shell.Tools.IsFloating("output") && shell.Tools.IsVisible("output"));
+        Assert.True(shell.Well.IsFloating(b) && b.IsDirty);
+
+        host.Window.Show();
+        await DevScene.SettleAsync(10);
+        Assert.All(windows, w => Assert.True(w.IsVisible));
+        host.Window.CloseInterceptor = null;
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task Typing_in_a_floating_window_is_user_activity_for_the_idle_trim()
+    {
+        await using var host = await StartAsync();
+        var shell = host.Shell;
+        var b = shell.Well.EditorTabs.Single(t => t.Title == "b.txt");
+        shell.Well.Float(b);
+        Assert.True(await RealAppHost.WaitFor(() => WindowOf(b.LiveView) is HostWindow { IsVisible: true } && b.Controller is not null));
+        var floating = (HostWindow)WindowOf(b.LiveView)!;
+        b.Controller!.Focus();
+        var activity = host.Get<CsCode.Profiling.IUserActivityMonitor>();
+        activity.NotifyActivity();
+        await Task.Delay(400);
+        Assert.True(activity.IdleTime >= TimeSpan.FromMilliseconds(350), activity.IdleTime.ToString());
+
+        floating.KeyTextInput("q");
+        Assert.Contains('q', b.Doc.GetText());
+        Assert.True(activity.IdleTime < TimeSpan.FromMilliseconds(300), $"idle {activity.IdleTime.TotalMilliseconds} ms after typing in the floating window");
+        await Task.Delay(400);
+        floating.MouseMove(new Avalonia.Point(20, 20));
+        Assert.True(activity.IdleTime < TimeSpan.FromMilliseconds(300), $"idle {activity.IdleTime.TotalMilliseconds} ms after moving the mouse in it");
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task The_Ctrl_Tab_switcher_closes_without_switching_when_its_window_loses_activation()
+    {
+        await using var host = await StartAsync();
+        var well = host.Shell.Well;
+        var a = well.EditorTabs.Single(t => t.Title == "a.txt");
+        var b = well.EditorTabs.Single(t => t.Title == "b.txt");
+        well.Activate(a);
+        well.Activate(b);
+        await DevScene.SettleAsync(5);
+        var switcher = host.Window.GetVisualDescendants().OfType<Border>().Single(x => x.Name == MainWindow.SwitcherName);
+
+        host.Window.KeyPress(Key.Tab, RawInputModifiers.Control, PhysicalKey.Tab, null); // Ctrl held: the switcher stays open
+        await DevScene.SettleAsync(2);
+        Assert.True(switcher.IsVisible);
+        Deactivate(host.Window); // Alt+Tab to another application with Ctrl still down: the Ctrl release goes there
+        await DevScene.SettleAsync(2);
+        Assert.False(switcher.IsVisible);
+        Assert.Same(b, well.ActiveEditor);
+        // Back in CsCode, a plain Ctrl press and release (Ctrl+S...) does not switch to the tab the stale switcher had selected.
+        host.Window.KeyPress(Key.LeftCtrl, RawInputModifiers.Control, PhysicalKey.ControlLeft, null);
+        host.Window.KeyRelease(Key.LeftCtrl, RawInputModifiers.None, PhysicalKey.ControlLeft, null);
+        await DevScene.SettleAsync(2);
+        Assert.Same(b, well.ActiveEditor);
+
+        // The same in a floating window.
+        well.Float(b);
+        Assert.True(await RealAppHost.WaitFor(() => WindowOf(b.LiveView) is HostWindow { IsVisible: true } && b.Controller is not null));
+        var floating = (HostWindow)WindowOf(b.LiveView)!;
+        b.Controller!.Focus();
+        floating.KeyPress(Key.Tab, RawInputModifiers.Control, PhysicalKey.Tab, null);
+        await DevScene.SettleAsync(2);
+        Assert.True(switcher.IsVisible);
+        Deactivate(floating);
+        await DevScene.SettleAsync(2);
+        Assert.False(switcher.IsVisible);
+        Assert.Same(b, well.ActiveEditor);
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task The_palette_prompts_and_switcher_show_in_the_floating_window_that_has_the_keyboard()
+    {
+        // An owned floating window stays above the main one: overlays drawn in the main window could be hidden under it and answered blind.
+        await using var host = await StartAsync();
+        var shell = host.Shell;
+        var well = shell.Well;
+        var b = well.EditorTabs.Single(t => t.Title == "b.txt");
+        well.Float(b);
+        Assert.True(await RealAppHost.WaitFor(() => WindowOf(b.LiveView) is HostWindow { IsVisible: true } && b.Controller is not null));
+        var floating = (HostWindow)WindowOf(b.LiveView)!;
+        b.Controller!.Focus();
+        var quickView = host.Window.GetVisualDescendants().OfType<Views.QuickInputView>().Single();
+        var dialogView = host.Window.GetVisualDescendants().OfType<Views.DialogHostView>().Single();
+        var quick = host.Get<QuickInput.QuickInputViewModel>();
+
+        // Ctrl+Shift+P in the floating editor: the palette is in the floating window, takes the keyboard there, and Esc gives it back.
+        floating.KeyPress(Key.P, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.P, null);
+        Assert.True(await RealAppHost.WaitFor(() => quick.IsVisible), "no palette");
+        Assert.Same(floating, WindowOf(quickView));
+        Assert.True(await RealAppHost.WaitFor(() => quickView.GetVisualDescendants().OfType<TextBox>().Any(t => t.IsFocused)), "the palette's box has no focus");
+        floating.KeyTextInput("zzz");
+        Assert.Equal(">zzz", quick.Text);
+        floating.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        Assert.True(await RealAppHost.WaitFor(() => !quick.IsVisible && b.Controller.IsFocused), "Esc did not close the palette and give the editor the keyboard");
+
+        // Ctrl+Tab there: the switcher too.
+        floating.KeyPress(Key.Tab, RawInputModifiers.Control, PhysicalKey.Tab, null);
+        await DevScene.SettleAsync(2);
+        var switcher = floating.GetVisualDescendants().OfType<Border>().SingleOrDefault(x => x.Name == MainWindow.SwitcherName);
+        Assert.NotNull(switcher);
+        Assert.True(switcher.IsVisible);
+        floating.KeyRelease(Key.LeftCtrl, RawInputModifiers.None, PhysicalKey.ControlLeft, null);
+        await DevScene.SettleAsync(2);
+        Assert.False(switcher.IsVisible);
+        well.Activate(b);
+        await DevScene.SettleAsync(5);
+        b.Controller!.Focus();
+
+        // The floating window's close button with a dirty document: the Save prompt is in that window, Enter answers it (Save).
+        b.Doc.ApplyEdits([new Core.Text.TextEdit(Core.Text.TextRange.At(0, 0), "Z")]);
+        floating.Close();
+        var dialogs = host.Get<Notifications.DialogHostViewModel>();
+        Assert.True(await RealAppHost.WaitFor(() => dialogs.IsVisible), "no Save prompt");
+        Assert.Same(floating, WindowOf(dialogView));
+        Assert.True(await RealAppHost.WaitFor(() => dialogView.GetVisualDescendants().OfType<Button>().Any(x => x.IsFocused)), "the prompt's button has no focus");
+        floating.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.True(await RealAppHost.WaitFor(() => !well.Tabs.Contains(b) && shell.Factory.FloatingWindows.Count == 0), "the floating window did not close");
+        Assert.Equal("Zbeta\n", File.ReadAllText(host.Files.Combine("b.txt")));
+
+        // Its window is gone: the overlays are back in the main window, and the palette opens there.
+        Assert.Same(host.Window, WindowOf(quickView));
+        Assert.Same(host.Window, WindowOf(dialogView));
+        var a = well.EditorTabs.Single(t => t.Title == "a.txt");
+        Assert.True(await RealAppHost.WaitFor(() => a.Controller is not null));
+        a.Controller!.Focus();
+        var running = await host.OpenPaletteAsync(KnownCommands.CommandPalette);
+        Assert.Same(host.Window, WindowOf(quickView));
+        await host.ClosePaletteAsync(running);
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task The_palette_prompts_and_switcher_fit_a_narrow_or_short_floating_window()
+    {
+        // A tool window floats at its docked size (a right-hand one is narrow); the overlays are an adorner over that window's dock, clipped to it.
+        await using var host = await StartAsync();
+        var well = host.Shell.Well;
+        var b = well.EditorTabs.Single(t => t.Title == "b.txt");
+        well.Float(b);
+        Assert.True(await RealAppHost.WaitFor(() => WindowOf(b.LiveView) is HostWindow { IsVisible: true } && b.Controller is not null));
+        var floating = (HostWindow)WindowOf(b.LiveView)!;
+        floating.Width = 260;
+        floating.Height = 420;
+        await DevScene.SettleAsync(5);
+        var dock = floating.GetVisualDescendants().OfType<DockControl>().First();
+        Assert.True(dock.Bounds.Width is > 200 and < 270, $"the floating dock is {dock.Bounds.Size}");
+        b.Controller!.Focus();
+        var quickView = host.Window.GetVisualDescendants().OfType<Views.QuickInputView>().Single();
+        var dialogView = host.Window.GetVisualDescendants().OfType<Views.DialogHostView>().Single();
+        var quick = host.Get<QuickInput.QuickInputViewModel>();
+
+        async Task PaletteFitsAsync()
+        {
+            floating.KeyPress(Key.P, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.P, null);
+            Assert.True(await RealAppHost.WaitFor(() => quick.IsVisible && quick.Items.Count > 0), "no palette");
+            Assert.Same(floating, WindowOf(quickView));
+            await DevScene.SettleAsync(3);
+            var card = quickView.GetVisualChildren().OfType<Border>().Single(x => x.Child is DockPanel);
+            AssertWithin(card, dock, "the palette");
+            Assert.Equal(Math.Floor(Math.Min(620, dock.Bounds.Width * 0.62)), card.Bounds.Width, 0); // VS Code: 62 % of its window's width
+            AssertWithin(quickView.GetVisualDescendants().OfType<TextBox>().Single(), dock, "the palette's box");
+            var row = quickView.GetVisualDescendants().OfType<ListBoxItem>().FirstOrDefault(r => r.IsEffectivelyVisible);
+            Assert.NotNull(row);
+            AssertWithin(row, dock, "the palette's first row");
+            floating.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+            Assert.True(await RealAppHost.WaitFor(() => !quick.IsVisible && b.Controller.IsFocused), "Esc did not close the palette");
+        }
+
+        await PaletteFitsAsync(); // narrow
+        floating.Height = 170;     // short: the list keeps some rows under the box
+        await DevScene.SettleAsync(5);
+        await PaletteFitsAsync();
+
+        // Ctrl+Tab: the switcher stays inside the window (Esc closes it without switching).
+        floating.Height = 420;
+        await DevScene.SettleAsync(5);
+        floating.KeyPress(Key.Tab, RawInputModifiers.Control, PhysicalKey.Tab, null);
+        await DevScene.SettleAsync(3);
+        var switcher = floating.GetVisualDescendants().OfType<Border>().Single(x => x.Name == MainWindow.SwitcherName);
+        Assert.True(switcher.IsVisible);
+        AssertWithin(switcher, dock, "the switcher");
+        floating.KeyPress(Key.Escape, RawInputModifiers.Control, PhysicalKey.Escape, null);
+        floating.KeyRelease(Key.LeftCtrl, RawInputModifiers.None, PhysicalKey.ControlLeft, null);
+        await DevScene.SettleAsync(2);
+        Assert.False(switcher.IsVisible);
+        Assert.Same(b, well.ActiveEditor);
+
+        // The floating window's close button with a dirty document: the Save prompt and every one of its buttons are inside the window.
+        b.Doc.ApplyEdits([new Core.Text.TextEdit(Core.Text.TextRange.At(0, 0), "Z")]);
+        floating.Close();
+        var dialogs = host.Get<Notifications.DialogHostViewModel>();
+        Assert.True(await RealAppHost.WaitFor(() => dialogs.IsVisible), "no Save prompt");
+        Assert.Same(floating, WindowOf(dialogView));
+        await DevScene.SettleAsync(3);
+        AssertWithin(dialogView.GetVisualChildren().OfType<Border>().Single(), dock, "the Save prompt");
+        var buttons = dialogView.GetVisualDescendants().OfType<Button>().ToList();
+        Assert.Equal(3, buttons.Count);
+        foreach (var button in buttons) AssertWithin(button, dock, "the prompt's " + button.Content);
+        dialogs.Choose("Don't Save");
+        Assert.True(await RealAppHost.WaitFor(() => !well.Tabs.Contains(b) && host.Shell.Factory.FloatingWindows.Count == 0), "the floating window did not close");
+    }
+
+    /// <summary>Asserts that <paramref name="part"/> is drawn whole inside <paramref name="host"/> (an adorner is clipped to the element it adorns).</summary>
+    private static void AssertWithin(Visual part, Visual host, string what)
+    {
+        var origin = part.TranslatePoint(default, host) ?? throw new InvalidOperationException(what + " is not in " + host);
+        var r = new Avalonia.Rect(origin, part.Bounds.Size);
+        Assert.True(r.Width > 0 && r.Height > 0 && r.X >= -0.5 && r.Y >= -0.5 && r.Right <= host.Bounds.Width + 0.5 && r.Bottom <= host.Bounds.Height + 0.5,
+            $"{what} at {r} is cut off by its window's dock ({host.Bounds.Size})");
+    }
+
+    /// <summary>What the platform reports when another application takes the keyboard (the headless platform has no other application).</summary>
+    private static void Deactivate(Window window)
+    {
+        var impl = (object)window.PlatformImpl!;
+        var deactivated = impl.GetType().GetProperty("Deactivated", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("the headless window has no Deactivated callback");
+        ((Action)deactivated.GetValue(impl)!).Invoke();
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
     public async Task Floating_windows_hide_and_show_with_the_main_window()
     {
         await using var host = await StartAsync();
@@ -263,10 +534,12 @@ public class FloatingWindowTests
             var window = (Window)shell.Factory.WindowOf(b)!.Host!;
             var view = b.LiveView!;
             var doc = b.Doc;
+            b.Controller!.Focus(); // the keyboard in the floating editor when its tab closes (it moves to the window, which then closes)
             await shell.Well.CloseAsync(b);
             await DevScene.SettleAsync(10);
             Assert.Empty(shell.Factory.FloatingWindows);
             Assert.False(window.IsVisible);
+            Assert.Same(host.Window, WindowOf(host.Window.FocusManager?.GetFocusedElement() as Control)); // back in the main window
             return [b, window, view, doc];
         });
         // A tool window floated and docked back leaves no window behind either.

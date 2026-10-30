@@ -26,6 +26,9 @@ public sealed class MacroApp : IAsyncDisposable
     private MacroApp(RealAppHost host) => Host = host;
 
     public RealAppHost Host { get; }
+    /// <summary>The window keys and text are raised on: the main window, or a floating window the editor was moved into.</summary>
+    public Avalonia.Controls.TopLevel Input { get => _input ?? Host.Window; set => _input = value; }
+    private Avalonia.Controls.TopLevel? _input;
     public MacroIntegration Integration => Host.Shell.Macros ?? throw new InvalidOperationException("the composition has no macro integration");
     public MacroService Service => Integration.Service;
     public DocumentWell Well => Host.Shell.Well;
@@ -81,17 +84,17 @@ public sealed class MacroApp : IAsyncDisposable
                 _ => null,
             };
             var mods = c is >= 'A' and <= 'Z' ? RawInputModifiers.Shift : RawInputModifiers.None;
-            if (key is { } k) Host.Window.KeyPress(k, mods, PhysicalKey.None, c.ToString());
-            Host.Window.KeyTextInput(c.ToString());
-            if (key is { } k2) Host.Window.KeyRelease(k2, mods, PhysicalKey.None, c.ToString());
+            if (key is { } k) Input.KeyPress(k, mods, PhysicalKey.None, c.ToString());
+            Input.KeyTextInput(c.ToString());
+            if (key is { } k2) Input.KeyRelease(k2, mods, PhysicalKey.None, c.ToString());
             Dispatcher.UIThread.RunJobs();
         }
     }
 
     public void Press(Key key, RawInputModifiers modifiers = RawInputModifiers.None)
     {
-        Host.Window.KeyPress(key, modifiers, PhysicalKey.None, null);
-        Host.Window.KeyRelease(key, modifiers, PhysicalKey.None, null);
+        Input.KeyPress(key, modifiers, PhysicalKey.None, null);
+        Input.KeyRelease(key, modifiers, PhysicalKey.None, null);
         Dispatcher.UIThread.RunJobs();
     }
 

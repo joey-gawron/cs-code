@@ -84,6 +84,23 @@ public class ThemeCatalogTests
         Assert.Same(result.Theme, ThemeCompletion.Complete(result.Theme));
     }
 
+    [Fact]
+    public void The_remote_indicator_badge_is_readable_in_every_theme()
+    {
+        // The badge is always in the status bar ('$(remote)' while disconnected). Themes that set only its background (One Light: light grey,
+        // Dracula: lavender, Solarized Light: olive) kept the base's white text: 1.5, 2.4 and 2.7 to 1.
+        foreach (var (theme, _) in AllThemes())
+        {
+            var check = ThemeCompletion.Analyze(theme).Checks.Single(c => c.Pair.Foreground == "statusBarItem.remoteForeground");
+            Assert.Equal("statusBarItem.remoteBackground", check.Pair.Background);
+            Assert.True(check.FinalRatio >= Contrast.AaNormalText, $"{theme.Label}: {check.FinalRatio:F2}");
+            var completed = ThemeCompletion.Complete(theme).Colors;
+            var surface = Contrast.Over(completed["statusBarItem.remoteBackground"], completed["statusBar.background"]);
+            var ratio = Contrast.Ratio(Contrast.Over(completed["statusBarItem.remoteForeground"], surface), surface);
+            Assert.True(ratio >= Contrast.AaNormalText, $"{theme.Label}: the completed theme's badge is {ratio:F2}:1");
+        }
+    }
+
     [Theory]
     [InlineData(VsThemes.DarkId)]
     [InlineData(VsThemes.BlueId)]

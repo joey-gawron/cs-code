@@ -102,11 +102,20 @@ public sealed class ToolWindowManager : IDisposable
         _visibilityChanged.Fire((id, true));
     }
 
-    /// <summary>Docks an auto-hidden tool back into its well (a no-op for any other tool). Layouts do not record Auto Hide.</summary>
+    /// <summary>Docks an auto-hidden tool back into its well (a no-op for any other tool).</summary>
     public void Unpin(ToolTab t)
     {
         if (IsPinned(t)) _factory.PinDockable(t); // toggles
     }
+
+    /// <summary>Visual Studio's Auto Hide: a docked tool moves onto its well's edge strip (a no-op for one that floats or is already there).</summary>
+    public void AutoHide(ToolTab t)
+    {
+        if (!IsPinned(t) && !_factory.IsFloating(t) && IsVisible(t.Spec.Id)) _factory.PinDockable(t); // toggles
+    }
+
+    /// <summary>Whether the tool is auto-hidden (on an edge strip; it counts as visible).</summary>
+    public bool IsAutoHidden(ToolTab t) => IsPinned(t);
 
     /// <summary>Visual Studio's Float: the tool moves into a floating window of its own (shown first when hidden).</summary>
     public void Float(string id)

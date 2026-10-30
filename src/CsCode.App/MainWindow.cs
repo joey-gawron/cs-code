@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Recycling;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
@@ -39,7 +40,15 @@ public sealed class MainWindow : Window, IWindowChrome
     private readonly TitleBarView _titleBar;
     private readonly Border _switcher = new();
     private readonly StackPanel _switcherItems = new() { Spacing = 1 };
-    private bool _closeConfirmed, _zen, _switcherActive;
+    private readonly ScrollViewer _switcherScroll = new() { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+    // The overlays that take the keyboard (MRU switcher, quick input, modal prompt) are shown in the window that has it: this one's overlay grid, or
+    // a floating window's (as an adorner over its dock; an owned floating window stays above this one and would hide them). Toasts stay here.
+    private readonly Grid _overlays = new() { IsHitTestVisible = true };
+    private readonly KeyboardOverlayLayer _keyboardOverlays = new();
+    private readonly QuickInputView _quick;
+    private Control? _overlaysAdorning; // the floating window's dock the keyboard overlays adorn (null: they are in this window)
+    private TopLevel? _overlayHost; // that floating window
+    private bool _closeConfirmed, _zen, _switcherActive, _windowClosed;
     private string? _sessionName;
     private int _switcherIndex;
     private WindowState _stateBeforeFullScreen;
@@ -82,23 +91,38 @@ public sealed class MainWindow : Window, IWindowChrome
         Grid.SetRow(_status, 3);
         rows.Children.Add(_status);
 
-        var overlays = new Grid { IsHitTestVisible = true };
-        overlays.Children.Add(new NotificationsView(_sp.GetRequiredService<NotificationCenter>()) { IsHitTestVisible = true });
+        _overlays.Children.Add(new NotificationsView(_sp.GetRequiredService<NotificationCenter>()) { IsHitTestVisible = true });
         BuildSwitcher();
-        overlays.Children.Add(_switcher);
-        var quick = new QuickInputView(_sp.GetRequiredService<QuickInputViewModel>()) { Margin = new Thickness(0, 30, 0, 0) };
-        overlays.Children.Add(quick);
-        overlays.Children.Add(new DialogHostView(_sp.GetRequiredService<DialogHostViewModel>()));
+        _keyboardOverlays.Children.Add(_switcher);
+        // Before the views subscribe: an overlay moves into the window that has the keyboard before it shows and takes the keyboard.
+        var quickVm = _sp.GetRequiredService<QuickInputViewModel>();
+        var dialogVm = _sp.GetRequiredService<DialogHostViewModel>();
+        quickVm.PropertyChanged += OnOverlayVisibilityChanged;
+        dialogVm.PropertyChanged += OnOverlayVisibilityChanged;
+        _disposables.Add(Disposable.Create(() => { quickVm.PropertyChanged -= OnOverlayVisibilityChanged; dialogVm.PropertyChanged -= OnOverlayVisibilityChanged; }));
+        // The palette and the prompts give the keyboard back when they close (to the editor a palette entry opened, else to what had it).
+        // (resolved once: a close's focus restore can run after the container is gone, and then does nothing)
+        var documents = _shell.Well;
+        object? ActiveTab() => _windowClosed ? null : documents.Active;
+        void FocusActiveEditor() { if (!_windowClosed) documents.FocusActiveEditor(); }
+        _quick = new QuickInputView(quickVm, ActiveTab, FocusActiveEditor) { Margin = new Thickness(0, 30, 0, 0) };
+        _keyboardOverlays.Children.Add(_quick);
+        _keyboardOverlays.Children.Add(new DialogHostView(dialogVm, ActiveTab, FocusActiveEditor));
+        _overlays.Children.Add(_keyboardOverlays);
 
         var root = new Grid();
         root.Children.Add(rows);
-        root.Children.Add(overlays);
+        root.Children.Add(_overlays);
         AddResizeGrips(root, useCustomChrome);
         Content = root;
 
         AddDockStyles(this);
         _disposables.Add(AttachShellInput(this));
-        Closing += OnClosing;
+        // Only this window decides whether it closes (WPF's behaviour). Avalonia's default asks the owned (floating) windows first and lets any of them
+        // cancel: a floating window's Closing empties it instead (Save prompts, tools hidden) and cancels, so the main window's X closed the floating
+        // documents and stayed open, without saving the layout. OnClosing docks the floating windows back itself once the close is confirmed.
+        ClosingBehavior = WindowClosingBehavior.OwnerWindowOnly;
+        Closing += OnShellClosing;
         Opened += OnOpened;
 
         // Floating windows (Float in the tab and tool-window menus): each gets the shell's keys, focus keys, menus and clipboard routing, follows
@@ -124,11 +148,15 @@ public sealed class MainWindow : Window, IWindowChrome
     // ------------------------------------------------------------------ shell input and styles (main and floating windows)
 
     /// <summary>
-    /// The window-level handlers every shell window needs: Vim and the keyboard pipeline (tunnelling KeyDown / TextInput / KeyUp), the focus
-    /// context keys, the right-click menus and the Edit menu's focus routing. Dispose to remove them.
+    /// The window-level handlers every shell window needs: the modules' own (<see cref="ShellController.AttachWindow"/>: Vim's end of a key and
+    /// clipboard refresh on activation, the macro recorder's and player's guards, the idle trim's activity), Vim and the keyboard pipeline
+    /// (tunnelling KeyDown / TextInput / KeyUp), the focus context keys, the right-click menus, the Edit menu's focus routing, and the MRU switcher
+    /// ending when the window loses activation. Dispose to remove them.
     /// </summary>
     private IDisposable AttachShellInput(Window window)
     {
+        // first: the modules' tunnel handlers run before the window's own, as they did when they were attached to the main window directly
+        var hooks = _shell.AttachWindow(window);
         window.AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         window.AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
         window.AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
@@ -138,15 +166,26 @@ public sealed class MainWindow : Window, IWindowChrome
         window.AddHandler(GotFocusEvent, OnGotFocus, RoutingStrategies.Bubble, handledEventsToo: true);
         var menus = _shell.ContextMenus.Attach(window);
         var clipboard = _shell.Clipboard.Attach(window);
+        window.Deactivated += OnShellWindowDeactivated;
         return Disposable.Create(() =>
         {
             window.RemoveHandler(KeyDownEvent, OnPreviewKeyDown);
             window.RemoveHandler(TextInputEvent, OnPreviewTextInput);
             window.RemoveHandler(KeyUpEvent, OnPreviewKeyUp);
             window.RemoveHandler(GotFocusEvent, OnGotFocus);
+            window.Deactivated -= OnShellWindowDeactivated;
             menus.Dispose();
             clipboard.Dispose();
+            hooks.Dispose();
         });
+    }
+
+    // Ctrl released while another application (or window) had the keyboard: this window never sees the KeyUp that commits the switcher, so it
+    // closes without switching (VS Code's and Visual Studio's switchers close the same way). Left open, the next Ctrl press and release here
+    // would activate a tab picked from a stale list.
+    private void OnShellWindowDeactivated(object? sender, EventArgs e)
+    {
+        if (_switcherActive) HideSwitcher(commit: false);
     }
 
     /// <summary>The shell's Dock styles (empty wells take no room, italic preview tabs, the active tab's accent bar), in every shell window.</summary>
@@ -179,10 +218,45 @@ public sealed class MainWindow : Window, IWindowChrome
         {
             window.Opened -= OnOpened;
             window.Closed -= OnClosedHost;
+            if (ReferenceEquals(_overlayHost, window)) HostKeyboardOverlays(this); // back home: the window's tree goes
             input.Dispose();
+            // The keyboard was in the window that closed (a closing tab hands it to its window): it comes back to this window's active editor, as in
+            // Visual Studio. Left there, the closed window stayed the focused element and kept itself, its last tab's view and document alive.
+            if (!_windowClosed && FocusManager?.GetFocusedElement() is Visual focused && (ReferenceEquals(focused, window) || window.IsVisualAncestorOf(focused) || !focused.IsAttachedToVisualTree()))
+            {
+                if (!Focus()) FocusManager?.Focus(null);
+                _shell.Well.FocusActiveEditor();
+            }
         }
         window.Opened += OnOpened;
         window.Closed += OnClosedHost;
+    }
+
+    // ------------------------------------------------------------------ overlays that take the keyboard
+
+    private void OnOverlayVisibilityChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(QuickInputViewModel.IsVisible)) return; // (DialogHostViewModel's has the same name)
+        var opening = sender switch { QuickInputViewModel q => q.IsVisible, DialogHostViewModel d => d.IsVisible, _ => false };
+        if (opening) HostKeyboardOverlays(FocusManager?.GetFocusedElement() is Visual focused ? TopLevel.GetTopLevel(focused) : null);
+    }
+
+    /// <summary>
+    /// Shows the keyboard overlays in <paramref name="target"/>: a visible floating window gets them over its dock (an adorner: arranged to the
+    /// dock's bounds, in the window's own tree, so focus and keys work there); anything else (this window, nothing) puts them back here.
+    /// </summary>
+    private void HostKeyboardOverlays(TopLevel? target)
+    {
+        Control? dock = target is HostWindow { IsVisible: true } floating && !ReferenceEquals(floating, this)
+            ? floating.GetVisualDescendants().OfType<DockControl>().FirstOrDefault() : null;
+        if (ReferenceEquals(dock, _overlaysAdorning)) return;
+        if (_overlaysAdorning is { } adorned) AdornerLayer.SetAdorner(adorned, null);
+        else _overlays.Children.Remove(_keyboardOverlays);
+        _overlaysAdorning = dock;
+        _overlayHost = dock is null ? null : target;
+        _quick.Margin = new Thickness(0, dock is null ? 30 : 0, 0, 0); // this window's card sits under its title bar
+        if (dock is not null) AdornerLayer.SetAdorner(dock, _keyboardOverlays);
+        else _overlays.Children.Add(_keyboardOverlays);
     }
 
     private void OnVisibilityChanged(bool visible)
@@ -271,6 +345,7 @@ public sealed class MainWindow : Window, IWindowChrome
         // Ctrl+Tab / Ctrl+Shift+Tab: MRU editor switcher overlay (committed when Ctrl is released).
         if (e.Key == Key.Tab && e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Alt))
         {
+            if (!_switcherActive) HostKeyboardOverlays(sender as TopLevel); // in the window the keys are pressed in
             StepSwitcher(e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : +1);
             e.Handled = true;
             return;
@@ -301,13 +376,32 @@ public sealed class MainWindow : Window, IWindowChrome
         _switcher.IsVisible = false;
         _switcher.HorizontalAlignment = HorizontalAlignment.Center;
         _switcher.VerticalAlignment = VerticalAlignment.Center;
-        _switcher.MinWidth = 300;
+        _switcher.Name = SwitcherName;
+        _switcher.MinWidth = OverlaySizing.SwitcherMinWidth;
         _switcher.Padding = new Thickness(6);
         _switcher.Background = ThemeBrushes.Get("editorWidget.background");
         _switcher.BorderBrush = ThemeBrushes.Get("editorWidget.border");
         _switcher.BorderThickness = new Thickness(1);
         _switcher.BoxShadow = BoxShadows.Parse("0 6 18 0 #66000000");
-        _switcher.Child = _switcherItems;
+        _switcher.Child = _switcherScroll;
+        _switcherScroll.Content = _switcherItems;
+        _keyboardOverlays.Measuring = FitSwitcher;
+    }
+
+    /// <summary>The switcher's name in the visual tree (tests).</summary>
+    internal const string SwitcherName = "CtrlTabSwitcher";
+
+    /// <summary>
+    /// The switcher fits the window it is in (a floating one can be narrow or short): at most that window inside a margin, its rows scrolling and
+    /// their titles trimmed.
+    /// </summary>
+    private void FitSwitcher(Size window)
+    {
+        var width = OverlaySizing.Inside(window.Width);
+        var height = OverlaySizing.Inside(window.Height);
+        OverlaySizing.Set(_switcher, MaxWidthProperty, width);
+        OverlaySizing.Set(_switcher, MinWidthProperty, Math.Min(OverlaySizing.SwitcherMinWidth, width));
+        OverlaySizing.Set(_switcher, MaxHeightProperty, height);
     }
 
     private void StepSwitcher(int delta)
@@ -322,16 +416,22 @@ public sealed class MainWindow : Window, IWindowChrome
         }
         _switcherIndex = ((_switcherIndex + delta) % _switcherList.Count + _switcherList.Count) % _switcherList.Count;
         _switcherItems.Children.Clear();
+        Border? selected = null;
         for (var i = 0; i < _switcherList.Count; i++)
         {
+            var label = ViewHelpers.Label(_switcherList[i].Title, i == _switcherIndex ? "list.activeSelectionForeground" : "foreground", 12);
+            label.TextTrimming = TextTrimming.CharacterEllipsis;
             var row = new Border
             {
                 Padding = new Thickness(10, 4), Background = i == _switcherIndex ? ThemeBrushes.Get("list.activeSelectionBackground") : Brushes.Transparent,
-                Child = ViewHelpers.Label(_switcherList[i].Title, i == _switcherIndex ? "list.activeSelectionForeground" : "foreground", 12),
+                Child = label,
             };
+            if (i == _switcherIndex) selected = row;
             _switcherItems.Children.Add(row);
         }
         _switcher.IsVisible = true;
+        // a short window shows some of the rows: the selected one is among them
+        if (selected is not null) Dispatcher.UIThread.Post(() => { if (_switcher.IsVisible && selected.IsAttachedToVisualTree()) selected.BringIntoView(); }, DispatcherPriority.Loaded);
     }
 
     private void HideSwitcher(bool commit)
@@ -378,51 +478,89 @@ public sealed class MainWindow : Window, IWindowChrome
 
     // ------------------------------------------------------------------ closing
 
-    private async void OnClosing(object? sender, WindowClosingEventArgs e)
+    /// <summary>A close this window confirmed that a module's Closing handler then held, and how it was confirmed (see <see cref="OnClosing"/>).</summary>
+    private enum HeldClose { None, Prompted, WithoutPrompt }
+
+    private HeldClose _held, _confirming;
+    private bool _closeProceeding;
+
+    /// <summary>
+    /// This window's own close handling, the first Closing handler: background mode's hide, then (cancelling this close and closing again when they
+    /// are answered) the layout save and the Save prompts. The modules' handlers (the terminal's <c>confirmOnExit</c>) run after it.
+    /// </summary>
+    private async void OnShellClosing(object? sender, WindowClosingEventArgs e)
     {
         if (_closeConfirmed) return;
-        if (CloseInterceptor?.Invoke(e.CloseReason) == true)
+        var held = _held;
+        // The module that held a confirmed close closes again when the user agrees: a close confirmed without prompts goes ahead as it was; one
+        // confirmed with prompts asks only for what is dirty since (normally nothing), and is past background mode's hide already.
+        if (e.IsProgrammatic && held == HeldClose.WithoutPrompt)
         {
-            e.Cancel = true;
+            _held = HeldClose.None;
+            _closeConfirmed = true;
+            _confirming = HeldClose.WithoutPrompt;
             return;
         }
+        if (!(e.IsProgrammatic && held == HeldClose.Prompted) && CloseInterceptor?.Invoke(e.CloseReason) == true)
+        {
+            e.Cancel = true; // hidden (background mode): a held close stays held
+            return;
+        }
+        _held = HeldClose.None;
         e.Cancel = true;
+        await CloseWithPromptsAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// After every Closing handler: a confirmed close that goes ahead docks the floating windows back first (the layout was saved with them
+    /// floating); one that a module held (the terminal asks, and closes again when the user agrees) leaves this window as it was, working, and
+    /// the next close starts over (Save prompts included: the user may have edited since declining).
+    /// </summary>
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        base.OnClosing(e);
+        if (!_closeConfirmed) return;
+        if (!e.Cancel)
+        {
+            _closeProceeding = true;
+            ReleaseFloatingWindows();
+            return;
+        }
+        _closeConfirmed = false;
+        _held = _confirming;
+    }
+
+    /// <summary>The Save prompts, then the close: true when the window closed (false: a prompt was cancelled, or a module held the close).</summary>
+    private async Task<bool> CloseWithPromptsAsync()
+    {
+        _shell.BeginClose(); // saves the layout before tabs close, so the next start restores them
+        var end = ShellController.CloseEnd.Cancelled;
         try
         {
-            _shell.SaveLayoutNow(); // before tabs close, so the next start restores them
-            if (await _shell.Well.CloseAllAsync().ConfigureAwait(true))
-            {
-                _closeConfirmed = true;
-                ReleaseFloatingWindows();
-                Close();
-            }
-            else _shell.Layout.Save(); // the user cancelled a Save prompt: keep the layout as it is
+            if (await _shell.Well.CloseAllAsync().ConfigureAwait(true)) end = CloseConfirmed(HeldClose.Prompted);
         }
         catch (Exception ex)
         {
             _sp.GetService<Startup.CrashHandler>()?.Report(ex, fatal: false, source: "Closing");
-            _closeConfirmed = true;
-            Close();
+            end = CloseConfirmed(HeldClose.Prompted);
         }
+        finally { _shell.EndClose(end); } // cancelled (a Save prompt): keep the layout as it is now
+        return end == ShellController.CloseEnd.Closed;
+    }
+
+    private ShellController.CloseEnd CloseConfirmed(HeldClose how)
+    {
+        _closeConfirmed = true;
+        _confirming = how;
+        _closeProceeding = false;
+        Close();
+        return _closeProceeding ? ShellController.CloseEnd.Closed : ShellController.CloseEnd.Held;
     }
 
     /// <summary>Closes without any save prompts (tests and crash recovery).</summary>
-    public void CloseWithoutPrompt()
-    {
-        _closeConfirmed = true;
-        ReleaseFloatingWindows();
-        Close();
-    }
+    public void CloseWithoutPrompt() => CloseConfirmed(HeldClose.WithoutPrompt);
 
-    public async Task<bool> RequestExitAsync()
-    {
-        _shell.SaveLayoutNow();
-        if (!await _shell.Well.CloseAllAsync().ConfigureAwait(true)) return false;
-        _closeConfirmed = true;
-        ReleaseFloatingWindows();
-        Close();
-        return true;
-    }
+    public Task<bool> RequestExitAsync() => CloseWithPromptsAsync();
 
     // ------------------------------------------------------------------ window modes
 
@@ -468,6 +606,7 @@ public sealed class MainWindow : Window, IWindowChrome
 
     protected override void OnClosed(EventArgs e)
     {
+        _windowClosed = true;
         base.OnClosed(e);
         if (_shell.Factory.FloatingWindows.Count > 0) ReleaseFloatingWindows(); // closed some other way (the lifetime ended)
         _disposables.Dispose();

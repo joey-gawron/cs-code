@@ -172,6 +172,23 @@ public class VimClipboardRegisterTests
     }
 
     [AvaloniaFact(Timeout = 120_000)]
+    public async Task Activating_a_floating_editor_window_reads_both_registers_too()
+    {
+        var primary = new InMemoryPrimarySelection();
+        await using var app = await VimApp.StartAsync("x\n", settings: Quiet, configure: Clipboard(primary));
+        app.Well.Float(app.Well.ActiveEditor!);
+        Assert.True(await RealAppHost.WaitFor(() => app.Well.ActiveEditor?.LiveView is { } v && Avalonia.Controls.TopLevel.GetTopLevel(v) is Dock.Avalonia.Controls.HostWindow { IsVisible: true }));
+        var floating = (Avalonia.Controls.Window)Avalonia.Controls.TopLevel.GetTopLevel(app.Well.ActiveEditor!.LiveView!)!;
+        await app.FocusAsync();
+        await app.Host.Window.Clipboard!.SetTextAsync("CLIP");     // copied in another application while CsCode was in the background
+        primary.SetExternal("SEL");
+        floating.Activate();                                        // the user comes back to CsCode in the floating window
+        await DevScene.SettleAsync(5);
+        Assert.True(await RealAppHost.WaitFor(() => app.Vim.Clipboard.Text('+') == "CLIP" && app.Vim.Clipboard.Text('*') == "SEL"),
+            $"'+' {app.Vim.Clipboard.Text('+')} '*' {app.Vim.Clipboard.Text('*')}");
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
     public async Task A_yank_from_a_CRLF_document_has_the_documents_line_ends_on_the_clipboard_and_puts_back_without_extra_ones()
     {
         await using var app = await VimApp.StartAsync("first\r\nsecond\r\n", settings: Quiet, configure: Clipboard(new InMemoryPrimarySelection()));

@@ -65,8 +65,8 @@ public static class AppServices
     }
 
     /// <summary>
-    /// Modules report their child processes through <see cref="IMemoryMonitor.TrackChildProcess"/>; the shell wraps the registered monitor (or stands in
-    /// for it while CsCode.Profiling registers none) so the exit path knows which processes to kill if their owner does not stop them in time.
+    /// Modules report their child processes through <see cref="IMemoryMonitor.TrackChildProcess"/>; the shell wraps the registered monitor (CsCode.Profiling's,
+    /// or stands in for one when a composition registers none) so the exit path knows which processes to kill if their owner does not stop them in time.
     /// </summary>
     private static void AddChildProcessTracking(IServiceCollection services)
     {

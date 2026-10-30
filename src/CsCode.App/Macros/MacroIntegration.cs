@@ -107,21 +107,28 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
                 if (_ui.CheckAccess()) Stop();
                 else _ui.Post(Stop);
             }));
-        if (_windowHolder.Window is { } top)
-        {
-            // typing aimed at an editor while a macro plays would mix with the macro's own: swallowed (before the editor and after Vim)
-            top.AddHandler(InputElement.TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
-            // the end of a key's or text's route (handled or not): the editor is done with the input the recorder was told about
-            top.AddHandler(InputElement.KeyDownEvent, OnInputDone, RoutingStrategies.Bubble, handledEventsToo: true);
-            top.AddHandler(InputElement.TextInputEvent, OnInputDone, RoutingStrategies.Bubble, handledEventsToo: true);
-            _subscriptions.Add(Disposable.Create(() =>
-            {
-                top.RemoveHandler(InputElement.TextInputEvent, OnPreviewTextInput);
-                top.RemoveHandler(InputElement.KeyDownEvent, OnInputDone);
-                top.RemoveHandler(InputElement.TextInputEvent, OnInputDone);
-            }));
-        }
         _ = StartServiceAsync();
+    }
+
+    /// <summary>
+    /// The per-window part (the shell calls it for the main window and for every floating one, <see cref="ShellController.AttachWindow"/>): input
+    /// is routed through the window that holds the focused editor, so each window needs the player's typing guard and the recorder's end of input.
+    /// Without them in a floating window, typing there mixed with a playing macro, and the recorder, told an input began but never that it ended,
+    /// dropped every later command. Dispose to remove them.
+    /// </summary>
+    public IDisposable AttachWindow(TopLevel top)
+    {
+        // typing aimed at an editor while a macro plays would mix with the macro's own: swallowed (before the editor and after Vim)
+        top.AddHandler(InputElement.TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
+        // the end of a key's or text's route (handled or not): the editor is done with the input the recorder was told about
+        top.AddHandler(InputElement.KeyDownEvent, OnInputDone, RoutingStrategies.Bubble, handledEventsToo: true);
+        top.AddHandler(InputElement.TextInputEvent, OnInputDone, RoutingStrategies.Bubble, handledEventsToo: true);
+        return Disposable.Create(() =>
+        {
+            top.RemoveHandler(InputElement.TextInputEvent, OnPreviewTextInput);
+            top.RemoveHandler(InputElement.KeyDownEvent, OnInputDone);
+            top.RemoveHandler(InputElement.TextInputEvent, OnInputDone);
+        });
     }
 
     private async Task StartServiceAsync()

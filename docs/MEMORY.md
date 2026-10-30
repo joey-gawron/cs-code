@@ -19,7 +19,8 @@ eight other agents built and tested on the same machine (load average 10–36): 
 ```
 
 Composition: `AppServices.Build` already calls `services.AddCsCodeProfiling()`; the shell starts it (`ShellController.Initialize` →
-`ProfilingShell.Attach`: `StartCsCodeProfiling()`, input handlers for the idle clock). The shell's `ShellMemoryMonitor` wraps the registered
+`ProfilingShell.Start`: `StartCsCodeProfiling()`) and registers `ProfilingShell.AttachWindow` as a per-window hook (`ShellController.AttachWindow`,
+run for the main window and every floating one: the input handlers for the idle clock). The shell's `ShellMemoryMonitor` wraps the registered
 monitor for its exit path (`ChildProcessTracker`), so every module keeps resolving `IMemoryMonitor` as before.
 
 ## 1. The memory monitor (MUST 1)
@@ -80,7 +81,9 @@ collection and the page release, measured before/after (`MemoryTrimReport`, logg
   its adapter or a launcher script's real server are in `ChildProcessWorkingSetBytes`, the Memory channel and the cap. A child above its cap for 2 consecutive samples (1 under
   Aggressive pressure) gets its owner's callback, at most once a minute, exceptions isolated.
 * **Idle trim**: after `idleTrimSeconds` without input (`IUserActivityMonitor.NotifyActivity`, called by the shell's tunnel handlers for keys,
-  text, pointer press/move/wheel — one timestamp write per event), an Idle-level trim with a compacting collection, once per idle period.
+  text, pointer press/move/wheel — one timestamp write per event — on the main window and on every floating window: input in a floating window
+  used to leave the idle clock running, so the trim's blocking collection could run mid-typing), an Idle-level trim with a compacting collection,
+  once per idle period.
 
 **Measured effect in the real app** (`cscode-profile trim-effect`, headless, 20 documents open after 3 open/close cycles of 21 files, live GC heap
 ~60 MB; load ~10–15):

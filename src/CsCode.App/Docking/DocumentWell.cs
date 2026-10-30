@@ -1,5 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CsCode.App.Notifications;
 using CsCode.App.Services;
 using CsCode.Core.Languages;
@@ -155,10 +158,16 @@ public sealed class DocumentWell : IDisposable
         return _factory.DocumentGroups().FirstOrDefault() ?? _factory.PrimaryDocuments;
     }
 
+    /// <summary>
+    /// Makes <paramref name="tab"/> the active tab of its group and of the well. Unless <paramref name="preserveFocus"/>, its editor also takes the
+    /// keyboard once Dock presents it, as in VS Code and Visual Studio, when the keyboard was in the editor it replaces or nowhere (the view that had
+    /// it left the window, or a closed palette had it): a preview opened from the Explorer leaves the keyboard in the Explorer.
+    /// </summary>
     public void Activate(ShellDocument tab, bool preserveFocus = false)
     {
         var group = _factory.GroupOf(tab);
         if (group is null) return;
+        var previous = _active;
         group.ActiveDockable = tab;
         _factory.SetActiveDockable(tab);
         if (!preserveFocus)
@@ -167,6 +176,17 @@ public sealed class DocumentWell : IDisposable
             _factory.WindowOf(tab)?.SetActive(); // a floating document's window comes to the front
         }
         OnActive(tab);
+        if (!preserveFocus) FocusWhenShown(tab, takeFrom: previous);
+    }
+
+    /// <summary>
+    /// Puts the keyboard into the active editor once it is shown, unless something else has it by then (a palette or prompt that closed leaves it
+    /// nowhere; see <see cref="Views.OverlayFocus"/>). <paramref name="mayTakeFrom"/>: what else it may be taken from when the editor is shown (the
+    /// palette: where it left the keyboard, while the user has not pressed anything since).
+    /// </summary>
+    public void FocusActiveEditor(Func<IInputElement, bool>? mayTakeFrom = null)
+    {
+        if (_active is { } active) FocusWhenShown(active, mayTakeFrom: mayTakeFrom);
     }
 
     // ---------------------------------------------------------------- floating
@@ -469,19 +489,26 @@ public sealed class DocumentWell : IDisposable
     }
 
     /// <summary>
-    /// Visual Studio: closing the focused document puts the keyboard into the document that takes its place. Dock presents it after this turn, so
-    /// wait (bounded) until its editor is in the window. Nothing happens if the user focused something else meanwhile.
+    /// Visual Studio: closing the focused document puts the keyboard into the document that takes its place (and activating one moves it there).
+    /// Dock presents it after this turn, so wait (bounded) until its editor is in the window. Nothing happens if the user focused something else
+    /// meanwhile: only when nothing has the keyboard, or the editor of <paramref name="takeFrom"/> (the tab active before) still has it (another
+    /// group's editor stays in the window).
     /// </summary>
-    private void FocusWhenShown(ShellDocument next, int attempt = 0)
+    private void FocusWhenShown(ShellDocument next, int attempt = 0, ShellDocument? takeFrom = null, Func<IInputElement, bool>? mayTakeFrom = null)
     {
         if (next is not EditorTab editor || editor.IsDisposed || !ReferenceEquals(_active, editor)) return;
         if (editor.LiveView is { } view && TopLevel.GetTopLevel(view) is { } top && editor.Controller is { } controller)
         {
-            if (top.FocusManager?.GetFocusedElement() is null) controller.Focus();
+            var focused = top.FocusManager?.GetFocusedElement();
+            if (focused is null or TopLevel || InViewOf(takeFrom, focused) || mayTakeFrom?.Invoke(focused) == true) controller.Focus();
             return;
         }
-        if (attempt < 20) DispatcherTimer.RunOnce(() => FocusWhenShown(next, attempt + 1), TimeSpan.FromMilliseconds(25));
+        // (a well without the shell's dispatcher, in unit tests, has no window to wait for)
+        if (attempt < 20 && _ui?.CheckAccess() == true) DispatcherTimer.RunOnce(() => FocusWhenShown(next, attempt + 1, takeFrom, mayTakeFrom), TimeSpan.FromMilliseconds(25));
     }
+
+    private static bool InViewOf(ShellDocument? tab, IInputElement focused) =>
+        tab is EditorTab { IsDisposed: false, LiveView: { } view } && focused is Visual v && (ReferenceEquals(v, view) || view.IsVisualAncestorOf(v));
 
     private async Task CloseDocumentAsync(IEditorDocument doc)
     {
