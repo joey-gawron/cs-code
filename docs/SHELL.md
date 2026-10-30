@@ -333,7 +333,9 @@ presentation `CreateView` + `RestoreViewState`. Closed tabs' views go back throu
 * A focused editor stays reachable from Avalonia's focus machinery and from AvaloniaEdit's static "last focused element" (`RoutedCommand`) until another
   element takes focus; detaching it is not enough. Before Dock removes a tab whose view holds keyboard focus, the well clears focus (the window is
   not focusable), and once the document that takes its place is presented its editor gets the keyboard, as in Visual Studio. When the last document
-  closes nothing takes focus, so AvaloniaEdit's static slot keeps that one view until focus next moves anywhere (bounded: one view).
+  closes nothing takes focus, so AvaloniaEdit's static slot kept that one view (and its document's text) until focus next moved anywhere; a
+  disposed view now clears the slot when it points into its own text area (`RoutedCommandFocusRelease`, by reflection against AvaloniaEdit
+  12.0.0's private `_inputElement`, left alone when the layout differs; `RoutedCommandFocusLeakTests`).
 
 **Floating windows** (wave 3). Float in a document tab's or a tool window's menu (and Window > Float Editor, `workbench.action.moveEditorToNewWindow`)
 moves it into a native window of its own: Dock.Avalonia's `HostWindow`, owned by the main window (it stays above it and out of the taskbar), with a
@@ -609,7 +611,7 @@ only (above). (The stale focus area found while testing, the main window not see
 Known issues: (1) **Combined hostile storm p99 is ~19 ms, not < 16 ms** (each source alone meets it; max is within 50 ms). (2) Dock.Avalonia 12.1.0.13 keeps every presented dockable in its control-recycling
 cache (`ControlRecycling`, keyed by the dockable, never evicted); the shell's tabs stay out of it by being their own content templates (see *View lifecycle and Dock*), which depends on
 Dock's `ControlRecyclingDataTemplate` asking an `IRecyclingDataTemplate` dockable first (true of 12.1.0.13; `RealAppDockCacheTests` fails if an upgrade changes it). The 300-tab live-host test asserts the steady state (heap flat, closed tabs unreachable).
-(3) AvaloniaEdit's static `RoutedCommand` keeps the last element that took focus: after the last document closes, that one view stays reachable until focus moves anywhere (bounded).
+(3) Fixed: AvaloniaEdit's static `RoutedCommand` kept the last element that took focus, so after the last document closed that one view stayed reachable until focus moved anywhere; a disposed view now clears it (*Keyboard* above).
 (4) A theme switch's Fluent palette step is one dispatcher callback of 4-8 ms on a full window (over the 4 ms slice rule): assigning the palette is a
 single Avalonia resource change that every control re-resolves, and it cannot be split; bursts run it once. (5) The contrast repair changes a theme's
 own colours where they fail AA (listed per theme above), e.g. Solarized Light's chrome text is darkened; a user who wants the theme's exact colours
