@@ -387,16 +387,40 @@ public sealed class SearchEngine : IDisposable
     }
 }
 
-/// <summary>Bounded hand-off from the coordinator (async producer) to worker threads (blocking consumers).</summary>
+/// <summary>
+/// Bounded hand-off from the coordinator (async producer) to worker threads (blocking consumers). A full queue parks the producer on a task
+/// the worker that frees a slot completes in place, so the producer resumes on the coordinator's own scheduler: SemaphoreSlim.WaitAsync
+/// resumed through a thread-pool item each time, one per file whenever the workers were the bottleneck (macOS's slower file reads made a
+/// 200k-file search queue tens of thousands of them).
+/// </summary>
 internal sealed class WorkQueue(int capacity)
 {
     private readonly ConcurrentQueue<WorkItem> _items = new();
     private readonly SemaphoreSlim _available = new(0);
-    private readonly SemaphoreSlim _space = new(capacity, capacity);
+    private readonly object _gate = new();
+    private int _space = capacity; // guarded by _gate
+    private TaskCompletionSource? _spaceFreed; // the parked producer's wait; guarded by _gate
 
     public async ValueTask EnqueueAsync(WorkItem item, CancellationToken ct)
     {
-        await _space.WaitAsync(ct).ConfigureAwait(true);
+        while (true)
+        {
+            TaskCompletionSource freed;
+            lock (_gate)
+            {
+                if (_space > 0)
+                {
+                    _space--;
+                    break;
+                }
+                // Continuations run where it is completed (no RunContinuationsAsynchronously): a worker queues the await below to the
+                // coordinator's scheduler.
+                freed = _spaceFreed ??= new TaskCompletionSource();
+            }
+            ct.ThrowIfCancellationRequested();
+            using (ct.UnsafeRegister(static (s, token) => ((TaskCompletionSource)s!).TrySetCanceled(token), freed))
+                await freed.Task.ConfigureAwait(true);
+        }
         _items.Enqueue(item);
         _available.Release();
     }
@@ -407,7 +431,14 @@ internal sealed class WorkQueue(int capacity)
         _available.Wait(ct);
         if (_items.TryDequeue(out item))
         {
-            _space.Release();
+            TaskCompletionSource? freed;
+            lock (_gate)
+            {
+                _space++;
+                freed = _spaceFreed;
+                _spaceFreed = null;
+            }
+            freed?.TrySetResult();
             return true;
         }
         return false;

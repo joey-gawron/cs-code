@@ -339,4 +339,42 @@ public class LimitsAndLifecycleTests : IDisposable
         sub.Dispose();
         lock (seen) Assert.All(seen, n => Assert.StartsWith("cscode-search", n)); // batches are published from the coordinator thread
     }
+
+    [Fact]
+    public async Task A_producer_held_up_by_a_full_queue_resumes_on_its_own_thread_not_through_the_pool()
+    {
+        // Slow workers (macOS's file reads) keep the queue full: every slot a worker freed resumed the producer through a thread-pool item
+        // (SemaphoreSlim.WaitAsync), tens of thousands in a 200k-file search.
+        const int Items = 3000;
+        var queue = new WorkQueue(2);
+        var ct = TestContext.Current.CancellationToken;
+        var taken = 0;
+        var consumer = new Thread(() =>
+        {
+            while (taken < Items && queue.TryTake(out _, ct))
+            {
+                Thread.SpinWait(500); // slower than the producer: it waits for space nearly every time
+                taken++;
+            }
+        }) { IsBackground = true, Name = "test consumer" };
+        using var scheduler = new DedicatedThreadScheduler("test producer");
+        var uri = new Uri("file:///x");
+        var threads = new HashSet<string?>();
+        var before = ThreadPool.CompletedWorkItemCount;
+        consumer.Start();
+        await Task.Factory.StartNew(async () =>
+        {
+            for (var i = 0; i < Items; i++)
+            {
+                await queue.EnqueueAsync(new WorkItem(uri), ct);
+                threads.Add(Thread.CurrentThread.Name);
+            }
+        }, ct, TaskCreationOptions.None, scheduler).Unwrap().WaitAsync(TimeSpan.FromSeconds(30), ct);
+        consumer.Join();
+        var used = ThreadPool.CompletedWorkItemCount - before;
+
+        Assert.Equal(Items, taken);
+        Assert.Equal(["test producer"], threads);
+        Assert.True(used < Items / 10, $"{used} thread-pool work items for {Items} items through a full queue");
+    }
 }
