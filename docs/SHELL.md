@@ -88,7 +88,8 @@ chain) remain as a safety net. Preparation runs off the UI thread; the UI thread
 published once (every assignment into the application resource dictionary makes all controls re-resolve dynamic resources), so a runtime switch is
 brush colours in one dispatcher callback, then Avalonia Fluent's palette, light/dark variant and text-selection colour in one callback each (each makes
 every control re-resolve its Fluent resources: the palette step is 4-8 ms on a full window, the others < 1 ms). A newer switch supersedes the queued
-steps of an older one, and a **burst** of switches (two within `ThemeApplier.BurstWindow`, 200 ms: arrowing through a theme list) repaints the
+steps of an older one, and a **burst** of switches (two within `ThemeApplier.BurstWindow`, 400 ms: arrowing through a theme list, whose previews come every 250 ms; it was 200 ms,
+shorter than the preview interval, so previews never formed a burst and each paid for Fluent's palette step: T4) repaints the
 brushes each time but runs the Fluent steps once, when the burst settles. The startup apply runs everything in one go before the first frame.
 
 Code-built views use `ThemeBrushes.Get("statusBar.background")` (the same live brush instance).

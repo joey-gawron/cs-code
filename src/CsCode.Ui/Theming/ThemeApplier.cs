@@ -211,7 +211,7 @@ public sealed class ThemeApplier : IDisposable
         }
 
         if (!sliced) { Palette(); return; }
-        // A burst of switches (arrowing through a theme list: a preview every ~120 ms) repaints every vsc: brush at once but defers Fluent's steps
+        // A burst of switches (arrowing through a theme list: a preview every ThemePreviewer.MinInterval) repaints every vsc: brush at once but defers Fluent's steps
         // until the burst settles, so the expensive re-resolutions run once per burst instead of once per preview. A lone switch runs them now.
         var now = System.Diagnostics.Stopwatch.GetTimestamp();
         var burst = _lastSlicedApply != 0 && System.Diagnostics.Stopwatch.GetElapsedTime(_lastSlicedApply, now) < BurstWindow;
@@ -222,8 +222,13 @@ public sealed class ThemeApplier : IDisposable
         else _settleTimer = TimeProvider.System.CreateTimer(_ => _ui.PostCoalesced("theme.apply.palette", Palette), null, BurstWindow, Timeout.InfiniteTimeSpan);
     }
 
-    /// <summary>Two switches closer than this are a burst (see <see cref="Apply"/>).</summary>
-    public static readonly TimeSpan BurstWindow = TimeSpan.FromMilliseconds(200);
+    /// <summary>
+    /// Two switches closer than this are a burst (see <see cref="Apply"/>). Longer than the pickers' preview interval
+    /// (<see cref="ThemePreviewer.MinInterval"/>, 250 ms) with room for timer jitter: at 200 ms, previews arrowed through at that interval were
+    /// never a burst, so every preview ran Fluent's palette step (4-8 ms on a quiet machine, 10-30 ms under load) and the preview budget was missed
+    /// (T4).
+    /// </summary>
+    public static readonly TimeSpan BurstWindow = ThemePreviewer.MinInterval + TimeSpan.FromMilliseconds(150);
 
     private long _lastSlicedApply;
     private ITimer? _settleTimer;
