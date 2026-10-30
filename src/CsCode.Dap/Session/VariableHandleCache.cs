@@ -145,27 +145,28 @@ internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int m
         _allChildren = null;
     }
 
-    private (int Reference, IReadOnlyList<DebugVariable> Children)? _allChildren;
+    private (int Reference, string? Filter, IReadOnlyList<DebugVariable> Children)? _allChildren;
 
     /// <summary>
     /// Every child of <paramref name="reference"/> from an adapter that ignores paging: in the page cache when they fit, and the latest such list
     /// also in a slot of its own, because a list too big for the page cache is still paged by the UI a hundred rows at a time and must not be
     /// fetched again for each page. Bounded: one list (the session keeps at most its per-request cap of children).
     /// </summary>
-    public void SetAllChildren(int reference, IReadOnlyList<DebugVariable> children)
+    /// <param name="filter">The filter the list was asked with ("indexed" | "named" | null for both): a detected paging-ignoring adapter may honour it.</param>
+    public void SetAllChildren(int reference, string? filter, IReadOnlyList<DebugVariable> children)
     {
-        _pages.Set(new VariablesKey(reference, null, null, null), children);
-        _allChildren = (reference, children);
+        _pages.Set(new VariablesKey(reference, filter, null, null), children);
+        _allChildren = (reference, filter, children);
     }
 
-    public bool TryGetAllChildren(int reference, [NotNullWhen(true)] out IReadOnlyList<DebugVariable>? children)
+    public bool TryGetAllChildren(int reference, string? filter, [NotNullWhen(true)] out IReadOnlyList<DebugVariable>? children)
     {
-        if (_allChildren is { } slot && slot.Reference == reference)
+        if (_allChildren is { } slot && slot.Reference == reference && slot.Filter == filter)
         {
             children = slot.Children;
             return true;
         }
-        return _pages.TryGet(new VariablesKey(reference, null, null, null), out children);
+        return _pages.TryGet(new VariablesKey(reference, filter, null, null), out children);
     }
 
     public void RegisterHandle(int reference)

@@ -672,6 +672,65 @@ public class EndPassDebugTests
         Assert.DoesNotContain("root=unset", line, StringComparison.Ordinal);
     }
 
+    // ------------------------------------------------------------------ T53: an adapter (without a quirk) that ignores start and count
+
+    /// <summary>A container of 3 named and 250 indexed children whose adapter honours <c>filter</c> but ignores <c>start</c> and <c>count</c>.</summary>
+    private static void IgnoresStartAndCount(CsCode.Dap.Tests.Fakes.FakeDebugAdapter a)
+    {
+        var named = Enumerable.Range(0, 3).Select(i => new CsCode.Dap.Protocol.DapVariable { Name = "n" + i, Value = "x" }).ToList();
+        var indexed = Enumerable.Range(0, 250).Select(i => new CsCode.Dap.Protocol.DapVariable { Name = $"[{i}]", Value = i.ToString(System.Globalization.CultureInfo.InvariantCulture) }).ToList();
+        a.On("variables", r =>
+        {
+            var args = r.Args<CsCode.Dap.Protocol.DapVariablesArguments>();
+            return args.VariablesReference != 1 ? new CsCode.Dap.Protocol.DapVariablesResponse()
+                : new CsCode.Dap.Protocol.DapVariablesResponse { Variables = args.Filter switch { "indexed" => indexed, "named" => named, _ => [.. named, .. indexed] } };
+        });
+    }
+
+    private static string Span(IReadOnlyList<DebugVariable> page) => page.Count == 0 ? "" : $"{page[0].Name}..{page[^1].Name} ({page.Count})";
+
+    [Fact]
+    public async Task An_adapter_seen_ignoring_start_and_count_gets_its_pages_cut_by_the_session()
+    {
+        await using var h = await SessionHarness.StartAsync(IgnoresStartAndCount, config: Cfg.Make(type: "user-adapter"));
+        var (_, scopes) = await h.StopAndLoadAsync();
+        var reference = scopes[0].VariablesReference;
+        Assert.Equal("n0..[96] (100)", Span(await h.Session.GetVariablesAsync(reference, 0, 100, Ct)));   // the answer was all 253: detected
+        Assert.Equal("[97]..[196] (100)", Span(await h.Session.GetVariablesAsync(reference, 100, 100, Ct))); // not the first page again
+        Assert.Equal("[197]..[249] (53)", Span(await h.Session.GetVariablesAsync(reference, 200, 100, Ct)));
+        Assert.Equal(1, h.Adapter.CountOf("variables")); // the whole list was kept: one request for every page
+
+        // the next stop: whole lists are asked for at once (no start/count the adapter would ignore)
+        await h.Session.ContinueAsync(ct: Ct);
+        await h.StopAtBreakpointAsync();
+        await h.Session.GetScopesAsync((await h.Session.GetStackTraceAsync(1, ct: Ct))[0].Id, Ct);
+        Assert.Equal("[100]..[199] (100)", Span(await h.Session.GetVariablesAsync(reference, "indexed", 100, 100, Ct)));
+        var last = h.Adapter.RequestsOf("variables")[^1].Args<CsCode.Dap.Protocol.DapVariablesArguments>();
+        Assert.Equal(("indexed", (int?)null, (int?)null), (last.Filter, last.Start, last.Count));
+    }
+
+    [Fact]
+    public async Task A_later_page_that_reveals_the_adapter_ignores_count_is_asked_for_again_as_a_whole_list()
+    {
+        await using var h = await SessionHarness.StartAsync(IgnoresStartAndCount, config: Cfg.Make(type: "user-adapter"));
+        var (_, scopes) = await h.StopAndLoadAsync();
+        // the first request is a later page of the indexed children (the Variables window's "more" after a full first page of named ones)
+        Assert.Equal("[100]..[199] (100)", Span(await h.Session.GetVariablesAsync(scopes[0].VariablesReference, "indexed", 100, 100, Ct)));
+        Assert.Equal("[200]..[249] (50)", Span(await h.Session.GetVariablesAsync(scopes[0].VariablesReference, "indexed", 200, 100, Ct)));
+        Assert.Equal("n0..n2 (3)", Span(await h.Session.GetVariablesAsync(scopes[0].VariablesReference, "named", 0, 100, Ct)));
+    }
+
+    [Fact]
+    public async Task An_adapter_that_honours_paging_keeps_being_asked_for_pages()
+    {
+        await using var h = await SessionHarness.StartAsync(a =>
+            a.VariablesByReference[1] = [.. Enumerable.Range(0, 250).Select(i => new CsCode.Dap.Protocol.DapVariable { Name = $"[{i}]", Value = "0" })]);
+        var (_, scopes) = await h.StopAndLoadAsync();
+        Assert.Equal("[100]..[199] (100)", Span(await h.Session.GetVariablesAsync(scopes[0].VariablesReference, 100, 100, Ct)));
+        Assert.Equal("[0]..[99] (100)", Span(await h.Session.GetVariablesAsync(scopes[0].VariablesReference, 0, 100, Ct)));
+        Assert.All(h.Adapter.RequestsOf("variables").Select(r => r.Args<CsCode.Dap.Protocol.DapVariablesArguments>()), a => Assert.Equal(100, a.Count));
+    }
+
     // ------------------------------------------------------------------ debug-10: an adapter's error answer to stackTrace
 
     [Fact]
