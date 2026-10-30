@@ -35,6 +35,7 @@ public sealed class TerminalPanelRuntime : IDisposable
     public const string AltBufferContextKey = "terminalAltBufferActive";
     public const string HasSelectionContextKey = "terminalTextSelected";
     public const string ProcessSupportedContextKey = "terminalProcessSupported";
+    public const string SplitPaneActiveContextKey = "terminalSplitPaneActive";
 
     /// <summary>VS Code's default <c>terminal.integrated.commandsToSkipShell</c> (the subset CsCode has), plus every terminal command.</summary>
     public static readonly string[] DefaultCommandsToSkipShell =
@@ -67,8 +68,14 @@ public sealed class TerminalPanelRuntime : IDisposable
         Service = services.GetRequiredService<TerminalService>();
         Ui = services.GetService<IUiDispatcher>() ?? new AvaloniaFallbackDispatcher();
         if (Commands is { } commands) _subs.Add(TerminalCommandSet.Register(commands, this));
+        // the task commands, when a task runner is composed (checked without building it: it is built with the debugger, later)
+        var hasTasks = services.GetService<IServiceProviderIsService>()?.IsService(typeof(Core.Tasks.ITaskService)) ?? false;
+        if (hasTasks && Commands is { } taskCommands) _subs.Add(TaskCommandSet.Register(taskCommands, this));
         if (services.GetService<IContributionRegistry>() is { } contributions)
+        {
             _subs.Add(contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory, TerminalCommandSet.Keybindings));
+            if (hasTasks) _subs.Add(contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory, TaskCommandSet.Keybindings));
+        }
         _subs.Add(Service.PresentationRequested.Subscribe(p => Dispatcher.UIThread.Post(() => OnPresentation(p))));
         if (Config is { } config)
             _subs.Add(config.Changed.Subscribe(e =>
@@ -149,6 +156,9 @@ public sealed class TerminalPanelRuntime : IDisposable
 
     public bool CursorBlinking(TerminalSnapshot? snapshot) => snapshot?.CursorBlink ?? Config?.Get(TerminalSettingKeys.CursorBlinking, false) ?? false;
 
+    /// <summary>The prompt marks of shell integration are drawn ("both" and "gutter"; CsCode has no overview ruler, so that value draws none).</summary>
+    public bool CommandDecorations => (Config?.Get<string>(TerminalSettingKeys.ShellIntegrationDecorationsEnabled) ?? "both") is "both" or "gutter";
+
     public string WordSeparators => Config?.Get<string>(TerminalSettingKeys.WordSeparators) ?? TerminalSettingKeys.DefaultWordSeparators;
     public string RightClickBehavior => Config?.Get<string>(TerminalSettingKeys.RightClickBehavior) ?? "default";
     public bool CopyOnSelection => Config?.Get(TerminalSettingKeys.CopyOnSelection, false) ?? false;
@@ -208,6 +218,9 @@ public sealed class TerminalPanelRuntime : IDisposable
     }
 
     internal void SetAltBuffer(bool active) => Keys?.Set(AltBufferContextKey, active);
+
+    /// <summary><c>terminalSplitPaneActive</c>: the shown group is split (the pane keys apply).</summary>
+    internal void SetSplitPaneActive(bool split) => Keys?.Set(SplitPaneActiveContextKey, split);
 
     /// <summary>A view asks whether it should take the keyboard when it appears (a command asked for the Terminal window).</summary>
     internal bool TakeFocusRequest()
@@ -383,6 +396,10 @@ public sealed class TerminalPanelRuntime : IDisposable
             ],
             [
                 new MenuEntry("C_lear Terminal", () => Run(TerminalCommandSet.Clear)) { Icon = "clear-all", CommandId = TerminalCommandSet.Clear },
+                new MenuEntry("_Split Terminal", () => Run(TerminalCommandSet.Split)) { Icon = "split-horizontal", Gesture = Bindings?.GetLabel(TerminalCommandSet.Split), CommandId = TerminalCommandSet.Split },
+                .. (control.Session is { } shown && Service.GroupOf(shown) is { IsSplit: true }
+                    ? new[] { new MenuEntry("_Unsplit Terminal", () => Run(TerminalCommandSet.Unsplit)) { CommandId = TerminalCommandSet.Unsplit } }
+                    : []),
                 new MenuEntry("_Rename...", () => Run(TerminalCommandSet.Rename)) { CommandId = TerminalCommandSet.Rename },
                 new MenuEntry("_Kill Terminal", () => Run(TerminalCommandSet.Kill)) { Icon = "trash", CommandId = TerminalCommandSet.Kill },
             ]);

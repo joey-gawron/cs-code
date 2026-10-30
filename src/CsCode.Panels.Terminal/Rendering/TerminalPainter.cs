@@ -22,6 +22,8 @@ internal sealed class TerminalColors
     public Color CommandDefault;
     public Color CommandSuccess;
     public Color CommandError;
+    public Color FindMatch;
+    public Color FindMatchHighlight;
     public readonly Color[] Ansi = new Color[16];
     public bool BoldIsBright = true;
     public double MinimumContrast = 4.5;
@@ -38,6 +40,9 @@ internal sealed class TerminalColors
         c.CommandDefault = Get("terminalCommandDecoration.defaultBackground", Color.FromArgb(0x40, 0xff, 0xff, 0xff));
         c.CommandSuccess = Get("terminalCommandDecoration.successBackground", Color.FromRgb(0x1b, 0x81, 0xa8));
         c.CommandError = Get("terminalCommandDecoration.errorBackground", Color.FromRgb(0xf1, 0x4c, 0x4c));
+        // VS Code: the terminal's find colours default to the editor's
+        c.FindMatch = Get("terminal.findMatchBackground", Get("editor.findMatchBackground", Color.FromRgb(0x51, 0x5c, 0x6a)));
+        c.FindMatchHighlight = Get("terminal.findMatchHighlightBackground", Get("editor.findMatchHighlightBackground", Color.FromArgb(0x55, 0xea, 0x5c, 0x00)));
         var defaults = DefaultTerminalPalette.Instance;
         for (var i = 0; i < 16; i++)
         {
@@ -165,7 +170,10 @@ internal sealed class TerminalPainter : IDisposable
         return _brushes[c] = new ImmutableSolidColorBrush(c);
     }
 
-    public readonly record struct Overlay(Func<long, int, (int Start, int End)?>? Selection, (int Row, int Start, int End)? Link, bool CursorOn, bool Focused, CursorShape CursorStyle);
+    /// <param name="Decorations">Shell-integration marks beside prompts (<c>terminal.integrated.shellIntegration.decorationsEnabled</c>).</param>
+    /// <param name="FindMatches">Find's matches in view (highlighted), <paramref name="CurrentMatch"/> the one Find is on.</param>
+    public readonly record struct Overlay(Func<long, int, (int Start, int End)?>? Selection, (int Row, int Start, int End)? Link, bool CursorOn, bool Focused, CursorShape CursorStyle,
+        bool Decorations = true, IReadOnlyList<TerminalMatch>? FindMatches = null, TerminalMatch? CurrentMatch = null);
 
     public void Paint(DrawingContext ctx, TerminalSnapshot snap, TerminalColors colors, Overlay overlay, Size size)
     {
@@ -195,6 +203,15 @@ internal sealed class TerminalPainter : IDisposable
                     var (_, bg, bgDefault) = colors.Resolve(seg.Attributes, snap.ReverseVideo);
                     if (!bgDefault) ctx.FillRectangle(Brush(bg), new Rect(seg.Start * cw, 0, (seg.End - seg.Start + 1) * cw, ch));
                 }
+                if (overlay.FindMatches is { Count: > 0 } matches)
+                {
+                    // Find: every match in view, the current one stronger (VS Code's findMatchHighlight / findMatch colours)
+                    var line = snap.ViewportTop + r;
+                    foreach (var m in matches)
+                        if (m.ColumnsOn(line, snap.Columns) is { } span)
+                            ctx.FillRectangle(Brush(m == overlay.CurrentMatch ? colors.FindMatch : colors.FindMatchHighlight),
+                                new Rect(span.Start * cw, 0, (span.End - span.Start + 1) * cw, ch));
+                }
                 if (overlay.Selection?.Invoke(snap.ViewportTop + r, snap.Columns) is { } sel)
                     ctx.FillRectangle(selection, new Rect(sel.Start * cw, 0, (sel.End - sel.Start + 1) * cw, ch));
                 foreach (var seg in visual.Segments)
@@ -210,7 +227,7 @@ internal sealed class TerminalPainter : IDisposable
                     }
                     Decorate(ctx, seg, fg, colors, font);
                 }
-                if (row.Mark == RowMark.PromptStart)
+                if (row.Mark == RowMark.PromptStart && overlay.Decorations)
                 {
                     // shell integration: a mark beside each prompt, coloured by its command's exit code (VS Code's command decorations)
                     var color = row.MarkExitCode switch { null or int.MinValue => colors.CommandDefault, 0 => colors.CommandSuccess, _ => colors.CommandError };

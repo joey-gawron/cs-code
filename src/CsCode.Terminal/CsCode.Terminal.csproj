@@ -15,6 +15,16 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
   </ItemGroup>
 
+  <!-- Shell-integration scripts (docs/TERMINAL.md), shipped next to the application as shellIntegration/ (also in a publish): bash, fish
+       and pwsh read one script each; zsh reads the dot files of shellIntegration/zsh through ZDOTDIR (listed by name: they start with a dot). -->
+  <ItemGroup>
+    <None Remove="ShellIntegration/**" />
+    <None Include="ShellIntegration/cscode.bash;ShellIntegration/cscode.fish;ShellIntegration/cscode.ps1" Link="shellIntegration/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="ShellIntegration/zsh/.zshenv;ShellIntegration/zsh/.zprofile;ShellIntegration/zsh/.zshrc;ShellIntegration/zsh/cscode-integration.zsh"
+          Link="shellIntegration/zsh/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="CsCode.Terminal.Tests" />
     <InternalsVisibleTo Include="CsCode.Panels.Terminal" />

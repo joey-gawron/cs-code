@@ -198,6 +198,68 @@ public sealed class RealAppTerminalTests
     }
 
     [AvaloniaFact]
+    public async Task Injected_shell_integration_decorates_commands_by_exit_code_without_any_setup_in_the_shell()
+    {
+        await using var app = await TerminalAppHost.StartAsync();
+        await app.RunAsync(TerminalCommandSet.New);
+        Assert.True(await app.WaitForScreenAsync("$"), "no prompt: " + app.ScreenText());
+        var session = app.Terminals.ActiveSession!;
+        Assert.True(session.ShellIntegrationInjected); // the sandboxed profile is bash --noprofile --norc: injected through the first prompt
+        await session.SendTextAsync("clear");
+        foreach (var line in new[] { "true", "false" })
+        {
+            // one at a time: typed-ahead lines would be echoed out of place
+            await session.SendTextAsync(line);
+            Assert.True(await TerminalAppHost.WaitFor(() => session.LastCommand?.Command.CommandLine == line), $"'{line}' was not reported");
+        }
+        var control = app.View!.Control;
+        int RowOf(string text) => Array.FindIndex(control.Snapshot!.Rows, r => r.GetText() == text);
+        int? ExitOf(string text) => RowOf(text) is >= 0 and var row ? control.Snapshot!.Rows[row].MarkExitCode : null;
+        Assert.True(await TerminalAppHost.WaitFor(() => ExitOf("$ false") == 1 && ExitOf("$ true") == 0),
+            "the prompts carry no exit codes: " + app.ScreenText() + " / " + string.Join(",", control.Snapshot!.Rows.Select(r => $"{r.Mark}:{r.MarkExitCode}")));
+
+        // the marks are drawn left of the prompts: success and error colours differ
+        Avalonia.Media.Color MarkPixel(string text)
+        {
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            using var frame = app.Window.CaptureRenderedFrame()!;
+            var cellHeight = control.Font.CellHeight;
+            var p = control.TranslatePoint(new Avalonia.Point(Views.TerminalControl.PaddingLeft - 2, Views.TerminalControl.PaddingTop + (RowOf(text) + 0.5) * cellHeight), app.Window)!.Value;
+            return Pixel(frame, (int)p.X, (int)p.Y);
+        }
+        var success = MarkPixel("$ true");
+        var error = MarkPixel("$ false");
+        Assert.NotEqual(success, error);
+        app.Capture("terminal-shell-integration-injected");
+        await app.Get<IConfigurationService>().UpdateAsync("terminal.integrated.shellIntegration.decorationsEnabled", "never");
+        Assert.True(await TerminalAppHost.WaitFor(() => MarkPixel("$ false") != error, 5000), "decorationsEnabled=never still draws the marks");
+    }
+
+    [AvaloniaFact]
+    public async Task Ctrl_f_in_a_real_shell_highlights_every_match_and_counts_them()
+    {
+        await using var app = await TerminalAppHost.StartAsync();
+        await app.RunAsync(TerminalCommandSet.Focus);
+        Assert.True(await app.WaitForScreenAsync("$"), "no prompt: " + app.ScreenText());
+        var session = app.Terminals.ActiveSession!;
+        await session.SendTextAsync("for i in 1 2 3 4 5; do echo \"step $i: needle, haystack, needles\"; done");
+        Assert.True(await app.WaitForScreenAsync("step 5"), app.ScreenText());
+        var view = app.View!;
+        view.Control.Focus();
+        Assert.True(await TerminalAppHost.WaitFor(() => view.Control.IsKeyboardFocusWithin));
+        app.Window.KeyPress(Key.F, RawInputModifiers.Control, PhysicalKey.F, "f");
+        Assert.True(await TerminalAppHost.WaitFor(() => view.IsFindVisible && view.FindBox.IsKeyboardFocusWithin), "Ctrl+F did not open the find bar");
+        app.Window.KeyTextInput("needle");
+        // 5 lines x ("needle" + "needles"), plus the command line itself (once each); the rows in view have theirs highlighted
+        Assert.True(await TerminalAppHost.WaitFor(() => view.FindCountText == "12 of 12" && view.Control.FindMatches is { Count: > 2 } shown
+            && shown.Count == view.Control.Snapshot!.Rows.Sum(r => System.Text.RegularExpressions.Regex.Matches(r.GetText(), "needle").Count)),
+            $"{view.FindCountText} / {view.Control.FindMatches?.Count}");
+        app.Capture("terminal-find");
+        app.Window.KeyPress(Key.W, RawInputModifiers.Alt, PhysicalKey.W, "w");
+        Assert.True(await TerminalAppHost.WaitFor(() => view.FindCountText == "6 of 6"), view.FindCountText);
+    }
+
+    [AvaloniaFact]
     public async Task Confirm_on_exit_asks_after_the_main_windows_own_close_handling_and_closes_on_terminate()
     {
         await using var app = await TerminalAppHost.StartAsync(settings: new() { ["terminal.integrated.confirmOnExit"] = "always" });
@@ -263,6 +325,65 @@ public sealed class RealAppTerminalTests
         Assert.True(await app.WaitForScreenAsync("$"));
         await app.Terminals.ActiveSession!.SendTextAsync("pwd");
         Assert.True(await app.WaitForScreenAsync(folder), app.ScreenText());
+    }
+
+    [AvaloniaFact]
+    public async Task Ctrl_shift_5_splits_the_terminal_and_alt_arrows_move_between_real_shells()
+    {
+        await using var app = await TerminalAppHost.StartAsync();
+        app.Shell.Menus.Refresh();
+        var terminalMenu = app.Shell.Menus.Roots.Single(r => r.Header.Replace("_", "", StringComparison.Ordinal) == "Terminal");
+        var splitItem = terminalMenu.Children.Single(c => c.CommandId == TerminalCommandSet.Split);
+        Assert.True(splitItem.IsEnabled);
+        Assert.Equal("Ctrl+Shift+5", splitItem.Gesture);
+
+        await app.RunAsync(TerminalCommandSet.Focus);
+        Assert.True(await app.WaitForScreenAsync("$"), "no prompt: " + app.ScreenText());
+        var first = app.Terminals.ActiveSession!;
+        var work = app.Sandbox.Combine("left");
+        Directory.CreateDirectory(work);
+        await first.SendTextAsync($"cd '{work}'");
+        // the shell has really changed directory (shell integration reports it) before the split looks
+        Assert.True(await TerminalAppHost.WaitFor(() => first.CurrentDirectory == work), $"cwd {first.CurrentDirectory}");
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Control.IsKeyboardFocusWithin));
+
+        app.Window.KeyPress(Key.D5, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.Digit5, "%");
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes.Count == 2 && app.View.Panes[1].Control.IsKeyboardFocusWithin),
+            "Ctrl+Shift+5 did not split the terminal and focus the new pane");
+        var second = app.Terminals.ActiveSession!;
+        Assert.NotSame(first, second);
+        Assert.Equal(true, app.Get<IContextKeyService>().Get("terminalSplitPaneActive"));
+        // the split starts where the first shell is (splitCwd "inherited")
+        app.Window.KeyTextInput("pwd");
+        app.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes[1].Control.Snapshot is { } s
+            && s.Rows.Any(r => r.GetText() == work), 10_000), "the split did not start in the first shell's directory");
+
+        // Alt+Left: the left pane; typing goes to its shell
+        app.Window.KeyPress(Key.Left, RawInputModifiers.Alt, PhysicalKey.ArrowLeft, null);
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes[0].Control.IsKeyboardFocusWithin && ReferenceEquals(app.Terminals.ActiveSession, first)),
+            "Alt+Left did not move to the left pane");
+        app.Window.KeyTextInput("echo left-$((40+2))");
+        app.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes[0].Control.Snapshot is { } s && s.Rows.Any(r => r.GetText() == "left-42")),
+            "the left shell did not run the command");
+        Assert.DoesNotContain(app.View!.Panes[1].Control.Snapshot!.Rows, r => r.GetText().Contains("left-42", StringComparison.Ordinal));
+
+        // Ctrl+Shift+Right: the left pane grows
+        var before = app.View.Panes[0].Bounds.Width;
+        app.Window.KeyPress(Key.Right, RawInputModifiers.Control | RawInputModifiers.Shift, PhysicalKey.ArrowRight, null);
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes[0].Bounds.Width > before + 10), "Ctrl+Shift+Right did not resize the pane");
+        app.Capture("terminal-split");
+
+        // Alt+Right back; kill the right pane: the left one is all that is left and has the keyboard
+        app.Window.KeyPress(Key.Right, RawInputModifiers.Alt, PhysicalKey.ArrowRight, null);
+        Assert.True(await TerminalAppHost.WaitFor(() => ReferenceEquals(app.Terminals.ActiveSession, second)));
+        await app.RunAsync(TerminalCommandSet.Kill);
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.Panes.Count == 1 && app.View.Control.IsKeyboardFocusWithin
+            && ReferenceEquals(app.View.Control.Session, first)), "killing the right pane did not leave the left one focused");
+        Assert.Equal(false, app.Get<IContextKeyService>().Get("terminalSplitPaneActive"));
+        // without a split Alt+Left belongs to the shell again (readline gets ESC [1;3D)
+        Assert.False(app.Runtime.GoesToWorkbench(new CsCode.Core.Platform.KeyStroke("left", false, false, true, false)));
     }
 
     [AvaloniaFact]

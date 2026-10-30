@@ -2,7 +2,9 @@ using System.Text.Json;
 using CsCode.Core.Contributions;
 using CsCode.Core.Debugging;
 using CsCode.Core.Diagnostics;
+using CsCode.Core.Languages;
 using CsCode.Core.Platform;
+using CsCode.Core.Tasks;
 using CsCode.Core.Terminal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -32,6 +34,12 @@ public sealed class DapPlatform
     /// <summary>The integrated terminal, when one is composed: <c>runInTerminal</c> (kind integrated) runs the debuggee in it. Resolved lazily (the
     /// terminal module is built with the shell's tool windows, after the debug service).</summary>
     public Func<ITerminalService?>? Terminals { get; init; }
+    /// <summary>The tasks' terminal presentation, when the integrated terminal is composed: tasks then run in terminals (resolved lazily).</summary>
+    public Func<ITaskTerminalHost?>? TaskTerminals { get; init; }
+    /// <summary>Where tasks' problem matchers publish (the Error List reads it).</summary>
+    public IDiagnosticService? Diagnostics { get; init; }
+    /// <summary>The shell's view activator (a task's <c>revealProblems</c> shows the Error List), resolved lazily.</summary>
+    public Func<IViewActivator?>? Views { get; init; }
 
     public ILogger Logger(string category) => LoggerFactory?.CreateLogger(category) ?? NullLogger.Instance;
 
@@ -51,6 +59,9 @@ public sealed class DapPlatform
         Memory = sp.GetService<IMemoryMonitor>(),
         LoggerFactory = sp.GetService<ILoggerFactory>(),
         Terminals = () => sp.GetService<ITerminalService>(),
+        TaskTerminals = () => sp.GetService<ITaskTerminalHost>(),
+        Diagnostics = sp.GetService<IDiagnosticService>(),
+        Views = () => sp.GetService<IViewActivator>(),
     };
 
     /// <summary>Folder to use when a caller passes none: the first workspace folder.</summary>

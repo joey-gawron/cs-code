@@ -92,8 +92,22 @@ public sealed partial class TerminalLaunchResolver(IConfigurationService? config
         var program = options.ShellPath ?? profile!.Path;
         var file = Which(ExpandHome(program, env), env.GetValueOrDefault("PATH")) ?? throw new PtySpawnException($"The terminal program '{program}' was not found.");
         var args = options.ShellArgs ?? profile?.Args ?? [];
+        // VS Code's shell-integration injection (terminal.integrated.shellIntegration.enabled): never for a task's or a debuggee's program
+        if (!options.IsTransient && (config?.Get(TerminalSettingKeys.ShellIntegrationEnabled, true) ?? true) && ScriptsDirectory is { } scripts
+            && ShellIntegrationInjector.For(file, args, env, scripts, ShellIntegrationInjector.NewNonce()) is { } injection)
+        {
+            args = injection.Args;
+            foreach (var (k, v) in injection.Environment)
+            {
+                if (v is null) env.Remove(k);
+                else env[k] = v;
+            }
+        }
         return new PtyStartInfo(file, args.ToArray(), WorkingDirectory(options.Cwd, env), env, columns, rows);
     }
+
+    /// <summary>Where the shell-integration scripts are (next to the application by default; null: none, nothing is injected).</summary>
+    public string? ScriptsDirectory { get; set; } = ShellIntegrationInjector.DefaultScriptsDirectory();
 
     public Dictionary<string, string> Environment(TerminalCreateOptions options, TerminalProfile? profile)
     {

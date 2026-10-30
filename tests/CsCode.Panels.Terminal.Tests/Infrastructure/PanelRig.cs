@@ -64,7 +64,12 @@ public sealed class FakePtyHost : IPtyHost
     public void Resize(int columns, int rows) { lock (_gate) Sizes.Add((columns, rows)); }
     public void Kill(TimeSpan? grace = null) => Killed = true;
     public string? GetForegroundProcessName() => "fakesh";
-    public void Dispose() => Killed = true;
+
+    public void Dispose()
+    {
+        Killed = true;
+        _listener = null; // as a real host: a disposed host no longer references its terminal (the rig keeps every host)
+    }
 }
 
 /// <summary>

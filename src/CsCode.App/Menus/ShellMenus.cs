@@ -148,6 +148,7 @@ public static class ShellMenus
 
         Sub("_Terminal",
             M("_New Terminal", "workbench.action.terminal.new", icon: IconKey.Terminal),
+            M("_Split Terminal", "workbench.action.terminal.split", icon: "split-horizontal"),
             M("_Toggle Terminal", KnownCommands.ToggleTerminal),
             S,
             M("_Run Task...", "workbench.action.tasks.runTask"),

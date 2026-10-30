@@ -1,5 +1,6 @@
 using CsCode.Core.Diagnostics;
 using CsCode.Core.Platform;
+using CsCode.Core.Tasks;
 using CsCode.Core.Terminal;
 using CsCode.Terminal.Sessions;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,6 +19,9 @@ public static class ServiceCollectionExtensions
     {
         services.TryAddSingleton(sp => CreateService(sp));
         services.TryAddSingleton<ITerminalService>(sp => sp.GetRequiredService<TerminalService>());
+        // tasks run in terminals (the Dap task runner's presentation seam)
+        services.TryAddSingleton(sp => new Tasks.TaskTerminalHost(sp.GetRequiredService<TerminalService>()));
+        services.TryAddSingleton<ITaskTerminalHost>(sp => sp.GetRequiredService<Tasks.TaskTerminalHost>());
         return services;
     }
 

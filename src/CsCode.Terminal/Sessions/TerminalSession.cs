@@ -76,6 +76,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
             CurrentDirectoryChanged = dir => _cwd = dir,
             Bell = () => _bell.Fire(this),
             ClipboardWrite = text => _clipboardWrite.Fire(text),
+            CommandRecorded = OnCommandRecorded,
         };
         _worker = new Thread(WorkerLoop) { IsBackground = true, Name = $"cscode-terminal-{id}" };
         _worker.Start();
@@ -87,7 +88,36 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
     /// <summary>The emulator: touched only on this session's worker (use <see cref="Post"/> / <see cref="InvokeAsync{T}"/>).</summary>
     internal VtEmulator Emulator { get; }
 
-    public string Title => _userTitle ?? Options.Name ?? _oscTitle ?? _processName ?? "Terminal";
+    public string Title => _userTitle ?? _name ?? Options.Name ?? _oscTitle ?? _processName ?? "Terminal";
+
+    private volatile string? _name;
+
+    /// <summary>A new creator's name (a task terminal reused for another task is named after that task).</summary>
+    internal void SetName(string name)
+    {
+        _name = name;
+        _titleChanged.Fire(this);
+    }
+
+    /// <summary>
+    /// The program's raw output as the PTY delivers it (reader thread, before the emulator sees it): a task's problem matchers read it.
+    /// Must return at once.
+    /// </summary>
+    internal Action<ReadOnlySpan<byte>>? OutputTap { get; set; }
+
+    /// <summary>What is written below the output when the program exits (null: VS Code's "[The terminal process exited with code N.]").</summary>
+    internal Func<int, string>? ExitMessage { get; set; }
+
+    /// <summary>VS Code's task terminals: once the program exited, any key closes the terminal ("press any key to close it").</summary>
+    internal bool CloseOnInputAfterExit { get; set; }
+
+    private readonly Emitter<TerminalSession> _closeRequested = new();
+
+    /// <summary>A key was pressed in an exited terminal that closes on input (<see cref="CloseOnInputAfterExit"/>).</summary>
+    internal IEventSource<TerminalSession> CloseRequested => _closeRequested;
+
+    /// <summary>Writes text into the terminal as if the program had (CsCode's own messages: a task's command line). Any thread.</summary>
+    internal void WriteLocal(string text) => Post(() => Emulator.Feed(text));
     public int? ProcessId => _processId > 0 ? _processId : null;
     public bool IsTransient => Options.IsTransient;
     public bool HasExited => _hasExited;
@@ -95,6 +125,46 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
     public int? ExitCode => _hasExited ? Volatile.Read(ref _exitCode) : null;
     public string? CurrentDirectory => _cwd;
     public bool IsDisposed => _disposed;
+
+    /// <summary>The directory the program was started in.</summary>
+    public string? StartDirectory { get; private set; }
+
+    /// <summary>CsCode started the shell with its shell-integration script (the marks still depend on the shell running it).</summary>
+    public bool ShellIntegrationInjected { get; private set; }
+
+    /// <summary>The last command the shell reported finished (shell integration), with a short tail of its output; null before the first.</summary>
+    public TerminalCommandSummary? LastCommand => Volatile.Read(ref _lastCommand);
+
+    private TerminalCommandSummary? _lastCommand;
+    private readonly Emitter<TerminalCommandSummary> _commandFinished = new();
+
+    /// <summary>A command finished (shell integration; fires on the worker thread): screen readers announce it.</summary>
+    public IEventSource<TerminalCommandSummary> CommandFinished => _commandFinished;
+
+    /// <summary>On the worker, right after the emulator recorded a finished command: a bounded summary for the UI.</summary>
+    private void OnCommandRecorded(TerminalCommand command)
+    {
+        var summary = new TerminalCommandSummary(command, Emulator.CommandOutput(command, TerminalCommandSummary.MaxOutputTail, maxRows: 200) ?? "");
+        Volatile.Write(ref _lastCommand, summary);
+        _commandFinished.Fire(summary);
+    }
+
+    /// <summary>The whole output of the last command (bounded by the scrollback), read on the worker; null without shell integration.</summary>
+    public Task<string?> GetLastCommandOutputAsync() => InvokeAsync(e => e.CommandOutput());
+
+    /// <summary>The scrollback and screen as text for screen readers (VS Code's accessible buffer), read on the worker.</summary>
+    public Task<TerminalAccessibleBuffer> GetAccessibleBufferAsync() => InvokeAsync(e => e.AccessibleBuffer());
+
+    /// <summary>
+    /// The program's working directory as the kernel knows it (<c>/proc/&lt;pid&gt;/cwd</c>): right even for a shell without shell integration
+    /// that never reported a <c>cd</c>. Null when unknown (exited, no /proc). Blocking file-system read: call off the UI thread.
+    /// </summary>
+    public string? ProcessDirectory()
+    {
+        if (ProcessId is not { } pid || _hasExited || !OperatingSystem.IsLinux()) return null;
+        try { return new FileInfo($"/proc/{pid}/cwd").LinkTarget is { Length: > 0 } dir && Directory.Exists(dir) ? dir : null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
 
     /// <summary>The program's window title (OSC 0/2), if it set one.</summary>
     public string? ProgramTitle => _oscTitle;
@@ -126,6 +196,10 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
     internal void Start(PtyStartInfo info)
     {
         var host = _hostFactory();
+        // shell integration: the emulator trusts command lines reported with the nonce the shell was given (queued before any output)
+        var nonce = info.Environment.GetValueOrDefault(ShellIntegrationInjector.NonceVariable);
+        ShellIntegrationInjected = info.Environment.ContainsKey(ShellIntegrationInjector.InjectionVariable);
+        Post(() => Emulator.ShellIntegrationNonce = nonce);
         try
         {
             host.Start(info, this);
@@ -134,6 +208,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
             _processName = Path.GetFileName(info.FileName);
             _startName = host.GetForegroundProcessName() ?? _processName;
             _cwd = info.WorkingDirectory;
+            StartDirectory = info.WorkingDirectory;
         }
         catch (PtySpawnException ex)
         {
@@ -156,7 +231,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
         var old = _host;
         _host = null;
         old?.Dispose();
-        Post(() => Emulator.Feed("\e[!p\e[?1049l\e[?25h\r\n")); // whatever the last program left on: soft reset, primary screen, visible cursor
+        Post(Emulator.PrepareForNextProgram); // whatever the last program left on: primary screen, modes, visible cursor; a fresh line
         Volatile.Write(ref _exitCode, -1);
         _hasExited = false;
         Start(info);
@@ -174,6 +249,22 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
 
     /// <summary>Keystrokes and pastes for the program: queued on the host's writer (never blocks); typing scrolls the view to the bottom.</summary>
     public bool Input(ReadOnlySpan<byte> bytes, bool urgent = false)
+    {
+        if (_hasExited && CloseOnInputAfterExit && !_disposed && !bytes.IsEmpty)
+        {
+            // a finished task's terminal: the key closes it
+            CloseOnInputAfterExit = false;
+            _closeRequested.Fire(this);
+            return true;
+        }
+        return Report(bytes, urgent);
+    }
+
+    /// <summary>
+    /// Bytes the terminal reports on its own (mouse and focus reports, the wheel's cursor keys): like <see cref="Input"/>, but never the key
+    /// that closes a finished task's terminal (moving the mouse over it must not close it).
+    /// </summary>
+    public bool Report(ReadOnlySpan<byte> bytes, bool urgent = false)
     {
         if (_disposed || _host is not { } host || _hasExited) return false;
         var ok = host.Write(bytes, urgent);
@@ -270,6 +361,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
 
     void IPtyListener.OnOutput(ReadOnlySpan<byte> data)
     {
+        OutputTap?.Invoke(data);
         while (!data.IsEmpty)
         {
             var n = Math.Min(data.Length, ChunkBytes);
@@ -298,7 +390,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
             Volatile.Write(ref _exitCode, exitCode);
             _hasExited = true;
             // VS Code's wording; the buffer stays so the user can read what happened.
-            Emulator.Feed($"\e[0m\r\n[The terminal process exited with code {exitCode}.]");
+            Emulator.Feed(ExitMessage?.Invoke(exitCode) ?? $"\e[0m\r\n[The terminal process exited with code {exitCode}.]");
             Publish();
             _exited.Fire(new TerminalExitedEventArgs(this, exitCode));
             _titleChanged.Fire(this);
@@ -408,10 +500,19 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
         _exited.Clear();
         _bell.Clear();
         _clipboardWrite.Clear();
+        _commandFinished.Clear();
+        _closeRequested.Clear();
+        OutputTap = null;
     }
 
     /// <summary>Waits (tests) until the worker thread ended after <see cref="Dispose"/>.</summary>
     internal bool JoinWorker(TimeSpan timeout) => _worker.Join(timeout);
 
     public override string ToString() => $"{Id}: {Title}";
+}
+
+/// <summary>A finished command for the UI: the command (line, exit code, rows) and the end of its output (at most <see cref="MaxOutputTail"/> characters).</summary>
+public sealed record TerminalCommandSummary(TerminalCommand Command, string OutputTail)
+{
+    public const int MaxOutputTail = 4096;
 }

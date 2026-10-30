@@ -191,9 +191,11 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   `${selectedText}` needs the shell to implement the optional `IActiveSelectionProvider`; without it it resolves to an empty string.
 * `ITaskService`/`TaskService`: `shell` and `process` tasks, `command`, `args`, `options.cwd/env/shell`, `dependsOn` (+ `dependsOrder`),
   `group` (string or `{kind,isDefault}`), platform blocks, the same substitution, output to the `Tasks` channel (bounded, batched), exit-code
-  success, cancellation kills the process tree, cycle detection. Problem matchers are accepted in any shape and ignored. Shell tasks run
-  via `/bin/sh -c` (`cmd /d /c` on Windows) with POSIX quoting of args. `preLaunchTask`/`postDebugTask` use it; a failed `preLaunchTask` offers
-  "Debug Anyway".
+  success, cancellation kills the process tree, cycle detection. Problem matchers (`$msCompile`, `$tsc`, `$gcc`, `$rustc`, `$eslint-*`,
+  custom ones) feed the Error List (`ProblemMatchers.cs`, `DapPlatform.Diagnostics`). Shell tasks run via `/bin/sh -c` (`cmd /d /c` on
+  Windows) with POSIX quoting of args. With the integrated terminal composed (`DapPlatform.TaskTerminals`, the Core seam `ITaskTerminalHost`)
+  a task runs in a terminal named after it following its `presentation` (`TaskService.Terminal.cs`; details in docs/TERMINAL.md, "Tasks in
+  terminals"). `preLaunchTask`/`postDebugTask` use it; a failed `preLaunchTask` offers "Debug Anyway".
 
 ## netcoredbg and other adapters
 

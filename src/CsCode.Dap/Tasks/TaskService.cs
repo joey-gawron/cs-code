@@ -15,11 +15,13 @@ namespace CsCode.Dap.Tasks;
 /// Minimum-viable <c>tasks.json</c> runner (<c>.cscode/</c> then <c>.vscode/</c>): <c>shell</c> and <c>process</c> tasks, <c>command</c>,
 /// <c>args</c>, <c>options.cwd/env</c>, <c>dependsOn</c> (+ <c>dependsOrder</c> sequence/parallel), <c>group</c>, platform blocks, the same
 /// <c>${…}</c> substitution as launch.json. Output streams (batched, bounded) to the "Tasks" output channel; success = exit code 0;
-/// cancelling kills the whole process tree. Problem matchers are accepted and ignored. Task processes (a preLaunchTask's <c>tsc</c>,
-/// <c>cargo build</c>…) are reported to <see cref="CsCode.Core.Diagnostics.IMemoryMonitor.TrackChildProcess"/>, and <see cref="Dispose"/> (app
-/// shutdown) kills every task still running, with its process tree.
+/// cancelling kills the whole process tree. With the integrated terminal composed (<see cref="DapPlatform.TaskTerminals"/>) a task runs in a
+/// terminal named after it instead, following its <c>presentation</c> (TaskService.Terminal.cs). Problem matchers feed the Error List either
+/// way (ProblemMatchers.cs). Task processes (a preLaunchTask's <c>tsc</c>, <c>cargo build</c>…) are reported to
+/// <see cref="CsCode.Core.Diagnostics.IMemoryMonitor.TrackChildProcess"/>, and <see cref="Dispose"/> (app shutdown) kills every task still
+/// running, with its process tree.
 /// </summary>
-public sealed class TaskService : ITaskService, IDisposable
+public sealed partial class TaskService : ITaskService, IDisposable
 {
     public const string ChannelName = "Tasks";
     private static readonly string[] Locations = [".cscode/tasks.json", ".vscode/tasks.json"];
@@ -58,6 +60,7 @@ public sealed class TaskService : ITaskService, IDisposable
         Process[] running;
         lock (_running) running = [.. _running];
         foreach (var p in running) KillTree(p);
+        TerminateTerminalRuns();
     }
 
     public TaskService(DebugLane lane, DapPlatform platform)
@@ -69,7 +72,8 @@ public sealed class TaskService : ITaskService, IDisposable
 
     private sealed record TaskModel(
         string Label, string Type, string? Command, IReadOnlyList<string> Args, string? Cwd, IReadOnlyDictionary<string, string> Env,
-        string? ShellExecutable, IReadOnlyList<string> ShellArgs, IReadOnlyList<string> DependsOn, bool Sequence, string? Group, bool IsDefault, string? Detail);
+        string? ShellExecutable, IReadOnlyList<string> ShellArgs, IReadOnlyList<string> DependsOn, bool Sequence, string? Group, bool IsDefault, string? Detail,
+        JsonObject? Presentation = null, JsonNode? ProblemMatcher = null);
 
     private sealed record TasksFile(IReadOnlyList<TaskModel> Tasks, IReadOnlyDictionary<string, JsonElement> Inputs);
 
@@ -151,7 +155,9 @@ public sealed class TaskService : ITaskService, IDisposable
                     depends,
                     string.Equals(t["dependsOrder"]?.GetValue<string>(), "sequence", StringComparison.OrdinalIgnoreCase),
                     group, isDefault,
-                    t["detail"]?.GetValue<string>()));
+                    t["detail"]?.GetValue<string>(),
+                    MergePresentation(root["presentation"] as JsonObject, t["presentation"] as JsonObject),
+                    t["problemMatcher"]?.DeepClone()));
             }
         return new TasksFile(tasks, inputs);
     }
@@ -236,7 +242,8 @@ public sealed class TaskService : ITaskService, IDisposable
             StandardErrorEncoding = Encoding.UTF8,
         };
         if (cwd is not null && Directory.Exists(cwd)) psi.WorkingDirectory = cwd;
-        foreach (var (k, v) in task.Env) psi.Environment[k] = await resolver.ResolveAsync(v, ct);
+        var taskEnv = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var (k, v) in task.Env) psi.Environment[k] = taskEnv[k] = await resolver.ResolveAsync(v, ct);
 
         if (string.Equals(task.Type, "process", StringComparison.OrdinalIgnoreCase))
         {
@@ -259,6 +266,10 @@ public sealed class TaskService : ITaskService, IDisposable
             psi.ArgumentList.Add(line);
         }
 
+        var problems = StartProblemMatchers(task, folderPath, psi.WorkingDirectory is { Length: > 0 } wd ? wd : folderPath);
+        if (_p.TaskTerminals?.Invoke() is { } terminals)
+            return await ExecuteInTerminalAsync(terminals, task, psi, taskEnv, channel, problems, ct);
+
         channel?.AppendLine($"> Executing task: {task.Label} <");
         Process process;
         try { process = await Task.Run(() => Process.Start(psi) ?? throw new InvalidOperationException("the process did not start"), ct); }
@@ -278,7 +289,7 @@ public sealed class TaskService : ITaskService, IDisposable
             var pumps = new List<BoundedTextPump>();
             var readers = new[] { process.StandardOutput, process.StandardError }.Select(r =>
             {
-                var pump = new BoundedTextPump(_lane, text => channel?.Append(text));
+                var pump = new BoundedTextPump(_lane, text => { channel?.Append(text); problems?.Append(text); });
                 pumps.Add(pump);
                 return PumpAsync(r, pump);
             }).ToArray();
@@ -297,7 +308,13 @@ public sealed class TaskService : ITaskService, IDisposable
             }
             catch (TimeoutException) { /* a grandchild keeps the pipes open: the task itself has finished */ }
 
+            if (problems is not null)
+            {
+                await DrainLaneAsync(); // the pumps' last flushes are queued on the lane: the matchers see all output first
+                problems.Complete();
+            }
             if (Volatile.Read(ref _disposed) != 0) return new TaskResult(task.Label, -1, Cancelled: true); // killed by the shutdown
+            await RevealProblemsAsync(task, problems);
             channel?.AppendLine($"> Task '{task.Label}' finished with exit code {process.ExitCode}.");
             return new TaskResult(task.Label, process.ExitCode);
         }
