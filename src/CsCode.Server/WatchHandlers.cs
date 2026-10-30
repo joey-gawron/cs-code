@@ -8,7 +8,8 @@ namespace CsCode.Server;
 
 /// <summary>
 /// <c>watch/*</c>: client watches become Platform <see cref="IFileWatcher"/> watches on the server (recursive, debounced, exclude-aware, missing
-/// roots wait); each delivered batch is sent as one <c>watch/changes</c> notification with paths. All watches end with the connection.
+/// roots wait); each delivered batch is sent as one <c>watch/changes</c> notification with paths. All watches end with the server. A client that
+/// reconnected to a persistent server re-arms its watches with the same ids: the new watch replaces the old one.
 /// </summary>
 internal sealed class WatchHandlers(IFileWatcher watcher) : IDisposable
 {
@@ -17,11 +18,11 @@ internal sealed class WatchHandlers(IFileWatcher watcher) : IDisposable
 
     public int Count => _watches.Count;
 
-    public void Register(RpcPeer peer)
+    public void Register(IRpcEndpoint peer)
     {
         peer.OnRequest<WatchStartParams, Empty>(RemoteMethods.WatchStart, async (p, ct) =>
         {
-            if (_watches.Count >= MaxWatches) throw new RemoteException(RpcErrorCodes.Busy, $"More than {MaxWatches} watches");
+            if (_watches.Count >= MaxWatches && !_watches.ContainsKey(p.WatchId)) throw new RemoteException(RpcErrorCodes.Busy, $"More than {MaxWatches} watches");
             var root = FileUri.FromDirectoryPath(FileSystemHandlers.Uri(p.Root).LocalPath);
             var id = p.WatchId;
             var handle = watcher.Watch(root, p.Recursive, p.Excludes, changes =>
@@ -34,11 +35,8 @@ internal sealed class WatchHandlers(IFileWatcher watcher) : IDisposable
                 }
                 if (wire.Count > 0) peer.Notify(RemoteMethods.WatchChanges, new WatchChangesParams(id, wire));
             });
-            if (!_watches.TryAdd(id, handle))
-            {
-                handle.Dispose();
-                throw new ArgumentException($"Duplicate watch id '{id}'");
-            }
+            if (_watches.TryRemove(id, out var replaced)) replaced.Dispose(); // re-armed after a reconnect
+            _watches[id] = handle;
             // Answer once the OS watch is armed (events before that are not reported), so the client knows from when on it sees changes.
             if (handle is FileWatchHandle armed)
                 await Task.WhenAny(armed.Ready, Task.Delay(TimeSpan.FromSeconds(10), ct)).ConfigureAwait(false);

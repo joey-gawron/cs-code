@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using CsCode.Core.Diagnostics;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
@@ -27,6 +28,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
     private readonly Func<IPtyHost> _hostFactory;
     private readonly DisposableStore _subscriptions = new();
     private readonly Dictionary<TerminalSession, DisposableStore> _perTerminal = new();
+    private readonly ConditionalWeakTable<TerminalSession, BackendLauncher> _backends = new();
     private readonly Emitter<ITerminal> _created = new();
     private readonly Emitter<TerminalExitedEventArgs> _exited = new();
     private readonly Emitter<ITerminal> _removed = new();
@@ -50,6 +52,12 @@ public sealed class TerminalService : ITerminalService, IDisposable
     }
 
     public TerminalLaunchResolver Resolver { get; }
+
+    /// <summary>
+    /// Where terminals run when not on this machine (the Remote module's provider: a remote workspace's terminals run on its server). Asked for every
+    /// new terminal; null, or a null answer, means a local PTY. Set by the container (resolved lazily, on the first terminal).
+    /// </summary>
+    public Func<ITerminalBackendProvider?>? Backends { get; set; }
 
     /// <summary>Theme colours for OSC 10/11/12/4 answers (set by the panel from the colour theme; any thread).</summary>
     public ITerminalPalette Palette { get; set; } = DefaultTerminalPalette.Instance;
@@ -96,7 +104,9 @@ public sealed class TerminalService : ITerminalService, IDisposable
         }
         int id;
         lock (_gate) id = ++_nextId;
-        var session = new TerminalSession(id, options, _hostFactory, EmulatorOptions(), columns, rows);
+        var backend = Backends?.Invoke() is { } provider && provider.TryCreate(options) is { } first ? new BackendLauncher(provider, options, first) : null;
+        var session = new TerminalSession(id, options, backend is null ? _hostFactory : backend.CreateHost, EmulatorOptions(), columns, rows);
+        if (backend is not null) _backends.Add(session, backend);
         var subs = new DisposableStore();
         subs.Add(session.TitleChanged.Subscribe(s => _titleChanged.Fire(s)));
         subs.Add(session.Exited.Subscribe(e => _exited.Fire(e)));
@@ -114,7 +124,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
 
     private PtyStartInfo? Resolve(TerminalCreateOptions options, int columns, int rows, TerminalSession session)
     {
-        try { return Resolver.Resolve(options, columns, rows); }
+        try { return _backends.TryGetValue(session, out var backend) ? backend.Start(columns, rows) : Resolver.Resolve(options, columns, rows); }
         catch (Exception ex) when (ex is PtySpawnException or IOException or UnauthorizedAccessException)
         {
             // Shown in the terminal itself: a program that cannot be found makes a terminal that exited at once, with the reason.
@@ -125,7 +135,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
 
     private void Track(TerminalSession session)
     {
-        if (_memory is null || session.ProcessId is not { } pid) return;
+        if (_memory is null || session.ProcessId is not { } pid || _backends.TryGetValue(session, out _)) return; // a remote pid is not ours to account
         var tracked = _memory.TrackChildProcess($"terminal {session.Id}", pid);
         lock (_gate)
         {

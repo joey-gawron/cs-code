@@ -43,7 +43,7 @@ internal sealed class FileSystemHandlers : IDisposable
 
     public int ActiveUploads => _uploads.Count;
 
-    public void Register(RpcPeer peer)
+    public void Register(IRpcEndpoint peer)
     {
         peer.OnRequest<PathParams, WireStat?>(RemoteMethods.FsStat, async (p, ct) => await StatAsync(p.Path, ct).ConfigureAwait(false));
         peer.OnRequest<PathParams, ReadDirResult>(RemoteMethods.FsReadDir, async (p, ct) =>

@@ -224,6 +224,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             Settings = SettingsFor(final),
             StartChild = StartChildAsync,
             Quirks = _builtins.GetValueOrDefault(final.Type)?.Quirks ?? DebugAdapterQuirks.None,
+            PathMapper = _p.PathMapper,
         });
         Attach(session, final.PostDebugTask, folder, group, configuration.Type);
         try

@@ -318,6 +318,8 @@ public sealed partial class DebugSession
         if (source is null) return null;
         try
         {
+            // A remote workspace's adapter reports paths on the remote host: they map back to the workspace's URIs.
+            if (_o.PathMapper is { } mapper && source.Path is { Length: > 0 } path && mapper.ToUri(path, Configuration.WorkspaceFolder) is { } remote) return remote;
             if (source.ToUri() is { } file) return file;
         }
         catch (UriFormatException) { }

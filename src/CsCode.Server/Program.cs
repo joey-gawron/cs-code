@@ -16,11 +16,15 @@ internal static class Program
         }
         if (options.ShowVersion) { Console.WriteLine($"cscode-server {ServerHost.Version} (protocol v{RemoteProtocol.Version})"); return 0; }
         if (options.Askpass) return AskpassClient.Run(options.AskpassPrompt ?? "", Console.Out, Console.Error);
+        if (options.Daemon is not null) return await ServerDaemon.RunAsync(options).ConfigureAwait(false);
 
         // stdout carries the protocol and nothing else: anything that writes to Console.Out (a library, a stray debug line) goes to stderr instead.
         var stdout = Console.OpenStandardOutput();
         var stdin = Console.OpenStandardInput();
         Console.SetOut(Console.Error);
+
+        // R4: ssh runs a relay to the session's persistent server, which outlives this connection.
+        if (options.Persist is not null) return ServerRelay.Run(options, stdin, stdout);
 
         ServerHost host;
         try

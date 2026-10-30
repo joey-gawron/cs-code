@@ -32,6 +32,10 @@ public sealed class DapPlatform
     /// <summary>The integrated terminal, when one is composed: <c>runInTerminal</c> (kind integrated) runs the debuggee in it. Resolved lazily (the
     /// terminal module is built with the shell's tool windows, after the debug service).</summary>
     public Func<ITerminalService?>? Terminals { get; init; }
+    /// <summary>URIs of a remote workspace ⇄ the paths its adapters use (the Remote module's mapper); resolved lazily, optional.</summary>
+    public Func<IDebugPathMapper?>? PathMappers { get; init; }
+
+    public IDebugPathMapper? PathMapper => PathMappers?.Invoke();
 
     public ILogger Logger(string category) => LoggerFactory?.CreateLogger(category) ?? NullLogger.Instance;
 
@@ -51,6 +55,7 @@ public sealed class DapPlatform
         Memory = sp.GetService<IMemoryMonitor>(),
         LoggerFactory = sp.GetService<ILoggerFactory>(),
         Terminals = () => sp.GetService<ITerminalService>(),
+        PathMappers = () => sp.GetService<IDebugPathMapper>(),
     };
 
     /// <summary>Folder to use when a caller passes none: the first workspace folder.</summary>
@@ -65,12 +70,15 @@ public sealed class DapPlatform
         var doc = Navigation?.ActiveDocument;
         var window = Window;
         var commands = Commands;
+        var mapper = PathMapper;
+        // A remote workspace's folders and files resolve to their paths on the remote host (where its adapters and tasks run).
+        string? DirOf(Uri u) => u.IsFile ? NormalizeDir(u.LocalPath) : mapper?.ToAdapterPath(u) is { } p ? NormalizeDir(p) : null;
         return new VariableContext
         {
-            WorkspaceFolder = folderUri is { IsFile: true } f ? NormalizeDir(f.LocalPath) : null,
-            WorkspaceFolderByName = name => Workspace?.Folders.Where(u => u.IsFile).Select(u => NormalizeDir(u.LocalPath))
+            WorkspaceFolder = folderUri is { } f ? DirOf(f) : null,
+            WorkspaceFolderByName = name => Workspace?.Folders.Select(DirOf).OfType<string>()
                 .FirstOrDefault(p => string.Equals(Path.GetFileName(p), name, StringComparison.Ordinal)),
-            ActiveFile = doc is { Uri.IsFile: true } ? doc.Uri.LocalPath : null,
+            ActiveFile = doc is null ? null : doc.Uri.IsFile ? doc.Uri.LocalPath : mapper?.ToAdapterPath(doc.Uri),
             ActiveLine = doc is not null && Navigation?.ActiveCaret is { } caret ? caret.Line + 1 : null,
             SelectedText = Selection is null ? null : () => Selection.SelectedText,
             Cwd = Environment.CurrentDirectory,

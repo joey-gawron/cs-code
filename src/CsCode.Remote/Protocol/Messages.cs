@@ -1,6 +1,9 @@
 using System.Text.Json;
+using CsCode.Core.Debugging;
 using CsCode.Core.Languages;
 using CsCode.Core.Platform;
+using CsCode.Core.Tasks;
+using CsCode.Core.Terminal;
 using CsCode.Core.Text;
 
 namespace CsCode.Remote.Protocol;
@@ -8,7 +11,8 @@ namespace CsCode.Remote.Protocol;
 /// <summary>Protocol constants. Bump <see cref="Version"/> on any incompatible change; client and server refuse a mismatch at the handshake.</summary>
 public static class RemoteProtocol
 {
-    public const int Version = 1;
+    /// <summary>v2: byte channels (terminals, debug adapters), tasks, persistent servers (R3/R4).</summary>
+    public const int Version = 2;
 
     /// <summary>The server writes this line on stdout before the framed stream starts; the client skips whatever a login shell printed before it.</summary>
     public const string Greeting = "CSCODE-SERVER-READY v1";
@@ -20,6 +24,14 @@ public static class RemoteProtocol
         public const string Languages = "languages";
         public const string Search = "search";
         public const string Watch = "watch";
+        /// <summary>Remote terminals (a PTY on the server), R3.</summary>
+        public const string Terminals = "terminals";
+        /// <summary>Debug adapters run on the server, their DAP stream tunnelled over the connection, R3.</summary>
+        public const string Debug = "debug";
+        /// <summary>tasks.json tasks run on the server, R3.</summary>
+        public const string Tasks = "tasks";
+        /// <summary>The server outlives a dropped connection (grace period) and the client reattaches to it, R4.</summary>
+        public const string Persistent = "persistent";
     }
 }
 
@@ -95,12 +107,50 @@ public static class RemoteMethods
     public const string NavApplyEdit = "nav/applyEdit";
     /// <summary>server → client: text appended to one of the server's output channels (bounded, coalesced).</summary>
     public const string OutputAppend = "output/append";
+
+    // ---- R3/R4: byte channels — terminals and debug adapters — resumable across reconnects (offsets) with flow control (acks)
+    /// <summary>Both ways (notification): bytes of a channel at an absolute offset.</summary>
+    public const string ChanData = "chan/data";
+    /// <summary>client → server (notification): the client consumed the channel's output up to an offset (flow control).</summary>
+    public const string ChanAck = "chan/ack";
+    /// <summary>server → client (notification): the channel's source ended after its last byte (exit code / reason).</summary>
+    public const string ChanClosed = "chan/closed";
+    /// <summary>client → server: end the channel's source (kill the process, SIGHUP then SIGKILL after the grace period).</summary>
+    public const string ChanClose = "chan/close";
+    /// <summary>client → server after a reconnect: resume a channel from the client's received offset (the server replays what was missed).</summary>
+    public const string ChanAttach = "chan/attach";
+    /// <summary>client → server after a reconnect: the channels the client still has; the server ends every other one.</summary>
+    public const string ChanKeep = "chan/keep";
+
+    public const string TermCreate = "term/create";
+    /// <summary>client → server (notification): the terminal's window size.</summary>
+    public const string TermResize = "term/resize";
+    /// <summary>The terminal's foreground process (read on the server).</summary>
+    public const string TermInfo = "term/info";
+
+    /// <summary>The server runs its own debug configuration providers for a type (they see the server's file system).</summary>
+    public const string DapResolve = "dap/resolve";
+    /// <summary>Starts the debug adapter for a configuration on the server; its DAP stream becomes a channel.</summary>
+    public const string DapStart = "dap/start";
+    /// <summary>A second connection to an adapter server started by <see cref="DapStart"/> (js-debug's child sessions).</summary>
+    public const string DapConnect = "dap/connect";
+
+    public const string TaskList = "task/list";
+    public const string TaskStart = "task/start";
+    /// <summary>Long poll: completes with the task's result (re-issued after a reconnect; the task keeps running on the server).</summary>
+    public const string TaskWait = "task/wait";
+    public const string TaskCancel = "task/cancel";
+
+    /// <summary>client → server after a reconnect: the documents the client still has open; the server closes the others.</summary>
+    public const string DocKeep = "doc/keep";
 }
 
 // ------------------------------------------------------------------------------------------------------------------- handshake
 
 public sealed record HelloParams(int ProtocolVersion, string ClientVersion, IReadOnlyList<string> Capabilities, string Mode);
 
+/// <param name="InstanceId">Random per server process: a reconnect that finds the same id resumed the same server (its terminals, debug adapters,
+/// tasks and language servers kept running).</param>
 public sealed record HelloResult(
     int ProtocolVersion,
     string ServerVersion,
@@ -109,11 +159,21 @@ public sealed record HelloResult(
     int ProcessId,
     string Home,
     string DataDir,
-    IReadOnlyList<string> Capabilities);
+    IReadOnlyList<string> Capabilities,
+    string? InstanceId = null);
 
 public sealed record OpenDocumentInfo(Uri Uri, int Version, int Length);
 
-public sealed record ServerStatus(IReadOnlyList<OpenDocumentInfo> Documents, int Watches, int Searches, int Uploads, int Registrations, long ManagedBytes, int Threads);
+public sealed record ServerStatus(IReadOnlyList<OpenDocumentInfo> Documents, int Watches, int Searches, int Uploads, int Registrations, long ManagedBytes, int Threads)
+{
+    public int Terminals { get; init; }
+    public int DebugAdapters { get; init; }
+    public int Channels { get; init; }
+    public int RunningTasks { get; init; }
+    /// <summary>Client connections this server process has served (more than one: a persistent server that was reconnected to).</summary>
+    public int Connections { get; init; }
+    public string? InstanceId { get; init; }
+}
 
 // ------------------------------------------------------------------------------------------------------------------- file system
 
@@ -293,6 +353,41 @@ public sealed record NavOpenParams(Uri Uri, TextRange? Selection, bool Preview, 
 public sealed record NavApplyEditParams(WorkspaceEdit Edit, string? Label);
 
 public sealed record OutputAppendParams(string Channel, string Text);
+
+// ------------------------------------------------------------------------------------------------------------------- channels (R3/R4)
+
+public sealed record ChanDataParams(long Id, long Offset, Payload Data);
+public sealed record ChanAckParams(long Id, long Offset);
+/// <param name="FinalOffset">Total bytes the channel produced (the client has everything once it received up to here).</param>
+public sealed record ChanClosedParams(long Id, long FinalOffset, int? ExitCode, string? Reason);
+public sealed record ChanCloseParams(long Id, int GraceMs);
+public sealed record ChanIdParams(long Id);
+public sealed record ChanAttachParams(long Id, long ReceivedOffset);
+/// <param name="Exists">False: the server no longer has the channel (it was resumed by a different server, or ended long ago).</param>
+/// <param name="ServerReceived">Bytes of client input the server has accepted (the client resends from there).</param>
+/// <param name="LostBytes">Output that fell out of the server's replay buffer while nobody was connected.</param>
+public sealed record ChanAttachResult(bool Exists, long ServerReceived, long LostBytes);
+public sealed record ChanKeepParams(IReadOnlyList<long> Ids);
+
+public sealed record TermCreateParams(TerminalCreateOptions Options, int Columns, int Rows);
+public sealed record TermCreateResult(long Channel, int ProcessId, string Program, string WorkingDirectory);
+public sealed record TermResizeParams(long Id, int Columns, int Rows);
+public sealed record TermInfoResult(string? ForegroundProcess);
+
+public sealed record DapResolveParams(Uri? Folder, DebugConfiguration Configuration);
+/// <summary>The configuration as the server's providers left it; null = a provider aborted the launch.</summary>
+public sealed record DapResolveResult(DebugConfiguration? Configuration);
+public sealed record DapStartParams(DebugConfiguration Configuration);
+/// <param name="Shareable">The adapter is a server a child session can connect to again (<see cref="RemoteMethods.DapConnect"/>).</param>
+public sealed record DapStartResult(long Channel, int? ProcessId, string Description, bool Shareable);
+public sealed record DapConnectParams(long Parent);
+
+public sealed record TaskListParams(Uri? Folder);
+public sealed record TaskStartParams(string Label, Uri? Folder);
+public sealed record TaskRunParams(string RunId);
+public sealed record TaskResultWire(TaskResult Result);
+
+public sealed record DocKeepParams(IReadOnlyList<Uri> Uris);
 
 /// <summary>Empty params/result.</summary>
 public sealed record Empty

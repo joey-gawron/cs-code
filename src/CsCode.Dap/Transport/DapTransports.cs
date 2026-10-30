@@ -43,6 +43,7 @@ public static class DapTransportFactory
             DebugAdapterServer server => await TcpTransport.ConnectAsync(server.Host, server.Port, connectTimeout, ct).ConfigureAwait(false),
             DebugAdapterNamedPipe pipe => await PipeTransport.ConnectAsync(pipe.Path, connectTimeout, ct).ConfigureAwait(false),
             DebugAdapterServerProcess server => await ServerProcessTransport.StartAsync(server, logger, ct).ConfigureAwait(false),
+            DebugAdapterStreamDescriptor stream => await StreamTransport.ConnectAsync(stream, ct).ConfigureAwait(false), // a remote workspace's adapter
             _ => throw new NotSupportedException($"Unknown debug adapter descriptor {descriptor.GetType().Name}"),
         };
 
@@ -56,6 +57,7 @@ public static class DapTransportFactory
         ServerProcessTransport s => s.Endpoint,
         TcpTransport t => new DebugAdapterServer(t.Host, t.Port),
         PipeTransport p => new DebugAdapterNamedPipe(p.Path),
+        StreamTransport s => s.SharedEndpoint,
         _ => null,
     };
 }

@@ -51,6 +51,11 @@ public sealed record DebugSessionOptions(
     public DebugAdapterQuirks Quirks { get; init; } = DebugAdapterQuirks.None;
     /// <summary>The integrated terminal for <c>runInTerminal</c> (null, or null returned: the debuggee runs piped into the Debug Console).</summary>
     public Func<ITerminalService?>? Terminals { get; init; }
+    /// <summary>
+    /// URIs ⇄ adapter paths for a session of a workspace that is not on this machine (a remote workspace: the adapter runs there and speaks its
+    /// paths); null or unhandled URIs keep the <c>file:</c> rules.
+    /// </summary>
+    public IDebugPathMapper? PathMapper { get; init; }
 }
 
 /// <summary>A <c>variablesReference</c>/frame id was used after the debuggee resumed (handles only live while stopped).</summary>

@@ -54,7 +54,7 @@ internal sealed class SearchHandlers : IDisposable
         public void Dispose() { try { Cts.Cancel(); } catch (ObjectDisposedException) { } }
     }
 
-    public void Register(RpcPeer peer)
+    public void Register(IRpcEndpoint peer)
     {
         peer.OnRequest<SearchFilesParams, SearchSession>(RemoteMethods.SearchFiles, (p, _) => ValueTask.FromResult(Start(s => ProduceFilesAsync(p, s))));
         peer.OnRequest<SearchTextParams, SearchSession>(RemoteMethods.SearchText, (p, _) =>
