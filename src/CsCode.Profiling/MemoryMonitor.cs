@@ -283,7 +283,7 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
         var nowMs = NowMs();
         MemoryPressureDecision decision;
         lock (_policyGate) decision = _policy.Evaluate(nowMs, snapshot.WorkingSetBytes, Interlocked.Read(ref _budgetBytes));
-        if (decision.SustainedGrowth && decision.Level is null && nowMs - _growthLoggedAt > _options.Policy.GrowthWindow.TotalMilliseconds)
+        if (ShouldLogGrowth(decision, nowMs - _createdAt * 1000 / Stopwatch.Frequency, nowMs - _growthLoggedAt, _options))
         {
             _growthLoggedAt = nowMs;
             _log?.LogWarning("Memory is growing steadily: working set {WorkingSetMb} MB ({Reason})", snapshot.WorkingSetBytes / 1024 / 1024, decision.Reason);
@@ -295,6 +295,15 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
         }
         CheckChildren(nowMs, aggressive: decision.Level == MemoryTrimLevel.Aggressive);
     }
+
+    /// <summary>
+    /// Whether a sample's sustained growth goes to the log: not when the policy acts on it anyway (a trim is logged), not within
+    /// <see cref="MemoryMonitorOptions.GrowthLogGrace"/> of start, and at most once per growth window.
+    /// </summary>
+    internal static bool ShouldLogGrowth(MemoryPressureDecision decision, long sinceStartMs, long sinceLastLoggedMs, MemoryMonitorOptions options) =>
+        decision.SustainedGrowth && decision.Level is null
+        && sinceStartMs >= options.GrowthLogGrace.TotalMilliseconds
+        && sinceLastLoggedMs > options.Policy.GrowthWindow.TotalMilliseconds;
 
     private MemorySnapshot Sample()
     {

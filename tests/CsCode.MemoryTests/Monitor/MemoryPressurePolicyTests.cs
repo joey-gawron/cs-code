@@ -110,4 +110,20 @@ public sealed class MemoryPressurePolicyTests
         Assert.True(d.SustainedGrowth);
         Assert.Null(d.Level);
     }
+
+    // From the desktop: "Memory is growing steadily: working set 472 MB" 62 s into a session, every session — the startup ramp, not a leak.
+    [Fact]
+    public void The_startup_ramp_is_not_logged_as_steady_growth_but_later_growth_is()
+    {
+        var policy = new MemoryPressurePolicy();
+        MemoryPressureDecision decision = default;
+        for (long t = 0; t <= 62_000; t += 2_000) decision = policy.Evaluate(t, 300 * Mb + t * 3 * Mb / 1000, 0); // ~180 MB a minute
+        Assert.True(decision.SustainedGrowth);
+        var options = new MemoryMonitorOptions();
+
+        Assert.False(MemoryMonitor.ShouldLogGrowth(decision, sinceStartMs: 62_000, sinceLastLoggedMs: long.MaxValue / 2, options));
+        Assert.True(MemoryMonitor.ShouldLogGrowth(decision, sinceStartMs: 4 * 60_000, sinceLastLoggedMs: long.MaxValue / 2, options));
+        Assert.False(MemoryMonitor.ShouldLogGrowth(decision, sinceStartMs: 4 * 60_000, sinceLastLoggedMs: 60_000, options)); // once per window
+        Assert.False(MemoryMonitor.ShouldLogGrowth(decision with { Level = MemoryTrimLevel.Aggressive }, 4 * 60_000, long.MaxValue / 2, options));
+    }
 }

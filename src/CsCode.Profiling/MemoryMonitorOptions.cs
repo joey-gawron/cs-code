@@ -23,6 +23,11 @@ public sealed record MemoryMonitorOptions
     /// typescript-language-server, a debuggee under its adapter); the members' resident sets are read on every sample, the tree only this often.
     /// </summary>
     public TimeSpan ChildTreeRescanInterval { get; init; } = TimeSpan.FromSeconds(10);
+    /// <summary>
+    /// Sustained growth is not logged this soon after start: opening a folder, loading grammars and starting language servers grow the
+    /// working set steadily by design, and the warning used to fire about a minute into every session.
+    /// </summary>
+    public TimeSpan GrowthLogGrace { get; init; } = TimeSpan.FromMinutes(3);
     public MemoryPolicyOptions Policy { get; init; } = new();
 }
 
