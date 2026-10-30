@@ -279,11 +279,23 @@ public sealed class GlobRegexTests
     {
         var patterns = Enumerable.Range(0, 40).Select(i => $@"^(?:.*/)?[^/]*\.ext{i}$").ToArray();
         GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
-        var before = GC.GetTotalMemory(true);
+        var before = LiveHeap();
         var compiled = patterns.Select(GlobRegex.Compile).ToArray();
         foreach (var m in compiled) foreach (var p in new[] { "/a/b.ext1", "/x/y/z.cs", "q.ext39" }) m.IsMatch(p);
-        var perPattern = (GC.GetTotalMemory(true) - before) / (double)patterns.Length;
+        var perPattern = (LiveHeap() - before) / (double)patterns.Length;
         GC.KeepAlive(compiled);
         Assert.True(perPattern < 2048, $"{perPattern:F0} B per compiled pattern"); // NonBacktracking kept ~150 KB
+    }
+
+    /// <summary>
+    /// The live heap after a full collection: <see cref="GC.GetTotalMemory(bool)"/>, except on macOS, where it is inflated (4.8 KB per pattern
+    /// for 0.9 KB of live objects on Apple arm64) and the collection's heap size minus fragmentation is used.
+    /// </summary>
+    private static long LiveHeap()
+    {
+        var total = GC.GetTotalMemory(forceFullCollection: true);
+        if (!OperatingSystem.IsMacOS()) return total;
+        var info = GC.GetGCMemoryInfo();
+        return info.HeapSizeBytes - info.FragmentedBytes;
     }
 }

@@ -35,7 +35,7 @@ public sealed class MemoryAppHost : IAsyncDisposable
         {
             ["cscode.languageServers"] = BuiltinServers.Where(s => !options.EnabledServers.Contains(s)).ToDictionary(s => s, _ => (object)new { enabled = false }),
             ["workbench.startupEditor"] = "none",
-            ["terminal.integrated.profiles.linux"] = new Dictionary<string, object>
+            [CsCode.Terminal.Sessions.TerminalSettingKeys.ProfilesKey] = new Dictionary<string, object>
             {
                 ["sandboxed"] = new
                 {
@@ -49,7 +49,7 @@ public sealed class MemoryAppHost : IAsyncDisposable
                     },
                 },
             },
-            ["terminal.integrated.defaultProfile.linux"] = "sandboxed",
+            [CsCode.Terminal.Sessions.TerminalSettingKeys.DefaultProfileKey] = "sandboxed",
             ["terminal.integrated.cwd"] = Sandbox.Combine("home"),
             ["terminal.integrated.shellIntegration.enabled"] = false,
         };

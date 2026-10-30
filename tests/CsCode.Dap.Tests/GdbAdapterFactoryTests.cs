@@ -122,7 +122,8 @@ public class GdbAdapterFactoryTests
         Assert.Equal(["set environment RUST_BACKTRACE=1", "set environment SPACED=a b", "unset environment LANG"], GdbAdapterFactory.EnvironmentCommands(resolved));
         Assert.SkipWhen(OperatingSystem.IsWindows(), "the environment goes through a private file on Unix only");
         using var root = new TempDirectory("gdbenv-");
-        var factory = Make(env: new() { ["PATH"] = "/usr/bin:/bin" }, privateRoot: root.Path);
+        Script(dir.Combine("bin"), "gdb", "exit 0\n"); // a stand-in: no GDB needs to be installed (a Mac has none)
+        var factory = Make(env: new() { ["PATH"] = dir.Combine("bin") + ":/usr/bin:/bin" }, privateRoot: root.Path);
         var d = Assert.IsType<DebugAdapterStdioProcess>(await factory.CreateDescriptorAsync(resolved, Ct) ?? throw new Xunit.Sdk.XunitException("no descriptor"));
         // The values (often secrets) are not on GDB's command line (/proc/<pid>/cmdline is world-readable): GDB reads them from a private file,
         // written when a gdb starts (each start: see Each_gdb_started_from_the_descriptor_gets_its_own_private_environment_file...).

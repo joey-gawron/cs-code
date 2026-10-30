@@ -10,8 +10,8 @@ public readonly record struct ResourceCounts(int Threads, int FileDescriptors, i
 
 /// <summary>
 /// Handle / thread / descriptor census (MUST 4): <c>/proc/self/task</c> and <c>/proc/self/fd</c> on Linux (exact, and they include native threads
-/// and descriptors the runtime does not know about), <see cref="Process.HandleCount"/> and <see cref="Process.Threads"/> elsewhere; child processes
-/// from <c>/proc/self/task/*/children</c>. <see cref="AssertReturnsToBaselineAsync"/> polls, because threads and descriptors are released
+/// and descriptors the runtime does not know about), <see cref="Process.Threads"/> and <c>/dev/fd</c> on macOS, <see cref="Process.HandleCount"/> and
+/// <see cref="Process.Threads"/> elsewhere; child processes from <c>/proc/self/task/*/children</c> (macOS: libproc). <see cref="AssertReturnsToBaselineAsync"/> polls, because threads and descriptors are released
 /// asynchronously (a reader thread exits after its pipe closed, the thread pool retires idle workers after ~20 s).
 /// </summary>
 public static class ResourceCensus
@@ -25,12 +25,18 @@ public static class ResourceCensus
             return new ResourceCounts(threads, fds, fds, ChildPids().Count);
         }
         using var self = Process.GetCurrentProcess();
+        if (OperatingSystem.IsMacOS())
+        {
+            var fds = Count("/dev/fd");
+            return new ResourceCounts(self.Threads.Count, fds, fds, ChildPids().Count);
+        }
         return new ResourceCounts(self.Threads.Count, 0, self.HandleCount, 0);
     }
 
-    /// <summary>Direct children of this process (Linux; empty elsewhere).</summary>
+    /// <summary>Direct children of this process (Linux, macOS; empty elsewhere).</summary>
     public static IReadOnlyList<int> ChildPids()
     {
+        if (OperatingSystem.IsMacOS()) return MacProcesses.ChildPids(Environment.ProcessId);
         var pids = new List<int>();
         if (!OperatingSystem.IsLinux()) return pids;
         try

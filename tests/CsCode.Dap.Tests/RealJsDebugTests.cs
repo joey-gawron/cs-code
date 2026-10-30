@@ -591,6 +591,7 @@ public class RealJsDebugTests
     [Fact]
     public async Task An_adapter_crash_reaps_the_orphaned_debuggee_but_not_a_process_it_detached_on_purpose()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "process discovery by environment (ProcessTable.WithEnvironment) reads /proc");
         await using var rig = await RealJsDebugRig.CreateAsync();
         var program = WriteProgram(rig, "detach.js", DetachProgram);
         var detached = 0;
@@ -734,6 +735,7 @@ public class RealJsDebugTests
     [Fact]
     public async Task An_adapter_crash_ends_both_sessions_and_reaps_the_orphaned_debuggee()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "process discovery by environment (ProcessTable.WithEnvironment) reads /proc");
         await using var rig = await RealJsDebugRig.CreateAsync();
         rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
         var parent = await rig.StartAsync();

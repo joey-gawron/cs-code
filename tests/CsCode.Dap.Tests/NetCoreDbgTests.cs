@@ -550,7 +550,7 @@ public class NetCoreDbgFactoryTests
         if (asset.EndsWith(".zip", StringComparison.Ordinal))
         {
             using var zip = new ZipArchive(ms, ZipArchiveMode.Create, true);
-            using var w = new StreamWriter(zip.CreateEntry("netcoredbg/netcoredbg.exe").Open());
+            using var w = new StreamWriter(zip.CreateEntry("netcoredbg/" + NetCoreDbgAdapterFactory.ExecutableName).Open()); // the macOS release is a zip too
             w.Write("x");
         }
         else

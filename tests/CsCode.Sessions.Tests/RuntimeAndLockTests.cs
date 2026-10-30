@@ -82,8 +82,7 @@ public class RuntimeDirectoryTests
     }
 
     /// <summary>Root may chmod anything, so the ownership tests mean nothing for it.</summary>
-    private static bool IsRoot() => File.ReadLines("/proc/self/status").FirstOrDefault(l => l.StartsWith("Uid:", StringComparison.Ordinal)) is { } line
-        && line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[2] == "0";
+    private static bool IsRoot() => UnixNative.EffectiveUid() == 0;
 
     [Fact]
     public void Cscode_home_gets_its_own_runtime_dir_so_tests_never_reach_the_real_one()

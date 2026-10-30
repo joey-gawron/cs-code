@@ -163,11 +163,7 @@ public class ProcessLanguageHostTests
         await TestEnv.WaitUntilAsync(() => !TestEnv.IsAlive(tsPid), TimeSpan.FromSeconds(20), "the stopped server's process to exit");
     }
 
-    private static int ParentOf(int pid)
-    {
-        var stat = File.ReadAllText($"/proc/{pid}/stat");
-        return int.Parse(stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[1], System.Globalization.CultureInfo.InvariantCulture);
-    }
+    private static int ParentOf(int pid) => TestEnv.ParentOf(pid);
 
     private static IEnumerable<int> Ancestors(int pid)
     {

@@ -14,6 +14,9 @@ namespace CsCode.Editor.Tests;
 /// </summary>
 public class HeldUndoGroupTests
 {
+    /// <summary>AvaloniaEdit's undo/redo modifier: Cmd on macOS, Ctrl elsewhere.</summary>
+    private static KeyModifiers Command => OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
+
     private static void Type(Avalonia.Controls.Window window, string text)
     {
         foreach (var c in text)
@@ -69,7 +72,7 @@ public class HeldUndoGroupTests
         Type(window, "de");                                    // a new typed run
         Assert.Equal("xabde", Text(doc));
 
-        Assert.True(c.ReplayKey(Key.Z, KeyModifiers.Control)); // AvaloniaEdit's own Ctrl+Z on the text area
+        Assert.True(c.ReplayKey(Key.Z, Command)); // AvaloniaEdit's own Ctrl+Z (Cmd+Z) on the text area
         Assert.Equal("xab", Text(doc));
         Assert.Equal(new TextPosition(0, 3), c.Caret);
         c.Undo();                                              // the controller (menu, toolbar, the "undo" command)
@@ -79,10 +82,10 @@ public class HeldUndoGroupTests
         Assert.Equal("x", Text(doc));
         Assert.False(c.CanUndo);
         c.Undo();                                              // nothing of the group's left: the history before it is not touched
-        Assert.True(c.ReplayKey(Key.Z, KeyModifiers.Control));
+        Assert.True(c.ReplayKey(Key.Z, Command));
         Assert.Equal("x", Text(doc));
 
-        Assert.True(c.ReplayKey(Key.Y, KeyModifiers.Control)); // redo inside the group
+        Assert.True(c.ReplayKey(Key.Y, Command)); // redo inside the group
         Assert.Equal("xabc", Text(doc));
         c.Redo();
         Assert.Equal("xab", Text(doc));
@@ -351,8 +354,8 @@ public class HeldUndoGroupTests
         controller.SetSelection(TextRange.At(0, 3));
         var group = controller.OpenUndoGroup();
         Assert.True(controller.ReplayText("x"));
-        Assert.True(controller.ReplayKey(Key.Z, KeyModifiers.Control)); // a step undone inside the group: the redo list holds it
-        Assert.True(controller.ReplayKey(Key.Y, KeyModifiers.Control));
+        Assert.True(controller.ReplayKey(Key.Z, Command)); // a step undone inside the group: the redo list holds it
+        Assert.True(controller.ReplayKey(Key.Y, Command));
         window.Content = null;
         weak.Add(new WeakReference(view));
         host.Factory.DisposeView(view);

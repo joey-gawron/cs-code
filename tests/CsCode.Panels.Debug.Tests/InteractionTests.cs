@@ -139,7 +139,7 @@ public class InteractionTests
         var (sc, view, window, tree) = await LocalsHost();
         using var _ = sc;
         await Click(window, Rows(view), tree.Rows.Single(r => r.Name == "s"));
-        await Press(window, Key.C, RawInputModifiers.Control);
+        await Press(window, Key.C, OperatingSystem.IsMacOS() ? RawInputModifiers.Meta : RawInputModifiers.Control); // Cmd+C on macOS (ClipboardKeys)
         await PanelRig.Eventually(() => sc.Rig.Window.Clipboard.Count == 1);
         Assert.Equal("\"hello world\"", sc.Rig.Window.Clipboard[0]);
         window.Close();

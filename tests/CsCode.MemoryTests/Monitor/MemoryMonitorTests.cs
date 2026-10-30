@@ -39,6 +39,7 @@ public sealed class MemoryMonitorTests
     [Fact]
     public void A_sample_reads_the_resident_set_threads_and_runtime_counters_and_is_published()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "private, anonymous and file-backed memory and the thread count come from /proc/self/status (.NET reports no private bytes on macOS)");
         using var monitor = new MemoryMonitor();
         MemorySnapshot? published = null;
         using var sub = monitor.Sampled.Subscribe(s => published = s);
@@ -59,6 +60,7 @@ public sealed class MemoryMonitorTests
     [Fact]
     public void The_sampler_allocates_nothing_and_a_monitor_sample_only_its_published_snapshot()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "the allocation-free sampler reads /proc/self/status; elsewhere a refreshed Process allocates (ProcessSampler)");
         using var sampler = new ProcessSampler();
         Assert.True(sampler.IsProcfs);
         using var child = Process.Start(new ProcessStartInfo("sleep", "30") { UseShellExecute = false })!;
@@ -87,6 +89,7 @@ public sealed class MemoryMonitorTests
     [Fact]
     public async Task Child_processes_are_accounted_while_alive_and_dropped_when_they_exit_or_are_untracked()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "a child's resident set is read from /proc/<pid>/status; macOS falls back to Process.WorkingSet64, which reports 32 KB for a 1.2 MB sleep");
         using var monitor = new MemoryMonitor();
         using var child = Process.Start(new ProcessStartInfo("sleep", "30") { UseShellExecute = false })!;
         try
@@ -489,7 +492,8 @@ public sealed class MemoryMonitorTests
         monitor.Dispose();
         Assert.True(sw.ElapsedMilliseconds < 50, $"Dispose took {sw.ElapsedMilliseconds} ms");
         await trim;
-        Assert.True(SpinWait.SpinUntil(() => !ThreadNames().Contains("cscode-memory"), 3000), "the sampling thread is still running");
+        Assert.True(SpinWait.SpinUntil(() => OperatingSystem.IsLinux() ? !ThreadNames().Contains("cscode-memory") : !monitor.IsThreadAlive, 3000),
+            "the sampling thread is still running");
         monitor.Dispose(); // idempotent
     }
 
@@ -567,6 +571,7 @@ public sealed class MemoryMonitorTests
     [Fact]
     public void The_breakdown_splits_resident_memory_into_managed_native_and_file_backed_parts()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "the breakdown reads /proc/self/smaps; elsewhere only the runtime's totals are filled in (MemoryBreakdown)");
         var b = MemoryBreakdown.Capture();
         Assert.True(b.ResidentBytes > 0 && b.AnonymousBytes > 0 && b.FileBackedBytes > 0);
         Assert.Equal(b.AnonymousBytes, b.ManagedBytes + b.NativeAnonymousBytes);

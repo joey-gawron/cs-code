@@ -101,7 +101,7 @@ public sealed class ToolkitTests
         using var stop = new ManualResetEventSlim();
         var threads = Enumerable.Range(0, 6).Select(_ => new Thread(() => stop.Wait()) { IsBackground = true }).ToList();
         threads.ForEach(t => t.Start());
-        var files = Enumerable.Range(0, 6).Select(_ => File.OpenRead("/proc/self/status")).ToList();
+        var files = Enumerable.Range(0, 6).Select(_ => File.OpenRead(typeof(ToolkitTests).Assembly.Location)).ToList();
         var busy = ResourceCensus.Capture();
         Assert.True(busy.Threads >= baseline.Threads + 6 && busy.FileDescriptors >= baseline.FileDescriptors + 6, $"{baseline} -> {busy}");
         await Assert.ThrowsAsync<MemoryAssertionException>(() => ResourceCensus.AssertReturnsToBaselineAsync(baseline, tolerance: 2, timeout: TimeSpan.FromMilliseconds(200)));
@@ -301,9 +301,11 @@ public sealed class ToolkitTests
         {
             pids = burner.ChildPids.ToArray();
             await Task.Delay(100);
-            Assert.All(pids, pid => Assert.True(Directory.Exists($"/proc/{pid}")));
+            Assert.All(pids, pid => Assert.True(OperatingSystem.IsMacOS() ? ProcessTree.Resident(pid) > 0 : Directory.Exists($"/proc/{pid}")));
         }
-        Assert.All(pids, pid => Assert.True(!Directory.Exists($"/proc/{pid}") || File.ReadAllText($"/proc/{pid}/stat").Contains(") Z", StringComparison.Ordinal)));
+        // gone or a zombie (macOS: libproc has no resident set for either)
+        Assert.All(pids, pid => Assert.True(OperatingSystem.IsMacOS() ? ProcessTree.Resident(pid) == 0
+            : !Directory.Exists($"/proc/{pid}") || File.ReadAllText($"/proc/{pid}/stat").Contains(") Z", StringComparison.Ordinal)));
         using (CpuBurner.InProcess(2)) await Task.Delay(50);
     }
 

@@ -165,8 +165,8 @@ public sealed class SettingScopeTests
     {
         Assert.SkipUnless(CsCode.Terminal.Pty.PtyHosts.IsSupported, "needs a PTY");
         await using var host = new RemoteTestHost(r3: true,
-            userSettings: """{ "terminal.integrated.env.linux": { "SCOPE_PROBE": "client-machine", "ONLY_CLIENT": "x" } }""",
-            machineSettings: """{ "terminal.integrated.env.linux": { "SCOPE_PROBE": "remote-machine" } }""");
+            userSettings: $$"""{ "{{TerminalSettingKeys.EnvKey}}": { "SCOPE_PROBE": "client-machine", "ONLY_CLIENT": "x" } }""",
+            machineSettings: $$"""{ "{{TerminalSettingKeys.EnvKey}}": { "SCOPE_PROBE": "remote-machine" } }""");
         await host.ConnectAsync();
         await host.OpenWorkspaceAsync();
         var terminals = host.Services.GetRequiredService<TerminalService>();

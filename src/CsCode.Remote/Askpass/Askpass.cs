@@ -26,6 +26,7 @@ public sealed class AskpassServer : IDisposable
     private readonly Socket _listener;
     private readonly string _token;
     private readonly CancellationTokenSource _cts = new();
+    private readonly Thread _acceptThread;
     private int _prompts;
     private int _disposed;
 
@@ -37,8 +38,8 @@ public sealed class AskpassServer : IDisposable
         _token = token;
         ScriptPath = script;
         _log = log;
-        var t = new Thread(AcceptLoop) { IsBackground = true, Name = "CsCode.Remote-askpass" };
-        t.Start();
+        _acceptThread = new Thread(AcceptLoop) { IsBackground = true, Name = "CsCode.Remote-askpass" };
+        _acceptThread.Start();
     }
 
     public string Directory { get; }
@@ -91,6 +92,7 @@ public sealed class AskpassServer : IDisposable
             Socket client;
             try { client = _listener.Accept(); }
             catch (Exception ex) when (ex is SocketException or ObjectDisposedException) { return; }
+            if (_cts.IsCancellationRequested) { client.Dispose(); return; } // Dispose's wake-up (macOS)
             _ = HandleAsync(client);
         }
     }
@@ -158,10 +160,26 @@ public sealed class AskpassServer : IDisposable
         return null;
     }
 
+    /// <summary>
+    /// macOS: closing a listening socket does not end an <c>accept</c> blocked on it in another thread, and the runtime's close waits for that
+    /// call, so Dispose hung. A connection of our own ends the call; the loop sees the cancellation and leaves before the close.
+    /// </summary>
+    private void WakeAcceptLoop()
+    {
+        try
+        {
+            using var wake = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            wake.Connect(new UnixDomainSocketEndPoint(SocketPath));
+        }
+        catch (SocketException) { return; } // nothing listens any more: no call to end
+        _acceptThread.Join(TimeSpan.FromSeconds(1));
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _cts.Cancel();
+        if (OperatingSystem.IsMacOS()) WakeAcceptLoop();
         try { _listener.Dispose(); } catch (SocketException) { }
         try { System.IO.Directory.Delete(Directory, recursive: true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         _cts.Dispose();

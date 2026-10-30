@@ -34,7 +34,7 @@ public sealed class TerminalAppHost : IAsyncDisposable
         {
             ["cscode.languageServers"] = BuiltinServers.ToDictionary(s => s, _ => (object)new { enabled = false }),
             ["workbench.startupEditor"] = "none",
-            ["terminal.integrated.profiles.linux"] = new Dictionary<string, object>
+            [CsCode.Terminal.Sessions.TerminalSettingKeys.ProfilesKey] = new Dictionary<string, object>
             {
                 ["sandboxed"] = new
                 {
@@ -55,7 +55,7 @@ public sealed class TerminalAppHost : IAsyncDisposable
                     },
                 },
             },
-            ["terminal.integrated.defaultProfile.linux"] = "sandboxed",
+            [CsCode.Terminal.Sessions.TerminalSettingKeys.DefaultProfileKey] = "sandboxed",
             ["terminal.integrated.cwd"] = Sandbox.Combine("home"),
         };
         if (extraSettings is not null) foreach (var (k, v) in extraSettings) settings[k] = v;

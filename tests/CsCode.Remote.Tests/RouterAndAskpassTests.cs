@@ -190,7 +190,7 @@ public class AskpassTests
     public async Task A_prompt_reaches_the_window_service_and_the_answer_comes_back_once_per_valid_token()
     {
         if (OperatingSystem.IsWindows()) { Assert.Skip("Unix sockets / askpass are Unix-only here"); return; }
-        using var dir = new TempDirectory("cscode-askpass-test-");
+        using var dir = new TempDirectory("ap-"); // short: macOS socket paths end at 103 bytes and its temp directory takes 49 of them
         var window = new RecordingWindowService();
         window.InputResponses.Enqueue("s3cret; $(rm -rf ~)");
         using var server = AskpassServer.Start(window, ["/opt/cscode it's/cscode"], runtimeDir: dir.Path);

@@ -5,6 +5,7 @@ using CsCode.Core.Lifecycle;
 using CsCode.Core.Terminal;
 using CsCode.Terminal.Emulator;
 using CsCode.Terminal.Pty;
+using CsCode.Terminal.Pty.Unix;
 
 namespace CsCode.Terminal.Sessions;
 
@@ -163,14 +164,13 @@ public sealed class TerminalSession : ITerminal, IDisposable
     public Task<TerminalAccessibleBuffer> GetAccessibleBufferAsync() => InvokeAsync(e => e.AccessibleBuffer());
 
     /// <summary>
-    /// The program's working directory as the kernel knows it (<c>/proc/&lt;pid&gt;/cwd</c>): right even for a shell without shell integration
-    /// that never reported a <c>cd</c>. Null when unknown (exited, no /proc). Blocking file-system read: call off the UI thread.
+    /// The program's working directory as the kernel knows it (<c>/proc/&lt;pid&gt;/cwd</c>, macOS: libproc): right even for a shell without
+    /// shell integration that never reported a <c>cd</c>. Null when unknown (exited, no process table). Blocking read: call off the UI thread.
     /// </summary>
     public string? ProcessDirectory()
     {
-        if (ProcessId is not { } pid || _hasExited || !OperatingSystem.IsLinux()) return null;
-        try { return new FileInfo($"/proc/{pid}/cwd").LinkTarget is { Length: > 0 } dir && Directory.Exists(dir) ? dir : null; }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        if (ProcessId is not { } pid || _hasExited || !ProcessTable.IsAvailable) return null;
+        return ProcessTable.WorkingDirectory(pid) is { } dir && Directory.Exists(dir) ? dir : null;
     }
 
     /// <summary>The program's window title (OSC 0/2), if it set one.</summary>
