@@ -21,7 +21,7 @@ internal sealed class LanguageHost : IDisposable
     private const int OriginalsKept = 8;
 
     private readonly IServiceProvider _sp;
-    private readonly RpcPeer _peer;
+    private readonly IRpcEndpoint _peer;
     private readonly IDocumentManager _documents;
     private readonly MirroringFeatureRegistry _registry;
     private readonly IDiagnosticService _diagnostics;
@@ -39,7 +39,7 @@ internal sealed class LanguageHost : IDisposable
     private ILanguageServerManager? _manager;
     private int _diagScheduled, _disposed;
 
-    public LanguageHost(IServiceProvider sp, RpcPeer peer)
+    public LanguageHost(IServiceProvider sp, IRpcEndpoint peer)
     {
         _sp = sp;
         _peer = peer;
@@ -62,6 +62,7 @@ internal sealed class LanguageHost : IDisposable
         p.OnNotification<DocUriParams>(RemoteMethods.DocClose, Close, inline: true);
         p.OnNotification<DocLanguageParams>(RemoteMethods.DocLanguage, e => { if (_open.TryGetValue(e.Uri, out var d)) d.Doc.SetLanguageId(e.LanguageId); }, inline: true);
         p.OnNotification<DocUriParams>(RemoteMethods.DocSaved, e => { if (_open.TryGetValue(e.Uri, out var d)) _documents.NotifySaved(d.Doc); }, inline: true);
+        p.OnNotification<DocKeepParams>(RemoteMethods.DocKeep, Keep, inline: true);
         p.OnRequest<LangInvokeParams, JsonElement?>(RemoteMethods.LangInvoke, InvokeAsync);
         p.OnRequest<WillSaveParams, IReadOnlyList<TextEdit>?>(RemoteMethods.LangWillSave, WillSaveAsync);
         p.OnRequest<FileOperationParams, WorkspaceEdit?>(RemoteMethods.LangFileOperation, FileOperationAsync);
@@ -116,6 +117,26 @@ internal sealed class LanguageHost : IDisposable
         }
         var doc = new MirrorDocument(e.Uri, e.LanguageId, e.Version, e.Text);
         _open[e.Uri] = (doc, _documents.Register(doc));
+    }
+
+    /// <summary>After a reconnect to this (persistent) server: documents the client closed while it was away are closed here too.</summary>
+    private void Keep(DocKeepParams e)
+    {
+        var keep = e.Uris.ToHashSet();
+        foreach (var uri in _open.Keys.Where(u => !keep.Contains(u)).ToArray())
+            if (_open.TryRemove(uri, out var d)) d.Token.Dispose();
+    }
+
+    /// <summary>
+    /// A client (re)attached: it dropped its mirrors when its previous connection went away, so the current diagnostics, server list and commands
+    /// are announced again (registrations it fetches itself with <c>lang/list</c>).
+    /// </summary>
+    public void OnAttached()
+    {
+        var uris = _diagnostics.GetAll().Select(d => d.Uri).Distinct().ToArray();
+        if (uris.Length > 0) OnDiagnosticsChanged(uris);
+        Schedule(_serversTimer, 10);
+        Schedule(_commandsTimer, 10);
     }
 
     private void Change(DocChangeParams e)

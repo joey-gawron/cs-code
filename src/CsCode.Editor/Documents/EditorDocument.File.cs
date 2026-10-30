@@ -411,7 +411,12 @@ public sealed partial class EditorDocument
     private void StartWatching()
     {
         var svc = _svc;
-        if (svc is null || !Uri.IsFile) return;
+        if (svc is null || IsUntitled) return;
+        if (!Uri.IsFile)
+        {
+            StartWatchingProvider(svc);
+            return;
+        }
         _watch?.Dispose();
         var dir = Path.GetDirectoryName(Uri.LocalPath);
         if (string.IsNullOrEmpty(dir)) return;
@@ -420,6 +425,30 @@ public sealed partial class EditorDocument
         {
             foreach (var c in changes)
                 if (c.Uri.IsFile && string.Equals(c.Uri.LocalPath, local, StringComparison.Ordinal))
+                {
+                    _ = HandleExternalChangeAsync();
+                    return;
+                }
+        });
+    }
+
+    /// <summary>
+    /// A document of another file system (a remote <c>ssh:</c> file): watched through the routing watcher like a local one (its provider reports the
+    /// file's own URI, built with the same escaping the document was opened with). A scheme without a watcher provider gets a no-op watch.
+    /// </summary>
+    private void StartWatchingProvider(EditorServices svc)
+    {
+        _watch?.Dispose();
+        var text = Uri.AbsoluteUri;
+        var authority = text.IndexOf("://", StringComparison.Ordinal);
+        var slash = text.LastIndexOf('/');
+        // Only hierarchical URIs with an authority (ssh://host/dir/file): a virtual document (debug:, untitled:) has no directory to watch.
+        if (authority < 0 || slash <= authority + 2 || !Uri.TryCreate(text[..(slash + 1)], UriKind.Absolute, out var directory)) return;
+        var self = Uri;
+        _watch = svc.FileWatcher.Watch(directory, false, null, changes =>
+        {
+            foreach (var c in changes)
+                if (c.Uri == self)
                 {
                     _ = HandleExternalChangeAsync();
                     return;

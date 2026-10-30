@@ -143,6 +143,13 @@ public sealed class StatusBarView : Border, IDisposable
             element = b;
         }
         else element = new Border { Child = content, Padding = new Thickness(7, 0), Height = 22 };
+        // A coloured item (the remote indicator's badge): its own theme brush, which follows theme switches in place.
+        if (item.BackgroundColorKey is { } bg)
+        {
+            if (element is Button button) button.Background = ThemeBrushes.Get(bg);
+            else if (element is Border border) border.Background = ThemeBrushes.Get(bg);
+            element.Classes.Add("badge");
+        }
         if (item.Tooltip is { } tip) ToolTip.SetTip(element, tip);
         return element;
     }

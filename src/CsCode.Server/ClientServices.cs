@@ -31,10 +31,10 @@ internal static class ClientServices
 internal sealed class ClientWindowService : IWindowService, IDisposable
 {
     private static readonly TimeSpan UserWait = TimeSpan.FromMinutes(30);
-    private readonly RpcPeer _peer;
+    private readonly IRpcEndpoint _peer;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _progress = new(StringComparer.Ordinal);
 
-    public ClientWindowService(RpcPeer peer)
+    public ClientWindowService(IRpcEndpoint peer)
     {
         _peer = peer;
         peer.OnNotification<ProgressCancelParams>(RemoteMethods.WindowProgressCancel, p =>
@@ -95,7 +95,7 @@ internal sealed class ClientWindowService : IWindowService, IDisposable
         }
     }
 
-    private sealed class Reporter(RpcPeer peer, string id) : IProgressReporter
+    private sealed class Reporter(IRpcEndpoint peer, string id) : IProgressReporter
     {
         public void Report(string? message = null, double? percent = null) =>
             peer.Notify(RemoteMethods.WindowProgress, new ProgressParams(id, "report", Message: message, Percent: percent));
@@ -121,7 +121,7 @@ internal sealed class ClientWindowService : IWindowService, IDisposable
 }
 
 /// <summary>Forwards "show document" and "apply workspace edit" to the client's editor. There are no editors on the server.</summary>
-internal sealed class ClientNavigationService(RpcPeer peer) : INavigationService
+internal sealed class ClientNavigationService(IRpcEndpoint peer) : INavigationService
 {
     private readonly Emitter<IEditorDocument?> _active = new();
 
@@ -147,12 +147,12 @@ internal sealed class ClientNavigationService(RpcPeer peer) : INavigationService
 internal sealed class ForwardingOutputService : IOutputService, IDisposable
 {
     private const int MaxFlushChars = 64 * 1024;
-    private readonly RpcPeer _peer;
+    private readonly IRpcEndpoint _peer;
     private readonly ConcurrentDictionary<string, Channel> _channels = new(StringComparer.Ordinal);
     private readonly Emitter<string> _changed = new();
     private readonly Timer _timer;
 
-    public ForwardingOutputService(RpcPeer peer)
+    public ForwardingOutputService(IRpcEndpoint peer)
     {
         _peer = peer;
         _timer = new Timer(_ => Flush(), null, 250, 250);

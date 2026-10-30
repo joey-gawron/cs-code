@@ -32,6 +32,20 @@ public abstract class UriMapper
     }
 }
 
+/// <summary>URI schemes of remote workspaces: <c>ssh://[user@]host[:port]/path</c>, <c>docker://container/path</c>, <c>wsl://distro/path</c>.</summary>
+public static class RemoteSchemes
+{
+    public const string Ssh = "ssh";
+    public const string Docker = "docker";
+    public const string Wsl = "wsl";
+
+    public static IReadOnlyList<string> All { get; } = [Ssh, Docker, Wsl];
+
+    public static bool IsRemote(string scheme) =>
+        string.Equals(scheme, Ssh, StringComparison.OrdinalIgnoreCase) || string.Equals(scheme, Docker, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(scheme, Wsl, StringComparison.OrdinalIgnoreCase);
+}
+
 /// <summary>
 /// <c>ssh://[user@]host[:port]/abs/path</c> ⇄ remote path ⇄ the server's <c>file:</c> URI.
 /// <list type="bullet">
@@ -55,7 +69,7 @@ public sealed class SshUriMapper : UriMapper
     public bool WindowsRemote { get; }
 
     public override bool Handles(Uri clientUri) =>
-        clientUri.IsAbsoluteUri && string.Equals(clientUri.Scheme, Scheme, StringComparison.OrdinalIgnoreCase) && Authority.Matches(clientUri);
+        clientUri.IsAbsoluteUri && string.Equals(clientUri.Scheme, Authority.Scheme, StringComparison.OrdinalIgnoreCase) && Authority.Matches(clientUri);
 
     /// <summary>The remote path of a client URI (<c>/home/me/a b.txt</c>; <c>C:/x</c> on a Windows remote).</summary>
     public string ToRemotePath(Uri clientUri)
@@ -99,27 +113,37 @@ public sealed class SshUriMapper : UriMapper
         serverUri.IsAbsoluteUri && serverUri.IsFile ? FromRemotePath(FileUris.ToPath(serverUri, WindowsRemote)) : serverUri;
 }
 
-/// <summary>Who we are connected to: user, host (name, alias or IP literal) and port. Its <see cref="Root"/> is <c>ssh://user@host:port/</c>.</summary>
+/// <summary>
+/// Who we are connected to: user, host (name, alias or IP literal) and port. Its <see cref="Root"/> is <c>ssh://user@host:port/</c>. The same shape
+/// names the other transports: <c>docker://[user@]container/</c> (a running container) and <c>wsl://[user@]distro/</c> (a WSL distribution).
+/// </summary>
 public sealed record RemoteAuthority
 {
-    public RemoteAuthority(string host, string? user = null, int? port = null)
+    public RemoteAuthority(string host, string? user = null, int? port = null, string scheme = RemoteSchemes.Ssh)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
+        if (!RemoteSchemes.IsRemote(scheme)) throw new ArgumentException($"Unsupported remote scheme '{scheme}'", nameof(scheme));
+        Scheme = scheme.ToLowerInvariant();
         Host = host.StartsWith('[') && host.EndsWith(']') ? host[1..^1] : host;
         User = string.IsNullOrEmpty(user) ? null : user;
         // A destination is handed to ssh as one argument: refuse what could be read as an option or split into words (defence in depth: SshArgs checks again).
         if (Host.StartsWith('-') || Host.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || c is '/' or '@' or '\\'))
             throw new ArgumentException($"Invalid host '{host}'", nameof(host));
+        // A container or distribution name goes to docker / wsl.exe as one argument: their own name rules (letters, digits, _ . -).
+        if (Scheme != RemoteSchemes.Ssh && !Host.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '.' or '-'))
+            throw new ArgumentException($"Invalid {Scheme} name '{host}'", nameof(host));
         if (User is not null && (User.StartsWith('-') || User.Any(c => char.IsWhiteSpace(c) || char.IsControl(c))))
             throw new ArgumentException($"Invalid user '{user}'", nameof(user));
-        Port = port is > 0 and < 65536 ? port : null;
-        var sb = new StringBuilder(SshUriMapper.Scheme).Append("://");
+        Port = Scheme == RemoteSchemes.Ssh && port is > 0 and < 65536 ? port : null;
+        var sb = new StringBuilder(Scheme).Append("://");
         if (User is not null) sb.Append(Uri.EscapeDataString(User)).Append('@');
         sb.Append(Host.Contains(':') ? "[" + Host + "]" : Host); // IPv6 literal
         if (Port is { } p) sb.Append(':').Append(p);
         Root = new Uri(sb.Append('/').ToString(), UriKind.Absolute);
     }
 
+    /// <summary><c>ssh</c>, <c>docker</c> or <c>wsl</c>: which transport reaches the host.</summary>
+    public string Scheme { get; }
     public string Host { get; }
     public string? User { get; }
     public int? Port { get; }
@@ -130,21 +154,35 @@ public sealed record RemoteAuthority
     /// <summary>The <c>[user@]host[:port]</c> text, as ssh takes it (IPv6 in brackets only when a port follows).</summary>
     public string Destination => (User is null ? "" : User + "@") + (Port is null ? Host : (Host.Contains(':') ? "[" + Host + "]" : Host) + ":" + Port);
 
-    /// <summary>True when <paramref name="uri"/> (any scheme) has this authority (case-insensitive host, exact user and port).</summary>
+    /// <summary>True when <paramref name="uri"/> has this authority (its scheme, case-insensitive host, exact user and port).</summary>
     public bool Matches(Uri uri) =>
-        string.Equals(uri.IdnHost.Trim('[', ']'), Host, StringComparison.OrdinalIgnoreCase)
+        string.Equals(uri.Scheme, Scheme, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(uri.IdnHost.Trim('[', ']'), Host, StringComparison.OrdinalIgnoreCase)
         && string.Equals(uri.UserInfo.Length == 0 ? null : Uri.UnescapeDataString(uri.UserInfo), User, StringComparison.Ordinal)
         && (uri.IsDefaultPort || uri.Port < 0 ? Port is null : uri.Port == Port);
 
-    /// <summary>Parses <c>[user@]host[:port]</c> (IPv6 as <c>[::1]:22</c> or bare <c>::1</c>) or an <c>ssh://</c> URI's authority.</summary>
+    /// <summary>
+    /// Parses <c>[user@]host[:port]</c> (IPv6 as <c>[::1]:22</c> or bare <c>::1</c>), an <c>ssh://</c> URI's authority, or a <c>docker://[user@]container</c>
+    /// / <c>wsl://[user@]distro</c> one.
+    /// </summary>
     public static RemoteAuthority Parse(string text)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
         var s = text.Trim();
-        if (s.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
+        foreach (var scheme in RemoteSchemes.All)
         {
+            if (!s.StartsWith(scheme + "://", StringComparison.OrdinalIgnoreCase)) continue;
+            if (scheme != RemoteSchemes.Ssh)
+            {
+                // A container / distribution name keeps its case for docker and wsl.exe (a URI's host would be lower-cased); URIs match it case-insensitively.
+                var rest = s[(scheme.Length + 3)..];
+                var slash = rest.IndexOf('/');
+                var authority = slash < 0 ? rest : rest[..slash];
+                var userEnd = authority.LastIndexOf('@');
+                return new RemoteAuthority(userEnd < 0 ? authority : authority[(userEnd + 1)..], userEnd < 0 ? null : Uri.UnescapeDataString(authority[..userEnd]), null, scheme);
+            }
             var u = new Uri(s, UriKind.Absolute);
-            return new RemoteAuthority(u.IdnHost.Trim('[', ']'), u.UserInfo.Length == 0 ? null : Uri.UnescapeDataString(u.UserInfo), u.IsDefaultPort || u.Port < 0 ? null : u.Port);
+            return new RemoteAuthority(u.IdnHost.Trim('[', ']'), u.UserInfo.Length == 0 ? null : Uri.UnescapeDataString(u.UserInfo), u.IsDefaultPort || u.Port < 0 ? null : u.Port, scheme);
         }
         string? user = null;
         var at = s.LastIndexOf('@');
@@ -170,7 +208,7 @@ public sealed record RemoteAuthority
         return new RemoteAuthority(s, user, port);
     }
 
-    public override string ToString() => Destination;
+    public override string ToString() => Scheme == RemoteSchemes.Ssh ? Destination : Root.AbsoluteUri.TrimEnd('/');
 }
 
 /// <summary>

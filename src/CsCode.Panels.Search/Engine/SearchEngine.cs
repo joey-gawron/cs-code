@@ -22,20 +22,24 @@ public sealed class SearchEngine : IDisposable
     private readonly IConfigurationService? _config;
     private readonly ISearchFileSource _source;
     private readonly SearchLimits? _limitsOverride;
+    private readonly IReadOnlyList<ITextSearchProvider> _textSearch;
     private readonly ConcurrentDictionary<int, SearchSession> _sessions = new();
     private readonly object _schedulerGate = new();
     private DedicatedThreadScheduler? _scheduler;
     private int _nextId, _runningWorkers;
     private volatile bool _disposed;
 
+    /// <param name="textSearch">Providers that search folders of their scheme where the files are (a remote workspace's server): such folders are not
+    /// read here, only their matches arrive.</param>
     public SearchEngine(IWorkspaceService workspace, IDocumentManager? documents = null, IConfigurationService? configuration = null,
-        ISearchFileSource? fileSource = null, SearchLimits? limits = null)
+        ISearchFileSource? fileSource = null, SearchLimits? limits = null, IReadOnlyList<ITextSearchProvider>? textSearch = null)
     {
         _workspace = workspace;
         _documents = documents;
         _config = configuration;
         _source = fileSource ?? new DefaultFileSource(workspace);
         _limitsOverride = limits;
+        _textSearch = textSearch ?? [];
     }
 
     /// <summary>Worker threads currently alive across all sessions (tests assert this returns to 0 after cancel/dispose).</summary>
@@ -209,6 +213,13 @@ public sealed class SearchEngine : IDisposable
             return;
         }
 
+        // A remote workspace is searched where its files are (server-side Find in Files): only the matches cross the network.
+        if (!query.MultiLine && folders.Count > 0 && _textSearch.FirstOrDefault(p => folders.All(f => string.Equals(f.Scheme, p.Scheme, StringComparison.OrdinalIgnoreCase))) is { } remote)
+        {
+            await ProduceRemoteAsync(session, remote, folders, roots, Accept, memory, queue).ConfigureAwait(true);
+            return;
+        }
+
         var request = new FileSourceRequest(folders, roots, query.UseExcludeSettings, query.UseIgnoreFiles, include, exclude, settingsExclude);
         var n = 0;
         await foreach (var uri in _source.EnumerateAsync(request, ct).ConfigureAwait(true))
@@ -225,6 +236,68 @@ public sealed class SearchEngine : IDisposable
             // Let the flusher run even when the source yields synchronously (a hot enumeration would starve it).
             if ((++n & 0xFF) == 0) await Task.Yield();
         }
+    }
+
+    /// <summary>
+    /// Folders a <see cref="ITextSearchProvider"/> searches where they are: documents with unsaved changes under them are scanned here from memory
+    /// (the server's disk copy is stale), everything else comes back as matches, filtered with the same include/exclude rules as a local search
+    /// and counted against the same result cap.
+    /// </summary>
+    private async ValueTask ProduceRemoteAsync(SearchSession session, ITextSearchProvider provider, IReadOnlyList<Uri> folders, RootSet roots, Func<Uri, bool> accept,
+        Dictionary<Uri, (string Text, int Version)> memory, WorkQueue queue)
+    {
+        var query = session.Query;
+        var ct = session.Token;
+        foreach (var (uri, m) in memory)
+            if (roots.Contains(uri) && accept(uri)) await queue.EnqueueAsync(new WorkItem(uri, m.Text, m.Version), ct).ConfigureAwait(true);
+
+        var excludes = new List<string>();
+        if (query.UseExcludeSettings)
+            foreach (var key in new[] { "files.exclude", SearchLimits.ExcludeKey })
+                if (_config?.GetRaw(key) is { ValueKind: System.Text.Json.JsonValueKind.Object } obj)
+                    excludes.AddRange(obj.EnumerateObject().Where(p => p.Value.ValueKind == System.Text.Json.JsonValueKind.True).Select(p => p.Name));
+        var limits = session.Limits;
+        var request = new TextSearchQuery(folders, query.Pattern, query.IsRegex, query.MatchCase, query.WholeWord, excludes, query.UseIgnoreFiles,
+            limits.MaxResults, limits.MaxFileSizeBytes);
+        await foreach (var batch in provider.SearchAsync(request, ct).ConfigureAwait(true))
+        {
+            foreach (var file in batch.GroupBy(h => h.Uri))
+            {
+                if (memory.ContainsKey(file.Key) || !roots.Contains(file.Key) || !accept(file.Key)) continue;
+                var matches = new List<SearchMatch>();
+                foreach (var hit in file)
+                {
+                    if (!session.TryReserve()) break; // the cap: the session stops, truncated
+                    matches.Add(RemoteMatch(hit, limits.MaxPreviewChars));
+                }
+                if (matches.Count > 0) session.Report(new WorkItem(file.Key), new ScanResult(ScanStatus.Ok, matches));
+                if (session.Token.IsCancellationRequested) return;
+            }
+        }
+    }
+
+    /// <summary>A match found elsewhere, with the preview built like a local one's (leading blanks trimmed, controls as spaces, clipped around the match).</summary>
+    internal static SearchMatch RemoteMatch(TextSearchHit hit, int maxPreview)
+    {
+        maxPreview = Math.Clamp(maxPreview, 40, 480);
+        var text = hit.LineText;
+        var idx = Math.Clamp(hit.Column - hit.LineTextStart, 0, text.Length);
+        var len = Math.Min(hit.Length, text.Length - idx);
+        var lead = 0;
+        while (lead < idx && char.IsWhiteSpace(text[lead])) lead++;
+        var start = idx - lead > 40 || text.Length - lead > maxPreview ? Math.Max(lead, idx - 40) : lead;
+        var clipLeft = start > lead || (hit.LineTextStart > 0 && start == 0);
+        var end = Math.Min(text.Length, start + maxPreview);
+        var clipRight = end < text.Length;
+        var sb = new System.Text.StringBuilder(end - start + 2);
+        if (clipLeft) sb.Append('…');
+        for (var i = start; i < end; i++) sb.Append(text[i] < ' ' ? ' ' : text[i]);
+        if (clipRight) sb.Append('…');
+        var preview = sb.ToString().TrimEnd();
+        var previewStart = (clipLeft ? 1 : 0) + (idx - start);
+        var matched = text.Substring(idx, len);
+        return new SearchMatch(new TextRange(new TextPosition(hit.Line, hit.Column), new TextPosition(hit.Line, hit.Column + hit.Length)),
+            preview, Math.Min(previewStart, preview.Length), Math.Max(0, Math.Min(len, preview.Length - previewStart)), matched.Length > 256 ? matched[..256] : matched);
     }
 
     /// <summary>Non-file schemes have no local path to stream from: read their bytes through <see cref="IFileSystem"/> (size-checked first).</summary>

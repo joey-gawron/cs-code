@@ -2,7 +2,7 @@
 
   <!-- cscode-server: the headless workspace host (docs/REMOTE.md). Runs next to the files (over ssh, or as a local child process for
        cscode.languageHost=process) and serves the file system, watcher, search and the language servers over JSON-RPC on stdio.
-       Composes Platform + Lsp; never references Avalonia. -->
+       Composes Platform + Lsp + Dap (adapters, tasks) + Terminal (PTY); never references Avalonia. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>cscode-server</AssemblyName>
@@ -19,6 +19,9 @@
     <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
     <ProjectReference Include="../CsCode.Platform/CsCode.Platform.csproj" />
     <ProjectReference Include="../CsCode.Lsp/CsCode.Lsp.csproj" />
+    <!-- R3: debug adapters and tasks run next to the files (the Dap module's factories and task runner), terminals on a local PTY here. -->
+    <ProjectReference Include="../CsCode.Dap/CsCode.Dap.csproj" />
+    <ProjectReference Include="../CsCode.Terminal/CsCode.Terminal.csproj" />
     <ProjectReference Include="../CsCode.Remote/CsCode.Remote.csproj" />
   </ItemGroup>
 

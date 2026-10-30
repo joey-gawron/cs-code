@@ -39,6 +39,12 @@ public static class IpcCodec
                 }
                 w.WriteEndArray();
             }
+            if (m.Remotes is { } remotes)
+            {
+                w.WriteStartArray("remotes");
+                foreach (var r in remotes) w.WriteStringValue(r);
+                w.WriteEndArray();
+            }
             if (m.Wait is { } wait) w.WriteBoolean("wait", wait);
             if (m.Force is { } force) w.WriteBoolean("force", force);
             if (m.Hidden is { } hidden) w.WriteBoolean("hidden", hidden);
@@ -88,6 +94,7 @@ public static class IpcCodec
             int? protocol = null, pid = null, line = null, column = null, count = null;
             long? shown = null, ws = null;
             List<IpcPath>? paths = null;
+            List<string>? remotes = null;
             List<SessionSummary>? sessions = null;
             JsonElement? data = null;
             while (r.Read() && r.TokenType == JsonTokenType.PropertyName)
@@ -108,6 +115,7 @@ public static class IpcCodec
                     case "workingSetBytes": ws = r.GetInt64(); break;
                     case "debugging": debugging = r.GetBoolean(); break;
                     case "paths": paths = ReadPaths(ref r); break;
+                    case "remotes": remotes = ReadStrings(ref r); break;
                     case "wait": wait = r.GetBoolean(); break;
                     case "force": force = r.GetBoolean(); break;
                     case "hidden": hidden = r.GetBoolean(); break;
@@ -126,7 +134,7 @@ public static class IpcCodec
             return new IpcMessage
             {
                 Type = type, Ok = ok, Error = error, ProtocolVersion = protocol, Pid = pid, Session = session, State = state, LastShownUnixMs = shown,
-                WorkingSetBytes = ws, Debugging = debugging, Paths = paths, Wait = wait, Force = force, Hidden = hidden, Unnamed = unnamed,
+                WorkingSetBytes = ws, Debugging = debugging, Paths = paths, Remotes = remotes, Wait = wait, Force = force, Hidden = hidden, Unnamed = unnamed,
                 Sessions = sessions, Data = data, Uri = uri, Text = text, Line = line, Column = column, Count = count,
             };
         }
@@ -157,6 +165,18 @@ public static class IpcCodec
                 }
             }
             if (!string.IsNullOrEmpty(path)) list.Add(new IpcPath(path, line, column));
+        }
+        return list;
+    }
+
+    private static List<string> ReadStrings(ref Utf8JsonReader r)
+    {
+        var list = new List<string>();
+        if (r.TokenType != JsonTokenType.StartArray) throw new IpcProtocolException("remotes must be an array");
+        while (r.Read() && r.TokenType != JsonTokenType.EndArray)
+        {
+            if (r.TokenType == JsonTokenType.String && r.GetString() is { Length: > 0 } value) list.Add(value);
+            else r.Skip();
         }
         return list;
     }

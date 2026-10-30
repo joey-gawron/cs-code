@@ -18,6 +18,8 @@ internal interface IBreakpointSyncHost
     DebugAdapterQuirks Quirks { get; }
     Task<JsonElement> RequestAsync(string command, object? arguments, CancellationToken ct);
     void BreakpointStatusChanged(DebugBreakpointStatus status);
+    /// <summary>The path the adapter knows a source by; null when it has none (virtual <c>debug:</c> sources, another machine's files).</summary>
+    string? AdapterPathOf(Uri uri) => uri.IsFile ? uri.LocalPath : null;
 }
 
 /// <summary>
@@ -134,7 +136,8 @@ internal sealed class BreakpointSync : IDisposable
 
     private async Task SendFileAsync(Uri uri, CancellationToken ct)
     {
-        if (!uri.IsFile) return; // virtual (debug:) and remote sources are not addressable by an adapter's path
+        // Virtual (debug:) sources are not addressable by an adapter's path; a remote workspace's files are, by their path on the remote host.
+        if (_host.AdapterPathOf(uri) is not { } adapterPath) return;
         var caps = _host.Capabilities;
         var pos = _host.Positions;
         var sent = new List<(SourceBreakpoint Bp, DapSourceBreakpoint Wire)>();
@@ -171,7 +174,7 @@ internal sealed class BreakpointSync : IDisposable
         if (_sentSignatures.TryGetValue(uri, out var previous) && previous == signature) return;
         if (sent.Count == 0 && previous is null) { _sentSignatures[uri] = signature; return; } // never sent anything for this file: nothing to clear
 
-        var args = new DapSetBreakpointsArguments { Source = DapMapping.ToWire(uri), Breakpoints = [.. sent.Select(s => s.Wire)], SourceModified = false };
+        var args = new DapSetBreakpointsArguments { Source = DapMapping.ToWire(adapterPath), Breakpoints = [.. sent.Select(s => s.Wire)], SourceModified = false };
         Interlocked.Increment(ref _requestsSent);
         JsonElement body;
         try { body = await _host.RequestAsync("setBreakpoints", args, ct); }

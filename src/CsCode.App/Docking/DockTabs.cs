@@ -275,7 +275,8 @@ public sealed class EditorTab : ShellDocument
     public static string TitleFor(Uri uri)
     {
         if (uri.Scheme == "untitled") return uri.AbsolutePath.Length > 0 ? uri.AbsolutePath : uri.ToString();
-        var path = uri.IsFile ? uri.LocalPath : uri.AbsolutePath;
+        // A remote (ssh:) URI's path is escaped ("my%20file.cs"): titles show the file's real name.
+        var path = uri.IsFile ? uri.LocalPath : Uri.UnescapeDataString(uri.AbsolutePath);
         return Path.GetFileName(path.TrimEnd('/', '\\')) is { Length: > 0 } n ? n : path;
     }
 }

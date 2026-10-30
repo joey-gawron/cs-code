@@ -52,6 +52,22 @@ public class ShellContributionTests
     }
 
     [Fact]
+    public void The_indicator_is_a_badge_in_the_themes_remote_colours_in_every_state()
+    {
+        var host = Protocol.RemoteAuthority.Parse("me@box");
+        foreach (var state in Enum.GetValues<RemoteConnectionState>())
+        {
+            var item = RemoteShellContributions.Indicator(new RemoteConnectionStatus(state, "me@box", host.Root, "msg"));
+            Assert.Equal("statusBarItem.remoteBackground", item.BackgroundColorKey);
+            Assert.Equal("statusBarItem.remoteForeground", item.ColorKey);
+            Assert.Equal(StatusBarAlignment.Left, item.Alignment);
+        }
+        Assert.StartsWith("$(remote) SSH: me@box", RemoteShellContributions.Indicator(new RemoteConnectionStatus(RemoteConnectionState.Connected, "me@box", host.Root)).Text);
+        var docker = new Uri("docker://c0ffee/");
+        Assert.StartsWith("$(remote) Docker: c0ffee", RemoteShellContributions.Indicator(new RemoteConnectionStatus(RemoteConnectionState.Connected, "c0ffee", docker)).Text);
+    }
+
+    [Fact]
     public async Task A_failed_connection_shows_an_error_with_retry_and_show_log()
     {
         await using var host = new RemoteTestHost(o => o.TransportFactory = (_, _) => throw new IOException("ssh: connect to host nowhere port 22: Connection refused"));

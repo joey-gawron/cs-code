@@ -31,7 +31,11 @@ public static class ServiceCollectionExtensions
         sp.GetService<IWorkspaceService>(),
         new LazyViewActivator(sp),
         sp.GetService<IMemoryMonitor>(),
-        hostFactory);
+        hostFactory)
+    {
+        // A remote workspace's terminals run on its server (the Remote module registers the provider); resolved on the first terminal.
+        Backends = () => sp.GetService<ITerminalBackendProvider>(),
+    };
 
     /// <summary>The shell's view activator depends on the tool windows (which include the terminal's): resolved when first needed.</summary>
     private sealed class LazyViewActivator(IServiceProvider services) : IViewActivator

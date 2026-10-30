@@ -46,6 +46,9 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
             _store.Add(commands.Register(ShowLog, _ => Run(ShowLogAsync()), new CommandMetadata(ShowLog, "Show Log", "Remote")));
             if (sp.GetService<IConfigurationService>() is { } config) _store.Add(config.RegisterProperties(RemoteSettings.Properties()));
         }
+        // R3: sessions of a remote workspace start their adapter on the server (asked before the built-in, local factories).
+        if (sp.GetService<CsCode.Core.Debugging.IDebugService>() is { } debug && sp.GetService<Bridge.RemoteDebugging>() is { } remoteDebug)
+            _store.Add(remoteDebug.RegisterWith(debug));
         if (sp.GetService<IStatusBarService>() is { } statusBar)
         {
             // Resolving the manager here is cheap (everything it needs is resolved lazily) and makes the indicator follow it from the start.
@@ -57,21 +60,39 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
         return this;
     }
 
+    /// <summary>True for the folder URI of a remote workspace (<c>ssh://host/path</c>): the session restore reconnects instead of opening it directly.</summary>
+    public static bool IsRemoteFolder(Uri uri) => uri.IsAbsoluteUri && RemoteSchemes.IsRemote(uri.Scheme);
+
     private static async ValueTask<object?> Run(Task work)
     {
         await work.ConfigureAwait(false);
         return null;
     }
 
-    internal static StatusBarItemModel Indicator(RemoteConnectionStatus s) => s.State switch
+    /// <summary>The badge's theme colours (VS Code's): the indicator is always drawn as a coloured badge at the left of the status bar.</summary>
+    public const string BadgeBackground = "statusBarItem.remoteBackground";
+    public const string BadgeForeground = "statusBarItem.remoteForeground";
+
+    internal static StatusBarItemModel Indicator(RemoteConnectionStatus s) => (s.State switch
     {
-        RemoteConnectionState.Connected => new(IndicatorId, $"$(remote) SSH: {s.Host}", $"Connected to {s.Host}. Click for remote commands.", Connect, StatusBarAlignment.Left, 10_000),
+        RemoteConnectionState.Connected => new StatusBarItemModel(IndicatorId, $"$(remote) {Label(s)}", $"Connected to {s.Host}. Click for remote commands.", Connect, StatusBarAlignment.Left, 10_000),
         RemoteConnectionState.Connecting or RemoteConnectionState.Bootstrapping =>
-            new(IndicatorId, $"$(sync~spin) SSH: {s.Host}", s.Message ?? "Connecting…", ShowLog, StatusBarAlignment.Left, 10_000),
-        RemoteConnectionState.Reconnecting => new(IndicatorId, $"$(sync~spin) SSH: {s.Host} (reconnecting)", s.Message ?? "Reconnecting…", ShowLog, StatusBarAlignment.Left, 10_000),
-        RemoteConnectionState.Failed => new(IndicatorId, $"$(error) SSH: {s.Host} (disconnected)", s.Message ?? "Connection failed", Reconnect, StatusBarAlignment.Left, 10_000),
+            new(IndicatorId, $"$(sync~spin) {Label(s)}", s.Message ?? "Connecting…", ShowLog, StatusBarAlignment.Left, 10_000),
+        RemoteConnectionState.Reconnecting => new(IndicatorId, $"$(sync~spin) {Label(s)} (reconnecting)", s.Message ?? "Reconnecting…", ShowLog, StatusBarAlignment.Left, 10_000),
+        RemoteConnectionState.Failed => new(IndicatorId, $"$(error) {Label(s)} (disconnected)", s.Message ?? "Connection failed", Reconnect, StatusBarAlignment.Left, 10_000),
         _ => new(IndicatorId, "$(remote)", "Open a remote window (Connect to Host…)", Connect, StatusBarAlignment.Left, 10_000),
+    }) with { ColorKey = BadgeForeground, BackgroundColorKey = BadgeBackground };
+
+    /// <summary>"SSH: host", "Docker: container", "WSL: distro" — by the connection's URI scheme.</summary>
+    private static string Label(RemoteConnectionStatus s) => s.Authority?.Scheme switch
+    {
+        RemoteSchemes.Docker => "Docker: " + Bare(s.Host, RemoteSchemes.Docker),
+        RemoteSchemes.Wsl => "WSL: " + Bare(s.Host, RemoteSchemes.Wsl),
+        _ => "SSH: " + s.Host,
     };
+
+    private static string? Bare(string? host, string scheme) =>
+        host is not null && host.StartsWith(scheme + "://", StringComparison.OrdinalIgnoreCase) ? host[(scheme.Length + 3)..].TrimEnd('/') : host;
 
     // Set updates the entry by id; only the newest token is kept (disposing an older one would remove the entry).
     private void UpdateIndicator(IStatusBarService statusBar, RemoteConnectionStatus s) => Interlocked.Exchange(ref _indicator, statusBar.Set(Indicator(s)));
@@ -94,10 +115,10 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
         await new PoolHop();
         var manager = Manager;
         string? path = null;
-        if (target is { Length: > 0 } && target.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
+        if (target is { Length: > 0 } && Uri.TryCreate(target, UriKind.Absolute, out var uri) && RemoteSchemes.IsRemote(uri.Scheme))
         {
-            var uri = new Uri(target);
-            if (!await ConnectWithProgressAsync(RemoteAuthority.Parse(target).Destination).ConfigureAwait(false)) return;
+            var authority = RemoteAuthority.Parse(target);
+            if (!await ConnectWithProgressAsync(authority.Scheme == RemoteSchemes.Ssh ? authority.Destination : authority.ToString()).ConfigureAwait(false)) return;
             path = SshUriMapper.PathOf(uri, false);
         }
         else if (!manager.Status.IsConnected)
@@ -182,7 +203,7 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
     {
         var manager = Manager;
         // The remote folder stops being reachable: close it first so nothing keeps calling into a closed connection.
-        if (sp.GetService<IWorkspaceService>() is { } ws && ws.Folders.Any(f => f.Scheme == SshUriMapper.Scheme))
+        if (sp.GetService<IWorkspaceService>() is { } ws && ws.Folders.Any(IsRemoteFolder))
             await ws.CloseFolderAsync().ConfigureAwait(false);
         await manager.DisconnectAsync().ConfigureAwait(false);
     }

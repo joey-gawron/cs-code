@@ -70,9 +70,8 @@ internal static class DapMapping
 
     public static DebugThread ToCore(DapThread t) => new(t.Id, t.Name);
 
-    public static DapSource ToWire(Uri uri)
-    {
-        var path = uri.IsFile ? uri.LocalPath : uri.ToString();
-        return new DapSource { Path = path, Name = System.IO.Path.GetFileName(path.TrimEnd('/', '\\')) };
-    }
+    public static DapSource ToWire(Uri uri) => ToWire(uri.IsFile ? uri.LocalPath : uri.ToString());
+
+    /// <summary>A source by the path the adapter knows it by (a remote workspace's file: its path on the remote host).</summary>
+    public static DapSource ToWire(string path) => new() { Path = path, Name = System.IO.Path.GetFileName(path.TrimEnd('/', '\\')) };
 }

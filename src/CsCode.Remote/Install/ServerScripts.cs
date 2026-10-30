@@ -13,21 +13,25 @@ public static class ServerScripts
 
     /// <summary>
     /// $1 install root ("" = ~/.cscode-server) · $2 data dir ("" = root/data) · $3 marker ("" = none) · $4 "force" to ignore existing installs ·
-    /// $5… candidate hashes, preferred first. Execs the first installed server (touching its directory so cleanup keeps it), or prints
-    /// <see cref="NotInstalledMarker"/> and the probe lines (os, arch, home, dotnet runtimes) and exits <see cref="NotInstalledExitCode"/>.
+    /// $5 persistent session id ("" = the server ends with the connection) · $6 its grace period in seconds · $7… candidate hashes, preferred first.
+    /// Execs the first installed server (touching its directory so cleanup keeps it), or prints <see cref="NotInstalledMarker"/> and the probe lines
+    /// (os, arch, home, dotnet runtimes) and exits <see cref="NotInstalledExitCode"/>.
     /// </summary>
     public const string Start = """
         root="$1"; [ -n "$root" ] || root="$HOME/.cscode-server"
         data="$2"; [ -n "$data" ] || data="$root/data"
-        marker="$3"; force="$4"
-        shift 4
+        marker="$3"; force="$4"; persist="$5"; grace="$6"
+        shift 6
         if [ "$force" != "force" ]; then
           for h in "$@"; do
             if [ -x "$root/bin/$h/cscode-server" ]; then
               touch "$root/bin/$h" 2>/dev/null
               mkdir -p "$data" 2>/dev/null
-              if [ -n "$marker" ]; then exec "$root/bin/$h/cscode-server" --stdio --data-dir "$data" --marker "$marker"; fi
-              exec "$root/bin/$h/cscode-server" --stdio --data-dir "$data"
+              server="$root/bin/$h/cscode-server"
+              set -- --stdio --data-dir "$data"
+              if [ -n "$marker" ]; then set -- "$@" --marker "$marker"; fi
+              if [ -n "$persist" ]; then set -- "$@" --persist "$persist" --grace "$grace"; fi
+              exec "$server" "$@"
             fi
           done
         fi

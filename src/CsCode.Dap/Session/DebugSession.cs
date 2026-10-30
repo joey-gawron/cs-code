@@ -162,6 +162,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     // ------------------------------------------------------------------ IBreakpointSyncHost
 
     IDebugSession IBreakpointSyncHost.Session => this;
+    string? IBreakpointSyncHost.AdapterPathOf(Uri uri) => uri.IsFile ? uri.LocalPath : _o.PathMapper?.ToAdapterPath(uri);
     DapPositions IBreakpointSyncHost.Positions => _positions;
     DapCapabilities IBreakpointSyncHost.Capabilities => _dapCaps;
     bool IBreakpointSyncHost.IsLive => _client is { IsClosed: false } && State != DebugSessionState.Terminated;

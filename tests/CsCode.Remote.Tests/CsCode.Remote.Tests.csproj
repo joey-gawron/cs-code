@@ -13,6 +13,9 @@
     <ProjectReference Include="../../src/CsCode.Platform/CsCode.Platform.csproj" />
     <ProjectReference Include="../../src/CsCode.Lsp/CsCode.Lsp.csproj" />
     <ProjectReference Include="../../src/CsCode.Remote/CsCode.Remote.csproj" />
+    <!-- R3: the consumers of remote terminals, debug adapters and tasks (their real services, client side) -->
+    <ProjectReference Include="../../src/CsCode.Terminal/CsCode.Terminal.csproj" />
+    <ProjectReference Include="../../src/CsCode.Dap/CsCode.Dap.csproj" />
     <!-- the real server: its build output (cscode-server.dll + runtimeconfig) lands next to the tests, which start it as a child process -->
     <ProjectReference Include="../../src/CsCode.Server/CsCode.Server.csproj" />
     <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />

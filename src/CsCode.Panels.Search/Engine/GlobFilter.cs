@@ -108,18 +108,25 @@ public sealed class GlobFilter
     }
 }
 
-/// <summary>Maps file URIs to workspace-relative glob paths ("/src/a.cs") for the folders being searched.</summary>
+/// <summary>
+/// Maps file URIs to workspace-relative glob paths ("/src/a.cs") for the folders being searched. Folders of other schemes (a remote workspace,
+/// <c>ssh://host/path</c>) are keyed by their scheme and authority plus the unescaped path, so their files get the same relative paths.
+/// </summary>
 public sealed class RootSet
 {
     private static readonly StringComparison PathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
-    private readonly string[] _roots; // local paths with forward slashes and a trailing '/'
+    private readonly string[] _roots; // keys with forward slashes and a trailing '/'
 
     public RootSet(IEnumerable<Uri> folders)
     {
-        _roots = folders.Where(f => f.IsFile).Select(f => Normalise(f.LocalPath)).Select(p => p.EndsWith('/') ? p : p + "/")
+        _roots = folders.Select(Key).Select(p => p.EndsWith('/') ? p : p + "/")
             .OrderByDescending(p => p.Length).ToArray();
     }
+
+    /// <summary>A file: URI's local path; another scheme's "scheme://authority/unescaped/path".</summary>
+    private static string Key(Uri uri) =>
+        uri.IsFile ? Normalise(uri.LocalPath) : uri.GetLeftPart(UriPartial.Authority) + Uri.UnescapeDataString(uri.AbsolutePath);
 
     public IReadOnlyList<string> Roots => _roots;
 
@@ -128,6 +135,12 @@ public sealed class RootSet
     /// <summary>The folder-relative path with a leading slash; absolute (leading slash) when no root contains the file.</summary>
     public string ToRelative(Uri uri)
     {
+        if (!uri.IsFile)
+        {
+            var key = Key(uri);
+            foreach (var root in _roots)
+                if (key.StartsWith(root, PathComparison)) return "/" + key[root.Length..];
+        }
         var path = uri.IsFile ? Normalise(uri.LocalPath) : Uri.UnescapeDataString(uri.AbsolutePath);
         return ToRelative(path);
     }
@@ -145,8 +158,7 @@ public sealed class RootSet
 
     public bool Contains(Uri uri)
     {
-        if (!uri.IsFile) return false;
-        var path = Normalise(uri.LocalPath);
+        var path = Key(uri);
         foreach (var root in _roots)
             if (path.StartsWith(root, PathComparison)) return true;
         return false;

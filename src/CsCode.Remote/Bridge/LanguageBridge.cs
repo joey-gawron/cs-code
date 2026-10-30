@@ -69,8 +69,8 @@ public sealed class LanguageBridge : IRemoteParticipant, IDisposable
     /// <summary>The server's selector, restricted to what this connection serves (ssh: scheme of that host; local files for the process host).</summary>
     internal DocumentSelector MapSelector(DocumentSelector selector)
     {
-        if (Mapper is not SshUriMapper) return selector;
-        return new DocumentSelector(selector.Filters.Select(f => f with { Scheme = SshUriMapper.Scheme }).ToArray());
+        if (Mapper is not SshUriMapper remote) return selector;
+        return new DocumentSelector(selector.Filters.Select(f => f with { Scheme = remote.Authority.Scheme }).ToArray());
     }
 
     private void Register(LangRegistration r)

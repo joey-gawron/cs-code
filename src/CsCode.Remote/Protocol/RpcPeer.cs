@@ -45,7 +45,7 @@ public sealed class RpcPeerOptions
 /// <item>Closing (EOF, protocol error, <see cref="Dispose"/>) fails every pending call with <see cref="RemoteDisconnectedException"/>.</item>
 /// </list>
 /// </summary>
-public sealed class RpcPeer : IDisposable
+public sealed class RpcPeer : IRpcEndpoint, IDisposable
 {
     public const string CancelMethod = "$/cancelRequest";
     private static readonly byte[] HeaderPrefix = "Content-Length: "u8.ToArray();

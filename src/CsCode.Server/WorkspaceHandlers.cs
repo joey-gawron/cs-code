@@ -16,7 +16,7 @@ internal sealed class WorkspaceHandlers(WorkspaceService workspace, Configuratio
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public void Register(RpcPeer peer)
+    public void Register(IRpcEndpoint peer)
     {
         peer.OnRequest<SetFoldersParams, Empty>(RemoteMethods.WorkspaceSetFolders, async (p, ct) =>
         {

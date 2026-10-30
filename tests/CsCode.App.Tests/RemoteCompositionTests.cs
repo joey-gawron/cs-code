@@ -1,4 +1,6 @@
+using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.VisualTree;
 using CsCode.App.Docking;
 using CsCode.App.Services;
 using CsCode.App.Startup;
@@ -57,6 +59,13 @@ public class RemoteCompositionTests
 
             await manager.ConnectAsync("tester@box");
             Assert.True(await DevHost.WaitFor(() => status.Items.Any(i => i.Id == "remote.indicator" && i.Text.Contains("SSH: tester@box", StringComparison.Ordinal)), 10_000));
+            // the indicator is drawn as a badge in the theme's remote colours (VS 2022 Dark: white on #16825D)
+            var window = await run.MainWindowAsync();
+            Button? badge = null;
+            Assert.True(await DevHost.WaitFor(() => (badge = window.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Classes.Contains("badge"))) is not null, 10_000), "no badge in the status bar");
+            var brush = Assert.IsAssignableFrom<Avalonia.Media.ISolidColorBrush>(badge!.Background);
+            Assert.Equal(Avalonia.Media.Color.Parse("#16825D"), brush.Color);
+            Assert.Same(CsCode.Ui.Theming.ThemeBrushes.Get("statusBarItem.remoteBackground"), badge.Background);
 
             var folder = manager.ToUri(env.Workspace.Path + "/")!;
             await sp.GetRequiredService<IWorkspaceService>().OpenFolderAsync(folder);
@@ -89,6 +98,119 @@ public class RemoteCompositionTests
         }
         // the app's exit stopped the server (and nothing else of ours is left)
         Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task A_remote_document_changed_on_the_server_reloads_and_its_tab_shows_the_real_file_name()
+    {
+        // T12: the editor watched file: documents only (a remote file changed on the server was never offered for reload), and tab titles of
+        // ssh: documents showed the escaped path ("my%20notes.txt").
+        Assert.SkipUnless(File.Exists(ServerAssembly), "cscode-server.dll is not next to the tests");
+        using var env = new RealAppHome();
+        using var serverData = new TempDirectory("cscode-app-remote-");
+        var marker = "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
+        var file = env.Workspace.WriteFile("my notes.txt", "first\n");
+        await using (var run = new RealAppRun(env, s => Remote(s, serverData, marker)))
+        {
+            await run.MainWindowAsync();
+            var sp = run.Services;
+            var manager = sp.GetRequiredService<IRemoteConnectionManager>();
+            await manager.ConnectAsync("tester@box");
+            await sp.GetRequiredService<IWorkspaceService>().OpenFolderAsync(manager.ToUri(env.Workspace.Path + "/")!);
+            var uri = manager.ToUri(file)!;
+            Assert.Contains("my%20notes.txt", uri.AbsoluteUri, StringComparison.Ordinal);
+
+            var tab = await sp.GetRequiredService<DocumentWell>().OpenAsync(uri);
+            Assert.Equal("my notes.txt", tab.Title);
+            var doc = tab.Doc;
+            Assert.Equal("first\n", doc.GetText().Replace("\r\n", "\n", StringComparison.Ordinal));
+
+            // changed on the "remote" disk (the server's machine): the clean document reloads, as a local one does
+            await Task.Delay(300); // the server's watch is armed when the document opened; give the first event a fresh mtime
+            File.WriteAllText(file, "second, from the server\n");
+            Assert.True(await DevHost.WaitFor(() => doc.GetText().Replace("\r\n", "\n", StringComparison.Ordinal) == "second, from the server\n", 20_000),
+                "the remote document was not reloaded: " + doc.GetText());
+            Assert.False(doc.IsDirty);
+        }
+        Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task In_the_real_app_a_remote_workspace_terminal_runs_on_the_server()
+    {
+        // R3 in the real composition: the Terminal module asks the Remote module's provider; a remote folder's terminal is the server's child.
+        Assert.SkipUnless(File.Exists(ServerAssembly), "cscode-server.dll is not next to the tests");
+        using var env = new RealAppHome();
+        using var serverData = new TempDirectory("cscode-app-remote-");
+        var marker = "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
+        await using (var run = new RealAppRun(env, s => Remote(s, serverData, marker)))
+        {
+            await run.MainWindowAsync();
+            var sp = run.Services;
+            var manager = sp.GetRequiredService<IRemoteConnectionManager>();
+            await manager.ConnectAsync("tester@box");
+            await sp.GetRequiredService<IWorkspaceService>().OpenFolderAsync(manager.ToUri(env.Workspace.Path + "/")!);
+            var terminals = sp.GetRequiredService<CsCode.Core.Terminal.ITerminalService>();
+            var t = await terminals.CreateAsync(new CsCode.Core.Terminal.TerminalCreateOptions
+            {
+                ShellPath = "/bin/bash", ShellArgs = ["--noprofile", "--norc"], Show = false,
+                Env = new Dictionary<string, string?> { ["HISTFILE"] = "/dev/null" },
+            });
+            var server = ((CsCode.Remote.Client.RemoteConnectionManager)manager).Session!.Server.ProcessId;
+            Assert.True(IsDescendant(t.ProcessId!.Value, server), $"terminal pid {t.ProcessId} is not under the server {server}");
+            Assert.Equal(env.Workspace.Path, t.CurrentDirectory);
+            await terminals.KillAsync(t);
+        }
+        Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task Find_in_Files_on_a_remote_workspace_returns_the_servers_matches_through_the_real_engine()
+    {
+        Assert.SkipUnless(File.Exists(ServerAssembly), "cscode-server.dll is not next to the tests");
+        using var env = new RealAppHome();
+        using var serverData = new TempDirectory("cscode-app-remote-");
+        var marker = "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
+        env.Workspace.WriteFile("src/one.cs", "// a needle\nclass One { }\n");
+        env.Workspace.WriteFile("src/two.cs", "class Two { int needle; }\n");
+        env.Workspace.WriteFile("notes.md", "no match here\n");
+        await using (var run = new RealAppRun(env, s => Remote(s, serverData, marker)))
+        {
+            await run.MainWindowAsync();
+            var sp = run.Services;
+            var manager = sp.GetRequiredService<IRemoteConnectionManager>();
+            await manager.ConnectAsync("tester@box");
+            await sp.GetRequiredService<IWorkspaceService>().OpenFolderAsync(manager.ToUri(env.Workspace.Path + "/")!);
+            using var engine = CsCode.Panels.Search.ViewModels.SearchServices.From(sp).Engine;
+            var files = new List<CsCode.Panels.Search.Engine.FileMatches>();
+            using var session = engine.Start(new CsCode.Panels.Search.Engine.SearchQuery("needle"), s => s.Batches.Subscribe(b => { lock (files) files.AddRange(b.Files); }));
+            var done = await session.Result.WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.Equal(CsCode.Panels.Search.Engine.SearchOutcome.Completed, done.Outcome);
+            lock (files)
+            {
+                Assert.Equal([manager.ToUri(env.Workspace.Combine("src", "one.cs")), manager.ToUri(env.Workspace.Combine("src", "two.cs"))],
+                    files.Select(f => f.Uri).Distinct().OrderBy(u => u!.AbsoluteUri));
+                var two = files.Single(f => f.Uri.AbsolutePath.EndsWith("two.cs", StringComparison.Ordinal)).Matches.Single();
+                Assert.Equal(new TextPosition(0, 16), two.Range.Start);
+                Assert.Equal("needle", two.Preview.Substring(two.PreviewMatchStart, two.PreviewMatchLength));
+            }
+        }
+        Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
+    }
+
+    private static bool IsDescendant(int pid, int ancestor)
+    {
+        for (var p = pid; p > 1;)
+        {
+            if (p == ancestor) return true;
+            try
+            {
+                var stat = File.ReadAllText($"/proc/{p}/stat");
+                p = int.Parse(stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[1], System.Globalization.CultureInfo.InvariantCulture);
+            }
+            catch (IOException) { return false; }
+        }
+        return false;
     }
 
     [AvaloniaFact(Timeout = 180_000)]

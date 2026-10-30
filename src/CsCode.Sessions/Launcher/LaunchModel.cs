@@ -26,6 +26,8 @@ public sealed record LaunchRequest(LaunchKind Kind)
     public string? Session { get; init; }
     public bool NewWindow { get; init; }
     public IReadOnlyList<LaunchTarget> Targets { get; init; } = [];
+    /// <summary><c>ssh://[user@]host[:port]/path</c> (and other remote URIs) from the command line: the session connects and opens them as folders.</summary>
+    public IReadOnlyList<string> RemoteTargets { get; init; } = [];
     public bool Wait { get; init; }
     /// <summary><c>--quit --all</c>.</summary>
     public bool All { get; init; }

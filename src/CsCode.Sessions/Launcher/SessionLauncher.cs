@@ -117,7 +117,11 @@ public sealed class SessionLauncher
             gate?.Dispose();
             gate = null;
 
-            var show = new IpcMessage { Type = IpcVerbs.Show, Paths = paths, Wait = request.Wait && paths.Length > 0 };
+            var show = new IpcMessage
+            {
+                Type = IpcVerbs.Show, Paths = paths, Wait = request.Wait && paths.Length > 0,
+                Remotes = request.RemoteTargets.Count > 0 ? request.RemoteTargets : null, // cscode ssh://host/path: the session connects and opens it
+            };
             SessionTrace.Mark("launcher: show sent");
             var reply = TryRequest(target.Value, show, show.Wait == true ? null : _timeouts.ShowReply);
             SessionTrace.Mark("launcher: show replied " + (reply.Ok == true ? "ok" : reply.Error));

@@ -2,12 +2,14 @@ using System.Text;
 using CsCode.Core;
 using CsCode.Core.Platform;
 using CsCode.Core.Remote;
+using CsCode.Dap;
 using CsCode.Lsp;
 using CsCode.Platform;
 using CsCode.Remote;
 using CsCode.Remote.Client;
 using CsCode.Remote.Protocol;
 using CsCode.Remote.Transport;
+using CsCode.Terminal;
 using CsCode.TestDoubles;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -144,14 +146,25 @@ public static class TestEnv
     }
 
     /// <summary>
+    /// <c>CSCODE_TEST_SERVER</c>: a published <c>cscode-server</c> executable (an extracted bundle, e.g. the trimmed one) that the loopback tests run
+    /// instead of the build's <c>cscode-server.dll</c>; unset: the build's.
+    /// </summary>
+    public static string? PublishedServer => Environment.GetEnvironmentVariable("CSCODE_TEST_SERVER") is { Length: > 0 } exe && File.Exists(exe) ? exe : null;
+
+    /// <summary>
     /// Launch line of a local server (data dir in <paramref name="dataDir"/>; marker for process accounting). HOME and the XDG directories point into
     /// the data dir, so the server and the language servers it starts never touch the user's caches or configuration.
     /// </summary>
-    public static ProcessLaunch ServerLaunch(string dataDir, string marker)
+    public static ProcessLaunch ServerLaunch(string dataDir, string marker, (string Session, int GraceSeconds)? persist = null)
     {
         var home = Path.Combine(dataDir, "home");
         Directory.CreateDirectory(home);
-        return LocalServer.Launch(ServerAssembly, dataDir, marker, belowNormal: true, environment: new Dictionary<string, string?>
+        var launch = LocalServer.Launch(ServerAssembly, dataDir, marker, belowNormal: true, persist: persist, environment: ServerEnvironment(home));
+        // the same arguments, without `dotnet <dll>`, for a published single-file server
+        return PublishedServer is { } exe ? launch with { FileName = exe, Arguments = launch.Arguments.Skip(1).ToArray() } : launch;
+    }
+
+    private static Dictionary<string, string?> ServerEnvironment(string home) => new()
         {
             ["SSH_AUTH_SOCK"] = null,
             ["HOME"] = home,
@@ -160,8 +173,7 @@ public static class TestEnv
             ["XDG_DATA_HOME"] = Path.Combine(home, ".local", "share"),
             ["XDG_STATE_HOME"] = Path.Combine(home, ".local", "state"),
             ["CSCODE_HOME"] = null,
-        });
-    }
+        };
 
     /// <summary>PIDs of live processes whose command line contains <paramref name="marker"/> (Linux /proc).</summary>
     public static IReadOnlyList<int> ProcessesWithMarker(string marker)
@@ -266,25 +278,43 @@ public static class TestEnv
 public sealed class RemoteTestHost : IAsyncDisposable
 {
     public const string Host = "tester@remote-box";
-    private readonly TempDirectory _home = new("cscode-remote-client-");
+    private TempDirectory _home = new("cscode-remote-client-");
     private readonly TempDirectory _serverData = new("cscode-remote-server-");
+    private readonly string? _sharedServerData;
 
     /// <param name="loopback">false: the real ssh transport (settings from <paramref name="userSettings"/>, e.g. remote.ssh.configFile).</param>
     /// <param name="userSettings">The client's user settings.json (written to the temp CSCODE_HOME before anything reads it).</param>
+    /// <param name="r3">Also compose the R3 consumers: the Dap module (debug service, task runner) and the Terminal module's service, with the
+    /// remote debug factory/provider registered as the shell would.</param>
+    /// <param name="persistent">R4: the loopback server is a persistent one (a relay to a daemon with this grace period).</param>
     public RemoteTestHost(Action<RemoteOptions>? options = null, Action<IServiceCollection>? services = null, Func<IRemoteTransport, IRemoteTransport>? wrap = null,
-        bool loopback = true, string? userSettings = null, IWindowService? window = null)
+        bool loopback = true, string? userSettings = null, IWindowService? window = null, bool r3 = false, TimeSpan? persistent = null, TempDirectory? clientHome = null,
+        string? serverDataDir = null, string? marker = null)
     {
+        _sharedServerData = serverDataDir; // another (crashed) client's server: its data dir holds the persistent server's socket
+        if (clientHome is not null)
+        {
+            _home.Dispose();
+            _home = clientHome;
+            _ownsHome = false;
+        }
         if (userSettings is not null)
         {
             Directory.CreateDirectory(Path.Combine(_home.Path, "config"));
             File.WriteAllText(Path.Combine(_home.Path, "config", "settings.json"), userSettings);
         }
-        Marker = "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
+        Marker = marker ?? "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
         Workspace = new TempDirectory("cscode-remote-ws-");
+        IRemoteTransport Loopback()
+        {
+            var persist = persistent is { } grace ? (Manager.ServerSessionId ?? throw new InvalidOperationException("no server session id"), (int)Math.Max(1, grace.TotalSeconds)) : ((string, int)?)null;
+            return new LoopbackTransport(TestEnv.ServerLaunch(ServerDataDir, Marker, persist));
+        }
         var remoteOptions = new RemoteOptions
         {
             ServerMarker = Marker,
-            TransportFactory = !loopback ? null : (_, _) => wrap is null ? new LoopbackTransport(TestEnv.ServerLaunch(_serverData.Path, Marker)) : wrap(new LoopbackTransport(TestEnv.ServerLaunch(_serverData.Path, Marker))),
+            GracePeriod = persistent ?? TimeSpan.Zero,
+            TransportFactory = !loopback ? null : (_, _) => wrap is null ? Loopback() : wrap(Loopback()),
             SshEnvironment = new Dictionary<string, string?> { ["SSH_AUTH_SOCK"] = null, ["SSH_AGENT_PID"] = null },
             AskpassDirectory = _home.Path,
             Reconnect = new ReconnectPolicy(3, () => 0.5),
@@ -307,10 +337,20 @@ public sealed class RemoteTestHost : IAsyncDisposable
         sc.AddSingleton<ICommandService, TestCommandService>();
         sc.AddSingleton<INavigationService>(sp => new RecordingNavigationService(sp.GetRequiredService<Core.Text.IDocumentManager>()));
         sc.AddSingleton(remoteOptions);
+        if (r3)
+        {
+            sc.AddCsCodeDap();
+            sc.AddCsCodeTerminalService();
+        }
         sc.AddCsCodeRemote();
         services?.Invoke(sc);
         Services = sc.BuildServiceProvider();
+        if (r3 && Services.GetService<Core.Debugging.IDebugService>() is { } debug)
+            _r3 = Services.GetRequiredService<CsCode.Remote.Bridge.RemoteDebugging>().RegisterWith(debug);
     }
+
+    private readonly IDisposable? _r3;
+    private readonly bool _ownsHome = true;
 
     public string Marker { get; }
     public TempDirectory Workspace { get; }
@@ -318,7 +358,7 @@ public sealed class RemoteTestHost : IAsyncDisposable
     public IWindowService Window { get; }
     public RecordingWindowService Recording { get; }
     public InMemoryOutputService Output { get; }
-    public string ServerDataDir => _serverData.Path;
+    public string ServerDataDir => _sharedServerData ?? _serverData.Path;
     public string ClientHome => _home.Path;
 
     public RemoteConnectionManager Manager => Services.GetRequiredService<RemoteConnectionManager>();
@@ -338,11 +378,12 @@ public sealed class RemoteTestHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _r3?.Dispose();
         await Services.DisposeAsync();
         await TestEnv.AssertNoProcessesAsync(Marker);
         Workspace.Dispose();
         _serverData.Dispose();
-        _home.Dispose();
+        if (_ownsHome) _home.Dispose();
     }
 
     public static string Text(byte[] bytes) => Encoding.UTF8.GetString(bytes);
