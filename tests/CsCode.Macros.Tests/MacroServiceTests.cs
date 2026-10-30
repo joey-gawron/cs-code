@@ -167,6 +167,65 @@ public sealed class MacroServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Nothing_is_recorded_while_the_terminal_has_the_keyboard_keys_text_searches_or_commands()
+    {
+        var r = await CreateAsync();
+        var gate = new TaskCompletionSource();
+        r.Commands.Register("user.cmd", _ => Done());
+        r.Commands.Register("terminal.paste", _ => Done());
+        r.Commands.Register("terminal.slow", async _ => { await gate.Task; return null; });
+        r.Commands.Register("toggle.terminal", _ => { r.Keys.Set(MacroCommands.RecordingPausedWhen, true); return Done(); });
+
+        await Exec(r, MacroCommands.Record);
+        await _ui.Run(() => r.Service.RecordText("a"));
+        await Exec(r, "user.cmd");
+        await Exec(r, "toggle.terminal");        // started in the editor, but the terminal has the keyboard when it completes
+        Assert.True(r.Service.IsRecordingPaused);
+        Assert.Equal("$(record) Recording macro… (paused in the terminal)", r.StatusText(MacroCommands.RecordingStatusId));
+        await _ui.Run(() =>
+        {
+            r.Service.RecordText("ls");
+            r.Service.RecordKey(KeyStrokeParser.ParseStroke("enter"));
+            r.Service.RecordCommand(MacroCommands.Find, J(new { text = "x" }));
+        });
+        await Exec(r, "terminal.paste");
+        var slow = _ui.RunAsync(async () => await r.Commands.ExecuteAsync("terminal.slow")); // started in the terminal...
+        await _ui.Run(() => r.Keys.Set(MacroCommands.RecordingPausedWhen, false));
+        gate.SetResult();                          // ...and reported after the keyboard went back to the editor
+        await slow;
+        await _ui.DrainAsync();
+        Assert.False(r.Service.IsRecordingPaused);
+        Assert.Equal("$(record) Recording macro…", r.StatusText(MacroCommands.RecordingStatusId));
+        await _ui.Run(() => r.Service.RecordText("b"));
+        await Exec(r, MacroCommands.Stop);
+
+        Assert.Equal([new TextStep("a"), new CommandStep("user.cmd"), new TextStep("b")], r.Service.Last!.Steps);
+    }
+
+    [Fact]
+    public async Task A_recording_started_in_the_terminal_waits_for_the_editor_and_time_in_the_terminal_is_no_pause()
+    {
+        var r = await CreateAsync();
+        r.Config.Set(MacroSettings.RecordPauses, true);
+        r.Keys.Set(MacroCommands.RecordingPausedWhen, true);
+        r.Commands.Register("terminal.clear", _ => Done());
+
+        await Exec(r, MacroCommands.Record);       // Ctrl+M, Ctrl+R pressed in the terminal (a chord: it reaches the key bindings)
+        Assert.True(r.Service.IsRecordingPaused);
+        await Exec(r, "terminal.clear");
+        await _ui.Run(() => r.Service.RecordText("echo"));
+        await _ui.Run(() => r.Keys.Set(MacroCommands.RecordingPausedWhen, false));
+        await _ui.Run(() => r.Service.RecordText("x"));
+        await _ui.Run(() => r.Keys.Set(MacroCommands.RecordingPausedWhen, true));
+        await Task.Delay(400);                     // in the terminal: not a pause of the macro
+        await _ui.Run(() => r.Keys.Set(MacroCommands.RecordingPausedWhen, false));
+        await _ui.Run(() => r.Service.RecordText("y"));
+        await Exec(r, MacroCommands.Stop);
+
+        Assert.Equal([new TextStep("xy")], r.Service.Last!.Steps);
+    }
+
+    [Fact]
     public async Task An_empty_recording_keeps_the_previous_last_macro()
     {
         var r = await CreateAsync();

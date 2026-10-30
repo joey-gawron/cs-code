@@ -233,7 +233,7 @@ public sealed partial class EditorDocument
                 _eol = eol;
                 _editorConfig = ec;
                 // Edits typed while the write was in flight stay dirty: only mark the file original if nothing changed since the snapshot.
-                if (Version == snap.Version) _text.UndoStack.MarkAsOriginalFile();
+                if (Version == snap.Version) MarkSaved();
                 return 0;
             }).ConfigureAwait(false);
             _saved.Fire(this);
@@ -372,7 +372,7 @@ public sealed partial class EditorDocument
                 if (Version != snap.Version) return false; // edited meanwhile: recompute against the new text
                 if (plan.Length > 0 || plan.Middle.Length > 0)
                     RunAtomic(() => _text.Replace(plan.Start, plan.Length, plan.Middle));
-                _text.UndoStack.ClearAll();
+                ClearUndoHistory(); // a held undo group (macro playback) stays open, with the new text as its start
                 _text.UndoStack.MarkAsOriginalFile();
                 UpdateDirty(false);
                 lock (_stateGate)

@@ -23,7 +23,9 @@ dedicated I/O thread, `FswFileWatcher`, `InMemoryConfiguration`, `EditorConfigRe
 `DiagnosticService`), so the module runs and is testable on its own. Nothing ever references another module's concrete types.
 
 Contract additions (additive only — no existing member was renamed or removed): `IEditorViewFactory.DisposeView`; `IEditorViewController.GetViewState`,
-`RestoreViewState`, `GetBreadcrumbsAsync`, `IsFocused`; the `EditorViewState` record. **No change was made to CsCode.Core.**
+`RestoreViewState`, `GetBreadcrumbsAsync`, `IsFocused`; the `EditorViewState` record; the clipboard members (§7a); the macro hooks `TextInput`,
+`ReplayText`, `ReplayKey`, `OpenUndoGroup`, `StartNewUndoStep` (below). The later additions are default interface members, so other
+implementations keep compiling. **No change was made to CsCode.Core.**
 
 **Modal editing surface (for the shell's Vim adapter).** `CodeEditorControl.Modal` (`EditorModalSurface`, created on first use, disposed with the
 view) is a Vim-free hook surface: the typing path (`TypeText` = `TextArea.PerformTextInput`), `CaretShape` (block / underline / outline / thin
@@ -35,7 +37,31 @@ undo group the layer closed. `EditorDocument` adds `BeforeChange` (each change's
 read), `BeginUndoGroup`/`EndUndoGroup`/`AddUndoMarker` (one undo step per Vim change, with a marker reporting undo/redo of the group) and
 `BeginAtomic`/`EndAtomic` (one change event for a burst of edits); `EditorViewFactory` raises `ViewOpened`/`ViewClosing` (the latter first thing in
 `DisposeView`). Key routing is the shell's: the window offers editor keys to Vim before the key bindings (docs/SHELL.md, "Keyboard"), and keys Vim
-passes through reach the editor unchanged.
+passes through reach the editor unchanged. While the integrated terminal has the keyboard its own precedence decides first (`commandsToSkipShell`,
+chords; docs/SHELL.md "Keyboard", docs/TERMINAL.md), and none of those keys reaches an editor.
+
+**Macro hooks (for the shell's macro recorder and player, docs/MACROS.md).** All UI thread; a destroyed view takes nothing and returns false.
+
+| Member | What it does |
+|---|---|
+| `IEditorViewController.TextInput` | Text the user types into the view (a key's character or an IME commit), raised from a tunnelling handler on the text area *before* the editor applies it, and only for input no earlier handler took (Vim takes its own in the window's handler). Control characters some platforms send after Enter / Tab / Backspace are not reported (those are key presses); text inserted by code (paste, commands, `ReplayText`) is not reported. Costs one handler that returns at once while nothing subscribes (the recorder subscribes only while recording). |
+| `ReplayText(text)` | Types through the editor's typing path (`TextArea.PerformTextInput`) as if typed: auto-closing and over-typing, completion and signature-help triggers, snippets, language-aware Enter for `"\n"`, typed-run undo coalescing. One character at a time reproduces typing. False for a read-only document. |
+| `ReplayKey(key, modifiers)` | Raises a routed key-down and key-up on the text area: the window's handlers see it first (the shell's pipeline lets a replayed key through unresolved), then the editor's own key handling (caret movement and selection, Backspace, Delete, Enter, Tab, the completion list, snippet placeholders, AvaloniaEdit's Ctrl+Z / Ctrl+Y). The text area takes the keyboard focus first: AvaloniaEdit's editing commands act on the last *focused* text area, not the event's source. Returns whether a handler took the key. |
+| `OpenUndoGroup()` | Holds an undo group of the view's document open until the result is disposed: every change of the document meanwhile (typing, keys, commands, in any view, over any number of dispatcher callbacks) becomes ONE undo step. Handles of one document nest; the group also closes when the document closes; typing right before or after it is a step of its own; disposing twice, or after the view or document is gone, does nothing. Off the UI thread: `EditorDocument.OpenUndoGroup` throws, a handle's `Dispose` is posted. |
+| `StartNewUndoStep()` | The next change starts an undo step of its own (a typed run does not continue the last one), inside a held group too. |
+
+While a group is held, **Undo and Redo never throw** (AvaloniaEdit's `UndoStack.Undo` does with a group open, and forgets its open groups): the
+controller's `Undo`/`Redo`, `EditorDocument.Undo`/`Redo` and the text area's `ApplicationCommands.Undo`/`Redo` (Ctrl+Z / Ctrl+Y, `TextEditor.Undo`;
+each view puts its own bindings in front of AvaloniaEdit's, active only while a group is held) reverse and re-apply the steps made inside the
+group, newest first, as edits inside it. The steps are the editor's usual ones (a typed run, one key's change, one command's edit, a modal
+layer's group), read from the typing path's and modal layers' groups (`EditorDocument.BeginUndoGroup`; the typing path now opens its groups
+through it) and from the buffer's update events; the changed text is AvaloniaEdit's immutable text sources, shared with its own history. Nothing
+from before the group is reached, so undoing the closed group restores exactly the text it started from; `CanUndo`/`CanRedo` report the
+group's own steps meanwhile. The document turns dirty at the group's first change (AvaloniaEdit recomputes its saved marker only when the
+outermost group closes), a save inside the group marks it clean and closing the group settles the marker; a reload from disk clears the history
+and keeps the group open from the reloaded text. A group keeps at most `EditorDocument.HeldUndoChangeLimit` (100,000) changes and closes when it
+reaches that many (memory bound). Code that calls AvaloniaEdit's `UndoStack.Undo`/`ClearAll` directly with a group held gets AvaloniaEdit's
+exception; closing the group afterwards is still safe. Tests: `HeldUndoGroupTests`, `MacroHooksViewTests`.
 
 What the shell must know:
 

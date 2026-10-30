@@ -107,8 +107,17 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         // The controller's TextInput tap (macro recording): tunnelling, so it sees the input before the text area applies it, and only input that
         // the window's own handlers (a modal layer such as Vim) left alone.
         Editor.TextArea.AddHandler(TextInputEvent, OnTextAreaTextInput, RoutingStrategies.Tunnel);
+        // While the document holds an undo group open (macro playback), the text area's own Undo / Redo (Ctrl+Z / Ctrl+Y, TextEditor.Undo, so
+        // also the controller) must not reach AvaloniaEdit's stack, which throws with a group open: these bindings come first and act on the
+        // changes made inside the group. Without a held group they decline and AvaloniaEdit's bindings run as before.
+        var undoBinding = new RoutedCommandBinding(ApplicationCommands.Undo, (_, e) => OnHeldUndoRedo(e, redo: false), OnCanHeldUndoRedo);
+        var redoBinding = new RoutedCommandBinding(ApplicationCommands.Redo, (_, e) => OnHeldUndoRedo(e, redo: true), OnCanHeldUndoRedo);
+        Editor.TextArea.CommandBindings.Insert(0, undoBinding);
+        Editor.TextArea.CommandBindings.Insert(0, redoBinding);
         _disposables.Add(Disposable.Create(() =>
         {
+            Editor.TextArea.CommandBindings.Remove(undoBinding);
+            Editor.TextArea.CommandBindings.Remove(redoBinding);
             Editor.TextArea.RemoveHandler(TextInputEvent, OnTextAreaTextInput);
             Editor.TextArea.GotFocus -= OnTextAreaGotFocus;
             Editor.TextArea.Caret.PositionChanged -= OnCaretChanged;
@@ -153,6 +162,17 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     }
 
     private void OnContextRequested(object? sender, ContextRequestedEventArgs e) => EditorMenus.PrepareContextKeys(this);
+
+    private void OnCanHeldUndoRedo(object? sender, CanExecuteRoutedEventArgs e) => e.CanExecute = !_disposed && Document.HasOpenUndoGroup;
+
+    private void OnHeldUndoRedo(ExecutedRoutedEventArgs e, bool redo)
+    {
+        e.Handled = true;
+        if (_disposed || Document.UndoRedoHeld(redo) is not { } caret) return; // nothing of the group's left: the history before it stays as it is
+        Editor.TextArea.ClearSelection();
+        Editor.CaretOffset = Math.Clamp(caret, 0, Document.Buffer.TextLength);
+        Editor.TextArea.Caret.BringCaretToView();
+    }
 
     /// <summary>
     /// Hooks for a modal editing layer (the shell's Vim adapter): typing path, caret shape, viewport, folds, popup state, highlights. Created on

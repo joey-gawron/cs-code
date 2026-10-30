@@ -275,6 +275,33 @@ too (AvaloniaEdit marks its text area's GotFocus handled, so the editor taking f
 every focus key on each focus change, after the control's own handler: it agrees with what the terminal sets for itself (T22), so the keys are
 right synchronously, without a dispatcher turn (`FocusContextKeyTests`). Floating windows get the same handlers (see *Floating windows*).
 
+The order a key press goes through (all on the UI thread, inside the key event; nothing here waits):
+
+1. **A focused terminal first** (`TerminalPanelRuntime`, docs/TERMINAL.md "Keybinding precedence"): a tunnelling *class* handler on every
+   top-level window, so it runs before the window's own handler. Only for keys whose source is a terminal control. It applies VS Code's
+   precedence: a key that starts a chord (`terminal.integrated.allowChords`, default true; not Esc), the second key of a pending chord, and a key
+   bound to a command in `terminal.integrated.commandsToSkipShell` (VS Code's defaults for the commands CsCode has, every terminal command, the
+   user's entries, `-id` removes one) go on to CsCode; Ctrl+Tab stays with the editor switcher; every other key, **including keys bound to other
+   commands** (Ctrl+C, Ctrl+H, Ctrl+V...), goes to the shell and is handled there, unless `terminal.integrated.sendKeybindingsToShell` (false)
+   sends even the skip-list keys. Keys a focused terminal takes never reach steps 2-4. The lookup reads `IKeybindingService.All` (precedence,
+   `when` clauses, removals) without touching the pipeline's chord state; typed text reaches the terminal control's own `TextInput`.
+2. **The window's tunnelling handler**: the Ctrl+Tab switcher, then the Vim interceptor (above; editors only), then the pipeline.
+3. **The pipeline** (`KeyboardPipeline.Handle`): its **tap** (`IKeyboardTap`, `KeyboardPipeline.Tap`: one per pipeline, the macro integration,
+   docs/MACROS.md) is asked first, `BeforeResolve(stroke)`: null lets the pipeline resolve the key as usual, `Handled` consumes it (no binding
+   runs and the focused control does not get it: Esc stopping a macro, an editor's keys swallowed while a macro plays), `PassThrough` skips the
+   bindings and leaves the key to the focused control (a key a macro replays: it was recorded because no binding took it). Then the bindings
+   resolve, and `AfterResolve(stroke, decision)` sees the outcome (the macro recorder keeps a key aimed at an editor's text area that the
+   bindings passed through, and Enter / F3 in the editor's find panel as a search). The tap is called for every key the pipeline is asked
+   about, inside the key event: it must stay cheap and allocation-free. Keys the terminal (step 1) or Vim (step 2) took never reach it, so
+   they are never recorded.
+4. **The focused control** gets what the pipeline passed through (the editor's caret keys, Backspace, AvaloniaEdit's own Ctrl+Z / Ctrl+Y, a
+   text box's editing keys).
+
+Text input (`TextInput`) goes through the window's tunnelling handler too: the Vim interceptor first, then the macro integration's handler,
+which swallows typing aimed at an editor while a macro plays; the editor's own text-input tap (`IEditorViewController.TextInput`, docs/EDITOR.md)
+reports what reaches an editor to the macro recorder. While the terminal has the keyboard (`terminalFocus`) the recorder records nothing at all
+(commands included).
+
 **Documents.** `DocumentWell` adds to the Dock model (the single source of truth for tabs, order and groups): open / preview (italic, replaced by the next preview, promoted by editing or reopening) /
 pin / close / close others / saved / all / to the right / reopen closed (last 20), Save/Don't Save/Cancel prompts (also when the user clicks Dock's close button: Dock's close is cancelled and routed through the prompt),
 split right/down, move between groups, MRU order and the **Ctrl+Tab switcher** overlay. Only the active tab of each group plus the last `cscode.shell.liveEditorViews` (default 8) tabs keep a live editor view;

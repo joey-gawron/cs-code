@@ -242,6 +242,71 @@ public sealed class MacroPlayerTests : IDisposable
         Assert.Equal(MacroPlayStatus.Refused, (await concurrent!).Status);
     }
 
+    // ------------------------------------------------------------------------------------------------------------ undo
+
+    [Fact]
+    public async Task Every_playback_has_one_undo_scope_entered_before_each_step_and_closed_however_it_ends()
+    {
+        var (player, host) = Rig();
+        _commands.Register("test.throw", _ => throw new InvalidOperationException("boom"));
+        var keys = 0;
+        _commands.Register("test.cancel", _ => { player.Cancel(); return ValueTask.FromResult<object?>(null); });
+
+        var unknown = await Play(player, M(T("ab"), K("left"), C("test.unknown")));
+        var ok = await Play(player, M(T("ab"), K("left")), new MacroPlayOptions(MacroRepeat.Times, 3));
+        var failed = await Play(player, M(T("x"), C("test.throw"), T("never")));
+        var cancelled = await Play(player, M(T("y"), C("test.cancel"), T("never")));
+        host.OnKey = _ => keys++;
+        player.Limits = () => new MacroLimits { MaxSteps = 5 };
+        var stopped = await Play(player, M(K("right")), new MacroPlayOptions(MacroRepeat.Times, 100));
+        player.Limits = () => MacroLimits.Default;
+        host.Unavailable = "Vim emulation is on.";
+        var refused = await Play(player, M(T("z")));
+        host.Unavailable = null;
+
+        Assert.Equal(MacroPlayStatus.Failed, unknown.Status);
+        Assert.Equal(MacroPlayStatus.Completed, ok.Status);
+        Assert.Equal(MacroPlayStatus.Failed, failed.Status);
+        Assert.Equal(MacroPlayStatus.Cancelled, cancelled.Status);
+        Assert.Equal(MacroPlayStatus.Stopped, stopped.Status);
+        Assert.Equal(MacroPlayStatus.Refused, refused.Status);
+        Assert.Equal(6, host.UndoScopes.Count); // one per playback
+        Assert.All(host.UndoScopes, s => Assert.True(s.Closed && s.ClosedOnUiThread && s.EntersAfterClose == 0));
+        Assert.Equal([3, 6, 2, 2, 5, 0], host.UndoScopes.Select(s => s.Enters)); // before every step that started (the text step's characters are one step)
+        Assert.All(host.UndoScopes.Take(5), s => Assert.Equal([host.Document], s.Groups));
+        Assert.Equal(5, keys);
+        Assert.Equal(0, host.WrongThreadCalls);
+    }
+
+    [Fact]
+    public async Task A_playback_across_two_editors_has_one_undo_group_per_editor_and_nested_macros_share_them()
+    {
+        var (player, host) = Rig();
+        var first = host.Document;
+        var second = new Uri("file:///other.txt");
+        _commands.Register("test.switch", _ => { host.Document = host.Document == first ? second : first; return ValueTask.FromResult<object?>(null); });
+        var inner = Named("inner", T("i"), C("test.switch"), T("j"));
+        _commands.Register("macro.run.inner", async _ => await player.PlayAsync(inner));
+
+        var result = await Play(player, M(T("a"), C("macro.run.inner"), T("b"), C("test.switch"), T("c")), new MacroPlayOptions(MacroRepeat.Times, 2));
+
+        Assert.Equal(MacroPlayStatus.Completed, result.Status);
+        var scope = Assert.Single(host.UndoScopes); // the nested macro joined the playback's scope
+        Assert.Equal([first, second], scope.Groups);
+        Assert.True(scope.Closed);
+    }
+
+    [Fact]
+    public async Task Without_an_undo_scope_from_the_host_playback_runs_as_before()
+    {
+        var (player, host) = Rig();
+        host.SupportsUndoScopes = false;
+        var result = await Play(player, M(T("ab"), K("left"), T("c")));
+        Assert.Equal(MacroPlayStatus.Completed, result.Status);
+        Assert.Equal("acb", host.Text);
+        Assert.Empty(host.UndoScopes);
+    }
+
     // ------------------------------------------------------------------------------------------------------------ cancellation
 
     [Fact]

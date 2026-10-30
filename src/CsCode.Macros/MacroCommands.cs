@@ -32,6 +32,8 @@ public static class MacroCommands
     public const string RecordingContextKey = "cscode.macroRecording";
     public const string PlayingContextKey = "cscode.macroPlaying";
     public const string HasLastContextKey = "cscode.macroHasLast";
+    /// <summary>While this context key is set (the integrated terminal has the keyboard), recording records nothing: keys, text, searches, commands.</summary>
+    public const string RecordingPausedWhen = "terminalFocus";
 
     // status bar items
     public const string RecordingStatusId = "macros.recording";
