@@ -441,11 +441,16 @@ public class SessionExecutionTests
         lock (seen) Assert.True(seen.Count <= 20, "one announcement per event at most");
         await h.Adapter.SendEventAsync("module", new DapModuleEvent { Reason = "removed", Module = new DapModule { Id = JsonSerializer.SerializeToElement("m0") } });
         await SessionHarness.Eventually(() => { lock (seen) return seen[^1] == 19; });
-        var count = seen.Count;
+        int count;
+        lock (seen) count = seen.Count;
         await h.Adapter.SendEventAsync("module", new DapModuleEvent { Reason = "removed", Module = new DapModule { Id = JsonSerializer.SerializeToElement("unknown") } });
-        await h.Adapter.SendEventAsync("module", new DapModuleEvent { Reason = "new", Module = new DapModule { Id = JsonSerializer.SerializeToElement("m0"), Name = "0.dll" } });
-        await SessionHarness.Eventually(() => { lock (seen) return seen[^1] == 20; });
-        lock (seen) Assert.Equal(count + 1, seen.Count); // removing a module it never reported changed nothing
+        // The process event is handled after the removal, so an announcement the removal posted is queued by then: the lane item posted
+        // after it runs behind that announcement. (No module event may follow here, or its announcement would hide this one in its burst.)
+        await h.Adapter.SendEventAsync("process", new DapProcessEvent { Name = "app", SystemProcessId = 4242 });
+        await SessionHarness.Eventually(() => h.Session.DebuggeeProcessId == 4242);
+        await h.Lane.Run(() => 0, Ct);
+        lock (seen) Assert.Equal(count, seen.Count); // removing a module it never reported changed nothing
+        Assert.Equal(19, modules.Modules.Count);
     }
 
     [Fact]
