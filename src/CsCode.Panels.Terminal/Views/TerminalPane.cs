@@ -40,6 +40,9 @@ public sealed class TerminalPane : DockPanel, IDisposable
 
     internal ScrollBar ScrollBar => _scroll;
 
+    /// <summary>What the view subscribed to for this pane's terminal (disposed with the pane).</summary>
+    internal IDisposable? Subscription { get; set; }
+
     private void OnFrameDrawn(TerminalSnapshot snap)
     {
         _updatingScroll = true;
@@ -56,6 +59,8 @@ public sealed class TerminalPane : DockPanel, IDisposable
 
     public void Dispose()
     {
+        Subscription?.Dispose();
+        Subscription = null;
         Control.FrameDrawn -= OnFrameDrawn;
         Control.Dispose();
     }

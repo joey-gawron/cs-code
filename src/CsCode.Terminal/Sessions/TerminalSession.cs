@@ -152,6 +152,9 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
     /// <summary>The whole output of the last command (bounded by the scrollback), read on the worker; null without shell integration.</summary>
     public Task<string?> GetLastCommandOutputAsync() => InvokeAsync(e => e.CommandOutput());
 
+    /// <summary>The scrollback and screen as text for screen readers (VS Code's accessible buffer), read on the worker.</summary>
+    public Task<TerminalAccessibleBuffer> GetAccessibleBufferAsync() => InvokeAsync(e => e.AccessibleBuffer());
+
     /// <summary>
     /// The program's working directory as the kernel knows it (<c>/proc/&lt;pid&gt;/cwd</c>): right even for a shell without shell integration
     /// that never reported a <c>cd</c>. Null when unknown (exited, no /proc). Blocking file-system read: call off the UI thread.

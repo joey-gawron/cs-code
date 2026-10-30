@@ -48,12 +48,16 @@ public static class TerminalCommandSet
     public const string ResizePaneLeft = "workbench.action.terminal.resizePaneLeft";
     public const string ResizePaneRight = "workbench.action.terminal.resizePaneRight";
     public const string KillAll = "workbench.action.terminal.killAll";
+    public const string FocusAccessibleBuffer = "workbench.action.terminal.focusAccessibleBuffer";
+    public const string CopyLastCommand = "workbench.action.terminal.copyLastCommand";
+    public const string CopyLastCommandOutput = "workbench.action.terminal.copyLastCommandOutput";
 
     public static readonly string[] Ids =
     [
         New, NewHere, Toggle, Focus, Kill, Clear, FocusNext, FocusPrevious, Rename, SelectAll, CopySelection, Paste, ScrollUp, ScrollDown, ScrollUpPage,
         ScrollDownPage, ScrollToTop, ScrollToBottom, RunSelectedText, RunActiveFile, SendSequence, ScrollToPreviousCommand, ScrollToNextCommand,
         FocusFind, FindNext, FindPrevious, HideFind, Split, Unsplit, Join, FocusNextPane, FocusPreviousPane, ResizePaneLeft, ResizePaneRight, KillAll,
+        FocusAccessibleBuffer, CopyLastCommand, CopyLastCommandOutput,
     ];
 
     private const string Focused = "terminalFocus";
@@ -88,6 +92,7 @@ public static class TerminalCommandSet
         new(FocusPreviousPane, "alt+up", When: FocusedSplit),
         new(ResizePaneLeft, "ctrl+shift+left", When: FocusedSplit),
         new(ResizePaneRight, "ctrl+shift+right", When: FocusedSplit),
+        new(FocusAccessibleBuffer, "alt+f2", When: Focused),
     ];
 
     private const string ProcessSupported = "terminalProcessSupported";
@@ -132,6 +137,22 @@ public static class TerminalCommandSet
         Add(KillAll, "Kill All Terminals", async _ =>
         {
             foreach (var s in service.Sessions.Reverse()) await service.KillAsync(s).ConfigureAwait(true);
+        });
+        Add(FocusAccessibleBuffer, "Focus Accessible Buffer", async _ =>
+        {
+            if (runtime.View is not { IsShown: true }) await runtime.ShowAsync(focus: true).ConfigureAwait(true);
+            if (runtime.View is { } view) await view.ShowAccessibleBufferAsync().ConfigureAwait(true);
+        });
+        Add(CopyLastCommand, "Copy Last Command", async _ =>
+        {
+            if (service.ActiveSession?.LastCommand?.Command.CommandLine is { Length: > 0 } line) await runtime.CopyAsync(line).ConfigureAwait(true);
+            else runtime.Window?.SetStatusBarMessage("No command was reported in this terminal (shell integration).", TimeSpan.FromSeconds(4));
+        });
+        Add(CopyLastCommandOutput, "Copy Last Command Output", async _ =>
+        {
+            var output = service.ActiveSession is { } s ? await s.GetLastCommandOutputAsync().ConfigureAwait(true) : null;
+            if (output is not null) await runtime.CopyAsync(output).ConfigureAwait(true);
+            else runtime.Window?.SetStatusBarMessage("No command was reported in this terminal (shell integration).", TimeSpan.FromSeconds(4));
         });
         Add(Rename, "Rename...", async inv =>
         {

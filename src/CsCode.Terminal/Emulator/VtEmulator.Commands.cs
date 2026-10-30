@@ -119,8 +119,8 @@ public sealed partial class VtEmulator
         var lineStart = sb.Length;
         for (var l = first; l <= last && sb.Length < maxChars; l++)
         {
-            if (GetRow(l) is not { } row) continue;
-            if (l > first && !row.IsWrapped)
+            var row = LineAtAbsolute(l);
+            if (l > first && !row.Wrapped)
             {
                 // a hard line ends (a soft-wrapped row continues on the next one: its blanks are part of the text)
                 TrimTrailingBlanks(sb, lineStart);
@@ -129,9 +129,31 @@ public sealed partial class VtEmulator
             }
             var start = l == line ? column : 0;
             var end = l == endLine ? endColumn : int.MaxValue;
-            if (end > start) row.AppendText(sb, start, end);
+            if (end > start) AppendLineText(row, sb, start, end);
         }
         TrimTrailingBlanks(sb, lineStart);
+    }
+
+    /// <summary>
+    /// A line's text read in place, as <see cref="TerminalRow.AppendText"/> would give it (blanks as spaces, spacers skipped, never-written
+    /// cells at the end left out), without making the immutable row copy a scrollback line would otherwise keep cached.
+    /// </summary>
+    internal static void AppendLineText(Line line, StringBuilder sb, int start = 0, int end = int.MaxValue)
+    {
+        var cells = line.Cells;
+        var used = cells.Length;
+        while (used > 0 && cells[used - 1].IsBlankDefault) used--;
+        end = Math.Min(end, used);
+        for (var c = Math.Max(0, start); c < end; c++)
+        {
+            var cell = cells[c];
+            if (cell.IsSpacer) continue;
+            var rune = cell.Rune;
+            if (rune == 0) sb.Append(' ');
+            else if (rune < 0) sb.Append(line.ClusterText(rune));
+            else if (rune < 0x10000) sb.Append((char)rune);
+            else sb.Append(char.ConvertFromUtf32(rune));
+        }
     }
 
     private static void TrimTrailingBlanks(StringBuilder sb, int from)

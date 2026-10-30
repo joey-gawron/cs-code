@@ -52,6 +52,9 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
     private readonly ToggleButton _wholeWord;
     private readonly ToggleButton _regex;
     private readonly TextBlock _findStatus;
+    private readonly TextBlock _announcer;
+    private readonly TextBox _accessibleBuffer;
+    private TerminalAccessibleBuffer? _buffer;
     private int _highlightSeq;
     private bool _highlightPending;
     private (long ViewportTop, long Sequence, int Rows) _highlighted;
@@ -110,7 +113,27 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
         };
         SetDock(_findBar, DockSide.Top);
         Children.Add(_findBar);
-        Children.Add(_panesHost);
+
+        // screen readers: a polite live region announcing finished commands (no height: it is never seen)
+        _announcer = new TextBlock { Height = 0, ClipToBounds = true, Focusable = false };
+        Avalonia.Automation.AutomationProperties.SetName(_announcer, "Terminal announcements");
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(_announcer, Avalonia.Automation.AutomationLiveSetting.Polite);
+        SetDock(_announcer, DockSide.Top);
+        Children.Add(_announcer);
+
+        // the accessible buffer (VS Code's Alt+F2): the whole scrollback as read-only text over the panes
+        _accessibleBuffer = new TextBox
+        {
+            IsReadOnly = true, AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.NoWrap, IsVisible = false,
+            FontFamily = runtime.CreateFont().Family,
+            Background = ThemeBrushes.Get("terminal.background"), Foreground = ThemeBrushes.Get("terminal.foreground"),
+        };
+        Avalonia.Automation.AutomationProperties.SetName(_accessibleBuffer, "Terminal buffer");
+        _accessibleBuffer.AddHandler(KeyDownEvent, OnAccessibleBufferKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        var content = new Panel();
+        content.Children.Add(_panesHost);
+        content.Children.Add(_accessibleBuffer);
+        Children.Add(content);
 
         var service = runtime.Service;
         void Refresh() => Dispatcher.UIThread.Post(RefreshList);
@@ -406,6 +429,7 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
             old.Control.FrameDrawn -= OnPaneFrameDrawn;
             old.Dispose();
         }
+        if (_accessibleBuffer.IsVisible) HideAccessibleBuffer(); // it showed another terminal
         _panes.Clear();
         _panes.AddRange(keep);
         if (_panes.Count == 0) _panes.Add(NewPane(null));
@@ -417,7 +441,76 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
     {
         var pane = new TerminalPane(_runtime, session);
         pane.Control.FrameDrawn += OnPaneFrameDrawn;
+        if (session is not null)
+            pane.Subscription = session.CommandFinished.Subscribe(c => Dispatcher.UIThread.Post(() => Announce(session, c)));
         return pane;
+    }
+
+    // ------------------------------------------------------------------ screen readers
+
+    /// <summary>What the live region said last (tests).</summary>
+    internal string Announcement => _announcer.Text ?? "";
+
+    /// <summary>
+    /// A command of the active terminal finished (shell integration): the live region says so, with its exit code and the end of its output
+    /// (a few lines), as VS Code's terminal reads finished commands to screen readers.
+    /// </summary>
+    private void Announce(TerminalSession session, TerminalCommandSummary summary)
+    {
+        if (IsDisposed || !ReferenceEquals(session, _runtime.Service.ActiveSession)) return;
+        var c = summary.Command;
+        var lines = summary.OutputTail.Split('\n');
+        var tail = string.Join('\n', lines.Skip(Math.Max(0, lines.Length - 5)));
+        if (tail.Length > 500) tail = tail[^500..];
+        var head = c.ExitCode is { } code && code != 0 ? $"Command failed with exit code {code}" : "Command finished";
+        _announcer.Text = $"{head}: {c.CommandLine ?? "(unknown command)"}" + (tail.Length > 0 ? $"\n{tail}" : "");
+    }
+
+    public bool IsAccessibleBufferVisible => _accessibleBuffer.IsVisible;
+    internal TextBox AccessibleBuffer => _accessibleBuffer;
+
+    /// <summary>
+    /// VS Code's Focus Accessible Buffer (Alt+F2): the active terminal's scrollback and screen as read-only text a screen reader can walk line
+    /// by line, the caret at the terminal's cursor; Ctrl+Up/Down jump between shell-integration prompts, Escape returns to the terminal.
+    /// </summary>
+    public async Task ShowAccessibleBufferAsync()
+    {
+        if (Control.Session is not { } session) return;
+        TerminalAccessibleBuffer buffer;
+        try { buffer = await session.GetAccessibleBufferAsync().ConfigureAwait(true); }
+        catch (Exception ex) when (ex is ObjectDisposedException or TaskCanceledException) { return; }
+        if (IsDisposed) return;
+        _buffer = buffer;
+        _accessibleBuffer.Text = buffer.Text;
+        _accessibleBuffer.IsVisible = true;
+        _accessibleBuffer.CaretIndex = buffer.CursorOffset >= 0 ? buffer.CursorOffset : buffer.Text.Length;
+        _accessibleBuffer.Focus();
+    }
+
+    public void HideAccessibleBuffer()
+    {
+        if (!_accessibleBuffer.IsVisible) return;
+        _accessibleBuffer.IsVisible = false;
+        _accessibleBuffer.Text = "";
+        _buffer = null;
+        FocusTerminal();
+    }
+
+    private void OnAccessibleBufferKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            HideAccessibleBuffer();
+            e.Handled = true;
+        }
+        else if (e.Key is Key.Up or Key.Down && e.KeyModifiers == KeyModifiers.Control && _buffer is { PromptOffsets.Count: > 0 } buffer)
+        {
+            // the previous / next command's prompt
+            var caret = _accessibleBuffer.CaretIndex;
+            int? target = e.Key == Key.Up ? buffer.PromptOffsets.LastOrDefault(p => p < caret, -1) : buffer.PromptOffsets.FirstOrDefault(p => p > caret, -1);
+            if (target is >= 0 and var t) _accessibleBuffer.CaretIndex = t;
+            e.Handled = true;
+        }
     }
 
     /// <summary>Panes in star columns (the group's remembered weights, else equal) with a splitter between each pair.</summary>

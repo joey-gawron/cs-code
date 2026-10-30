@@ -157,7 +157,12 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
             {
                 // other visuals (the scrollbar) must not change during the render pass: tell the view right after it
                 _notified = snap;
-                Dispatcher.UIThread.Post(() => { if (!_disposed) FrameDrawn?.Invoke(snap); });
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (_disposed) return;
+                    FrameDrawn?.Invoke(snap);
+                    _peer?.OnFrame(); // only when assistive technology created the peer
+                });
             }
         }
         else context.FillRectangle(_painter.Brush(_colors.Background), new Rect(bounds));
@@ -647,6 +652,13 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
             : (Rect?)null;
         ContextMenus.Open(_runtime.ContextMenuEntries(this), this, anchor, "Terminal menu");
     }
+
+    // ------------------------------------------------------------------ accessibility
+
+    private TerminalAutomationPeer? _peer;
+
+    /// <summary>Screen readers: the terminal as a read-only document of its visible text (<see cref="TerminalAutomationPeer"/>).</summary>
+    protected override Avalonia.Automation.Peers.AutomationPeer OnCreateAutomationPeer() => _peer = new TerminalAutomationPeer(this);
 
     // ------------------------------------------------------------------ IME
 
