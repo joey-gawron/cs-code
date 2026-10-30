@@ -175,7 +175,8 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             var launch = Definition with
             {
                 Args = LaunchVariables.Expand(Definition.Args, RootFolder),
-                Env = LaunchVariables.ExpandEnvironment(Definition.Env, RootFolder),
+                // lsp-9, macOS only: elsewhere a definition's env is passed as written, as it always was
+                Env = OperatingSystem.IsMacOS() ? LaunchVariables.ExpandEnvironment(Definition.Env, RootFolder) : Definition.Env,
             };
             var connection = await _ctx.Connections.ConnectAsync(
                 new LspLaunchRequest(launch, _ctx.Services.Paths?.ToolsDir, Definition.WorkingDirectory ?? cwd, settings.Priority, line => log.Add(line), settings.CpuQuotaPercent,

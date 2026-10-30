@@ -48,20 +48,42 @@ public static class LoginShellEnvironment
 
     /// <summary>
     /// Starts the resolution when <see cref="ShouldResolve"/> says so, merging the result into this process's environment when it arrives. Call
-    /// once, early (before any child process can start). Returns whether a resolution was started.
+    /// once, early (before any child process can start). Returns whether a resolution was started. On a Mac app started from the Dock whose
+    /// shell gives nothing (it failed, timed out, or <see cref="SkipVariable"/> is set), the usual install directories are appended to PATH
+    /// instead (<see cref="AppendFallbackPath"/>), so a debugger, task or terminal still finds <c>node</c>, <c>netcoredbg</c> or <c>cargo</c> there.
     /// </summary>
     public static bool Start()
     {
-        if (!ShouldResolve(Environment.GetEnvironmentVariable, OperatingSystem.IsMacOS())) return false;
+        if (!ShouldResolve(Environment.GetEnvironmentVariable, OperatingSystem.IsMacOS()))
+        {
+            if (OperatingSystem.IsMacOS() && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TERM"))) // skipped by CSCODE_SKIP_SHELL_ENV
+                Volatile.Write(ref s_pending, Task.FromResult<Resolution?>(new Resolution(null, $"login shell environment: not read ({SkipVariable} is set)" + AppendFallbackPath())));
+            return false;
+        }
         var shell = Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } s ? s : "/bin/zsh"; // the macOS default login shell
         Volatile.Write(ref s_pending, Task.Run<Resolution?>(async () =>
         {
             var resolution = await ResolveAsync(shell, DefaultRunner, DefaultTimeout).ConfigureAwait(false);
-            if (resolution.Environment is null) return resolution;
+            if (resolution.Environment is null) return resolution with { Description = resolution.Description + AppendFallbackPath() };
             var changed = Merge(resolution.Environment, Environment.GetEnvironmentVariable, Environment.SetEnvironmentVariable);
             return resolution with { Description = resolution.Description + $"; {changed.Count} variable(s) changed" + (changed.Count == 0 ? "" : ": " + string.Join(", ", changed)) };
         }));
         return true;
+    }
+
+    /// <summary>
+    /// Tests: makes <paramref name="resolution"/> the pending one, as <see cref="Start"/> does, so what starts child processes waits for it; disposing
+    /// the result puts the previous one back.
+    /// </summary>
+    public static IDisposable PendForTests(Task<Resolution?> resolution)
+    {
+        var previous = Interlocked.Exchange(ref s_pending, resolution);
+        return new Restore(previous);
+    }
+
+    private sealed class Restore(Task<Resolution?> previous) : IDisposable
+    {
+        public void Dispose() => Volatile.Write(ref s_pending, previous);
     }
 
     /// <summary>On macOS (<paramref name="isMacOS"/>), when <see cref="SkipVariable"/> is unset and CsCode was not started from a terminal (no <c>TERM</c>).</summary>
@@ -155,6 +177,53 @@ public static class LoginShellEnvironment
     }
 
     /// <summary>
+    /// dbg-4's fallback when the login shell gives nothing: where Homebrew (Apple Silicon, Intel), MacPorts, Nix, rustup, Go, the dotnet installer
+    /// and dotnet tools, and the Node, Ruby and Python version managers put their programs (<c>~</c> = home). The newest
+    /// <c>~/.nvm/versions/node/*/bin</c> is added after them.
+    /// </summary>
+    public static IReadOnlyList<string> FallbackDirectories { get; } =
+    [
+        "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/opt/local/bin", "~/.nix-profile/bin", "/nix/var/nix/profiles/default/bin",
+        "~/.cargo/bin", "~/.local/bin", "~/go/bin", "/usr/local/go/bin", "~/.dotnet/tools", "/usr/local/share/dotnet", "~/.volta/bin", "~/Library/pnpm",
+        "~/.bun/bin", "~/.asdf/shims", "~/.local/share/mise/shims", "~/.rbenv/shims", "~/.pyenv/shims",
+    ];
+
+    /// <summary>
+    /// <paramref name="path"/> with each of <see cref="FallbackDirectories"/> (and the newest nvm Node's bin) that exists and is not on it already
+    /// appended, so what launchd's PATH has keeps winning; null when nothing is to be added.
+    /// </summary>
+    public static string? FallbackPath(string? path, string home, Func<string, bool> directoryExists, Func<string, IEnumerable<string>> subdirectoryNames)
+    {
+        var entries = (path ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
+        var known = new HashSet<string>(entries.Select(d => d.Length > 1 ? d.TrimEnd('/') : d), StringComparer.Ordinal);
+        var dirs = FallbackDirectories.Select(d => d.StartsWith("~/", StringComparison.Ordinal) ? home + d[1..] : d).ToList();
+        var nvm = home + "/.nvm/versions/node";
+        if (directoryExists(nvm)
+            && subdirectoryNames(nvm).Select(n => (Name: n, Version: Version.TryParse(n.TrimStart('v'), out var v) ? v : null)).Where(n => n.Version is not null)
+                .MaxBy(n => n.Version) is { Name: { } newest })
+            dirs.Add($"{nvm}/{newest}/bin");
+        var added = dirs.Where(d => known.Add(d) && directoryExists(d)).ToList();
+        return added.Count == 0 ? null : string.Join(Path.PathSeparator, entries.Concat(added));
+    }
+
+    /// <summary>Appends the <see cref="FallbackPath"/> to this process's PATH; returns the note for the log.</summary>
+    private static string AppendFallbackPath()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (home.Length == 0) return "";
+        var path = FallbackPath(Environment.GetEnvironmentVariable("PATH"), home, Directory.Exists, SubdirectoryNames);
+        if (path is null) return "; no install directory to add to PATH";
+        Environment.SetEnvironmentVariable("PATH", path);
+        return "; PATH is now " + path;
+
+        static IEnumerable<string> SubdirectoryNames(string dir)
+        {
+            try { return Directory.EnumerateDirectories(dir).Select(Path.GetFileName).OfType<string>().ToList(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+        }
+    }
+
+    /// <summary>
     /// The real runner: no terminal (standard input is closed at once, so a prompt in an rc file reads end of file), standard error drained, the
     /// whole process tree killed at the timeout.
     /// </summary>
@@ -177,8 +246,9 @@ public static class LoginShellEnvironment
         foreach (var (k, v) in environment) psi.Environment[k] = v;
         using var process = Process.Start(psi) ?? throw new InvalidOperationException("the shell did not start");
         process.StandardInput.Close();
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
+        var output = new StringBuilder();
+        var error = new StringBuilder();
+        var reading = Task.WhenAll(ReadIntoAsync(process.StandardOutput, output), ReadIntoAsync(process.StandardError, error));
         using var cts = new CancellationTokenSource(timeout);
         try
         {
@@ -190,10 +260,22 @@ public static class LoginShellEnvironment
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { /* gone meanwhile */ }
             return new ShellRun(null, "", "");
         }
-        // A background job the rc file started may keep the pipes open after the shell exited: the output is not waited for beyond a moment.
-        var drained = Task.WhenAll(output, error);
-        if (await Task.WhenAny(drained, Task.Delay(TimeSpan.FromSeconds(1))).ConfigureAwait(false) != drained)
-            return new ShellRun(process.ExitCode, output.IsCompletedSuccessfully ? output.Result : "", "");
-        return new ShellRun(process.ExitCode, await output.ConfigureAwait(false), await error.ConfigureAwait(false));
+        // A background job the rc file started may keep the pipes open after the shell exited: the end of the output is not waited for beyond a
+        // moment, and what was read by then (the environment between its markers among it) is the output.
+        await Task.WhenAny(reading, Task.Delay(TimeSpan.FromSeconds(1))).ConfigureAwait(false);
+        lock (output) lock (error) return new ShellRun(process.ExitCode, output.ToString(), error.ToString());
+    }
+
+    /// <summary>Appends what <paramref name="reader"/> reads to <paramref name="into"/> (under its lock) as it arrives, until the end of the stream.</summary>
+    private static async Task ReadIntoAsync(StreamReader reader, StringBuilder into)
+    {
+        var buffer = new char[8192];
+        try
+        {
+            int n;
+            while ((n = await reader.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+                lock (into) into.Append(buffer, 0, n);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException) { /* the pipe went away: what was read is kept */ }
     }
 }

@@ -125,6 +125,42 @@ public class LoginShellEnvironmentTests
     }
 
     [Fact]
+    public async Task The_real_runner_keeps_the_environment_when_a_background_job_holds_the_output_open()
+    {
+        if (OperatingSystem.IsWindows()) { Assert.Skip("a shell script stands in for the login shell: Unix only"); return; }
+        using var dir = new TempDirectory("cscode-shellenv-");
+        // an rc file that starts a job in the background without redirecting its output: the pipe stays open after the shell exited
+        var shell = Script(dir.Combine("daemon-zsh"), "#!/bin/sh\n(sleep 5 &)\nFROM_RC=kept exec /bin/sh -c \"$4\"\n");
+
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var resolution = await LoginShellEnvironment.ResolveAsync(shell, LoginShellEnvironment.DefaultRunner, TimeSpan.FromSeconds(30));
+
+        Assert.True(resolution.Environment is not null, resolution.Description);
+        Assert.Equal("kept", resolution.Environment["FROM_RC"]);
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(4), $"took {started.Elapsed}: waited for the background job");
+    }
+
+    [Fact]
+    public void Without_the_shell_environment_the_install_directories_that_exist_are_appended_to_PATH()
+    {
+        const string Home = "/Users/me";
+        var existing = new HashSet<string>
+        {
+            "/opt/homebrew/bin", "/usr/local/bin", "/usr/local/share/dotnet", Home + "/.cargo/bin", Home + "/.dotnet/tools", Home + "/.volta/bin",
+            Home + "/.nvm/versions/node", Home + "/.nvm/versions/node/v20.11.1/bin", Home + "/.nvm/versions/node/v9.0.0/bin",
+        };
+        string[] versions = ["v9.0.0", "v20.11.1", "system"];
+        var path = string.Join(Path.PathSeparator, "/usr/bin", "/bin", "/usr/local/bin/");
+
+        var extended = LoginShellEnvironment.FallbackPath(path, Home, existing.Contains, _ => versions);
+
+        Assert.Equal(string.Join(Path.PathSeparator, "/usr/bin", "/bin", "/usr/local/bin/", "/opt/homebrew/bin", Home + "/.cargo/bin", Home + "/.dotnet/tools",
+            "/usr/local/share/dotnet", Home + "/.volta/bin", Home + "/.nvm/versions/node/v20.11.1/bin"), extended); // launchd's PATH keeps winning
+        Assert.Null(LoginShellEnvironment.FallbackPath(extended, Home, existing.Contains, _ => versions)); // nothing more to add
+        Assert.Null(LoginShellEnvironment.FallbackPath("/usr/bin", Home, _ => false, _ => []));
+    }
+
+    [Fact]
     public async Task The_user_login_shell_on_a_Mac_gives_its_environment()
     {
         if (!OperatingSystem.IsMacOS()) { Assert.Skip("the login shell is only asked on macOS"); return; }

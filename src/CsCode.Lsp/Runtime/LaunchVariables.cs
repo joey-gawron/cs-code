@@ -22,6 +22,7 @@ public static class LaunchVariables
     /// A definition's <c>env</c> (lsp-9): besides <c>${workspaceFolder}</c> and <c>${userHome}</c>, <c>${env:NAME}</c> is CsCode's own value of NAME
     /// (empty when unset, as in VS Code) and a leading <c>~</c> (<c>~</c> or <c>~/…</c>) is the home directory, so
     /// <c>"PATH": "~/.volta/bin:${env:PATH}"</c> extends the PATH instead of replacing it. The same dictionary is returned when nothing changes.
+    /// The language client applies it on macOS only (Linux and Windows keep passing env values as written).
     /// </summary>
     public static IReadOnlyDictionary<string, string>? ExpandEnvironment(IReadOnlyDictionary<string, string>? env, string? workspaceFolder) =>
         ExpandEnvironment(env, workspaceFolder, Environment.GetEnvironmentVariable, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
