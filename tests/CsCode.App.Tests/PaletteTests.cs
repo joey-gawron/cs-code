@@ -76,6 +76,59 @@ public class PaletteTests
         Assert.Equal("View: Toggle Word Wrap", rig.Source().TryQuerySync(">")![0].Label); // recently used first
     }
 
+    /// <summary>T13/T18: command mode used to stop at 100 rows, so 'Preferences:' and 'Search:' commands fell off the end. VS Code lists them all.</summary>
+    [Fact]
+    public void Command_mode_lists_every_command_however_many_there_are()
+    {
+        using var rig = new Rig();
+        for (var i = 0; i < 450; i++) rig.Cmd($"cmd.{i:D3}", $"Command {i:D3}", i % 2 == 0 ? "Macros" : "View");
+        rig.Cmd("z.last", "Zebra", "Zoo");
+        var all = rig.Source().TryQuerySync(">")!;
+        Assert.Equal(451, all.Count);
+        Assert.Equal("Zoo: Zebra", all[^1].Label); // alphabetically last, still listed
+        Assert.Equal(225, rig.Source().TryQuerySync(">macros")!.Count); // a filter keeps every match too
+    }
+
+    [Fact]
+    public async Task A_command_table_over_the_sync_limit_is_ranked_on_a_worker_and_still_lists_every_command()
+    {
+        using var rig = new Rig();
+        for (var i = 0; i < PaletteSource.SyncCommandLimit + 200; i++) rig.Cmd($"cmd.{i:D4}", $"Command {i:D4}", "Test");
+        var src = rig.Source();
+        Assert.Null(src.TryQuerySync(">")); // too many to sort on the UI thread
+        var all = await src.QueryAsync(">", CancellationToken.None);
+        Assert.Equal(PaletteSource.SyncCommandLimit + 200, all.Count);
+        Assert.Equal("Test: Command 0000", all[0].Label);
+        Assert.Equal(PaletteSource.SyncCommandLimit + 200, (await src.QueryAsync(">command", CancellationToken.None)).Count);
+    }
+
+    /// <summary>T12: a failed index build (an unreadable folder) used to stay cached until the folders changed, so go to file kept failing.</summary>
+    [Fact]
+    public async Task A_failed_file_index_build_is_not_cached()
+    {
+        using var dir = new TempDirectory("cscode-palette-");
+        dir.WriteFile("a.cs", "");
+        using var rig = new Rig();
+        await rig.Workspace.OpenFolderAsync(dir.Uri);
+        var index = new FileIndex(rig.Workspace);
+        rig.Workspace.FindFilesFailure = new IOException("permission denied");
+        await Assert.ThrowsAsync<IOException>(() => index.GetAsync(CancellationToken.None));
+        Assert.Equal(1, index.BuildCount);
+
+        var snapshot = await index.GetAsync(CancellationToken.None); // the next query builds again, and succeeds
+        Assert.Equal(2, index.BuildCount);
+        Assert.Equal(["a.cs"], snapshot.Paths);
+        await index.GetAsync(CancellationToken.None);
+        Assert.Equal(2, index.BuildCount); // a good build is kept
+
+        // Through the palette: the failed query reports its error, the next one lists the file.
+        var src = new PaletteSource(rig.Context, new FileIndex(rig.Workspace));
+        rig.Workspace.FindFilesFailure = new IOException("permission denied");
+        await Assert.ThrowsAsync<IOException>(() => src.QueryAsync("a", CancellationToken.None));
+        Assert.Equal("a.cs", (await src.QueryAsync("a", CancellationToken.None)).Single().Label);
+        index.Dispose();
+    }
+
     [Fact]
     public async Task Go_to_line_parses_line_and_column_clamps_and_moves_the_caret()
     {
