@@ -18,8 +18,9 @@ namespace CsCode.Dap.Adapters;
 /// becomes a CHILD session (DAP <c>startDebugging</c>) that the debug service connects to the same socket; breakpoints hit there. Types
 /// <c>pwa-node</c> and its legacy alias <c>node</c>.
 /// <para>Lookup of the adapter: setting <c>cscode.debug.jsDebugPath</c> → environment variable <c>CSCODE_JSDEBUG</c> → the installed copy
-/// <c>{ToolsDir}/js-debug/&lt;version&gt;/js-debug</c>; either may name the js-debug directory or <c>dapDebugServer.js</c> itself. When none
-/// exists the user is OFFERED the pinned download (never silent). Node.js: setting <c>cscode.debug.nodePath</c> → PATH.</para>
+/// <c>{ToolsDir}/js-debug/&lt;version&gt;/js-debug</c> → the copy installed with the app (<see cref="BundledAdapters"/>); the setting and the variable
+/// may name the js-debug directory or <c>dapDebugServer.js</c> itself. When none exists the user is OFFERED the pinned download (never silent).
+/// Node.js: setting <c>cscode.debug.nodePath</c> → PATH.</para>
 /// <para>Adapter quirk handled here: without <c>__workspaceFolder</c> (which VS Code's js-debug extension always sets) js-debug drops every
 /// <c>${workspaceFolder}</c> entry of its default <c>resolveSourceMapLocations</c>, so NO source map is ever resolved and breakpoints in
 /// <c>.ts</c> files never bind (checked against v1.140.0). The provider fills it in.</para>
@@ -87,7 +88,7 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         if (_p.Configuration?.Get<string>(SettingPath) is { Length: > 0 } configured && ResolveServerScript(configured) is { } fromSetting) return fromSetting;
         if (Environment(EnvironmentVariable) is { Length: > 0 } env && ResolveServerScript(env) is { } fromEnv) return fromEnv;
         if (_p.Paths is { } paths && File.Exists(JsDebugInstaller.ServerScript(paths.ToolsDir))) return JsDebugInstaller.ServerScript(paths.ToolsDir);
-        return null;
+        return BundledAdapters.JsDebug(_p.Paths);
     }
 
     /// <summary>Accepts <c>dapDebugServer.js</c> itself, the js-debug directory (with <c>src/</c>), its parent (the install directory) or its <c>src/</c>.</summary>
