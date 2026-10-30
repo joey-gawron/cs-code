@@ -436,10 +436,12 @@ lines quoted above.
 
 > **Status: built and unit-tested; the matrix below has NOT been run against the real adapter.** The package was downloaded and verified, and it
 > installs (checked by a test; nothing in it executed), but in the wave-3 session that built this the permission system refused to execute the
-> downloaded CodeLLDB binary ("code from external"), so no row could be run. Everything around the adapter is tested with stand-ins; the
-> real-adapter suites are written (`RealCodeLldbRustTests`, `RealCodeLldbPanelsTests`) and skip until CodeLLDB is present. What each row is
-> expected to do is taken from CodeLLDB's own sources at the pinned tag (`src/codelldb/src/…`), marked as such. Running the suites (below) turns
-> this section into evidence; until then, the GDB column is the evaluated one.
+> downloaded CodeLLDB binary ("code from external"), so no row could be run. Everything around the adapter is tested with stand-ins — including
+> an `lldb` session end to end through the real `DebugService` with a stand-in installed as `extension/adapter/codelldb` that speaks DAP on its
+> stdio (`CodeLldbStandInTests`: the `--settings` command line, nice 10, the folder as working directory, the launch arguments the provider
+> filled in, a clean exit); the real-adapter suites are written (`RealCodeLldbRustTests`, `RealCodeLldbPanelsTests`) and skip until CodeLLDB is
+> present. What each row is expected to do is taken from CodeLLDB's own sources at the pinned tag (`src/codelldb/src/…`), marked as such.
+> Running the suites (below) turns this section into evidence; until then, the GDB column is the evaluated one.
 
 ### Download (pinned) and installer
 
