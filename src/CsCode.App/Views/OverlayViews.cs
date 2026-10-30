@@ -20,10 +20,14 @@ public sealed class DialogHostView : Grid
     private readonly TextBlock _title = new() { FontSize = 14, FontWeight = FontWeight.SemiBold };
     private readonly TextBlock _message = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 16) };
     private readonly StackPanel _buttons = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8 };
+    private readonly OverlayFocus _focus;
 
-    public DialogHostView(DialogHostViewModel vm)
+    /// <param name="activeEditor">The active document tab (identity only), for giving the keyboard back when the prompt closes (<see cref="OverlayFocus"/>).</param>
+    /// <param name="focusActiveEditor">Puts the keyboard into the active editor.</param>
+    public DialogHostView(DialogHostViewModel vm, Func<object?>? activeEditor = null, Action? focusActiveEditor = null)
     {
         _vm = vm;
+        _focus = new OverlayFocus(this, activeEditor, focusActiveEditor);
         IsVisible = false;
         Background = new SolidColorBrush(Color.FromArgb(0x66, 0, 0, 0));
         Focusable = true;
@@ -39,7 +43,14 @@ public sealed class DialogHostView : Grid
         Children.Add(card);
         vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(DialogHostViewModel.IsVisible)) { IsVisible = vm.IsVisible; if (vm.IsVisible) Rebuild(); }
+            if (e.PropertyName != nameof(DialogHostViewModel.IsVisible)) return;
+            IsVisible = vm.IsVisible;
+            if (vm.IsVisible)
+            {
+                _focus.Opened();
+                Rebuild();
+            }
+            else _focus.Closed();
         };
         KeyDown += (_, e) =>
         {

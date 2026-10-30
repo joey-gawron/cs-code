@@ -86,9 +86,12 @@ public sealed class MainWindow : Window, IWindowChrome
         overlays.Children.Add(new NotificationsView(_sp.GetRequiredService<NotificationCenter>()) { IsHitTestVisible = true });
         BuildSwitcher();
         overlays.Children.Add(_switcher);
-        var quick = new QuickInputView(_sp.GetRequiredService<QuickInputViewModel>()) { Margin = new Thickness(0, 30, 0, 0) };
+        // The palette and the prompts give the keyboard back when they close (to the editor a palette entry opened, else to what had it).
+        object? ActiveTab() => _shell.Well.Active;
+        void FocusActiveEditor() => _shell.Well.FocusActiveEditor();
+        var quick = new QuickInputView(_sp.GetRequiredService<QuickInputViewModel>(), ActiveTab, FocusActiveEditor) { Margin = new Thickness(0, 30, 0, 0) };
         overlays.Children.Add(quick);
-        overlays.Children.Add(new DialogHostView(_sp.GetRequiredService<DialogHostViewModel>()));
+        overlays.Children.Add(new DialogHostView(_sp.GetRequiredService<DialogHostViewModel>(), ActiveTab, FocusActiveEditor));
 
         var root = new Grid();
         root.Children.Add(rows);

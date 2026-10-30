@@ -26,10 +26,14 @@ public sealed class QuickInputView : Grid
     private readonly ListBox _list;
     private readonly TextBlock _title;
     private readonly TextBlock _validation;
+    private readonly OverlayFocus _focus;
 
-    public QuickInputView(QuickInputViewModel vm)
+    /// <param name="activeEditor">The active document tab (identity only), for giving the keyboard back when the overlay closes (<see cref="OverlayFocus"/>).</param>
+    /// <param name="focusActiveEditor">Puts the keyboard into the active editor.</param>
+    public QuickInputView(QuickInputViewModel vm, Func<object?>? activeEditor = null, Action? focusActiveEditor = null)
     {
         _vm = vm;
+        _focus = new OverlayFocus(this, activeEditor, focusActiveEditor);
         DataContext = vm;
         IsVisible = false;
 
@@ -83,13 +87,17 @@ public sealed class QuickInputView : Grid
         {
             case nameof(QuickInputViewModel.IsVisible):
                 IsVisible = _vm.IsVisible;
-                if (_vm.IsVisible)
+                if (!_vm.IsVisible) _focus.Closed();
+                else
+                {
+                    _focus.Opened();
                     Dispatcher.UIThread.Post(() =>
                     {
                         _input.PasswordChar = _vm.IsPassword ? '•' : '\0';
                         _input.Focus();
                         _input.CaretIndex = _input.Text?.Length ?? 0;
                     }, DispatcherPriority.Input);
+                }
                 break;
             case nameof(QuickInputViewModel.SelectedIndex) when _vm.SelectedIndex >= 0:
                 _list.ScrollIntoView(_vm.SelectedIndex);

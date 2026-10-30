@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.VisualTree;
@@ -132,8 +133,67 @@ public class FocusContextKeyTests
         var running = await host.OpenPaletteAsync(KnownCommands.QuickOpen);
         Assert.True(await RealAppHost.WaitFor(() => Keys(host).Input), "the palette's text box has focus");
         Assert.False(Keys(host).Editor);
-        await host.ClosePaletteAsync(running);
-        tab.Controller.Focus();
+        // Esc: the keyboard goes back to the editor by itself (VS Code, Visual Studio), and typing reaches it.
+        host.Window.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        Assert.True(await RealAppHost.WaitFor(() => running.IsCompleted));
+        await running;
+        Assert.True(await RealAppHost.WaitFor(() => Keys(host) == (true, false, false, false, false)), Keys(host).ToString());
+        Assert.True(tab.Controller.IsFocused);
+        host.Window.KeyTextInput("x"); // Vim is on (the default): x deletes the character under the caret
+        Assert.Equal("lpha\nbeta\n", tab.Doc.GetText());
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task A_file_opened_from_the_palette_takes_the_keyboard()
+    {
+        using var sandbox = new TempDirectory("cscode-focus-sandbox-");
+        await using var host = await Create(sandbox).StartAsync();
+        host.Files.WriteFile("b.txt", "beta\n");
+        await host.Get<IWorkspaceService>().OpenFolderAsync(new Uri(host.Files.Path + "/"));
+        var a = await host.Shell.Well.OpenAsync(new Uri(host.Files.Combine("a.txt")));
+        Assert.True(await RealAppHost.WaitFor(() => a.Controller is not null && a.LiveView!.IsAttachedToVisualTree()));
+        a.Controller!.Focus();
+
+        var quick = host.Get<QuickInput.QuickInputViewModel>();
+        var running = await host.OpenPaletteAsync(KnownCommands.QuickOpen);
+        quick.Text = "b.txt";
+        Assert.True(await RealAppHost.WaitFor(() => quick.Items.Any(i => i.Label == "b.txt")), string.Join(", ", quick.Items.Select(i => i.Label)));
+        host.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.True(await RealAppHost.WaitFor(() => running.IsCompleted));
+        await running;
+        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Well.ActiveEditor?.Title == "b.txt" && host.Shell.Well.ActiveEditor.Controller?.IsFocused == true),
+            $"active {host.Shell.Well.ActiveEditor?.Title}, focused {host.Window.FocusManager?.GetFocusedElement()}");
         Assert.Equal((true, false, false, false, false), Keys(host));
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task After_a_close_prompt_the_editor_that_takes_the_closed_ones_place_has_the_keyboard()
+    {
+        using var sandbox = new TempDirectory("cscode-focus-sandbox-");
+        await using var host = await Create(sandbox).StartAsync();
+        host.Files.WriteFile("b.txt", "beta\n");
+        var well = host.Shell.Well;
+        var a = await well.OpenAsync(new Uri(host.Files.Combine("a.txt")));
+        var b = await well.OpenAsync(new Uri(host.Files.Combine("b.txt")));
+        Assert.True(await RealAppHost.WaitFor(() => b.Controller is not null && b.LiveView!.IsAttachedToVisualTree()));
+        b.Controller!.Focus();
+        b.Doc.ApplyEdits([new Core.Text.TextEdit(Core.Text.TextRange.At(0, 0), "dirty ")]); // closing asks
+        Assert.True(b.IsDirty);
+
+        var dialogs = host.Get<Notifications.DialogHostViewModel>();
+        host.Window.KeyPress(Key.F4, RawInputModifiers.Control, PhysicalKey.F4, null);
+        Assert.True(await RealAppHost.WaitFor(() => dialogs.IsVisible), "no Save prompt");
+        dialogs.Choose("Don't Save");
+        Assert.True(await RealAppHost.WaitFor(() => !well.Tabs.Contains(b)));
+        Assert.True(await RealAppHost.WaitFor(() => a.Controller?.IsFocused == true), $"focused {host.Window.FocusManager?.GetFocusedElement()}");
+        Assert.Equal((true, false, false, false, false), Keys(host));
+
+        // A cancelled prompt gives the keyboard back to the editor that asked.
+        a.Doc.ApplyEdits([new Core.Text.TextEdit(Core.Text.TextRange.At(0, 0), "dirty ")]);
+        host.Window.KeyPress(Key.F4, RawInputModifiers.Control, PhysicalKey.F4, null);
+        Assert.True(await RealAppHost.WaitFor(() => dialogs.IsVisible), "no Save prompt");
+        Assert.False(a.Controller!.IsFocused);
+        dialogs.Choose("Cancel");
+        Assert.True(await RealAppHost.WaitFor(() => a.Controller.IsFocused), $"focused {host.Window.FocusManager?.GetFocusedElement()}");
     }
 }
