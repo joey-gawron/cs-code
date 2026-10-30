@@ -7,6 +7,7 @@ using CsCode.Core.Terminal;
 using CsCode.Remote.Bridge;
 using CsCode.Remote.Client;
 using CsCode.Terminal.Sessions;
+using CsCode.TestDoubles;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -228,6 +229,86 @@ public class R3Tests
         await host.ConnectAsync(); // the workspace stays local: no remote folder is open
         using (var backend = provider.TryCreate(tagged)) Assert.IsType<RemoteTerminalBackend>(backend);
         Assert.Null(provider.TryCreate(tagged with { Env = null })); // an ordinary terminal of a local workspace stays local
+    }
+
+    [Fact]
+    public async Task An_idle_local_task_terminal_never_runs_a_servers_task_and_an_idle_remote_one_never_runs_a_local_task()
+    {
+        // Remote: Open Remote Folder keeps the window's terminals: a local task's idle terminal ("press any key to reuse") is there when the remote
+        // folder's task runs, and the remote task's terminal is there when the local folder comes back. Each task runs where it belongs.
+        await using var host = new RemoteTestHost(r3: true);
+        Directory.CreateDirectory(Path.Combine(host.Workspace.Path, ".vscode"));
+        File.WriteAllText(Path.Combine(host.Workspace.Path, ".vscode", "tasks.json"), RemoteTasksJson);
+        using var local = new TempDirectory("cscode-local-ws-");
+        Directory.CreateDirectory(Path.Combine(local.Path, ".vscode"));
+        File.WriteAllText(Path.Combine(local.Path, ".vscode", "tasks.json"),
+            """{ "version": "2.0.0", "tasks": [ { "label": "here", "type": "shell", "command": "echo here-by-$PPID > here.txt; exit 5" } ] }""");
+        await host.ConnectAsync();
+        var tasks = host.Services.GetRequiredService<ITaskService>();
+        var terminals = host.Services.GetRequiredService<TerminalService>();
+        int ParentOf(string file, string prefix) =>
+            int.Parse(File.ReadAllText(file).Trim()[prefix.Length..], System.Globalization.CultureInfo.InvariantCulture);
+        bool OnTheServer(int pid) => TestEnv.Descendants(host.Manager.Session!.Server.ProcessId).Append(host.Manager.Session!.Server.ProcessId).Contains(pid);
+
+        await host.WorkspaceService.OpenFolderAsync(local.Uri, Ct);
+        Assert.Equal(5, (await tasks.RunAsync("here", null, Ct)).ExitCode);
+        var localTerminal = Assert.Single(terminals.Sessions);
+        Assert.False(OnTheServer(ParentOf(Path.Combine(local.Path, "here.txt"), "here-by-")));
+        await TerminalProbe.WaitForTextAsync(localTerminal, "Terminal will be reused by tasks");
+
+        await host.OpenWorkspaceAsync();
+        var remote = await tasks.RunAsync("build", null, Ct);
+        Assert.Null(remote.Error);
+        Assert.Equal(3, remote.ExitCode);
+        Assert.True(OnTheServer(ParentOf(Path.Combine(host.Workspace.Path, "built.txt"), "built-by-")), "the server's task ran on this machine");
+        Assert.Equal(2, terminals.Sessions.Count);
+        var remoteTerminal = Assert.Single(terminals.Sessions, s => !ReferenceEquals(s, localTerminal));
+        await TerminalProbe.WaitForTextAsync(remoteTerminal, "Terminal will be reused by tasks");
+
+        await host.WorkspaceService.OpenFolderAsync(local.Uri, Ct);
+        File.Delete(Path.Combine(local.Path, "here.txt"));
+        var again = await tasks.RunAsync("here", null, Ct);
+        Assert.Null(again.Error);
+        Assert.Equal(5, again.ExitCode); // not -1: the idle remote terminal was not picked (it cannot run a local program)
+        Assert.False(OnTheServer(ParentOf(Path.Combine(local.Path, "here.txt"), "here-by-")));
+        Assert.Equal(2, terminals.Sessions.Count); // the local one was reused
+        await TerminalProbe.WaitForTextAsync(localTerminal, "here-by-");
+    }
+
+    [Fact]
+    public async Task An_idle_debuggee_terminal_is_reused_only_by_a_program_that_runs_where_it_runs()
+    {
+        // runInTerminal's ReuseWhenIdle: the same rule as task terminals when the folder changes between local and remote in one window
+        await using var host = new RemoteTestHost(r3: true);
+        using var local = new TempDirectory("cscode-local-ws-");
+        await host.ConnectAsync();
+        var terminals = host.Services.GetRequiredService<TerminalService>();
+        TerminalCreateOptions Debuggee(string tag) => new()
+        {
+            Name = "Launch App", IsTransient = true, ReuseWhenIdle = true, Show = false,
+            ShellPath = "/bin/sh", ShellArgs = ["-c", $"echo {tag}-$PPID; exit 0"],
+        };
+        bool OnTheServer(TerminalSession t) => t.ProcessId is { } pid && TestEnv.Descendants(host.Manager.Session!.Server.ProcessId).Contains(pid);
+
+        await host.WorkspaceService.OpenFolderAsync(local.Uri, Ct);
+        var here = (TerminalSession)await terminals.CreateAsync(Debuggee("first"), Ct);
+        await TestEnv.WaitUntilAsync(() => here.HasExited, TimeSpan.FromSeconds(10), "the local debuggee to end");
+
+        await host.OpenWorkspaceAsync();
+        var there = (TerminalSession)await terminals.CreateAsync(Debuggee("second"), Ct);
+        Assert.NotSame(here, there);
+        await TerminalProbe.WaitForTextAsync(there, "second-");
+        await TestEnv.WaitUntilAsync(() => there.HasExited, TimeSpan.FromSeconds(10), "the remote debuggee to end");
+        Assert.Equal(0, there.ExitCode);
+
+        await host.WorkspaceService.OpenFolderAsync(local.Uri, Ct);
+        var hereAgain = (TerminalSession)await terminals.CreateAsync(Debuggee("third"), Ct);
+        Assert.Same(here, hereAgain); // the idle local one, not the idle remote one (which cannot run a local program)
+        await TerminalProbe.WaitForTextAsync(hereAgain, "third-");
+        await TestEnv.WaitUntilAsync(() => hereAgain.HasExited, TimeSpan.FromSeconds(10), "the local debuggee to end again");
+        Assert.Equal(0, hereAgain.ExitCode);
+        Assert.False(OnTheServer(hereAgain));
+        Assert.Equal(2, terminals.Sessions.Count);
     }
 
     [Fact]

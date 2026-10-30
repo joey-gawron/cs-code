@@ -154,7 +154,7 @@ tasks.json `presentation` (the top-level one merged under the task's), VS Code's
 |---|---|---|
 | `reveal` | always | always: the Terminal window shows the task's terminal; silent: only when the task fails or its problem matchers found errors; never |
 | `focus` | false | the revealed terminal takes the keyboard |
-| `panel` | shared | shared: an idle task terminal of a shared task is reused (renamed); dedicated: only the one this task ran in; new: always a new one. A terminal whose task still runs is never reused. |
+| `panel` | shared | shared: an idle task terminal of a shared task is reused (renamed); dedicated: only the one this task ran in; new: always a new one. A terminal whose task still runs is never reused, nor one that runs elsewhere than the task must (a remote workspace's server vs this machine). |
 | `group` | | tasks of the same group run as split panes of one terminal group |
 | `clear` | false | a reused terminal is emptied first |
 | `echo` | true | the command line above the output |
