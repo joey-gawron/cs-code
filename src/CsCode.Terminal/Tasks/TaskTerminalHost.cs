@@ -10,7 +10,8 @@ namespace CsCode.Terminal.Tasks;
 /// <see cref="ITaskTerminalHost"/>: tasks run in terminals named after them, with VS Code's <c>presentation</c> rules. A task terminal is
 /// transient (no confirmation, never restored); after its task it shows "Terminal will be reused by tasks, press any key to close it" and is
 /// reused by the next task: panel <c>shared</c> takes any idle shared task terminal, <c>dedicated</c> only the one this task ran in, <c>new</c>
-/// never reuses; tasks with the same <c>group</c> split into one terminal group. <c>reveal</c> always shows the terminal (taking the keyboard
+/// never reuses — and only a terminal that runs where the task's program must run (a remote workspace's server, or this machine: the folder
+/// changed in the same window); tasks with the same <c>group</c> split into one terminal group. <c>reveal</c> always shows the terminal (taking the keyboard
 /// only with <c>focus</c>), silent and never leave it hidden (the task runner reveals a failed silent task); <c>clear</c> empties a reused
 /// terminal first; <c>close</c> closes it when the task ends. The task's output reaches <see cref="TaskTerminalRequest.Output"/> from the PTY's
 /// reader thread, decoded, before the emulator draws it.
@@ -51,18 +52,6 @@ public sealed class TaskTerminalHost : ITaskTerminalHost, IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         var p = request.Presentation;
         var run = new Run(this, request);
-        Slot? reuse = null;
-        TerminalSession? splitFrom = null;
-        lock (_gate)
-        {
-            _slots.RemoveAll(s => s.Session.IsDisposed);
-            if (p.Panel != TaskPanelKind.New)
-                reuse = _slots.LastOrDefault(s => s.Current is null && s.Session.HasExited && s.Panel == p.Panel && s.Group == p.Group
-                    && (p.Panel == TaskPanelKind.Shared || s.Label == request.Label));
-            if (reuse is not null) Claim(reuse, request, run);
-            else if (p.Group is { } group) splitFrom = _slots.LastOrDefault(s => s.Group == group && !s.Session.IsDisposed)?.Session;
-        }
-
         var options = new TerminalCreateOptions
         {
             Name = request.Label,
@@ -73,6 +62,22 @@ public sealed class TaskTerminalHost : ITaskTerminalHost, IDisposable
             IsTransient = true,
             Show = false,
         };
+        // Where the task's program must run (a remote workspace's server, or this machine): only a terminal that runs there is reused. The backend
+        // provider is resolved on first use, so it is asked off the caller's thread.
+        var elsewhere = p.Panel != TaskPanelKind.New && _terminals.Backends is not null
+            && await Task.Run(() => _terminals.WouldRunElsewhere(options), ct).ConfigureAwait(false);
+        Slot? reuse = null;
+        TerminalSession? splitFrom = null;
+        lock (_gate)
+        {
+            _slots.RemoveAll(s => s.Session.IsDisposed);
+            if (p.Panel != TaskPanelKind.New)
+                reuse = _slots.LastOrDefault(s => s.Current is null && s.Session.HasExited && s.Panel == p.Panel && s.Group == p.Group
+                    && (p.Panel == TaskPanelKind.Shared || s.Label == request.Label) && _terminals.RunsElsewhere(s.Session) == elsewhere);
+            if (reuse is not null) Claim(reuse, request, run);
+            else if (p.Group is { } group) splitFrom = _slots.LastOrDefault(s => s.Group == group && !s.Session.IsDisposed)?.Session;
+        }
+
         try
         {
             if (reuse is not null)

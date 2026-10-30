@@ -58,16 +58,16 @@ greeting line `CSCODE-SERVER-READY v1` before the framed stream; the client skip
 |---|---|
 | lifecycle | `hello` (protocol version + capabilities: `gzip`, `watch`, `search`, `languages`; server version, OS/arch, pid, home, data dir), `$/ping`, `server/shutdown`, `server/status` (open documents, watches, searches, uploads, registrations, memory, threads), `$/cancelRequest` (both ways) |
 | files | `fs/stat` (with an etag = mtime ticks + size), `fs/readDir`, `fs/read` (≤ 256 KB range), `fs/write` (≤ 256 KB, optional expected etag), `fs/writeBegin` / `fs/writeChunk` / `fs/writeCommit` / `fs/writeAbort` (chunked upload, committed with one atomic write), `fs/mkdir`, `fs/delete`, `fs/rename`, `fs/copy` |
-| watch | `watch/start` (answers once the OS watch is armed), `watch/stop`; server → client `watch/changes` |
+| watch | `watch/start` (answers once the OS watch is armed), `watch/stop`, `watch/keep` (after a (re)connect: the watches the client still has; the rest stop); server → client `watch/changes` |
 | search | `search/files`, `search/text` start a session; `search/next` pulls the next batch (natural back-pressure); `search/cancel` |
 | workspace | `workspace/setFolders`, `settings/setUser` |
 | documents (R2) | `doc/open` (full text + client version), `doc/change` (the editor's own incremental changes and versions), `doc/close`, `doc/saved`, `doc/language` — handled inline, in order |
 | languages (R2) | server → client `lang/registered` / `lang/unregistered`; `lang/list`, `lang/invoke` (registration id + op + document + args), `lang/willSave`, `lang/fileOperation`, server → client `diag/publish`, `lsp/servers`, `commands/changed`; `lsp/control`, `lsp/addDefinition`, `lsp/removeDefinition`, `commands/execute` |
 | UI (R2, server → client) | `window/showMessage`, `window/quickPick`, `window/inputBox`, `window/openExternal`, `window/clipboard`, `window/status`, `window/progress` (+ client → server `window/progressCancel`), `nav/open`, `nav/applyEdit`, `output/append` |
 | channels (R3/R4) | `chan/data` (both ways: bytes at an absolute offset), `chan/ack` (client → server: consumed up to an offset), server → client `chan/closed` (final offset, exit code, reason), `chan/close` (end the source after a grace period), `chan/attach` (after a reconnect: resume from the client's offset; answers what the server received of the input and how much output it could not keep), `chan/keep` (the channels the client still has; the rest end) |
-| terminals (R3) | `term/create` (the unresolved `TerminalCreateOptions` + size → channel, pid, program, directory), `term/resize`, `term/info` (foreground process) |
+| terminals (R3) | `term/create` (the unresolved `TerminalCreateOptions` + size → channel, pid, program, directory, and the shell-integration nonce the server gave the shell), `term/resize`, `term/info` (foreground process) |
 | debugging (R3) | `dap/resolve` (the server's configuration providers), `dap/start` (adapter for a configuration → channel), `dap/connect` (another connection to an adapter server: js-debug's child sessions) |
-| tasks (R3) | `task/list`, `task/start` (→ run id), `task/wait` (long poll, re-issued after a reconnect), `task/cancel` |
+| tasks (R3) | `task/list`, `task/start` (→ run id), `task/wait` (long poll, re-issued after a reconnect), `task/cancel`, `task/keep` (after a (re)connect: the runs the client still waits for; the rest are cancelled); server → client `task/terminal` (show a task's process in a terminal: label, program, arguments, directory, environment, presentation, a tag the terminal's `term/create` carries) and `task/reveal` (when the client announced `taskTerminals`) |
 | documents (R4) | `doc/keep` (after a reconnect: the documents the client still has open) |
 
 * Protocol **v2** (R3/R4). `hello` answers an `InstanceId` (random per server process): a reconnect that finds the same one resumed the same server.
@@ -122,10 +122,18 @@ the first time a workspace opens — instead the start fails with "No usable ver
 * **docker / wsl**: the same fixed scripts, as an argument vector for `docker exec -i [-u user] <container> sh -c <script> cscode <args…>` /
   `wsl.exe -d <distro> [-u user] --exec sh -c <script> cscode <args…>`; container and distribution names are validated (letters, digits, `_ . -`,
   never a leading `-`). The docker test container has no network and no mounts.
-* **Persistent servers (R4)**: the daemon's socket is in a 0700 directory (`<data dir>/run`, or `$XDG_RUNTIME_DIR/cscode-server` when that path is too
-  long) with mode 0600, next to a lock file only the live daemon holds; session ids are 32 random hex digits (validated server-side). Only the same user
-  can reach a daemon. The daemon is started through `/bin/sh -c 'exec "$0" "$@" </dev/null >/dev/null 2>&1 &'` (no string from data) and calls
-  `setsid()`: it holds none of ssh's pipes and is not in the relay's process tree.
+* **Persistent servers (R4)**: the daemon's socket (`<session>-<build>.sock`) is in a 0700 directory — `<data dir>/run`; when that path is too long
+  for a socket address, `$XDG_RUNTIME_DIR/cscode-server`; without `XDG_RUNTIME_DIR` (docker exec, su, macOS, hosts without systemd) for root
+  `/run/cscode-server`, for anyone else `cscode-<uid>-<12 random hex digits>` in `$TMPDIR` or `/tmp` (only a temp directory others cannot
+  rename our entries in: sticky, or not writable by everybody), recorded in `<data dir>/run/socket-dir` so every relay and daemon of the data dir
+  finds it — a fixed name could be made first by another user and keep this user's persistent server from ever starting. That directory must be
+  this user's own entry: `lchown(path, euid, -1)` (a no-op for the owner, refused for anyone else, and it never follows a link) and then not a
+  symbolic link (the others, in places only this user or root can make entries in, must not be a link and must take chmod); in a sticky directory nobody else can rename an entry of ours afterwards, so the check cannot be passed by swapping a
+  directory for a link between two checks (the earlier "no link, then chmod" could: chmod follows links). A recorded directory that is gone (a
+  reboot) is made again under its name; one that is not ours (taken meanwhile) is replaced by a new one (remote-8) — with mode 0600, next to a lock file only the live daemon holds; session ids are 32 random hex digits (validated server-side). Only the same
+  user can reach a daemon. The daemon is started through `/bin/sh -c 'exec "$0" "$@" </dev/null >/dev/null 2>&1 &'` (no string from data) and calls
+  `setsid()`: it holds none of ssh's pipes and is not in the relay's process tree. A daemon that cannot start writes why next to its socket
+  (`.failed`) and the relay reports it at once instead of waiting for the socket.
 * **Prompts (askpass)**: per connection attempt an `AskpassServer` creates a directory with mode 0700 (in `$XDG_RUNTIME_DIR`, else the temp dir), a Unix
   socket (0600) and a 0700 wrapper script `exec '<cscode>' --askpass "$@"`, and a random 256-bit one-time token. ssh gets `SSH_ASKPASS=<script>`,
   `SSH_ASKPASS_REQUIRE=force` and the socket/token variables; `cscode --askpass "<prompt>"` sends token + prompt; the server compares the token in constant
@@ -215,9 +223,28 @@ connection that created or reattached it, so the replay always comes before newe
   the workspace's `ssh:` URIs, and makes `${workspaceFolder}`/`${file}` the remote paths. Adapter servers (js-debug) are reached again by their child
   sessions through `dap/connect` (the stream connection's `SharedEndpoint`).
 * **Tasks** (`RemoteTaskService` wraps the Dap module's `ITaskService`): tasks of a remote folder are listed and run by the server's task runner
-  (shell/process tasks, `dependsOn`, problem matchers into the server's diagnostics → mirrored into the Error List, output into "Remote: Tasks").
-  `task/start` + `task/wait` (long poll): a run outlives the connection that started it and the client waits for it again after a reconnect to the
-  same server; cancelling kills the task's process tree there. preLaunchTask/postDebugTask of a remote debug session go the same way.
+  (shell/process tasks, `dependsOn`, variables and problem matchers next to the files; problems go into the server's diagnostics → mirrored into the
+  Error List). As in VS Code a task runs **in a terminal** (end pass, T49): when the client composes the integrated terminal it announces
+  `taskTerminals`, and the server's runner presents a task through `ServerTaskTerminals` (its `ITaskTerminalHost`): `task/terminal` asks the client,
+  whose own task presentation (`TaskTerminalHost`: a terminal named after the task, `presentation` reuse/reveal/echo/clear/close, "press any key")
+  opens a terminal; its `term/create` carries the request's tag (`CSCODE_SERVER_TASK`, removed from the program's environment), so the PTY — on the
+  server — is connected to the waiting run: its output feeds the problem matchers there, its exit is the result, cancelling kills it, closing the
+  terminal ends the task (terminated). A tagged terminal always runs on the server (`RemoteTerminals` refuses rather than starting it locally), the
+  server refuses a tagged `term/create` no run waits for (so a task never runs twice or unwanted), and a reused task terminal starts the next program
+  there too (`TerminalService.RestartAsync` through the backend). Only a terminal that runs where the program must run is reused: Remote: Open
+  Remote Folder keeps the window's terminals, and an idle local task terminal is never picked for a server's task, nor an idle remote one for a
+  local task (also for `runInTerminal`'s idle debuggee terminal); `RestartAsync` refuses a local restart of a program the backend provider claims,
+  as the last guard. A link drop while a task's terminal is being opened: before the server claimed the run, it asks again on the next connection
+  with the same tag and the client answers it with the start it already made; after the claim (the PTY runs, the `term/create` answer was lost)
+  it never asks again — the client, which names the tag as still opening in `chan/keep` (so the server keeps that PTY), sends the same
+  `term/create` on the next connection to the same server and is answered with that PTY, whose output so far is replayed. A start abandoned on the
+  server (cancelled, or the client could not show it) ends a PTY that claimed the run meanwhile. A client without the integrated
+  terminal gets the old presentation: the output piped into "Remote: Tasks". `task/start` + `task/wait` (long poll): a run outlives the connection
+  that started it and the client waits for it again after a reconnect to the same server (a task's terminal is a channel like any other); after each
+  (re)connect `task/keep` names the runs the client still waits for and the server cancels the others (one cancelled while the link was down, or a
+  crashed client's). A cancel while `task/start`'s answer is still on its way does not abandon the run the server started: it is cancelled as soon
+  as its id arrives. preLaunchTask/postDebugTask of a remote debug session go the same way. The Error List is not brought forward by a remote task's
+  `revealProblems` (the server has no views).
 * **Find in Files** (`ITextSearchProvider`): when every searched folder is remote, the panel's engine sends the query (pattern, case, whole word,
   `files.exclude` + `search.exclude` for pruning, ignore files, the result cap, the file size limit) and reads no remote file itself; matches come back
   in batches and get the same include/exclude filtering, cap and preview rules as local matches. Documents with unsaved changes are searched from
@@ -230,16 +257,37 @@ connection that created or reattached it, so the replay always comes before newe
   starting it when it does not run, writes the greeting and copies bytes both ways. The daemon serves one client connection at a time (a newer one
   replaces an older, half-open one) and keeps language servers, open documents, terminals, debug adapters and task runs between connections. It exits
   when the client disconnects deliberately (`server/shutdown`), on SIGTERM, or after the grace period without a client.
+* **One daemon per session and server build** (end pass, remote-4): the socket and lock names carry the build id (a hash of the protocol version, the
+  informational version and the module version ids of the server's CsCode assemblies; `CSCODE_SERVER_BUILD_ID` overrides it for tests). An upgraded
+  client that restores a session therefore never reaches the old build's daemon (which might not speak its protocol); its relay asks the daemons of
+  other builds of the same session (and pre-build-id `<session>.sock` ones) to shut down (`server/shutdown`) before starting its own.
+* **The ssh agent of the newest connection** (remote-7): each relay points `<session>-<build>.agent` (a symbolic link next to the socket, replaced
+  with one rename) at its own `SSH_AUTH_SOCK`; a daemon started by a relay that had one gets the link as its `SSH_AUTH_SOCK`, so terminals and tasks
+  (old and new) reach the forwarded agent after a reconnect, when the first connection's agent socket is gone. A connection without an agent removes
+  the link.
 * **Reconnect after network loss with state kept**: the client reconnects with backoff; `hello` returns the same `InstanceId`, so it resumes: channels
   reattach (`chan/attach`, replay, resend), tasks are waited for again, documents are re-sent in full (the server replaces its copies; `doc/keep`
   closes what the client closed meanwhile), watches re-armed, diagnostics/servers/commands re-announced by the server. A debug session that was
   stopped at a breakpoint steps on after the reconnect; a terminal's program keeps running and nothing it printed is lost or repeated (tested with
   four random link cuts during a flood). If the server did not keep the state (a new instance), terminals and adapters end with the reason.
+  Acknowledgements are stream offsets: output that fell out of the 2 MB ring while the link was down counts as consumed, so the program is never left
+  waiting for a window that cannot open (remote-2). Every re-armed watch delivers a rescan — `Changed(root)` and, for a watch of one directory,
+  `Changed` for each entry — so an open editor, which watches its file's directory for its own URI, checks its file again and a later save does not
+  overwrite what changed on the server during the outage (remote-1). The rescan's listings (one `fs/readDir` per watched directory, at most 20,000
+  entries) go out once the reconnected session is published, so terminal output, debug streams and file operations never wait for them; a rescan
+  and the live batches of one watch are never delivered at the same time. After resynchronising, `chan/keep`, `watch/keep` and `task/keep` name what the
+  client still has on every connect, also a first connect to a server that was there before (a restarted client, or one that gave up and connects
+  again): the server ends the rest.
 * **Persistence across a client restart**: a saved session whose folder is remote reconnects when it is restored (`remote.openFolder`; the editors load
   as soon as the connection is up) — tested with real session processes. The persistent session id per host is recorded in
   `{GlobalStorageDir}/remote/sessions/` with its owner's pid: a client that finds the previous owner dead (a crash) reuses the id and reattaches to the
   server it left running (warm language servers); two live windows never share one. Terminals are not restored after a restart (the accepted default):
-  a reattached server ends the channels the new client does not claim (`chan/keep`).
+  a reattached server ends the channels, watches and task runs the new client does not claim (`chan/keep`, `watch/keep`, `task/keep`).
+* **Permanent failures** end the reconnect loop at once only when flagged where they are thrown (`RemoteBootstrapException.IsPermanent`: no bundle for
+  the platform, the install script's own refusals of the bundle — exit 3 no SHA-256 tool, 4 checksum mismatch, 5 no server in it —, still not
+  installed after the upload, a protocol mismatch, no local server build); never from the message text, which carries host names and ssh's own
+  output (remote-9). Every other failed install is retried: ssh's 255 (the link broke during the upload), an upload killed by the install timeout
+  (a slow link), a container stopped mid-upload (docker's or wsl.exe's own codes), a full disk.
 
 ## Transports: ssh, docker, wsl
 
@@ -291,6 +339,9 @@ child sessions, terminals, tasks, the persistent daemon, chaos, the installer an
 constructed. `ProcessLanguageHost` starts `cscode-server` (the build that ships next to the app) as a below-normal-priority child over stdio with the
 identity URI mapping and the same participants; it mirrors the server list (`lsp/servers`, for the status bar), forwards start/stop/restart/stop-all and
 `AddDefinition`, restarts the child with backoff if it dies, and stops it (tree killed) on dispose. Data dir: `{GlobalStorageDir}/language-host`.
+The child is `dotnet cscode-server.dll` for a framework-dependent build and, in an installed self-contained app (whose server is self-contained too,
+its runtimeconfig naming `includedFrameworks`), the server's own executable next to the app — no `dotnet` need exist (T47). Resolved in `inProcess`
+mode (a composition that resolves every service), the host stays idle: it starts no child and its synchronous dispose returns at once (T29).
 
 ## Shell glue
 
@@ -387,14 +438,18 @@ docker and wsl transports too.
   client. A remote session's client-side providers run first with the `ssh:` folder (they mostly do nothing there), then the server's.
 * A debug session survives a reconnect only if the outage is shorter than the adapter request timeout for requests issued during it (none are in a
   stopped session); DAP output lost from the 2 MB ring (a very chatty program during a long outage) ends the session, since DAP framing cannot skip.
-* Terminal shell integration, split terminals and tasks-in-terminals (W2, merged separately) were not available here: a remote terminal runs whatever
-  the server's resolver resolves; once W2 lands, the server's resolver injects shell integration the same way, and tasks shown in terminals will run in
-  remote terminals (the task decorator here runs them through the server's task runner).
+* Shell integration in remote terminals (end pass, T44): the server's resolver injects with the scripts shipped next to the server
+  (`shellIntegration/` is in every bundle, the trimmed single-file ones included — checked by running the R3 suite against an extracted linux-x64
+  bundle) and `term/create` hands the client the shell's nonce, so command lines are trusted as in a local terminal. Tasks run in remote terminals
+  (see Tasks).
 * Remote workspace settings apply on the server (language servers, terminals, tasks) but not to client-side editor options.
 * Find in Files over a remote workspace counts only the files with matches in its "files searched" figure (the server's own count is not passed on).
 * Docker: a container must already run (no image or compose management), and the image needs glibc, OpenSSL, `tar`, `gzip`, `sha256sum` (Microsoft's
   `dotnet/runtime-deps` images have them; `debian:*-slim` lacks libssl). Container names reopen case-insensitively from URIs (see Transports).
-* A persistent server whose client crashed keeps running for the grace period (3 h by default), like VS Code's; its language servers and terminals with it.
+* A persistent server whose client crashed keeps running for the grace period (3 h by default), like VS Code's; its language servers with it (its
+  terminals, watches and task runs end when a restarted client reattaches). An upgraded client ends the previous build's daemon of the session.
+* A remote save is not conditional on the file's etag yet: after a reconnect the editor re-checks its file (rescan), but a change on the server that
+  lands between that check and a save is still overwritten (the editor's save path would have to pass the etag; Editor area).
 * Not done from the brief's R1 detail list: content prefetch for open tabs (each open reads on demand, chunked and pipelined), JSON-RPC batch
   arrays (requests pipeline instead), the remote icon overlay in the Explorer title (the Explorer belongs to the shell), and the "Show Log" action on the
   progress notification itself (it is on the failure message; `Remote: Show Log` is a command).

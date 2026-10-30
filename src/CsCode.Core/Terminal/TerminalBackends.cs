@@ -20,7 +20,14 @@ public interface ITerminalBackendListener
 }
 
 /// <summary>What the other side started: its process id there, the program (resolved there) and its working directory there.</summary>
-public sealed record TerminalBackendStarted(int ProcessId, string Program, string WorkingDirectory);
+public sealed record TerminalBackendStarted(int ProcessId, string Program, string WorkingDirectory)
+{
+    /// <summary>
+    /// The few variables of the program's environment the terminal itself needs (additive, end pass): the shell-integration ones (<c>CSCODE_NONCE</c>,
+    /// <c>CSCODE_INJECTION</c>) when the other side started the shell with CsCode's shell integration. Null: none.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? Environment { get; init; }
+}
 
 /// <summary>
 /// A terminal program running elsewhere, with the shape of a local PTY host. Every member may be called from any thread and returns without waiting,

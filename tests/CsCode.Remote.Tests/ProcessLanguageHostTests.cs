@@ -5,6 +5,7 @@ using CsCode.Core.Text;
 using CsCode.Lsp;
 using CsCode.Platform;
 using CsCode.Remote.Bridge;
+using CsCode.Remote.Transport;
 using CsCode.TestDoubles;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -86,6 +87,46 @@ public class ProcessLanguageHostTests
         var manager = host.Services.GetRequiredService<ILanguageServerManager>();
         Assert.Equal("LanguageServerManager", manager.GetType().Name);
         Assert.Empty(TestEnv.ProcessesWithMarker(host.Marker));
+    }
+
+    [Fact]
+    public async Task Resolved_in_in_process_mode_the_process_host_starts_no_child_and_disposes_without_blocking()
+    {
+        // T29: a composition that resolves every registration (the "resolve everything" tests, a container walk) reaches the process host too
+        await using var host = new Host("inProcess");
+        var plh = host.Services.GetRequiredService<ProcessLanguageHost>();
+        Assert.False(plh.IsStarted);
+        await Task.Delay(1500, Ct); // a started host would have its child by now
+        Assert.Empty(TestEnv.ProcessesWithMarker(host.Marker));
+        Assert.Equal(Core.Remote.RemoteConnectionState.Disconnected, plh.Client.Status.State);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        plh.Dispose(); // the container's synchronous disposal: nothing to stop, nothing to wait for
+        Assert.True(sw.ElapsedMilliseconds < 100, $"Dispose blocked for {sw.ElapsedMilliseconds} ms");
+    }
+
+    [Fact]
+    public void A_self_contained_server_build_runs_through_its_own_executable_and_a_framework_dependent_one_through_dotnet()
+    {
+        // T47: in an installed (self-contained) app there may be no dotnet at all; the server next to it is self-contained too
+        using var dir = new TempDirectory("cscode-plh-layout-");
+        var dll = Path.Combine(dir.Path, LocalServer.AssemblyFile);
+        File.WriteAllText(dll, "");
+        var apphost = Path.Combine(dir.Path, OperatingSystem.IsWindows() ? "cscode-server.exe" : "cscode-server");
+        File.WriteAllText(apphost, "");
+        var config = Path.Combine(dir.Path, "cscode-server.runtimeconfig.json");
+
+        File.WriteAllText(config, """{ "runtimeOptions": { "tfm": "net10.0", "includedFrameworks": [ { "name": "Microsoft.NETCore.App", "version": "10.0.12" } ] } }""");
+        var selfContained = LocalServer.Launch(dll, "/data", "m");
+        Assert.Equal(apphost, selfContained.FileName);
+        Assert.Equal(["--stdio", "--data-dir", "/data", "--marker", "m"], selfContained.Arguments);
+
+        File.WriteAllText(config, """{ "runtimeOptions": { "tfm": "net10.0", "framework": { "name": "Microsoft.NETCore.App", "version": "10.0.0" } } }""");
+        var frameworkDependent = LocalServer.Launch(dll, "/data", "m");
+        Assert.Equal(LocalServer.FindDotnetHost(), frameworkDependent.FileName);
+        Assert.Equal([dll, "--stdio", "--data-dir", "/data", "--marker", "m"], frameworkDependent.Arguments);
+
+        // the build next to the tests is framework-dependent: it keeps running through dotnet
+        Assert.Null(LocalServer.SelfContainedHost(TestEnv.ServerAssembly));
     }
 
     [Fact]

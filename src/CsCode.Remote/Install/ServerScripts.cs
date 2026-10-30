@@ -12,6 +12,13 @@ public static class ServerScripts
     public const string InstalledMarker = "CSCODE-INSTALLED";
 
     /// <summary>
+    /// Exit codes of <see cref="Install"/>'s own refusals: no SHA-256 tool on the remote (3), the uploaded bundle's checksum is wrong (4), the bundle
+    /// has no server in it (5). Uploading again gives the same answer. Any other failure (ssh's 255, a killed upload after the install timeout, a
+    /// stopped container's docker or wsl.exe code, a full disk, <c>set -e</c>'s 1 or 2) may well pass on the next attempt.
+    /// </summary>
+    public static readonly IReadOnlySet<int> InstallRefusalExitCodes = new HashSet<int> { 3, 4, 5 };
+
+    /// <summary>
     /// $1 install root ("" = ~/.cscode-server) · $2 data dir ("" = root/data) · $3 marker ("" = none) · $4 "force" to ignore existing installs ·
     /// $5 persistent session id ("" = the server ends with the connection) · $6 its grace period in seconds · $7… candidate hashes, preferred first.
     /// Execs the first installed server (touching its directory so cleanup keeps it), or prints <see cref="NotInstalledMarker"/> and the probe lines

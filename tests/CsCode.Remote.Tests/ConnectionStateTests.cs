@@ -61,11 +61,14 @@ public sealed class FakeTransport : IRemoteTransport
     private RpcPeer? _server;
     public int Connects;
     public bool Refuse;
+    /// <summary>The failure of the next connection attempts (instead of "connection refused" when <see cref="Refuse"/>).</summary>
+    public Exception? Failure;
     public string Description => "fake";
 
     public Task<RemoteChannel> ConnectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         Interlocked.Increment(ref Connects);
+        if (Failure is { } failure) return Task.FromException<RemoteChannel>(failure);
         if (Refuse) return Task.FromException<RemoteChannel>(new IOException("connection refused"));
         var toServer = new MemoryPipe();
         var toClient = new MemoryPipe();
@@ -189,6 +192,35 @@ public class ConnectionStateTests
         await Task.Delay(200, Ct);
         Assert.Equal(connects, transport.Connects);
         Assert.Equal(RemoteConnectionState.Disconnected, client.Status.State);
+    }
+
+    [Theory]
+    [InlineData("protocol-lab")]
+    [InlineData("bundle-ci@checksum.example")]
+    public async Task A_transient_start_failure_keeps_retrying_whatever_the_host_is_called(string host)
+    {
+        // remote-9: the transient "server did not start" message carries the host name (and ssh's stderr): words in it must not make it permanent
+        var transport = new FakeTransport();
+        var clock = new ManualClock();
+        await using var client = new RemoteClient(host, () => transport, new SshUriMapper(RemoteAuthority.Parse(host)), "test", new ReconnectPolicy(4, () => 0.5), clock);
+        await client.ConnectAsync(Ct);
+        transport.Failure = new RemoteBootstrapException(
+            $"The server did not start (ssh {host}, exit code 255): ssh: connect to host {host} port 22: Network is unreachable (protocol, bundle, checksum)");
+        transport.Drop();
+        await WaitForStateAsync(client, RemoteConnectionState.Reconnecting);
+        await TestEnv.WaitUntilAsync(() => clock.PendingTimers > 0, TimeSpan.FromSeconds(5), "backoff timer");
+        clock.Advance(TimeSpan.FromMilliseconds(500)); // attempt 1 fails with the transient error
+        await TestEnv.WaitUntilAsync(() => client.Status.Attempt == 2 || client.Status.State == RemoteConnectionState.Failed, TimeSpan.FromSeconds(5), "attempt 2");
+        Assert.Equal(RemoteConnectionState.Reconnecting, client.Status.State);
+        Assert.Equal(2, client.Status.Attempt);
+
+        // a failure flagged permanent where it was thrown (no bundle for the platform) ends the loop at once
+        transport.Failure = new RemoteBootstrapException("No server bundle for FreeBSD amd64") { IsPermanent = true };
+        await TestEnv.WaitUntilAsync(() => clock.PendingTimers > 0, TimeSpan.FromSeconds(5), "backoff timer 2");
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await WaitForStateAsync(client, RemoteConnectionState.Failed);
+        Assert.Contains("FreeBSD", client.Status.Message);
+        Assert.Equal(3, transport.Connects);
     }
 
     [Fact]

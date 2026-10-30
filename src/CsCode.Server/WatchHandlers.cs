@@ -9,7 +9,8 @@ namespace CsCode.Server;
 /// <summary>
 /// <c>watch/*</c>: client watches become Platform <see cref="IFileWatcher"/> watches on the server (recursive, debounced, exclude-aware, missing
 /// roots wait); each delivered batch is sent as one <c>watch/changes</c> notification with paths. All watches end with the server. A client that
-/// reconnected to a persistent server re-arms its watches with the same ids: the new watch replaces the old one.
+/// reconnected to a persistent server re-arms its watches with the same ids (the new watch replaces the old one), then names the ones it still
+/// has (<c>watch/keep</c>): every other watch ends.
 /// </summary>
 internal sealed class WatchHandlers(IFileWatcher watcher) : IDisposable
 {
@@ -45,6 +46,15 @@ internal sealed class WatchHandlers(IFileWatcher watcher) : IDisposable
         peer.OnRequest<WatchStopParams, Empty>(RemoteMethods.WatchStop, (p, _) =>
         {
             if (_watches.TryRemove(p.WatchId, out var w)) w.Dispose();
+            return ValueTask.FromResult(Empty.Value);
+        });
+        // After a (re)connect: watches the client stopped while it was away (its watch/stop could not reach us) and those of a previous client
+        // process of this session are not claimed, and end here.
+        peer.OnRequest<WatchKeepParams, Empty>(RemoteMethods.WatchKeep, (p, _) =>
+        {
+            var keep = p.WatchIds.ToHashSet(StringComparer.Ordinal);
+            foreach (var id in _watches.Keys.Where(id => !keep.Contains(id)).ToArray())
+                if (_watches.TryRemove(id, out var w)) w.Dispose();
             return ValueTask.FromResult(Empty.Value);
         });
     }

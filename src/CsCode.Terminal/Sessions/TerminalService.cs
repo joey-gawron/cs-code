@@ -135,8 +135,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
     private TerminalSession CreateCore(TerminalCreateOptions options, TerminalSession? parent, Action<TerminalSession>? beforeStart)
     {
         var (columns, rows) = options.InitialSize ?? DefaultSize;
-        if (options.ReuseWhenIdle && options.IsTransient && options.Name is { } name
-            && Sessions.FirstOrDefault(s => s.IsTransient && s.HasExited && s.Options.Name == name) is { } idle)
+        if (options.ReuseWhenIdle && options.IsTransient && options.Name is { } name && FindIdle(name, options) is { } idle)
         {
             if (Resolve(options, idle.Emulator.Columns, idle.Emulator.Rows, idle) is { } again)
             {
@@ -172,6 +171,18 @@ public sealed class TerminalService : ITerminalService, IDisposable
         return session;
     }
 
+    /// <summary>
+    /// An exited transient terminal named <paramref name="name"/> that runs where the program of <paramref name="options"/> must run: an idle local
+    /// terminal never runs a remote workspace's program, nor an idle remote one a local program.
+    /// </summary>
+    private TerminalSession? FindIdle(string name, TerminalCreateOptions options)
+    {
+        var idle = Sessions.Where(s => s.IsTransient && s.HasExited && s.Options.Name == name).ToList();
+        if (idle.Count == 0) return null;
+        var elsewhere = WouldRunElsewhere(options);
+        return idle.FirstOrDefault(s => RunsElsewhere(s) == elsewhere);
+    }
+
     private TerminalSession[] Flatten() => _groups.SelectMany(g => g.Terminals).ToArray();
 
     /// <summary>
@@ -185,8 +196,19 @@ public sealed class TerminalService : ITerminalService, IDisposable
         return await Task.Run(() =>
         {
             PtyStartInfo info;
-            try { info = Resolver.Resolve(options, session.Emulator.Columns, session.Emulator.Rows); }
-            catch (Exception ex) when (ex is PtySpawnException or IOException or UnauthorizedAccessException)
+            // A terminal that runs elsewhere (a remote workspace's) runs the next program there too, never on this machine; a local one never runs a
+            // program that must run elsewhere (the caller picks a terminal of the right kind: this is the guarantee, not the choice).
+            try
+            {
+                info = _backends.TryGetValue(session, out var backend)
+                    ? backend.Start(session.Emulator.Columns, session.Emulator.Rows, options)
+                    : WouldRunElsewhere(options)
+                        ? throw new PtySpawnException("This terminal runs on this machine, and the program must run on the remote host.")
+                        : Resolver.Resolve(options, session.Emulator.Columns, session.Emulator.Rows);
+            }
+            // InvalidOperationException: the backend provider refuses a program that must run elsewhere but cannot now (a server's task while its
+            // host is not connected): the terminal says so and stays exited, like any program that cannot start.
+            catch (Exception ex) when (ex is PtySpawnException or IOException or UnauthorizedAccessException or (InvalidOperationException and not ObjectDisposedException))
             {
                 session.WriteLocal($"\e[31m{ex.Message}\e[0m\r\n");
                 return false;
@@ -196,6 +218,25 @@ public sealed class TerminalService : ITerminalService, IDisposable
             Track(session);
             return true;
         }, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Whether <paramref name="session"/> runs its programs elsewhere (on a remote workspace's server), not on this machine.</summary>
+    internal bool RunsElsewhere(TerminalSession session) => _backends.TryGetValue(session, out _);
+
+    /// <summary>
+    /// Whether a new terminal for <paramref name="options"/> would run elsewhere: the backend provider's answer (no I/O, but the provider is
+    /// resolved on first use: call this off the UI thread). A program that must run elsewhere but cannot now (a server's task while its host is
+    /// not connected: the provider refuses it) counts as elsewhere — it fails to start there, it never runs here.
+    /// </summary>
+    internal bool WouldRunElsewhere(TerminalCreateOptions options)
+    {
+        if (Backends?.Invoke() is not { } provider) return false;
+        try
+        {
+            using var probe = provider.TryCreate(options);
+            return probe is not null;
+        }
+        catch (InvalidOperationException) { return true; }
     }
 
     /// <summary>How a split of <paramref name="parent"/> starts (reads /proc and settings: off the UI thread).</summary>
@@ -256,7 +297,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
 
     private PtyStartInfo? Resolve(TerminalCreateOptions options, int columns, int rows, TerminalSession session)
     {
-        try { return _backends.TryGetValue(session, out var backend) ? backend.Start(columns, rows) : Resolver.Resolve(options, columns, rows); }
+        try { return _backends.TryGetValue(session, out var backend) ? backend.Start(columns, rows, options) : Resolver.Resolve(options, columns, rows); }
         catch (Exception ex) when (ex is PtySpawnException or IOException or UnauthorizedAccessException)
         {
             // Shown in the terminal itself: a program that cannot be found makes a terminal that exited at once, with the reason.

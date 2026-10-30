@@ -16,7 +16,9 @@ namespace CsCode.Remote.Bridge;
 /// <c>cscode.languageHost = process</c>: the whole language client (every language server's client, its JSON, its caches and its GC) runs in a local
 /// <c>cscode-server</c> child process at below-normal priority, and this class stands in for <see cref="ILanguageServerManager"/> in the GUI. Local
 /// documents sync to it and its providers, diagnostics, prompts and commands are bridged back exactly like a remote workspace's (identity URI
-/// mapping). The child is started when this host is first resolved, restarted with backoff if it dies, and stopped (tree killed) on dispose.
+/// mapping). In process mode the child is started when this host is first resolved, restarted with backoff if it dies, and stopped (tree killed)
+/// on dispose; resolved in inProcess mode, the host stays idle and starts nothing. The child is the self-contained server's own executable in an
+/// installed (self-contained) app, else <c>dotnet cscode-server.dll</c> (<see cref="LocalServer.Launch"/>).
 /// </summary>
 public sealed class ProcessLanguageHost : ILanguageServerManager, IWillSaveParticipant, IFileOperationParticipant, IAsyncDisposable, IDisposable
 {
@@ -43,7 +45,7 @@ public sealed class ProcessLanguageHost : ILanguageServerManager, IWillSaveParti
         IRemoteTransport Transport()
         {
             var assembly = LocalServer.FindServerAssembly(options.LocalServerAssembly)
-                           ?? throw new RemoteBootstrapException("cscode-server.dll was not found next to the program; cscode.languageHost = process needs it");
+                           ?? throw new RemoteBootstrapException("cscode-server.dll was not found next to the program; cscode.languageHost = process needs it") { IsPermanent = true };
             var dataDir = options.LocalServerDataDir ?? Path.Combine(paths?.GlobalStorageDir ?? Path.GetTempPath(), "language-host");
             return new LoopbackTransport(LocalServer.Launch(assembly, dataDir, options.ServerMarker, environment: options.LocalServerEnvironment));
         }
@@ -64,10 +66,21 @@ public sealed class ProcessLanguageHost : ILanguageServerManager, IWillSaveParti
             Interlocked.Exchange(ref _tracking, null)?.Dispose();
             if (session is not null) _tracking = sp.GetService<IMemoryMonitor>()?.TrackChildProcess("cscode-server (language host)", session.Channel.ProcessId);
         }));
-        _ = StartAsync();
+        // Only the language host of process mode starts its child. Resolved in inProcess mode (a composition that resolves every service), it stays
+        // idle: no cscode-server, and nothing to stop on dispose.
+        if (sp.GetService<LanguageHostMode>() is not { IsProcess: false })
+        {
+            _started = true;
+            _ = StartAsync();
+        }
     }
 
+    private readonly bool _started;
+
     public RemoteClient Client => _client;
+
+    /// <summary>Whether this host started (and owns) a child process: false when it was resolved in inProcess mode.</summary>
+    public bool IsStarted => _started;
 
     private async Task StartAsync()
     {
@@ -173,12 +186,28 @@ public sealed class ProcessLanguageHost : ILanguageServerManager, IWillSaveParti
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        await _client.DisposeAsync().ConfigureAwait(false);
+        if (_started) await _client.DisposeAsync().ConfigureAwait(false);
+        DisposeOwned();
+    }
+
+    private void DisposeOwned()
+    {
         Interlocked.Exchange(ref _tracking, null)?.Dispose();
         _owned.Dispose();
         _serversChanged.Clear();
     }
 
-    /// <summary>Synchronous disposal (container shutdown without DisposeAsync): bounded so it can never hang the exit.</summary>
-    public void Dispose() => DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(10));
+    /// <summary>
+    /// Synchronous disposal (container shutdown without DisposeAsync). A host that never started has no child to stop and returns at once; one
+    /// that did waits for the child to be stopped, bounded so it can never hang the exit (the shell disposes it asynchronously first).
+    /// </summary>
+    public void Dispose()
+    {
+        if (!_started)
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0) DisposeOwned();
+            return;
+        }
+        DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(10));
+    }
 }

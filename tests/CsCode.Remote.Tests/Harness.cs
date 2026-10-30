@@ -291,7 +291,7 @@ public sealed class RemoteTestHost : IAsyncDisposable
     /// machine-scoped settings such as <c>cscode.debug.gdbArgs</c> come from there, not from the client's user settings.</param>
     public RemoteTestHost(Action<RemoteOptions>? options = null, Action<IServiceCollection>? services = null, Func<IRemoteTransport, IRemoteTransport>? wrap = null,
         bool loopback = true, string? userSettings = null, IWindowService? window = null, bool r3 = false, TimeSpan? persistent = null, TempDirectory? clientHome = null,
-        string? serverDataDir = null, string? marker = null, string? machineSettings = null)
+        string? serverDataDir = null, string? marker = null, string? machineSettings = null, bool terminals = true)
     {
         _sharedServerData = serverDataDir; // another (crashed) client's server: its data dir holds the persistent server's socket
         if (machineSettings is not null)
@@ -348,7 +348,7 @@ public sealed class RemoteTestHost : IAsyncDisposable
         if (r3)
         {
             sc.AddCsCodeDap();
-            sc.AddCsCodeTerminalService();
+            if (terminals) sc.AddCsCodeTerminalService(); // without it, a remote task is piped into "Remote: Tasks"
         }
         sc.AddCsCodeRemote();
         services?.Invoke(sc);

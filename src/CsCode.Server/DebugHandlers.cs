@@ -152,7 +152,8 @@ internal sealed class DapSource(ServerChannel channel, IDapTransport transport, 
 /// <summary>
 /// R3 remote tasks: tasks.json tasks of a remote folder run HERE through the Dap module's task runner (shell/process tasks, dependsOn, problem
 /// matchers → this server's diagnostics, mirrored to the client; output → the "Tasks" channel, forwarded). A run outlives the connection that
-/// started it: the client waits for it with <c>task/wait</c> and waits again after a reconnect to this (persistent) server.
+/// started it: the client waits for it with <c>task/wait</c> and waits again after a reconnect to this (persistent) server. After each (re)connect
+/// the client names the runs it still waits for (<c>task/keep</c>); every other run is cancelled and forgotten.
 /// </summary>
 internal sealed class TaskHandlers(ITaskService tasks, ILogger log) : IDisposable
 {
@@ -182,6 +183,20 @@ internal sealed class TaskHandlers(ITaskService tasks, ILogger log) : IDisposabl
         link.OnRequest<TaskRunParams, Empty>(RemoteMethods.TaskCancel, (p, _) =>
         {
             if (_runs.TryGetValue(p.RunId, out var run)) { try { run.Cts.Cancel(); } catch (ObjectDisposedException) { } }
+            return ValueTask.FromResult(Empty.Value);
+        });
+        // After a (re)connect: the runs nobody waits for any more — cancelled while the client was away (its task/cancel could not reach us), or
+        // started by a previous client process of this session — are cancelled (their process trees killed) and forgotten.
+        link.OnRequest<TaskKeepParams, Empty>(RemoteMethods.TaskKeep, (p, _) =>
+        {
+            var keep = p.RunIds.ToHashSet(StringComparer.Ordinal);
+            foreach (var id in _runs.Keys.Where(id => !keep.Contains(id)).ToArray())
+            {
+                if (!_runs.TryRemove(id, out var run)) continue;
+                log.LogInformation("Task run {Id} was not reclaimed by the client: {What}", id, run.Task.IsCompleted ? "forgotten" : "cancelling it");
+                try { run.Cts.Cancel(); } catch (ObjectDisposedException) { }
+                run.Task.ContinueWith(done => run.Cts.Dispose(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
             return ValueTask.FromResult(Empty.Value);
         });
     }

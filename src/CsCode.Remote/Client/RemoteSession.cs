@@ -29,8 +29,9 @@ public sealed class RemoteSession : IAsyncDisposable
     public bool IsOpen => !Peer.IsClosed;
 
     /// <param name="attach">Registers the client-side handlers on the peer before it starts reading (participants).</param>
+    /// <param name="capabilities">What this client offers beyond gzip (announced in the handshake).</param>
     public static async Task<RemoteSession> ConnectAsync(IRemoteTransport transport, UriMapper mapper, string mode, Action<RpcPeer> attach,
-        IProgress<string>? progress, ILogger log, CancellationToken ct, TimeSpan? callTimeout = null)
+        IProgress<string>? progress, ILogger log, CancellationToken ct, TimeSpan? callTimeout = null, IReadOnlyList<string>? capabilities = null)
     {
         var channel = await transport.ConnectAsync(progress, ct).ConfigureAwait(false);
         RpcPeer? peer = null;
@@ -47,10 +48,10 @@ public sealed class RemoteSession : IAsyncDisposable
             peer.Start();
             progress?.Report("Handshake");
             var hello = await peer.InvokeAsync<HelloParams, HelloResult>(RemoteMethods.Hello,
-                new HelloParams(RemoteProtocol.Version, ClientVersion, [RemoteProtocol.Capabilities.Gzip], mode), ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false)
+                new HelloParams(RemoteProtocol.Version, ClientVersion, [RemoteProtocol.Capabilities.Gzip, .. capabilities ?? []], mode), ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false)
                 ?? throw new RemoteBootstrapException("The server sent an empty handshake");
             if (hello.ProtocolVersion != RemoteProtocol.Version)
-                throw new RemoteBootstrapException($"The server speaks protocol v{hello.ProtocolVersion}, this client v{RemoteProtocol.Version} (reinstall the server)");
+                throw new RemoteBootstrapException($"The server speaks protocol v{hello.ProtocolVersion}, this client v{RemoteProtocol.Version} (reinstall the server)") { IsPermanent = true };
             return new RemoteSession(channel, peer, mapper, hello);
         }
         catch

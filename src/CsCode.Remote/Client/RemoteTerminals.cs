@@ -11,13 +11,19 @@ namespace CsCode.Remote.Client;
 /// R3 remote terminals: the <see cref="ITerminalBackendProvider"/> the Terminal module asks for every new terminal. While the workspace is remote
 /// (its primary folder is on the configured host) terminals run on the server (<c>term/create</c>: the server resolves the shell, environment and
 /// directory and runs a PTY); otherwise the answer is null and the terminal is local. Debuggees started with <c>runInTerminal</c> and anything else
-/// that creates terminals follow the same rule.
+/// that creates terminals follow the same rule. A terminal the server asked for to show one of its tasks (tagged) always runs on the server: its
+/// program and paths are the server's, never this machine's.
 /// </summary>
 public sealed class RemoteTerminals(RemoteConnectionManager manager, Func<IWorkspaceService?> workspace) : ITerminalBackendProvider
 {
     public ITerminalBackend? TryCreate(TerminalCreateOptions options)
     {
-        if (workspace()?.PrimaryFolder is not { } folder || manager.MapperFor(folder) is null || manager.Channels is not { } channels) return null;
+        var folder = workspace()?.PrimaryFolder is { } primary && manager.MapperFor(primary) is not null ? primary : null;
+        if (options.Env?.ContainsKey(TaskTerminalTag.Variable) == true)
+            return manager.Channels is { } hostChannels
+                ? new RemoteTerminalBackend(manager, hostChannels, manager.Logger) { Folder = folder }
+                : throw new InvalidOperationException("The remote host of this task is not connected.");
+        if (folder is null || manager.Channels is not { } channels) return null;
         return new RemoteTerminalBackend(manager, channels, manager.Logger) { Folder = folder };
     }
 }
@@ -36,7 +42,7 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
     private readonly RemoteConnectionManager _manager;
     private readonly RemoteChannels _channels;
     private readonly ILogger _log;
-    private readonly BlockingCollection<object> _queue = new(new ConcurrentQueue<object>()); // byte[] / Exit / LostMarker
+    private readonly BlockingCollection<object> _queue = new(new ConcurrentQueue<object>()); // byte[] / Exit / Notice
     private readonly ManualResetEventSlim _attached = new(false);
     private ITerminalBackendListener? _listener;
     private ClientChannel? _channel;
@@ -50,6 +56,9 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
     private int _foregroundBusy, _disposed;
 
     private sealed record Exit(int Code, string? Reason);
+
+    /// <summary>Text of our own (not the program's output): shown, never acknowledged as consumed channel bytes.</summary>
+    private sealed record Notice(byte[] Text);
 
     public RemoteTerminalBackend(RemoteConnectionManager manager, RemoteChannels channels, ILogger? log = null)
     {
@@ -66,23 +75,41 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
     public TerminalBackendStarted Start(TerminalCreateOptions options, int columns, int rows)
     {
         // Blocking by contract: the terminal service runs this off the UI thread, as it forks local programs there.
-        using var cts = new CancellationTokenSource(StartTimeout);
-        try
+        // A task's terminal (tagged) whose answer is lost with the connection may already run on the server: the same term/create on the next
+        // connection to that server is answered with its PTY (chan/keep spares it meanwhile, since the tag is named as opening), whose output so far is
+        // replayed — the task runs once and is not ended by the drop. Another terminal's start fails with the connection (the user opens another).
+        var tag = options.Env is { } env && env.TryGetValue(TaskTerminalTag.Variable, out var t) ? t : null;
+        using var opening = tag is null ? null : _channels.OpeningTaskTerminal(tag);
+        string? instance = null;
+        for (var attempt = 0; ; attempt++)
         {
-            var session = _manager.WaitForSessionAsync(StartTimeout, cts.Token).GetAwaiter().GetResult();
-            if (!session.Server.Capabilities.Contains(RemoteProtocol.Capabilities.Terminals))
-                throw new NotSupportedException($"The server on {_manager.HostName} cannot run terminals.");
-            var r = session.Peer.InvokeAsync<TermCreateParams, TermCreateResult>(RemoteMethods.TermCreate, new TermCreateParams(options, columns, rows, Folder), cts.Token, StartTimeout)
-                        .GetAwaiter().GetResult() ?? throw new IOException("The server sent no answer for the new terminal.");
-            _pid = r.ProcessId;
-            _size = ((long)columns << 32) | (uint)rows;
-            _channel = _channels.Open(r.Channel, this);
-            _delivery = new Thread(DeliveryLoop) { IsBackground = true, Name = "CsCode.Remote-terminal-" + r.Channel };
-            _delivery.Start();
-            return new TerminalBackendStarted(r.ProcessId, r.Program, r.WorkingDirectory);
+            using var cts = new CancellationTokenSource(StartTimeout);
+            try
+            {
+                var session = _manager.WaitForSessionAsync(StartTimeout, cts.Token).GetAwaiter().GetResult();
+                if (attempt > 0 && session.Server.InstanceId != instance)
+                    throw new IOException($"The connection to {_manager.HostName} was lost while the task's terminal started, and the server did not keep it.");
+                instance = session.Server.InstanceId;
+                if (!session.Server.Capabilities.Contains(RemoteProtocol.Capabilities.Terminals))
+                    throw new NotSupportedException($"The server on {_manager.HostName} cannot run terminals.");
+                var r = session.Peer.InvokeAsync<TermCreateParams, TermCreateResult>(RemoteMethods.TermCreate, new TermCreateParams(options, columns, rows, Folder), cts.Token, StartTimeout)
+                            .GetAwaiter().GetResult() ?? throw new IOException("The server sent no answer for the new terminal.");
+                _pid = r.ProcessId;
+                _size = ((long)columns << 32) | (uint)rows;
+                _channel = _channels.Open(r.Channel, this);
+                // Asked again: the PTY may have been started on the lost connection, whose output went there: the server replays it from the start.
+                if (attempt > 0) _channel.ReattachAsync(session.Peer, cts.Token).GetAwaiter().GetResult();
+                _delivery = new Thread(DeliveryLoop) { IsBackground = true, Name = "CsCode.Remote-terminal-" + r.Channel };
+                _delivery.Start();
+                return new TerminalBackendStarted(r.ProcessId, r.Program, r.WorkingDirectory) { Environment = r.ShellIntegration };
+            }
+            catch (RemoteDisconnectedException ex) when (tag is not null && instance is not null && attempt < 2)
+            {
+                _log.LogInformation("The connection was lost while the terminal of a task started; asking the server for it again: {Error}", ex.Message);
+            }
+            catch (OperationCanceledException) { throw new TimeoutException($"Starting a terminal on {_manager.HostName} took more than {StartTimeout.TotalSeconds:0} s."); }
+            catch (NotSupportedException ex) { throw new InvalidOperationException(ex.Message, ex); }
         }
-        catch (OperationCanceledException) { throw new TimeoutException($"Starting a terminal on {_manager.HostName} took more than {StartTimeout.TotalSeconds:0} s."); }
-        catch (NotSupportedException ex) { throw new InvalidOperationException(ex.Message, ex); }
     }
 
     public void Attach(ITerminalBackendListener listener)
@@ -96,7 +123,7 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
     void IChannelSink.Deliver(ReadOnlyMemory<byte> data) => TryAdd(data.ToArray());
 
     void IChannelSink.Lost(long bytes) =>
-        TryAdd(System.Text.Encoding.UTF8.GetBytes($"\r\n\e[33m[{bytes} bytes of output were lost while the connection was down]\e[0m\r\n"));
+        TryAdd(new Notice(System.Text.Encoding.UTF8.GetBytes($"\r\n\e[33m[{bytes} bytes of output were lost while the connection was down]\e[0m\r\n")));
 
     void IChannelSink.Closed(int? exitCode, string? reason) => TryAdd(new Exit(exitCode ?? -1, reason));
 
@@ -119,6 +146,7 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
                     listener.OnOutput(data); // may block: the terminal's worker is behind (back-pressure)
                     _channel?.Consumed(data.Length);
                 }
+                else if (item is Notice notice) listener.OnOutput(notice.Text);
                 else if (item is Exit exit)
                 {
                     if (exit.Code == -1 && exit.Reason is { } why) listener.OnOutput(System.Text.Encoding.UTF8.GetBytes($"\r\n\e[31m{why}\e[0m\r\n"));

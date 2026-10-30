@@ -32,6 +32,11 @@ public static class RemoteProtocol
         public const string Tasks = "tasks";
         /// <summary>The server outlives a dropped connection (grace period) and the client reattaches to it, R4.</summary>
         public const string Persistent = "persistent";
+        /// <summary>
+        /// Client capability (end pass, T49): the client shows a task's process in a terminal (VS Code's task presentation), so the server's task
+        /// runner asks it for one (<c>task/terminal</c>) and the process runs on a server PTY; without it tasks are piped into "Remote: Tasks".
+        /// </summary>
+        public const string TaskTerminals = "taskTerminals";
     }
 }
 
@@ -59,6 +64,9 @@ public static class RemoteMethods
 
     public const string WatchStart = "watch/start";
     public const string WatchStop = "watch/stop";
+    /// <summary>client → server after a (re)connect: the watches the client still has; the server stops every other one (stopped while the
+    /// client was away, or left by a previous client process of the session).</summary>
+    public const string WatchKeep = "watch/keep";
     /// <summary>server → client notification</summary>
     public const string WatchChanges = "watch/changes";
 
@@ -140,6 +148,16 @@ public static class RemoteMethods
     /// <summary>Long poll: completes with the task's result (re-issued after a reconnect; the task keeps running on the server).</summary>
     public const string TaskWait = "task/wait";
     public const string TaskCancel = "task/cancel";
+    /// <summary>client → server after a (re)connect: the task runs the client still waits for; the server cancels and forgets every other one
+    /// (cancelled while the client was away, or started by a previous client process of the session).</summary>
+    public const string TaskKeep = "task/keep";
+    /// <summary>
+    /// server → client: show a task's process in a terminal named after the task (the client's task presentation: reuse, reveal, echo…); the
+    /// terminal runs it on this server (<c>term/create</c> carrying the request's tag). Answers once the process was started.
+    /// </summary>
+    public const string TaskTerminal = "task/terminal";
+    /// <summary>server → client (notification): bring a task's terminal forward (<c>reveal: silent</c> after a failure).</summary>
+    public const string TaskReveal = "task/reveal";
 
     /// <summary>client → server after a reconnect: the documents the client still has open; the server closes the others.</summary>
     public const string DocKeep = "doc/keep";
@@ -209,6 +227,7 @@ public sealed record MoveParams(string Source, string Target, bool Overwrite);
 
 public sealed record WatchStartParams(string WatchId, string Root, bool Recursive, IReadOnlyList<string>? Excludes);
 public sealed record WatchStopParams(string WatchId);
+public sealed record WatchKeepParams(IReadOnlyList<string> WatchIds);
 public sealed record WireFileChange(string Path, FileChangeKind Kind);
 public sealed record WatchChangesParams(string WatchId, IReadOnlyList<WireFileChange> Changes);
 
@@ -372,12 +391,17 @@ public sealed record ChanAttachParams(long Id, long ReceivedOffset);
 /// <param name="ServerReceived">Bytes of client input the server has accepted (the client resends from there).</param>
 /// <param name="LostBytes">Output that fell out of the server's replay buffer while nobody was connected.</param>
 public sealed record ChanAttachResult(bool Exists, long ServerReceived, long LostBytes);
-public sealed record ChanKeepParams(IReadOnlyList<long> Ids);
+/// <param name="Ids">The channels the client still has: the server ends every other one.</param>
+/// <param name="TaskTags">Task terminals the client is still opening (<see cref="TaskTerminalTag"/>) whose <c>term/create</c> answer was lost with the
+/// connection: a PTY the server started for one of them is kept too, and the client's repeated <c>term/create</c> is answered with it.</param>
+public sealed record ChanKeepParams(IReadOnlyList<long> Ids, IReadOnlyList<string>? TaskTags = null);
 
 /// <param name="Folder">The client's workspace folder: a new terminal starts there even when the server has not applied the client's latest
 /// <c>workspace/setFolders</c> yet (requests run concurrently on the server).</param>
 public sealed record TermCreateParams(TerminalCreateOptions Options, int Columns, int Rows, Uri? Folder = null);
-public sealed record TermCreateResult(long Channel, int ProcessId, string Program, string WorkingDirectory);
+/// <param name="ShellIntegration">The shell-integration variables the server started the shell with (<c>CSCODE_NONCE</c>, <c>CSCODE_INJECTION</c>;
+/// the server's own scripts, shipped in its bundle), so the client's terminal trusts the command lines the shell reports; null: not injected.</param>
+public sealed record TermCreateResult(long Channel, int ProcessId, string Program, string WorkingDirectory, IReadOnlyDictionary<string, string>? ShellIntegration = null);
 public sealed record TermResizeParams(long Id, int Columns, int Rows);
 public sealed record TermInfoResult(string? ForegroundProcess);
 
@@ -393,6 +417,21 @@ public sealed record TaskListParams(Uri? Folder);
 public sealed record TaskStartParams(string Label, Uri? Folder);
 public sealed record TaskRunParams(string RunId);
 public sealed record TaskResultWire(TaskResult Result);
+public sealed record TaskKeepParams(IReadOnlyList<string> RunIds);
+
+/// <summary>A task process to show in a terminal (<see cref="RemoteMethods.TaskTerminal"/>); paths are the server's.</summary>
+/// <param name="Tag">Names this start: the terminal's <c>term/create</c> carries it (<see cref="TaskTerminalTag.Variable"/>) so the server
+/// connects that PTY to the waiting task (its output to the problem matchers, its exit to the result).</param>
+public sealed record TaskTerminalParams(string Tag, string Label, string FileName, IReadOnlyList<string> Arguments, string? WorkingDirectory,
+    IReadOnlyDictionary<string, string?> Environment, TaskPresentation Presentation, string? CommandLine);
+
+public sealed record TaskTagParams(string Tag);
+
+/// <summary>How a task terminal's <c>term/create</c> names the task start it belongs to (removed from the program's environment on the server).</summary>
+public static class TaskTerminalTag
+{
+    public const string Variable = "CSCODE_SERVER_TASK";
+}
 
 public sealed record DocKeepParams(IReadOnlyList<Uri> Uris);
 
