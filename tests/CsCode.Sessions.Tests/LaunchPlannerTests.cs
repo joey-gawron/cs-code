@@ -219,4 +219,58 @@ public class LaunchPlannerTests
         var withSpare = LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Background), World([Proc(2, null, ProcessStates.Spare)]), WithSpare);
         Assert.False(withSpare.EnsureSpare);
     }
+
+    [Fact]
+    public void A_session_whose_process_is_quitting_is_awaited_not_copied()
+    {
+        // sessions-3: its process says "quitting" and still holds the lock for its final save: not wedged. The launcher waits, then plans again.
+        var leaving = Proc(10, "work", ProcessStates.Quitting);
+        var wait = LaunchPlanner.Plan(Open("work"), World([leaving], [Saved("work")], "work", "work"), Defaults);
+        Assert.Equal((LaunchAction.AwaitQuit, 10, "work"), (wait.Action, wait.Pid, wait.Session));
+        Assert.Empty(wait.Warnings);
+        // `cscode` with no session follows the last one the same way.
+        Assert.Equal(LaunchAction.AwaitQuit, LaunchPlanner.Plan(Open(), World([leaving], [Saved("work")], "work", "work"), Defaults).Action);
+
+        // Once it let go of the lock: a fresh start of the same session (no copy, no warning), even while it still answers "quitting".
+        var start = LaunchPlanner.Plan(Open("work"), World([leaving], [Saved("work")], "work"), Defaults);
+        Assert.Equal((LaunchAction.Start, "work", null, false), (start.Action, start.Session, start.SeedFrom, start.NewUnnamed));
+        Assert.Empty(start.Warnings);
+
+        // One that stopped answering is wedged after all: the copy.
+        var wedged = LaunchPlanner.Plan(Open("work"), World([leaving with { Responsive = false }], [Saved("work")], "work", "work"), Defaults);
+        Assert.Equal(("work", "window-1"), (wedged.SeedFrom, wedged.Session));
+    }
+
+    [Fact]
+    public void A_remote_folder_opens_its_own_session_not_the_last_one()
+    {
+        // sessions-6: `cscode ssh://host/path` resolved like a files-only command line (the last session), whose folder remote.openFolder replaced.
+        var saved = new[] { Saved("work", 1, "file:///home/me/work/"), Saved("app", 30, "ssh://me@box/srv/app/") };
+        LaunchRequest Remote(string uri) => new(LaunchKind.Open) { RemoteTargets = [uri] };
+
+        var fresh = LaunchPlanner.Plan(Remote("ssh://me@box/srv/other"), World([], saved, "work"), Defaults);
+        Assert.Equal((LaunchAction.Start, true), (fresh.Action, fresh.NewUnnamed));
+        Assert.StartsWith("window-", fresh.Session);
+
+        // The saved session whose primary folder it is: the trailing '/', escaping and the host's case do not matter; the user and port do.
+        foreach (var same in new[] { "ssh://me@box/srv/app", "ssh://me@BOX/srv/app/", "ssh://me@box/srv/%61pp" })
+            Assert.Equal("app", LaunchPlanner.Plan(Remote(same), World([], saved, "work"), Defaults).Session);
+        foreach (var other in new[] { "ssh://you@box/srv/app", "ssh://me@box:2222/srv/app", "docker://box/srv/app", "ssh://me@box/srv/App" })
+            Assert.NotEqual("app", LaunchPlanner.Plan(Remote(other), World([], saved, "work"), Defaults).Session);
+
+        // A running session with that folder is shown; an explicit --session still wins.
+        var show = LaunchPlanner.Plan(Remote("ssh://me@box/srv/app"), World([Proc(5, "app", ProcessStates.Hidden)], saved, "work"), Defaults);
+        Assert.Equal((LaunchAction.Show, 5), (show.Action, show.Pid));
+        Assert.Equal("work", LaunchPlanner.Plan(Remote("ssh://me@box/srv/app") with { Session = "work" }, World([], saved, "work"), Defaults).Session);
+    }
+
+    [Fact]
+    public void A_hidden_session_that_would_have_to_ask_is_never_evicted()
+    {
+        // sessions-10: evicting it popped its window up with save prompts (hot exit off, or changes over the backup limit).
+        var prompting = Proc(1, "a", ProcessStates.Hidden, shownMinutesAgo: 60) with { NeedsPrompt = true };
+        var quiet = Proc(2, "b", ProcessStates.Hidden, shownMinutesAgo: 30);
+        Assert.Equal([2], ResidentPolicy.SelectEvictions([prompting, quiet, Proc(3, "c", ProcessStates.Shown)], 2, keepPid: null));
+        Assert.Empty(ResidentPolicy.SelectEvictions([prompting, Proc(3, "c", ProcessStates.Shown)], 1, keepPid: null));
+    }
 }

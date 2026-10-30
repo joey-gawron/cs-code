@@ -123,6 +123,62 @@ public class SessionLauncherTests
     }
 
     [Fact]
+    public async Task A_session_whose_process_is_quitting_is_started_afresh_once_it_lets_go_not_copied()
+    {
+        // sessions-3: the quitting owner still held the lock (its final save, a slow language server's shutdown): the launcher took it for a
+        // wedged one and opened a copy of the session, with a false "does not respond" warning.
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        rt.Store.Save(new SessionDocument { Name = "work" });
+        var held = FileLock.TryAcquire(rt.Store.LockPathOf("work"))!;
+        using var leaving = new FakeHost(rt.Runtime, "work", ProcessStates.Quitting);
+        var error = new StringWriter();
+        _ = Task.Run(async () => { await Task.Delay(400); held.Dispose(); }); // its last save is done
+
+        var outcome = await new SessionLauncher(rt.Runtime, rt.Store, new LaunchSettings(), spawner, new StringWriter(), error,
+            new LauncherTimeouts { Handshake = TimeSpan.FromMilliseconds(300), ShowReply = TimeSpan.FromSeconds(5), StartHello = TimeSpan.FromSeconds(5), QuitWait = TimeSpan.FromSeconds(10) })
+            .RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" });
+
+        Assert.Equal(0, outcome.ExitCode);
+        Assert.Equal(["--host", "--session", "work"], Assert.Single(spawner.Spawned));
+        Assert.DoesNotContain("does not respond", error.ToString());
+        held.Dispose();
+    }
+
+    [Fact]
+    public async Task A_quitting_process_that_keeps_the_session_too_long_counts_as_wedged()
+    {
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        rt.Store.Save(new SessionDocument { Name = "work" });
+        using var held = FileLock.TryAcquire(rt.Store.LockPathOf("work"));
+        using var leaving = new FakeHost(rt.Runtime, "work", ProcessStates.Quitting);
+        var error = new StringWriter();
+
+        var outcome = await Launcher(rt, spawner, error: error).RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" }); // QuitWait 1 s
+
+        Assert.Equal(0, outcome.ExitCode);
+        Assert.Equal(["--host", "--session", "window-1", "--seed-from", "work", "--unnamed"], Assert.Single(spawner.Spawned));
+        Assert.Contains("does not respond", error.ToString());
+    }
+
+    [Fact]
+    public async Task A_show_that_finds_the_session_quitting_opens_it_afresh()
+    {
+        // sessions-3: a show that reached a quitting process replied OK and nothing appeared.
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        using var closing = new FakeHost(rt.Runtime, "work", ProcessStates.Shown) { QuitsBeforeShow = true };
+
+        var outcome = await Launcher(rt, spawner).RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "work" });
+
+        Assert.Equal(0, outcome.ExitCode);
+        var fresh = Assert.Single(spawner.Hosts, h => h.Session == "work");
+        Assert.Equal(fresh.Pid, outcome.TargetPid);
+        Assert.Contains(fresh.Received, m => m.Type == IpcVerbs.Show);
+    }
+
+    [Fact]
     public async Task Concurrent_launches_of_one_session_end_with_one_owner()
     {
         using var rt = new TestRuntime();
@@ -164,6 +220,7 @@ public class SessionLauncherTests
         var deadline = Stopwatch.StartNew();
         while (!a.QuitRequested && deadline.ElapsedMilliseconds < 3000) await Task.Delay(10);
         Assert.True(a.QuitRequested, "the least recently shown hidden session was asked to quit");
+        Assert.True(Assert.Single(a.Received, m => m.Type == IpcVerbs.Quit).Evict); // sessions-10: an eviction, refused rather than prompting
         Assert.False(b.QuitRequested);
         Assert.Equal("c", spare.Session);
     }

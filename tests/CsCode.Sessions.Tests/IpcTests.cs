@@ -36,6 +36,18 @@ public class IpcTests
     }
 
     [Fact]
+    public void Needs_prompt_and_evict_survive_the_codec_and_are_absent_from_old_messages()
+    {
+        var hello = IpcCodec.Decode(IpcCodec.Encode(new IpcMessage { Type = IpcVerbs.Hello, NeedsPrompt = true }));
+        Assert.True(hello.NeedsPrompt);
+        var quit = IpcCodec.Decode(IpcCodec.Encode(new IpcMessage { Type = IpcVerbs.Quit, Force = false, Evict = true }));
+        Assert.Equal((false, true), (quit.Force, quit.Evict));
+        var old = IpcCodec.Decode("{\"type\":\"quit\",\"force\":false}"u8);
+        Assert.Null(old.Evict);
+        Assert.Null(old.NeedsPrompt);
+    }
+
+    [Fact]
     public async Task A_request_gets_its_reply_and_the_endpoint_is_private()
     {
         using var rt = new TestRuntime();

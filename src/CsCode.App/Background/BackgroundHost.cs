@@ -32,6 +32,9 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     private FileLock? _sessionLock;
     private IpcServer? _server;
     private volatile SessionWindowController? _controller;
+
+    /// <summary>The window side, once attached (tests).</summary>
+    internal SessionWindowController? Controller => _controller;
     private Task<PreparedSession>? _prepared;
     private string? _session;
     private bool _unnamed, _claimed;

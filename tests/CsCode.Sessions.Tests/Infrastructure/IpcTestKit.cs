@@ -55,6 +55,8 @@ public sealed class FakeHost : IIpcHandler, IDisposable
     public bool Wedged { get; set; }
     public bool RefuseClaim { get; set; }
     public TimeSpan ShowDelay { get; set; }
+    /// <summary>A show finds it quitting (answers <see cref="IpcMessage.QuittingError"/> and reports the quitting state from then on).</summary>
+    public bool QuitsBeforeShow { get; set; }
     public ConcurrentQueue<IpcMessage> Received { get; } = new();
     public bool QuitRequested { get; private set; }
 
@@ -88,6 +90,12 @@ public sealed class FakeHost : IIpcHandler, IDisposable
         }
         if (request.Type == IpcVerbs.Show)
         {
+            if (QuitsBeforeShow)
+            {
+                // Its quit committed between the launcher's discovery and the show (the real host's answer).
+                lock (_gate) State = ProcessStates.Quitting;
+                return IpcMessage.Failure(IpcMessage.QuittingError);
+            }
             if (ShowDelay > TimeSpan.Zero) await Task.Delay(ShowDelay, ct);
             lock (_gate)
             {

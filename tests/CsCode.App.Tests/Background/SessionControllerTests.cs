@@ -1,0 +1,349 @@
+using System.Text;
+using System.Text.Json;
+using Avalonia.Headless.XUnit;
+using CsCode.App.Background;
+using CsCode.App.Notifications;
+using CsCode.App.Startup;
+using CsCode.App.Tests.Hosting;
+using CsCode.App.Tests.Infrastructure;
+using CsCode.Core.Lifecycle;
+using CsCode.Core.Platform;
+using CsCode.Sessions;
+using CsCode.Sessions.Ipc;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Xunit;
+
+namespace CsCode.App.Tests.Background;
+
+/// <summary>
+/// A REAL session process's window side, run in the test process (headless): the <see cref="BackgroundHost"/> with a private runtime directory and
+/// store, the real app and its modules, and the IPC requests the launcher sends. Save prompts are answered by <see cref="FakeModalDialogs"/>.
+/// </summary>
+internal sealed class InProcessSession : IAsyncDisposable
+{
+    private readonly BackgroundHost? _previous;
+
+    private InProcessSession(RealAppHome env, RuntimeDirectory runtime, SessionStore store, BackgroundHost host, FakeModalDialogs dialogs, RealAppRun run, BackgroundHost? previous)
+    {
+        Env = env;
+        Runtime = runtime;
+        Store = store;
+        Host = host;
+        Dialogs = dialogs;
+        Run = run;
+        _previous = previous;
+    }
+
+    public RealAppHome Env { get; }
+    public RuntimeDirectory Runtime { get; }
+    public SessionStore Store { get; }
+    public BackgroundHost Host { get; }
+    public FakeModalDialogs Dialogs { get; }
+    public RealAppRun Run { get; }
+
+    /// <param name="settings">Extra user settings (JSON members, comma-separated).</param>
+    /// <param name="seed">Writes the session's saved state before the process starts.</param>
+    public static async Task<InProcessSession> StartAsync(string session, string? settings = null, Action<SessionStore>? seed = null, Action<IServiceCollection>? configure = null)
+    {
+        if (OperatingSystem.IsWindows()) Assert.Skip("Unix sockets");
+        var env = new RealAppHome();
+        env.WriteUserSettings($$"""{ "workbench.startupEditor": "none", "cscode.background.showTrayIcon": false{{(settings is null ? "" : ", " + settings)}} }""");
+        var runtime = RuntimeDirectory.Resolve(name => name == "CSCODE_HOME" ? env.Home.Path : null);
+        var store = new SessionStore(env.Home.Combine("data"));
+        seed?.Invoke(store);
+        var host = BackgroundHost.Start(CommandLineOptions.Parse(["--host", "--session", session, "--headless-test"]), new CrashHandler(env.CrashLogs.Path), runtime, store, out var refused);
+        Assert.Null(refused);
+        Assert.NotNull(host);
+        var previous = App.Background;
+        App.Background = host;
+        var dialogs = new FakeModalDialogs();
+        var run = new RealAppRun(env, s =>
+        {
+            s.RemoveAll<IModalDialogs>();
+            s.AddSingleton<IModalDialogs>(dialogs);
+            configure?.Invoke(s);
+        });
+        var started = new InProcessSession(env, runtime, store, host, dialogs, run, previous);
+        await run.MainWindowAsync();
+        Assert.True(await DevHost.WaitFor(() => host.State == ProcessStates.Shown, 60_000), "not shown: " + host.State);
+        return started;
+    }
+
+    public string Endpoint => Runtime.EndpointOf(Environment.ProcessId);
+
+    /// <summary>A launcher's request, sent from a pool thread (the test runs on the UI thread, which serves it).</summary>
+    public Task<IpcMessage> RequestAsync(IpcMessage request, int replySeconds = 30) =>
+        Task.Run(() => IpcClient.Request(Endpoint, request, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(replySeconds)));
+
+    public async Task MustAsync(IpcMessage request)
+    {
+        var reply = await RequestAsync(request);
+        Assert.True(reply.Ok == true, $"{request.Type}: {reply.Error}");
+    }
+
+    public async Task<InspectedState> InspectAsync(bool withText = false)
+    {
+        var reply = await RequestAsync(new IpcMessage { Type = IpcVerbs.Inspect, Text = withText ? "text" : null });
+        Assert.True(reply.Ok == true, reply.Error);
+        return reply.Data!.Value.Deserialize<InspectedState>()!;
+    }
+
+    public string WriteFile(string name, string text)
+    {
+        var path = Path.Combine(Env.Workspace.Path, name);
+        File.WriteAllText(path, text);
+        return path;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await Run.DisposeAsync(); }
+        finally
+        {
+            App.Background = _previous;
+            Host.Dispose();
+            Env.Dispose();
+        }
+    }
+}
+
+public class SessionControllerTests
+{
+    /// <summary>Polls an asynchronous condition (an IPC inspect: never block the UI thread that answers it).</summary>
+    private static async Task<bool> UntilAsync(Func<Task<bool>> condition, int timeoutMs = 20_000)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (!await condition())
+        {
+            if (clock.ElapsedMilliseconds > timeoutMs) return false;
+            await Task.Delay(50);
+        }
+        return true;
+    }
+
+    private static IpcMessage Show(params string[] paths) => new() { Type = IpcVerbs.Show, Paths = paths.Select(p => new IpcPath(p)).ToArray() };
+
+    private static IpcMessage Edit(string path, string text) => new() { Type = IpcVerbs.TestEdit, Uri = new Uri(path).ToString(), Line = 0, Column = 0, Text = text };
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task Quitting_with_save_prompts_leaves_no_backup_to_bring_discarded_changes_back()
+    {
+        // sessions-2: with hot exit off the autosave still backs up (crash recovery, as VS Code does); after "Don't Save" those backups were left
+        // behind and the next start restored the discarded text.
+        await using var s = await InProcessSession.StartAsync("s", "\"files.hotExit\": \"off\"");
+        var file = s.WriteFile("a.txt", "original\n");
+        await s.MustAsync(Show(file));
+        await s.MustAsync(Edit(file, "xyz "));
+        Assert.True(await DevHost.WaitFor(() => s.Store.Backups.List("s").Count == 1, 15_000), "the autosave wrote no backup");
+
+        s.Dialogs.Answers.Enqueue("Don't Save");
+        var quit = await s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = false }, 60);
+        Assert.True(quit.Ok == true, quit.Error);
+        Assert.Contains(s.Dialogs.Shown, d => d.Buttons.Contains("Don't Save"));
+        await s.Run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Empty(s.Store.Backups.List("s"));
+        Assert.Equal("original\n", File.ReadAllText(file));
+        Assert.Contains(s.Store.Load("s").Session!.Editors, e => e.Uri == new Uri(file).ToString() && e.BackupId is null);
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task A_session_written_by_a_newer_version_asks_before_its_unsaved_changes_go_and_refuses_a_forced_quit()
+    {
+        // sessions-1: such a session must not be written (backups included), so its unsaved changes were silently dropped on quit and eviction.
+        const string Newer = "{\"version\": 3, \"name\": \"x\", \"someNewField\": 1}";
+        await using var s = await InProcessSession.StartAsync("x", seed: store =>
+        {
+            Directory.CreateDirectory(store.SessionsDir);
+            File.WriteAllText(store.PathOf("x"), Newer);
+        });
+        var file = s.WriteFile("f.txt", "original\n");
+        await s.MustAsync(Show(file));
+        await s.MustAsync(Edit(file, "EDIT "));
+        await Task.Delay(2500); // past the autosave delay: nothing may be written for this session
+        Assert.Empty(s.Store.Backups.List("x"));
+
+        // An eviction or `cscode --quit x` (forced) is refused: nobody could be asked about the changes.
+        var evict = await s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = false, Evict = true });
+        Assert.NotEqual(true, evict.Ok);
+        var forced = await s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = true });
+        Assert.NotEqual(true, forced.Ok);
+        Assert.Contains("newer CsCode", forced.Error);
+        Assert.Equal(ProcessStates.Shown, s.Host.State);
+        Assert.True((await s.InspectAsync()).Visible);
+
+        // Quit Session asks; "Save" writes the file. The newer version's session file stays exactly as it was.
+        s.Dialogs.Answers.Enqueue("Save");
+        var quit = await s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = false }, 60);
+        Assert.True(quit.Ok == true, quit.Error);
+        Assert.Contains(s.Dialogs.Shown, d => d.Buttons.Contains("Don't Save"));
+        await s.Run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal("EDIT original\n", File.ReadAllText(file));
+        Assert.Equal(Newer, File.ReadAllText(s.Store.PathOf("x")));
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task Wait_returns_when_every_file_is_closed_or_the_window_is_closed()
+    {
+        // sessions-4: `cscode --wait a b` returned at once (only one file was waited for), and closing the window (hidden) never returned.
+        await using var s = await InProcessSession.StartAsync("w");
+        var a = s.WriteFile("a.txt", "a\n");
+        var b = s.WriteFile("b.txt", "b\n");
+
+        var both = s.RequestAsync(Show(a, b) with { Wait = true }, 120);
+        Assert.True(await UntilAsync(async () => (await s.InspectAsync()).Tabs.Count == 2), "the files did not open");
+        await s.MustAsync(new IpcMessage { Type = IpcVerbs.TestCloseTab, Uri = new Uri(a).ToString() });
+        await Task.Delay(500);
+        Assert.False(both.IsCompleted, "--wait returned while b.txt was still open");
+        await s.MustAsync(new IpcMessage { Type = IpcVerbs.TestCloseTab, Uri = new Uri(b).ToString() });
+        Assert.True((await both.WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+
+        // The git editor case: the user closes the window (it is hidden; the tab stays in the session). The launcher gets its answer.
+        var message = s.WriteFile("COMMIT_EDITMSG", "message\n");
+        var commit = s.RequestAsync(Show(message) with { Wait = true }, 120);
+        Assert.True(await UntilAsync(async () => (await s.InspectAsync()).Tabs.Any(t => t.Uri == new Uri(message).ToString())));
+        await s.MustAsync(new IpcMessage { Type = IpcVerbs.TestCloseWindow });
+        var reply = await commit.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(reply.Ok == true, reply.Error);
+
+        // And Quit Session answers a waiting launcher with OK (it got "closed the connection without replying" before).
+        var again = s.RequestAsync(Show(message) with { Wait = true }, 120);
+        Assert.True(await DevHost.WaitFor(() => s.Host.State == ProcessStates.Shown, 20_000));
+        await Task.Delay(300);
+        var quit = await s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = true });
+        Assert.True(quit.Ok == true, quit.Error);
+        Assert.True((await again.WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task A_hidden_session_that_would_prompt_says_so_and_refuses_an_eviction_without_showing_its_window()
+    {
+        // sessions-10: an eviction sent a plain quit, which popped the hidden window up with save prompts (hot exit off).
+        await using var s = await InProcessSession.StartAsync("e", "\"files.hotExit\": \"off\"");
+        var file = s.WriteFile("a.txt", "a\n");
+        await s.MustAsync(Show(file));
+        await s.MustAsync(Edit(file, "UNSAVED "));
+        await s.MustAsync(new IpcMessage { Type = IpcVerbs.Hide });
+
+        var hello = ResidentDiscovery.Probe(s.Runtime, Environment.ProcessId, TimeSpan.FromSeconds(2));
+        Assert.NotNull(hello);
+        Assert.Equal(ProcessStates.Hidden, hello.State);
+        Assert.True(hello.NeedsPrompt);
+
+        var evict = await s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = false, Evict = true });
+        Assert.NotEqual(true, evict.Ok);
+        Assert.Contains("not evicted", evict.Error);
+        Assert.Empty(s.Dialogs.Shown);
+        var state = await s.InspectAsync();
+        Assert.False(state.Visible);
+        Assert.Equal(ProcessStates.Hidden, state.State);
+        Assert.False(s.Run.Session.Ended.IsCompleted);
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task A_committed_quit_lets_go_of_the_session_at_once_and_answers_a_late_show_with_quitting()
+    {
+        // sessions-3: the lock was held until the process exited (seconds, with a slow language server), so a launch meanwhile took the
+        // quitting process for a wedged owner and opened a copy; a show to it replied OK and showed nothing.
+        await using var s = await InProcessSession.StartAsync("q");
+        var file = s.WriteFile("a.txt", "a\n");
+        await s.MustAsync(Show(file));
+        await s.MustAsync(Edit(file, "UNSAVED "));
+        Assert.True(FileLock.IsHeldElsewhere(s.Store.LockPathOf("q")));
+
+        var quit = await s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = false });
+        Assert.True(quit.Ok == true, quit.Error);
+        // The process has not ended yet (its services shut down after this), but the session is free and fully written.
+        Assert.False(FileLock.IsHeldElsewhere(s.Store.LockPathOf("q")));
+        Assert.Single(s.Store.Backups.List("q"));
+        var show = await s.RequestAsync(Show(file));
+        Assert.Equal(IpcMessage.QuittingError, show.Error);
+        await s.Run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task The_autosave_capture_builds_no_document_text_on_the_ui_thread()
+    {
+        // sessions-11: every autosave materialised each changed dirty document's whole text on the UI thread (tens of ms and an LOH string of
+        // twice its size for a big file, every 1.5 s while typing). The capture now takes the document's snapshot; the lane builds the text.
+        await using var s = await InProcessSession.StartAsync("big");
+        var text = new StringBuilder();
+        for (var i = 0; text.Length < 8_000_000; i++) text.Append("2026-10-30 00:00:00.000 INFO some log line number ").Append(i).Append('\n');
+        var file = s.WriteFile("big.log", text.ToString());
+        await s.MustAsync(Show(file));
+
+        // A keystroke and the capture in one UI-thread turn: no autosave can back the new version up in between.
+        var doc = s.Run.Services.GetRequiredService<CsCode.App.Docking.DocumentWell>().Find(new Uri(file))!.Doc;
+        doc.ApplyEdits([new CsCode.Core.Text.TextEdit(CsCode.Core.Text.TextRange.At(0, 0), "x")]);
+        var controller = s.Host.Controller!;
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var captured = controller.Capture(includeBackups: true);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        var changed = Assert.Single(captured.Changed);
+        Assert.NotNull(changed.Snapshot);
+        Assert.True(allocated < 1_000_000, $"the capture allocated {allocated / 1024} KB on the UI thread for an 8 MB document");
+        Assert.Equal(text.Length + 1, changed.ToEntry().Text.Length); // and the lane gets the whole text
+    }
+
+    /// <summary>A remote file system for a test scheme whose reads wait until <see cref="Connect"/> (the connection coming up).</summary>
+    private sealed class SlowRemote : IFileSystemProvider
+    {
+        private readonly TaskCompletionSource _connected = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Dictionary<string, byte[]> Files { get; } = new(StringComparer.Ordinal);
+        public string Scheme => "memrem";
+        public void Connect() => _connected.TrySetResult();
+
+        public async ValueTask<FileStat?> StatAsync(Uri uri, CancellationToken ct = default)
+        {
+            await _connected.Task.WaitAsync(ct);
+            return Files.TryGetValue(uri.AbsolutePath, out var b) ? new FileStat(FileType.File, b.Length, DateTimeOffset.UnixEpoch) : null;
+        }
+
+        public async ValueTask<byte[]> ReadFileAsync(Uri uri, CancellationToken ct = default)
+        {
+            await _connected.Task.WaitAsync(ct);
+            return Files.TryGetValue(uri.AbsolutePath, out var b) ? b : throw new FileNotFoundException(uri.ToString());
+        }
+
+        public ValueTask<IReadOnlyList<DirectoryEntry>> ReadDirectoryAsync(Uri uri, CancellationToken ct = default) => ValueTask.FromResult<IReadOnlyList<DirectoryEntry>>([]);
+        public ValueTask WriteFileAsync(Uri uri, ReadOnlyMemory<byte> content, bool createParents = true, CancellationToken ct = default) { Files[uri.AbsolutePath] = content.ToArray(); return ValueTask.CompletedTask; }
+        public ValueTask CreateDirectoryAsync(Uri uri, CancellationToken ct = default) => ValueTask.CompletedTask;
+        public ValueTask DeleteAsync(Uri uri, bool recursive = false, bool useTrash = true, CancellationToken ct = default) => ValueTask.CompletedTask;
+        public ValueTask RenameAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default) => ValueTask.CompletedTask;
+        public ValueTask CopyAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default) => ValueTask.CompletedTask;
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task Unsaved_changes_of_remote_files_go_back_into_the_remote_documents_once_they_can_be_read()
+    {
+        // sessions-12: they came back as an anonymous plain-text Untitled buffer, and the link to the remote file was lost for good.
+        const string Remote = "memrem://box/dir/a.cs", Gone = "memrem://box/dir/gone.cs";
+        var remote = new SlowRemote();
+        remote.Files["/dir/a.cs"] = Encoding.UTF8.GetBytes("class A {}\n");
+        await using var s = await InProcessSession.StartAsync("r", seed: store =>
+        {
+            store.Save(new SessionDocument { Name = "r" });
+            store.Backups.Write("r", [new BackupEntry(HotExitBackupStore.IdFor(Remote), Remote, "class A { int unsaved; }\n", "utf-8", "\n", "csharp", 3),
+                new BackupEntry(HotExitBackupStore.IdFor(Gone), Gone, "deleted remotely\n", "utf-8", "\n", "csharp", 2)], [], long.MaxValue);
+        }, configure: services => services.AddSingleton<IFileSystemProvider>(remote));
+
+        // Not connected yet: nothing is restored, and the autosaves keep both backups.
+        await Task.Delay(3000);
+        Assert.Equal(2, s.Store.Backups.List("r").Count);
+        Assert.DoesNotContain((await s.InspectAsync()).Tabs, t => t.Uri.StartsWith("untitled:", StringComparison.Ordinal));
+
+        remote.Connect();
+        InspectedState state = null!;
+        Assert.True(await UntilAsync(async () => (state = await s.InspectAsync(withText: true)).Tabs.Count == 2), "the remote backups were not restored");
+        var restored = Assert.Single(state.Tabs, t => t.Uri == Remote);
+        Assert.True(restored.Dirty);
+        Assert.Equal("class A { int unsaved; }\n", restored.Text);
+        // The file that cannot be read any more: its text in an untitled buffer of its language (the user is told which file it was).
+        var orphan = Assert.Single(state.Tabs, t => t.Uri.StartsWith("untitled:", StringComparison.Ordinal));
+        Assert.Equal("deleted remotely\n", orphan.Text);
+        var languages = s.Run.Services.GetRequiredService<CsCode.App.Docking.DocumentWell>().EditorTabs.Select(t => t.Doc.LanguageId).ToArray();
+        Assert.Equal(["csharp", "csharp"], languages);
+    }
+}
