@@ -48,7 +48,7 @@ public sealed class AppSoakTests(ITestOutputHelper output)
 
     [AvaloniaFact(Timeout = 600_000)]
     public Task Scrolling_a_twenty_thousand_line_file() =>
-        SoakAsync(h => new ScrollScenario(h, AppWorkspace.Big(h.Files)), warmup: 4, iterations: 6);
+        SoakAsync(h => new ScrollScenario(h, AppWorkspace.Big(h.Files)) { TokenLines = v => v.Tokens?.Store.ValidLines }, warmup: 4, iterations: 6);
 
     [AvaloniaFact(Timeout = 600_000)]
     public Task Typing_into_a_document_and_closing_it_without_saving() =>
