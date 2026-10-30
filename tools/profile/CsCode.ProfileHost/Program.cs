@@ -2,6 +2,8 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Threading;
+using BenchmarkDotNet.Configs;
+using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Running;
 using CsCode.App.Startup;
 using CsCode.Core.Debugging;
@@ -51,8 +53,12 @@ public static class Program
             case "budget": return Headless(() => BudgetAsync(options.String("server", "typescript")));
             case "soak": return Headless(() => SoakAsync(options.Double("minutes", 12)));
             case "trim-effect": return Headless(TrimEffectAsync);
+            case "hold": return Headless(() => HoldAsync(options.Int("documents", 20), options.Int("seconds", 120)));
             case "bench":
-                BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args.Skip(1).ToArray());
+                // In-process (the tool's assembly name is not its project's, which BenchmarkDotNet's per-benchmark project generation needs).
+                BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args.Skip(1).ToArray(),
+                    BenchmarkDotNet.Configs.DefaultConfig.Instance.AddJob(BenchmarkDotNet.Jobs.Job.ShortRun
+                        .WithToolchain(BenchmarkDotNet.Toolchains.InProcess.Emit.InProcessEmitToolchain.Instance)));
                 return 0;
             default:
                 Console.Error.WriteLine("unknown command " + args[0]);
@@ -208,6 +214,20 @@ public static class Program
         };
         stages.Add(result);
         Measurement(result);
+    }
+
+    // ------------------------------------------------------------------ hold (for gcdump / counters / trace from another shell)
+
+    /// <summary>Opens N documents, prints <c>READY pid</c>, then keeps the app alive (pumping, idle) for the given seconds.</summary>
+    private static async Task<int> HoldAsync(int documents, int seconds)
+    {
+        await using var host = await MemoryAppHost.StartAsync();
+        if (documents > 0)
+            foreach (var f in AppWorkspace.Seed(host.Files, documents)) await host.Get<INavigationService>().OpenAsync(new Uri(f));
+        await MemoryAppHost.SettleAsync(200);
+        Console.WriteLine($"READY {Environment.ProcessId}");
+        for (var waited = 0; waited < seconds * 10; waited++) await MemoryAppHost.SettleAsync(10, frames: false);
+        return 0;
     }
 
     // ------------------------------------------------------------------ trim effect

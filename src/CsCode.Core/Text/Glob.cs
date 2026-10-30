@@ -14,22 +14,31 @@ public static class Glob
     private static readonly ConcurrentDictionary<string, Regex> Cache = new();
 
     /// <summary>
+    /// Bound on one match. The translated globs have no nested quantifiers, so a match takes microseconds; the timeout only caps a pathological
+    /// pattern (many <c>**/</c> in a row against a long path), which then does not match.
+    /// </summary>
+    private static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
     /// Matches a path against a pattern. Patterns without '/' match the file name only; patterns with '/' match the
     /// full (forward-slash) path, anchored at any directory boundary unless they start with '/'.
     /// </summary>
     public static bool IsMatch(string pattern, string path)
     {
         if (string.IsNullOrEmpty(pattern)) return false;
-        var p = pattern.Replace('\\', '/');
+        var p = pattern.Replace('\\', '/'); // the same instance when there is no backslash: no allocation on the hot path
         var normalized = path.Replace('\\', '/');
-        var target = p.Contains('/') ? normalized : normalized[(normalized.LastIndexOf('/') + 1)..];
-        return GetRegex(p).IsMatch(target);
+        var target = p.Contains('/') ? normalized.AsSpan() : normalized.AsSpan(normalized.LastIndexOf('/') + 1);
+        try { return GetRegex(p).IsMatch(target); }
+        catch (RegexMatchTimeoutException) { return false; }
     }
 
     private static Regex GetRegex(string pattern)
     {
         if (Cache.TryGetValue(pattern, out var rx)) return rx;
-        rx = new Regex(ToRegex(pattern), RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+        // The backtracking interpreter, not NonBacktracking: a NonBacktracking regex keeps ~150 KB of symbolic-automaton caches once it has
+        // matched (measured in the app with 20 documents: the ~40 cached globs of the language-server selectors held 6 MB; docs/MEMORY.md).
+        rx = new Regex(ToRegex(pattern), RegexOptions.CultureInvariant, MatchTimeout);
         if (Cache.Count >= MaxCached) Cache.Clear(); // crude but bounded: globs are few and cheap to rebuild
         Cache[pattern] = rx;
         return rx;

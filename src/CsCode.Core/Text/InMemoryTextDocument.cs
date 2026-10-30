@@ -103,6 +103,17 @@ public sealed class InMemoryTextDocument : ITextDocument
         TextDocumentChangedEventArgs args;
         lock (_gate)
         {
+            // One edit (typing, the common case): one string concatenation, no LINQ, no StringBuilder copy of the whole text.
+            if (edits.Count == 1 && OffsetAtCore(edits[0].Range.Start) is var s0 && OffsetAtCore(edits[0].Range.End) is var e0 && e0 >= s0)
+            {
+                var edit = edits[0];
+                _text = string.Concat(_text.AsSpan(0, s0), edit.NewText, _text.AsSpan(e0));
+                _lineStarts = ComputeLineStarts(_text);
+                Version++;
+                IsDirty = true;
+                args = new TextDocumentChangedEventArgs(this, Version, new List<TextContentChange>(1) { new(edit.Range, s0, e0 - s0, edit.NewText) });
+                goto fire;
+            }
             // Resolve every edit against the ORIGINAL text first, then apply from the end so offsets stay valid.
             var resolved = edits
                 .Select(e => (Start: OffsetAtCore(e.Range.Start), End: OffsetAtCore(e.Range.End), e.NewText, e.Range))
@@ -124,6 +135,7 @@ public sealed class InMemoryTextDocument : ITextDocument
             IsDirty = true;
             args = new TextDocumentChangedEventArgs(this, Version, changes);
         }
+    fire:
         _changed.Fire(args);
         return true;
     }
@@ -148,19 +160,28 @@ public sealed class InMemoryTextDocument : ITextDocument
 
     private static int[] ComputeLineStarts(string text)
     {
-        var starts = new List<int> { 0 };
+        // Two passes (count, then fill) instead of a growing List + ToArray: one exact-size array per edit.
+        var count = 1;
         for (var i = 0; i < text.Length; i++)
         {
             if (text[i] == '\r')
             {
                 if (i + 1 < text.Length && text[i + 1] == '\n') i++;
-                starts.Add(i + 1);
+                count++;
             }
-            else if (text[i] == '\n')
-            {
-                starts.Add(i + 1);
-            }
+            else if (text[i] == '\n') count++;
         }
-        return starts.ToArray();
+        var starts = new int[count];
+        var n = 1;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '\r')
+            {
+                if (i + 1 < text.Length && text[i + 1] == '\n') i++;
+                starts[n++] = i + 1;
+            }
+            else if (text[i] == '\n') starts[n++] = i + 1;
+        }
+        return starts;
     }
 }

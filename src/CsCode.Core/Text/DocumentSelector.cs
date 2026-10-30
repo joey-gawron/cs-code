@@ -35,8 +35,13 @@ public sealed record DocumentSelector(IReadOnlyList<DocumentFilter> Filters)
         new(languageIds.Select(l => new DocumentFilter(Language: l)).ToArray());
     public static readonly DocumentSelector All = new([new DocumentFilter(Language: "*")]);
 
-    public int Score(Uri uri, string languageId) =>
-        Filters.Count == 0 ? 0 : Filters.Max(f => f.Score(uri, languageId));
+    public int Score(Uri uri, string languageId)
+    {
+        // A loop, not LINQ's Max: this runs for every provider on every completion/hover/diagnostic lookup.
+        var best = 0;
+        for (var i = 0; i < Filters.Count; i++) best = Math.Max(best, Filters[i].Score(uri, languageId));
+        return best;
+    }
 
     public int Score(ITextDocument doc) => Score(doc.Uri, doc.LanguageId);
 }
