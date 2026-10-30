@@ -96,81 +96,95 @@ public sealed partial class VimEngine
 
     private IEnumerator<int> SyntaxOperatorWork(Cmd c, int count0)
     {
-        var m = c.M;
-        var motion = IsSyntaxMotion(m);
-        var request = RequestSyntax(motion ? VimSyntaxObjectKind.Function : SyntaxKindOf(m.NChar), inner: !motion && m.Key == 'i');
-        if (request is null) yield break;
-        while (!request.Answered) yield return 0;
-        if (TakeSyntaxAnswer(request) is not { } ranges) yield break;
+        // after Ctrl-O the command goes back to Insert mode however it ends (done, failed, timed out, cancelled)
+        try
+        {
+            var m = c.M;
+            var motion = IsSyntaxMotion(m);
+            var request = RequestSyntax(motion ? VimSyntaxObjectKind.Function : SyntaxKindOf(m.NChar), inner: !motion && m.Key == 'i');
+            if (request is null) yield break;
+            while (!request.Answered) yield return 0;
+            if (TakeSyntaxAnswer(request) is not { } ranges) yield break;
 
-        var oap = _oap;
-        oap.ResetForMotion(c.Op, c.Reg);
-        var cursor = new TextPosition(_line, _col);
-        oap.Start = cursor;
-        oap.CursorStart = cursor;
-        var count1 = count0 > 0 ? count0 : 1;
-        if (motion)
-        {
-            if (SyntaxMotionTarget(ranges, m, count1, cursor) is not { } target) { SyntaxFailed(); yield break; }
-            _line = target.Line;
-            _col = target.Character;
-            oap.Type = MType.Char;
-            oap.Inclusive = m.Key2 == 'M'; // to the end of a function includes its last character (as e does); to a start excludes it
+            var oap = _oap;
+            oap.ResetForMotion(c.Op, c.Reg);
+            var cursor = new TextPosition(_line, _col);
+            oap.Start = cursor;
+            oap.CursorStart = cursor;
+            var count1 = count0 > 0 ? count0 : 1;
+            if (motion)
+            {
+                if (SyntaxMotionTarget(ranges, m, count1, cursor) is not { } target) { SyntaxFailed(); yield break; }
+                _line = target.Line;
+                _col = target.Character;
+                oap.Type = MType.Char;
+                oap.Inclusive = m.Key2 == 'M'; // to the end of a function includes its last character (as e does); to a start excludes it
+            }
+            else
+            {
+                if (EnclosingSyntaxRange(ranges, cursor, cursor, count1, strictlyLarger: false) is not { } range) { SyntaxFailed(); yield break; }
+                oap.Start = range.Start;
+                var last = LastCharOf(range);
+                _line = last.Line;
+                _col = last.Character;
+                oap.Type = MType.Char;
+                oap.Inclusive = true;
+            }
+            oap.Force = c.Force;
+            DoPendingOperator(c, oap, count0);
+            CheckPcmark();
+            FinishCommand();
         }
-        else
+        finally
         {
-            if (EnclosingSyntaxRange(ranges, cursor, cursor, count1, strictlyLarger: false) is not { } range) { SyntaxFailed(); yield break; }
-            oap.Start = range.Start;
-            var last = LastCharOf(range);
-            _line = last.Line;
-            _col = last.Character;
-            oap.Type = MType.Char;
-            oap.Inclusive = true;
+            MaybeResumeInsert();
         }
-        oap.Force = c.Force;
-        DoPendingOperator(c, oap, count0);
-        CheckPcmark();
-        FinishCommand();
-        MaybeResumeInsert();
     }
 
     private IEnumerator<int> SyntaxPlainWork(Cmd c, int count0)
     {
-        var motion = IsSyntaxMotion(c);
-        var request = RequestSyntax(motion ? VimSyntaxObjectKind.Function : SyntaxKindOf(c.NChar), inner: !motion && c.Key == 'i');
-        if (request is null) yield break;
-        while (!request.Answered) yield return 0;
-        if (TakeSyntaxAnswer(request) is not { } ranges) yield break;
+        // after Ctrl-O the command goes back to Insert mode however it ends (done, failed, timed out, cancelled)
+        try
+        {
+            var motion = IsSyntaxMotion(c);
+            var request = RequestSyntax(motion ? VimSyntaxObjectKind.Function : SyntaxKindOf(c.NChar), inner: !motion && c.Key == 'i');
+            if (request is null) yield break;
+            while (!request.Answered) yield return 0;
+            if (TakeSyntaxAnswer(request) is not { } ranges) yield break;
 
-        var count1 = count0 > 0 ? count0 : 1;
-        var cursor = new TextPosition(_line, _col);
-        if (motion)
-        {
-            if (SyntaxMotionTarget(ranges, c, count1, cursor) is not { } target) { SyntaxFailed(); yield break; }
-            if (!VisualActive) SetPcmark(); // a jump, as nvim-treesitter-textobjects' set_jumps
-            _line = target.Line;
-            _col = target.Character;
-            _setCurswant = true;
-            CheckCursor();
+            var count1 = count0 > 0 ? count0 : 1;
+            var cursor = new TextPosition(_line, _col);
+            if (motion)
+            {
+                if (SyntaxMotionTarget(ranges, c, count1, cursor) is not { } target) { SyntaxFailed(); yield break; }
+                if (!VisualActive) SetPcmark(); // a jump, as nvim-treesitter-textobjects' set_jumps
+                _line = target.Line;
+                _col = target.Character;
+                _setCurswant = true;
+                CheckCursor();
+            }
+            else
+            {
+                if (!VisualActive) { SyntaxFailed(); yield break; }
+                var (selStart, selEnd) = _visualStart <= cursor ? (_visualStart, cursor) : (cursor, _visualStart);
+                // a selection of one character is the cursor; a wider one grows to the next object that encloses more than it
+                var grow = selStart != selEnd;
+                if (EnclosingSyntaxRange(ranges, selStart, selEnd, count1, strictlyLarger: grow) is not { } range) { SyntaxFailed(); yield break; }
+                _visualStart = range.Start;
+                var last = LastCharOf(range);
+                _line = last.Line;
+                _col = last.Character;
+                if (O.SelectionExclusive) IncCursor();
+                SetMode(VimMode.Visual);
+                _setCurswant = true;
+            }
+            CheckPcmark();
+            FinishCommand();
         }
-        else
+        finally
         {
-            if (!VisualActive) { SyntaxFailed(); yield break; }
-            var (selStart, selEnd) = _visualStart <= cursor ? (_visualStart, cursor) : (cursor, _visualStart);
-            // a selection of one character is the cursor; a wider one grows to the next object that encloses more than it
-            var grow = selStart != selEnd;
-            if (EnclosingSyntaxRange(ranges, selStart, selEnd, count1, strictlyLarger: grow) is not { } range) { SyntaxFailed(); yield break; }
-            _visualStart = range.Start;
-            var last = LastCharOf(range);
-            _line = last.Line;
-            _col = last.Character;
-            if (O.SelectionExclusive) IncCursor();
-            SetMode(VimMode.Visual);
-            _setCurswant = true;
+            MaybeResumeInsert();
         }
-        CheckPcmark();
-        FinishCommand();
-        MaybeResumeInsert();
     }
 
     // ------------------------------------------------------------------------------------------------------------

@@ -271,6 +271,27 @@ public class SyntaxObjectTests
         Assert.Contains("changed", e.LastError, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void After_ctrl_o_insert_mode_resumes_once_the_object_is_done_or_failed(bool deferred)
+    {
+        var (e, h) = Create(deferred: deferred);
+        h.Caret = new TextPosition(1, 13);                 // in "int a"
+        Keys(e, "i<C-o>diay");                             // the y is typed while (deferred) the tree is asked
+        h.AnswerSyntaxRequests();
+        e.Drain();
+        Assert.Equal(VimMode.Insert, e.Mode);
+        Assert.StartsWith("class A {\n    void f(y, int b) {", Text(h));
+
+        h.Caret = new TextPosition(0, 0);
+        Keys(e, "<Esc>i<C-o>3]mz");                        // no third function: the motion fails, Insert mode comes back
+        h.AnswerSyntaxRequests();
+        e.Drain();
+        Assert.Equal(VimMode.Insert, e.Mode);
+        Assert.StartsWith("zclass A {", Text(h));
+    }
+
     [Fact]
     public void Inside_normal_and_g_only_an_immediate_answer_is_used_and_a_late_one_ends_the_command_without_hanging()
     {
