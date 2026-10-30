@@ -615,6 +615,63 @@ public class EndPassDebugTests
         Assert.Equal(1, terminal.Kills);
     }
 
+    // ------------------------------------------------------------------ T27: CsCode's DOTNET_ROOT_<ARCH> is not handed down
+
+    private static readonly string Arch = DotnetRootFold.ArchRootVariable;
+
+    [Fact]
+    public void The_arch_specific_dotnet_root_is_folded_into_dotnet_root()
+    {
+        var env = new Dictionary<string, string?> { [Arch] = "/sdk/dotnet", ["PATH"] = "/bin" };
+        DotnetRootFold.Apply(env);
+        Assert.Equal("/sdk/dotnet", env["DOTNET_ROOT"]);
+        Assert.False(env.ContainsKey(Arch));
+
+        var same = new Dictionary<string, string?> { [Arch] = "/sdk/dotnet/", ["DOTNET_ROOT"] = "/sdk/dotnet" };
+        DotnetRootFold.Apply(same);
+        Assert.Equal(("/sdk/dotnet", false), (same["DOTNET_ROOT"], same.ContainsKey(Arch)));
+
+        var split = new Dictionary<string, string?> { [Arch] = "/sdk/dotnet", ["DOTNET_ROOT"] = "/other/runtime" }; // a deliberate split set-up
+        DotnetRootFold.Apply(split);
+        Assert.Equal(("/other/runtime", "/sdk/dotnet"), (split["DOTNET_ROOT"], split[Arch]));
+
+        var mine = new Dictionary<string, string?> { [Arch] = "/sdk/dotnet" }; // the launch's own env names it: the user's choice
+        DotnetRootFold.Apply(mine, [Arch]);
+        Assert.Equal("/sdk/dotnet", mine[Arch]);
+        Assert.False(mine.ContainsKey("DOTNET_ROOT"));
+    }
+
+    [Fact]
+    public void A_terminal_debuggee_gets_overrides_that_fold_it()
+    {
+        string? Inherited(string name) => name == Arch ? "/sdk/dotnet" : null;
+        var env = DebuggeeLauncher.WithDotnetRootFold(new Dictionary<string, string?> { ["NODE_OPTIONS"] = "--x" }, Inherited)!;
+        Assert.Equal("/sdk/dotnet", env["DOTNET_ROOT"]);
+        Assert.True(env.ContainsKey(Arch) && env[Arch] is null); // a null override removes it from the terminal's environment
+        Assert.Equal("--x", env["NODE_OPTIONS"]);
+        Assert.Null(DebuggeeLauncher.WithDotnetRootFold(null, _ => null)); // nothing to fold: unchanged
+    }
+
+    [Fact]
+    public async Task A_piped_debuggee_does_not_inherit_the_arch_specific_dotnet_root()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix shell");
+        var inherited = Environment.GetEnvironmentVariable(Arch);
+        Assert.SkipWhen(string.IsNullOrEmpty(inherited), $"this test process has no {Arch} (dotnet test sets it for the test host)");
+        using var lane = new DebugLane("t27");
+        var output = new ConcurrentQueue<string>();
+        using var launcher = new DebuggeeLauncher(lane, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, (_, text) => output.Enqueue(text));
+        await launcher.LaunchAsync(new CsCode.Dap.Protocol.DapRunInTerminalArguments
+        {
+            Kind = "external",
+            Args = ["/bin/sh", "-c", $"echo \"arch=${{{Arch}-unset}} root=${{DOTNET_ROOT-unset}}\""],
+        }, "t27", Ct);
+        await SessionHarness.Eventually(() => string.Concat(output).Contains('\n'), 10_000, "the debuggee's line");
+        var line = string.Concat(output);
+        Assert.Contains("arch=unset", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("root=unset", line, StringComparison.Ordinal);
+    }
+
     // ------------------------------------------------------------------ debug-10: an adapter's error answer to stackTrace
 
     [Fact]

@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using CsCode.Core.Debugging;
+using CsCode.Dap.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace CsCode.Dap.Transport;
@@ -164,6 +165,7 @@ public sealed class ServerProcessTransport : IDapTransport, IKillableTransport
         if (descriptor.Cwd is { Length: > 0 } cwd && Directory.Exists(cwd)) psi.WorkingDirectory = cwd;
         if (descriptor.Env is not null)
             foreach (var (k, v) in descriptor.Env) psi.Environment[k] = v;
+        DotnetRootFold.Apply(psi.Environment, descriptor.Env?.Keys); // the programs the server launches inherit it
         psi.Environment[MarkerVariable] = marker;
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };

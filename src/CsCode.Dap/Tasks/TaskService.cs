@@ -244,6 +244,7 @@ public sealed partial class TaskService : ITaskService, IDisposable
         if (cwd is not null && Directory.Exists(cwd)) psi.WorkingDirectory = cwd;
         var taskEnv = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (var (k, v) in task.Env) psi.Environment[k] = taskEnv[k] = await resolver.ResolveAsync(v, ct);
+        DotnetRootFold.Apply(psi.Environment, taskEnv.Keys); // CsCode's own DOTNET_ROOT_<ARCH> must not outrank a tool's DOTNET_ROOT
 
         if (string.Equals(task.Type, "process", StringComparison.OrdinalIgnoreCase))
         {
@@ -268,7 +269,10 @@ public sealed partial class TaskService : ITaskService, IDisposable
 
         var problems = StartProblemMatchers(task, folderPath, psi.WorkingDirectory is { Length: > 0 } wd ? wd : folderPath);
         if (_p.TaskTerminals?.Invoke() is { } terminals)
+        {
+            foreach (var (k, v) in DotnetRootFold.Overrides(taskEnv)) taskEnv.TryAdd(k, v); // the terminal starts from CsCode's environment
             return await ExecuteInTerminalAsync(terminals, task, psi, taskEnv, channel, problems, ct);
+        }
 
         channel?.AppendLine($"> Executing task: {task.Label} <");
         Process process;

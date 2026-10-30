@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Net.Sockets;
 using System.Text;
 using CsCode.Core.Debugging;
+using CsCode.Dap.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace CsCode.Dap.Transport;
@@ -149,6 +150,7 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
         if (!string.IsNullOrEmpty(exe.Cwd)) psi.WorkingDirectory = exe.Cwd;
         if (exe.Env is not null)
             foreach (var (k, v) in exe.Env) psi.Environment[k] = v;
+        DotnetRootFold.Apply(psi.Environment, exe.Env?.Keys); // the adapter's debuggees inherit it
 
         var process = new Process { StartInfo = psi };
         try
@@ -191,6 +193,7 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
         foreach (var name in descriptor.RemoveEnv) psi.Environment.Remove(name);
         if (descriptor.Env is not null)
             foreach (var (k, v) in descriptor.Env) psi.Environment[k] = v;
+        DotnetRootFold.Apply(psi.Environment, descriptor.Env?.Keys); // the adapter's debuggees inherit it
         psi.Environment[ServerProcessTransport.MarkerVariable] = marker;
 
         var process = new Process { StartInfo = psi };

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using CsCode.Core.Terminal;
 using CsCode.Dap.Client;
+using CsCode.Dap.Configuration;
 using CsCode.Dap.Protocol;
 using Microsoft.Extensions.Logging;
 
@@ -67,6 +68,7 @@ internal sealed class DebuggeeLauncher : IDisposable
                 if (v is null) psi.Environment.Remove(k);
                 else psi.Environment[k] = v;
             }
+        DotnetRootFold.Apply(psi.Environment, a.Env?.Keys);
 
         // fork/exec can take milliseconds: keep it off the lane. We resume on the lane afterwards (context captured).
         var process = await Task.Run(() => Process.Start(psi)) ?? throw new InvalidOperationException($"Could not start '{a.Args[0]}'");
@@ -92,7 +94,7 @@ internal sealed class DebuggeeLauncher : IDisposable
             ShellPath = a.Args[0],
             ShellArgs = a.Args.Skip(1).ToArray(),
             Cwd = string.IsNullOrEmpty(a.Cwd) ? null : a.Cwd,
-            Env = a.Env,
+            Env = WithDotnetRootFold(a.Env),
             IsTransient = true,
             ReuseWhenIdle = true,
             Show = true,
@@ -108,6 +110,16 @@ internal sealed class DebuggeeLauncher : IDisposable
         }
         _logger.LogDebug("Debuggee {Program} runs in terminal {Terminal} (pid {Pid})", a.Args[0], terminal.Id, pid);
         return new DapRunInTerminalResponse { ProcessId = pid };
+    }
+
+    /// <summary>The adapter's environment for the debuggee plus the overrides that fold CsCode's <c>DOTNET_ROOT_&lt;ARCH&gt;</c> (<see cref="DotnetRootFold"/>).</summary>
+    internal static IReadOnlyDictionary<string, string?>? WithDotnetRootFold(IReadOnlyDictionary<string, string?>? env, Func<string, string?>? environment = null)
+    {
+        var fold = DotnetRootFold.Overrides(env, environment);
+        if (fold.Count == 0) return env;
+        var merged = new Dictionary<string, string?>(fold, StringComparer.Ordinal);
+        foreach (var (k, v) in env ?? new Dictionary<string, string?>()) merged[k] = v;
+        return merged;
     }
 
     private async Task PumpAsync(Process process, StreamReader reader, BoundedTextPump pump)
