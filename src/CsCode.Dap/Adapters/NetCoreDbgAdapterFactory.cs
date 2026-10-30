@@ -14,6 +14,8 @@ public sealed record BuiltinDebugAdapter(string Type, string Label, IReadOnlyLis
 {
     /// <summary>What this adapter does differently from what the client expects (GDB's native DAP); applied to every session of the type.</summary>
     public DebugAdapterQuirks? Quirks { get; init; }
+    /// <summary>Another name for a debug type listed too (<c>node</c>, <c>rust-gdb</c>, <c>netcoredbg</c>): listed after the debuggers themselves.</summary>
+    public bool IsAlias { get; init; }
 }
 
 /// <summary>
@@ -357,7 +359,7 @@ public sealed partial class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDe
     public static IEnumerable<BuiltinDebugAdapter> Builtins(NetCoreDbgAdapterFactory factory) =>
     [
         new BuiltinDebugAdapter("coreclr", ".NET (netcoredbg)", Languages, factory, factory),
-        new BuiltinDebugAdapter("netcoredbg", ".NET (netcoredbg alias)", Languages, factory, factory),
+        new BuiltinDebugAdapter("netcoredbg", ".NET (legacy 'netcoredbg' type)", Languages, factory, factory) { IsAlias = true },
     ];
 
     public static readonly IReadOnlyList<string> Languages = ["csharp", "fsharp", "vb"];

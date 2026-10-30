@@ -540,6 +540,21 @@ public class EndPassDebugTests
     }
 
     [Fact]
+    public async Task Aliases_are_listed_after_the_debuggers_themselves()
+    {
+        await using var h = new ServiceHarness(moreBuiltins: p =>
+        [
+            .. NetCoreDbgAdapterFactory.Builtins(new NetCoreDbgAdapterFactory(p)).Where(b => b.IsAlias),
+            .. GdbAdapterFactory.Builtins(new GdbAdapterFactory(p)),
+            .. ServiceCollectionExtensions.JsDebugAdapters().Select(a => a(new JsDebugAdapterFactory(p))),
+        ]);
+        await SessionHarness.Eventually(() => h.Service.DebuggerTypes.Any(t => t.Type == "fake"), 5000, "the debugger list is complete");
+        var types = h.Service.DebuggerTypes.Select(t => t.Type).ToList();
+        Assert.Equal(["netcoredbg", "node", "rust-gdb"], types.TakeLast(3).Order(StringComparer.Ordinal)); // a "Select debugger" pick offers coreclr first
+        Assert.True(types.IndexOf("coreclr") < types.IndexOf("netcoredbg"));
+    }
+
+    [Fact]
     public async Task A_netcoredbg_configuration_finds_its_adapter()
     {
         await using var h = new ServiceHarness(moreBuiltins: p => NetCoreDbgAdapterFactory.Builtins(new NetCoreDbgAdapterFactory(p) { PathVariable = () => "" }).Where(b => b.Type == "netcoredbg"));

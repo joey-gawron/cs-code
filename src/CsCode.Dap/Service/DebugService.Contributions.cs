@@ -122,6 +122,7 @@ public sealed partial class DebugService
     private void RebuildDebuggerTypes()
     {
         var types = new Dictionary<string, DebuggerType>(StringComparer.OrdinalIgnoreCase);
+        var aliases = _builtins.Values.Where(b => b.IsAlias).Select(b => b.Type).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var b in _builtins.Values) types[b.Type] = new DebuggerType(b.Type, b.Label, b.Languages);
         string[] registered;
         lock (_gate) registered = [.. _factories.Where(kv => kv.Value.Count > 0).Select(kv => kv.Key)];
@@ -129,7 +130,8 @@ public sealed partial class DebugService
         if (_p.Contributions is { } registry)
             foreach (var c in registry.Of<DebuggerContribution>().Items)
                 types[c.Value.Type] = new DebuggerType(c.Value.Type, c.Value.Label, c.Value.Languages ?? []);
-        Volatile.Write(ref _debuggerTypes, [.. types.Values.OrderBy(t => t.Label, StringComparer.CurrentCultureIgnoreCase)]);
+        // The debuggers by label, then the aliases of their types (a "Select debugger" pick offers "coreclr" before "netcoredbg").
+        Volatile.Write(ref _debuggerTypes, [.. types.Values.OrderBy(t => aliases.Contains(t.Type)).ThenBy(t => t.Label, StringComparer.CurrentCultureIgnoreCase)]);
     }
 }
 

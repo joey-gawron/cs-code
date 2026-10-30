@@ -69,6 +69,6 @@ public static class ServiceCollectionExtensions
     public static IEnumerable<Func<JsDebugAdapterFactory, BuiltinDebugAdapter>> JsDebugAdapters() =>
     [
         f => new BuiltinDebugAdapter(JsDebugAdapterFactory.PrimaryType, "Node.js / TypeScript (js-debug)", JsDebugAdapterFactory.Languages, f, f),
-        f => new BuiltinDebugAdapter("node", "Node.js (legacy 'node' type, js-debug)", JsDebugAdapterFactory.Languages, f, f),
+        f => new BuiltinDebugAdapter("node", "Node.js (legacy 'node' type, js-debug)", JsDebugAdapterFactory.Languages, f, f) { IsAlias = true },
     ];
 }

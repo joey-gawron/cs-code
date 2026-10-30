@@ -62,7 +62,7 @@ public sealed class GdbAdapterFactory : IDebugAdapterFactory, IDebugConfiguratio
     public static IEnumerable<BuiltinDebugAdapter> Builtins(GdbAdapterFactory factory) =>
     [
         new(PrimaryType, "Rust / C / C++ (GDB)", Languages, factory, factory) { Quirks = GdbAdapterQuirks.Instance },
-        new(RustAlias, "Rust (GDB, legacy 'rust-gdb' type)", Languages, factory, factory) { Quirks = GdbAdapterQuirks.Instance },
+        new(RustAlias, "Rust (GDB, legacy 'rust-gdb' type)", Languages, factory, factory) { Quirks = GdbAdapterQuirks.Instance, IsAlias = true },
     ];
 
     // ------------------------------------------------------------------ adapter
