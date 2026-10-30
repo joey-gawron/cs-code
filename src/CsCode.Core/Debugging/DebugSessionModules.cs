@@ -1,3 +1,5 @@
+using CsCode.Core.Lifecycle;
+
 namespace CsCode.Core.Debugging;
 
 /// <summary>A module (assembly / shared library) loaded by the debuggee, as the adapter reported it (DAP <c>Module</c>).</summary>
@@ -17,4 +19,10 @@ public interface IDebugSessionModules
     /// Refreshes the list with the <c>modules</c> request when the adapter advertises it (never otherwise), then returns <see cref="Modules"/>.
     /// </summary>
     ValueTask<IReadOnlyList<DebugModule>> GetModulesAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// <see cref="Modules"/> changed (modules loaded or unloaded, also while the debuggee runs). Coalesced: a burst of <c>module</c> events is
+    /// announced once, after it. Fires off the UI thread; a UI re-reads <see cref="Modules"/> on it (no adapter request needed).
+    /// </summary>
+    IEventSource<IDebugSession> ModulesChanged { get; }
 }

@@ -429,6 +429,31 @@ public class SessionExecutionTests
     }
 
     [Fact]
+    public async Task A_change_of_the_modules_is_announced_after_the_events_that_made_it()
+    {
+        await using var h = await SessionHarness.StartAsync();
+        var modules = (IDebugSessionModules)h.Session;
+        var seen = new List<int>(); // the module count each announcement saw
+        using var sub = modules.ModulesChanged.Subscribe(_ => { lock (seen) seen.Add(modules.Modules.Count); });
+        for (var i = 0; i < 20; i++)
+            await h.Adapter.SendEventAsync("module", new DapModuleEvent { Reason = "new", Module = new DapModule { Id = JsonSerializer.SerializeToElement("m" + i), Name = i + ".dll" } });
+        await SessionHarness.Eventually(() => { lock (seen) return seen.Count > 0 && seen[^1] == 20; });
+        lock (seen) Assert.True(seen.Count <= 20, "one announcement per event at most");
+        await h.Adapter.SendEventAsync("module", new DapModuleEvent { Reason = "removed", Module = new DapModule { Id = JsonSerializer.SerializeToElement("m0") } });
+        await SessionHarness.Eventually(() => { lock (seen) return seen[^1] == 19; });
+        int count;
+        lock (seen) count = seen.Count;
+        await h.Adapter.SendEventAsync("module", new DapModuleEvent { Reason = "removed", Module = new DapModule { Id = JsonSerializer.SerializeToElement("unknown") } });
+        // The process event is handled after the removal, so an announcement the removal posted is queued by then: the lane item posted
+        // after it runs behind that announcement. (No module event may follow here, or its announcement would hide this one in its burst.)
+        await h.Adapter.SendEventAsync("process", new DapProcessEvent { Name = "app", SystemProcessId = 4242 });
+        await SessionHarness.Eventually(() => h.Session.DebuggeeProcessId == 4242);
+        await h.Lane.Run(() => 0, Ct);
+        lock (seen) Assert.Equal(count, seen.Count); // removing a module it never reported changed nothing
+        Assert.Equal(19, modules.Modules.Count);
+    }
+
+    [Fact]
     public async Task Loaded_sources_are_tracked_announced_and_removed()
     {
         await using var h = await SessionHarness.StartAsync();
@@ -696,6 +721,24 @@ public class SessionDataTests
         Assert.NotEmpty(scopes);
         Assert.Equal(2, h.Adapter.CountOf("scopes")); // the cached scope list (old variablesReferences) was not reused
         await h.Session.EvaluateAsync("x", frames[0].Id, ct: Ct);
+    }
+
+    [Theory]
+    [InlineData("variables", false)]
+    [InlineData("stacks", true)]
+    [InlineData(null, true)]
+    public async Task The_frame_generation_the_panels_read_changes_with_the_frames_and_before_the_invalidated_event(string? area, bool changes)
+    {
+        // The panels' focus tracker compares it in its Invalidated handler to keep the focused frame across a variables-only invalidation.
+        await using var h = await SessionHarness.StartAsync();
+        await h.StopAndLoadAsync();
+        var frames = (IDebugSessionFrames)h.Session;
+        var before = frames.FrameGeneration;
+        long? seen = null;
+        using var sub = h.Session.Invalidated.Subscribe(_ => seen = frames.FrameGeneration);
+        await h.Adapter.SendEventAsync("invalidated", new DapInvalidatedEvent { Areas = area is null ? null : [area] });
+        await SessionHarness.Eventually(() => seen is not null);
+        Assert.Equal(changes, seen != before);
     }
 
     [Theory]

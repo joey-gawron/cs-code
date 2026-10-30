@@ -100,6 +100,33 @@ public class WatchTests
     }
 
     [AvaloniaFact]
+    public async Task A_watch_edited_while_another_folder_opens_is_not_saved_into_that_folder()
+    {
+        // Regression: the workspace service swaps the state's workspace scope before it announces the new folder, and awaits the other
+        // workspace dependents in between. An edit in that window saved the old folder's list into the new folder's scope, overwriting it.
+        using var rig = new PanelRig(withSession: false);
+        var a = new Uri("file:///work/a/");
+        var b = new Uri("file:///work/b/");
+        SaveWatches(rig, a, "a1");
+        SaveWatches(rig, b, "b1");
+        await rig.Workspace.OpenFolderAsync(a);
+        using var vm = new WatchViewModel(rig.Services);
+        Assert.Equal(["a1"], WatchNames(vm));
+
+        var dependent = new TaskCompletionSource();
+        rig.Workspace.SlowDependent = () => dependent.Task;
+        var opening = rig.Workspace.OpenFolderAsync(b);
+        rig.Services.Watches.Add("x"); // the state already belongs to B, the window still shows A's list
+        Assert.Equal(["b1"], SavedWatches(rig, b));
+        dependent.SetResult();
+        await opening;
+
+        await PanelRig.Eventually(() => WatchNames(vm).SequenceEqual(["b1"]), what: "B's watches shown");
+        Assert.Equal(["b1"], SavedWatches(rig, b));
+        Assert.Equal(["a1"], SavedWatches(rig, a));
+    }
+
+    [AvaloniaFact]
     public async Task Adding_a_watch_from_locals_before_the_watch_window_was_ever_opened_keeps_the_folders_saved_watches()
     {
         // Regression (debug-ct-4 / dbgp-persist-1, "never save before the load"): only the Watch window loaded the saved list. An edit made

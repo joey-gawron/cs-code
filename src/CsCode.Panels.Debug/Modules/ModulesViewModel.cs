@@ -15,7 +15,9 @@ public sealed record ModuleRow(string Name, string? Path, string? Version, bool?
 /// <summary>
 /// Modules window, refreshed on every stop and on demand; bounded to <see cref="MaxModules"/> rows. A session that implements
 /// <see cref="IDebugSessionModules"/> (the DAP module's does) supplies the list it keeps from the adapter's <c>module</c> events, sending the
-/// <c>modules</c> request only when the adapter advertises it: most adapters, netcoredbg included, do not implement that request. Any other
+/// <c>modules</c> request only when the adapter advertises it: most adapters, netcoredbg included, do not implement that request. Its list is
+/// also re-read (no request) whenever it announces a change, so modules loaded while the debuggee runs show up at once; the window only
+/// exists while it is shown (the tool window disposes it when hidden), so a hidden window does no work for them. Any other
 /// session is asked with the raw DAP request through <c>CustomRequestAsync</c>; one that refused it is not asked again on every stop (Refresh
 /// still retries).
 /// </summary>
@@ -25,6 +27,11 @@ public sealed class ModulesViewModel : ObservableObject, IDisposable
 
     private readonly DebugPanelServices _s;
     private readonly DebugFocusTracker _tracker;
+    private readonly string _key = "debug.modules." + Interlocked.Increment(ref s_ids);
+    private static int s_ids;
+    // The focused session's ModulesChanged subscription (released at a session change, the end of the session and Dispose).
+    private IDebugSessionModules? _watched;
+    private IDisposable? _watch;
     private CancellationTokenSource _cts = new();
     private long _generation;
     private long _loadedEpoch = -1;
@@ -55,7 +62,9 @@ public sealed class ModulesViewModel : ObservableObject, IDisposable
     {
         if (IsDisposed) return;
         _focus = focus;
-        if (focus.Session is null || focus.State == DebugSessionState.Terminated)
+        var ended = focus.Session is null || focus.State == DebugSessionState.Terminated;
+        Watch(ended ? null : focus.Session as IDebugSessionModules);
+        if (focus.Session is null || ended)
         {
             Cancel();
             _loadedEpoch = -1;
@@ -66,6 +75,27 @@ public sealed class ModulesViewModel : ObservableObject, IDisposable
         if (!focus.IsStopped || focus.Epoch == _loadedEpoch) return; // the list stays while running; it refreshes at the next stop
         _loadedEpoch = focus.Epoch;
         _ = LoadAsync(focus.Session);
+    }
+
+    private void Watch(IDebugSessionModules? session)
+    {
+        if (ReferenceEquals(_watched, session)) return;
+        _watch?.Dispose();
+        _watched = session;
+        _watch = session?.ModulesChanged.Subscribe(_ => _s.Ui.PostCoalesced(_key, ReadModules));
+    }
+
+    /// <summary>UI thread: shows the list the focused session keeps, after it announced a change (running or stopped).</summary>
+    private void ReadModules()
+    {
+        if (IsDisposed || _watched is not { } modules) return;
+        Show(modules.Modules);
+    }
+
+    private void Show(IReadOnlyList<DebugModule> modules)
+    {
+        Rows.ReplaceAll([.. modules.Take(MaxModules).Select(m => new ModuleRow(m.Name is { Length: > 0 } name ? name : "(unnamed)", m.Path, m.Version, m.IsUserCode, m.SymbolStatus))]);
+        StatusText = Rows.Count == 0 ? "The debug adapter did not report any modules." : null;
     }
 
     private void Cancel()
@@ -89,19 +119,17 @@ public sealed class ModulesViewModel : ObservableObject, IDisposable
         var ct = _cts.Token;
         try
         {
-            List<ModuleRow> rows;
             if (session is IDebugSessionModules modules)
             {
-                var list = await _s.Ui.OnUi(modules.GetModulesAsync(ct), ct);
-                rows = [.. list.Take(MaxModules).Select(m => new ModuleRow(m.Name is { Length: > 0 } name ? name : "(unnamed)", m.Path, m.Version, m.IsUserCode, m.SymbolStatus))];
+                await _s.Ui.OnUi(modules.GetModulesAsync(ct), ct);
+                if (generation != Volatile.Read(ref _generation) || IsDisposed) return;
+                Show(modules.Modules); // the list as it is now: a change announced (and shown) meanwhile is not undone by an older copy
+                return;
             }
-            else
-            {
-                var args = JsonSerializer.SerializeToElement(new { startModule = 0, moduleCount = MaxModules });
-                var body = await _s.Ui.OnUi(session.CustomRequestAsync("modules", args, ct), ct);
-                rows = body is { ValueKind: JsonValueKind.Object } json ? Parse(json) : [];
-                _refused = null;
-            }
+            var args = JsonSerializer.SerializeToElement(new { startModule = 0, moduleCount = MaxModules });
+            var body = await _s.Ui.OnUi(session.CustomRequestAsync("modules", args, ct), ct);
+            var rows = body is { ValueKind: JsonValueKind.Object } json ? Parse(json) : [];
+            _refused = null;
             if (generation != Volatile.Read(ref _generation) || IsDisposed) return;
             Rows.ReplaceAll(rows);
             StatusText = rows.Count == 0 ? "The debug adapter did not report any modules." : null;
@@ -133,6 +161,9 @@ public sealed class ModulesViewModel : ObservableObject, IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _tracker.Dispose();
+        _watch?.Dispose();
+        _watch = null;
+        _watched = null;
         try { _cts.Cancel(); }
         catch (AggregateException) { }
         _cts.Dispose();

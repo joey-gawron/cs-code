@@ -77,7 +77,9 @@ public sealed partial class BreakpointsView : UserControl, IDisposable, IToolWin
                 menu.Items.Add(new MenuItem { Header = "Go to Source", InputGesture = KeyGesture.Parse("Enter"), Command = new UiCommand(() => model.NavigateAsync(row)) });
                 menu.Items.Add(new Separator());
             }
-            if (row.Kind is BreakpointRowKind.Source or BreakpointRowKind.Exception)
+            if (row.Kind == BreakpointRowKind.Source)
+                menu.Items.Add(Gated("Condition…", row.Condition is null ? model.ConditionUnsupported : null, () => model.EditConditionAsync(row)));
+            else if (row.Kind == BreakpointRowKind.Exception)
                 menu.Items.Add(new MenuItem { Header = "Condition…", Command = new UiCommand(() => model.EditConditionAsync(row)) });
             if (row.Kind == BreakpointRowKind.Source)
             {

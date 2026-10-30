@@ -67,7 +67,9 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
   adapters from a `DebugAdapterExecutable` (netcoredbg) start at normal priority; adapter **servers** (`DebugAdapterServerProcess`, js-debug)
   and stdio adapters from a `DebugAdapterStdioProcess` (GDB) start under `nice -n 10` (PriorityClass BelowNormal on Windows), which the
   debuggees they launch inherit, with the environment marker `CSCODE_DAP_ADAPTER`; a stdio adapter that died (signal, non-zero exit — not GDB's
-  normal `quit`) has the processes still carrying its marker in its session reaped. Task processes (`tasks.json`, a preLaunchTask's `tsc`) are tracked
+  normal `quit`) has the processes still carrying its marker in its session reaped. **Decision (owner): netcoredbg keeps normal priority.**
+  It launches the .NET program itself, which would inherit a lowered priority and run slower under the debugger, so it is not niced like the
+  others; do not change this as a "consistency" fix. Task processes (`tasks.json`, a preLaunchTask's `tsc`) are tracked
   too, and `TaskService.Dispose` (app shutdown) kills any task still running. A server transport kills the server's tree on close; processes
   that left the tree survive a normal close (a program's detached browser or daemon) and are reaped only after the server died on its own (its
   environment marker, same session only). `DebugService.Dispose` — a container disposed synchronously — kills every adapter tree and
@@ -135,7 +137,8 @@ The tests that read process-wide counters or latency budgets run in a non-parall
   `threads` only), the location is unchanged and **no `StopLocationChanged` fires**: that event means "the stop moved" and the editor
   reveals (re-centers on) the stop line for it, so re-announcing an identical location would scroll the user's view back. Data views
   re-read through their own `IDebugSession.Invalidated` subscription (the panels' focus tracker starts a new epoch on it and accepts the
-  unchanged location after its grace period). Otherwise (`stacks`/`all`) it clears the location, fetches the stack again (re-registering
+  unchanged location at once: the session's `IDebugSessionFrames.FrameGeneration`, readable from any thread, changes only when frame ids
+  die, and has already changed when `Invalidated` fires). Otherwise (`stacks`/`all`) it clears the location, fetches the stack again (re-registering
   the frames) and publishes a location on a live frame, like a new stop (VS Code re-runs the stop for these areas too, revealing the line).
   A dead `FrameId` is never left published.
 * Termination: graceful (`terminate` if supported and the session is a launch, else `disconnect{terminateDebuggee}` / detach for attach),
@@ -313,7 +316,9 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 * Additive Core files: `Core/Tasks/ITaskService.cs`; `Core/Debugging/DebugExtras.cs` (`IDebugFrameFocus`, `IDebugOutputHistory`,
   `IDebugSourceContentProvider`, `IDebugSessionHealth`, `IActiveSelectionProvider`, `DebugSourceUri`); `Core/Debugging/DebugKnownCapabilities.cs`
   (`IDebugKnownCapabilities` — DebugService remembers each type's last capabilities — and `DebugCapabilityGate`, which the breakpoint editors use
-  to offer hit counts/logpoints only when supported); `Core/Debugging/DebugSessionPaging.cs` (`IDebugSessionVariablePaging`, filtered paging);
+  to offer conditions/hit counts/logpoints only when supported); `Core/Debugging/DebugSessionPaging.cs` (`IDebugSessionVariablePaging`, filtered paging);
+  `Core/Debugging/DebugSessionModules.cs` (`IDebugSessionModules`: the module list, `GetModulesAsync`, and `ModulesChanged`, fired once per
+  burst of `module` events by posting behind them on the lane); `Core/Debugging/DebugSessionFrames.cs` (`IDebugSessionFrames.FrameGeneration`);
   `DebugVariable.IsLazy` (DAP `presentationHint.lazy`). They are *new interfaces/members* rather than changed signatures, so existing implementers
   and fakes are not broken.
 * Editor ↔ debugger: the editor calls `IBreakpointManager.ApplyLineShift` on edits and reads `IDebugService.StopLocation`; frame selection goes

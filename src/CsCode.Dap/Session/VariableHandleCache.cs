@@ -80,14 +80,16 @@ internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int m
 
     /// <summary>Changes whenever variable data dies (every invalidation): a response requested under an older generation is stale.</summary>
     public long Generation { get; private set; }
-    /// <summary>Changes only when frame ids die (resume, new stop, an invalidation of stacks), not when only variables were invalidated.</summary>
-    public long FrameGeneration { get; private set; }
+    /// <summary>Changes only when frame ids die (resume, new stop, an invalidation of stacks), not when only variables were invalidated. Any
+    /// thread: the session publishes it to the panels (IDebugSessionFrames).</summary>
+    public long FrameGeneration => Volatile.Read(ref _frameGeneration);
+    private long _frameGeneration;
     public int TrackedHandles => _handles.Count;
     public int CachedPages => _pages.Count;
 
     public void Invalidate()
     {
-        FrameGeneration++;
+        Interlocked.Increment(ref _frameGeneration);
         _frames.Clear();
         _framesOverflowed = false;
         _frameRuns.Clear();

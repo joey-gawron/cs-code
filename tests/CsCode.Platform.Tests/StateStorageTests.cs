@@ -330,6 +330,29 @@ public class StateStorageTests : IDisposable
     }
 
     [Fact]
+    public async Task A_write_for_one_folder_is_refused_once_the_workspace_scope_belongs_to_another()
+    {
+        var folderA = FileUri.FromDirectoryPath(_f.Temp.Combine("projA"));
+        var folderB = FileUri.FromDirectoryPath(_f.Temp.Combine("projB"));
+        using var s = _f.Create();
+        var scoped = (IWorkspaceStateScope)s;
+        Assert.True(scoped.TrySetForFolder<string>(null, "k", "none")); // no folder yet
+
+        await ((IWorkspaceBound)s).OnWorkspaceFoldersChangedAsync([folderA], Ct);
+        Assert.True(scoped.TrySetForFolder(folderA, "k", "a"));
+        await ((IWorkspaceBound)s).OnWorkspaceFoldersChangedAsync([folderB], Ct);
+        s.Set("k", "b", StorageScope.Workspace);
+        Assert.False(scoped.TrySetForFolder(folderA, "k", "a again")); // A's value never reaches B's scope
+        Assert.False(scoped.TrySetForFolder<string>(folderA, "k", null));
+        Assert.Equal("b", s.Get<string>("k", StorageScope.Workspace));
+        Assert.True(scoped.TrySetForFolder<string>(folderB, "k", null)); // null removes
+        Assert.Null(s.Get<string>("k", StorageScope.Workspace));
+
+        await ((IWorkspaceBound)s).OnWorkspaceFoldersChangedAsync([folderA], Ct);
+        Assert.Equal("a", s.Get<string>("k", StorageScope.Workspace));
+    }
+
+    [Fact]
     public async Task Workspace_state_survives_a_restart()
     {
         var folder = FileUri.FromDirectoryPath(_f.Temp.Combine("proj"));

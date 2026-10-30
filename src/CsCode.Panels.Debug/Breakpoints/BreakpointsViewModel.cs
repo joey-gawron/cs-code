@@ -347,6 +347,7 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable
         if (_s.Window is not { } window) return;
         if (row.Kind == BreakpointRowKind.Source && row.Source is { } bp)
         {
+            if (ConditionUnsupported is { } why && bp.Condition is null) { await window.ShowMessageAsync(MessageSeverity.Info, why); return; }
             var text = await window.ShowInputBoxAsync(new InputBoxOptions(Title: "Breakpoint condition", Prompt: "Break when this expression is true (leave empty for none)", Value: bp.Condition ?? ""));
             if (text is not null) _manager.Update(bp with { Condition = string.IsNullOrWhiteSpace(text) ? null : text.Trim() });
         }
@@ -362,6 +363,9 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable
     /// an unsupported kind itself). netcoredbg has no hit-count breakpoints and no logpoints; js-debug has both.
     /// </summary>
     public string? HitCountUnsupported => DebugCapabilityGate.HitCountUnsupported(_s.Debug);
+
+    /// <summary>Why the active debug adapter cannot take a condition on a source breakpoint, or null (see <see cref="HitCountUnsupported"/>).</summary>
+    public string? ConditionUnsupported => DebugCapabilityGate.ConditionUnsupported(_s.Debug);
 
     /// <summary>Why the active debug adapter cannot take a logpoint, or null (see <see cref="HitCountUnsupported"/>).</summary>
     public string? LogMessageUnsupported => DebugCapabilityGate.LogPointUnsupported(_s.Debug);

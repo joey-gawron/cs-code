@@ -20,7 +20,7 @@ namespace CsCode.Dap.Session;
 /// synchronously) and the volatile properties may be read from any thread. Events fire on the lane — subscribers must be cheap.
 /// Protocol order (spec): initialize → launch/attach → (adapter sends `initialized`) → breakpoints → configurationDone → running.
 /// </summary>
-public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, IDebugSessionVariablePaging, IBreakpointSyncHost
+public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, IDebugSessionVariablePaging, IDebugSessionFrames, IBreakpointSyncHost
 {
     private readonly DebugSessionOptions _o;
     private readonly DebugSessionSettings _settings;
@@ -667,7 +667,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         catch (ObjectDisposedException) { /* lane already gone (app shutdown): nothing left to release but emitters */ }
         _o.Breakpoints.ClearStatuses(Id);
         _stopped.Clear(); _continued.Clear(); _outputEvent.Clear(); _threadChanged.Clear(); _stateChanged.Clear(); _terminated.Clear();
-        _breakpointStatus.Clear(); _invalidated.Clear(); _unresponsiveChanged.Clear(); _progress.Clear(); _exceptionInfo.Clear(); _loadedSource.Clear();
+        _breakpointStatus.Clear(); _invalidated.Clear(); _modulesChanged.Clear(); _unresponsiveChanged.Clear(); _progress.Clear(); _exceptionInfo.Clear(); _loadedSource.Clear();
         _disposed.TrySetResult();
     }
 }

@@ -265,4 +265,29 @@ public class JsDebugPanelFixTests
         Assert.Equal("5", rig.Debug.Breakpoints.SourceBreakpoints.Single(b => b.Id == bp.Id).HitCondition);
         Assert.True(BreakpointsView.Gated("Hit Count…", vm.HitCountUnsupported, () => Task.CompletedTask).IsEnabled);
     }
+
+    [AvaloniaFact]
+    public async Task A_condition_is_offered_only_when_the_active_adapter_supports_conditional_breakpoints()
+    {
+        // Regression: Condition… asked for an expression the adapter could not take (the gate covered hit counts and logpoints only).
+        using var rig = new PanelRig();
+        rig.Session.Capabilities = new DebugCapabilities();
+        rig.StopAt(0);
+        rig.Debug.Breakpoints.Add(new Uri("file:///work/Program.cs"), 7);
+        using var vm = new BreakpointsViewModel(rig.Services);
+        await PanelRig.Eventually(() => vm.Rows.Any(r => r.Kind == BreakpointRowKind.Source), what: "rows");
+        var row = vm.Rows.Single(r => r.Kind == BreakpointRowKind.Source);
+        Assert.Equal("The 'fake' debug adapter does not support conditional breakpoints.", vm.ConditionUnsupported);
+
+        rig.Window.InputResponses.Enqueue("x > 1");
+        await vm.EditConditionAsync(row);
+        Assert.Empty(rig.Window.InputPrompts);
+        Assert.Equal(["The 'fake' debug adapter does not support conditional breakpoints."], rig.Window.Messages);
+        Assert.Null(rig.Debug.Breakpoints.SourceBreakpoints.Single().Condition);
+
+        rig.Session.Capabilities = new DebugCapabilities(SupportsConditionalBreakpoints: true);
+        Assert.Null(vm.ConditionUnsupported);
+        await vm.EditConditionAsync(row);
+        Assert.Equal("x > 1", rig.Debug.Breakpoints.SourceBreakpoints.Single().Condition);
+    }
 }

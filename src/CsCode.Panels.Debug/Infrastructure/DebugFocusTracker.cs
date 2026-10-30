@@ -49,6 +49,9 @@ public sealed class DebugFocusTracker : IDisposable
     private long _invalidatedAt;
     private long _revalidatedEpoch = -1;
     private (long Epoch, DebugStopLocation Location, int FrameId)? _liveFrame;
+    // The bound session's IDebugSessionFrames.FrameGeneration at its latest stop, resume or invalidation (null: it does not tell, so every
+    // invalidation is treated as one of stacks).
+    private long? _frameGeneration;
     private readonly CancellationTokenSource _lifetime = new();
     private int _disposed;
 
@@ -96,20 +99,29 @@ public sealed class DebugFocusTracker : IDisposable
             _bound = session;
             _stop = null;
             _liveFrame = null;
+            _frameGeneration = (session as IDebugSessionFrames)?.FrameGeneration;
             if (session is not null)
             {
                 fresh = new DisposableStore();
                 fresh.Add(session.Stopped.Subscribe(e =>
                 {
-                    lock (_gate) _stop = (e.Reason, e.Text is { Length: > 0 } text ? (e.Description is { Length: > 0 } d ? d + ": " + text : text) : e.Description, e.ThreadId);
+                    lock (_gate)
+                    {
+                        _stop = (e.Reason, e.Text is { Length: > 0 } text ? (e.Description is { Length: > 0 } d ? d + ": " + text : text) : e.Description, e.ThreadId);
+                        _frameGeneration = (session as IDebugSessionFrames)?.FrameGeneration;
+                    }
                     Bump();
                 }));
                 fresh.Add(session.Continued.Subscribe(_ =>
                 {
-                    lock (_gate) _stop = null;
+                    lock (_gate)
+                    {
+                        _stop = null;
+                        _frameGeneration = (session as IDebugSessionFrames)?.FrameGeneration;
+                    }
                     Bump();
                 }));
-                fresh.Add(session.Invalidated.Subscribe(_ => OnInvalidated()));
+                fresh.Add(session.Invalidated.Subscribe(_ => OnInvalidated(session)));
                 fresh.Add(session.StateChanged.Subscribe(_ => Schedule()));
                 fresh.Add(session.Terminated.Subscribe(_ => Schedule()));
             }
@@ -128,13 +140,29 @@ public sealed class DebugFocusTracker : IDisposable
     /// The adapter asked for a refresh (DAP <c>invalidated</c>): values may have changed (a new epoch, so panels reload) and the session forgot
     /// its frame ids, while the stop location keeps the old one. The location is accepted again only once the stack was re-read (see
     /// <see cref="Revalidate"/>), not after the grace period, which would hand the panels a dead frame id.
+    /// When only variables were invalidated (the session's <see cref="IDebugSessionFrames.FrameGeneration"/> did not change), the frame ids
+    /// survive, so a location that was current stays current for the new epoch: the panels reload at once, without a <c>stackTrace</c>
+    /// round-trip spent showing "Loading…".
     /// </summary>
-    private void OnInvalidated()
+    private void OnInvalidated(IDebugSession session)
     {
         lock (_gate)
         {
-            _invalidatedEpoch = Interlocked.Increment(ref _epoch);
-            _invalidatedAt = Stopwatch.GetTimestamp();
+            var generation = (session as IDebugSessionFrames)?.FrameGeneration;
+            var bound = ReferenceEquals(_bound, session); // an event that raced a session switch is a plain new epoch
+            var framesSurvived = bound && generation is not null && generation == _frameGeneration;
+            if (bound) _frameGeneration = generation;
+            var epoch = Interlocked.Increment(ref _epoch);
+            if (framesSurvived && Volatile.Read(ref _locationEpoch) >= epoch - 1)
+            {
+                AcceptLocation(epoch);
+                if (_liveFrame is { } live && live.Epoch == epoch - 1) _liveFrame = live with { Epoch = epoch }; // still the live frame
+            }
+            else
+            {
+                _invalidatedEpoch = epoch;
+                _invalidatedAt = Stopwatch.GetTimestamp();
+            }
         }
         Schedule();
     }

@@ -195,6 +195,29 @@ public class ExceptionAndModulesTests
     }
 
     [AvaloniaFact]
+    public async Task The_modules_window_shows_a_module_loaded_while_the_debuggee_runs_without_a_request_and_lets_the_session_go()
+    {
+        // Regression: the session had no change event, so a module loaded while running only appeared at the next stop (or on Refresh).
+        var session = new FakeModulesDebugSession();
+        session.WithDefaultScript();
+        session.ModuleList.Add(new DebugModule("1", "Sample.dll", "/work/out/Sample.dll"));
+        using var rig = new PanelRig(session: session);
+        var vm = new ModulesViewModel(rig.Services);
+        rig.StopAt(0);
+        await PanelRig.Eventually(() => vm.Rows.Count == 1, what: "modules at the stop");
+        rig.Resume();
+        var calls = session.ModulesCalls;
+
+        session.LoadModule(new DebugModule("2", "Lib.dll", "/work/out/Lib.dll"));
+        await PanelRig.Eventually(() => vm.Rows.Count == 2, what: "the module loaded while running");
+        Assert.Equal("Lib.dll", vm.Rows[1].Name);
+        Assert.Equal(calls, session.ModulesCalls); // re-read, not requested
+
+        vm.Dispose(); // the window was hidden
+        Assert.Equal(0, session.ModulesChangedEmitter.SubscriberCount);
+    }
+
+    [AvaloniaFact]
     public async Task A_session_whose_adapter_refused_the_modules_request_is_not_asked_again_at_every_stop()
     {
         // A session that does not expose its modules is asked with the raw request; one refusal is enough (Refresh still retries).

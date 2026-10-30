@@ -109,6 +109,41 @@ public class DebugGateAndRevealTests
     }
 
     [AvaloniaFact]
+    public async Task Conditions_are_offered_only_when_the_active_adapter_supports_them()
+    {
+        // Regression: Add Conditional Breakpoint… and Edit Condition… were offered (and asked for an expression) for an adapter without
+        // conditional breakpoints, whose breakpoint then only reported the condition as unsupported.
+        var (debug, host) = DebugHost();
+        using var _ = host;
+        var (doc, view, _) = await host.OpenAsync("a\nb\nc\n", "a.cs");
+        var feature = view.Feature<DebugFeature>()!;
+        debug.Manager.Add(doc.Uri, 1);
+        await ViewHost.WaitFor(() => feature.BreakpointAt(1) is not null, "breakpoint shown");
+        debug.ActiveSession = new CapableSession(new DebugCapabilities(), "bare");
+
+        const string why = "The 'bare' debug adapter does not support conditional breakpoints.";
+        var menu = feature.BuildContextMenu(1);
+        Assert.False(Entry(menu, "Edit Condition").IsEnabled);
+        Assert.Equal("Edit Condition… (not supported)", Entry(menu, "Edit Condition").Header);
+        Assert.Equal(why, ToolTip.GetTip(Entry(menu, "Edit Condition")));
+        var empty = feature.BuildContextMenu(2);
+        Assert.False(Entry(empty, "Add Conditional Breakpoint").IsEnabled);
+        Assert.Equal(why, ToolTip.GetTip(Entry(empty, "Add Conditional Breakpoint")));
+
+        host.Window.InputResponses.Enqueue("i > 3");
+        await feature.EditConditionAsync(2);
+        Assert.Equal("i > 3", Assert.Single(host.Window.InputResponses)); // no input box consumed it
+        host.Window.InputResponses.Clear();
+        Assert.Contains(host.Window.Messages, m => m.Message == why);
+        Assert.Single(debug.Manager.GetForUri(doc.Uri)); // no breakpoint added on line 2
+
+        // a condition the breakpoint already has can still be edited away
+        debug.Manager.Update(feature.BreakpointAt(1)! with { Condition = "x" });
+        await ViewHost.WaitFor(() => feature.BreakpointAt(1)?.Condition == "x", "condition shown");
+        Assert.True(Entry(feature.BuildContextMenu(1), "Edit Condition").IsEnabled);
+    }
+
+    [AvaloniaFact]
     public async Task The_stop_line_is_revealed_when_it_changes_not_every_time_the_same_line_is_announced()
     {
         var (debug, host) = DebugHost();

@@ -22,7 +22,7 @@ namespace CsCode.Platform.State;
 /// </list>
 /// The application scope is read synchronously in the constructor (a small file, at startup); workspace scopes are loaded on the lane when the folder opens.
 /// </summary>
-public sealed class StateStorage : IStateStorage, IWorkspaceBound, IAsyncDisposable, IDisposable
+public sealed class StateStorage : IStateStorage, IWorkspaceStateScope, IWorkspaceBound, IAsyncDisposable, IDisposable
 {
     private static readonly TimeSpan RetryAfterFailure = TimeSpan.FromSeconds(5);
 
@@ -43,6 +43,7 @@ public sealed class StateStorage : IStateStorage, IWorkspaceBound, IAsyncDisposa
     private readonly Timer _timer;
     private Scope _app;
     private Scope _workspace = new(null);
+    private Uri? _workspaceFolder; // the primary folder _workspace belongs to (swapped with it)
     private long _firstDirtyTick;
     private bool _disposed;
 
@@ -78,15 +79,38 @@ public sealed class StateStorage : IStateStorage, IWorkspaceBound, IAsyncDisposa
     {
         ArgumentException.ThrowIfNullOrEmpty(key);
         if (value is null) { Remove(key, scope); return; }
-        var element = value is JsonElement je ? je.Clone() : JsonSerializer.SerializeToElement(value, CoreJson.Options);
+        var element = ToElement(value);
         lock (_gate)
         {
-            var s = ScopeOf(scope);
-            if (s.Values.TryGetValue(key, out var old) && old.GetRawText() == element.GetRawText()) return; // unchanged: no write
-            s.Values[key] = element;
-            MarkDirty(s);
+            if (!Put(ScopeOf(scope), key, element)) return;
         }
         ScheduleFlush();
+    }
+
+    public bool TrySetForFolder<T>(Uri? folder, string key, T? value)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(key);
+        JsonElement? element = value is null ? null : ToElement(value);
+        bool changed;
+        lock (_gate)
+        {
+            if (_workspaceFolder != folder) return false; // swapped to another folder: its scope must not get this folder's value
+            if (element is { } e) changed = Put(_workspace, key, e);
+            else if (changed = _workspace.Values.Remove(key)) MarkDirty(_workspace);
+        }
+        if (changed) ScheduleFlush();
+        return true;
+    }
+
+    private static JsonElement ToElement<T>(T value) => value is JsonElement je ? je.Clone() : JsonSerializer.SerializeToElement(value, CoreJson.Options);
+
+    /// <summary>Caller holds _gate. Stores the value and marks the scope dirty; false when it was already there (no write).</summary>
+    private bool Put(Scope s, string key, JsonElement element)
+    {
+        if (s.Values.TryGetValue(key, out var old) && old.GetRawText() == element.GetRawText()) return false;
+        s.Values[key] = element;
+        MarkDirty(s);
+        return true;
     }
 
     public void Remove(string key, StorageScope scope = StorageScope.Application)
@@ -251,7 +275,7 @@ public sealed class StateStorage : IStateStorage, IWorkspaceBound, IAsyncDisposa
         await FlushAsync().ConfigureAwait(false);
         var next = await _lane.RunAsync(_ => LoadScope(path), ct).ConfigureAwait(false);
         Scope old;
-        lock (_gate) { old = _workspace; _workspace = next; }
+        lock (_gate) { old = _workspace; _workspace = next; _workspaceFolder = folders.Count > 0 ? folders[0] : null; }
 
         // A Set that landed on the old scope between the flush above and the swap must not be lost with the discarded object.
         await _lane.RunAsync(_ => { lock (_flushGate) FlushScope(old); }, CancellationToken.None).ConfigureAwait(false);

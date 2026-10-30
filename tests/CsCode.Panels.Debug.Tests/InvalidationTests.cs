@@ -52,6 +52,30 @@ public class InvalidationTests
     }
 
     [AvaloniaFact]
+    public async Task An_invalidation_of_variables_only_reloads_in_the_same_frame_without_waiting_for_the_stack()
+    {
+        // Regression: every invalidation was treated as one of stacks, so after a variables-only one (the frame ids survive) the focus went
+        // pending until a stackTrace round-trip had revalidated the location, and Locals and Watch showed "Loading…" meanwhile.
+        using var rig = StoppedRig();
+        var focuses = new List<DebugFocus>();
+        using var tracker = new DebugFocusTracker(rig.Services, focuses.Add);
+        tracker.Start();
+        using var locals = new LocalsViewModel(rig.Services);
+        rig.StopAt(2);
+        await PanelRig.Eventually(() => Names(locals.Tree) == "x,s,o" && focuses.Count > 0 && focuses[^1].FrameId == 102, what: "first stop");
+        var epoch = focuses[^1].Epoch;
+        var stackCalls = rig.Session.StackCalls;
+        var scopeCalls = rig.Session.ScopeCalls;
+        var seen = focuses.Count;
+
+        rig.Session.InvalidateVariables();
+        await PanelRig.Eventually(() => focuses[^1].Epoch > epoch, what: "the invalidation's epoch");
+        await PanelRig.Eventually(() => rig.Session.ScopeCalls > scopeCalls && Names(locals.Tree) == "x,s,o", what: "locals reloaded");
+        Assert.All(focuses.Skip(seen), f => Assert.Equal((102, false), (f.FrameId, f.LocationPending)));
+        Assert.Equal(stackCalls, rig.Session.StackCalls);
+    }
+
+    [AvaloniaFact]
     public async Task An_adapter_that_renumbers_its_frames_gets_the_live_frame_focused_even_when_the_service_ignores_it()
     {
         using var rig = StoppedRig();

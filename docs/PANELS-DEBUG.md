@@ -56,7 +56,10 @@ IDebugService / IDebugSession events (any thread)
   publish the old location: the tracker then accepts the location only after **one** `stackTrace` request (`Infrastructure/FrameRevalidator`,
   shared by every panel) re-registered the ids; when the adapter renumbered its frames, the frame at the same position is focused (and
   `IDebugFrameFocus` is asked to follow), never a dead id. That live frame is kept for its epoch only (dropped at the next stop, resume,
-  invalidation or session change), so the runtime's app-lifetime tracker does not keep an ended session reachable.
+  invalidation or session change), so the runtime's app-lifetime tracker does not keep an ended session reachable. An invalidation of
+  `variables` only (the session's `IDebugSessionFrames.FrameGeneration` did not change since its stop or previous invalidation) keeps the
+  frame ids: a location that was current stays current for the new epoch (and so does a live frame found for a renumbered one), so the panels
+  reload at once instead of showing "Loading…" for a `stackTrace` round-trip.
 * `Infrastructure/UiAsync.OnUi` — never captures a `SynchronizationContext` (so view-models behave the same under a test dispatcher) and a
   cancelled token unblocks the await **even if the adapter ignores it**: a hung adapter cannot keep a closed panel alive.
 * `Variables/VariablesTreeViewModel` — the engine behind Locals/Autos/Watch (and reusable for editor hover pins).
@@ -114,7 +117,9 @@ IDebugService / IDebugSession events (any thread)
 * **Watch**: expressions live in `IDebugService.Watches` (so they survive the window being hidden) and are persisted per workspace in
   `IStateStorage` (`debug.watches`, restored when the service has none). `Variables/WatchStore` loads the saved list before the first edit,
   wherever it comes from (Locals' Add Watch, the command), and follows `IWorkspaceService.FoldersChanged`: when the primary folder changes the
-  service's list is replaced by the new folder's saved one (nothing is saved in between). Evaluated with context `watch` in the focused frame on every stop/step/frame
+  service's list is replaced by the new folder's saved one (nothing is saved in between). The storage swaps its workspace scope before that
+  event (and other workspace dependents may take a while in between), so the list is saved through `IWorkspaceStateScope.TrySetForFolder`
+  for the folder it was loaded from: an edit made in that window is refused rather than written over the new folder's list. Evaluated with context `watch` in the focused frame on every stop/step/frame
   switch; errors are red with the adapter's message; results with `variablesReference` expand; values stay (dimmed) while running.
   Edit inline, Delete, Alt+↑/↓ or **drag and drop** to reorder (the service has no reorder operation, so the list is rebuilt in the new order).
 
@@ -140,10 +145,10 @@ IDebugService / IDebugSession events (any thread)
 
 Source / function / exception breakpoints with enable checkboxes, condition / hit-count / log-message badges and the adapter's verdict from
 `IBreakpointManager.GetStatus` (verified, unverified = hollow, moved-to-line note, failed message in red). Condition, hit count and log message
-are edited through `IWindowService.ShowInputBoxAsync` — hit counts and log messages only when the active adapter supports them
-(`DebugCapabilityGate`: the running session's capabilities, else the last ones of the selected configuration's type; netcoredbg has neither,
-js-debug both): otherwise the menu entry is disabled with "(not supported)" and the reason as tooltip, and the command says why instead of
-asking; Delete / Delete All / Enable All / Disable All / New Function Breakpoint; double-click or
+are edited through `IWindowService.ShowInputBoxAsync` — a source breakpoint's condition, hit count and log message only when the active
+adapter supports them (`DebugCapabilityGate`: the running session's capabilities, else the last ones of the selected configuration's type;
+netcoredbg has conditions but no hit counts or logpoints, js-debug all three): otherwise the menu entry is disabled with "(not supported)"
+and the reason as tooltip, and the command says why instead of asking (one the breakpoint already has can still be edited away); Delete / Delete All / Enable All / Disable All / New Function Breakpoint; double-click or
 Enter navigates (to the adapter-moved line when it moved). Rows update **in place** when only a status or flag changed. **Limit:** the manager
 contract cannot update a function breakpoint, so its checkbox is read-only.
 
@@ -171,8 +176,10 @@ contract cannot update a function breakpoint, so its checkbox is read-only.
   are reusable by the editor as a popup. The runtime keeps the context key `cscode.debug.exceptionStopped` true while such a stop is current.
 * `debug.modules`: loaded modules on every stop and on demand, bounded to 2,000 rows. A session implementing the Core `IDebugSessionModules`
   (the DAP session does) supplies the list it keeps from the adapter's `module` events and sends the `modules` request only when the adapter
-  advertises `supportsModulesRequest` (netcoredbg does not implement it). Other sessions are asked with the raw request through
-  `CustomRequestAsync`; one that refused it shows the message and is not asked again at every stop (Refresh retries).
+  advertises `supportsModulesRequest` (netcoredbg does not implement it). While the window is shown it also re-reads that list (no request)
+  on the session's `ModulesChanged`, which the DAP session fires once per burst of `module` events, so modules loaded while the debuggee
+  runs appear at once. Other sessions are asked with the raw request through `CustomRequestAsync`; one that refused it shows the message and
+  is not asked again at every stop (Refresh retries).
 
 ## Threading and memory
 
@@ -195,7 +202,7 @@ real Skia headless platform.
 | Suite | What it proves |
 |---|---|
 | `VariablesTests`, `WatchTests`, `CallStackTests`, `BreakpointsTests`, `ConsoleTests`, `ExceptionAndModulesTests` | view-model behaviour against fake `IDebugService`/`IDebugSession` (lazy expansion, paging, chunked inserts racing collapse/re-expansion, change highlighting incl. Autos, handle invalidation, edits, watch persistence and folder switches, frame focus incl. a declined focus, breakpoint states, console bounding/history/completions, REPL state across console views and across a session end, exception helper, modules) |
-| `InvalidationTests` | adapter `invalidated`: Locals/Watch reload in a live frame, renumbered frames, one shared stack request, no ended session kept by a tracker that outlives it |
+| `InvalidationTests` | adapter `invalidated`: Locals/Watch reload in a live frame, a variables-only one without a stack request or a pending focus, renumbered frames, one shared stack request, no ended session kept by a tracker that outlives it |
 | `ChangeHighlightTests` | change highlighting by the frame's function (js-debug on Node.js 24 shapes): names added and removed between stops of one frame, a new local marked, a block scope coming and going, one shared identity request per stop, no identity of an earlier stop's caller frame, the name fallback without an identity |
 | `RuntimeTests` | `debug.addToWatch` with the Watch tab hidden / on screen / brought forward, and the Ctrl+Alt+W contribution |
 | `InteractionTests` | real views in a headless window: keyboard model, inline editors, drag-reorder, context routing |
@@ -223,6 +230,6 @@ dotnet run --project src/CsCode.Panels.Debug/Demo -- --start # start the session
 
 * Autos is an approximation (see above); Threads cannot freeze/thaw; function-breakpoint checkboxes are read-only; the Exception window (and
   the Modules window for sessions without `IDebugSessionModules`) uses `CustomRequestAsync` because the contracts have no typed API for it;
-  the Modules window refreshes at stops, not live while running; hover pins / DataTips are the editor's job.
+  the Modules window of such a session refreshes at stops, not live while running; hover pins / DataTips are the editor's job.
 * Console output without a trailing newline is not joined with the next event's text.
 * Value edits refresh only the edited row (dependents update at the next stop or via a reload).
