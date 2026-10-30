@@ -348,7 +348,7 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
         if (props.IsRightButtonPressed && !MouseReporting(mods))
         {
             e.Handled = true;
-            OpenContextMenu(keyboard: false);
+            RightClick(snap, row, col);
             return;
         }
         if (MouseReporting(mods))
@@ -391,6 +391,40 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
     }
 
     private bool _selectionMoved;
+
+    /// <summary>
+    /// <c>terminal.integrated.rightClickBehavior</c> (VS Code's values; its Linux default is the context menu): copyPaste copies a selection (and
+    /// clears it) or else pastes, paste pastes, selectWord selects the word under the pointer and opens the menu, nothing does nothing.
+    /// </summary>
+    private void RightClick(TerminalSnapshot snap, int row, int col)
+    {
+        switch (_runtime.RightClickBehavior)
+        {
+            case "copyPaste" when _selection is not null:
+                _ = CopyThenClearAsync();
+                break;
+            case "copyPaste" or "paste":
+                _ = PasteAsync();
+                break;
+            case "nothing":
+                break;
+            case "selectWord":
+                _selection = WordSelection(snap, row, col);
+                InvalidateVisual();
+                OpenContextMenu(keyboard: false);
+                break;
+            default:
+                OpenContextMenu(keyboard: false);
+                break;
+        }
+    }
+
+    private async Task CopyThenClearAsync()
+    {
+        await CopyAsync();
+        _selection = null;
+        InvalidateVisual();
+    }
 
     private TerminalSelection WordSelection(TerminalSnapshot snap, int row, int col)
     {

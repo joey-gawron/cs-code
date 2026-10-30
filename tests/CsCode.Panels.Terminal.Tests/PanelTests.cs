@@ -56,6 +56,38 @@ public sealed class PanelTests
     }
 
     [AvaloniaFact]
+    public async Task Confirm_on_exit_holds_the_window_close_until_the_user_agrees()
+    {
+        await using var rig = await new PanelRig().ReadyAsync();
+        var closed = false;
+        rig.Window.Closed += (_, _) => closed = true;
+        rig.Config.Set("terminal.integrated.confirmOnExit", "always");
+        rig.WindowService.MessageActionResponses.Enqueue("Cancel");
+        rig.Window.Close();
+        Assert.True(await PanelRig.Pump(() => rig.WindowService.Messages.Count > 0));
+        Assert.Contains(rig.WindowService.Messages, m => m.Message == "Do you want to terminate the active terminal session?");
+        await PanelRig.Pump(() => closed, 300);
+        Assert.False(closed, "the window closed although the user cancelled");
+
+        rig.WindowService.MessageActionResponses.Enqueue("Terminate");
+        rig.Window.Close();
+        Assert.True(await PanelRig.Pump(() => closed), "Terminate did not close the window");
+        Assert.Equal(2, rig.WindowService.Messages.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task Confirm_on_exit_with_child_processes_asks_only_when_a_program_runs_in_a_terminal()
+    {
+        await using var rig = await new PanelRig().ReadyAsync();
+        var closed = false;
+        rig.Window.Closed += (_, _) => closed = true;
+        rig.Config.Set("terminal.integrated.confirmOnExit", "hasChildProcesses");
+        rig.Window.Close(); // only the shell runs (the fake PTY's foreground process is the one it started with)
+        Assert.True(await PanelRig.Pump(() => closed), "the window did not close");
+        Assert.Empty(rig.WindowService.Messages);
+    }
+
+    [AvaloniaFact]
     public async Task Application_cursor_mode_changes_the_arrow_keys()
     {
         await using var rig = await new PanelRig().ReadyAsync();
@@ -123,6 +155,26 @@ public sealed class PanelTests
         Assert.Null(rig.Clipboard.Content); // copyOnSelection is off by default
         await rig.Commands.ExecuteAsync(TerminalCommandSet.CopySelection);
         Assert.Equal("line here\nsecond", rig.Clipboard.Content?.Text);
+    }
+
+    [AvaloniaFact]
+    public async Task Right_click_behavior_copy_paste_copies_a_selection_else_pastes()
+    {
+        await using var rig = await new PanelRig().ReadyAsync();
+        rig.Config.Set("terminal.integrated.rightClickBehavior", "copyPaste");
+        await rig.OutputAsync("copy me please", "please");
+        rig.Window.MouseDown(rig.Cell(5, 0), MouseButton.Left, RawInputModifiers.None);
+        rig.Window.MouseMove(rig.Cell(6, 0), RawInputModifiers.LeftMouseButton);
+        rig.Window.MouseUp(rig.Cell(6, 0), MouseButton.Left, RawInputModifiers.None);
+        Assert.NotNull(rig.Control.Selection);
+        rig.Window.MouseDown(rig.Cell(1, 1), MouseButton.Right, RawInputModifiers.None);
+        rig.Window.MouseUp(rig.Cell(1, 1), MouseButton.Right, RawInputModifiers.None);
+        Assert.True(await PanelRig.Pump(() => rig.Clipboard.Content?.Text == "me"), "right-click did not copy the selection");
+        Assert.True(await PanelRig.Pump(() => rig.Control.Selection is null), "the copied selection stayed");
+        rig.Host.ClearWritten();
+        rig.Window.MouseDown(rig.Cell(1, 1), MouseButton.Right, RawInputModifiers.None);
+        rig.Window.MouseUp(rig.Cell(1, 1), MouseButton.Right, RawInputModifiers.None);
+        Assert.True(await PanelRig.Pump(() => rig.Host.Written == "me"), "right-click without a selection did not paste: " + rig.Host.Written);
     }
 
     [AvaloniaFact]

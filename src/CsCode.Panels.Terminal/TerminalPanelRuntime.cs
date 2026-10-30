@@ -150,6 +150,7 @@ public sealed class TerminalPanelRuntime : IDisposable
     public bool CursorBlinking(TerminalSnapshot? snapshot) => snapshot?.CursorBlink ?? Config?.Get(TerminalSettingKeys.CursorBlinking, false) ?? false;
 
     public string WordSeparators => Config?.Get<string>(TerminalSettingKeys.WordSeparators) ?? TerminalSettingKeys.DefaultWordSeparators;
+    public string RightClickBehavior => Config?.Get<string>(TerminalSettingKeys.RightClickBehavior) ?? "default";
     public bool CopyOnSelection => Config?.Get(TerminalSettingKeys.CopyOnSelection, false) ?? false;
 
     /// <summary>The effective commandsToSkipShell: the defaults and every terminal command, plus the user's entries, minus the '-id' ones.</summary>
@@ -392,8 +393,60 @@ public sealed class TerminalPanelRuntime : IDisposable
         if (Commands is { } c) await c.ExecuteAsync(command).ConfigureAwait(true);
     }
 
+    // ------------------------------------------------------------------ confirmOnExit
+
+    private readonly List<WeakReference<Avalonia.Controls.Window>> _closingHooks = new();
+    private bool _exitConfirmed;
+
+    /// <summary>The window that shows the terminals: its close asks first when <c>terminal.integrated.confirmOnExit</c> says so.</summary>
+    internal void WatchWindowClosing(TopLevel? top)
+    {
+        if (top is not Avalonia.Controls.Window window) return;
+        _closingHooks.RemoveAll(w => !w.TryGetTarget(out _));
+        if (_closingHooks.Any(w => w.TryGetTarget(out var known) && ReferenceEquals(known, window))) return;
+        window.Closing += OnWindowClosing;
+        _closingHooks.Add(new WeakReference<Avalonia.Controls.Window>(window));
+    }
+
+    /// <summary>
+    /// VS Code's <c>terminal.integrated.confirmOnExit</c>: "never" (default), "always" (any live terminal) or "hasChildProcesses" (a program other
+    /// than the shell runs in one). Runs after the window's own close handling (save prompts, background mode's hide): a close that is still
+    /// going ahead is held, the question asked, and the close repeated when the user agrees.
+    /// </summary>
+    private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (e.Cancel || _exitConfirmed || sender is not Avalonia.Controls.Window window) return;
+        var mode = Config?.Get<string>(TerminalSettingKeys.ConfirmOnExit) ?? "never";
+        if (mode is not ("always" or "hasChildProcesses") || Window is not { } messages) return;
+        var live = Service.Sessions.Where(s => !s.HasExited).ToList();
+        if (live.Count == 0) return;
+        e.Cancel = true;
+        try
+        {
+            if (mode == "always" || await Task.Run(() => live.Any(s => s.HasForegroundChild())).ConfigureAwait(true))
+            {
+                var question = live.Count == 1 ? "Do you want to terminate the active terminal session?"
+                    : $"Do you want to terminate the {live.Count} active terminal sessions?";
+                var answer = await messages.ShowMessageAsync(MessageSeverity.Warning, question,
+                    [new MessageAction("Terminate"), new MessageAction("Cancel", IsCloseAffordance: true)]).ConfigureAwait(true);
+                if (answer != "Terminate") return;
+            }
+            _exitConfirmed = true;
+            window.Close();
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
+        {
+            // the application is going away under the question: let the close happen
+            _exitConfirmed = true;
+            window.Close();
+        }
+    }
+
     public void Dispose()
     {
+        foreach (var hook in _closingHooks)
+            if (hook.TryGetTarget(out var window)) window.Closing -= OnWindowClosing;
+        _closingHooks.Clear();
         _keyHandler?.Dispose();
         _keyHandler = null;
         _subs.Dispose();

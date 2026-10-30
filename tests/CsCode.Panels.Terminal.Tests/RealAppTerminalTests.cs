@@ -186,6 +186,24 @@ public sealed class RealAppTerminalTests
     }
 
     [AvaloniaFact]
+    public async Task Confirm_on_exit_asks_after_the_main_windows_own_close_handling_and_closes_on_terminate()
+    {
+        await using var app = await TerminalAppHost.StartAsync(settings: new() { ["terminal.integrated.confirmOnExit"] = "always" });
+        await app.RunAsync(TerminalCommandSet.New);
+        Assert.True(await app.WaitForScreenAsync("$"), "no prompt: " + app.ScreenText());
+        var closed = false;
+        app.Window.Closed += (_, _) => closed = true;
+        var notifications = app.Get<CsCode.App.Notifications.NotificationCenter>();
+        app.Window.Close(); // the main window first runs its own close (save prompts), then the terminal asks
+        Assert.True(await TerminalAppHost.WaitFor(() => notifications.Toasts.Any(t => t.Message.Contains("terminate the active terminal session", StringComparison.Ordinal))),
+            "no question about the running terminal");
+        Assert.False(closed);
+        var toast = notifications.Toasts.First(t => t.Message.Contains("terminate", StringComparison.Ordinal));
+        toast.InvokeCommand.Execute(toast.Actions.First(a => a.Title == "Terminate"));
+        Assert.True(await TerminalAppHost.WaitFor(() => closed), "Terminate did not close the window");
+    }
+
+    [AvaloniaFact]
     public async Task Open_in_terminal_starts_the_shell_in_that_folder()
     {
         await using var app = await TerminalAppHost.StartAsync();

@@ -190,8 +190,8 @@ brief asks for Ctrl+Insert/Shift+Insert). Everything else matches VS Code. All o
 | `terminal.integrated.copyOnSelection` | false | |
 | `terminal.integrated.enableMultiLinePasteWarning` | "auto" | auto / always / never |
 | `terminal.integrated.confirmOnKill` | "editor" | never/editor (panel terminals: no prompt)/panel/always |
-| `terminal.integrated.confirmOnExit` | "never" | declared; not acted on yet (see gaps) |
-| `terminal.integrated.rightClickBehavior` | "default" | declared; only the context menu is implemented |
+| `terminal.integrated.confirmOnExit` | "never" | always / hasChildProcesses: closing the window asks first (after the window's own save prompts; a background-mode hide never asks) |
+| `terminal.integrated.rightClickBehavior` | "default" | default (context menu) / copyPaste / paste / selectWord / nothing |
 | `terminal.integrated.persistentSessionReviveProcess` | "never" | terminals are never restored |
 
 ## Debugger: `runInTerminal` (C8)
@@ -286,7 +286,8 @@ Screenshots (headless, git-ignored): `.scratch/screenshots/terminal/terminal-ls-
 * Windows ConPTY: written, never run. macOS: `posix_spawn` cannot make the slave the controlling terminal there (BSD needs `TIOCSCTTY`), so job
   control and Ctrl+C would not work; the variadic `ioctl`/`fcntl` declarations are not valid on Apple arm64. Linux (glibc ≥ 2.29; 2.34+ for
   `closefrom`, 2.36+ for pidfd) is the supported platform.
-* `confirmOnExit` and `rightClickBehavior` are declared but not acted on; `confirmOnKill` asks only for `panel`/`always` (panel terminals with
+* `confirmOnExit` hooks the window that shows the Terminal view (`Window.Closing`, after the main window's handler): terminals created with
+  `Show = false` in a window that never showed the view are not counted. `confirmOnKill` asks only for `panel`/`always` (panel terminals with
   the default `editor` never ask).
 * OSC 10/11/12 *set* is ignored (queries answered); DECRQSS/XTGETTCAP/sixel are consumed without answers; DECSLRM (left/right margins),
   DECDWL/DECDHL and 132-column mode are not implemented (as in xterm.js).

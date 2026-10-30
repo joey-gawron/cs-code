@@ -118,6 +118,7 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
+        _runtime.WatchWindowClosing(TopLevel.GetTopLevel(this));
         // Opening the Terminal window with no terminal creates one, as VS Code does.
         if (_runtime.Service.Terminals.Count == 0) _ = CreateFirstAsync();
         if (_runtime.TakeFocusRequest()) FocusTerminal();
