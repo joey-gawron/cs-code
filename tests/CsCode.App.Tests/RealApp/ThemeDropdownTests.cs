@@ -222,6 +222,48 @@ public class ThemeDropdownTests
         Assert.True(await RealAppHost.WaitFor(() => SettingInFile(host) == "Visual Studio Light"));
     }
 
+    /// <summary>
+    /// Switching faster than settings.json is written (the closed box arrowed through, or a loaded machine whose disk lags): the write of the
+    /// previous choice reports its setting change after the next choice was made, and that late report must not take the newer choice back.
+    /// The lane is held so the write of the newer choice is still pending when the report of the older one reaches the UI thread.
+    /// </summary>
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task A_late_report_of_the_previous_choice_written_to_settings_json_never_takes_back_the_newer_one()
+    {
+        await using var host = await RealAppHost.Create().StartAsync();
+        var themes = host.Get<IColorThemeService>();
+        var config = host.Get<IConfigurationService>();
+        var older = themes.Available.Single(t => t.Id == "vscode.monokai");
+        var newer = themes.Available.Single(t => t.Id == "textmatesharp.dracula");
+
+        // The test body runs on the UI thread: nothing posted to it runs until the next await.
+        _ = themes.SetCurrentAsync(older.Id); // persisted on the IO lane, whose setting change posts the shell's follow-up to the UI thread
+        var deadline = Environment.TickCount64 + 10_000;
+        while (config.Get<string>(SettingKeys.WorkbenchColorTheme) != older.Label && Environment.TickCount64 < deadline) Thread.Sleep(5);
+        Assert.Equal(older.Label, config.Get<string>(SettingKeys.WorkbenchColorTheme));
+        var lane = host.Get<CsCode.Platform.Io.IoLane>();
+        using var release = new ManualResetEventSlim();
+        var held = 0;
+        var threads = host.Get<CsCode.Platform.PlatformOptions>().IoThreads;
+        for (var i = 0; i < threads; i++) lane.Post(() => { Interlocked.Increment(ref held); release.Wait(30_000); });
+        try
+        {
+            while (Volatile.Read(ref held) < threads && Environment.TickCount64 < deadline) Thread.Sleep(5);
+            Assert.Equal(threads, Volatile.Read(ref held));
+            _ = themes.SetCurrentAsync(newer.Id); // its write waits behind the held lane
+            Assert.Equal(newer.Id, themes.Current.Id);
+            await DevScene.SettleAsync(20); // the older choice's setting change is handled while settings.json still names it
+            Assert.Equal(newer.Id, themes.Current.Id);
+        }
+        finally { release.Set(); }
+
+        Assert.True(await RealAppHost.WaitFor(() => SettingInFile(host) == newer.Label), "settings.json: " + SettingInFile(host));
+        await DevScene.SettleAsync(20);
+        Assert.Equal(newer.Label, SettingInFile(host));
+        Assert.Equal(newer.Id, themes.Current.Id);
+        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Theme!.AppliedThemeId == newer.Id), "applied: " + host.Shell.Theme!.AppliedThemeId);
+    }
+
     /// <summary>The user's Extra (2026-10-29): the Color Theme dropdown is gone from the main window and from View &gt; Toolbars.</summary>
     [AvaloniaFact(Timeout = 60_000)]
     public async Task The_main_window_has_no_theme_dropdown_and_View_Toolbars_lists_only_Standard_and_Debug()

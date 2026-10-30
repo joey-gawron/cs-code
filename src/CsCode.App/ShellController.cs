@@ -249,7 +249,10 @@ public sealed class ShellController : IDisposable
             factory.WindowMoveDragEnd -= OnMoved;
         }));
 
-        if (config is not null)
+        // Only for a theme service that does not follow the setting itself. The editor's does, and for it this follow-up raced the user: a write of
+        // the previous choice reported after a newer one was made (settings.json lagging behind quick switches) chose, and persisted, the
+        // previous theme again, so the newer choice was lost.
+        if (config is not null && _sp.GetRequiredService<IColorThemeService>() is not CsCode.Editor.Theming.ColorThemeService)
             _disposables.Add(config.Changed.Subscribe(e =>
             {
                 if (e.Affects(SettingKeys.WorkbenchColorTheme)) _ui.Post(() => _ = ApplyConfiguredThemeAsync());
