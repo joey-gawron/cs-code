@@ -143,13 +143,16 @@ public sealed record CommandLineOptions(
           -w, --wait             Wait until the opened file's tab is closed (for use as $EDITOR / the git editor).
           --list-sessions        List saved and running sessions.
           --background           Start CsCode in the background without a window (for login autostart).
-          --quit [<name>]        Quit a session's process (default: the last active one); --quit --all quits every CsCode process.
+          --quit [<name>]        Quit a session's process (default: the last active one; once it has quit, the window shown last,
+                                 never a hidden session); --quit --all quits every CsCode process.
           --foreground           Run the window in this process, without background mode.
           -h, --help             Show this help.
           -v, --version          Show the version.
 
         Without --session, files open in the last active session, a folder in the session that has it (else a new one), and
-        no arguments follow the setting cscode.sessions.default (last | new | <name>). Closing a window keeps its session running
-        in the background (cscode.background.keepRunning); File > Quit Session ends it.
+        no arguments follow the setting cscode.sessions.default (last | new | <name>). The last active session counts while its
+        process runs, even one that does not respond (a copy opens, and --quit says so); once it has quit, files go to the session
+        shown last. Closing a window keeps its session running in the background (cscode.background.keepRunning); File > Quit
+        Session ends it.
         """;
 }

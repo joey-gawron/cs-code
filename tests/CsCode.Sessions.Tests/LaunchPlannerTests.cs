@@ -156,6 +156,72 @@ public class LaunchPlannerTests
         Assert.Equal("b", LaunchPlanner.Plan(Open(), none, Defaults).Session);
     }
 
+    // Review of the fallback above: a last active session whose process is alive but missed the 300 ms hello (paused in a debugger, a GC, load)
+    // is listed only as an unresponsive process without a session; it was taken for quit, and `cscode --quit` force-quit the other session.
+    [Fact]
+    public void A_last_active_session_that_still_holds_its_lock_is_never_passed_over()
+    {
+        var paused = Proc(11, null, ProcessStates.Starting, responsive: false);
+        var world = World([Proc(10, "a", ProcessStates.Shown, 5), paused], [Saved("a", 5), Saved("b", 1)], "b", "b");
+
+        // An open goes to it as before the fallback: a copy, with the warning; never the other window.
+        foreach (var request in new[] { Open(), Open(targets: new LaunchTarget("/x/f.cs", false, 3, 4)) })
+        {
+            var open = LaunchPlanner.Plan(request, world, Defaults);
+            Assert.Equal((LaunchAction.Start, "b", "window-1"), (open.Action, open.SeedFrom, open.Session));
+            Assert.Contains(open.Warnings, w => w.Contains("does not respond"));
+        }
+
+        // --quit (and --quit b) asks nobody and says why.
+        foreach (var request in new[] { new LaunchRequest(LaunchKind.Quit), new LaunchRequest(LaunchKind.Quit) { Session = "b" } })
+        {
+            var quit = LaunchPlanner.Plan(request, world, Defaults);
+            Assert.Empty(quit.QuitPids);
+            Assert.Equal("b", quit.Session);
+            Assert.Contains(quit.Warnings, w => w.Contains("Session 'b'") && w.Contains("does not respond"));
+        }
+
+        // In the final save of its quit: an open waits for it (and plans again once it lets go); --quit says it is already quitting.
+        var leaving = World([Proc(10, "a", ProcessStates.Shown, 5), Proc(11, "b", ProcessStates.Quitting, 1)], [Saved("a", 5), Saved("b", 1)], "b", "b");
+        var wait = LaunchPlanner.Plan(Open(), leaving, Defaults);
+        Assert.Equal((LaunchAction.AwaitQuit, 11), (wait.Action, wait.Pid));
+        var quitLeaving = LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Quit), leaving, Defaults);
+        Assert.Empty(quitLeaving.QuitPids);
+        Assert.Contains(quitLeaving.Warnings, w => w.Contains("already quitting"));
+        // Once it let go (still answering "quitting" while the rest shuts down) it has really quit: the window still open.
+        var gone = World([Proc(10, "a", ProcessStates.Shown, 5), Proc(11, "b", ProcessStates.Quitting, 1)], [Saved("a", 5), Saved("b", 1)], "b");
+        var show = LaunchPlanner.Plan(Open(), gone, Defaults);
+        Assert.Equal((LaunchAction.Show, 10), (show.Action, show.Pid));
+        Assert.Equal([10], LaunchPlanner.Plan(new LaunchRequest(LaunchKind.Quit), gone, Defaults).QuitPids);
+    }
+
+    [Fact]
+    public void Once_the_last_active_session_has_quit_quit_falls_back_only_to_a_shown_window_but_open_to_a_hidden_one_too()
+    {
+        var quit = new LaunchRequest(LaunchKind.Quit);
+        // Hidden, starting and spare processes only (one never shown at all, which used to win as the lowest pid): nothing is quit.
+        var unseen = new[]
+        {
+            Proc(9, "never", ProcessStates.Hidden) with { LastShownUtc = null }, Proc(10, "a", ProcessStates.Hidden, 2),
+            Proc(11, "c", ProcessStates.Starting) with { LastShownUtc = null }, Proc(12, null, ProcessStates.Spare),
+        };
+        var hiddenOnly = LaunchPlanner.Plan(quit, World(unseen, [Saved("a"), Saved("b")], last: "b"), Defaults);
+        Assert.Empty(hiddenOnly.QuitPids);
+        Assert.Contains(hiddenOnly.Warnings, w => w.Contains("Session 'b' is not running"));
+        Assert.Empty(LaunchPlanner.Plan(quit, World(unseen), Defaults).QuitPids); // no marker at all
+
+        // An open still goes to the hidden session shown most recently, as before.
+        var open = LaunchPlanner.Plan(Open(targets: new LaunchTarget("/x/f.cs", false, 3, 4)), World(unseen, [Saved("a"), Saved("b")], last: "b"), Defaults);
+        Assert.Equal((LaunchAction.Show, 10), (open.Action, open.Pid));
+
+        // With windows shown: the one shown most recently, even when a hidden session was shown more recently still.
+        var shown = unseen.Concat([Proc(13, "d", ProcessStates.Shown, 30), Proc(14, "e", ProcessStates.Shown, 20)]).ToArray();
+        var plan = LaunchPlanner.Plan(quit, World(shown, [Saved("a"), Saved("b")], last: "b"), Defaults);
+        Assert.Equal(("e", 14), (plan.Session, Assert.Single(plan.QuitPids)));
+        Assert.Empty(plan.Warnings);
+        Assert.Equal([14], LaunchPlanner.Plan(quit, World(shown), Defaults).QuitPids);
+    }
+
     [Fact]
     public void An_invalid_session_name_fails()
     {

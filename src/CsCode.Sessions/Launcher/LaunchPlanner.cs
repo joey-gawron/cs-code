@@ -6,8 +6,8 @@ namespace CsCode.Sessions.Launcher;
 /// The launcher's decision table (pure: the same world and request always give the same plan; docs/SESSIONS.md has the table).
 /// <list type="number">
 /// <item>Which session: <c>--session NAME</c>; <c>--new-window</c> → a new unnamed one; a folder (local, else a remote <c>ssh://</c> one) → the saved
-/// session whose primary folder it is, else a new unnamed one; files only or nothing → <c>cscode.sessions.default</c> (<c>last</c>: the session
-/// shown last; <c>new</c>; or a name).</item>
+/// session whose primary folder it is, else a new unnamed one; files only or nothing → <c>cscode.sessions.default</c> (<c>last</c>: the last
+/// active session, or once it has really quit the one shown most recently; <c>new</c>; or a name).</item>
 /// <item>A responsive process owns it → <see cref="LaunchAction.Show"/>.</item>
 /// <item>Its process is quitting and still holds the lock → <see cref="LaunchAction.AwaitQuit"/> (the launcher waits for it, then plans again).</item>
 /// <item>Its lock is held but no process answers (wedged) → <see cref="LaunchAction.Start"/> a new unnamed session seeded from it, with a warning.</item>
@@ -117,19 +117,37 @@ public static class LaunchPlanner
     }
 
     /// <summary>
-    /// The session "the last one" means (no arguments, files only, <c>--quit</c> without a name): the last active session while a process has
-    /// it; once it has quit (its marker stays behind), the most recently shown session still running, and only then the saved last one.
-    /// Residents first, so the saved sessions are not read while one runs (the launcher reads them lazily). From the desktop: after a second
-    /// session quit, <c>cscode file</c> would have restarted it beside the window still open, and <c>cscode --quit</c> aimed at it.
+    /// The session "the last one" means when opening (no arguments, files only): the last active session while it is still there
+    /// (<see cref="HeldLastActive"/>); once it has really quit (its marker stays behind), the most recently shown session still running (a hidden
+    /// one too: showing it loses nothing), and only then the saved last one. Residents first, so the saved sessions are not read while one runs
+    /// (the launcher reads them lazily). From the desktop: after a second session quit, <c>cscode file</c> would have restarted it beside the
+    /// window still open. <c>--quit</c> without a name falls back more narrowly (<see cref="PlanQuit"/>).
     /// </summary>
     private static string? LastSession(LaunchWorld world)
     {
-        if (world.LastActive is { } last && world.Processes.Any(p => p.OwnsSession(last))) return last;
-        if (world.Processes.Where(p => p.Responsive && p.Session is not null && p.State != ProcessStates.Quitting)
-                .OrderByDescending(p => p.LastShownUtc ?? DateTimeOffset.MinValue).FirstOrDefault() is { Session: { } resident })
-            return resident;
+        if (HeldLastActive(world) is { } last) return last;
+        if (MostRecentlyShown(world, shownOnly: false) is { Session: { } resident }) return resident;
         return world.LastActive is { } saved && world.Saved.Any(s => s.Name == saved) ? saved : null;
     }
+
+    /// <summary>
+    /// The last active session while it is not really gone: a process owns it, or its lock is held (its process is wedged, misses the 300 ms
+    /// hello while paused in a debugger, collecting garbage or under load, or is in the final save of its quit; such a process is listed only as
+    /// an unresponsive one without a session). It is never passed over for another session: an open then waits for the quit
+    /// (<see cref="LaunchAction.AwaitQuit"/>, after which the plan is made again) or opens a copy with a warning, and <c>--quit</c> says it does
+    /// not respond. Passing it over made <c>--quit</c> force-quit a different session (a hidden one, or the lowest pid when none had been shown),
+    /// which also dropped that one from restore-on-login.
+    /// </summary>
+    private static string? HeldLastActive(LaunchWorld world) =>
+        world.LastActive is { } last && (world.Processes.Any(p => p.OwnsSession(last)) || world.IsSessionLocked(last)) ? last : null;
+
+    /// <summary>
+    /// The responsive session process shown most recently (never the spare or one that is quitting); with <paramref name="shownOnly"/> only one
+    /// whose window is on screen now (never a hidden or starting one).
+    /// </summary>
+    private static ResidentProcess? MostRecentlyShown(LaunchWorld world, bool shownOnly) =>
+        world.Processes.Where(p => p.Responsive && p.Session is not null && p.State != ProcessStates.Quitting && (!shownOnly || p.State == ProcessStates.Shown))
+            .OrderByDescending(p => p.LastShownUtc ?? DateTimeOffset.MinValue).FirstOrDefault();
 
     private static IEnumerable<string> TakenNames(LaunchWorld world) =>
         world.Saved.Select(s => s.Name).Concat(world.Processes.Select(p => p.Session).OfType<string>());
@@ -157,6 +175,12 @@ public static class LaunchPlanner
             && string.Equals(PathOf(a), PathOf(b), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// <c>--quit [NAME]</c>. Without a name: the last active session while it is still there (<see cref="HeldLastActive"/>); once it has really
+    /// quit, the session whose window was shown most recently and is shown now, never a hidden or starting one (a forced quit of a session
+    /// nobody sees, picked by a rule nobody sees, also drops it from restore-on-login); the launcher prints which session it asked. A session
+    /// whose lock is held but whose process does not answer is reported, never quit in its place.
+    /// </summary>
     private static LaunchPlan PlanQuit(LaunchRequest request, LaunchWorld world)
     {
         if (request.All)
@@ -165,12 +189,21 @@ public static class LaunchPlanner
                 .Select(p => $"CsCode process {p.Pid} does not respond; it was not asked to quit.").ToArray();
             return new LaunchPlan(LaunchAction.Quit) { QuitPids = world.Processes.Where(p => p.Responsive).Select(p => p.Pid).ToArray(), Warnings = warnings };
         }
-        var name = request.Session ?? LastSession(world);
-        if (name is null) return new LaunchPlan(LaunchAction.Quit) { Warnings = ["No session to quit (name one, or use --all)."] };
-        var owner = world.Processes.FirstOrDefault(p => p.OwnsSession(name));
-        return owner is null
-            ? new LaunchPlan(LaunchAction.Quit) { Session = name, Warnings = [$"Session '{name}' is not running."] }
-            : new LaunchPlan(LaunchAction.Quit) { Session = name, QuitPids = [owner.Pid] };
+        var name = request.Session ?? HeldLastActive(world);
+        if (name is null)
+        {
+            if (MostRecentlyShown(world, shownOnly: true) is { Session: { } shown } window)
+                return new LaunchPlan(LaunchAction.Quit) { Session = shown, QuitPids = [window.Pid] };
+            return world.LastActive is { } gone
+                ? new LaunchPlan(LaunchAction.Quit) { Session = gone, Warnings = [$"Session '{gone}' is not running."] }
+                : new LaunchPlan(LaunchAction.Quit) { Warnings = ["No session to quit (name one, or use --all)."] };
+        }
+        if (world.Processes.FirstOrDefault(p => p.OwnsSession(name)) is { } owner)
+            return new LaunchPlan(LaunchAction.Quit) { Session = name, QuitPids = [owner.Pid] };
+        var warning = !world.IsSessionLocked(name) ? $"Session '{name}' is not running."
+            : world.Processes.Any(p => p.IsLeaving(name)) ? $"Session '{name}' is already quitting."
+            : $"Session '{name}' is held by a CsCode process that does not respond (or that this launch cannot reach); it was not asked to quit.";
+        return new LaunchPlan(LaunchAction.Quit) { Session = name, Warnings = [warning] };
     }
 
     private static LaunchPlan PlanBackground(LaunchWorld world, LaunchSettings settings)
