@@ -115,6 +115,27 @@ internal static class EditorCommands
             return Task.CompletedTask;
         });
 
+        // ---- clipboard (Visual Studio's behaviours: EditorClipboard, ClipboardOperations) and the context menu ----
+        Cmd(EditorMenus.Cut, "Cut", (view, _) => view.Clipboard.CutAsync());
+        Cmd(EditorMenus.Copy, "Copy", (view, _) => view.Clipboard.CopyAsync());
+        Cmd(EditorMenus.Paste, "Paste", (view, _) => view.Clipboard.PasteAsync());
+        Cmd(EditorMenus.CycleClipboardRing, "Cycle Clipboard Ring", (view, _) => view.Clipboard.CycleRingAsync());
+        Cmd(EditorMenus.ShowContextMenu, "Show Editor Context Menu", (view, _) => { view.ShowContextMenu(); return Task.CompletedTask; });
+        Cmd(EditorMenus.InsertSnippet, "Insert Snippet...", (view, _) => view.Feature<ISnippetFeature>()?.PickAndInsertAsync(surround: false) ?? Task.CompletedTask);
+        Cmd(EditorMenus.SurroundWithSnippet, "Surround With...", (view, _) => view.Feature<ISnippetFeature>()?.PickAndInsertAsync(surround: true) ?? Task.CompletedTask);
+
+        // ---- debugging from the editor (the right-click menu's Breakpoint submenu, Run To Cursor, Add Watch, QuickWatch) ----
+        Cmd(EditorMenus.RunToCursor, "Run To Cursor", (view, _) => EditorMenus.RunToCursorAsync(view));
+        Cmd(EditorMenus.AddWatch, "Add Watch", (view, _) => EditorMenus.AddWatchAsync(view));
+        Cmd(EditorMenus.QuickWatch, "QuickWatch...", (view, _) => EditorMenus.QuickWatchAsync(view));
+        Cmd(EditorMenus.ToggleBreakpointEnabled, "Enable or Disable Breakpoint", (view, _) =>
+        {
+            var line = view.Controller.Caret.Line;
+            if (view.Feature<DebugFeature>() is { } debug && debug.BreakpointAt(line) is { } bp) debug.SetEnabled(line, !bp.Enabled);
+            return Task.CompletedTask;
+        });
+        Cmd(EditorMenus.EditBreakpointCondition, "Breakpoint Conditions...", (view, _) => view.Feature<DebugFeature>()?.EditConditionAsync(view.Controller.Caret.Line) ?? Task.CompletedTask);
+
         // ---- history / find ----
         Cmd("undo", "Undo", (view, _) => { view.Controller.Undo(); return Task.CompletedTask; });
         Cmd("redo", "Redo", (view, _) => { view.Controller.Redo(); return Task.CompletedTask; });

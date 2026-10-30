@@ -89,6 +89,9 @@ public static class AppServices
         services.AddSingleton<IUiDispatcher>(_ => AvaloniaUiDispatcher.Instance);
         services.AddSingleton<WindowHolder>();
         services.AddSingleton<IShellHost>(sp => new AvaloniaShellHost(() => sp.GetRequiredService<WindowHolder>().Window));
+        // The system clipboard (+ PRIMARY on X11) and the in-memory clipboard ring, for the editor, the panels and the shell.
+        services.TryAddSingleton(sp => new ClipboardService(sp.GetRequiredService<IUiDispatcher>(), AvaloniaPlatformClipboard.Of(() => sp.GetRequiredService<WindowHolder>().Window)));
+        services.TryAddSingleton<IClipboardService>(sp => sp.GetRequiredService<ClipboardService>());
 
         services.AddSingleton<NotificationCenter>();
         services.AddSingleton<QuickInputViewModel>();

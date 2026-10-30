@@ -9,8 +9,11 @@ namespace CsCode.App.ToolWindows.ErrorList;
 /// <summary>One Error List row (or a file group header when grouping by file).</summary>
 public sealed record ErrorRow(
     Uri Uri, string FileName, string Directory, int Line, int Column, DiagnosticSeverity Severity,
-    string Message, string? Source, string? Code, TextRangeInfo Range, bool IsHeader = false, int HeaderCount = 0)
+    string Message, string? Source, string? Code, TextRangeInfo Range, bool IsHeader = false, int HeaderCount = 0, Uri? HelpLink = null)
 {
+    /// <summary>The row as Visual Studio copies it: severity, code, description, file, line (tab separated).</summary>
+    public string CopyText => IsHeader ? HeaderText : string.Join('\t', Severity.ToString(), Code ?? "", Message, Uri.IsFile ? Uri.LocalPath : Uri.ToString(), Line.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
     public string Location => IsHeader ? "" : $"{FileName} ({Line}, {Column})";
     public string SeverityIcon => Severity switch { DiagnosticSeverity.Error => "error", DiagnosticSeverity.Warning => "warning", _ => "info" };
     public string SeverityColorId => Severity switch { DiagnosticSeverity.Error => "problemsErrorIcon.foreground", DiagnosticSeverity.Warning => "problemsWarningIcon.foreground", _ => "problemsInfoIcon.foreground" };
@@ -154,7 +157,7 @@ public sealed class ErrorListViewModel : ObservableObject, IDisposable
                      || (d.Code?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false) || (d.Source?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)))
                 continue;
             rows.Add(new ErrorRow(uri, name, Path.GetDirectoryName(path) ?? "", d.Range.Start.Line + 1, d.Range.Start.Character + 1, d.Severity, FirstLine(d.Message), d.Source, d.Code,
-                new TextRangeInfo(d.Range.Start.Line, d.Range.Start.Character, d.Range.End.Line, d.Range.End.Character)));
+                new TextRangeInfo(d.Range.Start.Line, d.Range.Start.Character, d.Range.End.Line, d.Range.End.Character), HelpLink: d.CodeDescriptionHref));
         }
 
         Comparison<ErrorRow> cmp = sort switch

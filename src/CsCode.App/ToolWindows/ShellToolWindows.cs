@@ -32,7 +32,7 @@ public sealed class ExplorerToolWindow : IToolWindow
             services.GetService<IConfigurationService>(), services.GetService<IStateStorage>(), services.GetService<IModalDialogs>(), services.GetService<DocumentWell>(),
             services.GetService<Services.FileParticipants>());
         var view = new ExplorerView(vm, services.GetRequiredService<IWindowService>(), services.GetService<ICommandService>(), services.GetService<IContextKeyService>(),
-            services.GetService<IContributionRegistry>());
+            services.GetService<IContributionRegistry>(), ErrorListToolWindow.ShellMenuServices(services));
         // Load after the first frame so showing the window never waits for the directory read.
         Dispatcher.UIThread.Post(() => { _ = vm.RefreshRootsAsync(); }, DispatcherPriority.Background);
         return view;
@@ -47,7 +47,8 @@ public sealed class OutputToolWindow : IToolWindow
     public ToolWindowLocation DefaultLocation => ToolWindowLocation.Bottom;
     public string? ToggleCommandId => "workbench.action.output.toggleOutput";
     public string? AutoShowWhen => null;
-    public Control CreateView(IServiceProvider services) => new OutputView(new OutputViewModel(services.GetRequiredService<IOutputService>()));
+    public Control CreateView(IServiceProvider services) =>
+        new OutputView(new OutputViewModel(services.GetRequiredService<IOutputService>()), services.GetService<IWindowService>(), ErrorListToolWindow.ShellMenuServices(services));
 }
 
 public sealed class ErrorListToolWindow : IToolWindow
@@ -59,7 +60,13 @@ public sealed class ErrorListToolWindow : IToolWindow
     public string? ToggleCommandId => "workbench.actions.view.problems";
     public string? AutoShowWhen => null;
     public Control CreateView(IServiceProvider services) =>
-        new ErrorListView(new ErrorListViewModel(services.GetRequiredService<IDiagnosticService>(), services.GetRequiredService<IUiDispatcher>(), services.GetService<INavigationService>()));
+        new ErrorListView(new ErrorListViewModel(services.GetRequiredService<IDiagnosticService>(), services.GetRequiredService<IUiDispatcher>(), services.GetService<INavigationService>()),
+            services.GetService<IWindowService>(), ShellMenuServices(services));
+
+    internal static Ui.Menus.MenuServices? ShellMenuServices(IServiceProvider services) =>
+        services.GetService<ICommandService>() is { } commands && services.GetService<IContextKeyService>() is { } keys
+            ? new Ui.Menus.MenuServices(commands, keys, services.GetService<IKeybindingService>(), services.GetService<IContributionRegistry>())
+            : null;
 }
 
 public sealed class FindResultsToolWindow : IToolWindow
@@ -71,5 +78,6 @@ public sealed class FindResultsToolWindow : IToolWindow
     public string? ToggleCommandId => "workbench.action.findResults.toggle";
     public string? AutoShowWhen => null;
     /// <summary>The results live in a singleton model (the command can fill them while the window is hidden); only the view comes and goes.</summary>
-    public Control CreateView(IServiceProvider services) => new FindResultsView(services.GetRequiredService<FindResultsViewModel>());
+    public Control CreateView(IServiceProvider services) =>
+        new FindResultsView(services.GetRequiredService<FindResultsViewModel>(), services.GetService<IWindowService>(), ErrorListToolWindow.ShellMenuServices(services));
 }

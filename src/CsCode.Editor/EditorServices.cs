@@ -43,6 +43,8 @@ public sealed class EditorServices : IDisposable
         Contributions = Opt<IContributionRegistry>() ?? new ContributionRegistry();
         Commands = Opt<ICommandService>();
         ContextKeys = Opt<IContextKeyService>();
+        Clipboard = Opt<IClipboardService>();
+        Keybindings = Opt<IKeybindingService>();
         // Resolved on first use, not here: the shell's navigation service needs the document well, which needs the editor view factory,
         // which needs this object; the debug service needs navigation. Resolving them eagerly is a DI cycle that never finishes.
         _navigation = new Lazy<INavigationService?>(Opt<INavigationService>);
@@ -67,6 +69,9 @@ public sealed class EditorServices : IDisposable
     public IContributionRegistry Contributions { get; }
     public ICommandService? Commands { get; }
     public IContextKeyService? ContextKeys { get; }
+    /// <summary>The shell's clipboard (system clipboard, PRIMARY, ring); null when standalone (the editor then uses its window's clipboard).</summary>
+    public IClipboardService? Clipboard { get; }
+    public IKeybindingService? Keybindings { get; }
     public INavigationService? Navigation => _navigation.Value;
     public IMemoryMonitor? Memory { get; }
     public IDebugService? Debug => _debug.Value;

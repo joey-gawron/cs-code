@@ -5,6 +5,7 @@ using Avalonia.VisualTree;
 using Avalonia;
 using CsCode.Panels.Debug.CallStack;
 using CsCode.Panels.Debug.Infrastructure;
+using CsCode.Ui.Menus;
 
 namespace CsCode.Panels.Debug.Views;
 
@@ -12,8 +13,21 @@ namespace CsCode.Panels.Debug.Views;
 /// Call Stack window. A click picks the frame (keyboard focus stays here), double-click / Enter picks it and moves focus to the editor;
 /// ↑↓ move the highlight only. Context menu: Copy Call Stack, Show External Code.
 /// </summary>
-public sealed partial class CallStackView : UserControl, IDisposable
+public sealed partial class CallStackView : UserControl, IDisposable, IClipboardTarget
 {
+    /// <summary>One frame as Visual Studio copies it: the frame, then its location in brackets.</summary>
+    internal static string FrameText(CallStackRow row) => row.Location is { Length: > 0 } loc ? $"{row.Text}  [{loc}]" : row.Text;
+
+    public bool CanCopy => Model is { Rows.Count: > 0 };
+
+    /// <summary>Copy: the selected frame, or the whole stack of the thread when no frame is selected (a thread row).</summary>
+    public async Task CopyAsync()
+    {
+        if (Model is not { } model) return;
+        if (model.SelectedRow is { Kind: CallStackRowKind.Frame } frame && model.Window is { } window) await window.CopyToClipboardAsync(FrameText(frame));
+        else await model.CopyCallStackAsync();
+    }
+
     public CallStackView()
     {
         InitializeComponent();
@@ -76,9 +90,9 @@ public sealed partial class CallStackView : UserControl, IDisposable
                         this.FindControl<ListBox>("Rows")!.ScrollIntoView(owner);
                     }
                     break;
-                case Key.C when (e.KeyModifiers & KeyModifiers.Control) != 0:
+                case Key.C or Key.Insert when ClipboardKeys.Classify(e) == ClipboardAction.Copy:
                     e.Handled = true;
-                    await model.CopyCallStackAsync();
+                    await CopyAsync();
                     break;
             }
         }
@@ -95,7 +109,8 @@ public sealed partial class CallStackView : UserControl, IDisposable
             menu.Items.Add(new MenuItem { Header = "Switch To Frame", InputGesture = KeyGesture.Parse("Enter"), Command = new UiCommand(() => model.ActivateAsync(row, takeFocus: true)) });
             menu.Items.Add(new Separator());
         }
-        menu.Items.Add(new MenuItem { Header = "Copy Call Stack", InputGesture = KeyGesture.Parse("Ctrl+C"), Command = new UiCommand(model.CopyCallStackAsync) });
+        if (model.SelectedRow is { Kind: CallStackRowKind.Frame }) menu.Items.Add(new MenuItem { Header = "Copy", InputGesture = KeyGesture.Parse("Ctrl+C"), Command = new UiCommand(CopyAsync) });
+        menu.Items.Add(new MenuItem { Header = "Copy Call Stack", Command = new UiCommand(model.CopyCallStackAsync) });
         menu.Items.Add(new MenuItem
         {
             Header = "Show External Code",

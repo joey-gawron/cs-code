@@ -103,6 +103,8 @@ Numbers refer to the brief's MUST list.
     execution arrow + line highlight with auto-reveal, breakpoints that follow edits, hover-evaluate (`EvaluateAsync(expr, frameId, "hover")`).
 11. `AddCsCodeEditor`, this document.
 
+12. **Clipboard and the right-click menu** (clipboard wave, `docs/briefs/clipboard-and-context-menus.md`): see §7a.
+
 SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
 ## 4. Threading rules and how they are verified
@@ -167,7 +169,7 @@ Debug build, shared 22-core Linux machine; ranges are the spread of repeated run
 **Settings read live** (`IConfigurationService.Changed`; per-language `"[lang]": {…}` overrides through `GetRaw`; `.editorconfig` indent style/size win over settings as in VS Code):
 `editor.fontFamily`, `editor.fontSize`, `editor.lineHeightFactor`, `editor.tabSize`, `editor.insertSpaces`, `editor.wordWrap` (on/off), `editor.renderWhitespace` (`boundary` is treated as `all`), `editor.lineNumbers` (on/off), `editor.rulers`, `editor.mouseWheelZoom`, `editor.guides.indentation`,
 `editor.renderLineHighlight`, `editor.bracketPairColorization.enabled`, `editor.matchBrackets`, `editor.occurrencesHighlight`, `editor.folding`, `editor.quickSuggestions`, `editor.quickSuggestionsDelay`, `editor.suggestOnTriggerCharacters`, `editor.autoClosingBrackets/Quotes`, `editor.autoSurround`,
-`editor.formatOnSave/OnType/OnPaste`, `editor.hover.delay`, `editor.inlayHints.enabled`, `workbench.colorTheme`, `files.encoding`, `files.eol`, `files.insertFinalNewline`, `files.trimFinalNewlines`, `files.trimTrailingWhitespace`, `files.associations`, and the module's own `cscode.editor.undoLimit` (default 1000 groups),
+`editor.formatOnSave/OnType/OnPaste`, `editor.emptySelectionClipboard`, `editor.selectionClipboard`, `editor.autoIndentOnPaste`, `editor.autoIndent`, `editor.hover.delay`, `editor.inlayHints.enabled`, `workbench.colorTheme`, `files.encoding`, `files.eol`, `files.insertFinalNewline`, `files.trimFinalNewlines`, `files.trimTrailingWhitespace`, `files.associations`, and the module's own `cscode.editor.undoLimit` (default 1000 groups),
 `cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB), and the EXPERIMENTAL
 `editor.experimental.treeSitter` (false; registered with the configuration service; see docs/TREE-SITTER-EVALUATION.md).
 
@@ -175,13 +177,70 @@ Debug build, shared 22-core Linux machine; ranges are the spread of repeated run
 `sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.startFindReplace`, `workbench.action.gotoLine`, `editor.action.triggerSuggest`, `triggerParameterHints`, `quickFix`, `organizeImports`, `revealDefinition`, `goToDeclaration`, `goToTypeDefinition`,
 `goToImplementation`, `goToReferences`, `rename`, `formatDocument`, `formatSelection`, `editor.fold`, `foldRecursively`, `unfold`, `unfoldRecursively`, `toggleFold`, `foldAll`, `unfoldAll`, `editor.action.insertSnippet`, `editor.debug.action.toggleBreakpoint`.
 
+### 7a. Clipboard and the right-click menu
+
+`View/EditorClipboard.cs` (one per view, also in large-file mode) replaces AvaloniaEdit's Cut/Copy/Paste with Visual Studio's behaviours, computed by
+the pure `Editing/ClipboardOperations.cs` and applied as ONE undo unit:
+
+* **Whole lines**: Ctrl+C / Ctrl+X on a caret copy / cut the line with its line ending (`editor.emptySelectionClipboard`, default on); pasting such a
+  line inserts it above the caret's line, the caret staying on its own line. The clipboard text is plain; the "whole line" shape travels as CsCode
+  metadata (`ClipboardText.Shape`), which the shell's clipboard service hands back only while the clipboard still holds that exact text.
+* **Several carets** are the rows of a box selection (Alt+drag; a zero-width box is a column of carets, which is how this editor, without a
+  multi-caret model, expresses Visual Studio's multi-caret). Copy takes one piece per row (or each caret's whole line); a paste puts one line or
+  piece per row when the counts match, a single line into every row, else the whole text at each. The caret ends after the last row's paste.
+* **Box (column) selection** copies as a block (`Shape = Block`, one piece per row) and a block pastes as a block: row *i* at the caret's visual
+  column on line caret+*i* (tabs expanded), short lines padded with spaces, missing lines appended.
+* **Line endings** are converted to the document's EOL on paste (CRLF, CR, LF). Unicode is untouched (emoji, combining marks, RTL).
+* **Auto-indent on paste** (`editor.autoIndentOnPaste`, default on; off when `editor.autoIndent` is `none`; skipped above 512 KB): the lines
+  after the first keep their indentation relative to the copied line (`ClipboardText.SourceIndent`, else inferred from the text) and are
+  re-based where the paste lands (the caret's column when only whitespace precedes it, else the line's indentation); whole lines pasted above a
+  line get the indentation Enter would give there (the language rules). Then `editor.formatOnPaste` asks the language server for range
+  formatting of the pasted range, as its own undo step (Ctrl+Z first undoes the formatting, then the paste, as in Visual Studio).
+* **Clipboard ring**: Ctrl+Shift+V pastes the newest ring entry; pressing it again right away (caret still after it, nothing else edited)
+  replaces it in place with the next older one, cycling; the whole cycle is one undo step (a continued undo group). The ring itself is the shell's
+  (`IClipboardService.Ring`, 20 entries, in memory only).
+* **PRIMARY** (Linux, `editor.selectionClipboard`, default on there and off elsewhere): a non-empty selection is offered as PRIMARY once per UI
+  turn, lazily (the text is produced from the immutable snapshot only when someone pastes it); a middle-click moves the caret to the click and
+  inserts PRIMARY there (line endings converted, one undo step).
+* **Right-click** moves the caret to the click unless it lands inside the selection, and focuses the view.
+* **No waiting**: the UI thread starts a read and continues; a paste lands when the clipboard owner answered (the shell's service bounds the wait).
+  A 10 MB paste goes in whole (one `ApplyEdits`), one Ctrl+Z removes it. Copies and pastes of remote documents use the local clipboard.
+* Without the shell's `IClipboardService` (standalone), `Fallbacks/LocalClipboardService` uses the window's clipboard and an in-memory ring.
+
+**Right-click menu** (`View/EditorMenus.cs`): the editor contributes its menu to the shell through `IContributionRegistry` (`editor/context`), in
+Visual Studio 2022's wording and order: Quick Actions and Refactorings... (Ctrl+.), Rename... | Peek Definition, Go To Definition, Go To Declaration,
+Go To Implementation, Find All References | Breakpoint > (Insert Breakpoint / Delete Breakpoint, Disable / Enable Breakpoint, Conditions...), Run To
+Cursor (Ctrl+F10), Add Watch, QuickWatch... (Shift+F9) | Snippet > (Insert Snippet... Ctrl+K Ctrl+X, Surround With... Ctrl+K Ctrl+S) | Cut, Copy,
+Paste | Format Document, Format Selection, Comment Selection, Uncomment Selection | Command Palette.... Items that cannot apply are hidden: the
+language items follow VS Code's provider keys the editor keeps for the focused document (`editorHasCodeActionsProvider`, `editorHasRenameProvider`,
+`editorHasDefinitionProvider` and its declaration / type-definition / implementation siblings: one provider interface serves all four, so they
+come and go together, `editorHasReferenceProvider`, `editorHasDocumentFormattingProvider`, `editorHasDocumentSelectionFormattingProvider`); the
+debug items follow `inDebugMode` / `debugState` and the caret-line keys `cscode.editor.breakpointsAvailable`, `lineHasBreakpoint`,
+`lineBreakpointEnabled`, which the view sets when the menu is requested (`PrepareContextKeys`, O(1)); Cut/Copy follow `cscode.editor.canCutCopy`;
+Peek Definition stays hidden (not implemented). Rename enables when the server's prepareRename answers; Paste when the clipboard says it holds
+text (`EnablementCheck`, never awaited on the UI thread). Shift+F10, the Menu key and `editor.action.showContextMenu` open it at the caret
+(`IEditorViewController.GetCaretBounds`).
+
+Commands added: `editor.action.clipboardCutAction`, `clipboardCopyAction`, `clipboardPasteAction` (the shell's focus-following registration
+shadows these in the app; docs/SHELL.md), `cscode.editor.cycleClipboardRing`, `editor.action.showContextMenu`, `cscode.editor.insertSnippetPicker`,
+`editor.action.surroundWithSnippet`, `editor.debug.action.runToCursor` (a temporary breakpoint at the caret's line, then Continue, or Start when
+not debugging; removed at the next stop or when the session ends), `editor.debug.action.selectionToWatch` (Add Watch with the selection or the
+word at the caret, through the Debug panels' `debug.addToWatch`), `cscode.debug.quickWatch` (evaluates in the stopped frame, shows the value with
+an Add Watch action: a lighter QuickWatch, no tree), `debug.enableOrDisableBreakpoint` (Ctrl+F9), `editor.debug.action.conditionalBreakpoint`.
+Keys contributed (built-in, below the user's keybindings.json): Ctrl+X / Shift+Delete, Ctrl+C / Ctrl+Insert, Ctrl+V / Shift+Insert, Ctrl+Shift+V,
+Ctrl+F10, Shift+F9, Ctrl+F9, Ctrl+K Ctrl+S, Ctrl+K Ctrl+X. Contract additions (default members, so other implementations keep compiling):
+`IEditorViewController.CanCut/CanCopy/CanPaste`, `CutAsync/CopyAsync/PasteAsync`, `GetCaretBounds`, `PrepareContextMenu`.
+
+Tests: `ClipboardOperationsTests` (pure), `EditorClipboardViewTests` (keys, undo, ring, box, PRIMARY and middle-click, right-click, format on paste,
+read-only, a slow clipboard owner, 10 MB, contributions, context keys, Run To Cursor, retention), `RemoteClipboardTests`.
+
 **Large-file mode**: above `cscode.editor.largeFileThresholdBytes` (default 5 MB) or with a line longer than 20,000 characters the document's language is forced to `plaintext`, and its views get no tokenisation, folding, squiggles, bracket matching or any other language feature (just text); files over 200 MB are refused with a clear `FileTooLargeException` message.
 
 ## 8. Known gaps (honest list)
 
 Not done, or done only in part — none of this is faked:
 
-* **Multi-cursor** (Alt+Click, Ctrl+Alt+Up/Down, Ctrl+D) is not implemented: AvaloniaEdit has no multi-caret model and the stretch goal was not attempted. Rectangular selection (AvaloniaEdit's own) works.
+* **Multi-cursor** (Alt+Click, Ctrl+Alt+Up/Down, Ctrl+D) is not implemented: AvaloniaEdit has no multi-caret model and the stretch goal was not attempted. Rectangular selection (AvaloniaEdit's own) works, and its rows act as carets for the clipboard (§7a); after a paste into several rows a single caret remains.
 * **Minimap, sticky scroll, code lens, semantic-token overlay, Alt+F12 peek, overview-ruler markers on the scrollbar** are not implemented (settings for them are read but have no effect).
 * `editor.cursorStyle`, `editor.cursorBlinking`, `editor.smoothScrolling` and font ligatures are not applied (AvaloniaEdit offers no equivalent; ligatures stay off). `editor.wordWrap` supports on/off only. Drag-and-drop of text is AvaloniaEdit's own behaviour; bidirectional text and IME composition were not tested.
 * **Typing allocation**: the TextMate colorizer allocates per token on the edited line (§6). A single pre-merged element list would cut it; not done.

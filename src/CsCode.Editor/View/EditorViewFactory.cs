@@ -50,9 +50,24 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
 
         // Snippets are offered through the same registry as language-server completions, so the popup merges them with the same code.
         _disposables.Add(services.Features.Register<ICompletionProvider>(DocumentSelector.All, new SnippetCompletionProvider(snippets), "cscode.snippets"));
-        if (services.Commands is { } commands) _disposables.Add(EditorCommands.Register(this, commands));
-        // keep context keys current for when-clauses (editorTextFocus, editorLangId, …)
+        if (services.Commands is { } commands)
+        {
+            _disposables.Add(EditorCommands.Register(this, commands));
+            // The right-click menu's items, its submenus and the clipboard keys: the shell builds menus from these, it does not know them.
+            _disposables.Add(EditorMenus.Contribute(this, services.Contributions));
+        }
+        // Capability context keys (editorHasRenameProvider, ...) follow servers that come and go.
+        _disposables.Add(services.Features.ProvidersChanged.Subscribe(_ => services.Ui.Post(() =>
+        {
+            if (ActiveView is { IsDisposed: false } view) UpdateCapabilityKeys(view);
+        })));
     }
+
+    private Fallbacks.LocalClipboardService? _localClipboard;
+
+    /// <summary>The shell's clipboard service, or (standalone) the clipboard of the window the active view is in.</summary>
+    internal IClipboardService Clipboard => Services.Clipboard
+        ?? (_localClipboard ??= new Fallbacks.LocalClipboardService(() => ActiveView is { } v ? Avalonia.Controls.TopLevel.GetTopLevel(v) : null));
 
     internal EditorServices Services { get; }
     internal LanguageService Languages { get; }
@@ -209,6 +224,32 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         keys.Set("editorReadonly", view.Document.IsReadOnly);
         keys.Set("resourceExtname", Path.GetExtension(view.Document.Uri.IsFile ? view.Document.Uri.LocalPath : view.Document.Uri.AbsolutePath));
         keys.Set("resourceScheme", view.Document.Uri.Scheme);
+        UpdateCapabilityKeys(view);
+        EditorMenus.PrepareContextKeys(view);
+    }
+
+    /// <summary>
+    /// VS Code's provider context keys for the focused view's document (registry lookups only). The definition provider interface serves
+    /// definition, declaration, type definition and implementation alike, so those four keys go together.
+    /// </summary>
+    internal void UpdateCapabilityKeys(CodeEditorControl view)
+    {
+        if (Services.ContextKeys is not { } keys) return;
+        var doc = view.Document;
+        var features = Services.Features;
+        var large = doc.IsLargeFile;
+        bool Has<T>() where T : class, ILanguageProvider => !large && features.GetProviders<T>(doc).Count > 0;
+        var definition = Has<IDefinitionProvider>();
+        var formatting = Has<IDocumentFormattingProvider>();
+        keys.Set("editorHasCodeActionsProvider", Has<ICodeActionProvider>());
+        keys.Set("editorHasRenameProvider", Has<IRenameProvider>());
+        keys.Set("editorHasDefinitionProvider", definition);
+        keys.Set("editorHasDeclarationProvider", definition);
+        keys.Set("editorHasTypeDefinitionProvider", definition);
+        keys.Set("editorHasImplementationProvider", definition);
+        keys.Set("editorHasReferenceProvider", Has<IReferenceProvider>());
+        keys.Set("editorHasDocumentFormattingProvider", formatting);
+        keys.Set("editorHasDocumentSelectionFormattingProvider", formatting);
     }
 
     /// <summary>The per-view feature components (completion, hover, diagnostics, folding…), created by the control after its core is up.</summary>

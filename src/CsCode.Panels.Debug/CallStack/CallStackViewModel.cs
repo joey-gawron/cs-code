@@ -501,6 +501,9 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
         return string.Join(Environment.NewLine, model.Frames.Select(f => LocationOf(f) is { Length: > 0 } loc ? $"{f.Name}  [{loc}]" : f.Name));
     }
 
+    /// <summary>The window service (Copy of one frame), null when none is registered.</summary>
+    internal Core.Platform.IWindowService? Window => _s.Window;
+
     public async Task CopyCallStackAsync()
     {
         if (_s.Window is { } window) await window.CopyToClipboardAsync(GetCallStackText());

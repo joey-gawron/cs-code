@@ -47,6 +47,48 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
         _d.Add(view.Document.Changed.Subscribe(_ => OnDocumentChanged()));
         _d.Add(view.Controller.CaretChanged.Subscribe(_ => OnCaretChanged()));
         _d.Add(Disposable.Create(() => view.TextArea.RemoveHandler(InputElement.KeyDownEvent, OnKeyDown)));
+        _d.Add(view.Factory.Snippets.Changed.Subscribe(language => view.Post(() => _ = RefreshSurroundAsync())));
+        _d.Add(view.Document.LanguageIdChanged.Subscribe(document => view.Post(() => _ = RefreshSurroundAsync())));
+        _ = RefreshSurroundAsync();
+    }
+
+    // ---- snippet pickers (Insert Snippet, Surround With) ----
+
+    private volatile bool _hasSurround;
+
+    public bool HasSurroundSnippets => _hasSurround;
+
+    private static bool Surrounds(SnippetDefinition s) =>
+        s.Body.Contains("TM_SELECTED_TEXT", StringComparison.Ordinal) || s.Body.Contains("$SELECTION", StringComparison.Ordinal) || s.Body.Contains("${SELECTION", StringComparison.Ordinal);
+
+    // The first lookup of a language parses its snippet files: never on the UI thread (the menu reads the cached answer).
+    private async Task RefreshSurroundAsync()
+    {
+        var language = _v.Document.LanguageId;
+        var snippets = _v.Factory.Snippets;
+        var has = await Task.Run(() => snippets.GetSnippets(language).Any(Surrounds)).ConfigureAwait(true);
+        if (!_disposed && language == _v.Document.LanguageId) _hasSurround = has;
+    }
+
+    public async Task PickAndInsertAsync(bool surround)
+    {
+        if (_disposed || _v.Document.IsReadOnly || _v.Services.Window is not { } window) return;
+        var language = _v.Document.LanguageId;
+        var snippets = _v.Factory.Snippets;
+        var all = await Task.Run(() => snippets.GetSnippets(language).Where(s => !surround || Surrounds(s)).OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToArray()).ConfigureAwait(true);
+        if (_disposed) return;
+        if (all.Length == 0)
+        {
+            FeatureSupport.Status(_v, surround ? "There are no surround snippets for this language" : "There are no snippets for this language");
+            return;
+        }
+        var target = _v.Controller.Selections[0]; // remembered: the picker takes the focus
+        var version = _v.Document.Version;
+        var items = all.Select(s => new QuickPickItem(s.Prefixes.FirstOrDefault() ?? s.Name, s.Name, s.Description, Tag: s)).ToArray();
+        var picked = await window.ShowQuickPickAsync(items, new QuickPickOptions(Title: surround ? "Surround With" : "Insert Snippet", Placeholder: "Select a snippet", MatchOnDescription: true)).ConfigureAwait(true);
+        if (_disposed || picked?.Tag is not SnippetDefinition chosen) return;
+        _v.Controller.Focus();
+        await InsertAsync(chosen.Body, _v.Document.Version == version ? target : null).ConfigureAwait(true);
     }
 
     public bool IsActive => _stops is not null;

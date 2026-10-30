@@ -68,7 +68,8 @@ public sealed class MainWindow : Window, IWindowChrome
         _titleBar = new TitleBarView(this, _shell.Menus, commands, showCaptionButtons: useCustomChrome);
         _toolbar = new ToolbarView(commands, keys, ui, _sp.GetService<IKeybindingService>(), _sp.GetService<IDebugService>(),
             _sp.GetService<Core.Theming.IColorThemeService>(), _sp.GetService<IConfigurationService>());
-        _status = new StatusBarView(_sp.GetRequiredService<IStatusBarService>(), commands, keys, ui);
+        _status = new StatusBarView(_sp.GetRequiredService<IStatusBarService>(), commands, keys, ui, _sp.GetService<IWindowService>(),
+            new Ui.Menus.MenuServices(commands, keys, _sp.GetService<IKeybindingService>(), _sp.GetService<Core.Contributions.IContributionRegistry>()));
 
         var dock = BuildDock();
 
@@ -107,6 +108,8 @@ public sealed class MainWindow : Window, IWindowChrome
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
         AddHandler(GotFocusEvent, OnGotFocus, RoutingStrategies.Bubble | RoutingStrategies.Tunnel);
+        _disposables.Add(_shell.ContextMenus.Attach(this));
+        _disposables.Add(_shell.Clipboard.Attach(this));
         Closing += OnClosing;
         Opened += OnOpened;
 

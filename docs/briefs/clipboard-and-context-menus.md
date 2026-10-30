@@ -95,3 +95,20 @@ merge main into it first.
 ## Done when
 Every item above works on the real window (screenshots of the editor menu, a tab menu, and a paste from Kate); all tests are green; everything is
 committed without attribution trailers.
+
+## Status (clipboard and context-menus wave, branch `worktree-wf_583605c3-334-2`)
+Built: A1-A6 and B1-B4 except the items below; details in `docs/SHELL.md` (*Clipboard*, *Right-click menus*) and `docs/EDITOR.md` (§7a).
+* **Left for after the Vim branch lands on main** (agreed between sessions: the Vim adapter backs `+` and `*` with CLIPBOARD meanwhile):
+  the additive `IVimHost` overloads `ReadClipboard(char register)` / `WriteClipboard(char register, string text, VimRegisterType type)` (defaults
+  calling the current members; the Vim engine's tests must stay green), then the Vim host maps `*` to PRIMARY through
+  `IClipboardService.ReadPrimarySelectionAsync` / `SetPrimarySelection` (`+` stays CLIPBOARD, through `IClipboardService.ReadAsync` /
+  `WriteAsync`, which also keeps CsCode's shape metadata and the ring). Also for the Vim session: the editor now contributes built-in keybindings
+  for Ctrl+C/X/V, Ctrl+Insert, Shift+Insert, Shift+Delete, Ctrl+Shift+V (`editorTextFocus`); if Vim routes keys after the window's keymap, it
+  must win those keys back (as VSCodeVim does with higher-precedence bindings), like the Ctrl+letter keys the Visual Studio preset already binds.
+* **Not done**: Float in the tab and tool-window menus (the shell has no floating host windows); Copy with formatting (SHOULD; the service can
+  write `text/html`, nothing renders the HTML yet); the terminal's clipboard (no terminal); a native Wayland primary selection (CsCode runs
+  through XWayland; KWin bridges PRIMARY); Peek Definition (not implemented, item hidden); QuickWatch is a lighter take (value in a notification
+  with Add Watch, no tree).
+* **Integrator's real-desktop check** (not verifiable headless): copy from Kate into CsCode and back, Konsole and Firefox both ways, PRIMARY with
+  middle-click across Wayland and XWayland; screenshots of the editor menu, a tab menu and a paste from Kate. The same round trips were run
+  against a second X client on a private Xvfb (`RealWindowClipboardTests`, `X11SelectionTests`); no xclip/xsel/wl-clipboard is installed.

@@ -64,6 +64,8 @@ public sealed class ShellController : IDisposable
     public MenuModel Menus { get; private set; } = null!;
     public LayoutPersistence Layout { get; private set; } = null!;
     public ShellStatusItems StatusItems { get; private set; } = null!;
+    public ClipboardRouter Clipboard { get; private set; } = null!;
+    public ShellContextMenus ContextMenus { get; private set; } = null!;
     public ShellDockFactory Factory => _sp.GetRequiredService<ShellDockFactory>();
     public DocumentWell Well => _sp.GetRequiredService<DocumentWell>();
     public ToolWindowManager Tools => _sp.GetRequiredService<ToolWindowManager>();
@@ -136,6 +138,13 @@ public sealed class ShellController : IDisposable
 
         Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs, id => Tools.IsVisible(id));
         _disposables.Add(Menus);
+        // Edit > Cut/Copy/Paste follow keyboard focus; right-click menus (editor, tabs, tool windows) are built from contributions.
+        Clipboard = new ClipboardRouter(commands, keys, well, () => _sp.GetService<WindowHolder>()?.Window);
+        _disposables.Add(Clipboard);
+        Menus.Refreshing = Clipboard.UpdateKeys;
+        ContextMenus = new ShellContextMenus(well, Tools, Factory, new Ui.Menus.MenuServices(commands, keys, _sp.GetService<IKeybindingService>(), _sp.GetService<Core.Contributions.IContributionRegistry>()),
+            window, workspace);
+        _disposables.Add(ContextMenus);
         _disposables.Add(Tools.VisibilityChanged.Subscribe(_ => Menus.ScheduleRefresh()));
 
         StatusItems = new ShellStatusItems(_sp.GetRequiredService<IStatusBarService>(), _ui, nav, _sp.GetRequiredService<NotificationCenter>(), config,

@@ -72,6 +72,9 @@ public sealed class CodeEditorControl : UserControl, IDisposable
 
         Editor.TextArea.IndentationStrategy = new LanguageIndentationStrategy(this);
         _components.Add(new TypingBehaviors(this));
+        // Clipboard behaviour exists in large-file mode too (it is not a language feature).
+        Clipboard = new EditorClipboard(this);
+        _components.Add(Clipboard);
         _components.Add(new EditorChromeRenderers(this));
         foreach (var feature in _factory.CreateFeatures(this)) _components.Add(feature);
 
@@ -87,6 +90,10 @@ public sealed class CodeEditorControl : UserControl, IDisposable
             if (id == Document.LanguageId) Post(OnSettingsChanged);
         }));
 
+        // The editor's right-click menu is built by the host (the shell) from contributions; the routed request passes this view first, which
+        // brings the caret-dependent context keys up to date (breakpoint at the line, can copy...), so building the menu never waits.
+        AddHandler(ContextRequestedEvent, OnContextRequested, RoutingStrategies.Bubble);
+        _disposables.Add(Disposable.Create(() => RemoveHandler(ContextRequestedEvent, OnContextRequested)));
         Editor.TextArea.GotFocus += OnTextAreaGotFocus;
         Editor.TextArea.Caret.PositionChanged += OnCaretChanged;
         Editor.TextArea.SelectionChanged += OnSelectionChanged;
@@ -120,6 +127,21 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     internal TextArea TextArea => Editor.TextArea;
     internal TextView TextView => Editor.TextArea.TextView;
     internal bool IsDisposed => _disposed;
+    /// <summary>Cut/Copy/Paste, the clipboard ring, PRIMARY and middle-click paste of this view.</summary>
+    internal EditorClipboard Clipboard { get; }
+
+    /// <summary>Opens the editor's context menu at the caret (Shift+F10, the Menu key, the <c>editor.action.showContextMenu</c> command).</summary>
+    internal void ShowContextMenu() => TextArea.RaiseEvent(new ContextRequestedEventArgs());
+
+    /// <summary>The caret's rectangle in this control's coordinates (where a keyboard-opened menu appears).</summary>
+    internal Rect CaretBounds()
+    {
+        var caret = TextArea.Caret.CalculateCaretRectangle();
+        var origin = TextView.TranslatePoint(new Point(caret.X - TextView.ScrollOffset.X, caret.Y - TextView.ScrollOffset.Y), this) ?? default;
+        return new Rect(origin, new Size(Math.Max(1, caret.Width), Math.Max(1, caret.Height)));
+    }
+
+    private void OnContextRequested(object? sender, ContextRequestedEventArgs e) => EditorMenus.PrepareContextKeys(this);
 
     // ---- helpers used by components ----
 

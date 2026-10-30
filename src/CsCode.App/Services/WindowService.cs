@@ -28,10 +28,14 @@ public sealed class WindowService : IWindowService
     private readonly IStatusBarService _status;
     private readonly IShellHost _host;
     private readonly TimeProvider _time;
+    private readonly IClipboardService? _clipboard;
     private int _progressSeq;
 
-    public WindowService(IUiDispatcher ui, NotificationCenter notifications, QuickInputViewModel quick, IStatusBarService status, IShellHost host, TimeProvider? time = null)
+    /// <param name="clipboard">When registered, copies go through it (clipboard ring); otherwise straight to the host's clipboard.</param>
+    public WindowService(IUiDispatcher ui, NotificationCenter notifications, QuickInputViewModel quick, IStatusBarService status, IShellHost host, TimeProvider? time = null,
+        IClipboardService? clipboard = null)
     {
+        _clipboard = clipboard;
         _ui = ui;
         _notifications = notifications;
         _quick = quick;
@@ -114,7 +118,7 @@ public sealed class WindowService : IWindowService
 
     public ValueTask<bool> OpenExternalAsync(Uri uri) => _host.LaunchAsync(uri);
 
-    public ValueTask CopyToClipboardAsync(string text) => _host.CopyTextAsync(text);
+    public ValueTask CopyToClipboardAsync(string text) => _clipboard is { } clipboard ? clipboard.WriteAsync(ClipboardText.Plain(text)) : _host.CopyTextAsync(text);
 
     private sealed class ProgressReporter(IUiDispatcher ui, NotificationItem item, int id) : IProgressReporter
     {
