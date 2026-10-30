@@ -112,8 +112,8 @@ public sealed class ToolWindowManager : IDisposable
     /// editor): on the element the view prefers (<see cref="IToolWindowFocus"/>), else on its first content element in tab order (never a button,
     /// splitter or drop-down, see <see cref="FirstContentElement"/>), else, for a view with nothing else that can take it, on its host
     /// (<see cref="ToolTab.FocusHost"/>). <see cref="Show"/> only creates the view and Dock presents it on a later layout pass, so this runs after
-    /// layout and waits (bounded) until the view is on screen. Nothing happens when the tool was hidden meanwhile or a later request superseded
-    /// this one.
+    /// layout and waits (bounded) until the view is on screen and has its content (<see cref="IToolWindowFocus.ContentPending"/>: the rows of an
+    /// Explorer just created). Nothing happens when the tool was hidden meanwhile or a later request superseded this one.
     /// </summary>
     public void FocusView(string id)
     {
@@ -125,14 +125,15 @@ public sealed class ToolWindowManager : IDisposable
     private void FocusWhenShown(ToolTab t, int request, int attempt)
     {
         if (request != _focusRequest || t.LiveView is not { } view) return;
-        if (view.IsAttachedToVisualTree() && view.IsEffectivelyVisible)
+        var shown = view.IsAttachedToVisualTree() && view.IsEffectivelyVisible;
+        if (!shown || view is IToolWindowFocus { ContentPending: true })
         {
-            if (view is IToolWindowFocus own && own.FocusPreferred()) return;
-            if (FirstContentElement(view)?.Focus() == true) return;
-            t.FocusHost();
-            return;
+            if (attempt < 20) { DispatcherTimer.RunOnce(() => FocusWhenShown(t, request, attempt + 1), TimeSpan.FromMilliseconds(25)); return; }
+            if (!shown) return; // content still pending at the bound: what the view has now
         }
-        if (attempt < 20) DispatcherTimer.RunOnce(() => FocusWhenShown(t, request, attempt + 1), TimeSpan.FromMilliseconds(25));
+        if (view is IToolWindowFocus own && own.FocusPreferred()) return;
+        if (FirstContentElement(view)?.Focus() == true) return;
+        t.FocusHost();
     }
 
     /// <summary>

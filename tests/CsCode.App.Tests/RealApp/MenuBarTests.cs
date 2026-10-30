@@ -219,6 +219,34 @@ public class MenuBarTests
         Assert.False(editor.Controller.IsFocused);
     }
 
+    // Found in review: reopening a closed Explorer, the item's main use, left the keyboard nowhere. Dock lays the new view out a pass later, by
+    // when the folder's root row is there and takes the keyboard; then the root's children arrive as one bulk change (a Reset), which recycles
+    // every row, the focused one too, and Avalonia moves the keyboard to nothing: the arrows, Enter and typing went nowhere, where before the
+    // item it was at least in the editor. When Dock was quicker than the folder's first load, there was no row yet and the keyboard went to the
+    // filter box instead.
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task View_Tool_Windows_Explorer_reopened_keeps_the_keyboard_on_a_row_while_its_folder_loads()
+    {
+        await using var host = RealAppHost.Create(h => { h.Files.WriteFile("a.txt", "alpha beta\n"); h.Files.WriteFile("b.txt", "gamma\n"); });
+        await host.StartAsync([host.Files.Path]);
+        var editor = await host.Shell.Well.OpenAsync(new Uri(host.Files.Combine("a.txt")));
+        Assert.True(await RealAppHost.WaitFor(() => editor.Controller is not null && editor.LiveView!.IsAttachedToVisualTree()));
+        host.Shell.Tools.Hide("explorer");
+        await DevScene.SettleAsync(10);
+        Assert.Null(host.Shell.Tools.Get("explorer")!.LiveView); // closed: the item creates its view and loads the folder again
+        editor.Controller!.Focus();
+
+        await ClickToolWindowItemAsync(host, "Explorer");
+
+        var explorer = host.Shell.Tools.Get("explorer")!;
+        Assert.True(await RealAppHost.WaitFor(() => explorer.LiveView?.GetVisualDescendants().OfType<ListBoxItem>()
+            .Any(r => r.IsEffectivelyVisible && r.DataContext is ToolWindows.Explorer.ExplorerNode { Name: "b.txt" }) == true), "the folder's files never showed");
+        await DevScene.SettleAsync(10);
+        var focused = host.Window.FocusManager?.GetFocusedElement();
+        Assert.True(focused is ListBoxItem row && explorer.LiveView!.IsVisualAncestorOf(row), $"the keyboard is on {Focused(host)}");
+        Assert.False(editor.Controller.IsFocused);
+    }
+
     // Found in review: with no line (an empty channel, or after Clear Output) the Output window has no row to take the keyboard, and tab order
     // put it on the channel picker, where Down switched the channel and a letter searched the channels. Visual Studio puts it in the window.
     [AvaloniaFact(Timeout = 60_000)]
@@ -272,6 +300,49 @@ public class MenuBarTests
         var chrome = host.Shell.Tools.Get("test.chrome")!;
         Assert.True(await RealAppHost.WaitFor(() => (chrome.LiveView?.Parent as Control)?.IsKeyboardFocusWithin == true), $"the keyboard is on {Focused(host)}");
         Assert.Same(chrome.LiveView!.Parent, host.Window.FocusManager?.GetFocusedElement()); // the window itself, not one of its buttons
+    }
+
+    // Found in review: an Explorer just created has no row until its folder loads, after its first frame; when Dock laid the view out first, the
+    // shell asked it at once, it found no row, and tab order put the keyboard in its filter box. A view whose content is pending is asked once it
+    // has come.
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task View_Tool_Windows_asks_a_view_whose_content_is_pending_once_it_has_come_instead_of_falling_back_to_tab_order()
+    {
+        await using var host = await RealAppHost.Create(h => h.Files.WriteFile("a.txt", "alpha beta\n")).StartAsync([], s =>
+            s.AddSingleton<CsCode.Ui.IToolWindow>(new PendingContentTool()));
+        var editor = await host.Shell.Well.OpenAsync(new Uri(host.Files.Combine("a.txt")));
+        Assert.True(await RealAppHost.WaitFor(() => editor.Controller is not null && editor.LiveView!.IsAttachedToVisualTree()));
+        editor.Controller!.Focus();
+
+        await ClickToolWindowItemAsync(host, "Pending Content");
+
+        var view = Assert.IsType<PendingContentView>(host.Shell.Tools.Get("test.pending")!.LiveView);
+        Assert.True(await RealAppHost.WaitFor(() => view.IsAttachedToVisualTree() && view.IsEffectivelyVisible));
+        await DevScene.SettleAsync(5);
+        Assert.False(view.Filter.IsFocused, "the keyboard went to the filter box while the content was on its way");
+        view.Content.IsVisible = true; // the content comes
+        Assert.True(await RealAppHost.WaitFor(() => view.Content.IsFocused), $"the keyboard is on {Focused(host)}");
+    }
+
+    private sealed class PendingContentTool : CsCode.Ui.IToolWindow
+    {
+        public string Id => "test.pending";
+        public string Title => "Pending Content";
+        public string? IconKey => "files";
+        public CsCode.Ui.ToolWindowLocation DefaultLocation => CsCode.Ui.ToolWindowLocation.Bottom;
+        public string? ToggleCommandId => "test.toggle.pending";
+        public string? AutoShowWhen => null;
+        public Control CreateView(IServiceProvider services) => new PendingContentView();
+    }
+
+    /// <summary>As the Explorer: a filter box (first in tab order), then the content it prefers, which comes after the view is shown.</summary>
+    private sealed class PendingContentView : StackPanel, CsCode.Ui.IToolWindowFocus
+    {
+        public TextBox Filter { get; } = new() { Name = "Filter" };
+        public TextBox Content { get; } = new() { Name = "Content", IsVisible = false };
+        public PendingContentView() { Children.Add(Filter); Children.Add(Content); }
+        public bool FocusPreferred() => Content.IsVisible && Content.Focus();
+        public bool ContentPending => !Content.IsVisible;
     }
 
     /// <summary>

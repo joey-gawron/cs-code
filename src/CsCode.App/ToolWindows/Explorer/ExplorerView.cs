@@ -65,6 +65,7 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
         _list.DoubleTapped += (_, e) => { if (_list.SelectedItem is ExplorerNode n && !n.IsDirectory) _ = _vm.OpenAsync(n, preview: false); };
         _list.Tapped += OnTapped;
         _list.ContextRequested += OnContextRequested;
+        ToolWindowFocus.KeepOnRows(_list); // every expand and collapse replaces the rows (one Reset), the focused one too
 
         var empty = EmptyState();
         empty.Bind(IsVisibleProperty, new Avalonia.Data.Binding(nameof(ExplorerViewModel.HasFolder)) { Converter = Avalonia.Data.Converters.BoolConverters.Not });
@@ -189,9 +190,14 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
 
     /// <summary>
     /// View &gt; Tool Windows &gt; Explorer, as Solution Explorer: the keyboard on the selected row (else one on screen), where the arrows, Enter and
-    /// F2 work, not on the New File button that leads the tab order. Without a folder there is no row (the shell falls back to tab order).
+    /// F2 work, not on the New File button that leads the tab order. Without a folder there is no row (the shell falls back to tab order). An
+    /// Explorer just reopened has no row at first (<see cref="ContentPending"/>), then its root row: the folder's rows replace it as they load,
+    /// and the keyboard stays on them (<see cref="ToolWindowFocus.KeepOnRows"/>).
     /// </summary>
     public bool FocusPreferred() => ToolWindowFocus.FocusRow(_list);
+
+    /// <summary>The folder's rows load after the view's first frame (<see cref="ExplorerToolWindow"/>): until then there is no row to focus.</summary>
+    public bool ContentPending => _vm.RootsPending;
 
     // ---- clipboard: like Solution Explorer, Cut/Copy/Paste move and copy the FILES (Copy Path puts the path on the system clipboard)
 

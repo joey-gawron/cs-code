@@ -1,4 +1,6 @@
 using Avalonia.Controls;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 
 namespace CsCode.Ui;
 
@@ -38,15 +40,22 @@ public interface IToolWindow
 /// View &gt; Tool Windows activates the window: its list, tree or input, not the first button of its toolbar or the splitter of its column header,
 /// which is where tab order alone would put it. A view without it, or whose <see cref="FocusPreferred"/> finds nothing, gets the keyboard on its
 /// first focusable element in tab order that is not a button, a GridSplitter or a ComboBox (with none, the window itself takes it). Called on the
-/// UI thread once the view is laid out.
+/// UI thread once the view is laid out and its content has come (<see cref="ContentPending"/>).
 /// </summary>
 public interface IToolWindowFocus
 {
     /// <summary>Focuses the view's main element; false when nothing of it can take the keyboard now (the shell then falls back to tab order).</summary>
     bool FocusPreferred();
+
+    /// <summary>
+    /// True while what <see cref="FocusPreferred"/> would focus is still on its way: an Explorer just created has no row until its folder loads,
+    /// after its first frame. The shell then waits, as (and as long as) it waits for Dock to lay the view out, before it asks; asked at once, the
+    /// view found nothing and tab order put the keyboard in the Explorer's filter box. False by default.
+    /// </summary>
+    bool ContentPending => false;
 }
 
-/// <summary>Building blocks of <see cref="IToolWindowFocus.FocusPreferred"/>.</summary>
+/// <summary>Building blocks of <see cref="IToolWindowFocus.FocusPreferred"/>, and of keeping the keyboard where it put it.</summary>
 public static class ToolWindowFocus
 {
     /// <summary>
@@ -60,4 +69,23 @@ public static class ToolWindowFocus
         var row = (list.SelectedItem is { } selected ? list.ContainerFromItem(selected) : null) ?? list.GetRealizedContainers().FirstOrDefault();
         return row?.Focus() == true;
     }
+
+    /// <summary>
+    /// Keeps the keyboard on <paramref name="list"/>'s rows when a change of its items takes it away. A bulk change (one Reset, which
+    /// <see cref="Collections.BulkObservableCollection{T}"/> raises for every range it inserts or removes) recycles every realized row, the
+    /// focused one too, and Avalonia then leaves the keyboard on nothing, where the arrows, Enter and typing go nowhere: in the Explorer, each
+    /// folder expanded or collapsed (clicked, or loading its children after View &gt; Tool Windows put the keyboard on the root) did that. Once
+    /// the rows are laid out again, <see cref="FocusRow"/> gives it back: the selected row, else the first on screen. Not when something else
+    /// has taken the keyboard meanwhile, nor when the list left the screen (its window hidden): only a row that lost it to nothing.
+    /// </summary>
+    public static void KeepOnRows(ListBox list) => list.LostFocus += (_, e) =>
+    {
+        if (e.NewFocusedElement is not (null or TopLevel)) return; // moved on: the user's or a command's doing
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!list.IsAttachedToVisualTree() || TopLevel.GetTopLevel(list)?.FocusManager is not { } focus || focus.GetFocusedElement() is not (null or TopLevel)) return;
+            list.UpdateLayout(); // the rows of the new items
+            FocusRow(list);
+        }, DispatcherPriority.Loaded);
+    };
 }

@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CsCode.App.Notifications;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.App.ToolWindows.Explorer;
@@ -95,6 +98,39 @@ public class ExplorerTests
         using var second = new ExplorerViewModel(rig.Workspace, AvaloniaUiDispatcher.Instance, null, rig.Config, rig.State, rig.Dialogs);
         await second.RefreshRootsAsync();
         Assert.Contains(second.Rows, r => r.Name == "c.txt");
+    }
+
+    // Found in review (View > Tool Windows > Explorer on a closed Explorer): every expand and collapse replaces the rows in one bulk change (a
+    // Reset), which recycles every row on screen, the focused one too, and Avalonia left the keyboard on nothing; after a click on a folder, or
+    // its children loading under a focused root, the arrows, Enter and typing went nowhere. The view gives it back to a row.
+    [AvaloniaFact]
+    public async Task Expanding_or_collapsing_a_folder_keeps_the_keyboard_on_the_rows()
+    {
+        using var rig = new Rig();
+        rig.Dir.WriteFile("a/inner.txt", "");
+        rig.Dir.WriteFile("top.txt", "");
+        await rig.OpenAsync();
+        var view = new ExplorerView(rig.Vm, new RecordingWindowService());
+        var window = new Window { Width = 300, Height = 400, Content = view };
+        using var close = CsCode.Core.Lifecycle.Disposable.Create(window.Close);
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        ListBoxItem? Row(string name) => view.GetVisualDescendants().OfType<ListBoxItem>()
+            .FirstOrDefault(r => r.IsEffectivelyVisible && r.DataContext is ExplorerNode n && n.Name == name);
+        var a = rig.Vm.Rows.Single(r => r.Name == "a");
+        rig.Vm.Selected = a;
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(Row("a")?.Focus());
+
+        await rig.Vm.ToggleAsync(a); // what a click on the folder does
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotNull(Row("inner.txt"));
+        Assert.Same(Row("a"), window.FocusManager!.GetFocusedElement());
+
+        rig.Vm.Collapse(a);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(Row("inner.txt"));
+        Assert.Same(Row("a"), window.FocusManager!.GetFocusedElement());
     }
 
     [AvaloniaFact]
