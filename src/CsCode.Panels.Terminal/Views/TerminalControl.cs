@@ -46,6 +46,7 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
     private bool _mouseButtonHeld;
     private int _mouseButton;
     private bool _suppressText;
+    private long _suppressGeneration;
     private bool _cursorOn = true;
     private DispatcherTimer? _blink;
     private string? _preedit;
@@ -237,8 +238,15 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
         if (bytes is null) return false;
         var interrupt = bytes is [0x03] or [0x1c] or [0x1a];
         s.Input(bytes, urgent: interrupt);
-        // a handled Ctrl/Alt combination must not also arrive as text (some platforms send both)
+        // A handled Ctrl/Alt combination must not also arrive as text (some platforms send both: macOS's Option+B is followed by "∫"). Only
+        // that key's own text, which comes right behind its KeyDown: the flag ends with the key's KeyUp or on the next dispatcher turn, so
+        // text that arrives later without a KeyDown of its own (an input method's commit on Linux) is never swallowed.
         _suppressText = (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Alt)) != 0;
+        if (_suppressText)
+        {
+            var generation = ++_suppressGeneration;
+            Dispatcher.UIThread.Post(() => { if (_suppressGeneration == generation) _suppressText = false; }, DispatcherPriority.Background);
+        }
         ClearSelectionOnInput();
         ResetBlink();
         return true;
@@ -255,6 +263,12 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
             return;
         }
         if (HandleKey(e)) e.Handled = true;
+    }
+
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        base.OnKeyUp(e);
+        _suppressText = false; // the key's own text came before its release, or not at all
     }
 
     protected override void OnTextInput(TextInputEventArgs e)
@@ -287,7 +301,8 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
         _runtime.SetTerminalFocus(true, this);
         // clicking (or tabbing) into a split pane makes its terminal the active one: keys, commands and Find act on it
         if (_session is { IsDisposed: false } focused && !ReferenceEquals(_runtime.Service.ActiveSession, focused)) _runtime.Service.SetActive(focused);
-        if (_session is { } s && s.Modes.FocusEvents) s.Report(KeyEncoder.Focus(true));
+        // a focus report is not the user's input: a scrolled-back view stays where it is (xterm.js)
+        if (_session is { } s && s.Modes.FocusEvents) s.Report(KeyEncoder.Focus(true), scrollToBottom: false);
         StartBlink();
         InvalidateVisual();
     }
@@ -296,7 +311,7 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
     {
         base.OnLostFocus(e);
         _runtime.SetTerminalFocus(false, this);
-        if (_session is { } s && s.Modes.FocusEvents) s.Report(KeyEncoder.Focus(false));
+        if (_session is { } s && s.Modes.FocusEvents) s.Report(KeyEncoder.Focus(false), scrollToBottom: false);
         StopBlink();
         InvalidateVisual();
     }

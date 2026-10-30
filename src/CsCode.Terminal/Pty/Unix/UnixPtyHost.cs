@@ -39,8 +39,12 @@ public sealed unsafe class UnixPtyHost : IPtyHost
     private volatile bool _slaveGone;
     private int _references; // threads alive + the owner; descriptors are closed when it drops to 0
     private IPtyListener? _listener;
-    private Timer? _killTimer;
+    private bool _killRequested;
+    private ulong _reapedAtTicks; // when the child was reaped (ProcessTable.BootTicksNow); 0: not yet, or unknown
     private string? _slavePath;
+
+    /// <summary>Pending SIGKILL escalations: a timer must fire even when nothing else references its host any more.</summary>
+    private static readonly HashSet<Timer> KillTimers = new();
 
     public UnixPtyHost(long maxPendingWriteBytes = DefaultMaxPendingWriteBytes)
     {
@@ -263,18 +267,26 @@ public sealed unsafe class UnixPtyHost : IPtyHost
         var r = waitpid(_pid, &status, WNOHANG);
         if (r == _pid)
         {
-            Volatile.Write(ref _exitCode, DecodeWaitStatus(status));
-            _exited = true;
+            Reaped(DecodeWaitStatus(status));
             return true;
         }
         if (r < 0 && Marshal.GetLastPInvokeError() == ECHILD)
         {
-            // Someone else reaped it (only possible if the runtime's SIGCHLD handling reaps every child): the code is lost.
+            // Someone else reaped it (only possible if the runtime's SIGCHLD handling reaps every child): the code is lost, and so is the
+            // moment of the reap (_reapedAtTicks stays 0: nothing is killed by its number afterwards).
             Volatile.Write(ref _exitCode, 0);
             _exited = true;
             return true;
         }
         return false;
+    }
+
+    /// <summary>The child was reaped just now: from here on its pid may be reused once nothing else (its session's members) holds the number.</summary>
+    private void Reaped(int exitCode)
+    {
+        Volatile.Write(ref _reapedAtTicks, ProcessTable.BootTicksNow());
+        Volatile.Write(ref _exitCode, exitCode);
+        _exited = true;
     }
 
     private void WaitForExitBlocking()
@@ -284,7 +296,7 @@ public sealed unsafe class UnixPtyHost : IPtyHost
         {
             int status;
             var r = waitpid(_pid, &status, 0);
-            if (r == _pid) { Volatile.Write(ref _exitCode, DecodeWaitStatus(status)); _exited = true; }
+            if (r == _pid) Reaped(DecodeWaitStatus(status));
             else if (r < 0 && Marshal.GetLastPInvokeError() != EINTR) { _exited = true; }
         }
     }
@@ -301,7 +313,7 @@ public sealed unsafe class UnixPtyHost : IPtyHost
         {
             int status;
             var r = waitpid(_pid, &status, 0);
-            if (r == _pid) { Volatile.Write(ref _exitCode, DecodeWaitStatus(status)); break; }
+            if (r == _pid) { Reaped(DecodeWaitStatus(status)); break; }
             if (r < 0 && Marshal.GetLastPInvokeError() != EINTR) { Volatile.Write(ref _exitCode, 0); break; }
         }
         _exited = true;
@@ -381,35 +393,74 @@ public sealed unsafe class UnixPtyHost : IPtyHost
         lock (_gate)
         {
             pid = _pid;
-            if (pid <= 0) return;
-            if (_killTimer is not null) return; // already being killed
-            // The timer escalates even if the child exits quickly: what it started in the background (same session) goes too.
-            _killTimer = new Timer(_ => KillSession(pid), null, grace ?? TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan);
+            if (pid <= 0 || _killRequested) return; // never started, or already being killed
+            _killRequested = true;
         }
-        if (!_exited)
+        if (_exited)
         {
-            kill(-pid, SIGHUP); // the shell is a session (and process group) leader; bash forwards the hang-up to its jobs
-            kill(-pid, SIGCONT); // stopped jobs must run to die
-            kill(pid, SIGHUP);
+            // Reaped already (a finished task's terminal closed or reused, maybe hours later): what is left of its session goes, from the pool
+            // (a /proc scan never runs on the caller's thread, which may be the UI's) and only while the session is provably still this
+            // terminal's (KillSession).
+            ThreadPool.UnsafeQueueUserWorkItem(static s => s.Host.KillSession(s.Pid), (Host: this, Pid: pid), preferLocal: false);
+            return;
         }
-        else
-        {
-            KillSession(pid);
-        }
+        // The timer escalates even if the child exits quickly: what it started in the background (same session) goes too.
+        StartKillTimer(pid, grace ?? TimeSpan.FromSeconds(2));
+        kill(-pid, SIGHUP); // the shell is a session (and process group) leader; bash forwards the hang-up to its jobs
+        kill(-pid, SIGCONT); // stopped jobs must run to die
+        kill(pid, SIGHUP);
     }
 
-    /// <summary>SIGKILL to every process still in the child's session (its jobs, which have their own process groups) and its group.</summary>
+    private void StartKillTimer(int pid, TimeSpan grace)
+    {
+        Timer? timer = null;
+        timer = new Timer(_ =>
+        {
+            lock (KillTimers) KillTimers.Remove(timer!);
+            timer!.Dispose();
+            KillSession(pid);
+        }, null, Timeout.Infinite, Timeout.Infinite);
+        lock (KillTimers) KillTimers.Add(timer);
+        timer.Change(grace, Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>
+    /// SIGKILL to every process still in the child's session (its jobs, which have their own process groups) and its group. Once the child has
+    /// been reaped its pid is only a number that the kernel hands out again as soon as nothing uses it as a pid, process group or session id: then
+    /// only <see cref="OrphansToKill"/> are signalled, never the number itself.
+    /// </summary>
     private void KillSession(int sid)
     {
-        if (!_exited) kill(sid, SIGKILL);
-        kill(-sid, SIGKILL);
-        foreach (var pid in ProcessTable.SessionMembers(sid))
-            kill(pid, SIGKILL);
-        lock (_gate)
+        if (!_exited)
         {
-            _killTimer?.Dispose();
+            kill(sid, SIGKILL);
+            kill(-sid, SIGKILL);
+            foreach (var pid in ProcessTable.SessionMembers(sid))
+                kill(pid, SIGKILL);
+            return;
         }
+        var members = OrphansToKill(ProcessTable.SessionMembersWithStart(sid), Volatile.Read(ref _reapedAtTicks));
+        if (members.Count == 0) return;
+        kill(-sid, SIGKILL);
+        foreach (var pid in members)
+            kill(pid, SIGKILL);
     }
+
+    /// <summary>
+    /// What may be killed of a reaped leader's session (<paramref name="members"/>: the processes whose session id is its pid now, with their
+    /// start times; <paramref name="reapedAt"/>: when it was reaped, same clock). A member that started no later than the reap has carried that
+    /// session id ever since (a session id never comes back once left), so the number stayed in use the whole time and was never free for
+    /// another process: every member is then the terminal's. Without such a member the number may have been reused (a new session leader
+    /// started later, its children) and nothing is killed.
+    /// </summary>
+    internal static IReadOnlyList<int> OrphansToKill(IReadOnlyList<(int Pid, ulong StartTicks)> members, ulong reapedAt)
+    {
+        if (reapedAt == 0 || !members.Any(m => m.StartTicks <= reapedAt)) return [];
+        return members.Select(m => m.Pid).ToList();
+    }
+
+    /// <summary>Tests: the escalation for session <paramref name="sid"/> as the kill timer runs it.</summary>
+    internal void KillSessionForTest(int sid) => KillSession(sid);
 
     public string? GetForegroundProcessName()
     {

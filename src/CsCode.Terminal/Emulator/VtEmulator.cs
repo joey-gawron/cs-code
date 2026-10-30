@@ -83,6 +83,10 @@ public sealed partial class VtEmulator : IVtHandler
     public CursorShape CursorShape { get; private set; }
     public bool ReverseVideo { get; private set; }
     public bool SynchronizedOutput { get; private set; }
+
+    /// <summary>The terminal ends a synchronized update (DECSET 2026) the program left on past the time limit, or the program is gone.</summary>
+    internal void EndSynchronizedOutput() => SynchronizedOutput = false;
+
     public TerminalModes Modes { get; private set; } = TerminalModes.Initial;
 
     /// <summary>Bumped whenever something visible changed (the session builds a snapshot only when it moved).</summary>

@@ -88,6 +88,46 @@ public sealed class TerminalServiceTests : IDisposable
         await WaitScreenAsync(t, $"[xterm-256color|truecolor|cscode|from settings {_sandbox.Home}|from caller|unset]");
     }
 
+    /// <summary>
+    /// T27: CsCode started by dotnet run/test carries DOTNET_ROOT_&lt;ARCH&gt; for its own apphost; shells and task programs get the language
+    /// servers' rule (folded into DOTNET_ROOT when that is unset, dropped when it names the same directory, kept when it names another).
+    /// </summary>
+    [Fact]
+    public void Dotnet_root_for_this_architecture_is_folded_into_DOTNET_ROOT_for_programs_in_the_terminal()
+    {
+        var arch = Core.Platform.InheritedDotnetRoot.ArchRootVariable;
+        var sdk = _sandbox.Dir.Combine("sdk");
+        var other = _sandbox.Dir.Combine("other");
+        Dictionary<string, string> Resolve(Dictionary<string, string> inherited, IReadOnlyDictionary<string, string?>? own = null) =>
+            new TerminalLaunchResolver(_config, null, () => inherited).Environment(new TerminalCreateOptions { Env = own }, null);
+
+        var folded = Resolve(new() { ["PATH"] = "/bin", [arch] = sdk });
+        Assert.Equal(sdk, folded["DOTNET_ROOT"]);
+        Assert.False(folded.ContainsKey(arch));
+
+        var same = Resolve(new() { ["PATH"] = "/bin", [arch] = sdk, ["DOTNET_ROOT"] = sdk + "/" });
+        Assert.Equal(sdk + "/", same["DOTNET_ROOT"]);
+        Assert.False(same.ContainsKey(arch));
+
+        var split = Resolve(new() { ["PATH"] = "/bin", [arch] = sdk, ["DOTNET_ROOT"] = other });
+        Assert.Equal((other, sdk), (split["DOTNET_ROOT"], split[arch])); // a deliberate split set-up stays
+
+        // the caller's (a task's, a profile's) own value is applied on top, as written
+        var own = Resolve(new() { ["PATH"] = "/bin", [arch] = sdk }, new Dictionary<string, string?> { [arch] = other });
+        Assert.Equal((sdk, other), (own["DOTNET_ROOT"], own[arch]));
+    }
+
+    [Fact]
+    public async Task A_shell_started_by_a_cscode_from_dotnet_run_has_no_DOTNET_ROOT_for_this_architecture()
+    {
+        var arch = Core.Platform.InheritedDotnetRoot.ArchRootVariable;
+        var sdk = _sandbox.Dir.Combine("sdk");
+        using var service = new TerminalService(_config, environment: () => _sandbox.Environment(new Dictionary<string, string> { [arch] = sdk }));
+        var t = (TerminalSession)await service.CreateAsync(Bash());
+        await t.SendTextAsync($"echo \"[${{{arch}-unset}}|$DOTNET_ROOT]\"");
+        await WaitScreenAsync(t, $"[unset|{sdk}]");
+    }
+
     [Fact]
     public async Task Exit_keeps_the_buffer_and_reports_the_code()
     {

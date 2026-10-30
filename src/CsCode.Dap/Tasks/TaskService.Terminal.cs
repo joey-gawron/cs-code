@@ -77,7 +77,7 @@ public sealed partial class TaskService
     }
 
     private async Task<TaskResult> ExecuteInTerminalAsync(ITaskTerminalHost host, TaskModel task, ProcessStartInfo psi, IReadOnlyDictionary<string, string?> env,
-        IOutputChannel? channel, ProblemCollector? problems, CancellationToken ct)
+        IOutputChannel? channel, ProblemCollector? problems, TaskInstance instance, string key, CancellationToken ct)
     {
         var presentation = PresentationOf(task.Presentation);
         var args = psi.ArgumentList.ToArray();
@@ -99,6 +99,14 @@ public sealed partial class TaskService
             return new TaskResult(task.Label, -1, Error: $"The task '{task.Label}' could not be started in a terminal: {ex.Message}");
         }
         lock (_terminalRuns) _terminalRuns.Add(run);
+        return await AwaitRunAsync(instance, task, problems, RunInTerminalAsync(run, task, psi, presentation, pump, channel, problems, instance, key, ct));
+    }
+
+    /// <summary>A task's run in its terminal, until the process exited (or its terminal was closed): its result.</summary>
+    private async Task<TaskResult> RunInTerminalAsync(ITaskTerminalRun run, TaskModel task, ProcessStartInfo psi, TaskPresentation presentation, BoundedTextPump? pump,
+        IOutputChannel? channel, ProblemCollector? problems, TaskInstance instance, string key, CancellationToken ct)
+    {
+        var result = new TaskResult(task.Label, -1, Cancelled: true);
         try
         {
             if (Volatile.Read(ref _disposed) != 0) run.Terminate(); // shut down while it was starting
@@ -114,18 +122,23 @@ public sealed partial class TaskService
             if (exit.Terminated || ct.IsCancellationRequested || Volatile.Read(ref _disposed) != 0)
             {
                 channel?.AppendLine($"> Task '{task.Label}' was cancelled.");
-                return new TaskResult(task.Label, -1, Cancelled: true);
+                return result;
             }
             if (presentation.Reveal == TaskRevealKind.Silent && (exit.ExitCode != 0 || problems is { Errors: > 0 })) await run.RevealAsync(CancellationToken.None);
             await RevealProblemsAsync(task, problems);
             channel?.AppendLine($"> Task '{task.Label}' finished with exit code {exit.ExitCode}.");
-            return exit.ExitCode == -1
+            return result = exit.ExitCode == -1
                 ? new TaskResult(task.Label, -1, Error: $"Could not start '{psi.FileName}' (the terminal '{task.Label}' shows why).")
                 : new TaskResult(task.Label, exit.ExitCode);
         }
         finally
         {
             lock (_terminalRuns) _terminalRuns.Remove(run);
+            if (instance.IsBackground)
+            {
+                FinishCycle(instance, result);
+                End(key, instance);
+            }
         }
     }
 

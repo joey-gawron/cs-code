@@ -277,6 +277,32 @@ public sealed class EmulatorTests
     }
 
     [Fact]
+    public void The_scrollback_cap_counts_link_targets_and_grapheme_clusters()
+    {
+        // terminal-10: every cell its own OSC 8 link with a 2,000-character target is ~320 KB a line (cells alone: 2 KB), which the cap
+        // must see. Counted as cells only, 200 such lines (64 MB) passed a 4 MB cap.
+        const long cap = 4L * 1024 * 1024;
+        var t = Term(80, 24, new EmulatorOptions { ScrollbackLines = 1000, ScrollbackMaxBytes = cap });
+        var uri = "https://example.com/" + new string('a', 2000);
+        for (var line = 0; line < 200; line++)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (var c = 0; c < 80; c++) sb.Append($"\e]8;;{uri}{line}-{c}\e\\X\e]8;;\e\\");
+            t.Feed(sb.Append("\r\n").ToString());
+        }
+        Assert.True(t.Scrollback.Bytes <= cap, $"{t.Scrollback.Bytes} bytes accounted");
+        Assert.InRange(t.ScrollbackCount, 1, 13); // 4 MB / ~322 KB a line
+        Assert.Equal($"{uri}199-79", t.GetScreenRow(22).Link(t.GetScreenRow(22)[79].Attributes.LinkId)); // the links themselves still work
+
+        // long grapheme clusters (a base letter and 31 combining marks in every cell: ~9 KB a line, cells alone 2 KB) count too
+        var u = Term(80, 24, new EmulatorOptions { ScrollbackLines = 100_000, ScrollbackMaxBytes = 1024 * 1024 });
+        var row = string.Concat(Enumerable.Repeat("e" + new string('́', 31), 80));
+        for (var i = 0; i < 2000; i++) u.Feed(row + "\r\n");
+        Assert.True(u.Scrollback.Bytes <= 1024 * 1024);
+        Assert.True(u.ScrollbackCount < 300, $"{u.ScrollbackCount} lines of long clusters kept under a 1 MB cap (cells alone: 528)");
+    }
+
+    [Fact]
     public void Erase_scrollback_clears_it()
     {
         var t = Term(5, 2);

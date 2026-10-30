@@ -313,6 +313,121 @@ public sealed class UnixPtyHostTests : IDisposable
             return pid;
         }
     }
+
+    // ------------------------------------------------------------------ terminal-2: never kill a reaped leader's number
+
+    [Fact]
+    public async Task Disposing_an_exited_terminal_never_kills_a_process_that_took_its_number_later()
+    {
+        RequireLinux();
+        using var host = new UnixPtyHost();
+        var output = new RecordingPtyListener();
+        host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "exit 0"]), output);
+        await output.WaitExitAsync();
+        Assert.True(await ProcessChecks.WaitGoneAsync(host.ProcessId), "not reaped");
+        await Task.Delay(50); // a later clock tick than the reap (start times count in 10 ms ticks)
+
+        // An unrelated session leader started after the reap stands in for a process that was given the reaped pid: the kernel reuses a
+        // number once nothing holds it. (The real reuse was reproduced in a private pid namespace: docs/TERMINAL.md.)
+        using var stranger = new UnixPtyHost();
+        var strangerOutput = new RecordingPtyListener();
+        stranger.Start(_sandbox.Command("/bin/sh", ["-c", "echo up; exec sleep 30"]), strangerOutput);
+        Assert.True(await strangerOutput.WaitForAsync("up"));
+        var sid = stranger.ProcessId;
+        Assert.Contains(sid, ProcessTable.SessionMembers(sid));
+
+        host.KillSessionForTest(sid); // what the kill timer (or Dispose of the exited terminal) would do if that number were its pid
+        await Task.Delay(300);
+        Assert.True(ProcessChecks.IsAlive(sid), "a process that took the reaped number later was killed");
+        stranger.Kill(TimeSpan.FromMilliseconds(200));
+        await strangerOutput.WaitExitAsync(5_000);
+    }
+
+    [Fact]
+    public async Task Disposing_an_exited_terminal_still_kills_the_jobs_its_program_left_behind_off_the_callers_thread()
+    {
+        RequireLinux();
+        var host = new UnixPtyHost();
+        var output = new RecordingPtyListener();
+        // a background job that outlives the program: it keeps the session (and so the number) in use
+        host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "trap '' HUP; sleep 1000 & echo BG=$!; exit 0"]), output);
+        Assert.True(await output.WaitForAsync("BG="));
+        await output.WaitExitAsync();
+        var bg = int.Parse(System.Text.RegularExpressions.Regex.Match(output.Text, @"BG=(\d+)").Groups[1].Value);
+        Assert.True(ProcessChecks.IsAlive(bg));
+        Assert.Contains(bg, ProcessTable.SessionMembers(host.ProcessId));
+
+        var sw = Stopwatch.StartNew();
+        host.Dispose(); // (the /proc scan runs on the pool)
+        Assert.True(sw.ElapsedMilliseconds < 50, $"Dispose of an exited terminal took {sw.ElapsedMilliseconds} ms on the caller's thread");
+        Assert.True(await ProcessChecks.WaitGoneAsync(bg, 5_000), "the left-behind job survived");
+    }
+
+    /// <summary>
+    /// The real reuse, where it can be forced: in a private pid namespace (<c>unshare -Urpfm --mount-proc dotnet test ... --filter
+    /// FullyQualifiedName~private_pid_namespace</c>) the next pid can be chosen, so a new session leader gets the reaped terminal program's
+    /// pid. Skipped elsewhere.
+    /// </summary>
+    [Fact]
+    public async Task In_a_private_pid_namespace_a_reused_pid_survives_disposing_the_exited_terminal()
+    {
+        RequireLinux();
+        const string lastPid = "/proc/sys/kernel/ns_last_pid";
+        Assert.SkipUnless(CanWrite(lastPid), "Needs a private pid namespace (run the test under unshare -Urpfm --mount-proc).");
+        var host = new UnixPtyHost();
+        var output = new RecordingPtyListener();
+        host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "exit 0"]), output);
+        await output.WaitExitAsync();
+        var pid = host.ProcessId;
+        Assert.True(await ProcessChecks.WaitGoneAsync(pid), "not reaped");
+
+        File.WriteAllText(lastPid, (pid - 1).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var stranger = new UnixPtyHost();
+        var strangerOutput = new RecordingPtyListener();
+        stranger.Start(_sandbox.Command("/bin/sh", ["-c", "echo up; exec sleep 30"]), strangerOutput);
+        Assert.SkipUnless(stranger.ProcessId == pid, $"another process took pid {pid} first");
+        Assert.True(await strangerOutput.WaitForAsync("up"));
+
+        host.Dispose();
+        await Task.Delay(500);
+        Assert.True(ProcessChecks.IsAlive(pid), "disposing the exited terminal killed the session leader that reused its pid");
+        stranger.Kill(TimeSpan.FromMilliseconds(200));
+        await strangerOutput.WaitExitAsync(5_000);
+
+        static bool CanWrite(string path)
+        {
+            try { using var f = new FileStream(path, FileMode.Open, FileAccess.Write); return true; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+        }
+    }
+
+    [Fact]
+    public void Only_a_session_that_kept_the_number_in_use_since_the_reap_is_killed()
+    {
+        const ulong reap = 1_000;
+        // a member that started before (or in the tick of) the reap: the number was never free, every member is the terminal's
+        Assert.Equal([10, 11], UnixPtyHost.OrphansToKill([(10, 990), (11, 1_500)], reap));
+        Assert.Equal([12], UnixPtyHost.OrphansToKill([(12, 1_000)], reap));
+        // only processes started after the reap: the number may have been reused (a new session leader and its children)
+        Assert.Empty(UnixPtyHost.OrphansToKill([(13, 1_001), (14, 2_000)], reap));
+        Assert.Empty(UnixPtyHost.OrphansToKill([], reap));
+        // the moment of the reap is unknown: nothing is killed by number
+        Assert.Empty(UnixPtyHost.OrphansToKill([(15, 1)], 0));
+    }
+
+    [Fact]
+    public void Uptime_is_read_in_clock_ticks()
+    {
+        Assert.Equal(1_234_567UL, ProcessTable.ParseUptimeTicks("12345.67 54321.00\n", 100));
+        Assert.Equal(1_234_500UL, ProcessTable.ParseUptimeTicks("12345 1", 100));
+        Assert.Equal(12_345_670UL, ProcessTable.ParseUptimeTicks("12345.67 1", 1000));
+        Assert.Equal(0UL, ProcessTable.ParseUptimeTicks("garbage", 100));
+        if (!OperatingSystem.IsLinux()) return;
+        // a process started just now started at or before now, on the same clock
+        var now = ProcessTable.BootTicksNow();
+        Assert.True(now > 0);
+        Assert.True(ProcessTable.Stat(Environment.ProcessId)!.Value.StartTicks <= now);
+    }
 }
 
 [CollectionDefinition(Name, DisableParallelization = true)]

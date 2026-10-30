@@ -33,6 +33,21 @@ elif [ -n "$__cscode_login" ]; then
         fi
     fi
 elif [ -n "$__cscode_rcfile" ]; then
+    # bash tilde-expands its --rcfile/--init-file name itself; the profile's argument reaches this file as written ("~/.config/bash/rc")
+    case $__cscode_rcfile in
+        "~" | "~/"*) __cscode_rcfile=$HOME${__cscode_rcfile#"~"} ;;
+        "~"*)
+            # ~user/...: only a plain user name is looked up (nothing else in the value is ever evaluated)
+            __cscode_user=${__cscode_rcfile%%/*}
+            __cscode_user=${__cscode_user#"~"}
+            if [[ $__cscode_user =~ ^[A-Za-z_][A-Za-z0-9._-]*$ ]]; then
+                builtin eval "__cscode_userhome=~$__cscode_user"
+                if [[ $__cscode_userhome != "~"* ]]; then __cscode_rcfile=$__cscode_userhome${__cscode_rcfile#"~$__cscode_user"}; fi
+                builtin unset __cscode_userhome
+            fi
+            builtin unset __cscode_user
+            ;;
+    esac
     if [ -r "$__cscode_rcfile" ]; then . "$__cscode_rcfile"; fi
 elif [ -r ~/.bashrc ]; then
     . ~/.bashrc

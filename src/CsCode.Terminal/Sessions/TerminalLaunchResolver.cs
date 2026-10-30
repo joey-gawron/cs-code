@@ -117,6 +117,9 @@ public sealed partial class TerminalLaunchResolver(IConfigurationService? config
         if (inherit) foreach (var (k, v) in source) env[k] = v;
         else foreach (var k in new[] { "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR" })
             if (source.TryGetValue(k, out var v)) env[k] = v;
+        // CsCode started by dotnet run/test has DOTNET_ROOT_<ARCH> for its own apphost: a .NET program run in the terminal (or a task's) must not
+        // get it in place of what its wrapper exports (T27; the language servers' rule). Profile, settings and caller variables apply on top.
+        InheritedDotnetRoot.FoldValues(env);
         // A terminal that CsCode itself was started from must not leak into the new one's identity.
         env.Remove("TERM_PROGRAM_VERSION");
         env["TERM"] = "xterm-256color";

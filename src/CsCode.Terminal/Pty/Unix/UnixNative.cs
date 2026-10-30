@@ -106,6 +106,10 @@ internal static unsafe class UnixNative
     [DllImport(Libc, SetLastError = true)] public static extern int close(int fd);
     [DllImport(Libc, SetLastError = true)] public static extern int pipe(int* fds);
     [DllImport(Libc, SetLastError = true)] public static extern int tcgetpgrp(int fd);
+    [DllImport(Libc)] public static extern long sysconf(int name);
+
+    /// <summary><c>sysconf</c>'s clock-ticks name (glibc: 2; macOS: 3).</summary>
+    public static int SC_CLK_TCK => IsLinux ? 2 : 3;
 
     /// <summary>Exit code from a waitpid status: the code for a normal exit, 128 + n for a signal (as shells report it).</summary>
     public static int DecodeWaitStatus(int status)

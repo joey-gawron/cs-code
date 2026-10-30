@@ -28,4 +28,17 @@ public interface ITaskService
     /// (see <see cref="TaskResult"/>); cancelling <paramref name="ct"/> kills the whole process tree and yields <c>Cancelled = true</c>.
     /// </summary>
     ValueTask<TaskResult> RunAsync(string taskLabel, Uri? folder = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// True when the task is running as many times as it may (tasks.json <c>runOptions.instanceLimit</c>, default 1): <see cref="RunAsync"/> then
+    /// starts no second instance but waits for the running one (a background task: until it is idle), and a user's Run Task shows VS Code's
+    /// "The task is already active" (Terminate Task / Restart Task). Returns at once (any thread). Additive (end pass): false by default.
+    /// </summary>
+    bool IsActive(string taskLabel, Uri? folder = null) => false;
+
+    /// <summary>
+    /// Ends every running instance of the task (its process tree; its terminal stays) and completes once they have ended, so a following
+    /// <see cref="RunAsync"/> starts it afresh (Restart Task). Additive (end pass): nothing by default.
+    /// </summary>
+    ValueTask TerminateAsync(string taskLabel, Uri? folder = null, CancellationToken ct = default) => ValueTask.CompletedTask;
 }

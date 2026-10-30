@@ -550,10 +550,14 @@ public sealed partial class VtEmulator
         OriginMode = c.OriginMode;
     }
 
-    /// <summary>DECSTR: modes back to their defaults; the screen and the cursor position stay.</summary>
+    /// <summary>
+    /// DECSTR: modes back to their defaults; the screen and the cursor position stay. A synchronized update (2026) ends too: a reused task or
+    /// debug terminal (<see cref="PrepareForNextProgram"/>) must not hold the next program's frames because the last one was killed mid-update.
+    /// </summary>
     private void SoftReset()
     {
         CursorVisible = true;
+        SynchronizedOutput = false;
         InsertMode = false;
         OriginMode = false;
         AutoWrap = true;
