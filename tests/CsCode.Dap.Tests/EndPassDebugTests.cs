@@ -366,6 +366,7 @@ public class EndPassDebugTests
         Assert.StartsWith("{", doc.GetLineText(reveal.Selection!.Value.Start.Line)[reveal.Selection.Value.Start.Character..], StringComparison.Ordinal);
         Assert.Contains("\"GDB: Attach to process\"", string.Join("\n", Enumerable.Range(reveal.Selection.Value.Start.Line, 4).Select(doc.GetLineText)), StringComparison.Ordinal);
         Assert.Equal(existing, File.ReadAllText(uri.LocalPath)); // nothing written behind the editor's back
+        Assert.False(File.Exists(Path.Combine(h.Dir.Path, ".cscode", "tasks.json"))); // an attach configuration runs no task: none is added
     }
 
     [Fact]
@@ -379,6 +380,88 @@ public class EndPassDebugTests
         await h.Commands.ExecuteAsync(DebugService.AddConfigurationCommand);
         await SessionHarness.Eventually(() => File.ReadAllText(Path.Combine(h.Dir.Path, ".vscode", "launch.json")).Contains("GDB: Launch", StringComparison.Ordinal));
         await SessionHarness.Eventually(() => h.Configurations.GetLaunchConfigurationsAsync(h.Dir.Uri, Ct).AsTask().Result.Count == 1, 5000, "the new configuration is listed");
+    }
+
+    /// <summary>Picks <paramref name="type"/>'s configuration named <paramref name="name"/> in Add Configuration's two quick picks.</summary>
+    private static async Task AddConfigurationAsync(ServiceHarness h, string type, string name)
+    {
+        await SessionHarness.Eventually(() => h.Service.DebuggerTypes.Any(t => t.Type == "fake"), 5000, "the debugger list is complete");
+        var templates = (await h.Configurations.GetConfigurationTemplatesAsync(type, h.Dir.Uri, Ct)).Configurations.Select(c => c.Name).ToList();
+        Assert.Contains(name, templates);
+        h.Window.QuickPickResponses.Enqueue(h.Service.DebuggerTypes.Select(t => t.Type).ToList().IndexOf(type));
+        if (templates.Count > 1) h.Window.QuickPickResponses.Enqueue(templates.IndexOf(name));
+        await h.Commands.ExecuteAsync(DebugService.AddConfigurationCommand);
+    }
+
+    private static void CargoPackage(ServiceHarness h)
+    {
+        h.Dir.WriteFile("Cargo.toml", "[package]\nname = \"sample\"\nversion = \"0.1.0\"\n");
+        h.Dir.WriteFile("src/main.rs", "fn main() {}\n");
+    }
+
+    /// <summary>
+    /// The added configuration's preLaunchTask ('cargo: build') exists nowhere (CsCode detects no tasks): it is added to the folder's own
+    /// tasks.json, which keeps its text, so F5 on the new configuration finds it (end-pass review, debug-4).
+    /// </summary>
+    [Fact]
+    public async Task Add_configuration_adds_the_task_its_prelaunch_task_names_to_the_folders_tasks_json()
+    {
+        var nav = new EditorNavigation();
+        await using var h = HarnessWithEditor(nav);
+        CargoPackage(h);
+        h.Dir.WriteFile(".vscode/launch.json", "{ \"version\": \"0.2.0\", \"configurations\": [] }");
+        h.Dir.WriteFile(".vscode/tasks.json", UserTasks);
+        Assert.DoesNotContain(await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct), t => t.Label == "cargo: build");
+
+        await AddConfigurationAsync(h, "gdb", "Rust: Debug sample (cargo build)");
+
+        var launch = nav.Document(new Uri(Path.Combine(h.Dir.Path, ".vscode", "launch.json")))!.GetText();
+        Assert.Equal("cargo: build", Assert.Single(LaunchJson.Parse(launch, h.Dir.Uri, "launch.json").Configurations).PreLaunchTask);
+        var tasks = await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct);
+        Assert.Equal(["user-task", "cargo: build"], tasks.Select(t => t.Label));
+        Assert.True(tasks[1].IsDefaultBuild);
+        Assert.Contains("// the user's own tasks", File.ReadAllText(Path.Combine(h.Dir.Path, ".vscode", "tasks.json")), StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(h.Dir.Path, ".cscode", "tasks.json")));
+
+        // the same configuration added again: its task is there now, nothing more is added
+        await AddConfigurationAsync(h, "gdb", "Rust: Debug sample (cargo build)");
+        Assert.Equal(["user-task", "cargo: build"], (await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct)).Select(t => t.Label));
+    }
+
+    [Fact]
+    public async Task Add_configuration_without_a_tasks_json_writes_the_templates_next_to_the_launch_json()
+    {
+        var nav = new EditorNavigation();
+        await using var h = HarnessWithEditor(nav);
+        h.Dir.WriteFile("App.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>");
+        h.Dir.WriteFile(".vscode/launch.json", "{ \"version\": \"0.2.0\", \"configurations\": [] }");
+        await AddConfigurationAsync(h, "coreclr", ".NET: Launch");
+        Assert.True(File.Exists(Path.Combine(h.Dir.Path, ".vscode", "tasks.json")));
+        var build = Assert.Single(await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct));
+        Assert.Equal("build", build.Label);
+        Assert.True(build.IsDefaultBuild);
+    }
+
+    /// <summary>A tasks.json open in the editor gets the task there (unsaved, like the configuration), not behind the editor's back.</summary>
+    [Fact]
+    public async Task Add_configuration_adds_the_task_in_the_editor_when_the_tasks_json_is_open()
+    {
+        var nav = new EditorNavigation();
+        await using var h = HarnessWithEditor(nav);
+        CargoPackage(h);
+        h.Dir.WriteFile(".cscode/launch.json", "{ \"version\": \"0.2.0\", \"configurations\": [] }");
+        h.Dir.WriteFile(".cscode/tasks.json", UserTasks);
+        var tasksUri = new Uri(Path.Combine(h.Dir.Path, ".cscode", "tasks.json"));
+        var tasksDoc = (EditorNavigation.Doc)(await nav.OpenAsync(tasksUri, ct: Ct))!;
+        tasksDoc.ApplyEdits([new TextEdit(new TextRange(new TextPosition(0, 0), new TextPosition(0, 0)), "// unsaved\n")]);
+
+        await AddConfigurationAsync(h, "gdb", "Rust: Debug sample (cargo build)");
+
+        Assert.Equal(UserTasks, File.ReadAllText(tasksUri.LocalPath)); // nothing written behind the editor's back
+        var text = tasksDoc.GetText();
+        Assert.StartsWith("// unsaved\n", text, StringComparison.Ordinal);
+        using var doc = JsonDocument.Parse(text, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+        Assert.Equal(["user-task", "cargo: build"], doc.RootElement.GetProperty("tasks").EnumerateArray().Select(t => t.GetProperty("label").GetString()));
     }
 
     // ------------------------------------------------------------------ debug-5: a start in progress

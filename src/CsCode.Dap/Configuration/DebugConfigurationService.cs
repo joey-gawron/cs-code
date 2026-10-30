@@ -375,12 +375,45 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
         return (configs, extraFiles);
     }
 
-    /// <summary>The configurations "Add Configuration…" offers for a debug type (what a new launch.json for it would hold).</summary>
-    public ValueTask<IReadOnlyList<DebugConfiguration>> GetInitialConfigurationsAsync(string debugType, Uri? folder = null, CancellationToken ct = default) =>
+    /// <summary>
+    /// What "Add Configuration…" offers for a debug type: the configurations a new launch.json for it would hold, and the companion tasks.json
+    /// that Create launch.json would write with them (the tasks their preLaunchTask names; null when the debugger has none).
+    /// </summary>
+    internal sealed record ConfigurationTemplates(IReadOnlyList<DebugConfiguration> Configurations, string? TasksJson);
+
+    /// <summary>The configurations (and companion tasks.json) "Add Configuration…" offers for a debug type.</summary>
+    internal ValueTask<ConfigurationTemplates> GetConfigurationTemplatesAsync(string debugType, Uri? folder = null, CancellationToken ct = default) =>
         new(_lane.RunAsync(async () =>
         {
             var f = folder ?? _p.PrimaryFolder ?? throw new InvalidOperationException("Open a folder first.");
-            return (IReadOnlyList<DebugConfiguration>)(await InitialCoreAsync(debugType, f, withFiles: false, ct)).Configs;
+            var (configs, files) = await InitialCoreAsync(debugType, f, withFiles: true, ct);
+            return new ConfigurationTemplates(configs, files.Where(x => string.Equals(x.Path, "tasks.json", StringComparison.Ordinal)).Select(x => x.Content).FirstOrDefault());
+        }, ct));
+
+    /// <summary>
+    /// The tasks of <paramref name="tasksJson"/> (a template's companion tasks.json) that <paramref name="configuration"/> runs: its
+    /// <c>preLaunchTask</c> and <c>postDebugTask</c>. Empty when it names none of them, or the text does not parse.
+    /// </summary>
+    internal static IReadOnlyList<JsonObject> TasksNamedBy(DebugConfiguration configuration, string? tasksJson)
+    {
+        var names = new[] { configuration.PreLaunchTask, configuration.PostDebugTask }.OfType<string>().Where(n => n.Length > 0).ToHashSet(StringComparer.Ordinal);
+        if (names.Count == 0 || tasksJson is null) return [];
+        try
+        {
+            return JsonNode.Parse(tasksJson, documentOptions: Lenient)?["tasks"] is JsonArray tasks
+                ? [.. tasks.OfType<JsonObject>().Where(t => t["label"]?.GetValueKind() == JsonValueKind.String && names.Contains(t["label"]!.GetValue<string>()))]
+                : [];
+        }
+        catch (JsonException) { return []; }
+    }
+
+    /// <summary>The tasks.json a folder's tasks come from (TaskService's order: <c>.cscode/</c> first, else <c>.vscode/</c>); null when it has none.</summary>
+    internal ValueTask<Uri?> FindTasksJsonAsync(Uri folder, CancellationToken ct = default) =>
+        new(_lane.RunAsync(async () =>
+        {
+            foreach (var location in new[] { ".cscode/", ".vscode/" })
+                if (_p.Workspace is not null && await IsFileAsync(Combine(folder, location + "tasks.json"), ct)) return Combine(folder, location + "tasks.json");
+            return (Uri?)null;
         }, ct));
 
     /// <summary>The launch.json a folder's configurations come from (<c>.cscode/</c> first, else <c>.vscode/</c>); null when it has none.</summary>

@@ -181,12 +181,16 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   refreshed when the file is edited. `CreateLaunchJsonAsync` writes the VS Code template layout (never overwrites an existing file) plus
   provider-supplied companion files (the coreclr template also writes a `tasks.json` with a default `build` task). A companion never shadows
   the user's own file: when the folder keeps its `tasks.json` in `.vscode/`, the new `launch.json` goes to `.vscode/` and the template's tasks
-  whose labels are missing are appended to that file's `tasks` (text edit, comments kept; never a second default build task); a file that
-  does not parse is left alone (`JsoncText.cs`).
+  whose labels are missing are appended to that file's `tasks` (text edit, comments kept; a template's default build task is added as a
+  plain build task when the file has a default BUILD task — a default test task does not count); a file that does not parse is left alone
+  (`JsoncText.cs`, `DebugConfigurationService.AddTasks`).
 * **Open launch.json** (`workbench.action.debug.configure`) opens the folder's launch.json, creating it first for the folder's debugger (or a
   picked one). **Add Configuration...** (`debug.addConfiguration`) picks a debugger, then one of its templates, and appends it to
   `configurations` in the editor (one undoable edit, unsaved, the rest of the file as written) and reveals it; without a launch.json it is
-  Open launch.json. F5 opens the launch.json it created, and with a launch.json that holds no configuration (or does not parse) opens it
+  Open launch.json. CsCode detects no tasks (VS Code has `tsc: build` or cargo tasks without a tasks.json), so the task the added
+  configuration's `preLaunchTask`/`postDebugTask` names comes with it when the folder lacks it: appended to the tasks.json in use (in the
+  editor when it is open there, else on disk; comments kept, no second default build task), or the template's tasks.json is written next to
+  the launch.json. F5 opens the launch.json it created, and with a launch.json that holds no configuration (or does not parse) opens it
   instead of offering Create (VS Code's behaviour).
 * **Starting**: from `StartAsync` until the session exists (variables, providers, `preLaunchTask`, the adapter download offer) the debugger is
   `initializing` (`inDebugMode`: F5 means Continue, as in VS Code), a second start of the same configuration is ignored (no second build, no

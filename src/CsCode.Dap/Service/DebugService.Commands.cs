@@ -83,7 +83,8 @@ public sealed partial class DebugService
     /// <summary>
     /// Lane. VS Code's "Add Configuration...": the user picks a debugger, then one of its configurations (what a new launch.json for it holds),
     /// which is appended to the <c>configurations</c> of the folder's launch.json — in the editor, as an edit the user can undo and must save,
-    /// with the rest of the file as written — and revealed. Without a launch.json this is "Open launch.json" (which creates one).
+    /// with the rest of the file as written — and revealed. The task its preLaunchTask names comes with it when the folder lacks it
+    /// (<see cref="AddCompanionTasksAsync"/>). Without a launch.json this is "Open launch.json" (which creates one).
     /// </summary>
     private async Task AddConfigurationCoreAsync(CancellationToken ct)
     {
@@ -97,7 +98,8 @@ public sealed partial class DebugService
         var debugger = await window.ShowQuickPickAsync([.. types.Select(t => new QuickPickItem(t.Label, t.Type, Tag: t.Type))],
             new QuickPickOptions(Title: "Add Configuration", Placeholder: "Select debugger"), ct);
         if (debugger?.Tag is not string type) return;
-        var templates = await _configurations.GetInitialConfigurationsAsync(type, folder, ct);
+        var offered = await _configurations.GetConfigurationTemplatesAsync(type, folder, ct);
+        var templates = offered.Configurations;
         if (templates.Count == 0) { await ReportAsync($"'{debugger.Label}' offers no configurations to add."); return; }
         var chosen = templates[0];
         if (templates.Count > 1)
@@ -133,6 +135,40 @@ public sealed partial class DebugService
             _configurations.Invalidate(folder);
         }
         if (navigation is not null) await navigation.OpenAsync(uri, new TextRange(at, at), ct: ct);
+        await AddCompanionTasksAsync(folder, uri, chosen, offered.TasksJson, navigation, ct);
+    }
+
+    /// <summary>
+    /// Lane. The tasks the added configuration runs (its preLaunchTask, postDebugTask) that its debugger's template defines — what Create
+    /// launch.json writes as the companion tasks.json — and the folder's tasks.json lacks: CsCode detects no tasks (in VS Code 'tsc: build' or a
+    /// cargo build task exist without a tasks.json), so without them the new configuration would name a task that exists nowhere and fail at F5.
+    /// They are appended to the tasks.json in use, keeping its text as written — in the editor when it is open there (unsaved, like the
+    /// configuration), else on disk — with no second default build task; without a tasks.json the template's is written next to the launch.json.
+    /// </summary>
+    private async Task AddCompanionTasksAsync(Uri folder, Uri launchJson, DebugConfiguration added, string? tasksJson, INavigationService? navigation, CancellationToken ct)
+    {
+        var needed = DebugConfigurationService.TasksNamedBy(added, tasksJson);
+        if (needed.Count == 0 || _p.Workspace is not { } ws) return;
+        if (await _configurations.FindTasksJsonAsync(folder, ct) is not { } tasksUri)
+        {
+            await ws.FileSystem.WriteFileAsync(new Uri(launchJson, "tasks.json"), System.Text.Encoding.UTF8.GetBytes(tasksJson!), createParents: true, ct);
+            return;
+        }
+        var open = navigation?.OpenDocuments.FirstOrDefault(d => d.Uri == tasksUri);
+        var text = open is not null ? open.GetText() : System.Text.Encoding.UTF8.GetString(await ws.FileSystem.ReadFileAsync(tasksUri, ct));
+        if (DebugConfigurationService.AddTasks(text, needed, out var problem) is not { } edit)
+        {
+            if (problem is not null)
+                await ReportAsync($"{tasksUri.LocalPath}: the task '{needed[0]["label"]}' that '{added.Name}' runs could not be added: {problem}.");
+            return;
+        }
+        if (open is not null && navigation is not null)
+        {
+            var range = new TextRange(open.PositionAt(edit.Position), open.PositionAt(edit.Position + edit.Length));
+            var changes = new Dictionary<Uri, IReadOnlyList<TextEdit>> { [tasksUri] = [new TextEdit(range, edit.Text)] };
+            await navigation.ApplyWorkspaceEditAsync(new WorkspaceEdit(changes), "Add Configuration", ct);
+        }
+        else await ws.FileSystem.WriteFileAsync(tasksUri, System.Text.Encoding.UTF8.GetBytes(edit.ApplyTo(text)), createParents: false, ct);
     }
 
     /// <summary>Line and character of <paramref name="offset"/> in <paramref name="text"/> ('\n', '\r\n' and '\r' end lines).</summary>
