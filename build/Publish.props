@@ -22,31 +22,7 @@
 
   <Import Project="NuGetRuntimePacks.props" />
 
-  <!--
-    The packs a publish uses are pinned: tools/publish-app.sh checks the pinned packages (size, SHA-512, SHA-256) in the NuGet cache with
-    tools/fetch-publish-packs.sh before it publishes, and the publish must then use exactly those versions. The SDK picks the runtime, apphost,
-    crossgen2 and ILCompiler pack versions from its own bundled list (a newer SDK would quietly restore newer, unchecked packs), so for a build
-    with a runtime identifier they are set to the pinned version here. -p:CsCodePinnedRuntimeVersion=none takes the SDK's own choice (unchecked).
-  -->
-  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
-    <CsCodePinnedRuntimeVersion Condition="'$(CsCodePinnedRuntimeVersion)' == ''">10.0.12</CsCodePinnedRuntimeVersion>
-  </PropertyGroup>
-  <Target Name="CsCodePinPublishPacks" BeforeTargets="ProcessFrameworkReferences" Condition="'$(RuntimeIdentifier)' != '' and '$(CsCodePinnedRuntimeVersion)' != 'none'">
-    <ItemGroup>
-      <KnownFrameworkReference Condition="'%(Identity)' == 'Microsoft.NETCore.App' and '%(TargetFramework)' == '$(TargetFramework)'">
-        <LatestRuntimeFrameworkVersion>$(CsCodePinnedRuntimeVersion)</LatestRuntimeFrameworkVersion>
-        <TargetingPackVersion>$(CsCodePinnedRuntimeVersion)</TargetingPackVersion>
-      </KnownFrameworkReference>
-      <KnownAppHostPack Condition="'%(Identity)' == 'Microsoft.NETCore.App' and '%(TargetFramework)' == '$(TargetFramework)'">
-        <AppHostPackVersion>$(CsCodePinnedRuntimeVersion)</AppHostPackVersion>
-      </KnownAppHostPack>
-      <KnownCrossgen2Pack Condition="'%(Identity)' == 'Microsoft.NETCore.App.Crossgen2' and '%(TargetFramework)' == '$(TargetFramework)'">
-        <Crossgen2PackVersion>$(CsCodePinnedRuntimeVersion)</Crossgen2PackVersion>
-      </KnownCrossgen2Pack>
-      <KnownILCompilerPack Condition="'%(Identity)' == 'Microsoft.DotNet.ILCompiler' and '%(TargetFramework)' == '$(TargetFramework)'">
-        <ILCompilerPackVersion>$(CsCodePinnedRuntimeVersion)</ILCompilerPackVersion>
-      </KnownILCompilerPack>
-    </ItemGroup>
-  </Target>
+  <!-- The pack versions a publish uses are pinned (also imported by CsCode.Server.csproj, which this publish builds and ships). -->
+  <Import Project="PinnedRuntimePacks.props" />
 
 </Project>

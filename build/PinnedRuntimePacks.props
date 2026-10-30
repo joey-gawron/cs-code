@@ -1,0 +1,33 @@
+<Project>
+
+  <!--
+    The packs a publish uses are pinned. Imported by build/Publish.props (the app) and by src/CsCode.Server/CsCode.Server.csproj: the app's
+    publish builds cscode-server as a project of its own and ships it next to cscode, so its packs must be the pinned ones too (and
+    tools/publish-server.sh gets the same pin, the version tools/fetch-server-runtime-packs.sh checks). tools/publish-app.sh checks the pinned
+    packages (size, SHA-512, SHA-256) in the NuGet cache with tools/fetch-publish-packs.sh before it publishes, passes the pin, and refuses an
+    output whose cscode.deps.json or cscode-server.deps.json names another runtime pack. The SDK picks the runtime, apphost, targeting,
+    crossgen2 and ILCompiler pack versions from its own bundled list (a newer SDK would quietly restore newer, unchecked packs), so for a build
+    with a runtime identifier they are set to the pinned version here. -p:CsCodePinnedRuntimeVersion=none takes the SDK's own choice (unchecked).
+  -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <CsCodePinnedRuntimeVersion Condition="'$(CsCodePinnedRuntimeVersion)' == ''">10.0.12</CsCodePinnedRuntimeVersion>
+  </PropertyGroup>
+  <Target Name="CsCodePinPublishPacks" BeforeTargets="ProcessFrameworkReferences" Condition="'$(RuntimeIdentifier)' != '' and '$(CsCodePinnedRuntimeVersion)' != 'none'">
+    <ItemGroup>
+      <KnownFrameworkReference Condition="'%(Identity)' == 'Microsoft.NETCore.App' and '%(TargetFramework)' == '$(TargetFramework)'">
+        <LatestRuntimeFrameworkVersion>$(CsCodePinnedRuntimeVersion)</LatestRuntimeFrameworkVersion>
+        <TargetingPackVersion>$(CsCodePinnedRuntimeVersion)</TargetingPackVersion>
+      </KnownFrameworkReference>
+      <KnownAppHostPack Condition="'%(Identity)' == 'Microsoft.NETCore.App' and '%(TargetFramework)' == '$(TargetFramework)'">
+        <AppHostPackVersion>$(CsCodePinnedRuntimeVersion)</AppHostPackVersion>
+      </KnownAppHostPack>
+      <KnownCrossgen2Pack Condition="'%(Identity)' == 'Microsoft.NETCore.App.Crossgen2' and '%(TargetFramework)' == '$(TargetFramework)'">
+        <Crossgen2PackVersion>$(CsCodePinnedRuntimeVersion)</Crossgen2PackVersion>
+      </KnownCrossgen2Pack>
+      <KnownILCompilerPack Condition="'%(Identity)' == 'Microsoft.DotNet.ILCompiler' and '%(TargetFramework)' == '$(TargetFramework)'">
+        <ILCompilerPackVersion>$(CsCodePinnedRuntimeVersion)</ILCompilerPackVersion>
+      </KnownILCompilerPack>
+    </ItemGroup>
+  </Target>
+
+</Project>

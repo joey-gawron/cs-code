@@ -72,12 +72,13 @@ After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
-# The launcher starts the CsCode processes and exits. Without RemainAfterExit the unit would stop right then, and with the default
-# KillMode=control-group systemd would kill every process the launcher started (they stay in this unit's cgroup). KillMode=process: stopping
-# the unit never kills sessions either; at logout they get SIGTERM, which a session answers by saving (hot exit) before it ends.
+# The launcher starts the CsCode processes and exits; they stay in this unit's cgroup. RemainAfterExit keeps the unit active after that
+# (without it the unit would stop at once and take them along). Stopping the unit (logout through PartOf=graphical-session.target, or
+# systemctl --user stop) sends SIGTERM to every process in the cgroup (the default kill mode, control-group): a session answers it by saving
+# its unsaved changes (hot exit) and quitting, within 15 s (its own watchdog); SIGKILL only after TimeoutStopSec.
 Type=oneshot
 RemainAfterExit=yes
-KillMode=process
+TimeoutStopSec=30
 ExecStart=$cscode --background
 
 [Install]

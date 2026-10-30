@@ -14,6 +14,8 @@
 
   <!-- Self-contained builds on a Nix-provided SDK take the official runtime packs (the SDK's own carry a /nix/store ELF interpreter). -->
   <Import Project="../../build/NuGetRuntimePacks.props" />
+  <!-- The runtime, apphost, targeting and crossgen2 pack versions are pinned for a build with a runtime identifier (the app's publish ships this). -->
+  <Import Project="../../build/PinnedRuntimePacks.props" />
 
   <ItemGroup>
     <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />

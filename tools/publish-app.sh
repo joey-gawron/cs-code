@@ -11,8 +11,8 @@
 #   --unpinned       publish a runtime identifier whose packs are not pinned (only linux-x64's are), with the packs restore picks, unchecked
 #
 # The packs are pinned: before publishing, tools/fetch-publish-packs.sh restores them and checks each one's size, SHA-512 and SHA-256 against
-# its pin (no publish when one differs), the publish is told to use exactly that version (build/Publish.props, CsCodePinnedRuntimeVersion), and
-# the output must name it.
+# its pin (no publish when one differs), the publish is told to use exactly that version (build/PinnedRuntimePacks.props,
+# CsCodePinnedRuntimeVersion: the app and the cscode-server it ships), and the output must name it (cscode.deps.json, cscode-server.deps.json).
 #
 # The output runs on the system's loader and libraries, without a dotnet and without the Nix shell (tests/CsCode.App.Tests,
 # PublishedAppTests, starts it with env -i). On a Nix-provided dotnet, run the script itself in the development environment, for the SDK only:
@@ -71,10 +71,17 @@ echo "Publishing CsCode ($rid, self-contained, ReadyToRun composite) to $out"
 dotnet publish "$repo/src/CsCode.App/CsCode.App.csproj" --nologo -v:q -c Release -r "$rid" --self-contained true \
   --disable-build-servers --artifacts-path "$artifacts" -o "$out" "${pin_args[@]}"
 [ -x "$out/$app" ] || { echo "publish-app.sh: $out/$app is missing" >&2; exit 1; }
-# The output must carry the pinned runtime (a publish that took another version of the packs is not shipped).
-if [ -n "$pinned" ] && ! grep -q "\"runtimepack.Microsoft.NETCore.App.Runtime.$rid/$pinned\"" "$out/cscode.deps.json"; then
-  echo "publish-app.sh: $out/cscode.deps.json does not name the pinned runtime pack $pinned; refusing this publish" >&2
-  exit 1
+# The output must carry the pinned runtime (a publish that took another version of the packs is not shipped): the app's, and that of the
+# cscode-server it ships next to it (built by this publish as a project of its own, with the same pin: build/PinnedRuntimePacks.props).
+if [ -n "$pinned" ]; then
+  deps_files=(cscode.deps.json)
+  if [ -e "$out/cscode-server.dll" ]; then deps_files+=(cscode-server.deps.json); fi
+  for deps in "${deps_files[@]}"; do
+    if [ ! -f "$out/$deps" ] || ! grep -q "\"runtimepack.Microsoft.NETCore.App.Runtime.$rid/$pinned\"" "$out/$deps"; then
+      echo "publish-app.sh: $out/$deps does not name the pinned runtime pack $pinned; refusing this publish" >&2
+      exit 1
+    fi
+  done
 fi
 
 # A file that points into /nix/store would run only on this machine (and on Nix's glibc): never ship one.

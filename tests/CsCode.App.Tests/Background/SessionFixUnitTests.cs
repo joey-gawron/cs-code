@@ -85,7 +85,10 @@ public class AutostartUnitTests
     public void The_systemd_unit_keeps_the_processes_the_launcher_starts()
     {
         // sessions-5: a oneshot unit without RemainAfterExit stopped as soon as the launcher exited, and its default KillMode killed every
-        // process the launcher had started. --dry-run prints the unit and changes nothing (the user's systemd is never touched).
+        // process the launcher had started. And KillMode=process (the first fix) meant stopping the unit at logout signalled only the launcher,
+        // long gone: the sessions never got the SIGTERM they save on, and were SIGKILLed with the user manager. RemainAfterExit alone keeps
+        // them, and the default KillMode=control-group sends them SIGTERM when the unit stops (systemd.kill(5)). --dry-run prints the unit and
+        // changes nothing (the user's systemd is never touched).
         if (!OperatingSystem.IsLinux()) Assert.Skip("Linux autostart");
         using var home = new TempDirectory("cscode-unit-");
         var psi = new ProcessStartInfo("bash") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -98,8 +101,10 @@ public class AutostartUnitTests
         var output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
         Assert.True(p.WaitForExit(30_000));
         Assert.Equal(0, p.ExitCode);
+        Assert.Contains("Type=oneshot", output);
         Assert.Contains("RemainAfterExit=yes", output);
-        Assert.Contains("KillMode=process", output);
+        Assert.DoesNotContain("KillMode=", output); // control-group: SIGTERM to the sessions when the unit stops
+        Assert.Contains("TimeoutStopSec=30", output); // past the session's own 15 s SIGTERM watchdog
         Assert.Contains("ExecStart=/bin/true --background", output);
         Assert.False(Directory.Exists(home.Combine("config", "systemd")), "a dry run wrote the unit");
     }
@@ -132,13 +137,15 @@ public class PublishPinTests
         var pinned = Run("bash", [Path.Combine("tools", "fetch-publish-packs.sh"), "--print-version"]).Output.Trim();
         Assert.Matches(@"^\d+\.\d+\.\d+$", pinned);
         Assert.Contains($"<CsCodePinnedRuntimeVersion Condition=\"'$(CsCodePinnedRuntimeVersion)' == ''\">{pinned}</CsCodePinnedRuntimeVersion>",
-            File.ReadAllText(Path.Combine(PublishedAppFixture.RepoRoot(), "build", "Publish.props")));
+            File.ReadAllText(Path.Combine(PublishedAppFixture.RepoRoot(), "build", "PinnedRuntimePacks.props")));
 
-        // Evaluation only (no download): the packs restore would fetch, for the pin and for a version no SDK bundles.
-        using var obj = new TempDirectory("cscode-pin-obj-");
+        // Evaluation only (no download): the packs restore would fetch, for the pin and for a version no SDK bundles. The app, and the
+        // cscode-server it ships (its publish builds it as a project of its own: it took the SDK's packs before).
+        foreach (var project in new[] { Path.Combine("src", "CsCode.App", "CsCode.App.csproj"), Path.Combine("src", "CsCode.Server", "CsCode.Server.csproj") })
         foreach (var version in new[] { pinned, "10.0.99" })
         {
-            var (code, output) = Run("dotnet", ["msbuild", Path.Combine("src", "CsCode.App", "CsCode.App.csproj"), "-nologo", "-t:CollectPackageDownloads", "-getItem:PackageDownload",
+            using var obj = new TempDirectory("cscode-pin-obj-");
+            var (code, output) = Run("dotnet", ["msbuild", project, "-nologo", "-t:CollectPackageDownloads", "-getItem:PackageDownload",
                 "-p:RuntimeIdentifier=linux-x64", "-p:SelfContained=true", "-p:CsCodeNuGetRuntimePacks=true", "-p:PublishReadyToRun=true", "-p:Configuration=Release",
                 $"-p:CsCodePinnedRuntimeVersion={version}", $"-p:BaseIntermediateOutputPath={obj.Path}/"], timeoutMs: 300_000);
             Assert.True(code == 0, output);
@@ -150,6 +157,7 @@ public class PublishPinTests
         Assert.Contains("if ! bash \"$repo/tools/fetch-publish-packs.sh\"; then", script);
         Assert.Contains("-p:CsCodePinnedRuntimeVersion=$pinned", script);
         Assert.Contains("runtimepack.Microsoft.NETCore.App.Runtime.$rid/$pinned", script);
+        Assert.Contains("deps_files+=(cscode-server.deps.json)", script); // and the cscode-server it ships
     }
 
     [Fact]
