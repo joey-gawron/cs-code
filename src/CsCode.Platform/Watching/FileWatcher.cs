@@ -27,21 +27,27 @@ public sealed class FileWatchHandle : IDisposable
 /// <item><b>Coalescing</b>: a quiet period of <see cref="PlatformOptions.WatchDebounce"/> after the last event delivers one batch; a
 /// continuously busy watch still delivers every <see cref="PlatformOptions.WatchMaxDelay"/>. See <see cref="ChangeCoalescer"/> for the merge rules.</item>
 /// <item><b>Excludes</b>: <c>excludeGlobs</c> (null = the <c>files.watcherExclude</c> setting, else built-ins; empty = none) filter events by
-/// root-relative path. (The OS still watches excluded directories — FileSystemWatcher cannot skip them — it is the events that are dropped.)</item>
-/// <item><b>Handles</b>: one <see cref="FileSystemWatcher"/> (= one inotify instance) is shared by every subscription on the same root and
-/// disposed with the last one. When the OS watch limit is exhausted that root degrades to a coarse polling watcher (logged once per root).</item>
+/// root-relative path. A directory that every subscription on a root excludes is not watched by the OS at all on Linux
+/// (<see cref="InotifyBackend"/> watches one directory at a time and skips it); a subscription that joins with fewer excludes has the
+/// directories it wants watched before its <see cref="FileWatchHandle.Ready"/>. Elsewhere <see cref="FileSystemWatcher"/> watches the whole tree
+/// and only the events are dropped.</item>
+/// <item><b>Handles</b>: one OS watch (one inotify instance on Linux) is shared by every subscription on the same root and disposed with
+/// the last one. When the OS watch limit is exhausted that root degrades to a coarse polling watcher (logged once per root).</item>
 /// <item><b>Roots that come and go</b>: a root that does not exist yet (<c>.cscode/</c> of a folder opened without one) waits through a
 /// non-recursive watch on its nearest existing ancestor — shared like any other, usually the folder's own — and arms its OS watch when the
-/// directory appears, reporting what is already inside as created. An OS watch dies silently with its directory (no error on Linux; one on
-/// a moved directory keeps reporting it under the old path), so a root is re-checked when a watched parent reports it deleted, moved or
-/// (re-)created, after deletions below it, and whenever another subscriber joins it: a deleted root goes back to waiting, a replaced one is
-/// re-armed. Not detected: a root replaced (or an empty one removed) while nothing watches its parent and nobody re-watches it.</item>
+/// directory appears, reporting what is already inside as created. An OS watch dies silently with its directory (no error on Linux; a
+/// FileSystemWatcher on a moved directory keeps reporting it under the old path, the inotify backend falls silent), so a root is re-checked
+/// when a watched parent reports it deleted, moved or (re-)created, after deletions below it, and whenever another subscriber joins it: a
+/// deleted root goes back to waiting, a replaced one is re-armed. Not detected: a root replaced (or an empty one removed) while nothing
+/// watches its parent and nobody re-watches it.</item>
 /// <item><b>Roots that keep going away</b>: on Linux a <see cref="FileSystemWatcher"/> whose directory was deleted can never be released — its
 /// reader thread waits forever on an inotify instance that has no watch left, so disposing it frees neither (.NET 10). Every directory lost
-/// under an OS watch therefore costs one inotify instance (the per-user limit is often 128, shared with every other program) and one thread
-/// until the process exits. To bound that, a path that has lost <see cref="MaxOsWatchLosses"/> OS watches is polled from then on: polling
-/// follows the path, so it survives any number of deletions and re-creations at no OS cost (≤ <see cref="MaxOsWatchLosses"/> leaked
-/// instances per path, instead of one per <c>rm -rf</c> of a build output or <c>git checkout</c> that removes <c>.vscode/</c>).</item>
+/// under such a watch would cost one inotify instance (the per-user limit is often 128, shared with every other program) and one thread
+/// until the process exits. To bound that, a path that has lost <see cref="MaxOsWatchLosses"/> leaking OS watches is polled from then on:
+/// polling follows the path, so it survives any number of deletions and re-creations at no OS cost (≤ <see cref="MaxOsWatchLosses"/> leaked
+/// instances per path, instead of one per <c>rm -rf</c> of a build output or <c>git checkout</c> that removes <c>.vscode/</c>). Only a backend
+/// that leaks counts (<see cref="IWatchBackend.LeaksWhenItsRootIsDeleted"/>): the Linux default, <see cref="InotifyBackend"/>, wakes its reader
+/// and closes its instance on dispose whatever happened to the directory, so its root is re-armed (or waited for) every time, never polled.</item>
 /// </list>
 /// </summary>
 public sealed class FileWatcher : IFileWatcher, IDisposable
@@ -85,7 +91,7 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
     private readonly IConfigurationServiceRead? _config;
     private readonly PlatformOptions _options;
     private readonly ILogger _log;
-    private readonly BackendFactory _fswFactory;
+    private readonly BackendFactory _backendFactory;
     private readonly object _gate = new();
     private readonly Dictionary<(string, bool), Source> _sources = new();
     private HashSet<string> _roots = new(PathComparer);   // every source's root; replaced (never mutated) under _gate, read lock-free from OS callbacks
@@ -98,14 +104,18 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
     public FileWatcher(IoLane lane, IConfigurationService? configuration = null, PlatformOptions? options = null, ILogger<FileWatcher>? logger = null)
         : this(lane, configuration is null ? null : new ConfigRead(configuration), options, logger, null) { }
 
-    internal FileWatcher(IoLane lane, IConfigurationServiceRead? config, PlatformOptions? options, ILogger<FileWatcher>? logger, BackendFactory? fswFactory)
+    internal FileWatcher(IoLane lane, IConfigurationServiceRead? config, PlatformOptions? options, ILogger<FileWatcher>? logger, BackendFactory? backendFactory)
     {
         _lane = lane;
         _config = config;
         _options = options ?? new PlatformOptions();
         _log = logger ?? NullLogger<FileWatcher>.Instance;
-        _fswFactory = fswFactory ?? ((root, recursive, sink, fatal) => new FswBackend(root, recursive, sink, fatal));
+        _backendFactory = backendFactory ?? DefaultBackend;
     }
+
+    /// <summary>inotify one directory at a time on Linux (excluded directories cost no watch), <see cref="FileSystemWatcher"/> elsewhere.</summary>
+    internal static IWatchBackend DefaultBackend(string root, bool recursive, Func<string, bool> isPruned, RawSink sink, Action<Exception> onFatal) =>
+        OperatingSystem.IsLinux() ? new InotifyBackend(root, recursive, isPruned, sink, onFatal) : new FswBackend(root, recursive, sink, onFatal);
 
     private sealed class ConfigRead(IConfigurationService config) : IConfigurationServiceRead
     {
@@ -145,8 +155,8 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
         }
         // The shared watch may be on a directory that was deleted, moved or replaced since. Consumers re-watch when their parent watch reports
         // such a change, so a joining subscriber is the moment to look: whoever re-watches revives the watch for every subscriber instead of
-        // joining a dead one.
-        var ready = joined ? Task.WhenAll(source.Ready, _lane.RunAsync<Task>(_ => Recheck(source)).Unwrap()) : source.Ready;
+        // joining a dead one. And it may want a directory the others excluded, which the OS watch then left out.
+        var ready = joined ? Task.WhenAll(source.Ready, _lane.RunAsync<Task>(_ => Recheck(source, joined: true)).Unwrap()) : source.Ready;
         return new FileWatchHandle(ready, () => Release(source, sub));
     }
 
@@ -198,7 +208,8 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
         {
             try
             {
-                backend = _fswFactory(source.Root, source.Recursive, (k, p, o) => OnRaw(source, k, p, o), ex => OnBackendFailed(source, generation, ex));
+                backend = _backendFactory(source.Root, source.Recursive, dir => NobodyWants(source, dir), (k, p, o) => OnRaw(source, k, p, o),
+                    ex => OnBackendFailed(source, generation, ex));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or NotSupportedException)
             {
@@ -230,6 +241,9 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
             return Task.CompletedTask;
         }
         if (failed is not null) OnBackendFailed(source, generation, failed); // it failed before it was in place: degrade it now that it is
+        // A subscription that joined while the tree was walked may want a directory the walk had already skipped, and its own re-check may
+        // have run before the backend was in place. (The re-check of any later joiner finds the backend.)
+        else backend.RevisitPruned();
         // After the backend is in place (and, for polling, has taken its baseline): whatever appears from now on is reported by the backend,
         // whatever was there before by this scan — at worst twice, never not at all.
         if (announce) ScanNewDirectory(source, source.Root);
@@ -249,7 +263,18 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
     }
 
     // Only FileSystemWatcher on Linux keeps its inotify instance (and thread) when its directory is deleted; other backends cost nothing to lose.
-    private static bool LeaksWhenItsRootGoes(IWatchBackend backend) => backend is FswBackend && FswBackend.LeaksWhenItsRootIsDeleted;
+    private static bool LeaksWhenItsRootGoes(IWatchBackend backend) => backend.LeaksWhenItsRootIsDeleted;
+
+    /// <summary>
+    /// True when every subscription on <paramref name="source"/> excludes <paramref name="dir"/> (and so everything below it): the OS need not
+    /// watch it and a new-directory scan need not enter it. Read live — from a backend's walk and reader thread — as subscriptions come and go.
+    /// </summary>
+    private static bool NobodyWants(Source source, string dir)
+    {
+        foreach (var sub in Volatile.Read(ref source.Subscriptions))
+            if (!sub.IsExcluded(dir)) return false;
+        return true;
+    }
 
     private void LogPollingFromNowOn(string root) =>
         _log.LogInformation("'{Root}' has lost {Count} OS file watches with its directory (deleted, moved or replaced); each costs an inotify instance and a thread until CsCode exits, so it is polled every {Interval:F1}s from now on.",
@@ -319,15 +344,17 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
     /// On the IO lane: compares a source with its root on disk. A waiting source whose root exists now arms its OS watch (announcing the
     /// content); one waiting in an ancestor that is no longer the nearest existing one moves its wait; an armed source whose root is gone
     /// goes back to waiting, and one whose root was re-created since it armed is re-armed on the new directory. A polling source needs
-    /// neither. Returns when the new watch (if any) is armed.
+    /// neither. <paramref name="joined"/>: a subscription just joined, so an OS watch that stays in place also watches what it wants and the
+    /// others excluded (a re-armed one walks with it already). Returns when the new watch (if any) is armed.
     /// </summary>
-    private Task Recheck(Source source)
+    private Task Recheck(Source source, bool joined = false)
     {
         Volatile.Write(ref source.CheckScheduled, 0); // anything after this point schedules another check
         var exists = Directory.Exists(source.Root);
         var nearest = exists ? null : NearestExistingAncestor(source.Root).Ancestor;
         IDisposable? waiter = null;
         IWatchBackend? backend = null;
+        IWatchBackend? stays = null;
         var pollingFromNowOn = false;
         lock (_gate)
         {
@@ -344,9 +371,16 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
                 source.Backend = null;
                 if (LeaksWhenItsRootGoes(backend)) pollingFromNowOn = CountOsWatchLoss(source.Root);
             }
-            else return Task.CompletedTask; // consistent (or being armed right now by another lane item, which looks at the disk itself)
+            // Consistent (or being armed right now by another lane item, which looks at the disk itself and revisits what it pruned).
+            else if (joined && source.Backend is { } current) stays = current;
+            else return Task.CompletedTask;
         }
 
+        if (stays is not null)
+        {
+            stays.RevisitPruned();
+            return Task.CompletedTask;
+        }
         waiter?.Dispose();
         if (backend is not null)
         {
@@ -460,8 +494,9 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
             if (kind == RawKind.Deleted && !source.UsingPolling) ScheduleRecheck(source, _options.WatchDebounce);
         }
 
-        // FileSystemWatcher cannot see what happens inside a directory in the instant between its creation and its own watch being armed
-        // (`mkdir -p a/b/c` reports only `a`). So when a directory appears, look inside it ourselves and announce what is already there.
+        // No OS watch sees what happens inside a directory in the instant between its creation and its own watch being armed (`mkdir -p a/b/c`
+        // reports only `a`). So when a directory appears, look inside it ourselves and announce what is already there. (A backend arms a new
+        // directory's watches before it reports the directory, so whatever this scan comes too early for, the backend reports.)
         if (source.Recursive && !source.UsingPolling && kind is RawKind.Created or RawKind.Renamed)
             _lane.Post(() => ScanNewDirectory(source, path), ex => _log.LogDebug(ex, "Scanning new directory {Path} failed", path));
     }
@@ -507,8 +542,7 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
         {
             var dir = stack.Pop();
             if (source.Closed) return;
-            var subs = Volatile.Read(ref source.Subscriptions);
-            if (subs.Length == 0 || subs.All(s => s.IsExcluded(dir))) continue; // nobody wants this subtree: do not even enumerate it
+            if (NobodyWants(source, dir)) continue; // nobody wants this subtree: do not even enumerate it
             IEnumerable<string> entries;
             try { entries = Directory.EnumerateFileSystemEntries(dir, "*", options); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }

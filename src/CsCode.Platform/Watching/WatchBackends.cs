@@ -1,5 +1,6 @@
 using System.IO.Enumeration;
 using CsCode.Core.Text;
+using CsCode.Platform.Configuration;
 using CsCode.Platform.Io;
 using Microsoft.Extensions.Logging;
 
@@ -7,12 +8,33 @@ namespace CsCode.Platform.Watching;
 
 internal delegate void RawSink(RawKind kind, string path, string? oldPath);
 
-internal interface IWatchBackend : IDisposable { }
+internal interface IWatchBackend : IDisposable
+{
+    /// <summary>
+    /// True when disposing this backend after its root directory was deleted cannot release what it holds from the OS, so that every such loss
+    /// counts towards polling the path instead (<see cref="FileWatcher.MaxOsWatchLosses"/>). Only <see cref="FswBackend"/> on Linux.
+    /// </summary>
+    bool LeaksWhenItsRootIsDeleted => false;
 
-/// <summary>Creates the OS-level backend for one root. Throws IOException when the OS watch limit is exhausted (the caller then falls back to polling).</summary>
-internal delegate IWatchBackend BackendFactory(string root, bool recursive, RawSink sink, Action<Exception> onFatal);
+    /// <summary>
+    /// A subscription joined the root: watch the directories that were left unwatched because every subscription excluded them, if one of them
+    /// is wanted now. Called on the IO lane once the backend is in place. Backends that watch (or poll) everything they will ever report ignore it.
+    /// </summary>
+    void RevisitPruned() { }
+}
 
-/// <summary>One <see cref="FileSystemWatcher"/> for a whole tree. NOTE: each instance consumes one inotify instance on Linux, which is why <see cref="FileWatcher"/> shares one per root.</summary>
+/// <summary>
+/// Creates the OS-level backend for one root. <paramref name="isPruned"/> says, for a directory below the root, that no subscription wants
+/// anything at or below it (it is read live: subscriptions come and go), so the backend need not watch it. Throws IOException when the OS
+/// watch limit is exhausted (the caller then falls back to polling), <see cref="DirectoryNotFoundException"/> when the root is not a directory.
+/// </summary>
+internal delegate IWatchBackend BackendFactory(string root, bool recursive, Func<string, bool> isPruned, RawSink sink, Action<Exception> onFatal);
+
+/// <summary>
+/// One <see cref="FileSystemWatcher"/> for a whole tree: the backend everywhere but Linux (where <see cref="InotifyBackend"/> is used). It cannot
+/// skip excluded directories: on Linux it would put an inotify watch on every directory below the root. Each instance consumes one inotify
+/// instance on Linux, which is why <see cref="FileWatcher"/> shares one per root.
+/// </summary>
 internal sealed class FswBackend : IWatchBackend
 {
     /// <summary>
@@ -20,7 +42,7 @@ internal sealed class FswBackend : IWatchBackend
     /// watch left, and Dispose only removes watches — so the instance and the thread stay until the process exits (measured on .NET 10:
     /// +1 inotify fd and +1 thread per watcher disposed after its directory was deleted, none when disposed before, or after a move).
     /// </summary>
-    public static bool LeaksWhenItsRootIsDeleted => OperatingSystem.IsLinux();
+    public bool LeaksWhenItsRootIsDeleted => OperatingSystem.IsLinux();
 
     private readonly FileSystemWatcher _fsw;
 
@@ -168,8 +190,7 @@ internal sealed class PollingBackend : IWatchBackend
 /// <summary>Excludes for one subscription: glob patterns tested against the root-relative path (and, for directories, the path with a trailing '/').</summary>
 internal sealed class ExcludeMatcher
 {
-    public static readonly IReadOnlyList<string> BuiltInWatcherExcludes =
-        ["**/.git/objects/**", "**/.git/subtree-cache/**", "**/.hg/store/**", "**/node_modules/**", "**/bin/**", "**/obj/**"];
+    public static readonly IReadOnlyList<string> BuiltInWatcherExcludes = BuiltInSettings.WatcherExcludes;
 
     private readonly string[] _patterns;
     private readonly string _root;

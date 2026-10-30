@@ -11,6 +11,14 @@ public static class BuiltInSettings
 {
     public const string KeymapKey = "cscode.keymap";
 
+    /// <summary>
+    /// The default of <c>files.watcherExclude</c>, and what a watch excludes when no configuration is at hand. Version-control internals and the
+    /// build and package output of .NET (bin/obj), npm (node_modules) and Rust, Maven and sbt (target): the directories with the most churn
+    /// and the most subdirectories. A directory every watcher on a root excludes costs no OS watch (on Linux, one inotify watch per directory).
+    /// </summary>
+    public static IReadOnlyList<string> WatcherExcludes { get; } =
+        ["**/.git/objects/**", "**/.git/subtree-cache/**", "**/.hg/store/**", "**/node_modules/**", "**/bin/**", "**/obj/**", "**/target/**"];
+
     private static ConfigurationProperty P(string key, object? value, string description, string? schemaJson = null) =>
         new(key, JsonSerializer.SerializeToElement(value), description, schemaJson is null ? null : JsonDocument.Parse(schemaJson).RootElement.Clone());
 
@@ -34,11 +42,8 @@ public static class BuiltInSettings
         {
             ["**/.git"] = true, ["**/.svn"] = true, ["**/.hg"] = true, ["**/CVS"] = true, ["**/.DS_Store"] = true, ["**/Thumbs.db"] = true,
         }, "Glob patterns for files and folders to exclude from the explorer, quick open and search.", """{"type":"object"}"""),
-        P(SettingKeys.FilesWatcherExclude, new Dictionary<string, bool>
-        {
-            ["**/.git/objects/**"] = true, ["**/.git/subtree-cache/**"] = true, ["**/.hg/store/**"] = true,
-            ["**/node_modules/**"] = true, ["**/bin/**"] = true, ["**/obj/**"] = true,
-        }, "Glob patterns of paths to exclude from file watching.", """{"type":"object"}"""),
+        P(SettingKeys.FilesWatcherExclude, WatcherExcludes.ToDictionary(static g => g, static _ => true),
+            "Glob patterns of paths to exclude from file watching.", """{"type":"object"}"""),
         P(SettingKeys.WorkbenchColorTheme, "Visual Studio Dark", "Specifies the color theme used in the workbench.", """{"type":"string"}"""),
         P(SettingKeys.WorkbenchStartupEditor, "welcomePage", "Controls which editor is shown at startup.", """{"type":"string","enum":["none","welcomePage","newUntitledFile"]}"""),
         P(SettingKeys.MemoryBudgetMb, 0, "Soft memory budget in MB (0 = unlimited). Above it caches are trimmed.", """{"type":"integer","minimum":0}"""),

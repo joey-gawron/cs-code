@@ -50,7 +50,7 @@ public static class ServiceCollectionExtensions
         // The watcher reads files.watcherExclude from configuration, and configuration uses the watcher: the lazy accessor breaks the cycle
         // (configuration always passes explicit excludes for its own watches, so the accessor is never touched during its construction).
         services.TryAddSingleton(sp => new FileWatcher(sp.GetRequiredService<IoLane>(), new LazyWatcherConfig(sp), sp.GetRequiredService<PlatformOptions>(),
-            sp.GetService<ILogger<FileWatcher>>(), fswFactory: null));
+            sp.GetService<ILogger<FileWatcher>>(), backendFactory: null));
         services.TryAddSingleton(sp => new FileWatcherRouter(sp.GetRequiredService<FileWatcher>(), () => sp.GetServices<IFileWatcherProvider>()));
         services.TryAddSingleton<IFileWatcher>(sp => sp.GetRequiredService<FileWatcherRouter>());
 

@@ -280,6 +280,40 @@ public class ExplorerTests
     }
 
     [AvaloniaFact]
+    public async Task The_live_refresh_watches_past_watcher_excluded_and_explorer_excluded_folders_but_still_shows_the_former()
+    {
+        // The Explorer's subscription shares the folder's OS watch with the language servers and EditorConfig (files.watcherExclude); a folder
+        // every subscription excludes costs no OS watch. With files.exclude alone it kept target/ and node_modules/ watched for everyone.
+        using var rig = new Rig();
+        rig.Dir.WriteFile("target/debug/app", "");
+        rig.Dir.WriteFile("src/main.rs", "");
+        rig.Config.Set(SettingKeys.FilesExclude, new Dictionary<string, bool> { ["**/.git"] = true, ["*.log"] = true, ["**/off"] = false });
+        rig.Config.Set(SettingKeys.FilesWatcherExclude, new Dictionary<string, bool> { ["**/target/**"] = true, ["**/node_modules/**"] = false });
+        await rig.OpenAsync();
+
+        var excludes = Assert.Single(rig.Watcher.ActiveExcludes);
+        Assert.NotNull(excludes);
+        Assert.Equal(["**/.git", "**/target/**", "*.log"], excludes.Order(StringComparer.Ordinal));
+
+        // What is shown is still files.exclude alone: a watcher-excluded folder is listed, and expanding it reads the disk.
+        var target = rig.Vm.Rows.Single(r => r.Name == "target");
+        await rig.Vm.ToggleAsync(target);
+        Assert.Contains("  debug", rig.Names);
+    }
+
+    [AvaloniaFact]
+    public async Task Without_settings_the_live_refresh_excludes_the_built_in_watcher_excludes_and_the_explorer_defaults()
+    {
+        using var rig = new Rig();
+        await rig.OpenAsync();
+        var excludes = Assert.Single(rig.Watcher.ActiveExcludes);
+        Assert.NotNull(excludes);
+        Assert.Contains("**/target/**", excludes);
+        Assert.Contains("**/node_modules/**", excludes);
+        Assert.Contains("**/.git", excludes);
+    }
+
+    [AvaloniaFact]
     public async Task The_filter_box_narrows_to_matching_loaded_nodes_and_clearing_restores_the_tree()
     {
         using var rig = new Rig();

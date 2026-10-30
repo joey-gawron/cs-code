@@ -126,6 +126,9 @@ public class ExcludeMatcherTests
     [InlineData("/w/src/Program.cs", false)]
     [InlineData("/w/binary.txt", false)]                     // "bin" must not match by prefix
     [InlineData("/w/obj.txt", false)]
+    [InlineData("/w/target", true)]                          // Rust, Maven and sbt build output
+    [InlineData("/w/crates/core/target/debug/build", true)]
+    [InlineData("/w/src/target.rs", false)]
     public void Default_watcher_excludes(string path, bool excluded) =>
         Assert.Equal(excluded, new ExcludeMatcher("/w", ExcludeMatcher.BuiltInWatcherExcludes).IsExcluded(path));
 
@@ -651,33 +654,58 @@ public class FileWatcherTests : IDisposable
     private static Task WaitForPresent(Collector events, string name, CancellationToken ct) =>
         events.WaitFor(s => s.Any(c => Collector.Name(c) == name && c.Kind != FileChangeKind.Deleted), $"{name} to be reported", ct);
 
-    [Fact]
-    public async Task A_build_output_directory_deleted_and_rebuilt_again_and_again_keeps_reporting_and_costs_at_most_two_inotify_instances()
+    /// <summary>A fixture whose OS watches are FileSystemWatchers (the backend everywhere but Linux; on Linux the one that leaks).</summary>
+    private static WatchFixture FswFixture() => new(factory: (root, recursive, _, sink, fatal) => new FswBackend(root, recursive, sink, fatal));
+
+    private static async Task RebuildAgainAndAgain(WatchFixture f, int rebuilds)
     {
-        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fd");
-        var baseline = WatchFixture.InotifyFds();
-        Directory.CreateDirectory(_f.P("out/gen"));
-        File.WriteAllText(_f.P("out/gen/G0.cs"), "x");
+        Directory.CreateDirectory(f.P("out/gen"));
+        File.WriteAllText(f.P("out/gen/G0.cs"), "x");
         var events = new Collector();                                       // the editor watching the folder of an open generated file
-        var h = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P("out/gen")), false, null, events.Add);
+        var h = (FileWatchHandle)f.Watcher.Watch(FileUri.FromDirectoryPath(f.P("out/gen")), false, null, events.Add);
         await h.Ready;
 
-        const int Rebuilds = 10;
-        for (var i = 1; i <= Rebuilds; i++)
+        for (var i = 1; i <= rebuilds; i++)
         {
-            Directory.Delete(_f.P("out"), recursive: true);                 // clean …
+            Directory.Delete(f.P("out"), recursive: true);                  // clean …
             await events.WaitForKind($"G{i - 1}.cs", FileChangeKind.Deleted, Ct);
             await Task.Delay(100, Ct);
-            Directory.CreateDirectory(_f.P("out/gen"));                     // … and build
-            File.WriteAllText(_f.P($"out/gen/G{i}.cs"), "x");
+            Directory.CreateDirectory(f.P("out/gen"));                      // … and build
+            File.WriteAllText(f.P($"out/gen/G{i}.cs"), "x");
             await WaitForPresent(events, $"G{i}.cs", Ct);
         }
         h.Dispose();
+    }
+
+    [Fact]
+    public async Task A_build_output_directory_deleted_and_rebuilt_again_and_again_under_a_FileSystemWatcher_keeps_reporting_and_costs_at_most_two_inotify_instances()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fd");
+        using var f = FswFixture();
+        var baseline = WatchFixture.InotifyFds();
+        const int Rebuilds = 10;
+        await RebuildAgainAndAgain(f, Rebuilds);
 
         var leaked = await WatchFixture.SettledInotifyFds(baseline + FileWatcher.MaxOsWatchLosses, Ct) - baseline;
         Assert.True(leaked <= FileWatcher.MaxOsWatchLosses, $"{leaked} inotify instances leaked over {Rebuilds} rebuilds");
-        Assert.Single(_f.Log.Entries, e => e.Message.Contains("polled every", StringComparison.Ordinal));
+        Assert.Single(f.Log.Entries, e => e.Message.Contains("polled every", StringComparison.Ordinal));
+        Assert.DoesNotContain(f.Log.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task A_build_output_directory_deleted_and_rebuilt_again_and_again_keeps_its_os_watch_and_leaks_nothing()
+    {
+        // The default Linux backend closes its instance and stops its thread on dispose, deleted directory or not: no loss is counted, so the
+        // directory is re-armed with an OS watch after every rebuild instead of being demoted to polling.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fd");
+        var baseline = WatchFixture.InotifyFds();
+        const int Rebuilds = 10;
+        await RebuildAgainAndAgain(_f, Rebuilds);
+
+        Assert.Equal(baseline, await WatchFixture.SettledInotifyFds(baseline, Ct));
+        Assert.DoesNotContain(_f.Log.Entries, e => e.Message.Contains("polled every", StringComparison.Ordinal));
         Assert.DoesNotContain(_f.Log.Entries, e => e.Level >= LogLevel.Warning);
+        Assert.Equal(0, _f.Watcher.ActiveBackends);
     }
 
     [Fact]
@@ -710,43 +738,73 @@ public class FileWatcherTests : IDisposable
     }
 
     [Fact]
-    public async Task A_path_watched_again_after_its_watches_were_lost_is_polled_from_the_start()
+    public async Task A_path_watched_again_after_its_FileSystemWatchers_were_lost_is_polled_from_the_start()
     {
         // Modules drop their watch when the directory goes and watch the path again when it is back (the settings service does): the
         // losses count for the path, not for one watch, or each re-watch would cost a fresh inotify instance at the next deletion.
         Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fd");
-        var (folder, parent) = _f.Start(recursive: false);                  // the module's folder watch tells it when the directory goes
+        using var f = FswFixture();
+        var (folder, parent) = f.Start(recursive: false);                   // the module's folder watch tells it when the directory goes
         await parent.Ready;
         for (var i = 0; i < FileWatcher.MaxOsWatchLosses; i++)
         {
-            Directory.CreateDirectory(_f.P("cfg"));
+            Directory.CreateDirectory(f.P("cfg"));
             await folder.WaitForKind("cfg", FileChangeKind.Created, Ct);
-            var h = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P("cfg")), false, [], _ => { });
+            var h = (FileWatchHandle)f.Watcher.Watch(FileUri.FromDirectoryPath(f.P("cfg")), false, [], _ => { });
             await h.Ready;
             folder.Clear();
-            Directory.Delete(_f.P("cfg"), recursive: true);
+            Directory.Delete(f.P("cfg"), recursive: true);
             await folder.WaitForKind("cfg", FileChangeKind.Deleted, Ct);
             h.Dispose();                                                    // the module drops the watch of a directory that went
             folder.Clear();
         }
         // (counted on the lane: by the re-check the parent's report triggered, or where the dropped OS watch is disposed)
-        for (var i = 0; i < 250 && !_f.Log.Entries.Any(e => e.Message.Contains("polled every", StringComparison.Ordinal)); i++) await Task.Delay(20, Ct);
-        Assert.Single(_f.Log.Entries, e => e.Message.Contains("polled every", StringComparison.Ordinal));
+        for (var i = 0; i < 250 && !f.Log.Entries.Any(e => e.Message.Contains("polled every", StringComparison.Ordinal)); i++) await Task.Delay(20, Ct);
+        Assert.Single(f.Log.Entries, e => e.Message.Contains("polled every", StringComparison.Ordinal));
 
         var baseline = WatchFixture.InotifyFds();
-        Directory.CreateDirectory(_f.P("cfg"));
+        Directory.CreateDirectory(f.P("cfg"));
         var events = new Collector();
-        var again = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P("cfg")), false, [], events.Add);
+        var again = (FileWatchHandle)f.Watcher.Watch(FileUri.FromDirectoryPath(f.P("cfg")), false, [], events.Add);
         await again.Ready;
         Assert.Equal(baseline, WatchFixture.InotifyFds());                 // no OS watch any more …
-        File.WriteAllText(_f.P("cfg/right-after-ready.json"), "{}");       // … yet a change right after Ready is reported
+        File.WriteAllText(f.P("cfg/right-after-ready.json"), "{}");        // … yet a change right after Ready is reported
         await events.WaitForKind("right-after-ready.json", FileChangeKind.Created, Ct);
-        Directory.Delete(_f.P("cfg"), recursive: true);                    // and the path is followed through deletion and re-creation
+        Directory.Delete(f.P("cfg"), recursive: true);                     // and the path is followed through deletion and re-creation
         await events.WaitForKind("right-after-ready.json", FileChangeKind.Deleted, Ct);
-        Directory.CreateDirectory(_f.P("cfg"));
-        File.WriteAllText(_f.P("cfg/back.json"), "{}");
+        Directory.CreateDirectory(f.P("cfg"));
+        File.WriteAllText(f.P("cfg/back.json"), "{}");
         await events.WaitForKind("back.json", FileChangeKind.Created, Ct);
         again.Dispose();
+        parent.Dispose();
+    }
+
+    [Fact]
+    public async Task A_path_whose_directory_keeps_going_away_is_watched_by_the_os_again_every_time()
+    {
+        // The same module behaviour with the default backend: nothing leaks, so nothing is counted, and every re-watch is a real OS watch.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts /proc/self/fd");
+        var (folder, parent) = _f.Start(recursive: false);
+        await parent.Ready;
+        var baseline = WatchFixture.InotifyFds();
+        for (var i = 0; i < FileWatcher.MaxOsWatchLosses + 2; i++)
+        {
+            Directory.CreateDirectory(_f.P("cfg"));
+            await folder.WaitForKind("cfg", FileChangeKind.Created, Ct);
+            var events = new Collector();
+            var h = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P("cfg")), false, [], events.Add);
+            await h.Ready;
+            Assert.Equal(baseline + 1, WatchFixture.InotifyFds());         // an inotify instance, not polling
+            File.WriteAllText(_f.P($"cfg/f{i}.json"), "{}");
+            await events.WaitForKind($"f{i}.json", FileChangeKind.Created, Ct);
+            folder.Clear();
+            Directory.Delete(_f.P("cfg"), recursive: true);
+            await folder.WaitForKind("cfg", FileChangeKind.Deleted, Ct);
+            h.Dispose();
+            Assert.Equal(baseline, await WatchFixture.SettledInotifyFds(baseline, Ct));
+            folder.Clear();
+        }
+        Assert.DoesNotContain(_f.Log.Entries, e => e.Message.Contains("polled every", StringComparison.Ordinal));
         parent.Dispose();
     }
 
@@ -882,7 +940,7 @@ public class FileWatcherTests : IDisposable
     [Fact]
     public async Task When_the_os_watch_limit_is_exhausted_the_root_falls_back_to_polling_and_logs_once()
     {
-        using var f = new WatchFixture(factory: (_, _, _, _) => throw LimitReached());
+        using var f = new WatchFixture(factory: (_, _, _, _, _) => throw LimitReached());
         Directory.CreateDirectory(f.P("node_modules"));
         File.WriteAllText(f.P("existing.txt"), "x");
         var (events, h) = f.Start();
@@ -908,7 +966,7 @@ public class FileWatcherTests : IDisposable
     [Fact]
     public async Task Polling_prunes_the_default_excluded_directories()
     {
-        using var f = new WatchFixture(factory: (_, _, _, _) => throw LimitReached());
+        using var f = new WatchFixture(factory: (_, _, _, _, _) => throw LimitReached());
         Directory.CreateDirectory(f.P("node_modules/pkg"));
         var (events, h) = f.Start(excludes: []);          // subscriber excludes nothing, but polling never walks node_modules at all
         await h.Ready;
@@ -924,7 +982,7 @@ public class FileWatcherTests : IDisposable
     [Fact]
     public async Task Each_root_that_degrades_logs_its_own_single_warning()
     {
-        using var f = new WatchFixture(factory: (_, _, _, _) => throw LimitReached());
+        using var f = new WatchFixture(factory: (_, _, _, _, _) => throw LimitReached());
         var other = f.P("other");
         Directory.CreateDirectory(other);
         var h1 = (FileWatchHandle)f.Watcher.Watch(f.Root, true, null, _ => { });
@@ -951,7 +1009,7 @@ public class FileWatcherTests : IDisposable
 
     /// <summary>A fixture whose "OS watches" are fakes, added to <paramref name="backends"/> as created; <paramref name="onCreate"/> runs inside the factory.</summary>
     private static WatchFixture FakeFixture(List<FakeBackend> backends, Action<FakeBackend>? onCreate = null) =>
-        new(factory: (root, _, sink, fatal) =>
+        new(factory: (root, _, _, sink, fatal) =>
         {
             var b = new FakeBackend { Root = root, Sink = sink, Fatal = fatal };
             lock (backends) backends.Add(b);
@@ -1058,7 +1116,7 @@ public class FileWatcherTests : IDisposable
     public async Task A_fatal_error_after_arming_degrades_to_polling()
     {
         var backends = new List<FakeBackend>();
-        using var f = new WatchFixture(factory: (_, _, sink, fatal) => { var b = new FakeBackend { Sink = sink, Fatal = fatal }; lock (backends) backends.Add(b); return b; });
+        using var f = new WatchFixture(factory: (_, _, _, sink, fatal) => { var b = new FakeBackend { Sink = sink, Fatal = fatal }; lock (backends) backends.Add(b); return b; });
         var (events, h) = f.Start();
         await h.Ready;
 
@@ -1081,7 +1139,7 @@ public class FileWatcherTests : IDisposable
     public async Task A_raw_flood_beyond_the_bound_is_reported_as_one_root_changed_event()
     {
         FakeBackend? backend = null;
-        using var f = new WatchFixture(factory: (_, _, sink, fatal) => backend = new FakeBackend { Sink = sink, Fatal = fatal });
+        using var f = new WatchFixture(factory: (_, _, _, sink, fatal) => backend = new FakeBackend { Sink = sink, Fatal = fatal });
         f.Options.WatchDebounce = TimeSpan.FromMilliseconds(200);
         f.Options.WatchMaxDelay = TimeSpan.FromSeconds(20);
         var (events, h) = f.Start(excludes: []);

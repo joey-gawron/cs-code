@@ -42,7 +42,8 @@ public class WorkspaceSettingsWatchTests
     /// <c>.vscode/</c> removed and brought back again and again (branch switches, a clean that removes it): every time it must apply again,
     /// and the watches lost with each deleted directory must not use up the user's inotify instances — on Linux a FileSystemWatcher whose
     /// directory was deleted keeps its instance and a thread until the process exits, so the path is polled after
-    /// <see cref="CsCode.Platform.Watching.FileWatcher.MaxOsWatchLosses"/> such losses instead of costing one instance per cycle.
+    /// <see cref="CsCode.Platform.Watching.FileWatcher.MaxOsWatchLosses"/> such losses instead of costing one instance per cycle. (The default
+    /// Linux backend releases its instance in any case: none is left.)
     /// </summary>
     [AvaloniaFact(Timeout = 120_000)]
     public async Task A_settings_directory_deleted_and_created_again_keeps_applying_and_costs_at_most_two_inotify_instances()

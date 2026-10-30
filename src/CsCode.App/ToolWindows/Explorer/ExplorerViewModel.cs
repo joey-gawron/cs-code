@@ -6,6 +6,7 @@ using CsCode.App.Services;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
+using CsCode.Platform.Configuration;
 using CsCode.Ui.Collections;
 using CsCode.Ui.Threading;
 
@@ -100,7 +101,7 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
             var name = Path.GetFileName(folder.LocalPath.TrimEnd('/', '\\'));
             var root = new ExplorerNode(folder, name.Length > 0 ? name : folder.LocalPath, true, 0, null, isRoot: true);
             _roots.Add(root);
-            _watches.Add(_workspace.Watcher.Watch(folder, true, ExcludeGlobs(), OnWatcherChanges));
+            _watches.Add(_workspace.Watcher.Watch(folder, true, WatchExcludeGlobs(), OnWatcherChanges));
         }
         OnPropertyChanged(nameof(HasFolder));
         Rows.AddRange(_roots);
@@ -216,9 +217,24 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     internal static int CompareNodes(ExplorerNode a, ExplorerNode b) =>
         a.IsDirectory != b.IsDirectory ? (a.IsDirectory ? -1 : 1) : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
 
-    private IReadOnlyList<string> ExcludeGlobs()
+    private IReadOnlyList<string> ExcludeGlobs() =>
+        _config?.GetRaw(SettingKeys.FilesExclude) is { ValueKind: JsonValueKind.Object } obj ? EnabledGlobs(obj) : DefaultExcludes;
+
+    /// <summary>
+    /// What the live refresh does not watch: <c>files.watcherExclude</c> ∪ <c>files.exclude</c>. The subscription shares the folder's OS watch
+    /// with the language servers' and EditorConfig's (<c>files.watcherExclude</c>), and a directory that every subscription excludes costs no
+    /// OS watch; with <c>files.exclude</c> alone it kept <c>target/</c> and <c>node_modules/</c> watched for everyone — tens of thousands of
+    /// inotify watches on a Rust or JS tree. As in VS Code, a watcher-excluded folder is not refreshed live (neither is the folder itself
+    /// appearing or going); expanding or refreshing reads the disk. What is shown is still filtered by <c>files.exclude</c> alone.
+    /// </summary>
+    private IReadOnlyList<string> WatchExcludeGlobs()
     {
-        if (_config?.GetRaw(SettingKeys.FilesExclude) is not { ValueKind: JsonValueKind.Object } obj) return DefaultExcludes;
+        var watcher = _config?.GetRaw(SettingKeys.FilesWatcherExclude) is { ValueKind: JsonValueKind.Object } obj ? EnabledGlobs(obj) : BuiltInSettings.WatcherExcludes;
+        return watcher.Union(ExcludeGlobs(), StringComparer.Ordinal).ToArray();
+    }
+
+    private static List<string> EnabledGlobs(JsonElement obj)
+    {
         var globs = new List<string>();
         foreach (var p in obj.EnumerateObject()) if (p.Value.ValueKind == JsonValueKind.True) globs.Add(p.Name);
         return globs;
