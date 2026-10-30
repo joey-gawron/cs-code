@@ -47,7 +47,6 @@
   { "key": "ctrl+[",             "command": "editor.action.outdentLines",         "when": "editorTextFocus && !editorReadonly", "mac": "cmd+[" },
   { "key": "ctrl+shift+[",       "command": "editor.fold",                        "when": "editorTextFocus", "mac": "cmd+alt+[" },
   { "key": "ctrl+shift+]",       "command": "editor.unfold",                      "when": "editorTextFocus", "mac": "cmd+alt+]" },
-  { "key": "ctrl+k ctrl+l",      "command": "editor.toggleFold",                  "when": "editorTextFocus", "mac": "cmd+k cmd+l" },
   { "key": "ctrl+k ctrl+0",      "command": "editor.foldAll",                     "when": "editorTextFocus", "mac": "cmd+k cmd+0" },
   { "key": "ctrl+k ctrl+j",      "command": "editor.unfoldAll",                   "when": "editorTextFocus", "mac": "cmd+k cmd+j" },
 

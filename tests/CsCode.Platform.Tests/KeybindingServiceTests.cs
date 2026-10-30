@@ -528,9 +528,7 @@ public class KeybindingServiceTests : IDisposable
         string[] system = ["cmd+h", "cmd+m", "cmd+q", "cmd+`", "cmd+tab", "cmd+space", "cmd+shift+/"];
         var reserved = system.Select(KeyStrokeParser.ParseStroke).ToHashSet();
         Assert.DoesNotContain(mac.All, b => reserved.Contains(b.Chord[0]));
-        // Two commands on the same keys and the same `when` would make one of them unreachable.
-        var clashes = mac.All.GroupBy(b => (string.Join(' ', b.Chord), b.When)).Where(g => g.Select(b => b.Command).Distinct().Count() > 1).Select(g => g.Key).ToArray();
-        Assert.Empty(clashes);
+        // Keys that make another command unreachable (with the editor's contributed keys): EditorClipboardViewTests.On_macOS_no_preset_key_clashes_...
         Assert.DoesNotContain(_f.Log.Entries, e => e.Level >= LogLevel.Warning);
     }
 
@@ -541,6 +539,16 @@ public class KeybindingServiceTests : IDisposable
         Assert.Empty(linux.GetBindingsFor(KnownCommands.OpenSettings));
         Assert.Equal("workbench.action.showAllSymbols", Cmd(Press(linux, "ctrl+,")));
         Assert.DoesNotContain(_f.Log.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task The_VS_Code_preset_binds_no_toggle_fold_on_Linux()
+    {
+        using var linux = _f.Create(HostOs.Linux);
+        await linux.SetPresetAsync(KeybindingService.VsCodePreset, Ct);
+        _f.Context.Set("editorTextFocus", true);
+        Assert.Empty(linux.GetBindingsFor("editor.toggleFold"));
+        Assert.Equal(KeyResolution.None, Press(linux, "ctrl+k ctrl+l").Kind);
     }
 
     [Fact]
