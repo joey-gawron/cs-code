@@ -194,7 +194,8 @@ internal static class EditorConfigParser
                 if (from > to) (from, to) = (to, from);
                 if ((long)to - from < MaxRangeAlternatives)
                 {
-                    sb.Append("(?:").Append(string.Join('|', Enumerable.Range(from, to - from + 1).Select(n => n.ToString(CultureInfo.InvariantCulture)))).Append(')');
+                    // digit classes, not one alternative per number: {10000000..10000999} would be ~9,000 characters (T38 follow-up)
+                    sb.Append(GlobRegex.IntegerRange(from, to));
                     return;
                 }
             }

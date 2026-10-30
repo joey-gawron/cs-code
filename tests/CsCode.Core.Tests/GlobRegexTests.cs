@@ -191,6 +191,64 @@ public sealed class GlobRegexTests
         Assert.Same(GlobRegex.Never, GlobRegex.CompileOrNever(pattern));
     }
 
+    // ---- integer ranges (.editorconfig {num1..num2}, T38 follow-up) --------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(0, 9)]
+    [InlineData(0, 10)]
+    [InlineData(1, 3)]
+    [InlineData(3, 1)]
+    [InlineData(-1, 1)]
+    [InlineData(-12, -3)]
+    [InlineData(-120, 37)]
+    [InlineData(7, 1234)]
+    [InlineData(99, 100)]
+    [InlineData(199, 2001)]
+    [InlineData(10000000, 10000999)]
+    [InlineData(-10000999, -10000000)]
+    [InlineData(int.MaxValue - 999, int.MaxValue)]
+    [InlineData(int.MinValue, int.MinValue + 999)]
+    public void An_integer_range_matches_exactly_the_decimal_spelling_of_its_numbers(int from, int to)
+    {
+        var range = GlobRegex.IntegerRange(from, to);
+        var matcher = GlobRegex.Compile("^" + range + "$");
+        long lo = Math.Min(from, to), hi = Math.Max(from, to);
+        // every number of the range and 200 on each side, plus spellings that are not canonical
+        for (var n = lo - 200; n <= hi + 200; n++)
+        {
+            var inRange = n >= lo && n <= hi;
+            var text = n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            Assert.True(matcher.IsMatch(text) == inRange, $"{range} on {text}: expected {inRange}");
+            if (n >= 0) Assert.False(matcher.IsMatch("0" + text), $"{range} matched a leading zero: 0{text}");
+            if (n > 0) Assert.False(matcher.IsMatch("+" + text), $"{range} matched +{text}");
+            if (hi - lo > 1000 && n == lo + 200) n = Math.Max(n, hi - 400); // a wide range: its two ends are what can go wrong
+        }
+        Assert.False(matcher.IsMatch("-0"));
+        Assert.False(matcher.IsMatch(""));
+        Assert.False(matcher.IsMatch("-"));
+        Assert.True(range.Length < 400, $"{range.Length} characters: {range}");
+    }
+
+    [Fact]
+    public void Random_integer_ranges_agree_with_the_alternation_of_their_numbers()
+    {
+        var random = new Random(4242);
+        for (var round = 0; round < 300; round++)
+        {
+            var scale = (int)Math.Pow(10, random.Next(1, 6));
+            int a = random.Next(-scale, scale), b = random.Next(-scale, scale);
+            int lo = Math.Min(a, b), hi = Math.Min(Math.Max(a, b), lo + 999);
+            var reference = new Regex("^(?:" + string.Join('|', Enumerable.Range(lo, hi - lo + 1)) + ")$", RegexOptions.CultureInvariant);
+            var compact = GlobRegex.Compile("^" + GlobRegex.IntegerRange(lo, hi) + "$");
+            for (var n = lo - 30; n <= hi + 30; n++)
+            {
+                var text = n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                Assert.True(reference.IsMatch(text) == compact.IsMatch(text), $"{lo}..{hi} on {text}");
+            }
+        }
+    }
+
     [Fact]
     public void An_overlong_pattern_is_refused()
     {

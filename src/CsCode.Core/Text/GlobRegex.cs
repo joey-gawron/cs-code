@@ -220,6 +220,64 @@ public sealed class GlobRegex
         catch (ArgumentException) { return Never; }
     }
 
+    /// <summary>
+    /// A pattern fragment (a non-capturing group in this class's subset) that matches exactly the decimal spelling of every integer from
+    /// <paramref name="from"/> to <paramref name="to"/> (either order): no leading zeros, no plus sign, <c>-</c> for negatives, never <c>-0</c>. It
+    /// is built from digit classes, so its length grows with the number of digits, not with the size of the range: .editorconfig's
+    /// <c>{num1..num2}</c> used to be an alternation of every number, ~9,000 characters for <c>{10000000..10000999}</c>, above
+    /// <see cref="MaxPatternLength"/> (T38 follow-up). Additive (Core).
+    /// </summary>
+    public static string IntegerRange(int from, int to)
+    {
+        long lo = Math.Min(from, to), hi = Math.Max(from, to);
+        var parts = new List<string>(2);
+        if (lo < 0) parts.Add("-" + Group(NonNegativeRange(hi < 0 ? -hi : 1, -lo))); // the magnitudes of the negative part
+        if (hi >= 0) parts.Add(NonNegativeRange(Math.Max(lo, 0), hi));
+        return "(?:" + string.Join('|', parts) + ")";
+
+        static string Group(string alternatives) => alternatives.Contains('|', StringComparison.Ordinal) ? "(?:" + alternatives + ")" : alternatives;
+    }
+
+    /// <summary>Alternatives for <paramref name="lo"/>..<paramref name="hi"/> (0 ≤ lo ≤ hi), one run of equal-length numbers at a time.</summary>
+    private static string NonNegativeRange(long lo, long hi)
+    {
+        var parts = new List<string>();
+        var loText = lo.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var hiText = hi.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        for (var digits = loText.Length; digits <= hiText.Length; digits++)
+        {
+            var first = digits == loText.Length ? loText : "1" + new string('0', digits - 1);
+            var last = digits == hiText.Length ? hiText : new string('9', digits);
+            SameLengthRange(first, last, "", parts);
+        }
+        return string.Join('|', parts);
+    }
+
+    /// <summary>
+    /// Appends alternatives matching every number from <paramref name="lo"/> to <paramref name="hi"/>, digit strings of the same length (lo ≤ hi),
+    /// each prefixed with <paramref name="prefix"/>: the shared leading digits stay literal, then the range splits into "lo's first digit with the
+    /// rest from lo up", "the digits in between with any rest" and "hi's first digit with the rest up to hi".
+    /// </summary>
+    private static void SameLengthRange(string lo, string hi, string prefix, List<string> into)
+    {
+        var common = 0;
+        while (common < lo.Length && lo[common] == hi[common]) common++;
+        prefix += lo[..common];
+        lo = lo[common..];
+        hi = hi[common..];
+        if (lo.Length == 0) { into.Add(prefix); return; }
+
+        var rest = lo.Length - 1;
+        var any = string.Concat(Enumerable.Repeat("[0-9]", rest));
+        var fromLow = lo[1..].All(static c => c == '0');  // lo's first digit can take any rest
+        var toHigh = hi[1..].All(static c => c == '9');   // hi's first digit can take any rest
+        var classLo = fromLow ? lo[0] : (char)(lo[0] + 1);
+        var classHi = toHigh ? hi[0] : (char)(hi[0] - 1);
+        if (!fromLow) SameLengthRange(lo, lo[0] + new string('9', rest), prefix, into);
+        if (classLo <= classHi) into.Add(prefix + (classLo == classHi ? classLo.ToString() : $"[{classLo}-{classHi}]") + any);
+        if (!toHigh) SameLengthRange(hi[0] + new string('0', rest), hi, prefix, into);
+    }
+
     public bool IsMatch(string text) => IsMatch(text.AsSpan());
 
     public bool IsMatch(ReadOnlySpan<char> text)

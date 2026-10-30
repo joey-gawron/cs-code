@@ -268,7 +268,10 @@ path for every pattern, no allocation per match, a few hundred bytes per compile
 matches nothing). Measured roughly at load 28 (noisy): 50–250 ns for short globs, ~0.6–1 µs for `**/src/**/*.cs` on a matching path (compiled
 Regex: 60–470 ns at the same load) and 80 ns when the suffix rejects. Platform's `.gitignore` and `.editorconfig` readers and the Editor's
 `.editorconfig` reader use it too (they were the NonBacktracking regexes of item 2 below). `GlobRegexTests` (Core) checks it against .NET's
-Regex on 18,000 random patterns × texts, on both simulations.
+Regex on 18,000 random patterns × texts, on both simulations. Patterns longer than 8,192 characters are refused; the `.editorconfig` readers'
+numeric ranges (`{num1..num2}`, up to 1000 numbers as before) are therefore built with `GlobRegex.IntegerRange` from digit classes
+(`{10000000..10000999}` → `10000[0-9][0-9][0-9]`, length proportional to the digits) instead of one alternative per number, which reached ~9,000
+characters and made such a section silently never match (T38 follow-up; checked against the alternation on 300 random ranges).
 
 ## 7. Memory budget of the real app (MUST 7)
 
