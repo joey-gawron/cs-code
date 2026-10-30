@@ -112,7 +112,7 @@ public sealed class MacroPlayer
         var root = parent.Root;
         for (var r = parent; r is not null; r = r.Parent)
             if (ReferenceEquals(r.Macro, macro) || (macro.IsNamed && r.Macro.Name == macro.Name))
-                return root.Stop(MacroPlayStatus.Stopped, $"Macro {macro.DisplayName} runs itself (through {parent.Macro.DisplayName}); it was stopped.");
+                return root.Stop(MacroPlayStatus.Stopped, $"{macro.Subject} runs itself (through {parent.Macro.DisplayName}); it was stopped.");
         if (parent.Depth + 1 > root.Limits.MaxDepth)
             return root.Stop(MacroPlayStatus.Stopped, $"Macros are nested more than {root.Limits.MaxDepth} deep; playback was stopped.");
         // the step that started this is running in the root's flow: continue on the UI thread inside its slice
@@ -127,7 +127,7 @@ public sealed class MacroPlayer
         var macro = run.Macro;
         var root = run.Root;
         if (macro.TypesIntoEditor && _host()?.TypingUnavailableReason is { } why)
-            return root.Stop(MacroPlayStatus.Refused, $"Macro {macro.DisplayName} types into the editor and cannot play: {why}");
+            return root.Stop(MacroPlayStatus.Refused, $"{macro.Subject} types into the editor and cannot play: {why}");
         switch (options.Repeat)
         {
             case MacroRepeat.Times:
@@ -154,7 +154,7 @@ public sealed class MacroPlayer
             }
             case MacroRepeat.UntilSearchFails:
             {
-                if (!HasSearch(macro)) return root.Stop(MacroPlayStatus.Refused, $"Macro {macro.DisplayName} has no search step: record one (Find, then Enter or F3) to play it until the search fails.");
+                if (!HasSearch(macro)) return root.Stop(MacroPlayStatus.Refused, $"{macro.Subject} has no search step: record one (Find, then Enter or F3) to play it until the search fails.");
                 var before = _host()?.Caret;
                 while (true)
                 {
@@ -401,7 +401,7 @@ public sealed class MacroPlayer
         public MacroPlayResult Stop(MacroPlayStatus status, string message, int? step = null, Run? run = null)
         {
             if (_stopped is not null) return _stopped;
-            if (run is { Depth: > 0 }) message = $"{message} (in macro {run.Macro.DisplayName}, step {step})";
+            if (run is { Depth: > 0 }) message = $"{message} (in {run.Macro.DisplayName}, step {step})";
             _stopped = new MacroPlayResult(status, Runs, Steps, message, run is { Depth: > 0 } ? null : step);
             return _stopped;
         }
@@ -468,23 +468,23 @@ public static class MacroPlayResultText
         switch (result.Status)
         {
             case MacroPlayStatus.Completed when result.Runs == 0:
-                sb.Append($"Macro {macro.DisplayName} did not complete a run.");
+                sb.Append($"{macro.Subject} did not complete a run.");
                 if (result.Message is { } why) sb.Append(' ').Append(why);
                 break;
             case MacroPlayStatus.Completed:
-                sb.Append($"Macro {macro.DisplayName} played ");
+                sb.Append($"{macro.Subject} played ");
                 sb.Append(options.Repeat == MacroRepeat.Times ? options.Describe() : result.Runs == 1 ? "once" : $"{result.Runs:N0} times");
                 sb.Append('.');
                 if (result.Message is { } note) sb.Append(' ').Append(note);
                 break;
             case MacroPlayStatus.Cancelled:
-                sb.Append($"Macro {macro.DisplayName} was stopped (run {result.Runs:N0}).");
+                sb.Append($"{macro.Subject} was stopped (run {result.Runs:N0}).");
                 break;
             case MacroPlayStatus.Refused:
-                sb.Append(result.Message ?? $"Macro {macro.DisplayName} did not play.");
+                sb.Append(result.Message ?? $"{macro.Subject} did not play.");
                 break;
             default:
-                sb.Append($"Macro {macro.DisplayName} stopped");
+                sb.Append($"{macro.Subject} stopped");
                 if (result.Step is { } step) sb.Append($" at step {step} of {macro.Steps.Count}");
                 if (result.Runs > 1 || options.Repeat != MacroRepeat.Times || options.Times > 1) sb.Append($" (run {result.Runs:N0})");
                 sb.Append(": ").Append(result.Message);

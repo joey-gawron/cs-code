@@ -80,8 +80,11 @@ public sealed record Macro(string Name, IReadOnlyList<MacroStep> Steps)
 
     public string CommandId => MacroCommands.RunPrefix + Name;
 
-    /// <summary>For messages: the name, or "the last recorded macro".</summary>
-    public string DisplayName => IsNamed ? $"'{Name}'" : "the last recorded macro";
+    /// <summary>For messages, inside a sentence: "macro 'name'" or "the last recorded macro".</summary>
+    public string DisplayName => IsNamed ? $"macro '{Name}'" : "the last recorded macro";
+
+    /// <summary>For messages, at the start of a sentence: "Macro 'name'" or "The last recorded macro".</summary>
+    public string Subject => IsNamed ? $"Macro '{Name}'" : "The last recorded macro";
 
     /// <summary>Whether any step types into the editor (key or text steps); command-only macros also play while Vim emulation is on.</summary>
     public bool TypesIntoEditor => Steps.Any(static s => s.TypesIntoEditor);

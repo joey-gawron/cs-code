@@ -45,11 +45,29 @@ public static class MacroFileEditor
         var last = array.Items[^1];
         var itemIndent = IndentOf(bytes, last.Start);
         var trailingComma = HasComma(bytes, last.End, array.End);
-        var text2 = (trailingComma ? "" : ",") + newline + itemIndent + MacroJson.FormatMacro(macro, itemIndent, Unit(itemIndent, IndentOf(bytes, array.Start)), newline) + (trailingComma ? "," : "");
-        // insert right after the last item (or after its trailing comma), keeping whatever followed it (comments, the closing bracket's line)
+        var item = newline + itemIndent + MacroJson.FormatMacro(macro, itemIndent, Unit(itemIndent, IndentOf(bytes, array.Start)), newline) + (trailingComma ? "," : "");
         var at = trailingComma ? CommaAfter(bytes, last.End, array.End) + 1 : last.End;
-        return Splice(bytes, at, at, text2);
+        // a comment on the rest of the last item's line stays with that item: the new one goes after the end of the line
+        var lineEnd = Array.IndexOf(bytes, (byte)'\n', at, array.End - at);
+        if (lineEnd > 0 && OnlyCommentOrSpace(bytes, at, lineEnd))
+        {
+            if (bytes[lineEnd - 1] == (byte)'\r') lineEnd--;
+            return trailingComma ? Splice(bytes, lineEnd, lineEnd, item) : Splice2(bytes, at, ",", lineEnd, item);
+        }
+        // otherwise right after the last item (or after its trailing comma), keeping whatever followed it (the closing bracket's line)
+        return Splice(bytes, at, at, (trailingComma ? "" : ",") + item);
     }
+
+    private static bool OnlyCommentOrSpace(byte[] bytes, int from, int to)
+    {
+        var i = from;
+        while (i < to && bytes[i] is (byte)' ' or (byte)'\t' or (byte)'\r') i++;
+        return i == to || (i + 1 < to && bytes[i] == (byte)'/' && bytes[i + 1] == (byte)'/');
+    }
+
+    private static string Splice2(byte[] bytes, int first, string firstInsert, int second, string secondInsert) =>
+        Encoding.UTF8.GetString(bytes, 0, first) + firstInsert + Encoding.UTF8.GetString(bytes, first, second - first) + secondInsert +
+        Encoding.UTF8.GetString(bytes, second, bytes.Length - second);
 
     /// <summary>The file without the macro <paramref name="name"/> (unchanged when there is none).</summary>
     public static string Remove(string text, string name)

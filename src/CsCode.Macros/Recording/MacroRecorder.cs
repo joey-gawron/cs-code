@@ -46,11 +46,8 @@ public sealed class MacroRecorder
     public bool AddText(string text)
     {
         if (string.IsNullOrEmpty(text) || IsFull) return false;
-        if (_text.Length == 0)
-        {
-            AddPause();
-            if (_steps.Count + 1 > MaxSteps) return Full();
-        }
+        AddPause(); // a pause due now ends the text run first
+        if (_text.Length == 0 && _steps.Count + 1 > MaxSteps) return Full();
         if (_textChars + text.Length > MaxTextChars) return Full();
         _text.Append(text);
         _textChars += text.Length;
