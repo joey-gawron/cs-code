@@ -228,7 +228,8 @@ public class TreeSitterViewTests
         // the keystroke path only queues the edit for the worker: tree-sitter never runs on the UI thread, and typing is not slower than on TextMate
         Assert.NotEqual(Environment.CurrentManagedThreadId, engine.LastSliceThreadId);
         double P(List<double> l, double q) => l[Math.Min(l.Count - 1, (int)(l.Count * q))];
-        Assert.True(P(treeSitter, 0.95) <= P(textMate, 0.95) * 1.5 + 2,
-            $"keystroke p50/p95 tree-sitter {P(treeSitter, 0.5):F2}/{P(treeSitter, 0.95):F2} ms vs TextMate {P(textMate, 0.5):F2}/{P(textMate, 0.95):F2} ms");
+        var numbers = $"keystroke p50/p95 tree-sitter {P(treeSitter, 0.5):F2}/{P(treeSitter, 0.95):F2} ms vs TextMate {P(textMate, 0.5):F2}/{P(textMate, 0.95):F2} ms";
+        TestContext.Current.TestOutputHelper?.WriteLine(numbers + $" (load {TreeSitterBenchmarks.Load1():0.0})"); // T16: the numbers, also when it passes
+        Assert.True(P(treeSitter, 0.95) <= P(textMate, 0.95) * 1.5 + 2, numbers);
     }
 }
