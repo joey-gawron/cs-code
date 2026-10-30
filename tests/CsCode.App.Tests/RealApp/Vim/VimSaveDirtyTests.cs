@@ -28,7 +28,7 @@ public class VimSaveDirtyTests
         app.Keys("Aa");
         Assert.Equal(VimMode.Insert, app.Engine.Mode);
         Assert.True(doc.IsDirty);
-        await app.KeysAsync("<C-s>", 10); // the application's Save, the Insert session goes on
+        await app.KeysAsync(OperatingSystem.IsMacOS() ? "<D-s>" : "<C-s>", 10); // the application's Save, the Insert session goes on
         Assert.True(await RealAppHost.WaitFor(() => File.ReadAllText(path) == "xa\n"), File.ReadAllText(path));
         Assert.True(await RealAppHost.WaitFor(() => !doc.IsDirty));
         Assert.Equal(VimMode.Insert, app.Engine.Mode);

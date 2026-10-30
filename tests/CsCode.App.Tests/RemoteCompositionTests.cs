@@ -158,7 +158,7 @@ public class RemoteCompositionTests
             });
             var server = ((CsCode.Remote.Client.RemoteConnectionManager)manager).Session!.Server.ProcessId;
             Assert.True(IsDescendant(t.ProcessId!.Value, server), $"terminal pid {t.ProcessId} is not under the server {server}");
-            Assert.Equal(env.Workspace.Path, t.CurrentDirectory);
+            Assert.Equal(TempDirectory.PhysicalPath(env.Workspace.Path), t.CurrentDirectory); // the shell reports /private/var for macOS's /var
             await terminals.KillAsync(t);
         }
         Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
@@ -203,11 +203,7 @@ public class RemoteCompositionTests
         for (var p = pid; p > 1;)
         {
             if (p == ancestor) return true;
-            try
-            {
-                var stat = File.ReadAllText($"/proc/{p}/stat");
-                p = int.Parse(stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[1], System.Globalization.CultureInfo.InvariantCulture);
-            }
+            try { p = ProcessTable.ParentOf(p); }
             catch (IOException) { return false; }
         }
         return false;
@@ -257,20 +253,5 @@ public class RemoteCompositionTests
         Assert.Contains("not started by CsCode", stderr);
     }
 
-    private static bool ProcessesWithMarker(string marker)
-    {
-        if (!OperatingSystem.IsLinux()) return false;
-        foreach (var dir in Directory.EnumerateDirectories("/proc"))
-        {
-            if (!int.TryParse(Path.GetFileName(dir), out _)) continue;
-            try
-            {
-                if (File.ReadAllText(Path.Combine(dir, "cmdline")).Contains(marker, StringComparison.Ordinal)
-                    && !File.ReadAllText(Path.Combine(dir, "stat")).Contains(") Z ", StringComparison.Ordinal)) return true;
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
-        return false;
-    }
+    private static bool ProcessesWithMarker(string marker) => ProcessTable.WithMarker(marker).Count > 0;
 }
