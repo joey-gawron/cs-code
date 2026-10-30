@@ -66,6 +66,11 @@ Tests: `ProtocolRoundTripTests` (spec shapes, unions, optional/null handling, un
   with its `.dll` or `.runtimeconfig.json` beside it, also through symlinks; a `dotnet tool` shim beside `.store/`), it gets the root
   (the directory with `host/fxr`) of the dotnet on the server's PATH, then in `cscode.lsp.searchDirs`, then `~/.dotnet`, then the shared
   runtime CsCode runs on, and the server log says so. A definition whose `env` sets either variable is never changed.
+  **Only when the host's own lookup would not do** (lsp-core-5): with `DOTNET_ROOT` set, the Linux host looks nowhere else, so a distro or
+  global runtime (`/etc/dotnet/install_location[_<arch>]`, else `/usr/share/dotnet`, `/usr/local/share/dotnet` on macOS) that served the server
+  is left to the host when it has the frameworks the server's `.runtimeconfig.json` asks for (beside the apphost, or in a tool shim's `.store`;
+  roll-forward policy honoured, `DOTNET_ROLL_FORWARD` too) — or when nothing says what it asks for. Otherwise the first candidate above that has
+  those frameworks is chosen (or the first one, said so in the log line, which names the root and the reason).
 * Per-message size guard (`FramingGuardStream`, `cscode.lsp.maxMessageBytes`, default 64 MB): a header announcing more drops the connection (the
   session is then restarted by the normal crash path). Parsing rents ~9× a message's size from shared pools, so this bounds a hostile payload.
 

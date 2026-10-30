@@ -162,6 +162,117 @@ public class DotnetLaunchEnvironmentTests
         Assert.Contains(log, l => l.Contains("no dotnet was found", StringComparison.Ordinal));
     }
 
+    // ---- lsp-core-5: the host's own lookup and the server's framework ------------------------------------------------------------------
+
+    /// <summary>A fake installation with shared frameworks: <c>{root}/shared/Microsoft.NETCore.App/&lt;version&gt;/</c> per version.</summary>
+    private static string FakeDotnetRootWith(TempDirectory dir, string name, params string[] runtimeVersions)
+    {
+        var root = FakeDotnetRoot(dir, name);
+        foreach (var v in runtimeVersions) Directory.CreateDirectory(Path.Combine(root, "shared", "Microsoft.NETCore.App", v));
+        return root;
+    }
+
+    /// <summary>An apphost server whose runtimeconfig.json asks for Microsoft.NETCore.App <paramref name="version"/>.</summary>
+    private static string FakeServerNeeding(TempDirectory dir, string version, string? rollForward = null)
+    {
+        var exe = FakeDotnetServer(dir);
+        var roll = rollForward is null ? "" : $"\"rollForward\": \"{rollForward}\", ";
+        File.WriteAllText(dir.Combine("server", "srv.runtimeconfig.json"),
+            $$"""{ "runtimeOptions": { {{roll}}"tfm": "net8.0", "framework": { "name": "Microsoft.NETCore.App", "version": "{{version}}" } } }""");
+        return exe;
+    }
+
+    [Fact]
+    public void A_global_runtime_the_host_finds_by_itself_is_not_overridden()
+    {
+        // The reviewer's case: a global .NET 8 (install_location or /usr/share/dotnet), a Nix SDK 10 first on PATH, a net8.0 tool. Setting
+        // DOTNET_ROOT to the SDK made the host look only there ("You must install or update .NET").
+        using var dir = new TempDirectory("cscode-dotnet-");
+        var global = FakeDotnetRootWith(dir, "global", "8.0.11");
+        var nix = FakeDotnetRootWith(dir, "nix-sdk", "10.0.0");
+        var server = FakeServerNeeding(dir, "8.0.0");
+        var env = Env(("PATH", nix));
+        var log = new List<string>();
+        DotnetLaunchEnvironment.Apply(env, Def("srv"), server, null, [], log.Add, hostDefaultRoot: global);
+        Assert.False(env.ContainsKey(Root));
+        Assert.Contains(log, l => l.Contains("finds " + global, StringComparison.Ordinal) && l.Contains("Microsoft.NETCore.App 8.0.0", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_global_runtime_without_the_server_s_framework_is_bypassed_for_one_that_has_it()
+    {
+        using var dir = new TempDirectory("cscode-dotnet-");
+        var global = FakeDotnetRootWith(dir, "global", "6.0.36");
+        var first = FakeDotnetRootWith(dir, "first-on-path", "10.0.0");
+        var second = FakeDotnetRootWith(dir, "in-search-dirs", "8.0.4");
+        var server = FakeServerNeeding(dir, "8.0.0");
+        var env = Env(("PATH", first));
+        var log = new List<string>();
+        DotnetLaunchEnvironment.Apply(env, Def("srv"), server, [second], [], log.Add, hostDefaultRoot: global);
+        Assert.Equal(second, env[Root]); // the first dotnet found that HAS 8.0 (Minor roll-forward: 10.0 does not count)
+        Assert.Contains(log, l => l.Contains(second, StringComparison.Ordinal) && l.Contains("has it", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Without_a_fitting_runtime_anywhere_the_first_dotnet_is_still_used_and_the_log_says_so()
+    {
+        using var dir = new TempDirectory("cscode-dotnet-");
+        var only = FakeDotnetRootWith(dir, "only", "10.0.0");
+        var server = FakeServerNeeding(dir, "8.0.0");
+        var env = Env(("PATH", only));
+        var log = new List<string>();
+        DotnetLaunchEnvironment.Apply(env, Def("srv"), server, null, [], log.Add);
+        Assert.Equal(only, env[Root]);
+        Assert.Contains(log, l => l.Contains("no dotnet found has that framework", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_server_that_does_not_say_what_it_needs_leaves_a_global_install_to_the_host()
+    {
+        using var dir = new TempDirectory("cscode-dotnet-");
+        var global = FakeDotnetRootWith(dir, "global", "8.0.11");
+        var path = FakeDotnetRootWith(dir, "path", "10.0.0");
+        var server = FakeDotnetServer(dir); // srv + srv.dll, no runtimeconfig.json
+        var env = Env(("PATH", path));
+        DotnetLaunchEnvironment.Apply(env, Def("srv"), server, null, [], null, hostDefaultRoot: global);
+        Assert.False(env.ContainsKey(Root));
+
+        var noGlobal = Env(("PATH", path));
+        DotnetLaunchEnvironment.Apply(noGlobal, Def("srv"), server, null, [], null, hostDefaultRoot: null); // T2's case is unchanged
+        Assert.Equal(path, noGlobal[Root]);
+    }
+
+    [Theory]
+    [InlineData("8.0.0", null, "8.0.11", true)]
+    [InlineData("8.0.0", null, "9.0.0", false)]
+    [InlineData("8.0.0", "Major", "9.0.0", true)]
+    [InlineData("8.0.0", "LatestMajor", "10.0.0-rc.1", true)]
+    [InlineData("8.0.5", "LatestPatch", "8.0.11", true)]
+    [InlineData("8.0.5", "LatestPatch", "8.1.0", false)]
+    [InlineData("8.0.5", null, "8.0.4", false)]
+    public void The_roll_forward_policy_decides_which_installed_runtimes_fit(string required, string? rollForward, string installed, bool fits)
+    {
+        using var dir = new TempDirectory("cscode-dotnet-");
+        var root = FakeDotnetRootWith(dir, "root", installed);
+        var server = FakeServerNeeding(dir, required, rollForward);
+        var frameworks = DotnetLaunchEnvironment.RequiredFrameworks(server);
+        Assert.Equal(fits, DotnetLaunchEnvironment.Satisfies(root, frameworks));
+    }
+
+    [Fact]
+    public void A_dotnet_tool_shim_s_framework_is_read_from_its_store()
+    {
+        using var dir = new TempDirectory("cscode-dotnet-");
+        var shim = Executable(dir.Combine("tools", "csharp-ls"), "#!/bin/sh\n");
+        var any = dir.Combine("tools", ".store", "csharp-ls", "0.16.0", "csharp-ls", "0.16.0", "tools", "net8.0", "any");
+        Directory.CreateDirectory(any);
+        File.WriteAllText(Path.Combine(any, "CSharpLanguageServer.runtimeconfig.json"),
+            """{ "runtimeOptions": { "tfm": "net8.0", "framework": { "name": "Microsoft.NETCore.App", "version": "8.0.0" } } }""");
+        var required = Assert.Single(DotnetLaunchEnvironment.RequiredFrameworks(shim));
+        Assert.Equal("Microsoft.NETCore.App", required.Name);
+        Assert.Equal(new Version(8, 0, 0), required.Version);
+    }
+
     [Fact]
     public void A_server_that_is_not_a_dotnet_program_gets_no_DOTNET_ROOT()
     {
