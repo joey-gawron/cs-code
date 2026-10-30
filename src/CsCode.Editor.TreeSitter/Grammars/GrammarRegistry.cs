@@ -131,7 +131,8 @@ public sealed class GrammarRegistry : IDisposable
 
     private readonly GrammarLocator _locator;
     private readonly Func<string, string?> _rootScopeFor;
-    private readonly Dictionary<string, (LanguageBundle? Bundle, string? Error)> _byName = new(StringComparer.Ordinal);
+    // per grammar: the bundle, or why there is none (with the build the quarantine refused, when that was the reason)
+    private readonly Dictionary<string, (LanguageBundle? Bundle, string? Error, string? Quarantined)> _byName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IntPtr> _injectionParsers = new(StringComparer.Ordinal);
     private bool _disposed;
 
@@ -155,8 +156,14 @@ public sealed class GrammarRegistry : IDisposable
     {
         if (_byName.TryGetValue(grammar, out var known))
         {
-            error = known.Error;
-            return known.Bundle;
+            // A refusal by the quarantine holds only while the quarantine still says so: another process sharing it may have cleared it (its
+            // Reason re-reads the file when it changed; a stat otherwise). Every other answer stays until ForgetFailures.
+            if (known.Quarantined is not { } refused || Quarantine?.Reason(grammar, refused) is not null)
+            {
+                error = known.Error;
+                return known.Bundle;
+            }
+            _byName.Remove(grammar);
         }
         // Validated against the installed grammars BEFORE anything else: the name may come from document text (an injection), and an
         // unknown name must neither reach a path or the native loader nor be remembered (the cache stays bounded by what is installed).
@@ -165,8 +172,8 @@ public sealed class GrammarRegistry : IDisposable
             error = GrammarLocator.IsValidName(grammar) ? $"no compiled tree-sitter grammar '{grammar}' was found" : "not a grammar name";
             return null;
         }
-        var bundle = LoadUncached(grammar, out error);
-        _byName[grammar] = (bundle, error);
+        var bundle = LoadUncached(grammar, out error, out var quarantined);
+        _byName[grammar] = (bundle, error, quarantined);
         return bundle;
     }
 
@@ -182,9 +189,18 @@ public sealed class GrammarRegistry : IDisposable
         foreach (var name in _byName.Where(kv => kv.Value.Bundle is null).Select(kv => kv.Key).ToArray()) _byName.Remove(name);
     }
 
-    private LanguageBundle? LoadUncached(string grammar, out string? error)
+    /// <summary>Forgets the grammars the quarantine refused (they are tried again on next use). True when there were any.</summary>
+    public bool ForgetQuarantined()
+    {
+        var refused = _byName.Where(kv => kv.Value.Quarantined is not null).Select(kv => kv.Key).ToArray();
+        foreach (var name in refused) _byName.Remove(name);
+        return refused.Length > 0;
+    }
+
+    private LanguageBundle? LoadUncached(string grammar, out string? error, out string? quarantined)
     {
         error = null;
+        quarantined = null;
         if (!TsRuntime.Load())
         {
             error = TsRuntime.FailureReason;
@@ -197,9 +213,10 @@ public sealed class GrammarRegistry : IDisposable
             return null;
         }
         var identity = GrammarIdentity.Of(files);
-        if (Quarantine?.Reason(grammar, identity) is { } quarantined)
+        if (Quarantine?.Reason(grammar, identity) is { } reason)
         {
-            error = $"{grammar} is quarantined: {quarantined}";
+            error = $"{grammar} is quarantined: {reason}";
+            quarantined = identity;
             return null;
         }
         var root = _rootScopeFor(grammar) ?? "source." + grammar.Replace('_', '-');

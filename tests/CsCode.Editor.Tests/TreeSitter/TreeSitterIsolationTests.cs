@@ -154,6 +154,55 @@ public class TreeSitterIsolationTests
         Assert.Null(b.Reason("erlang", "id1"));
     }
 
+    /// <summary>
+    /// editor-9 (review): the registry consulted the quarantine only on a grammar's first lookup and kept the refusal, so a clear in another
+    /// process (or a clear the registry was not told about) left the grammar refused here until restart.
+    /// </summary>
+    [Fact]
+    public void The_registry_takes_a_grammar_again_once_another_process_cleared_the_quarantine()
+    {
+        RequireGrammar("toml");
+        using var dir = new TempDirectory("cscode-ts-quarantine-");
+        var file = Path.Combine(dir.Path, "quarantine.json");
+        var locator = GrammarLocator.CreateDefault(null);
+        var identity = GrammarIdentity.Of(locator.Find("toml")!);
+        var mine = new GrammarQuarantine(file); // process A
+        mine.RecordHang("toml", identity, "A hung in it");
+        using var registry = new GrammarRegistry(locator, TreeSitterLanguages.RootScopeFor) { Quarantine = mine };
+        Assert.Null(registry.Get("toml", out var error));
+        Assert.Contains("quarantined", error, StringComparison.Ordinal);
+        Assert.Null(registry.Get("toml", out _)); // (remembered)
+
+        Thread.Sleep(20); // a distinct modification time on coarse clocks
+        new GrammarQuarantine(file).Clear(); // process B: Clear Quarantined Tree-sitter Grammars
+        Assert.NotNull(registry.Get("toml", out error));
+        Assert.Null(error);
+    }
+
+    /// <summary>
+    /// ...and the documents of process A that went to TextMate come back without A running the command: its watchdog sees the clear (the
+    /// quarantine's generation moved on), and new documents of the language get tree-sitter as well.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task A_clear_in_another_process_brings_tree_sitter_back_for_open_and_new_documents()
+    {
+        RequireGrammar("toml");
+        using var dir = new TempDirectory("cscode-ts-isolation-");
+        var file = Path.Combine(dir.Path, "quarantine.json");
+        var identity = GrammarIdentity.Of(GrammarLocator.CreateDefault(null).Find("toml")!);
+        new GrammarQuarantine(file).RecordHang("toml", identity, "process A hung in it earlier");
+        using var host = ViewHost.Create();
+        host.Factory.Tokens.TreeSitter.IsolationDirectoryOverride = dir.Path;
+        var (_, open, _) = await host.OpenAsync("[a]\nb = 1\n", "a.toml");
+        await ViewHost.WaitFor(() => open.Tokens is { TreeSitterWanted: false, TreeSitter: null }, "a.toml handed back (quarantined)");
+
+        Thread.Sleep(20);
+        new GrammarQuarantine(file).Clear(); // process B
+        await WaitForTreeSitter(open, 1); // within a watchdog tick
+        var (_, later, _) = await host.OpenAsync("[c]\nd = 2\n", "b.toml");
+        await WaitForTreeSitter(later, 1);
+    }
+
     [Fact]
     public void A_quarantine_file_of_the_first_format_is_still_read()
     {

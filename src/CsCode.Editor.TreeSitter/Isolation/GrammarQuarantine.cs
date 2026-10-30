@@ -56,6 +56,19 @@ public sealed class GrammarQuarantine : IGrammarQuarantine
         }
     }
 
+    /// <summary>The number of clears so far, by this process or (the file is re-read when it changed) by any other sharing the file.</summary>
+    public int Generation
+    {
+        get
+        {
+            lock (_gate)
+            {
+                Refresh();
+                return _generation;
+            }
+        }
+    }
+
     public string? Reason(string grammar, string identity)
     {
         lock (_gate)

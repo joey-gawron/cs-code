@@ -242,6 +242,7 @@ internal sealed class TreeSitterService : IDisposable
                 newRecorder = FlightRecorder.Open(Path.Combine(isolationDir, "flight"));
             }
             else newRecorder = FlightRecorder.InMemory();
+            var generation = newQuarantine.Generation; // (a stat: before the lock)
             var lost = false;
             lock (_gate)
             {
@@ -249,6 +250,7 @@ internal sealed class TreeSitterService : IDisposable
                 {
                     _quarantine = newQuarantine;
                     _recorder = newRecorder;
+                    _quarantineGeneration = generation;
                     _watchdog ??= new Timer(_ => Watch(), null, WatchdogPeriod, WatchdogPeriod);
                 }
                 else lost = true; // set up meanwhile (or shut down): keep the published state
@@ -338,6 +340,7 @@ internal sealed class TreeSitterService : IDisposable
     // ---- the watchdog ----
 
     private int _watching;
+    private int _quarantineGeneration; // the quarantine's clear count this process last acted on
 
     private void Watch()
     {
@@ -363,6 +366,7 @@ internal sealed class TreeSitterService : IDisposable
             recorder = _recorder;
             quarantine = _quarantine;
         }
+        if (quarantine is not null) HonourClearElsewhere(quarantine);
         if (recorder is null) return;
         var (inside, grammar, identity, elapsed) = recorder.Current;
         if (!inside || elapsed < HangThreshold || grammar is null) return;
@@ -394,6 +398,26 @@ internal sealed class TreeSitterService : IDisposable
         hung?.Lane.Dispose(); // stops taking jobs; the stuck job itself cannot be stopped (native code)
         Tell($"The tree-sitter grammar '{grammar}' stopped responding. CsCode colours those files with TextMate now; the stuck thread keeps using one CPU core until CsCode is restarted.");
         LaneReplaced?.Invoke();
+    }
+
+    /// <summary>
+    /// Watchdog thread, once a tick (a stat of the quarantine file; it is read only when it changed). When another process sharing the file
+    /// cleared it (Clear Quarantined Tree-sitter Grammars there), the grammars this process refused are forgotten and the documents re-evaluate
+    /// their engine, as this process's own clear does: without it, open documents stayed on TextMate until this process ran the command itself
+    /// or restarted. (This process's own clear finds nothing left to forget by the time its lane job runs.)
+    /// </summary>
+    private void HonourClearElsewhere(GrammarQuarantine quarantine)
+    {
+        var generation = quarantine.Generation;
+        if (Interlocked.Exchange(ref _quarantineGeneration, generation) == generation) return;
+        LaneState? state;
+        lock (_gate) state = _disposed ? null : _lane;
+        state?.Lane.Post(WorkPriority.Interactive, null, _ =>
+        {
+            if (state.Registry?.ForgetQuarantined() != true) return; // nothing refused here: no document to move back
+            ForgetReports();
+            LaneReplaced?.Invoke(); // documents re-evaluate their engine
+        });
     }
 
     private FlightRecorder FlightRecorderAfterHang()
