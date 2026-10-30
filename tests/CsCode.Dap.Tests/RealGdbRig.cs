@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CsCode.Core.Debugging;
 using CsCode.Dap.Adapters;
+using CsCode.Dap.Client;
 using CsCode.Dap.Service;
 using CsCode.Dap.Session;
 using CsCode.Dap.Tests.Fakes;
@@ -164,6 +165,27 @@ internal sealed class RealGdbRig : IAsyncDisposable
             foreach (var v in await session.GetVariablesAsync(scope.VariablesReference, ct: Ct))
                 all.TryAdd(v.Name, v);
         return all;
+    }
+
+    /// <summary>Rust expressions a Watch window user types, evaluated the same way for GDB and CodeLLDB at <c>@call</c> (evidence for the matrix).</summary>
+    public static readonly IReadOnlyList<string> RustWatchExpressions =
+        ["v[1]", "v.len()", "s.len()", "big[249]", "*boxed", "boxed.x", "wrapper.point.x", "pair.1", "some", "x as u8", "text", "map.len()"];
+
+    /// <summary>Each of <see cref="RustWatchExpressions"/> as <c>expression => result</c> or <c>expression !! error</c>, and how many succeeded.</summary>
+    public static async Task<(string Text, int Succeeded)> EvaluateRustExpressionsAsync(DebugSession session, int frameId)
+    {
+        var parts = new List<string>();
+        var ok = 0;
+        foreach (var expression in RustWatchExpressions)
+        {
+            try
+            {
+                parts.Add($"{expression} => {(await session.EvaluateAsync(expression, frameId, "watch", Ct)).Result}");
+                ok++;
+            }
+            catch (DapRequestException ex) { parts.Add($"{expression} !! {ex.Message.Split('\n')[0]}"); }
+        }
+        return (string.Join(" | ", parts), ok);
     }
 
     /// <summary>The nice value of a process (Linux <c>/proc/&lt;pid&gt;/stat</c> field 19).</summary>

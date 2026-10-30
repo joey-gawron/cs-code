@@ -40,6 +40,12 @@ public sealed partial class DebugSession
         var reason = e.Reason;
         var description = e.Description;
         var text = e.Text;
+        // The stop that answers our own pause, reported by the adapter as something else (CodeLLDB: "exception", "signal SIGSTOP").
+        if (_pauseRequested)
+        {
+            _pauseRequested = false;
+            if (reason != "pause" && _quirks.IsPauseStop(reason, description)) (reason, description, text) = ("pause", null, null);
+        }
         _syntheticStop = e.Reason == "breakpoint" ? _sync?.SyntheticFilterHit(e.HitBreakpointIds) : null;
         if (_syntheticStop is { } filter)
         {
@@ -133,6 +139,7 @@ public sealed partial class DebugSession
         LastException = null;
         _syntheticStop = null;
         _syntheticException = null;
+        _pauseRequested = false;
         _recentOutput?.Clear(); // a panic message printed from now on belongs to the next stop
         if (allThreads) SetState(DebugSessionState.Running);
         _continued.Fire(new DebugContinuedEventArgs(this, threadId, allThreads));

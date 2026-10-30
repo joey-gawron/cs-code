@@ -66,9 +66,11 @@ public class RealCodeLldbRustTests
         await using var rig = await RigAsync();
         rig.PanicStops(false); // the sample catches a panic on its way to the end
         var bp = rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
+        var started = Stopwatch.GetTimestamp();
         var session = await rig.StartAsync();
         Note($"capabilities: exception filters {string.Join(", ", session.Capabilities.ExceptionBreakpointFilters?.Select(f => $"{f.Filter}='{f.Label}' default={f.Default}") ?? [])}");
         var loc = await rig.WaitForStopAsync(1);
+        Note($"start to the first stop: {Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms (load {File.ReadAllText("/proc/loadavg").Split(' ')[0]})");
         Assert.Equal("breakpoint", rig.LastStop.Reason);
         AssertAt(loc, "main.rs", InMain("loop"));
         await SessionHarness.Eventually(() => rig.H.Breakpoints.GetStatus(bp.Id) is { Verified: true }, 10_000, "verified breakpoint");
@@ -121,10 +123,11 @@ public class RealCodeLldbRustTests
     {
         await using var rig = await RigAsync();
         rig.PanicStops(false);
-        // @loop is one statement (one location); a println! line may have two (GDB stops twice per pass there): the condition goes on it, and
-        // every stop it makes is counted rather than assumed.
+        // @loop is one statement (one location); a println! line has several: LLDB resolves it to one location per lexical block of the macro's
+        // expansion (3 with Rust 1.98; GDB has 2), and each stops once per pass. The condition goes on it: it must hold at every one of them on
+        // the one pass where i == 3, and nowhere else.
         rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"), hitCondition: "2"); // sent as "=2": the second hit only
-        rig.H.Breakpoints.Add(rig.MainUri, InMain("print"), condition: "i == 3");
+        var print = rig.H.Breakpoints.Add(rig.MainUri, InMain("print"), condition: "i == 3");
         rig.H.Breakpoints.Add(rig.MainUri, InMain("call"), logMessage: "logged x={x}");
         await rig.StartAsync();
         var loc = await rig.WaitForStopAsync(1);
@@ -135,6 +138,7 @@ public class RealCodeLldbRustTests
         loc = await rig.WaitForStopAsync(2);
         AssertAt(loc, "main.rs", InMain("print"));
         Assert.Equal("3", await ValueOfAsync(rig, "i"));
+        var verdict = rig.H.Breakpoints.GetStatus(print.Id); // while the session lives (its verdicts go with it)
         var printStops = 1;
         while (true)
         {
@@ -147,9 +151,35 @@ public class RealCodeLldbRustTests
             printStops++;
         }
         await rig.WaitForEndAsync();
-        Note($"stops: {rig.StopCount} ({printStops} at the println! line); console: {rig.OutputOf("console").Replace("\n", "\\n")}");
-        Assert.InRange(printStops, 1, 2);
+        Note($"stops: {rig.StopCount} ({printStops} at the println! line, verdict '{verdict?.Message}'); console: {rig.OutputOf("console").Replace("\n", "\\n")}");
+        // CodeLLDB's verdict says how many locations LLDB resolved ("Resolved locations: N"): one stop at each, all on the i == 3 pass
+        var locations = System.Text.RegularExpressions.Regex.Match(verdict?.Message ?? "", @"Resolved locations: (\d+)");
+        Assert.True(locations.Success, $"verdict: {verdict}");
+        Assert.Equal(int.Parse(locations.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), printStops);
         Assert.Contains("logged x=51", rig.OutputText, StringComparison.Ordinal); // and no stop at the logpoint
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
+    [Fact]
+    public async Task Hit_conditions_take_codelldbs_own_operators()
+    {
+        await using var rig = await RigAsync();
+        rig.PanicStops(false);
+        rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"), hitCondition: "%2"); // every second hit: GDB cannot express it, CodeLLDB can
+        await rig.StartAsync();
+        var seen = new List<string>();
+        for (var stop = 1; ; stop++)
+        {
+            await SessionHarness.Eventually(() => rig.StopCount >= stop || rig.Service.Sessions.Count == 0, 60_000, "the next stop or the end");
+            if (rig.Service.Sessions.Count == 0) break;
+            var loc = await rig.WaitForStopAsync(stop);
+            AssertAt(loc, "main.rs", InMain("loop"));
+            seen.Add(await ValueOfAsync(rig, "i"));
+            await ContinueAsync(rig);
+        }
+        await rig.WaitForEndAsync();
+        Note($"hit count '%2' on a 5-pass loop: stops at i = {string.Join(", ", seen)}");
+        Assert.Equal(["1", "3"], seen); // hits 2 and 4
         await rig.AssertNothingLeftRunningAsync();
     }
 
@@ -356,10 +386,17 @@ public class RealCodeLldbRustTests
         Assert.Contains("hello", locals["s"].Value, StringComparison.Ordinal);
         Assert.Contains("world", locals["text"].Value, StringComparison.Ordinal);
         Assert.Equal("51", locals["x"].Value);
+        // the toolchain's formatters (lldb_lookup.py) are loaded: without them a Vec, an Option and an Rc show as raw structs
+        Assert.Contains("Loading Rust formatters from", rig.OutputOf("console"), StringComparison.Ordinal);
+        Assert.Equal(("size=3", "size=2", "Some(5)", "None", "Ok(12)"), (locals["v"].Value, locals["map"].Value, locals["some"].Value, locals["none"].Value, locals["ok"].Value));
+        Assert.Equal("strong=2, weak=0", locals["shared2"].Value);
         var big = locals["big"];
+        Assert.Equal("size=250", big.Value);
+        // CodeLLDB ignores start/count (it answers with every child) and announces no indexedVariables: the session pages for it
         var page = await session.GetVariablesAsync(big.VariablesReference, "indexed", 240, 10, Ct);
-        Note($"big: {big.Value} indexed={big.IndexedVariables}; [240..250): {string.Join(", ", page.Select(c => $"{c.Name}={c.Value}"))}");
-        Assert.Contains(page, c => c.Value == "498");
+        Note($"big: {big.Value} indexed={big.IndexedVariables}; [240..250): {string.Join(", ", page.Select(c => $"{c.Name}={c.Value} ({c.Type})"))}");
+        Assert.Equal(Enumerable.Range(240, 10).Select(i => $"[{i}]"), page.Select(c => c.Name));
+        Assert.Equal("498", page[^1].Value);
         await rig.Service.StopAllAsync(Ct);
         await rig.WaitForEndAsync();
         await rig.AssertNothingLeftRunningAsync();
@@ -379,15 +416,36 @@ public class RealCodeLldbRustTests
         Assert.Equal("7", (await session.EvaluateAsync("p.x + p.y", loc.FrameId, "watch", Ct)).Result);
         var watchError = await Assert.ThrowsAsync<DapRequestException>(async () => await session.EvaluateAsync("nope", loc.FrameId, "watch", Ct));
         Note("watch error: " + watchError.Message);
+        var (rust, _) = await RealGdbRig.EvaluateRustExpressionsAsync(session, loc.FrameId);
+        Note("rust expressions: " + rust);
 
         async Task<string> Repl(string text) => (await session.EvaluateAsync(text, loc.FrameId, "repl", Ct)).Result;
         Assert.Equal("102", await Repl("x * 2")); // an expression: the console is in evaluate mode
+        // An LLDB command's answer is an empty result: CodeLLDB prints the command's output as console output events before it (seen on the
+        // wire), which the Debug Console shows.
         var bt = await Repl("-exec bt");
-        Note("-exec bt: " + bt.Replace("\n", "\\n"));
-        Assert.Contains("main", bt, StringComparison.Ordinal);
-        Note("`frame variable x: " + (await Repl("`frame variable x")).Replace("\n", "\\n"));
-        var completions = await session.CompletionsAsync(loc.FrameId, "p.", 2, Ct);
-        Note("completions of 'p.': " + string.Join(", ", completions.Select(c => $"{c.Label}=>{c.Text}@{c.Start}+{c.Length}")));
+        await SessionHarness.Eventually(() => rig.OutputOf("console").Contains("frame #0", StringComparison.Ordinal), 10_000, "the backtrace in the console");
+        var backtrace = rig.OutputOf("console")[Math.Max(0, rig.OutputOf("console").IndexOf("* thread", StringComparison.Ordinal))..].Replace("\n", "\\n");
+        Note($"-exec bt: result '{bt.Replace("\n", "\\n")}'; console: {backtrace[..Math.Min(300, backtrace.Length)]}");
+        Assert.Contains("sample`sample::main at main.rs", rig.OutputOf("console"), StringComparison.Ordinal);
+        var consoleBefore = rig.OutputOf("console").Length;
+        Note("`frame variable x: result '" + (await Repl("`frame variable x")).Replace("\n", "\\n") + "'");
+        await SessionHarness.Eventually(() => rig.OutputOf("console")[consoleBefore..].Contains("(int) x = 51", StringComparison.Ordinal), 10_000, "frame variable in the console");
+        // Completions: CodeLLDB completes only LLDB commands in evaluate mode; an expression is completed as `frame variable <expression>`, and
+        // every answer is placed back into what was typed (applied here as the Debug Console applies it).
+        async Task<List<string>> CompleteAsync(string typed)
+        {
+            var completions = await session.CompletionsAsync(loc.FrameId, typed, typed.Length, Ct);
+            Note($"completions of '{typed}': " + string.Join(", ", completions.Select(c => $"{c.Label}=>{c.Text}@{c.Start}+{c.Length}")));
+            return [.. completions.Select(c => typed[..c.Start!.Value] + (c.Text ?? c.Label) + typed[(c.Start.Value + c.Length!.Value)..])];
+        }
+        Assert.Equal(["p.x", "p.y"], await CompleteAsync("p."));
+        Assert.Equal(["x + p.x", "x + p.y"], await CompleteAsync("x + p."));
+        Assert.Equal(["shape", "shared", "shared2"], await CompleteAsync("sh"));
+        Assert.Equal(["wrapper.point"], await CompleteAsync("wrapper.po"));
+        Assert.Equal(["`frame"], await CompleteAsync("`fram"));
+        Assert.Equal(["/cmd frame"], await CompleteAsync("/cmd fram"));
+        Assert.Equal(["-exec frame"], await CompleteAsync("-exec fram"));
 
         var scope = (await session.GetScopesAsync(loc.FrameId, Ct)).First();
         var set = await session.SetVariableAsync(scope.VariablesReference, "x", "100", Ct);
@@ -515,7 +573,17 @@ public class RealCodeLldbRustTests
         var heapAfter = GC.GetTotalMemory(true);
         var history = rig.Service.GetOutputHistory();
         Note($"1M-line flood: {seconds:0.0} s, {rig.OutputEvents} output batches delivered, {session.DroppedOutputChars:N0} chars dropped by design, heap {heapBefore / 1024 / 1024.0:0.0} -> {heapAfter / 1024 / 1024.0:0.0} MB, last output '{rig.OutputOf("stdout")[^Math.Min(40, rig.OutputOf("stdout").Length)..].Replace("\n", "\\n")}'");
-        Assert.Contains(history, h => h.Output.Contains("flood done", StringComparison.Ordinal));
+        // CodeLLDB v1.12.3 sends "Process exited with code 0." after the last program output it forwards; it does NOT drain the program's
+        // output still buffered when the exit is reported (notify_process_terminated: console message, exited, terminated): in 4 of 11 runs
+        // recorded on the wire the adapter's stream ended early ("flood line 999942", "…985", "…987", "…994") without "flood done", and every
+        // time the console's last line was exactly the adapter's last. What CsCode owns: everything the adapter sent reached the history, in
+        // order, up to that final message.
+        var exitMessage = history.Select((h, i) => (h, i)).Last(e => e.h.Output.Contains("Process exited with code 0.", StringComparison.Ordinal)).i;
+        Assert.DoesNotContain(history.Skip(exitMessage + 1), h => h.Category == "stdout");
+        var stdout = string.Concat(history.Where(h => h.Category == "stdout").Select(h => h.Output)).TrimEnd();
+        var lastLine = stdout[(stdout.LastIndexOf('\n') + 1)..];
+        Note($"1M-line flood: the program's last line in the console '{lastLine}'" + (lastLine == "flood done" ? "" : " (CodeLLDB dropped the rest: it does not drain the program's output at exit)"));
+        Assert.Matches(@"^(flood done|flood line \d+)$", lastLine); // the history ends on a whole line the program printed
         Assert.InRange(heapAfter - heapBefore, long.MinValue, 64L * 1024 * 1024);
         await rig.AssertNothingLeftRunningAsync();
     }

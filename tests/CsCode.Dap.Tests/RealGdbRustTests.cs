@@ -47,11 +47,13 @@ public class RealGdbRustTests
         Note("gdb: " + GdbToolchain.Version());
         rig.PanicStops(false); // the sample catches a panic on its way to the end
         var bp = rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var session = await rig.StartAsync();
         Assert.NotNull(session.AdapterProcessId);
         Assert.NotNull(session.AdapterProcessMarker);
 
         var loc = await rig.WaitForStopAsync(1);
+        Note($"start to the first stop: {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms (load {File.ReadAllText("/proc/loadavg").Split(' ')[0]})");
         Assert.Equal("breakpoint", rig.LastStop.Reason);
         AssertAt(loc, "main.rs", InMain("loop"));
         await SessionHarness.Eventually(() => rig.H.Breakpoints.GetStatus(bp.Id) is { Verified: true }, 10_000, "verified breakpoint");
@@ -530,6 +532,8 @@ public class RealGdbRustTests
         var watchError = await Assert.ThrowsAsync<DapRequestException>(async () => await session.EvaluateAsync("nope", loc.FrameId, "watch", Ct));
         Note("watch error: " + watchError.Message);
         Assert.Equal("No symbol 'nope' in current context", watchError.Message);
+        var (rust, _) = await RealGdbRig.EvaluateRustExpressionsAsync(session, loc.FrameId);
+        Note("rust expressions: " + rust);
 
         var scope = (await session.GetScopesAsync(loc.FrameId, Ct)).First(s => s.PresentationHint == "locals");
         // GDB finds a variable to set among the children it listed (the Locals window lists them first): "no variable named 'x'" otherwise.

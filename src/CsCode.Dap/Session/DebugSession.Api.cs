@@ -57,6 +57,38 @@ public sealed partial class DebugSession
         EnsureLive();
         var take = Math.Min(levels <= 0 ? _settings.MaxStackFrames : levels, _settings.MaxStackFrames);
         startFrame = Math.Max(0, startFrame);
+        if (_quirks.RenumbersFramesPerRequest) return await GetStableStackTraceAsync(threadId, startFrame, take, ct);
+        return await RequestStackTraceAsync(threadId, startFrame, take, ct);
+    }
+
+    /// <summary>
+    /// Lane only. Frames for an adapter that renumbers them on every <c>stackTrace</c> request (<see cref="DebugAdapterQuirks.RenumbersFramesPerRequest"/>):
+    /// each thread's frames are read once per stop, from the top, and every later request is served from them (only frames beyond those
+    /// already read are asked for), so one frame has one id for the whole stop whoever asks — the stop location, the Call Stack, Locals.
+    /// </summary>
+    private async Task<IReadOnlyList<DebugStackFrame>> GetStableStackTraceAsync(int threadId, int startFrame, int take, CancellationToken ct)
+    {
+        var gen = _handles.FrameGeneration;
+        var run = _handles.FrameRunOf(threadId);
+        var end = startFrame + take;
+        if (run.Frames.Count < end && !run.Complete)
+        {
+            var from = run.Frames.Count;
+            if (!_handles.CanKeepFrames(end - from)) return await RequestStackTraceAsync(threadId, startFrame, take, ct); // bounded: past it, as asked
+            var read = await RequestStackTraceAsync(threadId, from, end - from, ct);
+            if (gen != _handles.FrameGeneration) return [.. read.Skip(Math.Max(0, startFrame - from)).Take(take)]; // the program moved meanwhile: nothing to keep
+            // Another request may have read some of these meanwhile (the lane interleaves at the await): keep only what extends the run. Frames
+            // at one depth are the same frame, whichever request numbered them.
+            if (run.Frames.Count < from + read.Count) _handles.AppendFrames(run, read.Skip(run.Frames.Count - from));
+            if (read.Count < end - from) run.Complete = true;
+        }
+        var count = Math.Max(0, Math.Min(end, run.Frames.Count) - startFrame);
+        return count == 0 ? [] : run.Frames.GetRange(startFrame, count);
+    }
+
+    /// <summary>Lane only. One <c>stackTrace</c> request (or, for an adapter without delayed loading, the whole stack paged here).</summary>
+    private async Task<IReadOnlyList<DebugStackFrame>> RequestStackTraceAsync(int threadId, int startFrame, int take, CancellationToken ct)
+    {
         // Only adapters that advertise delayed loading honour startFrame/levels; for the others we ask for everything and page here.
         var delayed = _dapCaps.SupportsDelayedStackTraceLoading == true;
         var args = delayed
@@ -118,6 +150,7 @@ public sealed partial class DebugSession
         EnsureLive();
         if (reference <= 0) return [];
         if (!_handles.IsValidHandle(reference)) throw Stale("variables reference");
+        if (_quirks.IgnoresVariablePaging) return Page(await GetAllChildrenAsync(reference, ct), start, count);
         var key = new VariableHandleCache.VariablesKey(reference, filter, start, count);
         if (_handles.TryGetPage(key, out var cached)) return cached;
 
@@ -131,6 +164,34 @@ public sealed partial class DebugSession
         foreach (var v in vars) _handles.RegisterHandle(v.VariablesReference);
         _handles.SetPage(key, vars);
         return vars;
+    }
+
+    /// <summary>
+    /// Lane only. Every child of <paramref name="reference"/> from an adapter that ignores paging (<see cref="DebugAdapterQuirks.IgnoresVariablePaging"/>):
+    /// asked for once per stop, without <c>start</c>/<c>count</c>/<c>filter</c> (it would ignore them), at most
+    /// <see cref="DebugSessionOptions.MaxVariablesPerRequest"/> kept. Such an adapter announces no indexed/named split, so a filter cannot apply.
+    /// </summary>
+    private async Task<IReadOnlyList<DebugVariable>> GetAllChildrenAsync(int reference, CancellationToken ct)
+    {
+        if (_handles.TryGetAllChildren(reference, out var cached)) return cached;
+        var gen = _handles.Generation;
+        var resp = DapJson.Deserialize<DapVariablesResponse>(await RequestAsync("variables", new DapVariablesArguments { VariablesReference = reference }, ct)) ?? new DapVariablesResponse();
+        if (gen != _handles.Generation) throw Stale("variables reference");
+        var vars = resp.Variables.Take(_settings.MaxVariablesPerRequest).Select(DapMapping.ToCore).ToArray();
+        foreach (var v in vars) _handles.RegisterHandle(v.VariablesReference);
+        _handles.SetAllChildren(reference, vars);
+        return vars;
+    }
+
+    /// <summary>The page [<paramref name="start"/>, <paramref name="start"/> + <paramref name="count"/>) of a complete child list (null: from the first / to the end).</summary>
+    internal static IReadOnlyList<DebugVariable> Page(IReadOnlyList<DebugVariable> all, int? start, int? count)
+    {
+        var from = Math.Clamp(start ?? 0, 0, all.Count);
+        var take = count is > 0 ? Math.Min(count.Value, all.Count - from) : all.Count - from;
+        if (from == 0 && take == all.Count) return all;
+        var page = new DebugVariable[take];
+        for (var i = 0; i < take; i++) page[i] = all[from + i];
+        return page;
     }
 
     public ValueTask<DebugEvaluateResult> EvaluateAsync(string expression, int? frameId, string context = "repl", CancellationToken ct = default) =>
@@ -279,7 +340,14 @@ public sealed partial class DebugSession
         {
             EnsureLive();
             var tid = await ResolveThreadAsync(threadId, ct);
-            await RequestAsync("pause", new DapPauseArguments { ThreadId = tid }, ct);
+            // Set before the request: the adapter may announce the stop before it answers.
+            _pauseRequested = true;
+            try { await RequestAsync("pause", new DapPauseArguments { ThreadId = tid }, ct); }
+            catch
+            {
+                _pauseRequested = false;
+                throw;
+            }
         }, ct);
 
     // ------------------------------------------------------------------ misc

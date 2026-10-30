@@ -70,6 +70,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private JsonObject? _launchArgs;
     private SyntheticExceptionFilter? _syntheticStop;
     private DebugExceptionInfo? _syntheticException;
+    /// <summary>Lane only: our <c>pause</c> request is outstanding (cleared by the next stop or resume); see <see cref="DebugAdapterQuirks.IsPauseStop"/>.</summary>
+    private bool _pauseRequested;
     private readonly System.Text.StringBuilder? _recentOutput;
     private readonly Dictionary<string, DebugModuleInfo> _modules = new();
 

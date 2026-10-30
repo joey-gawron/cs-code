@@ -1,8 +1,8 @@
 # Debugging Rust and TypeScript — evaluation and fixes
 
 User request (2026-10-29): *"can you see how well the debugger feature works with rust and typescript"* — the user approved the js-debug download
-and asked to start with it; Rust followed with GDB. Wave 3 (user decision 2, "Get all the downloads you need") approved CodeLLDB: it is built in
-beside GDB, its matrix is written as a test suite, and running it is the one step still open (see [Rust through CodeLLDB](#rust-through-codelldb)).
+and asked to start with it; Rust followed with GDB. Wave 3 (user decisions 2 and 3, "Get all the downloads you need", "You can run the tests")
+approved CodeLLDB and running it: it is built in beside GDB and its matrix ran against the real adapter (see [Rust through CodeLLDB](#rust-through-codelldb)).
 This document records the evaluation matrix of `docs/briefs/debugger-rust-typescript.md` (MUST 3) with evidence, what was fixed (each with a
 regression test that fails without the fix), and what is an adapter limitation.
 
@@ -10,7 +10,7 @@ regression test that fails without the fix), and what is an adapter limitation.
 |---|---|---|
 | **TypeScript / JavaScript** | Microsoft **js-debug v1.140.0** (`js-debug-dap`, MIT), built in | **evaluated, defects fixed** — every row below |
 | **Rust** (default) | **GDB 18.1**'s native DAP (`gdb -i=dap`, no download), built in; GDB 16.3, which the brief assumed, was replaced by the system update | **evaluated, defects fixed** — [Rust through GDB](#rust-through-gdb) |
-| **Rust** | **CodeLLDB v1.12.3** (MIT, with its own LLDB; a pinned 56 MB download the app offers), built in as `lldb` | **built, unit-tested, NOT yet run against the real adapter** — [Rust through CodeLLDB](#rust-through-codelldb); [which one is the default](#which-rust-debugger-is-the-default) |
+| **Rust** | **CodeLLDB v1.12.3** (MIT, with its own LLDB; a pinned 56 MB download the app offers), built in as `lldb` | **evaluated, defects fixed** — [Rust through CodeLLDB](#rust-through-codelldb); [which one is the default](#which-rust-debugger-is-the-default) (GDB stays) |
 
 ## TypeScript / JavaScript through js-debug
 
@@ -414,7 +414,7 @@ Evidence is what GDB sent and what the panels showed, recorded by the tests (`CS
 * The 1M-line flood can miss the UI budget under heavy machine load (one DAP event per line, as js-debug's `console.log` flood; deferred to the
   performance wave with it).
 * GDB 16.3 itself was not run (replaced by 18.1 on this machine): on 16 the Debug Console has no completions.
-* CodeLLDB (the VS Code default for Rust) is built in as `lldb`, but its matrix has not been run yet: see [Rust through CodeLLDB](#rust-through-codelldb).
+* CodeLLDB (the VS Code default for Rust) is built in as `lldb` and evaluated beside GDB: see [Rust through CodeLLDB](#rust-through-codelldb).
 
 ### Running the suites
 
@@ -434,14 +434,13 @@ lines quoted above.
 **CodeLLDB** (Vadim Chugunov, MIT, github.com/vadimcn/codelldb; VS Code's usual Rust debugger) is built in beside GDB as the debug type
 **`lldb`** — the type CodeLLDB's own launch.json files use, so they work unchanged. Wave 3 approved the download (user decision 2).
 
-> **Status: built and unit-tested; the matrix below has NOT been run against the real adapter.** The package was downloaded and verified, and it
-> installs (checked by a test; nothing in it executed), but in the wave-3 session that built this the permission system refused to execute the
-> downloaded CodeLLDB binary ("code from external"), so no row could be run. Everything around the adapter is tested with stand-ins — including
-> an `lldb` session end to end through the real `DebugService` with a stand-in installed as `extension/adapter/codelldb` that speaks DAP on its
-> stdio (`CodeLldbStandInTests`: the `--settings` command line, nice 10, the folder as working directory, the launch arguments the provider
-> filled in, a clean exit); the real-adapter suites are written (`RealCodeLldbRustTests`, `RealCodeLldbPanelsTests`) and skip until CodeLLDB is
-> present. What each row is expected to do is taken from CodeLLDB's own sources at the pinned tag (`src/codelldb/src/…`), marked as such.
-> Running the suites (below) turns this section into evidence; until then, the GDB column is the evaluated one.
+> **Status: evaluated against the real CodeLLDB v1.12.3** (wave 3, builder W7b, 2026-10-29; the user approved running it: "You can run the
+> tests"). Both real suites pass: `RealCodeLldbRustTests` 19/19 (D) and `RealCodeLldbPanelsTests` 3/3 (P). Their first run (integration commit
+> dd81e5b) failed 4 of 18 D tests and both P tests; the adapter's actual DAP traffic, recorded by a logging wrapper in front of
+> `extension/adapter/codelldb` (stdin and stdout teed to files, then the real binary), showed four CsCode defects — fixed, each with a
+> regression test — and three test expectations taken from GDB that do not hold for LLDB — corrected, with the evidence below
+> ([Fixes](#fixes-codelldb)). Every row of the matrix is now observed; where CodeLLDB's sources explain a behaviour they are cited
+> (`src/codelldb/src/…` at the tag).
 
 ### Download (pinned) and installer
 
@@ -489,97 +488,165 @@ lines quoted above.
 * **Templates** (Create launch.json for `lldb`): **Rust: Debug <bin> (CodeLLDB, cargo build)**, **Rust: Debug unit tests of <package> (CodeLLDB,
   cargo test)** (the `cargo` key), **Rust: Attach to <bin> (CodeLLDB)**, and the same `cargo: build` process task as GDB's; plain LLDB templates
   without a Cargo.toml.
-* **Quirks** (`CodeLldbAdapterQuirks`, from CodeLLDB's sources):
+* **Quirks** (`CodeLldbAdapterQuirks`; the first five from CodeLLDB's sources and confirmed by the real runs, the last four found by them):
   * Its "rust_panic" filter is an LLDB breakpoint on `rust_panic$`, so the stop comes as reason **`breakpoint`** (and its `exceptionInfo` would
     answer `Breakpoint`). The session now recognises such a filter's breakpoint ids from the `setExceptionBreakpoints` response (new
     `DebugAdapterQuirks.BreakpointExceptionFilters`) and reports the stop as the exception **"Rust panics"** with the panic's message from the
     output — the same presentation as GDB's client-side filter.
-  * **Hit counts**: CodeLLDB reads a bare `N` as `>= N`; CsCode sends `=N` (the Nth hit only, as js-debug and Visual Studio's "is equal to");
-    `<`, `<=`, `=`, `>=`, `>`, `%` are CodeLLDB's own and pass unchanged — so `%3` works here, unlike with GDB.
+  * **Hit counts**: CodeLLDB reads a bare `N` as `>= N` (`src/codelldb/src/expressions/hit_condition.rs`: the last parser alternative is
+    `GE(n)`; its own test parses `" 13 "` as `GE(13)`); CsCode sends `=N` (the Nth hit only, as js-debug and Visual Studio's "is equal to");
+    `<`, `<=`, `=`, `==`, `>=`, `>`, `%` are CodeLLDB's own and pass unchanged — so `%2` works here (observed: stops on hits 2 and 4), unlike
+    with GDB.
   * **Debug Console**: evaluate mode; a backtick or `/cmd ` runs an LLDB command, and `-exec <command>` (VS Code's C++ habit, which the GDB adapter
-    takes) is sent as `/cmd <command>`.
+    takes) is sent as `/cmd <command>`. A command's evaluate result is EMPTY: CodeLLDB prints its output as `console` output events before the
+    response (observed for `bt` and `frame variable x`), which the Debug Console shows under the input line.
   * **Frames**: std frames and CodeLLDB's disassembly frames (code without sources: a `sourceReference`) are de-emphasised, so a pause in libc or a
     panic shows the user's code (the GDB rule).
   * **Start Without Debugging**: CodeLLDB honours `noDebug` but then refuses breakpoint requests with an error; the session sends none (new
     `DebugAdapterQuirks.RefusesBreakpointsWithoutDebugging`), as it already did for GDB.
+  * **Paging** (found by the real run): `variables` ignores `start`, `count` and `filter` (its `handle_variables` reads only the reference) and
+    never announces `indexedVariables`: asked for `[240, 250)` of a 250-element Vec it answered all 250 elements and `[raw]`. The session kept the
+    first `count` of an answer (its guard against adapters that ignore `count`), so every page was the first one again and the Locals window
+    stopped at `[99]`. New `DebugAdapterQuirks.IgnoresVariablePaging`: the session asks once per stop for all the children (at most
+    `MaxVariablesPerRequest`, 10,000) and cuts the pages itself.
+  * **Pause** (found): CodeLLDB pauses by stopping the process (LLDB sends SIGSTOP) and its stop handler maps every signal to reason
+    `exception` with no case for a pause it asked for: Break All arrived as `{"reason":"exception","description":"signal SIGSTOP"}` (and "Stop
+    reason: signal SIGSTOP" on stderr), so the Exception window would open on every pause. New `DebugAdapterQuirks.IsPauseStop`: while the
+    client's own `pause` is outstanding, that stop (only `signal SIGSTOP`; a real signal stays an exception) is reported as reason `pause`.
+  * **Frame ids** (found): every `stackTrace` answer numbers the frames anew (the stop location's request got 1001…, the Call Stack window's
+    request for the same stack 1021…; the older ids stay valid until the program resumes). The Call Stack window marks the frame whose id is the
+    stop location's, so it marked none (both panels tests failed on it), and Locals' frame identity found no frame. New
+    `DebugAdapterQuirks.RenumbersFramesPerRequest`: the session reads each thread's frames once per stop, from the top, and serves every later
+    request from them, asking only for frames beyond those read (bounded by the frame registry's 10,000).
+  * **Completions** (found): in evaluate mode CodeLLDB completes only LLDB commands (`handle_completions`: expression completion is a TODO) and
+    counts an answer's `start` inside the command with its prefix stripped (`` `fram `` → `frame` at start 0, length 4, which replaced
+    `` `fra `` with `frame`). Now an expression is completed as LLDB's `frame variable <expression>` (locals and their members), `-exec` as
+    `/cmd`, only the text before the caret is sent, and each answer is placed back at the caret by its length (`MapCompletions`).
 
 ### The matrix — CodeLLDB beside GDB
 
-GDB's column is the evaluated one ([above](#the-matrix)). The CodeLLDB column says what CodeLLDB v1.12.3's sources make us expect; **none of it
-has been observed yet**. Tests: **D** = `tests/CsCode.Dap.Tests/RealCodeLldbRustTests.cs` (real `DebugService`), **P** =
-`tests/CsCode.Panels.Debug.Tests/RealCodeLldbPanelsTests.cs` (the panels over the real DAP module); unit tests with fakes: `CodeLldbQuirksTests`,
-`CodeLldbAdapterFactoryTests`, `CodeLldbInstallerTests`.
+Every CodeLLDB row below was observed with the real CodeLLDB v1.12.3 (its bundled LLDB), Rust 1.98.1 from Nix and the same cargo sample as GDB's,
+on this machine (Debian 14, load average 5–17 from other builds); line numbers are 1-based. GDB's column is the evaluated one
+[above](#the-matrix). Tests: **D** = `tests/CsCode.Dap.Tests/RealCodeLldbRustTests.cs` (real `DebugService`), **P** =
+`tests/CsCode.Panels.Debug.Tests/RealCodeLldbPanelsTests.cs` (the panels over the real DAP module); unit tests with fakes shaped like the observed
+traffic: `CodeLldbQuirksTests`, `CodeLldbAdapterFactoryTests`, `CodeLldbInstallerTests`, `CodeLldbStandInTests`. The evidence quoted is what
+the tests record (`[codelldb]` lines with `CSCODE_DAP_TEST_METRICS`) and, for the fixes, the adapter's own DAP traffic.
 
-| Row | GDB 18.1 (evaluated) | CodeLLDB v1.12.3 — expected from its sources (not run) | Test |
-|---|---|---|---|
-| Launch + clean exit | works | stdio adapter, one session, exits after it; the program under `lldb-server`, niced, marked | D `Launch_stops_…_below_normal_priority` |
-| Line breakpoints, moved line | works | target created at `launch`, before `initialized`: breakpoints verified when set, `line` = the first resolved location | D, `A_breakpoint_on_a_line_without_code_…` |
-| Conditional | works | yes ("simple" expressions by default) | D `Conditional_hit_count_and_log_breakpoints` |
-| Hit count | partial (ignore count, `%N` impossible) | yes, every operator; a bare `N` is sent as `=N` | D (same), `CodeLldbQuirksTests` |
-| Logpoint | fixed | yes, `{expr}` in simple expressions | D (same) |
-| Function breakpoints | fixed | yes (LLDB name lookup; `/re ` for a regex) | D `Function_breakpoints_…` |
-| Rust panics | added (client-side filter) | its own "Rust: on panic", on by default; the stop reported as the exception by the new quirk | D `Rust_panics_…`, P, `CodeLldbQuirksTests` |
-| Start Without Debugging | fixed (GDB ignores `noDebug`) | honoured, but every breakpoint request is then answered "Not supported in noDebug mode." (its request dispatch): CsCode sends none, so no breakpoint shows as failed (quirk `RefusesBreakpointsWithoutDebugging`) | D `Start_without_debugging_…`, `CodeLldbQuirksTests` |
-| Step over/into/out | works | yes; `rust.py` sets LLDB's step-avoid regexp for `std::`/`core::`/`alloc::` | D `Step_into_over_and_out_…` |
-| Return value after step out | fixed (Return scope) | a `[return value]` variable first in its "Local" scope (`variables.rs`: `stop_return_value()`): Locals shows it as the first row; Autos does not lift it (it knows GDB's `returnValue` scope only) | D (same, records the scopes) |
-| Scopes | `Locals`/`Arguments` (hinted) | "Local", "Static", "Global", "Registers", none hinted and none marked expensive: the Locals window takes "Local" by its name (`ScopeSelector`), never the others | D, P |
-| Pause | fixed (stop location) | yes; libc shows as disassembly (de-emphasised by the quirk) | D `Pause_stop_while_running_and_restart` |
-| Restart | client relaunch (no `restart`) | advertises `supportsRestartRequest` (relaunches the target in the same adapter) | D (same) |
-| Stop | works | `disconnect` kills a launched program, detaches from an attached one | D (same), the attach test |
-| Adapter crash | works | marker reaping as for GDB | D `An_adapter_crash_…` |
-| Call stack: generics, closures, std | works / fixed | LLDB's function names; frames without sources as disassembly | D `Generic_functions_…`, P |
-| Locals: Rust values | fixed (CsCode's summaries) | the toolchain's `lldb_lookup.py` formatters (String, Vec, HashMap, Option/Result, Rc, enums…) | D `Locals_show_rust_values_…`, P |
-| Vec paging | fixed | recorded by the test (`[240..250)`) | D (same) |
-| Watch, set variable | works | yes (`supportsSetVariable`) | D `Watch_set_variable_and_the_debug_console_…`, P |
-| Debug Console REPL + completions | fixed (GDB runs commands) | evaluate mode set by CsCode; `/cmd`, backtick, `-exec`; `supportsCompletionsRequest` | D (same), P |
-| stdout / stderr | partial (one pipe) | LLDB reads the program through a pseudo-terminal: recorded by the test | D (same) |
-| Threads | works | yes | D `Threads_of_std_thread_…` |
-| Attach by pid | works | yes; detaches on Stop | D `Attach_to_a_running_rust_program_…` |
-| Unit-test binary (`cargo` key) | works | resolved by CsCode as for GDB (the VS Code extension's job, not the adapter's) | D `The_cargo_key_…` |
-| Templates | works | three CodeLLDB templates + `cargo: build` | D `The_codelldb_template_…`, `CodeLldbAdapterFactoryTests` |
-| `env` | fixed (GDB replaced the environment) | added on top of the inherited environment (LLDB's `target.inherit-env`) | unit test (strings, nulls dropped) |
-| 1M lines | works (budget under load) | recorded by the test (time, batches, heap) | D `A_million_line_flood_…` |
-| 10-session soak | works | — | D `Ten_real_sessions_…` |
+| Row | GDB 18.1 | CodeLLDB v1.12.3 | Evidence (CodeLLDB, observed) | Test |
+|---|---|---|---|---|
+| Launch + clean exit, nothing left running | works | **works** | `nice -n 10 codelldb --settings {"sourceLanguages":["rust"],"evaluateForHovers":true,"commandCompletions":true}`: codelldb and the program at nice 10; tree codelldb → `lldb-server gdbserver --native-regs --setsid` → `sample`, the program carrying the marker; "done hello world 3 2 Some(5) None Ok(12)", exit code 0; codelldb, lldb-server and the program gone. Start to the first stop **636–654 ms** (GDB: 273 ms in the same run, load 6.5): liblldb and the Python formatters load first. | D `Launch_stops_…_below_normal_priority` |
+| Line breakpoints | works | **works** | CodeLLDB creates the target at `launch`: `setBreakpoints` answers `verified: true, "Resolved locations: 0"`, then `breakpoint` events `changed, line 97, "Resolved locations: 1"` once the program is loaded, before the first stop. | D, P |
+| Moved line (comment line) | works | **works** | Requested 74 → stopped at 75; the verdict's line is 75. | D `A_breakpoint_on_a_line_without_code_…` |
+| Conditional | works | **works** | `i == 3`: every stop has `i = 3`. | D `Conditional_hit_count_and_log_breakpoints` |
+| Hit count | partial (ignore count, `%N` impossible) | **works** | A bare `2` (sent as `=2`) stops once, `i = 1`; `%2` stops on hits 2 and 4 (`i = 1, 3`) and nowhere else. | D (same), `Hit_conditions_take_codelldbs_own_operators`, `CodeLldbQuirksTests` |
+| Logpoint | fixed | **works** | `logged x=51`, category `console`, its own line, no stop. | D (same) |
+| Breakpoint on a `println!` line | adapter (2 stops per pass) | **adapter** (3 stops per pass) | LLDB resolves the line to 3 locations ("Resolved locations: 3", one per lexical block of the macro's expansion; instruction pointers `…5A63`, `…5A73`, `…5A9F`, all column 9) and stops at each: 3 stops, all on the `i == 3` pass. This was the first run's "hit-count breakpoint stopped 3 times": the `=2` hit count was right; the test expected GDB's 2 locations (test fixed: it now expects as many stops as CodeLLDB resolved locations). | D (same) |
+| Function breakpoints | fixed | **works** | `sample::util::add` → `util.rs:4`, "Resolved locations: 1". | D `Function_breakpoints_…` |
+| Rust panics | added (client-side filter) | **works** | Its own "Rust: on panic" (`rust_panic`, default on); the stop (reason `breakpoint` on the wire) is reported as `exception`, "Paused on exception: Rust panics", text "boom at the bottom", at the user's frame `util.rs:15` (`__rustc::rust_panic` and five std frames de-emphasised); `exceptionInfo` answered by the session; the uncaught one ends with 101. P: Exception window "Exception Thrown / panic: boom at the bottom", arrow on `util.rs : 15`. | D `Rust_panics_…`, P `A_rust_panic_shows_…` |
+| Start Without Debugging | fixed | **works** | `noDebug` honoured: 0 stops, exit code 0 (no breakpoint requests sent: CodeLLDB would refuse them); panics off → 101, no stop. | D `Start_without_debugging_…` |
+| Step over / into / out | works | **works** | Into → `util.rs:4` (`sample::util::add`), over → `util.rs:6` (as with GDB: `sum` has no line of its own), out → `main.rs:100`; reasons `step`. | D `Step_into_over_and_out_…` |
+| Return value after step out | fixed (Return scope) | **works** (Locals) | `[return value]=52` is the first row of "Local" (`stop_return_value()`); Autos does not lift it (it knows GDB's `returnValue` scope only). | D (same) |
+| Scopes | `Locals`/`Arguments` (hinted) | **works** | "Local", "Static" (vtables), "Global" (empty), "Registers": none hinted, none expensive; the Locals window takes "Local" by name (`ScopeSelector`). | D, P |
+| Pause | fixed (stop location) | **was broken → fixed** | On the wire: `{"reason":"exception","description":"signal SIGSTOP"}` after our `pause` (the first run's "expected pause, got exception"). Now reason `pause` at `sample::serve` `main.rs:46` (libc's `__internal_syscall_cancel` comes as disassembly, de-emphasised); P: arrow on `serve`, no Exception window. | D `Pause_stop_while_running_and_restart`, P `Break_all_shows_…`, `CodeLldbQuirksTests` |
+| Restart | client relaunch (270–660 ms, new GDB) | **works** (faster) | `supportsRestartRequest`: running again after **37–45 ms** in the same codelldb. | D (same) |
+| Stop | works | **works** | While running: every session gone after ~107 ms; codelldb exits. | D (same) |
+| Adapter crash | works | **works** | SIGKILL to codelldb: "The debug adapter closed the connection."; the program did not survive it. | D `An_adapter_crash_…` |
+| Call stack: generics, closures, std | works / fixed | **works** | `sample::apply::<sample::main::{closure#4}>` → into → `sample::main::{closure#4}`; `sample::util::describe::<i32>`; std frames de-emphasised and folded in P (`[External Code] \| explode : 15 ⇐ \| explode : 17 \| explode : 17 \| {closure#5} : 105 \| [External Code] \| main : 105 \| [External Code]`). | D `Generic_functions_…`, P |
+| Call stack: the current frame | works | **was broken → fixed** | CodeLLDB numbers frames anew per `stackTrace` (1001… then 1021… for the same stack): the Call Stack window marked no current frame (both P tests failed on it). Now `sample::main@main.rs : 100 ⇐`. | P, `CodeLldbQuirksTests` |
+| Locals: Rust values | fixed (CsCode's summaries) | **works** (the toolchain's formatters) | "Loading Rust formatters from <sysroot>/lib/rustlib/etc" (`lldb_lookup.py`): `s="hello"`, `text="world"`, `v=size=3` → `[0]=1 [1]=2 [2]=3`, `map=size=2` → `[0]=("b", 2) [1]=("a", 1)`, `some=Some(5)` → `0=5`, `none=None`, `ok=Ok(12)`, `err=Err("invalid digit found in string")`, `shape=Circle{radius:1.5}`, `rect=Rect(3, 4)`, `empty=Empty`, `p={x:3, y:4}`, `boxed={x:5, y:6}` (the Box is transparent), `shared=strong=2, weak=0` → `value="shared"`, `pair=(1, "two")`, `wrapper={point:{x:7, y:8}, tag:Some("w")}`; every formatted value has a `[raw]` child. Primitive types carry LLDB's C names (`i32` is `int`, `u32` `unsigned int`, `f64` `double`): LLDB has no Rust type system ("This version of LLDB has no plugin for the language "rust""). The first run's "raw `[0]`, `[1]` typed unsigned int" was this, not missing formatters. | D `Locals_show_rust_values_…`, P |
+| Locals: a 250-element Vec, paging | fixed | **was broken → fixed** | CodeLLDB ignores `start`/`count`/`filter`: `[240, 250)` came back as all 250 and `[raw]`, and the session kept the first 10 (`[0]=0 … [9]=18`: the first run's failure); the Locals pager showed `[0]…[99]` and stopped. Now `[240]=480 … [249]=498`; P pages to `[249]=498` and `[raw]`. | D (same), P, `CodeLldbQuirksTests` |
+| Watch | works | **works** | `x * 2` = 102 (type `long long`), `p.x + p.y` = 7; `nope` → "Expression evaluation in Rust not supported. Falling back to default language. Ran expression as 'Objective C++'. … use of undeclared identifier 'nope'". The same Rust expressions on both: CodeLLDB `v[1]` = 2, `big[249]` = 498, `*boxed`, `boxed.x`, `wrapper.point.x`, `pair.1`, `some`, `text` work; `v.len()`, `s.len()`, `map.len()`, `x as u8` → "Syntax error". GDB: `v[1]`, `big[249]` → "Cannot subscript non-array type", method calls → "Could not find function", `x as u8` = 51. | D `Watch_set_variable_…`, P |
+| Set variable | works | **works** | `x = 100` (`setVariable` answers `100`); the program prints `err 101`. | D (same) |
+| Debug Console REPL | fixed | **works** | Evaluate mode (`_adapterSettings.consoleMode: "evaluate"`; "Console is in 'evaluation' mode…"): `x * 2` → 102. `-exec bt`, `` `bt ``, `/cmd bt`: the result is empty and the backtrace arrives as console output (`* thread #1 … frame #0: … sample`sample::main at main.rs:100:23`): the first run's "console output empty where main was expected" read the result only (test fixed; P shows the lines). `` `frame variable x `` → `(int) x = 51`. | D (same), P |
+| Debug Console completions | fixed | **was broken → fixed** | CodeLLDB answered `[]` for `p.` (no expression completion) and `` `fram `` → `frame` at start 0, length 4 (inside the stripped command). Now `p.` → `p.x`, `p.y`; `x + p.` → `x + p.x`; `sh` → `shape`, `shared`, `shared2`; `wrapper.po` → `wrapper.point` (P: accepted into the input); `` `fram ``, `/cmd fram`, `-exec fram` → `frame` after the prefix. | D (same), P, `CodeLldbQuirksTests` |
+| stdout / stderr | partial (one pipe) | **partial** (adapter) | LLDB runs the program on a pseudo-terminal: `eprintln!("err 52")` arrives as `stdout` (stderr category empty); lines end `\r\n` (the console strips the `\r`). | D (same) |
+| Threads | works | **works** | `sample`, `worker-1`, `worker-2`; worker frames `sample::worker`, `sample::main::{closure#1}::{closure#0}`, std de-emphasised. | D `Threads_of_std_thread_…` |
+| Attach by pid | works | **works** | `pid` as text → number; CodeLLDB does not stop on attach: the first stop is the `@tick` breakpoint (reason `breakpoint`, `main.rs:45`); Stop detaches, the program keeps running, codelldb exits. | D `Attach_to_a_running_rust_program_…` |
+| Unit-test binary (`cargo` key) | works | **works** | Resolved by CsCode as for GDB; stop in `util.rs`'s test; "test result: ok. 1 passed". | D `The_cargo_key_…` |
+| Templates | works | **works** | Create launch.json for `lldb`: "Rust: Debug sample (CodeLLDB, cargo build)", the two others and `cargo: build`; the binary one builds and stops in `main.rs`. | D `The_codelldb_template_…`, `CodeLldbAdapterFactoryTests` |
+| `env` | fixed (GDB replaced it) | works (unit) | Added on top of the inherited environment (LLDB's `target.inherit-env`); string values, `null` dropped. Not in the real suite. | `CodeLldbAdapterFactoryTests` |
+| 1M lines | works (11–29 s) | **partial** (adapter) | **2.3–3.1 s**, 107–131 batches, heap +6–8 MB, the console's memory bounded (drop-oldest). CodeLLDB does **not drain** the program's buffered output when it reports the exit (`notify_process_terminated`: console message, `exited`, `terminated`): in 4 of 11 runs recorded on the wire its stream ended early (`flood line 999942`, `…985`, `…987`, `…994`) without "flood done", and the console's last line was the adapter's last line every time; without the recorder 11 of 15 runs ended early (up to 416 lines lost). Once, under load, the session never ended: see Known gaps. | D `A_million_line_flood_…` |
+| 10-session soak | works | **works** | 10 sessions collected, 10 codelldb processes gone. | D `Ten_real_sessions_…` |
+| Debuggee pid | from GDB's `process` event | **none** | No DAP `process` event ("Launched process <pid>" on the console only): `DebuggeeProcessId` stays empty (informational in CsCode). | D |
 
-### Known gaps (from CodeLLDB's sources; to confirm)
+### Fixes (CodeLLDB)
 
-* No DAP `process` event (it prints "Launched process <pid>" to the console instead): `DebugSession.DebuggeeProcessId` stays empty for `lldb`
-  sessions — informational only in CsCode (the real-adapter tests find the program under the adapter).
-* Its scopes carry no presentation hints: Locals relies on the name "Local"; the `[return value]` row is not lifted by Autos.
-* The program's stdout and stderr share LLDB's pseudo-terminal (expected to arrive as `stdout`, as with GDB's pipe).
-* The matrix itself: every CodeLLDB row above is unobserved.
+The first real run (integration commit dd81e5b) failed 4 D tests and both P tests. Each cause was read from the adapter's DAP traffic:
 
-### Running the suites (once CodeLLDB may run)
+| First-run failure | Cause | Kind | Change | Regression test |
+|---|---|---|---|---|
+| `Conditional_hit_count_and_log_breakpoints`: 3 stops at the `println!` line, expected 1–2 | LLDB resolves the line to 3 locations; the `=2` hit count was right (one stop, `i = 1`), and CodeLLDB does read a bare `N` as `>= N` | test expectation (GDB's 2 locations) | The test expects as many stops as CodeLLDB's verdict reports locations ("Resolved locations: 3"), all on the `i == 3` pass; a new test runs `%2` | D (2 tests) |
+| `Locals_show_rust_values_…`: `[0]=0, [1]=2 …` typed `unsigned int`, `498` missing | The formatters were loaded; CodeLLDB ignores paging and the session kept the first `count` children of its answer | **CsCode bug** | `DebugAdapterQuirks.IgnoresVariablePaging`: one request per stop for all the children, pages cut by the session (`VariableHandleCache.SetAllChildren`) | `CodeLldbQuirksTests.Codelldb_ignores_paging_…`, `A_page_of_…`; D now also asserts the formatted values; P pages a 250-element Vec |
+| `Pause_stop_while_running_and_restart`: reason `exception`, expected `pause` | CodeLLDB reports the stop of a pause as the signal SIGSTOP (reason `exception`) | **CsCode compensates** (adapter behaviour) | `DebugAdapterQuirks.IsPauseStop` and the session's outstanding-pause flag | `CodeLldbQuirksTests.A_pause_codelldb_reports_…`, `Only_the_sigstop_…`; P `Break_all_shows_…` |
+| `Watch_set_variable_…`: console result empty, expected `main` | A command's evaluate result is empty; its output comes as console output events | test expectation | The test reads the console output (`frame #0`, `sample::main at main.rs`), as the Debug Console shows it | D; P asserts the console lines |
+| Both P tests: the Call Stack marked no current frame | CodeLLDB renumbers frames per `stackTrace` | **CsCode bug** (assumed stable ids) | `DebugAdapterQuirks.RenumbersFramesPerRequest`: frames read once per stop and thread | `CodeLldbQuirksTests.Codelldb_renumbers_frames_…`, `The_service_stop_location_names_…` |
+| (found on the way) Completions: none for expressions; command completions garbled the input | CodeLLDB's positions are relative to the stripped command; no expression completion | **CsCode compensates** | `CodeLldbAdapterQuirks.MapCompletions` (`frame variable`, positions put back at the caret) | `CodeLldbQuirksTests.Completions_go_to_codelldb_…`, `A_completion_reaches_codelldb_…`; D, P |
+| (found on the way) 1M-line flood: "flood done" missing in some runs | CodeLLDB does not drain the program's output at exit | test expectation (adapter limitation) | The test checks what CsCode owns: the adapter's stream in order up to its "Process exited" message, ending on a whole line | D |
+
+The three new session hooks are additive (`DebugAdapterQuirks`, off by default): GDB, js-debug and netcoredbg sessions are unchanged.
+
+### Known gaps (observed)
+
+* **The program's last output can be lost at exit** (adapter): CodeLLDB reports the exit without draining LLDB's buffered output; seen with a
+  1M-line flood (in most runs; up to 416 lines). Programs that print a few lines and exit showed all of them in every run.
+* **A rare hang at the end of a flood**: once in about 15 flood runs without the recorder, under load, the session stayed Running after the
+  program had ended (codelldb alive with no child process, no `exited`/`terminated` received, the last output `flood line 999016`); the test's
+  10-minute limit ended it. Not reproduced in 23 later runs (8 recorded on the wire, 15 with a monitor ready to dump codelldb's threads), so
+  the cause is unknown; Stop (Shift+F5) ends such a session.
+* stderr is not told apart from stdout (LLDB's pseudo-terminal), as with GDB.
+* Expressions are LLDB's: CodeLLDB's "simple" expressions, then LLDB's C++ evaluator. Indexing a Vec works (`v[1]`); method calls
+  (`v.len()`) and casts (`x as u8`) do not; primitive types show C names (`int`, `unsigned int`, `long long`).
+* A `println!` line has 3 locations (3 stops per pass).
+* No `process` event: `DebuggeeProcessId` stays empty.
+* Its scopes carry no presentation hints (Locals relies on the name "Local"); Autos does not lift the `[return value]` row.
+* The first stop comes ~0.4 s later than GDB's (liblldb and the Python formatters load first).
+* The download: 56 MB (170 MB installed), offered on first use.
+
+### Running the suites
 
 ```bash
 tools/fetch-codelldb.sh            # or CODELLDB_ARCHIVE=<…/codelldb-linux-x64.vsix> tools/fetch-codelldb.sh: no download
-CSCODE_DAP_TEST_METRICS=/tmp/lldb.txt dotnet test tests/CsCode.Dap.Tests --filter "FullyQualifiedName~RealCodeLldbRustTests"
-CSCODE_DAP_TEST_METRICS=/tmp/lldb.txt dotnet test tests/CsCode.Panels.Debug.Tests --filter "FullyQualifiedName~RealCodeLldbPanelsTests"
+CSCODE_CODELLDB=<install dir> CSCODE_DAP_TEST_METRICS=<file> dotnet test tests/CsCode.Dap.Tests --filter "FullyQualifiedName~RealCodeLldbRustTests"
+CSCODE_CODELLDB=<install dir> CSCODE_DAP_TEST_METRICS=<file> dotnet test tests/CsCode.Panels.Debug.Tests --filter "FullyQualifiedName~RealCodeLldbPanelsTests"
+dotnet test tests/CsCode.Dap.Tests --filter "FullyQualifiedName~CodeLldb"     # + the unit tests (no CodeLLDB needed)
 CSCODE_CODELLDB_ARCHIVE=<vsix> dotnet test tests/CsCode.Dap.Tests --filter "FullyQualifiedName~The_real_pinned_package_installs"   # nothing executed
 ```
 
-Or point `CSCODE_CODELLDB` at an installed adapter. Run with `DISPLAY` and `SSH_AUTH_SOCK` unset and `CSCODE_HOME` in a temp directory. Each
-test records what CodeLLDB showed (`[codelldb]` lines): fill in the CodeLLDB column from them, fix what they find, then revisit the default below.
+`CSCODE_CODELLDB` may name the adapter, CodeLLDB's `extension/` directory or the install directory (here
+`.scratch/downloads/codelldb/v1.12.3`). Run with `DISPLAY` and `SSH_AUTH_SOCK` unset and `CSCODE_HOME` in a temp directory. To see the wire,
+point `CSCODE_CODELLDB` at a script that tees its stdin and stdout to files and runs the real adapter (`tee in | codelldb "$@" | tee out`);
+the adapter-crash test then kills the script rather than codelldb, so run that one without the recorder.
 
 ## Which Rust debugger is the default
 
 **GDB stays the default** (`cscode.debug.rustDebugger`: `"gdb"`, the default, or `"lldb"` for CodeLLDB; `"codelldb"` is accepted too). The
 setting decides which debugger a Rust folder's launch.json is created for when F5 finds no launch configuration (a `Cargo.toml` at the folder's
-root); an existing launch.json names its own type, and both debuggers stay available.
+root); an existing launch.json names its own type, and both debuggers stay available. Revisited in wave 3 (W7b) from both evaluated matrices:
+CodeLLDB is better in some rows and worse in others, not clearly better, so the default the user accepted stands.
 
-Why, from the evidence there is:
+| | GDB 18.1 (default) | CodeLLDB v1.12.3 |
+|---|---|---|
+| Install | none (the system's GDB) | 56 MB download, 170 MB installed, offered on first use |
+| Start to the first stop | **273 ms** | 636–654 ms |
+| Hit counts | "from the Nth hit on", no `%N` | **exact and every operator** (`=N`, `%N`, …) |
+| Restart | client relaunch, 270–660 ms | **in the adapter, 37–45 ms** |
+| Values | CsCode's summaries over GDB's Rust printers (`Point {x: 3, y: 4}`, `Vec(size=3)`) | **the toolchain's formatters** (`{x:3, y:4}`, `size=3`, `[raw]` children); C type names (`int`, `unsigned int`) |
+| Watch expressions | Rust syntax: casts (`x as u8`) work; no Vec indexing, no method calls | Vec indexing (`v[1]`, `big[249]`) works; no casts, no method calls |
+| `println!` line | 2 stops per pass | 3 stops per pass |
+| 1M-line flood | 11–29 s, every line delivered (after the trailing-output fix) | **2.3–3.1 s**, but the program's last lines are often lost at exit, and one run never ended |
+| stderr | merged into stdout | merged into stdout |
+| Debug Console | expressions, `-exec` commands, completions through `print` | expressions, `-exec`/backtick/`/cmd` commands (output as console lines), completions through `frame variable` |
+| What CsCode compensates | `GdbAdapterQuirks`: REPL, completions, hit counts, panics, noDebug, output, frames, trailing output | `CodeLldbAdapterQuirks`: panics, hit counts, `-exec`, frames, noDebug; paging, pause, frame ids, completions (found by the real run) |
 
-* GDB's whole matrix ran against the real GDB 18.1 (28 real tests, the panels, the real application), and every defect it found was fixed with a
-  regression test; CodeLLDB's has not run (above). A default chosen for an adapter nobody has seen working would not be "from evidence".
-* GDB needs no download; CodeLLDB is 56 MB to download and 170 MB on disk, which the app may only fetch after asking.
-* The accepted Rust defaults hold for both: panics stop (GDB's client-side filter; CodeLLDB's own filter, both reported as "Rust panics"), the
-  Debug Console evaluates expressions (the GDB quirk; CodeLLDB's evaluate mode), and Locals shows the returned value after Step Out (GDB's
-  "Return" group; CodeLLDB's `[return value]` row, by its sources — still to be observed).
+* For GDB: no download, faster start, Rust expression syntax, and the program's whole output (including its last lines) — the last point
+  matters most for a debugger whose console shows the program's output by default.
+* For CodeLLDB: exact hit counts, a fast in-adapter restart, the toolchain's own formatters, Vec indexing in Watch and a much faster console
+  flood.
+* A user who prefers CodeLLDB sets `"cscode.debug.rustDebugger": "lldb"`; CodeLLDB's own launch.json files (type `lldb`) work unchanged.
 
-What would change it: CodeLLDB's sources promise native answers to several of GDB's gaps — exact and modulo hit counts, a `restart` request, a
-`noDebug` launch, expressions without command fallbacks, the toolchain's own Rust formatters instead of CsCode's summaries. If the CodeLLDB
-suites confirm those and find nothing worse, switching the default is a one-line change (`RustDebugger()` in
-`src/CsCode.Dap/Service/DebugService.Commands.cs`) plus this section; the download offer then appears on a Rust user's first F5.
+Switching the default is the one line `RustDebugger()` in `src/CsCode.Dap/Service/DebugService.Commands.cs` (its fallback `GdbAdapterFactory.PrimaryType`)
+plus this section; the download offer would then appear on a Rust user's first F5. What would justify it: CodeLLDB draining the program's
+output at exit (an upstream fix) and the end-of-flood hang never reappearing.
 
 F5 without a launch configuration also used to make a **.NET** launch.json for every folder (the first debugger in label order): it now picks the
 folder's debugger — `Cargo.toml` → the Rust debugger, a .NET project or solution → `coreclr`, `tsconfig.json`/`package.json` → `pwa-node` — and
