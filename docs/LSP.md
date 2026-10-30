@@ -179,6 +179,11 @@ plus `didChange`/`didSave`/`didOpen`/`didClose`/`willSave*`, watched files, exec
   `AddDefinition` (returns a removal token), and the **`cscode.languageServers`** override, a JSON object keyed by id:
   `command, args, env, selector, initializationOptions, settings, rootMarkers, autoStart, workingDirectory, restartAboveBytes, enabled` (an unknown id with
   `command` + `selector` defines a new server). Changing launch properties restarts a running server; selector-only changes don't.
+  An entry's `settings` and `initializationOptions` objects are read like a settings.json of their own: their **top-level** dotted keys are paths
+  (`"rust-analyzer.check.command": "clippy"` answers `workspace/configuration` for `rust-analyzer` with `{"check":{"command":"clippy"}}`, merged
+  with a nested spelling of the same object), and every member name below the top level is kept as written, so URLs and globs survive
+  (`"yaml.schemas": {"https://…/x.json": "*.yml"}`). Before lsp-core-2 every member name was split at every depth, which broke those
+  (`DefinitionOverrides.ExpandTopLevelKeys`; `Top_level_dotted_keys_of_a_user_s_server_settings…`, `A_server_settings_object_splits_only…`).
   **`command`, `args`, `env` and `workingDirectory` come from user settings only** (machine-scoped members, docs/PLATFORM.md "Setting scopes"), as does
   `cscode.lsp.searchDirs`: a workspace's `.vscode`/`.cscode` settings.json may tune a server (`selector`, `settings`, `initializationOptions`,
   `rootMarkers`, `enabled`, `autoStart`, `restartAboveBytes`) but cannot define what is started; its value is ignored with a notice.
