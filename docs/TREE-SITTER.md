@@ -3,7 +3,7 @@
 CsCode colours code with two engines: **TextMate** (VS Code's grammars, the default wherever it has one) and **tree-sitter** (grammars CsCode
 bundles). This is stage 1 of the hybrid plan the user chose (docs/TREE-SITTER-EVALUATION.md §1, decision of 2026-10-29): TextMate stays the
 default; tree-sitter colours the languages TextMate cannot and is an option for the others; C# stays on TextMate. The same syntax trees give
-Expand/Shrink Selection, folding and an outline when no language server does.
+Expand/Shrink Selection, folding, an outline when no language server does, and sticky scroll by syntax.
 
 Contents: [1 The setting](#1-the-setting) · [2 Languages](#2-languages) · [3 Distribution](#3-distribution) · [4 Isolation](#4-isolation) ·
 [5 Structure](#5-structure) · [6 Threading](#6-threading) · [7 Tests](#7-tests) · [8 Limits and what is not done](#8-limits-and-what-is-not-done)
@@ -158,6 +158,13 @@ from the tree of the document's current version, waiting up to 2 s for a parse i
   grammar's own `tags.scm` (C, C++, C#, Elixir, Go, Java, JavaScript, Kotlin, Lua, Nix, OCaml, Protobuf, Python, Rust, Scala, TypeScript/TSX),
   or nvim-treesitter's `locals.scm` (definitions of functions, methods, types, classes, namespaces, modules, macros…; the symbol is the name's
   parent node). Symbols nest by containment; names are one line, at most 120 characters.
+* **Sticky scroll** (`editor.stickyScroll.enabled`, **off by default** in CsCode; `Features/StickyScrollFeature.cs`): while the first visible
+  line is inside foldable regions whose first lines have scrolled away, those lines stay pinned above the text (outermost first, at most 5;
+  a region whose body ends under the pinned rows is dropped; a header that is only `{` shows the declaration above it); clicking one goes
+  there. The regions are folding's, so on a tree-sitter document they are the syntax tree's folds (TOML tables, functions, Markdown
+  sections), elsewhere a server's ranges or indentation. Pinned lines are drawn in the editor font and foreground colour, without syntax
+  colours. UI cost: the folding manager's segment-tree lookup around one line per scroll event (tested: every step of a 60-step scroll
+  through 1,300 lines under 16 ms).
 
 ## 6. Threading
 
@@ -181,6 +188,7 @@ objects is posted to the lane that owns them.
   grammar, the whole crash path through the editor (two crash records → TextMate + message → clear command → tree-sitter), the hang path
   (watchdog → quarantine → new lane → other languages keep tree-sitter), the query guard, the recorder file removed on a clean shutdown;
 * structure: enclosing nodes, folds (quantified captures, closer lines, Markdown sections), the outline of 18 languages, the locals fallback,
+  sticky scroll (pinned headers by indentation and by the tree, click, off by default, scroll cost),
   every own/tags query compiles, Expand/Shrink Selection through the real command, folding through the real FoldingFeature (and the C#/TextMate
   view untouched), breadcrumbs, deferring to a server's symbols;
 * the real app: the hybrid default (TOML on the bundled grammar, Rust on TextMate), the setting through settings.json and the alias, the
@@ -192,10 +200,10 @@ Run: `dotnet test tests/CsCode.Editor.Tests --filter "FullyQualifiedName~TreeSit
 
 ## 8. Limits and what is not done
 
-* **Vim text objects** (`af`/`if`, `ac`/`ic`, `aa`/`ia`) and **sticky scroll** are not built (the brief's "if the rest is solid" items).
-  Text objects need an asynchronous host call from the Vim engine (`IVimHost`, the trees live on the syntax lane) and the
-  nvim-treesitter-textobjects queries (another download); sticky scroll needs a view overlay. Both fit on `SyntaxDocument.EnclosingNodes`
-  and the fold/symbol queries.
+* **Vim text objects** (`af`/`if`, `ac`/`ic`, `aa`/`ia`) are not built: they need an asynchronous host call from the Vim engine (`IVimHost`,
+  whose module another builder is changing in this wave; the trees live on the syntax lane) and the nvim-treesitter-textobjects queries
+  (another download). They fit on `SyntaxDocument.EnclosingNodes` and a `textobjects` query through `LanguageBundle.Query`.
+* Sticky scroll is off by default (VS Code turns it on) and its pinned lines are not syntax-coloured.
 * Structural features use only the host tree: inside an injection (a Markdown code fence, a Vue `<script>`) selection and outline see the host's
   node for the whole block.
 * Folds from the tree replace indentation and region markers for that document; a first parse slower than 2 s leaves indentation folds until

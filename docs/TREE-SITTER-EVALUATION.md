@@ -14,7 +14,7 @@ built from pinned, licence-checked sources (§10.2: `tools/treesitter/manifest.j
 colours exactly the languages TextMate cannot; the prototype's `editor.experimental.treeSitter` is now an alias). Crash isolation (§10.5) is in
 process with a syntax lane of its own, a hang watchdog, a crash quarantine and a query guard; out-of-process parsing was measured and not
 adopted (docs/TREE-SITTER.md §4, benchmark B6). Structural features (§10.6): Expand/Shrink Selection, folding and an outline/breadcrumbs are
-built; Vim text objects and sticky scroll are not. The text below is the evaluation as it was written (its "prototype" is today's engine).
+built, and sticky scroll (off by default); Vim text objects are not. The text below is the evaluation as it was written (its "prototype" is today's engine).
 
 Everything below was measured on this machine with what is installed (libtree-sitter 0.26.11, the grammar packages and nvim-treesitter's
 queries in the Nix store, read-only). **All performance numbers are PROVISIONAL**: they were taken while five other agents loaded the 22-core

@@ -255,7 +255,7 @@ read-only, a slow clipboard owner, 10 MB, contributions, context keys, Run To Cu
 Not done, or done only in part — none of this is faked:
 
 * **Multi-cursor** (Alt+Click, Ctrl+Alt+Up/Down, Ctrl+D) is not implemented: AvaloniaEdit has no multi-caret model and the stretch goal was not attempted. Rectangular selection (AvaloniaEdit's own) works, and its rows act as carets for the clipboard (§7a); after a paste into several rows a single caret remains.
-* **Minimap, sticky scroll, code lens, semantic-token overlay, Alt+F12 peek, overview-ruler markers on the scrollbar** are not implemented (settings for them are read but have no effect).
+* **Minimap, code lens, semantic-token overlay, Alt+F12 peek, overview-ruler markers on the scrollbar** are not implemented (settings for them are read but have no effect). Sticky scroll is (`editor.stickyScroll.enabled`, off by default; docs/TREE-SITTER.md §5).
 * `editor.cursorStyle`, `editor.cursorBlinking`, `editor.smoothScrolling` and font ligatures are not applied (AvaloniaEdit offers no equivalent; ligatures stay off). `editor.wordWrap` supports on/off only. Drag-and-drop of text is AvaloniaEdit's own behaviour; bidirectional text and IME composition were not tested.
 * **Typing allocation**: the TextMate colorizer allocates per token on the edited line (§6). A single pre-merged element list would cut it; not done.
 * The `previousLineText` guard of `onEnterRules` (which Core's `OnEnterRule` record cannot carry) is handled editor-side through `ExtendedLanguageConfiguration`/`EnterRuleEx`; the Core record is unchanged.
