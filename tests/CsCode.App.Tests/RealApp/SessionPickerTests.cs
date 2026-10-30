@@ -8,7 +8,9 @@ using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.App.Views;
 using CsCode.Core.Platform;
+using CsCode.App.Startup;
 using CsCode.Sessions;
+using CsCode.Sessions.Ipc;
 using Xunit;
 
 namespace CsCode.App.Tests.RealApp;
@@ -93,6 +95,44 @@ public class SessionPickerTests
         quick.Text = "?";
         Assert.True(await RealAppHost.WaitFor(() => quick.Items.Any(i => i.Label == "session:")));
         await host.ClosePaletteAsync(running);
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task A_window_showing_an_unnamed_session_does_not_offer_its_own_session()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Skip("Unix sockets");
+        var seeded = Seed();
+        new SessionStore(seeded.Home.Combine("data")).Save(new SessionDocument { Name = "window-1", IsUnnamed = true, LastUsedUtc = DateTimeOffset.UtcNow });
+        // This process is the session process of window-1 (cscode -n): its own name, which the window's title (SessionName) leaves out.
+        var runtime = RuntimeDirectory.Resolve(name => name == "CSCODE_HOME" ? seeded.Home.Path : null);
+        using var background = BackgroundHost.Start(CommandLineOptions.Parse(["--host", "--session", "window-1", "--unnamed", "--headless-test"]),
+            new CrashHandler(seeded.Home.Combine("logs")), runtime, new SessionStore(seeded.Home.Combine("data")), out var refused);
+        Assert.Null(refused);
+        Assert.NotNull(background);
+        var previous = App.Background;
+        App.Background = background;
+        RealAppHost host;
+        try { host = await seeded.StartAsync(); }
+        finally { App.Background = previous; }
+        await using var _ = host;
+        var opened = RegisterOpenSession(host);
+        Assert.Null(host.Window.SessionName); // unnamed: the title shows no session
+
+        await host.RunAsync(ShellMenus.Welcome);
+        var welcome = host.Window.GetVisualDescendants().OfType<WelcomeView>().Single();
+        await welcome.SessionsLoaded;
+        await DevScene.SettleAsync(5);
+        var texts = welcome.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).ToList();
+        Assert.Contains("work", texts);
+        Assert.DoesNotContain("window-1", texts);
+
+        var quick = host.Get<QuickInputViewModel>();
+        var running = await host.OpenPaletteAsync(KnownCommands.QuickOpen);
+        quick.Text = "session:";
+        Assert.True(await RealAppHost.WaitFor(() => quick.Items.Count == 3), string.Join(", ", quick.Items.Select(i => i.Label)));
+        Assert.Equal(["current", "work", "oss"], quick.Items.Select(i => i.Label)); // most recently used first; "current" is not this window's session here
+        await host.ClosePaletteAsync(running);
+        Assert.Empty(opened);
     }
 
     [AvaloniaFact(Timeout = 60_000)]
