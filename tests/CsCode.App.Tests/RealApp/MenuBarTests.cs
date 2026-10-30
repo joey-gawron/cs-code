@@ -62,6 +62,7 @@ public class MenuBarTests
     [InlineData("_File", "Open _Recent")]
     public async Task A_nested_submenu_opens_with_its_items_and_its_menu_stays_as_it_was(string menuHeader, string submenuHeader)
     {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "the in-window menu bar; macOS shows the menus in the system menu bar (NativeMenuTests)");
         await using var host = RealAppHost.Create(h => h.Files.WriteFile("a.txt", "x\n"));
         await host.StartAsync([host.Files.Path]);
         var bar = host.Window.GetVisualDescendants().OfType<ShellMenuBar>().Single();
@@ -413,6 +414,16 @@ public class MenuBarTests
     /// <summary>Clicks View &gt; Tool Windows &gt; <paramref name="title"/> in the menu bar as the user does: the item's click, then the menu closes.</summary>
     private static async Task ClickToolWindowItemAsync(RealAppHost host, string title)
     {
+        if (OperatingSystem.IsMacOS())
+        {
+            // The menus are in the system menu bar there (the window's exported NativeMenu): opened and clicked as macOS does.
+            var view = NativeMenu.GetMenu(host.Window)!.Items.OfType<NativeMenuItem>().Single(i => i.Header == "View").Menu!;
+            view.RaiseNeedsUpdate();
+            var toolWindows = view.Items.OfType<NativeMenuItem>().Single(i => i.Header == "Tool Windows").Menu!;
+            toolWindows.Items.OfType<NativeMenuItem>().Single(i => i.Header == title.Replace("_", "")).RaiseClick();
+            await DevScene.SettleAsync(10);
+            return;
+        }
         var bar = host.Window.GetVisualDescendants().OfType<ShellMenuBar>().Single();
         var top = bar.Items.OfType<MenuItem>().Single(i => Header(i) == "_View");
         top.IsSubMenuOpen = true;

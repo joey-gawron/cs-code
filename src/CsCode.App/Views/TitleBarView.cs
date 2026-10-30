@@ -18,7 +18,8 @@ namespace CsCode.App.Views;
 /// The custom title bar: app icon, menu bar, a centred Quick Launch box (opens the palette; always reads "Search (Ctrl+Q)" like Visual Studio's),
 /// the workspace name beside it (Visual Studio's solution name badge) and window controls. Dragging the empty area moves the window (the platform's
 /// own move, so snapping works), double-click toggles maximise. On platforms that keep native decorations (<c>showCaptionButtons = false</c>)
-/// the caption buttons are omitted and <see cref="NativeCaptionButtonsInset"/> is kept clear for the platform's own.
+/// the caption buttons are omitted and <see cref="NativeCaptionButtonsInset"/> is kept clear for the platform's own. On macOS the menus and the
+/// app's name are in the system menu bar, and the bar keeps only the middle.
 /// <para>Narrow windows: the caption buttons are laid out first and always get their width, then the menu (clipped if even that does not fit),
 /// then <see cref="TitleCenterPanel"/> shrinks the middle into what is left. Nothing draws under the window controls. They are still the last
 /// children, so screen readers reach them after the menu (see <see cref="TitleBarPanel"/>), and they are no Tab stops, as native ones are not.</para>
@@ -43,14 +44,16 @@ public sealed class TitleBarView : Border
     private readonly StackPanel? _captionButtons;
     private readonly TitleBarPanel _row;
 
-    public TitleBarView(Window window, MenuModel menus, ICommandService commands, bool showCaptionButtons)
+    /// <param name="inWindowMenu">False on macOS: the menus are in the system menu bar (<see cref="NativeMenuExport"/>), and so is the app's name,
+    /// so the bar has neither the menu nor the logo.</param>
+    public TitleBarView(Window window, MenuModel menus, ICommandService commands, bool showCaptionButtons, bool inWindowMenu = true)
     {
         _window = window;
         Height = 30;
         Background = ThemeBrushes.Get("titleBar.activeBackground");
         TextElement.SetForeground(this, ThemeBrushes.Get("titleBar.activeForeground"));
 
-        var logo = new Border { Width = 30, Height = 30, Child = new AppLogo { Width = 16, Height = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
+        var logo = new Border { Width = 30, Height = 30, IsVisible = inWindowMenu, Child = new AppLogo { Width = 16, Height = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
 
         if (showCaptionButtons)
         {
@@ -62,8 +65,14 @@ public sealed class TitleBarView : Border
         }
         else _maxButton = new Button();
 
-        var menu = new ShellMenuBar(menus) { ClipToBounds = true };
-        menu.Styles.Add(new Style(x => x.OfType<MenuItem>().Class(":selected")) { Setters = { new Setter(BackgroundProperty, ThemeBrushes.Get("menubar.selectionBackground")) } });
+        // Without the in-window menu not even a hidden one: a Menu anywhere in the window takes F10 and Alt for itself.
+        Control menu = new Panel();
+        if (inWindowMenu)
+        {
+            var bar = new ShellMenuBar(menus) { ClipToBounds = true };
+            bar.Styles.Add(new Style(x => x.OfType<MenuItem>().Class(":selected")) { Setters = { new Setter(BackgroundProperty, ThemeBrushes.Get("menubar.selectionBackground")) } });
+            menu = bar;
+        }
 
         // Centre: the Quick Launch box, then the workspace name.
         var searchGlyph = ViewHelpers.Glyph(IconKey.Search, 12, "descriptionForeground");

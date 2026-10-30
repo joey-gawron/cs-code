@@ -87,6 +87,7 @@ public class AppIconTests
     [AvaloniaFact(Timeout = 120_000)]
     public async Task The_title_bar_logo_is_the_artwork_at_100_and_200_percent()
     {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS shows the app's name in the system menu bar and no logo in the title bar");
         await using var host = await RealAppHost.Create().StartAsync();
         Assert.NotNull(host.Window.Icon);
         var logo = host.Window.GetVisualDescendants().OfType<AppLogo>().Single();

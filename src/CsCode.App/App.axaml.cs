@@ -30,9 +30,16 @@ public sealed class App : Application
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
-        // macOS names the application menu and its Hide and Quit items after this (the executable's name otherwise).
-        if (OperatingSystem.IsMacOS()) Name = "CsCode";
+        if (!OperatingSystem.IsMacOS()) return;
+        // macOS names the application menu and its Hide and Quit items after this (the executable's name otherwise), and reads the menu's own
+        // items as the app starts (Avalonia's "About Avalonia" otherwise): they run the commands of the run the main window connects.
+        Name = "CsCode";
+        ApplicationMenu = Menus.NativeMenuExport.BuildApplicationMenu();
+        NativeMenu.SetMenu(this, ApplicationMenu.Menu);
     }
+
+    /// <summary>macOS: the application menu's own items (About CsCode, Settings...); null elsewhere.</summary>
+    internal static Menus.NativeMenuExport? ApplicationMenu { get; private set; }
 
     public override void OnFrameworkInitializationCompleted()
     {

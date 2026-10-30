@@ -24,6 +24,7 @@ public class TitleBarLayoutTests
     [AvaloniaFact(Timeout = 60_000)]
     public async Task Nothing_in_the_title_bar_draws_under_the_window_controls_at_any_width()
     {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS keeps its own window controls (the traffic lights): no caption buttons of ours");
         await using var host = RealAppHost.Create(h => h.Files.WriteFile("src/Program.cs", "class P {}\n"));
         await host.StartAsync([host.Files.Path]);
         var bar = host.Window.GetVisualDescendants().OfType<TitleBarView>().Single();
@@ -63,6 +64,7 @@ public class TitleBarLayoutTests
     [AvaloniaFact(Timeout = 60_000)]
     public async Task The_title_bar_runs_logo_menu_middle_then_window_controls_in_layout_children_and_automation_order()
     {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS keeps its own window controls (the traffic lights): no caption buttons of ours");
         await using var host = RealAppHost.Create(h => h.Files.WriteFile("src/Program.cs", "class P {}\n"));
         await host.StartAsync([host.Files.Path]);
         var bar = host.Window.GetVisualDescendants().OfType<TitleBarView>().Single();
@@ -100,6 +102,7 @@ public class TitleBarLayoutTests
     [AvaloniaFact(Timeout = 60_000)]
     public async Task The_window_controls_are_not_Tab_stops_and_a_click_leaves_the_keyboard_in_the_editor()
     {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS keeps its own window controls (the traffic lights): no caption buttons of ours");
         await using var host = RealAppHost.Create(h => h.Files.WriteFile("src/Program.cs", "class P {}\n"));
         await host.StartAsync();
         var doc = await host.Shell.Well.OpenAsync(new Uri(host.Files.Combine("src/Program.cs")));
@@ -135,6 +138,7 @@ public class TitleBarLayoutTests
     [AvaloniaFact(Timeout = 60_000)]
     public async Task The_window_controls_are_named_for_screen_readers_and_maximise_follows_the_window_state()
     {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS keeps its own window controls (the traffic lights): no caption buttons of ours");
         await using var host = RealAppHost.Create(h => h.Files.WriteFile("a.txt", "x\n"));
         await host.StartAsync();
         var bar = host.Window.GetVisualDescendants().OfType<TitleBarView>().Single();
@@ -195,6 +199,24 @@ public class TitleBarLayoutTests
         {
             for (var i = 0; i < 3; i++) { Dispatcher.UIThread.RunJobs(); window.UpdateLayout(); }
         }
+    }
+
+    /// <summary>The real window on macOS: the menus are in the system menu bar (exported from the same model), the title bar keeps only its middle.</summary>
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task On_macOS_the_menus_are_in_the_system_menu_bar_and_the_title_bar_has_no_menu_or_logo()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "elsewhere the menus are in the title bar");
+        await using var host = await RealAppHost.Create().StartAsync();
+        var bar = host.Window.GetVisualDescendants().OfType<TitleBarView>().Single();
+        Assert.Empty(bar.GetVisualDescendants().OfType<Menu>());
+        Assert.DoesNotContain(bar.GetVisualDescendants().OfType<AppLogo>(), l => l.IsEffectivelyVisible);
+        Assert.Equal(30, host.Window.ExtendClientAreaTitleBarHeightHint); // the traffic lights centre in the 30 px bar
+
+        var menus = NativeMenu.GetMenu(host.Window) ?? throw new InvalidOperationException("the window exports no menu bar");
+        Assert.Equal(["File", "Edit", "View", "Go", "Debug", "Terminal", "Tools", "Window", "Help"], menus.Items.OfType<NativeMenuItem>().Select(i => i.Header));
+        var appMenu = NativeMenu.GetMenu(Application.Current!) ?? throw new InvalidOperationException("no application menu");
+        Assert.Equal(["About CsCode", "Settings…"], appMenu.Items.OfType<NativeMenuItem>().Where(i => i is not NativeMenuItemSeparator).Select(i => i.Header));
+        Assert.Equal("CsCode", Application.Current!.Name);
     }
 
     private static Rect BoundsIn(Visual root, Control control) =>
