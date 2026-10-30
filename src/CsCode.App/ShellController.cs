@@ -267,6 +267,9 @@ public sealed class ShellController : IDisposable
     {
         if (_started) return;
         _started = true;
+        // The restore is the start-up ramp (folder, layout, editors, grammars, language servers): the memory monitor's grace for it starts here, not
+        // at its creation, which for a warm spare was when the process started, minutes or hours before a claim restores a session into it.
+        _sp.GetService<CsCode.Profiling.MemoryMonitor>()?.RestartGrowthGrace();
         await ApplyConfiguredThemeAsync().ConfigureAwait(true);
         _restoring = true;
         try

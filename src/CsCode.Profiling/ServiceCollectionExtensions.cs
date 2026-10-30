@@ -25,15 +25,20 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// The host's start call: starts the monitor's sampling thread and, when the host has an <see cref="IOutputService"/>, the "Memory" output channel
-    /// (<see cref="MemoryLog"/>). Cheap and non-blocking (one thread is created; settings are read on it). Disposing the result stops the channel
-    /// writer; the monitor itself stops when the container disposes it. Returns <see cref="Disposable.Empty"/> when profiling is not registered.
+    /// The host's start call: starts the monitor's sampling thread, the "Memory" output channel (<see cref="MemoryLog"/>) when the host has an
+    /// <see cref="IOutputService"/>, and, when it has an <see cref="IWorkspaceService"/>, starts the steady-growth grace over whenever the workspace's
+    /// folders change (<see cref="MemoryMonitor.RestartGrowthGrace"/>; a folder opened long after start ramps like a start — file index, grammars,
+    /// language servers). Cheap and non-blocking (one thread is created; settings are read on it). Disposing the result stops the channel writer and
+    /// the folder subscription; the monitor itself stops when the container disposes it. Returns <see cref="Disposable.Empty"/> when profiling is
+    /// not registered.
     /// </summary>
     public static IDisposable StartCsCodeProfiling(this IServiceProvider services)
     {
         if (services.GetService<MemoryMonitor>() is not { } monitor) return Disposable.Empty;
         monitor.Start();
-        if (services.GetService<IOutputService>() is not { } output) return Disposable.Empty;
-        return new MemoryLog(monitor, output, services.GetService<IConfigurationService>());
+        var started = new DisposableStore();
+        if (services.GetService<IWorkspaceService>() is { } workspace) started.Add(workspace.FoldersChanged.Subscribe(_ => monitor.RestartGrowthGrace()));
+        if (services.GetService<IOutputService>() is { } output) started.Add(new MemoryLog(monitor, output, services.GetService<IConfigurationService>()));
+        return started;
     }
 }

@@ -7,6 +7,7 @@ using CsCode.Profiling;
 using CsCode.Profiling.Testing;
 using CsCode.TestDoubles;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace CsCode.MemoryTests.Monitor;
@@ -387,6 +388,74 @@ public sealed class MemoryMonitorTests
         await Task.Delay(200);
         monitor.Tick();
         Assert.Empty(cache.Calls);
+    }
+
+    /// <summary>Counts the monitor's "growing steadily" warnings.</summary>
+    private sealed class GrowthWarnings : ILoggerFactory, ILogger
+    {
+        private int _count;
+        public int Count => Volatile.Read(ref _count);
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning && formatter(state, exception).StartsWith("Memory is growing steadily", StringComparison.Ordinal)) Interlocked.Increment(ref _count);
+        }
+    }
+
+    // From review: a warm spare's monitor starts with the process, but the spare restores its session (folder, editors, grammars, language servers)
+    // when it is claimed, minutes or hours later; that ramp was logged as a leak because the grace only counted from the monitor's creation.
+    [Fact]
+    public async Task Restarting_the_growth_grace_holds_the_steady_growth_warning_off_for_another_grace()
+    {
+        var grace = TimeSpan.FromSeconds(2);
+        var options = new MemoryMonitorOptions
+        {
+            GrowthLogGrace = grace,
+            // Any two samples half a second apart are steady growth: the test is about when it is logged, not about what growth is.
+            Policy = new MemoryPolicyOptions
+            {
+                GrowthWindow = TimeSpan.FromSeconds(1), GrowthMinSamples = 2, GrowthMinRSquared = 0, GrowthBytesPerMinuteWithoutBudget = long.MinValue,
+            },
+        };
+        var warnings = new GrowthWarnings();
+        var sinceCreation = Stopwatch.StartNew(); // started first, so never shorter than the monitor's own count (the same below)
+        using var monitor = new MemoryMonitor(options, loggers: warnings);
+
+        await TickUntilAsync(() => warnings.Count == 1);
+        Assert.True(sinceCreation.Elapsed >= grace, $"logged {sinceCreation.ElapsedMilliseconds} ms after the monitor's creation");
+
+        var sinceRestart = Stopwatch.StartNew();
+        var restartedAt = Stopwatch.GetTimestamp();
+        monitor.RestartGrowthGrace();
+        Assert.True(monitor.GrowthGraceStart >= restartedAt, "the grace still counts from the monitor's creation");
+        await TickUntilAsync(() => warnings.Count == 2);
+        // Once per growth window would have logged it again a second after the first warning: the restart holds it off for a whole grace.
+        Assert.True(sinceRestart.Elapsed >= grace, $"logged again {sinceRestart.ElapsedMilliseconds} ms after the restart");
+
+        async Task TickUntilAsync(Func<bool> logged)
+        {
+            var clock = Stopwatch.StartNew();
+            while (!logged())
+            {
+                Assert.True(clock.Elapsed < TimeSpan.FromSeconds(30), "the steady growth was never logged");
+                monitor.Tick();
+                await Task.Delay(50);
+            }
+        }
+    }
+
+    // From review: the grace was measured as nowMs - _createdAt * 1000 / Stopwatch.Frequency, and a nanosecond timestamp times 1000 overflows a long
+    // once the machine has been up ~106 days: a monitor created a minute before that moment counted minus 213 days four minutes later.
+    [Fact]
+    public void Elapsed_milliseconds_do_not_overflow_on_a_machine_up_for_months()
+    {
+        var created = long.MaxValue / 1000 - 60 * Stopwatch.Frequency; // a minute before a timestamp times 1000 overflows
+        Assert.Equal(4 * 60_000, MemoryMonitor.ElapsedMs(created, created + 4 * 60 * Stopwatch.Frequency));
     }
 
     [Fact]

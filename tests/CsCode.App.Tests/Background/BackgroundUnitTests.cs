@@ -247,6 +247,53 @@ public class SessionStartupFailureTests
     }
 }
 
+public class SpareMemoryGraceTests
+{
+    // From review: the memory monitor does not log the start-up ramp as steady growth for 3 minutes after its creation, but a warm spare creates it
+    // when the process starts and restores its session (folder, layout, editors, grammars, language servers) at the claim, minutes or hours later,
+    // and a window opens a folder whenever the user does: both start the grace over, through the real composition.
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_claim_and_a_folder_opened_afterwards_each_start_the_memory_growth_grace_over()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Skip("Unix sockets");
+        using var env = new RealAppHome();
+        env.WriteUserSettings("""{ "workbench.startupEditor": "none", "cscode.background.showTrayIcon": false }""");
+        var runtime = RuntimeDirectory.Resolve(name => name == "CSCODE_HOME" ? env.Home.Path : null);
+        var store = new SessionStore(env.Home.Combine("data"));
+        var host = BackgroundHost.Start(CommandLineOptions.Parse(["--host", "--spare", "--headless-test"]), new CrashHandler(env.CrashLogs.Path), runtime, store, out _);
+        Assert.NotNull(host);
+        var previous = App.Background;
+        App.Background = host;
+        try
+        {
+            await using var run = new RealAppRun(env);
+            Assert.True(await DevHost.WaitFor(() => host.State == ProcessStates.Spare, 60_000), "not a spare: " + host.State);
+            var monitor = run.Services.GetRequiredService<CsCode.Profiling.MemoryMonitor>();
+            Assert.True(monitor.IsStarted); // with the spare's window, long before any claim
+
+            // A new session has no folder: only the claim's restore can start the grace over.
+            var claimed = System.Diagnostics.Stopwatch.GetTimestamp();
+            Assert.True(monitor.GrowthGraceStart < claimed);
+            var claim = await Task.Run(() => IpcClient.Request(runtime.EndpointOf(Environment.ProcessId), new IpcMessage { Type = IpcVerbs.Claim, Session = "S", Hidden = true }, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(30)));
+            Assert.True(claim.Ok == true, claim.Error);
+            Assert.True(monitor.GrowthGraceStart >= claimed, "the claim's restore did not start the growth grace over");
+
+            var opened = System.Diagnostics.Stopwatch.GetTimestamp();
+            await run.Services.GetRequiredService<CsCode.Core.Platform.IWorkspaceService>().OpenFolderAsync(new Uri(env.Workspace.Path + "/"));
+            Assert.True(monitor.GrowthGraceStart >= opened, "opening a folder did not start the growth grace over");
+
+            var quit = await Task.Run(() => IpcClient.Request(runtime.EndpointOf(Environment.ProcessId), new IpcMessage { Type = IpcVerbs.Quit, Force = true }, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10)));
+            Assert.True(quit.Ok == true, quit.Error);
+            await run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            App.Background = previous;
+            host.Dispose();
+        }
+    }
+}
+
 public class SessionShellTests
 {
     [Fact]

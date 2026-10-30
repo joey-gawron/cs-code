@@ -121,9 +121,9 @@ public sealed class MemoryPressurePolicyTests
         Assert.True(decision.SustainedGrowth);
         var options = new MemoryMonitorOptions();
 
-        Assert.False(MemoryMonitor.ShouldLogGrowth(decision, sinceStartMs: 62_000, sinceLastLoggedMs: long.MaxValue / 2, options));
-        Assert.True(MemoryMonitor.ShouldLogGrowth(decision, sinceStartMs: 4 * 60_000, sinceLastLoggedMs: long.MaxValue / 2, options));
-        Assert.False(MemoryMonitor.ShouldLogGrowth(decision, sinceStartMs: 4 * 60_000, sinceLastLoggedMs: 60_000, options)); // once per window
+        Assert.False(MemoryMonitor.ShouldLogGrowth(decision, sinceGraceStartMs: 62_000, sinceLastLoggedMs: long.MaxValue / 2, options));
+        Assert.True(MemoryMonitor.ShouldLogGrowth(decision, sinceGraceStartMs: 4 * 60_000, sinceLastLoggedMs: long.MaxValue / 2, options));
+        Assert.False(MemoryMonitor.ShouldLogGrowth(decision, sinceGraceStartMs: 4 * 60_000, sinceLastLoggedMs: 60_000, options)); // once per window
         Assert.False(MemoryMonitor.ShouldLogGrowth(decision with { Level = MemoryTrimLevel.Aggressive }, 4 * 60_000, long.MaxValue / 2, options));
     }
 }

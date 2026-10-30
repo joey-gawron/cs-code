@@ -63,7 +63,8 @@ else. Elsewhere (Windows, macOS) a cached `Process` is refreshed (allocates; com
   last 2 min: ≥ 2 % of the budget per minute with R² ≥ 0.8, at least 10 samples spanning half the window), an **Aggressive** trim;
 * **hysteresis**: a level re-arms only after usage fell 5 % below its threshold; while it stays above, the trim repeats at most every 5 min;
 * **minimum interval** 30 s between policy trims (10 s to escalate to a higher level) — no trim storms; with no budget it never trims but logs
-  sustained growth (32 MB/min) once per window.
+  sustained growth (32 MB/min) once per window, though not within 3 min (`GrowthLogGrace`) of the monitor's start, of the window's restore (a
+  warm spare's claim) or of a change of the workspace's folders: that growth is the start-up ramp (`MemoryMonitor.RestartGrowthGrace`).
 
 **A trim** (policy, idle or `TrimNowAsync`) runs on a background thread, one at a time (a policy trim skips while another runs): every registered
 `IMemoryTrimmable` in turn, each timed and isolated (a throwing trimmable is reported, the others and the collection still run), then the
