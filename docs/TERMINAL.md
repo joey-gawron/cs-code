@@ -419,7 +419,8 @@ Screenshots (headless, git-ignored): `.scratch/screenshots/terminal/terminal-ls-
 * Windows ConPTY: written, never run. macOS: `posix_spawn` cannot make the slave the controlling terminal there (BSD needs `TIOCSCTTY`), so job
   control and Ctrl+C would not work; the variadic `ioctl`/`fcntl` declarations are not valid on Apple arm64. Linux (glibc ≥ 2.29; 2.34+ for
   `closefrom`, 2.36+ for pidfd) is the supported platform.
-* `confirmOnExit` hooks the window that shows the Terminal view (`Window.Closing`, after the main window's handler): terminals created with
+* `confirmOnExit` hooks the window that shows the Terminal view, or the main window that owns its floating window (`Window.Closing`, after the
+  main window's handler; a floating window's close only hides the terminals, and the main window's close does not raise it): terminals created with
   `Show = false` in a window that never showed the view are not counted. `confirmOnKill` asks only for `panel`/`always` (panel terminals with
   the default `editor` never ask).
 * OSC 10/11/12 *set* is ignored (queries answered); DECRQSS/XTGETTCAP/sixel are consumed without answers; DECSLRM (left/right margins),

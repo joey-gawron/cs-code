@@ -52,6 +52,7 @@ public sealed class ShellController : IDisposable
     private readonly List<Func<Avalonia.Controls.TopLevel, IDisposable>> _windowHooks = [];
     private bool _started, _restoring, _disposed;
     private int _closing; // closes in progress (a second click on X while a Save prompt waits starts another)
+    private bool _closeHeld; // a confirmed close waits on a module's question (EndClose(Held)): the layout saved when it began stands
 
     public ShellController(IServiceProvider sp, IUiDispatcher ui)
     {
@@ -349,6 +350,7 @@ public sealed class ShellController : IDisposable
     private void ScheduleSaveLayout()
     {
         if (_restoring || _closing > 0) return;
+        _closeHeld = false; // the layout changed after a held close: the user works on (the question was declined), and this is the layout now
         _saveTimer?.Dispose();
         _saveTimer = _time.CreateTimer(_ => _ui.Post(() => { if (!_disposed && _closing == 0) Layout.SaveInBackground(); }), null, TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
     }
@@ -364,22 +366,37 @@ public sealed class ShellController : IDisposable
     /// <summary>
     /// The window is closing: the layout is saved now (with every tab, so the next start restores them) and no save runs while the tabs close one by
     /// one, also not while a Save prompt waits (it would keep only the tabs not closed yet), nor when the user closes again meanwhile (a second
-    /// click on X cancels the first prompt and asks again). Pair each call with <see cref="EndClose"/>.
+    /// click on X cancels the first prompt and asks again). After a held close (<see cref="CloseEnd.Held"/>) whose layout still stands, that layout
+    /// is kept: it has the tabs that close closed. Pair each call with <see cref="EndClose"/>.
     /// </summary>
     public void BeginClose()
     {
-        if (_closing++ == 0) SaveLayoutNow();
+        if (_closing++ == 0 && !_closeHeld) SaveLayoutNow();
     }
 
-    /// <summary>
-    /// A close ended. Closed: nothing may overwrite the layout saved when the close began. Cancelled (a Save prompt): once no other close is in
-    /// progress, the layout is saved as it is now (the tabs closed so far stay closed) and the debounced saves resume.
-    /// </summary>
-    public void EndClose(bool cancelled)
+    /// <summary>How a close that <see cref="BeginClose"/> began ended.</summary>
+    public enum CloseEnd
     {
-        if (!cancelled) return; // the window closes now
+        /// <summary>The window closed: nothing may overwrite the layout saved when the close began.</summary>
+        Closed,
+        /// <summary>A Save prompt was cancelled: once no other close is in progress, the layout is saved as it is now (the tabs closed so far stay
+        /// closed) and the debounced saves resume.</summary>
+        Cancelled,
+        /// <summary>
+        /// Every prompt was answered, then a module held the close with a question of its own (the terminal's <c>confirmOnExit</c>), which closes
+        /// the window again when the user agrees and does nothing when they decline. The window works on; the layout saved when the close began
+        /// stands (the close the user agrees to keeps it) until the user changes the layout, and the debounced saves resume then.
+        /// </summary>
+        Held,
+    }
+
+    /// <summary>A close ended (<see cref="CloseEnd"/>).</summary>
+    public void EndClose(CloseEnd end)
+    {
+        if (end == CloseEnd.Closed) return; // the window closes now
         if (_closing > 0 && --_closing > 0) return;
-        Layout.Save();
+        _closeHeld = end == CloseEnd.Held;
+        if (end == CloseEnd.Cancelled) Layout.Save();
     }
 
     /// <summary>

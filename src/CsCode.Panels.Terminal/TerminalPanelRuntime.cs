@@ -408,10 +408,15 @@ public sealed class TerminalPanelRuntime : IDisposable
     private readonly List<WeakReference<Avalonia.Controls.Window>> _closingHooks = new();
     private bool _exitConfirmed;
 
-    /// <summary>The window that shows the terminals: its close asks first when <c>terminal.integrated.confirmOnExit</c> says so.</summary>
+    /// <summary>
+    /// The window that shows the terminals: its close asks first when <c>terminal.integrated.confirmOnExit</c> says so. For a floating (owned) window,
+    /// the window that owns it: closing a floating window only hides the terminals in it, and the main window's close (which alone decides, its
+    /// floating windows' Closing is not raised) ends them, also when the Terminal was only ever shown floating.
+    /// </summary>
     internal void WatchWindowClosing(TopLevel? top)
     {
         if (top is not Avalonia.Controls.Window window) return;
+        while (window.Owner is Avalonia.Controls.Window owner) window = owner;
         _closingHooks.RemoveAll(w => !w.TryGetTarget(out _));
         if (_closingHooks.Any(w => w.TryGetTarget(out var known) && ReferenceEquals(known, window))) return;
         window.Closing += OnWindowClosing;

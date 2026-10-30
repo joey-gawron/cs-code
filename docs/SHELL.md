@@ -360,7 +360,13 @@ prompts (Cancel keeps the window). A tool window hidden while it floats goes bac
 it again (its command, View menu, Reset excepted) floats it there again, as in Visual Studio. The floating windows hide and show with the main
 window (background mode hides the main window instead of closing it), and when the main window really closes, everything floating is docked back
 after the layout was saved. Only the main window decides whether it closes (`ClosingBehavior = OwnerWindowOnly`, WPF's behaviour): with Avalonia's
-default the owned floating windows were asked first, one emptied itself and cancelled the main window's close, which then neither closed nor saved. Reset Window Layout docks everything. Not done: dragging a tab out of the window to float it relies on Dock's own drag
+default the owned floating windows were asked first, one emptied itself and cancelled the main window's close, which then neither closed nor saved.
+A module's Closing handler, which runs after the main window's own, can still hold a close the user confirmed: the terminal's `confirmOnExit` asks
+after the Save prompts (it watches the main window also for a Terminal shown only in a floating window) and closes again when the user agrees. So
+the floating windows are docked back only once a close goes ahead (`MainWindow.OnClosing`, after every handler), and a held close leaves the window
+working: the next close starts over, Save prompts included (the user may have edited since declining), background mode's hide aside for the
+module's own close again; the layout saved when the held close began stands until the user changes the layout, then the debounced saves resume
+(`ShellController.CloseEnd.Held`; `ConfirmOnExitWindowTests`). Reset Window Layout docks everything. Not done: dragging a tab out of the window to float it relies on Dock's own drag
 (not tested), and a floating window holds either tools or documents (Dock gives a floating root one kind of dock), never both.
 
 **Layout.** `LayoutPersistence`: tool placement, visibility, Auto Hide (`ToolLayout.AutoHide`: an auto-hidden tool is on its well's edge strip again after a

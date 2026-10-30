@@ -122,7 +122,7 @@ public sealed class MainWindow : Window, IWindowChrome
         // cancel: a floating window's Closing empties it instead (Save prompts, tools hidden) and cancels, so the main window's X closed the floating
         // documents and stayed open, without saving the layout. OnClosing docks the floating windows back itself once the close is confirmed.
         ClosingBehavior = WindowClosingBehavior.OwnerWindowOnly;
-        Closing += OnClosing;
+        Closing += OnShellClosing;
         Opened += OnOpened;
 
         // Floating windows (Float in the tab and tool-window menus): each gets the shell's keys, focus keys, menus and clipboard routing, follows
@@ -478,60 +478,89 @@ public sealed class MainWindow : Window, IWindowChrome
 
     // ------------------------------------------------------------------ closing
 
-    private async void OnClosing(object? sender, WindowClosingEventArgs e)
+    /// <summary>A close this window confirmed that a module's Closing handler then held, and how it was confirmed (see <see cref="OnClosing"/>).</summary>
+    private enum HeldClose { None, Prompted, WithoutPrompt }
+
+    private HeldClose _held, _confirming;
+    private bool _closeProceeding;
+
+    /// <summary>
+    /// This window's own close handling, the first Closing handler: background mode's hide, then (cancelling this close and closing again when they
+    /// are answered) the layout save and the Save prompts. The modules' handlers (the terminal's <c>confirmOnExit</c>) run after it.
+    /// </summary>
+    private async void OnShellClosing(object? sender, WindowClosingEventArgs e)
     {
         if (_closeConfirmed) return;
-        if (CloseInterceptor?.Invoke(e.CloseReason) == true)
+        var held = _held;
+        // The module that held a confirmed close closes again when the user agrees: a close confirmed without prompts goes ahead as it was; one
+        // confirmed with prompts asks only for what is dirty since (normally nothing), and is past background mode's hide already.
+        if (e.IsProgrammatic && held == HeldClose.WithoutPrompt)
         {
-            e.Cancel = true;
+            _held = HeldClose.None;
+            _closeConfirmed = true;
+            _confirming = HeldClose.WithoutPrompt;
             return;
         }
+        if (!(e.IsProgrammatic && held == HeldClose.Prompted) && CloseInterceptor?.Invoke(e.CloseReason) == true)
+        {
+            e.Cancel = true; // hidden (background mode): a held close stays held
+            return;
+        }
+        _held = HeldClose.None;
         e.Cancel = true;
-        var closed = false;
+        await CloseWithPromptsAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// After every Closing handler: a confirmed close that goes ahead docks the floating windows back first (the layout was saved with them
+    /// floating); one that a module held (the terminal asks, and closes again when the user agrees) leaves this window as it was, working, and
+    /// the next close starts over (Save prompts included: the user may have edited since declining).
+    /// </summary>
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        base.OnClosing(e);
+        if (!_closeConfirmed) return;
+        if (!e.Cancel)
+        {
+            _closeProceeding = true;
+            ReleaseFloatingWindows();
+            return;
+        }
+        _closeConfirmed = false;
+        _held = _confirming;
+    }
+
+    /// <summary>The Save prompts, then the close: true when the window closed (false: a prompt was cancelled, or a module held the close).</summary>
+    private async Task<bool> CloseWithPromptsAsync()
+    {
+        _shell.BeginClose(); // saves the layout before tabs close, so the next start restores them
+        var end = ShellController.CloseEnd.Cancelled;
         try
         {
-            _shell.BeginClose(); // saves the layout before tabs close, so the next start restores them
-            if (await _shell.Well.CloseAllAsync().ConfigureAwait(true))
-            {
-                closed = true;
-                _closeConfirmed = true;
-                ReleaseFloatingWindows();
-                Close();
-            }
+            if (await _shell.Well.CloseAllAsync().ConfigureAwait(true)) end = CloseConfirmed(HeldClose.Prompted);
         }
         catch (Exception ex)
         {
             _sp.GetService<Startup.CrashHandler>()?.Report(ex, fatal: false, source: "Closing");
-            closed = true;
-            _closeConfirmed = true;
-            Close();
+            end = CloseConfirmed(HeldClose.Prompted);
         }
-        finally { _shell.EndClose(cancelled: !closed); } // cancelled (a Save prompt): keep the layout as it is now
+        finally { _shell.EndClose(end); } // cancelled (a Save prompt): keep the layout as it is now
+        return end == ShellController.CloseEnd.Closed;
+    }
+
+    private ShellController.CloseEnd CloseConfirmed(HeldClose how)
+    {
+        _closeConfirmed = true;
+        _confirming = how;
+        _closeProceeding = false;
+        Close();
+        return _closeProceeding ? ShellController.CloseEnd.Closed : ShellController.CloseEnd.Held;
     }
 
     /// <summary>Closes without any save prompts (tests and crash recovery).</summary>
-    public void CloseWithoutPrompt()
-    {
-        _closeConfirmed = true;
-        ReleaseFloatingWindows();
-        Close();
-    }
+    public void CloseWithoutPrompt() => CloseConfirmed(HeldClose.WithoutPrompt);
 
-    public async Task<bool> RequestExitAsync()
-    {
-        _shell.BeginClose();
-        var closed = false;
-        try
-        {
-            if (!await _shell.Well.CloseAllAsync().ConfigureAwait(true)) return false;
-            closed = true;
-            _closeConfirmed = true;
-            ReleaseFloatingWindows();
-            Close();
-            return true;
-        }
-        finally { _shell.EndClose(cancelled: !closed); }
-    }
+    public Task<bool> RequestExitAsync() => CloseWithPromptsAsync();
 
     // ------------------------------------------------------------------ window modes
 
