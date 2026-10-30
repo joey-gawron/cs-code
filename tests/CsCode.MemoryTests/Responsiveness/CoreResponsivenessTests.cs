@@ -51,7 +51,7 @@ public sealed class CoreResponsivenessTests(ITestOutputHelper output)
         for (var i = 1; i <= 3; i++)
         {
             var (ok, report) = await attempt();
-            output.WriteLine($"{name} attempt {i} (load {File.ReadAllText("/proc/loadavg").Split(' ')[0]}): {report}");
+            output.WriteLine($"{name} attempt {i} (load {LoadAverage.OneMinute()}): {report}");
             if (ok) return;
             failures.Add(report);
         }

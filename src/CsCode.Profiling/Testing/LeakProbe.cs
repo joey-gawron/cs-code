@@ -14,6 +14,17 @@ public static class FullGc
         GC.WaitForPendingFinalizers();
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
     }
+
+    /// <summary>
+    /// The live managed heap right after <see cref="Collect"/>: <see cref="GC.GetTotalMemory(bool)"/>. On macOS that figure is inflated (a 64 KB
+    /// array kept per run read as 128 KB per run on Apple arm64, .NET 10), so there it is the last collection's heap size minus its fragmentation.
+    /// </summary>
+    public static long LiveBytes()
+    {
+        if (!OperatingSystem.IsMacOS()) return GC.GetTotalMemory(forceFullCollection: false);
+        var info = GC.GetGCMemoryInfo();
+        return info.HeapSizeBytes - info.FragmentedBytes;
+    }
 }
 
 /// <summary>

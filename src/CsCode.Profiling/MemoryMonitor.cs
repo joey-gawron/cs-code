@@ -129,6 +129,9 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
 
     public bool IsStarted => Volatile.Read(ref _thread) is not null;
 
+    /// <summary>The sampling thread still runs (tests).</summary>
+    internal bool IsThreadAlive => Volatile.Read(ref _thread) is { IsAlive: true };
+
     public IReadOnlyList<IMemoryTrimmable> Trimmables => Volatile.Read(ref _trimmables);
 
     public IDisposable Register(IMemoryTrimmable trimmable)

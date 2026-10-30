@@ -169,11 +169,11 @@ public static class SoakRunner
     private static void SettleHeap()
     {
         FullGc.Collect();
-        var previous = GC.GetTotalMemory(false);
+        var previous = FullGc.LiveBytes();
         for (var i = 0; i < 10; i++)
         {
             FullGc.Collect();
-            var now = GC.GetTotalMemory(false);
+            var now = FullGc.LiveBytes();
             if (previous - now < 64 * 1024) return;
             previous = now;
         }
@@ -187,7 +187,7 @@ public static class SoakRunner
         if (options.CollectBeforeSample) FullGc.Collect();
         var p = ProcessSnapshot();
         var resources = ResourceCensus.Capture();
-        return new SoakSample(iteration, clock.Elapsed.TotalSeconds, p.WorkingSetBytes, p.PrivateBytes, GC.GetTotalMemory(false),
+        return new SoakSample(iteration, clock.Elapsed.TotalSeconds, p.WorkingSetBytes, p.PrivateBytes, FullGc.LiveBytes(),
             GC.GetGCMemoryInfo().TotalCommittedBytes, GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), resources.Threads,
             resources.FileDescriptors, GC.GetTotalAllocatedBytes(false), options.ChildBytes?.Invoke() ?? 0);
     }

@@ -23,7 +23,7 @@ public sealed record HeapCensusResult(string Name, int Warmup, IReadOnlyList<lon
 }
 
 /// <summary>
-/// Heap census (MUST 4): runs a scenario N times after a warm-up, takes the live heap after each run (<see cref="GC.GetTotalMemory(bool)"/> with a
+/// Heap census (MUST 4): runs a scenario N times after a warm-up, takes the live heap after each run (<see cref="FullGc.LiveBytes"/> after a
 /// full collection, plus <see cref="GC.GetGCMemoryInfo()"/>'s committed bytes before and after) and fits a line through the series. A leak shows
 /// as a positive slope whose confidence interval excludes zero; caches filling up show during the warm-up, which is excluded.
 /// </summary>
@@ -40,7 +40,7 @@ public static class HeapCensus
         {
             scenario(warmup + i);
             FullGc.Collect();
-            live[i] = GC.GetTotalMemory(forceFullCollection: false);
+            live[i] = FullGc.LiveBytes();
         }
         return Result(name, warmup, live, committedBefore);
     }
@@ -57,7 +57,7 @@ public static class HeapCensus
         {
             await scenario(warmup + i);
             FullGc.Collect();
-            live[i] = GC.GetTotalMemory(forceFullCollection: false);
+            live[i] = FullGc.LiveBytes();
         }
         return Result(name, warmup, live, committedBefore);
     }
