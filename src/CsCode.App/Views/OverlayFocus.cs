@@ -68,6 +68,7 @@ public sealed class OverlayFocus
         var editorBefore = _editorBefore?.TryGetTarget(out var e) == true ? e : null;
         _before = null;
         _editorBefore = null;
+        if (!_overlay.IsAttachedToVisualTree()) return; // its window closed meanwhile
         var now = FocusedElement();
         if (now is Visual current && now is not TopLevel && !IsInOverlay(current)) return; // the accepted entry focused its own target
         var editorNow = _activeEditor?.Invoke();

@@ -32,6 +32,7 @@ public sealed class PaletteController : IDisposable
     /// <summary>Opens the palette pre-filled with a mode prefix ("" = files, "&gt;" commands, ":" line, "@" symbols, "#" workspace symbols).</summary>
     public async Task ShowAsync(string prefix)
     {
+        var activeBefore = _ctx.Well.Active;
         var picked = await await _ui.InvokeAsync(() => _quick.PickAsync(new PaletteSource(_ctx, _index), null, null, prefix)).ConfigureAwait(true);
         if (picked?.Accept is not { } accept) return;
         try { await accept().ConfigureAwait(true); }
@@ -39,7 +40,11 @@ public sealed class PaletteController : IDisposable
         catch (Exception ex)
         {
             if (_window is not null) await _window.ShowMessageAsync(MessageSeverity.Error, ex.Message).ConfigureAwait(true);
+            return;
         }
+        // The entry went to another editor (a file, a symbol, Open Next Editor...): it gets the keyboard, as in VS Code, also when the palette was
+        // opened from the terminal or a tool window (the palette gave the keyboard back there when it closed, before the file was open).
+        if (!ReferenceEquals(_ctx.Well.Active, activeBefore)) _ctx.Well.FocusActiveEditor(force: true);
     }
 
     /// <summary>A fixed-list pick whose highlight changes are reported (live theme preview).</summary>

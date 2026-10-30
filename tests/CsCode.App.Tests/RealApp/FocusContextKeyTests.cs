@@ -149,6 +149,7 @@ public class FocusContextKeyTests
         using var sandbox = new TempDirectory("cscode-focus-sandbox-");
         await using var host = await Create(sandbox).StartAsync();
         host.Files.WriteFile("b.txt", "beta\n");
+        host.Files.WriteFile("c.txt", "gamma\n");
         await host.Get<IWorkspaceService>().OpenFolderAsync(new Uri(host.Files.Path + "/"));
         var a = await host.Shell.Well.OpenAsync(new Uri(host.Files.Combine("a.txt")));
         Assert.True(await RealAppHost.WaitFor(() => a.Controller is not null && a.LiveView!.IsAttachedToVisualTree()));
@@ -164,6 +165,22 @@ public class FocusContextKeyTests
         Assert.True(await RealAppHost.WaitFor(() => host.Shell.Well.ActiveEditor?.Title == "b.txt" && host.Shell.Well.ActiveEditor.Controller?.IsFocused == true),
             $"active {host.Shell.Well.ActiveEditor?.Title}, focused {host.Window.FocusManager?.GetFocusedElement()}");
         Assert.Equal((true, false, false, false, false), Keys(host));
+
+        // Also from a tool window: the palette gives the keyboard back to the Explorer when it closes, then the file it opened takes it (VS Code).
+        host.Shell.Tools.Show("explorer");
+        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Tools.Get("explorer")!.LiveView?.GetVisualDescendants().OfType<ListBox>().Any(l => l.IsEffectivelyVisible) == true));
+        var list = host.Shell.Tools.Get("explorer")!.LiveView!.GetVisualDescendants().OfType<ListBox>().First(l => l.IsEffectivelyVisible);
+        Assert.True(await RealAppHost.WaitFor(() => list.GetVisualDescendants().OfType<ListBoxItem>().Any()));
+        list.GetVisualDescendants().OfType<ListBoxItem>().First().Focus(); // a row, as a click does
+        Assert.True(Keys(host).List, $"{Keys(host)} focused={host.Window.FocusManager?.GetFocusedElement()}");
+        running = await host.OpenPaletteAsync(KnownCommands.QuickOpen);
+        quick.Text = "c.txt"; // not open yet: it opens after the palette has given the keyboard back
+        Assert.True(await RealAppHost.WaitFor(() => quick.Items.FirstOrDefault()?.Label == "c.txt"), string.Join(", ", quick.Items.Select(i => i.Label)));
+        host.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.True(await RealAppHost.WaitFor(() => running.IsCompleted));
+        await running;
+        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Well.ActiveEditor?.Title == "c.txt" && host.Shell.Well.ActiveEditor.Controller?.IsFocused == true),
+            $"active {host.Shell.Well.ActiveEditor?.Title}, focused {host.Window.FocusManager?.GetFocusedElement()}");
     }
 
     [AvaloniaFact(Timeout = 60_000)]

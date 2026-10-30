@@ -47,7 +47,7 @@ public sealed class MainWindow : Window, IWindowChrome
     private readonly QuickInputView _quick;
     private Control? _overlaysAdorning; // the floating window's dock the keyboard overlays adorn (null: they are in this window)
     private TopLevel? _overlayHost; // that floating window
-    private bool _closeConfirmed, _zen, _switcherActive;
+    private bool _closeConfirmed, _zen, _switcherActive, _windowClosed;
     private string? _sessionName;
     private int _switcherIndex;
     private WindowState _stateBeforeFullScreen;
@@ -100,8 +100,10 @@ public sealed class MainWindow : Window, IWindowChrome
         dialogVm.PropertyChanged += OnOverlayVisibilityChanged;
         _disposables.Add(Disposable.Create(() => { quickVm.PropertyChanged -= OnOverlayVisibilityChanged; dialogVm.PropertyChanged -= OnOverlayVisibilityChanged; }));
         // The palette and the prompts give the keyboard back when they close (to the editor a palette entry opened, else to what had it).
-        object? ActiveTab() => _shell.Well.Active;
-        void FocusActiveEditor() => _shell.Well.FocusActiveEditor();
+        // (resolved once: a close's focus restore can run after the container is gone, and then does nothing)
+        var documents = _shell.Well;
+        object? ActiveTab() => _windowClosed ? null : documents.Active;
+        void FocusActiveEditor() { if (!_windowClosed) documents.FocusActiveEditor(); }
         _quick = new QuickInputView(quickVm, ActiveTab, FocusActiveEditor) { Margin = new Thickness(0, 30, 0, 0) };
         _keyboardOverlays.Children.Add(_quick);
         _keyboardOverlays.Children.Add(new DialogHostView(dialogVm, ActiveTab, FocusActiveEditor));
@@ -219,7 +221,7 @@ public sealed class MainWindow : Window, IWindowChrome
             input.Dispose();
             // The keyboard was in the window that closed (a closing tab hands it to its window): it comes back to this window's active editor, as in
             // Visual Studio. Left there, the closed window stayed the focused element and kept itself, its last tab's view and document alive.
-            if (FocusManager?.GetFocusedElement() is Visual focused && (ReferenceEquals(focused, window) || window.IsVisualAncestorOf(focused) || !focused.IsAttachedToVisualTree()))
+            if (!_windowClosed && FocusManager?.GetFocusedElement() is Visual focused && (ReferenceEquals(focused, window) || window.IsVisualAncestorOf(focused) || !focused.IsAttachedToVisualTree()))
             {
                 if (!Focus()) FocusManager?.Focus(null);
                 _shell.Well.FocusActiveEditor();
@@ -230,9 +232,6 @@ public sealed class MainWindow : Window, IWindowChrome
     }
 
     // ------------------------------------------------------------------ overlays that take the keyboard
-
-    /// <summary>The window the switcher, quick input and modal prompt are shown in now (this one, or a floating window).</summary>
-    internal TopLevel OverlayWindow => _overlayHost ?? this;
 
     private void OnOverlayVisibilityChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -552,6 +551,7 @@ public sealed class MainWindow : Window, IWindowChrome
 
     protected override void OnClosed(EventArgs e)
     {
+        _windowClosed = true;
         base.OnClosed(e);
         if (_shell.Factory.FloatingWindows.Count > 0) ReleaseFloatingWindows(); // closed some other way (the lifetime ended)
         _disposables.Dispose();
