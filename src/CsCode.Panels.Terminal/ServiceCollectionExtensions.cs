@@ -17,6 +17,8 @@ public sealed class TerminalToolWindow(TerminalPanelRuntime runtime) : IToolWind
     public ToolWindowLocation DefaultLocation => ToolWindowLocation.Bottom;
     /// <summary>Registered by the runtime (VS Code's toggle: hide when shown, else show, focus and create a terminal if there is none).</summary>
     public string? ToggleCommandId => KnownCommandsTerminal.Toggle;
+    /// <summary>View &gt; Tool Windows &gt; Terminal: shown, a terminal created when there is none, and the keyboard in it (never a hide, unlike the toggle).</summary>
+    public string? ShowCommandId => KnownCommandsTerminal.Focus;
     public string? AutoShowWhen => null;
 
     public Control CreateView(IServiceProvider services) => new TerminalView(runtime);
@@ -25,6 +27,7 @@ public sealed class TerminalToolWindow(TerminalPanelRuntime runtime) : IToolWind
 internal static class KnownCommandsTerminal
 {
     public const string Toggle = TerminalCommands.Toggle;
+    public const string Focus = TerminalCommands.Focus;
 }
 
 public static class ServiceCollectionExtensions

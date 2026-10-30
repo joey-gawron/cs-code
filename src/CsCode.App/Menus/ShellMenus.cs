@@ -5,7 +5,10 @@ namespace CsCode.App.Menus;
 
 /// <summary>
 /// One entry of a menu definition. <see cref="CheckWhen"/> is a context-key expression that makes the item show a check mark;
-/// <see cref="Dynamic"/> names a generated submenu body ("recent", "toolWindows") filled in by the menu model.
+/// <see cref="Dynamic"/> names a generated submenu body ("recent", "toolWindows") filled in by the menu model. <see cref="GestureCommandId"/>
+/// names the command whose keybinding the item shows when that is not its own command: View &gt; Tool Windows runs
+/// <see cref="ShellMenus.ShowToolWindow"/>, which nothing binds, and shows the tool's toggle shortcut (Ctrl+` for Terminal), the keys that
+/// reach the same window.
 /// </summary>
 public sealed record MenuNode(
     string Header,
@@ -16,7 +19,8 @@ public sealed record MenuNode(
     IReadOnlyList<MenuNode>? Children = null,
     bool IsSeparator = false,
     string? Dynamic = null,
-    object? Argument = null)
+    object? Argument = null,
+    string? GestureCommandId = null)
 {
     public static readonly MenuNode Separator = new("-", IsSeparator: true);
 }
@@ -35,8 +39,9 @@ public static class ShellMenus
     public const string KeyboardReference = "cscode.shell.showKeyboardReference";
     public const string ToggleNotifications = "cscode.shell.toggleNotifications";
     /// <summary>
-    /// Shows and activates a tool window (argument: its id): what View &gt; Tool Windows runs. Never a hide, as in Visual Studio's View menu:
-    /// a toggle hid a window that was open as a background tab, the very one the user was asking to see.
+    /// Shows, activates and focuses a tool window (argument: its id): what View &gt; Tool Windows runs. Never a hide, as in Visual Studio's View
+    /// menu: a toggle hid a window that was open as a background tab, the very one the user was asking to see. The keyboard goes into the window
+    /// (the tool's <see cref="CsCode.Ui.IToolWindow.ShowCommandId"/> when it has one, else its view), so typing after the click reaches it.
     /// </summary>
     public const string ShowToolWindow = "cscode.shell.showToolWindow";
     /// <summary>Shows or hides a toolbar group (argument: the group id, <see cref="Views.ToolbarView.Groups"/>); persisted in its setting.</summary>

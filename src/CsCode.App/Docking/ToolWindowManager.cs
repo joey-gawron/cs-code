@@ -1,3 +1,7 @@
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CsCode.Core.Lifecycle;
 using CsCode.Ui;
 using Dock.Model.Controls;
@@ -20,6 +24,7 @@ public sealed class ToolWindowManager : IDisposable
     private readonly Dictionary<string, IToolWindow> _documentViews = new(StringComparer.Ordinal);
     private readonly Emitter<(string Id, bool Visible)> _visibilityChanged = new();
     private readonly DisposableStore _subs = new();
+    private int _focusRequest;
 
     public ToolWindowManager(ShellDockFactory factory, IEnumerable<IToolWindow> specs, IServiceProvider services)
     {
@@ -100,6 +105,33 @@ public sealed class ToolWindowManager : IDisposable
         }
         t.EnsureHost(); // the view, inside the host Dock presents (Dock may reuse the host it cached for this tool)
         _visibilityChanged.Fire((id, true));
+    }
+
+    /// <summary>
+    /// Puts the keyboard into a shown tool's view, as Visual Studio's View menu does for the window it shows (typing next goes there, not into the
+    /// editor): on the element the view prefers (<see cref="IToolWindowFocus"/>), else on its first focusable element in tab order, else, for a
+    /// view with nothing that can take it, on its host (<see cref="ToolTab.FocusHost"/>). <see cref="Show"/> only creates the view and Dock
+    /// presents it on a later layout pass, so this runs after layout and waits (bounded) until the view is on screen. Nothing happens when the
+    /// tool was hidden meanwhile or a later request superseded this one.
+    /// </summary>
+    public void FocusView(string id)
+    {
+        if (!_tools.TryGetValue(id, out var t)) return;
+        var request = ++_focusRequest;
+        Dispatcher.UIThread.Post(() => FocusWhenShown(t, request, 0), DispatcherPriority.Loaded);
+    }
+
+    private void FocusWhenShown(ToolTab t, int request, int attempt)
+    {
+        if (request != _focusRequest || t.LiveView is not { } view) return;
+        if (view.IsAttachedToVisualTree() && view.IsEffectivelyVisible)
+        {
+            if (view is IToolWindowFocus own && own.FocusPreferred()) return;
+            if (FocusManager.FindFirstFocusableElement(view)?.Focus() == true) return;
+            t.FocusHost();
+            return;
+        }
+        if (attempt < 20) DispatcherTimer.RunOnce(() => FocusWhenShown(t, request, attempt + 1), TimeSpan.FromMilliseconds(25));
     }
 
     /// <summary>Docks an auto-hidden tool back into its well (a no-op for any other tool).</summary>

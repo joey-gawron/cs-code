@@ -462,6 +462,33 @@ public class MenuModelTests
         Assert.Equal(["output"], shown);
     }
 
+    // The items run ShellMenus.ShowToolWindow, which nothing binds: labelled by their own command they lost every shortcut (Ctrl+` for Terminal).
+    // The label is the tool's toggle binding, the keys that bring the same window up; the click still only shows it.
+    [Fact]
+    public async Task A_tool_window_item_shows_its_toggle_commands_shortcut_and_its_click_still_only_shows_the_window()
+    {
+        using var rig = new Rig();
+        rig.Tools.Add(new FakeTool("terminal", "Terminal", "workbench.action.terminal.toggleTerminal", ToolWindowLocation.Bottom));
+        rig.Tools.Add(new FakeTool("output", "Output", "workbench.action.output.toggleOutput", ToolWindowLocation.Bottom));
+        var toggled = 0;
+        var shown = new List<string?>();
+        rig.Commands.Register("workbench.action.terminal.toggleTerminal", _ => { toggled++; return ValueTask.FromResult<object?>(null); });
+        rig.Commands.Register(ShellMenus.ShowToolWindow, inv => { shown.Add(inv.Arg<string>(0)); return ValueTask.FromResult<object?>(null); });
+        rig.Bindings.Add("workbench.action.terminal.toggleTerminal", "ctrl+`");
+        rig.Bindings.Add(ShellMenus.ShowToolWindow, "ctrl+alt+w"); // a binding of the shared command must not label every item
+        rig.Bindings.RaiseChanged();
+        rig.Ui.RunPending();
+
+        var tools = rig.Root("View").Children.Single(c => c.Header.Contains("Tool Windows")).Children;
+        var terminal = tools.Single(c => c.Header == "Terminal");
+        Assert.Equal("Ctrl+`", terminal.Gesture);
+        Assert.Null(tools.Single(c => c.Header == "Output").Gesture); // its toggle is not bound
+
+        await ((CommunityToolkit.Mvvm.Input.IAsyncRelayCommand)terminal.Command!).ExecuteAsync(null);
+        Assert.Equal(["terminal"], shown);
+        Assert.Equal(0, toggled);
+    }
+
     [Fact]
     public async Task Invoking_an_item_executes_its_command()
     {

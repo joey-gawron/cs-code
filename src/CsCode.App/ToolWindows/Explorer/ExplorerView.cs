@@ -10,6 +10,7 @@ using CsCode.App.Menus;
 using CsCode.App.Views;
 using CsCode.Core.Contributions;
 using CsCode.Core.Platform;
+using CsCode.Ui;
 using CsCode.Ui.Controls;
 using CsCode.Ui.Icons;
 using CsCode.Ui.Menus;
@@ -21,7 +22,7 @@ namespace CsCode.App.ToolWindows.Explorer;
 /// The Explorer view: header actions, a filter box and a virtualised list of the model's flat visible rows. The view owns no tree logic;
 /// it forwards clicks, keys and context-menu commands to <see cref="ExplorerViewModel"/>. Disposed (with its view-model) when the tool window hides.
 /// </summary>
-public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget
+public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, IToolWindowFocus
 {
     private readonly ExplorerViewModel _vm;
     private readonly IWindowService _window;
@@ -185,6 +186,12 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget
             default: ClipboardKeys.TryHandle(e, this); break; // Ctrl+C/X/V, Ctrl+Insert, Shift+Insert, Shift+Delete: the files
         }
     }
+
+    /// <summary>
+    /// View &gt; Tool Windows &gt; Explorer, as Solution Explorer: the keyboard on the selected row (else one on screen), where the arrows, Enter and
+    /// F2 work, not on the New File button that leads the tab order. Without a folder there is no row (the shell falls back to tab order).
+    /// </summary>
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(_list);
 
     // ---- clipboard: like Solution Explorer, Cut/Copy/Paste move and copy the FILES (Copy Path puts the path on the system clipboard)
 

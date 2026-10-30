@@ -130,7 +130,7 @@ public sealed class MenuModel : IDisposable
         if (node.CommandId is { } id)
         {
             item.IsEnabled = _commands.Has(id) && _keys.Evaluate(node.When);
-            item.Gesture = _bindings?.GetLabel(id);
+            item.Gesture = _bindings?.GetLabel(node.GestureCommandId ?? id);
         }
         else if (node.Dynamic is not null) item.IsEnabled = item.Children.Count > 0;
         else item.IsEnabled = item.Children.Any(c => c.IsEnabled && !c.IsSeparator);
@@ -150,11 +150,12 @@ public sealed class MenuModel : IDisposable
             }
             case "toolWindows":
                 // Document views (Settings, Keyboard Shortcuts) are not tool windows: the Tools menu opens them. Each item shows its window
-                // (ShellMenus.ShowToolWindow), as in Visual Studio: no check marks, no hiding from here.
+                // (ShellMenus.ShowToolWindow), as in Visual Studio: no check marks, no hiding from here. Its shortcut label is the toggle's
+                // binding: nothing binds ShowToolWindow, and the toggle's keys are the ones that bring the window up.
                 return _toolWindows()
                     .Where(t => t.ToggleCommandId is not null && t.DefaultLocation != ToolWindowLocation.Document)
                     .OrderBy(t => t.DefaultLocation).ThenBy(t => t.Title, StringComparer.Ordinal)
-                    .Select(t => CreateDynamic(new MenuNode(t.Title, ShellMenus.ShowToolWindow, IconKey: t.IconKey, Argument: t.Id)))
+                    .Select(t => CreateDynamic(new MenuNode(t.Title, ShellMenus.ShowToolWindow, IconKey: t.IconKey, Argument: t.Id, GestureCommandId: t.ToggleCommandId)))
                     .ToArray();
             default:
                 return [];
@@ -175,7 +176,7 @@ public sealed class MenuModel : IDisposable
 
     private static string Describe(Uri uri) => uri.IsFile ? uri.LocalPath : uri.ToString();
 
-    /// <summary>Looks up an item by command id (tests and the native-menu mirror use this).</summary>
+    /// <summary>Looks up an item by command id, the first one when several share it (View &gt; Tool Windows). Tests use this: no native menu mirrors the bar.</summary>
     public MenuItemVm? Find(string commandId) => _all.Concat(Roots.SelectMany(Flatten)).FirstOrDefault(i => i.CommandId == commandId);
 
     private static IEnumerable<MenuItemVm> Flatten(MenuItemVm item) => new[] { item }.Concat(item.Children.SelectMany(Flatten));
