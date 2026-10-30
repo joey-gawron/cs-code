@@ -68,7 +68,6 @@ internal sealed class TreeSitterHighlighter : IDisposable
     /// </summary>
     internal static TimeSpan MaxParseTimeWithoutTree { get; set; } = TimeSpan.FromSeconds(5);
 
-    private readonly TreeSitterService _service;
     private readonly SyntaxDocument _syntax;
     private readonly PaintBuffer _paint = new();
     private readonly DirtyLines _dirty = new();
@@ -89,12 +88,15 @@ internal sealed class TreeSitterHighlighter : IDisposable
 
     private TreeSitterHighlighter(TreeSitterService service, SyntaxDocument syntax, string languageId, int generation, EditorWorker lane)
     {
-        _service = service;
         _syntax = syntax;
         LanguageId = languageId;
         Generation = generation;
         Lane = lane;
+        // the stack cache of THIS lane: after a hang the service hands out a new lane's cache, which a woken engine of the old lane must not touch
+        _stacks = service.Stacks;
     }
+
+    private readonly IScopeStacks _stacks;
 
     /// <summary>The syntax lane this engine (and its native objects) belongs to.</summary>
     public EditorWorker Lane { get; }
@@ -337,7 +339,7 @@ internal sealed class TreeSitterHighlighter : IDisposable
         var store = session.Store;
         var start = text.LineStart(first);
         var end = text.LineEnd(last);
-        _syntax.Highlight(text, start, end, _service.Stacks, _paint);
+        _syntax.Highlight(text, start, end, _stacks, _paint);
         if (_syntax.LastQueryTimedOut)
         {
             // the query guard stopped this pass (its colours are partial): a document that keeps doing it goes to TextMate
@@ -348,7 +350,7 @@ internal sealed class TreeSitterHighlighter : IDisposable
             }
         }
         else _queryOverruns = 0;
-        var root = _paint.Length > 0 ? -1 : _service.Stacks.Root(_syntax.Language.RootScopeKey);
+        var root = _paint.Length > 0 ? -1 : _stacks.Root(_syntax.Language.RootScopeKey);
         var runStart = -1;
         for (var line = first; line <= last; line++)
         {
