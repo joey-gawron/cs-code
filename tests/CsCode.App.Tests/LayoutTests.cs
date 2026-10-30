@@ -226,6 +226,27 @@ public class LayoutPersistenceTests
         Assert.Contains(restored, second.Factory.BottomTools.VisibleDockables!);
     }
 
+    [AvaloniaFact]
+    public async Task The_debounced_save_is_written_from_a_pool_thread_and_never_overwrites_a_newer_save()
+    {
+        using var rig = new Rig();
+        string? Saved() => rig.State.Get<string>(LayoutPersistence.StateKey);
+        rig.Layout.SaveInBackground(); // the snapshot is taken now; the JSON is made and stored on a pool thread
+        for (var i = 0; i < 200 && Saved() is null; i++) await Task.Delay(10);
+        Assert.Equal(LayoutSerializer.Serialize(rig.Layout.Capture()), Saved());
+
+        // An older background save that completes after a newer synchronous one (closing) is dropped.
+        for (var round = 0; round < 20; round++)
+        {
+            rig.Tools.Show("errorlist");
+            rig.Layout.SaveInBackground();
+            rig.Tools.Hide("errorlist");
+            rig.Layout.Save();
+            await Task.Delay(20);
+            Assert.False(LayoutSerializer.Deserialize(Saved())!.Tools.Single(t => t.Id == "errorlist").Visible);
+        }
+    }
+
     [Fact]
     public async Task Moving_a_tool_to_another_well_is_persisted()
     {

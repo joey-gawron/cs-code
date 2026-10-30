@@ -349,7 +349,7 @@ public sealed class ShellController : IDisposable
     {
         if (_restoring || _closing > 0) return;
         _saveTimer?.Dispose();
-        _saveTimer = _time.CreateTimer(_ => _ui.Post(() => { if (!_disposed && _closing == 0) Layout.Save(); }), null, TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
+        _saveTimer = _time.CreateTimer(_ => _ui.Post(() => { if (!_disposed && _closing == 0) Layout.SaveInBackground(); }), null, TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>Saves the layout immediately (window closing).</summary>

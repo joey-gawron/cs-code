@@ -258,13 +258,39 @@ public sealed class LayoutPersistence
             ?? LayoutSerializer.Deserialize(_state.Get<string>(StateKey, StorageScope.Application));
     }
 
-    /// <summary>Saves to the workspace scope and updates the global default (so a new workspace starts like the last one).</summary>
+    private readonly object _writeGate = new();
+    private long _saveSequence, _writtenSequence;
+
+    /// <summary>Saves to the workspace scope and updates the global default (so a new workspace starts like the last one). Synchronous: closing.</summary>
     public void Save()
     {
         if (_state is null) return;
-        var json = LayoutSerializer.Serialize(Capture());
-        _state.Set(StateKey, json, StorageScope.Workspace);
-        _state.Set(StateKey, json, StorageScope.Application);
+        var sequence = Interlocked.Increment(ref _saveSequence);
+        Write(sequence, LayoutSerializer.Serialize(Capture()));
+    }
+
+    /// <summary>
+    /// The debounced save: the snapshot is taken here (UI thread: a walk of the Dock model), the JSON is made and stored on a pool thread (the first
+    /// serialisation of the layout records costs the UI thread about 18 ms of JSON metadata work, ARCHITECTURE §6). A save that completes after a
+    /// newer one (this or <see cref="Save"/>) is dropped.
+    /// </summary>
+    public void SaveInBackground()
+    {
+        if (_state is null) return;
+        var snapshot = Capture();
+        var sequence = Interlocked.Increment(ref _saveSequence);
+        _ = Task.Run(() => Write(sequence, LayoutSerializer.Serialize(snapshot)));
+    }
+
+    private void Write(long sequence, string json)
+    {
+        lock (_writeGate)
+        {
+            if (sequence < _writtenSequence) return;
+            _writtenSequence = sequence;
+            _state!.Set(StateKey, json, StorageScope.Workspace); // (the state service is thread-safe)
+            _state.Set(StateKey, json, StorageScope.Application);
+        }
     }
 
     /// <summary>"Reset window layout": forgets saved layouts and restores the default tool placement and visibility.</summary>
