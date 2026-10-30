@@ -20,7 +20,8 @@ public sealed record TerminalLink(LinkKind Kind, int StartColumn, int EndColumn,
 /// </summary>
 public static partial class LinkDetector
 {
-    [GeneratedRegex(@"\b(?:https?|ftp|file|mailto):(?://)?[^\s""'<>\[\]{}`|\\^]+", RegexOptions.CultureInvariant)]
+    // any scheme with "://" (http, https, ftp, ssh, git, vscode...), plus mailto: and file:
+    [GeneratedRegex(@"\b(?:[A-Za-z][A-Za-z0-9+.\-]{1,15}://|mailto:|file:)[^\s""'<>\[\]{}`|\\^]+", RegexOptions.CultureInvariant)]
     private static partial Regex UrlPattern();
 
     // path, then optional :line[:col] or (line[,col])
