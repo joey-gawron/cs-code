@@ -91,6 +91,31 @@ public interface IEditorViewController
 
     /// <summary>Brings the context keys of the view's right-click menu up to date (the host calls it right before building that menu).</summary>
     void PrepareContextMenu() { }
+
+    // ---- additive members (macros; defaults keep other implementations compiling) ----
+
+    /// <summary>
+    /// Text the user types into this view (a key's character or an IME commit), raised as the text input reaches the view's text area and before
+    /// the editor applies it; only for input no earlier handler took (a modal layer such as Vim takes its own). Control characters that some
+    /// platforms send after Enter, Tab or Backspace are not reported (those keys are key presses). Text inserted by code (paste, commands,
+    /// <see cref="ReplayText"/>) is not reported. UI thread.
+    /// </summary>
+    Core.Lifecycle.IEventSource<string> TextInput => Core.Lifecycle.EventSource.Never<string>();
+
+    /// <summary>
+    /// Types <paramref name="text"/> through the editor's typing path exactly as if the user typed it (auto-closing and over-typing, completion
+    /// and signature-help triggers, snippets, language-aware Enter for "\n"). Pass one character at a time to reproduce typing character by
+    /// character (auto-closing applies to single characters). False when the view cannot take text (destroyed, read-only document). UI thread.
+    /// </summary>
+    bool ReplayText(string text) => false;
+
+    /// <summary>
+    /// Presses <paramref name="key"/> on the view's text area as the keyboard would (a routed key-down and key-up raised on the text area: the
+    /// window's key handlers see it first, then the editor's own key handling: caret movement and selection, Backspace, Delete, Enter, Tab, the
+    /// completion list, snippet placeholders). The text area takes the keyboard focus first: the editor's key commands act on the focused text
+    /// area. Returns whether a handler took the key; false when the view cannot take the focus (destroyed, not in a window). UI thread.
+    /// </summary>
+    bool ReplayKey(Avalonia.Input.Key key, Avalonia.Input.KeyModifiers modifiers) => false;
 }
 
 /// <summary>Everything needed to recreate a destroyed view. Positions are 0-based lines/UTF-16 columns so they survive edits made while no view existed.</summary>

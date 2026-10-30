@@ -99,8 +99,12 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         Editor.TextArea.Caret.PositionChanged += OnCaretChanged;
         Editor.TextArea.SelectionChanged += OnSelectionChanged;
         Editor.PointerWheelChanged += OnPointerWheel;
+        // The controller's TextInput tap (macro recording): tunnelling, so it sees the input before the text area applies it, and only input that
+        // the window's own handlers (a modal layer such as Vim) left alone.
+        Editor.TextArea.AddHandler(TextInputEvent, OnTextAreaTextInput, RoutingStrategies.Tunnel);
         _disposables.Add(Disposable.Create(() =>
         {
+            Editor.TextArea.RemoveHandler(TextInputEvent, OnTextAreaTextInput);
             Editor.TextArea.GotFocus -= OnTextAreaGotFocus;
             Editor.TextArea.Caret.PositionChanged -= OnCaretChanged;
             Editor.TextArea.SelectionChanged -= OnSelectionChanged;
@@ -320,6 +324,12 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     private void OnTextAreaGotFocus(object? sender, RoutedEventArgs e) => _factory.NotifyFocused(this);
 
     private void OnCaretChanged(object? sender, EventArgs e) => Controller.RaiseCaretChanged();
+
+    private void OnTextAreaTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (e.Handled || e.Source != TextArea || string.IsNullOrEmpty(e.Text)) return;
+        Controller.RaiseTextInput(e.Text);
+    }
 
     private void OnSelectionChanged(object? sender, EventArgs e) => Controller.RaiseSelectionChanged();
 
