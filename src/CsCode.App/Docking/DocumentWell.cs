@@ -181,11 +181,12 @@ public sealed class DocumentWell : IDisposable
 
     /// <summary>
     /// Puts the keyboard into the active editor once it is shown, unless something else has it by then (a palette or prompt that closed leaves it
-    /// nowhere; see <see cref="Views.OverlayFocus"/>); with <paramref name="force"/>, wherever the keyboard is (the user asked for that editor).
+    /// nowhere; see <see cref="Views.OverlayFocus"/>). <paramref name="mayTakeFrom"/>: what else it may be taken from when the editor is shown (the
+    /// palette: where it left the keyboard, while the user has not pressed anything since).
     /// </summary>
-    public void FocusActiveEditor(bool force = false)
+    public void FocusActiveEditor(Func<IInputElement, bool>? mayTakeFrom = null)
     {
-        if (_active is { } active) FocusWhenShown(active, force: force);
+        if (_active is { } active) FocusWhenShown(active, mayTakeFrom: mayTakeFrom);
     }
 
     // ---------------------------------------------------------------- floating
@@ -493,17 +494,17 @@ public sealed class DocumentWell : IDisposable
     /// meanwhile: only when nothing has the keyboard, or the editor of <paramref name="takeFrom"/> (the tab active before) still has it (another
     /// group's editor stays in the window).
     /// </summary>
-    private void FocusWhenShown(ShellDocument next, int attempt = 0, ShellDocument? takeFrom = null, bool force = false)
+    private void FocusWhenShown(ShellDocument next, int attempt = 0, ShellDocument? takeFrom = null, Func<IInputElement, bool>? mayTakeFrom = null)
     {
         if (next is not EditorTab editor || editor.IsDisposed || !ReferenceEquals(_active, editor)) return;
         if (editor.LiveView is { } view && TopLevel.GetTopLevel(view) is { } top && editor.Controller is { } controller)
         {
             var focused = top.FocusManager?.GetFocusedElement();
-            if (force || focused is null or TopLevel || InViewOf(takeFrom, focused)) controller.Focus();
+            if (focused is null or TopLevel || InViewOf(takeFrom, focused) || mayTakeFrom?.Invoke(focused) == true) controller.Focus();
             return;
         }
         // (a well without the shell's dispatcher, in unit tests, has no window to wait for)
-        if (attempt < 20 && _ui?.CheckAccess() == true) DispatcherTimer.RunOnce(() => FocusWhenShown(next, attempt + 1, takeFrom, force), TimeSpan.FromMilliseconds(25));
+        if (attempt < 20 && _ui?.CheckAccess() == true) DispatcherTimer.RunOnce(() => FocusWhenShown(next, attempt + 1, takeFrom, mayTakeFrom), TimeSpan.FromMilliseconds(25));
     }
 
     private static bool InViewOf(ShellDocument? tab, IInputElement focused) =>

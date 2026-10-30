@@ -129,7 +129,8 @@ public sealed class ShellController : IDisposable
         Sessions = new SessionCatalog(commands, _sp.GetService<IAppPaths>()?.UserDataDir, () => background?.SessionName ?? (chrome as MainWindow)?.SessionName,
             background is not null ? list => background.Lane.RunAsync(list) : null);
         Palette = new PaletteController(quick, new PaletteContext(commands, nav, well, keys, _sp.GetService<IKeybindingService>(), workspace, state,
-            _sp.GetService<ILanguageFeatureRegistry>(), _sp.GetService<IMemoryMonitor>(), Sessions), _ui, window);
+            _sp.GetService<ILanguageFeatureRegistry>(), _sp.GetService<IMemoryMonitor>(), Sessions), _ui, window,
+            () => (chrome as Avalonia.Controls.TopLevel)?.FocusManager?.GetFocusedElement()); // (keyboard focus is global: any window's)
         _disposables.Add(Palette);
 
         ContextKeys = new ContextKeyTracker(keys, well, _ui, quick, workspace, debug);

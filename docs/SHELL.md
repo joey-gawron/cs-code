@@ -278,7 +278,11 @@ right synchronously, without a dispatcher turn (`FocusContextKeyTests`). Floatin
 typing reached no editor and `inputFocus` stayed set): a dispatcher turn after the close, unless something outside the overlay took it meanwhile,
 it goes to the editor that became active (a palette entry opened another), else to what had it when the overlay opened (if still on screen), else
 to the active editor. Activating a document tab (`DocumentWell.Activate` without `preserveFocus`: Go to File, Ctrl+Tab, opening a file) gives its
-editor the keyboard once Dock shows it, when the keyboard was nowhere or in the editor it replaces; a preview opened from the Explorer leaves it there.
+editor the keyboard once Dock shows it, when the keyboard was nowhere or in the editor it replaces; a preview opened from the Explorer leaves it there
+(`FocusContextKeyTests`). A palette entry that goes to another editor gives it the keyboard also when the palette was opened from a tool window or
+the terminal (`PaletteController`), but only from where the palette left the keyboard, and only while the user has pressed no key or mouse button
+since accepting the entry: an entry can run for long (Start Debugging waits for its build and the adapter), and a user who switched tabs or clicked
+into the terminal or the Debug Console meanwhile keeps the keyboard there (VS Code does not focus after a command; the open itself does).
 
 The order a key press goes through (all on the UI thread, inside the key event; nothing here waits):
 
