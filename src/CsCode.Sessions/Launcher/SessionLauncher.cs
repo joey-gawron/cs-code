@@ -101,6 +101,10 @@ public sealed class SessionLauncher
                     PrintList(world);
                     return new LaunchOutcome(0, plan, null, clock.Elapsed, started);
                 case LaunchAction.Quit:
+                    // Without a name the user did not say which session: say which one is asked (once the last active one has quit it is the
+                    // window shown most recently, a different session), before the quit wait.
+                    if (request.Session is null && !request.All && plan.Session is { } quitting && plan.QuitPids is [var quitPid])
+                        _out.WriteLine($"cscode: quitting session '{quitting}' (pid {quitPid})");
                     return new LaunchOutcome(Quit(plan.QuitPids), plan, null, clock.Elapsed, started);
                 case LaunchAction.Background:
                     // The warm spare is off by default: an autostart entry then starts nothing, and the log (journal) should say why.
