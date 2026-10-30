@@ -1,13 +1,16 @@
 # Debugging Rust and TypeScript — evaluation and fixes
 
 User request (2026-10-29): *"can you see how well the debugger feature works with rust and typescript"* — the user approved the js-debug download
-and asked to start with it; Rust followed with GDB (CodeLLDB is not approved). This document records the evaluation matrix of `docs/briefs/debugger-rust-typescript.md` (MUST 3) with evidence,
-what was fixed (each with a regression test that fails without the fix), and what is an adapter limitation.
+and asked to start with it; Rust followed with GDB. Wave 3 (user decision 2, "Get all the downloads you need") approved CodeLLDB: it is built in
+beside GDB, its matrix is written as a test suite, and running it is the one step still open (see [Rust through CodeLLDB](#rust-through-codelldb)).
+This document records the evaluation matrix of `docs/briefs/debugger-rust-typescript.md` (MUST 3) with evidence, what was fixed (each with a
+regression test that fails without the fix), and what is an adapter limitation.
 
 | Language | Adapter | Status |
 |---|---|---|
 | **TypeScript / JavaScript** | Microsoft **js-debug v1.140.0** (`js-debug-dap`, MIT), built in | **evaluated, defects fixed** — every row below |
-| **Rust** | **GDB 18.1**'s native DAP (`gdb -i=dap`, no download), built in; GDB 16.3, which the brief assumed, was replaced by the system update | **evaluated, defects fixed** — [Rust through GDB](#rust-through-gdb) |
+| **Rust** (default) | **GDB 18.1**'s native DAP (`gdb -i=dap`, no download), built in; GDB 16.3, which the brief assumed, was replaced by the system update | **evaluated, defects fixed** — [Rust through GDB](#rust-through-gdb) |
+| **Rust** | **CodeLLDB v1.12.3** (MIT, with its own LLDB; a pinned 56 MB download the app offers), built in as `lldb` | **built, unit-tested, NOT yet run against the real adapter** — [Rust through CodeLLDB](#rust-through-codelldb); [which one is the default](#which-rust-debugger-is-the-default) |
 
 ## TypeScript / JavaScript through js-debug
 
@@ -248,8 +251,8 @@ temp directory; set `CSCODE_DAP_TEST_METRICS=<file>` to collect the evidence lin
 
 ## Rust through GDB
 
-CodeLLDB is not approved (no download): Rust is debugged with **GDB's native Debug Adapter Protocol support** (`gdb -i=dap`), which needs
-nothing but the system's GDB.
+Rust is debugged by default with **GDB's native Debug Adapter Protocol support** (`gdb -i=dap`), which needs nothing but the system's GDB
+(CodeLLDB, the alternative, is [below](#rust-through-codelldb)).
 
 ### How it is wired (MUST 1)
 
@@ -411,7 +414,7 @@ Evidence is what GDB sent and what the panels showed, recorded by the tests (`CS
 * The 1M-line flood can miss the UI budget under heavy machine load (one DAP event per line, as js-debug's `console.log` flood; deferred to the
   performance wave with it).
 * GDB 16.3 itself was not run (replaced by 18.1 on this machine): on 16 the Debug Console has no completions.
-* CodeLLDB (better Rust formatting, the VS Code default for Rust) needs a download the user has not approved: not evaluated.
+* CodeLLDB (the VS Code default for Rust) is built in as `lldb`, but its matrix has not been run yet: see [Rust through CodeLLDB](#rust-through-codelldb).
 
 ### Running the suites
 
@@ -425,3 +428,159 @@ dotnet test tests/CsCode.App.Tests --filter "FullyQualifiedName~RealAppRustDebug
 Every real test skips with the reason when gdb (14+, with Python), cargo or rustc is missing, and builds the sample offline. Run them with
 `DISPLAY` and `SSH_AUTH_SOCK` unset and `CSCODE_HOME` pointing at a temp directory; set `CSCODE_DAP_TEST_METRICS=<file>` to collect the evidence
 lines quoted above.
+
+## Rust through CodeLLDB
+
+**CodeLLDB** (Vadim Chugunov, MIT, github.com/vadimcn/codelldb; VS Code's usual Rust debugger) is built in beside GDB as the debug type
+**`lldb`** — the type CodeLLDB's own launch.json files use, so they work unchanged. Wave 3 approved the download (user decision 2).
+
+> **Status: built and unit-tested; the matrix below has NOT been run against the real adapter.** The package was downloaded and verified, and it
+> installs (checked by a test; nothing in it executed), but in the wave-3 session that built this the permission system refused to execute the
+> downloaded CodeLLDB binary ("code from external"), so no row could be run. Everything around the adapter is tested with stand-ins — including
+> an `lldb` session end to end through the real `DebugService` with a stand-in installed as `extension/adapter/codelldb` that speaks DAP on its
+> stdio (`CodeLldbStandInTests`: the `--settings` command line, nice 10, the folder as working directory, the launch arguments the provider
+> filled in, a clean exit); the real-adapter suites are written (`RealCodeLldbRustTests`, `RealCodeLldbPanelsTests`) and skip until CodeLLDB is
+> present. What each row is expected to do is taken from CodeLLDB's own sources at the pinned tag (`src/codelldb/src/…`), marked as such.
+> Running the suites (below) turns this section into evidence; until then, the GDB column is the evaluated one.
+
+### Download (pinned) and installer
+
+| | |
+|---|---|
+| Release | `v1.12.3` (2026-08-23, the latest stable release on 2026-10-29) |
+| linux-x64 package | `https://github.com/vadimcn/codelldb/releases/download/v1.12.3/codelldb-linux-x64.vsix` — 55,571,094 bytes, SHA-256 `1cd7f386598022b51a5b93b9ffa23e812b23f519cfe1833384ec4bef4bfd1be1` (GitHub's published digest; checked) |
+| Other platforms | linux-arm64, linux-armhf, darwin-x64, darwin-arm64, win32-x64: sizes and digests pinned in `CodeLldbInstaller.Packages` and `tools/fetch-codelldb.sh` (a test checks that both pin the same values) |
+| Installed | 170,481,348 bytes: `extension/adapter/codelldb` (the adapter), `extension/lldb/{bin,lib}` (LLDB's `liblldb.so`, `lldb-server`, its own Python 3.12), `extension/lang_support/rust.py` |
+
+* **`tools/fetch-codelldb.sh`** (tests, development): pinned version and per-platform digest, refuses a mismatch before extracting, lists the
+  entries first and refuses absolute paths, `..` and links, extracts only `extension/`, never runs anything from the package. `--force`,
+  `CODELLDB_ARCHIVE=<vsix>` (no download), `CODELLDB_DEST=<dir>`, `CODELLDB_PLATFORM=<platform>`. Default destination
+  `.scratch/tools/codelldb/v1.12.3/` (the real-adapter tests find it there, or through `CSCODE_CODELLDB`).
+* **`CodeLldbInstaller`** (the app): the same pins; downloads into `{ToolsDir}/codelldb/` (refused when it grows past twice the pinned size),
+  verifies the SHA-256, extracts `extension/` on the thread pool (170 MB never on the debug lane) into a staging directory — names checked
+  (`SafeDestination`), symlink entries refused, setuid/setgid never applied, at most 1 GiB declared, all checked before the first byte is
+  written — makes the adapter executable and moves the result to `{ToolsDir}/codelldb/v1.12.3/`. **The user is asked first**: "Debugging with
+  CodeLLDB needs CodeLLDB v1.12.3 (MIT licence, with its own LLDB: about 56 MB to download, about 170 MB installed) … Download it from
+  github.com/vadimcn/codelldb?" (Download / Cancel); concurrent starts ask once and download once; a failed download says why.
+
+### How it is wired
+
+* **Adapter**: built-in type `lldb`, label "Rust / C / C++ (CodeLLDB)", breakpoint languages `rust`, `c`, `cpp`
+  (`src/CsCode.Dap/Adapters/CodeLldbAdapterFactory.cs`). CodeLLDB's standalone adapter speaks DAP **on stdio** when started without `--port` or
+  `--connect` (its `lib.rs`: `use_stdio`; one session per process, which exits when the session ends), so it is a `DebugAdapterStdioProcess`
+  exactly like GDB: `nice -n 10 codelldb --settings {"sourceLanguages":["rust"],"evaluateForHovers":true,"commandCompletions":true}`, below
+  normal priority (`lldb-server` and the program inherit it), tracked through the session's `AdapterProcessId`, the `CSCODE_DAP_ADAPTER` marker
+  passed on to the program (LLDB's launch inherits the adapter's environment), orphans reaped if the adapter dies. `PYTHONHOME`, `PYTHONPATH`
+  and `CODELLDB_STARTUP` are removed from its environment (it embeds its own Python; VS Code's extension removes the same). No TCP port is
+  opened (VS Code's extension instead listens and has the adapter `--connect` back with an auth token).
+* **Rust support**: `sourceLanguages` (the configuration's, else `["rust"]`) makes CodeLLDB load the Rust toolchain's LLDB formatters
+  (`lang_support/rust.py` runs `rustc --print=sysroot` in the adapter's directory — the folder, so a `rust-toolchain` file counts — and imports
+  `lib/rustlib/etc/lldb_lookup.py`; Rust 1.98's registers its formatters on import) and offer its **"Rust: on panic"** filter (on by default).
+* **Lookup**: `cscode.debug.codelldbPath` → `CSCODE_CODELLDB` → `{ToolsDir}/codelldb/v1.12.3` → `codelldb` on PATH; a path may name the adapter,
+  CodeLLDB's `extension/` directory or an install directory. Otherwise the download is offered; without a window the start fails saying what to
+  do (and that GDB needs no download).
+* **Provider** (what VS Code's CodeLLDB extension does before the adapter sees a configuration; never overriding the user's values): the **`cargo`
+  key** (object or argument list) resolved through `CargoArtifacts` as for GDB; `cwd` and `relativePathBase` = the folder; `sourceLanguages`;
+  **`_adapterSettings.consoleMode: "evaluate"`** (VS Code's `lldb.consoleMode` setting is honoured when set); **`terminal: "console"`** (the
+  program's output in the Debug Console, as with GDB) unless `console: "integratedTerminal"` was asked for and a terminal is composed;
+  `sourceMap` `/rustc/<commit>` → `<sysroot>/lib/rustlib/src/rust` when rust-src is installed (std frames get their sources, as GDB's
+  substitute-path does); `env` values made strings (a `null`, VS Code's "remove", would fail CodeLLDB's launch); attach `pid`/`processId` text →
+  number.
+* **Templates** (Create launch.json for `lldb`): **Rust: Debug <bin> (CodeLLDB, cargo build)**, **Rust: Debug unit tests of <package> (CodeLLDB,
+  cargo test)** (the `cargo` key), **Rust: Attach to <bin> (CodeLLDB)**, and the same `cargo: build` process task as GDB's; plain LLDB templates
+  without a Cargo.toml.
+* **Quirks** (`CodeLldbAdapterQuirks`, from CodeLLDB's sources):
+  * Its "rust_panic" filter is an LLDB breakpoint on `rust_panic$`, so the stop comes as reason **`breakpoint`** (and its `exceptionInfo` would
+    answer `Breakpoint`). The session now recognises such a filter's breakpoint ids from the `setExceptionBreakpoints` response (new
+    `DebugAdapterQuirks.BreakpointExceptionFilters`) and reports the stop as the exception **"Rust panics"** with the panic's message from the
+    output — the same presentation as GDB's client-side filter.
+  * **Hit counts**: CodeLLDB reads a bare `N` as `>= N`; CsCode sends `=N` (the Nth hit only, as js-debug and Visual Studio's "is equal to");
+    `<`, `<=`, `=`, `>=`, `>`, `%` are CodeLLDB's own and pass unchanged — so `%3` works here, unlike with GDB.
+  * **Debug Console**: evaluate mode; a backtick or `/cmd ` runs an LLDB command, and `-exec <command>` (VS Code's C++ habit, which the GDB adapter
+    takes) is sent as `/cmd <command>`.
+  * **Frames**: std frames and CodeLLDB's disassembly frames (code without sources: a `sourceReference`) are de-emphasised, so a pause in libc or a
+    panic shows the user's code (the GDB rule).
+  * **Start Without Debugging**: CodeLLDB honours `noDebug` but then refuses breakpoint requests with an error; the session sends none (new
+    `DebugAdapterQuirks.RefusesBreakpointsWithoutDebugging`), as it already did for GDB.
+
+### The matrix — CodeLLDB beside GDB
+
+GDB's column is the evaluated one ([above](#the-matrix)). The CodeLLDB column says what CodeLLDB v1.12.3's sources make us expect; **none of it
+has been observed yet**. Tests: **D** = `tests/CsCode.Dap.Tests/RealCodeLldbRustTests.cs` (real `DebugService`), **P** =
+`tests/CsCode.Panels.Debug.Tests/RealCodeLldbPanelsTests.cs` (the panels over the real DAP module); unit tests with fakes: `CodeLldbQuirksTests`,
+`CodeLldbAdapterFactoryTests`, `CodeLldbInstallerTests`.
+
+| Row | GDB 18.1 (evaluated) | CodeLLDB v1.12.3 — expected from its sources (not run) | Test |
+|---|---|---|---|
+| Launch + clean exit | works | stdio adapter, one session, exits after it; the program under `lldb-server`, niced, marked | D `Launch_stops_…_below_normal_priority` |
+| Line breakpoints, moved line | works | target created at `launch`, before `initialized`: breakpoints verified when set, `line` = the first resolved location | D, `A_breakpoint_on_a_line_without_code_…` |
+| Conditional | works | yes ("simple" expressions by default) | D `Conditional_hit_count_and_log_breakpoints` |
+| Hit count | partial (ignore count, `%N` impossible) | yes, every operator; a bare `N` is sent as `=N` | D (same), `CodeLldbQuirksTests` |
+| Logpoint | fixed | yes, `{expr}` in simple expressions | D (same) |
+| Function breakpoints | fixed | yes (LLDB name lookup; `/re ` for a regex) | D `Function_breakpoints_…` |
+| Rust panics | added (client-side filter) | its own "Rust: on panic", on by default; the stop reported as the exception by the new quirk | D `Rust_panics_…`, P, `CodeLldbQuirksTests` |
+| Start Without Debugging | fixed (GDB ignores `noDebug`) | honoured, but every breakpoint request is then answered "Not supported in noDebug mode." (its request dispatch): CsCode sends none, so no breakpoint shows as failed (quirk `RefusesBreakpointsWithoutDebugging`) | D `Start_without_debugging_…`, `CodeLldbQuirksTests` |
+| Step over/into/out | works | yes; `rust.py` sets LLDB's step-avoid regexp for `std::`/`core::`/`alloc::` | D `Step_into_over_and_out_…` |
+| Return value after step out | fixed (Return scope) | a `[return value]` variable first in its "Local" scope (`variables.rs`: `stop_return_value()`): Locals shows it as the first row; Autos does not lift it (it knows GDB's `returnValue` scope only) | D (same, records the scopes) |
+| Scopes | `Locals`/`Arguments` (hinted) | "Local", "Static", "Global", "Registers", none hinted and none marked expensive: the Locals window takes "Local" by its name (`ScopeSelector`), never the others | D, P |
+| Pause | fixed (stop location) | yes; libc shows as disassembly (de-emphasised by the quirk) | D `Pause_stop_while_running_and_restart` |
+| Restart | client relaunch (no `restart`) | advertises `supportsRestartRequest` (relaunches the target in the same adapter) | D (same) |
+| Stop | works | `disconnect` kills a launched program, detaches from an attached one | D (same), the attach test |
+| Adapter crash | works | marker reaping as for GDB | D `An_adapter_crash_…` |
+| Call stack: generics, closures, std | works / fixed | LLDB's function names; frames without sources as disassembly | D `Generic_functions_…`, P |
+| Locals: Rust values | fixed (CsCode's summaries) | the toolchain's `lldb_lookup.py` formatters (String, Vec, HashMap, Option/Result, Rc, enums…) | D `Locals_show_rust_values_…`, P |
+| Vec paging | fixed | recorded by the test (`[240..250)`) | D (same) |
+| Watch, set variable | works | yes (`supportsSetVariable`) | D `Watch_set_variable_and_the_debug_console_…`, P |
+| Debug Console REPL + completions | fixed (GDB runs commands) | evaluate mode set by CsCode; `/cmd`, backtick, `-exec`; `supportsCompletionsRequest` | D (same), P |
+| stdout / stderr | partial (one pipe) | LLDB reads the program through a pseudo-terminal: recorded by the test | D (same) |
+| Threads | works | yes | D `Threads_of_std_thread_…` |
+| Attach by pid | works | yes; detaches on Stop | D `Attach_to_a_running_rust_program_…` |
+| Unit-test binary (`cargo` key) | works | resolved by CsCode as for GDB (the VS Code extension's job, not the adapter's) | D `The_cargo_key_…` |
+| Templates | works | three CodeLLDB templates + `cargo: build` | D `The_codelldb_template_…`, `CodeLldbAdapterFactoryTests` |
+| `env` | fixed (GDB replaced the environment) | added on top of the inherited environment (LLDB's `target.inherit-env`) | unit test (strings, nulls dropped) |
+| 1M lines | works (budget under load) | recorded by the test (time, batches, heap) | D `A_million_line_flood_…` |
+| 10-session soak | works | — | D `Ten_real_sessions_…` |
+
+### Known gaps (from CodeLLDB's sources; to confirm)
+
+* No DAP `process` event (it prints "Launched process <pid>" to the console instead): `DebugSession.DebuggeeProcessId` stays empty for `lldb`
+  sessions — informational only in CsCode (the real-adapter tests find the program under the adapter).
+* Its scopes carry no presentation hints: Locals relies on the name "Local"; the `[return value]` row is not lifted by Autos.
+* The program's stdout and stderr share LLDB's pseudo-terminal (expected to arrive as `stdout`, as with GDB's pipe).
+* The matrix itself: every CodeLLDB row above is unobserved.
+
+### Running the suites (once CodeLLDB may run)
+
+```bash
+tools/fetch-codelldb.sh            # or CODELLDB_ARCHIVE=<…/codelldb-linux-x64.vsix> tools/fetch-codelldb.sh: no download
+CSCODE_DAP_TEST_METRICS=/tmp/lldb.txt dotnet test tests/CsCode.Dap.Tests --filter "FullyQualifiedName~RealCodeLldbRustTests"
+CSCODE_DAP_TEST_METRICS=/tmp/lldb.txt dotnet test tests/CsCode.Panels.Debug.Tests --filter "FullyQualifiedName~RealCodeLldbPanelsTests"
+CSCODE_CODELLDB_ARCHIVE=<vsix> dotnet test tests/CsCode.Dap.Tests --filter "FullyQualifiedName~The_real_pinned_package_installs"   # nothing executed
+```
+
+Or point `CSCODE_CODELLDB` at an installed adapter. Run with `DISPLAY` and `SSH_AUTH_SOCK` unset and `CSCODE_HOME` in a temp directory. Each
+test records what CodeLLDB showed (`[codelldb]` lines): fill in the CodeLLDB column from them, fix what they find, then revisit the default below.
+
+## Which Rust debugger is the default
+
+**GDB stays the default** (`cscode.debug.rustDebugger`: `"gdb"`, the default, or `"lldb"` for CodeLLDB; `"codelldb"` is accepted too). The
+setting decides which debugger a Rust folder's launch.json is created for when F5 finds no launch configuration (a `Cargo.toml` at the folder's
+root); an existing launch.json names its own type, and both debuggers stay available.
+
+Why, from the evidence there is:
+
+* GDB's whole matrix ran against the real GDB 18.1 (28 real tests, the panels, the real application), and every defect it found was fixed with a
+  regression test; CodeLLDB's has not run (above). A default chosen for an adapter nobody has seen working would not be "from evidence".
+* GDB needs no download; CodeLLDB is 56 MB to download and 170 MB on disk, which the app may only fetch after asking.
+* The accepted Rust defaults hold for both: panics stop (GDB's client-side filter; CodeLLDB's own filter, both reported as "Rust panics"), the
+  Debug Console evaluates expressions (the GDB quirk; CodeLLDB's evaluate mode), and Locals shows the returned value after Step Out (GDB's
+  "Return" group; CodeLLDB's `[return value]` row, by its sources — still to be observed).
+
+What would change it: CodeLLDB's sources promise native answers to several of GDB's gaps — exact and modulo hit counts, a `restart` request, a
+`noDebug` launch, expressions without command fallbacks, the toolchain's own Rust formatters instead of CsCode's summaries. If the CodeLLDB
+suites confirm those and find nothing worse, switching the default is a one-line change (`RustDebugger()` in
+`src/CsCode.Dap/Service/DebugService.Commands.cs`) plus this section; the download offer then appears on a Rust user's first F5.
+
+F5 without a launch configuration also used to make a **.NET** launch.json for every folder (the first debugger in label order): it now picks the
+folder's debugger — `Cargo.toml` → the Rust debugger, a .NET project or solution → `coreclr`, `tsconfig.json`/`package.json` → `pwa-node` — and
+otherwise asks ("Select debugger") (`DefaultDebuggerTests`).

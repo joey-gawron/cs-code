@@ -48,16 +48,22 @@ public class RealGdbPanelsTests
         public T View<T>(string id) where T : class => (T)Tools[id].CreateView(Provider).DataContext!;
         public Uri MainUri => new(Sample.MainRs);
         public Uri UtilUri => new(Sample.UtilRs);
+        /// <summary>The debug type of <see cref="Config"/>: <c>gdb</c>, or <c>lldb</c> for the real CodeLLDB.</summary>
+        public string Type { get; init; } = GdbAdapterFactory.PrimaryType;
 
-        public static async Task<App> CreateAsync()
+        /// <param name="type"><c>gdb</c>, or <c>lldb</c>: CodeLLDB found by <see cref="CodeLldbToolchain"/> (never downloaded).</param>
+        public static async Task<App> CreateAsync(string type = GdbAdapterFactory.PrimaryType)
         {
-            Assert.SkipWhen(GdbToolchain.SkipReason() is not null, GdbToolchain.SkipReason() ?? "");
-            var sample = await RustSample.CreateAsync("rustgdb-panels-");
+            var codeLldb = type == CodeLldbAdapterFactory.PrimaryType;
+            var skip = codeLldb ? CodeLldbToolchain.SkipReason() : GdbToolchain.SkipReason();
+            Assert.SkipWhen(skip is not null, skip ?? "");
+            var sample = await RustSample.CreateAsync(codeLldb ? "rustlldb-panels-" : "rustgdb-panels-");
             var documents = new DocumentManager();
             var navigation = new RecordingNavigationService(documents);
             var window = new TestWindowService();
             var settings = new TestConfigurationService();
             settings.Set(GdbAdapterFactory.ArgsSettingPath, new[] { "-nx" }); // never the user's gdbinit
+            if (codeLldb) settings.Set(CodeLldbAdapterFactory.SettingPath, CodeLldbToolchain.FindAdapter()!);
             var paths = new TestAppPaths();
             var services = new ServiceCollection();
             services.AddSingleton<IConfigurationService>(settings);
@@ -72,12 +78,12 @@ public class RealGdbPanelsTests
             services.AddSingleton<IUiDispatcher>(AvaloniaUiDispatcher.Instance);
             CsCode.Dap.ServiceCollectionExtensions.AddCsCodeDap(services);
             CsCode.Panels.Debug.ServiceCollectionExtensions.AddCsCodeDebugPanels(services);
-            return new App { Provider = services.BuildServiceProvider(), Sample = sample, Navigation = navigation, Window = window, Paths = paths };
+            return new App { Provider = services.BuildServiceProvider(), Sample = sample, Navigation = navigation, Window = window, Paths = paths, Type = type };
         }
 
         public DebugConfiguration Config(params string[] args) => DebugConfiguration.FromJson(JsonSerializer.SerializeToElement(new Dictionary<string, object?>
         {
-            ["type"] = "gdb", ["request"] = "launch", ["name"] = "sample", ["program"] = Sample.Binary, ["cwd"] = Sample.Dir.Path, ["args"] = args,
+            ["type"] = Type, ["request"] = "launch", ["name"] = "sample", ["program"] = Sample.Binary, ["cwd"] = Sample.Dir.Path, ["args"] = args,
         }), Sample.Dir.Uri);
 
         public void PanicStops(bool enabled) => Debug.Breakpoints.SetExceptionFilters([new ExceptionFilterSetting(GdbAdapterQuirks.RustPanicFilter, "Rust panics", enabled)]);

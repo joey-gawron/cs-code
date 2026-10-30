@@ -44,6 +44,8 @@ internal sealed class BreakpointSync : IDisposable
     private int[] _functionAdapterIds = [];
     // Adapter ids of the function breakpoints that implement client-side exception filters (DebugAdapterQuirks.SyntheticExceptionFilters).
     private readonly Dictionary<int, SyntheticExceptionFilter> _syntheticByAdapterId = new();
+    // Adapter ids of the adapter's own exception filters whose stops come as breakpoint stops (DebugAdapterQuirks.BreakpointExceptionFilters).
+    private readonly Dictionary<int, SyntheticExceptionFilter> _filterByAdapterId = new();
     private readonly CancellationTokenSource _cts = new();
     private bool _pendingFunctionsOrFilters, _flushScheduled, _flushRunning, _active, _disposed;
     private string? _sentFunctions, _sentFilters;
@@ -61,12 +63,15 @@ internal sealed class BreakpointSync : IDisposable
     public int RequestsSent => Volatile.Read(ref _requestsSent);
     public int TrackedAdapterIds => _breakpointIdByAdapterId.Count;
 
-    /// <summary>Lane only. The client-side exception filter whose breakpoint the adapter reports among <paramref name="hitBreakpointIds"/>.</summary>
+    /// <summary>
+    /// Lane only. The client-side exception filter — or the adapter's own filter that stops as a breakpoint — whose breakpoint the adapter reports
+    /// among <paramref name="hitBreakpointIds"/>.
+    /// </summary>
     public SyntheticExceptionFilter? SyntheticFilterHit(IReadOnlyList<int>? hitBreakpointIds)
     {
         if (hitBreakpointIds is null) return null;
         foreach (var id in hitBreakpointIds)
-            if (_syntheticByAdapterId.TryGetValue(id, out var filter)) return filter;
+            if (_syntheticByAdapterId.TryGetValue(id, out var filter) || _filterByAdapterId.TryGetValue(id, out filter)) return filter;
         return null;
     }
 
@@ -287,13 +292,27 @@ internal sealed class BreakpointSync : IDisposable
         Interlocked.Increment(ref _requestsSent);
         try
         {
-            await _host.RequestAsync("setExceptionBreakpoints", new DapSetExceptionBreakpointsArguments { Filters = plain, FilterOptions = withCondition.Count > 0 ? withCondition : null }, ct);
+            var body = await _host.RequestAsync("setExceptionBreakpoints", new DapSetExceptionBreakpointsArguments { Filters = plain, FilterOptions = withCondition.Count > 0 ? withCondition : null }, ct);
+            RememberFilterBreakpoints(body, [.. plain, .. withCondition.Select(o => o.FilterId)]);
         }
         catch (DapRequestException ex)
         {
             _logger.LogDebug(ex, "Adapter rejected setExceptionBreakpoints");
         }
         _sentFilters = signature;
+    }
+
+    /// <summary>
+    /// The response lists one breakpoint per filter, in the order sent (filters, then filter options): the ids of the filters whose stops the
+    /// adapter reports as breakpoint stops are remembered, so <see cref="SyntheticFilterHit"/> recognises them.
+    /// </summary>
+    private void RememberFilterBreakpoints(JsonElement body, IReadOnlyList<string> sent)
+    {
+        _filterByAdapterId.Clear();
+        if (_host.Quirks.BreakpointExceptionFilters is not { Count: > 0 } reported || body.ValueKind != JsonValueKind.Object) return;
+        var response = DapJson.Deserialize<DapBreakpointsResponse>(body)?.Breakpoints ?? [];
+        for (var i = 0; i < sent.Count && i < response.Count; i++)
+            if (response[i].Id is { } adapterId && reported.FirstOrDefault(f => f.Filter == sent[i]) is { } filter) _filterByAdapterId[adapterId] = filter;
     }
 
     /// <summary>Adapter-initiated <c>breakpoint</c> event (e.g. a pending breakpoint got bound after a module loaded).</summary>
@@ -330,6 +349,7 @@ internal sealed class BreakpointSync : IDisposable
         _adapterIdsByFile.Clear();
         _breakpointIdByAdapterId.Clear();
         _syntheticByAdapterId.Clear();
+        _filterByAdapterId.Clear();
         _functionAdapterIds = [];
         _manager.ClearStatuses(_host.Session.Id);
     }

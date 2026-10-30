@@ -80,7 +80,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         _lane = options.Lane;
         _logger = options.Logger ?? NullLogger.Instance;
         _quirks = options.Quirks;
-        _recentOutput = _quirks.SyntheticExceptionFilters.Count > 0 ? new System.Text.StringBuilder() : null;
+        _recentOutput = _quirks.SyntheticExceptionFilters.Count > 0 || _quirks.BreakpointExceptionFilters.Count > 0 ? new System.Text.StringBuilder() : null;
         _positions = new DapPositions(_settings.LinesStartAt1, _settings.ColumnsStartAt1);
         _output = new OutputBatcher(_lane, this, e => _outputEvent.Fire(e), _settings.OutputWindow);
         _debuggees = new DebuggeeLauncher(_lane, _logger, (category, text) => _output.Add(category, text), options.Terminals);
@@ -309,7 +309,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         _sync = new BreakpointSync(this, _o.Breakpoints, _lane, _logger, _settings.BreakpointDebounce);
         MergeExceptionFilters();
         // Start Without Debugging on an adapter that debugs anyway (GDB): no breakpoints, no exception filters — nothing may stop the program.
-        if (!(_o.Configuration.NoDebug && _quirks.IgnoresNoDebug)) await _sync.SendAllAsync(ct);
+        // One that refuses them then (CodeLLDB) gets none either, so they are not all shown as failed.
+        if (!(_o.Configuration.NoDebug && (_quirks.IgnoresNoDebug || _quirks.RefusesBreakpointsWithoutDebugging))) await _sync.SendAllAsync(ct);
 
         if (_dapCaps.SupportsConfigurationDoneRequest == true)
             await RequestAsync("configurationDone", null, ct, _settings.LaunchTimeout);
