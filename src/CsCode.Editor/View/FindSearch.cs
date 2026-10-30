@@ -95,6 +95,7 @@ internal sealed class FindSearch : IDisposable
     private long _lastEdit; // Stopwatch timestamp of the last change
     private bool _researchArmed; // a pause timer is running
     private int _researchEpoch; // bumped to drop pending pause timers
+    private CancellationTokenSource? _pause; // the pending pause timer's (cancelled with it: nothing waits on a dropped one)
     private Research? _research; // the re-search running on the worker
     private string? _note; // a message of the last Replace (null: the search's own)
     private bool _disposed;
@@ -293,8 +294,15 @@ internal sealed class FindSearch : IDisposable
         ArmResearch(EditDelay, _researchEpoch);
     }
 
-    private void ArmResearch(TimeSpan delay, int epoch) =>
-        _ = Task.Delay(delay).ContinueWith(_ => _view.Post(() => ResearchDue(epoch)), TaskScheduler.Default);
+    private void ArmResearch(TimeSpan delay, int epoch)
+    {
+        _pause?.Dispose();
+        var pause = _pause = new CancellationTokenSource();
+        _ = Task.Delay(delay, pause.Token).ContinueWith(t =>
+        {
+            if (!t.IsCanceled) _view.Post(() => ResearchDue(epoch));
+        }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+    }
 
     private void ResearchDue(int epoch)
     {
@@ -314,6 +322,7 @@ internal sealed class FindSearch : IDisposable
     {
         _researchEpoch++;
         _researchArmed = false;
+        _pause?.Cancel();
         _research?.Cts.Cancel();
         _research = null;
     }
@@ -752,6 +761,8 @@ internal sealed class FindSearch : IDisposable
         Detach();
         _disposed = true;
         foreach (var b in _bindings) _view.Editor.TextArea.CommandBindings.Remove(b);
+        _pause?.Dispose();
+        _pause = null;
         _view.Editor.TemplateApplied -= OnTemplateApplied;
         _view.Editor.TextArea.DocumentChanged -= OnTextAreaDocumentChanged;
         _panelTextChanged = null;
