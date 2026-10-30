@@ -138,6 +138,82 @@ public class FileLockTests
         Assert.True(FileLock.IsHeldElsewhere(new SessionStore(Path.Combine(rt.Root, "data")).LockPathOf("work")));
     }
 
+    /// <summary>A directory this user cannot write into (null when chmod does not restrict this user, e.g. root).</summary>
+    internal static string? ReadOnlyDirectory(string path)
+    {
+        if (OperatingSystem.IsWindows()) return null;
+        Directory.CreateDirectory(path);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            File.WriteAllText(Path.Combine(path, "probe"), "");
+            MakeWritable(path);
+            return null; // chmod does not stop this user
+        }
+        catch (UnauthorizedAccessException) { return path; }
+    }
+
+    internal static void MakeWritable(string path)
+    {
+        if (!OperatingSystem.IsWindows() && Directory.Exists(path)) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    }
+
+    [Fact]
+    public void A_lock_another_process_holds_is_told_from_one_that_cannot_be_taken_at_all()
+    {
+        // sessions-7: with the locks in the data directory, a read-only data directory made every launch wait 15 s for the launcher lock and
+        // every session process refuse with "owned by another CsCode process": both looked like a lock someone held.
+        using var rt = new TestRuntime();
+        var path = rt.Store.LockPathOf("work");
+        using (var first = FileLock.TryAcquire(path))
+        {
+            Assert.NotNull(first);
+            Assert.Null(FileLock.TryAcquire(path, out var problem));
+            Assert.Null(problem); // held: waiting may help
+        }
+        var ro = ReadOnlyDirectory(Path.Combine(rt.Root, "ro"));
+        if (ro is null) Assert.Skip("this user can write into a mode 0500 directory");
+        try
+        {
+            Assert.Null(FileLock.TryAcquire(Path.Combine(ro, ".locks", "work.lock"), out var problem));
+            Assert.NotNull(problem);
+            var clock = Stopwatch.StartNew();
+            Assert.Null(FileLock.Acquire(Path.Combine(ro, "launcher.lock"), TimeSpan.FromSeconds(10), out problem));
+            Assert.NotNull(problem);
+            Assert.True(clock.ElapsedMilliseconds < 2000, $"waited {clock.ElapsedMilliseconds} ms for a lock that can never be taken");
+        }
+        finally { MakeWritable(ro); }
+    }
+
+    [Fact]
+    public void A_session_lock_takes_and_honours_the_lock_older_builds_used()
+    {
+        // sessions-7: an older build's process (still running after an upgrade) locks only <runtime>/locks/<name>.lock.
+        using var rt = new TestRuntime();
+        var legacy = rt.Runtime.LegacySessionLockPath("work");
+        Assert.Equal(Path.Combine(rt.Runtime.Path, "locks", "work.lock"), legacy);
+        using (var older = FileLock.TryAcquire(legacy))
+        {
+            Assert.NotNull(older);
+            Assert.True(SessionLock.IsHeldElsewhere(rt.Store, rt.Runtime, "work"));
+            Assert.Null(SessionLock.TryAcquire(rt.Store, rt.Runtime, "work"));
+            Assert.False(FileLock.IsHeldElsewhere(rt.Store.LockPathOf("work"))); // the failed take let go of the new lock again
+        }
+        using (var mine = SessionLock.TryAcquire(rt.Store, rt.Runtime, "work"))
+        {
+            Assert.NotNull(mine);
+            Assert.True(FileLock.IsHeldElsewhere(rt.Store.LockPathOf("work")));
+            Assert.True(FileLock.IsHeldElsewhere(legacy)); // what an older build checks
+        }
+        Assert.False(SessionLock.IsHeldElsewhere(rt.Store, rt.Runtime, "work"));
+
+        // A data directory that cannot hold locks is an error, not "someone else has it".
+        var ro = ReadOnlyDirectory(rt.Store.LocksDir);
+        if (ro is null) return;
+        try { Assert.Throws<IOException>(() => SessionLock.TryAcquire(rt.Store, rt.Runtime, "other")); }
+        finally { MakeWritable(ro); }
+    }
+
     [Fact]
     public void A_lock_is_exclusive_until_disposed()
     {
