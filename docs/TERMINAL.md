@@ -193,7 +193,10 @@ composed): `workbench.action.tasks.runTask` (Run Task..., a pick or a label argu
 build task, else a pick), `.test`, `.terminate` (Terminate Task...: the running task, a pick when several). Cancelling a run (or the app
 shutting down) ends the process group; closing a task's terminal while it runs cancels the task. Without a terminal (the remote server, tests)
 the runner pipes into the "Tasks" output channel as before. Task programs (and terminal shells) do not inherit the `DOTNET_ROOT_<ARCH>` that
-`dotnet run`/`dotnet test` give CsCode itself: it is folded into `DOTNET_ROOT` as for language servers (`InheritedDotnetRoot`).
+`dotnet run`/`dotnet test` give CsCode itself: it is folded into `DOTNET_ROOT` as for language servers (`InheritedDotnetRoot`), by the launch
+resolver in the inherited environment, before `terminal.integrated.env` and the caller's variables apply. The task runner and the debugger
+(`runInTerminal`) send only the task's or the adapter's `env`, so a task's or a debuggee's terminal follows the user's `DOTNET_ROOT` in
+`terminal.integrated.env` and `terminal.integrated.inheritEnv: false` like any other terminal (cross-branch review C3).
 
 **One instance at a time** (VS Code's `runOptions.instanceLimit`, default 1): running a task that is already running starts nothing new. A
 user's Run Task / Ctrl+Shift+B shows VS Code's "The task 'build' is already active." with **Terminate Task** and **Restart Task**

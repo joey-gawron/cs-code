@@ -286,7 +286,6 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             Logger = _p.Logger("CsCode.Dap.Session"),
             Memory = _p.Memory,
             Terminals = _p.Terminals,
-            TerminalsAreRemote = () => _p.TerminalsAreRemote,
             Settings = SettingsFor(final),
             StartChild = StartChildAsync,
             Quirks = _builtins.GetValueOrDefault(final.Type)?.Quirks ?? DebugAdapterQuirks.None,

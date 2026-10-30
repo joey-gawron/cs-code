@@ -801,17 +801,6 @@ public class EndPassDebugTests
     }
 
     [Fact]
-    public void A_terminal_debuggee_gets_overrides_that_fold_it()
-    {
-        string? Inherited(string name) => name == Arch ? "/sdk/dotnet" : null;
-        var env = DebuggeeLauncher.WithDotnetRootFold(new Dictionary<string, string?> { ["NODE_OPTIONS"] = "--x" }, Inherited)!;
-        Assert.Equal("/sdk/dotnet", env["DOTNET_ROOT"]);
-        Assert.True(env.ContainsKey(Arch) && env[Arch] is null); // a null override removes it from the terminal's environment
-        Assert.Equal("--x", env["NODE_OPTIONS"]);
-        Assert.Null(DebuggeeLauncher.WithDotnetRootFold(null, _ => null)); // nothing to fold: unchanged
-    }
-
-    [Fact]
     public async Task A_piped_debuggee_does_not_inherit_the_arch_specific_dotnet_root()
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix shell");
@@ -840,50 +829,37 @@ public class EndPassDebugTests
 
     private static readonly Uri RemoteFolder = new("ssh://build-host/home/me/app");
 
-    [Fact]
-    public void Terminals_are_remote_exactly_when_the_workspace_is_one_the_remote_module_maps()
-    {
-        Assert.True(new DapPlatform { Workspace = new FakeWorkspace(RemoteFolder), PathMappers = () => new SshMapper() }.TerminalsAreRemote);
-        Assert.False(new DapPlatform { Workspace = new FakeWorkspace(new Uri("file:///home/me/app")), PathMappers = () => new SshMapper() }.TerminalsAreRemote);
-        Assert.False(new DapPlatform { Workspace = new FakeWorkspace(RemoteFolder) }.TerminalsAreRemote); // no remote module: nothing maps it
-        Assert.False(new DapPlatform { Workspace = new FakeWorkspace(new Uri("docker://other/app")), PathMappers = () => new SshMapper() }.TerminalsAreRemote);
-        Assert.False(new DapPlatform { Workspace = new FakeWorkspace(), PathMappers = () => new SshMapper() }.TerminalsAreRemote);
-    }
-
     /// <summary>
-    /// A remote workspace's terminals run on the remote host, from ITS environment: a <c>runInTerminal</c> debuggee there gets the adapter's
-    /// environment only, never CsCode's DOTNET_ROOT_&lt;ARCH&gt; folded into a DOTNET_ROOT of this machine (end-pass review, T27). A local
-    /// terminal still gets the fold.
+    /// A <c>runInTerminal</c> debuggee gets the adapter's environment as it is (cross-branch review C3), in a local terminal as in a remote
+    /// workspace's. A local terminal's launch resolver folds CsCode's DOTNET_ROOT_&lt;ARCH&gt; into the environment it inherits, before
+    /// <c>terminal.integrated.env</c> and the caller's variables apply (<see cref="TerminalDotnetRootTests"/>): overrides derived from CsCode's
+    /// environment and sent as the caller's repeated that and outranked the user's settings and <c>inheritEnv: false</c>. A remote workspace's
+    /// terminal starts from the remote host's environment, where this machine's means nothing.
     /// </summary>
     [Fact]
-    public async Task A_terminal_debuggee_of_a_remote_workspace_gets_no_overrides_from_this_machines_environment()
+    public async Task A_terminal_debuggee_gets_the_adapters_environment_as_it_is()
     {
-        Assert.SkipWhen(DotnetRootFold.Overrides(null).Count == 0, $"this test process has no {Arch} to fold (dotnet test sets it for the test host)");
-        using var lane = new DebugLane("t27-remote");
+        using var lane = new DebugLane("t27-terminal");
         var service = new OneTerminalService(new ReusedTerminal());
         var args = new CsCode.Dap.Protocol.DapRunInTerminalArguments
         {
             Kind = "integrated", Title = "App", Args = ["/home/me/app/bin/App"], Env = new Dictionary<string, string?> { ["ASPNETCORE_ENVIRONMENT"] = "Development" },
         };
-        var remote = new DapPlatform { Workspace = new FakeWorkspace(RemoteFolder), PathMappers = () => new SshMapper() };
-        using (var launcher = new DebuggeeLauncher(lane, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, (_, _) => { }, () => service, () => remote.TerminalsAreRemote))
+        using (var launcher = new DebuggeeLauncher(lane, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, (_, _) => { }, () => service))
             await launcher.LaunchAsync(args, "App", Ct);
-        Assert.Equal(args.Env, service.LastOptions!.Env); // the adapter's environment, nothing added or removed
+        Assert.Equal(args.Env, service.LastOptions!.Env); // nothing added or removed
 
-        var local = new DapPlatform { Workspace = new FakeWorkspace(new Uri("file:///home/me/app")), PathMappers = () => new SshMapper() };
-        using (var launcher = new DebuggeeLauncher(lane, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, (_, _) => { }, () => service, () => local.TerminalsAreRemote))
-            await launcher.LaunchAsync(args, "App", Ct);
-        Assert.True(service.LastOptions!.Env!.ContainsKey(Arch)); // a local terminal: folded (removed, or moved to DOTNET_ROOT)
-        Assert.Equal("Development", service.LastOptions.Env["ASPNETCORE_ENVIRONMENT"]);
+        using (var launcher = new DebuggeeLauncher(lane, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, (_, _) => { }, () => service))
+            await launcher.LaunchAsync(args with { Env = null }, "App", Ct);
+        Assert.Null(service.LastOptions!.Env);
     }
 
-    /// <summary>The same through the debug service: the session started for a remote workspace tells its launcher so.</summary>
+    /// <summary>The same through the debug service, for a session of a local and of a remote workspace.</summary>
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Through_the_debug_service_a_remote_workspaces_terminal_debuggee_gets_the_adapters_environment_only(bool remote)
+    public async Task Through_the_debug_service_a_terminal_debuggee_gets_the_adapters_environment_only(bool remote)
     {
-        Assert.SkipWhen(DotnetRootFold.Overrides(null).Count == 0, $"this test process has no {Arch} to fold (dotnet test sets it for the test host)");
         var terminals = new OneTerminalService(new ReusedTerminal());
         await using var h = remote
             ? new ServiceHarness(workspaceFolder: RemoteFolder, pathMapper: new SshMapper(), terminals: terminals)
@@ -893,28 +869,27 @@ public class EndPassDebugTests
         {
             Kind = "integrated", Title = "App", Args = ["/home/me/app/bin/App"], Env = new Dictionary<string, string?> { ["X"] = "1" },
         });
-        var env = terminals.LastOptions!.Env!;
-        if (remote) Assert.Equal(["X"], env.Keys);
-        else Assert.True(env.ContainsKey(Arch));
+        Assert.Equal(["X"], terminals.LastOptions!.Env!.Keys);
     }
 
-    /// <summary>The same for a task shown in a terminal while the workspace is remote (the terminal runs on the remote host).</summary>
+    /// <summary>
+    /// The same for a task shown in a terminal, of a local and of a remote workspace: the task's own <c>env</c> only (the local terminal's
+    /// resolver folds what it inherits; <see cref="TerminalDotnetRootTests"/>).
+    /// </summary>
     [Fact]
-    public async Task A_task_in_a_terminal_of_a_remote_workspace_gets_no_overrides_from_this_machines_environment()
+    public async Task A_task_in_a_terminal_gets_its_own_environment_only()
     {
-        Assert.SkipWhen(DotnetRootFold.Overrides(null).Count == 0, $"this test process has no {Arch} to fold (dotnet test sets it for the test host)");
         using var dir = new TempDirectory("t27-task-");
         dir.WriteFile(".cscode/tasks.json", """{ "version": "2.0.0", "tasks": [ { "label": "build", "type": "process", "command": "make", "options": { "env": { "MODE": "x" } } } ] }""");
-        foreach (var (workspace, remote) in new[] { (RemoteFolder, true), (dir.Uri, false) })
+        foreach (var workspace in new[] { RemoteFolder, dir.Uri })
         {
             using var lane = new DebugLane("t27-task");
             var host = new RecordingTaskHost();
             using var tasks = new TaskService(lane, new DapPlatform { Workspace = new FakeWorkspace(workspace), PathMappers = () => new SshMapper(), TaskTerminals = () => host });
             Assert.True((await tasks.RunAsync("build", dir.Uri, Ct)).Succeeded);
             var env = Assert.Single(host.Requests).Environment;
+            Assert.Equal(["MODE"], env.Keys);
             Assert.Equal("x", env["MODE"]);
-            if (remote) Assert.Equal(["MODE"], env.Keys);
-            else Assert.True(env.ContainsKey(Arch));
         }
     }
 

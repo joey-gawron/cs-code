@@ -25,17 +25,15 @@ internal sealed class DebuggeeLauncher : IDisposable
     /// <summary>The terminals running this session's debuggees, with the debuggee's pid: a terminal is reused for the next run (another session's).</summary>
     private readonly List<(ITerminal Terminal, int Pid)> _terminals = new();
     private readonly Func<ITerminalService?>? _terminalService;
-    private readonly Func<bool>? _terminalsAreRemote;
     private readonly object _gate = new();
     private bool _disposed;
 
-    public DebuggeeLauncher(DebugLane lane, ILogger logger, Action<string, string> output, Func<ITerminalService?>? terminals = null, Func<bool>? terminalsAreRemote = null)
+    public DebuggeeLauncher(DebugLane lane, ILogger logger, Action<string, string> output, Func<ITerminalService?>? terminals = null)
     {
         _lane = lane;
         _logger = logger;
         _output = output;
         _terminalService = terminals;
-        _terminalsAreRemote = terminalsAreRemote;
     }
 
     public IReadOnlyList<int> LiveProcessIds
@@ -96,9 +94,10 @@ internal sealed class DebuggeeLauncher : IDisposable
             ShellPath = a.Args[0],
             ShellArgs = a.Args.Skip(1).ToArray(),
             Cwd = string.IsNullOrEmpty(a.Cwd) ? null : a.Cwd,
-            // A remote workspace's terminal runs on the remote host, from ITS environment: CsCode's own DOTNET_ROOT_<ARCH> means nothing there
-            // (DOTNET_ROOT=<this machine's path> would send the debuggee's apphost to a runtime directory of this machine).
-            Env = _terminalsAreRemote?.Invoke() == true ? a.Env : WithDotnetRootFold(a.Env),
+            // The adapter's env only, as a terminal's caller variables: a local terminal folds CsCode's DOTNET_ROOT_<ARCH> in what it inherits,
+            // before the user's terminal.integrated.env and inheritEnv apply (TerminalLaunchResolver); a remote workspace's terminal starts from
+            // the remote host's environment, where this machine's means nothing.
+            Env = a.Env,
             IsTransient = true,
             ReuseWhenIdle = true,
             Show = true,
@@ -114,16 +113,6 @@ internal sealed class DebuggeeLauncher : IDisposable
         }
         _logger.LogDebug("Debuggee {Program} runs in terminal {Terminal} (pid {Pid})", a.Args[0], terminal.Id, pid);
         return new DapRunInTerminalResponse { ProcessId = pid };
-    }
-
-    /// <summary>The adapter's environment for the debuggee plus the overrides that fold CsCode's <c>DOTNET_ROOT_&lt;ARCH&gt;</c> (<see cref="DotnetRootFold"/>).</summary>
-    internal static IReadOnlyDictionary<string, string?>? WithDotnetRootFold(IReadOnlyDictionary<string, string?>? env, Func<string, string?>? environment = null)
-    {
-        var fold = DotnetRootFold.Overrides(env, environment);
-        if (fold.Count == 0) return env;
-        var merged = new Dictionary<string, string?>(fold, StringComparer.Ordinal);
-        foreach (var (k, v) in env ?? new Dictionary<string, string?>()) merged[k] = v;
-        return merged;
     }
 
     private async Task PumpAsync(Process process, StreamReader reader, BoundedTextPump pump)
