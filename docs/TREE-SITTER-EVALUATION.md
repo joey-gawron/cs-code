@@ -8,6 +8,14 @@ languages highlighting, and make it the default per language only after the dist
 on a quiet machine. The bigger payoff is not colours but structure: folding, expand/shrink selection, outline and Vim text objects without a
 language server (§7). Nothing switches without the user's OK; the default stays TextMate.
 
+**Status (wave 3, 2026-10-30): decided and built — see docs/TREE-SITTER.md.** The user chose the hybrid (§10.1), CI-style native grammars
+built from pinned, licence-checked sources (§10.2: `tools/treesitter/manifest.json`, `fetch-grammars.sh`, `build-grammars.sh`, shipped as
+`tree-sitter/` next to the app), nvim-treesitter's queries with a NOTICE (§10.3), and "the 17 first" (§10.4: `editor.syntaxEngine` = `auto`
+colours exactly the languages TextMate cannot; the prototype's `editor.experimental.treeSitter` is now an alias). Crash isolation (§10.5) is in
+process with a syntax lane of its own, a hang watchdog, a crash quarantine and a query guard; out-of-process parsing was measured and not
+adopted (docs/TREE-SITTER.md §4, benchmark B6). Structural features (§10.6): Expand/Shrink Selection, folding and an outline/breadcrumbs are
+built, and sticky scroll (off by default); Vim text objects are not. The text below is the evaluation as it was written (its "prototype" is today's engine).
+
 Everything below was measured on this machine with what is installed (libtree-sitter 0.26.11, the grammar packages and nvim-treesitter's
 queries in the Nix store, read-only). **All performance numbers are PROVISIONAL**: they were taken while five other agents loaded the 22-core
 machine (1-minute load average 5–34, recorded next to every number in the raw results and in the tables). `tools/bench-treesitter.sh` repeats the whole set in

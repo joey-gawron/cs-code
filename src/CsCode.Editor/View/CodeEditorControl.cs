@@ -86,6 +86,11 @@ public sealed class CodeEditorControl : UserControl, IDisposable
             if (e.Affects("editor") || e.Affects("files") || e.Affects("cscode.editor") || e.Affects("[" + Document.LanguageId + "]")) Post(OnSettingsChanged);
         }));
         _disposables.Add(document.LanguageIdChanged.Subscribe(_ => Post(OnLanguageChanged)));
+        // a language without a grammar may get one (editor.syntaxEngine changed, a user grammar arrived): a plain view starts colouring
+        _disposables.Add(factory.Tokens.GrammarAvailabilityChanged.Subscribe(_ =>
+        {
+            if (Tokens is null && !IsDisposed) AttachTokenization();
+        }));
         _disposables.Add(factory.Languages.LanguageConfigurationChanged.Subscribe(id =>
         {
             if (id == Document.LanguageId) Post(OnSettingsChanged);
@@ -126,8 +131,8 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     internal TokenizationSession? Tokens { get; private set; }
 
     /// <summary>
-    /// Which engine colours this view right now: "TextMate", "tree-sitter" (the EXPERIMENTAL engine, <c>editor.experimental.treeSitter</c>), or
-    /// null (plain text, large-file mode). Diagnostics only; may change after a setting or language change.
+    /// Which engine colours this view right now: "TextMate", "tree-sitter" (<c>editor.syntaxEngine</c>, docs/TREE-SITTER.md), or null (plain
+    /// text, large-file mode). Diagnostics only; may change after a setting or language change.
     /// </summary>
     public string? SyntaxEngine => Tokens is not { } t ? null : t.TreeSitter is not null ? "tree-sitter" : "TextMate";
     internal TextArea TextArea => Editor.TextArea;

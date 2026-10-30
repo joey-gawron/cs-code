@@ -1,0 +1,28 @@
+CsCode — tree-sitter bundle (the "tree-sitter" folder next to the application)
+=============================================================================
+
+This folder holds third-party software compiled or copied, unmodified, from the pinned sources listed in bundle.json
+(tools/treesitter/manifest.json in the CsCode repository). The full licence text of every source, and the NOTICE file of each source that
+has one, is in licenses/<source>.txt.
+
+1. The tree-sitter runtime (lib/): https://github.com/tree-sitter/tree-sitter, MIT License, Copyright (c) 2018 Max Brunsfeld.
+   Compiled from the tagged release named in bundle.json.
+
+2. Grammars (grammars/<name>.so|.dylib|.dll): each compiled from its project's src/ directory at the commit nvim-treesitter pins.
+   MIT License: tree-sitter-asm, -bash, -c, -c-sharp, -cmake, -cpp, -css, -csv, -go, -graphql, -haskell, -html, -java, -javascript,
+   -jsdoc, -json, -kotlin, -lua, -markdown, -nasm, -nix, -ocaml, -proto, -python, -regex, -rst, -rust, -scala, -scss, -svelte, -toml,
+   -typescript, -vue, -yaml, -zig.
+   Apache License 2.0: tree-sitter-elixir (Copyright 2021 The Elixir Team; its NOTICE says the generated files in src/ are
+   Copyright (c) 2018-2021 Max Brunsfeld under the MIT License), tree-sitter-erlang (WhatsApp), tree-sitter-hcl (tree-sitter-grammars).
+
+3. Queries (grammars/queries/<name>/*.scm): copied unmodified from nvim-treesitter (https://github.com/nvim-treesitter/nvim-treesitter,
+   runtime/queries/) at the commit named in bundle.json, except tags.scm, which is the grammar project's own queries/tags.scm (under that
+   grammar's licence, above), concatenated as its tree-sitter.json lists them.
+   Copyright The nvim-treesitter contributors. Licensed under the Apache License, Version 2.0 (the "License"); you may not use these files
+   except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0 (also in
+   licenses/nvim-treesitter.txt). Unless required by applicable law or agreed to in writing, software distributed under the License is
+   distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+   specific language governing permissions and limitations under the License.
+
+CsCode reads these files at run time; it does not change them. No GPL-, LGPL-, EUPL- or otherwise copyleft-licensed source is part of the
+bundle (build-grammars.sh refuses any licence outside MIT, Apache-2.0, ISC, BSD-2-Clause, BSD-3-Clause, 0BSD and CC0-1.0).

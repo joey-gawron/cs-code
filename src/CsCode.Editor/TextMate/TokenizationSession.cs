@@ -21,7 +21,8 @@ namespace CsCode.Editor.TextMate;
 /// </summary>
 internal sealed class TokenizationSession : IDisposable
 {
-    public static readonly TimeSpan SliceBudget = TimeSpan.FromMilliseconds(6);
+    /// <summary>The longest a worker slice runs (settable for the T10 regression test, which makes it tiny to reproduce a loaded machine).</summary>
+    public static TimeSpan SliceBudget { get; internal set; } = TimeSpan.FromMilliseconds(6);
     public const int MaxCatchUpLines = 2000;
     public const int IslandOverscanLines = 200;
     public const int ReadAheadLines = 3000;
@@ -44,9 +45,10 @@ internal sealed class TokenizationSession : IDisposable
     private long _lastEditTimestamp;
     private int _readAheadPending;
 
-    // ---- EXPERIMENTAL tree-sitter engine (editor.experimental.treeSitter, docs/TREE-SITTER-EVALUATION.md) ----
-    // Decided on the UI thread (construction, Restart) from the setting; the engine itself is created and used on the worker only. When it
-    // cannot run (no runtime, no grammar...) the slice falls through to the TextMate path below, so TextMate is always the fallback.
+    // ---- the tree-sitter engine (editor.syntaxEngine, docs/TREE-SITTER.md) ----
+    // Decided on the UI thread (construction, Restart) from the setting; the engine itself is created and used on the SYNTAX LANE only (the
+    // TreeSitterService's own thread, so a grammar that hangs cannot stop the editor worker). When it cannot run (no runtime, no grammar,
+    // quarantined...) the session hands the document back to TextMate on the editor worker, so TextMate is always the fallback.
     private volatile bool _treeSitterWanted;
     private volatile bool _treeSitterGaveUp; // this document parsed too slowly with tree-sitter: TextMate until the setting/language changes
     private volatile TreeSitterHighlighter? _treeSitter;
@@ -65,7 +67,7 @@ internal sealed class TokenizationSession : IDisposable
         _doc = doc;
         Store = new LineTokenStore();
         Store.Reset(doc.LineCount, doc.Version);
-        _treeSitterWanted = owner.TreeSitter.IsEnabledFor(doc.LanguageId);
+        _treeSitterWanted = owner.TreeSitter.IsEnabledFor(doc.LanguageId, doc.Uri);
         _subscriptions.Add(doc.Changed.Subscribe(OnDocumentChanged));
         _subscriptions.Add(doc.LanguageIdChanged.Subscribe(_ => Restart()));
         // No work is scheduled until a view attaches (AttachView): nothing is tokenised for a document nobody sees.
@@ -135,9 +137,10 @@ internal sealed class TokenizationSession : IDisposable
     {
         Store.Reset(_doc.LineCount, _doc.Version);
         _hasGrammar = false;
-        _treeSitterWanted = _owner.TreeSitter.IsEnabledFor(_doc.LanguageId) && !_treeSitterGaveUp;
-        Interlocked.Increment(ref _treeSitterGeneration); // the running engine (if any) is replaced on the worker
+        _treeSitterWanted = _owner.TreeSitter.IsEnabledFor(_doc.LanguageId, _doc.Uri) && !_treeSitterGaveUp;
+        Interlocked.Increment(ref _treeSitterGeneration); // the running engine (if any) is retired: its rows are refused from now on
         TreeSitterEdits.Clear();
+        ReleaseTreeSitter(); // freed on its own lane (a TextMate document never runs a lane job that would do it)
         Schedule(WorkPriority.Visible);
         NotifyChanged(0, int.MaxValue);
     }
@@ -170,7 +173,20 @@ internal sealed class TokenizationSession : IDisposable
     private void Schedule(WorkPriority priority)
     {
         if (_disposed || Volatile.Read(ref _views) <= 0) return;
-        _owner.Worker.Post(priority, this, _ => RunSlice());
+        if (_treeSitterWanted)
+        {
+            EditorWorker lane;
+            try
+            {
+                lane = _owner.TreeSitter.Lane;
+            }
+            catch (ObjectDisposedException)
+            {
+                return; // shutting down
+            }
+            lane.Post(priority, this, _ => RunTreeSitterJob());
+        }
+        else _owner.Worker.Post(priority, this, _ => RunSlice());
     }
 
     // ---- worker ----
@@ -178,7 +194,7 @@ internal sealed class TokenizationSession : IDisposable
     private void RunSlice()
     {
         if (_disposed) return;
-        if (RunTreeSitterSlice()) return;
+        if (_treeSitterWanted) return; // the syntax lane owns this document's tokens now (a Restart scheduled its job)
         var grammar = _owner.Grammars.GrammarForLanguage(_doc.LanguageId);
         _hasGrammar = grammar is not null;
         if (grammar is null) return;
@@ -292,7 +308,7 @@ internal sealed class TokenizationSession : IDisposable
     /// <summary>UI thread: the setting now asks for a different engine than the one this session runs (a restart switches it).</summary>
     internal bool TreeSitterWantedChanged()
     {
-        var wanted = _owner.TreeSitter.IsEnabledFor(_doc.LanguageId);
+        var wanted = _owner.TreeSitter.IsEnabledFor(_doc.LanguageId, _doc.Uri);
         if (!wanted) _treeSitterGaveUp = false; // switching the setting off (or to another language) forgets an earlier give-up
         return (wanted && !_treeSitterGaveUp) != _treeSitterWanted;
     }
@@ -300,23 +316,38 @@ internal sealed class TokenizationSession : IDisposable
     /// <summary>True when tree-sitter gave up on this document (too slow to parse) and TextMate colours it.</summary>
     internal bool TreeSitterGaveUp => _treeSitterGaveUp;
 
+    /// <summary>True when the setting (or <c>auto</c>) gave this document to tree-sitter and nothing has handed it back to TextMate yet.</summary>
+    internal bool TreeSitterWanted => _treeSitterWanted;
+
     internal void NotifyTokensChanged(int first, int last) => NotifyChanged(first, last);
 
-    /// <summary>Runs a tree-sitter slice when the engine is wanted and usable; false = take the TextMate path.</summary>
+    /// <summary>True while <paramref name="engine"/> is still the engine this session wants (a restart or a lane change retires it).</summary>
+    internal bool IsCurrentEngine(TreeSitterHighlighter engine) =>
+        !_disposed && _treeSitterWanted && engine.Generation == Volatile.Read(ref _treeSitterGeneration) && _owner.TreeSitter.IsCurrent(engine.Lane);
+
+    /// <summary>Syntax lane: one tree-sitter slice; when tree-sitter cannot (or must no longer) colour the document, TextMate's turn.</summary>
+    private void RunTreeSitterJob()
+    {
+        if (_disposed) return;
+        if (!RunTreeSitterSlice()) Schedule(WorkPriority.Visible); // _treeSitterWanted is false now: this posts the TextMate slice
+    }
+
+    /// <summary>Runs a tree-sitter slice when the engine is wanted and usable (syntax lane); false = take the TextMate path.</summary>
     private bool RunTreeSitterSlice()
     {
         var engine = _treeSitter;
         var generation = Volatile.Read(ref _treeSitterGeneration);
-        if (engine is not null && (!_treeSitterWanted || engine.Generation != generation || engine.LanguageId != _doc.LanguageId))
+        if (engine is not null && (!_treeSitterWanted || engine.Generation != generation || engine.LanguageId != _doc.LanguageId || !_owner.TreeSitter.IsCurrent(engine.Lane)))
         {
             _treeSitter = null;
-            engine.Dispose();
+            // an engine of an abandoned lane (a grammar hung in it) is never touched again: its thread may still be inside it
+            if (engine.Lane.IsWorkerThread) engine.Dispose();
             engine = null;
         }
         if (!_treeSitterWanted) return false;
         if (engine is null)
         {
-            engine = TreeSitterHighlighter.TryCreate(_owner.TreeSitter, _doc.LanguageId, generation);
+            engine = TreeSitterHighlighter.TryCreate(_owner.TreeSitter, _doc.LanguageId, _doc.Uri, generation);
             if (engine is null)
             {
                 _treeSitterWanted = false; // logged once by the service; TextMate colours this document
@@ -334,8 +365,7 @@ internal sealed class TokenizationSession : IDisposable
         engine.RunSlice(this);
         if (engine.GaveUp)
         {
-            _owner.Log.LogWarning("tree-sitter spent {Seconds:0.0} s parsing {Uri} without a result (grammar error recovery?); TextMate colours it instead",
-                engine.ParseTimeSinceTree.TotalSeconds, _doc.Uri);
+            _owner.Log.LogWarning("tree-sitter gave up on {Uri} ({Reason}); TextMate colours it instead", _doc.Uri, engine.GaveUpReason);
             _treeSitterGaveUp = true;
             _treeSitter = null;
             engine.Dispose();
@@ -347,12 +377,12 @@ internal sealed class TokenizationSession : IDisposable
         return true;
     }
 
-    /// <summary>Disposes the engine on the worker (where its native objects live); any thread.</summary>
+    /// <summary>Disposes the engine on its lane (where its native objects live; an abandoned lane never runs it); any thread.</summary>
     private void ReleaseTreeSitter()
     {
         var engine = _treeSitter;
         if (engine is null) return;
-        _owner.Worker.Post(WorkPriority.Interactive, null, _ =>
+        engine.Lane.Post(WorkPriority.Interactive, null, _ =>
         {
             if (ReferenceEquals(_treeSitter, engine)) _treeSitter = null;
             engine.Dispose();

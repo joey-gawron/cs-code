@@ -60,10 +60,16 @@ convention so that users' existing theme JSON and keybindings keep working. No V
 artwork is included, and the application icon (`src/CsCode.App/Views/AppIcon.cs`) is original artwork. "Visual Studio" is a trademark of
 Microsoft Corporation; the theme names "Visual Studio Dark/Blue/Light" describe a colour palette only and imply no affiliation.
 
-## Tree-sitter (EXPERIMENTAL engine, nothing bundled)
+## Tree-sitter (bundled runtime, grammars and queries)
 
-The experimental syntax engine behind `editor.experimental.treeSitter` (`src/CsCode.Editor.TreeSitter`, docs/TREE-SITTER-EVALUATION.md)
-calls the tree-sitter C library through its own P/Invoke declarations. **No tree-sitter code, grammar or query file is redistributed with
-CsCode**: the runtime (`libtree-sitter`, MIT), the compiled grammars (the prototype's are all MIT) and the highlight/injection queries
-(nvim-treesitter's, Apache-2.0) are found on the user's machine at run time. If they are ever shipped, this section must list each
-grammar with its licence and the nvim-treesitter NOTICE (see the licence survey in docs/TREE-SITTER-EVALUATION.md §8).
+The syntax engine behind `editor.syntaxEngine` (`src/CsCode.Editor.TreeSitter`, docs/TREE-SITTER.md) calls the tree-sitter C library
+through its own P/Invoke declarations. The app ships a `tree-sitter/` folder built by `tools/treesitter/build-grammars.sh` from the pinned
+sources in `tools/treesitter/manifest.json` (GitHub archives at the commits nvim-treesitter pins, each checked against its SHA-256):
+
+* the tree-sitter runtime (`lib/`), **MIT**, Copyright (c) 2018 Max Brunsfeld;
+* 42 grammars compiled from 38 grammar projects: **MIT** except tree-sitter-elixir, tree-sitter-erlang and tree-sitter-hcl (**Apache-2.0**);
+* nvim-treesitter's query files (`grammars/queries/`), copied unmodified, **Apache-2.0**, plus the grammar projects' own `tags.scm` (their licence).
+
+The folder carries a NOTICE (`tools/treesitter/NOTICE`) and the full licence text of every source (and tree-sitter-elixir's NOTICE) in
+`tree-sitter/licenses/`. The build refuses any licence outside MIT, Apache-2.0, ISC, BSD-2/3-Clause, 0BSD and CC0-1.0, so no GPL/LGPL/EUPL
+grammar can be bundled. CsCode's own queries (`src/CsCode.Editor.TreeSitter/OwnQueries`) are CsCode's.

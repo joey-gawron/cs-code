@@ -170,6 +170,25 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
     /// <summary>Foldable regions currently installed (tests, diagnostics).</summary>
     internal int RangeCount => _manager.AllFoldings.Count();
 
+    /// <summary>
+    /// The installed regions whose lines contain <paramref name="line"/> (header line included), outermost first, as (first line, last line):
+    /// what sticky scroll shows. Uses the manager's segment tree (no scan of all regions). UI thread.
+    /// </summary>
+    internal List<(int Start, int End)> RegionsContaining(int line)
+    {
+        var result = new List<(int Start, int End)>();
+        var buffer = _v.Document.Buffer;
+        if (line < 0 || line >= buffer.LineCount) return result;
+        var dl = buffer.GetLineByNumber(line + 1);
+        foreach (var f in _manager.GetFoldingsContaining(dl.Offset))
+        {
+            var (s, e) = LinesOf(f);
+            if (s <= line && e >= line) result.Add((s, e));
+        }
+        result.Sort(static (a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : b.End.CompareTo(a.End));
+        return result;
+    }
+
     public IReadOnlyList<int> FoldedStartLines =>
         _manager.AllFoldings.Where(f => f.IsFolded).Select(f => _v.Document.PositionAt(f.StartOffset).Line).Distinct().OrderBy(l => l).ToList();
 

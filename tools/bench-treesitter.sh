@@ -4,12 +4,13 @@
 #
 #   tools/bench-treesitter.sh            # Release build (default)
 #   tools/bench-treesitter.sh --debug    # Debug build (what the editor's other numbers in docs/EDITOR.md use)
-#   tools/bench-treesitter.sh --filter B1   # only the scenarios whose name contains B1 (B1, B1b, B2_B3, B4, B5)
+#   tools/bench-treesitter.sh --filter B1   # only the scenarios whose name contains B1 (B1, B1b, B2_B3, B4, B5, B6)
 #   tools/bench-treesitter.sh --pass timing # only the timing pass (or --pass memory)
 #
 # Results: .scratch/bench/treesitter-<run>.md (git-ignored). Two passes: timings with tree-sitter's counting allocator OFF, then memory with
-# it ON (exact native bytes). Needs what the evaluation used: libtree-sitter 0.25+ and compiled grammars (found automatically in the Nix
-# store, or set CSCODE_TREESITTER_LIB / CSCODE_TREESITTER_GRAMMARS). Nothing is downloaded. Headless: no window opens.
+# it ON (exact native bytes). Uses the app's tree-sitter bundle when tools/treesitter/build-grammars.sh has built one (it is copied next to
+# the test assembly), else the development fallback (the Nix store, or CSCODE_TREESITTER_LIB / CSCODE_TREESITTER_GRAMMARS). B6 (what
+# out-of-process parsing would cost, docs/TREE-SITTER.md §4) needs the bundle and gcc. Nothing is downloaded. Headless: no window opens.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"

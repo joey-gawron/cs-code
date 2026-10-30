@@ -26,7 +26,7 @@ namespace CsCode.Editor.TreeSitter.Highlighting;
 /// like TextMate's nested scopes. Injections (<c>injections.scm</c>: fenced code in Markdown, script/style in HTML, …) are parsed with
 /// included ranges and painted as layers on top, recursively up to <see cref="MaxInjectionDepth"/>.
 /// </summary>
-public sealed unsafe class SyntaxDocument : IDisposable
+public sealed unsafe partial class SyntaxDocument : IDisposable
 {
     public const int InputBufferChars = 8 * 1024;
     public const int MaxInjectionDepth = 4;
@@ -81,6 +81,10 @@ public sealed unsafe class SyntaxDocument : IDisposable
     // thread concurrently with Dispose on the worker, and writing into a still-reachable pinned array can never be a use-after-free.
     private readonly long[] _controlStorage = GC.AllocateArray<long>(2, pinned: true);
     private ParseControl* _control;
+    // The query guard: the cursor's options (progress callback + payload) and its deadline, pinned for the cursor's whole iteration.
+    private readonly long[] _queryStorage = GC.AllocateArray<long>(4, pinned: true);
+    private TSQueryCursorOptions* _queryOptions;
+    private long* _queryDeadline;
     private InputState? _input;
     private GCHandle _inputHandle;
     private bool _parsing;
@@ -88,6 +92,22 @@ public sealed unsafe class SyntaxDocument : IDisposable
     private int _layerCounter;
     private int _injectionSitesThisCall;
     private bool _disposed;
+    private readonly Isolation.FlightRecorder? _recorder;
+
+    /// <summary>
+    /// The longest one <see cref="Highlight"/> (or structural query) may run its queries before the cursor is stopped (the query guard: a
+    /// pathological tree or query cannot occupy the lane). A viewport normally takes 1–30 ms. Settable for tests.
+    /// </summary>
+    public static TimeSpan MaxQueryTime { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>True when the last <see cref="Highlight"/> (or query) was stopped by <see cref="MaxQueryTime"/> (its result is partial).</summary>
+    public bool LastQueryTimedOut { get; private set; }
+
+    /// <summary>
+    /// Tests only: runs inside the flight recorder's scope just before a parse enters native code, with the grammar's name, so a test can stand
+    /// in for a grammar that never returns (a real one would have to be built with an endless loop in its scanner).
+    /// </summary>
+    internal static Action<string>? HangHookForTests { get; set; }
 
     public SyntaxDocument(GrammarRegistry registry, LanguageBundle language)
     {
@@ -104,6 +124,12 @@ public sealed unsafe class SyntaxDocument : IDisposable
         // Bounds the query cursor's in-progress match state on pathological input (the default is unlimited).
         TsApi.ts_query_cursor_set_match_limit(_cursor, 2048);
         _control = (ParseControl*)Unsafe.AsPointer(ref _controlStorage[0]);
+        _queryDeadline = (long*)Unsafe.AsPointer(ref _queryStorage[0]);
+        _queryOptions = (TSQueryCursorOptions*)Unsafe.AsPointer(ref _queryStorage[2]);
+        _queryOptions->Payload = _queryDeadline;
+        _queryOptions->ProgressCallback = &QueryProgress;
+        *_queryDeadline = long.MaxValue;
+        _recorder = registry.Recorder;
         for (var i = 0; i <= MaxInjectionDepth; i++)
         {
             _captures[i] = new List<CaptureSpan>(256);
@@ -204,7 +230,12 @@ public sealed unsafe class SyntaxDocument : IDisposable
         };
         var options = new TSParseOptions { Payload = _control, ProgressCallback = &Progress };
         var started = Stopwatch.GetTimestamp();
-        var tree = TsApi.ts_parser_parse_with_options(_parser, _tree, input, options);
+        IntPtr tree;
+        using (Record(Language))
+        {
+            HangHookForTests?.Invoke(Language.Name);
+            tree = TsApi.ts_parser_parse_with_options(_parser, _tree, input, options);
+        }
         LastParseTime += Stopwatch.GetElapsedTime(started);
         LastParseSlices++;
         if (tree == IntPtr.Zero) return ParseOutcome.Halted;
@@ -254,18 +285,43 @@ public sealed unsafe class SyntaxDocument : IDisposable
         start = Math.Clamp(start, 0, end);
         var root = stacks.Root(Language.RootScopeKey);
         paint.Reset(start, end - start, root);
+        LastQueryTimedOut = false;
         if (_tree == IntPtr.Zero || end <= start) return 0;
         _text = text;
         _layerCounter = 0;
         _injectionSitesThisCall = 0;
+        StartQueryClock();
         try
         {
-            return HighlightLayer(Language, TsApi.ts_tree_root_node(_tree), start, end, 0, stacks, paint, 0);
+            using (Record(Language))
+                return HighlightLayer(Language, TsApi.ts_tree_root_node(_tree), start, end, 0, stacks, paint, 0);
         }
         finally
         {
             _text = null;
+            StopQueryClock();
         }
+    }
+
+    private Isolation.FlightRecorder.Scope Record(LanguageBundle language) => _recorder is null ? default : _recorder.Enter(language.FlightRecord);
+
+    private void StartQueryClock()
+    {
+        _queryDeadline[1] = 0; // set by QueryProgress when it stops the cursor
+        *_queryDeadline = Stopwatch.GetTimestamp() + (long)(MaxQueryTime.TotalSeconds * Stopwatch.Frequency);
+    }
+
+    private void StopQueryClock()
+    {
+        LastQueryTimedOut = _queryDeadline[1] != 0;
+        *_queryDeadline = long.MaxValue;
+    }
+
+    /// <summary>Starts <paramref name="query"/> on the shared cursor over [start, end) of <paramref name="node"/>, under the query guard.</summary>
+    private void Exec(TsQuery query, TSNode node, int start, int end)
+    {
+        TsApi.ts_query_cursor_set_byte_range(_cursor, (uint)start * 2, (uint)end * 2);
+        TsApi.ts_query_cursor_exec_with_options(_cursor, query.Handle, node, _queryOptions);
     }
 
     // ---- layers ----
@@ -315,8 +371,7 @@ public sealed unsafe class SyntaxDocument : IDisposable
 
     private void CollectCaptures(LanguageBundle bundle, TsQuery query, TSNode root, int start, int end, List<CaptureSpan> caps)
     {
-        TsApi.ts_query_cursor_set_byte_range(_cursor, (uint)start * 2, (uint)end * 2);
-        TsApi.ts_query_cursor_exec(_cursor, query.Handle, root);
+        Exec(query, root, start, end);
         var keys = bundle.CaptureKeys;
         var seq = 0;
         TSQueryMatch m;
@@ -376,8 +431,7 @@ public sealed unsafe class SyntaxDocument : IDisposable
 
     private void CollectInjections(LanguageBundle host, TsQuery query, TSNode root, int start, int end, List<InjectionSite> sites)
     {
-        TsApi.ts_query_cursor_set_byte_range(_cursor, (uint)start * 2, (uint)end * 2);
-        TsApi.ts_query_cursor_exec(_cursor, query.Handle, root);
+        Exec(query, root, start, end);
         TSQueryMatch m;
         while (TsApi.ts_query_cursor_next_match(_cursor, &m) != 0)
         {
@@ -505,7 +559,8 @@ public sealed unsafe class SyntaxDocument : IDisposable
         try
         {
             var input = new TSInput { Payload = (void*)GCHandle.ToIntPtr(handle), Read = &ReadInput, Encoding = TSInputEncoding.Utf16LE };
-            tree = TsApi.ts_parser_parse_with_options(parser, IntPtr.Zero, input, default);
+            using (Record(site.Language))
+                tree = TsApi.ts_parser_parse_with_options(parser, IntPtr.Zero, input, default);
         }
         finally
         {
@@ -672,6 +727,16 @@ public sealed unsafe class SyntaxDocument : IDisposable
     {
         var control = (ParseControl*)state->Payload;
         return Volatile.Read(ref control->Cancel) != 0 || Stopwatch.GetTimestamp() >= control->Deadline ? (byte)1 : (byte)0;
+    }
+
+    /// <summary>The query guard: stops the cursor (and says so in the word after the deadline) once <see cref="MaxQueryTime"/> is spent.</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    private static byte QueryProgress(TSQueryCursorState* state)
+    {
+        var control = (long*)state->Payload;
+        if (Stopwatch.GetTimestamp() < control[0]) return 0;
+        control[1] = 1;
+        return 1;
     }
 
     // ---- lifetime ----

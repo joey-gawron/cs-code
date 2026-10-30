@@ -29,7 +29,7 @@ public sealed class TreeSitterBenchCollection
 /// <c>.scratch/bench/treesitter-&lt;run&gt;.md</c>. The assertions only check that each scenario completed: the numbers are the result.
 /// </summary>
 [Collection(TreeSitterBenchCollection.Name)]
-public class TreeSitterBenchmarks
+public partial class TreeSitterBenchmarks
 {
     private static bool Enabled => Environment.GetEnvironmentVariable("CSCODE_BENCH_TREESITTER") == "1";
 
@@ -349,7 +349,7 @@ public class TreeSitterBenchmarks
         // over the 20,000-character long-line limit: raise both to compare the engines on 10 MB
         host.Config.Set(SettingKeys.EditorLargeFileOptimizationsLimit, 200L * 1024 * 1024);
         host.Config.Set("cscode.editor.largeFileLongLineChars", 100_000_000);
-        host.Config.Set(TreeSitterService.SettingKey, treeSitter);
+        host.Config.Set(TreeSitterService.SettingKey, treeSitter ? TreeSitterService.TreeSitter : TreeSitterService.TextMate);
         // the give-up guard (5 s of parsing without a tree) would hand a 10 MB C# file to TextMate: measure tree-sitter itself here
         var guard = TreeSitterHighlighter.MaxParseTimeWithoutTree;
         TreeSitterHighlighter.MaxParseTimeWithoutTree = TimeSpan.FromMinutes(10);
@@ -418,7 +418,7 @@ public class TreeSitterBenchmarks
         const int count = 20;
         var text = CSharp(100 * 1024);
         using var host = ViewHost.Create();
-        host.Config.Set(TreeSitterService.SettingKey, treeSitter);
+        host.Config.Set(TreeSitterService.SettingKey, treeSitter ? TreeSitterService.TreeSitter : TreeSitterService.TextMate);
         // warm up the grammar/theme/JIT with one document, so the per-document numbers do not carry one-time costs
         var (_, warm, warmWindow) = await host.OpenAsync(text, "Warm.cs", 900, 600);
         await ViewHost.WaitFor(() => warm.Tokens?.ViewportReady is not null && warm.Tokens.IsQuiet, "warm-up", 120_000);
@@ -460,7 +460,7 @@ public class TreeSitterBenchmarks
         RequireGrammar("c_sharp");
         var engine = treeSitter ? "tree-sitter" : "TextMate";
         using var host = ViewHost.Create();
-        host.Config.Set(TreeSitterService.SettingKey, treeSitter);
+        host.Config.Set(TreeSitterService.SettingKey, treeSitter ? TreeSitterService.TreeSitter : TreeSitterService.TextMate);
         var samples = TreeSitterSamples.All;
         var scenario = "B5 soak: 300 documents (8 languages, ~6-20 K chars), view + 5 keystrokes each, view destroyed, then all closed";
         FullGc();

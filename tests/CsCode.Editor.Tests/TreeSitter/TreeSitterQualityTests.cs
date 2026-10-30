@@ -63,14 +63,14 @@ public class TreeSitterQualityTests
         var textMate = Colours(view, doc.Snapshot().GetText());
 
         // tree-sitter, switched live on the same view
-        host.Config.Set(TreeSitterService.SettingKey, true);
+        host.Config.Set(TreeSitterService.SettingKey, TreeSitterService.TreeSitter);
         await ViewHost.WaitFor(() => view.Tokens?.TreeSitter is { CompletedParses: > 0 } e && !e.Syntax.IsParsing && view.Tokens.Store.HasTokens(0, lines - 1), "tree-sitter tokens");
         ViewHost.Pump();
         var treeSitterFrame = window.CaptureRenderedFrame()!;
         var treeSitter = Colours(view, doc.Snapshot().GetText());
 
         var shots = ScratchDir("screenshots/treesitter");
-        SaveSideBySide(textMateFrame, treeSitterFrame, Path.Combine(shots, $"{language}.png"), $"{language} - TextMate", $"{language} - tree-sitter (editor.experimental.treeSitter)");
+        SaveSideBySide(textMateFrame, treeSitterFrame, Path.Combine(shots, $"{language}.png"), $"{language} - TextMate", $"{language} - tree-sitter (editor.syntaxEngine)");
 
         var (agreement, report) = Compare(doc.Snapshot().GetText(), textMate, treeSitter);
         File.WriteAllText(Path.Combine(ScratchDir("treesitter"), $"quality-{language}.md"), $"# {language}: TextMate vs tree-sitter (Dark+)\n\nagreement {agreement:P1} of non-blank characters\n\n{report}");

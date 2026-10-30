@@ -14,21 +14,25 @@ public static partial class QueryLoader
     [GeneratedRegex(@"^\s*;+\s*inherits\s*:?\s*(?<list>.+?)\s*$", RegexOptions.CultureInvariant)]
     private static partial Regex InheritsLine();
 
-    /// <summary>The composed query text, or null when <paramref name="name"/> has no such query. <paramref name="files"/> lists the files used, in order.</summary>
-    public static string? Load(GrammarLocator locator, string name, string kind, out IReadOnlyList<string> files)
+    /// <summary>
+    /// The composed query text, or null when <paramref name="name"/> has no such query. <paramref name="files"/> lists the files used, in order.
+    /// Query directories under <paramref name="preferredRoot"/> (where the grammar itself was found) are searched first, inherited ones too.
+    /// </summary>
+    public static string? Load(GrammarLocator locator, string name, string kind, out IReadOnlyList<string> files, string? preferredRoot = null)
     {
         var used = new List<string>();
         var sb = new StringBuilder();
-        var found = Append(locator, name, kind, followInherits: true, sb, used, new HashSet<string>(StringComparer.Ordinal), depth: 0);
+        var found = Append(locator, name, kind, followInherits: true, sb, used, new HashSet<string>(StringComparer.Ordinal), depth: 0, preferredRoot);
         files = used;
         return found ? sb.ToString() : null;
     }
 
-    private static bool Append(GrammarLocator locator, string name, string kind, bool followInherits, StringBuilder sb, List<string> used, HashSet<string> visited, int depth)
+    private static bool Append(GrammarLocator locator, string name, string kind, bool followInherits, StringBuilder sb, List<string> used, HashSet<string> visited, int depth,
+        string? preferredRoot)
     {
         if (depth > 8 || !visited.Add(name)) return false;
         string? path = null;
-        foreach (var dir in locator.QueryDirectories(name))
+        foreach (var dir in locator.QueryDirectories(name, preferredRoot))
         {
             var candidate = Path.Combine(dir, kind + ".scm");
             if (File.Exists(candidate))
@@ -37,15 +41,24 @@ public static partial class QueryLoader
                 break;
             }
         }
-        if (path is null) return false;
-        string text;
-        try
+        string? text;
+        if (path is null)
         {
-            text = File.ReadAllText(path);
+            // no file anywhere: CsCode's own query of that kind, if it writes one (the outline symbols)
+            text = OwnQueries.Read(name, kind);
+            if (text is null) return false;
+            path = $"cscode:{name}/{kind}.scm";
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        else
         {
-            return false;
+            try
+            {
+                text = File.ReadAllText(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
         }
 
         if (followInherits)
@@ -58,7 +71,7 @@ public static partial class QueryLoader
                 {
                     var optional = raw.StartsWith('(') && raw.EndsWith(')');
                     var inherited = optional ? raw[1..^1] : raw;
-                    Append(locator, inherited, kind, followInherits: !optional, sb, used, visited, depth + 1);
+                    Append(locator, inherited, kind, followInherits: !optional, sb, used, visited, depth + 1, preferredRoot);
                 }
             }
         }

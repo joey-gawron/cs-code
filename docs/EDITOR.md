@@ -81,11 +81,12 @@ view components (renderers, margins,        parsing + code colouring for hovers 
   viewport-first slices of 6 ms, "island" tokenisation of the window when a huge file is opened far down, read-ahead of 3000 lines held back while the user is typing. `IMemoryTrimmable`;
   everything is released when the last view goes away. A slice resumes at the first viewport line still missing tokens and always gets at least one line past the
   checkpoint it restarts from, so a slow grammar on a loaded machine cannot stall (it used to restart from the viewport top every slice).
-* **EXPERIMENTAL tree-sitter engine** (`editor.experimental.treeSitter`, default off, per language with `"[rust]": {…}`): for C#, TypeScript/TSX, JavaScript, Rust, Python,
-  Markdown (with injections), C/C++, HTML and CSS a session can be driven by tree-sitter instead of TextMate (`src/CsCode.Editor.TreeSitter`, `TreeSitter/`). It writes the same
-  token rows into the same `LineTokenStore` (capture names mapped onto TextMate scopes), so colouring, themes, `KindAt` and brackets are unchanged; parsing and queries run on the
-  editor worker, sliced and cancellable; any failure falls back to TextMate. `CodeEditorControl.SyntaxEngine` tells which engine colours a view. Evaluation, measurements and the
-  recommendation: `docs/TREE-SITTER-EVALUATION.md`.
+* **Tree-sitter engine** (`editor.syntaxEngine` = `auto` | `textmate` | `treesitter`, per language with `"[rust]": {…}`; `auto` = tree-sitter only for the
+  languages TextMate has no grammar for): a session can be driven by tree-sitter instead of TextMate (`src/CsCode.Editor.TreeSitter`, `TreeSitter/`), with the grammars the
+  app bundles. It writes the same token rows into the same `LineTokenStore` (capture names mapped onto TextMate scopes), so colouring, themes, `KindAt` and brackets are
+  unchanged; parsing and queries run on the engine's own syntax lane, sliced and cancellable; any failure falls back to TextMate. The tree also gives Expand Selection,
+  folding and an outline when no language server does. `CodeEditorControl.SyntaxEngine` tells which engine colours a view. Design, isolation and limits:
+  `docs/TREE-SITTER.md` (evaluation: `docs/TREE-SITTER-EVALUATION.md`).
 
 ## 3. What is implemented
 
@@ -182,8 +183,8 @@ Debug build, shared 22-core Linux machine; ranges are the spread of repeated run
 `editor.fontFamily`, `editor.fontSize`, `editor.lineHeightFactor`, `editor.tabSize`, `editor.insertSpaces`, `editor.wordWrap` (on/off), `editor.renderWhitespace` (`boundary` is treated as `all`), `editor.lineNumbers` (on/off), `editor.rulers`, `editor.mouseWheelZoom`, `editor.guides.indentation`,
 `editor.renderLineHighlight`, `editor.bracketPairColorization.enabled`, `editor.matchBrackets`, `editor.occurrencesHighlight`, `editor.folding`, `editor.quickSuggestions`, `editor.quickSuggestionsDelay`, `editor.suggestOnTriggerCharacters`, `editor.autoClosingBrackets/Quotes`, `editor.autoSurround`,
 `editor.formatOnSave/OnType/OnPaste`, `editor.emptySelectionClipboard`, `editor.selectionClipboard`, `editor.autoIndentOnPaste`, `editor.autoIndent`, `editor.hover.delay`, `editor.inlayHints.enabled`, `workbench.colorTheme`, `files.encoding`, `files.eol`, `files.insertFinalNewline`, `files.trimFinalNewlines`, `files.trimTrailingWhitespace`, `files.associations`, and the module's own `cscode.editor.undoLimit` (default 1000 groups),
-`cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB), and the EXPERIMENTAL
-`editor.experimental.treeSitter` (false; registered with the configuration service; see docs/TREE-SITTER-EVALUATION.md).
+`cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB), and
+`editor.syntaxEngine` (`auto`; the old `editor.experimental.treeSitter` is read as an alias; see docs/TREE-SITTER.md).
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
 `sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.showHover` (at the caret),
@@ -254,7 +255,7 @@ read-only, a slow clipboard owner, 10 MB, contributions, context keys, Run To Cu
 Not done, or done only in part — none of this is faked:
 
 * **Multi-cursor** (Alt+Click, Ctrl+Alt+Up/Down, Ctrl+D) is not implemented: AvaloniaEdit has no multi-caret model and the stretch goal was not attempted. Rectangular selection (AvaloniaEdit's own) works, and its rows act as carets for the clipboard (§7a); after a paste into several rows a single caret remains.
-* **Minimap, sticky scroll, code lens, semantic-token overlay, Alt+F12 peek, overview-ruler markers on the scrollbar** are not implemented (settings for them are read but have no effect).
+* **Minimap, code lens, semantic-token overlay, Alt+F12 peek, overview-ruler markers on the scrollbar** are not implemented (settings for them are read but have no effect). Sticky scroll is (`editor.stickyScroll.enabled`, off by default; docs/TREE-SITTER.md §5).
 * `editor.cursorStyle`, `editor.cursorBlinking`, `editor.smoothScrolling` and font ligatures are not applied (AvaloniaEdit offers no equivalent; ligatures stay off). `editor.wordWrap` supports on/off only. Drag-and-drop of text is AvaloniaEdit's own behaviour; bidirectional text and IME composition were not tested.
 * **Typing allocation**: the TextMate colorizer allocates per token on the edited line (§6). A single pre-merged element list would cut it; not done.
 * The `previousLineText` guard of `onEnterRules` (which Core's `OnEnterRule` record cannot carry) is handled editor-side through `ExtendedLanguageConfiguration`/`EnterRuleEx`; the Core record is unchanged.

@@ -8,8 +8,9 @@ using Xunit;
 namespace CsCode.Editor.Tests.TreeSitter;
 
 /// <summary>
-/// Shared plumbing for the tree-sitter tests: the runtime and grammars are whatever this machine has (libtree-sitter 0.26 and the grammar
-/// packages in the Nix store, read-only). A test that needs them SKIPS with the reason when they are missing.
+/// Shared plumbing for the tree-sitter tests: the runtime and grammars are the app's bundle when tools/treesitter/build-grammars.sh has built
+/// one (copied next to the test assembly as tree-sitter/), otherwise whatever this machine has (the development fallback: libtree-sitter 0.26
+/// and the grammar packages in the Nix store, read-only). A test that needs them SKIPS with the reason when they are missing.
 /// </summary>
 internal static class TreeSitterTestSupport
 {
@@ -20,7 +21,7 @@ internal static class TreeSitterTestSupport
         if (Environment.GetEnvironmentVariable("CSCODE_TREESITTER_TRACK_ALLOC") != "0") TsRuntime.TrackAllocations = true;
     }
 
-    private static readonly GrammarLocator Locator = new(GrammarLocator.DefaultRoots(null));
+    private static readonly GrammarLocator Locator = GrammarLocator.CreateDefault(null);
 
     /// <summary>
     /// A registry over the machine's grammars. Registries are confined to one thread (their injection parsers are not thread-safe), so every
@@ -69,6 +70,22 @@ internal static class TreeSitterTestSupport
 
     public static bool Has(string[] stack, string scopePrefix) =>
         stack.Any(s => s == scopePrefix || s.StartsWith(scopePrefix + ".", StringComparison.Ordinal));
+
+    /// <summary>The repository (found by walking up to CsCode.slnx from the test assembly).</summary>
+    public static string RepoRoot()
+    {
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "CsCode.slnx"))) return d.FullName;
+        throw new InvalidOperationException("CsCode.slnx not found above " + AppContext.BaseDirectory);
+    }
+
+    /// <summary>The app's bundle next to the test assembly (built by tools/treesitter/build-grammars.sh); skips the test when there is none.</summary>
+    public static TreeSitterBundle RequireBundle()
+    {
+        Assert.SkipWhen(TreeSitterBundle.Default is null,
+            $"no tree-sitter bundle next to the tests ({TreeSitterBundle.DefaultProblem}); run tools/treesitter/build-grammars.sh and rebuild");
+        return TreeSitterBundle.Default!;
+    }
 }
 
 /// <summary>A string as tree-sitter input.</summary>

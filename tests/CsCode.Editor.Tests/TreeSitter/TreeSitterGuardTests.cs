@@ -38,13 +38,24 @@ public class TreeSitterGuardTests
         try
         {
             using var host = ViewHost.Create();
-            host.Config.Set(TreeSitterService.SettingKey, true);
+            host.Config.Set(TreeSitterService.SettingKey, TreeSitterService.TreeSitter);
             var (_, small, _) = await host.OpenAsync(TreeSitterViewTests.CSharp, "Small.cs");
             await TreeSitterViewTests.WaitForTreeSitter(small);
 
             var body = string.Concat(Enumerable.Range(0, 3000).Select(i => $"public class C{i} {{ int F{i}(int a) {{ return a * {i}; }} }}\n"));
             var (_, view, _) = await host.OpenAsync(Unparsable + body, "Pathological.cs");
-            await ViewHost.WaitFor(() => view.Tokens is { TreeSitterGaveUp: true } t && t.TreeSitter is null && t.Store.ValidLines > 10, "TextMate takes over", 60_000);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (!(view.Tokens is { TreeSitterGaveUp: true } t && t.TreeSitter is null && t.Store.ValidLines > 10))
+            {
+                // T16: say where it stands if it does not get there (a load miss looks different from a broken guard)
+                if (clock.Elapsed > TimeSpan.FromSeconds(60))
+                    Assert.Fail($"TextMate did not take over in 60 s (load {TreeSitterBenchmarks.Load1():0.0}): gave up {view.Tokens?.TreeSitterGaveUp}, " +
+                        $"wanted {view.Tokens?.TreeSitterWanted}, engine {(view.Tokens?.TreeSitter is { } e ? $"parse time {e.ParseTimeSinceTree.TotalMilliseconds:0} ms" : "none")}, " +
+                        $"valid lines {view.Tokens?.Store.ValidLines}");
+                ViewHost.Pump();
+                await Task.Delay(15);
+            }
+            TestContext.Current.TestOutputHelper?.WriteLine($"handed to TextMate after {clock.Elapsed.TotalMilliseconds:0} ms (load {TreeSitterBenchmarks.Load1():0.0})");
             Assert.Equal("TextMate", view.SyntaxEngine);
             Assert.Equal("tree-sitter", small.SyntaxEngine); // the guard is per document
         }

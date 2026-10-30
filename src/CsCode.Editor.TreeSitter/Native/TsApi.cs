@@ -133,6 +133,20 @@ internal unsafe struct TSParseOptions
     public delegate* unmanaged[Cdecl]<TSParseState*, byte> ProgressCallback;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct TSQueryCursorState
+{
+    public void* Payload;
+    public uint CurrentByteOffset;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct TSQueryCursorOptions
+{
+    public void* Payload;
+    public delegate* unmanaged[Cdecl]<TSQueryCursorState*, byte> ProgressCallback;
+}
+
 /// <summary>
 /// The tree-sitter C API entry points used by CsCode. The import name <see cref="Library"/> is resolved by <see cref="TsRuntime"/>
 /// (a DllImport resolver that hands out the library it found and checked), so nothing here is called before <see cref="TsRuntime.IsAvailable"/>.
@@ -175,6 +189,10 @@ internal static unsafe partial class TsApi
     [LibraryImport(Library)] public static partial TSNode ts_node_named_child(TSNode node, uint index);
     [LibraryImport(Library)] public static partial uint ts_node_descendant_count(TSNode node);
     [LibraryImport(Library)] public static partial TSNode ts_node_named_descendant_for_byte_range(TSNode node, uint start, uint end);
+    [LibraryImport(Library)] public static partial TSNode ts_node_descendant_for_byte_range(TSNode node, uint start, uint end);
+    [LibraryImport(Library)] public static partial TSNode ts_node_next_named_sibling(TSNode node);
+    [LibraryImport(Library)] public static partial TSNode ts_node_prev_named_sibling(TSNode node);
+    [LibraryImport(Library)] public static partial byte ts_node_is_extra(TSNode node);
     [LibraryImport(Library)] public static partial byte* ts_node_string(TSNode node);
 
     // ---- query ----
@@ -192,6 +210,8 @@ internal static unsafe partial class TsApi
     [LibraryImport(Library)] public static partial IntPtr ts_query_cursor_new();
     [LibraryImport(Library)] public static partial void ts_query_cursor_delete(IntPtr cursor);
     [LibraryImport(Library)] public static partial void ts_query_cursor_exec(IntPtr cursor, IntPtr query, TSNode node);
+    // the cursor keeps the options pointer for the whole iteration (next_match/next_capture): it must stay valid until the next exec
+    [LibraryImport(Library)] public static partial void ts_query_cursor_exec_with_options(IntPtr cursor, IntPtr query, TSNode node, TSQueryCursorOptions* options);
     [LibraryImport(Library)] public static partial byte ts_query_cursor_set_byte_range(IntPtr cursor, uint start, uint end);
     [LibraryImport(Library)] public static partial void ts_query_cursor_set_match_limit(IntPtr cursor, uint limit);
     [LibraryImport(Library)] public static partial byte ts_query_cursor_did_exceed_match_limit(IntPtr cursor);

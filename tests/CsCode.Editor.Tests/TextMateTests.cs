@@ -151,9 +151,10 @@ public sealed class TextMateTests : IDisposable
         var (_, plain) = Open("just text", "plaintext", expectTokens: false);
         Assert.False(plain.HasGrammar);
         Assert.Null(plain.Store.GetTokens(0));
-        var (_, zig) = Open("const x = 1;", "zig", expectTokens: false); // a known language id without a bundled grammar
-        Assert.False(zig.HasGrammar);
-        Assert.Null(zig.Store.GetTokens(0));
+        // a language id without any grammar (Zig, the example before, is coloured by tree-sitter now: docs/TREE-SITTER.md)
+        var (_, unknown) = Open("const x = 1;", "x-no-such-language", expectTokens: false);
+        Assert.False(unknown.HasGrammar);
+        Assert.Null(unknown.Store.GetTokens(0));
     }
 
     // ---- state across lines ----

@@ -7,7 +7,7 @@ using CsCode.Editor.TreeSitter.Highlighting;
 namespace CsCode.Editor.TreeSitter;
 
 /// <summary>
-/// Edits recorded on the UI thread for the tree-sitter engine of one document, drained in order on the worker. Bounded: when edits pile up
+/// Edits recorded on the UI thread for the tree-sitter engine of one document, drained in order on the syntax lane. Bounded: when edits pile up
 /// unconsumed (no slice ran, e.g. no view), older ones are dropped and the engine falls back to a full parse (it detects the gap by version).
 /// </summary>
 internal sealed class TreeSitterEditQueue
@@ -48,13 +48,13 @@ internal sealed class TreeSitterEditQueue
 /// TextMate path produces — <c>(startColumn, scopeStackId)</c> rows in the session's <see cref="LineTokenStore"/> — so the colorizer, themes,
 /// auto-closing (<c>KindAt</c>) and bracket matching work unchanged; only how the rows are computed differs.
 ///
-/// Per worker slice (≤ <see cref="TokenizationSession.SliceBudget"/>): drain the recorded edits into the tree (<c>ts_tree_edit</c>), continue
+/// Per lane slice (≤ <see cref="TokenizationSession.SliceBudget"/>): drain the recorded edits into the tree (<c>ts_tree_edit</c>), continue
 /// the incremental parse until the slice budget (a halted parse resumes next slice; an edit cancels it), then highlight the viewport
 /// (always after a new tree or a scroll — cheap), then the lines the edit or <c>ts_tree_get_changed_ranges</c> dirtied near the viewport, then
 /// read-ahead once typing pauses. Dirty lines far from the viewport just lose their tokens and are highlighted when they come into view.
 /// Rows identical to the stored ones are not republished, so a re-highlight that changes nothing costs the UI nothing.
 ///
-/// Confined to the editor worker except <see cref="RequestCancel"/> (UI thread, on every edit).
+/// Confined to its syntax lane (<see cref="Lane"/>, the <see cref="TreeSitterService"/>'s own thread) except <see cref="RequestCancel"/> (UI thread, on every edit).
 /// </summary>
 internal sealed class TreeSitterHighlighter : IDisposable
 {
@@ -68,7 +68,6 @@ internal sealed class TreeSitterHighlighter : IDisposable
     /// </summary>
     internal static TimeSpan MaxParseTimeWithoutTree { get; set; } = TimeSpan.FromSeconds(5);
 
-    private readonly TreeSitterService _service;
     private readonly SyntaxDocument _syntax;
     private readonly PaintBuffer _paint = new();
     private readonly DirtyLines _dirty = new();
@@ -82,13 +81,25 @@ internal sealed class TreeSitterHighlighter : IDisposable
     private bool _disposed;
     private TimeSpan _parseTimeSinceTree;
 
-    private TreeSitterHighlighter(TreeSitterService service, SyntaxDocument syntax, string languageId, int generation)
+    /// <summary>Consecutive highlight calls the query guard had to stop (<see cref="SyntaxDocument.MaxQueryTime"/>) before the engine gives up.</summary>
+    internal const int MaxQueryOverruns = 3;
+
+    private int _queryOverruns;
+
+    private TreeSitterHighlighter(TreeSitterService service, SyntaxDocument syntax, string languageId, int generation, EditorWorker lane)
     {
-        _service = service;
         _syntax = syntax;
         LanguageId = languageId;
         Generation = generation;
+        Lane = lane;
+        // the stack cache of THIS lane: after a hang the service hands out a new lane's cache, which a woken engine of the old lane must not touch
+        _stacks = service.Stacks;
     }
+
+    private readonly IScopeStacks _stacks;
+
+    /// <summary>The syntax lane this engine (and its native objects) belongs to.</summary>
+    public EditorWorker Lane { get; }
 
     public string LanguageId { get; }
 
@@ -106,22 +117,35 @@ internal sealed class TreeSitterHighlighter : IDisposable
     public TimeSpan LastHighlightTime { get; private set; }
     public int CompletedParses { get; private set; }
 
-    /// <summary>The managed thread that ran the last slice (tests prove it is the editor worker, never the UI thread).</summary>
+    /// <summary>The managed thread that ran the last slice (tests prove it is the syntax lane, never the UI thread).</summary>
     public int LastSliceThreadId { get; private set; }
 
-    /// <summary>True once parsing took longer than <see cref="MaxParseTimeWithoutTree"/> without a result: the session hands the document to TextMate.</summary>
+    /// <summary>
+    /// True once a guard tripped — parsing took longer than <see cref="MaxParseTimeWithoutTree"/> without a result, or the query guard stopped
+    /// <see cref="MaxQueryOverruns"/> highlight passes in a row: the session hands the document to TextMate (<see cref="GaveUpReason"/>).
+    /// </summary>
     public bool GaveUp { get; private set; }
+
+    public string? GaveUpReason { get; private set; }
 
     /// <summary>Worker time spent parsing since the last completed tree (all slices, abandoned parses included).</summary>
     public TimeSpan ParseTimeSinceTree => _parseTimeSinceTree;
 
-    /// <summary>Worker only. Null (and the reason logged once by the service) when tree-sitter cannot handle the language here.</summary>
-    public static TreeSitterHighlighter? TryCreate(TreeSitterService service, string languageId, int generation)
+    /// <summary>The document version the current tree is the tree of (int.MinValue before the first parse). Lane only.</summary>
+    public int TreeVersion => _treeVersion;
+
+    /// <summary>The text of the current tree (lane only; null before the first parse).</summary>
+    internal SnapshotTextInput? TreeText => _treeVersion == int.MinValue ? null : _treeText;
+
+    private SnapshotTextInput? _treeText;
+
+    /// <summary>Lane only. Null (and the reason logged once by the service) when tree-sitter cannot handle the document here.</summary>
+    public static TreeSitterHighlighter? TryCreate(TreeSitterService service, string languageId, Uri? uri, int generation)
     {
-        if (service.BundleFor(languageId) is not { } bundle) return null;
+        if (service.BundleFor(languageId, uri) is not { } bundle) return null;
         try
         {
-            return new TreeSitterHighlighter(service, new SyntaxDocument(service.Registry, bundle), languageId, generation);
+            return new TreeSitterHighlighter(service, new SyntaxDocument(service.Registry, bundle), languageId, generation, service.Lane);
         }
         catch (InvalidOperationException)
         {
@@ -132,7 +156,7 @@ internal sealed class TreeSitterHighlighter : IDisposable
     /// <summary>Any thread: an edit made the running parse stale.</summary>
     public void RequestCancel() => _syntax.RequestCancel();
 
-    /// <summary>One worker slice for <paramref name="session"/>.</summary>
+    /// <summary>One lane slice for <paramref name="session"/>.</summary>
     public void RunSlice(TokenizationSession session)
     {
         if (_disposed) return;
@@ -157,7 +181,8 @@ internal sealed class TreeSitterHighlighter : IDisposable
             {
                 if (_parseTimeSinceTree > MaxParseTimeWithoutTree)
                 {
-                    GaveUp = true; // the session disposes this engine and lets TextMate colour the document
+                    // the session disposes this engine and lets TextMate colour the document
+                    GiveUp($"{_parseTimeSinceTree.TotalSeconds:0.0} s of parsing without a result (grammar error recovery?)");
                     return;
                 }
                 if (session.Document.Version == snap.Version) session.ScheduleSlice(WorkPriority.Visible); // out of budget: resume next slice
@@ -165,6 +190,8 @@ internal sealed class TreeSitterHighlighter : IDisposable
             }
             _parseTimeSinceTree = TimeSpan.Zero;
             _treeVersion = snap.Version;
+            _treeText = text;
+            TreeReady?.Invoke(this);
             CompletedParses++;
             Volatile.Write(ref _estimatedBytes, _syntax.EstimatedTreeBytes);
             if (_fullRefresh)
@@ -296,6 +323,15 @@ internal sealed class TreeSitterHighlighter : IDisposable
         return null;
     }
 
+    private void GiveUp(string reason)
+    {
+        GaveUp = true;
+        GaveUpReason = reason;
+    }
+
+    /// <summary>Fires on the lane after each completed parse (structural features wait for the tree of a version through it).</summary>
+    internal Action<TreeSitterHighlighter>? TreeReady { get; set; }
+
     /// <summary>Highlights lines [first, last] and publishes the rows that changed. False when the document moved on (stop the slice).</summary>
     private bool Highlight(TokenizationSession session, SnapshotTextInput text, int first, int last)
     {
@@ -303,8 +339,18 @@ internal sealed class TreeSitterHighlighter : IDisposable
         var store = session.Store;
         var start = text.LineStart(first);
         var end = text.LineEnd(last);
-        _syntax.Highlight(text, start, end, _service.Stacks, _paint);
-        var root = _paint.Length > 0 ? -1 : _service.Stacks.Root(_syntax.Language.RootScopeKey);
+        _syntax.Highlight(text, start, end, _stacks, _paint);
+        if (_syntax.LastQueryTimedOut)
+        {
+            // the query guard stopped this pass (its colours are partial): a document that keeps doing it goes to TextMate
+            if (++_queryOverruns >= MaxQueryOverruns)
+            {
+                GiveUp($"{MaxQueryOverruns} highlight passes in a row ran into the {SyntaxDocument.MaxQueryTime.TotalSeconds:0.#} s query limit");
+                return false;
+            }
+        }
+        else _queryOverruns = 0;
+        var root = _paint.Length > 0 ? -1 : _stacks.Root(_syntax.Language.RootScopeKey);
         var runStart = -1;
         for (var line = first; line <= last; line++)
         {
@@ -327,6 +373,12 @@ internal sealed class TreeSitterHighlighter : IDisposable
 
     private bool Flush(TokenizationSession session, int version, int first, int last)
     {
+        // a restart (engine switch) or a lane change retired this engine meanwhile: its rows must not land in the store any more
+        if (!session.IsCurrentEngine(this))
+        {
+            _batch.Clear();
+            return false;
+        }
         var ok = session.Store.Publish(version, first, _batch, [], chain: false);
         _batch.Clear();
         if (ok) session.NotifyTokensChanged(first, last);
@@ -356,7 +408,7 @@ internal sealed class TreeSitterHighlighter : IDisposable
         return _pairs.ToArray();
     }
 
-    /// <summary>Worker only: frees the parser, tree and query cursor.</summary>
+    /// <summary>Lane only: frees the parser, tree and query cursor.</summary>
     public void Dispose()
     {
         if (_disposed) return;

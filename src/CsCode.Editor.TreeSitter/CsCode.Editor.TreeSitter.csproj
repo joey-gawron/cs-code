@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- EXPERIMENTAL tree-sitter engine for syntax colouring, behind the setting editor.experimental.treeSitter (docs/TREE-SITTER-EVALUATION.md).
-       A thin own P/Invoke layer over the tree-sitter C API (libtree-sitter 0.25+, grammar ABI 13-15), grammar and query discovery, query
-       predicates, capture -> TextMate scope mapping and the per-document parser/highlighter. No Avalonia and no UI thread: everything here
-       is called on the editor worker. Native code is NOT shipped: the runtime and the grammars are found on the machine. -->
+  <!-- The tree-sitter engine for syntax colouring and the structural features (docs/TREE-SITTER.md): a thin own P/Invoke layer over the
+       tree-sitter C API (libtree-sitter 0.25+, grammar ABI 13-15), grammar and query discovery (the app's bundled grammars first), query
+       predicates, capture -> TextMate scope mapping, the per-document parser/highlighter, the structural queries and the crash/hang
+       isolation. No Avalonia and no UI thread: everything here runs on the editor's syntax lane. -->
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
@@ -11,6 +11,25 @@
   <ItemGroup>
     <InternalsVisibleTo Include="CsCode.Editor" />
     <InternalsVisibleTo Include="CsCode.Editor.Tests" />
+  </ItemGroup>
+
+  <!-- CsCode's own queries (the outline's symbols.scm for grammars without tags.scm): OwnQueries/<grammar>/<kind>.scm -->
+  <ItemGroup>
+    <EmbeddedResource Include="OwnQueries/**/*.scm" LogicalName="cscode.queries/$([System.String]::Copy('%(RecursiveDir)').Replace('\','/'))%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- The bundle tools/treesitter/build-grammars.sh builds (git-ignored artifacts/tree-sitter/<rid>/: runtime, grammars, queries, licences,
+       NOTICE, bundle.json) is copied as tree-sitter/ into the output and the publish folder of every project that references this one
+       (the app, its tests). No bundle (the script was not run) = nothing is copied and the engine falls back to what the machine has. -->
+  <PropertyGroup>
+    <CsCodeTreeSitterRid Condition="'$(CsCodeTreeSitterRid)' == ''">$(RuntimeIdentifier)</CsCodeTreeSitterRid>
+    <CsCodeTreeSitterRid Condition="'$(CsCodeTreeSitterRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</CsCodeTreeSitterRid>
+    <CsCodeTreeSitterBundle Condition="'$(CsCodeTreeSitterBundle)' == ''">$(MSBuildThisFileDirectory)../../artifacts/tree-sitter/$(CsCodeTreeSitterRid)/</CsCodeTreeSitterBundle>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(CsCodeTreeSitterBundle)bundle.json')">
+    <None Include="$(CsCodeTreeSitterBundle)**/*" Exclude="$(CsCodeTreeSitterBundle).work/**"
+          Link="tree-sitter/%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
 </Project>
