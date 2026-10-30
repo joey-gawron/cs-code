@@ -10,7 +10,7 @@
 # assets; the linux-amd64 one was also checked against a download, 2026-10-30); on an Intel Mac, release 3.1.3-1062, the last with an
 # osx-amd64 build. Runs on macOS's bash 3.2 and BSD tools. The archive must match the pin before anything is extracted;
 # extraction refuses absolute paths, '..' components, links and special files. NOT vsdbg (its licence forbids use outside Microsoft products).
-# The app itself does the same job at runtime through CsCode.Dap's NetCoreDbgInstaller (after asking the user).
+# The app itself does the same job at runtime through CsCode.Dap's NetCoreDbgInstaller (after asking the user), with the same pins.
 set -euo pipefail
 
 repo="Samsung/netcoredbg"

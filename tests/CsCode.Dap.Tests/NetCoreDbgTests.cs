@@ -4,6 +4,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using CsCode.Core.Debugging;
 using CsCode.Dap.Adapters;
 using CsCode.Dap.Configuration;
@@ -214,6 +215,9 @@ public class NetCoreDbgInstallerTests
 
     private static string Sha(byte[] b) => Convert.ToHexString(SHA256.HashData(b)).ToLowerInvariant();
 
+    /// <summary>An installer that takes the latest release from the fake's API (the fake's archive is never the pinned one).</summary>
+    private static NetCoreDbgInstaller Latest(FakeGitHub gh) => new(gh) { UseLatestRelease = true };
+
     [Fact]
     public void The_platform_asset_matches_this_machine()
     {
@@ -227,7 +231,7 @@ public class NetCoreDbgInstallerTests
         var gh = new FakeGitHub(archive, asset, Sha(archive));
         using var tools = new TempDirectory();
         var reports = new List<(string?, double?)>();
-        var exe = await new NetCoreDbgInstaller(gh).InstallAsync(tools.Path, new Progress(reports), Ct);
+        var exe = await Latest(gh).InstallAsync(tools.Path, new Progress(reports), Ct);
 
         Assert.Equal(Path.Combine(tools.Path, "netcoredbg", NetCoreDbgAdapterFactory.ExecutableName), exe);
         Assert.True(File.Exists(exe));
@@ -244,7 +248,7 @@ public class NetCoreDbgInstallerTests
         var (archive, asset) = MakeArchive();
         var gh = new FakeGitHub(archive, asset, new string('0', 64));
         using var tools = new TempDirectory();
-        var ex = await Assert.ThrowsAsync<InvalidDataException>(async () => await new NetCoreDbgInstaller(gh).InstallAsync(tools.Path, null, Ct));
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(async () => await Latest(gh).InstallAsync(tools.Path, null, Ct));
         Assert.Contains("SHA-256", ex.Message);
         Assert.Empty(Directory.GetFileSystemEntries(tools.Path)); // nothing extracted, nothing left behind
     }
@@ -254,7 +258,7 @@ public class NetCoreDbgInstallerTests
     {
         var (archive, asset) = MakeArchive();
         using var tools = new TempDirectory();
-        var exe = await new NetCoreDbgInstaller(new FakeGitHub(archive, asset, null)).InstallAsync(tools.Path, null, Ct);
+        var exe = await Latest(new FakeGitHub(archive, asset, null)).InstallAsync(tools.Path, null, Ct);
         Assert.True(File.Exists(exe));
     }
 
@@ -264,7 +268,7 @@ public class NetCoreDbgInstallerTests
         var garbage = Encoding.UTF8.GetBytes("this is not an archive at all");
         var asset = NetCoreDbgInstaller.CurrentPlatformAsset()!;
         using var tools = new TempDirectory();
-        await Assert.ThrowsAnyAsync<Exception>(async () => await new NetCoreDbgInstaller(new FakeGitHub(garbage, asset, Sha(garbage))).InstallAsync(tools.Path, null, Ct));
+        await Assert.ThrowsAnyAsync<Exception>(async () => await Latest(new FakeGitHub(garbage, asset, Sha(garbage))).InstallAsync(tools.Path, null, Ct));
         Assert.Empty(Directory.GetFileSystemEntries(tools.Path));
     }
 
@@ -288,7 +292,7 @@ public class NetCoreDbgInstallerTests
             archive = ms.ToArray();
         }
         using var tools = new TempDirectory();
-        await Assert.ThrowsAsync<InvalidOperationException>(async () => await new NetCoreDbgInstaller(new FakeGitHub(archive, asset, Sha(archive))).InstallAsync(tools.Path, null, Ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await Latest(new FakeGitHub(archive, asset, Sha(archive))).InstallAsync(tools.Path, null, Ct));
     }
 
     [Fact]
@@ -296,7 +300,7 @@ public class NetCoreDbgInstallerTests
     {
         var (archive, asset) = MakeArchive();
         using var tools = new TempDirectory();
-        var installer = new NetCoreDbgInstaller(new FakeGitHub(archive, asset, Sha(archive)));
+        var installer = Latest(new FakeGitHub(archive, asset, Sha(archive)));
         await installer.InstallAsync(tools.Path, null, Ct);
         File.WriteAllText(Path.Combine(tools.Path, "netcoredbg", "stale.txt"), "old");
         await installer.InstallAsync(tools.Path, null, Ct);
@@ -308,8 +312,8 @@ public class NetCoreDbgInstallerTests
     {
         var (archive, asset) = MakeArchive();
         using var tools = new TempDirectory();
-        await Assert.ThrowsAsync<HttpRequestException>(async () => await new NetCoreDbgInstaller(new FakeGitHub(archive, asset, null, apiStatus: HttpStatusCode.Forbidden)).InstallAsync(tools.Path, null, Ct));
-        await Assert.ThrowsAsync<HttpRequestException>(async () => await new NetCoreDbgInstaller(new FakeGitHub(archive, asset, null, downloadStatus: HttpStatusCode.NotFound)).InstallAsync(tools.Path, null, Ct));
+        await Assert.ThrowsAsync<HttpRequestException>(async () => await Latest(new FakeGitHub(archive, asset, null, apiStatus: HttpStatusCode.Forbidden)).InstallAsync(tools.Path, null, Ct));
+        await Assert.ThrowsAsync<HttpRequestException>(async () => await Latest(new FakeGitHub(archive, asset, null, downloadStatus: HttpStatusCode.NotFound)).InstallAsync(tools.Path, null, Ct));
         Assert.Empty(Directory.GetFileSystemEntries(tools.Path));
     }
 
@@ -318,20 +322,55 @@ public class NetCoreDbgInstallerTests
     {
         var (archive, _) = MakeArchive();
         using var tools = new TempDirectory();
-        await Assert.ThrowsAsync<InvalidOperationException>(async () => await new NetCoreDbgInstaller(new FakeGitHub(archive, "netcoredbg-some-other-os.zip", null)).InstallAsync(tools.Path, null, Ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await Latest(new FakeGitHub(archive, "netcoredbg-some-other-os.zip", null)).InstallAsync(tools.Path, null, Ct));
     }
 
     [Fact]
-    public void Only_the_intel_mac_asset_is_pinned_to_its_last_release()
+    public void Every_asset_is_pinned_with_a_size_and_a_sha256_and_the_fetch_script_pins_the_same()
     {
-        var pin = NetCoreDbgInstaller.PinnedRelease("netcoredbg-osx-amd64.tar.gz");
-        Assert.NotNull(pin);
-        Assert.Equal("3.1.3-1062", pin.Tag);
-        Assert.Equal("https://github.com/Samsung/netcoredbg/releases/download/3.1.3-1062/netcoredbg-osx-amd64.tar.gz", pin.DownloadUrl.ToString());
-        Assert.Equal(3479468, pin.Size);
-        Assert.Equal("49459b066836b6a452f418501d7ecab57bcd7e60d8464faac21ff70b496b8634", pin.Sha256);
-        foreach (var asset in new[] { "netcoredbg-linux-amd64.tar.gz", "netcoredbg-linux-arm64.tar.gz", "netcoredbg-osx-arm64.zip", "netcoredbg-win64.zip" })
-            Assert.Null(NetCoreDbgInstaller.PinnedRelease(asset));
+        string[] assets = ["netcoredbg-linux-amd64.tar.gz", "netcoredbg-linux-arm64.tar.gz", "netcoredbg-osx-arm64.zip", "netcoredbg-osx-amd64.tar.gz", "netcoredbg-win64.zip"];
+        Assert.Null(NetCoreDbgInstaller.PinnedRelease("netcoredbg-some-other-os.zip"));
+        var script = File.ReadAllText(Path.Combine(RepoRoot(), "tools", "fetch-netcoredbg.sh"));
+        Assert.Contains($"pinned_tag=\"{NetCoreDbgInstaller.PinnedTag}\"", script, StringComparison.Ordinal);
+        foreach (var asset in assets)
+        {
+            var pin = NetCoreDbgInstaller.PinnedRelease(asset);
+            Assert.NotNull(pin);
+            Assert.Equal(asset == "netcoredbg-osx-amd64.tar.gz" ? "3.1.3-1062" : NetCoreDbgInstaller.PinnedTag, pin.Tag);
+            Assert.Equal($"https://github.com/Samsung/netcoredbg/releases/download/{pin.Tag}/{asset}", pin.DownloadUrl.ToString());
+            Assert.Matches("^[0-9a-f]{64}$", pin.Sha256!);
+            Assert.InRange(pin.Size, 1_000_000, 50_000_000);
+            // tools/fetch-netcoredbg.sh reproduces the app's download: same sizes and digests.
+            Assert.Matches(new Regex($@"asset=""{Regex.Escape(asset)}"";\s+size={pin.Size}; pinned_sha256=""{pin.Sha256}"""), script);
+        }
+        Assert.Contains("pinned_tag=\"3.1.3-1062\"", script, StringComparison.Ordinal);
+    }
+
+    /// <summary>By default the pinned release is downloaded without asking the API for the latest one, and is checked against the pinned digest.</summary>
+    [Fact]
+    public async Task The_pinned_release_is_installed_unless_the_latest_is_asked_for()
+    {
+        var (archive, _) = MakeArchive();
+        const string asset = "netcoredbg-linux-amd64.tar.gz";
+        var gh = new FakeGitHub(archive, asset, Sha(archive));
+        using var tools = new TempDirectory();
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await new NetCoreDbgInstaller(gh) { PlatformAsset = () => asset }.InstallAsync(tools.Path, null, Ct));
+        Assert.Contains("080eb3b2d2152465f599d3b33d1ee6e747794e11cc0a3773ec689f5e5f2c5afa", ex.Message);
+        Assert.Equal([$"https://github.com/Samsung/netcoredbg/releases/download/3.2.0-1092/{asset}"], gh.Requests);
+        Assert.Empty(Directory.GetFileSystemEntries(tools.Path));
+
+        var latest = new FakeGitHub(archive, asset, new string('0', 64));
+        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await new NetCoreDbgInstaller(latest) { PlatformAsset = () => asset, UseLatestRelease = true }.InstallAsync(tools.Path, null, Ct));
+        Assert.Equal([NetCoreDbgInstaller.ReleasesApi, $"https://github.com/Samsung/netcoredbg/releases/download/9.9.9-1/{asset}"], latest.Requests);
+    }
+
+    private static string RepoRoot()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+            if (File.Exists(Path.Combine(dir.FullName, "CsCode.slnx"))) return dir.FullName;
+        throw new InvalidOperationException("repository root not found");
     }
 
     /// <summary>
@@ -344,11 +383,15 @@ public class NetCoreDbgInstallerTests
         var (archive, _) = MakeArchive();
         var gh = new FakeGitHub(archive, "netcoredbg-osx-amd64.tar.gz", Sha(archive));
         using var tools = new TempDirectory();
-        var installer = new NetCoreDbgInstaller(gh) { PlatformAsset = () => "netcoredbg-osx-amd64.tar.gz" };
-        var ex = await Assert.ThrowsAsync<InvalidDataException>(async () => await installer.InstallAsync(tools.Path, null, Ct));
-        Assert.Contains("49459b066836b6a452f418501d7ecab57bcd7e60d8464faac21ff70b496b8634", ex.Message);
-        Assert.Equal(["https://github.com/Samsung/netcoredbg/releases/download/3.1.3-1062/netcoredbg-osx-amd64.tar.gz"], gh.Requests);
-        Assert.Empty(Directory.GetFileSystemEntries(tools.Path));
+        foreach (var latest in new[] { false, true }) // the latest release has no osx-amd64 build, so asking for it changes nothing
+        {
+            gh.Requests.Clear();
+            var installer = new NetCoreDbgInstaller(gh) { PlatformAsset = () => "netcoredbg-osx-amd64.tar.gz", UseLatestRelease = latest };
+            var ex = await Assert.ThrowsAsync<InvalidDataException>(async () => await installer.InstallAsync(tools.Path, null, Ct));
+            Assert.Contains("49459b066836b6a452f418501d7ecab57bcd7e60d8464faac21ff70b496b8634", ex.Message);
+            Assert.Equal(["https://github.com/Samsung/netcoredbg/releases/download/3.1.3-1062/netcoredbg-osx-amd64.tar.gz"], gh.Requests);
+            Assert.Empty(Directory.GetFileSystemEntries(tools.Path));
+        }
     }
 
     [Fact]
@@ -358,7 +401,7 @@ public class NetCoreDbgInstallerTests
         using var tools = new TempDirectory();
         using var cts = new CancellationTokenSource();
         cts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await new NetCoreDbgInstaller(new FakeGitHub(archive, asset, null)).InstallAsync(tools.Path, null, cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await Latest(new FakeGitHub(archive, asset, null)).InstallAsync(tools.Path, null, cts.Token));
     }
 
     private sealed class Progress(List<(string?, double?)> sink) : CsCode.Core.Platform.IProgressReporter
@@ -448,7 +491,7 @@ public class NetCoreDbgFactoryTests
         using var paths = new TestAppPaths();
         var window = new RecordingWindowService();
         window.MessageActionResponses.Enqueue("Download");
-        var installer = new NetCoreDbgInstaller(new OfferGitHub(archive, asset));
+        var installer = new NetCoreDbgInstaller(new OfferGitHub(archive, asset)) { UseLatestRelease = true };
         var f = Make(paths: paths, window: window, installer: installer);
         var d = Assert.IsType<DebugAdapterExecutable>(await f.CreateDescriptorAsync(Cfg(), Ct));
         Assert.Equal(Path.Combine(paths.ToolsDir, "netcoredbg", NetCoreDbgAdapterFactory.ExecutableName), d.Command);
@@ -462,7 +505,7 @@ public class NetCoreDbgFactoryTests
         using var paths = new TestAppPaths();
         var window = new RecordingWindowService();
         window.MessageActionResponses.Enqueue("Download");
-        var installer = new NetCoreDbgInstaller(new OfferGitHub([], NetCoreDbgInstaller.CurrentPlatformAsset()!, fail: true));
+        var installer = new NetCoreDbgInstaller(new OfferGitHub([], NetCoreDbgInstaller.CurrentPlatformAsset()!, fail: true)) { UseLatestRelease = true };
         await Assert.ThrowsAsync<DebugSessionStartException>(async () => await Make(paths: paths, window: window, installer: installer).CreateDescriptorAsync(Cfg(), Ct));
         Assert.Contains(window.Messages, m => m.Severity == CsCode.Core.Platform.MessageSeverity.Error && m.Message.Contains("Could not install netcoredbg"));
     }
@@ -476,7 +519,7 @@ public class NetCoreDbgFactoryTests
         window.MessageActionResponses.Enqueue("Download");
         var installer = new NetCoreDbgInstaller(new OfferGitHub(MakeArchiveForOffer(), "netcoredbg-some-other-os.zip"))
         {
-            PlatformAsset = () => "netcoredbg-linux-amd64.tar.gz", // an asset that is not pinned: the latest release is looked up
+            PlatformAsset = () => "netcoredbg-linux-amd64.tar.gz", UseLatestRelease = true,
         };
         await Assert.ThrowsAsync<DebugSessionStartException>(async () => await Make(paths: paths, window: window, installer: installer).CreateDescriptorAsync(Cfg(), Ct));
         Assert.Contains(window.Messages, m => m.Severity == CsCode.Core.Platform.MessageSeverity.Error
@@ -492,7 +535,7 @@ public class NetCoreDbgFactoryTests
         var window = new RecordingWindowService();
         window.MessageActionResponses.Enqueue("Download");
         var gh = new OfferGitHub(archive, NetCoreDbgInstaller.CurrentPlatformAsset()!);
-        var f = Make(paths: paths, window: window, installer: new NetCoreDbgInstaller(gh));
+        var f = Make(paths: paths, window: window, installer: new NetCoreDbgInstaller(gh) { UseLatestRelease = true });
         var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => f.CreateDescriptorAsync(Cfg(), Ct).AsTask()));
         Assert.All(results, r => Assert.NotNull(r));
         Assert.Equal(1, gh.DownloadCount);
