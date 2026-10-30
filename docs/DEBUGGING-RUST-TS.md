@@ -545,7 +545,7 @@ the tests record (`[codelldb]` lines with `CSCODE_DAP_TEST_METRICS`) and, for th
 | Rust panics | added (client-side filter) | **works** | Its own "Rust: on panic" (`rust_panic`, default on); the stop (reason `breakpoint` on the wire) is reported as `exception`, "Paused on exception: Rust panics", text "boom at the bottom", at the user's frame `util.rs:15` (`__rustc::rust_panic` and five std frames de-emphasised); `exceptionInfo` answered by the session; the uncaught one ends with 101. P: Exception window "Exception Thrown / panic: boom at the bottom", arrow on `util.rs : 15`. | D `Rust_panics_…`, P `A_rust_panic_shows_…` |
 | Start Without Debugging | fixed | **works** | `noDebug` honoured: 0 stops, exit code 0 (no breakpoint requests sent: CodeLLDB would refuse them); panics off → 101, no stop. | D `Start_without_debugging_…` |
 | Step over / into / out | works | **works** | Into → `util.rs:4` (`sample::util::add`), over → `util.rs:6` (as with GDB: `sum` has no line of its own), out → `main.rs:100`; reasons `step`. | D `Step_into_over_and_out_…` |
-| Return value after step out | fixed (Return scope) | **works** (Locals) | `[return value]=52` is the first row of "Local" (`stop_return_value()`); Autos does not lift it (it knows GDB's `returnValue` scope only). | D (same) |
+| Return value after step out | fixed (Return scope) | **works** (Locals) | `[return value]=52` is the first row of "Local" (`stop_return_value()`); Autos lifts it (shows it first, whatever the line mentions), as GDB's `returnValue` scope (end pass T52, `GdbPanelFixTests.Autos_lift_a_return_value_listed_among_the_locals`). | D (same) |
 | Scopes | `Locals`/`Arguments` (hinted) | **works** | "Local", "Static" (vtables), "Global" (empty), "Registers": none hinted, none expensive; the Locals window takes "Local" by name (`ScopeSelector`). | D, P |
 | Pause | fixed (stop location) | **was broken → fixed** | On the wire: `{"reason":"exception","description":"signal SIGSTOP"}` after our `pause` (the first run's "expected pause, got exception"). Now reason `pause` at `sample::serve` `main.rs:46` (libc's `__internal_syscall_cancel` comes as disassembly, de-emphasised); P: arrow on `serve`, no Exception window. | D `Pause_stop_while_running_and_restart`, P `Break_all_shows_…`, `CodeLldbQuirksTests` |
 | Restart | client relaunch (270–660 ms, new GDB) | **works** (faster) | `supportsRestartRequest`: running again after **37–45 ms** in the same codelldb. | D (same) |
@@ -598,7 +598,7 @@ The three new session hooks are additive (`DebugAdapterQuirks`, off by default):
   (`v.len()`) and casts (`x as u8`) do not; primitive types show C names (`int`, `unsigned int`, `long long`).
 * A `println!` line has 3 locations (3 stops per pass).
 * No `process` event: `DebuggeeProcessId` stays empty.
-* Its scopes carry no presentation hints (Locals relies on the name "Local"); Autos does not lift the `[return value]` row.
+* Its scopes carry no presentation hints (Locals relies on the name "Local"); Autos lifts the `[return value]` row by its name (end pass T52).
 * The first stop comes ~0.4 s later than GDB's (liblldb and the Python formatters load first).
 * The download: 56 MB (170 MB installed), offered on first use.
 
