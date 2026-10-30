@@ -187,7 +187,7 @@ Debug build, shared 22-core Linux machine; ranges are the spread of repeated run
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
 `sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.showHover` (at the caret),
-`editor.action.marker.next`/`marker.prev` (next / previous problem, wrapping; the caret goes there and the hover shows it), `editor.action.startFindReplace`, `workbench.action.gotoLine`, `editor.action.triggerSuggest`, `triggerParameterHints`, `quickFix`, `organizeImports`, `revealDefinition`, `goToDeclaration`, `goToTypeDefinition`,
+`editor.action.marker.next`/`marker.prev` (next / previous problem, wrapping; the caret goes there and the hover shows it), `editor.action.startFindReplace` (`actions.find` and it put the keyboard in the find box at once, also the first time the panel opens and headless: T20), `workbench.action.gotoLine`, `editor.action.triggerSuggest`, `triggerParameterHints`, `quickFix`, `organizeImports`, `revealDefinition`, `goToDeclaration`, `goToTypeDefinition`,
 `goToImplementation`, `goToReferences`, `rename`, `formatDocument`, `formatSelection`, `editor.fold`, `foldRecursively`, `unfold`, `unfoldRecursively`, `toggleFold`, `foldAll`, `unfoldAll`, `editor.action.insertSnippet`, `editor.debug.action.toggleBreakpoint`.
 
 ### 7a. Clipboard and the right-click menu
