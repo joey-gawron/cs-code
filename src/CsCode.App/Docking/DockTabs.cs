@@ -313,12 +313,28 @@ public sealed class ToolTab : Tool, IDisposable, IRecyclingDataTemplate
     {
         if (_host is null)
         {
-            _host = new Border();
-            ShellFocus.SetArea(_host, Spec.Id is "explorer" ? FocusArea.Explorer : FocusArea.Panel);
+            var host = _host = new Border();
+            ShellFocus.SetArea(host, Spec.Id is "explorer" ? FocusArea.Explorer : FocusArea.Panel);
+            host.LostFocus += (_, _) => host.Focusable = false; // see FocusHost
         }
         var view = EnsureView();
         if (!ReferenceEquals(_host.Child, view)) _host.Child = view;
         return _host;
+    }
+
+    /// <summary>
+    /// The last resort of <see cref="ToolWindowManager.FocusView"/>, for a view with nothing that can take the keyboard but its buttons, splitters
+    /// and drop-downs (the Call Stack or Locals outside a debug session: an empty list under a header; the Output window with no line: an empty
+    /// list under the channel picker): the host takes it, so it still leaves the editor for the window Visual Studio would have activated.
+    /// Focusable only until the keyboard leaves it, so a click on the window's blank space keeps doing what it did (nothing).
+    /// </summary>
+    internal bool FocusHost()
+    {
+        if (_host is not { } host) return false;
+        host.Focusable = true;
+        if (host.Focus()) return true;
+        host.Focusable = false;
+        return false;
     }
 
     bool IDataTemplate.Match(object? data) => ReferenceEquals(data, this);

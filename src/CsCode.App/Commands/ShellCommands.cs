@@ -171,10 +171,17 @@ public static class ShellCommands
                 Run(toggle, "Toggle " + tool.Title, "View", () => { c.Tools.Toggle(id); return Task.CompletedTask; });
         }
         Run(ShowErrorList, "Show Error List", "View", () => { c.Tools.Show("errorlist"); return Task.CompletedTask; });
-        Hidden(ShellMenus.ShowToolWindow, inv =>
+        // View > Tool Windows: Visual Studio's View menu shows, activates AND focuses the window, so what the user types next goes there. A tool
+        // whose module shows itself its own way (ShowCommandId: Terminal creates a terminal, Find in Files seeds its query) runs that before the
+        // shell shows it: shown first, the Terminal's view would attach while the command's terminal is still starting and create a second one.
+        // Every other tool gets the keyboard in its view once Dock has laid it out.
+        Hidden(ShellMenus.ShowToolWindow, async inv =>
         {
-            if (inv.Arg<string>(0) is { } id) c.Tools.Show(id);
-            return Task.CompletedTask;
+            if (inv.Arg<string>(0) is not { } id || c.Tools.Get(id) is not { } tool) return;
+            var own = tool.Spec.ShowCommandId is { } show && c.Commands.Has(show) ? show : null;
+            if (own is not null) await c.Commands.ExecuteAsync(own).ConfigureAwait(true);
+            c.Tools.Show(id); // also after the tool's own command, so the window is in front whatever that command does
+            if (own is null) c.Tools.FocusView(id);
         });
 
         // Status-bar language picker.

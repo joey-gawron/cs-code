@@ -1,3 +1,7 @@
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CsCode.Core.Lifecycle;
 using CsCode.Ui;
 using Dock.Model.Controls;
@@ -20,6 +24,7 @@ public sealed class ToolWindowManager : IDisposable
     private readonly Dictionary<string, IToolWindow> _documentViews = new(StringComparer.Ordinal);
     private readonly Emitter<(string Id, bool Visible)> _visibilityChanged = new();
     private readonly DisposableStore _subs = new();
+    private int _focusRequest;
 
     public ToolWindowManager(ShellDockFactory factory, IEnumerable<IToolWindow> specs, IServiceProvider services)
     {
@@ -100,6 +105,56 @@ public sealed class ToolWindowManager : IDisposable
         }
         t.EnsureHost(); // the view, inside the host Dock presents (Dock may reuse the host it cached for this tool)
         _visibilityChanged.Fire((id, true));
+    }
+
+    /// <summary>
+    /// Puts the keyboard into a shown tool's view, as Visual Studio's View menu does for the window it shows (typing next goes there, not into the
+    /// editor): on the element the view prefers (<see cref="IToolWindowFocus"/>), else on its first content element in tab order (never a button,
+    /// splitter or drop-down, see <see cref="FirstContentElement"/>), else, for a view with nothing else that can take it, on its host
+    /// (<see cref="ToolTab.FocusHost"/>). <see cref="Show"/> only creates the view and Dock presents it on a later layout pass, so this runs after
+    /// layout and waits (bounded) until the view is on screen and has its content (<see cref="IToolWindowFocus.ContentPending"/>: the rows of an
+    /// Explorer just created). Nothing happens when the tool was hidden meanwhile or a later request superseded this one.
+    /// </summary>
+    public void FocusView(string id)
+    {
+        if (!_tools.TryGetValue(id, out var t)) return;
+        var request = ++_focusRequest;
+        Dispatcher.UIThread.Post(() => FocusWhenShown(t, request, 0), DispatcherPriority.Loaded);
+    }
+
+    private void FocusWhenShown(ToolTab t, int request, int attempt)
+    {
+        if (request != _focusRequest || t.LiveView is not { } view) return;
+        var shown = view.IsAttachedToVisualTree() && view.IsEffectivelyVisible;
+        if (!shown || view is IToolWindowFocus { ContentPending: true })
+        {
+            if (attempt < 20) { DispatcherTimer.RunOnce(() => FocusWhenShown(t, request, attempt + 1), TimeSpan.FromMilliseconds(25)); return; }
+            if (!shown) return; // content still pending at the bound: what the view has now
+        }
+        if (view is IToolWindowFocus own && own.FocusPreferred()) return;
+        if (FirstContentElement(view)?.Focus() == true) return;
+        t.FocusHost();
+    }
+
+    /// <summary>
+    /// The first element of <paramref name="view"/> in tab order that is the window's content, not its chrome: never a button (ToggleButton,
+    /// CheckBox and the rest are buttons too), a GridSplitter or a ComboBox (a toolbar's closed drop-down), which is what leads the tab order of
+    /// a window with a toolbar or a column header. The keyboard left there by the View menu does what the user did not ask for: the next Enter
+    /// presses Clear Console or Continue, the next arrow resizes the columns of Locals or switches the Output window's channel (and a letter
+    /// searches the channels); Visual Studio puts it in the window's list or input. Null when nothing else in the view can take the keyboard
+    /// (the caller then focuses the host), as in the Output window with no line to focus.
+    /// </summary>
+    internal static IInputElement? FirstContentElement(Control view)
+    {
+        var focus = TopLevel.GetTopLevel(view)?.FocusManager;
+        var seen = new HashSet<IInputElement>(); // tab order cycles (at the window, or inside a container with KeyboardNavigationMode.Cycle)
+        for (var e = FocusManager.FindFirstFocusableElement(view);
+             e is Avalonia.Visual v && (ReferenceEquals(v, view) || view.IsVisualAncestorOf(v)) && seen.Add(e);
+             e = focus?.FindNextElement(NavigationDirection.Next, new FindNextElementOptions { FocusedElement = e }))
+        {
+            if (e is not (Button or GridSplitter or ComboBox)) return e;
+        }
+        return null;
     }
 
     /// <summary>Docks an auto-hidden tool back into its well (a no-op for any other tool).</summary>

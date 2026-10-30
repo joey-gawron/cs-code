@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using CsCode.Panels.Debug.Infrastructure;
 using CsCode.Panels.Debug.Variables;
+using CsCode.Ui;
 using CsCode.Ui.Menus;
 
 namespace CsCode.Panels.Debug.Views;
@@ -14,8 +15,15 @@ namespace CsCode.Panels.Debug.Views;
 /// (↑↓ move, → expand / into the children, ← collapse / to the parent, Enter edit or activate, F2 rename or edit, Delete remove,
 /// Ctrl+C / Ctrl+Insert copy the value, Alt+↑/↓ move a watch). Edit > Copy copies the selected row's value too (<see cref="IClipboardTarget"/>).
 /// </summary>
-public sealed partial class VariablesTreeView : UserControl, IClipboardTarget
+public sealed partial class VariablesTreeView : UserControl, IClipboardTarget, IToolWindowFocus
 {
+    /// <summary>
+    /// View &gt; Tool Windows &gt; Locals, Autos or Watch: the keyboard on a row (the selected one, else one on screen), where the arrows walk and
+    /// expand the tree. Not on the Name column's splitter, which leads the tab order whether or not there are rows and which the arrows would
+    /// drag; with no row (no debug session) the shell focuses the window itself.
+    /// </summary>
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(RowsList);
+
     public bool CanCopy => Tree?.SelectedRow is { IsDataRow: true };
 
     public Task CopyAsync() => Tree is { SelectedRow: { IsDataRow: true } row } tree ? tree.CopyValueAsync(row) : Task.CompletedTask;

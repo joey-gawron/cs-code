@@ -5,6 +5,7 @@ using Avalonia.VisualTree;
 using Avalonia;
 using CsCode.Panels.Debug.CallStack;
 using CsCode.Panels.Debug.Infrastructure;
+using CsCode.Ui;
 using CsCode.Ui.Menus;
 
 namespace CsCode.Panels.Debug.Views;
@@ -13,8 +14,11 @@ namespace CsCode.Panels.Debug.Views;
 /// Call Stack window. A click picks the frame (keyboard focus stays here), double-click / Enter picks it and moves focus to the editor;
 /// ↑↓ move the highlight only. Context menu: Copy Call Stack, Show External Code.
 /// </summary>
-public sealed partial class CallStackView : UserControl, IDisposable, IClipboardTarget
+public sealed partial class CallStackView : UserControl, IDisposable, IClipboardTarget, IToolWindowFocus
 {
+    /// <summary>View &gt; Tool Windows &gt; Call Stack: the keyboard on a frame (the selected one, else one on screen), where ↑↓ and Enter work.</summary>
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(this.FindControl<ListBox>("Rows")!);
+
     /// <summary>One frame as Visual Studio copies it: the frame, then its location in brackets.</summary>
     internal static string FrameText(CallStackRow row) => row.Location is { Length: > 0 } loc ? $"{row.Text}  [{loc}]" : row.Text;
 

@@ -69,6 +69,8 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
 
     public BulkObservableCollection<ExplorerNode> Rows { get; } = new();
     public bool HasFolder => _roots.Count > 0;
+    /// <summary>The workspace has a folder whose root row is not in <see cref="Rows"/> yet: a view just created, before its first load.</summary>
+    public bool RootsPending => _roots.Count == 0 && _workspace.Folders.Count > 0;
     public ExplorerNode? Selected { get => _selected; set => SetProperty(ref _selected, value); }
     public IReadOnlyList<ExplorerNode> Roots => _roots;
 
