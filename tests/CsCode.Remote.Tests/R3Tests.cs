@@ -63,12 +63,12 @@ public class R3Tests
         // the shell is the server's child (a PTY there), started in the workspace folder on the server
         var serverPid = host.Manager.Session!.Server.ProcessId;
         Assert.Contains(t.ProcessId!.Value, TestEnv.Descendants(serverPid));
-        Assert.Equal(host.Workspace.Path, t.CurrentDirectory);
+        Assert.Equal(TestEnv.PhysicalPath(host.Workspace.Path), t.CurrentDirectory);
         Assert.Equal("bash", t.Title + (t.Title == "bash" ? "" : $" (program title '{t.ProgramTitle}')"));
 
         await t.SendTextAsync("echo marker-$((40+2)); pwd", true, Ct);
         var screen = await TerminalProbe.WaitForTextAsync(t, "marker-42");
-        Assert.Contains(host.Workspace.Path, screen);
+        Assert.Contains(TestEnv.PhysicalPath(host.Workspace.Path), screen);
 
         t.Resize(120, 40);
         await t.SendTextAsync("stty size", true, Ct);
@@ -490,9 +490,5 @@ public class R3Tests
         Assert.True(p.ExitCode == 0, "gcc failed: " + err);
     }
 
-    internal static string Cmdline(int pid)
-    {
-        try { return File.ReadAllText($"/proc/{pid}/cmdline").Replace('\0', ' '); }
-        catch (IOException) { return ""; }
-    }
+    internal static string Cmdline(int pid) => TestEnv.Cmdline(pid);
 }
