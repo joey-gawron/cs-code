@@ -268,7 +268,8 @@ public class RealTypeScriptServerTests
         await UntilAsync(async () => await p.Env.Provider<IHoverProvider>(p.Main).ProvideHoverAsync(p.Main, greetUse2, Ct), "hover after the restart", h => h.Contents.Any(c => c.Value.Contains("greet")));
         await TestHelpers.EventuallyAsync(() => p.Env.Diagnostics.Get(p.Main.Uri).Any(d => d.Code == "2322"), () => "diagnostics again after the restart\n" + p.Env.Dump(), TimeSpan.FromSeconds(60));
 
-        // the orphaned tsserver of the killed server was reaped too
+        // the orphaned tsserver of the killed server was reaped too (Linux: the reaper finds it by its marker in /proc, and so does this check)
+        if (!OperatingSystem.IsLinux()) return;
         await TestHelpers.EventuallyAsync(() => orphanCandidates.All(c => !Directory.Exists("/proc/" + c)), () => "orphaned children of the killed server are gone: " + string.Join(",", orphanCandidates.Where(c => Directory.Exists("/proc/" + c))), TimeSpan.FromSeconds(20));
     }
 
@@ -276,6 +277,7 @@ public class RealTypeScriptServerTests
     public async Task StopAll_leaves_no_child_process_behind()
     {
         if (!RequireTools()) return;
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "the server's process tree is read from /proc (ProcessReaper.Descendants is Linux-only)");
         await using var p = await OpenProjectAsync();
         var pid = p.Env.Manager.Servers.Single().ProcessId!.Value;
         await TestHelpers.EventuallyAsync(() => ProcessReaper.Descendants(pid).Count > 0, "tsserver started");

@@ -27,7 +27,7 @@ public class MacroTerminalRealAppTests
     {
         var settings = new Dictionary<string, object?>
         {
-            ["terminal.integrated.profiles.linux"] = new Dictionary<string, object>
+            [CsCode.Terminal.Sessions.TerminalSettingKeys.ProfilesKey] = new Dictionary<string, object>
             {
                 ["sandboxed"] = new
                 {
@@ -48,7 +48,7 @@ public class MacroTerminalRealAppTests
                     },
                 },
             },
-            ["terminal.integrated.defaultProfile.linux"] = "sandboxed",
+            [CsCode.Terminal.Sessions.TerminalSettingKeys.DefaultProfileKey] = "sandboxed",
             ["terminal.integrated.cwd"] = sandbox.Combine("home"),
             ["terminal.integrated.shellIntegration.enabled"] = false,
         };

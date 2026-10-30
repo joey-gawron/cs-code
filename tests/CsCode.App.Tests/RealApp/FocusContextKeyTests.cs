@@ -34,7 +34,7 @@ public class FocusContextKeyTests
             ["cscode.languageServers"] = new[] { "typescript", "csharp", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua" }
                 .ToDictionary(s => s, _ => (object)new { enabled = false }),
             ["workbench.startupEditor"] = "none",
-            ["terminal.integrated.profiles.linux"] = new Dictionary<string, object>
+            [CsCode.Terminal.Sessions.TerminalSettingKeys.ProfilesKey] = new Dictionary<string, object>
             {
                 ["sandboxed"] = new
                 {
@@ -48,7 +48,7 @@ public class FocusContextKeyTests
                     },
                 },
             },
-            ["terminal.integrated.defaultProfile.linux"] = "sandboxed",
+            [CsCode.Terminal.Sessions.TerminalSettingKeys.DefaultProfileKey] = "sandboxed",
             ["terminal.integrated.cwd"] = sandbox.Combine("home"),
             ["terminal.integrated.shellIntegration.enabled"] = false,
         };

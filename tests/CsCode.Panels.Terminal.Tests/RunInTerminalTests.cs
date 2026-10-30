@@ -51,7 +51,7 @@ public sealed class RunInTerminalTests
         // shell-less: the program the terminal runs is the debuggee itself
         Assert.Contains($"debuggee pid={pid} run=one", Screen(terminal));
         Assert.True(await TerminalAppHost.WaitFor(() => terminal.HasExited && Volatile.Read(ref ended) > 0, 30_000), "the run did not end");
-        Assert.False(Directory.Exists($"/proc/{pid}"), "the debuggee is still around");
+        Assert.True(CsCode.Terminal.Pty.Unix.ProcessTable.Stat(pid) is null, "the debuggee is still around");
 
         // the next run reuses the idle terminal, as VS Code does
         Assert.NotNull(await debug.StartAsync(Config("two")));
@@ -85,7 +85,7 @@ public sealed class RunInTerminalTests
         var pid = terminal.ProcessId!.Value;
         await debug.StopAllAsync();
         Assert.True(await TerminalAppHost.WaitFor(() => terminal.HasExited, 15_000), "the debuggee survived the stop");
-        Assert.True(await TerminalAppHost.WaitFor(() => !Directory.Exists($"/proc/{pid}"), 5_000), "the debuggee process is still around");
+        Assert.True(await TerminalAppHost.WaitFor(() => CsCode.Terminal.Pty.Unix.ProcessTable.Stat(pid) is null, 5_000), "the debuggee process is still around");
         Assert.Contains(terminal, app.Terminals.Sessions); // the terminal stays with its output
     }
 
