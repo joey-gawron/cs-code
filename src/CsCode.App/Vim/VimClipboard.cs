@@ -11,13 +11,21 @@ namespace CsCode.App.Vim;
 /// elsewhere, as in Vim. Reads come back with <c>'\n'</c> line ends and the register type when it is known: a yank of CsCode's own (exactly, while
 /// the clipboard or selection still holds its text), or the editor's whole-line and box copies.
 /// <para>
-/// The engine reads synchronously, inside key handling, and the service only asynchronously, so each register's content is cached. The cache
-/// follows every copy CsCode makes anywhere at once (the service announces them: the editor's Ctrl+C, the terminal's copy, Copy Path...), and is
-/// read afresh when a window is activated (both registers: another application may have copied), when an editor takes the focus (<c>+</c>: a
-/// copy made while CsCode stayed active, e.g. <c>xclip</c> in the terminal) and, with the keys held until it completes, right after
-/// <c>"+</c> / <c>"*</c>; a put of the unnamed register that stands for one of them waits for a read in flight (<see cref="VimIntegration"/>).
-/// Writes update the cache at once; their line-end conversion and the platform call run off the UI thread, in order, and a refresh waits for
-/// the writes before it. While Vim is off (<see cref="Enabled"/>) nothing is read or kept.
+/// The engine reads synchronously, inside key handling, and the service only asynchronously, so each register's content is cached. Before a
+/// put the register is read afresh with the keys held until the read completes (<see cref="VimIntegration"/>): after <c>"+</c> / <c>"*</c>,
+/// and for a p (P gp ]p, Visual p, a . repeating one) of the unnamed register that 'clipboard' or vim.useSystemClipboard make a clipboard
+/// register, as Vim's do_put reads the clipboard before it puts. For the reads that do not wait (Insert-mode CTRL-R, :put, a put inside a
+/// mapping or a macro) the cache is kept current as far as CsCode can tell: it follows every copy CsCode makes anywhere at once (the service
+/// announces them: the editor's Ctrl+C, the terminal's copy, Copy Path...), and both registers are read afresh when a window is activated and
+/// when an editor takes the focus (a copy or selection made while CsCode stayed active: <c>xclip</c> or a selection in the terminal). Writes
+/// update the cache at once; their line-end conversion and the platform call run off the UI thread, in order, and a refresh waits for the
+/// writes before it. While Vim is off (<see cref="Enabled"/>) nothing is read or kept.
+/// </para>
+/// <para>
+/// <c>*</c> is not read while PRIMARY is CsCode's own offer of a kind that is not the register: Vim's own <c>"*</c> write (the cache holds it)
+/// and an editor's selection (<c>editor.selectionClipboard</c>), which with Vim on is Vim's Visual mode or a mouse selection that became it. As in
+/// Vim without 'autoselect' (and as in VS Code, where an editor selection never reaches a Vim register), selecting text does not change
+/// <c>"*</c>, so a yank, a selection and p replace the selection with the yank. Other applications' selections and the terminal's are read.
 /// </para>
 /// <para>
 /// Threading: written and read by the engine on the UI thread; refreshes and the service's announcements publish from any thread. Each register
@@ -86,12 +94,17 @@ internal sealed class VimClipboard : IDisposable
     /// <summary>The clipboard texts Vim itself handed to the service (weakly: the ring and the platform own them).</summary>
     private readonly ConditionalWeakTable<ClipboardText, object> _own = new();
     private readonly IDisposable _copies;
+    private readonly Func<Delegate, bool>? _isEditorSelection;
     private Task _writes = Task.CompletedTask;
     private volatile bool _enabled = true;
+    /// <summary>The PRIMARY provider of Vim's last <c>"*</c> write (while it owns PRIMARY, the cache holds its text).</summary>
+    private volatile Func<string>? _ownSelection;
 
-    public VimClipboard(IClipboardService service)
+    /// <param name="isEditorSelection">Tells an editor's PRIMARY offer (its selection) from the others; null: none is an editor's.</param>
+    public VimClipboard(IClipboardService service, Func<Delegate, bool>? isEditorSelection = null)
     {
         _service = service;
+        _isEditorSelection = isEditorSelection;
         // The shell's service announces every write (a copy over the ring's 1 MB too); another implementation, the copies its ring takes.
         var copies = service is Services.ClipboardService shell ? shell.Written : service.RingChanged;
         _copies = copies.Subscribe(OnCopied);
@@ -111,6 +124,7 @@ internal sealed class VimClipboard : IDisposable
         {
             _enabled = value;
             if (value) return;
+            _ownSelection = null; // read afresh once Vim is on again: the cache it stood for is dropped
             foreach (var slot in (Slot[])[_clipboard, _selection])
                 lock (slot)
                 {
@@ -155,7 +169,9 @@ internal sealed class VimClipboard : IDisposable
         if (selection)
         {
             // offered lazily, like the editor's selection: the line ends are converted only when someone pastes it (on the selection's thread)
-            _service.SetPrimarySelection(() => ClipboardTextExtensions.NormalizeLineEndings(text, eol));
+            Func<string> provider = () => ClipboardTextExtensions.NormalizeLineEndings(text, eol);
+            _ownSelection = provider;
+            _service.SetPrimarySelection(provider);
             return;
         }
         _writes = WriteAfterAsync(_writes, content, eol);
@@ -248,7 +264,13 @@ internal sealed class VimClipboard : IDisposable
             Content? written;
             lock (slot) written = slot.Written;
             if (selection)
-                content = await _service.ReadPrimarySelectionAsync().ConfigureAwait(false) is { } text ? FromSelectionText(text, written) : null;
+            {
+                if (KeepsSelection()) return; // nothing to read: the cache stays what "* is
+                var text = await _service.ReadPrimarySelectionAsync().ConfigureAwait(false);
+                // checked again: an offer made just before the read may have reached the X server only meanwhile (the read then returned it)
+                if (KeepsSelection()) return;
+                content = text is null ? null : FromSelectionText(text, written);
+            }
             else
                 content = await _service.ReadAsync().ConfigureAwait(false) is { } clip ? FromClipboardText(clip, written) : null;
             // null: nothing readable (empty, another application's non-text data, no answer in time): keep the last known text
@@ -257,6 +279,16 @@ internal sealed class VimClipboard : IDisposable
                 if (_enabled && slot.Version == version) slot.Cached = new Snapshot(content);
         }
         catch (Exception) { /* unreadable: keep the last known text */ }
+    }
+
+    /// <summary>
+    /// Whether PRIMARY is CsCode's own offer that a read must not take for <c>*</c>: Vim's own <c>"*</c> write (the cache holds it already) or
+    /// an editor's selection (Vim's Visual mode, a mouse selection), which is not the register (see the class remarks).
+    /// </summary>
+    private bool KeepsSelection()
+    {
+        if (_service is not Services.ClipboardService shell || shell.OwnPrimaryOffer is not { } offer) return false;
+        return ReferenceEquals(offer, _ownSelection) || _isEditorSelection?.Invoke(offer) == true;
     }
 
     private static Content? FromSelectionText(string text, Content? written)

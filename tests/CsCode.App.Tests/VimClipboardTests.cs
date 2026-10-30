@@ -263,4 +263,74 @@ public class VimClipboardTests
         await clipboard.RefreshAllAsync().WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         Assert.Equal("CLIP", clipboard.Text('+'));
     }
+
+    // ------------------------------------------------------------------ "* and CsCode's own PRIMARY offers (vim-macros-clipboard-4 with -1)
+
+    /// <summary>An in-process PRIMARY counting its reads; while <see cref="Gate"/> is set a read waits for it before it looks at the owner.</summary>
+    private sealed class CountingPrimary : Services.IPrimarySelectionBackend
+    {
+        private readonly Services.InMemoryPrimarySelection _inner = new();
+        public volatile TaskCompletionSource? Gate;
+        public int Reads;
+
+        public bool IsAvailable => true;
+        public bool IsOwner => _inner.IsOwner;
+        public void SetOwner(Func<string>? provider) => _inner.SetOwner(provider);
+        public void SetExternal(string? text) => _inner.SetExternal(text);
+
+        public async Task<string?> ReadAsync(TimeSpan timeout, CancellationToken ct)
+        {
+            Interlocked.Increment(ref Reads);
+            if (Gate is { } gate) await gate.Task.ConfigureAwait(false);
+            return await _inner.ReadAsync(timeout, ct).ConfigureAwait(false);
+        }
+
+        public void Dispose() => _inner.Dispose();
+    }
+
+    [Fact]
+    public async Task Star_reads_other_selections_but_neither_vims_own_write_nor_an_editors_selection()
+    {
+        var primary = new CountingPrimary();
+        using var service = new Services.ClipboardService(CsCode.Ui.Threading.AvaloniaUiDispatcher.Instance, () => null, () => primary);
+        Func<string> editorSelection = () => "SELECTED";
+        using var clipboard = new VimClipboard(service, offer => ReferenceEquals(offer, editorSelection)) { Enabled = true };
+        var ct = TestContext.Current.CancellationToken;
+
+        clipboard.Write('*', "yank", VimRegisterType.Line, "\n");
+        await clipboard.RefreshAsync('*').WaitAsync(TimeSpan.FromSeconds(10), ct);
+        Assert.Equal(0, Volatile.Read(ref primary.Reads));           // Vim's own write owns PRIMARY: the register already holds it
+        Assert.Equal(new VimClipboard.Content("yank", VimRegisterType.Line), clipboard.Read('*'));
+
+        service.SetPrimarySelection(editorSelection);                 // an editor's selection (Vim's Visual mode): not "*
+        await clipboard.RefreshAllAsync().WaitAsync(TimeSpan.FromSeconds(10), ct);
+        Assert.Equal(0, Volatile.Read(ref primary.Reads));           // not even read (a whole selection is not joined for nothing)
+        Assert.Equal("yank", clipboard.Text('*'));
+
+        service.SetPrimarySelection(() => "terminal");                // the terminal's selection: read
+        await clipboard.RefreshAsync('*').WaitAsync(TimeSpan.FromSeconds(10), ct);
+        Assert.Equal("terminal", clipboard.Text('*'));
+        primary.SetExternal("other");                                 // another application's: read
+        await clipboard.RefreshAsync('*').WaitAsync(TimeSpan.FromSeconds(10), ct);
+        Assert.Equal("other", clipboard.Text('*'));
+
+        // an editor's offer made while a read is on its way (on X11 the claim may reach the server only then): the read returns it; not kept
+        primary.SetExternal("next");
+        var gate = primary.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var read = clipboard.RefreshAsync('*');
+        service.SetPrimarySelection(editorSelection);
+        gate.SetResult();
+        await read.WaitAsync(TimeSpan.FromSeconds(10), ct);
+        Assert.Equal("other", clipboard.Text('*'));
+        primary.Gate = null;
+
+        // Vim switched off and on while its own write still owns PRIMARY: the register was dropped, so it is read again
+        clipboard.Write('*', "again", VimRegisterType.Character, "\n");
+        clipboard.Enabled = false;
+        clipboard.Enabled = true;
+        var reads = Volatile.Read(ref primary.Reads);
+        await clipboard.RefreshAsync('*').WaitAsync(TimeSpan.FromSeconds(10), ct);
+        Assert.Equal(reads + 1, Volatile.Read(ref primary.Reads));
+        Assert.Equal("again", clipboard.Text('*'));
+    }
 }

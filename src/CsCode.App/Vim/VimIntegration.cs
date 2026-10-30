@@ -62,7 +62,8 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     private readonly Dictionary<EditorDocument, EditorVimBuffer> _buffers = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, IDisposable> _statusItems = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _statusTexts = new(StringComparer.Ordinal);
-    private readonly Queue<(VimView View, KeyStroke? Key, string? Text)> _held = new();
+    /// <summary>Keys waiting for a clipboard read; <c>Read</c>: the key that started it (it goes in without starting another). A null key and text: the start of a hold.</summary>
+    private readonly Queue<(VimView View, KeyStroke? Key, string? Text, bool Read)> _held = new();
     private IReadOnlyDictionary<KeyStroke, bool> _handleKeys = new Dictionary<KeyStroke, bool>();
     private Func<bool>? _chordPending;
     private VimView? _current;
@@ -93,9 +94,15 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
             _ownedClipboard = new Services.ClipboardService(_ui, Services.AvaloniaPlatformClipboard.Of(() => _windowHolder.Window), () => null);
             clipboard = _ownedClipboard;
         }
-        Clipboard = new VimClipboard(clipboard) { Enabled = false }; // follows vim.enable (SetEnabled)
+        Clipboard = new VimClipboard(clipboard, IsEditorSelection) { Enabled = false }; // follows vim.enable (SetEnabled)
         Actions = new VimShellActions(this, _well, sp.GetRequiredService<ShellDockFactory>(), sp.GetService<IWindowService>(), sp.GetService<IWorkspaceService>());
     }
+
+    /// <summary>
+    /// Whether a PRIMARY offer is an editor's selection (editor.selectionClipboard): the editor makes it in its own module (EditorClipboard), and
+    /// no other part of CsCode offers PRIMARY from there. Such an offer is not Vim's <c>"*</c> (<see cref="VimClipboard"/>).
+    /// </summary>
+    internal static bool IsEditorSelection(Delegate offer) => offer.Method.Module == typeof(CodeEditorControl).Module;
 
     /// <summary>The adapter for a composition with the Vim module and the real editor; null otherwise (fakes in the dev host, tests without Vim).</summary>
     public static VimIntegration? TryCreate(IServiceProvider sp) =>
@@ -165,7 +172,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         if (_windowHolder.Window is WindowBase window)
         {
             // Text copied or selected in another application reaches "+p / "*p (and <C-r>+, @+, :put + ...): both are read when the window becomes
-            // active; the clipboard also on editor focus.
+            // active, and on editor focus.
             void OnActivated(object? s, EventArgs e) => _ = Clipboard.RefreshAllAsync();
             window.Activated += OnActivated;
             _subscriptions.Add(Disposable.Create(() => window.Activated -= OnActivated));
@@ -371,20 +378,27 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
 
     /// <summary>
     /// One key (or typed text) into the engine. While the clipboard is being read for a <c>"+</c>/<c>"*</c> command, or for a put of the unnamed
-    /// register that stands for the clipboard, keys wait in order.
+    /// register that stands for the clipboard, keys wait in order. <paramref name="read"/>: the key's clipboard read is done (it started it).
     /// </summary>
-    private bool Feed(VimView v, KeyStroke? key, string? text)
+    private bool Feed(VimView v, KeyStroke? key, string? text, bool read = false)
     {
         if (_held.Count > 0)
         {
-            _held.Enqueue((v, key, text));
+            _held.Enqueue((v, key, text, read));
             return true;
         }
-        if (!ReferenceEquals(_current, v)) OnViewFocused(v);
-        if (PendingClipboardRead(v, text) is { } read)
+        if (text is { Length: > 1 } && !read && text.AsSpan().IndexOfAny('p', 'P', '.') >= 0 && text.EnumerateRunes().Skip(1).Any())
         {
-            HoldFor(v, read);
-            _held.Enqueue((v, key, text));
+            // several characters in one text input (an input method, a fast typist on some platforms): one key each, so that a put among them
+            // reads the clipboard first (the engine reads them one by one too)
+            var handled = false;
+            foreach (var rune in text.EnumerateRunes()) handled = Feed(v, null, rune.ToString());
+            return handled;
+        }
+        if (!ReferenceEquals(_current, v)) OnViewFocused(v);
+        if (!read && ClipboardReadFor(v, text) is { } clipboardRead)
+        {
+            HoldFor(v, clipboardRead, (v, key, text, true));
             return true;
         }
         ClearMessage(v);
@@ -473,24 +487,29 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     }
 
     /// <summary>
-    /// The read a put has to wait for: p / P (gp, ]p, Visual p...) put the unnamed register, which 'clipboard' unnamedplus / unnamed or
-    /// vim.useSystemClipboard make a clipboard register; while that register is being read (the window was just activated, the editor just
-    /// focused, Vim just switched on), the put waits for the read instead of putting what was known before. Null: nothing to wait for (no read
-    /// in flight, or this one was already waited for as long as keys wait). Without those options a plain p never waits: it puts Vim's own
-    /// register, and a slow clipboard owner must not delay it.
+    /// The read a key has to wait for: one that completes a put of the unnamed register, which 'clipboard' unnamedplus / unnamed or
+    /// vim.useSystemClipboard make a clipboard register (p P gp ]p, Visual p, Insert-mode CTRL-O p, a . repeating one; the engine tells from
+    /// its parser, <see cref="VimEngine.ClipboardRegisterReadBy(string)"/>). As in Vim, whose do_put reads the clipboard before it puts, the
+    /// register is read afresh (or the read in flight joined): another application, or the terminal, may have changed it while CsCode stayed
+    /// active. Null: nothing to wait for (another key, no such option, or a read that already outlasted a wait: the keys go ahead with the last
+    /// known text). Without those options a plain p never reads: it puts Vim's own register.
     /// </summary>
-    private Task? PendingClipboardRead(VimView v, string? text)
+    private Task? ClipboardReadFor(VimView v, string? text)
     {
-        if (text is not ("p" or "P") || v.Engine.Mode is not (VimMode.Normal or VimMode.Visual or VimMode.VisualLine or VimMode.VisualBlock)) return null;
-        if (_vim.Session.UnnamedClipboardRegister is not { } register || Clipboard.ReadInFlight(register) is not { } read) return null;
-        return ReferenceEquals(read, _waitedRead) ? null : read;
+        if (text is null || v.Engine.ClipboardRegisterReadBy(text) is not { } register) return null;
+        var read = Clipboard.RefreshAsync(register);
+        return read.IsCompleted || ReferenceEquals(read, _waitedRead) ? null : read;
     }
 
-    /// <summary>The keys after this one wait (in order, at most <see cref="ClipboardWait"/>) for <paramref name="read"/>.</summary>
-    private void HoldFor(VimView v, Task read)
+    /// <summary>
+    /// The keys after this one wait (in order, at most <see cref="ClipboardWait"/>) for <paramref name="read"/>; <paramref name="first"/>, the key
+    /// that needs the read, waits first. Queued before the wait starts: a read completed meanwhile releases them at once.
+    /// </summary>
+    private void HoldFor(VimView v, Task read, (VimView View, KeyStroke? Key, string? Text, bool Read)? first = null)
     {
         var generation = ++_holdGeneration;
-        _held.Enqueue((v, null, null)); // sentinel: keys queue behind it
+        _held.Enqueue((v, null, null, false)); // sentinel: keys queue behind it
+        if (first is { } key) _held.Enqueue(key);
         async Task ReleaseAsync()
         {
             try { await read.WaitAsync(ClipboardWait).ConfigureAwait(true); }
@@ -509,9 +528,9 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         _held.Clear();
         for (var i = 0; i < keys.Length; i++)
         {
-            var (view, key, text) = keys[i];
+            var (view, key, text, read) = keys[i];
             if (view.IsDisposed || (key is null && text is null)) continue; // the sentinel, or a view closed meanwhile
-            Feed(view, key, text);
+            Feed(view, key, text, read);
             if (_held.Count == 0) continue;
             // a released key started another clipboard read: the rest waits for that one
             for (var j = i + 1; j < keys.Length; j++) _held.Enqueue(keys[j]);
@@ -579,9 +598,9 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     private void OnViewFocused(VimView v)
     {
         if (v.IsDisposed) return;
-        // also when the same editor takes the focus again: the clipboard may have changed while CsCode stayed the active window (xclip in the
-        // terminal, a clipboard manager); copies made in CsCode reach the register at once anyway
-        _ = Clipboard.RefreshAsync('+');
+        // also when the same editor takes the focus again: the clipboard or the selection may have changed while CsCode stayed the active window
+        // (xclip or a selection in the terminal, a clipboard manager); copies made in CsCode reach the register at once anyway
+        _ = Clipboard.RefreshAllAsync();
         if (ReferenceEquals(_current, v)) return;
         _current = v;
         UpdateStatus();

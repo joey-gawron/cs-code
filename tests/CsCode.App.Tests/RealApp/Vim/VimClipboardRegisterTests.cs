@@ -23,7 +23,7 @@ public class VimClipboardRegisterTests
     private const string Quiet = "\"editor.quickSuggestions\": false";
 
     /// <summary>The shell's clipboard service over the window's (headless) clipboard and a PRIMARY the test controls (null: a platform without one).</summary>
-    private static Action<IServiceCollection> Clipboard(InMemoryPrimarySelection? primary) => services =>
+    private static Action<IServiceCollection> Clipboard(IPrimarySelectionBackend? primary) => services =>
         services.AddSingleton(sp => new ClipboardService(sp.GetRequiredService<IUiDispatcher>(),
             AvaloniaPlatformClipboard.Of(() => sp.GetRequiredService<WindowHolder>().Window), () => primary));
 
@@ -58,6 +58,29 @@ public class VimClipboardRegisterTests
 
         public Task<bool> HasTextAsync() => Inner()?.HasTextAsync() ?? Task.FromResult(false);
         public Task SetAsync(string text, string? html) => Inner()?.SetAsync(text, html) ?? Task.CompletedTask;
+    }
+
+    /// <summary>An in-process PRIMARY whose reads wait for <see cref="Gate"/> while it is set (another application slow to answer), counting them.</summary>
+    private sealed class GatedPrimarySelection : IPrimarySelectionBackend
+    {
+        private readonly InMemoryPrimarySelection _inner = new();
+        public volatile TaskCompletionSource? Gate;
+        public int Reads;
+
+        public bool IsAvailable => true;
+        public bool IsOwner => _inner.IsOwner;
+        public Func<string>? Provider => _inner.Provider;
+        public void SetOwner(Func<string>? provider) => _inner.SetOwner(provider);
+        public void SetExternal(string? text) => _inner.SetExternal(text);
+
+        public async Task<string?> ReadAsync(TimeSpan timeout, CancellationToken ct)
+        {
+            Interlocked.Increment(ref Reads);
+            if (Gate is { } gate) await gate.Task.ConfigureAwait(false);
+            return await _inner.ReadAsync(timeout, ct).ConfigureAwait(false);
+        }
+
+        public void Dispose() => _inner.Dispose();
     }
 
     private static Action<IServiceCollection> Gated(GatedPlatformClipboard platform, InMemoryPrimarySelection? primary) => services =>
@@ -260,24 +283,117 @@ public class VimClipboardRegisterTests
         Assert.Equal(0, app.Vim.HeldKeyCount);
         Assert.Equal("one\ntoutsidewo\n", app.Text);
 
-        app.Keys("P");                                            // no read in flight: nothing waits
+        await app.Host.Window.Clipboard!.SetTextAsync("again");   // changed meanwhile, CsCode still active: no activation or focus reads it
+        app.Keys("P");                                            // no read in flight: P reads the clipboard itself, as Vim's do_put does
+        await EventuallyAsync(() => Task.FromResult(app.Text), t => t == "one\ntoutsidagainewo\n", "P put the clipboard as it is now"); // before the caret, which p left on the last character it put
         Assert.Equal(0, app.Vim.HeldKeyCount);
-        Assert.Equal("one\ntoutsidoutsideewo\n", app.Text);  // before the caret, which p left on the last character it put
     }
 
     [AvaloniaFact(Timeout = 120_000)]
-    public async Task Focusing_the_same_editor_again_reads_the_clipboard_changed_meanwhile()
+    public async Task With_vim_useSystemClipboard_p_reads_a_clipboard_changed_while_CsCode_stayed_active()
+    {
+        await using var app = await VimApp.StartAsync("one\n", settings: SystemClipboard, configure: Clipboard(new InMemoryPrimarySelection()));
+        // Klipper syncing the selection to the clipboard, a password manager clearing it, xclip in the terminal: no activation, no focus change
+        await app.Host.Window.Clipboard!.SetTextAsync("outside");
+        app.Keys("p");
+        await EventuallyAsync(() => Task.FromResult(app.Text), t => t == "ooutsidene\n", "p put the clipboard as it is now");
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task With_vim_useSystemClipboard_only_a_put_of_the_unnamed_register_waits_for_the_clipboard()
+    {
+        var platform = new GatedPlatformClipboard();
+        await using var app = await VimApp.StartAsync("one two\n", settings: SystemClipboard, configure: Gated(platform, primary: null));
+        await app.Host.Window.Clipboard!.SetTextAsync("outside");
+        var gate = platform.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refresh = app.Vim.Clipboard.RefreshAllAsync();       // what activating the window starts; the owner is slow to answer
+
+        // p as a register's name, a mark, a motion's argument, a text object, and a put of a register Vim keeps: none reads the clipboard
+        foreach (var keys in new[] { "\"pyiw", "mp", "fp", "vip<Esc>", "\"pP" })
+        {
+            app.Keys(keys);
+            Assert.True(app.Vim.HeldKeyCount == 0, $"{keys} waited for the clipboard");
+        }
+        Assert.Equal("oneone two\n", app.Text);                   // "pP put register p at once
+        Assert.NotNull(app.Engine.GetMarkPosition('p'));         // mp set mark p
+
+        app.Keys("A<C-o>p");                                      // Insert-mode CTRL-O p puts the unnamed register, the clipboard: it waits
+        Assert.True(app.Vim.HeldKeyCount > 0, "CTRL-O p did not wait for the clipboard read");
+        Assert.Equal("oneone two\n", app.Text);
+        gate.SetResult();
+        platform.Gate = null;
+        await refresh.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await EventuallyAsync(() => Task.FromResult(app.Text), t => t == "oneone twooutside\n", "CTRL-O p put the clipboard");
+        Assert.Equal(0, app.Vim.HeldKeyCount);
+        Assert.Equal("-- INSERT --", app.ModeText);
+    }
+
+    // ------------------------------------------------------------------ 'clipboard' unnamed: p reads "* (vim-macros-clipboard-4 with -1)
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task With_clipboard_unnamed_p_reads_a_selection_made_since_in_the_terminal_or_another_application()
+    {
+        var primary = new GatedPrimarySelection();
+        await using var app = await VimApp.StartAsync("x\n", settings: Quiet, configure: Clipboard(primary));
+        app.Keys(":set clipboard=unnamed<CR>");
+        primary.SetExternal("old");
+        await app.Vim.Clipboard.RefreshAllAsync();                // the window's activation: "* is "old"
+        Assert.Equal("old", app.Vim.Clipboard.Text('*'));
+
+        // a selection in the integrated terminal: CsCode offers PRIMARY from outside the editor, and nothing reads it into "* meanwhile
+        app.Host.Get<IClipboardService>().SetPrimarySelection(() => "foo");
+        var gate = primary.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        app.Keys("p");
+        Assert.True(app.Vim.HeldKeyCount > 0, "p did not read the selection first");
+        Assert.Equal("x\n", app.Text);
+        gate.SetResult();
+        primary.Gate = null;
+        await EventuallyAsync(() => Task.FromResult(app.Text), t => t == "xfoo\n", "p put the terminal's selection");
+        Assert.Equal(0, app.Vim.HeldKeyCount);
+
+        primary.SetExternal("bar");                               // another application's selection, CsCode still the active window
+        app.Keys("p");
+        await EventuallyAsync(() => Task.FromResult(app.Text), t => t == "xfoobar\n", "p put the other application's selection");
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task With_clipboard_unnamed_an_editor_selection_is_not_star_so_Visual_p_puts_the_yank()
+    {
+        // The editor offers its selection as PRIMARY (editor.selectionClipboard: a middle-click elsewhere pastes it), Vim's Visual mode too. As
+        // in Vim without 'autoselect', and VS Code, selecting text does not change "*: yank, select, p replaces the selection with the yank.
+        var primary = new GatedPrimarySelection();
+        await using var app = await VimApp.StartAsync("one two three\n", settings: Quiet, configure: Clipboard(primary));
+        app.Keys(":set clipboard=unnamed<CR>");
+        await app.KeysAsync("yiw", 3);                           // "one": the unnamed register is "*, offered as PRIMARY
+        Assert.Equal("one", primary.Provider?.Invoke());
+        await app.KeysAsync("wviw", 5);
+        Assert.Equal("two", primary.Provider?.Invoke());          // the editor's offer
+        var reads = Volatile.Read(ref primary.Reads);
+        app.Keys("p");
+        await EventuallyAsync(() => Task.FromResult(app.Text), t => t == "one one three\n", "Visual p put the yank");
+        Assert.Equal(reads, Volatile.Read(ref primary.Reads));     // CsCode's own offer: nothing to read
+
+        // a Visual selection left with Esc stays PRIMARY (X11 keeps the last selection), and is not "* either: p puts what Visual p deleted
+        await app.KeysAsync("wviw<Esc>", 5);
+        Assert.Equal("three", primary.Provider?.Invoke());
+        app.Keys("p");
+        await EventuallyAsync(() => Task.FromResult(app.Text), t => t == "one one threetwo\n", "p put the deleted selection");
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task Focusing_the_same_editor_again_reads_the_clipboard_and_the_selection_changed_meanwhile()
     {
         await using var app = await VimApp.StartAsync("x\n", settings: Quiet, configure: Clipboard(new InMemoryPrimarySelection()));
         var shell = app.Host.Shell;
         shell.Tools.Show("output");
         await DevScene.SettleAsync(5);
         shell.Tools.Get("output")!.LiveView!.GetVisualDescendants().OfType<Control>().First(c => c.Focusable && c.IsEffectivelyVisible && c.IsEffectivelyEnabled).Focus();
-        // e.g. `xclip` run in the integrated terminal: CsCode stays the active window, so no activation reads it
+        // e.g. `xclip` and a selection in the integrated terminal: CsCode stays the active window, so no activation reads them
         await app.Host.Window.Clipboard!.SetTextAsync("CHANGED");
+        app.Host.Get<IClipboardService>().SetPrimarySelection(() => "SELECTED");
         await app.FocusAsync(5);                                  // back into the same editor
-        await app.KeysAsync("A<C-r>+<Esc>", 3);                    // Ctrl+R in Insert mode has no "+ to wait on
-        Assert.Equal("xCHANGED\n", app.Text);
+        await app.KeysAsync("A<C-r>+<C-r>*<Esc>", 3);              // Ctrl+R in Insert mode has no "+ to wait on
+        Assert.Equal("xCHANGEDSELECTED\n", app.Text);
     }
 
     // ------------------------------------------------------------------ Vim off (vim-macros-clipboard-6)

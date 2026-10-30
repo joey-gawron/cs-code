@@ -427,7 +427,9 @@ Every other id has exactly one registration; the test fails when a new duplicate
   has none) would need `zwp_primary_selection`. Without `$DISPLAY` there is no PRIMARY (`IsPrimarySelectionSupported` false).
 * **Vim registers** (`Vim/VimClipboard.cs`, docs/VIM.md): `"+` goes through this service (ring, shape metadata, the document's line ends),
   `"*` through PRIMARY where it is supported and through the clipboard elsewhere. `ClipboardService.Written` (every write, also those the
-  ring leaves out, on the writer's thread) keeps Vim's `+` cache equal to the last copy made anywhere in CsCode.
+  ring leaves out, on the writer's thread) keeps Vim's `+` cache equal to the last copy made anywhere in CsCode. `ClipboardService.OwnPrimaryOffer`
+  (the provider CsCode offered while it still owns PRIMARY, from the backend's `IsOwner`) lets Vim skip reading `"*` when PRIMARY is its own
+  write or an editor's selection, which is not `"*`.
 * **Edit menu routing** (`ClipboardRouter`): Cut / Copy / Paste act on what has keyboard focus, as in Visual Studio: the editor, a text box (its
   own Cut/Copy/Paste), or a view that copies its selection (`CsCode.Ui.Menus.IClipboardTarget`: Error List, Output, Find Results, Explorer files,
   Call Stack, Locals/Autos/Watch, Debug Console, Find in Files). Focus moving into a menu or popup does not count, so Edit > Copy and a context

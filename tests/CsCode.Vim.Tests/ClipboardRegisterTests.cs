@@ -306,4 +306,144 @@ public class ClipboardRegisterTests
         e.TypeKeys("j\"+P");
         Assert.Equal("THEREtwo", host.Buffer.GetLine(1));
     }
+
+    // ---------------------------------------------------------------- which key reads a clipboard register (vim-macros-clipboard-1, -4)
+
+    /// <summary>An engine with 'clipboard' set to <paramref name="option"/> (empty: Vim's own unnamed register), both clipboard registers holding text.</summary>
+    private static (VimEngine Engine, TwoClipboardHost Host) Probed(string option)
+    {
+        var (e, h, _) = Create("one two xp\nthree four\n");
+        if (option.Length > 0) e.ExecuteEx("set clipboard=" + option);
+        h.Held['+'] = ("PLUS", null);
+        h.Held['*'] = ("STAR", null);
+        return (e, h);
+    }
+
+    /// <summary>What a key can change: the text, the mode, the cursor, the keys pending, the unnamed register, mark p.</summary>
+    private static string State((VimEngine Engine, TwoClipboardHost Host) p) =>
+        $"{Text(p.Host)} | {p.Engine.ModeCode} {p.Engine.Cursor} [{p.Engine.PendingKeys}] \"{Reg(p.Engine, '"')}\" 'p={p.Engine.GetMarkPosition('p')}";
+
+    [Theory]
+    [InlineData("", "p", "+")]
+    [InlineData("", "P", "+")]
+    [InlineData("3", "p", "+")]
+    [InlineData("g", "p", "+")]
+    [InlineData("g", "P", "+")]
+    [InlineData("]", "p", "+")]
+    [InlineData("[", "P", "+")]
+    [InlineData("v", "p", "+")]
+    [InlineData("Vj", "P", "+")]
+    [InlineData("<C-v>j", "p", "+")]
+    [InlineData("i<C-o>", "p", "+")]       // Insert-mode CTRL-O p puts the unnamed register too
+    [InlineData("\"", "p", "")]           // p is the register's name
+    [InlineData("\"a", "p", "")]          // a register of Vim's own
+    [InlineData("\"+", "p", "")]          // named in the keys: read when "+ was typed
+    [InlineData("m", "p", "")]             // a mark
+    [InlineData("'", "p", "")]
+    [InlineData("f", "p", "")]             // a motion's argument
+    [InlineData("t", "p", "")]
+    [InlineData("r", "p", "")]
+    [InlineData("q", "p", "")]             // recording into register p
+    [InlineData("@", "p", "")]
+    [InlineData("vi", "p", "")]            // a text object
+    [InlineData("va", "p", "")]
+    [InlineData("d", "p", "")]             // an operator's motion
+    [InlineData("di", "p", "")]
+    [InlineData("i", "p", "")]             // typed text
+    [InlineData(":", "p", "")]             // the command line
+    [InlineData("", "x", "")]
+    public void Only_a_put_of_the_unnamed_register_reads_the_clipboard_register_it_stands_for(string before, string key, string expected)
+    {
+        var probed = Probed("unnamedplus");
+        probed.Engine.TypeKeys(before);
+        var at = State(probed);
+        Assert.Equal(expected, probed.Engine.ClipboardRegisterReadBy(key)?.ToString() ?? "");
+        Assert.Equal(at, State(probed));      // the engine's state is as it was
+        // and the key then does what it does without the question (the parser's state was put back)
+        var plain = Probed("unnamedplus");
+        plain.Engine.TypeKeys(before);
+        probed.Engine.TypeKeys(key);
+        plain.Engine.TypeKeys(key);
+        Assert.Equal(State(plain), State(probed));
+    }
+
+    [Theory]
+    [InlineData("nnoremap p x", "\"")]      // after " the next key is a register name, which no mapping takes
+    [InlineData("nnoremap p x", "m")]       // a mark's name, an argument: not mapped either
+    [InlineData("nnoremap p x", "f")]
+    [InlineData("nnoremap dx x", "d")]      // d waits for the mapping decision: asking parses dp, an operator waiting for its motion
+    public void Asking_leaves_the_parser_as_it_was_for_the_keys_that_follow(string mapping, string before)
+    {
+        var probed = Probed("unnamedplus");
+        var plain = Probed("unnamedplus");
+        foreach (var e in new[] { probed.Engine, plain.Engine })
+        {
+            e.ExecuteEx(mapping);
+            e.TypeKeys(before);
+        }
+        var at = State(probed);
+        Assert.Null(probed.Engine.ClipboardRegisterReadBy("p"));
+        Assert.Equal(at, State(probed));
+        probed.Engine.TypeKeys("p");                // a register name, a mark, a character to find; an invalid motion
+        plain.Engine.TypeKeys("p");
+        Assert.Equal(State(plain), State(probed));
+    }
+
+    [Theory]
+    [InlineData("unnamed", "*")]
+    [InlineData("unnamed,unnamedplus", "+")]
+    [InlineData("unnamedplus", "+")]
+    [InlineData("", "")]                   // the unnamed register is Vim's own: a put reads no clipboard
+    public void The_register_reported_follows_the_clipboard_option(string option, string expected)
+    {
+        var (e, _) = Probed(option);
+        Assert.Equal(expected, e.ClipboardRegisterReadBy("p")?.ToString() ?? "");
+        Assert.Equal(expected, e.ClipboardRegisterReadBy("P")?.ToString() ?? "");
+    }
+
+    [Fact]
+    public void Vim_useSystemClipboard_makes_a_put_read_plus()
+    {
+        var (e, _, _) = Create("one\n", new VimSession { UseSystemClipboard = true });
+        Assert.Equal('+', e.ClipboardRegisterReadBy("p"));
+    }
+
+    [Fact]
+    public void A_repeat_reads_the_register_the_repeated_put_read()
+    {
+        var (e, h, _) = Create("one\n");
+        e.ExecuteEx("set clipboard=unnamedplus");
+        h.Held['+'] = ("X", null);
+        h.Held['*'] = ("Y", null);
+        Assert.Null(e.ClipboardRegisterReadBy("."));          // nothing to repeat
+        e.TypeKeys("p");
+        Assert.Equal('+', e.ClipboardRegisterReadBy("."));
+        e.TypeKeys("x");
+        Assert.Null(e.ClipboardRegisterReadBy("."));          // x puts nothing
+        e.ExecuteEx("set clipboard=");
+        e.TypeKeys("\"*p");
+        Assert.Equal('*', e.ClipboardRegisterReadBy("."));    // the register the put named, whatever 'clipboard' says
+        e.TypeKeys("yy\"0p");
+        Assert.Null(e.ClipboardRegisterReadBy("."));
+    }
+
+    [Fact]
+    public void A_key_a_mapping_may_take_reports_nothing_and_a_mapping_prefix_left_alone_does_not_hide_the_put()
+    {
+        var (e, _, _) = Create("one\n");
+        e.ExecuteEx("set clipboard=unnamedplus");
+        e.ExecuteEx("nnoremap gD x");                         // like the shell's gD gi g. ]d [d: g waits for the mapping decision
+        e.TypeKeys("g");
+        Assert.Equal("g", e.PendingKeys);
+        Assert.Equal('+', e.ClipboardRegisterReadBy("p"));    // gp: no mapping takes it
+        e.TypeKeys("<Esc>");
+        e.ExecuteEx("nnoremap gp x");
+        e.TypeKeys("g");
+        Assert.Null(e.ClipboardRegisterReadBy("p"));          // the mapping runs instead
+        e.TypeKeys("<Esc>");
+        e.ExecuteEx("nnoremap p P");
+        Assert.Null(e.ClipboardRegisterReadBy("p"));
+        e.ExecuteEx("nnoremap pq x");                         // p begins a longer mapping: it waits for the next key
+        Assert.Null(e.ClipboardRegisterReadBy("p"));
+    }
 }
