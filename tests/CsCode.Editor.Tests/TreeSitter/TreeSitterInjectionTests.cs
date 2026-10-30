@@ -157,7 +157,8 @@ public class TreeSitterInjectionTests
         var previous = SyntaxDocument.MaxQueryTime;
         try
         {
-            SyntaxDocument.MaxQueryTime = TimeSpan.FromMilliseconds(150);
+            // Far below the block's seconds, and enough for the rst host's own query over the 600 KB document, which spends the same clock.
+            SyntaxDocument.MaxQueryTime = TimeSpan.FromMilliseconds(500);
             // unsliced, the C# grammar needs seconds for this (TreeSitterGuardTests: ~4 s; a 371 KB README.rst ran past the 10 s watchdog)
             var csharp = TreeSitterGuardTests.Unparsable + string.Concat(Enumerable.Range(0, 10_000).Select(i => $"public class C{i} {{ int F{i}(int a) {{ return a * {i}; }} }}\n"));
             var block = string.Concat(csharp.Split('\n').Select(l => l.Length == 0 ? "\n" : "   " + l + "\n"));
@@ -168,9 +169,20 @@ public class TreeSitterInjectionTests
             var input = new StringInput(text);
             Assert.Equal(ParseOutcome.Completed, doc.Parse(input, long.MaxValue));
             var paint = new PaintBuffer();
-            var sw = Stopwatch.StartNew();
-            doc.Highlight(input, 0, text.Length, new TestStacks(), paint);
-            Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"the highlight took {sw.Elapsed.TotalSeconds:0.0} s (load {TreeSitterBenchmarks.Load1():0.0})");
+            // A pass whose host query already spent the clock defers the block instead of starting it (by design: the next pass has a clock of
+            // its own). On a slow moment that is the first pass or two, so up to three passes; the one that starts the block must stop it.
+            for (var pass = 1; doc.InjectionParsesStopped == 0; pass++)
+            {
+                var deferred = doc.InjectionParsesDeferred;
+                var sw = Stopwatch.StartNew();
+                doc.Highlight(input, 0, text.Length, new TestStacks(), paint);
+                Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"pass {pass} took {sw.Elapsed.TotalSeconds:0.0} s (load {TreeSitterBenchmarks.Load1():0.0})");
+                if (doc.InjectionParsesStopped == 0)
+                {
+                    Assert.True(doc.InjectionParsesDeferred > deferred, $"pass {pass}: the block was neither stopped nor deferred (it parsed within the limit?)");
+                    Assert.True(pass < 3, $"the block was deferred {pass} times (load {TreeSitterBenchmarks.Load1():0.0})");
+                }
+            }
             Assert.Equal(1, doc.InjectionParsesStopped);
             Assert.True(doc.LastQueryTimedOut, "a stopped injection makes the pass partial (the query guard counts it)");
 
@@ -242,7 +254,8 @@ public class TreeSitterInjectionTests
         var previous = SyntaxDocument.MaxQueryTime;
         try
         {
-            SyntaxDocument.MaxQueryTime = TimeSpan.FromMilliseconds(150);
+            // Far below the block's seconds, and enough for the rst host's own query over the 600 KB document, which spends the same clock.
+            SyntaxDocument.MaxQueryTime = TimeSpan.FromMilliseconds(500);
             static string Indent(string code) => string.Concat(code.Split('\n').Select(l => l.Length == 0 ? "\n" : "   " + l + "\n"));
             var big = TreeSitterGuardTests.Unparsable + string.Concat(Enumerable.Range(0, 10_000).Select(i => $"public class C{i} {{ int F{i}(int a) {{ return a * {i}; }} }}\n"));
             var python = string.Concat(Enumerable.Range(0, 15).Select(i => $"def pyfunc{i}(a):\n    return a + {i}\n"));
