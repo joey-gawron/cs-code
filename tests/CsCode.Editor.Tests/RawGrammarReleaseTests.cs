@@ -69,10 +69,10 @@ public sealed class RawGrammarReleaseTests(ITestOutputHelper output) : IDisposab
         long Retained(bool release)
         {
             GrammarService.ReleaseRawGrammars = release;
-            var before = GC.GetTotalMemory(forceFullCollection: true);
+            var before = LiveHeap.Bytes();
             var service = new GrammarService(_host.Services);
             foreach (var scope in scopes) Tokenise(service.GrammarForScope(scope)!, "x = 1 // y");
-            var after = GC.GetTotalMemory(forceFullCollection: true);
+            var after = LiveHeap.Bytes();
             GC.KeepAlive(service);
             return after - before;
         }

@@ -16,9 +16,11 @@ namespace CsCode.Editor.Tests;
 /// 500 documents with views opened and closed, 500 view recreations from saved view state, a view retaining nothing after disposal.
 /// The measured numbers are printed (and recorded in docs/EDITOR.md).
 ///
-/// Run ALONE (T58): the memory budgets are measured on the whole process's heap (<c>GC.GetTotalMemory</c>) and the open's UI latency on the
-/// one headless UI thread every view test shares, so a test class running in parallel lands in both numbers (the 1 MB and 10 MB opens failed
-/// in the full Editor run only, in ~0.2–0.4 s, and passed alone every time). The collection runs after the parallel ones, by itself.
+/// T58 (the 1 MB and 10 MB opens failed in the full Editor run only, in ~0.2–0.4 s, and passed alone every time): the budgets compare the
+/// whole process's heap at two moments, and <c>GC.GetTotalMemory</c> counts the free space between objects, which depends on what earlier
+/// tests left (a 10 MB open measured 116 MB after the hostile-provider runs, 26 MB alone). They measure live bytes now (<see cref="LiveHeap"/>),
+/// and the class runs alone, after the parallel collections: another class's allocations and its work on the one headless UI thread every view
+/// test shares would land in the memory and latency numbers too.
 /// </summary>
 [Collection(MemoryMeasurementCollection.Name)]
 public class PerfMemoryTests(ITestOutputHelper output)
@@ -96,15 +98,13 @@ public class PerfMemoryTests(ITestOutputHelper output)
     {
         using var host = ViewHost.Create();
         var path = host.Dir.WriteFile($"big{megabytes}.cs", CSharpOfSize(megabytes * 1024 * 1024));
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        var before = GC.GetTotalMemory(true);
+        var before = LiveHeap.Bytes();
 
         EditorDocument? doc = null;
         var sw = Stopwatch.StartNew();
         var beats = await RunHeartbeat(async () => doc = (EditorDocument)await host.Factory.OpenDocumentAsync(new Uri(path)));
         var openMs = sw.ElapsedMilliseconds;
-        var afterOpen = GC.GetTotalMemory(true);
+        var afterOpen = LiveHeap.Bytes();
 
         sw.Restart();
         var view = (CodeEditorControl)host.Factory.CreateView(doc!);
@@ -112,7 +112,7 @@ public class PerfMemoryTests(ITestOutputHelper output)
         window.Show();
         ViewHost.Pump();
         var viewMs = sw.ElapsedMilliseconds;
-        var afterView = GC.GetTotalMemory(true);
+        var afterView = LiveHeap.Bytes();
 
         output.WriteLine($"{megabytes} MB: open {openMs} ms; UI latency during open p99={Percentile(beats, .99):F1} ms max={beats.Max():F1} ms; view + first layout {viewMs} ms; large-file mode={doc!.IsLargeFile}");
         output.WriteLine($"{megabytes} MB: managed memory after open {(afterOpen - before) / 1048576.0:F0} MB ({(afterOpen - before) / (megabytes * 1048576.0):F2} x file size), with a view {(afterView - before) / 1048576.0:F0} MB");
@@ -171,8 +171,7 @@ public class PerfMemoryTests(ITestOutputHelper output)
         var path = host.Dir.WriteFile("src.cs", CSharpOfSize(2 * 1024 * 1024 - 4096)); // just under the large-file threshold of 5 MB? no: 2 MB, a normal file
         var doc = (EditorDocument)await host.Factory.OpenDocumentAsync(new Uri(path));
         Assert.False(doc.IsLargeFile);
-        GC.Collect();
-        var before = GC.GetTotalMemory(true);
+        var before = LiveHeap.Bytes();
         var view = (CodeEditorControl)host.Factory.CreateView(doc);
         var window = new Avalonia.Controls.Window { Width = 900, Height = 600, Content = view };
         window.Show();
@@ -190,7 +189,7 @@ public class PerfMemoryTests(ITestOutputHelper output)
         }
         var tokenisedLines = tokens.Store.ValidLines;
         var storeBytes = tokens.Store.EstimatedBytes;
-        var measured = GC.GetTotalMemory(true) - before;
+        var measured = LiveHeap.Bytes() - before;
         var mb = (2 * 1024 * 1024 - 4096) / 1048576.0;
         output.WriteLine($"tokenised {tokenisedLines}/{wanted} lines of {mb:F1} MB in {sw.Elapsed.TotalSeconds:F1} s; token store (estimate) {storeBytes / 1048576.0 / mb:F1} MB per MB of source; process delta incl. view and colour tables {measured / 1048576.0 / mb:F1} MB per MB");
         Assert.True(tokenisedLines >= wanted - 1, $"tokenisation reached {tokenisedLines} of {wanted} lines");
