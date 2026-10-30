@@ -40,11 +40,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IDebugConfigurationService>(sp => sp.GetRequiredService<DebugConfigurationService>());
 
         services.AddSingleton<NetCoreDbgAdapterFactory>(sp => new NetCoreDbgAdapterFactory(sp.GetRequiredService<DapPlatform>()));
-        services.AddSingleton<BuiltinDebugAdapter>(sp =>
-        {
-            var factory = sp.GetRequiredService<NetCoreDbgAdapterFactory>();
-            return new BuiltinDebugAdapter("coreclr", ".NET (netcoredbg)", ["csharp", "fsharp", "vb"], factory, factory);
-        });
+        foreach (var index in new[] { 0, 1 }) // coreclr and its alias netcoredbg
+            services.AddSingleton<BuiltinDebugAdapter>(sp => NetCoreDbgAdapterFactory.Builtins(sp.GetRequiredService<NetCoreDbgAdapterFactory>()).ElementAt(index));
         services.AddSingleton<JsDebugAdapterFactory>(sp => new JsDebugAdapterFactory(sp.GetRequiredService<DapPlatform>()));
         foreach (var adapter in JsDebugAdapters())
             services.AddSingleton<BuiltinDebugAdapter>(sp => adapter(sp.GetRequiredService<JsDebugAdapterFactory>()));

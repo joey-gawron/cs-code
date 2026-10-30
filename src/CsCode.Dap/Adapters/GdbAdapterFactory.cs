@@ -83,10 +83,59 @@ public sealed class GdbAdapterFactory : IDebugAdapterFactory, IDebugConfiguratio
             if (rust.Commit is { Length: > 0 } commit && Directory.Exists(rust.SourceRoot)) Early($"set substitute-path /rustc/{commit} {rust.SourceRoot}");
         }
         if (Path.Combine(HelperDirectory, HelperScript) is var helper && File.Exists(helper)) Early("source " + helper);
-        foreach (var command in EnvironmentCommands(configuration)) Early(command);
+        string? privateDirectory = null;
+        if (EnvironmentCommands(configuration).ToList() is { Count: > 0 } environment)
+        {
+            // The values (often secrets: tokens, passwords) never go on GDB's command line, which every local user can read through
+            // /proc/<pid>/cmdline: GDB reads them from a private file instead, deleted with the adapter.
+            if (WriteEnvironmentFile(environment) is { } file)
+            {
+                args.Add("-ix");
+                args.Add(file.Path);
+                privateDirectory = file.Directory;
+            }
+            else foreach (var command in environment) Early(command); // Windows: no private directory (a command line there is not world-readable)
+        }
         args.Add("-i=dap");
-        return new DebugAdapterStdioProcess(gdb, args, null, cwd) { DisplayName = "gdb" };
+        return new DebugAdapterStdioProcess(gdb, args, null, cwd) { DisplayName = "gdb", PrivateDirectory = privateDirectory };
     }
+
+    internal const string EnvironmentFilePrefix = "cscode-gdbenv";
+
+    /// <summary>
+    /// Writes the launch environment's GDB commands to a file (0600) in a fresh private directory (0700, <c>$XDG_RUNTIME_DIR</c> when there is
+    /// one; directories of CsCode processes that are gone are swept first). Null where no private directory can be made (Windows).
+    /// </summary>
+    internal (string Path, string Directory)? WriteEnvironmentFile(IReadOnlyList<string> commands)
+    {
+        if (OperatingSystem.IsWindows()) return null;
+        PrivateSocket dir;
+        try { dir = PrivateSocket.Create(EnvironmentFilePrefix, PrivateRoot); }
+        catch (IOException ex)
+        {
+            _logger.LogWarning(ex, "No private directory for GDB's launch environment");
+            throw new DebugSessionStartException($"The launch environment cannot be passed to GDB privately: {ex.Message}");
+        }
+        var path = Path.Combine(dir.Directory!, "environment.gdb");
+        try
+        {
+            using var stream = new FileStream(path, new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew, Access = FileAccess.Write, UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+            });
+            using var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false));
+            foreach (var command in commands) writer.Write(command + "\n");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            dir.Delete();
+            throw new DebugSessionStartException($"The launch environment cannot be passed to GDB privately: {ex.Message}");
+        }
+        return (path, dir.Directory!);
+    }
+
+    /// <summary>Where the private directories are made (null: <see cref="PrivateSocket.DefaultRoot"/>); a seam for tests.</summary>
+    internal string? PrivateRoot { get; init; }
 
     /// <summary>The GDB executable without side effects; null when none is found.</summary>
     public string? Locate()

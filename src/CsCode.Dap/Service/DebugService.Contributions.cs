@@ -39,10 +39,31 @@ public sealed partial class DebugService
                 "Path of the GDB executable used for Rust, C and C++ debugging through GDB's own Debug Adapter Protocol support (gdb -i=dap, GDB 14 or newer). Empty: 'gdb' on PATH."),
             new ConfigurationProperty(GdbAdapterFactory.ArgsSettingPath, Json(Array.Empty<string>()),
                 "Extra command-line arguments for GDB, before CsCode's own (for example [\"-nx\"] to skip your gdbinit files)."),
-            new ConfigurationProperty("cscode.debug.requestTimeoutSeconds", Json(10),
+            new ConfigurationProperty(RequestTimeoutSetting, Json(10),
                 "Seconds a debug adapter may take to answer one request before the session reports it unresponsive."),
+            new ConfigurationProperty(RustDebuggerSetting, Json("gdb"),
+                "The debugger a Rust folder's launch.json is created for: 'gdb' (GDB's own Debug Adapter Protocol support, the default) or 'lldb' (CodeLLDB, downloaded on first use; 'codelldb' is accepted too).",
+                Schema("""{"type":"string","enum":["gdb","lldb","codelldb"],"enumDescriptions":["GDB (gdb -i=dap, GDB 14 or newer).","CodeLLDB.","CodeLLDB (same as 'lldb')."]}""")),
+            new ConfigurationProperty(CodeLldbAdapterFactory.SettingPath, Json(""),
+                "Path of the CodeLLDB adapter used for Rust, C and C++ debugging through LLDB: the adapter executable or the extension directory (empty: CSCODE_CODELLDB, then the tools directory, then PATH, then an offer to download it)."),
+            new ConfigurationProperty(CodeLldbAdapterFactory.ConsoleModeSetting, Json(CodeLldbAdapterFactory.DefaultConsoleMode),
+                "CodeLLDB's Debug Console mode (VS Code's CodeLLDB setting): 'evaluate' evaluates expressions (LLDB commands start with '`' or '/cmd'), 'commands' runs LLDB commands, 'split' does both.",
+                Schema("""{"type":"string","enum":["commands","evaluate","split"]}""")),
         ]));
     }
+
+    /// <summary>Setting: seconds a debug adapter may take to answer one request.</summary>
+    public const string RequestTimeoutSetting = "cscode.debug.requestTimeoutSeconds";
+
+    private static JsonElement Schema(string json) => JsonDocument.Parse(json).RootElement.Clone();
+
+    /// <summary>Every setting this module reads (each one is registered in <see cref="RegisterSettings"/>, so the Settings editor lists it).</summary>
+    internal static IReadOnlyList<string> SettingsRead =>
+    [
+        DebuggersSetting, NetCoreDbgAdapterFactory.SettingPath, JsDebugAdapterFactory.SettingPath, JsDebugAdapterFactory.NodeSettingPath,
+        GdbAdapterFactory.SettingPath, GdbAdapterFactory.ArgsSettingPath, RequestTimeoutSetting, RustDebuggerSetting,
+        CodeLldbAdapterFactory.SettingPath, CodeLldbAdapterFactory.ConsoleModeSetting,
+    ];
 
     private void InitializeContributions()
     {

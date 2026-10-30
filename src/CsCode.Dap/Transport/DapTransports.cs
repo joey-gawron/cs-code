@@ -79,6 +79,11 @@ public sealed record DebugAdapterStdioProcess(
     public string DisplayName { get; init; } = "debug adapter";
     /// <summary>Environment variables removed from the adapter's environment (and so from the debuggee's): the user's ssh-agent socket, …</summary>
     public IReadOnlyList<string> RemoveEnv { get; init; } = [];
+    /// <summary>
+    /// A private (0700) directory of startup files the adapter reads that must not be on its command line, which every local user can read
+    /// through <c>/proc/&lt;pid&gt;/cmdline</c> (GDB's launch environment: <c>-ix</c> commands). Deleted when the adapter exited or is closed.
+    /// </summary>
+    public string? PrivateDirectory { get; init; }
 }
 
 /// <summary>
@@ -196,7 +201,14 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException or DirectoryNotFoundException)
         {
             process.Dispose();
+            DeletePrivateDirectory(descriptor.PrivateDirectory);
             throw new InvalidOperationException($"Could not start {descriptor.DisplayName} '{descriptor.Command}': {ex.Message}", ex);
+        }
+        catch
+        {
+            process.Dispose();
+            DeletePrivateDirectory(descriptor.PrivateDirectory);
+            throw;
         }
         if (descriptor.BelowNormalPriority && nice is null)
         {
@@ -204,8 +216,20 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { /* best effort */ }
         }
         logger.LogDebug("Started {Name} {Command} (pid {Pid})", descriptor.DisplayName, descriptor.Command, process.Id);
-        return new ProcessTransport(process, logger, marker, descriptor.DisplayName);
+        return new ProcessTransport(process, logger, marker, descriptor.DisplayName) { _privateDirectory = descriptor.PrivateDirectory };
     }
+
+    /// <summary>The adapter's private startup files (<see cref="DebugAdapterStdioProcess.PrivateDirectory"/>); deleted once it exited or is closed.</summary>
+    private string? _privateDirectory;
+
+    private static void DeletePrivateDirectory(string? directory)
+    {
+        if (directory is null) return;
+        try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* gone, or a stale-directory sweep will take it */ }
+    }
+
+    private void ReleasePrivateDirectory() => DeletePrivateDirectory(Interlocked.Exchange(ref _privateDirectory, null));
 
     internal static string? FindNice()
     {
@@ -214,7 +238,11 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
         return null;
     }
 
-    private void OnExited(object? sender, EventArgs e) => _completion.TrySetResult();
+    private void OnExited(object? sender, EventArgs e)
+    {
+        ReleasePrivateDirectory();
+        _completion.TrySetResult();
+    }
 
     private async Task PumpStderrAsync()
     {
@@ -295,6 +323,7 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
         try { await CloseAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false); }
         catch (Exception ex) { _logger.LogDebug(ex, "Closing adapter transport"); }
         _process.Exited -= OnExited;
+        ReleasePrivateDirectory();
         _completion.TrySetResult();
         _process.Dispose();
     }

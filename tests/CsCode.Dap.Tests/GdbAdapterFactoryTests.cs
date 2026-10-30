@@ -20,11 +20,12 @@ namespace CsCode.Dap.Tests;
 public class GdbAdapterFactoryTests
 {
     private static GdbAdapterFactory Make(TestConfigurationService? settings = null, Dictionary<string, string?>? env = null, string? helperDir = null,
-        FakeWorkspace? ws = null, RecordingWindowService? window = null) =>
+        FakeWorkspace? ws = null, RecordingWindowService? window = null, string? privateRoot = null) =>
         new(new DapPlatform { Configuration = settings, Workspace = ws, Window = window })
         {
             Environment = name => env is not null && env.TryGetValue(name, out var v) ? v : null,
             HelperDirectory = helperDir ?? "/nonexistent",
+            PrivateRoot = privateRoot,
         };
 
     private static DebugConfiguration Cfg(object o, Uri? folder = null) => DebugConfiguration.FromJson(JsonSerializer.SerializeToElement(o), folder);
@@ -119,9 +120,44 @@ public class GdbAdapterFactoryTests
         Assert.False(resolved.Properties.ContainsKey("env")); // GDB's own env would REPLACE the whole environment
         Assert.Equal(dir.Path.TrimEnd('/'), resolved.GetString("cwd"));
         Assert.Equal(["set environment RUST_BACKTRACE=1", "set environment SPACED=a b", "unset environment LANG"], GdbAdapterFactory.EnvironmentCommands(resolved));
-        var d = Assert.IsType<DebugAdapterStdioProcess>(await Make(env: new() { ["PATH"] = "/usr/bin:/bin" }).CreateDescriptorAsync(resolved, Ct)
-            ?? throw new Xunit.Sdk.XunitException("no descriptor"));
-        Assert.Contains("set environment RUST_BACKTRACE=1", d.Args);
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the environment goes through a private file on Unix only");
+        using var root = new TempDirectory("gdbenv-");
+        var factory = Make(env: new() { ["PATH"] = "/usr/bin:/bin" }, privateRoot: root.Path);
+        var d = Assert.IsType<DebugAdapterStdioProcess>(await factory.CreateDescriptorAsync(resolved, Ct) ?? throw new Xunit.Sdk.XunitException("no descriptor"));
+        // The values (often secrets) are not on GDB's command line (/proc/<pid>/cmdline is world-readable): GDB reads them from a private file.
+        Assert.DoesNotContain(d.Args, a => a.Contains("RUST_BACKTRACE", StringComparison.Ordinal) || a.Contains("a b", StringComparison.Ordinal));
+        var file = d.Args[d.Args.ToList().IndexOf("-ix") + 1];
+        Assert.Equal(d.PrivateDirectory, Path.GetDirectoryName(file));
+        Assert.Equal(["set environment RUST_BACKTRACE=1", "set environment SPACED=a b", "unset environment LANG"], File.ReadAllLines(file));
+        Assert.True(d.Args.ToList().IndexOf("-ix") < d.Args.ToList().IndexOf("-i=dap"));
+        if (OperatingSystem.IsWindows()) return; // (satisfies the platform analyzer; skipped above)
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(file));
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(d.PrivateDirectory!));
+    }
+
+    /// <summary>
+    /// A real <c>gdb -i=dap</c> started from the descriptor: no argument of the running GDB carries a launch environment value, and the private
+    /// file is gone once GDB is. (That GDB applies the commands is covered by RealGdbRustTests' env test.)
+    /// </summary>
+    [Fact]
+    public async Task A_real_gdb_gets_the_launch_environment_from_the_private_file_and_the_file_goes_with_gdb()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix only");
+        var gdb = RustToolchainLocator.FindOnPath(System.Environment.GetEnvironmentVariable, "gdb");
+        Assert.SkipWhen(gdb is null, "gdb is not on PATH");
+        using var root = new TempDirectory("gdbenv-real-");
+        var factory = Make(env: new() { ["PATH"] = System.Environment.GetEnvironmentVariable("PATH") }, privateRoot: root.Path);
+        var config = Cfg(new { type = "gdb", request = "launch", name = "r", program = "/bin/sh", __cscodeEnvironment = new { CSCODE_SECRET_PROBE = "s3cret-value" } });
+        var d = Assert.IsType<DebugAdapterStdioProcess>(await factory.CreateDescriptorAsync(config, Ct));
+        var transport = CsCode.Dap.Transport.ProcessTransport.Start(d, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+        try
+        {
+            var cmdline = File.ReadAllText($"/proc/{transport.ProcessId}/cmdline").Replace('\0', ' ');
+            Assert.DoesNotContain("s3cret-value", cmdline, StringComparison.Ordinal);
+            Assert.Contains("-ix", cmdline, StringComparison.Ordinal);
+        }
+        finally { await transport.DisposeAsync(); }
+        Assert.False(Directory.Exists(d.PrivateDirectory), "the private directory outlived GDB");
     }
 
     [Fact]

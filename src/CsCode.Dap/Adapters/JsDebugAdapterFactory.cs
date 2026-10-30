@@ -238,6 +238,7 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         if (layout.TypeScriptEntry is null) return [];
         var project = layout.HasTsConfig ? "${workspaceFolder}/tsconfig.json" : "${workspaceFolder}";
         var type = OperatingSystem.IsWindows() ? "shell" : "process";
+        var compiler = await LocalTscAsync(folder, ct) ?? "tsc";
         var tasks = $$"""
             {
                 "version": "2.0.0",
@@ -245,7 +246,7 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
                     {
                         "label": "tsc: build",
                         "type": "{{type}}",
-                        "command": "tsc",
+                        "command": "{{compiler}}",
                         "args": ["-p", "{{project}}"],
                         "problemMatcher": "$tsc",
                         "group": { "kind": "build", "isDefault": true }
@@ -255,6 +256,25 @@ public sealed class JsDebugAdapterFactory : IDebugAdapterFactory, IDebugConfigur
 
             """;
         return [("tasks.json", tasks)];
+    }
+
+    /// <summary>
+    /// The folder's own TypeScript compiler (<c>node_modules/.bin/tsc</c>, <c>tsc.cmd</c> on Windows) when the project installed it, as VS Code's
+    /// TypeScript task provider prefers it: a project with TypeScript only as a devDependency has no <c>tsc</c> on PATH. Null: none there.
+    /// </summary>
+    private async Task<string?> LocalTscAsync(Uri? folder, CancellationToken ct)
+    {
+        if (folder is null || _p.Workspace is not { } ws) return null;
+        var relative = "node_modules/.bin/" + (OperatingSystem.IsWindows() ? "tsc.cmd" : "tsc");
+        try
+        {
+            // npm links it (a symbolic link to typescript/bin/tsc): a file, a link to one, or both flags
+            return await ws.FileSystem.StatAsync(new Uri(folder.ToString().TrimEnd('/') + "/" + relative), ct) is { } stat
+                && ((stat.Type & FileType.File) != 0 || stat.Type == FileType.SymbolicLink)
+                ? "${workspaceFolder}/" + relative
+                : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
     /// <param name="OutDir">tsc's outDir as written (relative to the folder, possibly "../x" or absolute); null or empty: next to the sources.</param>
