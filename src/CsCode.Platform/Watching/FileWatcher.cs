@@ -105,7 +105,7 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
         _config = config;
         _options = options ?? new PlatformOptions();
         _log = logger ?? NullLogger<FileWatcher>.Instance;
-        _fswFactory = fswFactory ?? ((root, recursive, sink, fatal) => new FswBackend(root, recursive, sink, fatal));
+        _fswFactory = fswFactory ?? ((root, recursive, sink, fatal) => OsWatchBackend.Create(root, recursive, sink, fatal, _options.PollInterval));
     }
 
     private sealed class ConfigRead(IConfigurationService config) : IConfigurationServiceRead

@@ -253,6 +253,16 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
   A failure is matched to the OS watch that reported it: a late report from a watch a re-check already replaced is ignored, and one that arrives while the watch is still being armed
   degrades it once it is in place. The polling watcher takes its baseline when it is armed, so a change right after `Ready` is reported.
 * Queue overflow reports a `Changed(root)` so consumers rescan.
+* **macOS** (`Watching/MacWatchBackends.cs`): FSEvents' item flags are sticky — a flag stays on a path until FSEvents has reported it, so `FileSystemWatcher` raises Changed and
+  Created for every new file, and for a write to a file made shortly before the stream, Changed+Created+Deleted for a file created and removed in one burst, and nothing when the
+  watched directory itself goes. So each reported path is classified again from `lstat` and what the watch knows (`FsEventsReconciler`, as VS Code's parcel watcher does): a name
+  snapshot of the tree taken when it is armed (≤ 20,000 entries, default excludes pruned) plus every path reported since. Unseen and not in the snapshot (or, where it does not reach,
+  born after arming) → Created, else Changed, once per change; gone → Deleted, except a path the snapshot proves was not there and the watch never saw (it came and went). A kqueue
+  vnode watch on the root reports its deletion or move (its known top entries deleted) and announces what a directory back at the path holds. FSEvents' rescan requests
+  (MustScanSubDirs, events dropped by the kernel or fseventsd, a mount below the root), which `FileSystemWatcher` raises as an `IOException`, report `Changed(root)` and keep the
+  stream (files-4). **Non-recursive** watches use kqueue, not FSEvents, whose streams are always the whole subtree (files-9: watching `~` for `~/.zshrc` would bring every event under
+  `~/Library` into the process): a vnode watch on the directory and one per file in it (≤ 256 per directory, ≤ 2,048 in all; files beyond are compared every poll interval),
+  diffed against a snapshot of the directory (name → inode, mtime, size). When the directory goes its entries are reported deleted and the path is polled until a directory is back.
 
 ## Workspace, search and fuzzy matching
 
