@@ -128,6 +128,9 @@ public sealed class ShellController : IDisposable
             () => new WelcomeView(commands, workspace, state), () => new KeyboardReferenceView(_sp.GetService<IKeybindingService>(), commands),
             _sp.GetService<ILanguageService>(), _sp.GetService<ShellViewActivator>(), _ui)));
 
+        // Remote editing: Connect to Host / Open Remote Folder / disconnect... commands and the remote indicator in the status bar.
+        if (_sp.GetService<CsCode.Remote.Shell.RemoteShellContributions>() is { } remote) _disposables.Add(remote.Start());
+
         Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window, context: keys);
         _disposables.Add(Keyboard);
 
@@ -242,6 +245,8 @@ public sealed class ShellController : IDisposable
         var options = _sp.GetRequiredService<CommandLineOptions>();
         var workspace = _sp.GetService<IWorkspaceService>();
         var nav = _sp.GetRequiredService<INavigationService>();
+        foreach (var remote in options.RemoteTargets) // cscode ssh://[user@]host[:port]/path: connect, then open the folder
+            _ = _sp.GetRequiredService<ICommandService>().ExecuteAsync(CsCode.Remote.Shell.RemoteShellContributions.OpenFolder, remote).AsTask();
         foreach (var t in options.Targets)
         {
             try

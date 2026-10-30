@@ -19,6 +19,9 @@ public sealed record CommandLineOptions(
     bool ShowVersion,
     IReadOnlyList<string> UnknownSwitches)
 {
+    /// <summary><c>ssh://[user@]host[:port]/path</c> arguments: remote folders to open (connecting first).</summary>
+    public IReadOnlyList<string> RemoteTargets { get; init; } = [];
+
     public static CommandLineOptions Empty { get; } = new([], false, false, false, false, []);
 
     /// <summary><c>--session NAME</c>: the named session (created when it does not exist).</summary>
@@ -56,6 +59,7 @@ public sealed record CommandLineOptions(
         var cwd = workingDirectory ?? Directory.GetCurrentDirectory();
         var targets = new List<StartupTarget>();
         var unknown = new List<string>();
+        var remote = new List<string>();
         bool newWindow = false, wait = false, help = false, version = false;
         bool list = false, background = false, quit = false, all = false, foreground = false;
         bool host = false, spare = false, hidden = false, unnamed = false, headless = false;
@@ -93,13 +97,15 @@ public sealed record CommandLineOptions(
                 case "--seed-from": pending = "--seed-from"; break;
                 case "--headless-test": headless = true; break;
                 default:
-                    if (arg.StartsWith('-') && arg.Length > 1) unknown.Add(arg);
+                    if (arg.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)) remote.Add(arg);
+                    else if (arg.StartsWith('-') && arg.Length > 1) unknown.Add(arg);
                     else targets.Add(ParseTarget(arg, cwd));
                     break;
             }
         }
         return new CommandLineOptions(targets, newWindow, wait, help, version, unknown)
         {
+            RemoteTargets = remote,
             Session = session, ListSessions = list, Background = background, Quit = quit, All = all, Foreground = foreground,
             Host = host, Spare = spare, Hidden = hidden, Unnamed = unnamed, SeedFrom = seedFrom, HeadlessTest = headless,
         };
@@ -128,6 +134,7 @@ public sealed record CommandLineOptions(
         Usage: cscode [options] [paths...]
 
           <path>                 A folder (opens as the workspace) or a file (opens in an editor). file:line[:col] jumps to a position.
+          ssh://[user@]host[:port]/path   Connect to the host over ssh and open the remote folder.
           -g, --goto <file:line[:col]>  Open a file at a position.
           -s, --session <name>   Open the named session (shown at once when it is already running; created when it does not exist).
           -n, --new-window       Open a new unnamed session (window-N).

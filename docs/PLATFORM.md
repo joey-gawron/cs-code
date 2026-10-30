@@ -38,8 +38,8 @@ Start-up notes for the integrator:
 | `IContextKeyService` | `Context.ContextKeyService` | full when grammar, scopes, `SetMany`, `Reset`; `Context.WhenClause.Validate/GetKeys` |
 | `IConfigurationService` | `Configuration.ConfigurationService` | layered JSONC, comment-preserving `UpdateAsync`, `LastError`, `ErrorChanged`, `ReloadAsync` |
 | `IKeybindingService` | `Keybindings.KeybindingService` | chords, presets, user file, contributions; `KeyBindingFormatter`, `LoadWarnings`, `ReloadAsync` |
-| `IFileSystem` | `FileSystem.LocalFileSystem` | `file:` only; atomic writes; trash |
-| `IFileWatcher` | `Watching.FileWatcher` | `Watch` returns a `FileWatchHandle` (`Ready` task) |
+| `IFileSystem` | `FileSystem.FileSystemRouter` → `FileSystem.LocalFileSystem` | routes by URI scheme (added for remote editing, docs/REMOTE.md): `file:` → `LocalFileSystem` (atomic writes; trash), other schemes → the registered `IFileSystemProvider` (Core); providers resolved lazily on the first non-`file:` call |
+| `IFileWatcher` | `Watching.FileWatcherRouter` → `Watching.FileWatcher` | routes by scheme the same way (`IFileWatcherProvider`); an unserved scheme gets an inert watch. `FileWatcher.Watch` returns a `FileWatchHandle` (`Ready` task) |
 | `IWorkspaceService` | `Workspace.WorkspaceService` | + `AddFolderAsync`, `RemoveFolderAsync`, `NoteRecent`, `ClearRecents`, `PrimaryFolder` |
 | `IStateStorage` | `State.StateStorage` | `FlushAsync`, `DisposeAsync` |
 | `ILoggerProvider` | `Logging.FileLoggerProvider` | rolling file logger |
@@ -225,7 +225,8 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
 * `FindFilesAsync(includeGlob, maxResults, ct)` streams `Uri`s from a parallel walk (≤ 3 workers) honouring `files.exclude` and `.gitignore` semantics (below); never enters `.git`/`.hg`/`.svn`; order is unspecified; `maxResults ≤ 0` = unlimited.
   Memory is **O(depth × fan-out)** (depth-first with a LIFO stack of lazy enumerators; a 10×10×10 tree with 20,000 files peaks at under 150 pending directories — asserted), results flow through a bounded channel with back-pressure (a parked walk holds no thread),
   cancellation/abandoning stops it within one directory entry, symlink cycles are detected by comparing real paths with the ancestor chain, dangling links are skipped.
-  Only `file:` folders are walked (a remote folder has its own search).
+  Only `file:` folders are walked here; folders of other schemes are searched by the `IFileSearchProvider` registered for the scheme (remote: on the
+  server), with the same include glob, `files.exclude`, ignore-file and symlink settings; `maxResults` spans all folders.
 * **gitignore** (`GitIgnoreFile`, golden-tested): comments/blank lines · trailing unescaped spaces · `!` negation (last match wins; nearest file wins across nested files) · trailing `/` = directory only · a `/` at the start or middle anchors to the file's directory ·
   `*` `?` `[a-z]` `[!x]` never cross `/` · `**/x`, `a/**/b`, `a/**` · backslash escapes. Files in `.gitignore` apply even outside a Git repo; `.git/info/exclude` is read at the root; the global excludes file is not.
   A file inside an ignored directory cannot be re-included (the directory is never entered), as in Git. Ignore files > 1 MB are skipped. `search.useIgnoreFiles` turns it off.

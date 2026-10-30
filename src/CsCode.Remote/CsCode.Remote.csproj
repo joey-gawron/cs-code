@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Remote editing, client side (docs/REMOTE.md): wire protocol, transports (ssh / local process), server bootstrap, askpass,
+       the ssh: file system, watcher and search providers, and the language/diagnostics/window bridges. Avalonia-free; references Core only
+       (the headless CsCode.Server shares the protocol types from here). -->
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Remote.Tests" />
+    <InternalsVisibleTo Include="cscode-server" />
+  </ItemGroup>
+
+</Project>
