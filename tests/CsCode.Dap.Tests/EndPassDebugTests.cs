@@ -710,18 +710,11 @@ public class EndPassDebugTests
         await using var h = await SessionHarness.StartAsync(IgnoresStartAndCount, config: Cfg.Make(type: "user-adapter"));
         var (_, scopes) = await h.StopAndLoadAsync();
         var reference = scopes[0].VariablesReference;
-        Assert.Equal("n0..[96] (100)", Span(await h.Session.GetVariablesAsync(reference, 0, 100, Ct)));   // the answer was all 253: detected
-        Assert.Equal("[97]..[196] (100)", Span(await h.Session.GetVariablesAsync(reference, 100, 100, Ct))); // not the first page again
+        Assert.Equal("n0..[96] (100)", Span(await h.Session.GetVariablesAsync(reference, 0, 100, Ct)));
+        Assert.Equal("[97]..[196] (100)", Span(await h.Session.GetVariablesAsync(reference, 100, 100, Ct))); // the answer began at n0 again: detected
         Assert.Equal("[197]..[249] (53)", Span(await h.Session.GetVariablesAsync(reference, 200, 100, Ct)));
-        Assert.Equal(1, h.Adapter.CountOf("variables")); // the whole list was kept: one request for every page
-
-        // the next stop: whole lists are asked for at once (no start/count the adapter would ignore)
-        await h.Session.ContinueAsync(ct: Ct);
-        await h.StopAtBreakpointAsync();
-        await h.Session.GetScopesAsync((await h.Session.GetStackTraceAsync(1, ct: Ct))[0].Id, Ct);
-        Assert.Equal("[100]..[199] (100)", Span(await h.Session.GetVariablesAsync(reference, "indexed", 100, 100, Ct)));
-        var last = h.Adapter.RequestsOf("variables")[^1].Args<CsCode.Dap.Protocol.DapVariablesArguments>();
-        Assert.Equal(("indexed", (int?)null, (int?)null), (last.Filter, last.Start, last.Count));
+        Assert.Empty(await h.Session.GetVariablesAsync(reference, 300, 100, Ct));
+        Assert.Equal(2, h.Adapter.CountOf("variables")); // the whole list was kept: no request for the later pages
     }
 
     [Fact]
@@ -733,6 +726,24 @@ public class EndPassDebugTests
         Assert.Equal("[100]..[199] (100)", Span(await h.Session.GetVariablesAsync(scopes[0].VariablesReference, "indexed", 100, 100, Ct)));
         Assert.Equal("[200]..[249] (50)", Span(await h.Session.GetVariablesAsync(scopes[0].VariablesReference, "indexed", 200, 100, Ct)));
         Assert.Equal("n0..n2 (3)", Span(await h.Session.GetVariablesAsync(scopes[0].VariablesReference, "named", 0, 100, Ct)));
+        Assert.Equal(3, h.Adapter.CountOf("variables")); // the later page, the first page to compare it with, the named children
+    }
+
+    /// <summary>js-debug answers an array's indexed page with one extra, non-indexed row: more than <c>count</c> alone is not "ignores paging".</summary>
+    [Fact]
+    public async Task An_answer_with_an_extra_row_that_honours_start_is_kept_as_its_page()
+    {
+        await using var h = await SessionHarness.StartAsync(a => a.On("variables", r =>
+        {
+            var args = r.Args<CsCode.Dap.Protocol.DapVariablesArguments>();
+            var from = args.Start ?? 0;
+            var page = Enumerable.Range(from, Math.Min(args.Count ?? 1000, 1000 - from)).Select(i => new CsCode.Dap.Protocol.DapVariable { Name = $"{i}", Value = "0" });
+            return new CsCode.Dap.Protocol.DapVariablesResponse { Variables = [.. page, new CsCode.Dap.Protocol.DapVariable { Name = "[[Prototype]]", Value = "Array" }] };
+        }));
+        var (_, scopes) = await h.StopAndLoadAsync();
+        var reference = scopes[0].VariablesReference;
+        for (var start = 0; start < 1000; start += 100)
+            Assert.Equal($"{start}..{start + 99} (100)", Span(await h.Session.GetVariablesAsync(reference, "indexed", start, 100, Ct)));
     }
 
     [Fact]

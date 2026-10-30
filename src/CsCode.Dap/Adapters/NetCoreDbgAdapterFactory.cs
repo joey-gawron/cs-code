@@ -175,7 +175,7 @@ public sealed partial class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDe
         if (!known) project = await ChooseStartupProjectAsync(folder, ask: false, ct);
         var projectArg = project is null ? "" : "${workspaceFolder}/" + project.RelativePath;
         var args = projectArg.Length > 0
-            ? $"\"build\", \"{projectArg}\", \"/property:GenerateFullPaths=true\", \"/consoleloggerparameters:NoSummary\""
+            ? $"\"build\", {JsonSerializer.Serialize(projectArg, ReadableJson)}, \"/property:GenerateFullPaths=true\", \"/consoleloggerparameters:NoSummary\"" // a path may need escaping
             : "\"build\", \"/property:GenerateFullPaths=true\", \"/consoleloggerparameters:NoSummary\"";
         var tasks = $$"""
             {
@@ -199,6 +199,7 @@ public sealed partial class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDe
     // ------------------------------------------------------------------ the project a new launch.json is for
 
     internal const string DefaultTargetFramework = "net10.0";
+    private static readonly JsonSerializerOptions ReadableJson = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     private static readonly string[] ProjectExtensions = [".csproj", ".fsproj", ".vbproj"];
     private static readonly HashSet<string> SkippedDirectories = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", "node_modules", "packages", "artifacts", "target", "out" };
     private const int MaxCandidates = 64, MaxDirectoriesScanned = 256;

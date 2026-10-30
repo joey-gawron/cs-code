@@ -152,7 +152,7 @@ public sealed partial class DebugSession
         if (reference <= 0) return [];
         if (!_handles.IsValidHandle(reference)) throw Stale("variables reference");
         if (_quirks.IgnoresVariablePaging) return Page(await GetAllChildrenAsync(reference, null, ct), start, count);
-        if (_pagingIgnored) return Page(await GetAllChildrenAsync(reference, filter, ct), start, count);
+        if (_handles.IgnoresPaging(reference, filter)) return Page(await GetAllChildrenAsync(reference, filter, ct), start, count);
         var key = new VariableHandleCache.VariablesKey(reference, filter, start, count);
         if (_handles.TryGetPage(key, out var cached)) return cached;
 
@@ -160,17 +160,17 @@ public sealed partial class DebugSession
         var args = new DapVariablesArguments { VariablesReference = reference, Filter = filter, Start = start, Count = count is > 0 ? count : null };
         var resp = DapJson.Deserialize<DapVariablesResponse>(await RequestAsync("variables", args, ct)) ?? new DapVariablesResponse();
         if (gen != _handles.Generation) throw Stale("variables reference"); // resumed while the request was in flight: the data is stale
-        if (count is > 0 && resp.Variables.Count > count)
+        if (count is > 0 && start is > 0 && resp.Variables.Count > count && await IgnoredStartAsync(reference, filter, count.Value, resp, ct))
         {
-            // More than asked for: this adapter ignores `count` — and, as every adapter seen doing so (CodeLLDB), `start`, which taking the first
-            // `count` of the answer would turn into the first page again for every page. From now on this session asks for whole lists (with
-            // the filter, which such an adapter may honour) and cuts the pages itself, as for the IgnoresVariablePaging quirk; a user-configured
-            // adapter needs no quirk for it. A first page's answer is that whole list already; a later page's is asked for again, since an
-            // adapter that does honour `start` answered only the rest of the list.
-            _pagingIgnored = true;
-            _logger.LogDebug("The debug adapter ignores variables paging (asked for {Count}, got {Got}): pages are cut client-side", count, resp.Variables.Count);
-            if (start is null or 0) return Page(KeepAllChildren(reference, filter, resp), 0, count);
-            return Page(await GetAllChildrenAsync(reference, filter, ct), start, count);
+            // A later page answered with more than asked for, from the first child on: the adapter ignores `start` and `count` for this container
+            // (as CodeLLDB does for all), so taking the first `count` of each answer showed the first page again for every page. The answer is
+            // the whole list: the container's pages are cut from it, as for the IgnoresVariablePaging quirk, with no quirk needed (a
+            // user-configured adapter). Per container: an adapter may honour paging elsewhere. (More than `count` alone proves nothing:
+            // js-debug answers an array's indexed page with one extra, non-indexed row.)
+            _handles.MarkIgnoresPaging(reference, filter);
+            _logger.LogDebug("The debug adapter ignored variables start and count (asked for {Count} from {Start}, got {Got} from the first): pages are cut client-side",
+                count, start, resp.Variables.Count);
+            return Page(KeepAllChildren(reference, filter, resp), start, count);
         }
         // A hostile/buggy adapter may send more than the cap: never hand the UI (or keep) more than that.
         var cap = Math.Min(count is > 0 ? count.Value : _settings.MaxVariablesPerRequest, _settings.MaxVariablesPerRequest);
@@ -182,7 +182,7 @@ public sealed partial class DebugSession
 
     /// <summary>
     /// Lane only. Every child of <paramref name="reference"/> from an adapter that ignores paging (<see cref="DebugAdapterQuirks.IgnoresVariablePaging"/>,
-    /// or detected so: <see cref="_pagingIgnored"/>): asked for once per stop, without <c>start</c>/<c>count</c> (it would ignore them), at most
+    /// or seen doing so for this container): asked for once per stop, without <c>start</c>/<c>count</c> (it would ignore them), at most
     /// <see cref="DebugSessionOptions.MaxVariablesPerRequest"/> kept. The quirk's adapter announces no indexed/named split, so no filter is sent
     /// for it (<paramref name="filter"/> null).
     /// </summary>
@@ -195,6 +195,27 @@ public sealed partial class DebugSession
         return KeepAllChildren(reference, filter, resp);
     }
 
+    /// <summary>
+    /// Lane only. Whether <paramref name="later"/>, the answer to a page after the first, starts with the container's first child: the adapter
+    /// ignored <c>start</c>. Compared with the first page of the same size, asked for when this stop has not read it yet.
+    /// </summary>
+    private async Task<bool> IgnoredStartAsync(int reference, string? filter, int count, DapVariablesResponse later, CancellationToken ct)
+    {
+        if (later.Variables.Count == 0) return false;
+        if (!_handles.TryGetPage(new VariableHandleCache.VariablesKey(reference, filter, 0, count), out var first)
+            && !_handles.TryGetPage(new VariableHandleCache.VariablesKey(reference, filter, null, count), out first))
+        {
+            var gen = _handles.Generation;
+            var args = new DapVariablesArguments { VariablesReference = reference, Filter = filter, Start = 0, Count = count };
+            var resp = DapJson.Deserialize<DapVariablesResponse>(await RequestAsync("variables", args, ct)) ?? new DapVariablesResponse();
+            if (gen != _handles.Generation) throw Stale("variables reference");
+            first = resp.Variables.Take(Math.Min(count, _settings.MaxVariablesPerRequest)).Select(DapMapping.ToCore).ToArray();
+            foreach (var v in first) _handles.RegisterHandle(v.VariablesReference);
+            _handles.SetPage(new VariableHandleCache.VariablesKey(reference, filter, 0, count), first);
+        }
+        return first.Count > 0 && first[0].Name == later.Variables[0].Name;
+    }
+
     private IReadOnlyList<DebugVariable> KeepAllChildren(int reference, string? filter, DapVariablesResponse resp)
     {
         var vars = resp.Variables.Take(_settings.MaxVariablesPerRequest).Select(DapMapping.ToCore).ToArray();
@@ -202,9 +223,6 @@ public sealed partial class DebugSession
         _handles.SetAllChildren(reference, filter, vars);
         return vars;
     }
-
-    /// <summary>Lane only: this session's adapter was seen ignoring <c>count</c> (T53); see <see cref="GetVariablesCoreAsync"/>.</summary>
-    private bool _pagingIgnored;
 
     /// <summary>The page [<paramref name="start"/>, <paramref name="start"/> + <paramref name="count"/>) of a complete child list (null: from the first / to the end).</summary>
     internal static IReadOnlyList<DebugVariable> Page(IReadOnlyList<DebugVariable> all, int? start, int? count)

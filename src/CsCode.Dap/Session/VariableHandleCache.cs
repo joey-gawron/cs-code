@@ -134,6 +134,7 @@ internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int m
         _handles.Clear();
         _pages.Clear();
         _allChildren = null;
+        _ignoringPaging.Clear();
         _scopes.Clear();
         _overflowed = false;
     }
@@ -144,6 +145,16 @@ internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int m
         _pages.Clear();
         _allChildren = null;
     }
+
+    /// <summary>The containers (reference, filter) of this stop whose adapter answered a page with every child: their pages are cut client-side.</summary>
+    private readonly HashSet<(int Reference, string? Filter)> _ignoringPaging = new();
+
+    public void MarkIgnoresPaging(int reference, string? filter)
+    {
+        if (_ignoringPaging.Count < 10_000) _ignoringPaging.Add((reference, filter)); // bounded; handles die with the stop anyway
+    }
+
+    public bool IgnoresPaging(int reference, string? filter) => _ignoringPaging.Contains((reference, filter));
 
     private (int Reference, string? Filter, IReadOnlyList<DebugVariable> Children)? _allChildren;
 
