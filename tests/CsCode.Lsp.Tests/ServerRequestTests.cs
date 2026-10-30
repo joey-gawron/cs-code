@@ -154,7 +154,6 @@ public class ServerRequestTests
         // lsp-core-2 follow-up: the configuration service keeps member names inside cscode.languageServers as written (URLs, globs). The server's
         // settings object is then read like a settings.json of its own: its top-level dotted keys are paths, everything below is kept.
         await using var env = new LspTestEnv();
-        env.Manager.AddDefinition(LspTestEnv.FakeDef());
         var overrides = CsCode.Lsp.Manager.BuiltinLanguageServers.All.ToDictionary(d => d.Id, _ => (object)new { enabled = false });
         overrides["fake"] = Json("""
             {
@@ -167,6 +166,7 @@ public class ServerRequestTests
             }
             """);
         env.Config.Set(LspSettingKeys.LanguageServers, overrides);
+        env.Manager.AddDefinition(LspTestEnv.FakeDef()); // after the setting: the first session already starts with the user's entry
         env.Open("a.fake", "x");
         var server = await env.Connections.WaitForServerAsync();
         var init = await server.WaitForAsync(P.LspMethods.Initialize);
