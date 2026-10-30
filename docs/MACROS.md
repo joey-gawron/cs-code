@@ -158,7 +158,7 @@ Vim emulation is **on by default**, so by default users get Vim's `q`/`@` macros
   a newline instead. Type the whole word while recording (or record with `editor.quickSuggestions` off).
 * Commands that ask for input (Rename, Go to Line, the palette) ask again on replay; what the user picked in them is not recorded (Go to Line's
   palette sets the caret directly, without a command).
-* Mouse actions, Ctrl+Tab and clicks on tabs are not recorded. The find panel's Replace / Replace All buttons are not recorded (use a search step
+* Mouse actions, Ctrl+Tab, clicks on tabs and files opened from Quick Open (no command runs) are not recorded. The find panel's Replace / Replace All buttons are not recorded (use a search step
   and typing). A key step is replayed unresolved: a hand-written `{ "key": "ctrl+s" }` presses Ctrl+S on the editor, it does not run Save
   (use `{ "command": "workbench.action.files.save" }`).
 * A playback is not one undo step (the editor's undo groups cannot stay open across slices: Undo inside a macro would throw).
