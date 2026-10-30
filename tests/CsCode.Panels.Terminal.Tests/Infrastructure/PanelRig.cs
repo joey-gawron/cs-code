@@ -90,9 +90,10 @@ public sealed class PanelRig : IAsyncDisposable
     public readonly Window Window;
     public readonly TerminalView View;
 
-    public PanelRig(int width = 900, int height = 400)
+    public PanelRig(int width = 900, int height = 400, Action<IServiceCollection>? configure = null)
     {
         var services = new ServiceCollection();
+        configure?.Invoke(services);
         services.AddSingleton<ICommandService>(Commands);
         services.AddSingleton<IContextKeyService>(Keys);
         services.AddSingleton<IConfigurationService>(Config);

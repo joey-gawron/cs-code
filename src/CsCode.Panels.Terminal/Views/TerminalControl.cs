@@ -46,7 +46,6 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
     private bool _mouseButtonHeld;
     private int _mouseButton;
     private bool _suppressText;
-    private long _suppressGeneration;
     private bool _cursorOn = true;
     private DispatcherTimer? _blink;
     private string? _preedit;
@@ -239,14 +238,9 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
         var interrupt = bytes is [0x03] or [0x1c] or [0x1a];
         s.Input(bytes, urgent: interrupt);
         // A handled Ctrl/Alt combination must not also arrive as text (some platforms send both: macOS's Option+B is followed by "∫"). Only
-        // that key's own text, which comes right behind its KeyDown: the flag ends with the key's KeyUp or on the next dispatcher turn, so
-        // text that arrives later without a KeyDown of its own (an input method's commit on Linux) is never swallowed.
+        // that key's own text, which comes right behind its KeyDown: one character, before the key's KeyUp ends the flag. Text that arrives
+        // later without a KeyDown of its own (an input method's commit on Linux, after Ctrl+L) is never swallowed.
         _suppressText = (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Alt)) != 0;
-        if (_suppressText)
-        {
-            var generation = ++_suppressGeneration;
-            Dispatcher.UIThread.Post(() => { if (_suppressGeneration == generation) _suppressText = false; }, DispatcherPriority.Background);
-        }
         ClearSelectionOnInput();
         ResetBlink();
         return true;
@@ -278,8 +272,12 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
         if (_suppressText)
         {
             _suppressText = false;
-            e.Handled = true;
-            return;
+            // the key's own text is one character; longer text is an input method's commit, which goes to the program
+            if (System.Globalization.StringInfo.GetNextTextElementLength(e.Text) == e.Text.Length)
+            {
+                e.Handled = true;
+                return;
+            }
         }
         _preedit = null;
         _session?.Input(KeyEncoder.Text(e.Text));

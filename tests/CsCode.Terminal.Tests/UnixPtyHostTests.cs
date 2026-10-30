@@ -364,16 +364,17 @@ public sealed class UnixPtyHostTests : IDisposable
     }
 
     /// <summary>
-    /// The real reuse, where it can be forced: in a private pid namespace (<c>unshare -Urpfm --mount-proc dotnet test ... --filter
-    /// FullyQualifiedName~private_pid_namespace</c>) the next pid can be chosen, so a new session leader gets the reaped terminal program's
-    /// pid. Skipped elsewhere.
+    /// The real reuse, where it can be forced: in a private pid namespace (<c>CSCODE_PIDNS_TEST=1 unshare -Urpfm --mount-proc dotnet test ...
+    /// --filter FullyQualifiedName~private_pid_namespace</c>) the next pid can be chosen, so a new session leader gets the reaped terminal
+    /// program's pid. Skipped elsewhere (opt-in: it sets the namespace's next pid).
     /// </summary>
     [Fact]
     public async Task In_a_private_pid_namespace_a_reused_pid_survives_disposing_the_exited_terminal()
     {
         RequireLinux();
         const string lastPid = "/proc/sys/kernel/ns_last_pid";
-        Assert.SkipUnless(CanWrite(lastPid), "Needs a private pid namespace (run the test under unshare -Urpfm --mount-proc).");
+        Assert.SkipUnless(Environment.GetEnvironmentVariable("CSCODE_PIDNS_TEST") == "1" && CanWrite(lastPid),
+            "Needs a private pid namespace: CSCODE_PIDNS_TEST=1 unshare -Urpfm --mount-proc dotnet test ...");
         var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "exit 0"]), output);
@@ -396,7 +397,8 @@ public sealed class UnixPtyHostTests : IDisposable
 
         static bool CanWrite(string path)
         {
-            try { using var f = new FileStream(path, FileMode.Open, FileAccess.Write); return true; }
+            // writing needs CAP_SYS_ADMIN over the namespace (the permission bits allow anyone to open it): write the value it has
+            try { File.WriteAllText(path, File.ReadAllText(path).Trim()); return true; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
         }
     }
