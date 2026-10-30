@@ -21,6 +21,15 @@ public interface IFileSystem
     ValueTask DeleteAsync(Uri uri, bool recursive = false, bool useTrash = true, CancellationToken ct = default);
     ValueTask RenameAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default);
     ValueTask CopyAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default);
+
+    /// <summary>
+    /// True when <see cref="WriteFileAsync"/> on <paramref name="uri"/> replaces an existing file safely by itself AND keeps the file: its hard
+    /// links, owner, group, mode and extended attributes/ACLs, a symlink written through (Platform's local file system: temp file + rename that
+    /// copies them, or an in-place write that restores the old content on a failure when a rename would lose them). A saver then writes the
+    /// target directly instead of writing a temp file and renaming it over the target, which breaks hard links and resets the owner (lsp-core-8).
+    /// Additive; false unless the implementation says so.
+    /// </summary>
+    bool PreservesFileOnWrite(Uri uri) => false;
 }
 
 /// <summary>

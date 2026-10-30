@@ -110,6 +110,9 @@ public sealed class RemoteFileSystem : IFileSystemProvider
     public ValueTask WriteFileAsync(Uri uri, ReadOnlyMemory<byte> content, bool createParents = true, CancellationToken ct = default) =>
         new(WriteCoreAsync(uri, content, null, createParents, ct));
 
+    /// <summary>The server writes with Platform's local file system, which keeps the file's links, owner, mode and xattrs (lsp-core-8).</summary>
+    public bool PreservesFileOnWrite(Uri uri) => true;
+
     /// <summary>
     /// Conditional write: fails with <see cref="RemoteFileModifiedException"/> when the remote file's etag is no longer <paramref name="expectedEtag"/>
     /// (someone else changed it since it was read; "" = it must not exist). Returns the new stat (with its etag).

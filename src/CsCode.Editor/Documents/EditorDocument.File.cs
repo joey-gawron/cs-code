@@ -248,6 +248,13 @@ public sealed partial class EditorDocument
     /// <summary>Temp file next to the target, then rename over it: a crash mid-write never leaves a truncated file. Symlinks are written through.</summary>
     internal static async Task WriteAtomicAsync(IFileSystem fs, Uri target, byte[] bytes, CancellationToken ct)
     {
+        // lsp-core-8: the app's file systems replace a file safely themselves AND keep its hard links, owner, group, mode and xattrs; a temp file
+        // renamed over the target would break hard links and reset the owner (and Platform's rename does not copy the mode: every save dropped +x).
+        if (fs.PreservesFileOnWrite(target))
+        {
+            await fs.WriteFileAsync(target, bytes, createParents: true, ct).ConfigureAwait(false);
+            return;
+        }
         var existing = await fs.StatAsync(target, ct).ConfigureAwait(false);
         if (existing is not null && (existing.Type & FileType.SymbolicLink) != 0)
         {

@@ -12,6 +12,7 @@ internal sealed class SchemeFileSystem(string scheme, IFileSystemProvider inner)
     public ValueTask<IReadOnlyList<DirectoryEntry>> ReadDirectoryAsync(Uri uri, CancellationToken ct = default) => inner.ReadDirectoryAsync(uri, ct);
     public ValueTask<byte[]> ReadFileAsync(Uri uri, CancellationToken ct = default) => inner.ReadFileAsync(uri, ct);
     public ValueTask WriteFileAsync(Uri uri, ReadOnlyMemory<byte> content, bool createParents = true, CancellationToken ct = default) => inner.WriteFileAsync(uri, content, createParents, ct);
+    public bool PreservesFileOnWrite(Uri uri) => inner.PreservesFileOnWrite(uri);
     public ValueTask CreateDirectoryAsync(Uri uri, CancellationToken ct = default) => inner.CreateDirectoryAsync(uri, ct);
     public ValueTask DeleteAsync(Uri uri, bool recursive = false, bool useTrash = true, CancellationToken ct = default) => inner.DeleteAsync(uri, recursive, useTrash, ct);
     public ValueTask RenameAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default) => inner.RenameAsync(source, target, overwrite, ct);

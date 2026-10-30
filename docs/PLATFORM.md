@@ -194,9 +194,18 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
 
 `LocalFileSystem` (`file:` only; other schemes → `NotSupportedException`):
 * `StatAsync` follows symlinks (size/time of the target; flags `SymbolicLink`; a dangling link reports `SymbolicLink` alone); `ReadDirectoryAsync` is one level, sorted, includes hidden entries.
-* `WriteFileAsync` is **atomic** (sibling temp file → fsync → rename), preserves the existing file's permissions, writes **through** symlinks, refuses read-only files (`UnauthorizedAccessException`), creates parents on request.
+* `WriteFileAsync` is **atomic** (sibling temp file → fsync → rename), writes **through** symlinks, refuses read-only files (`UnauthorizedAccessException`), creates parents on request.
   A failure before the rename (tested by fault injection) leaves the original untouched and no temp file. Readers see the complete old or complete new file (stress-tested).
   Not done: fsync of the containing directory (not expressible with .NET's APIs).
+* **A save keeps the file** (lsp-core-8, VS Code / Vim `backupcopy=auto` behaviour; `AtomicFile`, `Io/UnixFileIdentity.cs`): the temp file gets the
+  target's owner and group (`chown`, when they differ from a new file's), its mode (set-id bits too) and its extended attributes (ACLs, SELinux
+  label, `user.*`). When a rename would lose something — the file has **other hard links**, its owner/group cannot be given to a new file, an xattr
+  cannot be copied, or no temp file can be created next to it (a writable file in a read-only directory) — the content is written **in place**
+  (same inode: write, truncate, fsync); if that fails part way (disk full, I/O error, cancellation) the old content (kept in memory up to 256 MB)
+  is written back. In-place writes are not power-cut safe, as VS Code's are not. Linux only for links/owner/xattrs (`statx`); macOS and Windows
+  keep only the mode, as before. `IFileSystem.PreservesFileOnWrite(uri)` (Core, additive, default false) says so for `file:` (and the remote file
+  system, whose server writes the same way), and the editor's save then calls `WriteFileAsync(target)` instead of writing a temp file and renaming
+  it over the target — that rename dropped the executable bit on every save in the app and broke hard links.
 * `DeleteAsync`: recursive flag for non-empty directories; `useTrash` moves to the OS trash and **fails loudly** (`IOException`, original untouched) if it cannot — it never silently deletes permanently.
   Linux follows the freedesktop Trash spec (home trash; unique names `a.2.txt`; `.trashinfo` with percent-encoded `Path=` and local `DeletionDate=`, claimed atomically with `CreateNew`; cross-device = copy then delete).
   Symlinks are trashed/deleted as links; recursive delete never follows directory links (cycles are harmless).
