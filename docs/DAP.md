@@ -1,7 +1,8 @@
 # CsCode.Dap — Debug Adapter Protocol client and debugging services
 
 `src/CsCode.Dap` is a complete DAP client plus everything a Visual-Studio-style debugger UI binds to, with a working .NET story through
-Samsung **netcoredbg** (MIT), Node.js/TypeScript through Microsoft's **js-debug** and Rust (and C/C++) through **GDB's native DAP**. No Avalonia, no Newtonsoft, no extension host: the protocol layer is hand-written on `System.Text.Json`,
+Samsung **netcoredbg** (MIT), Node.js/TypeScript through Microsoft's **js-debug** and Rust (and C/C++) through **GDB's native DAP** (the
+default) or **CodeLLDB**. No Avalonia, no Newtonsoft, no extension host: the protocol layer is hand-written on `System.Text.Json`,
 and customisation is native and file based (`launch.json`, `tasks.json`, the `cscode.debuggers` setting).
 
 > **Status in one paragraph.** Everything in the brief's MUST list is implemented and covered by **587 passing tests against scripted
@@ -14,6 +15,11 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
 > behind. Run them with
 > `tools/fetch-netcoredbg.sh && tools/fetch-js-debug.sh && dotnet test tests/CsCode.Dap.Tests --filter Category=RealAdapter`.
 > See [Real-adapter tests](#real-adapter-tests-netcoredbg).
+>
+> **CodeLLDB (wave 3)**: built in as `lldb` with a pinned installer that asks first; its factory, installer, quirks and the default-debugger
+> choice are unit-tested, but its real-adapter suites (`RealCodeLldbRustTests`, 18 tests; `RealCodeLldbPanelsTests`, 2) have **not run yet**:
+> executing the downloaded adapter was refused by the building session's permission system. They skip until CodeLLDB is present
+> (`tools/fetch-codelldb.sh` or `CSCODE_CODELLDB`). See [DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-codelldb).
 
 ## Layout
 
@@ -27,10 +33,11 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
 | `Service/` | `DebugService : IDebugService` (+ `IDebugFrameFocus`, `IDebugOutputHistory`, `IDebugSourceContentProvider`), commands, `cscode.debuggers` contributions. |
 | `Configuration/` | `DebugConfigurationService`, `LaunchJson`, `VariableResolver`, `DapPlatform` (optional Core services bundle). |
 | `Tasks/TaskService.cs` | Minimal `tasks.json` runner (`ITaskService`). |
-| `Adapters/` | `NetCoreDbgAdapterFactory`, `NetCoreDbgInstaller`, `JsDebugAdapterFactory`, `JsDebugInstaller` (Node.js/TypeScript), `GdbAdapterFactory` + `GdbAdapterQuirks` + `CargoArtifacts` (Rust/C/C++ through GDB's native DAP; `Gdb/cscode_gdb.py`, copied to the output, summarises Rust values). |
+| `Adapters/` | `NetCoreDbgAdapterFactory`, `NetCoreDbgInstaller`, `JsDebugAdapterFactory`, `JsDebugInstaller` (Node.js/TypeScript), `GdbAdapterFactory` + `GdbAdapterQuirks` + `CargoArtifacts` (Rust/C/C++ through GDB's native DAP; `Gdb/cscode_gdb.py`, copied to the output, summarises Rust values), `CodeLldbAdapterFactory` + `CodeLldbAdapterQuirks` + `CodeLldbInstaller` (Rust/C/C++ through CodeLLDB), `RustToolchain` (the folder's sysroot and rustc commit, shared). |
 | `Session/DebugAdapterQuirks.cs` | What a built-in adapter does differently, compensated in one place (REPL input, completions, hit conditions, client-side exception filters, output categories, frames, trailing output); `BuiltinDebugAdapter.Quirks`, applied to every session of the type. |
 | `tools/fetch-netcoredbg.sh` | Fetches netcoredbg into `.scratch/tools/netcoredbg/` (SHA-256 verified, safe extraction). |
 | `tools/fetch-js-debug.sh` | Fetches the pinned js-debug v1.140.0 into `.scratch/tools/js-debug/v1.140.0/` (pinned SHA-256; `JSDEBUG_ARCHIVE=` installs from a local archive without downloading). |
+| `tools/fetch-codelldb.sh` | Fetches the pinned CodeLLDB v1.12.3 package of this platform into `.scratch/tools/codelldb/v1.12.3/` (pinned per-platform size and SHA-256, only `extension/` extracted, entries checked first; `CODELLDB_ARCHIVE=` installs from a local package without downloading). |
 
 ## Threading and isolation (binding rules, verified by tests)
 
@@ -220,6 +227,22 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   **"Rust panics"** exception filter (`std::panicking::rust_panic`, reported as an exception with the panic's message), GDB's messages as
   `console` output, logpoint line breaks, output after `terminated` kept, std/libc/symbol-less frames de-emphasised. Breakpoint languages rust,
   c, cpp. Evaluation, quirks and limits: [docs/DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-gdb).
+* Built-in `lldb` → **CodeLLDB v1.12.3** (MIT): `nice -n 10 codelldb --settings {"sourceLanguages":[…],…}` on **stdio** (a
+  `DebugAdapterStdioProcess` like GDB's; CodeLLDB speaks stdio without `--port`/`--connect`, one session per process; `PYTHONHOME`/`PYTHONPATH`
+  removed from its environment). Lookup `cscode.debug.codelldbPath` → `CSCODE_CODELLDB` → `{ToolsDir}/codelldb/v1.12.3` → PATH, else the user is
+  **offered** the pinned download (`CodeLldbInstaller`: per-platform SHA-256 and size pinned, only `extension/` extracted, links and setuid bits
+  refused, at most 1 GiB, extraction off the debug lane). The provider does what VS Code's CodeLLDB extension does: the `cargo` key (shared
+  `CargoArtifacts`), `cwd`/`relativePathBase`, `sourceLanguages` (Rust by default: the toolchain's LLDB formatters and the "Rust: on panic"
+  filter), `_adapterSettings.consoleMode: "evaluate"` (or VS Code's `lldb.consoleMode`), `terminal: "console"` unless an integrated terminal
+  was asked for and exists, `sourceMap` `/rustc/<commit>` → rust-src, string `env` values, numeric attach `pid`. `CodeLldbAdapterQuirks`: its
+  panic filter's breakpoint stops reported as the exception "Rust panics" (new `DebugAdapterQuirks.BreakpointExceptionFilters`: ids taken from
+  the `setExceptionBreakpoints` response), a bare hit count sent as `=N`, `-exec` → `/cmd`, std and disassembly frames de-emphasised, no
+  breakpoints sent to a `noDebug` launch (new `RefusesBreakpointsWithoutDebugging`). Templates like GDB's. **Not yet run against the real
+  adapter**: [docs/DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-codelldb).
+* **The Rust default**: F5 with no launch configuration offers "Create launch.json" for the folder's debugger — `Cargo.toml` → the Rust debugger
+  (`cscode.debug.rustDebugger`: `gdb`, the default, or `lldb`), a .NET project or solution → `coreclr`, `tsconfig.json`/`package.json` →
+  `pwa-node`, else a "Select debugger" pick (it used to take the first debugger in label order, .NET, for every folder). Why GDB:
+  [docs/DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#which-rust-debugger-is-the-default).
 * `${command:pickProcess}` is a built-in command (`pickProcess`) listing processes through `IWindowService.ShowQuickPickAsync` (enumeration runs
   off the caller thread; never lists the editor itself).
 * **User adapters, no extensions:** the `cscode.debuggers` setting (array of `{type, label, program, runtime, args, languages, windows/linux/osx,
@@ -235,13 +258,14 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 * Context keys (only if `IContextKeyService` resolves): `debugState` (`inactive|initializing|running|stopped`), `inDebugMode`, `debugType`,
   `debuggerAvailable`, `focusedSessionIsAttach`, `breakpointsExist`.
 * Settings registered with `IConfigurationService`: `cscode.debuggers`, `cscode.debug.netcoredbgPath`, `cscode.debug.jsDebugPath`,
-  `cscode.debug.nodePath`, `cscode.debug.gdbPath`, `cscode.debug.gdbArgs` (extra GDB arguments, e.g. `["-nx"]`), `cscode.debug.requestTimeoutSeconds`.
+  `cscode.debug.nodePath`, `cscode.debug.gdbPath`, `cscode.debug.gdbArgs` (extra GDB arguments, e.g. `["-nx"]`), `cscode.debug.codelldbPath`,
+  `cscode.debug.rustDebugger` (`gdb` | `lldb`), `lldb.consoleMode` (VS Code's CodeLLDB setting, read when set), `cscode.debug.requestTimeoutSeconds`.
 
 ## Integration notes
 
 * `services.AddCsCodeDap()` registers a shared `DebugLane`, `BreakpointManager`/`IBreakpointManager`, `ITaskService`, `IDebugConfigurationService`,
   `IDebugService` (and the same instance as `IDebugFrameFocus`, `IDebugOutputHistory`, `IDebugSourceContentProvider`, `IDebugKnownCapabilities`)
-  and the built-in adapters (netcoredbg for `coreclr`; js-debug for `pwa-node` and `node`; GDB for `gdb` and `rust-gdb`, with `GdbAdapterQuirks`). Every Core platform service it can use is **optional** (`DapPlatform.From(sp)` uses `GetService`).
+  and the built-in adapters (netcoredbg for `coreclr`; js-debug for `pwa-node` and `node`; GDB for `gdb` and `rust-gdb`, with `GdbAdapterQuirks`; CodeLLDB for `lldb`, with `CodeLldbAdapterQuirks`). Every Core platform service it can use is **optional** (`DapPlatform.From(sp)` uses `GetService`).
   **Resolve `IDebugService` once at startup**: its constructor registers the commands, `${command:pickProcess}` and the context keys.
 * Additive Core files: `Core/Tasks/ITaskService.cs`; `Core/Debugging/DebugExtras.cs` (`IDebugFrameFocus`, `IDebugOutputHistory`,
   `IDebugSourceContentProvider`, `IDebugSessionHealth`, `IActiveSelectionProvider`, `DebugSourceUri`); `Core/Debugging/DebugKnownCapabilities.cs`
@@ -276,6 +300,8 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 * js-debug: function breakpoints are unsupported by the adapter; async parent frames have no variables; see docs/DEBUGGING-RUST-TS.md.
 * GDB: the program's stderr arrives as stdout (one pipe); hit counts mean "from the Nth hit on" (GDB ignore counts); a `println!` line stops
   twice per pass; see docs/DEBUGGING-RUST-TS.md (Rust through GDB, known gaps).
+* CodeLLDB: built and unit-tested, its real-adapter suites not run yet (the CodeLLDB column of the matrix is what its sources say, not evidence);
+  its `[return value]` row is a variable in its "Local" scope, which Autos does not lift as it does GDB's `returnValue` scope.
 * A stop is shown at the first frame the adapter does not de-emphasise (VS Code's rule), so a pause in a library or a panic inside std shows
   the user's code; the Call Stack still lists (folded) the frames above it.
 * Single-thread-only resumes fire `Continued` once locally and may fire a second (duplicate) event if the adapter also sends `continued`.
@@ -341,3 +367,16 @@ restart, crash, generic and closure frames, Rust values, watch, set variable, th
 pid, the `cargo` key's test binary, the templates, `env`, a 1M-line flood and a 10-session soak; each checks that no gdb, debuggee or marked
 process is left. They skip with the reason when gdb (14+ with Python), cargo or rustc is missing. `GdbQuirksTests` (fake adapters shaped like
 GDB 18) and `GdbAdapterFactoryTests` (stand-in scripts for gdb/rustc, the stdio transport's nice/marker/reaping) need no GDB.
+
+### Real-adapter tests (CodeLLDB, Rust) — written, not yet run
+
+`RealCodeLldbRustTests` (trait `Category=RealAdapter`, serial; 18 tests) run the same matrix on the same rig (`RealGdbRig` with type `lldb`)
+against the real CodeLLDB, recording what it shows (`[codelldb]` lines with `CSCODE_DAP_TEST_METRICS`) and asserting what a user relies on (stops,
+lines, values read, processes left). They skip with the reason when CodeLLDB (`tools/fetch-codelldb.sh` → `.scratch/tools/codelldb/v1.12.3/`, or
+`CSCODE_CODELLDB`), cargo or rustc is missing; **they have never run** (see the status note at the top). Without CodeLLDB:
+`CodeLldbInstallerTests` (fabricated packages: pins equal to the fetch script's, download/verify/extract, digest and size refusals, zip-slip,
+symlink, size-limit and setuid refusals, cancellation; `The_real_pinned_package_installs` extracts the real v1.12.3 package from
+`CSCODE_CODELLDB_ARCHIVE`, trait `RealTools`, nothing executed), `CodeLldbAdapterFactoryTests` (lookup order, the stdio command line, the
+download offer accepted/declined/failed/concurrent, the provider, templates, DI), `CodeLldbQuirksTests` (fake adapters shaped like CodeLLDB's
+sources: the panic filter's breakpoint stop as an exception, filter options, hit counts, `-exec`, frames, `noDebug`) and `DefaultDebuggerTests`
+(the launch.json F5 creates per folder and the `cscode.debug.rustDebugger` setting).
