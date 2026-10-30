@@ -70,7 +70,7 @@ public class TreeSitterQualityTests
         var treeSitter = Colours(view, doc.Snapshot().GetText());
 
         var shots = ScratchDir("screenshots/treesitter");
-        SaveSideBySide(textMateFrame, treeSitterFrame, Path.Combine(shots, $"{language}.png"), $"{language} - TextMate", $"{language} - tree-sitter (editor.experimental.treeSitter)");
+        SaveSideBySide(textMateFrame, treeSitterFrame, Path.Combine(shots, $"{language}.png"), $"{language} - TextMate", $"{language} - tree-sitter (editor.syntaxEngine)");
 
         var (agreement, report) = Compare(doc.Snapshot().GetText(), textMate, treeSitter);
         File.WriteAllText(Path.Combine(ScratchDir("treesitter"), $"quality-{language}.md"), $"# {language}: TextMate vs tree-sitter (Dark+)\n\nagreement {agreement:P1} of non-blank characters\n\n{report}");
