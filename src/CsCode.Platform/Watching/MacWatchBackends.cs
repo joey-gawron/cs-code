@@ -714,9 +714,11 @@ internal sealed class FsEventsReconciler
 /// <summary>
 /// macOS, with <see cref="FswBackend"/>: the <see cref="FsEventsReconciler"/> of one stream, and a vnode watch on its root directory — FSEvents
 /// (through FileSystemWatcher) reports nothing when the root itself is deleted or moved away. The watch is armed again, and the content of the
-/// directory found there announced, at once when one is already back at the path, else on the next event of the stream (which follows the
-/// path). The root's loss and the announcement after it are reported in that order, whole, whichever threads they come from: a name the old
-/// and the new directory share must reach the owner deleted then created (replaced), never created then deleted (nothing at all).
+/// directory found there announced, at once when one is already back at the path, else as soon as one arrives there: the root's parent is
+/// watched (kqueue) while the root is gone, since the stream says nothing about a directory moved to its own path (it follows the path, so
+/// it reports what happens in that directory later, but a tree moved there and left alone would never be announced). The root's loss and
+/// the announcement after it are reported in that order, whole, whichever threads they come from: a name the old and the new directory
+/// share must reach the owner deleted then created (replaced), never created then deleted (nothing at all).
 /// </summary>
 internal sealed class MacRootWatch : IDisposable
 {
@@ -725,6 +727,7 @@ internal sealed class MacRootWatch : IDisposable
     private readonly string _root;
     private readonly object _gate = new(); // held while the loss or the announcement is reported
     private KqueueHub.Registration? _watch;
+    private KqueueHub.Registration? _parentWatch; // while the root is lost and nothing is back at its path
     private int _generation;               // of _watch: a loss reported by a watch replaced since is stale
     private bool _lost;
     private bool _disposed;
@@ -752,12 +755,28 @@ internal sealed class MacRootWatch : IDisposable
         lock (_gate)
         {
             if (_disposed || _watch is not null) return;
-            var generation = ++_generation;
-            _watch = KqueueHub.Watch(_root, Gone, _ => OnRootLost(generation));
-            if (_watch is null || !_lost) return;
+            if (!TryWatchRoot())
+            {
+                if (!_lost || _parentWatch is not null) return;
+                // Nothing at the path yet: whatever is made or moved there, the parent's watch reports (the stream does not). Looked at again
+                // once that watch is armed, for a directory that arrived in between.
+                _parentWatch = Path.GetDirectoryName(_root) is { Length: > 0 } parent ? KqueueHub.Watch(parent, MacWatchNative.NoteWrite, _ => EnsureWatched()) : null;
+                if (!TryWatchRoot()) return;
+            }
+            _parentWatch?.Dispose();
+            _parentWatch = null;
+            if (!_lost) return;
             _lost = false;
             Reconciler.RootFound();
         }
+    }
+
+    // Under _gate.
+    private bool TryWatchRoot()
+    {
+        var generation = ++_generation;
+        _watch = KqueueHub.Watch(_root, Gone, _ => OnRootLost(generation));
+        return _watch is not null;
     }
 
     /// <summary>The root is gone (its watch said so, or the stream asked for a rescan of a root that is not there).</summary>
@@ -778,13 +797,16 @@ internal sealed class MacRootWatch : IDisposable
 
     public void Dispose()
     {
-        KqueueHub.Registration? watch;
+        KqueueHub.Registration? watch, parentWatch;
         lock (_gate)
         {
             _disposed = true;
             watch = _watch;
             _watch = null;
+            parentWatch = _parentWatch;
+            _parentWatch = null;
         }
         watch?.Dispose();
+        parentWatch?.Dispose();
     }
 }

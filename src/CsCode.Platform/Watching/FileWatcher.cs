@@ -44,8 +44,9 @@ public sealed class FileWatchHandle : IDisposable
 /// one on a moved directory keeps reporting it under the old path); the inotify backend reports its root moved away or removed under it
 /// (onRootLost). So a root is re-checked then, when a watched parent reports it deleted, moved or (re-)created, after deletions below it, and
 /// whenever another subscriber joins it: a deleted root goes back to waiting, a replaced one is re-armed (what the new OS watch reports while
-/// the content is announced is held until the announcement is out). Not detected with a FileSystemWatcher: a root replaced (or an empty one
-/// removed) while nothing watches its parent and nobody re-watches it.</item>
+/// the content is announced is held until the announcement is out). On macOS the backend itself reports its root's loss and the directory
+/// back at the path (<see cref="MacRootWatch"/>). Not detected with a FileSystemWatcher elsewhere: a root replaced (or an empty one removed)
+/// while nothing watches its parent and nobody re-watches it.</item>
 /// <item><b>Roots that keep going away</b>: on Linux a <see cref="FileSystemWatcher"/> whose directory was deleted can never be released — its
 /// reader thread waits forever on an inotify instance that has no watch left, so disposing it frees neither (.NET 10). Every directory lost
 /// under such a watch would cost one inotify instance (the per-user limit is often 128, shared with every other program) and one thread
