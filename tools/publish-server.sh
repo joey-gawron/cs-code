@@ -5,14 +5,18 @@
 #   cscode-server-portable.tar.gz    framework-dependent build for any host with a .NET 10 runtime (launched through `dotnet`)
 #   manifest.json                    flavour, rid, file, sha256 and install hash (first 16 hex digits of the sha256) of each bundle
 #
-# Usage: tools/publish-server.sh [--out DIR] [--rid RID]... [--no-portable]
+# Usage: tools/publish-server.sh [--out DIR] [--rid RID]... [--all] [--no-portable] [--no-trim]
 #   --out DIR      output directory (default: .scratch/server-bundles; the client also looks there when it runs from a source tree)
-#   --rid RID      add a self-contained runtime id (repeatable). Only RIDs whose runtime pack the SDK already has build offline;
-#                  others need a NuGet download (this script never downloads anything itself).
+#   --rid RID      add a self-contained runtime id (repeatable; default linux-x64). A RID whose runtime pack is not in the NuGet cache is
+#                  restored from nuget.org by `dotnet publish` (tools/fetch-server-runtime-packs.sh pins and verifies those packs).
+#   --all          the five supported RIDs: linux-x64 linux-arm64 osx-x64 osx-arm64 win-x64
 #   --no-portable  skip the framework-dependent bundle
+#   --no-trim      do not trim the self-contained bundles. By default they are trimmed in partial mode (framework assemblies only; ours and
+#                  the NuGet libraries stay whole): linux-x64 33 MB -> 12 MB, and the whole remote test suite passes against the trimmed
+#                  server (docs/REMOTE.md, "Server bundles").
 #
-# Not trimmed: the server (de)serialises Core's records with reflection-based System.Text.Json and composes its services through
-# Microsoft.Extensions.DependencyInjection, neither of which is trim-safe without source-generated contexts for every model.
+# win-x64 holds cscode-server.exe; the client does not bootstrap Windows remotes yet (POSIX start/install scripts), so it is built for the
+# record and for a future PowerShell installer. macOS apphosts are signed ad hoc by the SDK on this Linux host (no Apple tooling needed).
 # On a Nix-provided dotnet, run it as `bash .scratch/notes/with-nix-env.sh tools/publish-server.sh` (or source tools/nix-dev-env.sh first).
 set -euo pipefail
 
@@ -20,11 +24,15 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 out="$repo/.scratch/server-bundles"
 rids=()
 portable=1
+trim=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) out=$2; shift 2 ;;
     --rid) rids+=("$2"); shift 2 ;;
+    --all) rids+=(linux-x64 linux-arm64 osx-x64 osx-arm64 win-x64); shift ;;
     --no-portable) portable=0; shift ;;
+    --no-trim) trim=0; shift ;;
+    --trim) trim=1; shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "publish-server.sh: unknown argument '$1'" >&2; exit 2 ;;
   esac
@@ -40,9 +48,10 @@ manifest_entries=()
 
 # bundle <flavour> <rid> <dir> <file> <runtime>
 bundle() {
-  local flavour=$1 rid=$2 dir=$3 file=$4 runtime=$5
-  [ -f "$dir/cscode-server" ] || { echo "publish-server.sh: $dir has no cscode-server" >&2; exit 1; }
-  chmod 755 "$dir/cscode-server"
+  local flavour=$1 rid=$2 dir=$3 file=$4 runtime=$5 exe=cscode-server
+  case "$rid" in win-*) exe=cscode-server.exe ;; esac
+  [ -f "$dir/$exe" ] || { echo "publish-server.sh: $dir has no $exe" >&2; exit 1; }
+  chmod 755 "$dir/$exe"
   tar -C "$dir" -czf "$out/$file.tmp" --owner=0 --group=0 --numeric-owner --sort=name .
   mv "$out/$file.tmp" "$out/$file"
   local sum
@@ -53,10 +62,16 @@ bundle() {
   echo "  $file  $(du -h "$out/$file" | cut -f1)  hash ${sum:0:16}"
 }
 
+trim_args=(-p:PublishTrimmed=false)
+if [ "$trim" = 1 ]; then
+  # Partial: only assemblies marked trimmable (the framework's) are trimmed; System.Text.Json keeps its reflection serializer (Core's records),
+  # and the trimmer's warnings (reflection the analysis cannot follow) are reported, not fatal: the tests run against the result instead.
+  trim_args=(-p:PublishTrimmed=true -p:TrimMode=partial -p:JsonSerializerIsReflectionEnabledByDefault=true -p:TreatWarningsAsErrors=false -p:SuppressTrimAnalysisWarnings=true)
+fi
 for rid in "${rids[@]}"; do
   echo "Publishing self-contained $rid…"
   dotnet publish "$project" --nologo -v:q -c Release -r "$rid" --self-contained true \
-    -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -p:PublishTrimmed=false \
+    -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none "${trim_args[@]}" \
     -o "$work/$rid"
   find "$work/$rid" -name '*.pdb' -delete
   bundle self-contained "$rid" "$work/$rid" "cscode-server-$rid.tar.gz" ""

@@ -146,6 +146,12 @@ public static class TestEnv
     }
 
     /// <summary>
+    /// <c>CSCODE_TEST_SERVER</c>: a published <c>cscode-server</c> executable (an extracted bundle, e.g. the trimmed one) that the loopback tests run
+    /// instead of the build's <c>cscode-server.dll</c>; unset: the build's.
+    /// </summary>
+    public static string? PublishedServer => Environment.GetEnvironmentVariable("CSCODE_TEST_SERVER") is { Length: > 0 } exe && File.Exists(exe) ? exe : null;
+
+    /// <summary>
     /// Launch line of a local server (data dir in <paramref name="dataDir"/>; marker for process accounting). HOME and the XDG directories point into
     /// the data dir, so the server and the language servers it starts never touch the user's caches or configuration.
     /// </summary>
@@ -153,7 +159,12 @@ public static class TestEnv
     {
         var home = Path.Combine(dataDir, "home");
         Directory.CreateDirectory(home);
-        return LocalServer.Launch(ServerAssembly, dataDir, marker, belowNormal: true, persist: persist, environment: new Dictionary<string, string?>
+        var launch = LocalServer.Launch(ServerAssembly, dataDir, marker, belowNormal: true, persist: persist, environment: ServerEnvironment(home));
+        // the same arguments, without `dotnet <dll>`, for a published single-file server
+        return PublishedServer is { } exe ? launch with { FileName = exe, Arguments = launch.Arguments.Skip(1).ToArray() } : launch;
+    }
+
+    private static Dictionary<string, string?> ServerEnvironment(string home) => new()
         {
             ["SSH_AUTH_SOCK"] = null,
             ["HOME"] = home,
@@ -162,8 +173,7 @@ public static class TestEnv
             ["XDG_DATA_HOME"] = Path.Combine(home, ".local", "share"),
             ["XDG_STATE_HOME"] = Path.Combine(home, ".local", "state"),
             ["CSCODE_HOME"] = null,
-        });
-    }
+        };
 
     /// <summary>PIDs of live processes whose command line contains <paramref name="marker"/> (Linux /proc).</summary>
     public static IReadOnlyList<int> ProcessesWithMarker(string marker)

@@ -240,6 +240,52 @@ public class R3Tests
     }
 
     [Fact]
+    public async Task A_remote_nodejs_session_runs_js_debug_on_the_server_and_its_child_session_reaches_the_same_adapter_server()
+    {
+        // js-debug is an adapter SERVER: the launched program becomes a child session (startDebugging) that must connect to that same server.
+        var jsDebug = Environment.GetEnvironmentVariable("CSCODE_JSDEBUG");
+        Assert.SkipUnless(jsDebug is { Length: > 0 } && Directory.Exists(jsDebug) && File.Exists("/usr/bin/node"), "needs CSCODE_JSDEBUG (tools/fetch-js-debug.sh) and node");
+        await using var host = new RemoteTestHost(r3: true, userSettings: JsonSerializer.Serialize(new Dictionary<string, object> { ["cscode.debug.jsDebugPath"] = jsDebug! }));
+        File.WriteAllText(Path.Combine(host.Workspace.Path, "app.js"), """
+            function twice(v) {
+              const r = v * 2;
+              return r;
+            }
+            const out = twice(21);
+            console.log("remote-node " + out);
+            """);
+        await host.ConnectAsync();
+        await host.OpenWorkspaceAsync();
+        var debug = host.Services.GetRequiredService<IDebugService>();
+        var uri = host.Remote("app.js");
+        debug.Breakpoints.Add(uri, 2); // return r;
+        var started = new List<IDebugSession>();
+        var output = new System.Text.StringBuilder();
+        debug.SessionStarted.Subscribe(s => { lock (started) started.Add(s); });
+        debug.Output.Subscribe(e => { lock (output) output.Append(e.Output); });
+        var config = DebugConfiguration.FromJson(JsonDocument.Parse("""{ "type": "pwa-node", "request": "launch", "name": "remote node", "program": "${workspaceFolder}/app.js" }""").RootElement, host.Remote());
+        var parent = await debug.StartAsync(config, Ct) ?? throw new Xunit.Sdk.XunitException("no session: " + string.Join(" | ", host.Recording.Messages.Select(m => m.Message)));
+
+        await TestEnv.WaitUntilAsync(() => debug.StopLocation is not null, TimeSpan.FromSeconds(90), "the breakpoint in the child session");
+        var stop = debug.StopLocation!;
+        Assert.Equal(uri, stop.Uri);
+        Assert.Equal(2, stop.Line);
+        Assert.NotSame(parent, stop.Session); // the program runs in the child session, on the parent's adapter server
+        Assert.Same(parent, stop.Session.Parent);
+        var frame = (await stop.Session.GetStackTraceAsync(stop.ThreadId, 0, 1, Ct))[0];
+        Assert.Equal("42", (await stop.Session.EvaluateAsync("r", frame.Id, "watch", Ct)).Result);
+        var serverTree = TestEnv.Descendants(host.Manager.Session!.Server.ProcessId);
+        Assert.Contains(serverTree, p => Cmdline(p).Contains("app.js", StringComparison.Ordinal)); // the debuggee is on the server
+
+        await stop.Session.ContinueAsync(null, Ct);
+        await TestEnv.WaitUntilAsync(() => { lock (output) return output.ToString().Contains("remote-node 42", StringComparison.Ordinal); }, TimeSpan.FromSeconds(30), "the program's output");
+        await debug.StopAllAsync(Ct);
+        await TestEnv.WaitUntilAsync(() => debug.Sessions.Count == 0, TimeSpan.FromSeconds(30), "the sessions to end");
+        await TestEnv.WaitUntilAsync(() => !TestEnv.Descendants(host.Manager.Session!.Server.ProcessId).Any(p => Cmdline(p).Contains("app.js", StringComparison.Ordinal) || Cmdline(p).Contains("dapDebugServer", StringComparison.Ordinal)),
+            TimeSpan.FromSeconds(30), "js-debug and node to end on the server");
+    }
+
+    [Fact]
     public void The_debug_path_mapper_maps_only_the_connected_hosts_uris()
     {
         var authority = Protocol.RemoteAuthority.Parse("me@box:2222");
