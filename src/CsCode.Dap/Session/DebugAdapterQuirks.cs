@@ -88,4 +88,10 @@ public class DebugAdapterQuirks
     /// then sends it no breakpoints and no exception filters, so the program runs to its end as it would without a debugger.
     /// </summary>
     public virtual bool IgnoresNoDebug => false;
+
+    /// <summary>
+    /// The adapter answers breakpoint requests of a <c>noDebug</c> launch with an error (CodeLLDB: "Not supported in noDebug mode."): the session
+    /// sends it none, rather than show every breakpoint as failed while the program runs.
+    /// </summary>
+    public virtual bool RefusesBreakpointsWithoutDebugging => false;
 }

@@ -20,6 +20,7 @@ namespace CsCode.Dap.Adapters;
 /// <item><b>Frames</b>: the Rust standard library (<c>/rustc/&lt;commit&gt;/…</c> or the rust-src component) and code CodeLLDB can only show
 /// as disassembly (a <c>sourceReference</c> frame: libc, frames without debug information) are de-emphasised, so a pause or a panic shows the
 /// user's code first, as with GDB.</item>
+/// <item><b>Start Without Debugging</b>: CodeLLDB honours <c>noDebug</c> but then refuses breakpoint requests with an error: none are sent.</item>
 /// </list>
 /// </summary>
 public sealed class CodeLldbAdapterQuirks : DebugAdapterQuirks
@@ -60,4 +61,7 @@ public sealed class CodeLldbAdapterQuirks : DebugAdapterQuirks
     }
 
     public override DebugStackFrame MapFrame(DebugStackFrame frame) => GdbAdapterQuirks.DeemphasizeLibraryFrame(frame);
+
+    /// <summary>In a <c>noDebug</c> launch CodeLLDB answers every breakpoint request with "Not supported in noDebug mode." (its request dispatch).</summary>
+    public override bool RefusesBreakpointsWithoutDebugging => true;
 }

@@ -159,7 +159,8 @@ internal sealed class RealGdbRig : IAsyncDisposable
         var scopes = await session.GetScopesAsync(frameId, Ct);
         TestMetrics.Report($"[{Type}] scopes: " + string.Join(" | ", scopes.Select(s => $"{s.Name} hint={s.PresentationHint} expensive={s.Expensive} named={s.NamedVariables}")));
         var all = new Dictionary<string, DebugVariable>(StringComparer.Ordinal);
-        foreach (var scope in scopes.Where(s => s.PresentationHint is "locals" or "arguments"))
+        // GDB hints its scopes locals/arguments; CodeLLDB names one "Local" with no hint (and puts a "[return value]" first in it after a step out)
+        foreach (var scope in scopes.Where(s => s.PresentationHint is "locals" or "arguments" || (s.PresentationHint is null && s.Name == "Local")))
             foreach (var v in await session.GetVariablesAsync(scope.VariablesReference, ct: Ct))
                 all.TryAdd(v.Name, v);
         return all;

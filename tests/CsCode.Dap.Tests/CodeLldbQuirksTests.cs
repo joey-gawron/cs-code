@@ -120,6 +120,30 @@ public class CodeLldbQuirksTests
         Assert.Equal("exception", stop!.Reason);
     }
 
+    /// <summary>
+    /// CodeLLDB runs a <c>noDebug</c> launch without the debugger, but answers every breakpoint request then with "Not supported in noDebug
+    /// mode.": sending them would show each of the user's breakpoints as failed while the program runs.
+    /// </summary>
+    [Fact]
+    public async Task Start_without_debugging_sends_codelldb_no_breakpoints_so_none_is_shown_as_failed()
+    {
+        await using var h = Harness((a, _) =>
+        {
+            foreach (var command in new[] { "setBreakpoints", "setFunctionBreakpoints" })
+                a.On(command, _ => throw new InvalidOperationException("Not supported in noDebug mode."));
+        });
+        var bp = h.Breakpoints.Add(new Uri(h.Dir.Combine("main.rs")), 3);
+        h.Breakpoints.AddFunction("sample::util::add");
+        await h.StartAsync(Config(h) with { NoDebug = true });
+        await h.AdapterFor(0).WaitForRequestAsync("configurationDone");
+        Assert.True(h.AdapterFor(0).RequestsOf("launch")[0].Arguments.GetProperty("noDebug").GetBoolean());
+        Assert.Equal(0, h.AdapterFor(0).CountOf("setBreakpoints") + h.AdapterFor(0).CountOf("setFunctionBreakpoints") + h.AdapterFor(0).CountOf("setExceptionBreakpoints"));
+        h.Breakpoints.Add(new Uri(h.Dir.Combine("main.rs")), 9); // nor one added while it runs
+        await Task.Delay(300, Ct);
+        Assert.Equal(0, h.AdapterFor(0).CountOf("setBreakpoints"));
+        Assert.Null(h.Breakpoints.GetStatus(bp.Id)); // no "failed" verdict
+    }
+
     [Fact]
     public void The_panic_message_is_read_as_for_gdb() =>
         Assert.Equal("first line\nsecond line",
