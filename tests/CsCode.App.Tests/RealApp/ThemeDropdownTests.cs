@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.LogicalTree;
 using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.Input;
 using CsCode.App.Menus;
@@ -22,14 +23,20 @@ namespace CsCode.App.Tests.RealApp;
 
 /// <summary>
 /// A1/A2 on the REAL composition (<see cref="RealAppHost"/>: every module, <c>CSCODE_HOME</c> in a temp directory, headless): the Color Theme
-/// dropdown on the toolbar and at the top of the Settings page lists every installed theme grouped with swatches, previews while arrowing without
-/// persisting, reverts on Escape, applies and persists on Enter or a click, follows every other way of changing the theme, and can be hidden
-/// through View &gt; Toolbars.
+/// dropdown at the top of the Settings page (<i>Environment › Appearance</i>; the user removed the toolbar's on 2026-10-29) lists every installed
+/// theme grouped with swatches, previews while arrowing without persisting, reverts on Escape, applies and persists on Enter or a click, and follows
+/// every other way of changing the theme. The main window has no theme dropdown, and View &gt; Toolbars no Color Theme entry.
 /// </summary>
 public class ThemeDropdownTests
 {
-    private static ThemePicker Toolbar(RealAppHost host) =>
-        host.Window.GetVisualDescendants().OfType<ToolbarView>().Single().ThemePicker ?? throw new InvalidOperationException("no theme dropdown");
+    /// <summary>Opens the Settings page (Tools &gt; Options) and returns its Color Theme dropdown.</summary>
+    internal static async Task<ThemePicker> SettingsPickerAsync(RealAppHost host)
+    {
+        await host.RunAsync(SearchPanelsHost.OpenSettings);
+        Assert.True(await RealAppHost.WaitFor(() => host.Window.GetVisualDescendants().OfType<SettingsView>().Any()), "the Settings page did not open");
+        await DevScene.SettleAsync(5);
+        return host.Window.GetVisualDescendants().OfType<SettingsView>().Single().ThemePicker ?? throw new InvalidOperationException("no theme dropdown");
+    }
 
     private static string? SettingInFile(RealAppHost host)
     {
@@ -54,11 +61,11 @@ public class ThemeDropdownTests
     }
 
     [AvaloniaFact(Timeout = 60_000)]
-    public async Task The_toolbar_dropdown_lists_every_installed_theme_grouped_dark_light_high_contrast_with_a_swatch()
+    public async Task The_settings_dropdown_lists_every_installed_theme_grouped_dark_light_high_contrast_with_a_swatch()
     {
         await using var host = await RealAppHost.Create().StartAsync();
         var themes = host.Get<IColorThemeService>();
-        var picker = Toolbar(host);
+        var picker = await SettingsPickerAsync(host);
         Assert.True(picker.IsEffectivelyVisible);
 
         var items = ((IEnumerable<ThemeListItem>)picker.ItemsSource!).ToList();
@@ -92,7 +99,7 @@ public class ThemeDropdownTests
         await using var host = await RealAppHost.Create().StartAsync();
         var themes = host.Get<IColorThemeService>();
         var applier = host.Shell.Theme!;
-        var picker = Toolbar(host);
+        var picker = await SettingsPickerAsync(host);
         var before = SettingInFile(host);
         await OpenAsync(host, picker);
 
@@ -120,7 +127,7 @@ public class ThemeDropdownTests
     {
         await using var host = await RealAppHost.Create().StartAsync();
         var themes = host.Get<IColorThemeService>();
-        var picker = Toolbar(host);
+        var picker = await SettingsPickerAsync(host);
         await OpenAsync(host, picker);
         for (var i = 0; i < 3; i++) { Press(host, Key.Down); await DevScene.SettleAsync(3); }
         // The open list moves the keyboard focus (the selection changes on Enter): the highlighted entry is the focused container's.
@@ -145,7 +152,7 @@ public class ThemeDropdownTests
     {
         await using var host = await RealAppHost.Create().StartAsync();
         var themes = host.Get<IColorThemeService>();
-        var picker = Toolbar(host);
+        var picker = await SettingsPickerAsync(host);
         await OpenAsync(host, picker);
         var container = picker.GetRealizedContainers().OfType<ComboBoxItem>().First(c => picker.ItemFromContainer(c) is ThemeChoiceItem { Label: "Monokai" });
         var top = TopLevel.GetTopLevel(container)!;
@@ -162,7 +169,7 @@ public class ThemeDropdownTests
     {
         await using var host = await RealAppHost.Create().StartAsync();
         var themes = host.Get<IColorThemeService>();
-        var picker = Toolbar(host);
+        var picker = await SettingsPickerAsync(host);
         picker.Focus();
         // Up from the first dark theme: the "Dark" header above it is not selectable.
         var firstDark = picker.Choices.First();
@@ -178,69 +185,99 @@ public class ThemeDropdownTests
     }
 
     [AvaloniaFact(Timeout = 60_000)]
-    public async Task The_dropdowns_follow_the_palette_command_and_an_edit_of_settings_json()
+    public async Task The_dropdown_follows_the_palette_command_and_an_edit_of_settings_json()
     {
         await using var host = await RealAppHost.Create().StartAsync();
         var themes = host.Get<IColorThemeService>();
-        var picker = Toolbar(host);
-        await host.RunAsync(SearchPanelsHost.OpenSettings);
-        var settings = host.Window.GetVisualDescendants().OfType<SettingsView>().Single();
-        var settingsPicker = settings.ThemePicker!;
-        Assert.True(settingsPicker.IsEffectivelyVisible);
-        Assert.Equal(VsThemes.DarkId, settingsPicker.SelectedThemeId);
+        var picker = await SettingsPickerAsync(host);
+        Assert.True(picker.IsEffectivelyVisible);
+        Assert.Equal(VsThemes.DarkId, picker.SelectedThemeId);
 
-        // The palette's Color Theme command: preview (both dropdowns show it), then choose Solarized Light.
+        // The palette's Color Theme command: preview (the dropdown shows it), then choose Solarized Light.
         var quick = host.Get<QuickInputViewModel>();
         var running = await host.OpenPaletteAsync(KnownCommands.SelectTheme);
         quick.Text = "Solarized Light";
         await DevScene.SettleAsync(10);
         quick.Accept();
         await running;
-        Assert.True(await RealAppHost.WaitFor(() => picker.SelectedThemeId == "vscode.solarized-light" && settingsPicker.SelectedThemeId == "vscode.solarized-light"));
+        Assert.True(await RealAppHost.WaitFor(() => picker.SelectedThemeId == "vscode.solarized-light"));
         Assert.True(await RealAppHost.WaitFor(() => SettingInFile(host) == "Solarized Light"));
 
-        // settings.json edited by hand (or by another window): the platform reloads it, the theme service follows, so do the dropdowns.
+        // settings.json edited by hand (or by another window): the platform reloads it, the theme service follows, so does the dropdown.
         var path = host.Get<IConfigurationService>().UserSettingsPath;
         var text = File.ReadAllText(path).Replace("\"Solarized Light\"", "\"Dracula\"", StringComparison.Ordinal);
         File.WriteAllText(path, text);
         Assert.True(await RealAppHost.WaitFor(() => themes.Current.Id == "textmatesharp.dracula", 15_000), "the theme follows settings.json");
-        Assert.True(await RealAppHost.WaitFor(() => picker.SelectedThemeId == "textmatesharp.dracula" && settingsPicker.SelectedThemeId == "textmatesharp.dracula"));
+        Assert.True(await RealAppHost.WaitFor(() => picker.SelectedThemeId == "textmatesharp.dracula"));
         Assert.True(await RealAppHost.WaitFor(() => host.Shell.Theme!.AppliedThemeId == "textmatesharp.dracula"));
 
-        // And the Settings page's dropdown drives the toolbar's.
-        settingsPicker.SelectedItem = settingsPicker.Choices.Single(c => c.Id == VsThemes.LightId); // closed box: applies directly
-        Assert.True(await RealAppHost.WaitFor(() => picker.SelectedThemeId == VsThemes.LightId && themes.Current.Id == VsThemes.LightId));
+        // A Settings page opened later (a fresh dropdown) starts on the current theme and drives the theme like the first one.
+        await host.RunAsync(KnownCommands.CloseActiveEditor);
+        Assert.True(await RealAppHost.WaitFor(() => !host.Window.GetVisualDescendants().OfType<SettingsView>().Any()));
+        var second = await SettingsPickerAsync(host);
+        Assert.NotSame(picker, second);
+        Assert.Equal("textmatesharp.dracula", second.SelectedThemeId);
+        second.SelectedItem = second.Choices.Single(c => c.Id == VsThemes.LightId); // closed box: applies directly
+        Assert.True(await RealAppHost.WaitFor(() => themes.Current.Id == VsThemes.LightId));
         Assert.True(await RealAppHost.WaitFor(() => SettingInFile(host) == "Visual Studio Light"));
     }
 
+    /// <summary>The user's Extra (2026-10-29): the Color Theme dropdown is gone from the main window and from View &gt; Toolbars.</summary>
     [AvaloniaFact(Timeout = 60_000)]
-    public async Task View_Toolbars_hides_and_shows_the_color_theme_group_and_persists_it()
+    public async Task The_main_window_has_no_theme_dropdown_and_View_Toolbars_lists_only_Standard_and_Debug()
+    {
+        await using var host = await RealAppHost.Create().StartAsync();
+        var config = host.Get<IConfigurationService>();
+        var toolbar = host.Window.GetVisualDescendants().OfType<ToolbarView>().Single();
+        // Nothing outside a Settings page is a theme dropdown (the toolbar, the title bar, the status bar).
+        Assert.Empty(host.Window.GetVisualDescendants().OfType<ThemePicker>());
+        Assert.Empty(toolbar.GetLogicalDescendants().OfType<ThemePicker>());
+        Assert.Equal([ToolbarView.StandardGroup, ToolbarView.DebugGroup], ToolbarView.Groups.Select(g => g.Id));
+        host.Shell.Menus.Refresh();
+        var toolbars = host.Shell.Menus.Roots.Single(r => r.Header == "_View").Children.Single(c => c.Header == "Tool_bars");
+        Assert.Equal(["_Standard", "_Debug"], toolbars.Children.Select(c => c.Header));
+        // Tools > Color Theme... (the palette's quick pick) stays.
+        Assert.Contains(host.Shell.Menus.Roots.Single(r => r.Header == "T_ools").Children, c => c.CommandId == KnownCommands.SelectTheme);
+        Assert.DoesNotContain(config.Properties, p => p.Key == "cscode.toolbars.colorTheme");
+        Assert.Contains(config.Properties, p => p.Key == "cscode.toolbars.debug");
+
+        // The old group id is ignored by View > Toolbars' command: nothing is written, nothing appears.
+        await host.RunAsync(ShellMenus.ToggleToolbar, "colorTheme");
+        Assert.DoesNotContain("cscode.toolbars.colorTheme", File.Exists(config.UserSettingsPath) ? File.ReadAllText(config.UserSettingsPath) : "");
+        Assert.Empty(host.Window.GetVisualDescendants().OfType<ThemePicker>());
+
+        // The Settings page has it, and only one.
+        var picker = await SettingsPickerAsync(host);
+        Assert.True(picker.IsEffectivelyVisible);
+        Assert.Single(host.Window.GetVisualDescendants().OfType<ThemePicker>());
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task View_Toolbars_hides_and_shows_a_group_and_persists_it()
     {
         await using var host = await RealAppHost.Create().StartAsync();
         var toolbar = host.Window.GetVisualDescendants().OfType<ToolbarView>().Single();
         var config = host.Get<IConfigurationService>();
         host.Shell.Menus.Refresh();
         var toolbars = host.Shell.Menus.Roots.Single(r => r.Header == "_View").Children.Single(c => c.Header == "Tool_bars");
-        Assert.Equal(["_Standard", "_Debug", "_Color Theme"], toolbars.Children.Select(c => c.Header));
-        var entry = toolbars.Children.Single(c => c.Header == "_Color Theme");
+        var entry = toolbars.Children.Single(c => c.Header == "_Debug");
         Assert.True(entry.IsChecked);
-        Assert.True(toolbar.IsGroupVisible(ToolbarView.ColorThemeGroup));
+        Assert.True(toolbar.IsGroupVisible(ToolbarView.DebugGroup));
 
         await ((IAsyncRelayCommand)entry.Command!).ExecuteAsync(null);
-        Assert.True(await RealAppHost.WaitFor(() => !toolbar.IsGroupVisible(ToolbarView.ColorThemeGroup)));
-        Assert.False(toolbar.ThemePicker!.IsEffectivelyVisible);
-        Assert.False(config.Get("cscode.toolbars.colorTheme", true));
-        Assert.Contains("\"cscode.toolbars.colorTheme\": false", File.ReadAllText(config.UserSettingsPath));
+        Assert.True(await RealAppHost.WaitFor(() => !toolbar.IsGroupVisible(ToolbarView.DebugGroup)));
+        Assert.False(config.Get("cscode.toolbars.debug", true));
+        Assert.Contains("\"cscode.toolbars.debug\": false", File.ReadAllText(config.UserSettingsPath));
         host.Shell.Menus.Refresh();
-        Assert.False(toolbars.Children.Single(c => c.Header == "_Color Theme").IsChecked);
-        Assert.True(toolbar.IsGroupVisible(ToolbarView.StandardGroup)); // the other groups are untouched
+        Assert.False(toolbars.Children.Single(c => c.Header == "_Debug").IsChecked);
+        Assert.True(toolbar.IsGroupVisible(ToolbarView.StandardGroup)); // the other group is untouched
 
-        await host.RunAsync(ShellMenus.ToggleToolbar, ToolbarView.ColorThemeGroup);
-        Assert.True(await RealAppHost.WaitFor(() => toolbar.IsGroupVisible(ToolbarView.ColorThemeGroup)));
+        await host.RunAsync(ShellMenus.ToggleToolbar, ToolbarView.DebugGroup);
+        Assert.True(await RealAppHost.WaitFor(() => toolbar.IsGroupVisible(ToolbarView.DebugGroup)));
         host.Shell.Menus.Refresh();
-        Assert.True(toolbars.Children.Single(c => c.Header == "_Color Theme").IsChecked);
+        Assert.True(toolbars.Children.Single(c => c.Header == "_Debug").IsChecked);
 
-        // Hiding the Standard group too leaves the Debug group first in line (its leading separator hidden).
+        // Hiding the Standard group leaves the Debug group first in line (its leading separator hidden).
         await host.RunAsync(ShellMenus.ToggleToolbar, ToolbarView.StandardGroup);
         Assert.True(await RealAppHost.WaitFor(() => !toolbar.IsGroupVisible(ToolbarView.StandardGroup)));
         Assert.True(toolbar.IsGroupVisible(ToolbarView.DebugGroup));
@@ -257,7 +294,7 @@ public class ThemeDropdownTests
         await host.StartAsync();
         Assert.Equal("vscode.abyss", host.Get<IColorThemeService>().Current.Id);
         Assert.True(await RealAppHost.WaitFor(() => host.Shell.Theme!.AppliedThemeId == "vscode.abyss"));
-        Assert.Equal("vscode.abyss", Toolbar(host).SelectedThemeId);
+        Assert.Equal("vscode.abyss", (await SettingsPickerAsync(host)).SelectedThemeId);
         // The chrome shows the completed Abyss: its title bar colour on the toolbar (borrowed), not the VS 2022 grey.
         var toolbarBrush = (Avalonia.Media.ISolidColorBrush)host.Shell.Theme!.GetBrush("toolbar.background")!;
         Assert.Equal(Avalonia.Media.Color.Parse("#10192c"), toolbarBrush.Color);

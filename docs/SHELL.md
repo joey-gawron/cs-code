@@ -44,7 +44,7 @@ Program -> App.axaml.cs -> AppSession -> AppStartup.BuildServicesAsync (pool thr
 | `IViewActivator` | `ShellViewActivator` | panels' "show view X" (Find in Files, Settings, Keyboard Shortcuts, Watch): a tool window is shown in its well, a document-location window opens or re-activates its singleton document tab; any thread |
 | `IClipboardService` (Core, new) | `ClipboardService` | the system clipboard of the main window (Avalonia; X11 CLIPBOARD, also under XWayland) through `IPlatformClipboard`, CsCode's shape metadata (whole lines, block, one piece per caret), the in-memory clipboard ring, and the Linux PRIMARY selection (`X11PrimarySelection`); see *Clipboard* below. `IWindowService.CopyToClipboardAsync` goes through it |
 | `IActiveSelectionProvider` | `ActiveSelectionProvider` | primary selection of the active editor (`${selectedText}` for Dap, the Find in Files seed); the UI thread publishes a (document, range) snapshot, readers on any thread take the text on demand |
-| `IColorThemeService` consumer | `ThemeApplier`, `ThemePicker` | the three VS2022 themes are registered into the module's `IColorThemeService`, and the service is given the shell's completion (`ThemeCompletion`) so that it hands out complete themes; `IColorThemePreview` (Core, optional) is used for the dropdowns' live preview |
+| `IColorThemeService` consumer | `ThemeApplier`, `ThemePicker` | the three VS2022 themes are registered into the module's `IColorThemeService`, and the service is given the shell's completion (`ThemeCompletion`) so that it hands out complete themes; `IColorThemePreview` (Core, optional) is used for the Settings page dropdown's live preview |
 
 ### Process lifecycle (`src/CsCode.App/Startup`)
 
@@ -164,14 +164,15 @@ background is moved instead (white on a mid orange gets a slightly darker orange
 | Visual Studio Light (TextMateSharp) | light | TextMateSharp | 55 / 77 / 99 | Menu, highlighted item (`menu.selectionForeground`, borrowed) 2.94, background #2877C7 4.61; Document tab, inactive (`tab.inactiveForeground`, theme) 4.17, #707070 4.54; List selection (`list.activeSelectionForeground`, theme) 2.94, background #2877C7 4.61; Quick pick, focused row (`quickInputList.focusForeground`, borrowed) 2.94, background #2877C7 4.61 |
 <!-- THEME-CONTRAST-END -->
 
-**Color Theme dropdown** (`ThemePicker`, a `ComboBox`): on the main toolbar after the debug group (its own group, hidden through View > Toolbars >
-Color Theme, setting `cscode.toolbars.colorTheme`) and at the top of the Settings page (*Environment › Appearance*, where Visual Studio has it under
-Tools > Options > Environment > General). Every installed theme, grouped Dark / Light / High contrast (sorted by label), each with a swatch: the
+**Color Theme dropdown** (`ThemePicker`, a `ComboBox`): only at the top of the Settings page (*Environment › Appearance*, where Visual Studio has it
+under Tools > Options > Environment > General; Tools > Options opens it). The main toolbar had one too until the user asked for it to go (wave 3,
+2026-10-29: "only have it in the settings menu"): the toolbar, View > Toolbars and the setting `cscode.toolbars.colorTheme` no longer have it (an old
+`settings.json` entry for that key is ignored); `ThemeDropdownTests` asserts the main window has no theme dropdown. Every installed theme, grouped Dark / Light / High contrast (sorted by label), each with a swatch: the
 editor background with three token colours (keyword, string, function). Arrowing through the open list previews live through `IColorThemePreview`
 (nothing is persisted; at most one preview per `ThemePreviewer.MinInterval`, 250 ms, latest wins, so holding an arrow key does not repaint the window
 30 times a second); Escape or clicking away reverts; Enter or a click applies and writes `workbench.colorTheme` (the label). Arrow keys on the closed,
-focused box apply directly, as Visual Studio's combos do; group headers are neither focusable nor selectable. Every dropdown follows every other way of
-changing the theme (the palette's Color Theme command, a `settings.json` edit, another window, the other dropdown) through `IColorThemeService.Changed`.
+focused box apply directly, as Visual Studio's combos do; group headers are neither focusable nor selectable. The dropdown follows every other way of
+changing the theme (the palette's Color Theme command, a `settings.json` edit, another window) through `IColorThemeService.Changed`.
 The list is rebuilt only when the set of themes changes, never per switch. The palette command *Color Theme* (`workbench.action.selectTheme`) uses
 the same grouping, the same throttled preview and the same commit (`ThemeSelection`).
 
@@ -321,7 +322,7 @@ Other modules (Vim mode, remote indicator) register their own through `IStatusBa
 (refreshes menus only), `toggleFullScreen`, `toggleZenMode`, `selectTheme`, `workbench.view.explorer`, `workbench.action.output.toggleOutput`, `workbench.actions.view.problems`,
 `workbench.action.findResults.toggle`, the toggle of every tool window whose module did not register its `ToggleCommandId` (debug windows: `workbench.debug.action.toggle*`), `cscode.references.show`,
 `cscode.shell.{resetLayout,openRecent,about,showWelcome,showKeyboardReference,toggleNotifications,changeLanguageMode,showErrorList,toggleToolbar}`
-(`toggleToolbar` takes a toolbar group id: `standard`, `debug`, `colorTheme`; View > Toolbars). `gotoLine` also takes an optional `"line[:column]"` argument.
+(`toggleToolbar` takes a toolbar group id: `standard`, `debug`; View > Toolbars). `gotoLine` also takes an optional `"line[:column]"` argument.
 `openSettings` / `openSettingsJson` are only fallbacks (they open settings.json) for a composition without the Settings panel.
 Clipboard and menus (`ShellContextMenus`, `ClipboardRouter`): `editor.action.clipboardCutAction` / `clipboardCopyAction` / `clipboardPasteAction`
 (focus routing, see *Command ownership*), and VS Code's file commands, which take a URI (else the active file): `copyFilePath`, `copyRelativeFilePath`,
@@ -409,7 +410,7 @@ Every other id has exactly one registration; the test fails when a new duplicate
 ### Settings
 
 `cscode.shell.liveEditorViews` (8), `cscode.shell.confirmMultiFileEdits` (true), `cscode.diagnostics.uiStallLogMs` (0; Debug builds default to 100),
-`cscode.toolbars.standard`, `cscode.toolbars.debug`, `cscode.toolbars.colorTheme` (true: the toolbar groups View > Toolbars shows; the setting is the
+`cscode.toolbars.standard`, `cscode.toolbars.debug` (true: the toolbar groups View > Toolbars shows; the setting is the
 state, so settings.json and other windows agree), plus the ones it reads:
 `workbench.colorTheme`, `workbench.startupEditor`, `files.exclude`, `editor.fontFamily`, `editor.tabSize`, `editor.insertSpaces`. They are declared through `IConfigurationService.RegisterProperties`.
 
@@ -436,9 +437,9 @@ A heartbeat posts a tick to the real dispatcher every 10 ms and records how late
 | theme switching | 10.6 ms | 12.8 ms | 5.1 ms |
 | **all at once** | **18.7 ms (budget 16 not met)** | 19.8-28.8 ms | 9-16 ms |
 
-**Theme previews** (`ThemeSwitchingCostTests`, the real composition with an editor and both dropdowns open; preview requests at key-repeat rate,
+**Theme previews** (`ThemeSwitchingCostTests`, the real composition with an editor and the Settings page's dropdown open; preview requests at key-repeat rate,
 about 30 a second, through all 24 themes): p99 14.7 ms, max 18.1 ms, longest UI callback 8.2 ms (the Fluent palette step; brushes < 0.1 ms), 11
-theme applies in 2.5 s (throttled); 100 switches through the closed dropdown leave the managed heap flat (+52 KB) and rebuild neither list. What
+theme applies in 2.5 s (throttled); 100 switches through the closed dropdown leave the managed heap flat (+52 KB) and never rebuild its list. What
 these numbers do **not** include: frame rendering. The headless platform renders only when a test forces a frame, and then on the test's own thread
 with software Skia (a full-window repaint after a theme change takes ~100 ms that way under load); on a desktop the rasterisation runs on Avalonia's
 render thread, but recording the re-resolved controls' draw operations is UI-thread work that no test here measures (there is no display for
@@ -453,7 +454,7 @@ Other checks: service calls from the UI thread return without waiting for the wo
 Bounded: Output 2 MB per channel, 20k lines in the view; notification history 100; closed-tab history 20; palette index capped at 300k files and an `IMemoryTrimmable`; icon geometry cache trimmable; Error List at most one immutable array.
 Lifetimes: every view and model owns a `DisposableStore`; tool-window views and their view-models are disposed when hidden; tab views by the LRU policy and on close. Tests: 100x show/hide of every tool window balances creation and disposal and retains nothing;
 500 palette opens retain no entries; 500 dialogs leave the heap flat; 200 theme switches leave the resource table and brush set unchanged; 100 switches
-through the theme dropdown on the real composition leave the managed heap flat (< 512 KB, measured +52 KB) and keep both dropdowns' lists; a closed
+through the theme dropdown on the real composition leave the managed heap flat (< 512 KB, measured +52 KB) and keep the dropdown's list; a closed
 Settings page releases its dropdown; 300 tabs opened/closed in the live Dock host release every sampled tab, document and view
 (managed heap flat between tab 100 and 300); a focused real editor's view is released when its tab closes, and an evicted view is released while its tab stays open; output flood and status updates use a bounded number of dispatcher posts.
 
@@ -520,7 +521,7 @@ cannot switch the repair off yet.
   windows open as document tabs.
 * `tests/CsCode.App.Tests/RealApp/*` run the REAL composition (`AppServices.Build` with every module, `CSCODE_HOME` in a temp directory, all built-in language servers disabled;
   `Infrastructure/RealAppHost.cs`): view activation (also after a tool window was closed with its X, clicked), document windows, default layout, debug auto-show, command
-  ownership (which module registered each duplicated id, in order), selection, Ln/Col, keys, wording, the Color Theme dropdowns (`ThemeDropdownTests`), theme
+  ownership (which module registered each duplicated id, in order), selection, Ln/Col, keys, wording, the Settings page's Color Theme dropdown and its absence from the main window (`ThemeDropdownTests`), theme
   icons (`ThemeIconTests`), switching cost (`ThemeSwitchingCostTests`) and screenshots (`ThemeScreenshotTests`).
 * **Themes**: `ShellController.PrepareThemes` gives the editor's `ColorThemeService` the shell's completion (`AppStartup` calls it on the start-up pool
   thread, so parsing the 21 embedded themes and completing the current one never runs on the UI thread before the first frame; the other themes are

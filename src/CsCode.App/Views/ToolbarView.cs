@@ -8,7 +8,6 @@ using Avalonia.Media;
 using CsCode.Core.Debugging;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
-using CsCode.Core.Theming;
 using CsCode.Ui.Icons;
 using CsCode.Ui.Theming;
 using CsCode.Ui.Threading;
@@ -20,24 +19,22 @@ public sealed record ToolbarGroup(string Id, string Title, string SettingKey);
 
 /// <summary>
 /// The standard toolbar (VS2022 layout), in groups that View &gt; Toolbars hides: <b>Standard</b> (back/forward, new/open/save/save-all,
-/// undo/redo, find in files), <b>Debug</b> (launch-configuration dropdown with the green Start button, step buttons that appear only while
-/// debugging) and <b>Color Theme</b> (the theme dropdown, <see cref="ThemePicker"/>). Every button runs a command id; enablement follows
-/// <c>when</c> clauses and command availability and is refreshed (coalesced) when context keys or registrations change.
-/// The launch-configuration combo is bound to <see cref="IDebugConfigurationService"/> only when a debug service is resolvable, the theme
-/// dropdown only when a colour theme service is.
+/// undo/redo, find in files) and <b>Debug</b> (launch-configuration dropdown with the green Start button, step buttons that appear only while
+/// debugging). Every button runs a command id; enablement follows <c>when</c> clauses and command availability and is refreshed (coalesced)
+/// when context keys or registrations change. The launch-configuration combo is bound to <see cref="IDebugConfigurationService"/> only when a
+/// debug service is resolvable. There is no Color Theme dropdown here (the user's choice, 2026-10-29): it lives on the Settings page only
+/// (<i>Environment › Appearance</i>), and the palette's Color Theme command stays.
 /// </summary>
 public sealed class ToolbarView : Border, IDisposable
 {
     public const string StandardGroup = "standard";
     public const string DebugGroup = "debug";
-    public const string ColorThemeGroup = "colorTheme";
 
     /// <summary>The hideable groups, in toolbar order. Their settings are declared by the shell (<see cref="ShellController"/>).</summary>
     public static IReadOnlyList<ToolbarGroup> Groups { get; } =
     [
         new(StandardGroup, "Standard", "cscode.toolbars.standard"),
         new(DebugGroup, "Debug", "cscode.toolbars.debug"),
-        new(ColorThemeGroup, "Color Theme", "cscode.toolbars.colorTheme"),
     ];
 
     private sealed record Spec(string CommandId, string Icon, string Tooltip, string? When = null, string ColorId = "foreground", bool DebugOnly = false);
@@ -80,7 +77,7 @@ public sealed class ToolbarView : Border, IDisposable
     private Button? _start;
 
     public ToolbarView(ICommandService commands, IContextKeyService keys, IUiDispatcher ui, IKeybindingService? bindings = null, IDebugService? debug = null,
-        IColorThemeService? themes = null, IConfigurationService? config = null)
+        IConfigurationService? config = null)
     {
         _commands = commands;
         _keys = keys;
@@ -153,13 +150,6 @@ public sealed class ToolbarView : Border, IDisposable
             debugGroup.Children.Add(b);
         }
 
-        // Color Theme (VS: Tools > Options > Environment > General; here also on the toolbar, after the debug group).
-        if (themes is not null)
-        {
-            ThemePicker = new ThemePicker(themes, ui, config) { Width = 230, Height = 22, MinHeight = 0, Padding = new Thickness(4, 0), VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
-            Group(ColorThemeGroup).Children.Add(ThemePicker);
-        }
-
         Child = row;
         Refresh();
         ApplyGroupVisibility();
@@ -171,9 +161,6 @@ public sealed class ToolbarView : Border, IDisposable
                 if (Groups.Any(g => e.Affects(g.SettingKey))) _ui.PostCoalesced("toolbar.groups", ApplyGroupVisibility);
             }));
     }
-
-    /// <summary>The Color Theme dropdown (null when no colour theme service is composed).</summary>
-    public ThemePicker? ThemePicker { get; }
 
     /// <summary>Whether a group is shown (View &gt; Toolbars).</summary>
     public bool IsGroupVisible(string groupId) => _groups.TryGetValue(groupId, out var g) && g.Panel.IsVisible;
@@ -239,9 +226,5 @@ public sealed class ToolbarView : Border, IDisposable
         _startLabel.Text = selected?.Name is { Length: > 0 } n ? n : "Start";
     }
 
-    public void Dispose()
-    {
-        _subs.Dispose();
-        ThemePicker?.Dispose();
-    }
+    public void Dispose() => _subs.Dispose();
 }

@@ -5,10 +5,10 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
-using CsCode.App.Views;
 using CsCode.Core.Platform;
 using CsCode.Core.Theming;
 using CsCode.Panels.Search;
+using CsCode.Panels.Search.Views;
 using CsCode.Ui.Theming;
 using Xunit;
 
@@ -97,7 +97,9 @@ public class ThemeScreenshotTests
     public async Task The_open_dropdown_and_the_settings_page()
     {
         await using var host = await StartAsync();
-        var picker = host.Window.GetVisualDescendants().OfType<ToolbarView>().Single().ThemePicker!;
+        await host.RunAsync(SearchPanelsHost.OpenSettings);
+        await DevScene.SettleAsync(10);
+        var picker = host.Window.GetVisualDescendants().OfType<SettingsView>().Single().ThemePicker!;
         foreach (var id in new[] { VsThemes.DarkId, "vscode.solarized-light" })
         {
             await SwitchAsync(host, id);
@@ -107,7 +109,6 @@ public class ThemeScreenshotTests
             picker.IsDropDownOpen = false;
             await DevScene.SettleAsync(5);
         }
-        await host.RunAsync(SearchPanelsHost.OpenSettings);
         foreach (var id in new[] { VsThemes.DarkId, "vscode.monokai", VsThemes.LightId })
         {
             await SwitchAsync(host, id);
