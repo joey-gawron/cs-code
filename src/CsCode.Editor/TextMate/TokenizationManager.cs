@@ -29,17 +29,27 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
         Interner = new ScopeInterner();
         Log = services.LoggerFactory.CreateLogger<TokenizationManager>();
         Ui = services.Ui;
-        TreeSitter = new TreeSitterService(services, worker, Interner);
+        TreeSitter = new TreeSitterService(services, Interner, HasTextMateGrammar) { LaneReplaced = OnEngineSettingChanged };
         _subscriptions.Add(TreeSitter);
         _subscriptions.Add(services.Contributions.Of<GrammarContribution>().Changed.Subscribe(_ => OnGrammarsChanged()));
-        // EXPERIMENTAL: editor.experimental.treeSitter (global or "[language]") switches documents between the engines live
+        // editor.syntaxEngine (global or "[language]", and the old editor.experimental.treeSitter alias) switches documents between the engines live
         _subscriptions.Add(services.Config.RegisterProperties([TreeSitterService.Property]));
         _subscriptions.Add(services.Config.Changed.Subscribe(e =>
         {
-            if (e.Affects(TreeSitterService.SettingKey) || e.AffectedKeys.Any(k => k.StartsWith('['))) OnEngineSettingChanged();
+            if (e.Affects(TreeSitterService.SettingKey) || e.Affects(TreeSitterService.LegacySettingKey) || e.AffectedKeys.Any(k => k.StartsWith('[')))
+                OnEngineSettingChanged();
         }));
+        if (services.Commands is { } commands && !commands.Has(ClearQuarantineCommand))
+            _subscriptions.Add(commands.Register(ClearQuarantineCommand, _ =>
+            {
+                TreeSitter.ClearQuarantine();
+                return ValueTask.FromResult<object?>(null);
+            }, new Core.Platform.CommandMetadata(ClearQuarantineCommand, "Clear Quarantined Tree-sitter Grammars", "Editor")));
         if (services.Memory is { } monitor) _monitorRegistration = monitor.Register(this);
     }
+
+    /// <summary>Tries the grammars the crash/hang isolation quarantined again (docs/TREE-SITTER.md, "Isolation").</summary>
+    public const string ClearQuarantineCommand = "editor.treeSitter.clearQuarantine";
 
     internal EditorServices Services { get; }
     internal EditorWorker Worker { get; }
@@ -48,7 +58,7 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
     internal ILogger Log { get; }
     internal IUiThread Ui { get; }
 
-    /// <summary>The EXPERIMENTAL tree-sitter engine's shared state (off unless <c>editor.experimental.treeSitter</c> is set).</summary>
+    /// <summary>The tree-sitter engine's shared state (<c>editor.syntaxEngine</c>, its syntax lane, the isolation).</summary>
     internal TreeSitterService TreeSitter { get; }
 
     public int SessionCount
@@ -59,11 +69,13 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
         }
     }
 
-    /// <summary>True when a grammar exists for the language (a user contribution or a built-in): otherwise there is nothing to tokenise with.</summary>
-    internal bool HasGrammar(string languageId) =>
+    /// <summary>True when a grammar exists for the language (TextMate, or tree-sitter when it colours the language): otherwise there is nothing to tokenise with.</summary>
+    internal bool HasGrammar(string languageId) => HasTextMateGrammar(languageId) || TreeSitter.IsEnabledFor(languageId);
+
+    /// <summary>True when TextMate can colour the language (a user contribution or a built-in grammar): what <c>editor.syntaxEngine</c> = <c>auto</c> asks.</summary>
+    internal bool HasTextMateGrammar(string languageId) =>
         Services.Contributions.Of<GrammarContribution>().Items.Any(c => c.Value.LanguageId == languageId)
-        || Languages.BuiltinLanguages.Catalog.ScopeForLanguage(languageId) is not null
-        || TreeSitter.IsEnabledFor(languageId);
+        || Languages.BuiltinLanguages.Catalog.ScopeForLanguage(languageId) is not null;
 
     internal TokenizationSession CreateSession(EditorDocument document)
     {

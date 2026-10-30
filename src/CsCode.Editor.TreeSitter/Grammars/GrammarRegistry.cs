@@ -76,6 +76,47 @@ public sealed class LanguageBundle
         if (symbol < _symbolNames.Length) _symbolNames[symbol] = name;
         return name;
     }
+
+    /// <summary>Where the grammar was found (null for bundles built by tests).</summary>
+    public GrammarFiles? Files { get; init; }
+
+    /// <summary>This build of the grammar (<see cref="GrammarIdentity"/>): what the quarantine keys on.</summary>
+    public string Identity { get; init; } = "";
+
+    /// <summary>What the flight recorder writes while this grammar's native code runs (<see cref="Isolation.FlightRecorder.RecordFor"/>).</summary>
+    internal string FlightRecord { get; init; } = "";
+
+    internal GrammarLocator? Locator { get; init; }
+
+    private readonly object _queriesGate = new();
+    private readonly Dictionary<string, (TsQuery? Query, string? Error)> _queries = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Another query of this grammar (<c>folds</c>, <c>locals</c>, <c>textobjects</c>…), composed with Neovim's <c>; inherits:</c> and compiled
+    /// on first use, then shared (queries are immutable). Null when the grammar has none, or it does not compile (<paramref name="error"/>).
+    /// Any thread; the first call for a kind pays the compile (a few ms).
+    /// </summary>
+    public TsQuery? Query(string kind, out string? error)
+    {
+        lock (_queriesGate)
+        {
+            if (_queries.TryGetValue(kind, out var known))
+            {
+                error = known.Error;
+                return known.Query;
+            }
+            TsQuery? query = null;
+            error = null;
+            if (Locator is not null && QueryLoader.Load(Locator, Name, kind, out var files, Files?.Root) is { } source)
+            {
+                query = TsQuery.Compile(Language, source, out var compileError);
+                if (query is null) error = $"{Name}: {kind} query does not compile ({compileError}; {string.Join(", ", files)})";
+            }
+            else error = $"{Name}: no {kind}.scm";
+            _queries[kind] = (query, error);
+            return query;
+        }
+    }
 }
 
 /// <summary>
@@ -103,6 +144,12 @@ public sealed class GrammarRegistry : IDisposable
 
     public GrammarLocator Locator => _locator;
 
+    /// <summary>Grammars refused because an earlier process died or hung inside them (crash isolation, docs/TREE-SITTER.md); null = none.</summary>
+    public IGrammarQuarantine? Quarantine { get; init; }
+
+    /// <summary>Where the documents of this registry record which grammar's native code is running (crash/hang isolation); null = nowhere.</summary>
+    public Isolation.FlightRecorder? Recorder { get; init; }
+
     /// <summary>The bundle for grammar <paramref name="grammar"/>, or null with a reason (no runtime, not installed, ABI mismatch, query does not compile).</summary>
     public LanguageBundle? Get(string grammar, out string? error)
     {
@@ -114,6 +161,12 @@ public sealed class GrammarRegistry : IDisposable
         var bundle = LoadUncached(grammar, out error);
         _byName[grammar] = (bundle, error);
         return bundle;
+    }
+
+    /// <summary>Forgets the grammars that could not be loaded (they are tried again on next use): after the quarantine was cleared.</summary>
+    public void ForgetFailures()
+    {
+        foreach (var name in _byName.Where(kv => kv.Value.Bundle is null).Select(kv => kv.Key).ToArray()) _byName.Remove(name);
     }
 
     private LanguageBundle? LoadUncached(string grammar, out string? error)
@@ -130,17 +183,34 @@ public sealed class GrammarRegistry : IDisposable
             error = $"no compiled tree-sitter grammar '{grammar}' was found";
             return null;
         }
+        var identity = GrammarIdentity.Of(files);
+        if (Quarantine?.Reason(grammar, identity) is { } quarantined)
+        {
+            error = $"{grammar} is quarantined: {quarantined}";
+            return null;
+        }
         var root = _rootScopeFor(grammar) ?? "source." + grammar.Replace('_', '-');
         var key = files.ParserPath + "|" + grammar + "|" + root;
         lock (SharedGate)
         {
             if (Shared.TryGetValue(key, out var shared)) return shared;
         }
+        // the version gate for the app's own grammars: the very file the bundle was built with (digest), and the ABI it was built for
+        if (files.Bundle?.VerifyGrammar(grammar, files.ParserPath) is { } corrupt)
+        {
+            error = $"{grammar}: refused, {corrupt}";
+            return null;
+        }
         var language = TsLanguage.Load(grammar, files.ParserPath, out error);
         if (language is null) return null;
+        if (files.Bundle?.Grammar(grammar) is { } recorded && recorded.Abi != language.AbiVersion)
+        {
+            error = $"{grammar}: refused, the library reports ABI {language.AbiVersion}, the bundle recorded {recorded.Abi}";
+            return null;
+        }
 
         var diagnostics = new List<string>();
-        var highlightSource = QueryLoader.Load(_locator, grammar, "highlights", out var highlightFiles);
+        var highlightSource = QueryLoader.Load(_locator, grammar, "highlights", out var highlightFiles, files.Root);
         TsQuery? highlights = null;
         if (highlightSource is not null)
         {
@@ -158,7 +228,7 @@ public sealed class GrammarRegistry : IDisposable
             return null;
         }
         TsQuery? injections = null;
-        var injectionSource = QueryLoader.Load(_locator, grammar, "injections", out var injectionFiles);
+        var injectionSource = QueryLoader.Load(_locator, grammar, "injections", out var injectionFiles, files.Root);
         if (injectionSource is not null)
         {
             injections = TsQuery.Compile(language, injectionSource, out var injectionError);
@@ -167,7 +237,13 @@ public sealed class GrammarRegistry : IDisposable
         }
         var suffix = root[(root.LastIndexOf('.') + 1)..];
         var bundle = new LanguageBundle(grammar, language, highlights, injections, root, suffix,
-            highlightFiles.Concat(injectionFiles).ToArray(), diagnostics);
+            highlightFiles.Concat(injectionFiles).ToArray(), diagnostics)
+        {
+            Files = files,
+            Locator = _locator,
+            Identity = identity,
+            FlightRecord = Isolation.FlightRecorder.RecordFor(grammar, identity),
+        };
         foreach (var (name, i) in highlights.CaptureNames.Select((n, i) => (n, i)))
             if (bundle.CaptureScopeNames[i] is null) diagnostics.Add($"capture @{name} has no scope mapping (left unstyled)");
         lock (SharedGate)

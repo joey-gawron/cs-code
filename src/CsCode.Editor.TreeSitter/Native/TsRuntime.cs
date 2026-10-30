@@ -5,11 +5,13 @@ using System.Runtime.InteropServices;
 namespace CsCode.Editor.TreeSitter.Native;
 
 /// <summary>
-/// Finds, checks and loads <c>libtree-sitter</c> (the runtime is NOT shipped with CsCode; see docs/TREE-SITTER-EVALUATION.md §Distribution).
-/// Search order: <see cref="LibraryPathOverride"/> / <c>CSCODE_TREESITTER_LIB</c>, the extra directories passed to <see cref="Load"/>
-/// (the user's <c>{UserDataDir}/tree-sitter</c>), the system's default library search (<c>libtree-sitter.so.0</c>, <c>tree-sitter.dll</c>,
-/// <c>libtree-sitter.dylib</c>), and on a Nix machine the newest <c>/nix/store/*-tree-sitter-0.2x*/lib</c>. A candidate is accepted only
-/// when it exports the 0.25+ API the engine uses (progress callbacks, <c>ts_language_abi_version</c>); an older one is skipped with a reason.
+/// Finds, checks and loads <c>libtree-sitter</c>. Search order (docs/TREE-SITTER.md, "Distribution"): <see cref="LibraryPathOverride"/>
+/// (tests, the bench script); the app's bundle (<c>&lt;app&gt;/tree-sitter/lib</c>, built from the pinned release by
+/// <c>tools/treesitter/build-grammars.sh</c> and checked against the digest in its <c>bundle.json</c>); the extra directories passed to
+/// <see cref="Load"/> (the user's <c>{UserDataDir}/tree-sitter</c>); <c>CSCODE_TREESITTER_LIB</c>; the system's default library search
+/// (<c>libtree-sitter.so.0</c>, <c>tree-sitter.dll</c>, <c>libtree-sitter.dylib</c>); and, for development only (no bundle, or
+/// <c>CSCODE_TREESITTER_NIX=1</c>), the newest <c>/nix/store/*-tree-sitter-0.2x*/lib</c>. A candidate is accepted only when it exports the
+/// 0.25+ API the engine uses (progress callbacks, <c>ts_language_abi_version</c>); an older one is skipped with a reason.
 ///
 /// Loading is idempotent and thread-safe; it is done once, off the UI thread (the editor's I/O lane or worker).
 /// </summary>
@@ -43,6 +45,9 @@ public static unsafe class TsRuntime
     /// <summary>Path of the loaded library, or null.</summary>
     public static string? LoadedPath { get; private set; }
 
+    /// <summary>Where the loaded library came from: "override", "bundled", "user", "CSCODE_TREESITTER_LIB", "system" or "nix store"; null when none.</summary>
+    public static string? LoadedFrom { get; private set; }
+
     /// <summary>Why the runtime is not available (every candidate tried and why it was rejected), or null when it is.</summary>
     public static string? FailureReason { get; private set; }
 
@@ -54,17 +59,24 @@ public static unsafe class TsRuntime
 
     public static long AllocationCount => Interlocked.Read(ref _trackedAllocations);
 
-    /// <summary>Loads the runtime once. Returns <see cref="IsAvailable"/>. Never throws.</summary>
-    public static bool Load(IEnumerable<string>? extraDirectories = null)
+    /// <summary>Loads the runtime once (the app's bundle first, <see cref="Grammars.TreeSitterBundle.Default"/>). Returns <see cref="IsAvailable"/>. Never throws.</summary>
+    public static bool Load(IEnumerable<string>? extraDirectories = null) => Load(Grammars.TreeSitterBundle.Default, extraDirectories);
+
+    /// <summary>Loads the runtime once, from <paramref name="bundle"/> first when given. Only the first call of the process decides.</summary>
+    public static bool Load(Grammars.TreeSitterBundle? bundle, IEnumerable<string>? extraDirectories)
     {
         lock (Gate)
         {
             if (_loadAttempted) return IsAvailable;
             _loadAttempted = true;
             InstallResolver();
-            foreach (var candidate in Candidates(extraDirectories))
+            foreach (var (candidate, from) in Candidates(bundle, extraDirectories))
             {
-                if (TryAccept(candidate)) break;
+                if (TryAccept(candidate))
+                {
+                    LoadedFrom = from;
+                    break;
+                }
             }
             if (_handle == IntPtr.Zero)
             {
@@ -87,15 +99,22 @@ public static unsafe class TsRuntime
     private static IntPtr Resolve(string name, Assembly assembly, DllImportSearchPath? path) =>
         name == TsApi.Library ? _handle : IntPtr.Zero; // IntPtr.Zero = default probing (libc.so.6)
 
-    private static IEnumerable<string> Candidates(IEnumerable<string>? extraDirectories)
+    private static IEnumerable<(string Path, string From)> Candidates(Grammars.TreeSitterBundle? bundle, IEnumerable<string>? extraDirectories)
     {
-        if (!string.IsNullOrEmpty(LibraryPathOverride)) yield return LibraryPathOverride!;
-        if (Environment.GetEnvironmentVariable("CSCODE_TREESITTER_LIB") is { Length: > 0 } env) yield return env;
+        if (!string.IsNullOrEmpty(LibraryPathOverride)) yield return (LibraryPathOverride!, "override");
+        if (bundle is not null)
+        {
+            // the version gate: only the very library the bundle was built with
+            if (bundle.VerifyRuntime() is { } problem) Attempts.Add($"bundled runtime refused: {problem}");
+            else yield return (bundle.RuntimePath, "bundled");
+        }
         foreach (var dir in extraDirectories ?? [])
             foreach (var file in LibraryFileNames)
-                yield return Path.Combine(dir, file);
-        foreach (var file in LibraryFileNames) yield return file; // the platform's default search
-        foreach (var nix in NixStoreRuntimes()) yield return nix;
+                yield return (Path.Combine(dir, file), "user");
+        if (Environment.GetEnvironmentVariable("CSCODE_TREESITTER_LIB") is { Length: > 0 } env) yield return (env, "CSCODE_TREESITTER_LIB");
+        foreach (var file in LibraryFileNames) yield return (file, "system"); // the platform's default search
+        if (Grammars.TreeSitterBundle.NixStoreFallback)
+            foreach (var nix in NixStoreRuntimes()) yield return (nix, "nix store");
     }
 
     private static string[] LibraryFileNames =>
@@ -147,7 +166,7 @@ public static unsafe class TsRuntime
             return false;
         }
         // 0.25 introduced the progress-callback parse API (the old cancellation flag and timeout are gone in 0.26) and ts_language_abi_version.
-        string[] required = ["ts_parser_parse_with_options", "ts_language_abi_version", "ts_query_cursor_next_capture", "ts_set_allocator"];
+        string[] required = ["ts_parser_parse_with_options", "ts_language_abi_version", "ts_query_cursor_next_capture", "ts_set_allocator", "ts_query_cursor_exec_with_options"];
         var missing = required.Where(r => !NativeLibrary.TryGetExport(handle, r, out _)).ToArray();
         if (missing.Length > 0)
         {

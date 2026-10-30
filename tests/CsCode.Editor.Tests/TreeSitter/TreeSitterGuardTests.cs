@@ -38,7 +38,7 @@ public class TreeSitterGuardTests
         try
         {
             using var host = ViewHost.Create();
-            host.Config.Set(TreeSitterService.SettingKey, true);
+            host.Config.Set(TreeSitterService.SettingKey, TreeSitterService.TreeSitter);
             var (_, small, _) = await host.OpenAsync(TreeSitterViewTests.CSharp, "Small.cs");
             await TreeSitterViewTests.WaitForTreeSitter(small);
 

@@ -23,7 +23,7 @@ public class TreeSitterLeakTests
         RequireGrammar("markdown");
         Assert.SkipUnless(TsRuntime.AllocationsTracked, "allocation tracking is off (CSCODE_TREESITTER_TRACK_ALLOC=0)");
         using var host = ViewHost.Create();
-        host.Config.Set(TreeSitterService.SettingKey, true);
+        host.Config.Set(TreeSitterService.SettingKey, TreeSitterService.TreeSitter);
 
         // warm-up: grammars, queries, injection parsers and the stack cache are allocated once per process/registry
         await Cycle(host, 8);
@@ -58,7 +58,7 @@ public class TreeSitterLeakTests
     {
         RequireGrammar("rust");
         using var host = ViewHost.Create();
-        host.Config.Set(TreeSitterService.SettingKey, true);
+        host.Config.Set(TreeSitterService.SettingKey, TreeSitterService.TreeSitter);
         var text = string.Concat(Enumerable.Range(0, 300).Select(i => $"fn f{i}() -> i32 {{ {i} }}\n"));
         var (doc, view, window) = await host.OpenAsync(text, "keep.rs");
         await TreeSitterViewTests.WaitForTreeSitter(view);

@@ -63,7 +63,7 @@ public class TreeSitterQualityTests
         var textMate = Colours(view, doc.Snapshot().GetText());
 
         // tree-sitter, switched live on the same view
-        host.Config.Set(TreeSitterService.SettingKey, true);
+        host.Config.Set(TreeSitterService.SettingKey, TreeSitterService.TreeSitter);
         await ViewHost.WaitFor(() => view.Tokens?.TreeSitter is { CompletedParses: > 0 } e && !e.Syntax.IsParsing && view.Tokens.Store.HasTokens(0, lines - 1), "tree-sitter tokens");
         ViewHost.Pump();
         var treeSitterFrame = window.CaptureRenderedFrame()!;

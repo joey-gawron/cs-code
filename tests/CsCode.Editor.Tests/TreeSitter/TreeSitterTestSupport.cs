@@ -8,8 +8,9 @@ using Xunit;
 namespace CsCode.Editor.Tests.TreeSitter;
 
 /// <summary>
-/// Shared plumbing for the tree-sitter tests: the runtime and grammars are whatever this machine has (libtree-sitter 0.26 and the grammar
-/// packages in the Nix store, read-only). A test that needs them SKIPS with the reason when they are missing.
+/// Shared plumbing for the tree-sitter tests: the runtime and grammars are the app's bundle when tools/treesitter/build-grammars.sh has built
+/// one (copied next to the test assembly as tree-sitter/), otherwise whatever this machine has (the development fallback: libtree-sitter 0.26
+/// and the grammar packages in the Nix store, read-only). A test that needs them SKIPS with the reason when they are missing.
 /// </summary>
 internal static class TreeSitterTestSupport
 {
@@ -20,7 +21,7 @@ internal static class TreeSitterTestSupport
         if (Environment.GetEnvironmentVariable("CSCODE_TREESITTER_TRACK_ALLOC") != "0") TsRuntime.TrackAllocations = true;
     }
 
-    private static readonly GrammarLocator Locator = new(GrammarLocator.DefaultRoots(null));
+    private static readonly GrammarLocator Locator = GrammarLocator.CreateDefault(null);
 
     /// <summary>
     /// A registry over the machine's grammars. Registries are confined to one thread (their injection parsers are not thread-safe), so every

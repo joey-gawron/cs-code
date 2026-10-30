@@ -4,44 +4,65 @@ namespace CsCode.Editor.TreeSitter.Grammars;
 
 /// <summary>Where one grammar's compiled parser and query directories were found.</summary>
 /// <param name="QueryDirectories">Most preferred first; a query file is taken from the first directory that has it.</param>
-/// <param name="Source">Human-readable origin ("user", "CSCODE_TREESITTER_GRAMMARS", "nix store").</param>
-public sealed record GrammarFiles(string Name, string ParserPath, IReadOnlyList<string> QueryDirectories, string Source);
+/// <param name="Source">Human-readable origin ("bundled", the root directory, "nix store").</param>
+/// <param name="Bundle">The app's bundle when the parser comes from it: the library is checked against the bundle's digest before it is loaded.</param>
+public sealed record GrammarFiles(string Name, string ParserPath, IReadOnlyList<string> QueryDirectories, string Source, TreeSitterBundle? Bundle = null)
+{
+    /// <summary>The search root the parser was found under (its queries are preferred), or null (Nix store).</summary>
+    public string? Root { get; init; }
+}
 
 /// <summary>
-/// Finds compiled grammars and their queries on the machine, read-only. Nothing is downloaded, built or installed (that is a product
-/// decision for the user, docs/TREE-SITTER-EVALUATION.md §Distribution). Search order:
+/// Finds compiled grammars and their queries, read-only. Search order (docs/TREE-SITTER.md, "Distribution"):
 /// <list type="number">
-/// <item>the explicit roots (the user's <c>{UserDataDir}/tree-sitter/grammars</c>, then <c>CSCODE_TREESITTER_GRAMMARS</c>, a path list) where a
-/// grammar is <c>&lt;root&gt;/&lt;name&gt;/parser</c> (or <c>&lt;name&gt;.so</c>, <c>libtree-sitter-&lt;name&gt;.so</c>) with
-/// <c>&lt;root&gt;/&lt;name&gt;/queries/*.scm</c> or <c>&lt;root&gt;/queries/&lt;name&gt;/*.scm</c>;</item>
-/// <item>on a Nix machine, <c>/nix/store/*-tree-sitter-&lt;name&gt;-0.0.0+rev=*</c> (the revisions nvim-treesitter pins, which match its queries)
-/// or any versioned <c>tree-sitter-&lt;name&gt;-*</c> package, with queries from the nvim-treesitter plugin in the store
-/// (<c>runtime/queries/&lt;name&gt;</c>) before the grammar package's own <c>queries/</c>.</item>
+/// <item>the app's bundle (<c>&lt;app&gt;/tree-sitter/grammars</c>, built from the pinned sources by <c>tools/treesitter/build-grammars.sh</c>);</item>
+/// <item>the user's <c>{UserDataDir}/tree-sitter/grammars</c>;</item>
+/// <item><c>CSCODE_TREESITTER_GRAMMARS</c> (a path list);</item>
 /// </list>
+/// where a grammar is <c>&lt;root&gt;/&lt;name&gt;.so</c> (or <c>&lt;root&gt;/&lt;name&gt;/parser</c>, <c>libtree-sitter-&lt;name&gt;.so</c>…) with queries in
+/// <c>&lt;root&gt;/queries/&lt;name&gt;/*.scm</c> or <c>&lt;root&gt;/&lt;name&gt;/queries/*.scm</c>; then, FOR DEVELOPMENT ONLY (an app without a bundle,
+/// or <c>CSCODE_TREESITTER_NIX=1</c>: <see cref="TreeSitterBundle.NixStoreFallback"/>), the Nix store: <c>/nix/store/*-tree-sitter-&lt;name&gt;-0.0.0+rev=*</c>
+/// (the revisions nvim-treesitter pins) or a versioned package, with queries from the nvim-treesitter plugin in the store before the grammar
+/// package's own <c>queries/</c>. Nothing is downloaded, built or installed here.
 /// Thread-safe; results are cached. The Nix listing is done once per process (≈ 100k store entries, tens of ms) on the calling lane.
 /// </summary>
 public sealed class GrammarLocator
 {
     private readonly string[] _roots;
     private readonly bool _useNixStore;
+    private readonly TreeSitterBundle? _bundle;
     private readonly object _gate = new();
     private readonly Dictionary<string, GrammarFiles?> _grammars = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IReadOnlyList<string>> _queryDirs = new(StringComparer.Ordinal);
 
-    public GrammarLocator(IEnumerable<string> roots, bool useNixStore = true)
+    /// <param name="roots">Searched in order.</param>
+    /// <param name="bundle">When one of <paramref name="roots"/> is this bundle's grammar root, grammars found there are labelled "bundled" and verified before use.</param>
+    public GrammarLocator(IEnumerable<string> roots, bool useNixStore = true, TreeSitterBundle? bundle = null)
     {
         _roots = roots.Where(r => !string.IsNullOrWhiteSpace(r)).ToArray();
         _useNixStore = useNixStore && OperatingSystem.IsLinux();
+        _bundle = bundle;
     }
 
-    /// <summary>The explicit roots: <paramref name="userGrammarDir"/> then each entry of <c>CSCODE_TREESITTER_GRAMMARS</c>.</summary>
-    public static IEnumerable<string> DefaultRoots(string? userGrammarDir)
+    /// <summary>The production order: the app's bundle, <paramref name="userGrammarDir"/>, <c>CSCODE_TREESITTER_GRAMMARS</c>; the Nix store only without a bundle.</summary>
+    public static GrammarLocator CreateDefault(string? userGrammarDir) =>
+        new(DefaultRoots(TreeSitterBundle.Default, userGrammarDir), TreeSitterBundle.NixStoreFallback, TreeSitterBundle.Default);
+
+    /// <summary>The explicit roots: the bundle's grammars, then <paramref name="userGrammarDir"/>, then each entry of <c>CSCODE_TREESITTER_GRAMMARS</c>.</summary>
+    public static IEnumerable<string> DefaultRoots(TreeSitterBundle? bundle, string? userGrammarDir)
     {
+        if (bundle is not null) yield return bundle.GrammarsRoot;
         if (!string.IsNullOrEmpty(userGrammarDir)) yield return userGrammarDir!;
         if (Environment.GetEnvironmentVariable("CSCODE_TREESITTER_GRAMMARS") is { Length: > 0 } env)
             foreach (var p in env.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 yield return p;
     }
+
+    /// <summary>The roots searched before the Nix store, in order.</summary>
+    public IReadOnlyList<string> Roots => _roots;
+
+    /// <summary>True when the Nix store is searched after the roots (development only).</summary>
+    public bool UsesNixStore => _useNixStore;
 
     public GrammarFiles? Find(string grammarName)
     {
@@ -76,6 +97,18 @@ public sealed class GrammarLocator
         }
     }
 
+    /// <summary>
+    /// <see cref="QueryDirectories(string)"/> with the directories under <paramref name="preferredRoot"/> first: the queries that ship with a
+    /// grammar build are the ones written for it (a user's newer grammar with its own queries must not get the bundle's, and vice versa).
+    /// </summary>
+    public IReadOnlyList<string> QueryDirectories(string name, string? preferredRoot)
+    {
+        var dirs = QueryDirectories(name);
+        if (preferredRoot is null) return dirs;
+        var prefix = preferredRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return dirs.OrderBy(d => d.StartsWith(prefix, StringComparison.Ordinal) ? 0 : 1).ToArray(); // stable
+    }
+
     private GrammarFiles? FindUncached(string name)
     {
         foreach (var root in _roots)
@@ -89,7 +122,11 @@ public sealed class GrammarLocator
                 Path.Combine(root, name + LibraryExtension),
             ];
             foreach (var c in candidates)
-                if (File.Exists(c)) return new GrammarFiles(name, c, QueryDirectories(name), root);
+            {
+                if (!File.Exists(c)) continue;
+                var bundled = _bundle is not null && string.Equals(root, _bundle.GrammarsRoot, StringComparison.Ordinal);
+                return new GrammarFiles(name, c, QueryDirectories(name, root), bundled ? "bundled" : root, bundled ? _bundle : null) { Root = root };
+            }
         }
         if (_useNixStore)
         {
