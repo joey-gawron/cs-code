@@ -497,8 +497,12 @@ Measured here, owned elsewhere — for the end pass (nothing below was changed o
 7. **Language servers dominate the footprint**: typescript-language-server on a 2-file project ≈ 550 MB in 4 node processes; a remote session
    starts its own TypeScript server on the remote host for a remote `.js` file (≈ 700 MB more on this loopback "remote"). Caps exist per server
    (`LanguageServerDefinition.RestartAboveBytes` → `TrackChildProcess` over-budget callbacks). End pass: the cap applies to the process TREE
-   (lsp-core-4: it used to read only the launched pid, so tsserver never counted), and typescript, vue and svelte set 3 GiB
-   (`BuiltinLanguageServers.TypeScriptEngineCap`, VS Code's `typescript.tsserver.maxTsServerMemory` default; T39). Others stay uncapped (native
+   (lsp-core-4: it used to read only the launched pid, so tsserver never counted), and typescript, vue and svelte set 4 GiB
+   (`BuiltinLanguageServers.TypeScriptEngineCap`, T39: VS Code's `typescript.tsserver.maxTsServerMemory` limits the V8 heap of EACH tsserver to
+   3072 MB; the tree's RSS also counts the launcher, the syntax server, the typings installer and the node runtime once per process, ~550 MB on a
+   small project, hence +1 GiB). A server is restarted for its cap at most 3 times (`ServerSlot.MaxMemoryRestarts`), each announced in the status
+   bar and its log, without resetting the crash policy; the next time the cap is no longer enforced and one warning offers Restart (a restart or a
+   new `restartAboveBytes` re-arms it), so a project whose normal size is above the cap is not killed forever. Others stay uncapped (native
    servers grow with the project; JVM ones are bounded by -Xmx); `restartAboveBytes: null` or 0 turns a cap off.
 8. **Scrolling leaks** (Editor module / AvaloniaEdit 12.0.0): each end-to-end scroll of a 20k-line file (80 `ScrollToLine` steps with frames)
    keeps ~3.7 MB more live heap, linearly, with no plateau over 16 passes (`cscode-profile census --scenario scroll`: 30.5 → 85.8 MB live,

@@ -46,12 +46,16 @@ public static class BuiltinLanguageServers
 {
     /// <summary>
     /// T39: the restart cap of the servers built on the TypeScript engine (typescript-language-server with its tsserver, vue-language-server,
-    /// svelteserver), applied to the whole process tree (lsp-core-4). 3 GiB is VS Code's <c>typescript.tsserver.maxTsServerMemory</c> default, the
-    /// heap at which VS Code's tsserver dies and is restarted; W6 measured ~550 MB for a mid-size project, so only a runaway or leaking server
-    /// reaches it. Other servers have no cap: native ones (rust-analyzer, clangd, gopls, HLS) grow with the project and would only regrow after a
-    /// restart, and the JVM ones are bounded by their own -Xmx. Override per server with <c>cscode.languageServers.&lt;id&gt;.restartAboveBytes</c>.
+    /// svelteserver). VS Code's limit is <c>typescript.tsserver.maxTsServerMemory</c> = 3072 MB of V8 old space for EACH tsserver; this cap is
+    /// compared with the resident memory of the whole process tree (lsp-core-4): the launcher, the syntax and semantic tsservers and the typings
+    /// installer, the node runtime's shared pages counted once per process. W6 measured that tree at ~550 MB on a small project, so 4 GiB = VS Code's
+    /// 3 GiB heap plus 1 GiB for the rest of the tree: a project VS Code serves stays under it, and only a tree whose semantic server would have hit
+    /// VS Code's limit reaches it. The slot restarts a server for its cap at most <see cref="ServerSlot.MaxMemoryRestarts"/> times, then stops
+    /// enforcing it and says so. Other servers have no cap: native ones (rust-analyzer, clangd, gopls, HLS) grow with the project and would only
+    /// regrow after a restart, and the JVM ones are bounded by their own -Xmx. Override per server with
+    /// <c>cscode.languageServers.&lt;id&gt;.restartAboveBytes</c> (null or 0: no cap).
     /// </summary>
-    public const long TypeScriptEngineCap = 3L * 1024 * 1024 * 1024;
+    public const long TypeScriptEngineCap = 4L * 1024 * 1024 * 1024;
 
     private static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
