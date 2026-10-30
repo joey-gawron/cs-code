@@ -66,9 +66,11 @@ public class RealCodeLldbRustTests
         await using var rig = await RigAsync();
         rig.PanicStops(false); // the sample catches a panic on its way to the end
         var bp = rig.H.Breakpoints.Add(rig.MainUri, InMain("loop"));
+        var started = Stopwatch.GetTimestamp();
         var session = await rig.StartAsync();
         Note($"capabilities: exception filters {string.Join(", ", session.Capabilities.ExceptionBreakpointFilters?.Select(f => $"{f.Filter}='{f.Label}' default={f.Default}") ?? [])}");
         var loc = await rig.WaitForStopAsync(1);
+        Note($"start to the first stop: {Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms (load {File.ReadAllText("/proc/loadavg").Split(' ')[0]})");
         Assert.Equal("breakpoint", rig.LastStop.Reason);
         AssertAt(loc, "main.rs", InMain("loop"));
         await SessionHarness.Eventually(() => rig.H.Breakpoints.GetStatus(bp.Id) is { Verified: true }, 10_000, "verified breakpoint");
@@ -414,6 +416,8 @@ public class RealCodeLldbRustTests
         Assert.Equal("7", (await session.EvaluateAsync("p.x + p.y", loc.FrameId, "watch", Ct)).Result);
         var watchError = await Assert.ThrowsAsync<DapRequestException>(async () => await session.EvaluateAsync("nope", loc.FrameId, "watch", Ct));
         Note("watch error: " + watchError.Message);
+        var (rust, _) = await RealGdbRig.EvaluateRustExpressionsAsync(session, loc.FrameId);
+        Note("rust expressions: " + rust);
 
         async Task<string> Repl(string text) => (await session.EvaluateAsync(text, loc.FrameId, "repl", Ct)).Result;
         Assert.Equal("102", await Repl("x * 2")); // an expression: the console is in evaluate mode
