@@ -195,9 +195,16 @@ AvaloniaEdit 12.0.0 (`Avalonia.AvaloniaEdit`):
 * `EnableHyperlinks` makes AvaloniaEdit start the browser itself; the editor turns it off and opens URLs through `IWindowService`.
 * **The stock search panel searched the whole document on the UI thread on every edit while open**, without a result limit, with a regex that
   had no match timeout. `FindSearch` (reflection against the 12.0.0 layout; the stock panel stays when it differs) gives it VS Code's find-widget
-  behaviour: at most 19,999 matches (the panel says when there are more), a 1 s regex match timeout (the panel says the pattern was stopped), and
-  after an edit the matches move with it while the re-search waits for 100 ms of quiet and runs on the editor worker from a snapshot. A new
-  pattern or option still searches at once on the UI thread, bounded, so Enter right after typing finds the match.
+  behaviour: at most 19,999 matches held and highlighted (the panel says when there are more), a 1 s regex match timeout (the panel says the
+  pattern was stopped; such a pattern is not re-run after edits), and after an edit the matches move with it while the re-search waits for
+  100 ms of quiet and runs on the editor worker from a snapshot, in 64 K-character chunks a slice at a time, stopped by a newer edit. A new
+  pattern or option still searches at once on the UI thread, bounded, so Enter right after typing finds the match. The panel uses its held
+  matches for highlighting, navigation AND Replace All, so the limit must not reach further: Find Next / Previous (F3, Shift+F3, Enter,
+  Shift+Enter) past the last held match search the text from the caret (wrapping over the whole document), a new pattern selects the match
+  after the caret wherever it is, and Replace / Replace All search the CURRENT text (every match, one undo step; a timed-out pattern replaces
+  nothing) instead of the held matches, which after an edit are only moved until the re-search lands: VS Code does the same (a model search
+  past `MATCHES_LIMIT` decorations, `replaceAll` searching the model again). These are command bindings placed before the panel's own, which
+  decline whenever the held matches answer the command exactly, and a tunnelling Enter handler on the panel.
 * **AvaloniaEdit allocates in proportion to the document's line count on every edit** (≈ 90 B per line per keystroke: 19 KB for a 50-line file, 538 KB for 6000 lines, measured on a bare themed `TextEditor`), and keeps ≈ 130 B per line per view for its height tree. Nothing in this module can change that.
 
 TextMateSharp 2.0.3:
