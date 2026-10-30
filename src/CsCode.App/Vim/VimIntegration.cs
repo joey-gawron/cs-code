@@ -71,6 +71,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     private System.Text.RegularExpressions.Regex? _searchRegex;
     private bool _started, _enabled, _disposed, _lastKeyDownToVim;
     private int _holdGeneration;
+    private Task? _waitedRead;
     private VimView? _editorKey;
 
     private VimIntegration(IServiceProvider sp, IVimService vim, EditorViewFactory editors)
@@ -92,7 +93,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
             _ownedClipboard = new Services.ClipboardService(_ui, Services.AvaloniaPlatformClipboard.Of(() => _windowHolder.Window), () => null);
             clipboard = _ownedClipboard;
         }
-        Clipboard = new VimClipboard(clipboard);
+        Clipboard = new VimClipboard(clipboard) { Enabled = false }; // follows vim.enable (SetEnabled)
         Actions = new VimShellActions(this, _well, sp.GetRequiredService<ShellDockFactory>(), sp.GetService<IWindowService>(), sp.GetService<IWorkspaceService>());
     }
 
@@ -129,6 +130,12 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
 
     /// <summary>Keys waiting for a clipboard read (tests).</summary>
     internal int HeldKeyCount => _held.Count;
+
+    /// <summary>
+    /// While this returns true, Vim takes no key or text: they go on to the shell's key pipeline. A playing macro sets it (MacroIntegration), so
+    /// that its gate (the pipeline's tap) stops the macro on Esc and keeps the user's keys out of the editor, with Vim on as with it off.
+    /// </summary>
+    internal Func<bool>? PassKeysThrough { get; set; }
 
     /// <summary>Wires the adapter (UI thread, once): the window's key interceptor calls arrive after this. <paramref name="chordPending"/> tells
     /// whether the shell is in the middle of a key chord (its second key must not go to Vim).</summary>
@@ -178,8 +185,11 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
             return;
         }
         _enabled = on;
+        // off: the '+' / '*' caches are dropped and nothing is read any more (window activation, editor focus); on: read afresh
+        Clipboard.Enabled = on;
         if (on)
         {
+            _ = Clipboard.RefreshAllAsync();
             foreach (var view in _editors.Views) Attach(view);
         }
         else
@@ -218,11 +228,12 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         vimView.Subscriptions.Add(engine.PendingWorkChanged.Subscribe(pending => { if (pending) SchedulePump(vimView); }));
         void OnFocus(object? s, RoutedEventArgs e) => OnViewFocused(vimView);
         void OnPointerReleased(object? s, PointerReleasedEventArgs e) => _ui.Post(() => OnMouseSelection(vimView)); // after the editor finished the gesture
-        view.GotFocus += OnFocus;
+        // handled events too: AvaloniaEdit marks its text area's GotFocus handled before it bubbles up to the view
+        view.AddHandler(InputElement.GotFocusEvent, OnFocus, RoutingStrategies.Bubble, handledEventsToo: true);
         view.AddHandler(InputElement.PointerReleasedEvent, OnPointerReleased, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
         vimView.Subscriptions.Add(Disposable.Create(() =>
         {
-            view.GotFocus -= OnFocus;
+            view.RemoveHandler(InputElement.GotFocusEvent, OnFocus);
             view.RemoveHandler(InputElement.PointerReleasedEvent, OnPointerReleased);
         }));
         if (_searchRegex is not null) surface.SetPatternHighlight(_searchRegex);
@@ -284,7 +295,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
 
     public bool OnKeyDown(KeyEventArgs e)
     {
-        if (!_enabled || _disposed || Find(e.Source) is not { } v) return false;
+        if (!_enabled || _disposed || PassKeysThrough?.Invoke() == true || Find(e.Source) is not { } v) return false;
         if (_chordPending?.Invoke() == true) return false; // the second key of a shell chord (Ctrl+K Ctrl+C) is the shell's
         if (!AvaloniaKeyMapper.TryMap(e.Key, e.KeyModifiers, out var stroke)) return false;
         if (VimKeyPolicy.IsTextKey(stroke))
@@ -326,7 +337,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
 
     public bool OnTextInput(TextInputEventArgs e)
     {
-        if (!_enabled || _disposed || Find(e.Source) is not { } v) return false;
+        if (!_enabled || _disposed || PassKeysThrough?.Invoke() == true || Find(e.Source) is not { } v) return false;
         var text = e.Text;
         if (string.IsNullOrEmpty(text)) return false;
         // some platforms follow Enter/Tab/Backspace with a control character as text: swallow it when Vim took the key press
@@ -357,7 +368,10 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         return p;
     }
 
-    /// <summary>One key (or typed text) into the engine. While the clipboard is being read for a <c>"+</c>/<c>"*</c> command, keys wait in order.</summary>
+    /// <summary>
+    /// One key (or typed text) into the engine. While the clipboard is being read for a <c>"+</c>/<c>"*</c> command, or for a put of the unnamed
+    /// register that stands for the clipboard, keys wait in order.
+    /// </summary>
     private bool Feed(VimView v, KeyStroke? key, string? text)
     {
         if (_held.Count > 0)
@@ -366,6 +380,12 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
             return true;
         }
         if (!ReferenceEquals(_current, v)) OnViewFocused(v);
+        if (PendingClipboardRead(v, text) is { } read)
+        {
+            HoldFor(v, read);
+            _held.Enqueue((v, key, text));
+            return true;
+        }
         ClearMessage(v);
         var result = Run(v, () => key is { } k ? v.Engine.HandleKey(k) : v.Engine.HandleText(text!));
         if (result == VimKeyResult.Handled) HoldForClipboard(v);
@@ -448,14 +468,34 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         if (pending.EndsWith("\"+", StringComparison.Ordinal)) register = '+';
         else if (pending.EndsWith("\"*", StringComparison.Ordinal)) register = '*';
         else return;
+        HoldFor(v, Clipboard.RefreshAsync(register));
+    }
+
+    /// <summary>
+    /// The read a put has to wait for: p / P (gp, ]p, Visual p...) put the unnamed register, which 'clipboard' unnamedplus / unnamed or
+    /// vim.useSystemClipboard make the clipboard register; while that register is being read (the window was just activated, the editor just
+    /// focused, Vim just switched on), the put waits for the read instead of putting what was known before. Null: nothing to wait for (no read
+    /// in flight, or this one was already waited for as long as keys wait).
+    /// </summary>
+    private Task? PendingClipboardRead(VimView v, string? text)
+    {
+        if (text is not ("p" or "P") || v.Engine.Mode is not (VimMode.Normal or VimMode.Visual or VimMode.VisualLine or VimMode.VisualBlock)) return null;
+        if (_vim.Session.UnnamedClipboardRegister is not { } register || Clipboard.ReadInFlight(register) is not { } read) return null;
+        return ReferenceEquals(read, _waitedRead) ? null : read;
+    }
+
+    /// <summary>The keys after this one wait (in order, at most <see cref="ClipboardWait"/>) for <paramref name="read"/>.</summary>
+    private void HoldFor(VimView v, Task read)
+    {
         var generation = ++_holdGeneration;
         _held.Enqueue((v, null, null)); // sentinel: keys queue behind it
         async Task ReleaseAsync()
         {
-            try { await Clipboard.RefreshAsync(register).WaitAsync(ClipboardWait).ConfigureAwait(true); }
+            try { await read.WaitAsync(ClipboardWait).ConfigureAwait(true); }
             catch (TimeoutException) { }
             catch (Exception) { /* an unreadable clipboard reads as the last known text */ }
             if (generation != _holdGeneration) return;
+            _waitedRead = read; // a read that outlasted the wait: the keys go ahead with the last known text
             ReleaseHeld();
         }
         _ = ReleaseAsync();
@@ -536,9 +576,12 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
 
     private void OnViewFocused(VimView v)
     {
-        if (v.IsDisposed || ReferenceEquals(_current, v)) return;
-        _current = v;
+        if (v.IsDisposed) return;
+        // also when the same editor takes the focus again: the clipboard may have changed while CsCode stayed the active window (xclip in the
+        // terminal, a clipboard manager); copies made in CsCode reach the register at once anyway
         _ = Clipboard.RefreshAsync('+');
+        if (ReferenceEquals(_current, v)) return;
+        _current = v;
         UpdateStatus();
     }
 
@@ -746,6 +789,8 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         _statusTexts.Clear();
         _held.Clear();
         _vim.Session.Mappings.RemoveOrigin(IntegrationOrigin);
+        PassKeysThrough = null;
+        Clipboard.Dispose();
         _ownedClipboard?.Dispose();
     }
 }

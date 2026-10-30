@@ -95,6 +95,11 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
         _subscriptions.Add(_commands.Register(MacroCommands.Find, FindAsync)); // no title: a recorded step, not a palette command
         if (_contributions is not null) _subscriptions.Add(_contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory, DefaultKeybindings));
         if (vim is not null)
+        {
+            // Vim sees an editor's keys before the key bindings and would take Esc, Delete, Ctrl+D... from a command-only macro playing with Vim on:
+            // while a macro plays they go past Vim to this integration's gate (BeforeResolve), as with Vim off
+            vim.PassKeysThrough = () => !_injecting && _service.State == MacroState.Playing;
+            _subscriptions.Add(Disposable.Create(() => vim.PassKeysThrough = null));
             _subscriptions.Add(vim.Service.EnabledChanged.Subscribe(on =>
             {
                 if (!on) return;
@@ -107,9 +112,11 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
                 if (_ui.CheckAccess()) Stop();
                 else _ui.Post(Stop);
             }));
+        }
         if (_windowHolder.Window is { } top)
         {
-            // typing aimed at an editor while a macro plays would mix with the macro's own: swallowed (before the editor and after Vim)
+            // typing aimed at an editor while a macro plays would mix with the macro's own: swallowed. This tunnel handler is added before the main
+            // window's own (ShellController.Initialize runs before MainWindow attaches its input), so it runs before Vim and the editor see the text
             top.AddHandler(InputElement.TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
             // the end of a key's or text's route (handled or not): the editor is done with the input the recorder was told about
             top.AddHandler(InputElement.KeyDownEvent, OnInputDone, RoutingStrategies.Bubble, handledEventsToo: true);

@@ -98,6 +98,7 @@ public sealed class ClipboardService : IClipboardService, IDisposable
     private readonly Func<IPlatformClipboard?> _platform;
     private readonly Lazy<IPrimarySelectionBackend?> _primary;
     private readonly Emitter<ClipboardText> _ringChanged = new();
+    private readonly Emitter<ClipboardText> _written = new();
     private readonly object _gate = new();
     private readonly LinkedList<ClipboardText> _ring = new();
     private ClipboardText? _last;
@@ -135,6 +136,7 @@ public sealed class ClipboardService : IClipboardService, IDisposable
         ArgumentNullException.ThrowIfNull(content);
         Volatile.Write(ref _last, content);
         AddToRing(content);
+        _written.Fire(content);
         if (_disposed) return;
         // Setting the clipboard makes CsCode its owner; no other process is involved until someone pastes, so this does not wait on anyone.
         var set = await _ui.InvokeAsync(() => SetOnUi(content)).ConfigureAwait(false);
@@ -176,6 +178,12 @@ public sealed class ClipboardService : IClipboardService, IDisposable
     }
 
     public IEventSource<ClipboardText> RingChanged => _ringChanged;
+
+    /// <summary>
+    /// Fires for every write, on the writer's thread, before the platform clipboard is set: also for the copies the ring leaves out (empty, over
+    /// 1 MB). For caches of what the clipboard holds (Vim's <c>+</c> register), which must follow every copy CsCode makes.
+    /// </summary>
+    public IEventSource<ClipboardText> Written => _written;
 
     private void AddToRing(ClipboardText content)
     {
@@ -220,6 +228,7 @@ public sealed class ClipboardService : IClipboardService, IDisposable
         if (_primary.IsValueCreated) _primary.Value?.Dispose();
         lock (_gate) _ring.Clear();
         _ringChanged.Clear();
+        _written.Clear();
     }
 }
 

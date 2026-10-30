@@ -289,6 +289,37 @@ public class MacroRealAppTests(ITestOutputHelper output)
     }
 
     [AvaloniaFact(Timeout = 120_000)]
+    public async Task With_vim_on_Esc_stops_a_playing_macro_and_vims_keys_do_not_edit_meanwhile()
+    {
+        // vim-macros-clipboard-2: a command-only macro plays with Vim on; Vim takes Esc, Delete and Ctrl+D in Normal mode, and the macro's gate
+        // (the keyboard pipeline's tap) must still see them
+        await using var app = await MacroApp.StartAsync("line one\nline two\nline three", vim: true, seed: h => h.Home.WriteFile("data/macros.json", """
+            { "macros": [ { "name": "slow", "steps": [ { "command": "editor.action.selectAll" }, { "pause": 6000 } ] } ] }
+            """));
+        Assert.True(await RealAppHost.WaitFor(() => app.Host.Get<ICommandService>().Has("macro.run.slow")));
+        Assert.True(app.Host.Shell.Vim!.Enabled);
+
+        var playing = app.Host.Get<ICommandService>().ExecuteAsync("macro.run.slow").AsTask();
+        Assert.True(await RealAppHost.WaitFor(() => app.Service.State == MacroState.Playing));
+        app.Press(Key.Delete);           // Vim's x: the user's keys must not interleave with the macro
+        app.Press(Key.D, MacroApp.Ctrl); // Vim's half-page scroll
+        app.Type("dd");                  // Vim's dd
+        await app.SettleAsync();
+        Assert.Equal(MacroState.Playing, app.Service.State);
+        Assert.Equal("line one\nline two\nline three", app.Text);
+
+        app.Press(Key.Escape);           // stops the macro, well before its pause ends
+        Assert.True(await RealAppHost.WaitFor(() => playing.IsCompleted, 2_000), "Esc did not stop the playback with Vim on");
+        await playing;
+        Assert.Equal(MacroState.Idle, app.Service.State);
+        Assert.Contains("was stopped", app.StatusText(MacroCommands.MessageStatusId));
+
+        app.Type("x");                   // after the playback Vim has its keys again
+        await app.SettleAsync();
+        Assert.NotEqual("line one\nline two\nline three", app.Text);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
     public async Task Switching_vim_on_stops_recording_and_keys_vim_takes_are_never_recorded()
     {
         await using var app = await MacroApp.StartAsync("abc\ndef");
