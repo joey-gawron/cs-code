@@ -66,6 +66,7 @@ public sealed partial class ConsoleView : UserControl, IDisposable, IClipboardTa
         var lines = this.FindControl<ListBox>("Lines")!;
         lines.AddHandler(KeyDownEvent, OnLinesKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         lines.ContextRequested += OnLinesContextRequested;
+        ToolWindowFocus.KeepOnRows(lines); // Clear All, a filter and the oldest lines trimmed replace or remove the rows
         this.FindControl<ListBox>("Completions")!.DoubleTapped += (_, _) =>
         {
             if (_model?.SelectedCompletion is { } c) Accept(c);

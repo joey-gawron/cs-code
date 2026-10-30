@@ -170,11 +170,8 @@ public sealed class BreakpointRow : ObservableObject
 /// persists them and mirrors them to the debug sessions; this model only re-reads its snapshots when <see cref="IBreakpointManager.Changed"/>
 /// fires (coalesced), so it never holds state of its own to go stale.
 /// </summary>
-public sealed class BreakpointsViewModel : ObservableObject, IDisposable, IRowsReplacedNotifier
+public sealed class BreakpointsViewModel : ObservableObject, IDisposable
 {
-    public event Action? RowsReplacing;
-    public event Action? RowsReplaced;
-
     /// <summary>Above this many breakpoints the row list is built on the thread pool instead of the UI thread (the snapshots are immutable).</summary>
     private const int OffThreadThreshold = 200;
 
@@ -254,10 +251,8 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable, IRowsR
             return;
         }
         var keep = SelectedRow?.Id;
-        RowsReplacing?.Invoke();
         Rows.ReplaceAll(rows);
         if (keep is not null) SelectedRow = rows.FirstOrDefault(r => r.Id == keep && !r.IsHeader);
-        RowsReplaced?.Invoke();
     }
 
     private List<BreakpointRow> BuildRows(IReadOnlyList<SourceBreakpoint> source, IReadOnlyList<FunctionBreakpoint> functions, IReadOnlyList<ExceptionFilterSetting> filters)
@@ -410,8 +405,6 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable, IRowsR
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _subs.Dispose();
         _selected = null;
-        RowsReplacing = null;
-        RowsReplaced = null;
         Rows.Clear();
     }
 }

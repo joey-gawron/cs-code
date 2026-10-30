@@ -7,6 +7,7 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CsCode.Core.Platform;
 using CsCode.Panels.Search.Settings;
 using CsCode.Panels.Search.ViewModels;
@@ -258,6 +259,38 @@ public class FindInFilesViewTests
         }
     }
 
+    // Dismissing a result (Delete), Collapse All and Expand All replace the rows (ReplaceAll), the focused one too: the keyboard stays on a row,
+    // where the next Delete, Enter or arrow works, instead of going nowhere.
+    [AvaloniaFact]
+    public async Task The_keyboard_stays_on_the_result_rows_when_they_are_replaced()
+    {
+        var (f, vm, view, window) = await OpenAsync();
+        using (f)
+        {
+            var list = view.FindControl<ListBox>("ResultsList")!;
+            bool OnARow() => window.FocusManager?.GetFocusedElement() is ListBoxItem row && list.IsVisualAncestorOf(row);
+            string Focused() => window.FocusManager?.GetFocusedElement()?.ToString() ?? "nothing";
+            var match = vm.Rows.OfType<MatchRow>().First();
+            vm.SelectedRow = match;
+            UiSupport.Pump();
+            Assert.True((list.ContainerFromItem(match) as Control)?.Focus());
+            var before = vm.TotalMatches;
+
+            window.KeyPress(Key.Delete, RawInputModifiers.None, PhysicalKey.Delete, null);
+            UiSupport.Pump();
+            Assert.Equal(before - 1, vm.TotalMatches);
+            Assert.True(OnARow(), $"after Delete the keyboard is on {Focused()}");
+
+            vm.CollapseAll();
+            UiSupport.Pump();
+            Assert.True(OnARow(), $"after Collapse All the keyboard is on {Focused()}");
+            vm.ExpandAll();
+            UiSupport.Pump();
+            Assert.True(OnARow(), $"after Expand All the keyboard is on {Focused()}");
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public async Task Collapsed_view_and_the_bottom_dock_layout_render()
     {
@@ -410,6 +443,39 @@ public class SettingsViewTests
         }
     }
 
+    // A value changed from the keyboard is written, and the configuration change refreshes the list (ReplaceAll), which rebuilds every row:
+    // the focused check box left the tree and the keyboard went nowhere. It stays on the row of the setting it was on.
+    [AvaloniaFact]
+    public async Task The_keyboard_stays_on_the_setting_it_was_on_when_a_change_refreshes_the_list()
+    {
+        var (f, vm, view, window) = Open();
+        using (f)
+        {
+            var list = view.FindControl<ListBox>("SettingsList")!;
+            string Focused() => window.FocusManager?.GetFocusedElement() is { } e ? $"{e} ({(e as Control)?.DataContext})" : "nothing";
+            void AssertOnTheSetting(object setting, string when)
+            {
+                var focused = window.FocusManager?.GetFocusedElement() as Control;
+                Assert.True(focused is not null && list.IsVisualAncestorOf(focused), $"{when} the keyboard is on {Focused()}");
+                Assert.Same(setting, focused!.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext);
+            }
+            var checkbox = view.Descendants<CheckBox>().First(c => c.IsEffectivelyVisible);
+            var setting = (BoolSettingViewModel)checkbox.DataContext!;
+            Assert.True(checkbox.Focus());
+
+            window.KeyPress(Key.Space, RawInputModifiers.None, PhysicalKey.Space, " ");
+            window.KeyRelease(Key.Space, RawInputModifiers.None, PhysicalKey.Space, " ");
+            UiSupport.Pump();
+            Assert.NotEmpty(f.Configuration.Writes);
+            AssertOnTheSetting(setting, "after Space");
+
+            await vm.RefreshAsync(); // settings.json changed on disk
+            UiSupport.Pump();
+            AssertOnTheSetting(setting, "after a refresh");
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void Disposing_the_view_flushes_pending_edits()
     {
@@ -445,6 +511,32 @@ public class KeyboardShortcutsViewTests
         var window = UiSupport.Host(view, 980, 420);
         UiSupport.Screenshot(window, "keybindings");
         Assert.Equal(4, view.Descendants<ListBoxItem>().Count());
+        window.Close();
+        view.Dispose();
+    }
+
+    // A key binding changed (keybindings.json saved) or a command registered (an extension loaded) reloads the table (ReplaceAll), every row
+    // with it: the keyboard on a row stays on the rows instead of going nowhere.
+    [AvaloniaFact]
+    public void The_keyboard_stays_on_the_rows_when_the_table_reloads()
+    {
+        UiSupport.EnsureTheme();
+        using var f = new UiFixture();
+        f.Keybindings.Bindings.AddRange(
+        [
+            new KeyBinding("workbench.action.findInFiles", KeyStrokeParser.ParseChord("ctrl+shift+f"), null, null, KeyBindingSource.Default),
+            new KeyBinding("workbench.action.debug.start", KeyStrokeParser.ParseChord("f5"), "!inDebugMode", null, KeyBindingSource.Default),
+        ]);
+        var vm = new KeyboardShortcutsViewModel(f.Services);
+        var view = new KeyboardShortcutsView(vm);
+        var window = UiSupport.Host(view, 980, 420);
+        var list = view.Descendants<ListBox>().Single();
+        Assert.True(view.Descendants<ListBoxItem>().First().Focus());
+
+        vm.Reload();
+        UiSupport.Pump();
+
+        Assert.True(window.FocusManager?.GetFocusedElement() is ListBoxItem row && list.IsVisualAncestorOf(row), $"the keyboard is on {window.FocusManager?.GetFocusedElement()?.ToString() ?? "nothing"}");
         window.Close();
         view.Dispose();
     }

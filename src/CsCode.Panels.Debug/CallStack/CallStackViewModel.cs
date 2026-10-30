@@ -90,11 +90,8 @@ public sealed class CallStackRow : ObservableObject
 /// even with "Show External Code" on, as VS Code does: a run of two or more becomes one "[External Code]" row. Activating any "[External
 /// Code]" row shows the frames it stands for (greyed) until the next stop.</para>
 /// </summary>
-public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsReplacedNotifier
+public sealed class CallStackViewModel : ObservableObject, IDisposable
 {
-    public event Action? RowsReplacing;
-    public event Action? RowsReplaced;
-
     public const int PageSize = 50;
     public const int MaxThreads = 500;
     public const int MaxFramesPerThread = 5_000;
@@ -343,12 +340,10 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
             return;
         }
         var keepKind = SelectedRow?.Kind;
-        RowsReplacing?.Invoke();
         Rows.ReplaceAll(rows);
         if (keepKind is { } kind)
             SelectedRow = rows.FirstOrDefault(r => r.Kind == kind && r.ThreadId == keepThread && r.Frame?.Id == keepFrame);
         OnPropertyChanged(nameof(ShowStatus));
-        RowsReplaced?.Invoke();
     }
 
     private void AddFrameRows(List<CallStackRow> rows, ThreadModel t, int depth)
@@ -521,8 +516,6 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable, IRowsRep
         _threads.Clear();
         _session = null;
         _selected = null;
-        RowsReplacing = null;
-        RowsReplaced = null;
         Rows.Clear();
         _focus = default;
     }

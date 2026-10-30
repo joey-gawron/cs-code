@@ -42,11 +42,8 @@ public sealed class ThreadRow : ObservableObject
 /// frame (through <see cref="IDebugFrameFocus"/>), which re-scopes Call Stack, Locals, Autos and Watch. Freezing/thawing threads is not
 /// offered: the debug contracts have no such operation.
 /// </summary>
-public sealed class ThreadsViewModel : ObservableObject, IDisposable, IRowsReplacedNotifier
+public sealed class ThreadsViewModel : ObservableObject, IDisposable
 {
-    public event Action? RowsReplacing;
-    public event Action? RowsReplaced;
-
     public const int MaxThreads = 500;
     private const int MaxLocationLookups = 100;
 
@@ -163,10 +160,8 @@ public sealed class ThreadsViewModel : ObservableObject, IDisposable, IRowsRepla
             else
             {
                 var keep = SelectedRow?.Id;
-                RowsReplacing?.Invoke();
                 Rows.ReplaceAll(rows);
                 if (keep is { } id) SelectedRow = rows.FirstOrDefault(r => r.Id == id);
-                RowsReplaced?.Invoke();
             }
             StatusText = rows.Count == 0 ? "No threads" : null;
             MarkCurrent(focus.ThreadId ?? session.FocusedThreadId);
@@ -266,8 +261,6 @@ public sealed class ThreadsViewModel : ObservableObject, IDisposable, IRowsRepla
         _cts.Dispose();
         _session = null;
         _selected = null;
-        RowsReplacing = null;
-        RowsReplaced = null;
         Rows.Clear();
         _focus = default;
     }

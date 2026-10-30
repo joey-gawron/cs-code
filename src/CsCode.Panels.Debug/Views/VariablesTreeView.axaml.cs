@@ -35,6 +35,7 @@ public sealed partial class VariablesTreeView : UserControl, IClipboardTarget, I
         rows.AddHandler(KeyDownEvent, OnRowsKeyDown, RoutingStrategies.Tunnel); // before the list's own arrow/Enter/Space handling
         rows.DoubleTapped += OnRowsDoubleTapped;
         rows.ContextRequested += OnContextRequested;
+        ToolWindowFocus.KeepOnRows(rows); // each stop clears the rows and fills them again; a watch edited replaces them
         // Drag and drop to reorder watches: handled by hand (pointer capture) so it works the same on every platform and in headless tests.
         rows.AddHandler(PointerPressedEvent, OnRowsPointerPressed, RoutingStrategies.Tunnel);
         rows.AddHandler(PointerMovedEvent, OnRowsPointerMoved, RoutingStrategies.Tunnel);

@@ -14,6 +14,8 @@ public sealed partial class KeyboardShortcutsView : UserControl, IDisposable
     {
         InitializeComponent();
         if (viewModel is not null) DataContext = viewModel;
+        // A binding changed or a command registered reloads the table, and the filter narrows it: both replace the rows (one Reset).
+        CsCode.Ui.ToolWindowFocus.KeepOnRows(this.FindControl<ListBox>("Rows")!);
     }
 
     public void Dispose()

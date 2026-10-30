@@ -30,6 +30,7 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
     private readonly ICommandService? _commands;
     private readonly IContextKeyService? _keys;
     private readonly ListBox _list;
+    private Button? _openFolder;
     private string _typeAhead = "";
     private DateTime _typeAheadAt;
 
@@ -95,7 +96,7 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
 
     private Control EmptyState()
     {
-        var open = new Button { Content = "Open Folder", HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 10, 0, 0), Padding = new Thickness(16, 4) };
+        var open = _openFolder = new Button { Content = "Open Folder", HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 10, 0, 0), Padding = new Thickness(16, 4) };
         open.Classes.Add("accent");
         open.Click += async (_, _) => { if (_commands is not null) await _commands.ExecuteAsync(KnownCommands.OpenFolder).ConfigureAwait(true); };
         return new StackPanel
@@ -190,11 +191,12 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
 
     /// <summary>
     /// View &gt; Tool Windows &gt; Explorer, as Solution Explorer: the keyboard on the selected row (else one on screen), where the arrows, Enter and
-    /// F2 work, not on the New File button that leads the tab order. Without a folder there is no row (the shell falls back to tab order). An
-    /// Explorer just reopened has no row at first (<see cref="ContentPending"/>), then its root row: the folder's rows replace it as they load,
-    /// and the keyboard stays on them (<see cref="ToolWindowFocus.KeepOnRows"/>).
+    /// F2 work, not on the New File button that leads the tab order. Without a folder there is no row: the keyboard goes on the Open Folder
+    /// button, what the window offers then (tab order put it in the filter box, with nothing to filter). An Explorer just reopened has no row at
+    /// first (<see cref="ContentPending"/>), then its root row: the folder's rows replace it as they load, and the keyboard stays on them
+    /// (<see cref="ToolWindowFocus.KeepOnRows"/>).
     /// </summary>
-    public bool FocusPreferred() => ToolWindowFocus.FocusRow(_list);
+    public bool FocusPreferred() => ToolWindowFocus.FocusRow(_list) || (!_vm.HasFolder && _openFolder?.IsEffectivelyVisible == true && _openFolder.Focus());
 
     /// <summary>The folder's rows load after the view's first frame (<see cref="ExplorerToolWindow"/>): until then there is no row to focus.</summary>
     public bool ContentPending => _vm.RootsPending;

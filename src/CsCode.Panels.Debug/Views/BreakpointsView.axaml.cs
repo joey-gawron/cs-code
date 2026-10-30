@@ -29,15 +29,7 @@ public sealed partial class BreakpointsView : UserControl, IDisposable, IToolWin
         rows.DoubleTapped += OnDoubleTapped;
         rows.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         rows.ContextRequested += OnContextRequested;
-        _focusKeeper = new ListFocusKeeper(rows);
-    }
-
-    private readonly ListFocusKeeper _focusKeeper;
-
-    protected override void OnDataContextChanged(EventArgs e)
-    {
-        base.OnDataContextChanged(e);
-        _focusKeeper.Attach(DataContext);
+        ToolWindowFocus.KeepOnRows(rows); // a breakpoint added or removed replaces the rows in one Reset
     }
 
     private BreakpointsViewModel? Model => DataContext as BreakpointsViewModel;
@@ -120,7 +112,6 @@ public sealed partial class BreakpointsView : UserControl, IDisposable, IToolWin
 
     public void Dispose()
     {
-        _focusKeeper.Dispose();
         (DataContext as IDisposable)?.Dispose();
     }
 }

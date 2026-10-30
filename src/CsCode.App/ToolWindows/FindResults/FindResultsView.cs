@@ -40,6 +40,7 @@ public sealed class FindResultsView : UserControl, IClipboardTarget, IToolWindow
             if (e.Key == Key.Enter && list.SelectedItem is FindResultRow r) { e.Handled = true; await vm.OpenAsync(r).ConfigureAwait(true); }
         };
         list.ContextRequested += OnContextRequested;
+        ToolWindowFocus.KeepOnRows(list); // each search replaces the rows (one Reset), and Clear All empties them
 
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*"), Background = ThemeBrushes.Get("panel.background") };
         root.Children.Add(title);

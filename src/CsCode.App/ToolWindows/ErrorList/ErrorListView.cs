@@ -74,6 +74,7 @@ public sealed class ErrorListView : UserControl, IDisposable, IClipboardTarget, 
             if (e.Key == Key.Enter && _list.SelectedItem is ErrorRow r) { e.Handled = true; await vm.NavigateAsync(r).ConfigureAwait(true); }
         };
         _list.ContextRequested += OnContextRequested;
+        ToolWindowFocus.KeepOnRows(_list); // each diagnostics update swaps in a new row array, the focused row's too
 
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,*"), Background = ThemeBrushes.Get("panel.background") };
         root.Children.Add(top);
@@ -127,7 +128,9 @@ public sealed class ErrorListView : UserControl, IDisposable, IClipboardTarget, 
 
     private void OnVmChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(ErrorListViewModel.Rows)) _list.ItemsSource = _vm.Rows; // the model swaps in a new immutable array
+        // The model swaps in a new immutable array. The selection stays on an equal row (the same diagnostic), and the keyboard goes back to it
+        // (ToolWindowFocus.KeepOnRows).
+        if (e.PropertyName == nameof(ErrorListViewModel.Rows)) _list.ItemsSource = _vm.Rows;
     }
 
     private static ToggleButton Chip(string icon, string checkedPath, string countPath, string noun, string colorId)

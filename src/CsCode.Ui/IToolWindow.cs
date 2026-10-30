@@ -72,24 +72,65 @@ public static class ToolWindowFocus
 
     /// <summary>
     /// Keeps the keyboard on <paramref name="list"/>'s rows when a change of its items takes it away. A bulk change (one Reset, which
-    /// <see cref="Collections.BulkObservableCollection{T}"/> raises for every range it inserts or removes) recycles every realized row, the
-    /// focused one too, and Avalonia then leaves the keyboard on nothing, where the arrows, Enter and typing go nowhere: in the Explorer, each
-    /// folder expanded or collapsed (clicked, or loading its children after View &gt; Tool Windows put the keyboard on the root) did that. Once
-    /// the rows are laid out again, <see cref="FocusRow"/> gives it back: the selected row, else the first on screen. Only for an element that
-    /// lost it to nothing by leaving the screen (a recycled row, the rename box once hidden): not when something else has taken the keyboard
+    /// <see cref="Collections.BulkObservableCollection{T}"/> raises for every range it inserts or removes, or a new ItemsSource) recycles every
+    /// realized row, the focused one too, and Avalonia then leaves the keyboard on nothing, where the arrows, Enter and typing go nowhere: in the
+    /// Explorer each folder expanded or collapsed (clicked, or loading its children after View &gt; Tool Windows put the keyboard on the root),
+    /// in the Error List each diagnostics update, in Find Results each search, in the Output window each batch of lines, in the debug windows
+    /// each stop, in Settings each value changed. Once the rows are laid out again it goes back: to the row of the item it was on when that item
+    /// is still shown (an equal one: the same diagnostic of a new Error List array), else, as <see cref="FocusRow"/>, the selected row or the first
+    /// on screen; with no row left (Clear All) the list itself takes it, so it stays in the window, as View &gt; Tool Windows leaves it in a
+    /// window with nothing but chrome, and moves on to a row when rows come back. Only for an element that lost it to nothing by leaving the
+    /// screen (a recycled row, a control of a row rebuilt, the rename box once hidden): not when something else has taken the keyboard
     /// meanwhile, nor when the list left the screen (its window hidden), nor when the element is still on screen, which is how Avalonia leaves
     /// it when another of the app's windows activates with nothing focused in it (a tool window floated) — taking it back then sent the keys
-    /// typed in that window to this list (Down moved the Explorer's selection, Delete asked to delete the file).
+    /// typed in that window to this list (Down moved the Explorer's selection, Delete asked to delete the file). A restore that finds the keyboard
+    /// elsewhere, or the list off screen, gives the list up until the keyboard comes back to it, so a later change of its rows leaves it alone.
     /// </summary>
-    public static void KeepOnRows(ListBox list) => list.LostFocus += (_, e) =>
+    public static void KeepOnRows(ListBox list)
     {
-        if (e.NewFocusedElement is not (null or TopLevel)) return; // moved on: the user's or a command's doing
-        if (e.Source is Avalonia.Visual lost && lost.IsAttachedToVisualTree() && lost.IsEffectivelyVisible) return; // still on screen: another window activated
-        Dispatcher.UIThread.Post(() =>
+        var inside = false;      // the keyboard is in the list: on a row, a control of one, or the list itself
+        object? item = null;     // the item of the row it is (or was last) on
+        var heldByList = false;  // the list itself holds it, made focusable for that (see Restore)
+        list.GotFocus += (_, e) =>
         {
-            if (!list.IsAttachedToVisualTree() || TopLevel.GetTopLevel(list)?.FocusManager is not { } focus || focus.GetFocusedElement() is not (null or TopLevel)) return;
+            inside = true;
+            item = (e.Source as Avalonia.Visual)?.FindAncestorOfType<ListBoxItem>(includeSelf: true) is { } row && ReferenceEquals(ItemsControl.ItemsControlFromItemContainer(row), list)
+                ? list.ItemFromContainer(row) : null;
+        };
+        list.LostFocus += (_, e) =>
+        {
+            if (ReferenceEquals(e.Source, list) && heldByList) { heldByList = false; list.Focusable = false; }
+            inside = false;
+            if (e.NewFocusedElement is not (null or TopLevel)) return; // moved on: the user's or a command's doing (a row of its own: GotFocus follows)
+            if (e.Source is Avalonia.Visual lost && lost.IsAttachedToVisualTree() && lost.IsEffectivelyVisible) return; // still on screen: another window activated
+            inside = true;
+            Restore();
+        };
+        // A row rebuilt with the rest takes a focused control of its (a check box of Settings) out of the tree, and that control's LostFocus no
+        // longer reaches the list; and rows replaced in two steps (cleared, then filled once they are read: Locals at each stop) come back to a
+        // list that holds the keyboard itself. Both are seen here, once the items have changed.
+        list.Items.CollectionChanged += (_, _) => { if (inside) Restore(); };
+
+        void Restore() => Dispatcher.UIThread.Post(() =>
+        {
+            if (!inside) return;
+            // Not taken back (the list left the screen, or the keyboard is somewhere else by now): the keyboard is no longer the list's to keep, and
+            // a later change of its items must not take it back (from another window activated meanwhile with nothing focused in it).
+            if (!list.IsAttachedToVisualTree() || !list.IsEffectivelyVisible || TopLevel.GetTopLevel(list)?.FocusManager is not { } focus) { inside = false; return; }
+            var current = focus.GetFocusedElement();
+            if (current is not (null or TopLevel) && !(heldByList && ReferenceEquals(current, list)))
+            {
+                if (!(current is Avalonia.Visual v && (ReferenceEquals(v, list) || list.IsVisualAncestorOf(v)))) inside = false; // somewhere else: leave it there
+                return; // on a row already: leave it there
+            }
             list.UpdateLayout(); // the rows of the new items
-            FocusRow(list);
+            if (item is not null && list.ContainerFromItem(item) is { IsEffectivelyVisible: true } same && same.Focus()) return; // the row it was on
+            if (FocusRow(list) || ReferenceEquals(current, list)) return;
+            // No row left (Clear All): the list itself takes it, focusable only until the keyboard leaves it, so a click on its blank space keeps
+            // doing what it did (nothing). A list focusable of its own (Find in Files' results) stays so.
+            if (list.Focusable) { list.Focus(); return; }
+            list.Focusable = heldByList = true;
+            if (!list.Focus()) { list.Focusable = heldByList = false; inside = false; }
         }, DispatcherPriority.Loaded);
-    };
+    }
 }

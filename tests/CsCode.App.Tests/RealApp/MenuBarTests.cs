@@ -220,6 +220,26 @@ public class MenuBarTests
         Assert.False(editor.Controller.IsFocused);
     }
 
+    // With no folder open the Explorer has no row, only its empty state's Open Folder button; the shell fell back to tab order, which skips the
+    // toolbar's buttons and put the keyboard in the filter box (a filter with nothing to filter). Enter now opens a folder, as the window offers.
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task View_Tool_Windows_Explorer_with_no_folder_open_puts_the_keyboard_on_Open_Folder()
+    {
+        await using var host = RealAppHost.Create(h => h.Files.WriteFile("a.txt", "alpha beta\n"));
+        await host.StartAsync([]);
+        var editor = await host.Shell.Well.OpenAsync(new Uri(host.Files.Combine("a.txt")));
+        Assert.True(await RealAppHost.WaitFor(() => editor.Controller is not null && editor.LiveView!.IsAttachedToVisualTree()));
+        editor.Controller!.Focus();
+
+        await ClickToolWindowItemAsync(host, "Explorer");
+
+        var explorer = host.Shell.Tools.Get("explorer")!;
+        Assert.True(await RealAppHost.WaitFor(() => explorer.LiveView?.IsKeyboardFocusWithin == true), $"the keyboard stayed on {Focused(host)}");
+        await DevScene.SettleAsync(5);
+        Assert.True(host.Window.FocusManager?.GetFocusedElement() is Button { Content: "Open Folder" }, $"the keyboard is on {Focused(host)}");
+        Assert.False(editor.Controller.IsFocused);
+    }
+
     // Found in review: reopening a closed Explorer, the item's main use, left the keyboard nowhere. Dock lays the new view out a pass later, by
     // when the folder's root row is there and takes the keyboard; then the root's children arrive as one bulk change (a Reset), which recycles
     // every row, the focused one too, and Avalonia moves the keyboard to nothing: the arrows, Enter and typing went nowhere, where before the
@@ -284,6 +304,50 @@ public class MenuBarTests
         if (asked) dialogs.Choose("Cancel");
         Assert.False(asked, "Delete typed in the floating window asked to delete the Explorer's file");
         Assert.True(File.Exists(host.Files.Combine("a.txt")));
+    }
+
+    // Found in review: a keeper whose posted restore found the keyboard already elsewhere (moved on to a text box before it ran) or its list off
+    // screen stayed armed, and a later change of the list's rows took the keyboard back to its row, also from a tool window floated meanwhile with
+    // nothing focused in it: Down typed there moved the Explorer's selection.
+    [AvaloniaFact(Timeout = 90_000)]
+    public async Task A_change_of_the_Explorer_rows_after_the_keyboard_moved_on_never_takes_it_back_from_a_floating_tool_window()
+    {
+        await using var host = RealAppHost.Create(h => { h.Files.WriteFile("a.txt", "alpha\n"); h.Files.WriteFile("c.txt", "gamma\n"); h.Files.WriteFile("d.txt", "delta\n"); h.Files.WriteFile("sub/inner.txt", "i\n"); });
+        await host.StartAsync([host.Files.Path]);
+        var explorer = host.Shell.Tools.Get("explorer")!;
+        ListBoxItem? Row(string name) => explorer.LiveView?.GetVisualDescendants().OfType<ListBoxItem>()
+            .FirstOrDefault(r => r.IsEffectivelyVisible && r.DataContext is ToolWindows.Explorer.ExplorerNode { Name: var n } && n == name);
+        Assert.True(await RealAppHost.WaitFor(() => Row("c.txt") is not null), "the folder's files never showed");
+        await DevScene.SettleAsync(10);
+        var model = ((ToolWindows.Explorer.ExplorerView)explorer.LiveView!).Model;
+        var sub = (ToolWindows.Explorer.ExplorerNode)Row("sub")!.DataContext!;
+        await model.ExpandAsync(sub);
+        Assert.True(await RealAppHost.WaitFor(() => Row("inner.txt") is not null), "the subfolder's file never showed");
+        await DevScene.SettleAsync(5);
+        model.Selected = (ToolWindows.Explorer.ExplorerNode)Row("a.txt")!.DataContext!;
+        await DevScene.SettleAsync(3);
+        Assert.True(Row("a.txt")!.Focus());
+        await DevScene.SettleAsync(3);
+        var other = explorer.LiveView!.GetVisualDescendants().OfType<TextBox>().First(t => t.IsEffectivelyVisible);
+
+        model.Collapse(sub);          // one Reset: the focused a.txt row is recycled, and the keeper posts its restore
+        Assert.True(other.Focus());   // the keyboard moves on before that restore runs
+        await DevScene.SettleAsync(5);
+        Assert.Same(other, host.Window.FocusManager?.GetFocusedElement());
+        host.Shell.Tools.Float("output");
+        await DevScene.SettleAsync(20);
+        var floating = TopLevel.GetTopLevel(host.Shell.Tools.Get("output")!.LiveView) as Window;
+        Assert.True(floating is not null && floating != host.Window, "Output did not float into a window of its own");
+
+        await model.ExpandAsync(sub); // the Explorer's rows change while the floating window is active
+        Assert.True(await RealAppHost.WaitFor(() => Row("inner.txt") is not null), "the subfolder's file never showed again");
+        await DevScene.SettleAsync(10);
+        Assert.False(host.Window.FocusManager?.GetFocusedElement() is ListBoxItem row && explorer.LiveView!.IsVisualAncestorOf(row),
+            $"the Explorer took the keyboard back: {Focused(host)}");
+        floating!.KeyPress(Avalonia.Input.Key.Down, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.ArrowDown, null);
+        floating.KeyRelease(Avalonia.Input.Key.Down, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.ArrowDown, null);
+        await DevScene.SettleAsync(10);
+        Assert.Equal("a.txt", model.Selected?.Name);
     }
 
     // Found in review: with no line (an empty channel, or after Clear Output) the Output window has no row to take the keyboard, and tab order

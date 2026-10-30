@@ -23,6 +23,8 @@ public sealed partial class SettingsView : UserControl, IDisposable
         _release = release;
         InitializeComponent();
         if (viewModel is not null) DataContext = viewModel;
+        // Each refresh (a value changed here or in settings.json, the scope switched) and each filter replace the rows (one Reset).
+        CsCode.Ui.ToolWindowFocus.KeepOnRows(this.FindControl<ListBox>("SettingsList")!);
         if (viewModel?.Themes is { } themes)
         {
             ThemePicker = new ThemePicker(themes, viewModel.Ui, viewModel.Configuration) { MinWidth = 280, MinHeight = 26, Padding = new Thickness(4, 1) };
