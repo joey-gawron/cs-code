@@ -32,7 +32,7 @@
         <TextBlock Grid.Column="3" Text="Source" />
       </Grid>
     </Border>
-    <ListBox Grid.Row="2" ItemsSource="{Binding Rows}" Background="Transparent" BorderThickness="0" Margin="20,0,20,8" AutomationProperties.Name="Keyboard shortcuts">
+    <ListBox Grid.Row="2" x:Name="Rows" ItemsSource="{Binding Rows}" Background="Transparent" BorderThickness="0" Margin="20,0,20,8" AutomationProperties.Name="Keyboard shortcuts">
       <ListBox.ItemTemplate>
         <DataTemplate x:DataType="s:ShortcutRow">
           <Grid ColumnDefinitions="2*,1.2*,1.6*,80" Margin="8,0" MinHeight="24">

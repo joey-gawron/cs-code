@@ -36,6 +36,7 @@ public sealed partial class FindInFilesView : UserControl, IDisposable, CsCode.U
         var results = ResultsList;
         results.AddHandler(KeyDownEvent, OnResultsKeyDown, RoutingStrategies.Tunnel);
         results.AddHandler(TappedEvent, OnResultsTapped, RoutingStrategies.Bubble);
+        CsCode.Ui.ToolWindowFocus.KeepOnRows(results); // results sorted, dismissed or replaced, Collapse All and Expand All replace the rows (one Reset)
         QueryBox.AddHandler(KeyDownEvent, OnQueryKeyDown, RoutingStrategies.Tunnel);
         ReplaceBox.AddHandler(KeyDownEvent, OnReplaceKeyDown, RoutingStrategies.Tunnel);
         IncludeBox.AddHandler(KeyDownEvent, OnQueryKeyDown, RoutingStrategies.Tunnel);
