@@ -164,6 +164,40 @@ public class RemoteCompositionTests
         Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
     }
 
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task Find_in_Files_on_a_remote_workspace_returns_the_servers_matches_through_the_real_engine()
+    {
+        Assert.SkipUnless(File.Exists(ServerAssembly), "cscode-server.dll is not next to the tests");
+        using var env = new RealAppHome();
+        using var serverData = new TempDirectory("cscode-app-remote-");
+        var marker = "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
+        env.Workspace.WriteFile("src/one.cs", "// a needle\nclass One { }\n");
+        env.Workspace.WriteFile("src/two.cs", "class Two { int needle; }\n");
+        env.Workspace.WriteFile("notes.md", "no match here\n");
+        await using (var run = new RealAppRun(env, s => Remote(s, serverData, marker)))
+        {
+            await run.MainWindowAsync();
+            var sp = run.Services;
+            var manager = sp.GetRequiredService<IRemoteConnectionManager>();
+            await manager.ConnectAsync("tester@box");
+            await sp.GetRequiredService<IWorkspaceService>().OpenFolderAsync(manager.ToUri(env.Workspace.Path + "/")!);
+            using var engine = CsCode.Panels.Search.ViewModels.SearchServices.From(sp).Engine;
+            var files = new List<CsCode.Panels.Search.Engine.FileMatches>();
+            using var session = engine.Start(new CsCode.Panels.Search.Engine.SearchQuery("needle"), s => s.Batches.Subscribe(b => { lock (files) files.AddRange(b.Files); }));
+            var done = await session.Result.WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.Equal(CsCode.Panels.Search.Engine.SearchOutcome.Completed, done.Outcome);
+            lock (files)
+            {
+                Assert.Equal([manager.ToUri(env.Workspace.Combine("src", "one.cs")), manager.ToUri(env.Workspace.Combine("src", "two.cs"))],
+                    files.Select(f => f.Uri).Distinct().OrderBy(u => u!.AbsoluteUri));
+                var two = files.Single(f => f.Uri.AbsolutePath.EndsWith("two.cs", StringComparison.Ordinal)).Matches.Single();
+                Assert.Equal(new TextPosition(0, 16), two.Range.Start);
+                Assert.Equal("needle", two.Preview.Substring(two.PreviewMatchStart, two.PreviewMatchLength));
+            }
+        }
+        Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
+    }
+
     private static bool IsDescendant(int pid, int ancestor)
     {
         for (var p = pid; p > 1;)

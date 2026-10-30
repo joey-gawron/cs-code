@@ -230,8 +230,8 @@ public sealed record SearchTextParams(
 public sealed record SearchSession(string SessionId);
 public sealed record SearchNextParams(string SessionId, int Max = 1000);
 
-/// <summary>One text match: 0-based line/column (UTF-16) and the line text (truncated to a preview).</summary>
-public sealed record TextSearchMatch(string Path, int Line, int Column, int Length, string Preview);
+/// <summary>One text match: 0-based line/column (UTF-16) and the line text (truncated to a preview that starts at <paramref name="PreviewStart"/> of the line).</summary>
+public sealed record TextSearchMatch(string Path, int Line, int Column, int Length, string Preview, int PreviewStart = 0);
 
 public sealed record SearchBatch(IReadOnlyList<string>? Paths, IReadOnlyList<TextSearchMatch>? Matches, bool Done, string? Error = null, int FilesSearched = 0);
 

@@ -44,6 +44,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFileSystemProvider>(sp => sp.GetRequiredService<RemoteConnectionManager>().FileSystem);
         services.AddSingleton<IFileWatcherProvider>(sp => sp.GetRequiredService<RemoteConnectionManager>().Watcher);
         services.AddSingleton<IFileSearchProvider>(sp => sp.GetRequiredService<RemoteConnectionManager>().Search);
+        services.AddSingleton<ITextSearchProvider>(sp => sp.GetRequiredService<RemoteConnectionManager>().Search); // server-side Find in Files
         services.AddSingleton<IWillSaveParticipant>(sp => sp.GetRequiredService<RemoteConnectionManager>().SaveParticipant);
         services.AddSingleton<IFileOperationParticipant>(sp => sp.GetRequiredService<RemoteConnectionManager>().SaveParticipant);
         services.TryAddSingleton(sp => new RemoteShellContributions(sp));

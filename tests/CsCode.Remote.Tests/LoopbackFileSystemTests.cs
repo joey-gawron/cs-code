@@ -155,6 +155,31 @@ public class LoopbackFileSystemTests
     }
 
     [Fact]
+    public async Task Find_in_Files_provider_searches_on_the_server_with_excludes_ignore_files_and_long_line_offsets()
+    {
+        // The ITextSearchProvider the Find in Files engine uses for a remote workspace (server-side scan, matches only).
+        await using var host = new RemoteTestHost();
+        host.Workspace.WriteFile("src/a.cs", "class A {\n    int needle;\n}\n");
+        host.Workspace.WriteFile("obj/gen.cs", "needle in an excluded folder\n");
+        host.Workspace.WriteFile("ignored/x.cs", "needle in an ignored folder\n");
+        host.Workspace.WriteFile(".gitignore", "ignored/\n");
+        host.Workspace.WriteFile("long.txt", new string('a', 300) + "needle" + new string('b', 300) + "\n");
+        await host.ConnectAsync();
+        Core.Platform.ITextSearchProvider provider = host.Services.GetServices<Core.Platform.ITextSearchProvider>().Single();
+        Assert.Equal("ssh", provider.Scheme);
+        var hits = new List<Core.Platform.TextSearchHit>();
+        await foreach (var batch in provider.SearchAsync(new Core.Platform.TextSearchQuery([host.Remote()], "needle", false, true, false, ["**/obj"], true, 1000, 1 << 20), Ct))
+            hits.AddRange(batch);
+        Assert.Equal([host.Remote("long.txt"), host.Remote("src/a.cs")], hits.Select(h => h.Uri).Distinct().OrderBy(u => u.AbsoluteUri));
+        var a = hits.Single(h => h.Uri == host.Remote("src/a.cs"));
+        Assert.Equal((1, 8, 6, "    int needle;", 0), (a.Line, a.Column, a.Length, a.LineText, a.LineTextStart));
+        var longHit = hits.Single(h => h.Uri == host.Remote("long.txt"));
+        Assert.Equal(300, longHit.Column);
+        Assert.True(longHit.LineTextStart > 0);
+        Assert.Equal("needle", longHit.LineText.Substring(longHit.Column - longHit.LineTextStart, 6));
+    }
+
+    [Fact]
     public async Task The_remote_watcher_reports_changes_as_ssh_uris()
     {
         await using var host = new RemoteTestHost();

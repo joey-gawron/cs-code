@@ -13,9 +13,24 @@ public sealed record RemoteTextMatch(Uri Uri, int Line, int Column, int Length, 
 /// only matches cross the network). Both are pull sessions: batches are fetched as the consumer reads, abandoning or cancelling the enumeration
 /// cancels the server-side work.
 /// </summary>
-public sealed class RemoteSearch(IRemoteEndpoint endpoint) : IFileSearchProvider
+public sealed class RemoteSearch(IRemoteEndpoint endpoint) : IFileSearchProvider, ITextSearchProvider
 {
     public const int BatchSize = 1000;
+
+    /// <summary>
+    /// Find in Files for a remote workspace (<see cref="ITextSearchProvider"/>): the server walks the folders (with the query's excludes and ignore
+    /// files) and scans them in parallel; matches stream back in batches as they are pulled. Invalid patterns fail with an ArgumentException.
+    /// </summary>
+    public async IAsyncEnumerable<IReadOnlyList<TextSearchHit>> SearchAsync(TextSearchQuery query, [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        if (query.Folders.Count == 0) yield break;
+        var (session, mapper) = await endpoint.ResolveAsync(query.Folders[0], ct).ConfigureAwait(false);
+        var request = new SearchTextParams(query.Folders.Select(mapper.ToRemotePath).ToArray(), query.Pattern, query.IsRegex, query.MatchCase, query.WholeWord,
+            null, query.ExcludeGlobs, query.UseIgnoreFiles, query.MaxResults, query.MaxFileBytes);
+        await foreach (var batch in PullAsync(session, RemoteMethods.SearchText, request, ct).ConfigureAwait(false))
+            if (batch.Matches is { Count: > 0 } matches)
+                yield return matches.Select(m => new TextSearchHit(mapper.FromRemotePath(m.Path), m.Line, m.Column, m.Length, m.Preview, m.PreviewStart)).ToArray();
+    }
 
     public string Scheme => SshUriMapper.Scheme;
 

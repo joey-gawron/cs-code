@@ -212,8 +212,8 @@ internal sealed class SearchHandlers : IDisposable
                 foreach (var m in matches)
                 {
                     if (countMatch() > p.MaxResults) { s.Cts.Cancel(); return; }
-                    var preview = lineText.Length <= PreviewChars ? lineText.ToString() : Preview(lineText, m.Index);
-                    s.Results.Writer.WriteAsync(new TextSearchMatch(path, line, m.Index, m.Length, preview), ct).AsTask().GetAwaiter().GetResult();
+                    var (preview, from) = lineText.Length <= PreviewChars ? (lineText.ToString(), 0) : Preview(lineText, m.Index);
+                    s.Results.Writer.WriteAsync(new TextSearchMatch(path, line, m.Index, m.Length, preview, from), ct).AsTask().GetAwaiter().GetResult();
                 }
             }
             if (end < 0) break;
@@ -234,10 +234,10 @@ internal sealed class SearchHandlers : IDisposable
         return list;
     }
 
-    private static string Preview(ReadOnlySpan<char> line, int at)
+    private static (string Text, int From) Preview(ReadOnlySpan<char> line, int at)
     {
         var from = Math.Max(0, at - 40);
-        return line.Slice(from, Math.Min(PreviewChars, line.Length - from)).ToString();
+        return (line.Slice(from, Math.Min(PreviewChars, line.Length - from)).ToString(), from);
     }
 
     private static bool StartsWithBom(byte[] b) => b.Length >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF;

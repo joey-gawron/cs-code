@@ -41,7 +41,7 @@ public sealed class SearchServices
         {
             Workspace = workspace,
             Ui = sp.GetService<IUiDispatcher>() ?? AvaloniaUiDispatcher.Instance,
-            Engine = new SearchEngine(workspace, documents, config),
+            Engine = new SearchEngine(workspace, documents, config, textSearch: sp.GetServices<ITextSearchProvider>().ToArray()),
             Replace = new ReplaceService(workspace, documents, limits: null, configuration: config), // same size limit / regex timeout as the search
             Configuration = config,
             Documents = documents,
