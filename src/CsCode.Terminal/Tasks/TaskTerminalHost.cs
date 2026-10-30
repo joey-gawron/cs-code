@@ -104,7 +104,8 @@ public sealed class TaskTerminalHost : ITaskTerminalHost, IDisposable
             run.Complete(-1, terminated: true);
             throw;
         }
-        if (p.Reveal == TaskRevealKind.Always && run.Session is { } shown)
+        // (a terminal closed while it was being claimed or created started nothing and ended the run as terminated: nothing to show)
+        if (p.Reveal == TaskRevealKind.Always && run.Session is { IsDisposed: false } shown)
             await _terminals.ShowAsync(shown, preserveFocus: !p.Focus, ct).ConfigureAwait(false);
         return run;
     }
