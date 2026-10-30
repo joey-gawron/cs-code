@@ -128,6 +128,56 @@ public class InstallerTests
         Assert.Equal(new[] { "3333333333333333", "4444444444444444", current, "not-a-hash" }.Order(StringComparer.Ordinal), left);
     }
 
+    /// <summary>A linux-x64 remote with nothing installed whose install script (fed the bundle on stdin) ends as <paramref name="install"/> says.</summary>
+    private sealed class ScriptedRemote(string install) : IRemoteShell
+    {
+        private static readonly Dictionary<string, string?> Clean = new() { ["SSH_AUTH_SOCK"] = null };
+        public string Description => "scripted";
+        public ProcessLaunch Launch(string script, IReadOnlyList<string> args) => script == ServerScripts.Install
+            ? new ProcessLaunch("/bin/sh", ["-c", "cat >/dev/null; " + install]) { Environment = Clean }
+            : new ProcessLaunch("/bin/sh", ["-c", "printf 'CSCODE-NOT-INSTALLED\\nos=Linux\\narch=x86_64\\nhome=/nowhere\\n'; exit 85"]) { Environment = Clean };
+    }
+
+    private static async Task<RemoteBootstrapException> InstallFailureAsync(string install, TimeSpan? installTimeout = null)
+    {
+        using var dir = new TempDirectory("cscode-install-fake-");
+        File.WriteAllBytes(dir.Combine("bundle.tar.gz"), new byte[64 * 1024]);
+        var bundles = new ServerBundleSet(dir.Path, [new ServerBundle(BundleFlavour.SelfContained, "linux-x64", "bundle.tar.gz", new string('0', 64), "0123456789abcdef")]);
+        var transport = new ShellServerTransport(new ScriptedRemote(install), new ServerLaunchOptions { Bundles = bundles, InstallTimeout = installTimeout ?? TimeSpan.FromMinutes(1) });
+        return await Assert.ThrowsAsync<RemoteBootstrapException>(() => transport.ConnectAsync(null, Ct));
+    }
+
+    [Theory]
+    [InlineData("echo 'checksum mismatch: expected 00, got 11' >&2; exit 4", true)]
+    [InlineData("echo 'neither sha256sum nor shasum is available on the remote' >&2; exit 3", true)]
+    [InlineData("echo 'the bundle has no cscode-server' >&2; exit 5", true)]
+    [InlineData("exit 255", false)] // ssh's own: the connection broke during the upload
+    [InlineData("exit 137", false)] // killed: a container stopped mid-upload
+    [InlineData("exit 126", false)] // docker exec / wsl.exe could not run the command (the container is restarting)
+    [InlineData("echo 'cat: write error: No space left on device' >&2; exit 1", false)]
+    public async Task Only_the_install_scripts_own_refusals_end_the_reconnect_loop(string install, bool permanent)
+    {
+        // remote-9: a refusal of the bundle itself is answered the same way by every upload; any other failed install may pass on the next attempt
+        var ex = await InstallFailureAsync(install);
+        Assert.StartsWith("Installing the server failed", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(permanent, ex.IsPermanent);
+    }
+
+    [Fact]
+    public void The_refusal_codes_are_the_ones_the_install_script_exits_with()
+    {
+        foreach (var code in ServerScripts.InstallRefusalExitCodes) Assert.Contains($"exit {code}", ServerScripts.Install, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_install_cut_off_by_the_install_timeout_is_retried()
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var ex = await InstallFailureAsync("sleep 60", TimeSpan.FromSeconds(1)); // a slow link: the upload is killed when the timeout runs out
+        Assert.InRange(sw.Elapsed.TotalSeconds, 0.5, 30);
+        Assert.False(ex.IsPermanent, ex.Message);
+    }
+
     [Fact]
     public async Task A_platform_without_a_bundle_fails_with_the_reason()
     {

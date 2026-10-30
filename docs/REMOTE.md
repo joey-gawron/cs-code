@@ -270,8 +270,10 @@ connection that created or reattached it, so the replay always comes before newe
   server it left running (warm language servers); two live windows never share one. Terminals are not restored after a restart (the accepted default):
   a reattached server ends the channels, watches and task runs the new client does not claim (`chan/keep`, `watch/keep`, `task/keep`).
 * **Permanent failures** end the reconnect loop at once only when flagged where they are thrown (`RemoteBootstrapException.IsPermanent`: no bundle for
-  the platform, a refused upload — not ssh's exit 255 during it —, still not installed after the upload, a protocol mismatch, no local server build);
-  never from the message text, which carries host names and ssh's own output (remote-9).
+  the platform, the install script's own refusals of the bundle — exit 3 no SHA-256 tool, 4 checksum mismatch, 5 no server in it —, still not
+  installed after the upload, a protocol mismatch, no local server build); never from the message text, which carries host names and ssh's own
+  output (remote-9). Every other failed install is retried: ssh's 255 (the link broke during the upload), an upload killed by the install timeout
+  (a slow link), a container stopped mid-upload (docker's or wsl.exe's own codes), a full disk.
 
 ## Transports: ssh, docker, wsl
 

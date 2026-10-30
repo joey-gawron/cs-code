@@ -140,11 +140,12 @@ public sealed class ShellServerTransport(IRemoteShell shell, ServerLaunchOptions
             await using (var bytes = File.OpenRead(bundle.FullPath))
                 result = await Shell.RunAsync(ServerScripts.Install, [Options.InstallRoot ?? "", bundle.Hash, bundle.Sha256, force ? "force" : ""], bytes, Options.InstallTimeout, ct)
                     .ConfigureAwait(false);
-            // The install script refused the bundle (checksum, no space, permissions): permanent. Exit code 255 is ssh's own (the connection broke
-            // during the upload): the next attempt uploads again.
+            // Permanent only when the install script itself refused the bundle (no checksum tool, wrong checksum, no server in it): uploading again
+            // gets the same answer. Anything else — ssh's 255 (the link broke during the upload), the upload killed after the install timeout, a
+            // container stopped mid-upload, a full disk — is retried by the reconnect loop like any other failed connection.
             if (result.ExitCode != 0 || !result.Stdout.Contains(ServerScripts.InstalledMarker, StringComparison.Ordinal))
                 throw new RemoteBootstrapException($"Installing the server failed (exit code {result.ExitCode}): {LastLines(result.Stderr + "\n" + result.Stdout)}")
-                    { IsPermanent = result.ExitCode != 255 };
+                    { IsPermanent = ServerScripts.InstallRefusalExitCodes.Contains(result.ExitCode) };
             force = false;
         }
     }
