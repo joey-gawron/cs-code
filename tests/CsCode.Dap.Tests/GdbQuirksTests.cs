@@ -246,32 +246,79 @@ public class GdbQuirksTests
 
     /// <summary>
     /// Restart while stopped on a panic: the new run's panic (its message arriving just after the stop) is described by its own message, not
-    /// the previous run's, which stayed in the output the description is read from (end-pass debug-11).
+    /// the previous run's, which stayed in the output the description is read from (end-pass debug-11). Both ways a session restarts: GDB has no
+    /// <c>restart</c> request (a new connection, the whole handshake again); an adapter with one (CodeLLDB) keeps its connection.
     /// </summary>
-    [Fact]
-    public async Task After_a_restart_a_panic_is_described_by_its_own_message_not_the_previous_runs()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task After_a_restart_a_panic_is_described_by_its_own_message_not_the_previous_runs(bool restartRequest)
     {
-        await using var h = Harness();
+        await using var h = Harness((a, _) => { if (restartRequest) a.Capabilities["supportsRestartRequest"] = true; });
         var session = (DebugSession)await h.StartAsync(Config(h));
         await h.AdapterFor(0).WaitForRequestAsync("setFunctionBreakpoints");
         await h.AdapterFor(0).SendOutputAsync("thread 'main' panicked at src/a.rs:1:1:\nboom A\n", "stdout");
         await h.AdapterFor(0).SendStoppedAsync("breakpoint", hitBreakpointIds: [1001]);
         await SessionHarness.Eventually(() => session.LastException is { Description: "boom A" });
         await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+        var continued = 0;
+        session.Continued.Subscribe(_ => Interlocked.Increment(ref continued));
 
-        await session.RestartAsync(Ct); // GDB has no `restart`: a new connection, the whole handshake again
+        await session.RestartAsync(Ct);
         Assert.Null(session.LastException);
         Assert.Null(h.Service.StopLocation); // the old run's stop is over
-        await h.WaitForAdapters(2);
-        await h.AdapterFor(1).WaitForRequestAsync("setFunctionBreakpoints");
+        Assert.Equal(1, Volatile.Read(ref continued)); // what DebugService and the panels drop the old stop's data on
+        Assert.Equal(DebugSessionState.Running, session.State);
+        FakeDebugAdapter adapter;
+        if (restartRequest)
+        {
+            Assert.Equal(1, h.AdapterFor(0).CountOf("restart"));
+            adapter = h.AdapterFor(0); // the same connection
+        }
+        else
+        {
+            await h.WaitForAdapters(2);
+            adapter = h.AdapterFor(1);
+            await adapter.WaitForRequestAsync("setFunctionBreakpoints");
+        }
         DebugStoppedEventArgs? stop = null;
         session.Stopped.Subscribe(e => stop = e);
-        await h.AdapterFor(1).SendStoppedAsync("breakpoint", hitBreakpointIds: [1001]);
+        await adapter.SendStoppedAsync("breakpoint", hitBreakpointIds: [1001]);
         await SessionHarness.Eventually(() => stop is not null);
         await Task.Delay(100, Ct);
-        await h.AdapterFor(1).SendOutputAsync("thread 'main' panicked at src/b.rs:2:2:\nboom B\n", "stdout");
+        await adapter.SendOutputAsync("thread 'main' panicked at src/b.rs:2:2:\nboom B\n", "stdout");
         await SessionHarness.Eventually(() => session.LastException is not null);
         Assert.Equal(("boom B", "thread 'main' panicked at src/b.rs:2:2"), (session.LastException!.Description, session.LastException.StackTrace));
+        Assert.NotEqual("boom A", stop!.Text);
+    }
+
+    /// <summary>
+    /// A restart (by request) while the program RUNS: the old run's last output — a panic message printed without a stop — must not describe the
+    /// new run's first panic either.
+    /// </summary>
+    [Fact]
+    public async Task A_restart_request_while_running_forgets_the_old_runs_output()
+    {
+        await using var h = Harness((a, _) => a.Capabilities["supportsRestartRequest"] = true);
+        var session = (DebugSession)await h.StartAsync(Config(h));
+        var adapter = h.AdapterFor(0);
+        await adapter.WaitForRequestAsync("setFunctionBreakpoints");
+        await adapter.SendOutputAsync("thread 'worker' panicked at src/a.rs:1:1:\nboom A\n", "stdout");
+        await SessionHarness.Eventually(() => h.Service.GetOutputHistory().Any(o => o.Output.Contains("boom A", StringComparison.Ordinal)));
+        var continued = 0;
+        session.Continued.Subscribe(_ => Interlocked.Increment(ref continued));
+
+        await session.RestartAsync(Ct);
+        Assert.Equal((DebugSessionState.Running, 0), (session.State, Volatile.Read(ref continued))); // nothing was stopped
+        Assert.Equal(1, adapter.CountOf("restart"));
+        DebugStoppedEventArgs? stop = null;
+        session.Stopped.Subscribe(e => stop = e);
+        await adapter.SendStoppedAsync("breakpoint", hitBreakpointIds: [1001]);
+        await SessionHarness.Eventually(() => stop is not null);
+        await Task.Delay(100, Ct);
+        await adapter.SendOutputAsync("thread 'main' panicked at src/b.rs:2:2:\nboom B\n", "stdout");
+        await SessionHarness.Eventually(() => session.LastException is not null);
+        Assert.Equal("boom B", session.LastException!.Description);
         Assert.NotEqual("boom A", stop!.Text);
     }
 
