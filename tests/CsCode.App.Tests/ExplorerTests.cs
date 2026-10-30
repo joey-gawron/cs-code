@@ -440,6 +440,70 @@ public class ExplorerTests
     }
 
     [AvaloniaFact]
+    public async Task A_wanted_folder_replaced_by_a_file_of_the_same_name_is_no_longer_asked_for()
+    {
+        using var rig = new Rig();
+        rig.Config.Set(SettingKeys.FilesWatcherExclude, new Dictionary<string, bool> { ["**/gen/**"] = true });
+        rig.Dir.WriteFile("gen/foo/x.txt", "");
+        await rig.OpenAsync();
+        await rig.Vm.ToggleAsync(rig.Vm.Rows.Single(r => r.Name == "gen"));
+        await rig.Vm.ToggleAsync(rig.Vm.Rows.Single(r => r.Name == "foo"));
+        var wants = Assert.Single(rig.Watcher.ActiveWants)!;
+        Assert.Equal(2, wants.Directories.Count);
+
+        Directory.Delete(rig.P("gen/foo"), recursive: true);                                                 // rm -rf gen/foo && touch gen/foo
+        File.WriteAllText(rig.P("gen/foo"), "");
+        rig.Watcher.Raise(new FileChange(new Uri(rig.P("gen/foo")), FileChangeKind.Changed));
+        await rig.Vm.FlushWatcherAsync();
+        Assert.False(rig.Vm.Rows.Single(r => r.Name == "foo").IsDirectory);
+        Assert.Equal([new Uri(rig.P("gen") + "/").AbsoluteUri], wants.Directories.Select(static u => u.AbsoluteUri));
+    }
+
+    [AvaloniaFact]
+    public async Task A_folder_collapsed_while_its_parent_is_being_expanded_is_not_asked_for()
+    {
+        // Expanding gen/ shows its expanded foo/ again, and both lie where the watch leaves things out; foo/ is collapsed while the disk is looked
+        // at (which folders are out of the watch): it is not shown, so it must not be asked for.
+        using var rig = new Rig();
+        rig.Config.Set(SettingKeys.FilesWatcherExclude, new Dictionary<string, bool> { ["**/gen/**"] = true });
+        rig.Dir.WriteFile("gen/foo/x.txt", "");
+        await rig.OpenAsync();
+        var gen = rig.Vm.Rows.Single(r => r.Name == "gen");
+        await rig.Vm.ToggleAsync(gen);
+        var foo = rig.Vm.Rows.Single(r => r.Name == "foo");
+        await rig.Vm.ToggleAsync(foo);
+        rig.Vm.Collapse(gen);
+        var wants = Assert.Single(rig.Watcher.ActiveWants)!;
+        Assert.Empty(wants.Directories);
+
+        var expanding = rig.Vm.ExpandAsync(gen);                                                            // looks at the disk on a worker …
+        rig.Vm.Collapse(foo);                                                                                // … while foo/ is collapsed
+        await expanding;
+        await rig.Vm.WantsApplied;
+        Assert.Equal([new Uri(rig.P("gen") + "/").AbsoluteUri], wants.Directories.Select(static u => u.AbsoluteUri));
+    }
+
+    [AvaloniaFact]
+    public async Task A_nested_folders_own_rescan_marker_reads_that_folder_again()
+    {
+        // Two workspace folders, one inside the other: the inner one's watch says it lost events. Its Changed(root) is the inner root's rescan,
+        // although the outer root lists the same folder as one of its own.
+        using var rig = new Rig();
+        rig.Dir.WriteFile("inner/a.cs", "");
+        var inner = new Uri(rig.P("inner") + "/");
+        await rig.Workspace.OpenFolderAsync(rig.Dir.Uri);
+        await rig.Vm.RefreshCompleted;
+        await rig.Workspace.OpenFolderAsync(inner);
+        await rig.Vm.RefreshCompleted;
+        Assert.Equal(2, rig.Vm.Roots.Count);
+
+        rig.Dir.WriteFile("inner/lost.cs", "");                                                             // its event was lost …
+        rig.Watcher.RaiseTo(inner, new FileChange(new Uri(rig.P("inner")), FileChangeKind.Changed));       // … and the inner watch says so
+        await rig.Vm.FlushWatcherAsync();
+        Assert.Contains(rig.Vm.Roots[1].Children!, c => c.Name == "lost.cs");
+    }
+
+    [AvaloniaFact]
     public async Task The_watchers_rescan_marker_reads_every_loaded_folder_of_that_root_again_and_hidden_entries_change_nothing()
     {
         using var rig = new Rig();

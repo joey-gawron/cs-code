@@ -45,8 +45,7 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     private bool _flushScheduled;
     private readonly Dictionary<Uri, FileWatchWants> _wants = new();   // per root folder: the folders its watch is asked for
     private readonly HashSet<Uri> _wanted = new();                     // expanded folders in a part of the tree the watch leaves out
-    private readonly HashSet<Uri> _rescanRoots = new();                // roots whose watch reported Changed(root): every loaded folder is re-read
-    private string[] _rootKeys = [];                                   // the roots' URIs without a trailing '/', read on the watcher's thread
+    private readonly HashSet<ExplorerNode> _rescanRoots = new();       // roots whose own watch reported Changed(root): every loaded folder is re-read
     private IReadOnlyList<string> _watchExcludes = [];
     private Task _wantsApplied = Task.CompletedTask;
     private ExplorerNode? _selected;
@@ -117,9 +116,9 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
             _roots.Add(root);
             var wants = new FileWatchWants();
             _wants[folder] = wants;
-            _watches.Add(_workspace.Watcher.Watch(folder, true, _watchExcludes, OnWatcherChanges, wants));
+            var rootKey = folder.AbsoluteUri.TrimEnd('/');
+            _watches.Add(_workspace.Watcher.Watch(folder, true, _watchExcludes, changes => OnWatcherChanges(root, rootKey, changes), wants));
         }
-        Volatile.Write(ref _rootKeys, _roots.Select(static r => r.Uri.AbsoluteUri.TrimEnd('/')).ToArray());
         OnPropertyChanged(nameof(HasFolder));
         Rows.AddRange(_roots);
         _restoring = true;
@@ -626,21 +625,21 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
 
     // ------------------------------------------------------------------ live refresh (watcher)
 
-    private void OnWatcherChanges(IReadOnlyList<FileChange> changes)
+    private void OnWatcherChanges(ExplorerNode root, string rootKey, IReadOnlyList<FileChange> changes)
     {
-        // Called on the watcher's thread: only record which directories changed, then flush once per debounce window. Changed(root) is the
-        // watcher's rescan marker (events were lost: an overflow, a reconnect): every loaded folder of that root is re-read. An entry that
+        // Called on the watcher's thread: only record which directories changed, then flush once per debounce window. Changed(root) from the
+        // root's own watch is the watcher's rescan marker (events were lost: an overflow, a reconnect): every loaded folder of that root is
+        // re-read. (A nested root's Changed from the watch of the root around it is a change of that folder like any other.) An entry that
         // files.exclude hides changes nothing shown (a wanted folder's events include those).
-        var roots = Volatile.Read(ref _rootKeys);
         var hidden = ExcludeGlobs();
         lock (_pendingGate)
         {
             foreach (var c in changes)
             {
                 var key = c.Uri.AbsoluteUri.TrimEnd('/');
-                if (c.Kind == FileChangeKind.Changed && Array.IndexOf(roots, key) >= 0)
+                if (c.Kind == FileChangeKind.Changed && key == rootKey)
                 {
-                    _rescanRoots.Add(c.Uri);
+                    _rescanRoots.Add(root);
                     continue;
                 }
                 var name = Uri.UnescapeDataString(key[(key.LastIndexOf('/') + 1)..]);
@@ -658,7 +657,8 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     /// <summary>Applies all pending watcher notifications: re-reads only the affected, already-loaded directories and splices differences.</summary>
     public async Task FlushWatcherAsync()
     {
-        Uri[] dirs, rescans;
+        Uri[] dirs;
+        ExplorerNode[] rescans;
         lock (_pendingGate)
         {
             dirs = _dirtyDirs.ToArray();
@@ -667,8 +667,8 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
             _rescanRoots.Clear();
             _flushScheduled = false;
         }
-        foreach (var rescan in rescans)
-            if (FindNode(rescan) is { IsRoot: true } root) await ReloadLoadedAsync(root).ConfigureAwait(true);
+        foreach (var root in rescans)
+            if (_roots.Contains(root)) await ReloadLoadedAsync(root).ConfigureAwait(true); // (a root of folders since closed: nothing)
         foreach (var dir in dirs)
         {
             var node = FindNode(dir);
@@ -707,16 +707,22 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         var oldByName = old.ToDictionary(c => c.Name, StringComparer.Ordinal);
         var merged = new List<ExplorerNode>(fresh.Count);
         var changed = old.Count != fresh.Count;
+        var replaced = new List<ExplorerNode>();
         foreach (var f in fresh)
         {
-            if (oldByName.Remove(f.Name, out var existing) && existing.IsDirectory == f.IsDirectory) merged.Add(existing);
-            else { merged.Add(f); changed = true; }
+            if (oldByName.Remove(f.Name, out var existing))
+            {
+                if (existing.IsDirectory == f.IsDirectory) { merged.Add(existing); continue; }
+                replaced.Add(existing); // a folder now a file, or the reverse: the old node goes like one that left
+            }
+            merged.Add(f);
+            changed = true;
         }
         if (!changed) return;
-        // Folders that left the listing (deleted, renamed, replaced) are no longer asked for, nor anything below them: a folder coming back at
-        // the same path is a new node, collapsed.
+        // Folders that left the listing (deleted, renamed, replaced — by a file too) are no longer asked for, nor anything below them: a folder
+        // coming back at the same path is a new node, collapsed.
         var unwanted = false;
-        foreach (var gone in oldByName.Values) if (gone.IsDirectory) unwanted |= Unwant(gone.Uri);
+        foreach (var gone in oldByName.Values.Concat(replaced)) if (gone.IsDirectory) unwanted |= Unwant(gone.Uri);
         if (unwanted && RootOf(dir) is { } root) _ = ApplyWantsAsync(root.Uri);
         merged.Sort(CompareNodes);
         dir.Children = merged;

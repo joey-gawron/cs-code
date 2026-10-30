@@ -843,6 +843,82 @@ public class InotifyBackendTests
     }
 
     [Fact]
+    public void A_walk_that_meets_two_watched_directories_whose_labels_crossed_watches_each_under_its_own_path()
+    {
+        // R/a and R/b are watched, P is left out. `mv a P/n; mv b a`, and P is wanted before those events are read: the walk of P finds a's
+        // directory at P/n while R/a now holds b's, which is watched under R/b. Relabelling by prefix would give both watches the label R/a and
+        // remove b's watch as if it were only a probe.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var t = new TempDirectory("cscode-inotify-");
+        Directory.CreateDirectory(t.Combine("a", "sub"));
+        Directory.CreateDirectory(t.Combine("b", "sub"));
+        Directory.CreateDirectory(t.Combine("P"));
+        var leftOut = true;
+        var raw = new RawCollector();
+        using var b = Backend(t.Path, raw, isPruned: d => Volatile.Read(ref leftOut) && d == t.Combine("P"), startReader: false);
+        Assert.Equal(5, b.WatchCount);
+        Directory.Move(t.Combine("a"), t.Combine("P", "n"));
+        Directory.Move(t.Combine("b"), t.Combine("a"));
+        Volatile.Write(ref leftOut, false);
+        b.RevisitPruned();
+
+        string[] Tree() => [t.Path, .. Directory.GetDirectories(t.Path, "*", SearchOption.AllDirectories)];
+        Assert.Equal(Tree().Order(StringComparer.Ordinal), b.WatchedDirectories.Order(StringComparer.Ordinal));
+        Assert.Equal(b.WatchCount, KernelWatches(b.Fd));
+        b.Pump(); // the moves' events describe the past
+        Assert.Equal(Tree().Order(StringComparer.Ordinal), b.WatchedDirectories.Order(StringComparer.Ordinal));
+        Assert.Equal(b.WatchCount, KernelWatches(b.Fd));
+        raw.Clear();
+        foreach (var dir in Tree()) File.WriteAllText(Path.Join(dir, "probe.txt"), "x");
+        b.Pump();
+        foreach (var dir in Tree())
+            Assert.Contains(raw.Snapshot(), e => e.Kind == RawKind.Created && e.Path == Path.Join(dir, "probe.txt"));
+    }
+
+    [Fact]
+    public void A_walk_that_finds_a_new_directory_at_a_watched_path_drops_the_watch_of_the_directory_that_moved_away()
+    {
+        // R/a/s is watched, P is left out. `mv a P/n; mv P/n/s <outside>; mkdir P/n/s`, and P is wanted before those events are read: the walk
+        // relabels a's watches to P/n, then finds a new directory at P/n/s, which the label of the old s still names. Two labels for one path
+        // would report what happens outside under P/n/s, and any later relabelling would move both.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "inotify");
+        using var t = new TempDirectory("cscode-inotify-");
+        using var outside = new TempDirectory("cscode-outside-");
+        Directory.CreateDirectory(t.Combine("a", "s"));
+        Directory.CreateDirectory(t.Combine("P"));
+        var leftOut = true;
+        var raw = new RawCollector();
+        using var b = Backend(t.Path, raw, isPruned: d => Volatile.Read(ref leftOut) && d == t.Combine("P"), startReader: false);
+        Assert.Equal(3, b.WatchCount);
+        Directory.Move(t.Combine("a"), t.Combine("P", "n"));
+        Directory.Move(t.Combine("P", "n", "s"), outside.Combine("x"));
+        Directory.CreateDirectory(t.Combine("P", "n", "s"));
+        Volatile.Write(ref leftOut, false);
+        b.RevisitPruned();
+
+        Assert.Equal(new[] { t.Path, t.Combine("P"), t.Combine("P", "n"), t.Combine("P", "n", "s") }.Order(StringComparer.Ordinal),
+            b.WatchedDirectories.Order(StringComparer.Ordinal));
+        Assert.Equal(b.WatchCount, KernelWatches(b.Fd));
+        b.Pump();
+        raw.Clear();
+        File.WriteAllText(outside.Combine("x", "elsewhere.txt"), "x");
+        File.WriteAllText(t.Combine("P", "n", "s", "here.txt"), "x");
+        b.Pump();
+        Assert.Contains(raw.Snapshot(), e => e.Kind == RawKind.Created && e.Path == t.Combine("P", "n", "s", "here.txt"));
+        Assert.DoesNotContain(raw.Snapshot(), e => e.Path.Contains("elsewhere", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_walk_pushes_each_path_at_most_twice_so_it_ends_whatever_the_labels_say()
+    {
+        // The backstop behind the crossed-label and stale-holder handling: a walk that kept pushing the same paths would spin inside the lock.
+        var walk = new InotifyBackend.Walk(resync: false);
+        for (var i = 0; i < 5; i++) walk.Push("/w/a", WatchVerdict.Watch);
+        walk.Push("/w/b", WatchVerdict.Watch);
+        Assert.Equal(3, walk.Stack.Count);
+    }
+
+    [Fact]
     public void A_directory_renamed_then_moved_out_before_its_events_are_read_reports_nothing_under_its_old_path()
     {
         // mv A B; mv B <outside>; mkdir B — all before the backend reads: the rename's probe finds the new B, and the moved directory must not

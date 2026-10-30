@@ -220,6 +220,41 @@ public class ExcludeMatcherTests
         Assert.False(tty);
         Assert.False(link);
     }
+
+    [Fact]
+    public async Task A_tag_replaced_by_a_fifo_or_a_link_after_it_was_looked_at_is_not_read_either()
+    {
+        // The walk looks at the tag (a regular file of the right size), then another process replaces it before it is opened: an open that
+        // follows links or waits for a FIFO's writer would block the inotify walk inside its lock.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "the open that cannot block is Linux's (where inotify walks under its lock)");
+        using var t = new TempDirectory("cscode-cachedir-");
+        const string Tag = "Signature: 8a477f597d28d172789f06886806bc55\n";
+        t.WriteFile("fifo/CACHEDIR.TAG", Tag);
+        t.WriteFile("tty/CACHEDIR.TAG", Tag);
+        t.WriteFile("real/CACHEDIR.TAG", Tag);
+        WatchExclusion.BeforeTagOpen = tag =>
+        {
+            if (tag == t.Combine("fifo", "CACHEDIR.TAG"))
+            {
+                File.Delete(tag);
+                Assert.Equal(0, MkFifo(tag, 0x180));
+            }
+            else if (tag == t.Combine("tty", "CACHEDIR.TAG"))
+            {
+                File.Delete(tag);
+                File.CreateSymbolicLink(tag, "/dev/ptmx");
+            }
+        };
+        try
+        {
+            var looked = Task.Run(() => (WatchExclusion.HasCacheDirTag(t.Combine("fifo")), WatchExclusion.HasCacheDirTag(t.Combine("tty")), WatchExclusion.HasCacheDirTag(t.Combine("real"))));
+            var (fifo, tty, real) = await looked.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            Assert.False(fifo);
+            Assert.False(tty);
+            Assert.True(real);
+        }
+        finally { WatchExclusion.BeforeTagOpen = null; }
+    }
 }
 
 internal sealed class WatchFixture : IDisposable
@@ -1318,12 +1353,15 @@ public class FileWatcherFallbackTests
     public async Task What_a_re_armed_watch_reports_while_its_content_is_announced_comes_after_the_announcement()
     {
         // A file written while a re-created directory's watch is armed: the new watch sees the write (Changed) before the announcement of what
-        // the directory holds (Created) is out. Changed then Created would merge to Changed: the file must reach subscribers as created.
+        // the directory holds (Created) is out. Delivered first, the Changed would reach subscribers on its own — the arming takes longer than
+        // the debounce here, as a big tree's walk does — and the file would never be reported created.
         var backends = new List<FakeBackend>();
         string? cfg = null;
         using var f = FakeFixture(backends, b =>
         {
-            if (cfg is { } dir && b.Root == dir && On(backends, dir).Length == 2) b.Sink!(RawKind.Changed, Path.Join(dir, "inside.json"), null); // the second arming
+            if (cfg is not { } dir || b.Root != dir || On(backends, dir).Length != 2) return; // the second arming
+            b.Sink!(RawKind.Changed, Path.Join(dir, "inside.json"), null);
+            Thread.Sleep(300);                                                                                   // the walk goes on
         });
         cfg = f.P("cfg");
         Directory.CreateDirectory(cfg);
@@ -1339,6 +1377,28 @@ public class FileWatcherFallbackTests
         Assert.Equal([FileChangeKind.Created], events.Snapshot().Where(c => Collector.Name(c) == "inside.json").Select(c => c.Kind));
         h.Dispose();
         parent.Dispose();
+    }
+
+    [Fact]
+    public async Task A_file_written_in_a_new_directory_before_the_scan_announces_it_is_reported_created()
+    {
+        // The OS watch of a new directory is in place before the directory is reported, so it can see a write to a file there (Changed) before
+        // the scan of the new directory announces that file. Changed then Created merges to Changed: the announcement must still say created.
+        var backends = new List<FakeBackend>();
+        using var f = FakeFixture(backends);
+        var (events, h) = f.Start();
+        await h.Ready;
+        var root = Assert.Single(On(backends, f.Temp.Path));
+        f.Temp.WriteFile("pkg/index.js", "1");
+        using var hold = new ManualResetEventSlim();
+        for (var i = 0; i < 3; i++) f.Lane.Post(() => hold.Wait(TestContext.Current.CancellationToken)); // the scan waits behind these
+        root.Sink!(RawKind.Created, f.P("pkg"), null);
+        root.Sink!(RawKind.Changed, f.P("pkg/index.js"), null);
+        hold.Set();
+        await events.WaitFor(s => s.Any(c => Collector.Name(c) == "index.js"), "index.js", Ct);
+        await Task.Delay(200, Ct);
+        Assert.Equal([FileChangeKind.Created], events.Snapshot().Where(c => Collector.Name(c) == "index.js").Select(c => c.Kind));
+        h.Dispose();
     }
 
     [Fact]

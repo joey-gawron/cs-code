@@ -248,7 +248,8 @@ On Linux the OS watch is an `InotifyBackend` (inotify via P/Invoke, one watch pe
   On Windows and macOS wants only change which events are delivered (`FileSystemWatcher` watches everything anyway). Every real `IFileWatcher` takes them (the router, the remote
   watcher, the editor's standalone fallback); only test doubles rely on the interface's default, which drops them. **Remote** (ssh, docker, wsl): `watch/start` carries a watch's
   wants and `watch/wants` their changes, to a server that announces the `watchWants` capability (client and server are the same build); the server's `FileWatcher` serves them like
-  local ones, and an older server watches without them. Language servers run on the server, against its own `file:` folders and watcher, so their `RelativePattern` wants work
+  local ones, and an older server watches without them. A change made while the watch is being armed (the server answers `watch/start` once its walk is done; the Explorer
+  restores its expanded folders meanwhile) is sent after `watch/start` answers, and `SetAsync` completes only then. Language servers run on the server, against its own `file:` folders and watcher, so their `RelativePattern` wants work
   there as they do locally.
 * **`InotifyBackend`** pairs `IN_MOVED_FROM`/`IN_MOVED_TO` by cookie into one rename (an unpaired FROM is a deletion, an unpaired TO a creation; a FROM ending a read waits 10 ms for its TO),
   watches a directory that is created or moved in (with its subtree) before reporting it, keeps the watches of a directory renamed inside the tree (only their paths change), drops those

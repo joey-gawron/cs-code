@@ -295,6 +295,14 @@ public sealed class FakeFileWatcher : IFileWatcher
         lock (_watches) snapshot = _watches.ToArray();
         foreach (var w in snapshot) w.Handler(changes);
     }
+
+    /// <summary>Delivers a batch to the watches of <paramref name="root"/> only (nested workspace folders each have their own).</summary>
+    public void RaiseTo(Uri root, params FileChange[] changes)
+    {
+        (Uri Root, IReadOnlyList<string>? Excludes, Action<IReadOnlyList<FileChange>> Handler, FileWatchWants? Wants)[] snapshot;
+        lock (_watches) snapshot = _watches.Where(w => w.Root == root).ToArray();
+        foreach (var w in snapshot) w.Handler(changes);
+    }
 }
 
 public sealed class FakeWorkspaceService : IWorkspaceService

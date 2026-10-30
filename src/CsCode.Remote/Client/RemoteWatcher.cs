@@ -51,6 +51,11 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
         public SshUriMapper Mapper { get; } = mapper;
         public RemoteSession? ArmedOn;
         public bool WasArmed;
+        /// <summary>
+        /// Held while the wanted paths go to the server — with <c>watch/start</c> or as <c>watch/wants</c> — so a change made while the watch is
+        /// being armed (its <c>watch/start</c> answers once the server's walk is done) is sent after it, never lost or overtaken.
+        /// </summary>
+        public readonly SemaphoreSlim SendingWants = new(1, 1);
         /// <summary>Held while delivering: the handler thread's batches and a rescan never reach the subscriber at the same time.</summary>
         public readonly object Delivering = new();
         public readonly TaskCompletionSource FirstArmed = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -98,6 +103,7 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
     /// <returns>Whether the subscriber is due a rescan: it was armed before the connection dropped, so it missed the outage's events.</returns>
     private async Task<bool> ArmAsync(Subscription sub, RemoteSession session, bool reconnect)
     {
+        await sub.SendingWants.WaitAsync().ConfigureAwait(false);
         try
         {
             var (directories, trees) = TakesWants(session) ? WantPaths(sub) : (null, null);
@@ -115,6 +121,7 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
             _log.LogWarning("Could not watch {Root} on the remote: {Error}", sub.Root, ex.Message);
             return false;
         }
+        finally { sub.SendingWants.Release(); }
     }
 
     /// <summary>
@@ -186,20 +193,23 @@ public sealed class RemoteWatcher : IFileWatcherProvider, IRemoteParticipant
 
     /// <summary>
     /// The subscription's wants changed: tell the server its watch is on (an older server, or none connected: nothing; the next arming sends
-    /// them). Completes once the server's OS watch follows them, or the server could not be reached.
+    /// them). While the watch is being armed this waits for the arming, then sends: the paths the arming took may be older than these.
+    /// Completes once the server's OS watch follows them, or the server could not be reached.
     /// </summary>
     private async Task SendWantsAsync(Subscription sub)
     {
-        if (sub.ArmedOn is not { IsOpen: true } session || !TakesWants(session)) return;
-        var (directories, trees) = WantPaths(sub);
+        await sub.SendingWants.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (sub.ArmedOn is not { IsOpen: true } session || !TakesWants(session) || !_subs.ContainsKey(sub.Id)) return;
+            var (directories, trees) = WantPaths(sub);
             await session.Peer.InvokeAsync<WatchWantsParams, Empty>(RemoteMethods.WatchWants, new WatchWantsParams(sub.Id, directories ?? [], trees ?? [])).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException or RemoteException)
         {
             _log.LogDebug("Could not send the wanted paths of {Root}: {Error}", sub.Root, ex.Message);
         }
+        finally { sub.SendingWants.Release(); }
     }
 
     void IRemoteParticipant.Attach(RpcPeer peer) =>

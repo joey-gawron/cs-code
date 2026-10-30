@@ -687,7 +687,7 @@ internal sealed class InotifyBackend : IWatchBackend
         path.StartsWith(dir, StringComparison.Ordinal) && (path.Length == dir.Length || path[dir.Length] == '/' || dir.EndsWith('/'));
 
     /// <summary>One walk's state: what it still has to visit, how often each path was pushed, and whether it rebuilds the maps (<see cref="Resync"/>).</summary>
-    private sealed class Walk(bool resync)
+    internal sealed class Walk(bool resync)
     {
         public readonly Stack<(string Dir, WatchVerdict Verdict)> Stack = new();
         private readonly Dictionary<string, int> _pushes = new(StringComparer.Ordinal);

@@ -1,4 +1,6 @@
+using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 using CsCode.Core.Text;
 
 namespace CsCode.Core.Platform;
@@ -42,7 +44,9 @@ public static class WatchExclusion
     /// <summary>
     /// True when <paramref name="directory"/> holds a <c>CACHEDIR.TAG</c> that is a regular file starting with the standard signature. Never
     /// throws, and never blocks: a symlink (to a terminal, say) or a FIFO named like the tag is not read — only a regular file at least as
-    /// long as the signature is opened (FIFOs and devices report no size).
+    /// long as the signature is (FIFOs and devices report no size). On Linux, where the inotify walk asks this while it holds its lock, the
+    /// file is opened without following a link and without waiting (<c>O_NOFOLLOW | O_NONBLOCK</c>) and its size taken from the open file, so
+    /// a tag replaced by a FIFO or a link between the first look and the open cannot block either.
     /// </summary>
     public static bool HasCacheDirTag(string directory)
     {
@@ -52,11 +56,36 @@ public static class WatchExclusion
             // The common case, asked for every directory a walk meets: one lstat, no exception.
             var info = new FileInfo(tag);
             if (!info.Exists || info.LinkTarget is not null || info.Length < CacheDirTagSignature.Length) return false;
-            using var file = new FileStream(tag, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.None);
+            BeforeTagOpen?.Invoke(tag);
             Span<byte> head = stackalloc byte[CacheDirTagSignature.Length];
+            if (OperatingSystem.IsLinux())
+            {
+                using var handle = OpenWithoutBlocking(tag);
+                if (handle is null || RandomAccess.GetLength(handle) < head.Length) return false; // a FIFO or a device now: size 0
+                return RandomAccess.Read(handle, head, 0) == head.Length && head.SequenceEqual(CacheDirTagSignature);
+            }
+            using var file = new FileStream(tag, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.None);
             return file.ReadAtLeast(head, head.Length, throwOnEndOfStream: false) == head.Length && head.SequenceEqual(CacheDirTagSignature);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return false; }
+    }
+
+    /// <summary>Tests: runs between the first look at the tag and its open (where another process may replace it).</summary>
+    internal static Action<string>? BeforeTagOpen;
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int LibcOpen([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
+
+    private const int ORdOnly = 0, ONoCtty = 0x100, ONonBlock = 0x800, OCloExec = 0x80000;
+
+    // O_NOFOLLOW is one of the few open flags whose value depends on the architecture.
+    private static int ONoFollow => RuntimeInformation.ProcessArchitecture is Architecture.Arm or Architecture.Arm64 or Architecture.Ppc64le ? 0x8000 : 0x20000;
+
+    /// <summary>Linux: opens <paramref name="path"/> for reading without following a link, waiting for a writer or taking a terminal. Null when it cannot.</summary>
+    private static SafeFileHandle? OpenWithoutBlocking(string path)
+    {
+        var fd = LibcOpen(path, ORdOnly | ONonBlock | ONoFollow | ONoCtty | OCloExec);
+        return fd < 0 ? null : new SafeFileHandle(fd, ownsHandle: true);
     }
 
     /// <summary>The path of <paramref name="fullPath"/> relative to <paramref name="root"/>, with '/' separators ("" for the root itself).</summary>
@@ -118,7 +147,7 @@ public static class WatchExclusion
 /// down to them and keeps them watched. A <i>directory</i> want covers its direct entries (an Explorer folder that is expanded); a <i>tree</i>
 /// want its whole subtree (a language server's <c>RelativePattern</c> base, such as a build script's <c>OUT_DIR</c> under <c>target/</c>).
 /// Live: <see cref="SetAsync"/> replaces the wanted paths, and the watch picks them up (and lets go of the ones no longer wanted). Watchers
-/// that cannot leave anything out (a <see cref="System.IO.FileSystemWatcher"/>) apply wants to the events they report only; remote watches ignore them.
+/// that cannot leave anything out (a <see cref="System.IO.FileSystemWatcher"/>) apply wants to the events they report only; a remote watch passes them to the server's watcher.
 /// </summary>
 public sealed class FileWatchWants
 {
