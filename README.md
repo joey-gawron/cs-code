@@ -41,3 +41,27 @@ or `dotnet run --project src/CsCode.App -- --quit --all`, ends it). The pre-star
 (`build/Publish.props`), in `.scratch/publish/linux-x64/`. It runs on the system's libraries, without a `dotnet` and without the
 Nix shell; on a Nix SDK it takes the official runtime packs from nuget.org (`tools/fetch-publish-packs.sh` pins them). Start-up
 numbers: [docs/SESSIONS.md](docs/SESSIONS.md), "Start-up performance".
+
+## Install (per user, Linux)
+
+`tools/install.sh` installs CsCode for the current user, so it runs from a terminal (`cscode`) and from the desktop's application menu, with
+the app icon (`assets/branding`) in the menu, the title bar and the taskbar. No sudo; nothing outside your home directory. On this machine's
+Nix SDK run it as `bash .scratch/notes/with-nix-env.sh tools/install.sh` (the library path only serves the build).
+
+* It builds the tree-sitter grammars offline from the pinned sources, publishes the app (`tools/publish-app.sh`), builds the remote server
+  bundles (`tools/publish-server.sh`) and copies the debug adapters already on the machine (netcoredbg, js-debug, CodeLLDB:
+  `--netcoredbg`/`--js-debug`/`--codelldb` or `CSCODE_NETCOREDBG`/`CSCODE_JSDEBUG`/`CSCODE_CODELLDB`) next to the app, where the app finds
+  them without those variables. Nothing is downloaded; `--from DIR` installs an existing publish instead.
+* Files: the app in `~/.local/share/cscode/<version>/` with a `current` symlink (the previous version is kept for rollback:
+  `ln -sfn <previous> ~/.local/share/cscode/current`), the launcher `~/.local/bin/cscode`, `~/.local/share/applications/cscode.desktop`
+  (Development menu; a New Window action) and the icons in `~/.local/share/icons/hicolor`. Every file it creates is listed in
+  `~/.local/share/cscode/install-manifest.tsv`.
+* Rerunning it upgrades: the new build becomes `current`, the one before stays, older ones go (one still running is kept until a later
+  install). Running windows keep their version until they quit (`cscode --quit --all`).
+* The installed app uses the normal per-user directories (`~/.config/cscode`, `~/.local/share/cscode`, `~/.local/state/cscode`).
+* `~/.local/share/cscode/current/uninstall.sh` (or `tools/uninstall.sh`) removes exactly what the manifest lists and keeps your settings,
+  sessions and data. Both scripts refuse to replace or remove a `cscode` launcher or desktop entry they did not create.
+
+Windows: `tools/install.ps1` (Start Menu shortcut, `cscode` on the user's PATH; `-Uninstall`). macOS: `tools/macos/make-app-bundle.sh` builds
+`CsCode.app` with an `.icns` made from the PNGs. Both are written but untested (only Linux is available here). Details:
+[docs/SESSIONS.md](docs/SESSIONS.md), "Installing".

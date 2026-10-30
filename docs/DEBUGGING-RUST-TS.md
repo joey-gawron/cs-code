@@ -48,7 +48,7 @@ regression test that fails without the fix), and what is an adapter limitation.
   own tree kill, Stop does end a detached process whose parent (the program) is still running, since it is still in the tree. Children of an
   ended parent are stopped.
 * **Locating js-debug**: setting `cscode.debug.jsDebugPath` → environment variable `CSCODE_JSDEBUG` → the installed copy
-  `{ToolsDir}/js-debug/v1.140.0/js-debug`; any of them may name the version directory, the `js-debug` directory, its `src/` or
+  `{ToolsDir}/js-debug/v1.140.0/js-debug` → the copy tools/install.sh put next to the app (`{InstallDir}/debug-adapters`); the first three may name the version directory, the `js-debug` directory, its `src/` or
   `dapDebugServer.js`. Node.js: setting `cscode.debug.nodePath` → `node` on PATH.
 * **Installer** (`JsDebugInstaller`): when nothing is found the user is **asked** ("Download" / "Cancel"; nothing is fetched otherwise) and the
   **pinned** `js-debug-dap-v1.140.0.tar.gz` is downloaded from the GitHub release, refused unless its SHA-256 is
@@ -475,7 +475,8 @@ lines quoted above.
 * **Rust support**: `sourceLanguages` (the configuration's, else `["rust"]`) makes CodeLLDB load the Rust toolchain's LLDB formatters
   (`lang_support/rust.py` runs `rustc --print=sysroot` in the adapter's directory — the folder, so a `rust-toolchain` file counts — and imports
   `lib/rustlib/etc/lldb_lookup.py`; Rust 1.98's registers its formatters on import) and offer its **"Rust: on panic"** filter (on by default).
-* **Lookup**: `cscode.debug.codelldbPath` → `CSCODE_CODELLDB` → `{ToolsDir}/codelldb/v1.12.3` → `codelldb` on PATH; a path may name the adapter,
+* **Lookup**: `cscode.debug.codelldbPath` → `CSCODE_CODELLDB` → `{ToolsDir}/codelldb/v1.12.3` → the copy installed with the app (`{InstallDir}/debug-adapters`) → `codelldb` on
+  PATH; a path may name the adapter,
   CodeLLDB's `extension/` directory or an install directory. Otherwise the download is offered; without a window the start fails saying what to
   do (and that GDB needs no download).
 * **Provider** (what VS Code's CodeLLDB extension does before the adapter sees a configuration; never overriding the user's values): the **`cargo`

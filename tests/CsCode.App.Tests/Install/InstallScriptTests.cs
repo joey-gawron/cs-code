@@ -79,6 +79,7 @@ public sealed class InstallScriptTests
         foreach (var source in new[] { "text/x-csharp", "text/rust", "text/x-c++src", "text/x-python", "text/javascript", "application/json", "text/markdown" })
             Assert.Contains(source, mime);
         Assert.DoesNotContain("inode/directory", mime); // never the default for folders
+        Assert.DoesNotContain("text/plain", mime); // nor for plain text
         // Exec: the launcher by its absolute path, quoted and escaped as the Desktop Entry Specification asks; then the file list.
         Assert.Equal([box.Launcher, "%F"], DesktopEntry.ExecArguments(main["Exec"]));
         Assert.Equal(box.Launcher, main["TryExec"]);

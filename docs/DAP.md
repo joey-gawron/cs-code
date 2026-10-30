@@ -200,7 +200,7 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 ## netcoredbg and other adapters
 
 * Built-in `coreclr` (alias `netcoredbg`) → `netcoredbg --interpreter=vscode`. Binary lookup: setting `cscode.debug.netcoredbgPath` →
-  `{ToolsDir}/netcoredbg/netcoredbg` → `PATH`. If none is found the user is **offered** a download (never silent) through
+  `{ToolsDir}/netcoredbg/netcoredbg` → the copy installed with the app (`{InstallDir}/debug-adapters`, `BundledAdapters`) → `PATH`. If none is found the user is **offered** a download (never silent) through
   `IWindowService.ShowMessageAsync` + `WithProgressAsync`. `NetCoreDbgInstaller` resolves the latest release from the GitHub API, downloads
   the platform asset (linux-amd64/arm64, osx-arm64, win64), **verifies its SHA-256 against the digest GitHub publishes for the asset** (refuses on
   mismatch; warns and relies on archive integrity if GitHub publishes none), extracts through a zip-slip-safe extractor (rejects `..`, absolute
@@ -214,8 +214,8 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 * Built-in `pwa-node` (and the legacy alias `node`, rewritten to `pwa-node`) → Microsoft's **js-debug** standalone server
   (`node dapDebugServer.js <private socket path>`, a `DebugAdapterServerProcess` with `PrivateSocket`; see "Adapter servers listen privately"):
   the parent session orchestrates and the program runs in the child session
-  js-debug asks for with `startDebugging`. Lookup: `cscode.debug.jsDebugPath` → `CSCODE_JSDEBUG` → `{ToolsDir}/js-debug/v1.140.0/js-debug`, else
-  the user is **offered** the pinned download (`JsDebugInstaller`, SHA-256 checked). Node.js: `cscode.debug.nodePath` → PATH. The provider sets
+  js-debug asks for with `startDebugging`. Lookup: `cscode.debug.jsDebugPath` → `CSCODE_JSDEBUG` → `{ToolsDir}/js-debug/v1.140.0/js-debug` →
+  the copy installed with the app (`{InstallDir}/debug-adapters`), else the user is **offered** the pinned download (`JsDebugInstaller`, SHA-256 checked). Node.js: `cscode.debug.nodePath` → PATH. The provider sets
   `__workspaceFolder` (without it js-debug resolves no source maps) and offers TypeScript (tsc build task), Node and attach templates. Breakpoint
   languages typescript, javascript, typescriptreact, javascriptreact. Evaluation and quirks: [docs/DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md).
 * Built-in `gdb` (and the alias `rust-gdb`) → **GDB's native DAP**: `nice -n 10 gdb [cscode.debug.gdbArgs] -q -iex … -i=dap` (a
@@ -231,7 +231,8 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   c, cpp. Evaluation, quirks and limits: [docs/DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-gdb).
 * Built-in `lldb` → **CodeLLDB v1.12.3** (MIT): `nice -n 10 codelldb --settings {"sourceLanguages":[…],…}` on **stdio** (a
   `DebugAdapterStdioProcess` like GDB's; CodeLLDB speaks stdio without `--port`/`--connect`, one session per process; `PYTHONHOME`/`PYTHONPATH`
-  removed from its environment). Lookup `cscode.debug.codelldbPath` → `CSCODE_CODELLDB` → `{ToolsDir}/codelldb/v1.12.3` → PATH, else the user is
+  removed from its environment). Lookup `cscode.debug.codelldbPath` → `CSCODE_CODELLDB` → `{ToolsDir}/codelldb/v1.12.3` → the copy installed with the app
+  (`{InstallDir}/debug-adapters`) → PATH, else the user is
   **offered** the pinned download (`CodeLldbInstaller`: per-platform SHA-256 and size pinned, only `extension/` extracted, links and setuid bits
   refused, at most 1 GiB, extraction off the debug lane). The provider does what VS Code's CodeLLDB extension does: the `cargo` key (shared
   `CargoArtifacts`), `cwd`/`relativePathBase`, `sourceLanguages` (Rust by default: the toolchain's LLDB formatters and the "Rust: on panic"
