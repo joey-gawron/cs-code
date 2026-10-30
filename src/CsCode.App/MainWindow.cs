@@ -491,6 +491,11 @@ public sealed class MainWindow : Window, IWindowChrome
 
     private HeldClose _held, _confirming;
     private bool _closeProceeding;
+    /// <summary>
+    /// The questions (notifications with actions) unanswered when the last confirmed close began: those shown since, while that close is held,
+    /// are the holding module's (<see cref="HeldQuestions"/>).
+    /// </summary>
+    private HashSet<NotificationItem>? _questionsBefore;
 
     /// <summary>
     /// This window's own close handling, the first Closing handler: background mode's hide, then (cancelling this close and closing again when they
@@ -563,6 +568,7 @@ public sealed class MainWindow : Window, IWindowChrome
         _closeConfirmed = true;
         _confirming = how;
         _closeProceeding = false;
+        _questionsBefore = PendingQuestions().ToHashSet();
         Close();
         return _closeProceeding ? ShellController.CloseEnd.Closed : ShellController.CloseEnd.Held;
     }
@@ -583,11 +589,73 @@ public sealed class MainWindow : Window, IWindowChrome
     public Task<ShellController.CloseEnd> RequestCloseAsync() => CloseWithPromptsAsync();
 
     /// <summary>
-    /// Background mode: the quit that a module's held close belonged to was given up (the user declined the module's question and works on, or the
-    /// quit was refused), so that close no longer stands: the next close of this window, the module's own repeat included, is a new one (background
-    /// mode's hide first, and the Save prompts again).
+    /// Background mode: the quit that a module's held close belonged to was given up (the user declined the module's question and works on, the
+    /// quit was refused, or it starts over), so that close no longer stands: the question it raised is withdrawn (dismissed, unanswered), and the
+    /// next close of this window is a new one (background mode's hide first, and the Save prompts again).
     /// </summary>
-    public void ForgetHeldClose() => _held = HeldClose.None;
+    public void ForgetHeldClose()
+    {
+        var questions = HeldQuestions().ToArray();
+        _held = HeldClose.None;
+        _questionsBefore = null;
+        // Its question goes with it (as if declined): the module then does nothing, and a later answer cannot close the window behind the quit's
+        // back (or hide it, and leave the module believing the user agreed).
+        foreach (var question in questions) question.DismissCommand.Execute(null);
+    }
+
+    /// <summary>How a close that a module held (<see cref="ShellController.CloseEnd.Held"/>) settled (<see cref="SettleHeldCloseAsync"/>).</summary>
+    public enum HeldCloseState
+    {
+        /// <summary>The module let the close go ahead (it closed again without asking, or the user agreed already): the window closes.</summary>
+        Closed,
+        /// <summary>The module asks: a question (a notification with actions) shown since the close was confirmed is up, unanswered.</summary>
+        Asking,
+        /// <summary>Neither, within the bound: the module still holds the close and shows no question.</summary>
+        Undecided,
+    }
+
+    /// <summary>
+    /// After a close came back held (<see cref="ShellController.CloseEnd.Held"/>): waits, without blocking the UI thread, until the module that holds
+    /// it asks (<see cref="HeldCloseState.Asking"/>) or lets it go ahead (<see cref="HeldCloseState.Closed"/>), at most <paramref name="bound"/>. A
+    /// held close is not always a question: the terminal's <c>confirmOnExit</c> "hasChildProcesses" holds every close while it looks for programs
+    /// other than the shell (off the UI thread), and closes again without a word when only shells run. Background mode's quits decide nothing
+    /// before this settles.
+    /// </summary>
+    public async Task<HeldCloseState> SettleHeldCloseAsync(TimeSpan bound)
+    {
+        Dispatcher.UIThread.VerifyAccess();
+        var settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Check()
+        {
+            if (_closeProceeding || HeldQuestions().Any()) settled.TrySetResult();
+        }
+        void OnProceeding() => settled.TrySetResult();
+        void OnNotifications(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) => Check();
+        var notifications = _sp.GetRequiredService<NotificationCenter>();
+        CloseProceeding += OnProceeding;
+        notifications.History.CollectionChanged += OnNotifications;
+        try
+        {
+            Check();
+            try { await settled.Task.WaitAsync(bound).ConfigureAwait(true); }
+            catch (TimeoutException) { /* still held, no question shown */ }
+        }
+        finally
+        {
+            CloseProceeding -= OnProceeding;
+            notifications.History.CollectionChanged -= OnNotifications;
+        }
+        if (_closeProceeding) return HeldCloseState.Closed;
+        return HeldQuestions().Any() ? HeldCloseState.Asking : HeldCloseState.Undecided;
+    }
+
+    /// <summary>The notifications with actions that wait for an answer (UI thread).</summary>
+    private IEnumerable<NotificationItem> PendingQuestions() =>
+        _sp.GetRequiredService<NotificationCenter>().History.Where(n => n.HasActions && !n.IsCompleted);
+
+    /// <summary>The questions shown since the held close (if one stands) was confirmed and still unanswered: the holding module's.</summary>
+    private IEnumerable<NotificationItem> HeldQuestions() =>
+        _held == HeldClose.None || _questionsBefore is not { } before ? [] : PendingQuestions().Where(n => !before.Contains(n));
 
     // ------------------------------------------------------------------ window modes
 

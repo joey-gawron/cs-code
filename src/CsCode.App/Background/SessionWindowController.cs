@@ -89,6 +89,14 @@ public sealed partial class SessionWindowController : IDisposable
     private volatile bool _windowClosing;
     /// <summary>A close of this window was held by a module's question: quitting would ask, so hello says needsPrompt and nothing evicts it.</summary>
     private bool _closeAsks;
+    /// <summary>The quit under way closed the window with the save prompts (false: without, hot exit): a held one starts over the same way.</summary>
+    private bool _quitPrompted;
+
+    /// <summary>
+    /// How long a quit waits for a module that holds its window's close to ask or let it go ahead (<see cref="MainWindow.SettleHeldCloseAsync"/>):
+    /// the terminal's "hasChildProcesses" looks for programs in a few milliseconds; past this the close counts as held by a question.
+    /// </summary>
+    internal static readonly TimeSpan HeldCloseSettleBound = TimeSpan.FromSeconds(3);
     /// <summary>Completed (and replaced) whenever a quit under way starts asking, commits or is undone: what a show that arrived meanwhile waits for.</summary>
     private TaskCompletionSource _quitPhase = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private IDisposable? _statusItem;
@@ -567,9 +575,13 @@ public sealed partial class SessionWindowController : IDisposable
             return false;
         }
         // A quit under way closes the window itself: its save prompts are up (they answer this close too) or its last write is under way; a second
-        // close would close the window behind the quit's back. One whose close a module held asks again: the window's close starts over (the save
-        // prompts for anything dirty since, then the module's question), and the quit commits if it goes ahead.
-        if (_quitting) return !_quitHeld;
+        // close would close the window behind the quit's back. One whose close a module holds asks again (AskAgainAsync: the close starts over as
+        // the quit began it), posted: not inside this close.
+        if (_quitting)
+        {
+            if (_quitHeld) _ui.Post(() => _ = QuitAsync(force: false, windowClose: true));
+            return true;
+        }
         if (_config?.Get(BackgroundSettings.KeepRunning, true) ?? true)
         {
             Hide();
@@ -593,13 +605,12 @@ public sealed partial class SessionWindowController : IDisposable
         _ui.AssertUiThread();
         if (_quitting)
         {
-            // A quit whose window close a module holds (its question is up): a new quit asks again (the window's close starts over: the save
-            // prompts for anything dirty since, then the module's question); a forced quit or an eviction would have to ask, so it is refused.
-            // Any other quit under way goes on; SIGTERM too, also during the save prompts or a held quit's question: the host's watchdog writes the
-            // last snapshot and ends the process (a held quit's decisions are on disk already).
+            // A quit whose window close a module holds (its question is up): a new quit asks again (AskAgainAsync); a forced quit or an eviction
+            // would have to ask, so it is refused. Any other quit under way goes on; SIGTERM too, also during the save prompts or a held quit's
+            // question: the host's watchdog writes the last snapshot and ends the process (a held quit's decisions are on disk already).
             if (!_quitHeld || terminate) return IpcMessage.Reply();
-            if (force || evict) return IpcMessage.Failure(QuitHeldMessage);
-            return await AfterQuitCloseAsync(await _window.RequestCloseAsync().ConfigureAwait(true), ProcessStates.Shown).ConfigureAwait(true);
+            if (force || evict) return IpcMessage.Failure(evict ? NotEvictedAsks : QuitHeldMessage);
+            return await AskAgainAsync().ConfigureAwait(true);
         }
         force |= terminate;
         _quitting = true;
@@ -654,7 +665,8 @@ public sealed partial class SessionWindowController : IDisposable
             }
             // The session's last write is done: the window closes, and the quit commits as it does.
             _commitOnClose = false;
-            return await AfterQuitCloseAsync(_window.CloseWithoutPrompt(), previousState, terminate, refuseHeld: (force || evict) && !terminate, evict).ConfigureAwait(true);
+            _quitPrompted = false;
+            return await AfterQuitCloseAsync(_window.CloseWithoutPrompt(), previousState, terminate, quiet: (force || evict) && !terminate, evict).ConfigureAwait(true);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -692,8 +704,9 @@ public sealed partial class SessionWindowController : IDisposable
     private async Task<IpcMessage> QuitWithPromptsAsync(string previousState)
     {
         // The session as it is before the prompts close its tabs: what the next start restores when the quit goes ahead (the autosave writes nothing
-        // while a quit is under way, nor while a module holds its close).
-        await PersistAsync(includeBackups: false).ConfigureAwait(true);
+        // while a quit is under way, nor while a module holds its close), with the unsaved changes backed up until the prompts decide them.
+        await PersistBeforePromptsAsync().ConfigureAwait(true);
+        _quitPrompted = true;
         ShellController.CloseEnd end;
         _asking = true; // the window that asks is shown (hello says shown meanwhile), and shows that arrive go ahead
         QuitPhaseChanged();
@@ -711,11 +724,51 @@ public sealed partial class SessionWindowController : IDisposable
     }
 
     /// <summary>
-    /// How the quit's window close ended: the window closed (the quit committed as it went ahead), a save prompt was cancelled (the quit is undone),
-    /// or a module holds the close with a question (<see cref="QuitHeldAsync"/>).
+    /// A new quit, or the user's close of the window, while a module holds a quit's close with its question: the close starts over as the quit began
+    /// it, and the module asks again (its earlier question is withdrawn). A hot-exit quit closes again without prompts: everything was backed up as
+    /// it began and nothing changed since (any change declines the held quit), as VS Code's hot exit closes again without asking to save. A quit with
+    /// save prompts asks them again for anything dirty since (normally nothing: its prompts closed every tab), and their answers decide the backups.
     /// </summary>
-    private async Task<IpcMessage> AfterQuitCloseAsync(ShellController.CloseEnd end, string previousState, bool terminate = false, bool refuseHeld = false, bool evict = false)
+    private async Task<IpcMessage> AskAgainAsync()
     {
+        _quitHeld = false; // a quit under way again: its prompts, or its close
+        _window.ForgetHeldClose();
+        ShellController.CloseEnd end;
+        if (_quitPrompted)
+        {
+            _asking = true;
+            QuitPhaseChanged();
+            try
+            {
+                _commitOnClose = !_readOnly;
+                end = await _window.RequestCloseAsync().ConfigureAwait(true);
+            }
+            finally { _asking = false; }
+        }
+        else
+        {
+            _commitOnClose = false;
+            end = _window.CloseWithoutPrompt();
+        }
+        return await AfterQuitCloseAsync(end, ProcessStates.Shown).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// How the quit's window close ended: the window closed (the quit committed as it went ahead), a save prompt was cancelled (the quit is undone),
+    /// or a module holds the close. A held close is settled first (<see cref="MainWindow.SettleHeldCloseAsync"/>): the module may only be finding
+    /// out whether to ask, and then lets the close go ahead without a word; the quit is decided once it asks (<see cref="QuitHeldAsync"/>) or the
+    /// close goes ahead. Meanwhile it is a quit under way: a user's close is ignored, a show waits, the autosave writes nothing.
+    /// <paramref name="quiet"/>: a forced quit or an eviction, which may not ask anyone.
+    /// </summary>
+    private async Task<IpcMessage> AfterQuitCloseAsync(ShellController.CloseEnd end, string previousState, bool terminate = false, bool quiet = false, bool evict = false)
+    {
+        var asks = false;
+        if (end == ShellController.CloseEnd.Held)
+        {
+            var settled = await _window.SettleHeldCloseAsync(HeldCloseSettleBound).ConfigureAwait(true);
+            if (settled == MainWindow.HeldCloseState.Closed || _windowClosing) end = ShellController.CloseEnd.Closed;
+            asks = settled == MainWindow.HeldCloseState.Asking;
+        }
         switch (end)
         {
             case ShellController.CloseEnd.Closed:
@@ -725,27 +778,29 @@ public sealed partial class SessionWindowController : IDisposable
                 Undo(_window.IsVisible ? ProcessStates.Shown : previousState);
                 return IpcMessage.Failure("the quit was cancelled");
             default:
-                return await QuitHeldAsync(previousState, terminate, refuseHeld, evict).ConfigureAwait(true);
+                return await QuitHeldAsync(previousState, terminate, quiet, evict, asks).ConfigureAwait(true);
         }
     }
 
     /// <summary>
-    /// A module holds the quit's window close with a question of its own (the terminal's <c>confirmOnExit</c>), asked after the save prompts. It is
-    /// not a cancel: the module repeats the close when the user agrees, and the quit commits then (<see cref="OnCloseProceeding"/>). Until then the
-    /// quit is pending: the window is shown and works (a hidden one is shown, so the question can be answered), and the session file stays as the
-    /// quit wrote it, with every tab (as the shell keeps the layout saved when the close began). The module says nothing when the user declines:
-    /// working on in the window declines it (<see cref="OnSessionChanged"/>). A forced quit or an eviction is refused instead (nobody may be asked);
-    /// SIGTERM leaves the process to the host's watchdog (nobody is there to answer, and everything is saved).
+    /// A module holds the quit's window close with a question of its own (the terminal's <c>confirmOnExit</c>), asked after the save prompts
+    /// (<paramref name="asks"/>; false: the module neither asked nor let the close go ahead in time, which counts the same). It is not a cancel: the
+    /// module repeats the close when the user agrees, and the quit commits then (<see cref="OnCloseProceeding"/>). Until then the quit is pending:
+    /// the window is shown and works (a hidden one is shown, so the question can be answered), and the session file stays as the quit wrote it, with
+    /// every tab (as the shell keeps the layout saved when the close began). The module says nothing when the user declines: working on in the
+    /// window declines it (<see cref="OnSessionChanged"/>). A forced quit or an eviction is refused instead (nobody may be asked: the question is
+    /// withdrawn and the window stays as it was); SIGTERM leaves the process to the host's watchdog (nobody is there to answer, and everything is
+    /// saved).
     /// </summary>
-    private async Task<IpcMessage> QuitHeldAsync(string previousState, bool terminate, bool refuse, bool evict)
+    private async Task<IpcMessage> QuitHeldAsync(string previousState, bool terminate, bool quiet, bool evict, bool asks)
     {
-        _closeAsks = true; // the next eviction would have to ask too
+        if (asks) _closeAsks = true; // the next eviction would have to ask too
         if (terminate)
         {
             UpdateNeedsPrompt();
             return IpcMessage.Failure(QuitHeldMessage);
         }
-        if (refuse)
+        if (quiet)
             return Refuse(previousState, evict ? NotEvictedAsks : $"session '{_host.SessionName}' asks before its window closes (a running terminal); not quitting");
         _quitHeld = true;
         // Every save prompt was answered and every tab is closed, whatever the answer to the question: the backups of what was saved or discarded
@@ -854,7 +909,7 @@ public sealed partial class SessionWindowController : IDisposable
         _quitting = false;
         _quitHeld = false;
         _commitOnClose = null;
-        _window.ForgetHeldClose(); // a close a module still holds no longer stands for a quit: its repeat is a new close (background mode's hide first)
+        _window.ForgetHeldClose(); // a close a module still holds no longer stands for a quit: its question is withdrawn, the next close is a new one
         _wasResident = true;
         _host.SetState(state);
         _autosave.MarkDirty();

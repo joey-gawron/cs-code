@@ -18,10 +18,10 @@ namespace CsCode.Panels.Terminal.Tests;
 /// </summary>
 public sealed class ConfirmOnExitWindowTests
 {
-    private static async Task<(TerminalAppHost App, List<FakePtyHost> Hosts)> StartAsync()
+    private static async Task<(TerminalAppHost App, List<FakePtyHost> Hosts)> StartAsync(string confirmOnExit = "always")
     {
         var hosts = new List<FakePtyHost>();
-        var app = await TerminalAppHost.StartAsync(settings: new() { ["terminal.integrated.confirmOnExit"] = "always" },
+        var app = await TerminalAppHost.StartAsync(settings: new() { ["terminal.integrated.confirmOnExit"] = confirmOnExit },
             configure: s => s.AddSingleton(sp => CsCode.Terminal.ServiceCollectionExtensions.CreateService(sp, () =>
             {
                 var h = new FakePtyHost();
@@ -152,6 +152,68 @@ public sealed class ConfirmOnExitWindowTests
         Answer(Question(app)!, "Terminate");
         Assert.True(await TerminalAppHost.WaitFor(() => closed), "Terminate did not close the window");
         Assert.Equal(1, proceeding);
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task A_held_close_settles_as_asking_and_a_forgotten_one_withdraws_its_question()
+    {
+        // Background mode decides a quit only once the held close settles; a quit it gives up (refused, declined, started over) withdraws the
+        // question, so that a later answer neither closes nor hides the window behind the quit's back.
+        var (app, hosts) = await StartAsync();
+        await using var _ = app;
+        await app.RunAsync(TerminalCommandSet.New);
+        Assert.True(await TerminalAppHost.WaitFor(() => hosts.Count == 1));
+        await TerminalAppHost.SettleAsync(10);
+        var proceeding = 0;
+        var closed = false;
+        app.Window.CloseProceeding += () => proceeding++;
+        app.Window.Closed += (_, _) => closed = true;
+
+        Assert.Equal(ShellController.CloseEnd.Held, app.Window.CloseWithoutPrompt());
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert.Equal(MainWindow.HeldCloseState.Asking, await app.Window.SettleHeldCloseAsync(TimeSpan.FromSeconds(30)));
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), $"settled only after {clock.Elapsed}");
+        var question = Question(app);
+        Assert.NotNull(question);
+
+        app.Window.ForgetHeldClose();
+        Assert.True(question.IsCompleted, "the question stayed up");
+        Assert.Null(await question.Result);
+        Assert.Null(Question(app));
+        await TerminalAppHost.SettleAsync(20);
+        Assert.False(closed);
+        Assert.Equal(0, proceeding);
+
+        // The terminal took the withdrawal as a "no": the next close asks again, and goes ahead when the user agrees.
+        Assert.Equal(ShellController.CloseEnd.Held, app.Window.CloseWithoutPrompt());
+        Assert.Equal(MainWindow.HeldCloseState.Asking, await app.Window.SettleHeldCloseAsync(TimeSpan.FromSeconds(30)));
+        Answer(Question(app)!, "Terminate");
+        Assert.True(await TerminalAppHost.WaitFor(() => closed), "Terminate did not close the window");
+        Assert.Equal(1, proceeding);
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task A_close_held_only_while_the_terminal_looks_for_programs_settles_as_closed()
+    {
+        // "hasChildProcesses" holds every close while it looks for programs other than the shell (off the UI thread), and closes again without a
+        // word when only shells run: background mode took that held close for a question, refused forced quits and evictions, and the terminal's
+        // close then hid the window.
+        var (app, hosts) = await StartAsync("hasChildProcesses");
+        await using var _ = app;
+        await app.RunAsync(TerminalCommandSet.New);
+        Assert.True(await TerminalAppHost.WaitFor(() => hosts.Count == 1));
+        await TerminalAppHost.SettleAsync(10);
+        var proceeding = 0;
+        var closed = false;
+        app.Window.CloseProceeding += () => proceeding++;
+        app.Window.Closed += (_, _) => closed = true;
+
+        // Held while it looks (unless the look ended before the terminal's handler awaited it).
+        if (app.Window.CloseWithoutPrompt() == ShellController.CloseEnd.Held)
+            Assert.Equal(MainWindow.HeldCloseState.Closed, await app.Window.SettleHeldCloseAsync(TimeSpan.FromSeconds(30)));
+        Assert.Equal(1, proceeding);
+        Assert.Null(Question(app));
+        Assert.True(await TerminalAppHost.WaitFor(() => closed), "the window did not close");
     }
 
     [AvaloniaFact(Timeout = 60_000)]

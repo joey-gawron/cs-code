@@ -253,6 +253,19 @@ public sealed partial class SessionWindowController
         return await _host.Lane.RunAsync(() => Write(captured)).ConfigureAwait(true);
     }
 
+    /// <summary>
+    /// Before a quit's save prompts (UI thread, then the lane): the session with every tab as it is now, its editors naming no backup (the prompts
+    /// decide the unsaved changes, and a quit that goes ahead leaves none), and the backups written all the same, so that SIGTERM or a crash while a
+    /// prompt waits still finds the latest unsaved text (the autosave writes nothing while a quit is under way; the prompts' answers drop them).
+    /// </summary>
+    private async Task PersistBeforePromptsAsync()
+    {
+        var all = Capture(includeBackups: true);
+        var captured = all with { Editors = all.Editors.Select(e => e.BackupId is null ? e : e with { BackupId = null }).ToArray() };
+        Volatile.Write(ref _lastCaptured, captured);
+        await _host.Lane.RunAsync(() => Write(captured)).ConfigureAwait(true);
+    }
+
     private void QueueWrite(Captured captured) => _ = _host.Lane.RunAsync(() => Write(captured));
 
     /// <summary>Fatal crash (any thread): writes the last snapshot that was captured but not written yet, synchronously.</summary>

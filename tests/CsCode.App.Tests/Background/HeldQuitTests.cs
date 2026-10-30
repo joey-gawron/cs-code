@@ -28,6 +28,9 @@ public class HeldQuitTests
     {
         private IPtyListener? _listener;
 
+        /// <summary>The terminal's foreground process: the shell it started with, or a program it runs (confirmOnExit "hasChildProcesses").</summary>
+        public volatile string Foreground = "sh";
+
         public int ProcessId => 4343;
         public bool HasExited { get; private set; }
         public int? ExitCode { get; private set; }
@@ -37,7 +40,7 @@ public class HeldQuitTests
         public bool Write(ReadOnlySpan<byte> data, bool urgent = false) => true;
         public void Resize(int columns, int rows) { }
         public void Kill(TimeSpan? grace = null) { }
-        public string? GetForegroundProcessName() => "sh";
+        public string? GetForegroundProcessName() => Foreground;
 
         public void Exit()
         {
@@ -68,6 +71,11 @@ public class HeldQuitTests
         {
             lock (_all) foreach (var p in _all) p.Exit();
         }
+
+        public void SetForeground(string program)
+        {
+            lock (_all) foreach (var p in _all) p.Foreground = program;
+        }
     }
 
     /// <summary>Ends the session's terminals (disposed before the session: its teardown then closes the window without a question).</summary>
@@ -83,9 +91,10 @@ public class HeldQuitTests
     }
 
     private const string ConfirmAlways = "\"terminal.integrated.confirmOnExit\": \"always\"";
+    private const string ConfirmWithChildProcesses = "\"terminal.integrated.confirmOnExit\": \"hasChildProcesses\"";
 
-    private static Task<InProcessSession> StartAsync(string session, Ptys ptys, string? settings = null) =>
-        InProcessSession.StartAsync(session, settings is null ? ConfirmAlways : ConfirmAlways + ", " + settings,
+    private static Task<InProcessSession> StartAsync(string session, Ptys ptys, string? settings = null, string confirm = ConfirmAlways) =>
+        InProcessSession.StartAsync(session, settings is null ? confirm : confirm + ", " + settings,
             configure: s => s.AddSingleton(sp => CsCode.Terminal.ServiceCollectionExtensions.CreateService(sp, ptys.Create)));
 
     private static IpcMessage Show(params string[] paths) => new() { Type = IpcVerbs.Show, Paths = paths.Select(p => new IpcPath(p)).ToArray() };
@@ -113,6 +122,42 @@ public class HeldQuitTests
     }
 
     private static void Answer(NotificationItem question, string action) => question.InvokeCommand.Execute(question.Actions.First(a => a.Title == action));
+
+    /// <summary>The terminal's questions that wait for an answer.</summary>
+    private static int OpenQuestions(InProcessSession s) =>
+        s.Run.Services.GetRequiredService<NotificationCenter>().History.Count(n => !n.IsCompleted && n.Message.Contains("terminate the active terminal session", StringComparison.Ordinal));
+
+    /// <summary>The user closes the window: the platform's close (its title bar's X), not a programmatic <c>Close()</c>.</summary>
+    private static void UserCloses(InProcessSession s)
+    {
+        var impl = (object)s.Run.Session.Window!.PlatformImpl!;
+        var closing = impl.GetType().GetInterfaces().Prepend(impl.GetType())
+            .Select(t => t.GetProperty("Closing", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
+            .FirstOrDefault(p => p?.PropertyType == typeof(Func<Avalonia.Controls.WindowCloseReason, bool>))
+            ?? throw new InvalidOperationException("the headless window has no Closing callback");
+        var cancelled = ((Func<Avalonia.Controls.WindowCloseReason, bool>)closing.GetValue(impl)!).Invoke(Avalonia.Controls.WindowCloseReason.WindowClosing);
+        Assert.True(cancelled, "the user's close went ahead");
+    }
+
+    /// <summary>How many questions the terminal asks from now on (counted also once the session has ended).</summary>
+    private static Func<int> CountQuestions(InProcessSession s)
+    {
+        var count = 0;
+        s.Run.Services.GetRequiredService<NotificationCenter>().History.CollectionChanged += (_, e) =>
+            count += e.NewItems?.OfType<NotificationItem>().Count(n => n.Message.Contains("terminate the active terminal session", StringComparison.Ordinal)) ?? 0;
+        return () => count;
+    }
+
+    /// <summary>Whether the window was ever shown from now on (a hidden session's quit must not flash it).</summary>
+    private static Func<bool> WatchShown(InProcessSession s)
+    {
+        var shown = false;
+        s.Run.Session.Window!.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == Avalonia.Visual.IsVisibleProperty && e.NewValue is true) shown = true;
+        };
+        return () => shown;
+    }
 
     private static string[] SavedEditors(InProcessSession s, string session) =>
         s.Store.Load(session).Session!.Editors.Select(e => Path.GetFileName(new Uri(e.Uri).LocalPath)).Order(StringComparer.Ordinal).ToArray();
@@ -318,6 +363,7 @@ public class HeldQuitTests
         Assert.Contains("not evicted", evict.Error);
         var forced = await s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = true });
         Assert.NotEqual(true, forced.Ok);
+        Assert.Equal(0, OpenQuestions(s)); // withdrawn: nobody could see it, and an answer to it later would have hidden or closed the window
 
         await Task.Delay(300);
         Assert.False(s.Run.Session.Ended.IsCompleted);
@@ -361,5 +407,215 @@ public class HeldQuitTests
         Assert.True(controller.QuitCommitted);
         Assert.Single(s.Store.Backups.List("t"));
         Assert.True(s.Store.Load("t").Session!.WasResident);
+    }
+
+    // ------------------------------------------------------------------ "hasChildProcesses": a held close is not always a question
+
+    /// <summary>
+    /// A session with confirmOnExit "hasChildProcesses", a dirty document and an idle terminal (only the shell runs), hidden or not: the terminal
+    /// holds the window's close while it looks for programs, then closes again without a word.
+    /// </summary>
+    private static async Task<(InProcessSession S, Ptys Ptys, string File)> StartWithChildProcessesAsync(string session, bool hidden)
+    {
+        var ptys = new Ptys();
+        var s = await StartAsync(session, ptys, confirm: ConfirmWithChildProcesses);
+        try
+        {
+            var a = s.WriteFile("a.txt", "a\n");
+            await s.MustAsync(Show(a));
+            await s.MustAsync(Edit(a, "unsaved "));
+            await OpenTerminalAsync(s, ptys);
+            if (hidden) await s.MustAsync(new IpcMessage { Type = IpcVerbs.Hide });
+            return (s, ptys, a);
+        }
+        catch
+        {
+            await new EndTerminals(s, ptys).DisposeAsync();
+            await s.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static async Task AssertQuitWithHotExitAsync(InProcessSession s, string session, IpcMessage reply, Func<int> asked)
+    {
+        Assert.True(reply.Ok == true, reply.Error);
+        await s.Run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(0, asked());
+        var backup = Assert.Single(s.Store.Backups.List(session));
+        Assert.Equal("unsaved a\n", s.Store.Backups.ReadText(session, backup.Id));
+        Assert.Equal(["a.txt"], SavedEditors(s, session));
+        Assert.False(FileLock.IsHeldElsewhere(s.Store.LockPathOf(session)));
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task With_only_shells_running_a_forced_quit_of_a_shown_session_quits()
+    {
+        // The held close was taken for a question: the forced quit was refused ("did not quit"), and the terminal's close that followed hid the
+        // window and left the terminal believing the user had agreed (confirmOnExit off for the rest of the process).
+        var (s, ptys, _) = await StartWithChildProcessesAsync("f", hidden: false);
+        await using var _ = s;
+        await using var endTerminals = new EndTerminals(s, ptys);
+        var asked = CountQuestions(s);
+        var forced = await s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = true });
+        await AssertQuitWithHotExitAsync(s, "f", forced, asked);
+        Assert.False(s.Store.Load("f").Session!.WasResident);
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task With_only_shells_running_an_eviction_quits_the_hidden_session()
+    {
+        // Refused before, and the session said needsPrompt from then on: never evicted again, maxResidentSessions no longer enforced.
+        var (s, ptys, _) = await StartWithChildProcessesAsync("g", hidden: true);
+        await using var _ = s;
+        await using var endTerminals = new EndTerminals(s, ptys);
+        var shown = WatchShown(s);
+        var asked = CountQuestions(s);
+        var hello = await Task.Run(() => ResidentDiscovery.Probe(s.Runtime, Environment.ProcessId, TimeSpan.FromSeconds(2)));
+        Assert.False(hello!.NeedsPrompt);
+        var evict = await s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = false, Evict = true });
+        await AssertQuitWithHotExitAsync(s, "g", evict, asked);
+        Assert.False(shown(), "the hidden window was shown");
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task With_only_shells_running_a_quit_of_a_hidden_session_quits_without_showing_its_window()
+    {
+        // Exit All's quit: the hidden window was shown for a question that never came, then closed, and the session was listed as not quit.
+        var (s, ptys, _) = await StartWithChildProcessesAsync("k", hidden: true);
+        await using var _ = s;
+        await using var endTerminals = new EndTerminals(s, ptys);
+        var shown = WatchShown(s);
+        var asked = CountQuestions(s);
+        var quit = await s.RequestAsync(Quit, 60);
+        await AssertQuitWithHotExitAsync(s, "k", quit, asked);
+        Assert.False(shown(), "the hidden window was shown");
+        Assert.False(s.Store.Load("k").Session!.WasResident);
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task With_a_program_running_in_a_terminal_a_forced_quit_is_refused_and_its_question_withdrawn()
+    {
+        var (s, ptys, _) = await StartWithChildProcessesAsync("p", hidden: false);
+        await using var _ = s;
+        await using var endTerminals = new EndTerminals(s, ptys);
+        ptys.SetForeground("vim");
+
+        var forced = await s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = true });
+        Assert.NotEqual(true, forced.Ok);
+        Assert.Contains("not quitting", forced.Error);
+        // Nobody may be asked: the question the close raised is gone (an answer to it later hid the window and switched confirmOnExit off).
+        Assert.Equal(0, OpenQuestions(s));
+        await Task.Delay(300);
+        Assert.False(s.Run.Session.Ended.IsCompleted);
+        var state = await s.InspectAsync();
+        Assert.True(state.Visible);
+        Assert.Equal(ProcessStates.Shown, state.State);
+        Assert.True(FileLock.IsHeldElsewhere(s.Store.LockPathOf("p")));
+        var hello = await Task.Run(() => ResidentDiscovery.Probe(s.Runtime, Environment.ProcessId, TimeSpan.FromSeconds(2)));
+        Assert.True(hello!.NeedsPrompt, "the next eviction would ask");
+
+        // The program ends: the next quit asks nothing and goes ahead (the withdrawn question left the terminal's confirmOnExit as it was).
+        ptys.SetForeground("sh");
+        var asked = CountQuestions(s);
+        await AssertQuitWithHotExitAsync(s, "p", await s.RequestAsync(Quit, 60), asked);
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task A_quit_of_a_hidden_session_whose_terminal_asks_shows_the_window_with_the_question()
+    {
+        var ptys = new Ptys();
+        await using var s = await StartAsync("w", ptys);
+        await using var endTerminals = new EndTerminals(s, ptys);
+        var a = s.WriteFile("a.txt", "a\n");
+        await s.MustAsync(Show(a));
+        await s.MustAsync(Edit(a, "unsaved "));
+        await OpenTerminalAsync(s, ptys);
+        await s.MustAsync(new IpcMessage { Type = IpcVerbs.Hide });
+
+        var quit = await s.RequestAsync(Quit, 60);
+        Assert.Equal(SessionWindowController.QuitHeldMessage, quit.Error);
+        var question = await QuestionAsync(s);
+        await Task.Delay(300);
+        var state = await s.InspectAsync();
+        Assert.True(state.Visible, "the question is in a hidden window");
+        Assert.Equal(ProcessStates.Shown, state.State);
+        Assert.Equal(1, OpenQuestions(s)); // showing the window did not count as working on (which withdraws the question)
+
+        Answer(question, "Terminate");
+        await s.Run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Single(s.Store.Backups.List("w"));
+        Assert.False(FileLock.IsHeldElsewhere(s.Store.LockPathOf("w")));
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task A_held_hot_exit_quit_asks_again_without_save_prompts_when_the_user_closes_the_window_or_quits_again()
+    {
+        // The window's close or a new Quit Session while the question was up showed the Save prompts for every dirty document, which a hot-exit
+        // quit never asks: after "Don't Save" and Terminate the quit kept the hot-exit backups, and the next start brought the discarded text back.
+        // As in VS Code, a hot-exit close asked again is a hot-exit close again: the backups stay, and so does the text.
+        var ptys = new Ptys();
+        await using var s = await StartAsync("r", ptys);
+        await using var endTerminals = new EndTerminals(s, ptys);
+        var a = s.WriteFile("a.txt", "original\n");
+        await s.MustAsync(Show(a));
+        await s.MustAsync(Edit(a, "unsaved "));
+        await OpenTerminalAsync(s, ptys);
+
+        var quit = await s.RequestAsync(Quit, 60);
+        Assert.Equal(SessionWindowController.QuitHeldMessage, quit.Error);
+        var first = await QuestionAsync(s);
+
+        UserCloses(s);
+        Assert.True(await DevHost.WaitFor(() => Question(s) is { } q && !ReferenceEquals(q, first), 20_000), "the window's close did not ask again");
+        Assert.True(first.IsCompleted, "the first question stayed up");
+        Assert.Equal(1, OpenQuestions(s));
+        var second = Question(s)!;
+
+        s.Dialogs.Answers.Enqueue("Don't Save"); // would be taken by a Save prompt
+        var again = await s.RequestAsync(Quit, 60);
+        Assert.Equal(SessionWindowController.QuitHeldMessage, again.Error);
+        Assert.True(await DevHost.WaitFor(() => Question(s) is { } q && !ReferenceEquals(q, second), 20_000), "Quit Session did not ask again");
+        Assert.Equal(1, OpenQuestions(s));
+        Assert.Empty(s.Dialogs.Shown); // no Save prompt: hot exit
+        Assert.True((await s.InspectAsync()).Tabs.Single().Dirty);
+        Assert.True(FileLock.IsHeldElsewhere(s.Store.LockPathOf("r")));
+
+        Answer(Question(s)!, "Terminate");
+        await s.Run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+        var backup = Assert.Single(s.Store.Backups.List("r"));
+        Assert.Equal("unsaved original\n", s.Store.Backups.ReadText("r", backup.Id));
+        Assert.Equal(backup.Id, Assert.Single(s.Store.Load("r").Session!.Editors).BackupId);
+        Assert.False(s.Store.Load("r").Session!.WasResident);
+        Assert.False(FileLock.IsHeldElsewhere(s.Store.LockPathOf("r")));
+        Assert.Equal("original\n", File.ReadAllText(a));
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task The_users_close_while_a_quits_question_is_up_asks_again_and_the_save_prompts_answers_still_hold()
+    {
+        // After "Don't Save", the user's close (the window's X) while the question is up starts the close over through the quit, which keeps its
+        // decision: Terminate then leaves no backup of the discarded text.
+        var ptys = new Ptys();
+        await using var s = await StartAsync("u", ptys, "\"files.hotExit\": \"off\"");
+        await using var endTerminals = new EndTerminals(s, ptys);
+        var a = s.WriteFile("a.txt", "original\n");
+        await s.MustAsync(Show(a));
+        await s.MustAsync(Edit(a, "discard me "));
+        await OpenTerminalAsync(s, ptys);
+
+        s.Dialogs.Answers.Enqueue("Don't Save");
+        _ = await s.RequestAsync(Quit, 60);
+        var first = await QuestionAsync(s);
+        UserCloses(s);
+        Assert.True(await DevHost.WaitFor(() => Question(s) is { } q && !ReferenceEquals(q, first), 20_000), "the window's close did not ask again");
+        Assert.Equal(1, OpenQuestions(s));
+        Assert.Single(s.Dialogs.Shown); // the first quit's Save prompt only: nothing is dirty since
+
+        Answer(Question(s)!, "Terminate");
+        await s.Run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Empty(s.Store.Backups.List("u"));
+        Assert.Equal(["a.txt"], SavedEditors(s, "u"));
+        Assert.All(s.Store.Load("u").Session!.Editors, e => Assert.Null(e.BackupId));
+        Assert.Equal("original\n", File.ReadAllText(a));
     }
 }
