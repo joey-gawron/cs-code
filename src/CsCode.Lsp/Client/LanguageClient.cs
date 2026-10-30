@@ -401,12 +401,6 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         _lifetime.Dispose();
     }
 
-    /// <summary>The restart cap the memory monitor applies to this session's process tree (the definition's, unless the slot changed it).</summary>
-    internal long? MemoryCap
-    {
-        get { lock (_memoryGate) return _memoryCapSet ? _memoryCap : Definition.RestartAboveBytes; }
-    }
-
     /// <summary>
     /// Changes the cap: before the session tracks its process it is simply the one used, afterwards the process is re-tracked with it (null: tracked,
     /// never restarted). The slot calls this when it stops enforcing a cap that keeps firing, and when the setting changes (T39).
