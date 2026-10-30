@@ -349,6 +349,8 @@ it builds everything first: the tree-sitter grammars (`tools/treesitter/fetch-gr
 must already be downloaded), the publish above, and the remote server bundles (`tools/publish-server.sh`: linux-x64 + portable). On a machine
 other than x86_64 (aarch64: linux-arm64) the publish would be unpinned, which publish-app.sh refuses unless told: install.sh refuses at once,
 before any work, unless it gets `--unpinned` (handed on to publish-app.sh; the summary and `.cscode-install/info` say so) or `--from DIR`.
+On x86_64, or with `--from`, `--unpinned` has no effect: install.sh warns and neither hands it on nor records it (linux-x64's publish is the
+pinned, checked one).
 
 | Path (XDG_DATA_HOME = `~/.local/share`) | What |
 |---|---|

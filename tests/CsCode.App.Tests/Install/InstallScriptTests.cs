@@ -281,11 +281,27 @@ public sealed class InstallScriptTests
         File.Delete(box.PublishArgs);
         Ok(await box.ScriptAsync(script, [.. quiet, "--from", box.FakePublish("arm64-publish")], arm64)); // an existing publish: nothing to pin
         Assert.False(File.Exists(box.PublishArgs));
+        var fromUnpinned = await box.ScriptAsync(script, [.. quiet, "--from", box.FakePublish("arm64-publish"), "--unpinned"], arm64);
+        Ok(fromUnpinned);
+        Assert.False(File.Exists(box.PublishArgs));
+        Assert.Contains("--unpinned has no effect", fromUnpinned.Error);
+        Assert.DoesNotContain("runtime packs: unpinned", fromUnpinned.Output);
 
-        var pinned = await box.ScriptAsync(script, [.. quiet, "--version", "2"], new Dictionary<string, string?> { ["PATH"] = box.MachinePath("x86_64") });
+        var x64 = new Dictionary<string, string?> { ["PATH"] = box.MachinePath("x86_64") };
+        string SourceLine() => File.ReadAllLines(Path.Combine(box.CurrentVersionDir, ".cscode-install", "info")).Single(l => l.StartsWith("source\t", StringComparison.Ordinal));
+        var pinned = await box.ScriptAsync(script, [.. quiet, "--version", "2"], x64);
         Ok(pinned);
         Assert.Equal(["--rid", "linux-x64"], File.ReadAllLines(box.PublishArgs));
         Assert.DoesNotContain("unpinned", pinned.Output);
+        Assert.Equal("source\ttools/publish-app.sh --rid linux-x64", SourceLine());
+
+        // linux-x64's packs are pinned whatever the option says: the publish is the pinned one, and neither the summary nor the record claims otherwise.
+        var pinnedAnyway = await box.ScriptAsync(script, [.. quiet, "--version", "3", "--unpinned"], x64);
+        Ok(pinnedAnyway);
+        Assert.Equal(["--rid", "linux-x64"], File.ReadAllLines(box.PublishArgs));
+        Assert.DoesNotContain("runtime packs: unpinned", pinnedAnyway.Output);
+        Assert.Contains("--unpinned has no effect", pinnedAnyway.Error);
+        Assert.Equal("source\ttools/publish-app.sh --rid linux-x64", SourceLine());
 
         var help = await box.ScriptAsync(script, ["--help"]);
         Ok(help);

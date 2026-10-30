@@ -8,7 +8,8 @@
 #
 #   --from DIR             install this publish (tools/publish-app.sh's output) instead of publishing now
 #   --unpinned             publish for a machine other than x86_64 (aarch64: linux-arm64) with the runtime packs restore picks, unchecked.
-#                          Only linux-x64's packs are pinned (tools/fetch-publish-packs.sh): without it, or --from, the install is refused
+#                          Only linux-x64's packs are pinned (tools/fetch-publish-packs.sh): without it, or --from, the install is refused.
+#                          On x86_64, or with --from, it has no effect (a warning says so)
 #   --version ID           the version's folder name (default: <app version>-g<commit>, plus -dirty.<time> for uncommitted changes; with
 #                          --from: <app version>-<content hash>)
 #   --netcoredbg PATH      netcoredbg to bundle: its executable or its folder (default: $CSCODE_NETCOREDBG, else .scratch/tools/netcoredbg)
@@ -78,9 +79,15 @@ case "$(uname -m)" in
     *) die "no CsCode build for $(uname -m)" ;;
 esac
 [ "$(uname -s)" = Linux ] || die "this installer is for Linux (Windows: tools/install.ps1; macOS: tools/macos/make-app-bundle.sh)"
-# tools/publish-app.sh refuses a runtime whose packs are not pinned unless told: say so now, not after the grammars were built.
+# tools/publish-app.sh refuses a runtime whose packs are not pinned unless told: say so now, not after the grammars were built. From here on
+# unpinned=1 means an unpinned publish happens (what publish-app.sh is told, the summary and .cscode-install/info all follow it).
 if [ -z "$from" ] && [ "$rid" != linux-x64 ] && [ "$unpinned" != 1 ]; then
     die "only linux-x64's runtime packs are pinned (tools/fetch-publish-packs.sh): pass --unpinned to publish $rid with the packs restore picks (unchecked), or install an existing publish with --from DIR"
+fi
+if [ "$unpinned" = 1 ]; then
+    if [ -n "$from" ]; then warn "--unpinned has no effect with --from (nothing is published)"; unpinned=0
+    elif [ "$rid" = linux-x64 ]; then warn "--unpinned has no effect on $rid: its runtime packs are pinned and checked"; unpinned=0
+    fi
 fi
 branding="$repo/assets/branding"
 template="$repo/packaging/linux/cscode.desktop.in"
@@ -203,7 +210,7 @@ say "Installing CsCode $version into $cscode_root/$version"
 # Modes from the umask (644/755), not the build tree's (often group-writable); symlinks are copied as links.
 cp -RP --preserve=timestamps -- "$src/." "$stage/"
 summary=()
-if [ -z "$from" ] && [ "$unpinned" = 1 ] && [ "$rid" != linux-x64 ]; then summary+=("runtime packs: unpinned (the ones restore picked for $rid, unchecked)"); fi
+if [ "$unpinned" = 1 ]; then summary+=("runtime packs: unpinned (the ones restore picked for $rid, unchecked)"); fi
 
 # The tree-sitter bundle (src/CsCode.Editor.TreeSitter: <app>/tree-sitter, checked by its bundle.json before anything is loaded).
 if [ "$treesitter" = 0 ]; then
