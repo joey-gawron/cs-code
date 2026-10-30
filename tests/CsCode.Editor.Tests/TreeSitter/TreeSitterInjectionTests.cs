@@ -189,6 +189,46 @@ public class TreeSitterInjectionTests
     }
 
     /// <summary>
+    /// editor-3 (review): the installed-grammar listing behind the name check was taken once per registry, so a grammar the user copied into
+    /// {UserDataDir}/tree-sitter/grammars after the first tree-sitter document was refused for its own language until restart (before the
+    /// check, the first lookup of the name probed for it). The listing is taken again when a search root changed: at once for a document's
+    /// own language, within a second for names from document text.
+    /// </summary>
+    [Fact]
+    public void A_grammar_copied_into_the_user_folder_while_running_is_found()
+    {
+        var bundle = RequireBundle();
+        RequireGrammar("toml");
+        using var dir = new TempDirectory("cscode-ts-user-");
+        var user = Path.Combine(dir.Path, "grammars");
+        Directory.CreateDirectory(user);
+        using var registry = new GrammarRegistry(new GrammarLocator([user], useNixStore: false), TreeSitterLanguages.RootScopeFor);
+        Assert.Null(registry.Get("toml", out var error)); // nothing there yet (the listing is taken now)
+        Assert.Contains("no compiled tree-sitter grammar 'toml'", error, StringComparison.Ordinal);
+        Assert.False(registry.IsKnown("toml"));
+
+        // the user installs a grammar: its library and its queries
+        File.Copy(Path.Combine(bundle.GrammarsRoot, "toml.so"), Path.Combine(user, "toml.so"));
+        var queries = Path.Combine(user, "queries", "toml");
+        Directory.CreateDirectory(queries);
+        foreach (var scm in Directory.GetFiles(Path.Combine(bundle.GrammarsRoot, "queries", "toml"), "*.scm")) File.Copy(scm, Path.Combine(queries, Path.GetFileName(scm)));
+
+        Assert.NotNull(registry.Get("toml", out error)); // a document of the language: at once
+        Assert.Null(error);
+
+        // names from document text (injections) see a new grammar too, within a second
+        var other = Path.Combine(dir.Path, "other");
+        Directory.CreateDirectory(other);
+        var locator = new GrammarLocator([other], useNixStore: false);
+        Assert.False(locator.IsKnown("toml"));
+        File.Copy(Path.Combine(bundle.GrammarsRoot, "toml.so"), Path.Combine(other, "toml.so"));
+        var clock = Stopwatch.StartNew();
+        while (!locator.IsKnown("toml") && clock.Elapsed < TimeSpan.FromSeconds(5)) Thread.Sleep(50);
+        Assert.True(locator.IsKnown("toml"), "an injection's name check never saw the grammar copied in");
+        Assert.False(locator.IsKnown("sql")); // and a miss after that is still only a listing lookup
+    }
+
+    /// <summary>
     /// The regions of one highlight share its clock. Once a pathological block spent it, every later region stopped at its first progress
     /// check and was remembered as slow under ITS language and size, so ordinary Python and C# blocks of that size stayed uncoloured for the
     /// document's life. A region is remembered only when its own parse had the time; the others are parsed by the next highlight.

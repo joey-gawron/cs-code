@@ -167,7 +167,9 @@ public sealed class GrammarRegistry : IDisposable
         }
         // Validated against the installed grammars BEFORE anything else: the name may come from document text (an injection), and an
         // unknown name must neither reach a path or the native loader nor be remembered (the cache stays bounded by what is installed).
-        if (!_locator.IsKnown(grammar))
+        // Names from document text are checked by IsKnown (below) before they get here; what reaches this unknown is a document's own
+        // language, so a grammar installed since the listing is looked for at once (the listing is taken again if a search root changed).
+        if (!_locator.IsKnown(grammar, throttled: false))
         {
             error = GrammarLocator.IsValidName(grammar) ? $"no compiled tree-sitter grammar '{grammar}' was found" : "not a grammar name";
             return null;

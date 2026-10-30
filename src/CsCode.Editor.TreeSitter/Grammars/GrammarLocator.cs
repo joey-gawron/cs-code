@@ -81,20 +81,60 @@ public sealed class GrammarLocator
     /// <summary>
     /// True when <paramref name="name"/> is a valid name (<see cref="IsValidName"/>) of a grammar this locator can find: one listed under a
     /// search root (a directory or a library named after it) or, when the Nix store is searched, a grammar package there. The listing is
-    /// taken once per locator (on first use, on the calling lane), so a name the document invents never makes it probe the file system or
-    /// grow a cache: what a document can ask for is bounded by what is installed.
+    /// taken on first use (on the calling lane), so a name the document invents never makes it probe the file system or grow a cache: what a
+    /// document can ask for is bounded by what is installed. It is taken again on a miss when a search root changed since (a grammar copied
+    /// into the user's folder while CsCode runs): at once for a document's own language (<paramref name="throttled"/> false, the registry's
+    /// lookups), at most once a second for names that come from document text (injections).
     /// </summary>
-    public bool IsKnown(string name)
+    public bool IsKnown(string name, bool throttled = true)
     {
         if (!IsValidName(name)) return false;
         lock (_gate)
         {
-            _known ??= ListKnown();
+            if (_known is null)
+            {
+                _knownStamps = RootStamps();
+                _rootsCheckedAt = Environment.TickCount64;
+                _known = ListKnown();
+                return _known.Contains(name);
+            }
+            if (_known.Contains(name)) return true;
+            var now = Environment.TickCount64;
+            if (throttled && now - _rootsCheckedAt < 1000) return false;
+            _rootsCheckedAt = now;
+            var stamps = RootStamps();
+            if (stamps.AsSpan().SequenceEqual(_knownStamps)) return false;
+            _knownStamps = stamps;
+            _known = ListKnown();
+            // what was looked for before the change is looked for again: a grammar or its queries may have arrived
+            foreach (var missing in _grammars.Where(kv => kv.Value is null).Select(kv => kv.Key).ToArray()) _grammars.Remove(missing);
+            _queryDirs.Clear();
             return _known.Contains(name);
         }
     }
 
     private HashSet<string>? _known;
+    private HashSet<string>? _nixKnown; // the Nix store's grammar packages (listed once: ≈ 100k entries)
+    private DateTime[] _knownStamps = [];
+    private long _rootsCheckedAt;
+
+    /// <summary>The modification time of each search root (adding or removing a grammar library or directory under it changes it).</summary>
+    private DateTime[] RootStamps()
+    {
+        var stamps = new DateTime[_roots.Length];
+        for (var i = 0; i < _roots.Length; i++)
+        {
+            try
+            {
+                stamps[i] = Directory.GetLastWriteTimeUtc(_roots[i]); // (a missing root: a fixed year-1601 value, so creating it is a change)
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                stamps[i] = default;
+            }
+        }
+        return stamps;
+    }
 
     private HashSet<string> ListKnown()
     {
@@ -123,24 +163,28 @@ public sealed class GrammarLocator
                 // an unreadable root contributes nothing
             }
         }
-        if (_useNixStore)
+        if (_useNixStore) known.UnionWith(_nixKnown ??= ListNixKnown());
+        return known;
+    }
+
+    private static HashSet<string> ListNixKnown()
+    {
+        var known = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var dir in NixStore.Entries())
         {
-            foreach (var dir in NixStore.Entries())
+            // <hash>-tree-sitter-<name>-<version>, the name possibly dashed ("c-sharp"); the version starts with a digit
+            var file = Path.GetFileName(dir);
+            var dash = file.IndexOf('-', StringComparison.Ordinal);
+            if (dash < 0 || file.EndsWith(".drv", StringComparison.Ordinal)) continue;
+            var rest = file.AsSpan(dash + 1);
+            if (!rest.StartsWith("tree-sitter-", StringComparison.Ordinal)) continue;
+            rest = rest["tree-sitter-".Length..];
+            for (var i = 1; i + 1 < rest.Length; i++)
             {
-                // <hash>-tree-sitter-<name>-<version>, the name possibly dashed ("c-sharp"); the version starts with a digit
-                var file = Path.GetFileName(dir);
-                var dash = file.IndexOf('-', StringComparison.Ordinal);
-                if (dash < 0 || file.EndsWith(".drv", StringComparison.Ordinal)) continue;
-                var rest = file.AsSpan(dash + 1);
-                if (!rest.StartsWith("tree-sitter-", StringComparison.Ordinal)) continue;
-                rest = rest["tree-sitter-".Length..];
-                for (var i = 1; i + 1 < rest.Length; i++)
-                {
-                    if (rest[i] != '-' || !char.IsAsciiDigit(rest[i + 1])) continue;
-                    var name = rest[..i].ToString().Replace('-', '_');
-                    if (IsValidName(name)) known.Add(name);
-                    break;
-                }
+                if (rest[i] != '-' || !char.IsAsciiDigit(rest[i + 1])) continue;
+                var name = rest[..i].ToString().Replace('-', '_');
+                if (IsValidName(name)) known.Add(name);
+                break;
             }
         }
         return known;
