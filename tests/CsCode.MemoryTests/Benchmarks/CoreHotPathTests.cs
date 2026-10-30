@@ -46,12 +46,14 @@ public sealed class CoreHotPathTests
     }
 
     [Fact]
-    public void A_pathological_glob_against_a_long_path_ends_within_its_timeout()
+    public void A_pathological_glob_against_a_long_path_is_decided_in_linear_time()
     {
-        var path = "/" + string.Join('/', Enumerable.Repeat("aaaa", 400)) + "/z";
+        // lsp-core-3: no timeout any more — the matcher is linear, so the answer is exact (it used to be "no match" after 250 ms of backtracking).
+        var path = "/" + string.Join('/', Enumerable.Repeat("aaaa", 400)) + "/zx";
         var sw = System.Diagnostics.Stopwatch.StartNew();
         Assert.False(Glob.IsMatch("**/**/**/**/**/**/**/**/x", path));
-        Assert.True(sw.ElapsedMilliseconds < 2000, $"{sw.ElapsedMilliseconds} ms");
+        Assert.True(Glob.IsMatch("**/**/**/**/**/**/**/**/x", path[..^2] + "x"));
+        Assert.True(sw.ElapsedMilliseconds < 500, $"{sw.ElapsedMilliseconds} ms");
     }
 
     [Fact]

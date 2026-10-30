@@ -55,6 +55,7 @@ public sealed class EditorConfigTests : IDisposable
     {
         var regex = new Regex(EditorConfigResolver.GlobToRegex(glob), RegexOptions.CultureInvariant);
         Assert.Equal(matches, regex.IsMatch(path));
+        Assert.Equal(matches, CsCode.Core.Text.GlobRegex.Compile(EditorConfigResolver.GlobToRegex(glob)).IsMatch(path)); // the matcher the resolver uses (T38)
     }
 
     // ---- parsing ----
@@ -87,7 +88,7 @@ public sealed class EditorConfigTests : IDisposable
     {
         var parsed = Parse("[*.cs]\nroot = true\n[[unterminated\nindent_size = 3\n");
         Assert.False(parsed.IsRoot);
-        Assert.All(parsed.Sections.Skip(1), s => Assert.DoesNotMatch(s.Pattern, "[unterminated"));
+        Assert.All(parsed.Sections.Skip(1), s => Assert.False(s.Pattern.IsMatch("[unterminated")));
     }
 
     // ---- resolution over a real directory tree ----

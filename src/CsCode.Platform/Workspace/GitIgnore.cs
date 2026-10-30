@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using CsCode.Core.Text;
 
 namespace CsCode.Platform.Workspace;
 
@@ -13,7 +14,7 @@ namespace CsCode.Platform.Workspace;
 /// </summary>
 internal sealed class GitIgnoreFile
 {
-    private readonly record struct Rule(bool Negate, bool DirOnly, string? Literal, Regex? Pattern);
+    private readonly record struct Rule(bool Negate, bool DirOnly, string? Literal, GlobRegex? Pattern);
 
     private readonly Rule[] _rules;
 
@@ -53,7 +54,8 @@ internal sealed class GitIgnoreFile
 
             try
             {
-                var rx = new Regex(ToRegex(line, anchored), RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+                // T38: the linear GlobRegex, not a NonBacktracking Regex (~150 KB of automaton cache per rule once matched; see Core Glob)
+                var rx = GlobRegex.Compile(ToRegex(line, anchored));
                 rules.Add(new Rule(negate, dirOnly, null, rx));
             }
             catch (ArgumentException) { /* a pattern we cannot express: ignore that one line, as git ignores malformed ones */ }

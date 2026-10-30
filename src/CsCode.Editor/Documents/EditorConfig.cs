@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using CsCode.Core.Platform;
+using CsCode.Core.Text;
 
 namespace CsCode.Editor.Documents;
 
@@ -39,7 +40,7 @@ public sealed class EditorConfigResolver(IFileSystem fs) : IEditorConfigSource
 {
     private const int MaxCachedFiles = 64;
 
-    internal sealed record Section(Regex Pattern, IReadOnlyDictionary<string, string> Values);
+    internal sealed record Section(GlobRegex Pattern, IReadOnlyDictionary<string, string> Values);
     internal sealed record Parsed(DateTimeOffset Modified, long Size, bool IsRoot, IReadOnlyList<Section> Sections);
 
     private readonly object _gate = new();
@@ -111,7 +112,7 @@ public sealed class EditorConfigResolver(IFileSystem fs) : IEditorConfigSource
     {
         var sections = new List<Section>();
         var isRoot = false;
-        Regex? currentPattern = null;
+        GlobRegex? currentPattern = null;
         Dictionary<string, string>? currentValues = null;
 
         void Close()
@@ -129,11 +130,11 @@ public sealed class EditorConfigResolver(IFileSystem fs) : IEditorConfigSource
                 currentValues = new Dictionary<string, string>(StringComparer.Ordinal);
                 try
                 {
-                    currentPattern = new Regex(GlobToRegex(line[1..^1]), RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+                    currentPattern = GlobRegex.Compile(GlobToRegex(line[1..^1])); // T38: linear, no ~150 KB NonBacktracking cache (see Core Glob)
                 }
                 catch (ArgumentException)
                 {
-                    currentPattern = new Regex("(?!)"); // an invalid glob matches nothing
+                    currentPattern = GlobRegex.Never; // an invalid glob matches nothing
                 }
                 continue;
             }

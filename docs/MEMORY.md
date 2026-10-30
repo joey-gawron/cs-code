@@ -256,6 +256,17 @@ The interpreter (non-compiled) backtracking engine was tried first: it was 10× 
 pathological glob ends within its 250 ms match timeout and does not match; cached globs retain < 20 KB each; the registry keeps its order) and the
 Core tests (35/35).
 
+**End pass (lsp-core-3, T38): `GlobRegex` replaces the compiled backtracking regex.** The backtracking engine is polynomial on globs such as
+`**/**/…/x` (40 of them against an 8-segment path: 250 ms per call, then a silent "no match" at the timeout — and a language server chooses its
+document selectors), and `[z-a]` threw `RegexParseException` out of `Glob.IsMatch`. `Core/Text/GlobRegex` compiles the same translated subset
+(literals, `.`, classes, `(?:…|…)`, `* + ?`, end anchors) to a Thompson NFA: bit-parallel simulation for up to 63 consuming states (every real
+glob), a list-based Pike VM above that, plus a required literal prefix/suffix check that rejects most paths before simulating. Linear in pattern ×
+path for every pattern, no allocation per match, a few hundred bytes per compiled pattern, never throws from `Glob.IsMatch` (a malformed pattern
+matches nothing). Measured roughly at load 28 (noisy): 50–250 ns for short globs, ~0.6–1 µs for `**/src/**/*.cs` on a matching path (compiled
+Regex: 60–470 ns at the same load) and 80 ns when the suffix rejects. Platform's `.gitignore` and `.editorconfig` readers and the Editor's
+`.editorconfig` reader use it too (they were the NonBacktracking regexes of item 2 below). `GlobRegexTests` (Core) checks it against .NET's
+Regex on 18,000 random patterns × texts, on both simulations.
+
 ## 7. Memory budget of the real app (MUST 7)
 
 `tools/profile/budget.sh` (Release host, headless Avalonia with Skia, `CSCODE_HOME` in a temp dir, built-in language servers off except the one
@@ -460,9 +471,9 @@ Measured here, owned elsewhere — for the end pass (nothing below was changed o
 1. **TextMateSharp keeps every grammar's raw JSON tree** after compiling it: ≈ 15–20 MB of the 66 MB the app's managed heap grows by with 20
    documents (`Parser.Raw`, `Dictionary<string, object>` entries, strings; section 7). Dropping the raw grammar after compilation (Editor module,
    W1's highlighting seam) is the largest single saving found.
-2. **NonBacktracking regexes keep ~150 KB of caches each** once used. Fixed for Core's `Glob` (section 6); the same pattern is in
-   `Platform/Workspace/GitIgnore.cs`, `Platform/EditorConfig/EditorConfigParser.cs`, `Editor/Documents/EditorConfig.cs` and
-   `Panels.Search/Engine/TextMatcher.cs` (the last one on purpose: user regexes need linear time; the glob translations do not).
+2. **NonBacktracking regexes keep ~150 KB of caches each** once used. Fixed for Core's `Glob` (section 6) and, in the end pass (T38), for
+   `Platform/Workspace/GitIgnore.cs`, `Platform/EditorConfig/EditorConfigParser.cs` and `Editor/Documents/EditorConfig.cs` (all on `GlobRegex`
+   now); `Panels.Search/Engine/TextMatcher.cs` keeps NonBacktracking on purpose (user regexes need the full syntax in linear time).
 3. **GC pauses in the app under load**: the hostile-matrix runs record 3–6 gen2 collections a second while typing with a load running, most of them
    `induced_noforce` (the GC's own response to `GC.AddMemoryPressure`, which SkiaSharp calls for its native surfaces) and `alloc_small`, with p99
    GC pauses of 45–155 ms — the main reason the headless budgets miss (with triage item 23's software rasteriser). Worth a desktop check

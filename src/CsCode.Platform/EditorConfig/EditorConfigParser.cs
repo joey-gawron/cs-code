@@ -2,13 +2,14 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using CsCode.Core.Platform;
+using CsCode.Core.Text;
 
 namespace CsCode.Platform.EditorConfig;
 
 /// <summary>One parsed <c>.editorconfig</c>: its <c>root</c> flag and its sections in file order.</summary>
 internal sealed class EditorConfigFile
 {
-    public sealed record Section(string Glob, Regex Pattern, IReadOnlyList<KeyValuePair<string, string>> Properties);
+    public sealed record Section(string Glob, GlobRegex Pattern, IReadOnlyList<KeyValuePair<string, string>> Properties);
 
     public bool IsRoot { get; init; }
     public IReadOnlyList<Section> Sections { get; init; } = [];
@@ -38,7 +39,7 @@ internal static class EditorConfigParser
         var root = false;
         var sections = new List<EditorConfigFile.Section>();
         string? glob = null;
-        Regex? pattern = null;
+        GlobRegex? pattern = null;
         List<KeyValuePair<string, string>>? props = null;
 
         void Flush()
@@ -83,7 +84,7 @@ internal static class EditorConfigParser
 
     // ---- glob -> regex -----------------------------------------------------------------------------------------------------------
 
-    private static Regex? TryCompile(string glob)
+    private static GlobRegex? TryCompile(string glob)
     {
         try
         {
@@ -94,7 +95,7 @@ internal static class EditorConfigParser
             if (!anchored) sb.Append("(?:.*/)?"); // a glob without a slash may match at any depth below the file's directory
             Convert(g, sb);
             sb.Append('$');
-            return new Regex(sb.ToString(), RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+            return GlobRegex.Compile(sb.ToString()); // T38: linear, and no ~150 KB NonBacktracking cache per section (see Core Glob)
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or RegexParseException)
         {

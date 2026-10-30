@@ -6,22 +6,17 @@ namespace CsCode.Core.Text;
 
 /// <summary>
 /// VS Code–style glob matching (<c>**</c>, <c>*</c>, <c>?</c>, <c>{a,b}</c>, <c>[abc]</c>) used by document selectors,
-/// files.exclude/watcherExclude and contribution patterns. Compiled regexes are cached in a BOUNDED cache.
+/// files.exclude/watcherExclude and contribution patterns. Compiled matchers are cached in a BOUNDED cache.
 /// </summary>
 public static class Glob
 {
     private const int MaxCached = 256;
-    private static readonly ConcurrentDictionary<string, Regex> Cache = new();
-
-    /// <summary>
-    /// Bound on one match. The translated globs have no nested quantifiers, so a match takes microseconds; the timeout only caps a pathological
-    /// pattern (many <c>**/</c> in a row against a long path), which then does not match.
-    /// </summary>
-    private static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(250);
+    private static readonly ConcurrentDictionary<string, GlobRegex> Cache = new();
 
     /// <summary>
     /// Matches a path against a pattern. Patterns without '/' match the file name only; patterns with '/' match the
-    /// full (forward-slash) path, anchored at any directory boundary unless they start with '/'.
+    /// full (forward-slash) path, anchored at any directory boundary unless they start with '/'. Never throws: patterns come from language
+    /// servers and workspace settings, and a malformed one (an unterminated or reversed class such as <c>[z-a]</c>) simply matches nothing.
     /// </summary>
     public static bool IsMatch(string pattern, string path)
     {
@@ -29,20 +24,20 @@ public static class Glob
         var p = pattern.Replace('\\', '/'); // the same instance when there is no backslash: no allocation on the hot path
         var normalized = path.Replace('\\', '/');
         var target = p.Contains('/') ? normalized.AsSpan() : normalized.AsSpan(normalized.LastIndexOf('/') + 1);
-        try { return GetRegex(p).IsMatch(target); }
-        catch (RegexMatchTimeoutException) { return false; }
+        return GetMatcher(p).IsMatch(target);
     }
 
-    private static Regex GetRegex(string pattern)
+    private static GlobRegex GetMatcher(string pattern)
     {
-        if (Cache.TryGetValue(pattern, out var rx)) return rx;
-        // Compiled backtracking, not NonBacktracking: a NonBacktracking regex keeps ~150 KB of symbolic-automaton caches once it has matched
-        // (measured in the app with 20 documents: the ~40 cached globs of the language-server selectors held 6 MB; docs/MEMORY.md). The
-        // interpreter would keep a few KB but was 10x slower on path globs; compiled is both small and 2-3x faster than NonBacktracking was.
-        rx = new Regex(ToRegex(pattern), RegexOptions.CultureInvariant | RegexOptions.Compiled, MatchTimeout);
+        if (Cache.TryGetValue(pattern, out var matcher)) return matcher;
+        // lsp-core-3 / T38: a linear-time NFA (GlobRegex), not a Regex. The compiled backtracking regex used here before was polynomial on patterns
+        // such as **/**/**/…/x (a server's document selector cost 250 ms per completion request until its timeout made it silently fail), and a
+        // NonBacktracking regex keeps ~150 KB of automaton caches per pattern once it has matched (the ~40 language-server selector globs held 6 MB;
+        // docs/MEMORY.md). A pattern that cannot be compiled ([z-a]) is cached as one that never matches instead of throwing into the caller.
+        matcher = GlobRegex.CompileOrNever(ToRegex(pattern));
         if (Cache.Count >= MaxCached) Cache.Clear(); // crude but bounded: globs are few and cheap to rebuild
-        Cache[pattern] = rx;
-        return rx;
+        Cache[pattern] = matcher;
+        return matcher;
     }
 
     internal static string ToRegex(string pattern)
