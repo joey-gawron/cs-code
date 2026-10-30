@@ -309,6 +309,79 @@ public class InteractionTests
         var before = sc.Rig.Debug.FakeBreakpoints.SourceBreakpoints.Count;
         await Press(window, Key.Delete);
         await PanelRig.Eventually(() => sc.Rig.Debug.FakeBreakpoints.SourceBreakpoints.Count == before - 1, what: "deleted");
+        await PanelRig.Eventually(() => KeyboardOnARow(window, view), what: "the keyboard on a row once the rows are replaced, not on " + Focused(window));
+        window.Close();
+    }
+
+    private static bool KeyboardOnARow(Window window, Control view) =>
+        window.FocusManager?.GetFocusedElement() is ListBoxItem row && view.IsVisualAncestorOf(row);
+
+    private static string Focused(Window window) => window.FocusManager?.GetFocusedElement() is { } e ? $"{e} ({(e as Control)?.DataContext})" : "nothing";
+
+    // Each stop replaces the rows of Locals (cleared, then filled as the variables arrive): the keyboard on a row stays on the rows, where the
+    // arrows, Enter and Ctrl+C work, instead of going nowhere.
+    [AvaloniaFact]
+    public async Task Locals_keeps_the_keyboard_on_its_rows_across_a_stop()
+    {
+        var (sc, view, window, tree) = await LocalsHost();
+        using var _ = sc;
+        await Click(window, Rows(view), tree.Rows.Single(r => r.Name == "item"));
+        Assert.True(KeyboardOnARow(window, view), Focused(window));
+
+        sc.Rig.StopAt(2);
+        await PanelRig.Eventually(() => tree.Rows.Count >= 8 && tree.Rows.Any(r => r.Name == "item"), what: "locals rows again");
+        await Settle();
+        await PanelRig.Eventually(() => KeyboardOnARow(window, view), what: "the keyboard on a row, not on " + Focused(window));
+        window.Close();
+    }
+
+    // Each stop, and Refresh, replaces the Modules rows (ReplaceAll).
+    [AvaloniaFact]
+    public async Task Modules_keeps_the_keyboard_on_its_rows_when_they_are_reloaded()
+    {
+        TestTheme.Apply(VsThemes.Dark);
+        using var sc = new Scenario();
+        sc.Session.CustomHandler = (command, _) => command == "modules"
+            ? System.Text.Json.JsonDocument.Parse("""{ "modules": [ { "id": 1, "name": "Sample.dll" }, { "id": 2, "name": "Other.dll" } ] }""").RootElement.Clone()
+            : null;
+        var view = sc.View("debug.modules");
+        var window = Host(view);
+        var model = (CsCode.Panels.Debug.Modules.ModulesViewModel)view.DataContext!;
+        await PanelRig.Eventually(() => model.Rows.Count == 2, what: "modules");
+        await Settle();
+        await Click(window, Rows(view), model.Rows[1]);
+        Assert.True(KeyboardOnARow(window, view), Focused(window));
+
+        await model.RefreshAsync();
+        await Settle();
+        await PanelRig.Eventually(() => KeyboardOnARow(window, view), what: "the keyboard on a row, not on " + Focused(window));
+        window.Close();
+    }
+
+    // Clear All empties the Debug Console's lines: the keyboard on a line stays in the window, and goes back to a line when one arrives.
+    [AvaloniaFact]
+    public async Task Debug_Console_keeps_the_keyboard_in_its_lines_when_they_are_cleared()
+    {
+        TestTheme.Apply(VsThemes.Dark);
+        using var sc = new Scenario();
+        var view = sc.View("debug.console");
+        var window = Host(view);
+        var model = (DebugConsoleViewModel)view.DataContext!;
+        await Settle();
+        var input = view.GetVisualDescendants().OfType<TextBox>().First(t => t.Name == "Input");
+        input.Focus();
+        window.KeyTextInput("item.Count");
+        await Press(window, Key.Enter);
+        await PanelRig.Eventually(() => model.Lines.Any(l => l.Kind == ConsoleLineKind.Result), what: "result line");
+        await Settle();
+        var lines = Rows(view, "Lines");
+        await Click(window, lines, model.Lines.First(l => l.Kind == ConsoleLineKind.Result));
+        Assert.True(KeyboardOnARow(window, view), Focused(window));
+
+        model.Clear();
+        await Settle();
+        await PanelRig.Eventually(() => window.FocusManager?.GetFocusedElement() is Control c && lines.IsVisualAncestorOf(c) || ReferenceEquals(window.FocusManager?.GetFocusedElement(), lines),
+            what: "the keyboard in the lines, not on " + Focused(window));
         window.Close();
     }
 

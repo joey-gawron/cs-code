@@ -22,15 +22,7 @@ public sealed partial class ThreadsView : UserControl, IDisposable, IToolWindowF
         rows.DoubleTapped += OnDoubleTapped;
         rows.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         rows.ContextRequested += OnContextRequested;
-        _focusKeeper = new ListFocusKeeper(rows);
-    }
-
-    private readonly ListFocusKeeper _focusKeeper;
-
-    protected override void OnDataContextChanged(EventArgs e)
-    {
-        base.OnDataContextChanged(e);
-        _focusKeeper.Attach(DataContext);
+        ToolWindowFocus.KeepOnRows(rows); // a thread started or ended replaces the rows in one Reset
     }
 
     private ThreadsViewModel? Model => DataContext as ThreadsViewModel;
@@ -65,7 +57,6 @@ public sealed partial class ThreadsView : UserControl, IDisposable, IToolWindowF
 
     public void Dispose()
     {
-        _focusKeeper.Dispose();
         (DataContext as IDisposable)?.Dispose();
     }
 }

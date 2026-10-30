@@ -40,15 +40,7 @@ public sealed partial class CallStackView : UserControl, IDisposable, IClipboard
         rows.AddHandler(KeyDownEvent, OnRowsKeyDown, RoutingStrategies.Tunnel); // before the list's own arrow/Enter/Space handling
         rows.DoubleTapped += OnRowsDoubleTapped;
         rows.ContextRequested += OnContextRequested;
-        _focusKeeper = new ListFocusKeeper(rows);
-    }
-
-    private readonly ListFocusKeeper _focusKeeper;
-
-    protected override void OnDataContextChanged(EventArgs e)
-    {
-        base.OnDataContextChanged(e);
-        _focusKeeper.Attach(DataContext);
+        ToolWindowFocus.KeepOnRows(rows); // other frames or threads (a stop, a thread expanded) replace the rows in one Reset
     }
 
     private CallStackViewModel? Model => DataContext as CallStackViewModel;
@@ -128,7 +120,6 @@ public sealed partial class CallStackView : UserControl, IDisposable, IClipboard
 
     public void Dispose()
     {
-        _focusKeeper.Dispose();
         (DataContext as IDisposable)?.Dispose();
     }
 }

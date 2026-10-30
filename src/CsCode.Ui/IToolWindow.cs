@@ -83,18 +83,33 @@ public static class ToolWindowFocus
     /// which is how Avalonia leaves it when another of the app's windows activates with nothing focused in it (a tool window floated) — taking it
     /// back then sent the keys typed in that window to this list (Down moved the Explorer's selection, Delete asked to delete the file).
     /// </summary>
-    public static void KeepOnRows(ListBox list) => list.LostFocus += (_, e) =>
+    public static void KeepOnRows(ListBox list)
     {
-        if (ReferenceEquals(e.Source, list)) list.Focusable = false; // see FocusList
-        if (e.NewFocusedElement is not (null or TopLevel)) return; // moved on: the user's or a command's doing
-        if (e.Source is Avalonia.Visual lost && lost.IsAttachedToVisualTree() && lost.IsEffectivelyVisible) return; // still on screen: another window activated
-        Dispatcher.UIThread.Post(() =>
+        list.LostFocus += (_, e) =>
         {
-            if (!list.IsAttachedToVisualTree() || !list.IsEffectivelyVisible || TopLevel.GetTopLevel(list)?.FocusManager is not { } focus || focus.GetFocusedElement() is not (null or TopLevel)) return;
-            list.UpdateLayout(); // the rows of the new items
-            if (!FocusRow(list)) FocusList(list);
-        }, DispatcherPriority.Loaded);
-    };
+            if (ReferenceEquals(e.Source, list)) list.Focusable = false; // see FocusList
+            if (e.NewFocusedElement is not (null or TopLevel)) return; // moved on: the user's or a command's doing
+            if (e.Source is Avalonia.Visual lost && lost.IsAttachedToVisualTree() && lost.IsEffectivelyVisible) return; // still on screen: another window activated
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!list.IsAttachedToVisualTree() || !list.IsEffectivelyVisible || TopLevel.GetTopLevel(list)?.FocusManager is not { } focus || focus.GetFocusedElement() is not (null or TopLevel)) return;
+                list.UpdateLayout(); // the rows of the new items
+                if (!FocusRow(list)) FocusList(list);
+            }, DispatcherPriority.Loaded);
+        };
+        // Rows replaced in two steps (cleared, then filled once they are read: Locals at each stop) come back to a list that holds the keyboard
+        // itself: it goes on to a row.
+        list.Items.CollectionChanged += (_, _) =>
+        {
+            if (!list.IsFocused || list.ItemCount == 0) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!list.IsFocused) return;
+                list.UpdateLayout();
+                FocusRow(list);
+            }, DispatcherPriority.Loaded);
+        };
+    }
 
     /// <summary>
     /// The list itself takes the keyboard when it has no row: focusable only until the keyboard leaves it (<see cref="KeepOnRows"/>), so a click
