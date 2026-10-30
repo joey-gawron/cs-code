@@ -221,7 +221,7 @@ public class RealAppContextMenuTests
             "Float", "New Horizontal Document Group", "New Vertical Document Group",
         ], Headers(menu));
         var entries = Entries(menu).ToDictionary(e => e.AccessibleName);
-        Assert.Equal(PlatformKeys.Label("Ctrl+F4", "⌘F4"), entries["Close"].Gesture);
+        Assert.Equal(PlatformKeys.Label("Ctrl+F4", "⌘W"), entries["Close"].Gesture); // a Mac closes on ⌘W; elsewhere Ctrl+W starts the group chords
         Assert.True(entries["Close To The Right"].IsEnabled); // second.txt is to its right
         Assert.False(entries["Reveal in Explorer"].IsEnabled); // the file is not in an open folder
 
