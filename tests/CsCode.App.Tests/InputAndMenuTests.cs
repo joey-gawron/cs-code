@@ -6,6 +6,7 @@ using CsCode.App.Services;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.Core.Debugging;
 using CsCode.Core.Platform;
+using CsCode.Platform;
 using CsCode.TestDoubles;
 using CsCode.Ui;
 using Xunit;
@@ -61,11 +62,11 @@ public class KeyboardPipelineTests
         public KeyboardPipeline Pipeline { get; }
         public List<(string Id, object?[] Args)> Executed { get; } = new();
 
-        public Rig()
+        public Rig(HostOs os = HostOs.Linux)
         {
             Bindings = new FakeKeybindingService(Keys);
             Status = new StatusBarService(Ui);
-            Pipeline = new KeyboardPipeline(Bindings, Commands, Ui, Status, Window, Time, context: Keys);
+            Pipeline = new KeyboardPipeline(Bindings, Commands, Ui, Status, Window, Time, context: Keys, os: os);
         }
 
         public void Cmd(string id) => Commands.Register(id, inv => { Executed.Add((id, inv.Args.ToArray())); return ValueTask.FromResult<object?>(null); });
@@ -125,6 +126,30 @@ public class KeyboardPipelineTests
         Assert.Contains("Ctrl+K, Z", r.StatusText("keys.dead"));
         r.Time.Advance(TimeSpan.FromSeconds(4));
         Assert.Null(r.StatusText("keys.dead"));
+    }
+
+    [Fact]
+    public void On_macOS_the_chord_messages_name_the_keys_as_the_Mac_does()
+    {
+        var r = new Rig(HostOs.MacOs);
+        r.Cmd("x.y");
+        r.Bindings.Add("x.y", "cmd+k cmd+c");
+        Assert.Equal(KeyDispatch.Handled, r.Press("cmd+k"));
+        Assert.Equal("(⌘K) was pressed. Waiting for second key of chord…", r.StatusText("keys.pending"));
+        Assert.Equal(KeyDispatch.Handled, r.Press("alt+z"));
+        Assert.Equal("The key combination (⌘K ⌥Z) is not a command.", r.StatusText("keys.dead"));
+    }
+
+    [Fact]
+    public void The_title_bars_search_box_names_the_Quick_Launch_key_of_the_platform()
+    {
+        var bindings = new FakeKeybindingService(new SimpleContextKeys());
+        bindings.Add(KnownCommands.CommandPalette, "f1");
+        Assert.Equal("Search (F1)", Views.TitleBarView.PlaceholderFor(bindings, mac: true));
+        bindings.Add(KnownCommands.CommandPalette, "ctrl+q");
+        Assert.Equal("Search (Ctrl+Q)", Views.TitleBarView.PlaceholderFor(bindings, mac: false));
+        bindings.Add(KnownCommands.CommandPalette, "cmd+shift+a"); // the Visual Studio keymap's "mac" key for Ctrl+Q
+        Assert.Equal("Search (⇧⌘A)", Views.TitleBarView.PlaceholderFor(bindings, mac: true));
     }
 
     [Fact]

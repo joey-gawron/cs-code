@@ -11,6 +11,10 @@ using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Editor.Tests.Support;
 using CsCode.Editor.View;
+using CsCode.Platform;
+using CsCode.Platform.Context;
+using CsCode.Platform.Io;
+using CsCode.Platform.Keybindings;
 using CsCode.TestDoubles;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -490,5 +494,44 @@ public class EditorClipboardViewTests
         other.Focus();
         ViewHost.Pump();
         window.Content = null;
+    }
+
+    [Fact]
+    public void Every_Ctrl_key_the_editor_contributes_has_a_Mac_key()
+    {
+        var missing = EditorMenus.Keybindings.Where(k => KeyStrokeParser.ParseChord(k.Key).Any(s => s.Ctrl) && k.Mac is null).Select(k => $"{k.Key} → {k.Command}");
+        Assert.Empty(missing);
+        Assert.Contains(EditorMenus.Keybindings, k => k.Command == EditorMenus.CycleClipboardRing && k.Mac == "cmd+shift+v");
+    }
+
+    public static TheoryData<string> PresetNames => [.. KeybindingService.Presets];
+
+    /// <summary>
+    /// On macOS the presets' Cmd keys and the editor's contributed Cmd keys share one keyboard: two commands on the same keys whose `when`
+    /// clauses can hold together make one unreachable, and a key that is also the first stroke of a chord makes the chord unreachable (or
+    /// the key, depending on precedence). Two `when` clauses exclude each other only when one negates a term of the other.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(PresetNames))]
+    public async Task On_macOS_no_preset_key_clashes_with_a_key_the_editor_contributes(string preset)
+    {
+        using var temp = new TempDirectory("cscode-kb-");
+        using var lane = new IoLane("test.kb", 1);
+        var registry = new ContributionRegistry();
+        using var _ = registry.Contribute(ContributionSources.Builtin, "", EditorMenus.Keybindings);
+        var paths = new AppPaths(k => k == "CSCODE_HOME" ? temp.Combine("home") : null, HostOs.MacOs, "/Users/test");
+        using var mac = new KeybindingService(new ContextKeyService(), paths, lane, registry, os: HostOs.MacOs);
+        await mac.SetPresetAsync(preset, TestContext.Current.CancellationToken);
+        Assert.Contains(mac.All, b => b.Command == EditorMenus.SurroundWithSnippet && b.Chord.SequenceEqual(KeyStrokeParser.ParseChord("cmd+k cmd+s")));
+
+        static string[] Terms(string? when) => when is null ? [] : [.. when.Split("&&", StringSplitOptions.TrimEntries)];
+        static bool Exclusive(string? a, string? b) => Terms(a).Any(t => Terms(b).Contains(t.StartsWith('!') ? t[1..] : "!" + t));
+        var all = mac.All.Where(b => !b.IsNegative).ToArray();
+        var clashes = (from x in all
+                       from y in all
+                       where x.Command != y.Command && x.Chord.Count <= y.Chord.Count && !(x.Chord.Count == y.Chord.Count && string.CompareOrdinal(x.Command, y.Command) > 0)
+                             && x.Chord.SequenceEqual(y.Chord.Take(x.Chord.Count)) && !Exclusive(x.When, y.When)
+                       select $"{string.Join(' ', x.Chord)} → {x.Command} [{x.When}] / {string.Join(' ', y.Chord)} → {y.Command} [{y.When}]").Distinct().ToArray();
+        Assert.True(clashes.Length == 0, $"{preset}: {string.Join("; ", clashes)}");
     }
 }

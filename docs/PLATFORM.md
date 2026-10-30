@@ -165,7 +165,8 @@ Built-in defaults (all in `BuiltInSettings.All`; every key in `SettingKeys` has 
 
 Sources, lowest → highest precedence: embedded preset → `KeybindingContribution`s in the contribution registry (built-in, then `ContributionSources.User`) → user `keybindings.json`.
 Later entries win; `{"command":"-foo"}` removes **earlier** entries of that command with the same key (a key-less negative removes all of them; when-clauses must match when both sides have one);
-`mac`/`linux`/`win` replace `key` on that platform (in presets, user file and contributions).
+`mac`/`linux`/`win` replace `key` on that platform (in presets, user file and contributions); an entry with no `key` binds only on the platforms it names
+(`{"mac": "cmd+,", ...}` binds nothing on Linux and, as a removal, removes nothing there).
 
 * **Chords**: a prefix yields `Pending`; the next stroke completes it, or an unknown stroke / Escape / timeout (default 5 s, checked lazily on the next stroke, no timer) resets it and returns `None`.
   The first matching binding by precedence whose `when` holds decides — a user single-stroke binding on `Ctrl+K` therefore disables the `Ctrl+K …` chords.
@@ -180,6 +181,9 @@ Later entries win; `{"command":"-foo"}` removes **earlier** entries of that comm
   Ctrl+Q and Ctrl+Shift+P palette (Quick Launch opens the palette), Ctrl+T and Ctrl+, go to all, Ctrl+P quick open, Ctrl+Shift+F find in files, Ctrl+F / Ctrl+H / Ctrl+G, Ctrl+S / Ctrl+Shift+S (save all),
   Ctrl+Tab MRU, Ctrl+W / Ctrl+F4 close, Ctrl+Alt+L explorer, Ctrl+Alt+O output, Ctrl+\ Ctrl+E error list, Ctrl+\` terminal, Alt+Up/Down move lines, Ctrl+D duplicate, Ctrl+L delete line, folding chords.
   VS Code preset: the VS Code defaults for the same feature set (e.g. Shift+Alt+F format — Ctrl+Shift+I on Linux, Ctrl+Shift+K delete line, Ctrl+Shift+E/U/M views, Ctrl+K S save all).
+  macOS: every Ctrl binding of both presets has a `mac` key (a test enforces it): Cmd in Ctrl's place (Visual Studio for Mac, VS Code for Mac), VS Code for Mac's key where Cmd+key
+  belongs to macOS (folding on Cmd+K chords, block comment Shift+Alt+A, pause F6, Find Next/Previous Cmd+G/Cmd+Shift+G, Quick Launch Cmd+Shift+A), and Control kept where VS Code for Mac
+  keeps it (Ctrl+Space, Ctrl+Tab, Ctrl+\`, Ctrl+G, Ctrl+-). Cmd+, opens Settings in both presets (Visual Studio's has no Settings key elsewhere).
   Command ids are `KnownCommands` or standard VS Code ids; **a key only works if the owning module registers the command** (some ids the presets use, e.g. `editor.action.addCommentLine`,
   `workbench.action.showAllSymbols`, `workbench.action.gotoLine`, are not in `KnownCommands`; the shell's keyboard pipeline should check `ICommandService.Has` before swallowing a key).
 

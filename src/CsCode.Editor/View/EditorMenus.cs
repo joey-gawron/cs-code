@@ -105,22 +105,23 @@ internal static class EditorMenus
 
     /// <summary>
     /// The clipboard keys (Visual Studio's and VS Code's defaults), contributed as built-in bindings so menus show them and keybindings.json can
-    /// rebind them. Within one command the last entry is the one menus display (highest precedence).
+    /// rebind them. Within one command the last entry is the one menus display (highest precedence). Every Ctrl key has a Mac one (Cmd as in the
+    /// keymap presets; Ctrl+Insert stays, the Insert key of a Mac's full keyboard).
     /// </summary>
     public static IReadOnlyList<KeybindingContribution> Keybindings { get; } =
     [
         new(Cut, "shift+delete", When: "editorTextFocus && !editorReadonly"),
         new(Cut, "ctrl+x", Mac: "cmd+x", When: "editorTextFocus && !editorReadonly"),
-        new(Copy, "ctrl+insert", When: "editorTextFocus"),
+        new(Copy, "ctrl+insert", Mac: "ctrl+insert", When: "editorTextFocus"),
         new(Copy, "ctrl+c", Mac: "cmd+c", When: "editorTextFocus"),
         new(Paste, "shift+insert", When: "editorTextFocus && !editorReadonly"),
         new(Paste, "ctrl+v", Mac: "cmd+v", When: "editorTextFocus && !editorReadonly"),
-        new(CycleClipboardRing, "ctrl+shift+v", When: "editorTextFocus && !editorReadonly"),
-        new(RunToCursor, "ctrl+f10", When: "editorTextFocus && " + BreakpointsAvailableKey),
+        new(CycleClipboardRing, "ctrl+shift+v", Mac: "cmd+shift+v", When: "editorTextFocus && !editorReadonly"),
+        new(RunToCursor, "ctrl+f10", Mac: "cmd+f10", When: "editorTextFocus && " + BreakpointsAvailableKey),
         new(QuickWatch, "shift+f9", When: "editorTextFocus && debugState == 'stopped'"),
-        new(ToggleBreakpointEnabled, "ctrl+f9", When: "editorTextFocus && " + BreakpointsAvailableKey),
-        new(SurroundWithSnippet, "ctrl+k ctrl+s", When: "editorTextFocus && !editorReadonly"),
-        new(InsertSnippet, "ctrl+k ctrl+x", When: "editorTextFocus && !editorReadonly"),
+        new(ToggleBreakpointEnabled, "ctrl+f9", Mac: "cmd+f9", When: "editorTextFocus && " + BreakpointsAvailableKey),
+        new(SurroundWithSnippet, "ctrl+k ctrl+s", Mac: "cmd+k cmd+s", When: "editorTextFocus && !editorReadonly"),
+        new(InsertSnippet, "ctrl+k ctrl+x", Mac: "cmd+k cmd+x", When: "editorTextFocus && !editorReadonly"),
     ];
 
     /// <summary>Contributes the items, submenus and keys; dispose to withdraw them.</summary>

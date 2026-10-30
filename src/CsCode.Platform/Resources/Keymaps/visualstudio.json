@@ -1,15 +1,19 @@
 // CsCode default keymap: "Visual Studio" (the default preset). Same format as the user's keybindings.json:
 //   { "key": "ctrl+k ctrl+c", "command": "...", "when": "...", "args": ..., "mac": "...", "linux": "...", "win": "..." }
-// "mac" / "linux" / "win" replace "key" on that platform. Command ids are VS Code-compatible (editor.action.*, workbench.action.*)
-// or the ids in KnownCommands. A key here only does something if the module that owns the command registers it.
+// "mac" / "linux" / "win" replace "key" on that platform; an entry with no "key" binds only on the platforms it names. Command ids are
+// VS Code-compatible (editor.action.*, workbench.action.*) or the ids in KnownCommands. A key here only does something if the module that owns
+// the command registers it.
+// macOS: every Ctrl binding has a "mac" key (a test checks this). Cmd takes Ctrl's place as in Visual Studio for Mac and VS Code; where Cmd+key
+// belongs to macOS (Cmd+H hide, Cmd+M minimize, Cmd+Q quit, Cmd+` next window, Cmd+Tab, Cmd+Space) or the Mac has no such key (Break), the
+// binding follows VS Code for Mac instead, and a few keep Control as VS Code for Mac does (Ctrl+Space, Ctrl+Tab, Ctrl+`, Ctrl+G, Ctrl+-).
 [
   // ---- debugging (Visual Studio: F5 / Ctrl+F5 / Shift+F5 / F9 / F10 / F11) ----
   { "key": "f5",                 "command": "workbench.action.debug.start",       "when": "!inDebugMode" },
   { "key": "f5",                 "command": "workbench.action.debug.continue",    "when": "inDebugMode" },
-  { "key": "ctrl+f5",            "command": "workbench.action.debug.run",         "when": "!inDebugMode" },
+  { "key": "ctrl+f5",            "command": "workbench.action.debug.run",         "when": "!inDebugMode", "mac": "ctrl+f5" },
   { "key": "shift+f5",           "command": "workbench.action.debug.stop",        "when": "inDebugMode" },
-  { "key": "ctrl+shift+f5",      "command": "workbench.action.debug.restart",     "when": "inDebugMode" },
-  { "key": "ctrl+alt+break",     "command": "workbench.action.debug.pause",       "when": "inDebugMode && debugState == 'running'" },
+  { "key": "ctrl+shift+f5",      "command": "workbench.action.debug.restart",     "when": "inDebugMode", "mac": "cmd+shift+f5" },
+  { "key": "ctrl+alt+break",     "command": "workbench.action.debug.pause",       "when": "inDebugMode && debugState == 'running'", "mac": "f6" },
   { "key": "f9",                 "command": "editor.debug.action.toggleBreakpoint", "when": "editorTextFocus" },
   { "key": "f10",                "command": "workbench.action.debug.stepOver",    "when": "inDebugMode" },
   { "key": "f11",                "command": "workbench.action.debug.stepInto",    "when": "inDebugMode" },
@@ -17,47 +21,47 @@
 
   // ---- navigation ----
   { "key": "f12",                "command": "editor.action.revealDefinition",     "when": "editorTextFocus" },
-  { "key": "ctrl+f12",           "command": "editor.action.goToImplementation",   "when": "editorTextFocus" },
+  { "key": "ctrl+f12",           "command": "editor.action.goToImplementation",   "when": "editorTextFocus", "mac": "cmd+f12" },
   { "key": "alt+f12",            "command": "editor.action.peekDefinition",       "when": "editorTextFocus" },
   { "key": "shift+f12",          "command": "editor.action.goToReferences",       "when": "editorTextFocus" },
-  { "key": "ctrl+g",             "command": "workbench.action.gotoLine" },
-  { "key": "ctrl+t",             "command": "workbench.action.showAllSymbols" },
-  { "key": "ctrl+,",             "command": "workbench.action.showAllSymbols" },
-  { "key": "ctrl+shift+o",       "command": "workbench.action.gotoSymbol",        "when": "editorTextFocus" },
-  { "key": "ctrl+-",             "command": "workbench.action.navigateBack" },
-  { "key": "ctrl+shift+-",       "command": "workbench.action.navigateForward" },
-  { "key": "ctrl+]",             "command": "editor.action.jumpToBracket",        "when": "editorTextFocus" },
+  { "key": "ctrl+g",             "command": "workbench.action.gotoLine",          "mac": "ctrl+g" }, // Cmd+G is Find Next on a Mac
+  { "key": "ctrl+t",             "command": "workbench.action.showAllSymbols",    "mac": "cmd+t" },
+  { "key": "ctrl+,",             "command": "workbench.action.showAllSymbols",    "mac": "cmd+shift+t" }, // Cmd+, is Settings on a Mac
+  { "key": "ctrl+shift+o",       "command": "workbench.action.gotoSymbol",        "when": "editorTextFocus", "mac": "cmd+shift+o" },
+  { "key": "ctrl+-",             "command": "workbench.action.navigateBack",      "mac": "ctrl+-" },
+  { "key": "ctrl+shift+-",       "command": "workbench.action.navigateForward",   "mac": "ctrl+shift+-" },
+  { "key": "ctrl+]",             "command": "editor.action.jumpToBracket",        "when": "editorTextFocus", "mac": "cmd+shift+\\" },
   { "key": "f8",                 "command": "editor.action.marker.nextInFiles",   "when": "editorFocus" },
   { "key": "shift+f8",           "command": "editor.action.marker.prevInFiles",   "when": "editorFocus" },
 
   // ---- editing ----
   { "key": "f2",                 "command": "editor.action.rename",               "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+r ctrl+r",      "command": "editor.action.rename",               "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+k ctrl+d",      "command": "editor.action.formatDocument",       "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+k ctrl+f",      "command": "editor.action.formatSelection",      "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+k ctrl+c",      "command": "editor.action.addCommentLine",       "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+k ctrl+u",      "command": "editor.action.removeCommentLine",    "when": "editorTextFocus && !editorReadonly" },
+  { "key": "ctrl+r ctrl+r",      "command": "editor.action.rename",               "when": "editorTextFocus && !editorReadonly", "mac": "cmd+r cmd+r" },
+  { "key": "ctrl+k ctrl+d",      "command": "editor.action.formatDocument",       "when": "editorTextFocus && !editorReadonly", "mac": "cmd+k cmd+d" },
+  { "key": "ctrl+k ctrl+f",      "command": "editor.action.formatSelection",      "when": "editorTextFocus && !editorReadonly", "mac": "cmd+k cmd+f" },
+  { "key": "ctrl+k ctrl+c",      "command": "editor.action.addCommentLine",       "when": "editorTextFocus && !editorReadonly", "mac": "cmd+k cmd+c" },
+  { "key": "ctrl+k ctrl+u",      "command": "editor.action.removeCommentLine",    "when": "editorTextFocus && !editorReadonly", "mac": "cmd+k cmd+u" },
   { "key": "ctrl+/",             "command": "editor.action.commentLine",          "when": "editorTextFocus && !editorReadonly", "mac": "cmd+/" },
-  { "key": "ctrl+shift+/",       "command": "editor.action.blockComment",         "when": "editorTextFocus && !editorReadonly" },
+  { "key": "ctrl+shift+/",       "command": "editor.action.blockComment",         "when": "editorTextFocus && !editorReadonly", "mac": "shift+alt+a" }, // Cmd+? is Help
   { "key": "ctrl+.",             "command": "editor.action.quickFix",             "when": "editorTextFocus && !editorReadonly", "mac": "cmd+." },
-  { "key": "ctrl+space",         "command": "editor.action.triggerSuggest",       "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+shift+space",   "command": "editor.action.triggerParameterHints", "when": "editorTextFocus" },
+  { "key": "ctrl+space",         "command": "editor.action.triggerSuggest",       "when": "editorTextFocus && !editorReadonly", "mac": "ctrl+space" }, // Cmd+Space is Spotlight
+  { "key": "ctrl+shift+space",   "command": "editor.action.triggerParameterHints", "when": "editorTextFocus", "mac": "cmd+shift+space" },
   { "key": "alt+up",             "command": "editor.action.moveLinesUpAction",    "when": "editorTextFocus && !editorReadonly" },
   { "key": "alt+down",           "command": "editor.action.moveLinesDownAction",  "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+d",             "command": "editor.action.copyLinesDownAction",  "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+l",             "command": "editor.action.deleteLines",          "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+shift+l",       "command": "editor.action.deleteLines",          "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+k ctrl+k",      "command": "editor.action.indentLines",          "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+k ctrl+l",      "command": "editor.action.outdentLines",         "when": "editorTextFocus && !editorReadonly" },
-  { "key": "ctrl+m ctrl+m",      "command": "editor.toggleFold",                  "when": "editorTextFocus" },
-  { "key": "ctrl+m ctrl+o",      "command": "editor.foldAll",                     "when": "editorTextFocus" },
-  { "key": "ctrl+m ctrl+l",      "command": "editor.unfoldAll",                   "when": "editorTextFocus" },
+  { "key": "ctrl+d",             "command": "editor.action.copyLinesDownAction",  "when": "editorTextFocus && !editorReadonly", "mac": "cmd+d" },
+  { "key": "ctrl+l",             "command": "editor.action.deleteLines",          "when": "editorTextFocus && !editorReadonly", "mac": "cmd+l" },
+  { "key": "ctrl+shift+l",       "command": "editor.action.deleteLines",          "when": "editorTextFocus && !editorReadonly", "mac": "cmd+shift+k" },
+  { "key": "ctrl+k ctrl+k",      "command": "editor.action.indentLines",          "when": "editorTextFocus && !editorReadonly", "mac": "cmd+]" },
+  { "key": "ctrl+k ctrl+l",      "command": "editor.action.outdentLines",         "when": "editorTextFocus && !editorReadonly", "mac": "cmd+[" },
+  { "key": "ctrl+m ctrl+m",      "command": "editor.toggleFold",                  "when": "editorTextFocus", "mac": "cmd+k cmd+l" }, // Cmd+M minimizes
+  { "key": "ctrl+m ctrl+o",      "command": "editor.foldAll",                     "when": "editorTextFocus", "mac": "cmd+k cmd+0" },
+  { "key": "ctrl+m ctrl+l",      "command": "editor.unfoldAll",                   "when": "editorTextFocus", "mac": "cmd+k cmd+j" },
 
   // ---- find ----
   { "key": "ctrl+f",             "command": "actions.find",                       "mac": "cmd+f" },
   { "key": "ctrl+h",             "command": "editor.action.startFindReplace",     "mac": "cmd+alt+f" },
-  { "key": "f3",                 "command": "editor.action.nextMatchFindAction",     "when": "editorFocus" },
-  { "key": "shift+f3",           "command": "editor.action.previousMatchFindAction", "when": "editorFocus" },
+  { "key": "f3",                 "command": "editor.action.nextMatchFindAction",     "when": "editorFocus", "mac": "cmd+g" },
+  { "key": "shift+f3",           "command": "editor.action.previousMatchFindAction", "when": "editorFocus", "mac": "cmd+shift+g" },
   { "key": "ctrl+shift+f",       "command": "workbench.action.findInFiles",       "mac": "cmd+shift+f" },
   { "key": "ctrl+shift+h",       "command": "workbench.action.replaceInFiles",    "mac": "cmd+shift+h" },
 
@@ -66,6 +70,7 @@
   { "key": "ctrl+shift+p",       "command": "workbench.action.showCommands",      "mac": "cmd+shift+p" },
   { "key": "f1",                 "command": "workbench.action.showCommands" },
   { "key": "ctrl+p",             "command": "workbench.action.quickOpen",         "mac": "cmd+p" },
+  {                              "command": "workbench.action.openSettings",      "mac": "cmd+," }, // Visual Studio has no Options key; a Mac app has Cmd+,
 
   // ---- files & editors ----
   { "key": "ctrl+n",             "command": "workbench.action.files.newUntitledFile", "mac": "cmd+n" },
@@ -74,15 +79,15 @@
   { "key": "ctrl+s",             "command": "workbench.action.files.save",        "mac": "cmd+s" },
   { "key": "ctrl+shift+s",       "command": "workbench.action.files.saveAll",     "mac": "cmd+alt+s" },
   { "key": "ctrl+w",             "command": "workbench.action.closeActiveEditor", "mac": "cmd+w" },
-  { "key": "ctrl+f4",            "command": "workbench.action.closeActiveEditor" },
-  { "key": "ctrl+tab",           "command": "workbench.action.quickOpenPreviousRecentlyUsedEditorInGroup" },
-  { "key": "ctrl+shift+tab",     "command": "workbench.action.quickOpenLeastRecentlyUsedEditorInGroup" },
-  { "key": "ctrl+pagedown",      "command": "workbench.action.nextEditor" },
-  { "key": "ctrl+pageup",        "command": "workbench.action.previousEditor" },
+  { "key": "ctrl+f4",            "command": "workbench.action.closeActiveEditor", "mac": "cmd+f4" },
+  { "key": "ctrl+tab",           "command": "workbench.action.quickOpenPreviousRecentlyUsedEditorInGroup", "mac": "ctrl+tab" }, // Cmd+Tab switches apps
+  { "key": "ctrl+shift+tab",     "command": "workbench.action.quickOpenLeastRecentlyUsedEditorInGroup", "mac": "ctrl+shift+tab" },
+  { "key": "ctrl+pagedown",      "command": "workbench.action.nextEditor",        "mac": "cmd+alt+right" },
+  { "key": "ctrl+pageup",        "command": "workbench.action.previousEditor",    "mac": "cmd+alt+left" },
 
   // ---- tool windows ----
-  { "key": "ctrl+alt+l",         "command": "workbench.view.explorer" },
-  { "key": "ctrl+alt+o",         "command": "workbench.action.output.toggleOutput" },
-  { "key": "ctrl+\\ ctrl+e",     "command": "workbench.actions.view.problems" },
-  { "key": "ctrl+`",             "command": "workbench.action.terminal.toggleTerminal" }
+  { "key": "ctrl+alt+l",         "command": "workbench.view.explorer",            "mac": "cmd+alt+l" },
+  { "key": "ctrl+alt+o",         "command": "workbench.action.output.toggleOutput", "mac": "cmd+alt+o" },
+  { "key": "ctrl+\\ ctrl+e",     "command": "workbench.actions.view.problems",    "mac": "cmd+\\ cmd+e" },
+  { "key": "ctrl+`",             "command": "workbench.action.terminal.toggleTerminal", "mac": "ctrl+`" } // Cmd+` cycles windows
 ]

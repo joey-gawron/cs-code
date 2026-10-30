@@ -43,7 +43,7 @@ public class ShellIntegrationTests
         host.Commands.Register("editor.action.addCommentLine", _ => { ran++; return ValueTask.FromResult<object?>(null); });
         Press(host, Key.K, RawInputModifiers.Control);
         await DevScene.SettleAsync(5);
-        Assert.Contains(Svc<Core.Platform.IStatusBarService>(host).Items, i => i.Id == "keys.pending" && i.Text.StartsWith("(Ctrl+K) was pressed"));
+        Assert.Contains(Svc<Core.Platform.IStatusBarService>(host).Items, i => i.Id == "keys.pending" && i.Text.StartsWith(OperatingSystem.IsMacOS() ? "(⌃K) was pressed" : "(Ctrl+K) was pressed"));
         Press(host, Key.C, RawInputModifiers.Control);
         await DevHost.WaitFor(() => ran == 1);
         Assert.Equal(1, ran);
