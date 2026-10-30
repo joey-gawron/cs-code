@@ -82,6 +82,80 @@ public class MacFileWatcherTests : IDisposable
         h.Dispose();
     }
 
+    [Fact]
+    public async Task A_recursively_watched_directory_replaced_in_an_instant_by_a_tree_sharing_its_names_reports_what_went_and_what_changed()
+    {
+        // Both trees hold a.json and sub/: a.json must not vanish from the report (created then deleted cancels out), and sub/old.json must be
+        // reported deleted even though sub/ is back.
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "the FSEvents root watch");
+        Directory.CreateDirectory(_f.P("cfg/sub"));
+        File.WriteAllText(_f.P("cfg/a.json"), "old");
+        File.WriteAllText(_f.P("cfg/sub/old.json"), "x");
+        using var outside = new TempDirectory("cscode-outside-");
+        outside.WriteFile("built/a.json", "new");
+        outside.WriteFile("built/sub/new.json", "x");
+        var events = new Collector();
+        var h = (FileWatchHandle)_f.Watcher.Watch(FileUri.FromDirectoryPath(_f.P("cfg")), true, [], events.Add);
+        await h.Ready;
+
+        Directory.Move(_f.P("cfg"), _f.P("cfg.bak"));
+        Directory.Move(outside.Combine("built"), _f.P("cfg"));
+        await events.WaitForKind("old.json", FileChangeKind.Deleted, Ct);
+        await events.WaitForKind("new.json", FileChangeKind.Created, Ct);
+        await events.WaitFor(s => s.LastOrDefault(c => Collector.Name(c) == "a.json") is { Kind: not FileChangeKind.Deleted }, "a.json changed", Ct);
+        h.Dispose();
+    }
+
+    [Fact]
+    public async Task A_root_replaced_in_an_instant_is_reported_lost_before_the_directory_back_at_its_path_is_announced()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "the kqueue root watch");
+        Directory.CreateDirectory(_f.P("cfg/sub"));
+        File.WriteAllText(_f.P("cfg/a.json"), "old");
+        File.WriteAllText(_f.P("cfg/sub/old.json"), "x");
+        using var outside = new TempDirectory("cscode-outside-");
+        outside.WriteFile("built/a.json", "new");
+        outside.WriteFile("built/sub/new.json", "x");
+        var root = _f.P("cfg");
+        var seen = new List<(RawKind Kind, string Path)>();
+        var replaced = 0;
+        using var watch = new MacRootWatch(root, (k, p, _) =>
+        {
+            lock (seen) seen.Add((k, Path.GetRelativePath(root, p)));
+            // The new tree arrives while the loss is being reported (the reporting reached FileWatcher's subscribers first, in the app).
+            if (Interlocked.Exchange(ref replaced, 1) == 0) Directory.Move(outside.Combine("built"), root);
+        });
+
+        Directory.Move(root, _f.P("cfg.bak"));
+        for (var i = 0; i < 500; i++)
+        {
+            lock (seen) if (seen.Contains((RawKind.Created, "sub")) && seen.Contains((RawKind.Created, "a.json"))) break;
+            await Task.Delay(20, Ct);
+        }
+        await Task.Delay(100, Ct);
+        lock (seen)
+        {
+            foreach (var name in new[] { "a.json", "sub" })
+            {
+                var deleted = seen.IndexOf((RawKind.Deleted, name));
+                Assert.True(deleted >= 0 && deleted < seen.IndexOf((RawKind.Created, name)), $"{name}: {string.Join(", ", seen)}");
+            }
+            Assert.Contains((RawKind.Deleted, Path.Join("sub", "old.json")), seen);
+        }
+    }
+
+    [Fact]
+    public void A_stream_that_cannot_be_made_releases_its_root_watch()
+    {
+        // The root watch is armed before the stream: a root replaced by a file meanwhile (the stream's constructor throws) must not leave it
+        // in the process-wide kqueue.
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "the kqueue root watch");
+        var file = _f.P("not-a-directory");
+        File.WriteAllText(file, "x");
+        Assert.ThrowsAny<ArgumentException>(() => new FswBackend(file, true, (_, _, _) => { }, _ => { }));
+        Assert.Equal(0, KqueueHub.WatchesOn(file));
+    }
+
     // ---- FSEvents ----------------------------------------------------------------------------------------------------------------
 
     [Fact]
@@ -115,6 +189,84 @@ public class MacFileWatcherTests : IDisposable
         reconciler.Handle(RawKind.Created, _f.P("old/before.txt"), null);
         reconciler.Handle(RawKind.Deleted, _f.P("old/before.txt"), null);
         Assert.Equal([(RawKind.Changed, "new.txt"), (RawKind.Deleted, "before.txt")], seen);
+    }
+
+    [Fact]
+    public void A_file_made_after_the_watch_is_created_once_then_changed_when_the_watch_knows_as_many_paths_as_it_may()
+    {
+        // The tree is full from the snapshot on (as in any workspace of more than MaxKnownPaths entries): a new file must still be remembered,
+        // else every later event of it is a creation again.
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "the macOS lstat layout");
+        for (var i = 0; i < 15; i++) File.WriteAllText(_f.P($"f{i:D2}"), "x");
+        var seen = new List<(RawKind Kind, string Name)>();
+        var reconciler = new FsEventsReconciler(_f.Temp.Path, (k, p, _) => seen.Add((k, Path.GetFileName(p))), _ => false, maxKnownPaths: 10);
+
+        File.WriteAllText(_f.P("new.txt"), "x");
+        reconciler.Handle(RawKind.Changed, _f.P("new.txt"), null);
+        reconciler.Handle(RawKind.Created, _f.P("new.txt"), null);
+        for (var i = 0; i < 3; i++)
+        {
+            File.AppendAllText(_f.P("new.txt"), "y");
+            reconciler.Handle(RawKind.Changed, _f.P("new.txt"), null);
+            reconciler.Handle(RawKind.Created, _f.P("new.txt"), null);
+        }
+        Assert.Equal([(RawKind.Created, "new.txt"), (RawKind.Changed, "new.txt"), (RawKind.Changed, "new.txt"), (RawKind.Changed, "new.txt")], seen);
+
+        // More new files than it may know: the ones known longest are forgotten to make room, yet none is created again, and a file made
+        // after them all still is.
+        seen.Clear();
+        for (var i = 0; i < 12; i++)
+        {
+            File.WriteAllText(_f.P($"n{i:D2}"), "x");
+            reconciler.Handle(RawKind.Created, _f.P($"n{i:D2}"), null);
+        }
+        for (var i = 0; i < 12; i++)
+        {
+            File.AppendAllText(_f.P($"n{i:D2}"), "y");
+            reconciler.Handle(RawKind.Changed, _f.P($"n{i:D2}"), null);
+            reconciler.Handle(RawKind.Created, _f.P($"n{i:D2}"), null);
+        }
+        File.WriteAllText(_f.P("last.txt"), "x");
+        reconciler.Handle(RawKind.Created, _f.P("last.txt"), null);
+        Assert.Equal(
+            Enumerable.Range(0, 12).Select(i => (RawKind.Created, $"n{i:D2}"))
+                .Concat(Enumerable.Range(0, 12).Select(i => (RawKind.Changed, $"n{i:D2}")))
+                .Append((RawKind.Created, "last.txt")),
+            seen);
+    }
+
+    [Fact]
+    public void A_case_only_rename_on_a_case_insensitive_volume_deletes_the_old_spelling()
+    {
+        // lstat of a.txt still finds the file once it is A.txt: reported changed, it stayed in the Explorer next to A.txt.
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "the macOS lstat layout");
+        File.WriteAllText(_f.P("a.txt"), "x");
+        Assert.SkipUnless(File.Exists(_f.P("A.TXT")), "the temporary directory's volume is case-sensitive");
+        var seen = new List<(RawKind Kind, string Name)>();
+        var reconciler = new FsEventsReconciler(_f.Temp.Path, (k, p, _) => seen.Add((k, Path.GetFileName(p))), _ => false);
+
+        File.Move(_f.P("a.txt"), _f.P("A.txt"));
+        reconciler.Handle(RawKind.Renamed, _f.P("A.txt"), _f.P("a.txt"));
+        reconciler.Handle(RawKind.Changed, _f.P("a.txt"), null); // the sticky flags of each path, raised on their own
+        reconciler.Handle(RawKind.Created, _f.P("A.txt"), null);
+        Assert.Equal([(RawKind.Deleted, "a.txt"), (RawKind.Created, "A.txt")], seen);
+    }
+
+    [Fact]
+    public async Task A_case_only_rename_is_reported_as_the_old_spelling_deleted_and_the_new_one_created()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "FSEvents");
+        File.WriteAllText(_f.P("a.txt"), "x");
+        Assert.SkipUnless(File.Exists(_f.P("A.TXT")), "the temporary directory's volume is case-sensitive");
+        var (events, h) = _f.Start();
+        await h.Ready;
+
+        File.Move(_f.P("a.txt"), _f.P("A.txt"));
+        await events.WaitFor(s => s.Any(c => c.Kind == FileChangeKind.Created && Collector.Name(c) == "A.txt")
+            && s.Any(c => c.Kind == FileChangeKind.Deleted && Collector.Name(c) == "a.txt"), "a.txt deleted and A.txt created", Ct);
+        await Task.Delay(150, Ct);
+        Assert.DoesNotContain(events.Snapshot(), c => Collector.Name(c) == "a.txt" && c.Kind != FileChangeKind.Deleted);
+        h.Dispose();
     }
 
     [Fact]

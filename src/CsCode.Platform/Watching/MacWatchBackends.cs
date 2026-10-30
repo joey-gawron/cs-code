@@ -48,6 +48,9 @@ internal static class MacWatchNative
     [DllImport("libc", EntryPoint = "lstat$INODE64", SetLastError = true)]
     private static extern int LStatInode64([MarshalAs(UnmanagedType.LPUTF8Str)] string path, [Out] byte[] buffer); // Intel macOS: the 64-bit-inode lstat
 
+    [DllImport("libc", EntryPoint = "getattrlist", SetLastError = true)]
+    private static extern int GetAttrList([MarshalAs(UnmanagedType.LPUTF8Str)] string path, [In] byte[] attrList, [Out] byte[] buffer, nuint size, uint options);
+
     [DllImport("libc", EntryPoint = "open", SetLastError = true)]
     private static extern int Open([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
 
@@ -79,6 +82,29 @@ internal static class MacWatchNative
         return new MacEntry((mode & 0xF000) == 0x4000, (mode & 0xF000) == 0xA000, BitConverter.ToUInt64(buffer, 8), Ns(buffer, 48), BitConverter.ToInt64(buffer, 96), Ns(buffer, 80));
     }
 
+    /// <summary>
+    /// The name of the entry at <paramref name="path"/> as its volume stores it (a symlink is not followed), or null when it cannot be read. On a
+    /// case-insensitive volume (APFS's default) <c>lstat</c> of <c>a.txt</c> finds <c>A.txt</c> too: this tells them apart.
+    /// </summary>
+    public static string? TryStoredName(string path)
+    {
+        // struct attrlist { u16 bitmapcount = ATTR_BIT_MAP_COUNT (5); u16 reserved; u32 commonattr = ATTR_CMN_NAME (1); u32 vol, dir, file, fork }.
+        // The buffer: u32 length, then an attrreference_t (i32 offset from itself, u32 length with the NUL) and the UTF-8 name.
+        var attrList = new byte[24];
+        attrList[0] = 5;
+        attrList[4] = 1;
+        var buffer = new byte[4 + 8 + 1024];
+        try
+        {
+            if (GetAttrList(path, attrList, buffer, (nuint)buffer.Length, 1 /* FSOPT_NOFOLLOW */) != 0) return null;
+        }
+        catch (Exception ex) when (ex is EntryPointNotFoundException or DllNotFoundException) { return null; }
+        var start = 4 + BitConverter.ToInt32(buffer, 4);
+        var length = (int)BitConverter.ToUInt32(buffer, 8) - 1;
+        if (start < 12 || length < 0 || start + length > buffer.Length) return null;
+        return System.Text.Encoding.UTF8.GetString(buffer, start, length);
+    }
+
     /// <summary>An event-only descriptor for <paramref name="path"/> (it never keeps a volume from being unmounted), or -1.</summary>
     public static int OpenEventOnly(string path)
     {
@@ -96,7 +122,7 @@ internal static class MacWatchNative
 internal static class KqueueHub
 {
     private static readonly object Gate = new();
-    private static readonly ConcurrentDictionary<long, Action<uint>> Handlers = new();
+    private static readonly ConcurrentDictionary<long, (string Path, Action<uint> Handler)> Handlers = new();
     private static int _kq = -1;
     private static long _nextId;
 
@@ -123,7 +149,7 @@ internal static class KqueueHub
         var fd = MacWatchNative.OpenEventOnly(path);
         if (fd < 0) return null;
         var id = Interlocked.Increment(ref _nextId);
-        Handlers[id] = handler;
+        Handlers[id] = (path, handler);
         var change = new[]
         {
             new MacWatchNative.KEvent
@@ -140,6 +166,9 @@ internal static class KqueueHub
         }
         return new Registration(id, fd);
     }
+
+    /// <summary>Live vnode watches on <paramref name="path"/> (tests).</summary>
+    internal static int WatchesOn(string path) => Handlers.Values.Count(h => h.Path == path);
 
     private static int Start()
     {
@@ -171,8 +200,8 @@ internal static class KqueueHub
             }
             for (var i = 0; i < n; i++)
             {
-                if (!Handlers.TryGetValue(events[i].UData, out var handler)) continue; // disposed meanwhile
-                try { handler(events[i].FFlags); }
+                if (!Handlers.TryGetValue(events[i].UData, out var watch)) continue; // disposed meanwhile
+                try { watch.Handler(events[i].FFlags); }
                 catch (Exception) { /* a handler only records and queues; never let one take the thread down */ }
             }
         }
@@ -403,12 +432,15 @@ internal sealed class KqueueDirectoryBackend : IWatchBackend
 
 /// <summary>
 /// macOS: turns what FileSystemWatcher raises for an FSEvents stream into true created/changed/deleted events. FSEvents flags are sticky (see
-/// the top of this file), so the kind FileSystemWatcher raised is only a hint: each path is looked at (<c>lstat</c>) and compared with what
-/// the watch knows — a snapshot of the tree's names taken when it was armed (bounded, built-in excludes pruned), plus every path reported
-/// since. A path that exists is <b>created</b> when the watch has not seen it and it was not there when the watch was armed (or, where the
-/// snapshot did not reach, was born after that), else <b>changed</b> (once per change: the other flags of the same event are dropped). A
-/// path that is gone is <b>deleted</b>, unless the snapshot shows it was not there and the watch never saw it: then it came and went unseen
-/// and is not reported. Where the snapshot does not reach, an unknown path that is gone is reported deleted (it may have existed).
+/// the top of this file), so the kind FileSystemWatcher raised is only a hint: each path is looked at (<c>lstat</c>, and the name as the volume
+/// stores it, so that a case-only rename on a case-insensitive volume is a deletion of the old spelling) and compared with what the watch knows
+/// — a snapshot of the tree's names taken when it was armed (bounded, built-in excludes pruned), plus every path reported since. A path that
+/// exists is <b>created</b> when the watch has not seen it and it was not there when the watch was armed (or, where the snapshot did not reach,
+/// was born after that), else <b>changed</b> (once per change: the other flags of the same event are dropped). A path that is gone is
+/// <b>deleted</b>, unless the snapshot shows it was not there and the watch never saw it: then it came and went unseen and is not reported.
+/// Where the snapshot does not reach, an unknown path that is gone is reported deleted (it may have existed). The tree holds at most
+/// <see cref="MaxKnownPaths"/> paths: past that, the paths known longest (the snapshot's first) are forgotten to make room for the ones
+/// reported now, and a forgotten path born after the watch was armed moves the "born after" line past its birth, so it is not created again.
 /// </summary>
 internal sealed class FsEventsReconciler
 {
@@ -419,23 +451,28 @@ internal sealed class FsEventsReconciler
         public Dictionary<string, Node>? Children;
         public bool Listed;          // every entry the directory had when the watch was armed is a child (and none was dropped since)
         public bool Placeholder;     // only here to hold children: the watch has not seen this path itself
+        public bool Detached;        // no longer in the tree (deleted, replaced, forgotten)
         public MacEntry? Seen;       // what lstat said when the watch last reported it (null: known from the snapshot only)
     }
 
     private readonly string _root;
     private readonly RawSink _sink;
     private readonly Func<string, bool> _isPruned;
+    private readonly int _maxKnownPaths;
     private readonly object _gate = new();
+    private readonly Queue<(Node Parent, string Name, Node Node)> _known = new(); // in the order they became known: the first to forget
     private long _armedAtNs;
+    private long _bornAfterNs;   // an unknown path born after this is new: when the watch was armed, or later once paths born since were forgotten
     private Node _tree = new();
     private int _count;
     private bool _trustListing = true;
 
-    public FsEventsReconciler(string root, RawSink sink, Func<string, bool> isPruned)
+    public FsEventsReconciler(string root, RawSink sink, Func<string, bool> isPruned, int maxKnownPaths = MaxKnownPaths)
     {
         _root = root.Length > 1 ? root.TrimEnd('/') : root;
         _sink = sink;
         _isPruned = isPruned;
+        _maxKnownPaths = maxKnownPaths;
         Snapshot();
     }
 
@@ -443,8 +480,8 @@ internal sealed class FsEventsReconciler
     private void Snapshot()
     {
         _armedAtNs = MacWatchNative.UnixNowNs(); // before the listing: whatever is born after this was not in it
-        _tree = new Node();
-        _count = 0;
+        _bornAfterNs = _armedAtNs;
+        Reset();
         _trustListing = true;
         var queue = new Queue<(string Path, Node Node)>();
         queue.Enqueue((_root, _tree));
@@ -460,18 +497,72 @@ internal sealed class FsEventsReconciler
                     static (ref FileSystemEntry e) => (e.FileName.ToString(), e.IsDirectory, (e.Attributes & FileAttributes.ReparsePoint) != 0), options);
                 foreach (var (name, isDir, link) in entries)
                 {
-                    if (_count >= MaxKnownPaths) { complete = false; break; }
-                    var child = new Node();
-                    node.Children[name] = child;
-                    _count++;
+                    if (_count >= _maxKnownPaths) { complete = false; break; }
+                    var child = Add(node, name, new Node());
                     var path = dir + "/" + name;
                     if (isDir && !link && !_isPruned(path)) queue.Enqueue((path, child));
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { complete = false; }
             node.Listed = complete;
-            if (_count >= MaxKnownPaths) break; // the directories still queued stay unlisted
+            if (_count >= _maxKnownPaths) break; // the directories still queued stay unlisted
         }
+    }
+
+    // Under _gate: forgets the whole tree.
+    private void Reset()
+    {
+        _tree = new Node();
+        _count = 0;
+        _known.Clear();
+    }
+
+    // Under _gate.
+    private Node Add(Node parent, string name, Node node)
+    {
+        (parent.Children ??= new(StringComparer.Ordinal))[name] = node;
+        _count++;
+        _known.Enqueue((parent, name, node));
+        return node;
+    }
+
+    // Under _gate: `node` and everything below it left the tree.
+    private void Detach(Node node)
+    {
+        node.Detached = true;
+        _count--;
+        if (node.Children is not null) foreach (var child in node.Children.Values) Detach(child);
+    }
+
+    // Under _gate: true when there is room for one more path, after forgetting the paths known longest if need be.
+    private bool HasRoom()
+    {
+        while (_count >= _maxKnownPaths)
+            if (!ForgetOne()) return false;
+        if (_known.Count > 2 * _maxKnownPaths)
+        {
+            // most are paths deleted since: drop them, so that a busy watch never grows the queue
+            var live = _known.Where(k => !k.Node.Detached).ToArray();
+            _known.Clear();
+            foreach (var k in live) _known.Enqueue(k);
+        }
+        return true;
+    }
+
+    // Under _gate: forgets the path known longest that holds nothing (a directory's children go first).
+    private bool ForgetOne()
+    {
+        while (_known.TryDequeue(out var k))
+        {
+            if (k.Node.Detached || k.Node.Children is { Count: > 0 }) continue;
+            k.Parent.Children!.Remove(k.Name);
+            k.Parent.Listed = false; // the listing no longer proves an unknown path there is new
+            Detach(k.Node);
+            // An event for it later finds an unknown path: born after this line it would be created again, so the line moves past its birth.
+            if (k.Node.Seen is { } seen && seen.BirthNs > _bornAfterNs) _bornAfterNs = seen.BirthNs;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>A raw event from FileSystemWatcher. Called on its thread (and on the kqueue thread for the root): serialised here.</summary>
@@ -497,20 +588,31 @@ internal sealed class FsEventsReconciler
     }
 
     /// <summary>
-    /// The root directory was deleted or moved away (FileSystemWatcher reports nothing then). Reports what the watch knew at its top as deleted,
-    /// so the owner looks at the path again. Until <see cref="RootFound"/>, nothing is known about the path.
+    /// The root directory was deleted or moved away (FileSystemWatcher reports nothing then). Reports everything the watch knew below it as
+    /// deleted — not only its top: a directory of the same name in a tree moved there at once is reported created again, which with this
+    /// deletion reads as replaced, and what the old one held must be reported gone by itself then — so the owner looks at the path again.
+    /// Until <see cref="RootFound"/>, nothing is known about the path.
     /// </summary>
     public void RootLost()
     {
         var changes = new List<(RawKind Kind, string Path)>();
         lock (_gate)
         {
-            if (_tree.Children is { } top)
-                foreach (var (name, node) in top) if (!node.Placeholder) changes.Add((RawKind.Deleted, _root + "/" + name));
-            _tree = new Node();
-            _count = 0;
+            Report(_tree, _root, changes);
+            Reset();
         }
         foreach (var (k, p) in changes) _sink(k, p, null);
+
+        static void Report(Node node, string path, List<(RawKind, string)> changes)
+        {
+            if (node.Children is null) return;
+            foreach (var (name, child) in node.Children)
+            {
+                var childPath = path + "/" + name;
+                if (!child.Placeholder) changes.Add((RawKind.Deleted, childPath));
+                Report(child, childPath, changes);
+            }
+        }
     }
 
     /// <summary>
@@ -540,12 +642,12 @@ internal sealed class FsEventsReconciler
         parent?.Children?.TryGetValue(name, out node);
         var parentListed = _trustListing && parent is { Listed: true, Placeholder: false };
 
-        if (MacWatchNative.TryLStat(path) is not { } now)
+        if (MacWatchNative.TryLStat(path) is not { } now || !IsStoredAs(path, name))
         {
             if (node is not null)
             {
                 parent!.Children!.Remove(name);
-                _count -= Count(node);
+                Detach(node);
                 changes.Add((RawKind.Deleted, path));
             }
             else if (!parentListed) changes.Add((RawKind.Deleted, path)); // it may have been there: say so (at worst once too often)
@@ -560,7 +662,7 @@ internal sealed class FsEventsReconciler
             if (replaced)
             {
                 // deleted and made again under the same name: what the watch knew below it is gone
-                _count -= Count(node) - 1;
+                if (node.Children is not null) foreach (var child in node.Children.Values) Detach(child);
                 node.Children = null;
                 node.Listed = false;
                 changes.Add((RawKind.Deleted, path));
@@ -570,15 +672,20 @@ internal sealed class FsEventsReconciler
             return;
         }
 
-        var created = parentListed || hint == RawKind.Renamed || now.BirthNs > _armedAtNs;
+        var created = parentListed || hint == RawKind.Renamed || now.BirthNs > _bornAfterNs;
         changes.Add((created ? RawKind.Created : RawKind.Changed, path));
         if (node is not null) { node.Placeholder = false; node.Seen = now; return; }
-        if (_count >= MaxKnownPaths) { if (parent is not null) parent.Listed = false; return; }
+        if (!HasRoom()) { if (parent is not null) parent.Listed = false; return; }
+        if (parent is { Detached: true }) parent = null; // forgotten to make room: find (or make) it again
         parent ??= Find(segments, segments.Length - 1, create: true);
         if (parent is null) return;
-        (parent.Children ??= new(StringComparer.Ordinal))[name] = new Node { Seen = now };
-        _count++;
+        Add(parent, name, new Node { Seen = now });
     }
+
+    // A case-only rename on a case-insensitive volume leaves lstat of the old spelling finding the renamed entry: that spelling is gone.
+    private static bool IsStoredAs(string path, string name) =>
+        MacWatchNative.TryStoredName(path) is not { } stored || stored == name
+        || string.Equals(stored.Normalize(), name.Normalize(), StringComparison.Ordinal); // (APFS keeps either Unicode form; both find it)
 
     private string[]? Segments(string path)
     {
@@ -595,36 +702,30 @@ internal sealed class FsEventsReconciler
             Node? next = null;
             if (node.Children?.TryGetValue(segments[i], out next) != true || next is null)
             {
-                if (!create || _count >= MaxKnownPaths) return null;
-                next = new Node { Placeholder = true };
-                (node.Children ??= new(StringComparer.Ordinal))[segments[i]] = next;
-                _count++;
+                if (!create || !HasRoom() || node.Detached) return null;
+                next = Add(node, segments[i], new Node { Placeholder = true });
             }
             node = next;
         }
         return node;
-    }
-
-    private static int Count(Node node)
-    {
-        var n = 1;
-        if (node.Children is not null) foreach (var child in node.Children.Values) n += Count(child);
-        return n;
     }
 }
 
 /// <summary>
 /// macOS, with <see cref="FswBackend"/>: the <see cref="FsEventsReconciler"/> of one stream, and a vnode watch on its root directory — FSEvents
 /// (through FileSystemWatcher) reports nothing when the root itself is deleted or moved away. The watch is armed again, and the content of the
-/// directory found there announced, on the next event once a directory is back at the path (the stream follows the path).
+/// directory found there announced, at once when one is already back at the path, else on the next event of the stream (which follows the
+/// path). The root's loss and the announcement after it are reported in that order, whole, whichever threads they come from: a name the old
+/// and the new directory share must reach the owner deleted then created (replaced), never created then deleted (nothing at all).
 /// </summary>
 internal sealed class MacRootWatch : IDisposable
 {
     private const uint Gone = MacWatchNative.NoteDelete | MacWatchNative.NoteRename | MacWatchNative.NoteRevoke;
 
     private readonly string _root;
-    private readonly object _gate = new();
+    private readonly object _gate = new(); // held while the loss or the announcement is reported
     private KqueueHub.Registration? _watch;
+    private int _generation;               // of _watch: a loss reported by a watch replaced since is stale
     private bool _lost;
     private bool _disposed;
 
@@ -632,38 +733,46 @@ internal sealed class MacRootWatch : IDisposable
     {
         _root = root;
         var pruned = new ExcludeMatcher(root, ExcludeMatcher.BuiltInWatcherExcludes);
-        Reconciler = new FsEventsReconciler(root, (kind, path, oldPath) => { EnsureWatched(); sink(kind, path, oldPath); }, pruned.IsExcluded);
+        Reconciler = new FsEventsReconciler(root, sink, pruned.IsExcluded);
         EnsureWatched();
     }
 
     public FsEventsReconciler Reconciler { get; }
 
+    /// <summary>A raw event of the stream: a root lost before it is watched (and announced) again first, then the event is classified.</summary>
+    public void Handle(RawKind kind, string path, string? oldPath)
+    {
+        EnsureWatched();
+        Reconciler.Handle(kind, path, oldPath);
+    }
+
     private void EnsureWatched()
     {
         if (Volatile.Read(ref _watch) is not null) return;
-        bool found;
         lock (_gate)
         {
             if (_disposed || _watch is not null) return;
-            _watch = KqueueHub.Watch(_root, Gone, _ => OnRootLost());
-            found = _watch is not null && _lost;
-            if (found) _lost = false;
+            var generation = ++_generation;
+            _watch = KqueueHub.Watch(_root, Gone, _ => OnRootLost(generation));
+            if (_watch is null || !_lost) return;
+            _lost = false;
+            Reconciler.RootFound();
         }
-        if (found) Reconciler.RootFound();
     }
 
-    public void OnRootLost()
+    /// <summary>The root is gone (its watch said so, or the stream asked for a rescan of a root that is not there).</summary>
+    public void OnRootLost() => OnRootLost(0);
+
+    private void OnRootLost(int generation)
     {
-        KqueueHub.Registration? lost;
         lock (_gate)
         {
-            if (_disposed) return;
-            lost = _watch;
+            if (_disposed || (generation != 0 && generation != _generation)) return;
+            _watch?.Dispose();
             _watch = null;
             _lost = true;
+            Reconciler.RootLost();
         }
-        lost?.Dispose();
-        Reconciler.RootLost();
         EnsureWatched(); // already back (replaced in an instant)?
     }
 

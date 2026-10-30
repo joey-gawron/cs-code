@@ -31,26 +31,28 @@ internal sealed class FswBackend : IWatchBackend
         if (OperatingSystem.IsMacOS())
         {
             _mac = new MacRootWatch(root, sink);
-            sink = _mac.Reconciler.Handle;
+            sink = _mac.Handle;
         }
-        _fsw = new FileSystemWatcher(root)
-        {
-            IncludeSubdirectories = recursive,
-            NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
-            InternalBufferSize = 64 * 1024,
-        };
-        _fsw.Created += (_, e) => sink(RawKind.Created, e.FullPath, null);
-        _fsw.Changed += (_, e) => sink(RawKind.Changed, e.FullPath, null);
-        _fsw.Deleted += (_, e) => sink(RawKind.Deleted, e.FullPath, null);
-        _fsw.Renamed += (_, e) => sink(RawKind.Renamed, e.FullPath, e.OldFullPath);
-        _fsw.Error += (_, e) => OnError(e.GetException(), root, sink, onFatal, _mac);
         try
         {
+            // (The root watch is armed already: whatever fails from here on, including the constructor on a root gone or replaced by a file
+            // meanwhile, must release it — its vnode watch would stay in the process-wide kqueue for good.)
+            _fsw = new FileSystemWatcher(root)
+            {
+                IncludeSubdirectories = recursive,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                InternalBufferSize = 64 * 1024,
+            };
+            _fsw.Created += (_, e) => sink(RawKind.Created, e.FullPath, null);
+            _fsw.Changed += (_, e) => sink(RawKind.Changed, e.FullPath, null);
+            _fsw.Deleted += (_, e) => sink(RawKind.Deleted, e.FullPath, null);
+            _fsw.Renamed += (_, e) => sink(RawKind.Renamed, e.FullPath, e.OldFullPath);
+            _fsw.Error += (_, e) => OnError(e.GetException(), root, sink, onFatal, _mac);
             _fsw.EnableRaisingEvents = true; // on Linux this walks the tree and adds inotify watches: may throw when the limit is hit
         }
         catch
         {
-            _fsw.Dispose();
+            _fsw?.Dispose();
             _mac?.Dispose();
             throw;
         }
