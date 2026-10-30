@@ -122,21 +122,24 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
     /// column 0, which scrolls off to the left with a long line and takes the indentation with it (the bulb landed over the gutter, or off the
     /// editor), so only indentation right of that edge is room; a neighbouring line counts only on a row of its own (a line hidden in a
     /// collapsed fold reports its fold header's row, whose text the bulb then covered) that lies wholly in the view (with the caret line the
-    /// first visible row the bulb went above it, clipped, and still counted as shown). Whether it shows is decided from where it ends up.
+    /// first visible row the bulb went above it, clipped, and still counted as shown). It shows whenever the caret line's row is wholly in
+    /// view, and is then kept inside the view (review of that fix, which decided from the bulb's own rectangle: a row is often shorter than
+    /// the bulb, at font 14 about 16.3 px against 18, so the bulb reaches below its row, and on the last row, where Down or a click on a
+    /// half-shown row leaves the caret line with its bottom on the view's, it reached below the view and hid).
     /// </summary>
     private void PositionBulb(int line)
     {
         var textView = _v.TextView;
-        if (!OwnRow(line))
-        {
-            _bulb.IsVisible = false; // the caret line is folded away itself: its row is another line's
-            return;
-        }
         var overlay = _v.Overlay;
         var view = new Rect(textView.TranslatePoint(default, overlay) ?? default, textView.Bounds.Size);
+        var (top, bottom) = OverlayPopup.AnchorFor(_v, new TextPosition(line, 0));
+        if (!OwnRow(line) || !InView(top.Y, bottom.Y))
+        {
+            _bulb.IsVisible = false; // the caret line is folded away itself (its row is another line's), scrolled out, or only partly in view
+            return;
+        }
         var glyph = _v.Feature<DebugFeature>()?.Margin;
         var floor = (glyph is null ? _v.TextArea.TranslatePoint(default, overlay) : glyph.TranslatePoint(new Point(glyph.Bounds.Width, 0), overlay))?.X ?? 0;
-        var (top, bottom) = OverlayPopup.AnchorFor(_v, new TextPosition(line, 0));
         var height = bottom.Y - top.Y;
         var x = view.Left + 1;
         var y = Middle(top.Y, bottom.Y);
@@ -146,9 +149,10 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
             else x = view.Left - _bulb.Width;
         }
         x = Math.Max(x, floor);
+        if (view.Height >= _bulb.Height) y = Math.Clamp(y, view.Top, view.Bottom - _bulb.Height); // its row is in view: so is all of the bulb
         Canvas.SetLeft(_bulb, x);
         Canvas.SetTop(_bulb, y);
-        _bulb.IsVisible = InView(y, y + _bulb.Height);
+        _bulb.IsVisible = true;
 
         double Middle(double t, double b) => t + Math.Max(0, (b - t - _bulb.Height) / 2);
 
@@ -171,15 +175,14 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
             return _v.Feature<FoldingFeature>() is not { } folding || !folding.TryGetClosedFold(l, out var start, out _) || start == l;
         }
 
-        // A line next to the caret line on screen (not one hidden in a fold, nor a wrapped line's far end) where the bulb fits, with its row and
-        // the bulb on it wholly in the view.
+        // A line next to the caret line on screen (not one hidden in a fold, nor a wrapped line's far end) where the bulb fits, with its row
+        // wholly in the view (the bulb on it is kept inside the view like the caret line's).
         double? Neighbour(int candidate)
         {
             if (candidate < 0 || candidate >= _v.Document.LineCount || !OwnRow(candidate) || !Fits(candidate)) return null;
             var (t, b) = OverlayPopup.AnchorFor(_v, new TextPosition(candidate, 0));
-            var at = Middle(t.Y, b.Y);
-            if (Math.Abs(Math.Abs(t.Y - top.Y) - height) > 1 || !InView(Math.Min(t.Y, at), Math.Max(b.Y, at + _bulb.Height))) return null;
-            return at;
+            if (Math.Abs(Math.Abs(t.Y - top.Y) - height) > 1 || !InView(t.Y, b.Y)) return null;
+            return Middle(t.Y, b.Y);
         }
     }
 

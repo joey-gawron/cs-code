@@ -241,6 +241,48 @@ public class DebugGateAndRevealTests
     }
 
     /// <summary>
+    /// Down past the last row scrolls the caret line's bottom onto the view's, and that row is shorter than the 18 px bulb, which reaches below
+    /// it: the bulb shows, kept inside the view, and hides only while the row is partly scrolled out (review: it was hidden on the last row,
+    /// where the keyboard always leaves the caret line, because it reached 1.7 px below the view).
+    /// </summary>
+    [AvaloniaFact]
+    public async Task The_lightbulb_shows_on_the_last_row_the_keyboard_scrolls_to()
+    {
+        var (_, host, view) = await BulbHost(string.Concat(Enumerable.Range(0, 200).Select(i => $"const v{i} = {i};\n")), "a.ts");
+        using var _ = host;
+        var bulb = view.Feature<CodeActionFeature>()!;
+        var window = (Window)TopLevel.GetTopLevel(view)!;
+        view.Controller.SetSelection(TextRange.At(0, 2));
+        PumpLayout();
+
+        for (var i = 0; i < 200 && view.TextView.ScrollOffset.Y <= 0; i++)
+        {
+            ViewTestHelpers.Key(window, Avalonia.Input.Key.Down);
+            PumpLayout();
+        }
+        var line = view.Controller.Caret.Line;
+        var (top, bottom) = OverlayPopup.AnchorFor(view, new TextPosition(line, 0));
+        Assert.InRange(bottom.Y, TextViewRect(view).Bottom - 0.5, TextViewRect(view).Bottom + 0.5);
+        Assert.True(bottom.Y - top.Y < 18, $"a row shorter than the bulb ({top.Y}..{bottom.Y}): {Layout(view)}");
+
+        await ViewHost.WaitFor(() => bulb.BulbVisible, $"lightbulb for line {line}, the last row");
+        PumpLayout();
+        var b = AssertBulbClearOfTheGutter(view, "last row");
+        Assert.True(b.Top >= TextViewRect(view).Top - 0.5 && b.Bottom <= TextViewRect(view).Bottom + 0.5, $"inside the view: {Layout(view)}");
+        AssertOnRow(view, b, line, "last row");
+
+        // half the row scrolled out below: hidden; back in: shown where it was
+        var offset = view.TextView.ScrollOffset;
+        ((Avalonia.Controls.Primitives.IScrollable)view.TextArea).Offset = offset - new Vector(0, (bottom.Y - top.Y) / 2);
+        PumpLayout();
+        Assert.False(bulb.BulbVisible, $"the caret line is partly out of view: {Layout(view)}");
+        ((Avalonia.Controls.Primitives.IScrollable)view.TextArea).Offset = offset;
+        PumpLayout();
+        Assert.True(bulb.BulbVisible, $"the caret line is back in view: {Layout(view)}");
+        Assert.Equal(b, bulb.BulbBounds);
+    }
+
+    /// <summary>
     /// Turning line numbers off or on, or a new font size, lays the text out again with the caret and the scroll offset unchanged: the bulb in
     /// the folding column follows the text and the caret line's row (review: it stayed where it was, over the text once the numbers went, over
     /// the numbers once they came back).
