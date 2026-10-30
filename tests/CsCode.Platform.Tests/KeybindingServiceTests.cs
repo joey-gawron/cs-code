@@ -474,6 +474,76 @@ public class KeybindingServiceTests : IDisposable
     }
 
     [Fact]
+    public void An_entry_with_only_another_platforms_key_binds_nothing_here_and_is_not_a_keyless_removal()
+    {
+        _f.WriteUser("""
+            [ { "mac": "cmd+9", "command": "x" },
+              { "mac": "cmd+s", "command": "-workbench.action.files.save" } ]
+            """);
+        using var linux = _f.Create(HostOs.Linux);
+        using var mac = _f.Create(HostOs.MacOs);
+        Assert.Empty(linux.LoadWarnings);
+        Assert.Empty(linux.GetBindingsFor("x"));
+        Assert.Equal("workbench.action.files.save", Cmd(Press(linux, "ctrl+s"))); // the mac-only removal leaves Linux's Ctrl+S alone
+        Assert.Equal("x", Cmd(Press(mac, "cmd+9")));
+        Assert.Equal(KeyResolution.None, Press(mac, "cmd+s").Kind);
+    }
+
+    public static TheoryData<string> PresetNames => [.. KeybindingService.Presets];
+
+    /// <summary>
+    /// A Ctrl binding without a "mac" key leaves a Mac user pressing Control where every other Mac app wants Cmd (audit ui-3 / files-11). Keys
+    /// that stay on Control on a Mac (Ctrl+Space, Ctrl+Tab, Ctrl+`, ...) say so with an explicit "mac" key.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(PresetNames))]
+    public void Every_ctrl_binding_in_the_presets_has_a_mac_key(string preset)
+    {
+        using var stream = typeof(KeybindingService).Assembly.GetManifestResourceStream($"CsCode.Platform.Keymaps.{preset}.json")!;
+        var root = (JsoncArray)JsoncParser.Parse(new StreamReader(stream).ReadToEnd())!;
+        var missing = new List<string>();
+        foreach (var o in root.Items.Cast<JsoncObject>())
+        {
+            string? Str(string name) => (o.Members.LastOrDefault(m => m.Name == name)?.Value as JsoncPrimitive)?.StringValue;
+            if (Str("key") is { } key && KeyStrokeParser.ParseChord(key).Any(s => s.Ctrl) && Str("mac") is null)
+                missing.Add($"{key} → {Str("command")}");
+        }
+        Assert.True(missing.Count == 0, $"{preset}: Ctrl bindings without a \"mac\" key: {string.Join("; ", missing)}");
+    }
+
+    [Theory]
+    [MemberData(nameof(PresetNames))]
+    public async Task On_macOS_the_presets_bind_Cmd_open_settings_on_Cmd_comma_and_leave_the_system_keys_alone(string preset)
+    {
+        using var mac = _f.Create(HostOs.MacOs);
+        await mac.SetPresetAsync(preset, Ct);
+        Assert.Equal(KnownCommands.OpenSettings, Cmd(Press(mac, "cmd+,")));
+        Assert.Equal("⌘,", mac.GetLabel(KnownCommands.OpenSettings));
+        Assert.Equal("⌘S", mac.GetLabel(KnownCommands.Save));
+        Assert.Equal("workbench.action.findInFiles", Cmd(Press(mac, "cmd+shift+f")));
+        _f.Context.Set("editorTextFocus", true);
+        Assert.Equal("editor.action.addCommentLine", Cmd(Press(mac, "cmd+k cmd+c")));
+
+        // Cmd+H hides the app, Cmd+M minimizes, Cmd+Q quits, Cmd+` cycles windows, Cmd+Tab switches apps, Cmd+Space is Spotlight, Cmd+? is Help.
+        string[] system = ["cmd+h", "cmd+m", "cmd+q", "cmd+`", "cmd+tab", "cmd+space", "cmd+shift+/"];
+        var reserved = system.Select(KeyStrokeParser.ParseStroke).ToHashSet();
+        Assert.DoesNotContain(mac.All, b => reserved.Contains(b.Chord[0]));
+        // Two commands on the same keys and the same `when` would make one of them unreachable.
+        var clashes = mac.All.GroupBy(b => (string.Join(' ', b.Chord), b.When)).Where(g => g.Select(b => b.Command).Distinct().Count() > 1).Select(g => g.Key).ToArray();
+        Assert.Empty(clashes);
+        Assert.DoesNotContain(_f.Log.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public void Visual_Studios_preset_binds_no_settings_key_on_Linux()
+    {
+        using var linux = _f.Create(HostOs.Linux);
+        Assert.Empty(linux.GetBindingsFor(KnownCommands.OpenSettings));
+        Assert.Equal("workbench.action.showAllSymbols", Cmd(Press(linux, "ctrl+,")));
+        Assert.DoesNotContain(_f.Log.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
     public void Args_in_a_binding_are_preserved()
     {
         _f.WriteUser("""[ { "key": "ctrl+alt+x", "command": "run.thing", "args": { "mode": "fast", "n": [1, 2] } } ]""");
