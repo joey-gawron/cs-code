@@ -33,7 +33,13 @@ public sealed class AppHostileMatrixTests(ITestOutputHelper output)
         var failures = new List<string>();
         for (var attempt = 1; attempt <= 3; attempt++)
         {
-            var (ok, report) = await RunOnceAsync(load, attempt);
+            // The app's GC mode (AppStartup.ConfigureRuntime sets SustainedLowLatency in Program.Main; a test process must set it itself).
+            var mode = System.Runtime.GCSettings.LatencyMode;
+            System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
+            (bool Ok, string Report) result;
+            try { result = await RunOnceAsync(load, attempt); }
+            finally { System.Runtime.GCSettings.LatencyMode = mode; }
+            var (ok, report) = result;
             Note(report);
             if (ok) return;
             failures.Add(report);

@@ -196,11 +196,41 @@ a minute each); `CSCODE_SOAK=1 CSCODE_SOAK_MINUTES=N` runs the long variants (`t
 * `IScenario` is the extension point: an integrator adds scenarios (LSP with a real server, longer debug sessions, remote reconnects) without
   touching the runner; `MemoryAppHost` + `AppScenarios.cs` are linked into the profiling host too.
 
-<!--FASTSOAK-->
+**Fast run results** (the full `dotnet test tests/CsCode.MemoryTests` of 2026-10-29 22:24–22:30, load 11–20, with the soak below running beside
+it): every Core-level soak passed (live heap 0 ± 0 B/iteration for documents, emitter, child tracking; within ± a few hundred bytes for the rest,
+threads and descriptors back to baseline). App level, live heap per iteration and outcome:
+
+| Scenario | Live heap / iteration (95 %) | Outcome |
+|---|---|---|
+| Themes (3 switches) | 118 ± 889 B | pass |
+| Tool windows (4 show/hide) | −199 ± 1,694 B | pass |
+| Terminal create/kill | 11 ± 3 KB | pass; no process left |
+| Language server start/stop (minimal server) | 7 ± 6 KB | pass; no process left |
+| js-debug session (stop at a breakpoint, Shift+F5) | 8 ± 24 KB | pass; no process left |
+| Remote session connect/open/disconnect | −3 ± 10 KB | pass; no process left |
+| Typing 100 keys + close unsaved | −6.1 ± 5.2 MB (noise: heavy GC churn) | pass |
+| Open/close 20 documents | 5.4 ± 3.5 MB (6 iterations) | **fail** in that run (1.8 ± 2.5 MB, pass, in an earlier one); warm-up raised to 4 — see the long soak, whose open/close iterations plateau |
+| Scroll a 20k-line file end to end | **4.8 ± 0.5 MB** | **fail — a real leak** (finding 8): a census of 16 passes grows linearly, 30.5 → 85.8 MB live |
 
 ### The real ≥ 10-minute soak
 
-<!--SOAK-->
+`tools/profile/soak.sh --minutes 12` (Release host, headless real app, 2026-10-29 22:24–22:36, load 11–20 with the fast suite running beside it):
+the **mixed scenario** — each iteration opens 5 of 20 files, types 50 characters into one, opens the 10k-line file, closes everything; every 5th
+iteration also switches three themes, shows/hides four tool windows and creates/kills a terminal. 10 warm-up iterations, then a sample every 10 s
+(full collection first, so the heap series is the live heap). Series: `.scratch/soak/app-mixed-20261029-223619.csv`.
+
+| | Whole run (680 iterations, 721 s, 68 samples) | First half | Second half | Last third |
+|---|---|---|---|---|
+| Live GC heap | 65.2 → 66.7 MB; **1,286 ± 891 B/iteration = 4.2 ± 2.8 MB/h** | 8.5 MB/h | **2.5 MB/h** | −4.1 MB/h (flat within noise) |
+| Resident set | 320 → 382 MB; 239 ± 23 MB/h; peaks by third 357 / 378 / 384 MB | 358 MB/h (320 → 378) | 87 MB/h (373 → 382) | 110 MB/h |
+| Threads / fds / children | 32 → 34 / 219 → 219 / 1 → 1 (the sandboxed bash of the last terminal iteration) | | | |
+| Gen2 collections per iteration | 3.61 → 3.54 (not growing) | | | |
+
+Reading: the **live heap plateaus** at ~66–67 MB (its slope falls from 8.5 MB/h to flat within the run); the **resident set is still settling**
+— it climbed 58 MB in the first 6 minutes and 9 MB in the last 6 (GC-committed and native memory grow towards the working size of the mixed
+workload, not the live heap). The ≤ 1 MB/h target after warm-up is **not yet demonstrated**: the whole-run interval (4.2 ± 2.8 MB/h) includes the
+settling phase; a ≥ 1 h soak with a longer warm-up (`soak.sh --minutes 60`) is needed to state the plateau of the resident set. The scroll
+scenario was left out of the mixed soak on purpose: it leaks (finding 8).
 
 ## 6. Benchmarks of Core's hot paths (MUST 6)
 
@@ -417,8 +447,13 @@ Measured here, owned elsewhere — for the end pass (nothing below was changed o
 7. **Language servers dominate the footprint**: typescript-language-server on a 2-file project ≈ 550 MB in 4 node processes; a remote session
    starts its own TypeScript server on the remote host for a remote `.js` file (≈ 700 MB more on this loopback "remote"). Caps exist per server
    (`LanguageServerDefinition.RestartAboveBytes` → `TrackChildProcess` over-budget callbacks); none of the built-ins sets one.
-8. The scroll soak's live heap grew ~4 MB per iteration over its first iterations (a 20k-line file scrolled end to end: the TextMate token state of
-   the whole file filling in, which the tokenizer keeps and trims under pressure); the fast test now warms up 4 iterations — see the long soak.
+8. **Scrolling leaks** (Editor module / AvaloniaEdit 12.0.0): each end-to-end scroll of a 20k-line file (80 `ScrollToLine` steps with frames)
+   keeps ~3.7 MB more live heap, linearly, with no plateau over 16 passes (`cscode-profile census --scenario scroll`: 30.5 → 85.8 MB live,
+   249 → 321 MB resident). Two heap dumps 8 passes apart (`dumpheap -stat`, `gcroot`): +7,001 `AvaloniaEdit.Folding.FoldingMarginMarker` (3.6 MB)
+   still children of the open editor's `FoldingMargin` (root: `TextArea.LeftMargins` → `FoldingMargin` → marker), and with them +2,749 visual
+   lines' drawing visuals, text lines and glyph runs (`VisualLineDrawingVisual`, `TextLineImpl`, `GlyphRun` ×11k, `SKTextBlob` ×9.6k). The
+   folding margin adds markers on each visual-line change without removing the old ones. The most important finding of this work: a user who
+   scrolls a big file for an hour grows by hundreds of megabytes until the tab is closed.
 9. The language-feature registry soak shows ~24 B/iteration of live-heap growth in 400 fast iterations (inside the 64 B threshold, cause not
    identified; likely run-time warm-up) — the long variant (`CSCODE_SOAK=1`) decides.
 

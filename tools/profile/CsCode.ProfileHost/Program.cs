@@ -54,7 +54,8 @@ public static class Program
             case "soak": return Headless(() => SoakAsync(options.Double("minutes", 12)));
             case "trim-effect": return Headless(TrimEffectAsync);
             case "hold": return Headless(() => HoldAsync(options.Int("documents", 20), options.Int("seconds", 120)));
-            case "census": return Headless(() => CensusAsync(options.String("scenario", "scroll"), options.Int("iterations", 20)));
+            case "census": return Headless(() => CensusAsync(options.String("scenario", "scroll"), options.Int("iterations", 20),
+                options.String("pause-at", "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToHashSet(), options.Int("pause-seconds", 60)));
             case "bench":
                 // In-process (the tool's assembly name is not its project's, which BenchmarkDotNet's per-benchmark project generation needs).
                 BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args.Skip(1).ToArray(),
@@ -234,7 +235,7 @@ public static class Program
     // ------------------------------------------------------------------ census (does a scenario's live heap plateau?)
 
     /// <summary>Runs one app scenario N times and prints the live heap (full GC) after each iteration: growth that stops is a cache, growth that does not is a leak.</summary>
-    private static async Task<int> CensusAsync(string name, int iterations)
+    private static async Task<int> CensusAsync(string name, int iterations, HashSet<int> pauseAt, int pauseSeconds)
     {
         await using var host = await MemoryAppHost.StartAsync();
         IScenario scenario = name switch
@@ -250,6 +251,10 @@ public static class Program
             await scenario.RunIterationAsync(i, default);
             FullGc.Collect();
             Console.WriteLine(FormattableString.Invariant($"CENSUS {name} {i} live {GC.GetTotalMemory(false) / 1024.0 / 1024.0:F1} MB rss {RunMetrics.Mb(host.Get<MemoryMonitor>().SampleNow().WorkingSetBytes)} MB"));
+            if (!pauseAt.Contains(i)) continue;
+            // a moment for `dotnet-dump collect -p PID` from another shell (tools/profile: compare two dumps' dumpheap -stat)
+            Console.WriteLine($"PAUSE {i} {Environment.ProcessId}");
+            for (var w = 0; w < pauseSeconds * 10; w++) await MemoryAppHost.SettleAsync(10, frames: false);
         }
         await scenario.DisposeAsync();
         return 0;
