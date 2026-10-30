@@ -151,6 +151,11 @@ the playback is a step of its own.
   operation of a group in memory); a playback that changes one document more often becomes one undo step for its first 100,000 changes and
   undoes step by step after that. Undo inside the playback reaches back at most the editor's undo limit (`cscode.editor.undoLimit` steps).
 * Edits a command makes in documents other than the active editor's (a rename across files, a workspace edit) are their own undo steps there.
+* **Cost** (measured headless on this machine, load average 3-4): holding the group adds nothing measurable per step (a typing macro's step:
+  47 µs held, 48 µs not held; the 10,000-run budget test: slices p99 3.56 ms, heartbeat p99 13 ms, max 20 ms, as before; an A/B at load 5-18
+  could not tell the two apart either). The one Undo of a long playback, though, is one AvaloniaEdit group undone in one dispatcher callback:
+  about 25 ms for 1,000 changes, 130-145 ms for 10,000-40,000, 265 ms for 100,000 (Redo about the same). Undo inside a playback undoes one
+  step and is cheap.
 
 ## Vim interplay (decision)
 
