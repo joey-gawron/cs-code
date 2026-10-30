@@ -15,7 +15,12 @@ namespace CsCode.Editor.Tests;
 /// Opening big files (time, memory, UI responsiveness during the open), tokeniser memory per megabyte of source, and the leak guarantees:
 /// 500 documents with views opened and closed, 500 view recreations from saved view state, a view retaining nothing after disposal.
 /// The measured numbers are printed (and recorded in docs/EDITOR.md).
+///
+/// Run ALONE (T58): the memory budgets are measured on the whole process's heap (<c>GC.GetTotalMemory</c>) and the open's UI latency on the
+/// one headless UI thread every view test shares, so a test class running in parallel lands in both numbers (the 1 MB and 10 MB opens failed
+/// in the full Editor run only, in ~0.2–0.4 s, and passed alone every time). The collection runs after the parallel ones, by itself.
 /// </summary>
+[Collection(MemoryMeasurementCollection.Name)]
 public class PerfMemoryTests(ITestOutputHelper output)
 {
     private const string CSharpBlock = """
