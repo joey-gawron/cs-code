@@ -214,16 +214,26 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
 
     // ---- undo (UI thread) ----
 
-    public bool CanUndo => _text.UndoStack.CanUndo;
-    public bool CanRedo => _text.UndoStack.CanRedo;
+    /// <summary>While an undo group is held open (<see cref="OpenUndoGroup"/>): whether a change made inside it can be undone.</summary>
+    public bool CanUndo => _held is { } h ? h.Undo.Count > 0 : _text.UndoStack.CanUndo;
+    public bool CanRedo => _held is { } h ? h.Redo.Count > 0 : _text.UndoStack.CanRedo;
 
     /// <summary>
     /// Undoes one group. The whole group is ONE change event: UndoStack registers the document as "affected" for the entire
     /// playback (one BeginUpdate/EndUpdate), and it must NOT be wrapped in our own update (it throws if an undo group is open).
+    /// While an undo group is held open (<see cref="OpenUndoGroup"/>) it undoes the last step made inside that group instead (never throws).
     /// </summary>
-    public void Undo() => _text.UndoStack.Undo();
+    public void Undo()
+    {
+        if (_held is not null) UndoRedoHeld(redo: false);
+        else _text.UndoStack.Undo();
+    }
 
-    public void Redo() => _text.UndoStack.Redo();
+    public void Redo()
+    {
+        if (_held is not null) UndoRedoHeld(redo: true);
+        else _text.UndoStack.Redo();
+    }
 
     /// <summary>
     /// Opens an undo group (UI thread): every change until the matching <see cref="EndUndoGroup"/> becomes ONE undo step; with
@@ -232,11 +242,18 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
     /// </summary>
     public void BeginUndoGroup(bool continueLast)
     {
+        HeldGroupStarting(continueLast);
         if (continueLast) _text.UndoStack.StartContinuedUndoGroup();
         else _text.UndoStack.StartUndoGroup();
+        _explicitGroups++;
     }
 
-    public void EndUndoGroup() => _text.UndoStack.EndUndoGroup();
+    public void EndUndoGroup()
+    {
+        _text.UndoStack.EndUndoGroup();
+        if (_explicitGroups > 0) _explicitGroups--;
+        HeldGroupEnded();
+    }
 
     /// <summary>
     /// Records a marker in the open undo group (UI thread; a group must be open): <paramref name="onUndoRedo"/> runs when the group is undone
@@ -275,7 +292,11 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
 
     // ---- change bookkeeping (UI thread, inside TextDocument events) ----
 
-    private void OnUpdateStarted(object? sender, EventArgs e) => _pending.Clear();
+    private void OnUpdateStarted(object? sender, EventArgs e)
+    {
+        _pending.Clear();
+        HeldUpdateStarted();
+    }
 
     private void OnChanging(object? sender, DocumentChangeEventArgs e)
     {
@@ -288,11 +309,13 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
             e.RemovalLength,
             e.InsertedText.Text);
         _pending.Add(change);
+        HeldChanging(e);
         _beforeChange.Fire(change);
     }
 
     private void OnUpdateFinished(object? sender, EventArgs e)
     {
+        HeldUpdateFinished(changed: _pending.Count > 0);
         if (_pending.Count == 0) return;
         var changes = _pending.ToArray();
         _pending.Clear();
@@ -320,6 +343,7 @@ public sealed partial class EditorDocument : IEditorDocument, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        if (_ui.CheckAccess()) CloseHeldUndoGroup(); // a held group (macro playback) never outlives the document
         DisposeFileState();
         _disposables.Dispose();
         _changed.Clear();

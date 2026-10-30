@@ -48,26 +48,26 @@ internal sealed class TypingBehaviors : IDisposable, ISettingsAware
     private int _expectedCaret = -1;
     private int _expectedVersion = -1;
 
+    // The groups go through the document (not its undo stack directly) so that a held undo group (macro playback) sees where a typed run starts.
     private void BeginTypingGroup(string text)
     {
-        var stack = _v.Document.Buffer.UndoStack;
+        var doc = _v.Document;
         if (_groupOpen)
         {
-            stack.EndUndoGroup(); // a previous group never got its TextEntered (some other handler swallowed the input)
+            doc.EndUndoGroup(); // a previous group never got its TextEntered (some other handler swallowed the input)
             _groupOpen = false;
         }
         var isNewline = text is "\n" or "\r" or "\r\n";
         // A modal layer (Vim) groups its own changes into undo steps: typing must never extend a group the layer closed.
-        var continues = !isNewline && !_v.ModalAttached && _expectedCaret == _v.Editor.CaretOffset && _expectedVersion == _v.Document.Version && _v.Editor.SelectionLength == 0;
-        if (continues) stack.StartContinuedUndoGroup();
-        else stack.StartUndoGroup();
+        var continues = !isNewline && !_v.ModalAttached && _expectedCaret == _v.Editor.CaretOffset && _expectedVersion == doc.Version && _v.Editor.SelectionLength == 0;
+        doc.BeginUndoGroup(continueLast: continues);
         _groupOpen = true;
     }
 
     private void EndTypingGroup(string text)
     {
         if (!_groupOpen) return;
-        _v.Document.Buffer.UndoStack.EndUndoGroup();
+        _v.Document.EndUndoGroup();
         _groupOpen = false;
         var isNewline = text is "\n" or "\r" or "\r\n";
         _expectedCaret = isNewline ? -1 : _v.Editor.CaretOffset;

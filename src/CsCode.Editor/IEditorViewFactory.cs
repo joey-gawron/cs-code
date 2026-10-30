@@ -116,6 +116,19 @@ public interface IEditorViewController
     /// area. Returns whether a handler took the key; false when the view cannot take the focus (destroyed, not in a window). UI thread.
     /// </summary>
     bool ReplayKey(Avalonia.Input.Key key, Avalonia.Input.KeyModifiers modifiers) => false;
+
+    // ---- additive members (macros: one undo step per playback; defaults keep other implementations compiling) ----
+
+    /// <summary>
+    /// Holds an undo group of this view's document open until the result is disposed: every change of the document meanwhile (typing, keys,
+    /// commands, in any view of it, over any number of dispatcher callbacks) becomes ONE undo step. Groups of one document nest: the group closes
+    /// when its last handle is disposed, or when the document closes. While it is open, Undo and Redo (<see cref="Undo"/>, the menu, Ctrl+Z /
+    /// Ctrl+Y on the text area) never throw: they reverse and re-apply the steps made inside the group, newest first, as the editor groups them
+    /// (a typed run, one command's edit, one key's change), and never reach the history from before it, so one Undo after the group closed
+    /// restores the text exactly as it was when it opened. Typing right before the group does not continue into it. Disposing twice, or after
+    /// the view or the document is gone, does nothing. UI thread.
+    /// </summary>
+    IDisposable OpenUndoGroup() => Disposable.Empty;
 }
 
 /// <summary>Everything needed to recreate a destroyed view. Positions are 0-based lines/UTF-16 columns so they survive edits made while no view existed.</summary>

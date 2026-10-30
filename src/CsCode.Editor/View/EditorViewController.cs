@@ -182,6 +182,8 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
 
     public IEventSource<string> TextInput => _textInput;
 
+    public IDisposable OpenUndoGroup() => _disposed || view.IsDisposed ? Disposable.Empty : view.Document.OpenUndoGroup();
+
     public bool ReplayText(string text)
     {
         if (_disposed || view.IsDisposed || view.Document.IsReadOnly || string.IsNullOrEmpty(text)) return false;
