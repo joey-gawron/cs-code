@@ -28,6 +28,20 @@ public interface IMacroHost
 
     /// <summary>Puts the caret at the start of <paramref name="line"/> of the active editor (no selection). False when it cannot.</summary>
     bool MoveCaretToLineStart(int line);
+
+    /// <summary>
+    /// Starts making the playback's edits ONE undo step per editor it acts on (called when a playback starts; the player calls
+    /// <see cref="IMacroUndoScope.Enter"/> before every step and disposes the scope when the playback ends, however it ends). Null when the
+    /// host cannot (then every step undoes as it would when typed).
+    /// </summary>
+    IMacroUndoScope? BeginUndoScope() => null;
+}
+
+/// <summary>The undo grouping of one playback (<see cref="IMacroHost.BeginUndoScope"/>). UI thread.</summary>
+public interface IMacroUndoScope : IDisposable
+{
+    /// <summary>Before a step: the active editor's edits from now on join the playback's undo step for that editor (its group opens on first use).</summary>
+    void Enter();
 }
 
 /// <summary>Where the caret of the active editor is (0-based), how long its document is and which version of it.</summary>

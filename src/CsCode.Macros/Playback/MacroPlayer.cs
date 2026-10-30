@@ -18,6 +18,8 @@ namespace CsCode.Macros;
 /// macros included), at most <see cref="MacroLimits.MaxDepth"/> nested macros, and a macro that (indirectly) runs itself is stopped.</item>
 /// <item><b>Nesting</b>: a command step that plays another macro (<c>macro.run.x</c>) joins the running playback (same guards, Esc stops all);
 /// any other playback request while one runs is refused.</item>
+/// <item><b>Undo</b>: one undo step per editor for the whole playback (<see cref="IMacroHost.BeginUndoScope"/>: the host holds an undo group
+/// of each editor a step acts on open until the playback ends, however it ends).</item>
 /// </list>
 /// The player keeps no editor reference: the host resolves the active editor on every step.
 /// </summary>
@@ -94,6 +96,7 @@ public sealed class MacroPlayer
         {
             if (!_scheduler.IsUiThread) await root.HopAsync();
             root.BeginSlice();
+            root.Undo = _host()?.BeginUndoScope(); // one undo step per editor for the whole playback, nested macros included
             _playingChanged.Fire(true);
             var result = await PlayRunAsync(new Run(root, macro, null, 0), options).ConfigureAwait(true);
             root.EndSlice();
@@ -102,9 +105,19 @@ public sealed class MacroPlayer
         finally
         {
             root.Finish();
+            CloseUndo(root);
             if (ReferenceEquals(_active, root)) _active = null;
             _playingChanged.Fire(false);
         }
+    }
+
+    /// <summary>The playback's undo groups close however it ended (completed, failed, stopped, cancelled), on the UI thread.</summary>
+    private void CloseUndo(Root root)
+    {
+        if (root.Undo is not { } undo) return;
+        root.Undo = null;
+        if (_scheduler.IsUiThread) undo.Dispose();
+        else _scheduler.Post(undo.Dispose);
     }
 
     private async Task<MacroPlayResult> PlayNestedAsync(Run parent, Macro macro, MacroPlayOptions options)
@@ -209,6 +222,7 @@ public sealed class MacroPlayer
             string? error;
             try
             {
+                root.Undo?.Enter(); // the editor this step acts on joins the playback's undo step
                 switch (step)
                 {
                     case KeyStep k:
@@ -373,6 +387,8 @@ public sealed class MacroPlayer
         }
 
         public MacroLimits Limits { get; }
+        /// <summary>The undo grouping of this playback (closed when it ends), or null.</summary>
+        public IMacroUndoScope? Undo { get; set; }
         public long Steps { get; set; }
         public int Runs { get; set; }
         public bool SearchFailed { get; set; }

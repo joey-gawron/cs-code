@@ -30,7 +30,9 @@ namespace CsCode.App.Macros;
 /// (<see cref="MacroService.BeginEditorInput"/>), so a command the editor itself starts then is not recorded twice.</item>
 /// <item><b>Playback host</b> (<see cref="IMacroHost"/>): keys go to the active editor through <see cref="IEditorViewController.ReplayKey"/> (the
 /// window's handlers see them first; the pipeline lets them through unresolved), text through <see cref="IEditorViewController.ReplayText"/>.
-/// Esc stops playback; other keys and typing aimed at an editor are swallowed while a macro plays.</item>
+/// Esc stops playback; other keys and typing aimed at an editor are swallowed while a macro plays. <b>One undo step per playback</b>
+/// (<see cref="BeginUndoScope"/>): before each step the active editor's document gets an undo group held open until the playback ends
+/// (<see cref="IEditorViewController.OpenUndoGroup"/>), one per document; it closes early when the document closes or Vim is switched on.</item>
 /// <item><b>Vim.</b> While Vim emulation is on, recording is refused with a hint (Vim has q/@), recording stops when Vim is switched on, and a
 /// macro that types (key or text steps) does not play: Vim would read its keys as commands. Command-only macros play.</item>
 /// </list>
@@ -52,9 +54,11 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
     private readonly IUiDispatcher _ui;
     private readonly WindowHolder _windowHolder;
     private readonly IContributionRegistry? _contributions;
+    private readonly IDocumentManager? _documents;
     private readonly DisposableStore _subscriptions = new();
     private readonly Dictionary<CodeEditorControl, IDisposable> _textTaps = new(ReferenceEqualityComparer.Instance);
     private DisposableStore? _recording;
+    private PlaybackUndo? _undo;
     private Vim.VimIntegration? _vim;
     private KeyboardPipeline? _keyboard;
     private bool _injecting, _started, _disposed;
@@ -68,6 +72,7 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
         _ui = sp.GetRequiredService<IUiDispatcher>();
         _windowHolder = sp.GetRequiredService<WindowHolder>();
         _contributions = sp.GetService<IContributionRegistry>();
+        _documents = sp.GetService<IDocumentManager>();
     }
 
     /// <summary>The integration for a composition with the macro module and the real editor; null otherwise (fakes in the dev host, some tests).</summary>
@@ -96,6 +101,7 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
                 void Stop()
                 {
                     if (!_disposed && _service.IsRecording) _service.StopRecording("Recording stopped: Vim emulation was switched on.");
+                    _undo?.CloseAll(); // Vim keeps its own undo steps (the editor's Undo runs Vim's u): the playback's groups end here
                 }
                 // at once on the UI thread: no key may be recorded between the switch and the stop
                 if (_ui.CheckAccess()) Stop();
@@ -284,6 +290,69 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
         return true;
     }
 
+    public IMacroUndoScope? BeginUndoScope()
+    {
+        if (_disposed) return null;
+        _undo?.Dispose(); // one playback at a time
+        return _undo = new PlaybackUndo(this);
+    }
+
+    /// <summary>The documents of the playback that is running, with the undo group each holds open (docs/MACROS.md, "Undo").</summary>
+    internal int OpenUndoGroups => _undo?.Count ?? 0;
+
+    /// <summary>
+    /// One undo step per editor for a playback: <see cref="Enter"/> (before each step) holds an undo group of the active editor's document open
+    /// the first time the playback acts on it. Groups close when the playback ends, when their document closes, and all at once when Vim is
+    /// switched on (with Vim on none opens: Vim groups its own changes, and the editor's Undo runs Vim's u). UI thread.
+    /// </summary>
+    private sealed class PlaybackUndo : IMacroUndoScope
+    {
+        private readonly MacroIntegration _owner;
+        private readonly Dictionary<IEditorDocument, IDisposable> _groups = new(ReferenceEqualityComparer.Instance);
+        private readonly IDisposable? _closedSubscription;
+        private bool _ended;
+
+        public PlaybackUndo(MacroIntegration owner)
+        {
+            _owner = owner;
+            _closedSubscription = owner._documents?.Closed.Subscribe(e =>
+            {
+                if (e.Document is not IEditorDocument document) return;
+                if (owner._ui.CheckAccess()) Close(document);
+                else owner._ui.Post(() => Close(document));
+            });
+        }
+
+        public int Count => _groups.Count;
+
+        public void Enter()
+        {
+            if (_ended || _owner._disposed || _owner.VimOn || _owner.ActiveController is not { } controller) return;
+            var document = controller.Document;
+            if (!_groups.ContainsKey(document)) _groups[document] = controller.OpenUndoGroup();
+        }
+
+        private void Close(IEditorDocument document)
+        {
+            if (_groups.Remove(document, out var group)) group.Dispose();
+        }
+
+        public void CloseAll()
+        {
+            foreach (var group in _groups.Values) group.Dispose();
+            _groups.Clear();
+        }
+
+        public void Dispose()
+        {
+            if (_ended) return;
+            _ended = true;
+            _closedSubscription?.Dispose();
+            CloseAll();
+            if (ReferenceEquals(_owner._undo, this)) _owner._undo = null;
+        }
+    }
+
     // ------------------------------------------------------------------------------------------------------------ the search step
 
     /// <summary>
@@ -314,6 +383,7 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _undo?.Dispose();
         OnStateChanged(MacroState.Idle);
         _subscriptions.Dispose();
         _keyboard = null;

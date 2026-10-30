@@ -138,6 +138,42 @@ public sealed class FakeEditorHost : IMacroHost
         return null;
     }
 
+    /// <summary>The undo scopes playbacks opened (<see cref="IMacroHost.BeginUndoScope"/>), oldest first; null-returning when false.</summary>
+    public List<FakeUndoScope> UndoScopes { get; } = new();
+    public bool SupportsUndoScopes { get; set; } = true;
+
+    public IMacroUndoScope? BeginUndoScope()
+    {
+        if (!SupportsUndoScopes) return null;
+        var scope = new FakeUndoScope(this);
+        UndoScopes.Add(scope);
+        return scope;
+    }
+
+    /// <summary>Records which documents a playback's steps acted on (one group each) and when the scope closed.</summary>
+    public sealed class FakeUndoScope(FakeEditorHost host) : IMacroUndoScope
+    {
+        public List<Uri> Groups { get; } = new();
+        public int Enters { get; private set; }
+        public int EntersAfterClose { get; private set; }
+        public bool Closed { get; private set; }
+        public bool ClosedOnUiThread { get; private set; }
+
+        public void Enter()
+        {
+            host.CheckThread();
+            if (Closed) EntersAfterClose++;
+            Enters++;
+            if (host.HasEditor && !Groups.Contains(host.Document)) Groups.Add(host.Document);
+        }
+
+        public void Dispose()
+        {
+            ClosedOnUiThread = host.Ui is not { IsUiThread: false };
+            Closed = true;
+        }
+    }
+
     private void Cost()
     {
         if (VirtualCost > TimeSpan.Zero) Clock?.Advance(VirtualCost);
