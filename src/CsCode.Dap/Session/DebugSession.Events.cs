@@ -197,10 +197,11 @@ public sealed partial class DebugSession
         var id = e.Module.Id.ValueKind == JsonValueKind.String ? e.Module.Id.GetString() ?? "" : e.Module.Id.GetRawText();
         lock (_modules)
         {
-            if (e.Reason == "removed") { _modules.Remove(id); return; }
-            if (_modules.Count >= MaxModules && !_modules.ContainsKey(id)) return; // bounded: a module-heavy app can't grow us without limit
-            _modules[id] = new DebugModuleInfo(id, e.Module.Name, e.Module.Path, e.Module.Version, e.Module.IsUserCode, e.Module.SymbolStatus);
+            if (e.Reason == "removed") { if (!_modules.Remove(id)) return; }
+            else if (_modules.Count >= MaxModules && !_modules.ContainsKey(id)) return; // bounded: a module-heavy app can't grow us without limit
+            else _modules[id] = new DebugModuleInfo(id, e.Module.Name, e.Module.Path, e.Module.Version, e.Module.IsUserCode, e.Module.SymbolStatus);
         }
+        NotifyModulesChanged();
     }
 
     private void OnLoadedSource(DapLoadedSourceEvent e)

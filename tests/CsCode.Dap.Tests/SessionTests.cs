@@ -429,6 +429,26 @@ public class SessionExecutionTests
     }
 
     [Fact]
+    public async Task A_change_of_the_modules_is_announced_after_the_events_that_made_it()
+    {
+        await using var h = await SessionHarness.StartAsync();
+        var modules = (IDebugSessionModules)h.Session;
+        var seen = new List<int>(); // the module count each announcement saw
+        using var sub = modules.ModulesChanged.Subscribe(_ => { lock (seen) seen.Add(modules.Modules.Count); });
+        for (var i = 0; i < 20; i++)
+            await h.Adapter.SendEventAsync("module", new DapModuleEvent { Reason = "new", Module = new DapModule { Id = JsonSerializer.SerializeToElement("m" + i), Name = i + ".dll" } });
+        await SessionHarness.Eventually(() => { lock (seen) return seen.Count > 0 && seen[^1] == 20; });
+        lock (seen) Assert.True(seen.Count <= 20, "one announcement per event at most");
+        await h.Adapter.SendEventAsync("module", new DapModuleEvent { Reason = "removed", Module = new DapModule { Id = JsonSerializer.SerializeToElement("m0") } });
+        await SessionHarness.Eventually(() => { lock (seen) return seen[^1] == 19; });
+        var count = seen.Count;
+        await h.Adapter.SendEventAsync("module", new DapModuleEvent { Reason = "removed", Module = new DapModule { Id = JsonSerializer.SerializeToElement("unknown") } });
+        await h.Adapter.SendEventAsync("module", new DapModuleEvent { Reason = "new", Module = new DapModule { Id = JsonSerializer.SerializeToElement("m0"), Name = "0.dll" } });
+        await SessionHarness.Eventually(() => { lock (seen) return seen[^1] == 20; });
+        lock (seen) Assert.Equal(count + 1, seen.Count); // removing a module it never reported changed nothing
+    }
+
+    [Fact]
     public async Task Loaded_sources_are_tracked_announced_and_removed()
     {
         await using var h = await SessionHarness.StartAsync();

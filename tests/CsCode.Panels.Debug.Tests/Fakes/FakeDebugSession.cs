@@ -341,6 +341,15 @@ public sealed class FakeModulesDebugSession : FakeDebugSession, IDebugSessionMod
 
     public List<DebugModule> ModuleList { get; } = new();
     public int ModulesCalls => Volatile.Read(ref _modulesCalls);
+    public Emitter<IDebugSession> ModulesChangedEmitter { get; } = new();
+    public IEventSource<IDebugSession> ModulesChanged => ModulesChangedEmitter;
+
+    /// <summary>The adapter reported a module (a <c>module</c> event of reason <c>new</c>): added, then <see cref="ModulesChanged"/> fires.</summary>
+    public void LoadModule(DebugModule module)
+    {
+        lock (ModuleList) ModuleList.Add(module);
+        ModulesChangedEmitter.Fire(this);
+    }
 
     public IReadOnlyList<DebugModule> Modules
     {

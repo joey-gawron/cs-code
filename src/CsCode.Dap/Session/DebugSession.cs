@@ -667,7 +667,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         catch (ObjectDisposedException) { /* lane already gone (app shutdown): nothing left to release but emitters */ }
         _o.Breakpoints.ClearStatuses(Id);
         _stopped.Clear(); _continued.Clear(); _outputEvent.Clear(); _threadChanged.Clear(); _stateChanged.Clear(); _terminated.Clear();
-        _breakpointStatus.Clear(); _invalidated.Clear(); _unresponsiveChanged.Clear(); _progress.Clear(); _exceptionInfo.Clear(); _loadedSource.Clear();
+        _breakpointStatus.Clear(); _invalidated.Clear(); _modulesChanged.Clear(); _unresponsiveChanged.Clear(); _progress.Clear(); _exceptionInfo.Clear(); _loadedSource.Clear();
         _disposed.TrySetResult();
     }
 }

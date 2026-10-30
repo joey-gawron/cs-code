@@ -174,8 +174,10 @@ contract cannot update a function breakpoint, so its checkbox is read-only.
   are reusable by the editor as a popup. The runtime keeps the context key `cscode.debug.exceptionStopped` true while such a stop is current.
 * `debug.modules`: loaded modules on every stop and on demand, bounded to 2,000 rows. A session implementing the Core `IDebugSessionModules`
   (the DAP session does) supplies the list it keeps from the adapter's `module` events and sends the `modules` request only when the adapter
-  advertises `supportsModulesRequest` (netcoredbg does not implement it). Other sessions are asked with the raw request through
-  `CustomRequestAsync`; one that refused it shows the message and is not asked again at every stop (Refresh retries).
+  advertises `supportsModulesRequest` (netcoredbg does not implement it). While the window is shown it also re-reads that list (no request)
+  on the session's `ModulesChanged`, which the DAP session fires once per burst of `module` events, so modules loaded while the debuggee
+  runs appear at once. Other sessions are asked with the raw request through `CustomRequestAsync`; one that refused it shows the message and
+  is not asked again at every stop (Refresh retries).
 
 ## Threading and memory
 
@@ -226,6 +228,6 @@ dotnet run --project src/CsCode.Panels.Debug/Demo -- --start # start the session
 
 * Autos is an approximation (see above); Threads cannot freeze/thaw; function-breakpoint checkboxes are read-only; the Exception window (and
   the Modules window for sessions without `IDebugSessionModules`) uses `CustomRequestAsync` because the contracts have no typed API for it;
-  the Modules window refreshes at stops, not live while running; hover pins / DataTips are the editor's job.
+  the Modules window of such a session refreshes at stops, not live while running; hover pins / DataTips are the editor's job.
 * Console output without a trailing newline is not joined with the next event's text.
 * Value edits refresh only the edited row (dependents update at the next stop or via a reload).
