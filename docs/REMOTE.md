@@ -192,9 +192,10 @@ The in-process language client ignores `ssh:` documents (Lsp hook), so a remote 
 ## Terminals, debugging and tasks (R3)
 
 All three run on the server, next to the files, and stream through **channels**: resumable byte streams with absolute offsets in both directions.
-Output is kept in a 2 MB replay ring per channel; while a client is connected a producer more than 512 KB ahead of the client's acknowledgements waits
+Output is kept in a replay ring per channel (up to 2 MB, grown on demand: a quiet terminal holds a few KB); while a client is connected a producer
+more than 512 KB ahead of the client's acknowledgements waits
 (the remote program is throttled, exactly as a full local PTY throttles it); while nobody is connected nothing waits and older output is counted as
-lost. Input is numbered and the client keeps its last 1 MB, so after a reconnect the server gets exactly what it missed. A channel sends only to the
+lost. Input is numbered and the client keeps its last 1 MB (also grown on demand), so after a reconnect the server gets exactly what it missed. A channel sends only to the
 connection that created or reattached it, so the replay always comes before newer output.
 
 * **Terminals** (`RemoteTerminals`, the Core `ITerminalBackendProvider` the Terminal module asks for every new terminal): while the workspace's
@@ -275,7 +276,7 @@ its reflection serializer), measured on 2026-10-29:
 | win-x64 | 34.9 MB | 10.7 MB |
 | portable (not trimmable) | 2.8 MB | — |
 
-Correctness: the whole `CsCode.Remote.Tests` suite (147 tests: files, watch, search, TypeScript LSP through the bridge, GDB and js-debug sessions with
+Correctness: the whole `CsCode.Remote.Tests` suite (153 tests: files, watch, search, TypeScript LSP through the bridge, GDB and js-debug sessions with
 child sessions, terminals, tasks, the persistent daemon, chaos, the installer and real-ssh bootstrap) passes against the trimmed linux-x64 server
 (`CSCODE_TEST_SERVER=<extracted bundle>/cscode-server`, `CSCODE_SERVER_BUNDLES=<dir>`), and the Docker test runs the trimmed bundle in a container.
 `--no-trim` builds untrimmed bundles if a path the tests do not cover turns out to need a trimmed framework member.

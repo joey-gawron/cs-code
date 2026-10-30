@@ -31,7 +31,7 @@ internal sealed class ServerChannel
 
     private readonly object _gate = new();
     private readonly RpcPeerSlot _link;
-    private readonly byte[] _ring = new byte[RingBytes];
+    private readonly ByteRing _ring = new(RingBytes, 16 * 1024); // grows with the output: a quiet terminal holds a few KB
     private RpcPeer? _peer; // the connection this channel currently sends to
     private long _sent;      // total bytes produced
     private long _acked;     // bytes the client consumed
@@ -76,19 +76,11 @@ internal sealed class ServerChannel
             while (!_disposed && Live is not null && _sent - _acked > Window) Monitor.Wait(_gate, 250);
             if (_disposed) return;
             var offset = _sent;
-            AppendToRing(chunk);
+            _ring.Append(chunk);
             _sent += chunk.Length;
             // Sent under the lock so offsets reach the peer's queue in order (Notify only enqueues).
             Live?.Notify(RemoteMethods.ChanData, new ChanDataParams(Id, offset, Payload.Encode(chunk, allowCompression: false)));
         }
-    }
-
-    private void AppendToRing(ReadOnlySpan<byte> chunk)
-    {
-        var start = (int)(_sent % RingBytes);
-        var first = Math.Min(chunk.Length, RingBytes - start);
-        chunk[..first].CopyTo(_ring.AsSpan(start));
-        if (first < chunk.Length) chunk[first..].CopyTo(_ring);
     }
 
     /// <summary>The source ended (after its last output). Reported now if a client is connected, else on its reattach.</summary>
@@ -141,7 +133,7 @@ internal sealed class ServerChannel
         {
             _peer = _link.Current; // the reattaching connection: from now on this channel's output goes there
             var peer = _peer;
-            var ringStart = Math.Max(0, _sent - RingBytes);
+            var ringStart = _ring.Start;
             var from = Math.Clamp(receivedOffset, ringStart, _sent);
             var lost = Math.Max(0, ringStart - receivedOffset);
             _acked = Math.Max(_acked, from); // what the client had (or can no longer get) needs no acknowledgement
@@ -149,10 +141,7 @@ internal sealed class ServerChannel
             {
                 var n = (int)Math.Min(MaxChunk, _sent - pos);
                 var chunk = new byte[n];
-                var start = (int)(pos % RingBytes);
-                var first = Math.Min(n, RingBytes - start);
-                _ring.AsSpan(start, first).CopyTo(chunk);
-                if (first < n) _ring.AsSpan(0, n - first).CopyTo(chunk.AsSpan(first));
+                _ring.CopyTo(pos, chunk);
                 peer?.Notify(RemoteMethods.ChanData, new ChanDataParams(Id, pos, Payload.Encode(chunk, allowCompression: false)));
                 pos += n;
             }

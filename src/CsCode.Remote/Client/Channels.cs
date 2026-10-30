@@ -35,7 +35,7 @@ public sealed class ClientChannel : IDisposable
     private readonly RemoteChannels _owner;
     private readonly IChannelSink _sink;
     private readonly object _gate = new();
-    private readonly byte[] _input = new byte[InputRingBytes];
+    private readonly ByteRing _input = new(InputRingBytes, 256); // typing is small: grows only for pastes and DAP requests
     private long _received, _consumed, _acked;
     private long _sent;        // input bytes written
     private long _unsentFrom = -1; // first input offset not handed to a connection (-1: everything was sent)
@@ -123,10 +123,7 @@ public sealed class ClientChannel : IDisposable
             if (_unsentFrom >= 0 && _sent - _unsentFrom + data.Length > InputRingBytes) return false;
             if (data.Length > InputRingBytes) return false;
             var offset = _sent;
-            var start = (int)(offset % InputRingBytes);
-            var first = Math.Min(data.Length, InputRingBytes - start);
-            data[..first].CopyTo(_input.AsSpan(start));
-            if (first < data.Length) data[first..].CopyTo(_input);
+            _input.Append(data);
             _sent += data.Length;
             if (_unsentFrom >= 0) return true; // earlier input is still waiting: keep the order, send it all on reconnect
             if (_owner.Peer is { } peer && peer.Notify(RemoteMethods.ChanData, new ChanDataParams(Id, offset, Payload.Encode(data, allowCompression: false)))) return true;
@@ -162,15 +159,12 @@ public sealed class ClientChannel : IDisposable
         }
         lock (_gate)
         {
-            var from = Math.Max(r.ServerReceived, _sent - InputRingBytes);
+            var from = Math.Max(r.ServerReceived, _input.Start);
             for (var pos = from; pos < _sent;)
             {
                 var n = (int)Math.Min(32 * 1024, _sent - pos);
                 var chunk = new byte[n];
-                var start = (int)(pos % InputRingBytes);
-                var first = Math.Min(n, InputRingBytes - start);
-                _input.AsSpan(start, first).CopyTo(chunk);
-                if (first < n) _input.AsSpan(0, n - first).CopyTo(chunk.AsSpan(first));
+                _input.CopyTo(pos, chunk);
                 if (!peer.Notify(RemoteMethods.ChanData, new ChanDataParams(Id, pos, new Payload(chunk)))) return; // dropped again: the next reconnect resends
                 pos += n;
             }
