@@ -11,6 +11,8 @@
     <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
     <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
     <ProjectReference Include="../../src/CsCode.Dap/CsCode.Dap.csproj" />
+    <!-- the real terminal service and task terminal host under tasks and runInTerminal debuggees (TerminalDotnetRootTests) -->
+    <ProjectReference Include="../../src/CsCode.Terminal/CsCode.Terminal.csproj" />
   </ItemGroup>
 
 </Project>

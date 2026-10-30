@@ -3,13 +3,15 @@ using System.Runtime.InteropServices;
 namespace CsCode.Dap.Configuration;
 
 /// <summary>
-/// The .NET host part of what CsCode starts for the user — debug adapters (and so the programs they launch), <c>runInTerminal</c> debuggees and
-/// tasks. <c>dotnet run</c> and <c>dotnet test</c> give CsCode's OWN apphost <c>DOTNET_ROOT_&lt;ARCH&gt;</c> (<c>DOTNET_ROOT_X64</c>), which the
-/// .NET host reads before <c>DOTNET_ROOT</c>: inherited by a debuggee or a tool, it overrides the DOTNET_ROOT that program's wrapper exports (a
-/// Nix-wrapped .NET tool targeting another runtime then fails with "You must install or update .NET"). It is folded into DOTNET_ROOT, as the
-/// language servers' launch environment does (CsCode.Lsp's DotnetLaunchEnvironment, rule 1): moved there when DOTNET_ROOT is unset, dropped when
-/// DOTNET_ROOT names the same directory, left alone when DOTNET_ROOT names another one (a deliberate split set-up). An explicit environment (a
-/// launch configuration's or task's <c>env</c>) that sets either variable is the user's choice and is never changed.
+/// The .NET host part of the programs the debugger starts itself, from CsCode's own environment — debug adapters, as a process or as a server
+/// (and so the programs they launch), and debuggees run without a terminal. <c>dotnet run</c> and <c>dotnet test</c> give CsCode's OWN apphost
+/// <c>DOTNET_ROOT_&lt;ARCH&gt;</c> (<c>DOTNET_ROOT_X64</c>), which the .NET host reads before <c>DOTNET_ROOT</c>: inherited by a debuggee or a
+/// tool, it overrides the DOTNET_ROOT that program's wrapper exports (a Nix-wrapped .NET tool targeting another runtime then fails with "You must
+/// install or update .NET"). It is folded into DOTNET_ROOT, as the language servers' launch environment does (CsCode.Lsp's
+/// DotnetLaunchEnvironment, rule 1): moved there when DOTNET_ROOT is unset, dropped when DOTNET_ROOT names the same directory, left alone when
+/// DOTNET_ROOT names another one (a deliberate split set-up). An explicit environment (a launch configuration's <c>env</c>) that sets either
+/// variable is the user's choice and is never changed. Not for programs in a terminal (tasks, <c>runInTerminal</c> debuggees): the terminal's
+/// launch resolver folds what a local terminal inherits before the user's <c>terminal.integrated.env</c> applies (cross-branch review C3).
 /// </summary>
 internal static class DotnetRootFold
 {
@@ -25,16 +27,6 @@ internal static class DotnetRootFold
             if (value is null) environment.Remove(name);
             else environment[name] = value;
         }
-    }
-
-    /// <summary>
-    /// The overrides that fold the variables for a child started with CsCode's environment plus overrides (a terminal): a null value removes
-    /// the variable. Empty when nothing needs to change or <paramref name="explicitEnv"/> sets either variable.
-    /// </summary>
-    public static IReadOnlyDictionary<string, string?> Overrides(IReadOnlyDictionary<string, string?>? explicitEnv, Func<string, string?>? environment = null)
-    {
-        if (explicitEnv is not null && (explicitEnv.ContainsKey(RootVariable) || explicitEnv.ContainsKey(ArchRootVariable))) return new Dictionary<string, string?>();
-        return Changes(environment ?? Environment.GetEnvironmentVariable);
     }
 
     private static Dictionary<string, string?> Changes(Func<string, string?> get)

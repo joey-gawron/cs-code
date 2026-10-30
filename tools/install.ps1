@@ -9,8 +9,9 @@
   Layout (per user, %LOCALAPPDATA%\Programs\CsCode):
     <version>\              the app (self-contained win-x64 publish: its own .NET runtime), debug-adapters\ when given, uninstall copy
     current                 a directory junction to the installed version (no administrator rights needed); the previous version is kept
-    bin\cscode.cmd          the command-line launcher (passes every argument; DOTNET_ROOT only when unset and a dotnet is found; adds
-                            %USERPROFILE%\.dotnet\tools to PATH for the processes the app starts); bin\ is added to the user's PATH
+    bin\cscode.cmd          the command-line launcher (passes every argument; adds %USERPROFILE%\.dotnet\tools to PATH for the processes
+                            the app starts; sets no DOTNET_ROOT: the app chooses one per .NET language server, when the host's own lookup
+                            would not find the server's framework); bin\ is added to the user's PATH
     install-manifest.json   what this script created, for -Uninstall
   Start Menu: %APPDATA%\Microsoft\Windows\Start Menu\Programs\CsCode.lnk (icon: the executable's, assets\branding\cscode.ico).
 
@@ -192,8 +193,6 @@ $launcherText = @"
 @echo off
 rem CsCode launcher ($Marker). Written by CsCode's tools\install.ps1, removed by its -Uninstall; a reinstall replaces it.
 setlocal
-if not defined DOTNET_ROOT for /f "delims=" %%d in ('where dotnet 2^>nul') do if not defined DOTNET_ROOT set "DOTNET_ROOT=%%~dpd"
-if defined DOTNET_ROOT if "%DOTNET_ROOT:~-1%"=="\" set "DOTNET_ROOT=%DOTNET_ROOT:~0,-1%"
 set "PATH=%PATH%;%USERPROFILE%\.dotnet\tools"
 "$current\cscode.exe" %*
 "@
