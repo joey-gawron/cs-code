@@ -440,11 +440,15 @@ public sealed class ReplaceService : IDisposable
             if (rx is not null)
             {
                 try { if (rx.Match(matched) is { Success: true } m) result = m.Result(expanded); }
-                catch (RegexMatchTimeoutException) { /* keep the unexpanded text */ }
+                // Under CPU pressure the match can time out: say so rather than show the template ("$1") as if it were what Replace writes.
+                catch (RegexMatchTimeoutException) { return PreviewUnavailable; }
             }
             return options.PreserveCase ? PreserveCase(matched, result) : result;
         };
     }
+
+    /// <summary>What a replace preview row shows when its regex timed out on the matched text (Replace itself matches the file again).</summary>
+    public const string PreviewUnavailable = "(preview unavailable)";
 
     /// <summary>Turns the replace-box escapes <c>\n</c>, <c>\t</c> and <c>\\</c> into characters; the backslash of anything else is kept.</summary>
     internal static string ExpandEscapes(string s)
