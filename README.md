@@ -8,7 +8,8 @@ TextMate grammars and snippets dropped into the user data folder.
 
 * Architecture and module boundaries: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 * Build: `dotnet build CsCode.slnx` · Test: `dotnet test CsCode.slnx`
-* On a Nix-provided `dotnet` (non-NixOS host): `source tools/nix-dev-env.sh` first.
+* Linux only: on a Nix-provided `dotnet` (non-NixOS host), `source tools/nix-dev-env.sh` first.
+* macOS: see [macOS](#macos) below.
 
 ## Running: background mode is the default
 
@@ -65,7 +66,44 @@ Nix SDK run it as `bash .scratch/notes/with-nix-env.sh tools/install.sh` (the li
 * `~/.local/share/cscode/current/uninstall.sh` (or `tools/uninstall.sh`) removes exactly what the manifest lists and keeps your settings,
   sessions and data. Both scripts refuse to replace or remove a `cscode` launcher or desktop entry they did not create.
 
-Windows: `tools/install.ps1` (Start Menu shortcut, `cscode` on the user's PATH; `-Uninstall`). macOS: `tools/macos/make-app-bundle.sh` builds
-`CsCode.app` with an `.icns` made from the PNGs, from `--from DIR` or, with `--unpinned`, a publish made now (the osx packs are not pinned).
-Both are written but untested (only Linux is available here). Details:
-[docs/SESSIONS.md](docs/SESSIONS.md), "Installing".
+Windows: `tools/install.ps1` (Start Menu shortcut, `cscode` on the user's PATH; `-Uninstall`), written but untested. macOS: see below.
+Details: [docs/SESSIONS.md](docs/SESSIONS.md), "Installing".
+
+## macOS
+
+Develop: install the .NET 10 SDK (the installer from dot.net, or `brew install --cask dotnet-sdk`), then
+
+```
+dotnet build CsCode.slnx
+dotnet run --project src/CsCode.App -- --foreground [paths...]
+```
+
+`brew install node` is optional: the TypeScript and JavaScript debugging tests need `node` (and `npm install -g typescript` for `tsc`);
+they are skipped without it. The debug adapters come from `tools/fetch-netcoredbg.sh`, `tools/fetch-js-debug.sh` and
+`tools/fetch-codelldb.sh`, which run on the stock bash 3.2 and BSD tools (an Intel Mac gets netcoredbg 3.1.3-1062, Samsung's last Intel
+build). `tools/nix-dev-env.sh` is not needed and does nothing on a Mac.
+
+Package and install (per user, on the Mac that builds it):
+
+```
+tools/package-macos.sh                     # .scratch/macos/osx-arm64/CsCode.app (osx-x64 on an Intel Mac)
+tools/package-macos.sh --install           # and put it in ~/Applications, with a `cscode` command on PATH
+tools/package-macos.sh --rid osx-arm64 --rid osx-x64   # both runtimes, each in .scratch/macos/<rid>/
+```
+
+* It publishes the app (`tools/publish-app.sh --unpinned`: the osx runtime packs are the ones restore picks from nuget.org, unchecked;
+  only linux-x64's are pinned), builds the remote server bundles (`tools/publish-server.sh`, shipped in `Contents/MacOS/server-bundles`;
+  `--no-server-bundles` or `--server-bundles DIR` instead) and assembles `CsCode.app` (`tools/macos/make-app-bundle.sh`): Info.plist
+  (`local.cscode.CsCode`, macOS 12 or later, Retina), an `.icns` built from `assets/branding` with `sips` and `iconutil`, and document types
+  so Finder's *Open With* lists CsCode for text, source files and folders (never as their default app). Opening a file that way starts
+  CsCode but does not open the file yet (no file-activation handling: docs/handoff/macos-audit.md, pkg-3).
+* The bundle is signed ad hoc (`codesign --sign -`), checked with `plutil -lint` and `codesign --verify --deep --strict`. That is enough for
+  the Mac that built it; a copy given to another Mac is stopped by Gatekeeper until it is signed with a Developer ID and notarized
+  (not done: pkg-2).
+* `--install` copies the app to `~/Applications/CsCode.app` (`--app-dir /Applications` for every user, with an administrator account)
+  and writes `cscode`, a two-line script that execs `CsCode.app/Contents/MacOS/cscode` with every argument, into the first writable
+  directory on your PATH of `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` and `~/bin` (`--bin-dir DIR` to choose). When none is on
+  PATH it uses `~/.local/bin` and prints the line to add to `~/.zprofile`. It never replaces a `cscode` it did not write (`--force` to).
+* Rerunning `--install` upgrades in place. To uninstall: quit CsCode (`cscode --quit --all`), then delete `~/Applications/CsCode.app` and
+  the `cscode` script; settings, sessions and data stay in `~/Library/Application Support/CsCode` (caches and logs in
+  `~/Library/Caches/CsCode` and `~/Library/Logs/CsCode`).
