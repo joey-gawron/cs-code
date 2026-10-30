@@ -150,6 +150,9 @@ public sealed class TerminalPanelRuntime : IDisposable
 
     public bool CursorBlinking(TerminalSnapshot? snapshot) => snapshot?.CursorBlink ?? Config?.Get(TerminalSettingKeys.CursorBlinking, false) ?? false;
 
+    /// <summary>The prompt marks of shell integration are drawn ("both" and "gutter"; CsCode has no overview ruler, so that value draws none).</summary>
+    public bool CommandDecorations => (Config?.Get<string>(TerminalSettingKeys.ShellIntegrationDecorationsEnabled) ?? "both") is "both" or "gutter";
+
     public string WordSeparators => Config?.Get<string>(TerminalSettingKeys.WordSeparators) ?? TerminalSettingKeys.DefaultWordSeparators;
     public string RightClickBehavior => Config?.Get<string>(TerminalSettingKeys.RightClickBehavior) ?? "default";
     public bool CopyOnSelection => Config?.Get(TerminalSettingKeys.CopyOnSelection, false) ?? false;

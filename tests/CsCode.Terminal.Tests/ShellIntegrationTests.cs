@@ -241,9 +241,110 @@ public sealed class ShellIntegrationTests : IDisposable
         // a program printing its own E (no or a wrong nonce) cannot claim what the command was
         var spoof = await RunAsync(t, "printf '\\033]633;E;rm -rf /;forged\\007'; echo spoofed");
         Assert.Equal("printf '\\033]633;E;rm -rf /;forged\\007'; echo spoofed", spoof.Command.CommandLine);
-        // programs started from the shell see none of CsCode's variables (a nested bash is a plain bash)
-        var env = await RunAsync(t, "env | grep -c '^CSCODE_' ; true");
+        // programs started from the shell see none of CsCode's variables, nor the bootstrap's PROMPT_COMMAND (a nested bash is a plain bash)
+        var env = await RunAsync(t, "env | grep -c -e '^CSCODE_' -e '^PROMPT_COMMAND=' ; true");
         Assert.Equal("0", env.OutputTail);
+    }
+
+    // ------------------------------------------------------------------ fish and pwsh (official release builds, tools/fetch-shells.sh)
+
+    /// <summary>A shell fetched by tools/fetch-shells.sh (or named by an environment variable), else null.</summary>
+    private static string? Downloaded(string variable, string relative)
+    {
+        if (Environment.GetEnvironmentVariable(variable) is { Length: > 0 } configured && File.Exists(configured)) return configured;
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+        {
+            var candidate = Path.Combine(d.FullName, ".scratch", "downloads", relative);
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
+    }
+
+    private static string? Fish => Downloaded("CSCODE_FISH", "fish/4.9.3/extracted/fish") ?? ShellSandbox.Which("fish");
+    private static string? Pwsh => Downloaded("CSCODE_PWSH", "pwsh/7.6.7/extracted/pwsh") ?? ShellSandbox.Which("pwsh");
+
+    [Fact]
+    public async Task Fish_reports_command_lines_exit_codes_output_and_the_directory()
+    {
+        if (Fish is not { } fish) { Assert.Skip("fish is not available: run tools/fetch-shells.sh fish (or set CSCODE_FISH)"); return; }
+        var odd = Directory.CreateDirectory(_sandbox.Dir.Combine("fish; dir")).FullName;
+        // -N: no configuration at all (the sandbox's XDG_CONFIG_HOME is empty anyway); --init-command is added by the injection
+        var t = (TerminalSession)await _service.CreateAsync(new TerminalCreateOptions
+        {
+            ShellPath = fish, ShellArgs = ["-N"], Cwd = _sandbox.Home, Show = false, InitialSize = (120, 30),
+            Env = new Dictionary<string, string?> { ["LD_LIBRARY_PATH"] = null },
+        });
+        Assert.True(t.ShellIntegrationInjected);
+        await WaitScreenAsync(t, ">", 20_000);
+
+        var ok = await RunAsync(t, "echo 'a;b'");
+        Assert.Equal("echo 'a;b'", ok.Command.CommandLine);
+        Assert.Equal(0, ok.Command.ExitCode);
+        Assert.Equal("a;b", ok.OutputTail);
+        var failed = await RunAsync(t, "false");
+        Assert.Equal("false", failed.Command.CommandLine);
+        Assert.Equal(1, failed.Command.ExitCode);
+        await RunAsync(t, $"cd '{odd}'");
+        await WaitAsync(() => t.CurrentDirectory == odd ? t.CurrentDirectory : null, $"cwd stayed {t.CurrentDirectory}");
+        var prompts = await t.InvokeAsync(e => Enumerable.Range(0, e.Rows).Count(r => e.GetScreenRow(r).Mark == RowMark.PromptStart));
+        Assert.True(prompts >= 3, $"{prompts} prompt marks");
+        var env = await RunAsync(t, "env | grep -c '^CSCODE_'; true");
+        Assert.Equal("0", env.OutputTail);
+    }
+
+    [Fact]
+    public async Task Pwsh_reports_command_lines_results_output_and_the_directory()
+    {
+        if (Pwsh is not { } pwsh) { Assert.Skip("pwsh is not available: run tools/fetch-shells.sh pwsh (or set CSCODE_PWSH)"); return; }
+        var odd = Directory.CreateDirectory(_sandbox.Dir.Combine("ps; dir")).FullName;
+        var t = (TerminalSession)await _service.CreateAsync(new TerminalCreateOptions
+        {
+            ShellPath = pwsh, ShellArgs = ["-NoLogo", "-NoProfile"], Cwd = _sandbox.Home, Show = false, InitialSize = (120, 30),
+            Env = new Dictionary<string, string?>
+            {
+                // the release build brings its own .NET; the Nix libraries of the test run are not for it
+                ["LD_LIBRARY_PATH"] = null,
+                ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1",
+                ["POWERSHELL_TELEMETRY_OPTOUT"] = "1",
+                ["POWERSHELL_UPDATECHECK"] = "Off",
+            },
+        });
+        Assert.True(t.ShellIntegrationInjected);
+        await WaitScreenAsync(t, "PS ", 30_000);
+
+        var ok = await RunAsync(t, "Write-Output 'a;b'");
+        Assert.Equal("Write-Output 'a;b'", ok.Command.CommandLine);
+        Assert.Equal(0, ok.Command.ExitCode);
+        Assert.Equal("a;b", ok.OutputTail);
+        var failed = await RunAsync(t, "Get-Item /does/not/exist");
+        Assert.Equal(1, failed.Command.ExitCode);
+        Assert.Contains("does not exist", failed.OutputTail, StringComparison.Ordinal);
+        await RunAsync(t, $"Set-Location '{odd}'");
+        await WaitAsync(() => t.CurrentDirectory == odd ? t.CurrentDirectory : null, $"cwd stayed {t.CurrentDirectory}");
+        var env = await RunAsync(t, "(Get-ChildItem Env: | Where-Object Name -like 'CSCODE_*').Count");
+        Assert.Equal("0", env.OutputTail);
+    }
+
+    [Fact]
+    public void Zsh_cannot_be_run_here_but_its_files_are_shipped_and_hand_zdotdir_back()
+    {
+        // No zsh on this machine and no official Linux release build to fetch: only the files and the hand-over are checked.
+        var dir = Path.Combine(Scripts, "zsh");
+        foreach (var name in new[] { ".zshenv", ".zprofile", ".zshrc", "cscode-integration.zsh" }) Assert.True(File.Exists(Path.Combine(dir, name)), name);
+        var zshrc = File.ReadAllText(Path.Combine(dir, ".zshrc"));
+        Assert.Contains("ZDOTDIR=$CSCODE_USER_ZDOTDIR", zshrc, StringComparison.Ordinal);
+        Assert.Contains("cscode-integration.zsh", zshrc, StringComparison.Ordinal);
+        Assert.Contains("builtin unset CSCODE_ZDOTDIR CSCODE_USER_ZDOTDIR", zshrc, StringComparison.Ordinal);
+        if (ShellSandbox.Which("zsh") is { } zsh)
+        {
+            // where a zsh exists, at least its parser accepts every file
+            foreach (var name in new[] { ".zshenv", ".zprofile", ".zshrc", "cscode-integration.zsh" })
+            {
+                using var p = System.Diagnostics.Process.Start(new ProcessStartInfo(zsh, ["-n", Path.Combine(dir, name)]) { RedirectStandardError = true })!;
+                p.WaitForExit(10_000);
+                Assert.True(p.ExitCode == 0, $"{name}: {p.StandardError.ReadToEnd()}");
+            }
+        }
     }
 
     [Fact]

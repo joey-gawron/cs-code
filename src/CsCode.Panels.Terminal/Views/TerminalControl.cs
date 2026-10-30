@@ -146,7 +146,7 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
             using (context.PushTransform(Matrix.CreateTranslation(PaddingLeft, PaddingTop)))
             {
                 var linkOverlay = _hoverLink is { } l && _hoverRow >= 0 ? (_hoverRow, l.StartColumn, l.EndColumn) : ((int, int, int)?)null;
-                _painter.Paint(context, snap, _colors, new TerminalPainter.Overlay(SelectionColumns, linkOverlay, _cursorOn, IsKeyboardFocusWithin, _runtime.CursorStyle),
+                _painter.Paint(context, snap, _colors, new TerminalPainter.Overlay(SelectionColumns, linkOverlay, _cursorOn, IsKeyboardFocusWithin, _runtime.CursorStyle, _runtime.CommandDecorations),
                     new Size(Math.Max(0, bounds.Width), Math.Max(0, bounds.Height)));
                 if (_preedit is { Length: > 0 } preedit && snap.CursorY >= 0) DrawPreedit(context, snap, preedit);
             }

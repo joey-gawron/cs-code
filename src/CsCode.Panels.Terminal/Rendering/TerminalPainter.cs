@@ -165,7 +165,9 @@ internal sealed class TerminalPainter : IDisposable
         return _brushes[c] = new ImmutableSolidColorBrush(c);
     }
 
-    public readonly record struct Overlay(Func<long, int, (int Start, int End)?>? Selection, (int Row, int Start, int End)? Link, bool CursorOn, bool Focused, CursorShape CursorStyle);
+    /// <param name="Decorations">Shell-integration marks beside prompts (<c>terminal.integrated.shellIntegration.decorationsEnabled</c>).</param>
+    public readonly record struct Overlay(Func<long, int, (int Start, int End)?>? Selection, (int Row, int Start, int End)? Link, bool CursorOn, bool Focused, CursorShape CursorStyle,
+        bool Decorations = true);
 
     public void Paint(DrawingContext ctx, TerminalSnapshot snap, TerminalColors colors, Overlay overlay, Size size)
     {
@@ -210,7 +212,7 @@ internal sealed class TerminalPainter : IDisposable
                     }
                     Decorate(ctx, seg, fg, colors, font);
                 }
-                if (row.Mark == RowMark.PromptStart)
+                if (row.Mark == RowMark.PromptStart && overlay.Decorations)
                 {
                     // shell integration: a mark beside each prompt, coloured by its command's exit code (VS Code's command decorations)
                     var color = row.MarkExitCode switch { null or int.MinValue => colors.CommandDefault, 0 => colors.CommandSuccess, _ => colors.CommandError };

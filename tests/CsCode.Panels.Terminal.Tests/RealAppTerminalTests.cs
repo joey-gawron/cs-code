@@ -198,6 +198,44 @@ public sealed class RealAppTerminalTests
     }
 
     [AvaloniaFact]
+    public async Task Injected_shell_integration_decorates_commands_by_exit_code_without_any_setup_in_the_shell()
+    {
+        await using var app = await TerminalAppHost.StartAsync();
+        await app.RunAsync(TerminalCommandSet.New);
+        Assert.True(await app.WaitForScreenAsync("$"), "no prompt: " + app.ScreenText());
+        var session = app.Terminals.ActiveSession!;
+        Assert.True(session.ShellIntegrationInjected); // the sandboxed profile is bash --noprofile --norc: injected through the first prompt
+        await session.SendTextAsync("clear");
+        foreach (var line in new[] { "true", "false" })
+        {
+            // one at a time: typed-ahead lines would be echoed out of place
+            await session.SendTextAsync(line);
+            Assert.True(await TerminalAppHost.WaitFor(() => session.LastCommand?.Command.CommandLine == line), $"'{line}' was not reported");
+        }
+        var control = app.View!.Control;
+        int RowOf(string text) => Array.FindIndex(control.Snapshot!.Rows, r => r.GetText() == text);
+        int? ExitOf(string text) => RowOf(text) is >= 0 and var row ? control.Snapshot!.Rows[row].MarkExitCode : null;
+        Assert.True(await TerminalAppHost.WaitFor(() => ExitOf("$ false") == 1 && ExitOf("$ true") == 0),
+            "the prompts carry no exit codes: " + app.ScreenText() + " / " + string.Join(",", control.Snapshot!.Rows.Select(r => $"{r.Mark}:{r.MarkExitCode}")));
+
+        // the marks are drawn left of the prompts: success and error colours differ
+        Avalonia.Media.Color MarkPixel(string text)
+        {
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            using var frame = app.Window.CaptureRenderedFrame()!;
+            var cellHeight = control.Font.CellHeight;
+            var p = control.TranslatePoint(new Avalonia.Point(Views.TerminalControl.PaddingLeft - 2, Views.TerminalControl.PaddingTop + (RowOf(text) + 0.5) * cellHeight), app.Window)!.Value;
+            return Pixel(frame, (int)p.X, (int)p.Y);
+        }
+        var success = MarkPixel("$ true");
+        var error = MarkPixel("$ false");
+        Assert.NotEqual(success, error);
+        app.Capture("terminal-shell-integration-injected");
+        await app.Get<IConfigurationService>().UpdateAsync("terminal.integrated.shellIntegration.decorationsEnabled", "never");
+        Assert.True(await TerminalAppHost.WaitFor(() => MarkPixel("$ false") != error, 5000), "decorationsEnabled=never still draws the marks");
+    }
+
+    [AvaloniaFact]
     public async Task Confirm_on_exit_asks_after_the_main_windows_own_close_handling_and_closes_on_terminate()
     {
         await using var app = await TerminalAppHost.StartAsync(settings: new() { ["terminal.integrated.confirmOnExit"] = "always" });
