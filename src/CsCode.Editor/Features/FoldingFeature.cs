@@ -237,7 +237,7 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
         }));
         _d.Add(view.Factory.Tokens.SyntaxTreeArrived.Subscribe(d =>
         {
-            if (ReferenceEquals(d, _v.Document)) Schedule(immediate: true);
+            if (ReferenceEquals(d, _v.Document)) Schedule(); // debounced: while typing, trees land after every pause and the next edit refolds anyway
         }));
         view.Controller.FoldedLinesProvider = () => FoldedStartLines;
         view.Controller.FoldRestorer = RestoreFolds;
