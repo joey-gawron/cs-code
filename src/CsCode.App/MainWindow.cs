@@ -581,6 +581,33 @@ public sealed class MainWindow : Window, IWindowChrome
 
     public async Task<bool> RequestExitAsync() => await CloseWithPromptsAsync().ConfigureAwait(true) == ShellController.CloseEnd.Closed;
 
+    /// <summary>An editor has changes not saved yet (what the Save prompts of a close would ask about).</summary>
+    public bool HasUnsavedChanges => _shell.Well.EditorTabs.Any(t => t.IsDirty);
+
+    /// <summary>
+    /// The desktop session ends (macOS log out with nothing unsaved): the layout is saved, as for any close, so the next start restores the tabs,
+    /// and the window closes without prompts. <see cref="ShellController.CloseEnd.Held"/> when a module holds the close with a question.
+    /// </summary>
+    public ShellController.CloseEnd CloseForSystemShutdown()
+    {
+        _shell.BeginClose();
+        var end = ShellController.CloseEnd.Cancelled;
+        try { end = CloseWithoutPrompt(); }
+        finally { _shell.EndClose(end); }
+        return end;
+    }
+
+    /// <summary>Shows the window (restored when minimised) and activates it: the system asked for the app (macOS Dock icon, documents opened).</summary>
+    public void BringToFront()
+    {
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        if (!IsVisible) Show();
+        Activate();
+    }
+
+    /// <summary>Opens paths handed over after the start (macOS file activation) as the command line's are opened (<see cref="ShellController.OpenTargets"/>).</summary>
+    public void OpenTargets(IReadOnlyList<Startup.StartupTarget> targets) => _shell.OpenTargets(targets);
+
     /// <summary>
     /// The Save prompts, then the close (background mode's quit with prompts): how it ended. <see cref="ShellController.CloseEnd.Held"/> is not a
     /// cancel: every prompt was answered and the tabs are closed, and the module that holds the close repeats it when the user agrees (see

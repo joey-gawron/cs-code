@@ -27,7 +27,12 @@ public sealed class App : Application
 
     public IServiceProvider? Services => _session?.Services;
 
-    public override void Initialize() => AvaloniaXamlLoader.Load(this);
+    public override void Initialize()
+    {
+        AvaloniaXamlLoader.Load(this);
+        // macOS names the application menu and its Hide and Quit items after this (the executable's name otherwise).
+        if (OperatingSystem.IsMacOS()) Name = "CsCode";
+    }
 
     public override void OnFrameworkInitializationCompleted()
     {
@@ -38,7 +43,7 @@ public sealed class App : Application
                 Crash.Report(e.Exception, fatal: false, source: "UI");
                 e.Handled = true; // keep running: the user is told and the log is written
             };
-            Start(new AvaloniaDesktopHost(desktop));
+            Start(new AvaloniaDesktopHost(desktop, this.TryGetFeature<IActivatableLifetime>()));
         }
         base.OnFrameworkInitializationCompleted();
     }
