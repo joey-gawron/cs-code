@@ -1,11 +1,14 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace CsCode.Remote.Transport;
 
 /// <summary>
-/// Finds the local <c>cscode-server</c> build (next to the app: the App project references the server, so its framework-dependent build lands in
-/// the same output directory) and the <c>dotnet</c> host that runs it: the host of the running process when it is one, else the runtime
-/// directory this process runs on (<c>&lt;root&gt;/shared/Microsoft.NETCore.App/&lt;v&gt;/</c> → <c>&lt;root&gt;/dotnet</c>), else <c>dotnet</c> on PATH.
+/// Finds the local <c>cscode-server</c> build (next to the app: the App project references the server, so its build lands in the same output
+/// directory) and what runs it. In a self-contained app (an installed publish: no dotnet need exist on the machine) the server is self-contained
+/// too and runs through its own apphost next to the app. Otherwise a <c>dotnet</c> host runs the dll: the host of the running process when it is
+/// one, else the runtime directory this process runs on (<c>&lt;root&gt;/shared/Microsoft.NETCore.App/&lt;v&gt;/</c> → <c>&lt;root&gt;/dotnet</c>),
+/// else <c>dotnet</c> on PATH.
 /// </summary>
 public static class LocalServer
 {
@@ -29,6 +32,22 @@ public static class LocalServer
         return File.Exists(candidate) ? candidate : exe;
     }
 
+    /// <summary>
+    /// The server's own executable (apphost) when the build next to <paramref name="serverAssembly"/> is self-contained (its runtimeconfig names
+    /// the frameworks it includes instead of the ones it needs), else null: a framework-dependent build runs through a dotnet host.
+    /// </summary>
+    public static string? SelfContainedHost(string serverAssembly)
+    {
+        var apphost = Path.ChangeExtension(serverAssembly, OperatingSystem.IsWindows() ? ".exe" : null);
+        if (!File.Exists(apphost)) return null;
+        try
+        {
+            using var config = JsonDocument.Parse(File.ReadAllBytes(Path.ChangeExtension(serverAssembly, ".runtimeconfig.json")));
+            return config.RootElement.TryGetProperty("runtimeOptions", out var options) && options.TryGetProperty("includedFrameworks", out _) ? apphost : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return null; }
+    }
+
     /// <summary>The launch line of a local server over stdio.</summary>
     /// <param name="dataDir">Its data directory (settings, state, logs).</param>
     /// <param name="belowNormal">Run the whole server tree (and the language servers it starts) below normal priority.</param>
@@ -36,9 +55,10 @@ public static class LocalServer
     public static ProcessLaunch Launch(string serverAssembly, string dataDir, string? marker = null, bool belowNormal = true,
         IReadOnlyDictionary<string, string?>? environment = null, (string Session, int GraceSeconds)? persist = null)
     {
-        List<string> args = [serverAssembly, "--stdio", "--data-dir", dataDir];
+        var apphost = SelfContainedHost(serverAssembly);
+        List<string> args = apphost is null ? [serverAssembly, "--stdio", "--data-dir", dataDir] : ["--stdio", "--data-dir", dataDir];
         if (marker is not null) args.AddRange(["--marker", marker]);
         if (persist is { } p) args.AddRange(["--persist", p.Session, "--grace", p.GraceSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
-        return new ProcessLaunch(FindDotnetHost(), args) { BelowNormalPriority = belowNormal, Environment = environment };
+        return new ProcessLaunch(apphost ?? FindDotnetHost(), args) { BelowNormalPriority = belowNormal, Environment = environment };
     }
 }
