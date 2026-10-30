@@ -225,9 +225,7 @@ public sealed partial class VtEmulator
                 if (!IsAlternateScreen)
                 {
                     // Like xterm.js: the scrollback goes, the screen stays (absolute row numbers restart at the screen).
-                    var pushed = Scrollback.TotalPushed;
-                    Scrollback.Clear();
-                    Scrollback.Replace([], pushed);
+                    Scrollback.Replace([], Scrollback.TotalPushed, Columns);
                     ViewportTop = ScreenTop;
                     FollowOutput = true;
                 }

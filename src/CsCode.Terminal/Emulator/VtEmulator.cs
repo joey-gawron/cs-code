@@ -171,8 +171,7 @@ public sealed partial class VtEmulator : IVtHandler
         for (var r = 1; r < s.Rows; r++) s.Lines[r].Clear(Cell.Blank);
         if (!IsAlternateScreen)
         {
-            var pushed = Scrollback.TotalPushed;
-            Scrollback.Replace([], pushed);
+            Scrollback.Replace([], Scrollback.TotalPushed, Columns);
         }
         FollowOutput = true;
         ViewportTop = ScreenTop;

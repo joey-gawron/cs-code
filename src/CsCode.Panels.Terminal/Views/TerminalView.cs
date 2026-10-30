@@ -189,7 +189,9 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
     /// <summary>Hides the Terminal window (the shell disposes this view; terminals keep running).</summary>
     public void Hide()
     {
-        if (Dockable() is { Factory: { } factory } dockable) factory.HideDockable(dockable);
+        if (Dockable() is not { Factory: { } factory } dockable) return;
+        Control.ReleaseFocus(); // before the view leaves the window: a focused control would stay reachable from the focus machinery
+        factory.HideDockable(dockable);
     }
 
     /// <summary>VS Code's Maximize Panel Size: the bottom well takes most of the height, and back.</summary>

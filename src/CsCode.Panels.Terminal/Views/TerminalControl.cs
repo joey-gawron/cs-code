@@ -115,8 +115,28 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
             });
     }
 
+    /// <summary>How many times the control was rendered (tests: a hidden window renders nothing).</summary>
+    internal int RenderCount { get; private set; }
+
+    /// <summary>Time spent in <see cref="Render"/> (total and longest), for the budget tests.</summary>
+    internal TimeSpan RenderTime { get; private set; }
+    internal TimeSpan LongestRender { get; private set; }
+
     public override void Render(DrawingContext context)
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        try { RenderCore(context); }
+        finally
+        {
+            var spent = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+            RenderTime += spent;
+            if (spent > LongestRender) LongestRender = spent;
+        }
+    }
+
+    private void RenderCore(DrawingContext context)
+    {
+        RenderCount++;
         var session = _session;
         if (session?.LatestSnapshot is { } latest) _snapshot = latest;
         var bounds = new Size(Bounds.Width, Bounds.Height);
@@ -187,13 +207,13 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
     {
         if (_session is not { } s || Bounds.Width < 1 || Bounds.Height < 1) return;
         var size = GridSize;
-        if (size == _grid && ReferenceEquals(s, _lastSized)) return;
+        if (size == _grid && s.Id == _lastSizedId) return;
         _grid = size;
-        _lastSized = s;
+        _lastSizedId = s.Id;
         s.Resize(size.Columns, size.Rows);
     }
 
-    private TerminalSession? _lastSized;
+    private int _lastSizedId; // an id, not the session: a killed terminal must not stay reachable through its view
 
     // ------------------------------------------------------------------ keyboard
 
@@ -595,6 +615,24 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
     }
 
     // ------------------------------------------------------------------ lifetime
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        // Avalonia's focus machinery keeps the last focused element until focus moves elsewhere: a hidden terminal must not stay reachable
+        // (with its view and painter) through it.
+        ReleaseFocus(e.RootVisual as TopLevel);
+        _runtime.SetTerminalFocus(false, this);
+        StopBlink();
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    /// <summary>Gives keyboard focus up (to the window, else nobody) when it is in this control: the shell's rule for views that go away.</summary>
+    internal void ReleaseFocus(TopLevel? top = null)
+    {
+        top ??= TopLevel.GetTopLevel(this);
+        if (top?.FocusManager is not { } focus || !ReferenceEquals(focus.GetFocusedElement(), this)) return;
+        if (!top.Focus()) focus.Focus(null);
+    }
 
     public void Dispose()
     {

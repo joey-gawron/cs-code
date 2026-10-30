@@ -61,7 +61,7 @@ public sealed partial class VtEmulator
             }
             for (var i = 0; i < remove; i++)
             {
-                if (b.Scrollback is not null) b.Scrollback.Push(lines[0].Snapshot());
+                b.Scrollback?.Push(lines[0]);
                 lines.RemoveAt(0);
                 b.CursorY--;
             }
@@ -74,9 +74,9 @@ public sealed partial class VtEmulator
             var pulled = new List<Line>();
             while (b.Scrollback is { Count: > 0 } sb && pulled.Count < add)
             {
-                var row = sb.PopNewest()!;
-                var line = new Line(b.Columns);
-                line.Load(row);
+                var line = sb.PopNewest()!;
+                line.Resize(b.Columns);
+                line.Touch();
                 pulled.Insert(0, line);
             }
             lines.AddRange(pulled);
@@ -191,7 +191,7 @@ public sealed partial class VtEmulator
             if (idx < result.Count) line.Load(result[idx]);
             screenLines[r] = line;
         }
-        sb.Replace(result.Take(screenStart).ToList(), firstAbsolute + screenStart);
+        sb.Replace(result.Take(screenStart).ToList(), firstAbsolute + screenStart, columns);
         b.Lines = screenLines;
         b.Columns = columns;
         b.Rows = rows;

@@ -258,13 +258,20 @@ internal sealed class Line
 }
 
 /// <summary>
-/// The primary screen's scrollback: a ring of immutable rows bounded by a line count (<c>terminal.integrated.scrollback</c>) and by a hard
-/// memory cap, whichever is reached first. <see cref="TotalPushed"/> counts every row ever pushed, which gives rows stable absolute numbers
-/// (selections and the viewport stay put while old rows fall off the front).
+/// The primary screen's scrollback: a ring of the lines that scrolled off the top, bounded by a line count
+/// (<c>terminal.integrated.scrollback</c>) and by a hard memory cap, whichever is reached first. <see cref="TotalPushed"/> counts every line ever
+/// pushed, which gives rows stable absolute numbers (selections and the viewport stay put while old lines fall off the front).
+/// <para>
+/// Allocation-free in steady state, which is what keeps a flood (<c>yes</c> scrolls millions of lines a second) from turning into gigabytes of
+/// garbage and GC pauses on every thread: the ring keeps the <see cref="Line"/> objects themselves (they are never written again while in it),
+/// and <see cref="Push"/> hands back the line evicted from the front, which the screen clears and reuses as its new bottom line. Immutable
+/// <see cref="TerminalRow"/> copies are made only for rows somebody reads (a frame's visible rows, a selection), and stay valid after the line
+/// they were copied from is recycled.
+/// </para>
 /// </summary>
 internal sealed class Scrollback
 {
-    private TerminalRow[] _ring;
+    private Line[] _ring;
     private int _start;
     private long _bytes;
 
@@ -272,7 +279,7 @@ internal sealed class Scrollback
     {
         MaxLines = Math.Max(0, maxLines);
         MaxBytes = maxBytes;
-        _ring = new TerminalRow[Math.Min(Math.Max(MaxLines, 1), 1024)];
+        _ring = new Line[Math.Min(Math.Max(MaxLines, 1), 1024)];
     }
 
     public int MaxLines { get; private set; }
@@ -280,52 +287,66 @@ internal sealed class Scrollback
     public int Count { get; private set; }
     public long Bytes => _bytes;
 
-    /// <summary>Rows ever pushed (absolute number of the row after the newest).</summary>
+    /// <summary>Lines ever pushed (absolute number of the row after the newest).</summary>
     public long TotalPushed { get; private set; }
 
     /// <summary>Absolute number of the oldest kept row.</summary>
     public long FirstAbsolute => TotalPushed - Count;
 
-    public TerminalRow this[int index] => _ring[(_start + index) % _ring.Length];
+    /// <summary>The kept row <paramref name="index"/> (0 = oldest) as an immutable row (cached by its line).</summary>
+    public TerminalRow this[int index] => _ring[(_start + index) % _ring.Length].Snapshot();
 
-    public void Push(TerminalRow row)
+    private static long SizeOf(Line line) => 64 + line.Cells.Length * 24L;
+
+    /// <summary>
+    /// Keeps <paramref name="line"/> (which left the screen) as the newest row. Returns a line the caller may reuse: one that fell off the
+    /// front of the ring, or <paramref name="line"/> itself when nothing is kept (scrollback 0); null when nothing fell off.
+    /// </summary>
+    public Line? Push(Line line)
     {
         TotalPushed++;
-        if (MaxLines == 0) return;
-        if (Count == MaxLines) DropOldest();
+        if (MaxLines == 0) return line;
+        Line? evicted = null;
+        if (Count == MaxLines) evicted = DropOldest();
         if (Count == _ring.Length) Grow();
-        _ring[(_start + Count) % _ring.Length] = row;
+        _ring[(_start + Count) % _ring.Length] = line;
         Count++;
-        _bytes += row.EstimatedBytes;
-        while (_bytes > MaxBytes && Count > 1) DropOldest();
+        _bytes += SizeOf(line);
+        while (_bytes > MaxBytes && Count > 1)
+        {
+            var dropped = DropOldest();
+            evicted ??= dropped;
+        }
+        return evicted;
     }
 
-    /// <summary>Removes and returns the newest row (pulled back onto a screen that grew taller).</summary>
-    public TerminalRow? PopNewest()
+    /// <summary>Removes and returns the newest line (pulled back onto a screen that grew taller).</summary>
+    public Line? PopNewest()
     {
         if (Count == 0) return null;
         var idx = (_start + Count - 1) % _ring.Length;
-        var row = _ring[idx];
+        var line = _ring[idx];
         _ring[idx] = null!;
         Count--;
         TotalPushed--;
-        _bytes -= row.EstimatedBytes;
-        return row;
+        _bytes -= SizeOf(line);
+        return line;
     }
 
-    private void DropOldest()
+    private Line DropOldest()
     {
-        var row = _ring[_start];
-        _bytes -= row.EstimatedBytes;
+        var line = _ring[_start];
+        _bytes -= SizeOf(line);
         _ring[_start] = null!;
         _start = (_start + 1) % _ring.Length;
         Count--;
+        return line;
     }
 
     private void Grow()
     {
-        var bigger = new TerminalRow[Math.Min(Math.Max(_ring.Length * 2, 16), Math.Max(MaxLines, 1))];
-        for (var i = 0; i < Count; i++) bigger[i] = this[i];
+        var bigger = new Line[Math.Min(Math.Max(_ring.Length * 2, 16), Math.Max(MaxLines, 1))];
+        for (var i = 0; i < Count; i++) bigger[i] = _ring[(_start + i) % _ring.Length];
         _ring = bigger;
         _start = 0;
     }
@@ -336,27 +357,19 @@ internal sealed class Scrollback
         _start = 0;
         Count = 0;
         _bytes = 0;
-        if (_ring.Length > 1024) _ring = new TerminalRow[1024];
+        if (_ring.Length > 1024) _ring = new Line[1024];
     }
 
-    public void SetMaxLines(int maxLines)
-    {
-        MaxLines = Math.Max(0, maxLines);
-        while (Count > MaxLines) DropOldest();
-        if (_ring.Length > Math.Max(MaxLines, 1))
-        {
-            var rows = Enumerable.Range(0, Count).Select(i => this[i]).ToArray();
-            _ring = new TerminalRow[Math.Max(MaxLines, 1)];
-            rows.CopyTo(_ring, 0);
-            _start = 0;
-        }
-    }
-
-    /// <summary>Replaces the content (reflow rebuilt the rows).</summary>
-    public void Replace(IReadOnlyList<TerminalRow> rows, long totalPushed)
+    /// <summary>Replaces the content with copies of <paramref name="rows"/> at <paramref name="columns"/> wide (reflow rebuilt them).</summary>
+    public void Replace(IReadOnlyList<TerminalRow> rows, long totalPushed, int columns)
     {
         Clear();
-        foreach (var r in rows.Skip(Math.Max(0, rows.Count - Math.Max(MaxLines, 0)))) { Push(r); }
+        foreach (var r in rows.Skip(Math.Max(0, rows.Count - Math.Max(MaxLines, 0))))
+        {
+            var line = new Line(columns);
+            line.Load(r);
+            Push(line);
+        }
         TotalPushed = totalPushed;
     }
 }

@@ -57,20 +57,20 @@ internal sealed class ScreenBuffer
         var keep = Scrollback is not null && toScrollback && top == 0;
         if (count == 1)
         {
-            // The hot path of a flood (one line feed at the bottom): no temporary array.
+            // The hot path of a flood (one line feed at the bottom): no allocation at all. The leaving line goes into the scrollback and
+            // the one that fell off the scrollback's front comes back as the new bottom line.
             var line = Lines[top];
-            if (keep) Scrollback!.Push(line.Snapshot());
+            var reuse = keep ? Recycled(Scrollback!.Push(line)) : line;
             Array.Copy(Lines, top + 1, Lines, top, height - 1);
-            line.Clear(fill);
-            Lines[bottom] = line;
+            reuse.Clear(fill);
+            Lines[bottom] = reuse;
             return;
         }
         var leaving = new Line[count];
         for (var i = 0; i < count; i++)
         {
             var line = Lines[top + i];
-            if (keep) Scrollback!.Push(line.Snapshot());
-            leaving[i] = line;
+            leaving[i] = keep ? Recycled(Scrollback!.Push(line)) : line;
         }
         Array.Copy(Lines, top + count, Lines, top, height - count);
         for (var i = 0; i < count; i++)
@@ -81,6 +81,9 @@ internal sealed class ScreenBuffer
         }
         // Rows that moved keep their content (and cached snapshot): only their position changed.
     }
+
+    /// <summary>A line the scrollback let go of, if it has this screen's width; else a new one.</summary>
+    private Line Recycled(Line? evicted) => evicted is not null && evicted.Columns == Columns ? evicted : new Line(Columns);
 
     /// <summary>Scrolls rows [top, bottom] down by <paramref name="count"/> (blank rows enter at the top).</summary>
     public void ScrollDown(int top, int bottom, int count, in Cell fill)
