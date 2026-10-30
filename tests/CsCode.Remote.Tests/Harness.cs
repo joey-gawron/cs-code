@@ -396,16 +396,21 @@ public sealed class RemoteTestHost : IAsyncDisposable
 
     public static string Text(byte[] bytes) => Encoding.UTF8.GetString(bytes);
 
-    /// <summary>The client's Remote log and the tail of the server's own log (failure messages).</summary>
+    /// <summary>
+    /// The client's Remote log and the tail of each of the server's own logs (failure messages). Tests poll it while the server works, so only the
+    /// <c>*.log</c> files are read (beside them the file logger's <c>.cscode.lock</c> is held exclusively by the server during each batch, and
+    /// reading it throws), and a log that cannot be read at this moment (rotated away under the listing) is named, not thrown.
+    /// </summary>
     public string Dump()
     {
         var sb = new StringBuilder("--- Remote output ---\n").Append(Output.Text(RemoteConnectionManager.OutputChannel));
         var logs = Path.Combine(ServerDataDir, "logs");
         if (Directory.Exists(logs))
-            foreach (var f in Directory.GetFiles(logs))
+            foreach (var f in Directory.GetFiles(logs, "*.log"))
             {
-                var lines = File.ReadAllLines(f);
-                sb.Append("--- ").Append(Path.GetFileName(f)).Append(" ---\n").AppendJoin('\n', lines.TakeLast(60));
+                sb.Append("--- ").Append(Path.GetFileName(f)).Append(" ---\n");
+                try { sb.AppendJoin('\n', File.ReadAllLines(f).TakeLast(60)).Append('\n'); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { sb.Append("(not readable now: ").Append(ex.Message).Append(")\n"); }
             }
         return sb.ToString();
     }

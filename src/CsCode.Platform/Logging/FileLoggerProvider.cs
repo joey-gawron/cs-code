@@ -29,7 +29,9 @@ public sealed class FileLoggerOptions
 /// <item><b>Several processes share the file</b> (background mode runs one CsCode process per session, all logging here). Each batch is
 /// written under an exclusive lock on <c>.{BaseName}.lock</c> beside it, into the file opened for that batch: a stream kept open would
 /// write at its own idea of the end and overwrite the other processes' lines, and would follow the file into <c>cscode.1.log</c> when
-/// another process rotates it. Batches are rare (a log line is an event), so the open per batch costs nothing measurable.</item>
+/// another process rotates it. Batches are rare (a log line is an event), so the open per batch costs nothing measurable. A batch waits for
+/// another process's batch as long as that takes and is never written without the lock while that process holds it (see
+/// <see cref="AcquireLock"/>); only a lock that cannot be taken at all is done without.</item>
 /// </list>
 /// </summary>
 public sealed class FileLoggerProvider : ILoggerProvider
@@ -49,10 +51,15 @@ public sealed class FileLoggerProvider : ILoggerProvider
     private long _dropped;
     private long _droppedReported;
     private bool _stopping;
+    /// <summary><see cref="Environment.TickCount64"/> at which a stopping provider stops waiting for the lock; 0 while it runs (no limit).</summary>
+    private long _stopDeadline;
     private FileStream? _file;
     private long _fileSize;
 
-    /// <summary>How long a batch waits for another process's batch before writing without the lock (a stuck holder must not stop logging).</summary>
+    /// <summary>
+    /// How long a stopping provider (<see cref="Dispose"/>) waits, all batches together, for another process to let go of the lock before it drops
+    /// what is still queued. A running provider has no limit (<see cref="AcquireLock"/>).
+    /// </summary>
     internal static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(1);
 
     public FileLoggerProvider(IAppPaths paths, FileLoggerOptions? options = null, TimeProvider? clock = null)
@@ -103,7 +110,10 @@ public sealed class FileLoggerProvider : ILoggerProvider
         _count++;
     }
 
-    /// <summary>Completes once every entry logged before this call has been written and flushed to the file.</summary>
+    /// <summary>
+    /// Completes once every entry logged before this call has been written and flushed to the file (or dropped). While another process holds the
+    /// lock that is when it lets go, however long that takes.
+    /// </summary>
     public Task FlushAsync()
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -144,24 +154,28 @@ public sealed class FileLoggerProvider : ILoggerProvider
 
     private void Write(List<Entry> batch)
     {
-        List<TaskCompletionSource>? markers = null;
         FileStream? gate = null;
         try
         {
-            gate = AcquireLock();
-            var dropped = Interlocked.Read(ref _dropped);
-            if (dropped > _droppedReported)
+            gate = AcquireLock(out var stillHeld);
+            if (stillHeld)
             {
-                WriteLine(_clock.GetUtcNow().UtcDateTime, LogLevel.Warning, "CsCode.Logging", $"{dropped - _droppedReported} log entries were dropped because the log writer could not keep up");
-                _droppedReported = dropped;
+                // Stopping, and another process kept the lock past the deadline: the batch is dropped (counted), never written without the lock.
+                foreach (var e in batch) if (e.Marker is null) Interlocked.Increment(ref _dropped);
             }
+            else
+            {
+                var dropped = Interlocked.Read(ref _dropped);
+                if (dropped > _droppedReported)
+                {
+                    WriteLine(_clock.GetUtcNow().UtcDateTime, LogLevel.Warning, "CsCode.Logging", $"{dropped - _droppedReported} log entries were dropped because the log writer could not keep up");
+                    _droppedReported = dropped;
+                }
 
-            foreach (var e in batch)
-            {
-                if (e.Marker is not null) { (markers ??= new()).Add(e.Marker); continue; }
-                WriteLine(e.Utc, e.Level, e.Category, e.Message);
+                foreach (var e in batch)
+                    if (e.Marker is null) WriteLine(e.Utc, e.Level, e.Category, e.Message);
+                _file?.Flush(flushToDisk: false);
             }
-            _file?.Flush(flushToDisk: false);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -177,28 +191,55 @@ public sealed class FileLoggerProvider : ILoggerProvider
             CloseFile(); // before the lock goes: the next holder must find every byte of this batch in the file
             gate?.Dispose();
         }
-        // Flush requests are completed no matter what happened above, or FlushAsync callers would hang.
-        if (markers is not null) foreach (var m in markers) m.TrySetResult();
+        // Flush requests are completed no matter what happened above (every one in the batch, also those after a line that failed), or FlushAsync
+        // callers would hang.
+        foreach (var e in batch) e.Marker?.TrySetResult();
     }
 
     /// <summary>
     /// The cross-process lock for one batch: the lock file opened with <see cref="FileShare.None"/> (an exclusive <c>flock</c> on Unix, a
-    /// sharing lock on Windows). Null when the directory cannot hold it or another process keeps it past <see cref="LockTimeout"/>: the batch
-    /// is then written without it, as logging must go on.
+    /// sharing lock on Windows).
+    /// <list type="bullet">
+    /// <item><b>Another process holds it</b> (its batch is being written): wait, as long as that takes. Writing without it is no way out: a holder
+    /// stalled mid-batch (a process stopped in a debugger) writes the rest of its batch at the offset it opened the file at once it goes on, over
+    /// these lines or through the middle of them. Nothing waits on this background thread, and meanwhile the bounded queue drops the oldest
+    /// entries and reports the drop once the lock is had.</item>
+    /// <item><b>Stopping</b> (<see cref="Dispose"/>): the wait ends <see cref="LockTimeout"/> after Dispose began, so a stalled holder cannot hold
+    /// up the exit for the whole join. Then <paramref name="stillHeld"/> is set and the batch, like each one after it that finds the lock still
+    /// taken at its single try, is dropped and counted: losing a quitting process's last lines is better than corrupting another process's.</item>
+    /// <item><b>It cannot be taken at all</b> (the folder or the file cannot be created or opened: a read-only remount, a full disk, an I/O error, a
+    /// lock file of another user, a folder removed under the app): null at once, and the batch is written without it, as logging must go on.
+    /// Waiting would not help, and would cost each batch, and the exit, the whole wait.</item>
+    /// </list>
     /// </summary>
-    private FileStream? AcquireLock()
+    private FileStream? AcquireLock(out bool stillHeld)
     {
+        stillHeld = false;
         try { System.IO.Directory.CreateDirectory(_dir); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
-        var deadline = Environment.TickCount64 + (long)LockTimeout.TotalMilliseconds;
+        var pause = 1;
         while (true)
         {
             try { return new FileStream(LockFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, bufferSize: 1); }
-            catch (UnauthorizedAccessException) { return null; }
-            catch (IOException) when (Environment.TickCount64 < deadline) { Thread.Sleep(5); } // held by another process's batch
-            catch (IOException) { return null; }
+            catch (IOException ex) when (IsHeldByAnother(ex))
+            {
+                var stop = Volatile.Read(ref _stopDeadline);
+                if (stop != 0 && Environment.TickCount64 >= stop) { stillHeld = true; return null; }
+                Thread.Sleep(pause); // another batch takes a millisecond or two; a stalled holder is polled at 20 Hz, not spun on
+                pause = Math.Min(pause * 2, 50);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
         }
     }
+
+    /// <summary>
+    /// The lock is held by another process (or another handle), not "cannot be used": <c>flock</c> answered EWOULDBLOCK, which .NET reports as an
+    /// IOException carrying the raw errno (11 on Linux, 35 on macOS and the BSDs); Windows reports a sharing or lock violation. The same test as
+    /// CsCode.Sessions' <c>FileLock</c>, which Platform cannot reference.
+    /// </summary>
+    private static bool IsHeldByAnother(IOException ex) => OperatingSystem.IsWindows()
+        ? (ex.HResult & 0xFFFF) is 32 or 33
+        : ex.HResult == (OperatingSystem.IsLinux() ? 11 : 35);
 
     private readonly StringBuilder _line = new();
 
@@ -281,12 +322,18 @@ public sealed class FileLoggerProvider : ILoggerProvider
 
     // ---- lifetime ----------------------------------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// Stops: later entries are ignored, the writer drains the queue, closes the file and exits, and this waits for it. Another process holding
+    /// the lock is waited for at most <see cref="LockTimeout"/> from here; whatever is still queued then is dropped (and counted in
+    /// <see cref="DroppedCount"/>), never written without the lock (<see cref="AcquireLock"/>).
+    /// </summary>
     public void Dispose()
     {
         lock (_q)
         {
             if (_stopping) return;
             _stopping = true;
+            Volatile.Write(ref _stopDeadline, Environment.TickCount64 + (long)LockTimeout.TotalMilliseconds);
             Monitor.PulseAll(_q);
         }
         if (_writer != Thread.CurrentThread) _writer.Join(TimeSpan.FromSeconds(5)); // the writer drains whatever is queued, then exits
