@@ -45,7 +45,12 @@ internal static class DefinitionOverrides
         if (o.TryGetProperty("rootMarkers", out var rm) && rm.ValueKind == JsonValueKind.Array) d = d with { RootMarkers = Strings(rm) };
         if (o.TryGetProperty("autoStart", out var au) && au.ValueKind is JsonValueKind.True or JsonValueKind.False) d = d with { AutoStart = au.GetBoolean() };
         if (o.TryGetProperty("workingDirectory", out var wd) && wd.ValueKind == JsonValueKind.String) d = d with { WorkingDirectory = wd.GetString() };
-        if (o.TryGetProperty("restartAboveBytes", out var rb) && rb.ValueKind == JsonValueKind.Number && rb.TryGetInt64(out var bytes)) d = d with { RestartAboveBytes = bytes };
+        // null or 0 turns a built-in cap off (the TypeScript-engine servers have one, T39)
+        if (o.TryGetProperty("restartAboveBytes", out var rb))
+        {
+            if (rb.ValueKind == JsonValueKind.Null) d = d with { RestartAboveBytes = null };
+            else if (rb.ValueKind == JsonValueKind.Number && rb.TryGetInt64(out var bytes)) d = d with { RestartAboveBytes = bytes > 0 ? bytes : null };
+        }
         return d;
     }
 

@@ -63,11 +63,20 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
         public int InCallback;
         public int Callbacks;
         public long LastCallbackMs = long.MinValue / 2;
+        /// <summary>Descendants found at the last tree scan, each with its status file opened once (sampling thread only; Linux).</summary>
+        public List<(int Pid, ProcFile File)> Descendants { get; } = new();
+        public long NextTreeScan;
+        public int Processes = 1;
 
         public void Close()
         {
             File?.Dispose();
             Process?.Dispose();
+            lock (Descendants)
+            {
+                foreach (var (_, f) in Descendants) f.Dispose();
+                Descendants.Clear();
+            }
         }
     }
 
@@ -171,7 +180,8 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
 
     /// <summary>The tracked children as last sampled.</summary>
     public IReadOnlyList<ChildProcessInfo> Children =>
-        Volatile.Read(ref _children).Select(c => new ChildProcessInfo(c.Name, c.Pid, Interlocked.Read(ref c.WorkingSet), c.Cap, c.Exited, Volatile.Read(ref c.Callbacks))).ToArray();
+        Volatile.Read(ref _children).Select(c => new ChildProcessInfo(c.Name, c.Pid, Interlocked.Read(ref c.WorkingSet), c.Cap, c.Exited, Volatile.Read(ref c.Callbacks),
+            Volatile.Read(ref c.Processes))).ToArray();
 
     // ------------------------------------------------------------------ activity
 
@@ -290,7 +300,8 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
     {
         var p = _sampler.Sample();
         long children = 0;
-        foreach (var child in Volatile.Read(ref _children))
+        var all = Volatile.Read(ref _children);
+        foreach (var child in all)
         {
             if (child.Exited) continue;
             long rss;
@@ -300,8 +311,13 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
             {
                 child.Exited = true;
                 Interlocked.Exchange(ref child.WorkingSet, 0);
+                Volatile.Write(ref child.Processes, 0);
+                CloseDescendants(child); // an orphan left behind is no longer this child's
                 continue;
             }
+            // lsp-core-4: the child's memory is its process TREE (typescript-language-server's tsserver, an adapter's debuggee, a launcher script's
+            // real server). The tree is rescanned every ChildTreeRescanInterval; the members are read on every sample through their open files.
+            if (child.File is not null) rss += TreeResident(child, all);
             Interlocked.Exchange(ref child.WorkingSet, rss);
             children += rss;
         }
@@ -312,6 +328,66 @@ public sealed class MemoryMonitor : IMemoryMonitor, IUserActivityMonitor, IDispo
         Interlocked.Increment(ref _samples);
         _sampled.Fire(snapshot);
         return snapshot;
+    }
+
+    /// <summary>The summed VmRSS of <paramref name="child"/>'s descendants (rescanning the tree when due); updates its process count.</summary>
+    private long TreeResident(Child child, Child[] all)
+    {
+        lock (child.Descendants)
+        {
+            var now = Stopwatch.GetTimestamp();
+            if (now >= child.NextTreeScan)
+            {
+                child.NextTreeScan = now + (long)(_options.ChildTreeRescanInterval.TotalSeconds * Stopwatch.Frequency);
+                RescanTree(child, all);
+            }
+            long sum = 0;
+            var processes = 1;
+            for (var i = child.Descendants.Count - 1; i >= 0; i--)
+            {
+                var rss = _sampler.ReadChildResident(child.Descendants[i].File);
+                if (rss < 0)
+                {
+                    child.Descendants[i].File.Dispose(); // exited (or a zombie): its handle stays bound to it, a reused pid is never read
+                    child.Descendants.RemoveAt(i);
+                    continue;
+                }
+                sum += rss;
+                processes++;
+            }
+            Volatile.Write(ref child.Processes, processes);
+            return sum;
+        }
+    }
+
+    /// <summary>Looks the child's descendants up again, keeping the open files of those still there. Another tracked child's subtree is its own.</summary>
+    private static void RescanTree(Child child, Child[] all)
+    {
+        var stop = new HashSet<int>();
+        foreach (var c in all)
+            if (!ReferenceEquals(c, child)) stop.Add(c.Pid);
+        var pids = ProcessTreeScanner.Descendants(child.Pid, stop, MaxTreeProcesses);
+        var open = new Dictionary<int, ProcFile>();
+        foreach (var (pid, file) in child.Descendants) open[pid] = file;
+        child.Descendants.Clear();
+        foreach (var pid in pids)
+        {
+            if (open.Remove(pid, out var kept)) child.Descendants.Add((pid, kept));
+            else if (ProcFile.TryOpen($"/proc/{pid}/status") is { } opened) child.Descendants.Add((pid, opened));
+        }
+        foreach (var gone in open.Values) gone.Dispose();
+    }
+
+    /// <summary>A tree larger than this (a terminal running a parallel build) is counted up to it.</summary>
+    private const int MaxTreeProcesses = 512;
+
+    private static void CloseDescendants(Child child)
+    {
+        lock (child.Descendants)
+        {
+            foreach (var (_, file) in child.Descendants) file.Dispose();
+            child.Descendants.Clear();
+        }
     }
 
     private static long ReadChildProcess(Process process)

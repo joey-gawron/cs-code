@@ -74,7 +74,10 @@ collection and the page release, measured before/after (`MemoryTrimReport`, logg
 * **Policy Moderate trims** fire while the user may be typing, so they start a **background** gen2 collection instead (no compaction) and then
   `malloc_trim`. Measured (`A_policy_moderate_trim_collects_in_the_background_while_an_aggressive_one_compacts`, 600k live objects): the background
   trim's longest pause is under half the compacting trim's.
-* **Child processes**: `TrackChildProcess(name, pid, restartAboveBytes, onOverBudget)` — a child above its cap for 2 consecutive samples (1 under
+* **Child processes**: `TrackChildProcess(name, pid, restartAboveBytes, onOverBudget)` — a child counts with its whole **process tree** (lsp-core-4,
+  Linux: the descendants are looked up every 10 s through `/proc/<pid>/task/*/children`, each member's VmRSS read every sample; another tracked
+  child's subtree is its own; up to 512 processes; elsewhere only the pid itself), so tsserver under typescript-language-server, a debuggee under
+  its adapter or a launcher script's real server are in `ChildProcessWorkingSetBytes`, the Memory channel and the cap. A child above its cap for 2 consecutive samples (1 under
   Aggressive pressure) gets its owner's callback, at most once a minute, exceptions isolated.
 * **Idle trim**: after `idleTrimSeconds` without input (`IUserActivityMonitor.NotifyActivity`, called by the shell's tunnel handlers for keys,
   text, pointer press/move/wheel — one timestamp write per event), an Idle-level trim with a compacting collection, once per idle period.
@@ -486,7 +489,10 @@ Measured here, owned elsewhere — for the end pass (nothing below was changed o
    but its name is no longer true: profiling now registers a monitor (the shell wraps it).
 7. **Language servers dominate the footprint**: typescript-language-server on a 2-file project ≈ 550 MB in 4 node processes; a remote session
    starts its own TypeScript server on the remote host for a remote `.js` file (≈ 700 MB more on this loopback "remote"). Caps exist per server
-   (`LanguageServerDefinition.RestartAboveBytes` → `TrackChildProcess` over-budget callbacks); none of the built-ins sets one.
+   (`LanguageServerDefinition.RestartAboveBytes` → `TrackChildProcess` over-budget callbacks). End pass: the cap applies to the process TREE
+   (lsp-core-4: it used to read only the launched pid, so tsserver never counted), and typescript, vue and svelte set 3 GiB
+   (`BuiltinLanguageServers.TypeScriptEngineCap`, VS Code's `typescript.tsserver.maxTsServerMemory` default; T39). Others stay uncapped (native
+   servers grow with the project; JVM ones are bounded by -Xmx); `restartAboveBytes: null` or 0 turns a cap off.
 8. **Scrolling leaks** (Editor module / AvaloniaEdit 12.0.0): each end-to-end scroll of a 20k-line file (80 `ScrollToLine` steps with frames)
    keeps ~3.7 MB more live heap, linearly, with no plateau over 16 passes (`cscode-profile census --scenario scroll`: 30.5 → 85.8 MB live,
    249 → 321 MB resident). Two heap dumps 8 passes apart (`dumpheap -stat`, `gcroot`): +7,001 `AvaloniaEdit.Folding.FoldingMarginMarker` (3.6 MB)
