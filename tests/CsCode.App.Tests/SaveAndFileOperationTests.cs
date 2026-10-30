@@ -104,6 +104,51 @@ public class SaveAndFileOperationTests
         Assert.False(File.Exists(created!.LocalPath));
     }
 
+    // files-1: a move that fails (a case-only folder rename on macOS did; here a file of the same name is in the way) left the tabs it had closed
+    // closed, and the will-rename edit in place: imports and references pointed at a path that was never created. Both are put back.
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_failed_explorer_move_reopens_the_tabs_it_closed_and_undoes_the_will_rename_edit()
+    {
+        using var env = new RealAppHome();
+        env.WriteUserSettings("{ \"cscode.shell.confirmMultiFileEdits\": false }");
+        var moving = env.Workspace.WriteFile("a/x.txt", "mine\n");
+        var inTheWay = env.Workspace.WriteFile("b/x.txt", "in the way\n");
+        var closedRefs = env.Workspace.WriteFile("refs.ts", "import './a/x';\n");
+        var openRefs = env.Workspace.WriteFile("open.ts", "// keep\nimport './a/x';\n");
+        var participant = new RecordingParticipant
+        {
+            RenameEdit = _ => new WorkspaceEdit(new Dictionary<Uri, IReadOnlyList<TextEdit>>
+            {
+                [new Uri(closedRefs)] = [new TextEdit(TextRange.FromLines(0, 10, 0, 11), "b")],
+                [new Uri(openRefs)] = [new TextEdit(TextRange.FromLines(1, 10, 1, 11), "b")],
+            }),
+        };
+        await using var run = new RealAppRun(env, s => participant.Register(s));
+        await run.MainWindowAsync();
+        var sp = run.Services;
+        await sp.GetRequiredService<IWorkspaceService>().OpenFolderAsync(env.Workspace.Uri);
+        var openDoc = await sp.GetRequiredService<INavigationService>().OpenAsync(new Uri(openRefs));
+        Assert.NotNull(openDoc);
+        Assert.NotNull(await sp.GetRequiredService<INavigationService>().OpenAsync(new Uri(moving)));
+        var well = sp.GetRequiredService<DocumentWell>();
+        using var explorer = new ExplorerViewModel(sp.GetRequiredService<IWorkspaceService>(), sp.GetRequiredService<IUiDispatcher>(), sp.GetRequiredService<INavigationService>(),
+            sp.GetService<IConfigurationService>(), sp.GetService<IStateStorage>(), dialogs: null, well, sp.GetRequiredService<FileParticipants>());
+        await explorer.RefreshRootsAsync();
+        var a = explorer.Roots[0].Children!.Single(c => c.Name == "a");
+        var b = explorer.Roots[0].Children!.Single(c => c.Name == "b");
+        await explorer.ExpandAsync(a);
+
+        explorer.Cut([a.Children!.Single(c => c.Name == "x.txt")]);
+        await Assert.ThrowsAnyAsync<IOException>(() => explorer.PasteAsync(b));
+
+        Assert.Contains(participant.Calls, c => c.StartsWith("willRename", StringComparison.Ordinal));
+        Assert.Contains(well.EditorTabs, t => t.Uri == new Uri(moving));
+        Assert.Equal("mine\n", NormalizedText(moving));
+        Assert.Equal("in the way\n", NormalizedText(inTheWay));
+        Assert.Equal("import './a/x';\n", NormalizedText(closedRefs)); // edited on disk for the move, put back on disk
+        Assert.Equal("// keep\nimport './a/x';\n", openDoc.GetText().ReplaceLineEndings("\n")); // edited in the editor, put back there
+    }
+
     [AvaloniaFact(Timeout = 120_000)]
     public async Task Workspace_edit_resource_operations_run_the_file_operation_participants()
     {

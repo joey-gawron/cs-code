@@ -92,10 +92,11 @@ Mechanics worth knowing:
 | `LogsDir` | `$XDG_STATE_HOME/cscode/logs` (`~/.local/state/cscode/logs`) | `%LOCALAPPDATA%\CsCode\Logs` | `~/Library/Logs/CsCode` |
 | `GlobalStorageDir` / `ToolsDir` | `{UserDataDir}/globalStorage`, `{UserDataDir}/tools` | | |
 | application state | `{GlobalStorageDir}/state.json` (+ `.bak`, `.corrupt`) | | |
-| per-workspace state | `{UserDataDir}/workspaceStorage/<hash>/state.json`; `<hash>` = first 32 hex of SHA-256 of the folder URI (no trailing slash; case-folded on Windows/macOS) | | |
-| trash | `$XDG_DATA_HOME/Trash/{files,info}` | recycle bin (`SHFileOperationW`) | `~/.Trash` |
+| per-workspace state | `{UserDataDir}/workspaceStorage/<hash>/state.json`; `<hash>` = first 32 hex of SHA-256 of the folder URI (no trailing slash; case-folded on Windows and, for local folders, on case-insensitive macOS volumes) | | |
+| trash | `$XDG_DATA_HOME/Trash/{files,info}` | recycle bin (`SHFileOperationW`) | Finder's Trash (`NSFileManager trashItemAtURL:`; a same-volume rename into `~/.Trash` only as fallback) |
 
 `CSCODE_HOME` overrides everything (portable installs and tests): `$CSCODE_HOME/{config,data,cache,logs}`. Relative `XDG_*` values are ignored per the spec.
+An absolute `CSCODE_TRASH_DIR` replaces the trash on every OS with a freedesktop-style one there; the test harnesses set it so no test reaches the user's real Trash.
 Core's contribution comment says `settings.json`/`keybindings.json` live in `UserDataDir`; they live in `ConfigDir` (identical on Windows/macOS, different on Linux) —
 only Platform reads them, and it exposes `IConfigurationService.UserSettingsPath` and `KeybindingService.UserKeybindingsPath`.
 
@@ -219,8 +220,9 @@ logs one warning and never throws at evaluation; nesting is capped (64); the par
   it over the target — that rename dropped the executable bit on every save in the app and broke hard links.
 * `DeleteAsync`: recursive flag for non-empty directories; `useTrash` moves to the OS trash and **fails loudly** (`IOException`, original untouched) if it cannot — it never silently deletes permanently.
   Linux follows the freedesktop Trash spec (home trash; unique names `a.2.txt`; `.trashinfo` with percent-encoded `Path=` and local `DeletionDate=`, claimed atomically with `CreateNew`; cross-device = copy then delete).
+  macOS uses Finder's Trash through Foundation (`trashItemAtURL:`, P/Invoke through `objc_msgSend`): items on other volumes go to that volume's trash and keep "Put Back"; when Foundation fails, only a same-volume rename into `~/.Trash` is tried, never a copy.
   Symlinks are trashed/deleted as links; recursive delete never follows directory links (cycles are harmless).
-* `RenameAsync`/`CopyAsync`: `overwrite` flag; refuse moving/copying a directory into itself; case-only rename works; copies recreate symlinks instead of following them; files above 4 MB copy chunked and cancellable (via temp file).
+* `RenameAsync`/`CopyAsync`: `overwrite` flag; refuse moving/copying a directory into itself; case-only rename works (files and folders); whether names differing only in case are one entry is asked per volume (`pathconf(_PC_CASE_SENSITIVE)` on macOS; Linux sensitive, Windows insensitive) and two entries with different (device, inode) are never treated as one; copies recreate symlinks instead of following them; files above 4 MB copy chunked and cancellable (via temp file) — on macOS through `copyfile(COPYFILE_ALL | COPYFILE_CLONE)` instead (an APFS clone where possible; keeps ACL/xattrs/quarantine, as `File.Copy` does for smaller files), whose progress callback stops a data copy mid-file on cancellation — and copied folders get their metadata with `copyfile(COPYFILE_METADATA)` on macOS. Path comparisons (watcher roots, the workspace-state hash of local folders) follow the volume's case sensitivity on macOS too.
 * `FileUri` maps `file:` URIs ⇄ paths correctly for spaces, `#`, `?`, `%`, unicode, Windows drive letters and UNC (OS-specific parts take a flag so they are tested on Linux).
 
 ## File watching
@@ -309,7 +311,7 @@ Stated plainly — what is **not** done or **not verified**:
 * `FileSystem.StatAsync` of a symlink chain resolves the final target only; `ReadDirectoryAsync` marks entry types but not link targets.
 * The `.gitignore` engine does not read the global `core.excludesFile` or the global/system `core.ignorecase` (only the repository's), and ignores POSIX `[:alpha:]` classes.
 * Events carry no ordering guarantee between different services.
-* The Windows recycle bin and macOS trash do not write "put back" metadata.
+* The Windows recycle bin does not write "put back" metadata (macOS's Foundation trash does; its `~/.Trash` fallback does not).
 
 There is no extension system (ARCHITECTURE §1). Its last remnants (`IAppPaths.ExtensionsDir`, the extension command ids, the `ExtensionId` members of Core records, extension-host wording)
 were removed at integration; `NoExtensionSystemTests` keeps them from coming back.

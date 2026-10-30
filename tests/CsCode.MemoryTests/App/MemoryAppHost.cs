@@ -22,14 +22,17 @@ public sealed class MemoryAppHost : IAsyncDisposable
 
     private readonly string? _previousHome;
     private readonly string? _previousData;
+    private readonly string? _previousTrash;
     private bool _disposed;
 
     private MemoryAppHost(MemoryAppHostOptions options)
     {
         _previousHome = Environment.GetEnvironmentVariable("CSCODE_HOME");
         _previousData = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        _previousTrash = Environment.GetEnvironmentVariable("CSCODE_TRASH_DIR");
         Environment.SetEnvironmentVariable("CSCODE_HOME", Home.Path);
-        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Home.Combine("xdg-data")); // the Platform trash: never the user's
+        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Home.Combine("xdg-data"));
+        Environment.SetEnvironmentVariable("CSCODE_TRASH_DIR", Home.Combine("trash")); // the Platform trash on every OS: never the user's
         foreach (var dir in new[] { "home", "config", "data" }) Directory.CreateDirectory(Sandbox.Combine(dir));
         var settings = new Dictionary<string, object?>
         {
@@ -135,6 +138,7 @@ public sealed class MemoryAppHost : IAsyncDisposable
         {
             Environment.SetEnvironmentVariable("CSCODE_HOME", _previousHome);
             Environment.SetEnvironmentVariable("XDG_DATA_HOME", _previousData);
+            Environment.SetEnvironmentVariable("CSCODE_TRASH_DIR", _previousTrash);
             Files.Dispose();
             Home.Dispose();
             Sandbox.Dispose();

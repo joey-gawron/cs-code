@@ -15,7 +15,8 @@ namespace CsCode.Platform.FileSystem;
 /// <item>Other URI schemes throw <see cref="NotSupportedException"/>.</item>
 /// <item>Writes are atomic (temp file + fsync + rename) and keep the file: hard links, owner, group, mode and extended attributes (written in
 /// place when a rename would lose them, see <see cref="AtomicFile"/>); they write THROUGH symlinks and refuse read-only files.</item>
-/// <item>Delete can use the trash (freedesktop spec on Linux incl. <c>.trashinfo</c>, <c>~/.Trash</c> on macOS, recycle bin on Windows).</item>
+/// <item>Delete can use the trash (freedesktop spec on Linux incl. <c>.trashinfo</c>, Finder's Trash with "Put Back" on macOS, recycle bin on Windows).</item>
+/// <item>Whether names that differ only in case are one entry is decided per volume (<see cref="IsCaseSensitive"/>).</item>
 /// <item>Directory symlinks are never followed by recursive delete/copy, so a link cycle cannot make them run away.</item>
 /// </list>
 /// </summary>
@@ -42,6 +43,18 @@ public sealed class LocalFileSystem : IFileSystem
 
     /// <summary>Test hook invoked after every 64 KB chunk of a read, write or chunked copy (lets tests cancel deterministically mid-operation).</summary>
     internal Action? ChunkHook { get; set; }
+
+    /// <summary>
+    /// macOS: big copies are APFS clones where the volume can make one. False copies the data block by block, as on a volume that cannot clone,
+    /// so a test can cancel one mid-file.
+    /// </summary>
+    internal bool CloneCopies { get; set; } = true;
+
+    /// <summary>
+    /// Whether the volume holding a path tells names apart by case (files-8: asked per volume on macOS, where APFS can be either). Settable so a
+    /// test on a case-sensitive Linux file system can drive the case-insensitive paths.
+    /// </summary>
+    internal Func<string, bool> IsCaseSensitive { get; set; } = FileSystemNative.IsCaseSensitive;
 
     private ValueTask<T> Run<T>(Uri uri, Func<string, CancellationToken, T> work, CancellationToken ct) =>
         new(_lane.RunAsync(token => work(FileUri.ToPath(uri), token), ct)); // path conversion (and its NotSupportedException) happens inside the task
@@ -177,8 +190,11 @@ public sealed class LocalFileSystem : IFileSystem
         var fullSource = Path.GetFullPath(source);
         var fullTarget = Path.GetFullPath(target);
         if (string.Equals(fullSource, fullTarget, StringComparison.Ordinal)) return; // renaming onto itself
-        // On a case-insensitive file system "a.txt" -> "A.txt" names the SAME entry: it is a rename, not a collision.
-        var caseOnlyChange = CaseInsensitiveFs && string.Equals(fullSource, fullTarget, StringComparison.OrdinalIgnoreCase);
+        // On a case-insensitive volume "a.txt" -> "A.txt" names the SAME entry: it is a rename, not a collision. On a case-sensitive one (Linux, a
+        // case-sensitive APFS volume) an existing "A.txt" is another file and must not be overwritten, so the volume is asked, and the entries
+        // themselves have the last word: two the kernel tells apart (different device or inode) are never the same.
+        var caseOnlyChange = string.Equals(fullSource, fullTarget, StringComparison.OrdinalIgnoreCase) && !IsCaseSensitive(fullSource)
+            && FileSystemNative.SameEntry(fullSource, fullTarget) != false;
 
         var targetExists = !caseOnlyChange && (File.Exists(target) || Directory.Exists(target) || new FileInfo(target).LinkTarget is not null);
         if (targetExists)
@@ -191,13 +207,14 @@ public sealed class LocalFileSystem : IFileSystem
         }
 
         ct.ThrowIfCancellationRequested();
-        if (srcIsDir) MoveDirectory(source, target, ct);
+        if (srcIsDir) MoveDirectory(source, target, caseOnlyChange, ct);
         else File.Move(source, target, overwrite: true);
     }
 
-    private void MoveDirectory(string source, string target, CancellationToken ct)
+    private void MoveDirectory(string source, string target, bool caseOnlyChange, CancellationToken ct)
     {
-        if (IsInside(target, source)) throw new IOException($"Cannot move '{source}' into itself ('{target}')");
+        // "foo" -> "Foo" looks like a move into itself to a case-insensitive comparison: it is the same directory, renamed (files-1).
+        if (!caseOnlyChange && IsInside(target, source)) throw new IOException($"Cannot move '{source}' into itself ('{target}')");
         try { Directory.Move(source, target); }
         catch (IOException) when (Directory.Exists(source) && !Directory.Exists(target))
         {
@@ -243,6 +260,9 @@ public sealed class LocalFileSystem : IFileSystem
             if (entry is DirectoryInfo d && d.LinkTarget is null) CopyDirectory(entry.FullName, dest, overwrite, ct);
             else CopyEntry(entry, dest, overwrite, ct);
         }
+        // macOS: the copy keeps the folder's ACL, mode, flags and extended attributes (Finder tags, quarantine) as Finder's does (gap-11). After
+        // the contents: a read-only or locked folder could not be filled. Best effort, like the per-file metadata.
+        if (OperatingSystem.IsMacOS()) FileSystemNative.TryCopyDirectoryMetadata(source, target);
     }
 
     // A symlink is copied AS a symlink (never followed): copying a tree that contains a cycle must terminate.
@@ -262,12 +282,21 @@ public sealed class LocalFileSystem : IFileSystem
 
         var file = (FileInfo)entry;
         if (!overwrite && (File.Exists(target) || Directory.Exists(target))) throw new IOException($"Cannot copy: '{target}' already exists");
+        // File.Copy keeps the mode, and on macOS also the ACL, extended attributes and quarantine, cloning the data on APFS (O(1)).
         if (file.Length <= ChunkedCopyThreshold) { File.Copy(file.FullName, target, overwrite); return; }
 
         // Big file: chunked so cancellation takes effect mid-copy; written via a temp file so a cancelled copy leaves nothing behind.
         var temp = target + "." + Guid.NewGuid().ToString("N")[..8] + ".tmp";
         try
         {
+            if (OperatingSystem.IsMacOS())
+            {
+                // copyfile, as File.Copy does, so a big file keeps its ACL, extended attributes and quarantine and is cloned where it can be
+                // (gap-11); a copy that is not a clone still stops mid-file on cancellation.
+                FileSystemNative.CopyFile(file.FullName, temp, CloneCopies, ChunkHook, ct);
+                File.Move(temp, target, overwrite);
+                return;
+            }
             using (var input = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.SequentialScan))
             using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1))
             {
@@ -292,14 +321,12 @@ public sealed class LocalFileSystem : IFileSystem
 
     // ---- helpers -----------------------------------------------------------------------------------------------------------------
 
-    private static bool CaseInsensitiveFs => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS();
-
     private static string TrimEnd(string p) => p.Length > 1 ? p.TrimEnd('/', '\\') : p;
 
-    private static bool IsInside(string candidate, string container)
+    private bool IsInside(string candidate, string container)
     {
         var c = Path.GetFullPath(candidate).TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
         var d = Path.GetFullPath(container).TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
-        return c.StartsWith(d, CaseInsensitiveFs ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        return c.StartsWith(d, IsCaseSensitive(container) ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
     }
 }

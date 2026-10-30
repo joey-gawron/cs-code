@@ -543,6 +543,75 @@ public class LocalFileSystemTests : IDisposable
         Assert.Equal(["README.md"], Directory.GetFiles(_f.Temp.Path).Select(f => Path.GetFileName(f)!).ToArray());
     }
 
+    // files-1: on a case-insensitive volume (macOS by default) "foo" -> "Foo" compared as "a move into itself" and failed, after Explorer had
+    // already closed the folder's tabs. The volume's answer is injected, so this runs (and failed before the fix) on Linux too.
+    [Fact]
+    public async Task A_case_only_rename_of_a_folder_on_a_case_insensitive_volume_is_a_rename()
+    {
+        _f.Fs.IsCaseSensitive = _ => false;
+        _f.Temp.WriteFile("src/inner.txt", "I");
+        await _f.Fs.RenameAsync(_f.U("src"), _f.U("Src"), ct: Ct);
+        Assert.Equal(["Src"], Directory.GetDirectories(_f.Temp.Path).Select(d => Path.GetFileName(d)!).ToArray());
+        Assert.Equal("I", File.ReadAllText(_f.P("Src/inner.txt")));
+    }
+
+    // files-8: a volume that keeps "a.txt" and "A.txt" apart (Linux, a case-sensitive APFS volume) must not lose "A.txt" to a case-only rename,
+    // even when the volume is wrongly believed to be case-insensitive (what macOS assumed): the two entries are told apart by their inodes.
+    [Fact]
+    public async Task A_case_only_rename_onto_another_entry_is_a_collision_even_when_the_volume_is_believed_case_insensitive()
+    {
+        _f.Temp.WriteFile("a.txt", "lower");
+        _f.Temp.WriteFile("A.txt", "UPPER");
+        Assert.SkipWhen(File.ReadAllText(_f.P("a.txt")) != "lower", "this volume is case-insensitive: a.txt and A.txt are one file");
+        _f.Fs.IsCaseSensitive = _ => false;
+
+        await Assert.ThrowsAsync<IOException>(async () => await _f.Fs.RenameAsync(_f.U("a.txt"), _f.U("A.txt"), ct: Ct));
+        Assert.Equal("lower", File.ReadAllText(_f.P("a.txt")));
+        Assert.Equal("UPPER", File.ReadAllText(_f.P("A.txt")));
+    }
+
+    [Fact]
+    public void The_volume_says_whether_names_differ_by_case()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows is case-insensitive by assumption");
+        _f.Temp.WriteFile("probe.txt", "p");
+        var distinct = !File.Exists(_f.P("PROBE.txt"));
+        Assert.Equal(distinct, FileSystemNative.IsCaseSensitive(_f.P("probe.txt")));
+        Assert.Equal(distinct, FileSystemNative.IsCaseSensitive(_f.P("not/yet/there.txt"))); // asks the nearest existing ancestor
+    }
+
+    // files-8: the watcher compared every macOS path case-insensitively, so on a case-sensitive APFS volume "Foo" and "foo" were one root.
+    [Fact]
+    public void Paths_differing_only_in_case_are_one_path_only_on_a_case_insensitive_volume()
+    {
+        var asked = new List<string>();
+        var sensitive = new VolumePathComparer(p => { asked.Add(p); return true; });
+        var insensitive = new VolumePathComparer(_ => false);
+
+        Assert.False(sensitive.Equals("/v/Foo", "/v/foo"));
+        Assert.True(insensitive.Equals("/v/Foo", "/v/foo"));
+        Assert.True(sensitive.Equals("/v/foo", "/v/foo"));
+        Assert.False(insensitive.Equals("/v/foo", "/v/bar"));
+        Assert.False(insensitive.Equals("/v/foo", null));
+        Assert.Equal(insensitive.GetHashCode("/v/Foo"), insensitive.GetHashCode("/v/foo"));
+        Assert.Equal(["/v/Foo"], asked); // only a pair that differs in nothing but case costs a question to the volume
+        Assert.Equal(2, new HashSet<string>(["/v/Foo", "/v/foo"], sensitive).Count);
+        Assert.Single(new HashSet<string>(["/v/Foo", "/v/foo"], insensitive));
+    }
+
+    [Fact]
+    public void Entries_are_the_same_only_when_device_and_inode_match()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "no lstat on Windows");
+        var a = _f.Temp.WriteFile("d/a.txt", "a");
+        var b = _f.Temp.WriteFile("d/b.txt", "b");
+        File.CreateSymbolicLink(_f.P("d/link"), a);
+        Assert.True(FileSystemNative.SameEntry(a, Path.Combine(_f.P("d"), "..", "d", "a.txt")));
+        Assert.False(FileSystemNative.SameEntry(a, b));
+        Assert.False(FileSystemNative.SameEntry(a, _f.P("d/link"))); // the link itself, never its target
+        Assert.Null(FileSystemNative.SameEntry(a, _f.P("d/missing")));
+    }
+
     [Fact]
     public async Task Rename_moves_a_symlink_itself()
     {
@@ -627,10 +696,59 @@ public class LocalFileSystemTests : IDisposable
     {
         File.WriteAllBytes(_f.P("big.bin"), Bytes(6_000_000));
         using var cts = new CancellationTokenSource();
+        _f.Fs.CloneCopies = false; // macOS: the data is copied, as on a volume that cannot clone (a clone takes no time to cancel)
         _f.Fs.ChunkHook = () => cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await _f.Fs.CopyAsync(_f.U("big.bin"), _f.U("big.copy"), ct: cts.Token));
         Assert.False(File.Exists(_f.P("big.copy")));
-        Assert.Equal(["big.bin"], Directory.GetFiles(_f.Temp.Path).Select(f => Path.GetFileName(f)!).ToArray());
+        // The caller's task completes as soon as the token is cancelled; the lane thread removes the temp file right after (on macOS once
+        // copyfile has returned), so it is given a moment.
+        string[] Files() => Directory.GetFiles(_f.Temp.Path).Select(f => Path.GetFileName(f)!).ToArray();
+        for (var wait = Stopwatch.StartNew(); Files().Length > 1 && wait.Elapsed < TimeSpan.FromSeconds(5);) await Task.Delay(10, Ct);
+        Assert.Equal(["big.bin"], Files());
+    }
+
+    // gap-11: Finder tags, quarantine and other extended attributes survived a copy only for files up to 4 MiB; big files and folders lost them.
+    [Fact]
+    public async Task On_macos_a_copy_keeps_the_extended_attributes_of_big_files_and_of_folders()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "macOS extended attributes");
+        File.WriteAllBytes(_f.P("big.bin"), Bytes(5_000_000));
+        Directory.CreateDirectory(_f.P("tree/sub"));
+        foreach (var p in new[] { "big.bin", "tree", "tree/sub" }) MacXattr.Set(_f.P(p), "com.example.cscode", p);
+
+        await _f.Fs.CopyAsync(_f.U("big.bin"), _f.U("big.copy"), ct: Ct);
+        await _f.Fs.CopyAsync(_f.U("tree"), _f.U("tree copy"), ct: Ct);
+        _f.Fs.CloneCopies = false; // as on a volume that cannot clone
+        await _f.Fs.CopyAsync(_f.U("big.bin"), _f.U("big.data-copy"), ct: Ct);
+
+        Assert.Equal(File.ReadAllBytes(_f.P("big.bin")), File.ReadAllBytes(_f.P("big.copy")));
+        Assert.Equal(File.ReadAllBytes(_f.P("big.bin")), File.ReadAllBytes(_f.P("big.data-copy")));
+        Assert.Equal("big.bin", MacXattr.Get(_f.P("big.copy"), "com.example.cscode"));
+        Assert.Equal("big.bin", MacXattr.Get(_f.P("big.data-copy"), "com.example.cscode"));
+        Assert.Equal("tree", MacXattr.Get(_f.P("tree copy"), "com.example.cscode"));
+        Assert.Equal("tree/sub", MacXattr.Get(_f.P("tree copy/sub"), "com.example.cscode"));
+    }
+
+    private static class MacXattr
+    {
+        [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "setxattr", SetLastError = true)]
+        private static extern int SetXattr(string path, string name, byte[] value, nuint size, uint position, int options);
+
+        [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "getxattr", SetLastError = true)]
+        private static extern nint GetXattr(string path, string name, byte[]? value, nuint size, uint position, int options);
+
+        public static void Set(string path, string name, string value)
+        {
+            var bytes = Encoding.UTF8.GetBytes(value);
+            Assert.Equal(0, SetXattr(path, name, bytes, (nuint)bytes.Length, 0, 0));
+        }
+
+        public static string? Get(string path, string name)
+        {
+            var buffer = new byte[256];
+            var n = GetXattr(path, name, buffer, (nuint)buffer.Length, 0, 0);
+            return n < 0 ? null : Encoding.UTF8.GetString(buffer, 0, (int)n);
+        }
     }
 
     [Fact]
