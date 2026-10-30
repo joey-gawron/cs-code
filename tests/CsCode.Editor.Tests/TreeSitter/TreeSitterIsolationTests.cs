@@ -88,6 +88,84 @@ public class TreeSitterIsolationTests
         Assert.Empty(FlightRecorder.CollectCrashes(dir.Path)); // reported once
     }
 
+    /// <summary>
+    /// editor-2: another CsCode process (background mode runs several on one user data folder) must never collect a LIVE process's flight
+    /// file. It used to decide by comparing the pid's start time to the tick, which .NET computes per process on Linux (1.7 ms apart in the
+    /// review's probe): a live process looked dead, its file was deleted and, while it was inside a grammar, a crash was counted against it.
+    /// </summary>
+    [Fact]
+    public void A_live_process_s_flight_file_is_never_collected_whatever_its_start_time_looks_like_from_here()
+    {
+        using var dir = new TempDirectory("cscode-ts-flight-");
+        using var other = Process.Start(new ProcessStartInfo("sleep", "30") { UseShellExecute = false })!; // stands in for the other process
+        try
+        {
+            using var recorder = FlightRecorder.Open(dir.Path);
+            using (recorder.Enter(FlightRecorder.RecordFor("toml", "probe-identity")))
+            {
+                // the file as another process sees it: owned by a live pid, with a start time this process computes slightly differently
+                using (var fs = new FileStream(recorder.FilePath!, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+                {
+                    fs.Position = 8;
+                    fs.Write(BitConverter.GetBytes(other.Id));
+                    fs.Position = 24;
+                    fs.Write(BitConverter.GetBytes(other.StartTime.ToUniversalTime().Ticks + 17_000));
+                }
+                Assert.Empty(FlightRecorder.CollectCrashes(dir.Path));
+                Assert.True(File.Exists(recorder.FilePath), "a live process's flight file was taken away");
+            }
+
+            // a file nobody holds is an owner that is gone, even when its pid now belongs to another (live) process
+            var orphan = Path.Combine(dir.Path, "orphan.flight");
+            var bytes = File.ReadAllBytes(recorder.FilePath!);
+            BitConverter.TryWriteBytes(bytes.AsSpan(12), 1); // "inside"
+            File.WriteAllBytes(orphan, bytes);
+            Assert.Equal([("toml", "probe-identity")], FlightRecorder.CollectCrashes(dir.Path));
+            Assert.False(File.Exists(orphan));
+            Assert.True(File.Exists(recorder.FilePath));
+        }
+        finally
+        {
+            other.Kill();
+            other.WaitForExit();
+        }
+    }
+
+    /// <summary>
+    /// editor-9: two processes share quarantine.json. A clear in one of them used to be undone by the other's next record (it merged its stale
+    /// entries back into the file), and the other one kept refusing the grammar anyway.
+    /// </summary>
+    [Fact]
+    public void A_clear_in_one_process_is_not_undone_by_another_and_is_honoured_there()
+    {
+        using var dir = new TempDirectory("cscode-ts-quarantine-");
+        var file = Path.Combine(dir.Path, "quarantine.json");
+        var a = new GrammarQuarantine(file); // process A
+        Assert.True(a.RecordHang("erlang", "id1", "test"));
+        var b = new GrammarQuarantine(file); // process B
+        Assert.NotNull(b.Reason("erlang", "id1"));
+        b.Clear();
+        Thread.Sleep(20); // a distinct modification time on coarse clocks
+        Assert.Null(a.Reason("erlang", "id1")); // A honours B's clear
+        a.RecordCrash("toml", "id2"); // and A's next record does not bring erlang back
+        var next = new GrammarQuarantine(file); // a new process
+        Assert.Null(next.Reason("erlang", "id1"));
+        Assert.Single(next.Entries, e => e.Grammar == "toml");
+        Assert.Null(b.Reason("erlang", "id1"));
+    }
+
+    [Fact]
+    public void A_quarantine_file_of_the_first_format_is_still_read()
+    {
+        using var dir = new TempDirectory("cscode-ts-quarantine-");
+        var file = Path.Combine(dir.Path, "quarantine.json");
+        File.WriteAllText(file, """[ { "Grammar": "toml", "Identity": "id1", "Crashes": 0, "Hangs": 1, "LastUtc": "2026-10-30T00:00:00Z" } ]""");
+        var q = new GrammarQuarantine(file);
+        Assert.NotNull(q.Reason("toml", "id1"));
+        q.Clear();
+        Assert.Null(new GrammarQuarantine(file).Reason("toml", "id1"));
+    }
+
     [Fact]
     public void The_quarantine_refuses_a_grammar_build_after_two_crashes_or_one_hang_and_persists()
     {
@@ -197,6 +275,63 @@ public class TreeSitterIsolationTests
             SyntaxDocument.HangHookForTests = null;
             TreeSitterService.HangThreshold = previous;
         }
+    }
+
+    /// <summary>editor-8: the command used to do nothing before this process's first tree-sitter document (nothing had loaded the quarantine yet).</summary>
+    [AvaloniaFact]
+    public async Task Clearing_the_quarantine_before_the_first_tree_sitter_document_takes_effect()
+    {
+        RequireGrammar("toml");
+        using var dir = new TempDirectory("cscode-ts-isolation-");
+        var file = Path.Combine(dir.Path, "quarantine.json");
+        var identity = GrammarIdentity.Of(GrammarLocator.CreateDefault(null).Find("toml")!);
+        new GrammarQuarantine(file).RecordHang("toml", identity, "an earlier process hung in it");
+
+        using var host = ViewHost.Create();
+        host.Factory.Tokens.TreeSitter.IsolationDirectoryOverride = dir.Path;
+        await host.Commands.ExecuteAsync(TokenizationManager.ClearQuarantineCommand); // first thing after the start
+        await ViewHost.WaitFor(() => new GrammarQuarantine(file).Reason("toml", identity) is null, "quarantine.json cleared");
+        var (_, toml, _) = await host.OpenAsync("[a]\nb = 1\n", "a.toml");
+        await WaitForTreeSitter(toml, 1);
+    }
+
+    /// <summary>
+    /// editor-10: the isolation set-up reads and writes files (the quarantine, earlier processes' flight files, this process's recorder) on the
+    /// lane, but it used to hold the lock the UI thread takes to schedule every tree-sitter document while doing it, exactly while the first
+    /// one lays out. Held up here by a hook, as slow storage would.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task The_UI_thread_never_waits_for_the_isolation_file_work()
+    {
+        RequireGrammar("toml");
+        using var dir = new TempDirectory("cscode-ts-isolation-");
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        using var host = ViewHost.Create();
+        var service = host.Factory.Tokens.TreeSitter;
+        service.IsolationDirectoryOverride = dir.Path;
+        service.IsolationSetupHookForTests = () =>
+        {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(30));
+        };
+        try
+        {
+            var (_, toml, _) = await host.OpenAsync("[a]\nb = 1\n", "a.toml");
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "the lane started the isolation set-up");
+            // the lane is inside the file work now; the UI thread schedules the document (what every edit and viewport report does)
+            var clock = Stopwatch.StartNew();
+            _ = service.Lane;
+            toml.Controller.SetSelection(CsCode.Core.Text.TextRange.At(1, 5));
+            ViewTestHelpers.Type(toml, "0");
+            ViewHost.Pump();
+            Assert.True(clock.ElapsedMilliseconds < 5_000, $"the UI thread waited {clock.ElapsedMilliseconds} ms for the lane's file work");
+        }
+        finally
+        {
+            release.Set();
+        }
+        await WaitForTreeSitter((await host.OpenAsync("[c]\nd = 2\n", "c.toml")).View, 1);
     }
 
     [AvaloniaFact]

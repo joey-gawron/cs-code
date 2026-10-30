@@ -43,9 +43,9 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
         Structure = new TreeSitterLanguageFeatures(this, services.Features);
         _subscriptions.Add(services.Features.Register(Core.Text.DocumentSelector.All, Structure, "tree-sitter"));
         if (services.Commands is { } commands && !commands.Has(ClearQuarantineCommand))
-            _subscriptions.Add(commands.Register(ClearQuarantineCommand, _ =>
+            _subscriptions.Add(commands.Register(ClearQuarantineCommand, invocation =>
             {
-                TreeSitter.ClearQuarantine();
+                _ = TreeSitter.ClearQuarantine(); // not awaited: it completes on the syntax lane, which a hung grammar may hold
                 return ValueTask.FromResult<object?>(null);
             }, new Core.Platform.CommandMetadata(ClearQuarantineCommand, "Clear Quarantined Tree-sitter Grammars", "Editor")));
         if (services.Memory is { } monitor) _monitorRegistration = monitor.Register(this);
