@@ -56,7 +56,8 @@ internal static partial class ServerBuild
 /// reason the daemon could not start (for the relay waiting for it). A directory is used only while it is provably this user's own entry
 /// (<see cref="IsOwnDirectory"/>).
 /// </summary>
-internal sealed partial record PersistencePaths(string Directory, string Stem)
+/// <param name="Shared">The directory is in the shared temp directory (others can make entries next to it): it must pass <see cref="IsOwnDirectory"/>.</param>
+internal sealed partial record PersistencePaths(string Directory, string Stem, bool Shared = false)
 {
     private const int MaxSocketPathBytes = 100; // sun_path is 108 bytes on Linux, 104 on macOS (the agent link is connected to by its path too)
     private const UnixFileMode Private = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
@@ -96,7 +97,7 @@ internal sealed partial record PersistencePaths(string Directory, string Stem)
         var env = environment ?? Environment.GetEnvironmentVariable;
         foreach (var dir in PrivateCandidates(dataDir, env))
             if (Fits(dir, stem)) return new PersistencePaths(dir, stem);
-        if (SharedDirectory(dataDir, stem, env, create: true) is { } shared) return new PersistencePaths(shared, stem);
+        if (SharedDirectory(dataDir, stem, env, create: true) is { } shared) return new PersistencePaths(shared, stem, Shared: true);
         throw new IOException($"No directory for the server's socket has a path short enough (data dir {dataDir})");
     }
 
@@ -199,16 +200,18 @@ internal sealed partial record PersistencePaths(string Directory, string Stem)
     }
 
     /// <summary>
-    /// Creates the directory owner-only, or checks and tightens an existing one: it must be this user's own directory (<see cref="IsOwnDirectory"/>:
-    /// not another user's, not a symbolic link somebody planted). Nobody else can reach the socket.
+    /// Creates the directory owner-only, or checks and tightens an existing one. One in the shared temp directory must be this user's own entry
+    /// (<see cref="IsOwnDirectory"/>: not another user's, not a symbolic link somebody planted). The others are in places only this user (or root)
+    /// can make entries in; there it must not be a link and must take chmod (refused to anybody but its owner). Nobody else can reach the socket.
     /// </summary>
     public void EnsureDirectory()
     {
         if (OperatingSystem.IsWindows()) { System.IO.Directory.CreateDirectory(Directory); return; }
         System.IO.Directory.CreateDirectory(Directory, Private);
-        if (!IsOwnDirectory(Directory))
+        if (Shared ? !IsOwnDirectory(Directory) : new DirectoryInfo(Directory).LinkTarget is not null)
             throw new IOException($"{Directory} is not a directory of this user's (another user's, or a symbolic link): the server's socket does not go there");
-        File.SetUnixFileMode(Directory, Private);
+        try { File.SetUnixFileMode(Directory, Private); }
+        catch (UnauthorizedAccessException) { throw new IOException($"{Directory} belongs to another user: the server's socket does not go there"); }
     }
 
     /// <summary>A connection to the daemon, or null when none listens (no socket, a stale one, refused).</summary>
@@ -285,12 +288,18 @@ internal sealed partial record PersistencePaths(string Directory, string Stem)
     {
         var found = new List<string>();
         var env = environment ?? Environment.GetEnvironmentVariable;
-        var dirs = PrivateCandidates(dataDir, env).Append(SharedDirectory(dataDir, Stem, env, create: false)).OfType<string>().Distinct(StringComparer.Ordinal);
-        foreach (var dir in dirs)
+        var dirs = PrivateCandidates(dataDir, env).Select(d => (Path: d, Shared: false))
+            .Append((Path: SharedDirectory(dataDir, Stem, env, create: false)!, Shared: true)).Where(d => d.Path is not null).DistinctBy(d => d.Path, StringComparer.Ordinal);
+        foreach (var (dir, shared) in dirs)
         {
             try
             {
-                if (!System.IO.Directory.Exists(dir) || !IsOwnDirectory(dir)) continue; // only ours are looked at
+                if (!System.IO.Directory.Exists(dir)) continue;
+                if (!OperatingSystem.IsWindows())
+                {
+                    if (shared ? !IsOwnDirectory(dir) : new DirectoryInfo(dir).LinkTarget is not null) continue; // only ours are looked at
+                    if (!shared) File.SetUnixFileMode(dir, Private); // refused unless ours (then: not looked at)
+                }
                 foreach (var file in System.IO.Directory.EnumerateFiles(dir, session + "*.sock"))
                 {
                     var name = Path.GetFileName(file);

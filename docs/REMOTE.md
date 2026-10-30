@@ -126,9 +126,9 @@ the first time a workspace opens — instead the start fails with "No usable ver
   for a socket address, `$XDG_RUNTIME_DIR/cscode-server`; without `XDG_RUNTIME_DIR` (docker exec, su, macOS, hosts without systemd) for root
   `/run/cscode-server`, for anyone else `cscode-<uid>-<12 random hex digits>` in `$TMPDIR` or `/tmp` (only a temp directory others cannot
   rename our entries in: sticky, or not writable by everybody), recorded in `<data dir>/run/socket-dir` so every relay and daemon of the data dir
-  finds it — a fixed name could be made first by another user and keep this user's persistent server from ever starting. Every socket directory
-  must be this user's own entry: `lchown(path, euid, -1)` (a no-op for the owner, refused for anyone else, and it never follows a link) and then
-  not a symbolic link; in a sticky directory nobody else can rename an entry of ours afterwards, so the check cannot be passed by swapping a
+  finds it — a fixed name could be made first by another user and keep this user's persistent server from ever starting. That directory must be
+  this user's own entry: `lchown(path, euid, -1)` (a no-op for the owner, refused for anyone else, and it never follows a link) and then not a
+  symbolic link (the others, in places only this user or root can make entries in, must not be a link and must take chmod); in a sticky directory nobody else can rename an entry of ours afterwards, so the check cannot be passed by swapping a
   directory for a link between two checks (the earlier "no link, then chmod" could: chmod follows links). A recorded directory that is gone (a
   reboot) is made again under its name; one that is not ours (taken meanwhile) is replaced by a new one (remote-8) — with mode 0600, next to a lock file only the live daemon holds; session ids are 32 random hex digits (validated server-side). Only the same
   user can reach a daemon. The daemon is started through `/bin/sh -c 'exec "$0" "$@" </dev/null >/dev/null 2>&1 &'` (no string from data) and calls
