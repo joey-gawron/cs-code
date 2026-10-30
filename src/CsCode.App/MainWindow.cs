@@ -353,7 +353,7 @@ public sealed class MainWindow : Window, IWindowChrome
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
-        _swallowText = false;
+        _swallowTextUntil = 0;
         // Ctrl+Tab / Ctrl+Shift+Tab: MRU editor switcher overlay (committed when Ctrl is released).
         if (e.Key == Key.Tab && e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Alt))
         {
@@ -370,21 +370,31 @@ public sealed class MainWindow : Window, IWindowChrome
         {
             e.Handled = true;
             // A character key the pipeline took (the second key of a chord: Ctrl+W v, Ctrl+K S, or a dead one) is not typing: a platform that
-            // sends the character as text input after the key press anyway must not get it into the editor.
-            _swallowText = Vim.VimKeyPolicy.IsTextKey(stroke);
+            // sends the character as text input after the key press anyway must not get it into the editor. Only that key's own text input, which
+            // follows at once: a platform that sends none for a handled key must not lose later text input with no key press, such
+            // as dictation or a character picked in the Character Viewer.
+            _swallowTextUntil = Vim.VimKeyPolicy.IsTextKey(stroke) ? Environment.TickCount64 + SwallowTextMs : 0;
         }
     }
 
-    /// <summary>The key press just handled by the key pipeline was a character key: its text input, if any follows, goes nowhere.</summary>
-    private bool _swallowText;
+    /// <summary>
+    /// Until this tick (<see cref="Environment.TickCount64"/>; 0: none) the next single-character text input belongs to the character key the key
+    /// pipeline just handled and goes nowhere.
+    /// </summary>
+    private long _swallowTextUntil;
+    private const int SwallowTextMs = 200;
 
     private void OnPreviewTextInput(object? sender, TextInputEventArgs e)
     {
-        if (_swallowText)
+        if (_swallowTextUntil != 0)
         {
-            _swallowText = false;
-            e.Handled = true;
-            return;
+            var own = Environment.TickCount64 <= _swallowTextUntil && e.Text is { } text && new System.Globalization.StringInfo(text).LengthInTextElements == 1;
+            _swallowTextUntil = 0;
+            if (own)
+            {
+                e.Handled = true;
+                return;
+            }
         }
         if (_shell.KeyInterceptor?.OnTextInput(e) == true) e.Handled = true;
     }

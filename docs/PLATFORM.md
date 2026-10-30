@@ -187,6 +187,8 @@ Later entries win; `{"command":"-foo"}` removes **earlier** entries of that comm
   `w` next group (wraps), `W`/`p` previous group, `o` close the editors of the other groups (`:only`), `c`/`q` close the editor (with the save prompt), `n` a new untitled editor
   in a group below; the second key also with Ctrl (Ctrl+W Ctrl+V == Ctrl+W v) except `c`/`W`. Control on a Mac too (`⌃W ⌃V`). Ctrl+W alone therefore closes nothing off the
   Mac: Ctrl+F4 closes the editor (Cmd+W and Cmd+F4 on a Mac). An unbound second key ends the chord, says so in the status bar and is not typed.
+  Next / previous group run through the main window's groups (top to bottom, left to right) and then each floating window's, wrapping, so a floating
+  window leads back to the main one; `h`/`j`/`k`/`l` stay in the window; from a tab that is not an editor (Welcome, Settings) they step from that tab's group.
   macOS: every Ctrl binding of both presets has a `mac` key (a test enforces it): Cmd in Ctrl's place (Visual Studio for Mac, VS Code for Mac), VS Code for Mac's key where Cmd+key
   belongs to macOS (folding on Cmd+K chords, block comment Shift+Alt+A, pause F6, Find Next/Previous Cmd+G/Cmd+Shift+G, Quick Launch Cmd+Shift+A), and Control kept where VS Code for Mac
   keeps it (Ctrl+Space, Ctrl+Tab, Ctrl+\`, Ctrl+G, Ctrl+-). Cmd+, opens Settings in both presets (Visual Studio's has no Settings key elsewhere).

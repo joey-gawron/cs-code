@@ -3,6 +3,7 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Threading;
+using CsCode.App.Commands;
 using CsCode.App.Docking;
 using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
@@ -191,5 +192,109 @@ public class CtrlWWindowCommandTests
         app.Press(Key.W, RawInputModifiers.Control);
         Assert.True(app.Host.Shell.Keyboard.IsChordPending);
         app.Host.Shell.Keyboard.Reset();
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task Text_input_with_no_key_press_after_a_chord_is_typed()
+    {
+        // A platform that sends no text input for the chord's second key: dictation or the Character Viewer later must still type. Before, the
+        // second key left a flag that dropped the next text input whenever it came.
+        await using var host = await StartAsync("\"vim.enable\": false");
+        var well = host.Shell.Well;
+        var factory = host.Get<ShellDockFactory>();
+        var a = well.EditorTabs.Single(t => t.Title == "a.txt");
+        var b = well.EditorTabs.Single(t => t.Title == "b.txt");
+        await FocusAsync(host, b);
+
+        CtrlW(host);
+        Press(host, Key.L);                                           // Ctrl+W l, no text input follows (one group: the keyboard stays)
+        host.Window.KeyTextInput("dictated");                         // straight after: several characters are not the key's own text
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(await RealAppHost.WaitFor(() => Text(b).Contains("dictated", StringComparison.Ordinal)), Text(b));
+
+        CtrlW(host);
+        Press(host, Key.V);
+        Assert.True(await RealAppHost.WaitFor(() => factory.DocumentGroups().Count == 2));
+        Assert.True(await RealAppHost.WaitFor(() => a.LiveView is { IsEffectivelyVisible: true } && b.LiveView is { IsEffectivelyVisible: true }));
+        await DevScene.SettleAsync(10);
+        await FocusAsync(host, b);
+        CtrlW(host);
+        Press(host, Key.H);                                           // Ctrl+W h, no text input: a takes the keyboard
+        Assert.True(await RealAppHost.WaitFor(() => well.ActiveEditor == a && ViewOf(a).Modal.Controller.IsFocused), well.ActiveEditor?.Title);
+        await Task.Delay(400);                                        // a character picked later
+        host.Window.KeyTextInput("é");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(await RealAppHost.WaitFor(() => Text(a).Contains('é')), Text(a));
+    }
+
+    /// <summary>a | b | the given tab in a third group to the right, each shown.</summary>
+    private static async Task<(EditorTab A, EditorTab B, EditorTab C)> ThreeGroupsAsync(RealAppHost host)
+    {
+        var well = host.Shell.Well;
+        var factory = host.Get<ShellDockFactory>();
+        var a = well.EditorTabs.Single(t => t.Title == "a.txt");
+        var b = well.EditorTabs.Single(t => t.Title == "b.txt");
+        well.SplitRight(b);
+        well.Activate(b);
+        var c = well.OpenUntitledSplit(right: true);
+        Assert.True(await RealAppHost.WaitFor(() => factory.DocumentGroups().Count == 3));
+        Assert.True(await RealAppHost.WaitFor(() => new[] { a, b, c }.All(t => t.LiveView is { IsEffectivelyVisible: true })));
+        await DevScene.SettleAsync(10);
+        Assert.True(Centre(a).X < Centre(b).X && Centre(b).X < Centre(c).X, $"{Centre(a)} {Centre(b)} {Centre(c)}");
+        return (a, b, c);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task From_a_tab_that_is_not_an_editor_the_group_commands_step_from_its_group()
+    {
+        // Welcome / Settings in front of the last group: Previous is the group before it, Next wraps to the first, Left is its neighbour. Before,
+        // Previous from such a tab picked the middle group of three and the direction commands did nothing.
+        await using var host = await StartAsync("\"vim.enable\": false");
+        var well = host.Shell.Well;
+        var commands = host.Get<ICommandService>();
+        var (a, b, c) = await ThreeGroupsAsync(host);
+        well.Activate(c);
+        var page = well.OpenView("ctrl-w-test", "Page", () => new Avalonia.Controls.Border());
+        Assert.True(await RealAppHost.WaitFor(() => page.LiveView is { IsEffectivelyVisible: true } && well.Active == page));
+        await DevScene.SettleAsync(5);
+
+        async Task FromPage(string command, EditorTab expected)
+        {
+            well.Activate(page);
+            Assert.True(await RealAppHost.WaitFor(() => well.Active == page && page.LiveView is { IsEffectivelyVisible: true }));
+            await DevScene.SettleAsync(3);
+            await commands.ExecuteAsync(command);
+            Assert.True(await RealAppHost.WaitFor(() => well.Active == expected), $"{command}: {well.Active?.Title}");
+        }
+
+        await FromPage(ShellCommands.FocusPreviousGroup, b);
+        await FromPage(ShellCommands.FocusNextGroup, a);
+        await FromPage(ShellCommands.FocusLeftGroup, b);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task From_a_floating_editor_the_next_and_previous_group_lead_back_to_the_main_window()
+    {
+        // Before, the cycle only held the floating window's own groups: from a floating window of one editor, w W t b (Vim's too) did nothing.
+        await using var host = await StartAsync("\"vim.enable\": false");
+        var well = host.Shell.Well;
+        var factory = host.Get<ShellDockFactory>();
+        var a = well.EditorTabs.Single(t => t.Title == "a.txt");
+        var b = well.EditorTabs.Single(t => t.Title == "b.txt");
+        well.Float(b);
+        Assert.True(await RealAppHost.WaitFor(() => factory.IsFloating(b) && b.LiveView is { IsEffectivelyVisible: true } && a.LiveView is { IsEffectivelyVisible: true }));
+        await DevScene.SettleAsync(10);
+        Assert.NotSame(Avalonia.Controls.TopLevel.GetTopLevel(a.LiveView!), Avalonia.Controls.TopLevel.GetTopLevel(b.LiveView!));
+
+        foreach (var step in new[] { GroupCycle.Next, GroupCycle.Previous, GroupCycle.First, GroupCycle.Last })
+        {
+            well.Activate(b);
+            Assert.True(await RealAppHost.WaitFor(() => well.Active == b));
+            Assert.True(well.FocusGroup(b, step));
+            Assert.True(await RealAppHost.WaitFor(() => well.Active == a), $"{step}: {well.Active?.Title}");
+        }
+        // and from the main window, Next reaches the floating editor
+        Assert.True(well.FocusGroup(a, GroupCycle.Next));
+        Assert.True(await RealAppHost.WaitFor(() => well.Active == b), well.Active?.Title);
     }
 }

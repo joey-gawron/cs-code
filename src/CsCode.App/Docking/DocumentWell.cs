@@ -402,37 +402,47 @@ public sealed class DocumentWell : IDisposable
     }
 
     /// <summary>
-    /// The editors in front of the document groups shown in the window of <paramref name="from"/> (the main window when it has none), with their
-    /// on-screen centres in that window. A group whose front tab is not an editor (Welcome, Settings) is not a Vim window and is skipped.
+    /// The tabs in front of the document groups that are shown, each with its window (0: the main window, then the floating windows in group
+    /// order) and its on-screen centre in that window.
     /// </summary>
-    private List<(EditorTab Tab, Point Centre)> GroupFronts(ShellDocument? from)
+    private List<GroupFront> GroupFronts()
     {
-        var list = new List<(EditorTab, Point)>();
-        var root = from?.LiveView is { } fv ? TopLevel.GetTopLevel(fv) : null;
+        var list = new List<GroupFront>();
+        var floating = new List<TopLevel>();
         foreach (var g in _factory.DocumentGroups())
         {
-            if (g.ActiveDockable is not EditorTab { IsDisposed: false, LiveView: { } v } t || TopLevel.GetTopLevel(v) is not { } top) continue;
-            if (root is null && !_factory.IsFloating(t)) root = top;
-            if (!ReferenceEquals(top, root)) continue;
-            if (v.TranslatePoint(new Point(v.Bounds.Width / 2, v.Bounds.Height / 2), top) is { } centre) list.Add((t, centre));
+            if (g.ActiveDockable is not ShellDocument { IsDisposed: false, LiveView: { } v } t || TopLevel.GetTopLevel(v) is not { } top) continue;
+            if (v.TranslatePoint(new Point(v.Bounds.Width / 2, v.Bounds.Height / 2), top) is not { } centre) continue;
+            var window = 0;
+            if (_factory.IsFloating(t))
+            {
+                window = floating.IndexOf(top);
+                if (window < 0) { floating.Add(top); window = floating.Count - 1; }
+                window++;
+            }
+            list.Add(new GroupFront(t, window, centre));
         }
         return list;
     }
 
+    private readonly record struct GroupFront(ShellDocument Tab, int Window, Point Centre);
+
     /// <summary>
-    /// Puts the keyboard in the nearest editor group in <paramref name="direction"/> from the group of <paramref name="from"/> (VS Code's
-    /// Focus Left / Right / Above / Below Editor Group, Vim's Ctrl-W h l k j). False when there is none that way.
+    /// Puts the keyboard in the nearest editor group in <paramref name="direction"/> from the group of <paramref name="from"/>, in the same window
+    /// (VS Code's Focus Left / Right / Above / Below Editor Group, Vim's Ctrl-W h l k j). <paramref name="from"/> may be a tab that is not an
+    /// editor (Welcome, Settings); a group whose front tab is not an editor is not a Vim window and is never the target. False when there is
+    /// none that way.
     /// </summary>
     public bool FocusGroup(ShellDocument? from, GroupDirection direction)
     {
         if (from is null) return false;
-        var editors = GroupFronts(from);
-        var origin = editors.FirstOrDefault(e => ReferenceEquals(e.Tab, from));
+        var fronts = GroupFronts();
+        var origin = fronts.FirstOrDefault(f => ReferenceEquals(f.Tab, from));
         if (origin.Tab is null) return false;
-        var best = editors.Where(e => !ReferenceEquals(e.Tab, from)).Select(e =>
+        var best = fronts.Where(f => f.Tab is EditorTab && f.Window == origin.Window && !ReferenceEquals(f.Tab, from)).Select(f =>
         {
-            var dx = e.Centre.X - origin.Centre.X;
-            var dy = e.Centre.Y - origin.Centre.Y;
+            var dx = f.Centre.X - origin.Centre.X;
+            var dy = f.Centre.Y - origin.Centre.Y;
             var ok = direction switch
             {
                 GroupDirection.Left => dx < -1 && Math.Abs(dy) <= Math.Abs(dx) * 2,
@@ -440,7 +450,7 @@ public sealed class DocumentWell : IDisposable
                 GroupDirection.Up => dy < -1 && Math.Abs(dx) <= Math.Abs(dy) * 2,
                 _ => dy > 1 && Math.Abs(dx) <= Math.Abs(dy) * 2,
             };
-            return (e.Tab, Distance: ok ? dx * dx + dy * dy : double.MaxValue);
+            return (Tab: (EditorTab)f.Tab, Distance: ok ? dx * dx + dy * dy : double.MaxValue);
         }).Where(e => e.Distance < double.MaxValue).OrderBy(e => e.Distance).FirstOrDefault();
         if (best.Tab is null) return false;
         FocusEditor(best.Tab);
@@ -448,22 +458,39 @@ public sealed class DocumentWell : IDisposable
     }
 
     /// <summary>
-    /// Puts the keyboard in another editor group in reading order (top to bottom, left to right): <see cref="GroupCycle.Next"/> and
-    /// <see cref="GroupCycle.Previous"/> wrap around (VS Code's Focus Next / Previous Editor Group, Vim's Ctrl-W w W p), First and Last are
-    /// Vim's Ctrl-W t b. False when there is no editor group.
+    /// Puts the keyboard in another editor group in reading order: the main window's groups top to bottom, left to right, then each floating
+    /// window's. <see cref="GroupCycle.Next"/> and <see cref="GroupCycle.Previous"/> step from the group of <paramref name="from"/> and wrap around
+    /// (VS Code's Focus Next / Previous Editor Group, Vim's Ctrl-W w W p), so a floating window's last group leads back to the main window; from a
+    /// tab that is not an editor (Welcome) they step from where its group is, and from no shown tab Next is the first group and Previous the last.
+    /// First and Last are the main window's top-left and bottom-right editors (Vim's Ctrl-W t b; any window's when the main one shows none).
+    /// False when there is no editor group.
     /// </summary>
     public bool FocusGroup(ShellDocument? from, GroupCycle step)
     {
-        var editors = GroupFronts(from).OrderBy(e => e.Centre.Y).ThenBy(e => e.Centre.X).Select(e => e.Tab).ToList();
+        var order = GroupFronts().Where(f => f.Tab is EditorTab || ReferenceEquals(f.Tab, from))
+            .OrderBy(f => f.Window).ThenBy(f => f.Centre.Y).ThenBy(f => f.Centre.X).ToList();
+        var editors = order.Where(f => f.Tab is EditorTab).ToList();
         if (editors.Count == 0) return false;
-        var i = from is null ? -1 : editors.FindIndex(t => ReferenceEquals(t, from));
-        var target = step switch
+        EditorTab? target;
+        if (step is GroupCycle.First or GroupCycle.Last)
         {
-            GroupCycle.First => editors[0],
-            GroupCycle.Last => editors[^1],
-            GroupCycle.Previous => editors[((i - 1) % editors.Count + editors.Count) % editors.Count],
-            _ => editors[(i + 1) % editors.Count],
-        };
+            var main = editors.Where(f => f.Window == 0).ToList();
+            if (main.Count == 0) main = editors;
+            target = (EditorTab)(step == GroupCycle.First ? main[0] : main[^1]).Tab;
+        }
+        else
+        {
+            var i = order.FindIndex(f => ReferenceEquals(f.Tab, from));
+            var delta = step == GroupCycle.Previous ? -1 : 1;
+            if (i < 0) target = (EditorTab)(delta > 0 ? editors[0] : editors[^1]).Tab;
+            else
+            {
+                target = from as EditorTab; // the only group: it keeps the keyboard
+                for (var k = 1; k < order.Count; k++)
+                    if (order[((i + delta * k) % order.Count + order.Count) % order.Count].Tab is EditorTab e) { target = e; break; }
+                if (target is null) return false;
+            }
+        }
         FocusEditor(target);
         return true;
     }

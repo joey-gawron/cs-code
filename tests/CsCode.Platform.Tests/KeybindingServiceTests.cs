@@ -489,8 +489,15 @@ public class KeybindingServiceTests : IDisposable
         _f.WriteUser("""[ { "command": "-workbench.action.closeActiveEditor" } ]""");
         using var svc = _f.Create();
         Assert.Empty(svc.GetBindingsFor("workbench.action.closeActiveEditor"));
-        Assert.Equal(KeyResolution.None, Press(svc, "ctrl+w").Kind);
         Assert.Equal(KeyResolution.None, Press(svc, "ctrl+f4").Kind);
+        // Ctrl+W c / q / Ctrl+Q close the editor too (in the editor, Vim off): those go, Ctrl+W's other window chords stay
+        _f.Context.Set("editorTextFocus", true);
+        foreach (var chord in new[] { "ctrl+w c", "ctrl+w q", "ctrl+w ctrl+q" })
+        {
+            Assert.Equal(KeyResolution.None, Press(svc, chord).Kind);
+            Assert.Empty(svc.PendingChord);
+        }
+        Assert.Equal("workbench.action.splitEditorRight", Cmd(Press(svc, "ctrl+w v")));
     }
 
     [Fact]
