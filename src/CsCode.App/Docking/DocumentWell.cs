@@ -161,9 +161,35 @@ public sealed class DocumentWell : IDisposable
         if (group is null) return;
         group.ActiveDockable = tab;
         _factory.SetActiveDockable(tab);
-        if (!preserveFocus) _factory.SetFocusedDockable(group, tab);
+        if (!preserveFocus)
+        {
+            _factory.SetFocusedDockable(group, tab);
+            _factory.WindowOf(tab)?.SetActive(); // a floating document's window comes to the front
+        }
         OnActive(tab);
     }
+
+    // ---------------------------------------------------------------- floating
+
+    /// <summary>Visual Studio's Float: the tab moves into a floating window of its own (Dock.Avalonia host window, owned by the main window).</summary>
+    public void Float(ShellDocument tab)
+    {
+        if (!Tabs.Contains(tab) || _factory.IsFloating(tab)) return;
+        _factory.Float(tab);
+        Activate(tab);
+        _tabsChanged.Fire(null);
+    }
+
+    /// <summary>Visual Studio's Dock as Tabbed Document: a floating tab goes back to the group it came from (else the primary group).</summary>
+    public void DockBack(ShellDocument tab)
+    {
+        if (!_factory.DockBack(tab)) return;
+        Activate(tab);
+        _tabsChanged.Fire(null);
+    }
+
+    /// <summary>Whether the tab is shown in a floating window.</summary>
+    public bool IsFloating(ShellDocument tab) => _factory.IsFloating(tab);
 
     // ---------------------------------------------------------------- close
 

@@ -298,7 +298,24 @@ presentation `CreateView` + `RestoreViewState`. Closed tabs' views go back throu
   not focusable), and once the document that takes its place is presented its editor gets the keyboard, as in Visual Studio. When the last document
   closes nothing takes focus, so AvaloniaEdit's static slot keeps that one view until focus next moves anywhere (bounded: one view).
 
-**Layout.** `LayoutPersistence`: tool placement, visibility, splitter proportions, open files with pin/preview, active file; versioned JSON, workspace scope first then global default,
+**Floating windows** (wave 3). Float in a document tab's or a tool window's menu (and Window > Float Editor, `workbench.action.moveEditorToNewWindow`)
+moves it into a native window of its own: Dock.Avalonia's `HostWindow`, owned by the main window (it stays above it and out of the taskbar), with a
+layout root of its own (`IRootDock.Windows`). The factory creates the host windows (`ShellDockFactory.HostWindowCreated`), and the main window gives
+each one the shell's Dock styles and the same window-level handlers it has itself: Vim and the keyboard pipeline (every key binding works in a
+floating window), the focus context keys, the right-click menus and the Edit menu's clipboard routing (which follows the window that last took
+focus). A floating document is still one of the well's tabs (`DocumentWell.Tabs` covers the floating groups: Save, Ctrl+Tab, the live-view budget,
+close prompts, the session all see it). Dock (tool) / Dock as Tabbed Document (document; `workbench.action.restoreEditorsToMainWindow` docks them
+all) returns it to the well or group it came from (else its default well, or the primary group). A floating window closes once it is empty (its
+last tab closed, docked or hidden). Its own close button (Alt+F4) empties it the shell's way: tools are hidden, documents closed with their Save
+prompts (Cancel keeps the window). A tool window hidden while it floats goes back to its well hidden, and its window's place is remembered: showing
+it again (its command, View menu, Reset excepted) floats it there again, as in Visual Studio. The floating windows hide and show with the main
+window (background mode hides the main window instead of closing it), and when the main window really closes, everything floating is docked back
+after the layout was saved. Reset Window Layout docks everything. Not done: dragging a tab out of the window to float it relies on Dock's own drag
+(not tested), and a floating window holds either tools or documents (Dock gives a floating root one kind of dock), never both.
+
+**Layout.** `LayoutPersistence`: tool placement, visibility, splitter proportions, open files with pin/preview, active file, floating windows (their
+place and the tools and documents in them, and where hidden floating tools float again: `LayoutSnapshot.Floating` / `FloatingHidden`, still
+version 1; a background session restoring into a hidden window floats them when the window is shown); versioned JSON, workspace scope first then global default,
 tolerant of corrupt/future data; saved (debounced) on change and on exit; `View > Appearance > Reset Window Layout`. There is no left tool well unless a tool window asks for one.
 The default (and reset) layout shows exactly `ShellController.DefaultLayoutTools`: Explorer (right), Output and Error List (bottom). Every other tool window, whichever module contributes it
 (Find Results, Find in Files, Modules...), starts hidden unless its `AutoShowWhen` holds, and a tool that a saved layout does not mention (its module was added later) gets that default too.
@@ -329,7 +346,7 @@ Other modules (Vim mode, remote indicator) register their own through `IStatusBa
 ### Commands registered by the shell
 
 `workbench.action.showCommands`, `quickOpen`, `gotoLine`, `gotoSymbol`, `showAllSymbols`, `files.openFolder`, `files.openFile`, `files.newUntitledFile`, `files.save`, `files.saveAs`, `files.saveAll`,
-`closeActiveEditor`, `closeAllEditors`, `closeOtherEditors`, `reopenClosedEditor`, `nextEditor`, `previousEditor`, `pinEditor`, `splitEditorRight`, `splitEditorDown`, `moveEditorToNextGroup`, `closeFolder`, `quit`, `reloadWindow`
+`closeActiveEditor`, `closeAllEditors`, `closeOtherEditors`, `reopenClosedEditor`, `nextEditor`, `previousEditor`, `pinEditor`, `splitEditorRight`, `splitEditorDown`, `moveEditorToNextGroup`, `moveEditorToNewWindow` (float), `restoreEditorsToMainWindow` (dock floating documents), `closeFolder`, `quit`, `reloadWindow`
 (refreshes menus only), `toggleFullScreen`, `toggleZenMode`, `selectTheme`, `workbench.view.explorer`, `workbench.action.output.toggleOutput`, `workbench.actions.view.problems`,
 `workbench.action.findResults.toggle`, the toggle of every tool window whose module did not register its `ToggleCommandId` (debug windows: `workbench.debug.action.toggle*`), `cscode.references.show`,
 `cscode.shell.{resetLayout,openRecent,about,showWelcome,showKeyboardReference,toggleNotifications,changeLanguageMode,showErrorList,toggleToolbar}`
@@ -397,10 +414,10 @@ Every other id has exactly one registration; the test fails when a new duplicate
   hard-codes none), at the pointer or, from the keyboard (the Menu key through Avalonia's context request; Shift+F10, which Avalonia does not map, through the editor; or `editor.action.showContextMenu`),
   below the caret. A window-level tunnelling handler owns the request unless a control on the way (the find box) has a menu of its own.
 * **Document tabs** (replacing Dock's): Save *file* (when dirty), Close, Close All But This, Close All, Close To The Right, Pin / Unpin Tab,
-  Copy Full Path, Open Containing Folder, Reveal in Explorer (files in an open folder), New Horizontal / Vertical Document Group, then
-  `editor/title/context` items.
-* **Tool windows** (tool tabs, auto-hide strip tabs, title bars; replacing Dock's): Dock (when auto-hidden), Auto Hide, Close, then
-  `view/title/context`. Float is left out: the shell has no floating host windows yet (*Known gaps*).
+  Copy Full Path, Open Containing Folder, Reveal in Explorer (files in an open folder), Float (or Dock as Tabbed Document when it floats), New
+  Horizontal / Vertical Document Group, then `editor/title/context` items.
+* **Tool windows** (tool tabs, auto-hide strip tabs, title bars; replacing Dock's): Float, Dock (when floating or auto-hidden), Auto Hide, Close,
+  then `view/title/context`. See *Floating windows*.
 * **Explorer**: New File / New Folder (folders), Reveal in File Manager, Open in Terminal (only when a terminal registers
   `workbench.action.terminal.newHere`), Find in Folder (folders), Cut / Copy / Paste (files, like Solution Explorer), Copy Path / Copy Relative
   Path, Rename (F2), Duplicate, Delete (Del), then `explorer/context`. Keys: Ctrl+C/X/V, Ctrl+Insert, Shift+Insert, Shift+Delete on files.
@@ -500,12 +517,11 @@ File menu with icon, shortcut and separator columns, palette with fuzzy list and
 ## Known gaps and issues (honest list)
 
 Not done: single-instance forwarding (SHOULD); native menu bar (`NativeMenu` on macOS / DBus global menu); Explorer drag-and-drop **UI** (the model's `MoveAsync` is tested; the view has no drag source/drop target) and dropping files from the OS onto the window;
-dirty marker is Dock's `*` rather than a dot that turns into a close glyph on hover; pinned tabs have model/commands but no pin glyph; layout restore reopens tabs but does not recreate split document groups or floating windows;
+dirty marker is Dock's `*` rather than a dot that turns into a close glyph on hover; pinned tabs have model/commands but no pin glyph; layout restore reopens tabs but does not recreate split document groups (floating windows it does recreate);
 auto-hide/peek animations, taskbar jump list, `--diff`, toolbar overflow (all SHOULD; high contrast comes from VS Code's two high-contrast themes, completed from the shell's high-contrast bases); the Windows/macOS title-bar path (`ExtendClientAreaToDecorationsHint`) is written but untested here (Linux only).
 `reloadWindow` only refreshes menus. Find in Files is the Search panel's tool window (`CsCode.Panels.Search`); Find Results hosts the references delivered by `cscode.references.show`. Explorer filter searches loaded nodes only.
 
-Clipboard and menus, not done: Float on tool windows and tabs (no floating host windows); Copy with formatting (HTML with the theme's syntax
-colours; the service writes `text/html` when given one, nothing builds it yet); the terminal (does not exist); a native Wayland primary selection
+Clipboard and menus, not done: a native Wayland primary selection
 (Avalonia 12 runs through XWayland here); Peek Definition and QuickWatch's tree (Peek is not implemented by the editor, so the item stays hidden;
 QuickWatch shows the value in a notification with Add Watch). Not verified headless: the Wayland <-> XWayland round trip with native KDE
 applications (Kate, Konsole, Firefox) and screenshots on the real desktop are the integrator's check. The menu-open budget is met in quiet runs

@@ -35,6 +35,8 @@ public sealed class ClipboardRouter : IDisposable
     private readonly Func<TopLevel?> _window;
     private readonly DisposableStore _subs = new();
     private WeakReference<Visual>? _focused;
+    // The window that last took focus (the main window, or a floating one: each has its own focus manager).
+    private WeakReference<TopLevel>? _focusedWindow;
 
     public ClipboardRouter(ICommandService commands, IContextKeyService keys, DocumentWell well, Func<TopLevel?>? window = null)
     {
@@ -53,8 +55,8 @@ public sealed class ClipboardRouter : IDisposable
     }
 
     /// <summary>
-    /// Follows keyboard focus in <paramref name="root"/> (the main window). Handled focus events count too: AvaloniaEdit's text area marks its
-    /// GotFocus handled, so a plain handler never sees the editor take focus.
+    /// Follows keyboard focus in <paramref name="root"/> (the main window, and each floating window). Handled focus events count too: AvaloniaEdit's
+    /// text area marks its GotFocus handled, so a plain handler never sees the editor take focus.
     /// </summary>
     public IDisposable Attach(Control root)
     {
@@ -69,6 +71,7 @@ public sealed class ClipboardRouter : IDisposable
     {
         if (focused is null || IsMenuOrPopup(focused)) return;
         _focused = new WeakReference<Visual>(focused);
+        if (TopLevel.GetTopLevel(focused) is { } window) _focusedWindow = new WeakReference<TopLevel>(window);
     }
 
     private static bool IsMenuOrPopup(Visual v)
@@ -82,8 +85,10 @@ public sealed class ClipboardRouter : IDisposable
     /// <summary>What Cut/Copy/Paste act on now (null: nothing that can use the clipboard has focus).</summary>
     public IClipboardTarget? Resolve()
     {
-        // What has focus now, unless that is a menu or popup (the Edit menu or a context menu is open): then what had focus before it.
-        Visual? focused = _window()?.FocusManager?.GetFocusedElement() is Visual current && !IsMenuOrPopup(current) ? current : null;
+        // What has focus now, unless that is a menu or popup (the Edit menu or a context menu is open): then what had focus before it. "Now" is in
+        // the window that last took focus: a floating window's focus is not the main window's.
+        var window = _focusedWindow?.TryGetTarget(out var w) == true && w is not Window { IsVisible: false } ? w : _window();
+        Visual? focused = window?.FocusManager?.GetFocusedElement() is Visual current && !IsMenuOrPopup(current) ? current : null;
         if (focused is null && _focused?.TryGetTarget(out var remembered) == true && remembered.IsAttachedToVisualTree()) focused = remembered;
         if (focused is null) return null;
         var tabs = _well.EditorTabs; // once: this runs on every menu refresh

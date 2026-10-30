@@ -57,6 +57,10 @@ public static class ShellCommands
     public const string ShowErrorList = "cscode.shell.showErrorList";
     public const string GotoLine = "workbench.action.gotoLine";
     public const string OpenSettingsJson = "workbench.action.openSettingsJson";
+    /// <summary>VS Code's "Move Editor into New Window": the active document floats (Visual Studio's Float).</summary>
+    public const string FloatEditor = "workbench.action.moveEditorToNewWindow";
+    /// <summary>VS Code's "Restore Editors into Main Window": every floating document is docked back (Visual Studio's Dock as Tabbed Document).</summary>
+    public const string DockEditor = "workbench.action.restoreEditorsToMainWindow";
 
     public static IDisposable Register(ShellCommandContext c)
     {
@@ -120,6 +124,12 @@ public static class ShellCommands
         Run("workbench.action.splitEditorRight", "Split Editor Right", "View", () => { if (c.Well.Active is { } t) c.Well.SplitRight(t); return Task.CompletedTask; });
         Run("workbench.action.splitEditorDown", "Split Editor Down", "View", () => { if (c.Well.Active is { } t) c.Well.SplitDown(t); return Task.CompletedTask; });
         Run("workbench.action.moveEditorToNextGroup", "Move Editor into Next Group", "View", () => { if (c.Well.Active is { } t) c.Well.MoveToNextGroup(t); return Task.CompletedTask; });
+        Run(FloatEditor, "Move Editor into New Window", "View", () => { if (c.Well.Active is { } t) c.Well.Float(t); return Task.CompletedTask; });
+        Run(DockEditor, "Restore Editors into Main Window", "View", () =>
+        {
+            foreach (var t in c.Well.Tabs.Where(c.Well.IsFloating).ToArray()) c.Well.DockBack(t);
+            return Task.CompletedTask;
+        });
 
         // ---- window
         Run(KnownCommands.Quit, "Exit", "File", async () => { await c.Chrome.RequestExitAsync().ConfigureAwait(true); });

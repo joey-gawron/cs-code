@@ -176,6 +176,8 @@ public static class ShellMenus
             M("Split Editor _Right", "workbench.action.splitEditorRight", "hasOpenEditors", IconKey.SplitRight),
             M("Split Editor _Down", "workbench.action.splitEditorDown", "hasOpenEditors", IconKey.SplitDown),
             M("Move Editor to _Next Group", "workbench.action.moveEditorToNextGroup", "hasOpenEditors"),
+            M("_Float Editor", Commands.ShellCommands.FloatEditor, "hasOpenEditors"),
+            M("Dock _All Floating Editors", Commands.ShellCommands.DockEditor, "hasOpenEditors"),
             S,
             M("Ne_xt Editor", "workbench.action.nextEditor", "hasOpenEditors"),
             M("Pre_vious Editor", "workbench.action.previousEditor", "hasOpenEditors"),
