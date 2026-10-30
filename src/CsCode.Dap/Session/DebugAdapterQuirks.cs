@@ -109,4 +109,11 @@ public class DebugAdapterQuirks
     /// session then reports it as reason <c>pause</c>, so Break All is not shown as an exception.
     /// </summary>
     public virtual bool IsPauseStop(string reason, string? description) => false;
+
+    /// <summary>
+    /// The adapter hands out new frame ids on every <c>stackTrace</c> request (CodeLLDB: the same frames came back as 1001… and then as 1021…
+    /// within one stop), so a frame id from one request is found in no other: the Call Stack window could not mark the stop location's frame.
+    /// The session then reads each thread's frames once per stop and serves every request from them, so a frame keeps one id while stopped.
+    /// </summary>
+    public virtual bool RenumbersFramesPerRequest => false;
 }

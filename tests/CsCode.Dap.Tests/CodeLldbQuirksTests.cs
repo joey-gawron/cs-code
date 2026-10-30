@@ -355,6 +355,89 @@ public class CodeLldbQuirksTests
         Assert.Equal(("exception", answer), (stops[2].Reason, stops[2].Description));
     }
 
+    /// <summary>
+    /// CodeLLDB numbers frames anew for every <c>stackTrace</c> answer (seen on the wire: the stop location's request got 1001…, the Call Stack
+    /// window's request for the same stack 1021…). The Call Stack window marks the frame whose id is the stop location's, so it marked none, and
+    /// Locals' frame identity found no frame either. The session now reads each thread's frames once per stop.
+    /// </summary>
+    [Fact]
+    public async Task Codelldb_renumbers_frames_per_request_so_the_session_keeps_one_id_per_frame_for_the_whole_stop()
+    {
+        var numbering = 1000;
+        await using var h = Harness((a, _) =>
+        {
+            a.Capabilities["supportsDelayedStackTraceLoading"] = true;
+            a.On("stackTrace", r =>
+            {
+                var args = r.Args<DapStackTraceArguments>();
+                var start = args.StartFrame ?? 0;
+                var levels = args.Levels is > 0 ? args.Levels.Value : 10;
+                numbering += 20; // CodeLLDB: a new handle per frame per answer
+                return new DapStackTraceResponse
+                {
+                    StackFrames = [.. Enumerable.Range(start, Math.Max(0, Math.Min(levels, 10 - start))).Select(i => new DapStackFrame
+                    {
+                        Id = numbering + i, Name = "f" + i, Line = 10 + i, Column = 1, Source = new DapSource { Name = "main.rs", Path = "/work/src/main.rs" },
+                    })],
+                };
+            });
+        });
+        var session = (DebugSession)await h.StartAsync(Config(h));
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => h.Service.StopLocation is { Session.State: DebugSessionState.Stopped });
+        var before = h.AdapterFor(0).CountOf("stackTrace"); // the service's own stop-location request has read the top
+
+        var top = await session.GetStackTraceAsync(1, 0, 2, Ct);
+        var page = await session.GetStackTraceAsync(1, 0, 50, Ct); // the Call Stack window's first page
+        Assert.Equal(10, page.Count);
+        Assert.Equal(top.Select(f => f.Id), page.Take(2).Select(f => f.Id)); // one id per frame, whoever asked
+        Assert.Equal(page.Select(f => f.Id).Distinct().Count(), page.Count);
+        Assert.Equal(page.Skip(3).Take(4).Select(f => f.Id), (await session.GetStackTraceAsync(1, 3, 4, Ct)).Select(f => f.Id));
+        Assert.Empty(await session.GetStackTraceAsync(1, 10, 50, Ct)); // the whole stack is known: nothing more is asked
+        var requests = h.AdapterFor(0).RequestsOf("stackTrace").Skip(before).Select(r => r.Args<DapStackTraceArguments>()).Select(a => (a.StartFrame, a.Levels)).ToList();
+        Assert.True(requests.Count <= 2, string.Join(", ", requests)); // at most the top and then only what lay beyond it
+        Assert.All(requests.Skip(1), r => Assert.True(r.StartFrame > 0, $"re-read from the top: {r}"));
+        var scopesOfTop = await session.GetScopesAsync(page[0].Id, Ct);
+        Assert.NotEmpty(scopesOfTop);
+
+        // a new stop numbers everything anew
+        await session.ContinueAsync(ct: Ct);
+        await h.AdapterFor(0).SendStoppedAsync("step", 1);
+        await SessionHarness.Eventually(() => session.State == DebugSessionState.Stopped);
+        var next = await session.GetStackTraceAsync(1, 0, 50, Ct);
+        Assert.Empty(next.Select(f => f.Id).Intersect(page.Select(f => f.Id)));
+        Assert.Equal(next.Take(2).Select(f => f.Id), (await session.GetStackTraceAsync(1, 0, 2, Ct)).Select(f => f.Id));
+    }
+
+    [Fact]
+    public async Task The_service_stop_location_names_the_frame_the_call_stack_reads()
+    {
+        var numbering = 1000;
+        await using var h = Harness((a, _) =>
+        {
+            a.Capabilities["supportsDelayedStackTraceLoading"] = true;
+            a.On("stackTrace", r =>
+            {
+                var args = r.Args<DapStackTraceArguments>();
+                var start = args.StartFrame ?? 0;
+                numbering += 20;
+                return new DapStackTraceResponse
+                {
+                    StackFrames = [.. Enumerable.Range(start, Math.Max(0, Math.Min(args.Levels ?? 3, 3 - start))).Select(i => new DapStackFrame
+                    {
+                        Id = numbering + i, Name = "f" + i, Line = 10 + i, Column = 1, Source = new DapSource { Name = "main.rs", Path = "/work/src/main.rs" },
+                    })],
+                };
+            });
+        });
+        var session = (DebugSession)await h.StartAsync(Config(h));
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => h.Service.StopLocation is { Session.State: DebugSessionState.Stopped });
+        var location = h.Service.StopLocation!;
+        var callStack = await session.GetStackTraceAsync(location.ThreadId, 0, 50, Ct); // as CallStackViewModel loads it
+        Assert.Contains(callStack, f => f.Id == location.FrameId);
+    }
+
     [Theory]
     [InlineData("exception", "signal SIGSTOP", true)]
     [InlineData("exception", "signal SIGSEGV", false)]
@@ -364,8 +447,9 @@ public class CodeLldbQuirksTests
         Assert.Equal(pause, Quirks.IsPauseStop(reason, description));
 
     [Fact]
-    public void Other_adapters_keep_their_pause_stops_and_their_paging() =>
-        Assert.Equal((false, false), (DebugAdapterQuirks.None.IsPauseStop("exception", "signal SIGSTOP"), DebugAdapterQuirks.None.IgnoresVariablePaging));
+    public void Other_adapters_keep_their_pause_stops_their_paging_and_their_frame_requests() =>
+        Assert.Equal((false, false, false), (DebugAdapterQuirks.None.IsPauseStop("exception", "signal SIGSTOP"), DebugAdapterQuirks.None.IgnoresVariablePaging,
+            DebugAdapterQuirks.None.RenumbersFramesPerRequest));
 
     [Theory]
     [InlineData("/rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/std/src/panicking.rs", 0, true)]

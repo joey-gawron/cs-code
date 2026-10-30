@@ -57,6 +57,38 @@ public sealed partial class DebugSession
         EnsureLive();
         var take = Math.Min(levels <= 0 ? _settings.MaxStackFrames : levels, _settings.MaxStackFrames);
         startFrame = Math.Max(0, startFrame);
+        if (_quirks.RenumbersFramesPerRequest) return await GetStableStackTraceAsync(threadId, startFrame, take, ct);
+        return await RequestStackTraceAsync(threadId, startFrame, take, ct);
+    }
+
+    /// <summary>
+    /// Lane only. Frames for an adapter that renumbers them on every <c>stackTrace</c> request (<see cref="DebugAdapterQuirks.RenumbersFramesPerRequest"/>):
+    /// each thread's frames are read once per stop, from the top, and every later request is served from them (only frames beyond those
+    /// already read are asked for), so one frame has one id for the whole stop whoever asks — the stop location, the Call Stack, Locals.
+    /// </summary>
+    private async Task<IReadOnlyList<DebugStackFrame>> GetStableStackTraceAsync(int threadId, int startFrame, int take, CancellationToken ct)
+    {
+        var gen = _handles.FrameGeneration;
+        var run = _handles.FrameRunOf(threadId);
+        var end = startFrame + take;
+        if (run.Frames.Count < end && !run.Complete)
+        {
+            var from = run.Frames.Count;
+            if (!_handles.CanKeepFrames(end - from)) return await RequestStackTraceAsync(threadId, startFrame, take, ct); // bounded: past it, as asked
+            var read = await RequestStackTraceAsync(threadId, from, end - from, ct);
+            if (gen != _handles.FrameGeneration) return [.. read.Skip(Math.Max(0, startFrame - from)).Take(take)]; // the program moved meanwhile: nothing to keep
+            // Another request may have read some of these meanwhile (the lane interleaves at the await): keep only what extends the run. Frames
+            // at one depth are the same frame, whichever request numbered them.
+            if (run.Frames.Count < from + read.Count) _handles.AppendFrames(run, read.Skip(run.Frames.Count - from));
+            if (read.Count < end - from) run.Complete = true;
+        }
+        var count = Math.Max(0, Math.Min(end, run.Frames.Count) - startFrame);
+        return count == 0 ? [] : run.Frames.GetRange(startFrame, count);
+    }
+
+    /// <summary>Lane only. One <c>stackTrace</c> request (or, for an adapter without delayed loading, the whole stack paged here).</summary>
+    private async Task<IReadOnlyList<DebugStackFrame>> RequestStackTraceAsync(int threadId, int startFrame, int take, CancellationToken ct)
+    {
         // Only adapters that advertise delayed loading honour startFrame/levels; for the others we ask for everything and page here.
         var delayed = _dapCaps.SupportsDelayedStackTraceLoading == true;
         var args = delayed

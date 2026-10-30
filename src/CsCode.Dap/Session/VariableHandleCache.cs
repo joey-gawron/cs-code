@@ -90,7 +90,38 @@ internal sealed class VariableHandleCache(int maxCachedVariables = 20_000, int m
         FrameGeneration++;
         _frames.Clear();
         _framesOverflowed = false;
+        _frameRuns.Clear();
+        _frameRunTotal = 0;
         InvalidateVariables();
+    }
+
+    /// <summary>One thread's frames as read from the top during the current stop, for an adapter that renumbers frames on every request.</summary>
+    internal sealed class FrameRun
+    {
+        public List<DebugStackFrame> Frames { get; } = new();
+        /// <summary>The adapter gave fewer frames than asked for: there are no more.</summary>
+        public bool Complete { get; set; }
+    }
+
+    private readonly Dictionary<int, FrameRun> _frameRuns = new();
+    private int _frameRunTotal;
+
+    public FrameRun FrameRunOf(int threadId)
+    {
+        if (!_frameRuns.TryGetValue(threadId, out var run)) _frameRuns[threadId] = run = new FrameRun();
+        return run;
+    }
+
+    /// <summary>Whether <paramref name="count"/> more frames fit (all threads' runs together hold at most as many frames as the registry tracks).</summary>
+    public bool CanKeepFrames(int count) => _frameRunTotal + count <= maxTrackedFrames;
+
+    public void AppendFrames(FrameRun run, IEnumerable<DebugStackFrame> frames)
+    {
+        foreach (var frame in frames)
+        {
+            run.Frames.Add(frame);
+            _frameRunTotal++;
+        }
     }
 
     /// <summary>

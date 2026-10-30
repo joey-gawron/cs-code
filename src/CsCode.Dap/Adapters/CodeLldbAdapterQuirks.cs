@@ -25,6 +25,8 @@ namespace CsCode.Dap.Adapters;
 /// <item><b>Paging</b> (observed with the real v1.12.3): <c>variables</c> ignores <c>start</c>/<c>count</c>/<c>filter</c>; the session asks once
 /// and pages itself.</item>
 /// <item><b>Pause</b> (observed): the stop of a pause is reported as the exception "signal SIGSTOP"; reported as a pause.</item>
+/// <item><b>Frame ids</b> (observed): every <c>stackTrace</c> answer numbers the frames anew; the session reads each thread's frames once per
+/// stop, so the stop location and the Call Stack window name the same frame by the same id.</item>
 /// </list>
 /// </summary>
 public sealed class CodeLldbAdapterQuirks : DebugAdapterQuirks
@@ -106,4 +108,10 @@ public sealed class CodeLldbAdapterQuirks : DebugAdapterQuirks
     /// is the pause: a real signal (SIGSEGV…) stays an exception.
     /// </summary>
     public override bool IsPauseStop(string reason, string? description) => reason == "exception" && description == PauseSignalDescription;
+
+    /// <summary>
+    /// CodeLLDB creates a new handle for each frame of each <c>stackTrace</c> answer (observed: the stop location's frames were 1001…, the Call
+    /// Stack window's request for the same stack got 1021…); the older ids stay valid until the program resumes.
+    /// </summary>
+    public override bool RenumbersFramesPerRequest => true;
 }
