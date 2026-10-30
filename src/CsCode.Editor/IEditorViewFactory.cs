@@ -129,6 +129,12 @@ public interface IEditorViewController
     /// the view or the document is gone, does nothing. UI thread.
     /// </summary>
     IDisposable OpenUndoGroup() => Disposable.Empty;
+
+    /// <summary>
+    /// The next change of this view's document starts an undo step of its own: typing does not continue the last typed run (inside a held
+    /// group too, where it decides what an Undo inside the group reverses). Macro playback marks every step this way. UI thread.
+    /// </summary>
+    void StartNewUndoStep() { }
 }
 
 /// <summary>Everything needed to recreate a destroyed view. Positions are 0-based lines/UTF-16 columns so they survive edits made while no view existed.</summary>

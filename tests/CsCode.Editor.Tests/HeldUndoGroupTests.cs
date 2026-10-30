@@ -114,6 +114,30 @@ public class HeldUndoGroupTests
     }
 
     [AvaloniaFact]
+    public async Task StartNewUndoStep_ends_the_typed_run_without_a_group_and_inside_one()
+    {
+        using var host = ViewHost.Create();
+        var (doc, view, window) = await host.OpenAsync("", "a.txt");
+        var c = view.Controller;
+        Type(window, "ab");
+        c.StartNewUndoStep();
+        Type(window, "cd");          // same caret, same version: one typed run with "ab" without the mark
+        c.Undo();
+        Assert.Equal("ab", Text(doc));
+
+        using (c.OpenUndoGroup())
+        {
+            Type(window, "ef");
+            c.StartNewUndoStep();
+            Type(window, "gh");
+            c.Undo();
+            Assert.Equal("abef", Text(doc));
+            c.Undo();
+            Assert.Equal("ab", Text(doc));
+        }
+    }
+
+    [AvaloniaFact]
     public async Task Handles_of_one_document_nest_and_the_group_closes_with_the_last()
     {
         using var host = ViewHost.Create();

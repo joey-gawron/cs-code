@@ -65,6 +65,18 @@ public sealed partial class EditorDocument
         _held = new HeldHistory(_explicitGroups);
     }
 
+    /// <summary>
+    /// The next change starts an undo step of its own: a typed run does not continue the last one, inside a held group too (macro playback
+    /// calls this before every step, so a step undone inside the playback is what that step did). UI thread.
+    /// </summary>
+    public void StartNewUndoStep()
+    {
+        if (!_ui.CheckAccess()) throw new InvalidOperationException("Undo steps are marked on the UI thread.");
+        if (_disposed) return;
+        if (_held is { } held) held.CanContinue = false;
+        else BreakContinuation();
+    }
+
     /// <summary>The next typed run starts an undo step of its own (AvaloniaEdit continues the last step otherwise): an empty group ends that.</summary>
     private void BreakContinuation()
     {
