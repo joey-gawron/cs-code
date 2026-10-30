@@ -17,6 +17,7 @@ namespace CsCode.Server;
 internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILogger log)
 {
     private readonly ConcurrentDictionary<long, PtySource> _terminals = new();
+    private readonly IConfigurationService? _config = sp.GetService<IConfigurationService>();
     private readonly TerminalLaunchResolver _resolver = new(sp.GetService<IConfigurationService>(), sp.GetService<IWorkspaceService>());
 
     public int Count => _terminals.Count(t => !t.Value.Channel.IsClosed);
@@ -37,7 +38,12 @@ internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILog
         if (!PtyHosts.IsSupported) throw new NotSupportedException("This remote host cannot run terminals (no pseudo-terminal support).");
         var columns = Math.Clamp(p.Columns, 1, 4096);
         var rows = Math.Clamp(p.Rows, 1, 4096);
-        var info = _resolver.Resolve(p.Options, columns, rows); // PtySpawnException → an error answer with the reason
+        var options = p.Options;
+        // The client's folder, unless terminal.integrated.cwd says otherwise (the resolver's order): this server may not have applied the client's
+        // newest workspace folders yet when the terminal is created right after opening one.
+        if (options.Cwd is null && p.Folder is { IsFile: true } folder && string.IsNullOrWhiteSpace(_config?.Get<string>(TerminalSettingKeys.Cwd)))
+            options = options with { Cwd = folder.LocalPath.Length > 1 ? folder.LocalPath.TrimEnd('/') : folder.LocalPath };
+        var info = _resolver.Resolve(options, columns, rows); // PtySpawnException → an error answer with the reason
         var channel = hub.Create("terminal");
         var source = new PtySource(channel, PtyHosts.Create(), () => _terminals.TryRemove(channel.Id, out _));
         channel.Source = source;

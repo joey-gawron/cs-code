@@ -369,7 +369,9 @@ public sealed record ChanAttachParams(long Id, long ReceivedOffset);
 public sealed record ChanAttachResult(bool Exists, long ServerReceived, long LostBytes);
 public sealed record ChanKeepParams(IReadOnlyList<long> Ids);
 
-public sealed record TermCreateParams(TerminalCreateOptions Options, int Columns, int Rows);
+/// <param name="Folder">The client's workspace folder: a new terminal starts there even when the server has not applied the client's latest
+/// <c>workspace/setFolders</c> yet (requests run concurrently on the server).</param>
+public sealed record TermCreateParams(TerminalCreateOptions Options, int Columns, int Rows, Uri? Folder = null);
 public sealed record TermCreateResult(long Channel, int ProcessId, string Program, string WorkingDirectory);
 public sealed record TermResizeParams(long Id, int Columns, int Rows);
 public sealed record TermInfoResult(string? ForegroundProcess);

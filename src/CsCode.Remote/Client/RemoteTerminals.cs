@@ -18,7 +18,7 @@ public sealed class RemoteTerminals(RemoteConnectionManager manager, Func<IWorks
     public ITerminalBackend? TryCreate(TerminalCreateOptions options)
     {
         if (workspace()?.PrimaryFolder is not { } folder || manager.MapperFor(folder) is null || manager.Channels is not { } channels) return null;
-        return new RemoteTerminalBackend(manager, channels, manager.Logger);
+        return new RemoteTerminalBackend(manager, channels, manager.Logger) { Folder = folder };
     }
 }
 
@@ -60,6 +60,9 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
 
     public long ChannelId => _channel?.Id ?? 0;
 
+    /// <summary>The workspace folder the terminal belongs to (its default directory on the server).</summary>
+    public Uri? Folder { get; init; }
+
     public TerminalBackendStarted Start(TerminalCreateOptions options, int columns, int rows)
     {
         // Blocking by contract: the terminal service runs this off the UI thread, as it forks local programs there.
@@ -69,7 +72,7 @@ public sealed class RemoteTerminalBackend : ITerminalBackend, IChannelSink
             var session = _manager.WaitForSessionAsync(StartTimeout, cts.Token).GetAwaiter().GetResult();
             if (!session.Server.Capabilities.Contains(RemoteProtocol.Capabilities.Terminals))
                 throw new NotSupportedException($"The server on {_manager.HostName} cannot run terminals.");
-            var r = session.Peer.InvokeAsync<TermCreateParams, TermCreateResult>(RemoteMethods.TermCreate, new TermCreateParams(options, columns, rows), cts.Token, StartTimeout)
+            var r = session.Peer.InvokeAsync<TermCreateParams, TermCreateResult>(RemoteMethods.TermCreate, new TermCreateParams(options, columns, rows, Folder), cts.Token, StartTimeout)
                         .GetAwaiter().GetResult() ?? throw new IOException("The server sent no answer for the new terminal.");
             _pid = r.ProcessId;
             _size = ((long)columns << 32) | (uint)rows;
