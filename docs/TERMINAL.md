@@ -2,22 +2,30 @@
 
 VS Code's integrated terminal (`workbench.action.terminal.*`, `terminal.integrated.*`) in a Visual Studio 2022 **Terminal** tool window in the
 bottom well, next to Output and the Error List. A real pseudo-terminal per terminal, an own VT emulator verified against tmux and libvterm, a
-custom renderer, and `runInTerminal` for the debugger.
+custom renderer, split terminals, shell integration injected into bash/zsh/fish/pwsh, tasks running in terminals, Find with highlighting,
+a screen-reader text model, and `runInTerminal` for the debugger.
 
 ```
- ITerminalService (Core, src/CsCode.Core/Terminal)  ◄── Explorer "Open in Terminal" (command), Dap runInTerminal (seam), tasks/remote later
+ ITerminalService (Core, src/CsCode.Core/Terminal)  ◄── Explorer "Open in Terminal" (command), Dap runInTerminal (seam), remote later
+ ITaskTerminalHost (Core, src/CsCode.Core/Tasks)    ◄── Dap's task runner (tasks.json, preLaunchTask): the presentation seam
         │
  CsCode.Terminal (no Avalonia)                          CsCode.Panels.Terminal (Avalonia)
    Pty/   IPtyHost: UnixPtyHost (posix_spawn),            TerminalToolWindow (id "terminal", Bottom)
           ConPtyHost (Windows, untested)                  TerminalPanelRuntime: commands, keys, key precedence, focus key,
-   Emulator/ VtParser, VtEmulator, ScreenBuffer,                               clipboard, links, theme palette
-          Scrollback, TerminalRow, TerminalSnapshot       TerminalView: dropdown, New/Kill/Clear/Maximize, scrollbar
-   Sessions/ TerminalSession (worker), TerminalService,   TerminalControl: renderer, keys/text/IME, mouse, selection
-          TerminalLaunchResolver (profiles/env/cwd)       Rendering/ TerminalFont, TerminalPainter
+   Emulator/ VtParser, VtEmulator(.Find, .Commands),                           clipboard, links, theme palette
+          ScreenBuffer, Scrollback, TerminalRow,          Commands/ TerminalCommandSet, TaskCommandSet
+          TerminalSnapshot, TerminalAccessibility         TerminalView: group dropdown, New/Split/Kill/Clear/Maximize,
+   Sessions/ TerminalSession (worker), TerminalService,              Find bar, live region, accessible buffer
+          TerminalGroup, TerminalLaunchResolver,          TerminalPane: a terminal's control and its scrollbar
+          ShellIntegrationInjector                        TerminalControl: renderer, keys/text/IME, mouse, selection
+   Tasks/ TaskTerminalHost (ITaskTerminalHost)            TerminalAutomationPeer: what screen readers read
+   ShellIntegration/ cscode.bash, cscode.fish,            Rendering/ TerminalFont, TerminalPainter
+          cscode.ps1, zsh/ (shipped as shellIntegration/)
 ```
 
-Composition: one line in `AppServices.Build` — `services.AddCsCodeTerminal()` (it calls `AddCsCodeTerminalService()` of the core library). The
-tool window's toggle command is `workbench.action.terminal.toggleTerminal` (the Terminal menu and Ctrl+\` already bind it).
+Composition: one line in `AppServices.Build` — `services.AddCsCodeTerminal()` (it calls `AddCsCodeTerminalService()` of the core library,
+which also registers `TaskTerminalHost` as `ITaskTerminalHost`). The tool window's toggle command is `workbench.action.terminal.toggleTerminal`
+(the Terminal menu and Ctrl+\` already bind it).
 
 ## Process layer (A2)
 
@@ -70,11 +78,14 @@ Under `tools/nix-dev-env.sh` the terminal inherits that script's `LD_LIBRARY_PAT
   1024 characters), 4 (palette set/query), 7 (cwd), 8 (hyperlinks), 10/11/12 queries answered from the theme (setting them is ignored),
   52 clipboard **write only** and only with `terminal.integrated.allowOsc52` (off by default), 104/110/111/112, 133/633 shell-integration
   marks (below); RIS, DECSTR; BEL (an event). DCS (DECRQSS, XTGETTCAP, sixel) is consumed without an answer.
-* **Shell integration** (SHOULD, partial): when the shell reports OSC 633 (VS Code's) or 133 (FinalTerm's) marks, the prompt row (`A`) is
-  marked and keeps its command's exit code (`D;code`, attributed to the nearest prompt above; a shell that reports only `B`/`C` gets it on that
-  row), `P;Cwd=` sets the cwd like OSC 7. The view draws a mark left of each prompt (`terminalCommandDecoration.defaultBackground` /
-  `successBackground` / `errorBackground`) and Ctrl+Up / Ctrl+Down bring the previous/next prompt to the top of the view. CsCode does **not**
-  inject integration scripts into the shell (VS Code does): the marks appear only for a shell configured to print them.
+* **Shell-integration marks**: OSC 633 (VS Code's) and 133 (FinalTerm's, which fish 4 prints itself): the prompt row (`A`) is marked and
+  keeps its command's exit code (`D;code`, attributed to the nearest prompt above; a shell that reports only `B`/`C` gets it on that row),
+  `P;Cwd=` (escaped value) sets the cwd like OSC 7, `E;<line>;<nonce>` is the command line — trusted only with the terminal's own nonce (a
+  program printing an E cannot claim what the command was; without a trusted E the line is read from the screen between `B` and `C`). Each
+  finished command is recorded (`TerminalCommand`: line, exit code, where its output starts and ends) for the screen-reader model and Copy Last
+  Command (Output). The view draws a mark left of each prompt (`terminalCommandDecoration.defaultBackground` / `successBackground` /
+  `errorBackground`; `terminal.integrated.shellIntegration.decorationsEnabled`) and Ctrl+Up / Ctrl+Down bring the previous/next prompt to the
+  top of the view. The marks come from the injected scripts (below).
 * **Scrollback**: `terminal.integrated.scrollback` lines (1000) and a hard cap of 32 MB, whichever comes first. Rows have stable absolute
   numbers (selections and the viewport do not move while old rows fall off). Scrolling is allocation-free: the ring keeps the line objects
   themselves and the line that falls off the front is cleared and reused as the new bottom line; immutable `TerminalRow` copies are made only
@@ -84,6 +95,96 @@ Under `tools/nix-dev-env.sh` the terminal inherits that script's `LD_LIBRARY_PAT
   back); columns **re-flow** the primary screen and its scrollback (`terminal.integrated.reflow`, on by default): soft-wrapped lines are joined
   and split at the new width without cutting a wide character, the cursor follows its character. The alternate screen (and everything with
   reflow off) is truncated/padded as xterm does.
+
+## Shell integration (injected, on by default)
+
+`terminal.integrated.shellIntegration.enabled` (true): bash, zsh, fish and pwsh are started with **CsCode's own scripts** (written for CsCode,
+`src/CsCode.Terminal/ShellIntegration/`, shipped next to the application as `shellIntegration/` and in a publish) that report OSC 633 `A`
+(prompt start), `B` (prompt end), `E` (command line, with a per-terminal nonce in `CSCODE_NONCE`), `C` (output starts), `D;code` (finished)
+and `P;Cwd=` (the directory). **The user's startup files still run and are never edited** (VS Code's approach): the injection replaces how the
+shell finds them, and the script reads them first.
+
+| Shell | Started as | Reads first |
+|---|---|---|
+| bash | `bash --init-file cscode.bash` | what bash would have: `~/.bashrc`, or the profile's `--rcfile`; with `-l` (`--init-file` does not apply to a login shell, so the shell starts non-login) `/etc/profile` and the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`, unless `--noprofile`. bash itself still reads a system rc first where it is built with one (Debian's `/etc/bash.bashrc`). |
+| bash `--norc` | its own arguments, unchanged | nothing (as asked); the first prompt sources the script through `PROMPT_COMMAND` (an inherited `PROMPT_COMMAND` is handed over in `CSCODE_BASH_PROMPT_COMMAND` and restored; the variable is un-exported) |
+| zsh | `ZDOTDIR=shellIntegration/zsh`, the user's `ZDOTDIR` (else `HOME`) in `CSCODE_USER_ZDOTDIR` | `.zshenv`, `.zprofile`, `.zshrc` are CsCode's: each sources the user's file with the user's `ZDOTDIR`; `.zshrc` then installs the hooks and hands `ZDOTDIR` back (unset again if the user had none), so `.zlogin` and child shells use the user's files |
+| fish | `fish --init-command "source 'cscode.fish'"` | fish's own configuration (config.fish, conf.d) — the init command runs after it |
+| pwsh | `pwsh -NoExit -Command ". 'cscode.ps1'"` | the profile (`$PROFILE`) — the command runs after it |
+
+As in VS Code only plain interactive shells are injected: no arguments, or only `-l`/`--login`/`-i` (bash also `--noprofile`, `--norc`,
+`--rcfile F`; fish `-N`; pwsh `-NoLogo`/`-NoProfile`/`-Login`). A profile with `-c`, a script or other flags runs untouched, as do `sh`,
+tmux and task/debuggee terminals (`IsTransient`). The scripts unset `CSCODE_*` so nothing reaches programs started from the shell (a nested
+bash is a plain bash). Hooks: bash — `PROMPT_COMMAND` first and last entries (the user's prompt commands in between still see `$?`), a
+`DEBUG` trap for `C`/`E` (a DEBUG trap the user had keeps running; bash-preexec, when loaded, is used instead), the command line from history
+when history saved it, else `$BASH_COMMAND`; PS1 re-wrapped when the user's prompt command changed it. zsh — `precmd`/`preexec` hooks (status
+taken by a first precmd hook, the prompt wrapped by the last). fish — `fish_preexec`/`fish_postexec`/`fish_prompt` events (fish 4 marks
+`A`/`B` itself; fish 3's prompt is wrapped). pwsh — the `prompt` function wrapped, `PSConsoleHostReadLine` for `E`/`C` with PSReadLine;
+pwsh reports success or failure (`D;0`/`D;1`, a failed native program's own code), not every exit code.
+
+Tested for real: bash (sandboxed: `--noprofile --norc` and `--rcfile`), **fish 4.9.3** and **PowerShell 7.6.7** (official Linux release
+builds fetched by `tools/fetch-shells.sh` with pinned SHA-256; the tests skip with the reason when they are missing). **zsh is not tested**:
+it is not installed here and publishes no Linux release build; only the files' presence and the `ZDOTDIR` hand-over are checked (and
+`zsh -n` on every file where a zsh exists).
+
+## Split terminals
+
+VS Code's terminal groups: each entry of the dropdown is a group ("1: bash", "2: bash, zsh" for a split one); the shown group's terminals are
+panes side by side (`TerminalPane`: a control and its scrollbar), separated by splitters (the widths are kept with the group). Split
+(`workbench.action.terminal.split`, Ctrl+Shift+5, the toolbar's split button, the context menu, Terminal > Split Terminal) adds a pane right
+of the active one running the same profile (a task's or debuggee's terminal splits into the default profile) in the directory
+`terminal.integrated.splitCwd` says (`inherited`, the default: the shell's current directory from `/proc/<pid>/cwd`; `initial`;
+`workspaceRoot`); it becomes the active terminal and takes the keyboard. Clicking into a pane makes it active; Alt+Left/Up and Alt+Right/Down
+move between panes (wrapping), Ctrl+Shift+Left/Right move the divider next to the active pane by four cells (VS Code's resize). Kill closes
+the active pane: its neighbour (left, else right) becomes active and gets the keyboard; the last pane closes the group and the previous
+group (else the next) is shown. Unsplit moves a pane into a group of its own; Join Terminals (a pick) moves terminals into the active
+group; Focus Next/Previous Terminal Group (Ctrl+PgDn/PgUp) cycle groups. Context key `terminalSplitPaneActive`. A process that exits keeps
+its pane with its buffer (as before).
+
+## Tasks in terminals
+
+With the terminal composed, the Dap task runner (`ITaskService`: Run Task, Run Build Task, a debug configuration's `preLaunchTask`) runs a
+task's process in a terminal named after the task, through the additive Core seam `ITaskTerminalHost` (implemented by `TaskTerminalHost`;
+`DapPlatform.TaskTerminals`). The program is the one the runner always ran (a shell task: `/bin/sh -c <line>`, or `options.shell`); the
+terminal shows ` *  Executing task: <line> ` first and, at the end, ` *  The terminal process "…" terminated with exit code: N.` for a failure
+and ` *  Terminal will be reused by tasks, press any key to close it. `. Task terminals are transient (no confirmation, never restored).
+tasks.json `presentation` (the top-level one merged under the task's), VS Code's defaults:
+
+| Option | Default | Behaviour |
+|---|---|---|
+| `reveal` | always | always: the Terminal window shows the task's terminal; silent: only when the task fails or its problem matchers found errors; never |
+| `focus` | false | the revealed terminal takes the keyboard |
+| `panel` | shared | shared: an idle task terminal of a shared task is reused (renamed); dedicated: only the one this task ran in; new: always a new one. A terminal whose task still runs is never reused. |
+| `group` | | tasks of the same group run as split panes of one terminal group |
+| `clear` | false | a reused terminal is emptied first |
+| `echo` | true | the command line above the output |
+| `showReuseMessage` | true | the "press any key to close it" line; a key in that exited terminal closes it |
+| `close` | false | the terminal closes when the task ends |
+| `revealProblems` | never | onProblem / always: the Error List comes forward after the task |
+
+**Problem matchers** (previously accepted and ignored) now feed the Error List, with or without a terminal: the task's output (from the
+terminal's PTY reader, or the process's pipes) is split into lines with escape sequences removed and `\r` overwrites resolved, and matched
+on the Dap lane; problems go to `IDiagnosticService` under the owner `task.<matcher owner>`, cleared when the task runs again, at most 2,000
+per run. Built in: `$msCompile`, `$tsc`/`$tsc-watch`, `$gcc`, `$rustc` (cargo's two-line form), `$eslint-compact`, `$eslint-stylish`
+(regular expressions written for CsCode); custom matchers with `owner`, `source`, `severity`, `fileLocation` (absolute/relative/autoDetect,
+with a base), `pattern` (one, several, `loop`, or a "$name"), `base`. Commands (registered when a task runner is composed):
+`workbench.action.tasks.runTask` (Run Task..., a pick or a label argument), `.build` (Run Build Task, **Ctrl+Shift+B**: the default build
+task, else a pick), `.test`, `.terminate` (Terminate Task...: the running task, a pick when several). Cancelling a run (or the app shutting
+down) ends the process group; closing a task's terminal while it runs cancels the task. Without a terminal (the remote server, tests) the
+runner pipes into the "Tasks" output channel as before. Not done: `isBackground` readiness (`background.beginsPattern/endsPattern`).
+
+## Screen readers
+
+The terminal's automation peer (`TerminalAutomationPeer`, created only when assistive technology asks) is a read-only **document** named
+"Terminal N: title" whose **value is the visible text** (soft-wrapped rows joined into their line, trailing blanks trimmed;
+`TerminalAccessibility.VisibleText`), whose help text is the last command shell integration reported ("Last command: make, exit code 2."),
+and which announces value changes at most twice a second while the screen changes. A **polite live region** in the Terminal window says
+"Command finished: <line>" / "Command failed with exit code N: <line>" with the last lines of the output when the active terminal's command
+ends. **Focus Accessible Buffer** (`workbench.action.terminal.focusAccessibleBuffer`, Alt+F2 in a terminal, VS Code's) shows the whole
+scrollback and screen as read-only text (`VtEmulator.AccessibleBuffer`, read in place on the worker without caching row copies) with the
+caret at the terminal's cursor; Ctrl+Up/Down jump between prompts, Escape returns to the terminal. **Copy Last Command** and **Copy Last
+Command Output** (`workbench.action.terminal.copyLastCommand` / `copyLastCommandOutput`) put them on the clipboard. Not done: a text pattern
+(Avalonia 12 has no `ITextProvider`), audio cues. Not checked with a real screen reader (Orca/NVDA): needs a desktop.
 
 ## Sessions and frames
 
@@ -100,9 +201,10 @@ output flows).
 
 ## The Terminal tool window (C1-C7)
 
-* **Window**: dropdown of terminals ("1: bash", "(exited N)"), New (+), Kill (trash), Clear, Maximize Panel Size (the bottom well's proportion,
-  and back); the window title shows the count ("Terminal (3)"). Opening the window with no terminal creates one (VS Code). Hide (toggle) and
-  maximize act on the Dock dockable that hosts the view — the same operations as its title-bar buttons (no shell API exists for them).
+* **Window**: dropdown of terminal groups ("1: bash", "2: bash, zsh", "(exited N)"), New (+), Split, Kill (trash), Clear, Maximize Panel Size
+  (the bottom well's proportion, and back); the window title shows the terminal count ("Terminal (3)"). Opening the window with no terminal
+  creates one (VS Code). Hide (toggle) and maximize act on the Dock dockable that hosts the view — the same operations as its title-bar
+  buttons (no shell API exists for them).
 * **Renderer** (`TerminalPainter`): only visible rows; per row, runs of equal rendition become one background rectangle and glyph runs built
   without shaping (each glyph advances exactly one or two cells, as terminals draw; grapheme clusters are shaped on their own); built runs are
   cached per `TerminalRow` instance. Font: `terminal.integrated.fontFamily`, else the editor's, else Cascadia/Consolas/DejaVu/Liberation/Noto
@@ -110,8 +212,8 @@ output flows).
   checked), `fontSize` (else `editor.fontSize`), `lineHeight`, `letterSpacing`; system fallback per character (CJK, emoji) with a bounded cache.
   `drawBoldTextInBrightColors`, `minimumContrastRatio` (4.5), cursor block/underline/bar (`cursorStyle`, DECSCUSR wins), blinking
   (`cursorBlinking`, DECSET 12) only while focused in an active window, a hollow block when unfocused. Colours from the theme's `terminal.*` keys,
-  read per frame, so a theme switch repaints at once. IME: the candidate window at the cursor, the preedit drawn there. Screen readers get the
-  terminal's name (SHOULD: no text model yet).
+  read per frame, so a theme switch repaints at once. IME: the candidate window at the cursor, the preedit drawn there. Screen readers: see
+  "Screen readers" above.
 * **Input** (C3): xterm encodings (`KeyEncoder`): cursor keys normal/application, `CSI 1;m X` modifiers, F1-F12, Alt as Meta, Ctrl+letter and
   Ctrl+punctuation, Backspace = DEL, Shift+Tab = `CSI Z`, application keypad; text and IME commits as UTF-8; bracketed paste (end markers inside
   the text are removed); mouse reports X10/1000/1002/1003 in default/UTF-8/SGR/urxvt encoding (`MouseEncoder`), Shift bypasses them; focus
@@ -132,14 +234,19 @@ output flows).
   worker, so the provider only returns a string; middle-click pastes PRIMARY), the multi-line paste warning (`enableMultiLinePasteWarning`:
   `auto` warns only without bracketed paste; Paste / Paste as one line / Cancel), all through `IClipboardService`. The view is an
   `IClipboardTarget`, so Edit > Copy/Paste act on it. Right-click menu (the shared menu builder): Copy, Paste, Select All, Clear Terminal,
-  Rename..., Kill Terminal (no Split: not implemented).
+  Split Terminal, Unsplit Terminal (in a split group), Rename..., Kill Terminal.
 * **Scrolling** (C5): wheel, Shift+PgUp/PgDn, Ctrl+Shift+Up/Down (line), Ctrl+Home/End (all only on the primary screen), the scrollbar; the
   view follows the output at the bottom and keeps its place while the user reads the scrollback; typing returns to the bottom.
-* **Find** (C5, SHOULD): Ctrl+F opens a find bar over the terminal (the selection, if one line, is the query). Typing searches up from
-  the bottom of the output, Enter goes further up (VS Code's direction in the terminal), Shift+Enter or F3 down, Shift+F3 up, past either end
-  it wraps; Match Case toggle; "No results". The match is selected and scrolled to the middle of the view when it is off screen. The search
-  runs on the terminal's worker over the lines in place (scrollback and screen; the alternate screen alone while a full-screen program runs).
-  F3/Shift+F3/Enter/Escape are the find box's own keys, not keybindings, so F3 still reaches programs in the terminal.
+* **Find** (C5): Ctrl+F opens a find bar over the terminal (the selection, if one line, is the query). Typing searches up from the bottom of
+  the output, Enter goes further up (VS Code's direction in the terminal), Shift+Enter or F3 down, Shift+F3 up, past either end it wraps;
+  Match Case, Match Whole Word and Use Regular Expression toggles (Alt+C / Alt+W / Alt+R in the box, as VS Code's find widget; .NET regular
+  expressions with a time-out, "Invalid regular expression" when one does not compile); the status says "3 of 12" ("1000+" past VS Code's
+  cap) or "No results" (a polite live region). **Every match in view is highlighted** (`terminal.findMatchHighlightBackground`, the current
+  one `terminal.findMatchBackground`; both default to the editor's find colours) and kept current while the view scrolls or output arrives
+  (one request in flight, the newest view wins). Lines that wrapped at the right margin are searched as one line, so **a match can continue
+  on the next row** (it is selected across both). The match is selected and scrolled to the middle of the view when it is off screen. The
+  search runs on the terminal's worker over the lines in place (scrollback and screen; the alternate screen alone while a full-screen program
+  runs). F3/Shift+F3/Enter/Escape are the find box's own keys, not keybindings, so F3 still reaches programs in the terminal.
 * **Links** (C6, Ctrl+click; underlined with a hand cursor while Ctrl is held): OSC 8 targets, URLs (any `scheme://`, `mailto:`, `file:`;
   trailing punctuation trimmed) — http/https open with the OS opener, other schemes after an `IWindowService` confirmation — and file paths
   (`path`, `path:line`, `path:line:col`, MSBuild's `path(line,col)`; absolute, `~/`, `./`, relative, or a bare `name.ext:line`) resolved off the
@@ -155,7 +262,14 @@ output flows).
 | `workbench.action.terminal.focus` | | show and focus (creates one if needed) |
 | `workbench.action.terminal.kill` | | kill the active terminal (`confirmOnKill`) |
 | `workbench.action.terminal.clear` | | scrollback and screen go, the prompt line stays (xterm.js `clear()`) |
-| `workbench.action.terminal.focusNext` / `focusPrevious` | Ctrl+PgDn / Ctrl+PgUp (terminal focus) | |
+| `workbench.action.terminal.focusNext` / `focusPrevious` | Ctrl+PgDn / Ctrl+PgUp (terminal focus) | Focus Next/Previous Terminal Group |
+| `workbench.action.terminal.split` | Ctrl+Shift+5 | Split Terminal (Terminal menu, toolbar, context menu) |
+| `workbench.action.terminal.unsplit` / `join` / `killAll` | | Unsplit Terminal / Join Terminals... (a pick) / Kill All Terminals |
+| `workbench.action.terminal.focusNextPane` / `focusPreviousPane` | Alt+Right, Alt+Down / Alt+Left, Alt+Up | `when terminalFocus && terminalSplitPaneActive` |
+| `workbench.action.terminal.resizePaneLeft` / `resizePaneRight` | Ctrl+Shift+Left / Right | same `when` |
+| `workbench.action.terminal.focusAccessibleBuffer` | Alt+F2 (terminal focus) | the accessible buffer |
+| `workbench.action.terminal.copyLastCommand` / `copyLastCommandOutput` | | shell integration's last command |
+| `workbench.action.tasks.runTask` / `build` / `test` / `terminate` | — / Ctrl+Shift+B / — / — | Run Task... / Run Build Task / Run Test Task / Terminate Task... |
 | `workbench.action.terminal.rename` | | input box, or a name argument; empty = automatic |
 | `workbench.action.terminal.selectAll` | Ctrl+Shift+A (terminal focus) | |
 | `workbench.action.terminal.copySelection` | Ctrl+Shift+C, Ctrl+Insert (terminal focus) | |
@@ -172,8 +286,9 @@ output flows).
 Differences from VS Code's Linux defaults (decisions for the user): Select All has no default key in VS Code on Linux — CsCode binds
 Ctrl+Shift+A (terminal focus only); Ctrl+PgDn / Ctrl+PgUp for the next/previous terminal and Ctrl+Insert for copy are CsCode's additions (the
 brief asks for Ctrl+Insert/Shift+Insert); Find's F3/Shift+F3/Enter/Shift+Enter work inside the find box only (VS Code also binds F3 while the
-find widget is open and the terminal has focus). Everything else matches VS Code. All of them are contributions, so `keybindings.json` can
-remove them.
+find widget is open and the terminal has focus); the pane keys (Alt+arrows, Ctrl+Shift+Left/Right) apply only while the shown group is split
+(VS Code binds them whenever a terminal has focus, so a lone shell never gets Alt+arrows there). Everything else matches VS Code. All of them
+are contributions, so `keybindings.json` can remove them.
 
 ### Settings
 
@@ -201,6 +316,9 @@ remove them.
 | `terminal.integrated.confirmOnExit` | "never" | always / hasChildProcesses: closing the window asks first (after the window's own save prompts; a background-mode hide never asks) |
 | `terminal.integrated.rightClickBehavior` | "default" | default (context menu) / copyPaste / paste / selectWord / nothing |
 | `terminal.integrated.persistentSessionReviveProcess` | "never" | terminals are never restored |
+| `terminal.integrated.shellIntegration.enabled` | true | inject the shell-integration scripts (bash, zsh, fish, pwsh) |
+| `terminal.integrated.shellIntegration.decorationsEnabled` | "both" | both/gutter draw the prompt marks; overviewRuler/never draw none (no ruler) |
+| `terminal.integrated.splitCwd` | "inherited" | inherited / initial / workspaceRoot |
 
 ## Debugger: `runInTerminal` (C8)
 
@@ -252,8 +370,12 @@ the headless compositor's rasterisation (framebuffer memory pressure), not to th
 ## Tests
 
 ```
-dotnet test tests/CsCode.Terminal.Tests          # PTY host, parser, emulator, sessions/service, differential (tmux, libvterm), real sessions, fuzz
-dotnet test tests/CsCode.Panels.Terminal.Tests   # encodings, selection/links, panel (fake PTYs), real app, runInTerminal (js-debug), budgets, screenshots
+dotnet test tests/CsCode.Terminal.Tests          # PTY host, parser, emulator, sessions/service, differential (tmux, libvterm), real sessions, fuzz,
+                                                 # splits, shell integration (bash; fish/pwsh after tools/fetch-shells.sh), task terminals, Find, accessibility
+dotnet test tests/CsCode.Panels.Terminal.Tests   # encodings, selection/links, panel (fake PTYs), split panes, Find, accessibility, real app (splits,
+                                                 # injected integration, tasks: Ctrl+Shift+B, Run Task, preLaunchTask), runInTerminal (js-debug), budgets, screenshots
+dotnet test tests/CsCode.Dap.Tests --filter "FullyQualifiedName~ProblemMatcherTests|FullyQualifiedName~TaskTerminalPresentationTests|FullyQualifiedName~TaskServiceTests"
+tools/fetch-shells.sh                            # fish 4.9.3 and PowerShell 7.6.7 (official release builds, pinned SHA-256) into .scratch/downloads/
 ```
 
 Shells in tests run sandboxed: `bash --noprofile --norc` / `sh` with HOME, XDG_CONFIG_HOME, XDG_DATA_HOME and ZDOTDIR in temp directories (the
@@ -284,14 +406,16 @@ reference reports, cursor, alternate screen):
   survives the same input (8 MB of noise and 50,000-token grammar fuzz, within its memory caps).
 
 Screenshots (headless, git-ignored): `.scratch/screenshots/terminal/terminal-ls-color.png`, `terminal-nvim.png`, `terminal-git-log.png`,
-`terminal-light-theme.png`.
+`terminal-light-theme.png`, `terminal-split.png`, `terminal-shell-integration-injected.png`, `terminal-task-build.png`, `terminal-find.png`.
 
 ## Known gaps and limits
 
-* **Not done (SHOULD/STRETCH)**: split terminals; Find's match highlighting, whole word and regex (it selects one match at a time, matches do
-  not span rows); shell-integration script injection, command
-  hover/re-run menus and sticky scroll (the marks, exit-code decorations and Ctrl+Up/Down are done); tasks in terminals; the remote terminal (R3,
-  `IPtyHost` is ready for it); screen-reader text; image protocols (no).
+* **Not done**: command hover/re-run menus and sticky scroll of shell integration; the tab list (VS Code's tabs beside the terminals: CsCode
+  keeps the dropdown, one entry per group); vertical splits (VS Code's panel splits are side by side, as here); `isBackground` task readiness;
+  a UI Automation text pattern and audio cues for screen readers; the remote terminal (R3, `IPtyHost` is ready for it; note the
+  shell-integration scripts are local files — a remote PTY host must set `TerminalLaunchResolver.ScriptsDirectory = null` or ship them);
+  image protocols (no).
+* zsh's integration is written but never run (no zsh here, no official Linux build to fetch). pwsh reports success/failure, not exit codes.
 * Windows ConPTY: written, never run. macOS: `posix_spawn` cannot make the slave the controlling terminal there (BSD needs `TIOCSCTTY`), so job
   control and Ctrl+C would not work; the variadic `ioctl`/`fcntl` declarations are not valid on Apple arm64. Linux (glibc ≥ 2.29; 2.34+ for
   `closefrom`, 2.36+ for pidfd) is the supported platform.
@@ -305,4 +429,4 @@ Screenshots (headless, git-ignored): `.scratch/screenshots/terminal/terminal-ls-
 * VS16 does not widen a narrow emoji (as xterm.js, tmux and libvterm).
 * The key-precedence hook and the hide/maximize through the hosting Dock dockable are integration points outside the shell's API (see above);
   if the shell later offers "focused view handles keys first" or hide/maximize for tool windows, switch to those.
-* Typing into an exited terminal does nothing (VS Code offers "press any key to close"; not implemented).
+* Typing into an exited terminal does nothing, except in a task's terminal, where any key closes it (VS Code's "press any key to close it").
