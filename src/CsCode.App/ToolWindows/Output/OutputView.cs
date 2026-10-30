@@ -60,6 +60,7 @@ public sealed class OutputView : UserControl, IDisposable, IClipboardTarget, ITo
     {
         var t = new TextBlock { Text = text, Margin = new Thickness(8, 0), TextWrapping = wrap ? TextWrapping.Wrap : TextWrapping.NoWrap };
         t.FontFamily = ThemeBrushes.CodeFont;
+        t.FontFeatures = ThemeBrushes.CodeFontFeatures;
         return t;
     }
 

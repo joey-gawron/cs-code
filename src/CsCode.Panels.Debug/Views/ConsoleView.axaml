@@ -8,6 +8,7 @@
     <StyleInclude Source="avares://CsCode.Panels.Debug/Views/DebugPanelStyles.axaml" />
     <Style Selector="TextBlock.line">
       <Setter Property="FontFamily" Value="{DynamicResource ui:CodeFontFamily}" />
+      <Setter Property="FontFeatures" Value="{DynamicResource ui:CodeFontFeatures}" />
       <Setter Property="Padding" Value="8,0" />
       <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
@@ -35,6 +36,7 @@
       <Setter Property="MinHeight" Value="24" />
       <Setter Property="MaxHeight" Value="110" />
       <Setter Property="FontFamily" Value="{DynamicResource ui:CodeFontFamily}" />
+      <Setter Property="FontFeatures" Value="{DynamicResource ui:CodeFontFeatures}" />
       <Setter Property="FontSize" Value="{DynamicResource ui:FontSize}" />
       <Setter Property="AcceptsReturn" Value="True" />
       <Setter Property="TextWrapping" Value="Wrap" />

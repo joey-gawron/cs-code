@@ -105,6 +105,7 @@ public sealed class FindResultsView : UserControl, IClipboardTarget, IToolWindow
         var preview = ViewHelpers.Label("", "foreground");
         preview.TextTrimming = TextTrimming.CharacterEllipsis;
         preview.FontFamily = ThemeBrushes.CodeFont;
+        preview.FontFeatures = ThemeBrushes.CodeFontFeatures;
         preview.Bind(TextBlock.TextProperty, new Binding(nameof(FindResultRow.Preview)) { Source = row });
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Height = 22, Background = Brushes.Transparent, Children = { line, preview } };
         panel.AttachedToVisualTree += async (_, _) => await _vm.LoadPreviewAsync(row).ConfigureAwait(true);

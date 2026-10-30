@@ -175,7 +175,7 @@
             <TextBlock Grid.Column="0" Text="{Binding LineNumber}" Classes="dim" FontSize="11" Width="34" TextAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0" />
             <v:MatchPreviewText Grid.Column="1" Preview="{Binding Preview}" MatchStart="{Binding PreviewMatchStart}" MatchLength="{Binding PreviewMatchLength}"
                                 MatchedText="{Binding MatchedText}" Previews="{Binding Previews}" VerticalAlignment="Center"
-                                FontFamily="{DynamicResource ResourceKey='ui:CodeFontFamily'}" FontSize="12" />
+                                FontFamily="{DynamicResource ResourceKey='ui:CodeFontFamily'}" FontFeatures="{DynamicResource ResourceKey='ui:CodeFontFeatures'}" FontSize="12" />
             <StackPanel Grid.Column="2" Classes="actions" Orientation="Horizontal" Spacing="1" VerticalAlignment="Center">
               <Button Classes="tool" Width="20" Height="20" Click="OnReplaceMatchClick" ToolTip.Tip="Replace" AutomationProperties.Name="Replace match"
                       IsVisible="{Binding $parent[ListBox].((vm:FindInFilesViewModel)DataContext).ReplaceVisible, FallbackValue=False}"><ic:Icon Kind="replace" Size="14" /></Button>

@@ -26,7 +26,7 @@ internal static class Program
 {
     [STAThread]
     public static int Main(string[] args) =>
-        AppBuilder.Configure<DemoApp>().UsePlatformDetect().WithInterFont().LogToTrace().StartWithClassicDesktopLifetime(args);
+        AppBuilder.Configure<DemoApp>().UsePlatformDetect().WithInterFont().WithCodeFonts().LogToTrace().StartWithClassicDesktopLifetime(args);
 }
 
 /// <summary>Colour theme service for the demo: the three built-in VS2022 themes, grey for anything a theme does not define.</summary>

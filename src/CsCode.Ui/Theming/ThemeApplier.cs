@@ -62,7 +62,7 @@ public sealed class ThemeApplier : IDisposable
         if (config is not null)
             _subs.Add(config.Changed.Subscribe(e =>
             {
-                if (e.Affects(SettingKeys.EditorFontFamily)) _ui.Post(() => SetCodeFont(config));
+                if (e.Affects(SettingKeys.EditorFontFamily) || e.Affects(SettingKeys.EditorFontLigatures)) _ui.Post(() => SetCodeFont(config));
             }));
         ApplyNow(themes.Current);
     }
@@ -265,8 +265,21 @@ public sealed class ThemeApplier : IDisposable
     {
         var family = config?.Get<string>(SettingKeys.EditorFontFamily);
         if (string.IsNullOrWhiteSpace(family))
-            family = OperatingSystem.IsMacOS() ? FontFamilies.MacCode : "Cascadia Code, Consolas, DejaVu Sans Mono, Liberation Mono, monospace";
+            family = FontFamilies.DefaultCode;
         _app.Resources["ui:CodeFontFamily"] = new FontFamily(FontFamilies.Normalize(family));
+        _app.Resources["ui:CodeFontFeatures"] = CodeFontFeatures(FontFamilies.LigatureFeatures(config?.GetRaw(SettingKeys.EditorFontLigatures)));
+    }
+
+    /// <summary><paramref name="features"/> (<see cref="FontFamilies.LigatureFeatures"/>) as the collection a text control takes; ill-formed ones are skipped.</summary>
+    public static FontFeatureCollection CodeFontFeatures(IReadOnlyList<string> features)
+    {
+        var collection = new FontFeatureCollection();
+        foreach (var f in features)
+        {
+            try { collection.Add(FontFeature.Parse(f)); }
+            catch (Exception e) when (e is FormatException or ArgumentException) { }
+        }
+        return collection;
     }
 
     public void Dispose()

@@ -147,7 +147,8 @@ Built-in defaults (all in `BuiltInSettings.All`; every key in `SettingKeys` has 
 
 | key | default |
 |---|---|
-| `editor.fontFamily` | `Cascadia Code, Consolas, monospace`; on macOS `Menlo, SF Mono, Monaco, monospace` (quotes are stripped and generic names mapped per OS when the font is built: `FontFamilies.Normalize`) |
+| `editor.fontFamily` | `Fira Code, Cascadia Code, Consolas, monospace`; on macOS `Fira Code, Menlo, SF Mono, Monaco, monospace`. Fira Code ships with CsCode (assets/fonts/fira-code, embedded in CsCode.Ui and registered by `CodeFonts.WithCodeFonts`), so it needs nothing installed; quotes are stripped, generic names mapped per OS and "Fira Code" pointed at the bundled faces (`fonts:CsCode#Fira Code`) when the font is built: `FontFamilies.Normalize`. Its ligatures are off unless `editor.fontLigatures` turns them on |
+| `editor.fontLigatures` | `false`, as in VS Code: `!=` and `=>` are drawn as their characters (`-liga, -calt`) in the editor and the code panels (`ui:CodeFontFeatures`); `true` draws the font's ligatures (Fira Code's keep one glyph per character, so carets and selections stay on columns), a string is a CSS font-feature-settings list (`"'ss01', 'zero'"`) that also turns them on. `FontFamilies.LigatureFeatures` |
 | `editor.fontSize` / `editor.tabSize` | `14` / `4` |
 | `editor.insertSpaces` / `editor.wordWrap` | `true` / `"off"` |
 | `editor.minimap.enabled` / `editor.formatOnSave` | `true` / `false` |

@@ -1,4 +1,6 @@
 using Avalonia.Headless.XUnit;
+using Avalonia.Media;
+using CsCode.Core.Theming;
 using CsCode.Panels.Terminal.Rendering;
 using Xunit;
 
@@ -28,5 +30,21 @@ public sealed class TerminalFontTests
         var font = TerminalFont.Create("No Such Font Anywhere", 13);
         Assert.True(font.RegularFace.Metrics.IsFixedPitch, $"{font.Family} is proportional");
         Assert.Equal("Menlo", font.Family.Name);
+    }
+
+    /// <summary>The terminal's default (the editor's) starts with the bundled Fira Code, which every OS now has: its regular and bold faces are used.</summary>
+    [AvaloniaTheory]
+    [InlineData(FontFamilies.MacCode)]
+    [InlineData(FontFamilies.OtherCode)]
+    [InlineData("'Fira Code'")]
+    public void The_bundled_Fira_Code_is_the_terminal_font_without_installing_it(string families)
+    {
+        var font = TerminalFont.Create(families, 13);
+        Assert.Equal("Fira Code", font.RegularFace.FamilyName);
+        Assert.True(font.RegularFace.Metrics.IsFixedPitch);
+        var (bold, glyph) = font.Glyph('M', bold: true, italic: false);
+        Assert.NotEqual(0, glyph);
+        Assert.Equal("Fira Code", bold.FamilyName);
+        Assert.Equal(FontWeight.Bold, bold.Weight);
     }
 }

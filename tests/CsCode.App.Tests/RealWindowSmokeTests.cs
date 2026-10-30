@@ -8,6 +8,7 @@ using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
+using CsCode.Ui.Theming;
 
 namespace CsCode.App.Tests;
 
@@ -110,7 +111,7 @@ public class RealWindowSmokeTests
         App.ConfigureServices = host.ApplyTo;
         var shot = Environment.GetEnvironmentVariable("CSCODE_SHOT")!;
         Exception? failure = null;
-        var exit = AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont()
+        var exit = AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().WithCodeFonts()
             .AfterSetup(_ => Dispatcher.UIThread.Post(async () =>
             {
                 // Runs on the real UI thread once the desktop lifetime is running and the shell has built its main window.
@@ -195,7 +196,7 @@ public class RealWindowSmokeTests
         var file = Environment.GetEnvironmentVariable("CSCODE_TEST_OPEN")!;
         var pidFile = Environment.GetEnvironmentVariable("CSCODE_TEST_PIDFILE");
         Exception? failure = null;
-        var exit = AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont()
+        var exit = AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().WithCodeFonts()
             .AfterSetup(_ => Dispatcher.UIThread.Post(async () =>
             {
                 var lifetime = (IClassicDesktopStyleApplicationLifetime)Application.Current!.ApplicationLifetime!;

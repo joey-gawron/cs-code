@@ -20,6 +20,7 @@ Changes made: coordinates rounded; icons selected and renamed to their kebab-cas
 | Avalonia (`Avalonia`, `Avalonia.Desktop`, `Avalonia.Skia`, `Avalonia.Headless`, `Avalonia.Themes.Fluent`) | MIT | UI toolkit; Fluent theme supplies control templates that the workbench theme retargets |
 | Dock.Avalonia (`Dock.Avalonia`, `Dock.Model.Mvvm`, `Dock.Avalonia.Themes.Fluent` and its dependent `Dock.Controls.*` packages) | MIT | Docking: document well, tool windows, floating windows |
 | Avalonia.Fonts.Inter / Inter typeface | SIL Open Font License 1.1 | Fallback UI font when Segoe UI is not installed |
+| Fira Code typeface 6.2 (font version 6.002), Copyright 2014-2021 The Fira Code Project Authors (<https://github.com/tonsky/FiraCode>) | SIL Open Font License 1.1 (`assets/fonts/fira-code/OFL.txt`) | Default code font on every OS (editor, code panels, terminal): the unmodified static Light, Regular, Medium, SemiBold and Bold TTFs, embedded in `CsCode.Ui` |
 | SkiaSharp, HarfBuzzSharp (transitive, via Avalonia.Skia) | MIT | Rendering and text shaping |
 | CommunityToolkit.Mvvm | MIT | `ObservableObject`, relay commands |
 | Microsoft.Extensions.DependencyInjection / Logging (+ Abstractions) | MIT | Composition root |

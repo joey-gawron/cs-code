@@ -122,7 +122,9 @@ internal sealed class EditorClipboard : IDisposable
         }
         var themes = _v.Factory.Themes;
         var settings = _v.Settings;
-        var style = new HtmlClipboardStyle(themes.GetColor("editor.background"), themes.GetColor("editor.foreground"), _v.Editor.FontFamily.ToString(),
+        // the font list as the setting names it: the view's FontFamily names the bundled Fira Code by its collection (fonts:CsCode#Fira Code),
+        // which no other application knows
+        var style = new HtmlClipboardStyle(themes.GetColor("editor.background"), themes.GetColor("editor.foreground"), settings.FontFamily,
             settings.FontSize, Math.Round(_v.TextArea.TextView.DefaultLineHeight, 2), settings.TabSize);
         return new HtmlCapture(lines, themes.Current, style, _v.Tokens?.Interner);
     }

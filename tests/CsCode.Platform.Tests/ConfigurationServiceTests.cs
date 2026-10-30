@@ -72,7 +72,7 @@ public class ConfigurationServiceTests : IDisposable
     public void Defaults_match_the_documented_vs_code_like_values()
     {
         using var svc = _f.Create();
-        Assert.Equal(OperatingSystem.IsMacOS() ? "Menlo, SF Mono, Monaco, monospace" : "Cascadia Code, Consolas, monospace", svc.Get<string>(SettingKeys.EditorFontFamily));
+        Assert.Equal(OperatingSystem.IsMacOS() ? "Fira Code, Menlo, SF Mono, Monaco, monospace" : "Fira Code, Cascadia Code, Consolas, monospace", svc.Get<string>(SettingKeys.EditorFontFamily));
         Assert.Equal(14, svc.Get<int>(SettingKeys.EditorFontSize));
         Assert.Equal(4, svc.Get<int>(SettingKeys.EditorTabSize));
         Assert.True(svc.Get<bool>(SettingKeys.EditorInsertSpaces));

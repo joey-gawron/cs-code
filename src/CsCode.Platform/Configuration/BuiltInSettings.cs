@@ -13,11 +13,12 @@ public static class BuiltInSettings
     public const string KeymapKey = "cscode.keymap";
 
     /// <summary>
-    /// The default <c>editor.fontFamily</c>. A stock Mac has none of Cascadia Code or Consolas (and its "monospace" is Helvetica), so it gets
-    /// Menlo first, as in VS Code. Elsewhere 'Courier New' is left out: the editor now strips the quotes that kept it from ever matching, and a
-    /// Linux machine with Microsoft's core fonts would otherwise switch from fontconfig's monospace to Courier New.
+    /// The default <c>editor.fontFamily</c>: Fira Code, which CsCode ships (assets/fonts/fira-code), on every OS, then the OS's own faces should
+    /// it ever be missing. A stock Mac has none of Cascadia Code or Consolas (and its "monospace" is Helvetica), so there Menlo comes next, as
+    /// in VS Code. Elsewhere 'Courier New' is left out: the editor now strips the quotes that kept it from ever matching, and a Linux machine
+    /// with Microsoft's core fonts would otherwise switch from fontconfig's monospace to Courier New.
     /// </summary>
-    public static string DefaultFontFamily { get; } = OperatingSystem.IsMacOS() ? FontFamilies.MacCode : "Cascadia Code, Consolas, monospace";
+    public static string DefaultFontFamily { get; } = OperatingSystem.IsMacOS() ? FontFamilies.MacCode : FontFamilies.Bundled + ", Cascadia Code, Consolas, monospace";
 
     /// <summary>The folders macOS keeps at a volume's root (Spotlight's index, the FSEvents log, the Trash of a removable volume, versions).</summary>
     private static readonly string[] MacVolumeFolders = [".Spotlight-V100", ".fseventsd", ".Trashes", ".TemporaryItems", ".DocumentRevisions-V100"];
@@ -35,6 +36,8 @@ public static class BuiltInSettings
     public static IReadOnlyList<ConfigurationProperty> All { get; } =
     [
         P(SettingKeys.EditorFontFamily, DefaultFontFamily, "Controls the font family.", """{"type":"string"}"""),
+        P(SettingKeys.EditorFontLigatures, false, "Font ligatures and contextual alternates (Fira Code's != and =>): true for the font's own, or a CSS font-feature-settings list such as \"'ss01', 'zero'\".",
+            """{"type":["boolean","string"]}"""),
         P(SettingKeys.EditorFontSize, 14, "Controls the font size in pixels.", """{"type":"number","minimum":6,"maximum":100}"""),
         P(SettingKeys.EditorTabSize, 4, "The number of spaces a tab is equal to.", """{"type":"integer","minimum":1}"""),
         P(SettingKeys.EditorInsertSpaces, true, "Insert spaces when pressing Tab.", """{"type":"boolean"}"""),

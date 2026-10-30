@@ -197,6 +197,39 @@ public class ThemeApplierTests
         Assert.Equal(new CornerRadius(2), radius);
     }
 
+    /// <summary>
+    /// The code panels (Output, Find Results, the debug console...) shape the code font with ui:CodeFontFeatures, from editor.fontLigatures:
+    /// off by default, so the bundled Fira Code draws != and => as their characters there too, and live on when the setting asks.
+    /// </summary>
+    [AvaloniaFact]
+    public void Code_panels_draw_Fira_Code_without_ligatures_unless_editor_fontLigatures_turns_them_on()
+    {
+        const string code = "a != b => c === d <= e";
+        var config = new CsCode.TestDoubles.TestConfigurationService();
+        var app = Application.Current!;
+        using var applier = new ThemeApplier(app, Themes(), new ImmediateUiDispatcher(), config);
+
+        int Substituted()
+        {
+            var block = new Avalonia.Controls.TextBlock { Text = code, FontFamily = ThemeBrushes.CodeFont, FontFeatures = ThemeBrushes.CodeFontFeatures };
+            block.Measure(Size.Infinity);
+            var run = block.TextLayout.TextLines[0].TextRuns.OfType<Avalonia.Media.TextFormatting.ShapedTextRun>().Single();
+            var face = run.ShapedBuffer.GlyphTypeface;
+            Assert.Equal("Fira Code", face.FamilyName);
+            var glyphs = run.ShapedBuffer.ToList();
+            Assert.Equal(code.Length, glyphs.Count);
+            return Enumerable.Range(0, code.Length).Count(i => face.CharacterToGlyphMap.TryGetGlyph(code[i], out var plain) && plain != glyphs[i].GlyphIndex);
+        }
+
+        Assert.Equal(["-liga", "-calt"], ThemeBrushes.CodeFontFeatures!.Select(f => f.ToString()));
+        Assert.Equal(0, Substituted());
+        config.Set("editor.fontLigatures", true);
+        Assert.Empty(ThemeBrushes.CodeFontFeatures!);
+        Assert.True(Substituted() >= 8);
+        config.Set("editor.fontLigatures", "'ss01', 'cv01' 2"); // VS Code's CSS feature list
+        Assert.Equal(["ss01", "cv01=2"], ThemeBrushes.CodeFontFeatures!.Select(f => f.ToString()));
+    }
+
     [AvaloniaFact]
     public void Missing_ids_fall_back_through_the_shell_chain_then_the_core_chain()
     {
