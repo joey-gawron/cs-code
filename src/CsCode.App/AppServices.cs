@@ -16,6 +16,7 @@ using CsCode.Editor;
 using CsCode.Lsp;
 using CsCode.Panels.Debug;
 using CsCode.Panels.Search;
+using CsCode.Panels.Terminal;
 using CsCode.Platform;
 using CsCode.Profiling;
 using CsCode.Remote;
@@ -56,6 +57,7 @@ public static class AppServices
         services.AddCsCodeShell(args);
         services.AddCsCodeDebugPanels();
         services.AddCsCodeSearchPanels();
+        services.AddCsCodeTerminal(); // the integrated terminal (ITerminalService) and its Terminal tool window
         services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
         configure?.Invoke(services); // dev/test host: replace anything above
         AddChildProcessTracking(services); // last: wraps whichever memory monitor ended up registered

@@ -9,9 +9,11 @@
     <Project Path="src/CsCode.Macros/CsCode.Macros.csproj" />
     <Project Path="src/CsCode.Panels.Debug/CsCode.Panels.Debug.csproj" />
     <Project Path="src/CsCode.Panels.Search/CsCode.Panels.Search.csproj" />
+    <Project Path="src/CsCode.Panels.Terminal/CsCode.Panels.Terminal.csproj" />
     <Project Path="src/CsCode.Platform/CsCode.Platform.csproj" />
     <Project Path="src/CsCode.Profiling/CsCode.Profiling.csproj" />
     <Project Path="src/CsCode.Sessions/CsCode.Sessions.csproj" />
+    <Project Path="src/CsCode.Terminal/CsCode.Terminal.csproj" />
     <Project Path="src/CsCode.Remote/CsCode.Remote.csproj" />
     <Project Path="src/CsCode.Server/CsCode.Server.csproj" />
     <Project Path="src/CsCode.Ui/CsCode.Ui.csproj" />
@@ -27,9 +29,11 @@
     <Project Path="tests/CsCode.MemoryTests/CsCode.MemoryTests.csproj" />
     <Project Path="tests/CsCode.Panels.Debug.Tests/CsCode.Panels.Debug.Tests.csproj" />
     <Project Path="tests/CsCode.Panels.Search.Tests/CsCode.Panels.Search.Tests.csproj" />
+    <Project Path="tests/CsCode.Panels.Terminal.Tests/CsCode.Panels.Terminal.Tests.csproj" />
     <Project Path="tests/CsCode.Platform.Tests/CsCode.Platform.Tests.csproj" />
     <Project Path="tests/CsCode.Sessions.Tests/CsCode.Sessions.Tests.csproj" />
     <Project Path="tests/CsCode.Remote.Tests/CsCode.Remote.Tests.csproj" />
+    <Project Path="tests/CsCode.Terminal.Tests/CsCode.Terminal.Tests.csproj" />
     <Project Path="tests/CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
     <Project Path="tests/CsCode.Vim.Tests/CsCode.Vim.Tests.csproj" />
   </Folder>

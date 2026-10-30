@@ -3,6 +3,7 @@ using CsCode.Core.Contributions;
 using CsCode.Core.Debugging;
 using CsCode.Core.Diagnostics;
 using CsCode.Core.Platform;
+using CsCode.Core.Terminal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -28,6 +29,9 @@ public sealed class DapPlatform
     public IActiveSelectionProvider? Selection { get; init; }
     public IMemoryMonitor? Memory { get; init; }
     public ILoggerFactory? LoggerFactory { get; init; }
+    /// <summary>The integrated terminal, when one is composed: <c>runInTerminal</c> (kind integrated) runs the debuggee in it. Resolved lazily (the
+    /// terminal module is built with the shell's tool windows, after the debug service).</summary>
+    public Func<ITerminalService?>? Terminals { get; init; }
 
     public ILogger Logger(string category) => LoggerFactory?.CreateLogger(category) ?? NullLogger.Instance;
 
@@ -46,6 +50,7 @@ public sealed class DapPlatform
         Selection = sp.GetService<IActiveSelectionProvider>(),
         Memory = sp.GetService<IMemoryMonitor>(),
         LoggerFactory = sp.GetService<ILoggerFactory>(),
+        Terminals = () => sp.GetService<ITerminalService>(),
     };
 
     /// <summary>Folder to use when a caller passes none: the first workspace folder.</summary>

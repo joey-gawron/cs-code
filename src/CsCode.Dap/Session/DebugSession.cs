@@ -83,7 +83,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         _recentOutput = _quirks.SyntheticExceptionFilters.Count > 0 ? new System.Text.StringBuilder() : null;
         _positions = new DapPositions(_settings.LinesStartAt1, _settings.ColumnsStartAt1);
         _output = new OutputBatcher(_lane, this, e => _outputEvent.Fire(e), _settings.OutputWindow);
-        _debuggees = new DebuggeeLauncher(_lane, _logger, (category, text) => _output.Add(category, text));
+        _debuggees = new DebuggeeLauncher(_lane, _logger, (category, text) => _output.Add(category, text), options.Terminals);
     }
 
     // ------------------------------------------------------------------ IDebugSession surface (volatile reads, any thread)

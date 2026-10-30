@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Terminal tool window: the renderer control, input mapping, selection/clipboard, links, commands and keys over CsCode.Terminal. -->
+  <PropertyGroup>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../CsCode.Ui/CsCode.Ui.csproj" />
+    <ProjectReference Include="../CsCode.Terminal/CsCode.Terminal.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <!-- UI-facing project: blocking calls (Task.Wait/.Result/GetResult, Thread.Sleep, sync file I/O) are build errors. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <AdditionalFiles Include="BannedSymbols.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Panels.Terminal.Tests" />
+  </ItemGroup>
+
+</Project>
