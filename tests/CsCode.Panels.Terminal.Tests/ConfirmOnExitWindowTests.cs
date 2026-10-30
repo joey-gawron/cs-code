@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using CsCode.App;
 using CsCode.App.Docking;
 using CsCode.App.Notifications;
 using CsCode.Core.Platform;
@@ -119,6 +120,38 @@ public sealed class ConfirmOnExitWindowTests
         Assert.True(await TerminalAppHost.WaitFor(() => closed), "Terminate did not close the window");
         Assert.Equal(["a.txt"], SavedDocuments(app));
         Assert.True(SavesFloating(app, "output"));
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task A_held_close_is_reported_as_held_not_cancelled_and_goes_ahead_once_when_the_user_agrees()
+    {
+        // Background mode's quits drive the window's close and must tell a held close (the question is up, the user may still agree) from a
+        // cancelled one: RequestExitAsync's false was both, and the quit was undone while the terminal went on to close the window.
+        var (app, hosts) = await StartAsync();
+        await using var _ = app;
+        await app.RunAsync(TerminalCommandSet.New);
+        Assert.True(await TerminalAppHost.WaitFor(() => hosts.Count == 1));
+        await TerminalAppHost.SettleAsync(10);
+        var proceeding = 0;
+        var closed = false;
+        app.Window.CloseProceeding += () => proceeding++;
+        app.Window.Closed += (_, _) => closed = true;
+
+        Assert.Equal(ShellController.CloseEnd.Held, await app.Window.RequestCloseAsync());
+        var first = Question(app);
+        Assert.NotNull(first);
+        Answer(first, "Cancel");
+        await TerminalAppHost.SettleAsync(10);
+        Assert.False(closed);
+        Assert.Equal(0, proceeding);
+
+        // Without prompts too; the user agrees this time: the close goes ahead once, before the window closes.
+        Assert.Equal(ShellController.CloseEnd.Held, app.Window.CloseWithoutPrompt());
+        Assert.True(await TerminalAppHost.WaitFor(() => Question(app) is { } q && !ReferenceEquals(q, first)), "no question the second time");
+        Assert.Equal(0, proceeding);
+        Answer(Question(app)!, "Terminate");
+        Assert.True(await TerminalAppHost.WaitFor(() => closed), "Terminate did not close the window");
+        Assert.Equal(1, proceeding);
     }
 
     [AvaloniaFact(Timeout = 60_000)]
