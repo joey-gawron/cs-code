@@ -610,14 +610,34 @@ public sealed class BudgetTests
         Assert.True(frames <= 1, $"{frames} frames built for a hidden window");
         Assert.True(control.RenderCount - renders <= 1, $"{control.RenderCount - renders} renders while hidden");
         Assert.Contains("hidden-2000", await session.InvokeAsync(e => e.ScreenText()));
-        // idle: no timer, no polling — measured over a plain wait (no pumping by the test itself)
+        // idle: no timer, no polling — measured over a plain wait (no pumping by the test itself). First the runtime finishes compiling at tier 1
+        // (tiered compilation with PGO, a background thread) the code that just ran: the app's start-up and the frames above. That took ~170
+        // methods and 150-250 ms of CPU per 3 s for ~9 s after the pumping (T57: 2 % in this window on a quiet machine, 5-8 % at load 30, with
+        // no timer or thread of the app's doing more than before), and it is not the hidden window's work. Bounded: an app that keeps
+        // generating code to compile never settles and is measured anyway.
+        var jitWait = await WaitForJitToSettleAsync(TimeSpan.FromSeconds(20));
+        var jitted = System.Runtime.JitInfo.GetCompiledMethodCount();
         var cpu = Process.GetCurrentProcess().TotalProcessorTime;
         await Task.Delay(3000);
         var idlePercent = (Process.GetCurrentProcess().TotalProcessorTime - cpu).TotalMilliseconds / 3000.0 * 100;
-        Note($"hidden: {frames} frames, {control.RenderCount - renders} renders, idle CPU {idlePercent:F2} %");
-        Assert.True(idlePercent < 2, $"idle CPU {idlePercent:F1} % while hidden");
+        jitted = System.Runtime.JitInfo.GetCompiledMethodCount() - jitted;
+        Note($"hidden: {frames} frames, {control.RenderCount - renders} renders, idle CPU {idlePercent:F2} % ({jitted} methods compiled; JIT settled after {jitWait.TotalSeconds:F1} s)");
+        Assert.True(idlePercent < 2, $"idle CPU {idlePercent:F1} % while hidden ({jitted} methods compiled in the window)");
         app.Window.Show();
         Assert.True(await app.WaitForScreenAsync("hidden-2000"), "the shown window did not catch up");
+    }
+
+    /// <summary>Waits (plainly, no pumping) until the runtime compiles at most a couple of methods a second; returns how long that took.</summary>
+    private static async Task<TimeSpan> WaitForJitToSettleAsync(TimeSpan limit)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed < limit)
+        {
+            var count = System.Runtime.JitInfo.GetCompiledMethodCount();
+            await Task.Delay(1000);
+            if (System.Runtime.JitInfo.GetCompiledMethodCount() - count <= 2) break;
+        }
+        return sw.Elapsed;
     }
 
     private static void Note(string text)
