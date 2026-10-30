@@ -1,0 +1,31 @@
+<Project>
+
+  <!--
+    Memory and runtime defaults of the CsCode app, chosen by experiment (docs/MEMORY.md, section 3 "GC and runtime configuration": the GC matrix of
+    tools/profile/gc-matrix.sh, measured on Linux x64 on this machine). Additive: the integrator imports it into src/CsCode.App/CsCode.App.csproj
+      <Import Project="../../build/MemoryDefaults.props" />
+    It produces the runtimeconfig of src/CsCode.Profiling/runtimeconfig.recommended.json. Directory.Build.props already sets the first three for every
+    project; they are repeated so the app's choice is explicit in one place. ReadyToRun / publish settings belong to build/Publish.props (W5).
+  -->
+  <PropertyGroup>
+    <!-- Workstation GC: server GC cost +140 MB resident in the real-app workload (+73 MB steady in the synthetic one) and higher pauses. -->
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <!-- Background (concurrent) gen2 collections: no long blocking gen2 pause while typing; turning it off saved no memory. -->
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <!-- Tiered compilation with PGO stays on (startup, steady-state speed); the matrix showed no reliable memory win from turning parts of it off. -->
+    <TieredCompilation>true</TieredCompilation>
+    <TieredPGO>true</TieredPGO>
+    <!-- Keeping free GC segments mapped saved nothing measurable. -->
+    <RetainVMGarbageCollection>false</RetainVMGarbageCollection>
+    <!-- ICU stays: invariant mode saved ~16 MB in one app run but changes culture-sensitive comparison, casing and sorting (Turkish i, accents). -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- GCConserveMemory 3: the GC compacts the large object heap when fragmentation grows (large documents, big strings). Synthetic workload:
+         peak resident set -58 MB, steady -21 MB for ~12 % more GC CPU; real-app workload: within noise. Levels 6 and 9 saved more in the synthetic
+         workload but doubled pauses and cost 17-68 % CPU. -->
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="3" />
+  </ItemGroup>
+
+</Project>

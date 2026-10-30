@@ -36,9 +36,10 @@ public static class Glob
     private static Regex GetRegex(string pattern)
     {
         if (Cache.TryGetValue(pattern, out var rx)) return rx;
-        // The backtracking interpreter, not NonBacktracking: a NonBacktracking regex keeps ~150 KB of symbolic-automaton caches once it has
-        // matched (measured in the app with 20 documents: the ~40 cached globs of the language-server selectors held 6 MB; docs/MEMORY.md).
-        rx = new Regex(ToRegex(pattern), RegexOptions.CultureInvariant, MatchTimeout);
+        // Compiled backtracking, not NonBacktracking: a NonBacktracking regex keeps ~150 KB of symbolic-automaton caches once it has matched
+        // (measured in the app with 20 documents: the ~40 cached globs of the language-server selectors held 6 MB; docs/MEMORY.md). The
+        // interpreter would keep a few KB but was 10x slower on path globs; compiled is both small and 2-3x faster than NonBacktracking was.
+        rx = new Regex(ToRegex(pattern), RegexOptions.CultureInvariant | RegexOptions.Compiled, MatchTimeout);
         if (Cache.Count >= MaxCached) Cache.Clear(); // crude but bounded: globs are few and cheap to rebuild
         Cache[pattern] = rx;
         return rx;

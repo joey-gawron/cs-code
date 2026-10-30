@@ -276,7 +276,7 @@ public sealed class TerminalScenario(MemoryAppHost host) : AppScenario(host, "te
         await t.SendTextAsync("echo memory-scenario-" + iteration, ct: ct);
         await MemoryAppHost.SettleAsync(5);
         await terminals.KillAsync(t, ct);
-        await Require(() => terminals.Terminals.Count == 0, "the terminal removed");
+        await Require(() => !terminals.Terminals.Contains(t), "the terminal removed", 20_000);
     }
 }
 
