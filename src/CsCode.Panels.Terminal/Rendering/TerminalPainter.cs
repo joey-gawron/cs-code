@@ -19,6 +19,9 @@ internal sealed class TerminalColors
     public Color Cursor;
     public Color CursorText;
     public Color Selection;
+    public Color CommandDefault;
+    public Color CommandSuccess;
+    public Color CommandError;
     public readonly Color[] Ansi = new Color[16];
     public bool BoldIsBright = true;
     public double MinimumContrast = 4.5;
@@ -32,6 +35,9 @@ internal sealed class TerminalColors
         c.Cursor = Get("terminalCursor.foreground", c.Foreground);
         c.CursorText = Get("terminalCursor.background", c.Background);
         c.Selection = Get("terminal.selectionBackground", Get("editor.selectionBackground", Color.FromArgb(0x80, 0x26, 0x4f, 0x78)));
+        c.CommandDefault = Get("terminalCommandDecoration.defaultBackground", Color.FromArgb(0x40, 0xff, 0xff, 0xff));
+        c.CommandSuccess = Get("terminalCommandDecoration.successBackground", Color.FromRgb(0x1b, 0x81, 0xa8));
+        c.CommandError = Get("terminalCommandDecoration.errorBackground", Color.FromRgb(0xf1, 0x4c, 0x4c));
         var defaults = DefaultTerminalPalette.Instance;
         for (var i = 0; i < 16; i++)
         {
@@ -203,6 +209,12 @@ internal sealed class TerminalPainter : IDisposable
                         ctx.DrawText(text, new Point(col * cw, font.Baseline - text.Baseline));
                     }
                     Decorate(ctx, seg, fg, colors, font);
+                }
+                if (row.Mark == RowMark.PromptStart)
+                {
+                    // shell integration: a mark beside each prompt, coloured by its command's exit code (VS Code's command decorations)
+                    var color = row.MarkExitCode switch { null or int.MinValue => colors.CommandDefault, 0 => colors.CommandSuccess, _ => colors.CommandError };
+                    ctx.FillRectangle(Brush(color), new Rect(-3, 1, 2, ch - 2));
                 }
                 if (overlay.Link is { } link && link.Row == r)
                     ctx.FillRectangle(Brush(colors.Foreground), new Rect(link.Start * cw, font.UnderlineY, (link.End - link.Start + 1) * cw, font.LineThickness));

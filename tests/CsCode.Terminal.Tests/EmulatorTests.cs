@@ -461,6 +461,35 @@ public sealed class EmulatorTests
     }
 
     [Fact]
+    public void Shell_integration_marks_prompts_with_their_commands_exit_codes_and_navigates_between_them()
+    {
+        var t = Term(20, 4, new EmulatorOptions { ScrollbackLines = 100 });
+        int? finished = -99;
+        t.CommandFinished = c => finished = c;
+        // three commands as VS Code's bash integration reports them: A prompt, B command line, C executed, D;code finished
+        for (var i = 0; i < 3; i++)
+            t.Feed($"\e]633;A\a$ \e]633;B\acmd{i}\r\n\e]633;C\aoutput {i}\r\nmore {i}\r\n\e]633;D;{i}\a");
+        t.Feed("\e]633;A\a$ \e]633;B\a");
+        Assert.Equal(2, finished);
+        var prompts = Enumerable.Range(0, (int)(t.ScreenTop + t.Rows)).Select(a => (a, Row: t.GetRow(a)))
+            .Where(x => x.Row is { Mark: RowMark.PromptStart }).ToList();
+        Assert.Equal(4, prompts.Count);
+        Assert.Equal([0, 1, 2], prompts.Take(3).Select(p => p.Row!.MarkExitCode!.Value));
+        Assert.Null(prompts[3].Row!.MarkExitCode); // the current prompt has not run anything yet
+        Assert.Equal("$ cmd1", prompts[1].Row!.GetText());
+
+        t.ScrollToCommand(-1);
+        Assert.Equal(prompts[2].a, t.ViewportTop);
+        t.ScrollToCommand(-1);
+        Assert.Equal(prompts[1].a, t.ViewportTop);
+        t.ScrollToCommand(+1);
+        Assert.Equal(prompts[2].a, t.ViewportTop);
+        t.ScrollToCommand(+1);
+        t.ScrollToCommand(+1);
+        Assert.True(t.FollowOutput);
+    }
+
+    [Fact]
     public void Bell_is_reported()
     {
         var t = Term();

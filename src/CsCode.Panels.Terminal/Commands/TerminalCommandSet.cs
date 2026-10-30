@@ -34,11 +34,13 @@ public static class TerminalCommandSet
     public const string RunActiveFile = TerminalCommands.RunActiveFile;
     public const string SendSequence = TerminalCommands.SendSequence;
     public const string ToggleMaximized = "workbench.action.toggleMaximizedPanel";
+    public const string ScrollToPreviousCommand = "workbench.action.terminal.scrollToPreviousCommand";
+    public const string ScrollToNextCommand = "workbench.action.terminal.scrollToNextCommand";
 
     public static readonly string[] Ids =
     [
         New, NewHere, Toggle, Focus, Kill, Clear, FocusNext, FocusPrevious, Rename, SelectAll, CopySelection, Paste, ScrollUp, ScrollDown, ScrollUpPage,
-        ScrollDownPage, ScrollToTop, ScrollToBottom, RunSelectedText, RunActiveFile, SendSequence,
+        ScrollDownPage, ScrollToTop, ScrollToBottom, RunSelectedText, RunActiveFile, SendSequence, ScrollToPreviousCommand, ScrollToNextCommand,
     ];
 
     private const string Focused = "terminalFocus";
@@ -59,6 +61,8 @@ public static class TerminalCommandSet
         new(ScrollDownPage, "shift+pagedown", When: FocusedPrimary),
         new(ScrollToTop, "ctrl+home", When: FocusedPrimary),
         new(ScrollToBottom, "ctrl+end", When: FocusedPrimary),
+        new(ScrollToPreviousCommand, "ctrl+up", When: FocusedPrimary),
+        new(ScrollToNextCommand, "ctrl+down", When: FocusedPrimary),
         new(FocusNext, "ctrl+pagedown", When: Focused),
         new(FocusPrevious, "ctrl+pageup", When: Focused),
     ];
@@ -106,6 +110,8 @@ public static class TerminalCommandSet
         Add(ScrollDownPage, "Scroll Down (Page)", _ => { runtime.View?.Control.ScrollPages(1); return Task.CompletedTask; });
         Add(ScrollToTop, "Scroll to Top", _ => { runtime.View?.Control.ScrollToTop(); return Task.CompletedTask; });
         Add(ScrollToBottom, "Scroll to Bottom", _ => { runtime.View?.Control.ScrollToBottom(); return Task.CompletedTask; });
+        Add(ScrollToPreviousCommand, "Scroll To Previous Command", _ => { runtime.View?.Control.ScrollToCommand(-1); return Task.CompletedTask; });
+        Add(ScrollToNextCommand, "Scroll To Next Command", _ => { runtime.View?.Control.ScrollToCommand(+1); return Task.CompletedTask; });
         Add(RunSelectedText, "Run Selected Text In Active Terminal", async inv =>
         {
             var text = inv.Arg<string>(0) ?? SelectedOrCurrentLine(runtime);

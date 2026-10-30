@@ -144,6 +144,48 @@ public sealed class RealAppTerminalTests
     }
 
     [AvaloniaFact]
+    public async Task Shell_integration_marks_prompts_with_exit_codes_and_ctrl_up_down_move_between_commands()
+    {
+        await using var app = await TerminalAppHost.StartAsync();
+        await app.RunAsync(TerminalCommandSet.New);
+        Assert.True(await app.WaitForScreenAsync("$"), "no prompt: " + app.ScreenText());
+        var session = app.Terminals.ActiveSession!;
+        // a bash configured as VS Code's integration script configures it: A before the prompt, B after it, D;$? before the next one
+        await session.SendTextAsync("""PROMPT_COMMAND='printf "\033]633;D;%s\007" $?'; PS1='\[\033]633;A\007\]$ \[\033]633;B\007\]'""");
+        await session.SendTextAsync("seq 1 40; true");
+        await session.SendTextAsync("seq 41 80; false");
+        await session.SendTextAsync("echo end-$((1+1))");
+        Assert.True(await app.WaitForScreenAsync("end-2"), app.ScreenText());
+        var control = app.View!.Control;
+        Assert.True(await TerminalAppHost.WaitFor(() => control.Snapshot is { } s && s.Rows.Count(r => r.Mark == CsCode.Terminal.Emulator.RowMark.PromptStart) >= 2));
+        control.Focus();
+        Assert.True(await TerminalAppHost.WaitFor(() => control.IsKeyboardFocusWithin));
+
+        CsCode.Terminal.Emulator.TerminalRow Top() => control.Snapshot!.Rows[0];
+        bool TopIs(string text) => Top().GetText().StartsWith(text, StringComparison.Ordinal);
+        async Task Press(Key key)
+        {
+            var before = control.Snapshot!.ViewportTop;
+            app.Window.KeyPress(key, RawInputModifiers.Control, key == Key.Up ? PhysicalKey.ArrowUp : PhysicalKey.ArrowDown, null);
+            await TerminalAppHost.WaitFor(() => control.Snapshot!.ViewportTop != before, 1000);
+        }
+        // the echo command's prompt is on the last screen (it cannot reach the top): Ctrl+Up goes past it to the "false" command's prompt
+        for (var i = 0; i < 2 && !TopIs("$ seq 41 80"); i++) await Press(Key.Up);
+        Assert.True(TopIs("$ seq 41 80"), "Ctrl+Up did not bring the previous command to the top: " + app.ScreenText());
+        Assert.Equal(CsCode.Terminal.Emulator.RowMark.PromptStart, Top().Mark);
+        Assert.Equal(1, Top().MarkExitCode);
+        await Press(Key.Up);
+        Assert.True(TopIs("$ seq 1 40"), "Ctrl+Up did not go to the first command: " + app.ScreenText());
+        Assert.Equal(0, Top().MarkExitCode);
+        app.Capture("terminal-shell-integration");
+        await Press(Key.Down);
+        Assert.True(TopIs("$ seq 41 80"), "Ctrl+Down did not go to the next command: " + app.ScreenText());
+        for (var i = 0; i < 3 && !control.Snapshot!.IsAtBottom; i++) await Press(Key.Down);
+        Assert.True(control.Snapshot!.IsAtBottom, "Ctrl+Down past the last prompt did not return to the bottom");
+        Assert.Equal(true, app.Get<IContextKeyService>().Get("terminalFocus")); // the keys ran terminal commands, the shell got none of them
+    }
+
+    [AvaloniaFact]
     public async Task Open_in_terminal_starts_the_shell_in_that_folder()
     {
         await using var app = await TerminalAppHost.StartAsync();

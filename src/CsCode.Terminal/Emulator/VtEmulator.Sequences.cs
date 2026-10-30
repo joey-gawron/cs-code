@@ -715,18 +715,91 @@ public sealed partial class VtEmulator
         switch (kind)
         {
             case 'A': line.Mark = RowMark.PromptStart; line.Touch(); break;
-            case 'B': line.Mark = RowMark.CommandStart; line.Touch(); break;
-            case 'C': line.Mark = RowMark.CommandExecuted; line.Touch(); break;
+            // the command line usually shares the prompt's row: a prompt mark is never downgraded
+            case 'B': if (line.Mark == RowMark.None) { line.Mark = RowMark.CommandStart; line.Touch(); } break;
+            case 'C': if (line.Mark == RowMark.None) { line.Mark = RowMark.CommandExecuted; line.Touch(); } break;
             case 'D':
+            {
+                // The exit code belongs to the command whose prompt is above (VS Code decorates that prompt): mark the nearest prompt row.
                 int? code = data.Length > 2 && int.TryParse(data.AsSpan(2).TrimEnd(';'), out var c) ? c : null;
-                line.Mark = RowMark.CommandFinished;
-                line.MarkExitCode = code;
-                line.Touch();
+                if (LastPromptLine() is { } prompt)
+                {
+                    prompt.MarkExitCode = code ?? int.MinValue; // MinValue: finished, code unknown
+                    prompt.Touch();
+                }
                 CommandFinished?.Invoke(code);
                 break;
+            }
             case 'P' when command == 633 && data.StartsWith("P;Cwd=", StringComparison.Ordinal):
                 SetCurrentDirectory(data[6..]);
                 break;
+        }
+    }
+
+    /// <summary>
+    /// The line a finished command's exit code belongs to: the nearest prompt at or above the cursor (screen, then scrollback, within 2,000
+    /// lines) when it has none yet; without any prompt mark (a shell that reports only B/C), the nearest unfinished command mark.
+    /// </summary>
+    private Line? LastPromptLine()
+    {
+        Line? fallback = null;
+        Line? Check(Line l, out bool stop)
+        {
+            stop = false;
+            if (l.Mark == RowMark.PromptStart) { stop = true; return l.MarkExitCode is null ? l : null; }
+            if (l.Mark is RowMark.CommandStart or RowMark.CommandExecuted && l.MarkExitCode is null) fallback ??= l;
+            return null;
+        }
+        var s = _screen;
+        for (var r = s.CursorY; r >= 0; r--)
+        {
+            var hit = Check(s.Lines[r], out var stop);
+            if (stop) return hit;
+        }
+        if (!IsAlternateScreen)
+            for (int i = Scrollback.Count - 1, n = 0; i >= 0 && n < 2000; i--, n++)
+            {
+                var hit = Check(Scrollback.LineAt(i), out var stop);
+                if (stop) return hit;
+            }
+        return fallback;
+    }
+
+    /// <summary>
+    /// Shell integration (OSC 633/133): the absolute row of the nearest prompt before (<paramref name="direction"/> -1) or after (+1)
+    /// <paramref name="from"/>, or null. Reads the marks on the lines, so it allocates nothing however long the scrollback.
+    /// </summary>
+    public long? FindPrompt(long from, int direction)
+    {
+        if (IsAlternateScreen) return null;
+        var first = ScrollbackTop;
+        var last = ScreenTop + Rows - 1;
+        for (var a = from + direction; a >= first && a <= last; a += direction)
+        {
+            var mark = a >= ScreenTop ? _screen.Lines[a - ScreenTop].Mark : Scrollback.LineAt((int)(a - first)).Mark;
+            if (mark == RowMark.PromptStart) return a;
+        }
+        return null;
+    }
+
+    // the prompt the last Ctrl+Up/Down went to, while the view is still where that left it (a prompt on the last screen cannot reach the top)
+    private long? _commandNavRow;
+    private long _commandNavViewport;
+
+    /// <summary>Ctrl+Up/Down: brings the previous/next prompt to the top of the view (past the last one: the bottom).</summary>
+    public void ScrollToCommand(int direction)
+    {
+        var from = _commandNavRow is { } row && ViewportTop == _commandNavViewport ? row
+            : FollowOutput ? ScreenTop + _screen.CursorY : ViewportTop;
+        if (FindPrompt(from, direction) is { } target)
+        {
+            ScrollViewportTo(target);
+            (_commandNavRow, _commandNavViewport) = (target, ViewportTop);
+        }
+        else if (direction > 0)
+        {
+            ScrollViewportToBottom();
+            _commandNavRow = null;
         }
     }
 

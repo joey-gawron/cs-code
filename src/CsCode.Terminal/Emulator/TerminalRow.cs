@@ -33,7 +33,7 @@ public sealed class TerminalRow
 
     public RowMark Mark { get; }
 
-    /// <summary>With <see cref="RowMark.CommandFinished"/>: the command's exit code when the shell reported one.</summary>
+    /// <summary>On a prompt row: the exit code of the command run from it once it finished (<see cref="int.MinValue"/>: finished, code unknown).</summary>
     public int? MarkExitCode { get; }
 
     /// <summary>Stored cells (trailing blanks trimmed).</summary>
@@ -295,6 +295,9 @@ internal sealed class Scrollback
 
     /// <summary>The kept row <paramref name="index"/> (0 = oldest) as an immutable row (cached by its line).</summary>
     public TerminalRow this[int index] => _ring[(_start + index) % _ring.Length].Snapshot();
+
+    /// <summary>The kept line <paramref name="index"/> (0 = oldest), for reads that need no copy (marks).</summary>
+    internal Line LineAt(int index) => _ring[(_start + index) % _ring.Length];
 
     private static long SizeOf(Line line) => 64 + line.Cells.Length * 24L;
 

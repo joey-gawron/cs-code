@@ -69,7 +69,12 @@ Under `tools/nix-dev-env.sh` the terminal inherits that script's `LD_LIBRARY_PAT
   DA2 (`CSI >0;276;0c`), XTVERSION, DECRQM (ANSI and DEC), `CSI 18 t`, title stack 22/23 t; OSC 0/1/2 (titles, control characters stripped,
   1024 characters), 4 (palette set/query), 7 (cwd), 8 (hyperlinks), 10/11/12 queries answered from the theme (setting them is ignored),
   52 clipboard **write only** and only with `terminal.integrated.allowOsc52` (off by default), 104/110/111/112, 133/633 shell-integration
-  marks; RIS, DECSTR; BEL (an event). DCS (DECRQSS, XTGETTCAP, sixel) is consumed without an answer.
+  marks (below); RIS, DECSTR; BEL (an event). DCS (DECRQSS, XTGETTCAP, sixel) is consumed without an answer.
+* **Shell integration** (SHOULD, partial): when the shell reports OSC 633 (VS Code's) or 133 (FinalTerm's) marks, the prompt row (`A`) is
+  marked and keeps its command's exit code (`D;code`, attributed to the nearest prompt above; a shell that reports only `B`/`C` gets it on that
+  row), `P;Cwd=` sets the cwd like OSC 7. The view draws a mark left of each prompt (`terminalCommandDecoration.defaultBackground` /
+  `successBackground` / `errorBackground`) and Ctrl+Up / Ctrl+Down bring the previous/next prompt to the top of the view. CsCode does **not**
+  inject integration scripts into the shell (VS Code does): the marks appear only for a shell configured to print them.
 * **Scrollback**: `terminal.integrated.scrollback` lines (1000) and a hard cap of 32 MB, whichever comes first. Rows have stable absolute
   numbers (selections and the viewport do not move while old rows fall off). Scrolling is allocation-free: the ring keeps the line objects
   themselves and the line that falls off the front is cleared and reused as the new bottom line; immutable `TerminalRow` copies are made only
@@ -153,6 +158,7 @@ output flows).
 | `workbench.action.terminal.scrollUp` / `scrollDown` | Ctrl+Shift+Up / Down | `when terminalFocus && !terminalAltBufferActive` |
 | `workbench.action.terminal.scrollUpPage` / `scrollDownPage` | Shift+PgUp / PgDn | same |
 | `workbench.action.terminal.scrollToTop` / `scrollToBottom` | Ctrl+Home / Ctrl+End | same |
+| `workbench.action.terminal.scrollToPreviousCommand` / `scrollToNextCommand` | Ctrl+Up / Ctrl+Down | same; shell-integration prompts |
 | `workbench.action.terminal.runSelectedText` | | the editor's selection, else its current line (or a text argument) |
 | `workbench.action.terminal.runActiveFile` | | saves and sends the active file's quoted path |
 | `workbench.action.terminal.sendSequence` | | `{ "text": "..." }` sent as is |
@@ -267,9 +273,9 @@ Screenshots (headless, git-ignored): `.scratch/screenshots/terminal/terminal-ls-
 
 ## Known gaps and limits
 
-* **Not done (SHOULD/STRETCH)**: split terminals; Find in terminal (Ctrl+F goes to the shell); shell-integration decorations, exit-code markers
-  and Ctrl+Up/Down command navigation (OSC 633/133 marks are parsed and kept on rows, nothing uses them yet); tasks in terminals; the remote
-  terminal (R3, `IPtyHost` is ready for it); screen-reader text; image protocols (no).
+* **Not done (SHOULD/STRETCH)**: split terminals; Find in terminal (Ctrl+F goes to the shell); shell-integration script injection, command
+  hover/re-run menus and sticky scroll (the marks, exit-code decorations and Ctrl+Up/Down are done); tasks in terminals; the remote terminal (R3,
+  `IPtyHost` is ready for it); screen-reader text; image protocols (no).
 * Windows ConPTY: written, never run. macOS: `posix_spawn` cannot make the slave the controlling terminal there (BSD needs `TIOCSCTTY`), so job
   control and Ctrl+C would not work; the variadic `ioctl`/`fcntl` declarations are not valid on Apple arm64. Linux (glibc ≥ 2.29; 2.34+ for
   `closefrom`, 2.36+ for pidfd) is the supported platform.

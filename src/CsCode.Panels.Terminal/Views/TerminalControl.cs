@@ -510,6 +510,8 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
     public void ScrollToTop() { if (_session is { } s) s.Post(() => s.Emulator.ScrollViewportTo(long.MinValue)); }
     public void ScrollToBottom() { if (_session is { } s) s.Post(s.Emulator.ScrollViewportToBottom); }
     public void ScrollTo(long absoluteTop) { if (_session is { } s) s.Post(() => s.Emulator.ScrollViewportTo(absoluteTop)); }
+    /// <summary>Shell integration: the previous (-1) or next (+1) prompt at the top of the view.</summary>
+    public void ScrollToCommand(int direction) { if (_session is { } s) s.Post(() => s.Emulator.ScrollToCommand(direction)); }
 
     // ------------------------------------------------------------------ links
 
