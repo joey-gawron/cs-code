@@ -279,7 +279,8 @@ Rust is debugged by default with **GDB's native Debug Adapter Protocol support**
   never read). Nothing is downloaded.
 * **Configuration provider**: `env` is moved aside and turned into `set environment` / `unset environment` commands (GDB's own `env` REPLACES
   the program's whole environment — PATH, HOME… gone — where VS Code's means "add these"; a value with a line break is refused with a
-  message); `cwd` defaults to the folder; for an attach a textual `pid` (what `${command:pickProcess}` substitutes; VS Code's C++ debugger
+  message), which GDB reads with `-ix` from a private 0600 file written afresh for each GDB started (a restart starts a new GDB from the same
+  descriptor) and deleted with it, never from its command line; `cwd` defaults to the folder; for an attach a textual `pid` (what `${command:pickProcess}` substitutes; VS Code's C++ debugger
   calls it `processId`) becomes the number GDB wants; CodeLLDB's **`"cargo"` key** is resolved: `{"args": ["test", "--no-run"],
   "filter": {"name": …, "kind": "lib|bin|test|…"}, "cwd": …, "env": …}` runs cargo with `--message-format=json-render-diagnostics` (adding
   `--no-run` to `test`/`bench`), its progress and compiler messages go to the Tasks output channel, and the executable cargo reports (after the
