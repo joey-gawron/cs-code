@@ -153,6 +153,20 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
     /// </summary>
     internal IEventSource<bool> GrammarAvailabilityChanged => _availability;
 
+    private readonly Emitter<EditorDocument> _treeArrived = new();
+
+    /// <summary>
+    /// Fires on the UI thread when a document's syntax tree arrived after a structural request (folding, the outline, Expand Selection) gave up
+    /// waiting for it, e.g. the first parse of a big file: those features ask again instead of keeping their fallback until the next edit.
+    /// </summary>
+    internal IEventSource<EditorDocument> SyntaxTreeArrived => _treeArrived;
+
+    /// <summary>Any thread (the syntax lane): see <see cref="SyntaxTreeArrived"/>.</summary>
+    internal void NotifySyntaxTreeArrived(EditorDocument document) => Ui.Post(() =>
+    {
+        if (!_disposed) _treeArrived.Fire(document);
+    });
+
     // ---- IMemoryTrimmable ----
 
     public string Name => "Editor syntax tokens";

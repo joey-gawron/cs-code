@@ -321,6 +321,28 @@ internal sealed class TokenizationSession : IDisposable
 
     internal void NotifyTokensChanged(int first, int last) => NotifyChanged(first, last);
 
+    private int _structureMissedTree;
+
+    /// <summary>
+    /// Any thread: a structural request (folding, the outline, Expand Selection) gave up waiting for this document's tree. When the next tree
+    /// lands, the manager says so once (<see cref="TokenizationManager.SyntaxTreeArrived"/>), on the syntax lane where trees land, so a tree that
+    /// lands just before this call is seen by <see cref="CheckTreeArrived"/> instead.
+    /// </summary>
+    internal void StructureMissedTree() => Volatile.Write(ref _structureMissedTree, 1);
+
+    /// <summary>Syntax lane: after <see cref="StructureMissedTree"/>, a tree of <paramref name="version"/> or later is already there: say so now.</summary>
+    internal void CheckTreeArrived(int version)
+    {
+        if (_treeSitter is { } engine && engine.TreeVersion >= version && engine.TreeVersion != int.MinValue) OnTreeReady(engine);
+    }
+
+    /// <summary>Syntax lane, after every completed parse.</summary>
+    private void OnTreeReady(TreeSitterHighlighter engine)
+    {
+        if (_disposed || !IsCurrentEngine(engine) || Interlocked.Exchange(ref _structureMissedTree, 0) == 0) return;
+        _owner.NotifySyntaxTreeArrived(_doc);
+    }
+
     /// <summary>True while <paramref name="engine"/> is still the engine this session wants (a restart or a lane change retires it).</summary>
     internal bool IsCurrentEngine(TreeSitterHighlighter engine) =>
         !_disposed && _treeSitterWanted && engine.Generation == Volatile.Read(ref _treeSitterGeneration) && _owner.TreeSitter.IsCurrent(engine.Lane);
@@ -360,6 +382,7 @@ internal sealed class TokenizationSession : IDisposable
                 engine.Dispose();
                 return true;
             }
+            engine.TreeReady = OnTreeReady;
         }
         _hasGrammar = true;
         engine.RunSlice(this);
