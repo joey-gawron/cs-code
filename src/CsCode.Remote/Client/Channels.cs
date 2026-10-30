@@ -135,6 +135,16 @@ public sealed class ClientChannel : IDisposable
         }
     }
 
+    /// <summary>
+    /// The connection went away: new input is held (not sent on the next connection) until <see cref="ReattachAsync"/> learned what the server got —
+    /// input sent just before the drop may have been lost in flight, and it must go again before anything newer.
+    /// </summary>
+    internal void Suspend()
+    {
+        lock (_gate)
+            if (_unsentFrom < 0) _unsentFrom = _sent;
+    }
+
     /// <summary>After a reconnect to the same server: resume from what we received, send again what the server did not get.</summary>
     internal async Task ReattachAsync(RpcPeer peer, CancellationToken ct)
     {
@@ -281,7 +291,11 @@ public sealed class RemoteChannels : IRemoteParticipant, IDisposable
         await session.Peer.InvokeAsync<ChanKeepParams, Empty>(RemoteMethods.ChanKeep, new ChanKeepParams(_channels.Keys.ToArray()), ct).ConfigureAwait(false);
     }
 
-    public void OnDisconnected() => _session = null;
+    public void OnDisconnected()
+    {
+        _session = null;
+        foreach (var c in _channels.Values) c.Suspend();
+    }
 
     /// <summary>The connection is gone for good (failed, or closed by the user): every channel ends with <paramref name="reason"/>.</summary>
     public void FailAll(string reason)

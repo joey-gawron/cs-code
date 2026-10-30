@@ -270,6 +270,7 @@ public sealed class RemoteTestHost : IAsyncDisposable
     public const string Host = "tester@remote-box";
     private TempDirectory _home = new("cscode-remote-client-");
     private readonly TempDirectory _serverData = new("cscode-remote-server-");
+    private readonly string? _sharedServerData;
 
     /// <param name="loopback">false: the real ssh transport (settings from <paramref name="userSettings"/>, e.g. remote.ssh.configFile).</param>
     /// <param name="userSettings">The client's user settings.json (written to the temp CSCODE_HOME before anything reads it).</param>
@@ -277,8 +278,10 @@ public sealed class RemoteTestHost : IAsyncDisposable
     /// remote debug factory/provider registered as the shell would.</param>
     /// <param name="persistent">R4: the loopback server is a persistent one (a relay to a daemon with this grace period).</param>
     public RemoteTestHost(Action<RemoteOptions>? options = null, Action<IServiceCollection>? services = null, Func<IRemoteTransport, IRemoteTransport>? wrap = null,
-        bool loopback = true, string? userSettings = null, IWindowService? window = null, bool r3 = false, TimeSpan? persistent = null, TempDirectory? clientHome = null)
+        bool loopback = true, string? userSettings = null, IWindowService? window = null, bool r3 = false, TimeSpan? persistent = null, TempDirectory? clientHome = null,
+        string? serverDataDir = null, string? marker = null)
     {
+        _sharedServerData = serverDataDir; // another (crashed) client's server: its data dir holds the persistent server's socket
         if (clientHome is not null)
         {
             _home.Dispose();
@@ -290,12 +293,12 @@ public sealed class RemoteTestHost : IAsyncDisposable
             Directory.CreateDirectory(Path.Combine(_home.Path, "config"));
             File.WriteAllText(Path.Combine(_home.Path, "config", "settings.json"), userSettings);
         }
-        Marker = "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
+        Marker = marker ?? "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
         Workspace = new TempDirectory("cscode-remote-ws-");
         IRemoteTransport Loopback()
         {
             var persist = persistent is { } grace ? (Manager.ServerSessionId ?? throw new InvalidOperationException("no server session id"), (int)Math.Max(1, grace.TotalSeconds)) : ((string, int)?)null;
-            return new LoopbackTransport(TestEnv.ServerLaunch(_serverData.Path, Marker, persist));
+            return new LoopbackTransport(TestEnv.ServerLaunch(ServerDataDir, Marker, persist));
         }
         var remoteOptions = new RemoteOptions
         {
@@ -345,7 +348,7 @@ public sealed class RemoteTestHost : IAsyncDisposable
     public IWindowService Window { get; }
     public RecordingWindowService Recording { get; }
     public InMemoryOutputService Output { get; }
-    public string ServerDataDir => _serverData.Path;
+    public string ServerDataDir => _sharedServerData ?? _serverData.Path;
     public string ClientHome => _home.Path;
 
     public RemoteConnectionManager Manager => Services.GetRequiredService<RemoteConnectionManager>();

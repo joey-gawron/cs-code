@@ -197,7 +197,7 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
         var config = Get<IConfigurationService>();
         var attempts = RemoteSettings.For(config, host, RemoteSettings.ReconnectAttempts, 8);
         var grace = _options.GracePeriod is { } g ? (int)g.TotalSeconds : RemoteSettings.For(config, host, RemoteSettings.ReconnectGracePeriod, 10800);
-        var serverSession = grace > 0 ? _sessions.Claim(authority.Root.AbsoluteUri) : null;
+        var serverSession = grace > 0 ? _options.ServerSession ?? _sessions.Claim(authority.Root.AbsoluteUri) : null;
         var client = new RemoteClient(host, () => CreateTransport(host, authority, serverSession, grace), mapper, "ssh", _options.Reconnect ?? new ReconnectPolicy(attempts),
             _options.Time, _log, Log, authority.Root) { CallTimeout = _options.CallTimeout };
         var owned = new DisposableStore();

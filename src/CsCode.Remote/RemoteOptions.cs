@@ -42,6 +42,9 @@ public sealed class RemoteOptions
     /// <summary>Overrides <c>remote.ssh.reconnectGracePeriod</c> (tests); <see cref="TimeSpan.Zero"/> turns persistence off.</summary>
     public TimeSpan? GracePeriod { get; set; }
 
+    /// <summary>The persistent server's session id to use (tests: a "restarted" client in the same process); null = claimed per host.</summary>
+    public string? ServerSession { get; set; }
+
     /// <summary><c>cscode-server.dll</c> for the local process language host; null = next to the program.</summary>
     public string? LocalServerAssembly { get; set; }
 

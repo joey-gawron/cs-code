@@ -20,6 +20,8 @@ internal interface IChannelSource : IDisposable
 /// is more than <see cref="Window"/> bytes ahead of the client's acknowledgements waits (the program is throttled, as by a full PTY); while nobody is
 /// connected nothing waits — the ring keeps the newest <see cref="RingBytes"/> and older output is counted as lost. Input from the client is
 /// de-duplicated by offset (a resend after a reconnect delivers each byte once).
+/// <para>A channel sends only to the connection it belongs to: the one it was created on, or the one that reattached it (<c>chan/attach</c>).
+/// A new connection gets nothing live until the client reattached the channel there, so the replay always comes before newer output.</para>
 /// </summary>
 internal sealed class ServerChannel
 {
@@ -28,8 +30,9 @@ internal sealed class ServerChannel
     private const int MaxChunk = 32 * 1024;
 
     private readonly object _gate = new();
-    private readonly IRpcEndpoint _link;
+    private readonly RpcPeerSlot _link;
     private readonly byte[] _ring = new byte[RingBytes];
+    private RpcPeer? _peer; // the connection this channel currently sends to
     private long _sent;      // total bytes produced
     private long _acked;     // bytes the client consumed
     private long _received;  // client input accepted
@@ -38,12 +41,16 @@ internal sealed class ServerChannel
     private string? _reason;
     private volatile bool _disposed;
 
-    public ServerChannel(long id, string kind, IRpcEndpoint link)
+    public ServerChannel(long id, string kind, RpcPeerSlot link)
     {
         Id = id;
         Kind = kind;
         _link = link;
+        _peer = link.Current; // created by a request of the current connection
     }
+
+    /// <summary>The connection to send to, while it is still the current one and open.</summary>
+    private RpcPeer? Live => _peer is { IsClosed: false } p && ReferenceEquals(p, _link.Current) ? p : null;
 
     public long Id { get; }
     public string Kind { get; }
@@ -66,13 +73,13 @@ internal sealed class ServerChannel
     {
         lock (_gate)
         {
-            while (!_disposed && !_link.IsClosed && _sent - _acked > Window) Monitor.Wait(_gate, 250);
+            while (!_disposed && Live is not null && _sent - _acked > Window) Monitor.Wait(_gate, 250);
             if (_disposed) return;
             var offset = _sent;
             AppendToRing(chunk);
             _sent += chunk.Length;
             // Sent under the lock so offsets reach the peer's queue in order (Notify only enqueues).
-            _link.Notify(RemoteMethods.ChanData, new ChanDataParams(Id, offset, Payload.Encode(chunk, allowCompression: false)));
+            Live?.Notify(RemoteMethods.ChanData, new ChanDataParams(Id, offset, Payload.Encode(chunk, allowCompression: false)));
         }
     }
 
@@ -93,7 +100,7 @@ internal sealed class ServerChannel
             _closed = true;
             _exitCode = exitCode;
             _reason = reason;
-            _link.Notify(RemoteMethods.ChanClosed, new ChanClosedParams(Id, _sent, exitCode, reason));
+            Live?.Notify(RemoteMethods.ChanClosed, new ChanClosedParams(Id, _sent, exitCode, reason));
             Monitor.PulseAll(_gate);
         }
     }
@@ -132,6 +139,8 @@ internal sealed class ServerChannel
     {
         lock (_gate)
         {
+            _peer = _link.Current; // the reattaching connection: from now on this channel's output goes there
+            var peer = _peer;
             var ringStart = Math.Max(0, _sent - RingBytes);
             var from = Math.Clamp(receivedOffset, ringStart, _sent);
             var lost = Math.Max(0, ringStart - receivedOffset);
@@ -144,10 +153,10 @@ internal sealed class ServerChannel
                 var first = Math.Min(n, RingBytes - start);
                 _ring.AsSpan(start, first).CopyTo(chunk);
                 if (first < n) _ring.AsSpan(0, n - first).CopyTo(chunk.AsSpan(first));
-                _link.Notify(RemoteMethods.ChanData, new ChanDataParams(Id, pos, Payload.Encode(chunk, allowCompression: false)));
+                peer?.Notify(RemoteMethods.ChanData, new ChanDataParams(Id, pos, Payload.Encode(chunk, allowCompression: false)));
                 pos += n;
             }
-            if (_closed) _link.Notify(RemoteMethods.ChanClosed, new ChanClosedParams(Id, _sent, _exitCode, _reason));
+            if (_closed) peer?.Notify(RemoteMethods.ChanClosed, new ChanClosedParams(Id, _sent, _exitCode, _reason));
             Monitor.PulseAll(_gate);
             return new ChanAttachResult(true, _received, lost);
         }
@@ -169,12 +178,12 @@ internal sealed class ServerChannel
 /// </summary>
 internal sealed class ChannelHub : IDisposable
 {
-    private readonly IRpcEndpoint _link;
+    private readonly RpcPeerSlot _link;
     private readonly ILogger _log;
     private readonly ConcurrentDictionary<long, ServerChannel> _channels = new();
     private long _nextId;
 
-    public ChannelHub(IRpcEndpoint link, ILogger log)
+    public ChannelHub(RpcPeerSlot link, ILogger log)
     {
         _link = link;
         _log = log;
