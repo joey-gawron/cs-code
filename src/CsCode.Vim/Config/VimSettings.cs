@@ -89,7 +89,8 @@ public static class VimSettings
             new(MaxRegisterChars, J(8_000_000), "Largest text a register may hold, in characters."),
             new(AutoSwitchInputMethod, J(new Dictionary<string, object>()), "Accepted for VSCodeVim compatibility; ignored."),
             new(VimrcEnable, J(true), "Load the vimrc file at startup."),
-            new(VimrcPath, J(""), "Path of the vimrc file (\"~/.vimrc\" to use your Vim configuration). Empty: 'vimrc' in the CsCode user data directory; ~/.vimrc is never read unless named here."),
+            // Machine scope (lsp-core-1): a workspace must not choose the file whose mappings run on every key.
+            new(VimrcPath, J(""), "Path of the vimrc file (\"~/.vimrc\" to use your Vim configuration). Empty: 'vimrc' in the CsCode user data directory; ~/.vimrc is never read unless named here. User settings only.") { Scope = ConfigurationScope.Machine },
             new(Surround, J(true), "Enable the vim-surround emulation (ys, ds, cs, S)."),
             new(Commentary, J(true), "Enable the vim-commentary emulation (gc, gcc)."),
             new(Sneak, J(false), "Enable the vim-sneak emulation (s, S, z)."),
@@ -100,10 +101,13 @@ public static class VimSettings
             new(HighlightedYank, J(true), "Flash the yanked text."),
             new(Targets, J(false), "Enable the targets.vim text objects."),
         };
+        // Machine scope (lsp-core-1): a binding's "commands" run any command with any arguments on a plain key press — from a cloned repository's
+        // .vscode/settings.json, "j" could send a shell line to the terminal (workbench.action.terminal.sendSequence). User settings only.
         foreach (var (key, _, nonRec) in KeyBindingSettings)
-            l.Add(new ConfigurationProperty(key, J(Array.Empty<object>()), nonRec
+            l.Add(new ConfigurationProperty(key, J(Array.Empty<object>()), (nonRec
                 ? "Key bindings that do not recurse: [{\"before\": [\"j\", \"j\"], \"after\": [\"<Esc>\"], \"commands\": [{\"command\": \"...\", \"args\": []}]}]."
-                : "Key bindings that expand recursively: [{\"before\": [\"j\", \"j\"], \"after\": [\"<Esc>\"], \"commands\": [{\"command\": \"...\", \"args\": []}]}]."));
+                : "Key bindings that expand recursively: [{\"before\": [\"j\", \"j\"], \"after\": [\"<Esc>\"], \"commands\": [{\"command\": \"...\", \"args\": []}]}].") + " User settings only.")
+            { Scope = ConfigurationScope.Machine });
         foreach (var (name, _, def) in CursorStyleSettings)
             l.Add(new ConfigurationProperty($"{CursorStylePerMode}.{name}", J(def), $"Cursor shape in {name} mode: block, line, underline, block-outline, line-thin or underline-thin."));
         return l;

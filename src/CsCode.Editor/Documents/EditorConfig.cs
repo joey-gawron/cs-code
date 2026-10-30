@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using CsCode.Core.Platform;
+using CsCode.Core.Text;
 
 namespace CsCode.Editor.Documents;
 
@@ -39,7 +40,7 @@ public sealed class EditorConfigResolver(IFileSystem fs) : IEditorConfigSource
 {
     private const int MaxCachedFiles = 64;
 
-    internal sealed record Section(Regex Pattern, IReadOnlyDictionary<string, string> Values);
+    internal sealed record Section(GlobRegex Pattern, IReadOnlyDictionary<string, string> Values);
     internal sealed record Parsed(DateTimeOffset Modified, long Size, bool IsRoot, IReadOnlyList<Section> Sections);
 
     private readonly object _gate = new();
@@ -111,7 +112,7 @@ public sealed class EditorConfigResolver(IFileSystem fs) : IEditorConfigSource
     {
         var sections = new List<Section>();
         var isRoot = false;
-        Regex? currentPattern = null;
+        GlobRegex? currentPattern = null;
         Dictionary<string, string>? currentValues = null;
 
         void Close()
@@ -129,11 +130,11 @@ public sealed class EditorConfigResolver(IFileSystem fs) : IEditorConfigSource
                 currentValues = new Dictionary<string, string>(StringComparer.Ordinal);
                 try
                 {
-                    currentPattern = new Regex(GlobToRegex(line[1..^1]), RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+                    currentPattern = GlobRegex.Compile(GlobToRegex(line[1..^1])); // T38: linear, no ~150 KB NonBacktracking cache (see Core Glob)
                 }
                 catch (ArgumentException)
                 {
-                    currentPattern = new Regex("(?!)"); // an invalid glob matches nothing
+                    currentPattern = GlobRegex.Never; // an invalid glob matches nothing
                 }
                 continue;
             }
@@ -215,12 +216,14 @@ public sealed class EditorConfigResolver(IFileSystem fs) : IEditorConfigSource
                 {
                     var end = glob.IndexOf('}', i + 1);
                     var body = end < 0 ? null : glob[(i + 1)..end];
-                    if (body is not null && Regex.Match(body, @"^(-?\d+)\.\.(-?\d+)$") is { Success: true } range)
+                    if (body is not null && Regex.Match(body, @"^(-?\d+)\.\.(-?\d+)$") is { Success: true } range
+                        && int.TryParse(range.Groups[1].Value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var lo)
+                        && int.TryParse(range.Groups[2].Value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var hi))
                     {
-                        // numeric range {1..3} → alternation of the literal numbers
-                        int lo = int.Parse(range.Groups[1].Value, CultureInfo.InvariantCulture), hi = int.Parse(range.Groups[2].Value, CultureInfo.InvariantCulture);
+                        // numeric range {1..3}: the first 1000 numbers, as digit classes (one alternative per number was ~9,000 characters for
+                        // {10000000..10000999}, above GlobRegex's limit, so the section never matched: T38 follow-up). A number beyond int is no range.
                         if (lo > hi) (lo, hi) = (hi, lo);
-                        sb.Append("(?:").Append(string.Join('|', Enumerable.Range(lo, Math.Min(hi - lo + 1, 1000)).Select(n => n.ToString(CultureInfo.InvariantCulture)))).Append(')');
+                        sb.Append(GlobRegex.IntegerRange(lo, (int)Math.Min(hi, lo + 999L)));
                         i = end;
                     }
                     else if (body is not null && body.Contains(','))

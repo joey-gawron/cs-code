@@ -50,6 +50,7 @@ public sealed class FileSystemRouter : IFileSystem
     public ValueTask<byte[]> ReadFileAsync(Uri uri, CancellationToken ct = default) => For(uri).ReadFileAsync(uri, ct);
     public ValueTask WriteFileAsync(Uri uri, ReadOnlyMemory<byte> content, bool createParents = true, CancellationToken ct = default) =>
         For(uri).WriteFileAsync(uri, content, createParents, ct);
+    public bool PreservesFileOnWrite(Uri uri) => For(uri).PreservesFileOnWrite(uri);
     public ValueTask CreateDirectoryAsync(Uri uri, CancellationToken ct = default) => For(uri).CreateDirectoryAsync(uri, ct);
     public ValueTask DeleteAsync(Uri uri, bool recursive = false, bool useTrash = true, CancellationToken ct = default) =>
         For(uri).DeleteAsync(uri, recursive, useTrash, ct);

@@ -69,12 +69,19 @@ public sealed class AppHostileMatrixTests(ITestOutputHelper output)
         try
         {
             await Task.Delay(500); // the load is under way before measuring
+            // T55: what the UI thread did in the measured window — its CPU time and run-queue wait (a loaded machine), Avalonia's own layout /
+            // render / input timings (real UI-thread work) and the GC pauses of this window only — so a miss says where it came from.
+            using var activity = new ThreadActivityRecorder("Avalonia.Diagnostic.Meter");
+            using var gcWindow = new GcPauseRecorder();
             using var probe = new ResponsivenessProbe(a => Dispatcher.UIThread.Post(a)).Start();
             var typing = new TypingLatencyProbe(a => Dispatcher.UIThread.Post(a, DispatcherPriority.Input),
                 c => area.RaiseEvent(new TextInputEventArgs { RoutedEvent = InputElement.TextInputEvent, Text = c.ToString() }));
             await typing.TypeAsync(string.Concat(Enumerable.Repeat("abc.def ", 10)), TimeSpan.FromMilliseconds(50)); // 80 keys over 4 s
             var typed = await typing.DrainAsync();
             var dispatcher = await probe.StopAsync();
+            activity.Stop();
+            gcWindow.Stop();
+            var window = $"in the measured window: {activity.Report()}; {gcWindow.Report()}";
 
             // the same load with the headless compositor rasterising frames on the UI thread: reported, not budgeted
             var raster = await RasterisedWindowAsync();
@@ -89,7 +96,8 @@ public sealed class AppHostileMatrixTests(ITestOutputHelper output)
                 && typed.Total.P99Ms <= HostileMatrix.TypingP99Ms && typed.Missing == 0 && heapGrowthMb <= HostileMatrix.HeapGrowthMb && drained;
             var report = string.Create(CultureInfo.InvariantCulture,
                 $"{load.Name} attempt {attempt} (load {LoadAverage()}): {dispatcher}; {typed}; heap {heapGrowthMb:+0.0;-0.0} MB after; queues drained {drained} " +
-                $"(posted-executed {ui.Stats.Posted - ui.Stats.Executed}); {gc.Report()}; with headless rasterisation on the UI thread: {raster}");
+                $"(posted-executed {ui.Stats.Posted - ui.Stats.Executed}); {window}; whole run (incl. the rasterised second): {gc.Report()}; " +
+                $"with headless rasterisation on the UI thread: {raster}");
             return (ok, report);
         }
         finally

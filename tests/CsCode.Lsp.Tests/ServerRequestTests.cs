@@ -149,6 +149,60 @@ public class ServerRequestTests
     }
 
     [Fact]
+    public async Task Top_level_dotted_keys_of_a_user_s_server_settings_are_sections_and_deeper_member_names_stay_whole()
+    {
+        // lsp-core-2 follow-up: the configuration service keeps member names inside cscode.languageServers as written (URLs, globs). The server's
+        // settings object is then read like a settings.json of its own: its top-level dotted keys are paths, everything below is kept.
+        await using var env = new LspTestEnv();
+        var overrides = CsCode.Lsp.Manager.BuiltinLanguageServers.All.ToDictionary(d => d.Id, _ => (object)new { enabled = false });
+        overrides["fake"] = Json("""
+            {
+              "settings": {
+                "rust-analyzer.check.command": "clippy",
+                "rust-analyzer": { "cargo": { "features": "all" } },
+                "yaml.schemas": { "https://json.schemastore.org/github-workflow.json": ".github/workflows/*.yml" }
+              },
+              "initializationOptions": { "cargo.features": "all", "files": { "exclude": { "**/*.min.js": true } } }
+            }
+            """);
+        env.Config.Set(LspSettingKeys.LanguageServers, overrides);
+        env.Manager.AddDefinition(LspTestEnv.FakeDef()); // after the setting: the first session already starts with the user's entry
+        env.Open("a.fake", "x");
+        var server = await env.Connections.WaitForServerAsync();
+        var init = await server.WaitForAsync(P.LspMethods.Initialize);
+        await server.WaitForAsync(P.LspMethods.Initialized);
+        await TestHelpers.EventuallyAsync(() => env.Manager.Servers.Any(s => s.State == LanguageServerState.Running), "running");
+
+        var options = init.Params.GetProperty("initializationOptions");
+        Assert.Equal("all", options.GetProperty("cargo").GetProperty("features").GetString());
+        Assert.True(options.GetProperty("files").GetProperty("exclude").GetProperty("**/*.min.js").GetBoolean());
+
+        var answer = await server.RequestAsync(P.LspMethods.WorkspaceConfiguration, new P.ConfigurationParams
+        {
+            Items = [new P.ConfigurationItem { Section = "rust-analyzer" }, new P.ConfigurationItem { Section = "rust-analyzer.check.command" },
+                     new P.ConfigurationItem { Section = "yaml" }],
+        });
+        Assert.Equal("clippy", answer[0].GetProperty("check").GetProperty("command").GetString());
+        Assert.Equal("all", answer[0].GetProperty("cargo").GetProperty("features").GetString()); // merged with the nested spelling
+        Assert.Equal("clippy", answer[1].GetString());
+        Assert.Equal(".github/workflows/*.yml", answer[2].GetProperty("schemas").GetProperty("https://json.schemastore.org/github-workflow.json").GetString());
+    }
+
+    [Theory]
+    [InlineData("""{"a.b":1,"a":{"c":2}}""", """{"a":{"b":1,"c":2}}""")]                      // objects that meet merge
+    [InlineData("""{"a":{"c":2},"a.b":1}""", """{"a":{"c":2,"b":1}}""")]
+    [InlineData("""{"a.b":{"x.y":1},"a":{"b":{"z":2}}}""", """{"a":{"b":{"x.y":1,"z":2}}}""")]  // names below the top level stay whole
+    [InlineData("""{"a.b":1,"a":3}""", """{"a":3}""")]                                          // a later scalar replaces
+    [InlineData("""{"a..b":1,".c":2,"d.":3}""", """{"a..b":1,".c":2,"d.":3}""")]                // not paths: kept as written
+    [InlineData("""{"plain":{"k.v":1}}""", """{"plain":{"k.v":1}}""")]
+    [InlineData("""[1,{"a.b":2}]""", """[1,{"a.b":2}]""")]                                       // not an object: unchanged
+    public void A_server_settings_object_splits_only_its_top_level_dotted_keys(string input, string expected)
+    {
+        var actual = CsCode.Lsp.Manager.DefinitionOverrides.ExpandTopLevelKeys(Json(input));
+        Assert.Equal(expected, actual.GetRawText());
+    }
+
+    [Fact]
     public async Task Settings_in_the_definition_are_pushed_with_didChangeConfiguration_at_start()
     {
         await using var env = new LspTestEnv();

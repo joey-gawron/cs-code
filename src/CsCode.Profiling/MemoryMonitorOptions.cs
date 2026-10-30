@@ -18,6 +18,11 @@ public sealed record MemoryMonitorOptions
     public int ChildOverBudgetSamples { get; init; } = 2;
     /// <summary>The over-budget callback of a child runs at most this often.</summary>
     public TimeSpan ChildCallbackCooldown { get; init; } = TimeSpan.FromSeconds(60);
+    /// <summary>
+    /// How often a tracked child's descendants are looked up again (Linux): a child's memory is its whole process tree (tsserver under
+    /// typescript-language-server, a debuggee under its adapter); the members' resident sets are read on every sample, the tree only this often.
+    /// </summary>
+    public TimeSpan ChildTreeRescanInterval { get; init; } = TimeSpan.FromSeconds(10);
     public MemoryPolicyOptions Policy { get; init; } = new();
 }
 

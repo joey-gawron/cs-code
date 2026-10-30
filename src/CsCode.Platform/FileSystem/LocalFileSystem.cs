@@ -13,7 +13,8 @@ namespace CsCode.Platform.FileSystem;
 /// Unix .NET implements it by queueing synchronous calls to the thread pool, which is exactly what the lane is there to avoid.)
 /// <list type="bullet">
 /// <item>Other URI schemes throw <see cref="NotSupportedException"/>.</item>
-/// <item>Writes are atomic (temp file + fsync + rename), preserve permissions, write THROUGH symlinks, and refuse read-only files.</item>
+/// <item>Writes are atomic (temp file + fsync + rename) and keep the file: hard links, owner, group, mode and extended attributes (written in
+/// place when a rename would lose them, see <see cref="AtomicFile"/>); they write THROUGH symlinks and refuse read-only files.</item>
 /// <item>Delete can use the trash (freedesktop spec on Linux incl. <c>.trashinfo</c>, <c>~/.Trash</c> on macOS, recycle bin on Windows).</item>
 /// <item>Directory symlinks are never followed by recursive delete/copy, so a link cycle cannot make them run away.</item>
 /// </list>
@@ -32,6 +33,9 @@ public sealed class LocalFileSystem : IFileSystem
         _trash = trash ?? PlatformTrash.Create();
         _log = logger ?? NullLogger<LocalFileSystem>.Instance;
     }
+
+    /// <summary>Every <c>file:</c> write keeps the file's links, owner, group, mode and xattrs (lsp-core-8): savers should write the target directly.</summary>
+    public bool PreservesFileOnWrite(Uri uri) => uri.IsFile;
 
     /// <summary>Fault-injection point for tests: runs after the temp file is durable and before the atomic rename.</summary>
     internal Action? BeforeAtomicCommit { get; set; }

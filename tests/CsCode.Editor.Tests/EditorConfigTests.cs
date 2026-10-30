@@ -46,6 +46,11 @@ public sealed class EditorConfigTests : IDisposable
     [InlineData("file{1..3}.txt", "file2.txt", true)]
     [InlineData("file{1..3}.txt", "file4.txt", false)]
     [InlineData("file{3..1}.txt", "file2.txt", true)]
+    [InlineData("build{10000000..10000999}.log", "build10000500.log", true)] // T38 follow-up: was ~9,000 characters, above GlobRegex's limit
+    [InlineData("build{10000000..10000999}.log", "build10001000.log", false)]
+    [InlineData("n{1000000..9999999}", "n1000999", true)]                    // the first 1000 numbers of a larger range, as before
+    [InlineData("n{1000000..9999999}", "n1001000", false)]
+    [InlineData("n{1..99999999999}", "n{1..99999999999}", true)]             // beyond int: not a range (int.Parse used to throw out of the parser)
     [InlineData("a{b}c", "a{b}c", true)] // a brace without a comma or a range is literal
     // escaping and regex metacharacters in names
     [InlineData("a.b", "aXb", false)]
@@ -55,6 +60,7 @@ public sealed class EditorConfigTests : IDisposable
     {
         var regex = new Regex(EditorConfigResolver.GlobToRegex(glob), RegexOptions.CultureInvariant);
         Assert.Equal(matches, regex.IsMatch(path));
+        Assert.Equal(matches, CsCode.Core.Text.GlobRegex.Compile(EditorConfigResolver.GlobToRegex(glob)).IsMatch(path)); // the matcher the resolver uses (T38)
     }
 
     // ---- parsing ----
@@ -87,7 +93,7 @@ public sealed class EditorConfigTests : IDisposable
     {
         var parsed = Parse("[*.cs]\nroot = true\n[[unterminated\nindent_size = 3\n");
         Assert.False(parsed.IsRoot);
-        Assert.All(parsed.Sections.Skip(1), s => Assert.DoesNotMatch(s.Pattern, "[unterminated"));
+        Assert.All(parsed.Sections.Skip(1), s => Assert.False(s.Pattern.IsMatch("[unterminated")));
     }
 
     // ---- resolution over a real directory tree ----

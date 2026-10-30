@@ -44,13 +44,20 @@ public static class ToolResolver
     }
 
     /// <param name="searchDirs">Already expanded directories searched after PATH; null = none (the manager passes <c>cscode.lsp.searchDirs</c>).</param>
+    /// <param name="workingDirectory">
+    /// Not used to resolve the command any more (lsp-core-1): the working directory is the server's root inside the WORKSPACE, so a relative command
+    /// would run whatever the opened repository keeps at that path. A command with a directory part must be absolute or start with <c>~/</c>; a
+    /// relative one (<c>./x</c>, <c>bin/x</c>) is not found. Kept for the signature.
+    /// </param>
     public static string? Resolve(string command, string? toolsDir, string? workingDirectory, IReadOnlyDictionary<string, string>? env, IReadOnlyList<string>? searchDirs = null)
     {
         if (string.IsNullOrWhiteSpace(command)) return null;
         if (command.Contains('/') || command.Contains('\\'))
         {
-            var path = Path.IsPathRooted(command) || workingDirectory is null ? command : Path.GetFullPath(Path.Combine(workingDirectory, command));
-            return IsExecutableFile(path) ? path : null;
+            var path = command.StartsWith("~/", StringComparison.Ordinal) || command.StartsWith("~\\", StringComparison.Ordinal)
+                ? ExpandDirectory(command)
+                : Path.IsPathRooted(command) ? command : null;
+            return path is not null && IsExecutableFile(path) ? path : null;
         }
 
         string? pathVar = null;

@@ -40,12 +40,17 @@ internal static class DefinitionOverrides
         if (o.TryGetProperty("args", out var a) && a.ValueKind == JsonValueKind.Array) d = d with { Args = Strings(a) };
         if (o.TryGetProperty("env", out var e) && e.ValueKind == JsonValueKind.Object) d = d with { Env = StringMap(e) };
         if (o.TryGetProperty("selector", out var s) && ParseSelector(s) is { } sel) d = d with { Selector = sel };
-        if (o.TryGetProperty("initializationOptions", out var io)) d = d with { InitializationOptions = io.Clone() };
-        if (o.TryGetProperty("settings", out var st)) d = d with { Settings = st.Clone() };
+        if (o.TryGetProperty("initializationOptions", out var io)) d = d with { InitializationOptions = ExpandTopLevelKeys(io) };
+        if (o.TryGetProperty("settings", out var st)) d = d with { Settings = ExpandTopLevelKeys(st) };
         if (o.TryGetProperty("rootMarkers", out var rm) && rm.ValueKind == JsonValueKind.Array) d = d with { RootMarkers = Strings(rm) };
         if (o.TryGetProperty("autoStart", out var au) && au.ValueKind is JsonValueKind.True or JsonValueKind.False) d = d with { AutoStart = au.GetBoolean() };
         if (o.TryGetProperty("workingDirectory", out var wd) && wd.ValueKind == JsonValueKind.String) d = d with { WorkingDirectory = wd.GetString() };
-        if (o.TryGetProperty("restartAboveBytes", out var rb) && rb.ValueKind == JsonValueKind.Number && rb.TryGetInt64(out var bytes)) d = d with { RestartAboveBytes = bytes };
+        // null or 0 turns a built-in cap off (the TypeScript-engine servers have one, T39)
+        if (o.TryGetProperty("restartAboveBytes", out var rb))
+        {
+            if (rb.ValueKind == JsonValueKind.Null) d = d with { RestartAboveBytes = null };
+            else if (rb.ValueKind == JsonValueKind.Number && rb.TryGetInt64(out var bytes)) d = d with { RestartAboveBytes = bytes > 0 ? bytes : null };
+        }
         return d;
     }
 
@@ -56,6 +61,54 @@ internal static class DefinitionOverrides
         var d = new LanguageServerDefinition(id, o.TryGetProperty("displayName", out var dn) && dn.ValueKind == JsonValueKind.String ? dn.GetString()! : id,
             sel, c.GetString()!, [], SettingsKey: LspSettingKeys.LanguageServers + "." + id);
         return Merge(d, o);
+    }
+
+    /// <summary>
+    /// A server's <c>settings</c> (and <c>initializationOptions</c>) object is written like a settings.json of its own: as there, its TOP-LEVEL dotted
+    /// keys are split into nested objects (<c>{"rust-analyzer.check.command": "clippy"}</c> answers a <c>workspace/configuration</c> request for
+    /// <c>rust-analyzer</c> with <c>{"check":{"command":"clippy"}}</c>), and every value below is kept as written, so globs, URLs and other member names
+    /// with dots survive (<c>{"yaml.schemas": {"https://…/x.json": "*.yml"}}</c>). Objects that meet are merged; a later scalar replaces. Before
+    /// lsp-core-2 the configuration service split member names at every depth, which broke the URLs; since it no longer does, this restores the
+    /// top-level spelling a user copies from VS Code's settings.json.
+    /// </summary>
+    internal static JsonElement ExpandTopLevelKeys(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object) return value.Clone();
+        var hasDotted = false;
+        foreach (var p in value.EnumerateObject())
+            if (p.Name.Contains('.', StringComparison.Ordinal)) { hasDotted = true; break; }
+        if (!hasDotted) return value.Clone();
+
+        var root = new System.Text.Json.Nodes.JsonObject();
+        foreach (var p in value.EnumerateObject())
+        {
+            var segments = p.Name.Split('.');
+            if (segments.Any(static x => x.Length == 0)) segments = [p.Name]; // "a..b", ".a", "a.": not a path, kept as written
+            var target = root;
+            for (var i = 0; i < segments.Length - 1; i++)
+            {
+                if (target[segments[i]] is not System.Text.Json.Nodes.JsonObject next)
+                {
+                    next = new System.Text.Json.Nodes.JsonObject();
+                    target[segments[i]] = next;
+                }
+                target = next;
+            }
+            var node = System.Text.Json.Nodes.JsonNode.Parse(p.Value.GetRawText());
+            if (node is System.Text.Json.Nodes.JsonObject incoming && target[segments[^1]] is System.Text.Json.Nodes.JsonObject existing) Merge(existing, incoming);
+            else target[segments[^1]] = node;
+        }
+        return JsonSerializer.SerializeToElement(root);
+
+        static void Merge(System.Text.Json.Nodes.JsonObject into, System.Text.Json.Nodes.JsonObject from)
+        {
+            foreach (var (k, v) in from.ToArray())
+            {
+                from.Remove(k);
+                if (v is System.Text.Json.Nodes.JsonObject vo && into[k] is System.Text.Json.Nodes.JsonObject eo) Merge(eo, vo);
+                else into[k] = v;
+            }
+        }
     }
 
     private static IReadOnlyList<string> Strings(JsonElement array) =>

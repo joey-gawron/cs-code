@@ -209,7 +209,14 @@ public class HostileServerTests
         AssertQueueBounded(rig);
 
         await rig.Env.Manager.StopAllAsync(Ct); // kills the whole tree, burners included
-        Assert.All(rig.Everyone, pid => Assert.True(!Directory.Exists("/proc/" + pid) || File.ReadAllText($"/proc/{pid}/stat").Contains(") Z "), $"process {pid} survived StopAll"));
+        Assert.All(rig.Everyone, pid => Assert.True(GoneOrZombie(pid), $"process {pid} survived StopAll"));
+    }
+
+    // A killed process can be reaped between the directory check and the read of its stat file: that is gone too (the old check threw then).
+    private static bool GoneOrZombie(int pid)
+    {
+        try { return !Directory.Exists("/proc/" + pid) || File.ReadAllText($"/proc/{pid}/stat").Contains(") Z ", StringComparison.Ordinal); }
+        catch (Exception ex) when (ex is DirectoryNotFoundException or FileNotFoundException) { return true; }
     }
 
     // STRETCH: optional Linux CPU cap through a transient systemd user scope (cscode.lsp.cpuQuotaPercent).

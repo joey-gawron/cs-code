@@ -9,8 +9,9 @@ namespace CsCode.Lsp.Manager;
 
 /// <summary>
 /// The long-lived identity "server X for root Y": supervises successive <see cref="LanguageClient"/> sessions. Owns the restart policy
-/// (exponential backoff, at most N crashes per window, then Faulted with ONE message offering "Restart"), the set of documents that belong
-/// to this server (so a restarted session re-opens them), and the published <see cref="LanguageServerInfo"/>.
+/// (exponential backoff, at most N crashes per window, then Faulted with ONE message offering "Restart"), the memory-cap policy (at most
+/// <see cref="MaxMemoryRestarts"/> restarts, each announced, then the cap is no longer enforced and ONE message says so: T39), the set of documents
+/// that belong to this server (so a restarted session re-opens them), and the published <see cref="LanguageServerInfo"/>.
 /// </summary>
 internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ctx, LanguageServerDefinition definition, string key, Uri? rootUri, IReadOnlyList<Uri> folders) : IClientObserver, IAsyncDisposable
 {
@@ -25,6 +26,15 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
     private string? _serverName, _serverVersion;
     private int? _pid;
     private bool _userStopped, _autoStartTried, _faultMessageShown, _notFoundShown, _disposed;
+    private int _memoryRestarts;      // automatic restarts for the memory cap since the user last (re)started the server or changed its cap
+    private bool _memoryCapSuspended; // the cap fired again after MaxMemoryRestarts restarts: no longer enforced until then
+
+    /// <summary>
+    /// T39: how many times the memory cap restarts a server before it stops enforcing the cap. The cap is compared with the RSS of the whole
+    /// process tree, which counts more than the V8 heap VS Code limits; a project whose normal size is above it would otherwise be killed and
+    /// restarted forever (each restart re-indexes the project). A manual restart, or a change of <c>restartAboveBytes</c>, re-arms it.
+    /// </summary>
+    internal const int MaxMemoryRestarts = 3;
 
     public LanguageServerDefinition Definition { get; private set; } = definition;
     public string Key { get; } = key;
@@ -34,6 +44,11 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
     public LanguageClient? Client => Volatile.Read(ref _client);
     public int DocumentCount { get { lock (_gate) return _documents.Count; } }
     public int CrashCountInWindow { get { lock (_gate) return _crashes.Count; } }
+    public int MemoryRestartCount { get { lock (_gate) return _memoryRestarts; } }
+    public bool MemoryCapSuspended { get { lock (_gate) return _memoryCapSuspended; } }
+
+    /// <summary>The cap a new session is tracked with: the definition's, or none once the slot stopped enforcing it.</summary>
+    private long? EffectiveMemoryCap { get { lock (_gate) return _memoryCapSuspended ? null : Definition.RestartAboveBytes; } }
 
     public LanguageServerInfo Info
     {
@@ -124,7 +139,7 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
     {
         if (user)
         {
-            lock (_gate) { _userStopped = false; _autoStartTried = true; _crashes.Clear(); _faultMessageShown = false; _notFoundShown = false; }
+            lock (_gate) { _userStopped = false; _autoStartTried = true; _crashes.Clear(); _faultMessageShown = false; _notFoundShown = false; ResetMemoryPolicy(); }
             CancelRestartTimer(); // an explicit start supersedes a pending automatic restart (but an automatic restart must not cancel itself)
         }
         await _lifecycle.WaitAsync(ct).ConfigureAwait(false);
@@ -141,6 +156,7 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
     {
         SetState(LanguageServerState.Starting, keepError: true);
         var client = new LanguageClient(ctx, Definition, Key, RootUri, Folders, this);
+        client.SetMemoryCap(EffectiveMemoryCap);
         lock (_gate)
         {
             _client = client;
@@ -217,7 +233,7 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
         try
         {
             await StopCoreAsync().ConfigureAwait(false);
-            lock (_gate) { _userStopped = false; _autoStartTried = true; _crashes.Clear(); _faultMessageShown = false; _notFoundShown = false; }
+            lock (_gate) { _userStopped = false; _autoStartTried = true; _crashes.Clear(); _faultMessageShown = false; _notFoundShown = false; ResetMemoryPolicy(); }
             if (_disposed) return;
             await StartCoreAsync(ct).ConfigureAwait(false);
         }
@@ -228,13 +244,26 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
     public void UpdateDefinition(LanguageServerDefinition updated, IReadOnlyList<Uri> folders)
     {
         bool restart;
+        LanguageClient? recap = null;
         lock (_gate)
         {
             restart = !DefinitionOverrides.SameLaunch(Definition, updated) && _state is LanguageServerState.Running or LanguageServerState.Starting or LanguageServerState.Unresponsive;
+            if (Definition.RestartAboveBytes != updated.RestartAboveBytes)
+            {
+                ResetMemoryPolicy(); // a new cap starts with a clean count and is enforced again
+                recap = _client;
+            }
             Definition = updated;
             Folders = folders;
         }
         if (restart) _ = RestartAsync().ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+        else recap?.SetMemoryCap(updated.RestartAboveBytes); // the running session is tracked with the new cap at once
+    }
+
+    private void ResetMemoryPolicy()
+    {
+        _memoryRestarts = 0;
+        _memoryCapSuspended = false;
     }
 
     // ---- crash handling ----------------------------------------------------------------------------------------
@@ -340,11 +369,64 @@ internal sealed class ServerSlot(LanguageServerManager manager, ClientContext ct
         else SetState(LanguageServerState.Running);
     }
 
-    public void OnRestartRequested(LanguageClient client, string reason)
+    /// <summary>
+    /// T39: the monitor saw the session's process tree above its cap. The first <see cref="MaxMemoryRestarts"/> times the server is restarted (a
+    /// status-bar message and a log line say so); the crash history is kept, so this never resets the crash policy. The next time the cap is no
+    /// longer enforced: the server keeps running and one warning says why, offering a restart (which re-arms the cap).
+    /// </summary>
+    public void OnMemoryCapExceeded(LanguageClient client, long cap)
     {
         if (!ReferenceEquals(Volatile.Read(ref _client), client)) return;
-        _ = RestartAsync().ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+        _ = OnLaneAsync(() => RestartForMemoryAsync(client, cap)).ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
     }
+
+    private async Task RestartForMemoryAsync(LanguageClient client, long cap)
+    {
+        int count;
+        lock (_gate)
+        {
+            if (_disposed || _userStopped || _memoryCapSuspended || !ReferenceEquals(_client, client)) return;
+            if (_memoryRestarts >= MaxMemoryRestarts) { _memoryCapSuspended = true; count = 0; }
+            else count = ++_memoryRestarts;
+        }
+        var capText = FormatBytes(cap);
+        if (count == 0)
+        {
+            client.SetMemoryCap(null);
+            client.Log.Add($"[client] the process tree is above its {capText} memory cap again after {MaxMemoryRestarts} restarts: the cap is no longer enforced until the server is restarted");
+            ShowMemoryCapSuspended(capText);
+            return;
+        }
+        client.Log.Add($"[client] the process tree is above its {capText} memory cap: restarting the server ({count} of {MaxMemoryRestarts})");
+        ctx.Services.Window?.SetStatusBarMessage($"{Definition.DisplayName} used more than its {capText} memory cap and was restarted", TimeSpan.FromSeconds(10));
+        CancelRestartTimer();
+        await _lifecycle.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_disposed || _userStopped || !ReferenceEquals(_client, client)) return; // stopped, restarted or crashed meanwhile
+            await StopCoreAsync().ConfigureAwait(false);
+            if (_disposed || _userStopped) return;
+            await StartCoreAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        finally { _lifecycle.Release(); }
+    }
+
+    private void ShowMemoryCapSuspended(string capText)
+    {
+        if (ctx.Services.Window is not { } window) return;
+        var message = $"{Definition.DisplayName} keeps going over its {capText} memory cap (restarted {MaxMemoryRestarts} times). It keeps running and the cap "
+            + $"is no longer enforced until you restart it. To change the cap, set \"{LspSettingKeys.LanguageServers}\": {{ \"{Definition.Id}\": {{ \"restartAboveBytes\": … }} }} (null turns it off).";
+        _ = Task.Run(async () =>
+        {
+            var chosen = await window.ShowMessageAsync(MessageSeverity.Warning, message, [new MessageAction("Restart")]).ConfigureAwait(false);
+            if (chosen == "Restart") await RestartAsync().ConfigureAwait(false);
+        });
+    }
+
+    private static string FormatBytes(long bytes) =>
+        bytes >= 1L << 30 && bytes % (1L << 30) == 0 ? $"{bytes >> 30} GiB"
+        : bytes >= 1L << 20 ? $"{bytes / (double)(1L << 20):0.#} MiB"
+        : $"{bytes} bytes";
 
     public async ValueTask DisposeAsync()
     {

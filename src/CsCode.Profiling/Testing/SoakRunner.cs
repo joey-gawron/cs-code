@@ -130,7 +130,7 @@ public static class SoakRunner
         try
         {
             for (var i = 0; i < options.WarmupIterations; i++) await scenario.RunIterationAsync(i, ct);
-            FullGc.Collect();
+            SettleHeap();
             var before = ResourceCensus.Capture();
             var samples = new List<SoakSample>(16_384);
             var clock = Stopwatch.StartNew();
@@ -158,6 +158,24 @@ public static class SoakRunner
         finally
         {
             await scenario.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// Full collections until the live heap stops shrinking (at most 10): what earlier work in the process left to finalize — another test's
+    /// windows, a disposed host's caches — is released before the first sample instead of during the run, where it read as a NEGATIVE slope
+    /// (T56: a 16 KB/iteration leak measured 14.9 KB in the full MemoryTests run, after the app tests).
+    /// </summary>
+    private static void SettleHeap()
+    {
+        FullGc.Collect();
+        var previous = GC.GetTotalMemory(false);
+        for (var i = 0; i < 10; i++)
+        {
+            FullGc.Collect();
+            var now = GC.GetTotalMemory(false);
+            if (previous - now < 64 * 1024) return;
+            previous = now;
         }
     }
 

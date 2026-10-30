@@ -52,7 +52,8 @@ public sealed class WorkspaceFoldersMirror : IRemoteParticipant, IDisposable
 
 /// <summary>
 /// User settings flow client → server: the client's settings.json text is sent on connect and again (debounced) whenever the settings change;
-/// the server writes it as its own user settings file. (Workspace settings are read on the server, next to the files.)
+/// the server writes it as its own user settings file. (Workspace settings are read on the server, next to the files.) For a remote window the
+/// server takes machine-scoped settings (the programs it runs) from its host's own machine settings file instead, as VS Code does.
 /// </summary>
 public sealed class UserSettingsMirror : IRemoteParticipant, IDisposable
 {
@@ -63,9 +64,12 @@ public sealed class UserSettingsMirror : IRemoteParticipant, IDisposable
     private readonly Timer _debounce;
     private volatile RemoteSession? _session;
     private string? _lastSent;
+    private readonly bool _remoteWindow;
 
-    public UserSettingsMirror(IConfigurationService? config, IFileSystem? fs, ILogger? log = null)
+    /// <param name="remoteWindow">true for a remote host (ssh, docker, wsl); false for the local process language host, whose machine is the client's.</param>
+    public UserSettingsMirror(IConfigurationService? config, IFileSystem? fs, ILogger? log = null, bool remoteWindow = false)
     {
+        _remoteWindow = remoteWindow;
         _config = config;
         _fs = fs;
         _log = log ?? NullLogger.Instance;
@@ -91,7 +95,7 @@ public sealed class UserSettingsMirror : IRemoteParticipant, IDisposable
         {
             var text = await ReadUserSettingsAsync(ct).ConfigureAwait(false);
             if (text == _lastSent) return;
-            await session.Peer.InvokeAsync<SetUserSettingsParams, Empty>(RemoteMethods.SettingsSetUser, new SetUserSettingsParams(text), ct).ConfigureAwait(false);
+            await session.Peer.InvokeAsync<SetUserSettingsParams, Empty>(RemoteMethods.SettingsSetUser, new SetUserSettingsParams(text, _remoteWindow), ct).ConfigureAwait(false);
             _lastSent = text;
         }
         catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException)

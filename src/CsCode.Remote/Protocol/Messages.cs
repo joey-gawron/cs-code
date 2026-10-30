@@ -238,7 +238,12 @@ public sealed record SearchBatch(IReadOnlyList<string>? Paths, IReadOnlyList<Tex
 public sealed record SetFoldersParams(IReadOnlyList<string> Folders);
 
 /// <summary>The client's user settings.json text (JSONC); the server writes it as its own user settings file, which its configuration service reloads.</summary>
-public sealed record SetUserSettingsParams(string Text);
+/// <param name="RemoteWindow">
+/// The server serves a remote window (ssh, docker, wsl), not the local process language host: machine-scoped settings then come from the server
+/// host's own machine settings file, and the client's values for them (programs on the client's machine) are not used there, as in VS Code.
+/// Absent (an older client): false, the previous behaviour.
+/// </param>
+public sealed record SetUserSettingsParams(string Text, bool RemoteWindow = false);
 
 // ------------------------------------------------------------------------------------------------------------------- documents (R2)
 

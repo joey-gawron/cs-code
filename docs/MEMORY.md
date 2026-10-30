@@ -74,7 +74,10 @@ collection and the page release, measured before/after (`MemoryTrimReport`, logg
 * **Policy Moderate trims** fire while the user may be typing, so they start a **background** gen2 collection instead (no compaction) and then
   `malloc_trim`. Measured (`A_policy_moderate_trim_collects_in_the_background_while_an_aggressive_one_compacts`, 600k live objects): the background
   trim's longest pause is under half the compacting trim's.
-* **Child processes**: `TrackChildProcess(name, pid, restartAboveBytes, onOverBudget)` — a child above its cap for 2 consecutive samples (1 under
+* **Child processes**: `TrackChildProcess(name, pid, restartAboveBytes, onOverBudget)` — a child counts with its whole **process tree** (lsp-core-4,
+  Linux: the descendants are looked up every 10 s through `/proc/<pid>/task/*/children`, each member's VmRSS read every sample; another tracked
+  child's subtree is its own; up to 512 processes; elsewhere only the pid itself), so tsserver under typescript-language-server, a debuggee under
+  its adapter or a launcher script's real server are in `ChildProcessWorkingSetBytes`, the Memory channel and the cap. A child above its cap for 2 consecutive samples (1 under
   Aggressive pressure) gets its owner's callback, at most once a minute, exceptions isolated.
 * **Idle trim**: after `idleTrimSeconds` without input (`IUserActivityMonitor.NotifyActivity`, called by the shell's tunnel handlers for keys,
   text, pointer press/move/wheel — one timestamp write per event), an Idle-level trim with a compacting collection, once per idle period.
@@ -256,6 +259,20 @@ The interpreter (non-compiled) backtracking engine was tried first: it was 10× 
 pathological glob ends within its 250 ms match timeout and does not match; cached globs retain < 20 KB each; the registry keeps its order) and the
 Core tests (35/35).
 
+**End pass (lsp-core-3, T38): `GlobRegex` replaces the compiled backtracking regex.** The backtracking engine is polynomial on globs such as
+`**/**/…/x` (40 of them against an 8-segment path: 250 ms per call, then a silent "no match" at the timeout — and a language server chooses its
+document selectors), and `[z-a]` threw `RegexParseException` out of `Glob.IsMatch`. `Core/Text/GlobRegex` compiles the same translated subset
+(literals, `.`, classes, `(?:…|…)`, `* + ?`, end anchors) to a Thompson NFA: bit-parallel simulation for up to 63 consuming states (every real
+glob), a list-based Pike VM above that, plus a required literal prefix/suffix check that rejects most paths before simulating. Linear in pattern ×
+path for every pattern, no allocation per match, a few hundred bytes per compiled pattern, never throws from `Glob.IsMatch` (a malformed pattern
+matches nothing). Measured roughly at load 28 (noisy): 50–250 ns for short globs, ~0.6–1 µs for `**/src/**/*.cs` on a matching path (compiled
+Regex: 60–470 ns at the same load) and 80 ns when the suffix rejects. Platform's `.gitignore` and `.editorconfig` readers and the Editor's
+`.editorconfig` reader use it too (they were the NonBacktracking regexes of item 2 below). `GlobRegexTests` (Core) checks it against .NET's
+Regex on 18,000 random patterns × texts, on both simulations. Patterns longer than 8,192 characters are refused; the `.editorconfig` readers'
+numeric ranges (`{num1..num2}`, up to 1000 numbers as before) are therefore built with `GlobRegex.IntegerRange` from digit classes
+(`{10000000..10000999}` → `10000[0-9][0-9][0-9]`, length proportional to the digits) instead of one alternative per number, which reached ~9,000
+characters and made such a section silently never match (T38 follow-up; checked against the alternation on 300 random ranges).
+
 ## 7. Memory budget of the real app (MUST 7)
 
 `tools/profile/budget.sh` (Release host, headless Avalonia with Skia, `CSCODE_HOME` in a temp dir, built-in language servers off except the one
@@ -398,11 +415,17 @@ matrix above apply them:
    waits behind queued work, which is exactly what the budget is about.
 2. **Do not pump from the measuring code.** `Dispatcher.UIThread.RunJobs()` inside the measured window runs the queue on the test's schedule;
    let the headless test's own loop run it (`await Task.Delay`), and measure with `ResponsivenessProbe(a => Dispatcher.UIThread.Post(a))`.
-3. **Report the headless rasteriser separately.** The headless platform renders only when ticked (`AvaloniaHeadlessPlatform.ForceRenderTimerTick`)
-   and then rasterises the invalidated area with software Skia **on the UI thread** (4–10 ms a frame, 15–25 gen2 collections a second while
-   something keeps changing — triage item 23); a desktop rasterises on its render thread. Budget windows run without ticks (or, like the
-   terminal, record only the control's own `Render` into a `DrawingGroup`, which is the UI thread's per-frame share on a desktop); a second window
-   with 60 Hz ticks is reported as "with headless rasterisation", never budgeted.
+3. **Report the headless rasteriser separately.** The headless platform rasterises the invalidated area with software Skia (4–40 ms a frame)
+   and, with its default `ShouldRenderOnUIThread = true`, does so **on the UI thread** — triage item 23; a desktop rasterises on its render
+   thread. **Avalonia 12 ticks that renderer by itself** (`HeadlessRenderTimer`: a `DispatcherTimer` at `Fps` = 60 on the UI thread, not only on
+   `ForceRenderTimerTick`), so a window "without ticks" still rasterised every dirty frame on the UI thread: in the matrix's baseline row that was
+   1.4–2.2 s of a 4.8 s typing window, the whole of T55's no-load miss. The memory tests therefore run with `ShouldRenderOnUIThread = false`
+   (`HeadlessSetup`): frames rasterise on a render thread, the UI thread keeps a desktop's share (input, layout, the composition commit), and
+   `ForceRenderTimerTick` still drives a frame (commit + wait). The terminal's tests record only the control's own `Render` into a
+   `DrawingGroup` instead. A second window with 60 Hz ticks is still reported, never budgeted. Each attempt's report now also says what the UI
+   thread did in the measured window (`ThreadActivityRecorder`: its CPU time and run-queue wait from `schedstat`, Avalonia's own
+   `avalonia.ui.measure/arrange/render.time` instruments, enabled by the `Avalonia.Diagnostics.Diagnostic.IsEnabled` switch) and the GC pauses of
+   that window alone — so a miss reads as machine load, GC, or real UI-thread work.
 4. **Run the app's GC mode** (`GCSettings.LatencyMode = SustainedLowLatency`, `AppStartup.ConfigureRuntime`) and put a `GcPauseRecorder` report
    next to the numbers.
 5. **Best of three attempts, every attempt reported with the load average**; on this shared machine rerun a miss alone with
@@ -460,11 +483,12 @@ Measured here, owned elsewhere — for the end pass (nothing below was changed o
 1. **TextMateSharp keeps every grammar's raw JSON tree** after compiling it: ≈ 15–20 MB of the 66 MB the app's managed heap grows by with 20
    documents (`Parser.Raw`, `Dictionary<string, object>` entries, strings; section 7). Dropping the raw grammar after compilation (Editor module,
    W1's highlighting seam) is the largest single saving found.
-2. **NonBacktracking regexes keep ~150 KB of caches each** once used. Fixed for Core's `Glob` (section 6); the same pattern is in
-   `Platform/Workspace/GitIgnore.cs`, `Platform/EditorConfig/EditorConfigParser.cs`, `Editor/Documents/EditorConfig.cs` and
-   `Panels.Search/Engine/TextMatcher.cs` (the last one on purpose: user regexes need linear time; the glob translations do not).
+2. **NonBacktracking regexes keep ~150 KB of caches each** once used. Fixed for Core's `Glob` (section 6) and, in the end pass (T38), for
+   `Platform/Workspace/GitIgnore.cs`, `Platform/EditorConfig/EditorConfigParser.cs` and `Editor/Documents/EditorConfig.cs` (all on `GlobRegex`
+   now); `Panels.Search/Engine/TextMatcher.cs` keeps NonBacktracking on purpose (user regexes need the full syntax in linear time).
 3. **GC pauses in the app under load**: the hostile-matrix runs record 3–6 gen2 collections a second while typing with a load running, most of them
-   `induced_noforce` (the GC's own response to `GC.AddMemoryPressure`, which SkiaSharp calls for its native surfaces) and `alloc_small`, with p99
+   `induced_noforce` (the GC's own response to `GC.AddMemoryPressure` — end pass, T55: not SkiaSharp, which never calls it, but Avalonia's
+   `BitmapMemory`, i.e. the headless window's new 4 MB `WriteableBitmap` per rendered frame; item 10) and `alloc_small`, with p99
    GC pauses of 45–155 ms — the main reason the headless budgets miss (with triage item 23's software rasteriser). Worth a desktop check
    (`tools/profile/counters.sh PID` on a real window: `cscode.gc.gen2_collections`, `cscode.gc.pause_time`).
 4. **Trimmables have little to give** in a normal state (section 2: 0–1 KB at every level with 20 documents open): the big re-creatable state
@@ -475,7 +499,14 @@ Measured here, owned elsewhere — for the end pass (nothing below was changed o
    but its name is no longer true: profiling now registers a monitor (the shell wraps it).
 7. **Language servers dominate the footprint**: typescript-language-server on a 2-file project ≈ 550 MB in 4 node processes; a remote session
    starts its own TypeScript server on the remote host for a remote `.js` file (≈ 700 MB more on this loopback "remote"). Caps exist per server
-   (`LanguageServerDefinition.RestartAboveBytes` → `TrackChildProcess` over-budget callbacks); none of the built-ins sets one.
+   (`LanguageServerDefinition.RestartAboveBytes` → `TrackChildProcess` over-budget callbacks). End pass: the cap applies to the process TREE
+   (lsp-core-4: it used to read only the launched pid, so tsserver never counted), and typescript, vue and svelte set 4 GiB
+   (`BuiltinLanguageServers.TypeScriptEngineCap`, T39: VS Code's `typescript.tsserver.maxTsServerMemory` limits the V8 heap of EACH tsserver to
+   3072 MB; the tree's RSS also counts the launcher, the syntax server, the typings installer and the node runtime once per process, ~550 MB on a
+   small project, hence +1 GiB). A server is restarted for its cap at most 3 times (`ServerSlot.MaxMemoryRestarts`), each announced in the status
+   bar and its log, without resetting the crash policy; the next time the cap is no longer enforced and one warning offers Restart (a restart or a
+   new `restartAboveBytes` re-arms it), so a project whose normal size is above the cap is not killed forever. Others stay uncapped (native
+   servers grow with the project; JVM ones are bounded by -Xmx); `restartAboveBytes: null` or 0 turns a cap off.
 8. **Scrolling leaks** (Editor module / AvaloniaEdit 12.0.0): each end-to-end scroll of a 20k-line file (80 `ScrollToLine` steps with frames)
    keeps ~3.7 MB more live heap, linearly, with no plateau over 16 passes (`cscode-profile census --scenario scroll`: 30.5 → 85.8 MB live,
    249 → 321 MB resident). Two heap dumps 8 passes apart (`dumpheap -stat`, `gcroot`): +7,001 `AvaloniaEdit.Folding.FoldingMarginMarker` (3.6 MB)
@@ -489,6 +520,17 @@ Measured here, owned elsewhere — for the end pass (nothing below was changed o
    30.5 → 85.8 MB over 16 before; the soak test fills that cache before measuring and passes (live heap 10 ± 11 KB/iteration at load 5).
 9. The language-feature registry soak shows ~24 B/iteration of live-heap growth in 400 fast iterations (inside the 64 B threshold, cause not
    identified; likely run-time warm-up) — the long variant (`CSCODE_SOAK=1`) decides.
+10. **T55, end pass: what the UI thread does per keystroke** (hostile matrix, rasterisation on the render thread, `ThreadActivityRecorder` +
+   Avalonia's diagnostic activities, 80 keys typed into a 2-line C# file with no language server): 1.0–2.2 s of UI-thread CPU in a 4.2 s window,
+   of which layout (`avalonia.ui.measure.time`) 0.5–1.5 s over ~400 measure passes (~5 per key; single passes up to 20–40 ms). Created while
+   typing (Loaded events): the **status bar rebuilds its item buttons on every caret move** (326 `Button`s for 80 keys: `StatusBarView.Rebuild`
+   creates a new element when an item's text changes and `SyncChildren` then clears and re-adds every child of the panel — shell area); the
+   **editor's suggestion list is created anew each time it opens** (20 `ListBox`es, 40 `ScrollViewer`s, 250 `ListBoxItem`s, 750 `TextBlock`s
+   inside `CodeEditorControl`'s canvas — editor area); 166 `FoldingMarginMarker`s (item 8). Updating a status item's content in place and
+   reusing the suggestion list are what would bring the dispatcher p99 (23–47 ms in the loaded rows at load 10–17; typing p99 mostly 3–20 ms)
+   under 16 ms; the rest is GC (in-window p99 16–30 ms; the headless window allocates a new 4 MB `WriteableBitmap` per frame, whose
+   `AddMemoryPressure` drives the `induced_noforce` gen2s — headless only). The baseline row passed (load 16.6: dispatcher p99 15.5 ms, typing
+   p99 3.0 ms) once frames stopped rasterising on the UI thread.
 
 ## 13. Tests
 

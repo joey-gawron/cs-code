@@ -50,6 +50,8 @@ Tests: `ProtocolRoundTripTests` (spec shapes, unions, optional/null handling, un
   (named pipe), `unix:///path` (unix domain socket). `ServerLaunch.Resolve` does the lookup (testable without a process); a built-in definition whose
   command and args are unchanged also tries its **alternatives** in order (`nil` → `nixd`, `erlang_ls` → `elp server`, …) and the not-found message
   names every executable it looked for. `${workspaceFolder}` / `${userHome}` expand in `args` and `initializationOptions` (`LaunchVariables`).
+  A command with a directory part must be absolute or start with `~/`: a relative one (`./bin/x`, `bin/x`) is **not** found — it used to be resolved
+  against the working directory, i.e. the server's root inside the workspace, so the opened repository chose the program (lsp-core-1).
 * Child processes (`ProcessConnection`): started **without a shell**, env + cwd from the definition, stderr drained on its own task into a bounded
   64-line ring and the bounded server log, below-normal priority, whole tree killed on dispose. Every child gets an environment marker
   (`CSCODE_LSP_SESSION`); on Linux a kill also finds **re-parented descendants** (server `kill -9`ed, grandchild orphaned) by scanning `/proc/*/environ`
@@ -64,6 +66,13 @@ Tests: `ProtocolRoundTripTests` (spec shapes, unions, optional/null handling, un
   with its `.dll` or `.runtimeconfig.json` beside it, also through symlinks; a `dotnet tool` shim beside `.store/`), it gets the root
   (the directory with `host/fxr`) of the dotnet on the server's PATH, then in `cscode.lsp.searchDirs`, then `~/.dotnet`, then the shared
   runtime CsCode runs on, and the server log says so. A definition whose `env` sets either variable is never changed.
+  **Only when the host's own lookup would not do** (lsp-core-5): with `DOTNET_ROOT` set, the Linux host looks nowhere else, so a distro or
+  global runtime (`/etc/dotnet/install_location[_<arch>]`, else `/usr/share/dotnet`, `/usr/local/share/dotnet` on macOS) that served the server
+  is left to the host when it has the frameworks the server's `.runtimeconfig.json` asks for (beside the apphost; for a tool shim, the one beside
+  the `.dll` whose path `dotnet tool install` wrote into the shim, i.e. the target framework the shim really runs — when that path cannot be read,
+  every runtimeconfig of the newest `.store` version must be satisfied, since a tool packed for net8.0 and net9.0 has one per framework;
+  roll-forward policy honoured, `DOTNET_ROLL_FORWARD` too) — or when nothing says what it asks for. Otherwise the first candidate above that has
+  those frameworks is chosen (or the first one, said so in the log line, which names the root and the reason).
 * Per-message size guard (`FramingGuardStream`, `cscode.lsp.maxMessageBytes`, default 64 MB): a header announcing more drops the connection (the
   session is then restarted by the normal crash path). Parsing rents ~9× a message's size from shared pools, so this bounds a hostile payload.
 
@@ -83,7 +92,7 @@ Tests: `ProtocolRoundTripTests` (spec shapes, unions, optional/null handling, un
 | Backpressure | optional work (`ShouldShed`) is skipped *without enqueueing* when the lane is backed up; the reader loop never blocks (handlers only enqueue) | `Background_features_are_skipped_without_enqueueing…` |
 | Timeouts | Interactive 3 s, Background 30 s (`interactiveTimeoutMs`, `backgroundTimeoutMs`) → `null` + non-blocking status message | `A_slow_server_yields_null_at_the_timeout…` |
 | Circuit breaker | 5 consecutive timeouts (`breakerThreshold`) → state `Unresponsive` (Core enum member added), requests answered `null` immediately, one probe per interval (active read-only probe loop), automatic recovery | `Consecutive_timeouts_mark_the_server_Unresponsive…` |
-| OS-level isolation | servers start at below-normal priority via the `nice` binary (grandchildren inherit it; a post-start `setpriority` would race their creation) / `PriorityClass` on Windows; `cscode.lsp.processPriority`; RSS tracked via `IMemoryMonitor.TrackChildProcess` with restart over `RestartAboveBytes`; **optional CPU cap** `cscode.lsp.cpuQuotaPercent` via a transient `systemd-run --user --scope -p CPUQuota=N%` (probed once; falls back with a log line) | `Cpu_burning_children_run_at_low_priority…`, `The_optional_cpu_quota…` (checks `cpu.max`), `Server_runs_below_normal_priority_including_its_tsserver_child` |
+| OS-level isolation | servers start at below-normal priority via the `nice` binary (grandchildren inherit it; a post-start `setpriority` would race their creation) / `PriorityClass` on Windows; `cscode.lsp.processPriority`; RSS of the server's whole process tree (tsserver included, lsp-core-4) tracked via `IMemoryMonitor.TrackChildProcess` with restart over `RestartAboveBytes` (typescript, vue, svelte: 4 GiB = VS Code's 3072 MB `maxTsServerMemory` heap of the semantic tsserver + 1 GiB for the rest of the tree, whose RSS counts the node runtime once per process, T39; `restartAboveBytes: null` turns it off). The cap restarts a server at most 3 times (a status-bar message and a log line each time, the crash history kept); the 4th time it is no longer enforced: the server keeps running, one warning offers Restart, and a restart or a new `restartAboveBytes` re-arms it (`RestartCapTests`); **optional CPU cap** `cscode.lsp.cpuQuotaPercent` via a transient `systemd-run --user --scope -p CPUQuota=N%` (probed once; falls back with a log line) | `Cpu_burning_children_run_at_low_priority…`, `The_optional_cpu_quota…` (checks `cpu.max`), `Server_runs_below_normal_priority_including_its_tsserver_child` |
 | In-flight work dies with its document | per-document version token cancelled (on the lane) whenever the text changes | `Editing_the_document_cancels_its_in_flight_requests` |
 
 One honest deviation: StreamJsonRpc's reader loop runs on the thread pool; it only frames and `JsonDocument.Parse`s. All typed (de)serialisation, mapping,
@@ -172,6 +181,14 @@ plus `didChange`/`didSave`/`didOpen`/`didClose`/`willSave*`, watched files, exec
   `AddDefinition` (returns a removal token), and the **`cscode.languageServers`** override, a JSON object keyed by id:
   `command, args, env, selector, initializationOptions, settings, rootMarkers, autoStart, workingDirectory, restartAboveBytes, enabled` (an unknown id with
   `command` + `selector` defines a new server). Changing launch properties restarts a running server; selector-only changes don't.
+  An entry's `settings` and `initializationOptions` objects are read like a settings.json of their own: their **top-level** dotted keys are paths
+  (`"rust-analyzer.check.command": "clippy"` answers `workspace/configuration` for `rust-analyzer` with `{"check":{"command":"clippy"}}`, merged
+  with a nested spelling of the same object), and every member name below the top level is kept as written, so URLs and globs survive
+  (`"yaml.schemas": {"https://…/x.json": "*.yml"}`). Before lsp-core-2 every member name was split at every depth, which broke those
+  (`DefinitionOverrides.ExpandTopLevelKeys`; `Top_level_dotted_keys_of_a_user_s_server_settings…`, `A_server_settings_object_splits_only…`).
+  **`command`, `args`, `env` and `workingDirectory` come from user settings only** (machine-scoped members, docs/PLATFORM.md "Setting scopes"), as does
+  `cscode.lsp.searchDirs`: a workspace's `.vscode`/`.cscode` settings.json may tune a server (`selector`, `settings`, `initializationOptions`,
+  `rootMarkers`, `enabled`, `autoStart`, `restartAboveBytes`) but cannot define what is started; its value is ignored with a notice.
 * **One server per (definition, workspace root)**: root = nearest ancestor containing a marker (names or globs like `*.sln`), never leaving the workspace
   folder that contains the file; fallback = that folder, then the file's directory. Built-ins whose build systems nest markers (jdtls, Kotlin, Metals,
   HLS, Elixir, Erlang, ocamllsp, Nix, buf) take the **outermost** marked directory inside the workspace folder instead (`RootStrategy.Outermost`; a

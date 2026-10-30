@@ -32,4 +32,6 @@ public sealed record MemoryTrimReport(
 }
 
 /// <summary>A tracked child process as the monitor last saw it.</summary>
-public sealed record ChildProcessInfo(string Name, int Pid, long WorkingSetBytes, long? RestartAboveBytes, bool Exited, int OverBudgetCallbacks);
+/// <param name="WorkingSetBytes">The resident set of the child AND its descendants (Linux; the sum of their VmRSS, shared pages counted per process).</param>
+/// <param name="Processes">How many processes that sum covers (the child plus the descendants found at the last tree scan that are still alive).</param>
+public sealed record ChildProcessInfo(string Name, int Pid, long WorkingSetBytes, long? RestartAboveBytes, bool Exited, int OverBudgetCallbacks, int Processes = 1);

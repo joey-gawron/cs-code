@@ -287,11 +287,19 @@ public sealed class RemoteTestHost : IAsyncDisposable
     /// <param name="r3">Also compose the R3 consumers: the Dap module (debug service, task runner) and the Terminal module's service, with the
     /// remote debug factory/provider registered as the shell would.</param>
     /// <param name="persistent">R4: the loopback server is a persistent one (a relay to a daemon with this grace period).</param>
+    /// <param name="machineSettings">The server host's machine settings.json (<see cref="CsCode.Server.ServerHost.MachineSettingsPath"/>): in a remote window,
+    /// machine-scoped settings such as <c>cscode.debug.gdbArgs</c> come from there, not from the client's user settings.</param>
     public RemoteTestHost(Action<RemoteOptions>? options = null, Action<IServiceCollection>? services = null, Func<IRemoteTransport, IRemoteTransport>? wrap = null,
         bool loopback = true, string? userSettings = null, IWindowService? window = null, bool r3 = false, TimeSpan? persistent = null, TempDirectory? clientHome = null,
-        string? serverDataDir = null, string? marker = null)
+        string? serverDataDir = null, string? marker = null, string? machineSettings = null)
     {
         _sharedServerData = serverDataDir; // another (crashed) client's server: its data dir holds the persistent server's socket
+        if (machineSettings is not null)
+        {
+            var machine = CsCode.Server.ServerHost.MachineSettingsPath(ServerDataDir);
+            Directory.CreateDirectory(Path.GetDirectoryName(machine)!);
+            File.WriteAllText(machine, machineSettings);
+        }
         if (clientHome is not null)
         {
             _home.Dispose();

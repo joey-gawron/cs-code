@@ -57,6 +57,14 @@ public class EditorConfigParserTests
     [InlineData("v{-1..1}", "v-1", true)]
     [InlineData("v{-1..1}", "v0", true)]
     [InlineData("v{-1..1}", "v2", false)]
+    [InlineData("build{10000000..10000999}.log", "build10000500.log", true)]  // T38 follow-up: ~9,000 characters as one alternative per number
+    [InlineData("build{10000000..10000999}.log", "build10000999.log", true)]
+    [InlineData("build{10000000..10000999}.log", "build10001000.log", false)]
+    [InlineData("build{10000000..10000999}.log", "build010000500.log", false)]
+    [InlineData("n{-2147483648..-2147482649}", "n-2147483000", true)]
+    [InlineData("n{-2147483648..-2147482649}", "n-2147482648", false)]
+    [InlineData("v{-1..1}", "v-0", false)]
+    [InlineData("v{-1..1}", "v01", false)]
     // anchoring: a slash anchors to the .editorconfig's directory
     [InlineData("/a.cs", "a.cs", true)]
     [InlineData("/a.cs", "sub/a.cs", false)]

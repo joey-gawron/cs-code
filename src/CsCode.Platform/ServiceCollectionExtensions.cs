@@ -55,8 +55,9 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IFileWatcher>(sp => sp.GetRequiredService<FileWatcherRouter>());
 
         // Configuration, state (both follow the open workspace folder)
+        // The window service is resolved only when a workspace file sets a user-only setting (a notice), long after both exist.
         services.TryAddSingleton(sp => new ConfigurationService(sp.GetRequiredService<IAppPaths>(), sp.GetRequiredService<IoLane>(), sp.GetRequiredService<IFileWatcher>(),
-            sp.GetRequiredService<PlatformOptions>(), sp.GetService<ILogger<ConfigurationService>>()));
+            sp.GetRequiredService<PlatformOptions>(), sp.GetService<ILogger<ConfigurationService>>(), () => sp.GetService<IWindowService>()));
         services.TryAddSingleton<IConfigurationService>(sp => sp.GetRequiredService<ConfigurationService>());
         services.TryAddSingleton(sp => new StateStorage(sp.GetRequiredService<IAppPaths>(), sp.GetRequiredService<IoLane>(), sp.GetRequiredService<PlatformOptions>(),
             sp.GetService<ILogger<StateStorage>>()));

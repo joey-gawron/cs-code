@@ -10,9 +10,10 @@ namespace CsCode.Server;
 /// <summary>
 /// <c>workspace/setFolders</c> keeps the server's workspace (what its language servers see as roots, where its workspace settings come from) equal
 /// to the client's remote folders; <c>settings/setUser</c> mirrors the client's user settings.json into the server's own user settings file, which
-/// the server's configuration service then serves (workspace settings are read here, next to the files).
+/// the server's configuration service then serves (workspace settings are read here, next to the files). For a remote window it also turns on
+/// this host's machine settings file (<paramref name="machineSettingsPath"/>), where machine-scoped settings come from, as in VS Code.
 /// </summary>
-internal sealed class WorkspaceHandlers(WorkspaceService workspace, ConfigurationService configuration, IFileSystem fs)
+internal sealed class WorkspaceHandlers(WorkspaceService workspace, ConfigurationService configuration, IFileSystem fs, string machineSettingsPath)
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -25,7 +26,7 @@ internal sealed class WorkspaceHandlers(WorkspaceService workspace, Configuratio
         });
         peer.OnRequest<SetUserSettingsParams, Empty>(RemoteMethods.SettingsSetUser, async (p, ct) =>
         {
-            await SetUserSettingsAsync(p.Text, ct).ConfigureAwait(false);
+            await SetUserSettingsAsync(p.Text, p.RemoteWindow, ct).ConfigureAwait(false);
             return Empty.Value;
         });
     }
@@ -45,9 +46,10 @@ internal sealed class WorkspaceHandlers(WorkspaceService workspace, Configuratio
         finally { _gate.Release(); }
     }
 
-    public async Task SetUserSettingsAsync(string text, CancellationToken ct)
+    public async Task SetUserSettingsAsync(string text, bool remoteWindow, CancellationToken ct)
     {
         if (text.Length > 4 * 1024 * 1024) throw new ArgumentException("settings.json larger than 4 MB");
+        await configuration.SetRemoteMachineSettingsAsync(remoteWindow ? machineSettingsPath : null, ct).ConfigureAwait(false);
         var path = configuration.UserSettingsPath;
         var uri = FileUri.FromPath(path);
         var current = await fs.StatAsync(uri, ct).ConfigureAwait(false) is not null

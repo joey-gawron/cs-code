@@ -24,7 +24,8 @@ internal interface IClientObserver
 {
     void OnHealthChanged(LanguageClient client, ServerHealth health);
     void OnExited(LanguageClient client, ClientExit exit);
-    void OnRestartRequested(LanguageClient client, string reason);
+    /// <summary>The server's process tree went over its memory cap (<paramref name="cap"/> bytes): the slot decides whether to restart it (T39).</summary>
+    void OnMemoryCapExceeded(LanguageClient client, long cap);
 }
 
 /// <summary>Everything shared by the clients of one manager.</summary>
@@ -64,7 +65,10 @@ internal sealed partial class LanguageClient : IAsyncDisposable
     private volatile bool _docsMayOpen;
     private long _inFlight;
     private long _lastTimeoutNoticeTicks;
+    private readonly object _memoryGate = new();
     private IDisposable? _memoryTracking;
+    private long? _memoryCap;
+    private bool _memoryCapSet;
 
     public LanguageClient(ClientContext ctx, LanguageServerDefinition definition, string slotKey, Uri? rootUri, IReadOnlyList<Uri> workspaceFolders, IClientObserver observer)
     {
@@ -353,8 +357,11 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             SetState(LanguageServerState.Stopping);
             _docsMayOpen = false;
             _lifetime.Cancel();
-            _memoryTracking?.Dispose();
-            _memoryTracking = null;
+            lock (_memoryGate)
+            {
+                _memoryTracking?.Dispose();
+                _memoryTracking = null;
+            }
             _features.DisposeAll();
             try { _store.Dispose(); } catch (AggregateException) { /* a subscriber's dispose must not abort teardown */ }
             ClearAllDiagnostics();
@@ -394,11 +401,38 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         _lifetime.Dispose();
     }
 
+    /// <summary>
+    /// Changes the cap: before the session tracks its process it is simply the one used, afterwards the process is re-tracked with it (null: tracked,
+    /// never restarted). The slot calls this when it stops enforcing a cap that keeps firing, and when the setting changes (T39).
+    /// </summary>
+    internal void SetMemoryCap(long? cap)
+    {
+        lock (_memoryGate)
+        {
+            _memoryCap = cap;
+            _memoryCapSet = true;
+            if (_memoryTracking is null || Volatile.Read(ref _tornDown) != 0) return;
+            _memoryTracking.Dispose();
+            _memoryTracking = Track(cap);
+        }
+    }
+
     private void TrackProcessMemory()
     {
-        if (_ctx.Services.Memory is { } monitor && ProcessId is { } pid)
-            _memoryTracking = monitor.TrackChildProcess($"lsp:{Definition.Id}", pid, Definition.RestartAboveBytes,
-                () => { _observer.OnRestartRequested(this, "memory cap exceeded"); return ValueTask.CompletedTask; });
+        lock (_memoryGate)
+        {
+            if (Volatile.Read(ref _tornDown) != 0) return;
+            _memoryTracking?.Dispose();
+            _memoryTracking = Track(_memoryCapSet ? _memoryCap : Definition.RestartAboveBytes);
+        }
+    }
+
+    private IDisposable? Track(long? cap)
+    {
+        if (_ctx.Services.Memory is not { } monitor || ProcessId is not { } pid) return null;
+        return monitor.TrackChildProcess($"lsp:{Definition.Id}", pid, cap, cap is { } c
+            ? () => { _observer.OnMemoryCapExceeded(this, c); return ValueTask.CompletedTask; }
+            : null);
     }
 
     // =================================================================================================================

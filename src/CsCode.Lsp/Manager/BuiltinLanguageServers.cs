@@ -44,6 +44,19 @@ public sealed record BuiltinServer(
 /// </summary>
 public static class BuiltinLanguageServers
 {
+    /// <summary>
+    /// T39: the restart cap of the servers built on the TypeScript engine (typescript-language-server with its tsserver, vue-language-server,
+    /// svelteserver). VS Code's limit is <c>typescript.tsserver.maxTsServerMemory</c> = 3072 MB of V8 old space for EACH tsserver; this cap is
+    /// compared with the resident memory of the whole process tree (lsp-core-4): the launcher, the syntax and semantic tsservers and the typings
+    /// installer, the node runtime's shared pages counted once per process. W6 measured that tree at ~550 MB on a small project, so 4 GiB = VS Code's
+    /// 3 GiB heap plus 1 GiB for the rest of the tree: a project VS Code serves stays under it, and only a tree whose semantic server would have hit
+    /// VS Code's limit reaches it. The slot restarts a server for its cap at most <see cref="ServerSlot.MaxMemoryRestarts"/> times, then stops
+    /// enforcing it and says so. Other servers have no cap: native ones (rust-analyzer, clangd, gopls, HLS) grow with the project and would only
+    /// regrow after a restart, and the JVM ones are bounded by their own -Xmx. Override per server with
+    /// <c>cscode.languageServers.&lt;id&gt;.restartAboveBytes</c> (null or 0: no cap).
+    /// </summary>
+    public const long TypeScriptEngineCap = 4L * 1024 * 1024 * 1024;
+
     private static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
     private static LanguageServerDefinition Def(string id, string name, string[] languages, string command, string[] args, string[] markers,
@@ -67,7 +80,7 @@ public static class BuiltinLanguageServers
     [
         // ---- the original twelve ------------------------------------------------------------------------------------------------------
         S(Def("typescript", "TypeScript / JavaScript", ["typescript", "typescriptreact", "javascript", "javascriptreact"], "typescript-language-server", ["--stdio"],
-                ["tsconfig.json", "jsconfig.json", "package.json"]),
+                ["tsconfig.json", "jsconfig.json", "package.json"]) with { RestartAboveBytes = TypeScriptEngineCap },
             All3("Install it with: npm install -g typescript-language-server typescript (or run tools/fetch-lsp-tools.sh)."),
             "typescript-language-server (tsserver)"),
         S(Def("csharp", "C# (csharp-ls)", ["csharp"], "csharp-ls", [], ["*.sln", "*.slnx", "*.csproj"]),
@@ -245,10 +258,10 @@ public static class BuiltinLanguageServers
         // @vue/language-server 2.x in non-hybrid mode does TypeScript itself and needs the project's TypeScript SDK; 3.x expects the client
         // to route TypeScript through a tsserver plugin, which CsCode does not do (only its HTML/CSS features work then).
         S(Def("vue", "Vue (vue-language-server)", ["vue"], "vue-language-server", ["--stdio"], ["package.json"],
-                """{"typescript":{"tsdk":"${workspaceFolder}/node_modules/typescript/lib"},"vue":{"hybridMode":false}}"""),
+                """{"typescript":{"tsdk":"${workspaceFolder}/node_modules/typescript/lib"},"vue":{"hybridMode":false}}""") with { RestartAboveBytes = TypeScriptEngineCap },
             All3("Install it with: npm install -g @vue/language-server@2 (the project needs typescript in its node_modules)"),
             "vue-language-server", notes: "Written for @vue/language-server 2.x (non-hybrid mode); 3.x needs a tsserver plugin route CsCode does not implement."),
-        S(Def("svelte", "Svelte (svelteserver)", ["svelte"], "svelteserver", ["--stdio"], ["svelte.config.js", "package.json"]),
+        S(Def("svelte", "Svelte (svelteserver)", ["svelte"], "svelteserver", ["--stdio"], ["svelte.config.js", "package.json"]) with { RestartAboveBytes = TypeScriptEngineCap },
             All3("Install it with: npm install -g svelte-language-server"),
             "svelteserver (prettier-plugin-svelte)"),
     ];
