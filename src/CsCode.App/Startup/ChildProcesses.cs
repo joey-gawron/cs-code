@@ -156,8 +156,13 @@ public sealed class ShellMemoryMonitor : IMemoryMonitor, IDisposable
     {
         if (_inner is not null) { await _inner.TrimNowAsync(level, ct).ConfigureAwait(false); return; }
         var all = Trimmables;
-        // Trimmables are called from a background thread by contract.
-        await Task.Run(() => { foreach (var t in all) { ct.ThrowIfCancellationRequested(); t.Trim(level); } }, ct).ConfigureAwait(false);
+        // Trimmables are called from a background thread by contract; then the compaction and page release IMemoryMonitor.TrimNowAsync promises
+        // (a hidden session's trim relies on it and does not trim the process a second time).
+        await Task.Run(() =>
+        {
+            foreach (var t in all) { ct.ThrowIfCancellationRequested(); t.Trim(level); }
+            CsCode.Sessions.ProcessMemory.Compact(aggressive: level == MemoryTrimLevel.Aggressive);
+        }, ct).ConfigureAwait(false);
     }
 
     public IDisposable TrackChildProcess(string name, int pid, long? restartAboveBytes = null, Func<ValueTask>? onOverBudget = null)

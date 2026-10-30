@@ -65,6 +65,11 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     /// <summary>Answers hello's "debugging" (set by the controller once the services exist).</summary>
     internal Func<bool>? IsDebugging { get; set; }
 
+    private volatile bool _needsPrompt;
+
+    /// <summary>Hello's <c>needsPrompt</c>: quitting now would ask the user about unsaved changes (kept current by the controller on the UI thread).</summary>
+    internal bool NeedsPrompt { get => _needsPrompt; set => _needsPrompt = value; }
+
     /// <summary>
     /// Takes the session (or prepares to be the spare) and opens the endpoint. Returns null with <paramref name="refusedExitCode"/> set when this
     /// process must not run (3: another process owns the session; 2: invalid name), or null without it when background mode is unavailable here
@@ -142,7 +147,7 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     /// <summary>Takes the lock of <paramref name="name"/> and makes it this process's session (releasing the previous one). False when another process holds it.</summary>
     internal bool TryTakeSession(string name, bool unnamed)
     {
-        var acquired = FileLock.TryAcquire(Runtime.SessionLockPath(name));
+        var acquired = FileLock.TryAcquire(Store.LockPathOf(name));
         if (acquired is null) return false;
         FileLock? previous;
         lock (_gate)
@@ -174,7 +179,8 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         SessionTrace.Mark("host: start-up failed");
     }
 
-    private void ReleaseSessionLock()
+    /// <summary>Lets go of the session (start-up failed, or the quit committed and its last write is done); hello keeps naming it, as quitting.</summary>
+    internal void ReleaseSessionLock()
     {
         FileLock? held;
         lock (_gate)
@@ -246,6 +252,7 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
                 {
                     Type = IpcVerbs.Hello, Ok = true, ProtocolVersion = IpcMessage.ProtocolVersionCurrent, Pid = Environment.ProcessId, Session = SessionName,
                     State = _state, LastShownUnixMs = LastShown?.ToUnixTimeMilliseconds(), Debugging = SafeIsDebugging(), WorkingSetBytes = Environment.WorkingSet,
+                    NeedsPrompt = _needsPrompt ? true : null,
                 };
             case IpcVerbs.ListSessions:
                 var list = await Lane.RunAsync(Store.List).ConfigureAwait(false);

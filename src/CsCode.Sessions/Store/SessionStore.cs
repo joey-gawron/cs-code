@@ -21,7 +21,9 @@ public sealed record SessionLoadResult(SessionDocument? Session, SessionLoadStat
 /// The saved sessions: <c>{UserDataDir}/sessions/&lt;name&gt;.json</c> (+ <c>.bak</c>, the previous version) and the per-session hot-exit backup
 /// directories (<see cref="HotExitBackupStore"/>). Writes are atomic (<see cref="AtomicFile"/>); reads tolerate a corrupt file by falling back to
 /// the backup. Synchronous and thread-safe for distinct sessions; callers run it on a background lane (never the UI thread). Several processes
-/// share the directory: each session is written only by the process that holds its lock (<see cref="SessionLock"/>).
+/// share the directory: each session is written only by the process that holds its lock (<see cref="LockPathOf"/>, a <see cref="Ipc.FileLock"/>).
+/// The locks live here, next to the data they protect, not in the runtime directory: launches whose environments resolve different runtime
+/// directories (no <c>XDG_RUNTIME_DIR</c> under <c>su -</c> or <c>env -i</c>) still find a session taken, so there is never a second writer.
 /// </summary>
 public sealed class SessionStore
 {
@@ -41,6 +43,15 @@ public sealed class SessionStore
 
     public string SessionsDir { get; }
     public HotExitBackupStore Backups { get; }
+
+    /// <summary><c>{UserDataDir}/sessions/.locks</c> (not a session: <see cref="List"/> reads only files directly in <see cref="SessionsDir"/>).</summary>
+    public string LocksDir => Path.Combine(SessionsDir, ".locks");
+
+    /// <summary>The lock whose holder owns (is the only writer of) session <paramref name="name"/>.</summary>
+    public string LockPathOf(string name) => Path.Combine(LocksDir, name + ".lock");
+
+    /// <summary>Serialises concurrent launchers of this data directory (discover, plan, start). A session name never starts with a dot.</summary>
+    public string LauncherLockPath => Path.Combine(LocksDir, ".launcher.lock");
 
     public string PathOf(string name) => Path.Combine(SessionsDir, name + ".json");
     private string BackupPathOf(string name) => PathOf(name) + ".bak";

@@ -25,9 +25,20 @@ internal static class LauncherEntry
         var spawner = ProcessHostSpawner.ForCurrentProcess(options.HeadlessTest ? ["--headless-test"] : null);
         var launcher = new SessionLauncher(runtime, new SessionStore(paths.UserDataDir), LaunchSettings.Read(paths.ConfigDir), spawner, Console.Out, Console.Error);
         foreach (var unknown in options.UnknownSwitches) Console.Error.WriteLine($"cscode: ignoring unknown option {unknown}");
-        var outcome = launcher.Run(ToRequest(options));
-        return outcome.ExitCode == 2 ? RunInProcess : outcome.ExitCode;
+        var request = ToRequest(options);
+        return ExitCodeFor(request, launcher.Run(request).ExitCode);
     }
+
+    /// <summary>
+    /// Exit code 2 (background mode unavailable) means "run the window in this process" only for opening a window: <c>--list-sessions</c>,
+    /// <c>--quit</c> and <c>--background</c> (the login autostart) never open one; they fail with the reason the launcher printed.
+    /// </summary>
+    internal static int ExitCodeFor(LaunchRequest request, int launcherExitCode) => launcherExitCode switch
+    {
+        2 when request.Kind == LaunchKind.Open => RunInProcess,
+        2 => 1,
+        var code => code,
+    };
 
     internal static LaunchRequest ToRequest(CommandLineOptions o)
     {

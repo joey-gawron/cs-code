@@ -108,7 +108,7 @@ public class SessionLauncherTests
         using var rt = new TestRuntime();
         using var spawner = new FakeSpawner(rt.Runtime);
         rt.Store.Save(new SessionDocument { Name = "work" });
-        using var held = FileLock.TryAcquire(rt.Runtime.SessionLockPath("work")); // its (wedged) owner holds the lock
+        using var held = FileLock.TryAcquire(rt.Store.LockPathOf("work")); // its (wedged) owner holds the lock
         using var wedged = new FakeHost(rt.Runtime, "work", ProcessStates.Shown, pid: Environment.ProcessId) { Wedged = true };
         var error = new StringWriter();
         var clock = Stopwatch.StartNew();

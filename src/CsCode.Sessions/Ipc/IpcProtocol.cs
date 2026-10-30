@@ -21,11 +21,12 @@ public static class ProcessStates
 /// <summary>
 /// One message of the launcher ↔ CsCode process protocol (requests and replies share the shape; unused fields are omitted on the wire).
 /// <list type="bullet">
-/// <item><c>hello {protocolVersion}</c> → pid, session, state, lastShownUnixMs, debugging, workingSetBytes.</item>
-/// <item><c>show {paths?, wait?}</c> → shows the window (opening the paths) and replies once it painted; with <c>wait</c> the reply comes when the
-/// (single) opened file's tab closes (<c>cscode --wait</c>, e.g. as the git editor). <c>remotes</c> (remote folder URIs, <c>cscode ssh://host/path</c>):
-/// the session connects and opens them once the window is up; the reply does not wait for the connection.</item>
-/// <item><c>hide</c>, <c>claim {session, paths?, hidden?}</c> (a warm spare takes a session), <c>listSessions</c>, <c>quit {force}</c>,
+/// <item><c>hello {protocolVersion}</c> → pid, session, state, lastShownUnixMs, debugging, workingSetBytes, needsPrompt.</item>
+/// <item><c>show {paths?, wait?}</c> → shows the window (opening the paths) and replies once it painted; with <c>wait</c> the reply comes when every
+/// opened file's tab has closed, or the window was closed (hidden) or the session quits (<c>cscode --wait</c>, e.g. as the git editor; VS Code's
+/// <c>--wait</c>). <c>remotes</c> (remote folder URIs, <c>cscode ssh://host/path</c>): the session connects and opens them once the window is up;
+/// the reply does not wait for the connection. A process that is already quitting answers <see cref="IpcMessage.QuittingError"/>.</item>
+/// <item><c>hide</c>, <c>claim {session, paths?, hidden?}</c> (a warm spare takes a session), <c>listSessions</c>, <c>quit {force, evict}</c>,
 /// <c>focusFile {paths}</c> (open without changing the window's visibility).</item>
 /// <item>Test-only verbs, accepted only by a process started with <c>--headless-test</c>: <c>inspect</c>, <c>testEdit</c>, <c>testCloseTab</c>,
 /// <c>testCaret</c>, <c>testFold</c>, <c>testCloseWindow</c>.</item>
@@ -46,6 +47,13 @@ public sealed record IpcMessage
     public long? LastShownUnixMs { get; init; }
     public long? WorkingSetBytes { get; init; }
     public bool? Debugging { get; init; }
+    /// <summary>
+    /// Hello: quitting this session now would have to ask the user (unsaved changes that cannot be backed up: <c>files.hotExit</c> off, over the
+    /// backup limit, or a session this version may not write). Such a session is never evicted.
+    /// </summary>
+    public bool? NeedsPrompt { get; init; }
+    /// <summary>Quit: an eviction (more than <c>maxResidentSessions</c>); the session refuses it rather than ask the user anything.</summary>
+    public bool? Evict { get; init; }
     public IReadOnlyList<IpcPath>? Paths { get; init; }
     /// <summary>Show: remote folder URIs from the command line (<c>cscode ssh://host/path</c>).</summary>
     public IReadOnlyList<string>? Remotes { get; init; }
@@ -62,6 +70,12 @@ public sealed record IpcMessage
     public int? Line { get; init; }
     public int? Column { get; init; }
     public int? Count { get; init; }
+
+    /// <summary>
+    /// The error of a request that reached a session process which has started to quit (its window is closing): the launcher waits for that
+    /// process to end and starts the session afresh instead of reporting a failure.
+    /// </summary>
+    public const string QuittingError = "quitting: the session is closing";
 
     public static IpcMessage Reply(bool ok = true, string? error = null) => new() { Type = "reply", Ok = ok, Error = error };
     public static IpcMessage Failure(string error) => Reply(false, error);

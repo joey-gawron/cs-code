@@ -81,9 +81,23 @@ public sealed partial class SessionWindowController
             return;
         }
         _backedUp.Clear(); // every backup is written again under the new name
+        // A session a newer CsCode wrote stays exactly as it is (its file and backups are that version's): the new name is a session of this
+        // version, written from now on, and Rename keeps the old one instead of deleting what this version cannot read.
+        var keptNewer = _readOnly;
+        lock (_writeGate) _readOnly = false;
         UpdateSessionIdentity();
-        await PersistAsync().ConfigureAwait(true);
-        if (rename || wasUnnamed) await _host.Lane.RunAsync(() => _host.Store.Delete(current)).ConfigureAwait(true);
+        var written = await PersistAsync().ConfigureAwait(true);
+        UpdateNeedsPrompt();
+        if (keptNewer)
+        {
+            if (rename) Notify(MessageSeverity.Info, $"Session '{current}' was saved by a newer CsCode, so it was kept as it is; this window is now session '{chosen}'.");
+        }
+        else if (rename || wasUnnamed)
+        {
+            // Its backups go with it only when every unsaved change is backed up under the new name.
+            if (written.Skipped.Count == 0) await _host.Lane.RunAsync(() => _host.Store.Delete(current)).ConfigureAwait(true);
+            else if (rename) Notify(MessageSeverity.Warning, $"Session '{current}' was kept: some unsaved changes exceed the backup limit and were not backed up under '{chosen}'.");
+        }
         _host.MarkShown();
     }
 
@@ -128,7 +142,7 @@ public sealed partial class SessionWindowController
     {
         var self = _host.SessionName;
         var candidates = await _host.Lane.RunAsync(() => _host.Store.List()
-            .Where(s => s.Name != self && !FileLock.IsHeldElsewhere(_host.Runtime.SessionLockPath(s.Name))).ToArray()).ConfigureAwait(true);
+            .Where(s => s.Name != self && !FileLock.IsHeldElsewhere(_host.Store.LockPathOf(s.Name))).ToArray()).ConfigureAwait(true);
         if (candidates.Length == 0)
         {
             Notify(MessageSeverity.Info, "There is no saved session to delete (running sessions must be quit first).");
@@ -142,7 +156,7 @@ public sealed partial class SessionWindowController
         if (answer != "Delete") return;
         var deleted = await _host.Lane.RunAsync(() =>
         {
-            using var held = FileLock.TryAcquire(_host.Runtime.SessionLockPath(name));
+            using var held = FileLock.TryAcquire(_host.Store.LockPathOf(name));
             if (held is null) return false; // it was started meanwhile
             _host.Store.Delete(name);
             return true;

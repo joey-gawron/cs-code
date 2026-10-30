@@ -95,6 +95,11 @@ public enum LaunchAction
     Claim,
     /// <summary>No process owns it and there is no spare: start a session process.</summary>
     Start,
+    /// <summary>
+    /// The session's process is quitting and still holds its lock (its final save): wait, bounded, until it lets go, then plan again. One that does
+    /// not let go in time counts as wedged.
+    /// </summary>
+    AwaitQuit,
     List,
     Quit,
     Background,
