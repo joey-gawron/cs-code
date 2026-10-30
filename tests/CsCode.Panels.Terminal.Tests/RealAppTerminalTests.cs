@@ -216,6 +216,44 @@ public sealed class RealAppTerminalTests
     }
 
     [AvaloniaFact]
+    public async Task With_a_vim_editor_open_keys_typed_into_the_terminal_reach_the_shell_and_leave_vim_alone()
+    {
+        var (app, hosts) = await StartWithFakePtys();
+        await using var _ = app;
+        var file = app.Sandbox.WriteFile("vim.txt", "first\nsecond\n");
+        await app.Get<INavigationService>().OpenAsync(new Uri(file));
+        var vim = app.Shell.Vim ?? throw new InvalidOperationException("the composition has no Vim adapter");
+        CsCode.Editor.View.CodeEditorControl? view = null;
+        Assert.True(await TerminalAppHost.WaitFor(() => (view = app.Shell.Well.ActiveEditor?.LiveView as CsCode.Editor.View.CodeEditorControl) is { } v
+            && vim.EngineOf(v) is not null), "the editor (with its Vim engine) did not appear");
+        var engine = vim.EngineOf(view!)!;
+        Assert.Equal("n", engine.ModeCode);
+        var caret = view!.Modal.Controller.Caret;
+
+        await app.RunAsync(TerminalCommandSet.Focus);
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View is { } t && t.Control.IsKeyboardFocusWithin && hosts.Count == 1));
+        var host = hosts[0];
+        host.ClearWritten();
+
+        // "jj" (an Insert-mode escape in many vimrcs, a motion in Normal mode) and Ctrl+V (Vim's block Visual; the editor's paste)
+        for (var i = 0; i < 2; i++)
+        {
+            app.Window.KeyPress(Key.J, RawInputModifiers.None, PhysicalKey.J, "j");
+            app.Window.KeyTextInput("j");
+            app.Window.KeyRelease(Key.J, RawInputModifiers.None, PhysicalKey.J, "j");
+        }
+        app.Window.KeyPress(Key.V, RawInputModifiers.Control, PhysicalKey.V, "v");
+        app.Window.KeyRelease(Key.V, RawInputModifiers.Control, PhysicalKey.V, "v");
+        await TerminalAppHost.SettleAsync(5);
+
+        Assert.Equal("jj\x16", host.Written);
+        Assert.Equal("n", engine.ModeCode);
+        Assert.Equal(caret, view.Modal.Controller.Caret);
+        Assert.Equal("first\nsecond\n", view.Document.GetText().Replace("\r\n", "\n", StringComparison.Ordinal));
+        Assert.True(app.View!.Control.IsKeyboardFocusWithin, "the terminal lost the keyboard");
+    }
+
+    [AvaloniaFact]
     public async Task Open_in_terminal_starts_the_shell_in_that_folder()
     {
         await using var app = await TerminalAppHost.StartAsync();
