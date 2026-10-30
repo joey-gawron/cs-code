@@ -28,7 +28,7 @@ public class RealAppKeyTests
         // The Visual Studio preset binds these to commands nothing registers (find next, jump to bracket, peek...): they used to be
         // swallowed with a "command not available" toast, so F3 never reached the editor's own find. (Ctrl+` left the list when the
         // integrated terminal registered its toggle.)
-        foreach (var key in new[] { "f3", "shift+f3", "ctrl+]", "alt+f12" })
+        foreach (var key in OperatingSystem.IsMacOS() ? new[] { "cmd+g", "cmd+shift+g", "cmd+shift+\\", "alt+f12" } : new[] { "f3", "shift+f3", "ctrl+]", "alt+f12" })
         {
             var stroke = KeyStrokeParser.ParseStroke(key);
             var bound = host.Get<IKeybindingService>().All.Where(b => b.Chord.Count == 1 && b.Chord[0] == stroke).Select(b => b.Command).ToArray();

@@ -17,8 +17,8 @@ public class MacroUndoRealAppTests
 {
     private static KeyStep K(string key) => new(KeyStrokeParser.ParseStroke(key));
 
-    private static void Undo(MacroApp app) => app.Press(Key.Z, MacroApp.Ctrl);
-    private static void Redo(MacroApp app) => app.Press(Key.Y, MacroApp.Ctrl);
+    private static void Undo(MacroApp app) => app.Press(Key.Z, MacroApp.Command);
+    private static void Redo(MacroApp app) => app.Press(Key.Y, MacroApp.Command);
 
     [AvaloniaFact(Timeout = 120_000)]
     public async Task One_ctrl_z_reverses_a_playback_of_many_runs_and_ctrl_y_redoes_it()
@@ -58,10 +58,10 @@ public class MacroUndoRealAppTests
         app.SetCaret(0, 4);
         app.RecordKey();
         app.Type("abc");
-        Undo(app);                                   // AvaloniaEdit's own Ctrl+Z: not a key binding, so it is recorded as a key step
+        Undo(app);                                   // AvaloniaEdit's own Ctrl+Z (Cmd+Z): not a key binding, so it is recorded as a key step
         app.Type("xy");
         app.RecordKey();
-        Assert.Equal([new TextStep("abc"), K("ctrl+z"), new TextStep("xy")], app.Service.Last!.Steps);
+        Assert.Equal([new TextStep("abc"), K(OperatingSystem.IsMacOS() ? "meta+z" : "ctrl+z"), new TextStep("xy")], app.Service.Last!.Steps);
         Assert.Equal("basexy", app.Text);
 
         var result = await app.Service.PlayAsync(app.Service.Last!, new MacroPlayOptions(MacroRepeat.Times, 2));

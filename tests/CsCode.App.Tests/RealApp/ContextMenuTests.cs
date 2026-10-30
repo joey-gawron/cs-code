@@ -97,11 +97,11 @@ public class RealAppContextMenuTests
             "Command Palette...",
         ], Headers(menu));
         var byName = Entries(menu).ToDictionary(e => e.AccessibleName);
-        Assert.Equal("Ctrl+X", byName["Cut"].Gesture);
-        Assert.Equal("Ctrl+C", byName["Copy"].Gesture);
-        Assert.Equal("Ctrl+V", byName["Paste"].Gesture);
-        Assert.Equal("Ctrl+K, Ctrl+C", byName["Comment Selection"].Gesture);
-        Assert.Equal("Ctrl+F10", byName["Run To Cursor"].Gesture);
+        Assert.Equal(PlatformKeys.Label("Ctrl+X", "⌘X"), byName["Cut"].Gesture);
+        Assert.Equal(PlatformKeys.Label("Ctrl+C", "⌘C"), byName["Copy"].Gesture);
+        Assert.Equal(PlatformKeys.Label("Ctrl+V", "⌘V"), byName["Paste"].Gesture);
+        Assert.Equal(PlatformKeys.Label("Ctrl+K, Ctrl+C", "⌘K ⌘C"), byName["Comment Selection"].Gesture);
+        Assert.Equal(PlatformKeys.Label("Ctrl+F10", "⌘F10"), byName["Run To Cursor"].Gesture);
         Assert.Equal(["Insert Breakpoint", "Conditions..."], byName["Breakpoint"].Children.Select(c => c.AccessibleName));
         Assert.Equal("F9", byName["Breakpoint"].Children[0].Gesture);
         Assert.True(Avalonia.Automation.AutomationProperties.GetName(ContextMenus.ItemsOf(menu).First(i => ContextMenus.EntryOf(i)!.AccessibleName == "Copy")) == "Copy");
@@ -122,7 +122,7 @@ public class RealAppContextMenuTests
         var menu = await RightClickAsync(host, view, PointOfOffset(view, 4, 13));
         Assert.Equal(["Rename...", "-", "Go To Definition", "Go To Declaration", "Go To Implementation"], Headers(menu).Take(5));
         var renameItem = ContextMenus.ItemsOf(menu).First(i => ContextMenus.EntryOf(i)!.AccessibleName == "Rename...");
-        Assert.Equal("Ctrl+R, Ctrl+R", ContextMenus.EntryOf(renameItem)!.Gesture);
+        Assert.Equal(PlatformKeys.Label("Ctrl+R, Ctrl+R", "⌘R ⌘R"), ContextMenus.EntryOf(renameItem)!.Gesture);
         Assert.False(renameItem.IsEnabled); // the server has not answered prepareRename yet: the menu did not wait for it
         prepared.SetResult(new PrepareRenameResult(TextRange.FromLines(4, 12, 4, 18), null));
         Assert.True(await RealAppHost.WaitFor(() => renameItem.IsEnabled), "Rename enabled when prepareRename answered");
@@ -221,7 +221,7 @@ public class RealAppContextMenuTests
             "Float", "New Horizontal Document Group", "New Vertical Document Group",
         ], Headers(menu));
         var entries = Entries(menu).ToDictionary(e => e.AccessibleName);
-        Assert.Equal("Ctrl+F4", entries["Close"].Gesture);
+        Assert.Equal(PlatformKeys.Label("Ctrl+F4", "⌘F4"), entries["Close"].Gesture);
         Assert.True(entries["Close To The Right"].IsEnabled); // second.txt is to its right
         Assert.False(entries["Reveal in Explorer"].IsEnabled); // the file is not in an open folder
 
@@ -317,7 +317,7 @@ public class RealAppContextMenuTests
         Assert.Contains(entries, e => e.AccessibleName == "Open in Terminal"); // the integrated terminal opens in the file's folder
         await entries.First(e => e.AccessibleName == "Copy Relative Path").Run!();
         Assert.Equal(Path.Combine("src", "a.cs"), (await host.Get<IClipboardService>().ReadAsync())?.Text);
-        Assert.Equal("Ctrl+C", entries.First(e => e.AccessibleName == "Copy").Gesture);
+        Assert.Equal(PlatformKeys.Label("Ctrl+C", "⌘C"), entries.First(e => e.AccessibleName == "Copy").Gesture);
     }
 
     [AvaloniaFact(Timeout = 60_000)]
@@ -351,7 +351,7 @@ public class RealAppContextMenuTests
         await DevScene.SettleAsync(5);
         menus.Refresh();
         Assert.True(copy.IsEnabled);
-        Assert.Equal("Ctrl+C", copy.Gesture);
+        Assert.Equal(PlatformKeys.Label("Ctrl+C", "⌘C"), copy.Gesture);
         await ((IAsyncRelayCommand)copy.Command!).ExecuteAsync(null);
         Assert.Equal("        var answer = 42;\n", (await clipboard.ReadAsync())?.Text);
 
@@ -499,10 +499,11 @@ public class RealAppContextMenuTests
     [AvaloniaFact(Timeout = 60_000)]
     public async Task Selecting_sets_PRIMARY_and_a_middle_click_pastes_it_in_the_real_editor()
     {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "editor.selectionClipboard (PRIMARY, middle-click paste) is Linux-only, as in VS Code (EditorSettings)");
         var primary = new InMemoryPrimarySelection();
         await using var host = await StartWithFileAsync(configure: s =>
             s.AddSingleton(sp => new ClipboardService(sp.GetRequiredService<Ui.Threading.IUiDispatcher>(), AvaloniaPlatformClipboard.Of(() => sp.GetRequiredService<WindowHolder>().Window), () => primary)));
-        Assert.True(OperatingSystem.IsLinux()); // editor.selectionClipboard is on by default on Linux
+        // editor.selectionClipboard is on by default on Linux
         await DevScene.SettleAsync(10);
         var tab = host.Shell.Well.ActiveEditor!;
         tab.Controller!.SetSelection(TextRange.FromLines(0, 0, 0, 5)); // "class"

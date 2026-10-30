@@ -28,8 +28,8 @@ public class MacroRealAppTests(ITestOutputHelper output)
         app.RecordKey();
         Assert.True(app.Service.IsRecording);
         Assert.Equal("$(record) Recording macro…", app.StatusText(MacroCommands.RecordingStatusId));
-        app.Press(Key.K, MacroApp.Ctrl);   // Ctrl+K, Ctrl+C: Visual Studio's Comment Selection (a command)
-        app.Press(Key.C, MacroApp.Ctrl);
+        app.Press(Key.K, MacroApp.Command); // Ctrl+K, Ctrl+C: Visual Studio's Comment Selection (a command)
+        app.Press(Key.C, MacroApp.Command);
         await app.SettleAsync();
         app.Press(Key.End);
         app.Type("!");
@@ -164,7 +164,7 @@ public class MacroRealAppTests(ITestOutputHelper output)
     {
         await using var app = await MacroApp.StartAsync("foo a foo b foo c");
         app.RecordKey();
-        app.Press(Key.F, MacroApp.Ctrl);    // opens the find panel (not recorded: the search is)
+        app.Press(Key.F, MacroApp.Command); // opens the find panel (not recorded: the search is)
         await app.SettleAsync();
         await FocusFindBoxAsync(app);
         app.Type("foo");                    // into the find box: the search step's text

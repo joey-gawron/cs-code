@@ -22,9 +22,19 @@ public static class ProcessTable
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { return false; }
     }
 
-    /// <summary>Live processes whose environment contains <c>variable=value</c> (the adapter server's marker reaches everything it spawned).</summary>
+    /// <summary>
+    /// Live processes whose environment contains <c>variable=value</c> (the adapter server's marker reaches everything it spawned): Linux /proc;
+    /// macOS <c>ps -E</c>, which shows the environment of this user's processes except Apple's own binaries.
+    /// </summary>
     public static List<int> WithEnvironment(string variable, string value)
     {
+        if (OperatingSystem.IsMacOS())
+        {
+            var entry = $" {variable}={value}";
+            return Ps("-A", "-E", "-ww", "-o", "pid=,stat=,command=")
+                .Where(r => r.Pid != Environment.ProcessId && !r.Stat.StartsWith('Z') && (r.Tail.EndsWith(entry, StringComparison.Ordinal) || r.Tail.Contains(entry + " ", StringComparison.Ordinal)))
+                .Select(r => r.Pid).ToList();
+        }
         var result = new List<int>();
         if (!OperatingSystem.IsLinux()) return result;
         var needle = Encoding.UTF8.GetBytes($"{variable}={value}\0");
