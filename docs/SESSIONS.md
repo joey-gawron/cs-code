@@ -154,6 +154,28 @@ so they stay (and a rename writes them under the new name before the old session
   language servers, watchers and debug sessions stay alive. With it false, closing quits the session (with hot exit).
 * *File ▸ Close Window (Keep Running)*: hide. *File ▸ Quit Session*: persist (with backups, `wasResident` false) and end this process.
   *File ▸ Exit* / *Exit All*: every other CsCode process quits (hot exit), then this one.
+* **A quit commits when its window really closes**, not before: sealing the session, deleting the backups after save prompts, releasing the
+  lock and saying `quitting` in hello happen when the window's close goes ahead (`MainWindow.CloseProceeding`). A module may hold the close
+  with a question of its own after the save prompts (the terminal's `terminal.integrated.confirmOnExit`, see SHELL.md); that is not a
+  cancel, and the quit is then **pending**:
+  * the window is shown (a hidden one too, so the question can be answered) and works; hello says `shown`, shows go ahead; the quit answers
+    "the quit waits for an answer in the session's window" (an IPC caller such as Exit All lists it as not quit yet);
+  * nothing is written over the session file the quit wrote before its prompts (the autosave writes nothing while any quit is under way),
+    so the next start restores every tab the prompts closed, as the shell keeps the layout saved when the close began; after save prompts the
+    backups are deleted at once (every tab is closed whatever the answer: "Don't Save" text never comes back, also after a crash meanwhile);
+  * *Terminate* closes the window again and the quit commits (backups discarded as the prompts decided, `wasResident` false, lock released);
+  * the terminal says nothing when its question is declined, so the quit is undone when the user **works on** in the window (a tab opened,
+    closed or activated, an edit, a folder, a tool window): the session is saved as it is now (the tabs the prompts closed stay closed),
+    counts as resident again, and the window's next close is a new one (background mode hides it). A new Quit Session while the question is
+    up asks again (the save prompts for anything dirty since, then the question); closing the window meanwhile asks again too.
+  * A forced quit (`--quit`) or an eviction never asks: when the terminal holds its close, it is refused (the window stays as it was, hidden
+    for an eviction) and the session says `needsPrompt` from then on, so it is not picked for eviction again. The question it raised stays up;
+    answering *Terminate* to it later is a new close of the window (hidden, in background mode).
+  * SIGTERM: everything was backed up before the close; the quit is not reported committed while the close is held, so the host's 15 s
+    watchdog ends the process (*Terminate* within that time ends it at once). SIGTERM while a pending quit's question is up leaves its
+    decisions as they are on disk.
+  * A user's close while a quit's save prompts are up or its last write is under way is ignored (the prompts answer it): a second close used
+    to close the window behind the quit, without its commit.
 * *File ▸ Sessions ▸* Open Session…, Switch Session… (`workbench.action.switchSession`, **Ctrl+Alt+S**; shows the other session and hides
   this one), Save Session As… (the old session stays as saved), Rename Session…, Delete Session… (only sessions that are not running),
   Start in the Background at Login….
@@ -165,8 +187,9 @@ so they stay (and a rename writes them under the new name before the old session
   then one trim: the memory monitor's `IMemoryMonitor.TrimNowAsync(Aggressive)` runs the registered trimmables, then a compacting full GC
   including the large object heap and `malloc_trim`. (A second, process-level trim after it only paused every thread again; it is used alone
   when there is no monitor.)
-* A hidden session that could only quit by asking (dirty documents with `files.hotExit` off, over the backup limit, or a session a newer
-  CsCode wrote) says so in `hello` (`needsPrompt`) and is never evicted; an eviction that reaches it anyway is refused, its window stays hidden.
+* A hidden session that could only quit by asking (dirty documents with `files.hotExit` off, over the backup limit, a session a newer
+  CsCode wrote, or a window whose close a module held with a question before) says so in `hello` (`needsPrompt`) and is never evicted; an
+  eviction that reaches it anyway is refused, its window stays hidden.
 * After `cscode.background.idleServerTimeoutMinutes` (15; 0 = never) the running language servers are stopped and restarted when the window is
   shown again; a running debug session keeps them (and keeps the process from being evicted).
 * Before showing again, the active tab of each group gets its view back, so the first frame shows the editors.
@@ -411,6 +434,10 @@ when `codesign` exists.
   go back into their documents once the file system answers. After save prompts: a relaunch during the shutdown starts the session afresh
   (the launcher against the real host), a show during the prompts goes ahead and one during the last write waits for the quit, a cancelled
   or refused quit keeps `--wait` waiting, and the backups of remote documents waiting for their connection survive the discard and a rename.
+* `HeldQuitTests` — the same, with the real terminal module (idle fake PTYs) and `confirmOnExit` "always": a quit whose close the terminal
+  holds after "Don't Save" keeps the session file it wrote before the prompts and leaves no backup (answered at once or after the autosave
+  delay), "Save" then Terminate, Cancel then working on (the autosave resumes, the next close hides, the next quit asks again), a hot-exit quit
+  keeps the session's lock until the window closes, an eviction and a forced quit are refused, and SIGTERM is left to the watchdog.
 * `SessionFixProcessTests` — REAL processes: SIGTERM saves the unsaved changes, an unusable runtime directory never opens a window for
   `--list-sessions`/`--quit`/`--background`, a relative `CSCODE_HOME`, reopening a session while its process waits for a language server that
   ignores shutdown (a fresh start, no copy), two runtime directories over one data directory (one owner, the other launch opens a copy).

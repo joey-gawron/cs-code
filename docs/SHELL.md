@@ -366,7 +366,12 @@ after the Save prompts (it watches the main window also for a Terminal shown onl
 the floating windows are docked back only once a close goes ahead (`MainWindow.OnClosing`, after every handler), and a held close leaves the window
 working: the next close starts over, Save prompts included (the user may have edited since declining), background mode's hide aside for the
 module's own close again; the layout saved when the held close began stands until the user changes the layout, then the debounced saves resume
-(`ShellController.CloseEnd.Held`; `ConfirmOnExitWindowTests`). Reset Window Layout docks everything. Not done: dragging a tab out of the window to float it relies on Dock's own drag
+(`ShellController.CloseEnd.Held`; `ConfirmOnExitWindowTests`). A held close is not a cancel, and the window reports it as such to background
+mode, whose quits drive the window's close: `RequestCloseAsync` (the Save prompts, then the close) and `CloseWithoutPrompt` return the
+`CloseEnd`, `CloseProceeding` is raised when a confirmed close goes ahead (also a held one the module repeats), and `ForgetHeldClose` drops a
+held close whose quit was given up, so the module's repeat is a new close (background mode's hide first). The quit commits on
+`CloseProceeding` and waits while the close is held (SESSIONS.md, "A quit commits when its window really closes"). Reset Window Layout docks
+everything. Not done: dragging a tab out of the window to float it relies on Dock's own drag
 (not tested), and a floating window holds either tools or documents (Dock gives a floating root one kind of dock), never both.
 
 **Layout.** `LayoutPersistence`: tool placement, visibility, Auto Hide (`ToolLayout.AutoHide`: an auto-hidden tool is on its well's edge strip again after a

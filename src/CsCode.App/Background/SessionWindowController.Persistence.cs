@@ -44,7 +44,10 @@ public sealed partial class SessionWindowController
 
     private static readonly BackupWriteResult NothingWritten = new([], [], 0, false);
 
-    /// <summary>Everything that changes a session marks it for autosave: tabs, the active tab, edits of dirty documents, folders, tool windows.</summary>
+    /// <summary>
+    /// Everything that changes a session marks it for autosave: tabs, the active tab, edits of dirty documents, folders, tool windows (and declines a
+    /// quit whose close a module holds: <see cref="OnSessionChanged"/>).
+    /// </summary>
     private void SubscribeForAutosave()
     {
         if (_subscribed) return;
@@ -53,11 +56,11 @@ public sealed partial class SessionWindowController
         _subs.Add(well.TabsChanged.Subscribe(_ =>
         {
             TrackTabs();
-            _autosave.MarkDirty();
+            OnSessionChanged();
         }));
-        _subs.Add(well.ActiveChanged.Subscribe(_ => _autosave.MarkDirty()));
-        if (_workspace is not null) _subs.Add(_workspace.FoldersChanged.Subscribe(_ => _autosave.MarkDirty()));
-        _subs.Add(_shell.Tools.VisibilityChanged.Subscribe(_ => _autosave.MarkDirty()));
+        _subs.Add(well.ActiveChanged.Subscribe(_ => OnSessionChanged()));
+        if (_workspace is not null) _subs.Add(_workspace.FoldersChanged.Subscribe(_ => _ui.Post(OnSessionChanged)));
+        _subs.Add(_shell.Tools.VisibilityChanged.Subscribe(_ => OnSessionChanged()));
         TrackTabs();
     }
 
@@ -76,11 +79,11 @@ public sealed partial class SessionWindowController
             var doc = tab.Doc;
             store.Add(tab.DirtyStateChanged.Subscribe(_ =>
             {
-                _autosave.MarkDirty();
+                OnSessionChanged();
                 UpdateNeedsPrompt();
             }));
             // Typing into a dirty document: one volatile write per keystroke (the saver arms its timer once per save).
-            store.Add(doc.Changed.Subscribe(_ => { if (doc.IsDirty) _autosave.MarkDirty(); }));
+            store.Add(doc.Changed.Subscribe(_ => { if (doc.IsDirty) OnSessionChanged(); }));
             _tabSubs[tab] = store;
         }
     }
@@ -155,14 +158,15 @@ public sealed partial class SessionWindowController
     /// <summary>
     /// Whether quitting now would have to ask the user (UI thread; answered by hello without the UI thread): dirty documents that cannot be backed
     /// up because <c>files.hotExit</c> is off, the last backup skipped some (over <c>cscode.sessions.maxBackupMb</c>), or the session was written
-    /// by a newer CsCode. Such a session is never evicted.
+    /// by a newer CsCode; or a close of the window was held by a module's question (the terminal's <c>confirmOnExit</c>). Such a session is never
+    /// evicted.
     /// </summary>
     private void UpdateNeedsPrompt()
     {
         if (_disposed) return;
         var dirty = _shell.Well.EditorTabs.Any(t => t.IsDirty);
         var hotExitOff = _config?.Get(BackgroundSettings.HotExit, BackgroundSettings.HotExitOnExitAndWindowClose) == BackgroundSettings.HotExitOff;
-        _host.NeedsPrompt = dirty && (hotExitOff || _readOnly || Volatile.Read(ref _skippedBackups) > 0);
+        _host.NeedsPrompt = _closeAsks || (dirty && (hotExitOff || _readOnly || Volatile.Read(ref _skippedBackups) > 0));
     }
 
     private void CaptureBounds()
@@ -216,11 +220,16 @@ public sealed partial class SessionWindowController
         return result;
     }
 
-    /// <summary>The autosave: capture on the UI thread, write on the lane.</summary>
+    /// <summary>
+    /// The autosave: capture on the UI thread, write on the lane. Not while a quit is under way: it wrote the session itself (before its save prompts
+    /// close the tabs: with every tab), and that write stands while the prompts wait and while a module holds the quit's close (as the shell keeps the
+    /// layout saved when a close began); an undone quit marks the session for the autosave again.
+    /// </summary>
     private async Task SaveSnapshotAsync()
     {
         if (_readOnly || _disposed || _host.SessionName is null) return;
-        var captured = await _ui.InvokeAsync(() => Capture(includeBackups: true)).ConfigureAwait(false);
+        var captured = await _ui.InvokeAsync(() => _quitting || _disposed ? null : Capture(includeBackups: true)).ConfigureAwait(false);
+        if (captured is null) return;
         var result = await _host.Lane.RunAsync(() => Write(captured)).ConfigureAwait(false);
         if (result.OverLimit && !_overLimitWarned)
         {

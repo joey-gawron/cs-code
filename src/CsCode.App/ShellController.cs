@@ -374,6 +374,9 @@ public sealed class ShellController : IDisposable
         if (_closing++ == 0 && !_closeHeld) SaveLayoutNow();
     }
 
+    /// <summary>A close is in progress (between <see cref="BeginClose"/> and its <see cref="EndClose"/>): what changes now (tabs closing) is the close's doing.</summary>
+    public bool IsClosing => _closing > 0;
+
     /// <summary>How a close that <see cref="BeginClose"/> began ended.</summary>
     public enum CloseEnd
     {

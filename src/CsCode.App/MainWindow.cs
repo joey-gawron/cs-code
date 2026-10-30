@@ -459,9 +459,17 @@ public sealed class MainWindow : Window, IWindowChrome
 
     /// <summary>
     /// Background mode: asked before a user's close goes ahead; returning true means it was handled (the window was hidden, or a quit with hot exit
-    /// started) and the close is cancelled. <see cref="CloseWithoutPrompt"/> and <see cref="RequestExitAsync"/> bypass it.
+    /// started) and the close is cancelled. <see cref="CloseWithoutPrompt"/> and <see cref="RequestCloseAsync"/> bypass it, and so does the close
+    /// that a module repeats after it held one confirmed with prompts (unless <see cref="ForgetHeldClose"/>).
     /// </summary>
     public Func<WindowCloseReason, bool>? CloseInterceptor { get; set; }
+
+    /// <summary>
+    /// A confirmed close goes ahead: raised once every Closing handler let it (before the floating windows dock back and the window closes), also
+    /// for a close that a module held and repeats when the user agrees. Background mode commits its quit here: until then a module may still
+    /// hold the close, and a held close the user declines leaves the window working.
+    /// </summary>
+    public event Action? CloseProceeding;
 
     private void UpdateTitle()
     {
@@ -523,6 +531,8 @@ public sealed class MainWindow : Window, IWindowChrome
         if (!e.Cancel)
         {
             _closeProceeding = true;
+            try { CloseProceeding?.Invoke(); }
+            catch (Exception ex) { _sp.GetService<Startup.CrashHandler>()?.Report(ex, fatal: false, source: "Closing"); }
             ReleaseFloatingWindows();
             return;
         }
@@ -530,8 +540,8 @@ public sealed class MainWindow : Window, IWindowChrome
         _held = _confirming;
     }
 
-    /// <summary>The Save prompts, then the close: true when the window closed (false: a prompt was cancelled, or a module held the close).</summary>
-    private async Task<bool> CloseWithPromptsAsync()
+    /// <summary>The Save prompts, then the close: how it ended (a prompt cancelled, a module holding the close, or the window closed).</summary>
+    private async Task<ShellController.CloseEnd> CloseWithPromptsAsync()
     {
         _shell.BeginClose(); // saves the layout before tabs close, so the next start restores them
         var end = ShellController.CloseEnd.Cancelled;
@@ -545,7 +555,7 @@ public sealed class MainWindow : Window, IWindowChrome
             end = CloseConfirmed(HeldClose.Prompted);
         }
         finally { _shell.EndClose(end); } // cancelled (a Save prompt): keep the layout as it is now
-        return end == ShellController.CloseEnd.Closed;
+        return end;
     }
 
     private ShellController.CloseEnd CloseConfirmed(HeldClose how)
@@ -557,10 +567,27 @@ public sealed class MainWindow : Window, IWindowChrome
         return _closeProceeding ? ShellController.CloseEnd.Closed : ShellController.CloseEnd.Held;
     }
 
-    /// <summary>Closes without any save prompts (tests and crash recovery).</summary>
-    public void CloseWithoutPrompt() => CloseConfirmed(HeldClose.WithoutPrompt);
+    /// <summary>
+    /// Closes without any save prompts (background mode's hot-exit quit, tests and crash recovery): <see cref="ShellController.CloseEnd.Closed"/>, or
+    /// <see cref="ShellController.CloseEnd.Held"/> when a module holds the close with a question (it closes again when the user agrees).
+    /// </summary>
+    public ShellController.CloseEnd CloseWithoutPrompt() => CloseConfirmed(HeldClose.WithoutPrompt);
 
-    public Task<bool> RequestExitAsync() => CloseWithPromptsAsync();
+    public async Task<bool> RequestExitAsync() => await CloseWithPromptsAsync().ConfigureAwait(true) == ShellController.CloseEnd.Closed;
+
+    /// <summary>
+    /// The Save prompts, then the close (background mode's quit with prompts): how it ended. <see cref="ShellController.CloseEnd.Held"/> is not a
+    /// cancel: every prompt was answered and the tabs are closed, and the module that holds the close repeats it when the user agrees (see
+    /// <see cref="CloseProceeding"/>), or does nothing when they decline.
+    /// </summary>
+    public Task<ShellController.CloseEnd> RequestCloseAsync() => CloseWithPromptsAsync();
+
+    /// <summary>
+    /// Background mode: the quit that a module's held close belonged to was given up (the user declined the module's question and works on, or the
+    /// quit was refused), so that close no longer stands: the next close of this window, the module's own repeat included, is a new one (background
+    /// mode's hide first, and the Save prompts again).
+    /// </summary>
+    public void ForgetHeldClose() => _held = HeldClose.None;
 
     // ------------------------------------------------------------------ window modes
 
