@@ -44,6 +44,8 @@ public static class TerminalSettingKeys
     public const string AltClickMovesCursor = Prefix + "altClickMovesCursor";
     public const string PersistentSessionReviveProcess = Prefix + "persistentSessionReviveProcess";
     public const string SplitCwd = Prefix + "splitCwd";
+    public const string ShellIntegrationEnabled = Prefix + "shellIntegration.enabled";
+    public const string ShellIntegrationDecorationsEnabled = Prefix + "shellIntegration.decorationsEnabled";
 
     /// <summary>VS Code's default word separators for double-click selection.</summary>
     public const string DefaultWordSeparators = " ()[]{}',\"`─‘’“”|";
@@ -91,6 +93,8 @@ public static class TerminalSettingKeys
         new(AltClickMovesCursor, J(true), "Alt+click moves the prompt's cursor (not implemented: the click is passed on)."),
         new(PersistentSessionReviveProcess, J("never"), "CsCode does not restore terminals after a restart; only 'never' is honoured."),
         new(SplitCwd, J("inherited"), "Where a split terminal starts: inherited (the current directory of the terminal it splits), initial (where that terminal started), workspaceRoot."),
+        new(ShellIntegrationEnabled, J(true), "Start bash, zsh, fish and pwsh with CsCode's shell integration (prompt and command marks, exit codes, the working directory). The user's startup files still run and are never changed."),
+        new(ShellIntegrationDecorationsEnabled, J("both"), "Show the shell-integration mark beside each command's prompt (coloured by its exit code): both, gutter, overviewRuler (CsCode has no ruler: as never), never."),
     ];
 }
 

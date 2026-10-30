@@ -76,6 +76,7 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
             CurrentDirectoryChanged = dir => _cwd = dir,
             Bell = () => _bell.Fire(this),
             ClipboardWrite = text => _clipboardWrite.Fire(text),
+            CommandRecorded = OnCommandRecorded,
         };
         _worker = new Thread(WorkerLoop) { IsBackground = true, Name = $"cscode-terminal-{id}" };
         _worker.Start();
@@ -98,6 +99,29 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
 
     /// <summary>The directory the program was started in.</summary>
     public string? StartDirectory { get; private set; }
+
+    /// <summary>CsCode started the shell with its shell-integration script (the marks still depend on the shell running it).</summary>
+    public bool ShellIntegrationInjected { get; private set; }
+
+    /// <summary>The last command the shell reported finished (shell integration), with a short tail of its output; null before the first.</summary>
+    public TerminalCommandSummary? LastCommand => Volatile.Read(ref _lastCommand);
+
+    private TerminalCommandSummary? _lastCommand;
+    private readonly Emitter<TerminalCommandSummary> _commandFinished = new();
+
+    /// <summary>A command finished (shell integration; fires on the worker thread): screen readers announce it.</summary>
+    public IEventSource<TerminalCommandSummary> CommandFinished => _commandFinished;
+
+    /// <summary>On the worker, right after the emulator recorded a finished command: a bounded summary for the UI.</summary>
+    private void OnCommandRecorded(TerminalCommand command)
+    {
+        var summary = new TerminalCommandSummary(command, Emulator.CommandOutput(command, TerminalCommandSummary.MaxOutputTail, maxRows: 200) ?? "");
+        Volatile.Write(ref _lastCommand, summary);
+        _commandFinished.Fire(summary);
+    }
+
+    /// <summary>The whole output of the last command (bounded by the scrollback), read on the worker; null without shell integration.</summary>
+    public Task<string?> GetLastCommandOutputAsync() => InvokeAsync(e => e.CommandOutput());
 
     /// <summary>
     /// The program's working directory as the kernel knows it (<c>/proc/&lt;pid&gt;/cwd</c>): right even for a shell without shell integration
@@ -140,6 +164,10 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
     internal void Start(PtyStartInfo info)
     {
         var host = _hostFactory();
+        // shell integration: the emulator trusts command lines reported with the nonce the shell was given (queued before any output)
+        var nonce = info.Environment.GetValueOrDefault(ShellIntegrationInjector.NonceVariable);
+        ShellIntegrationInjected = info.Environment.ContainsKey(ShellIntegrationInjector.InjectionVariable);
+        Post(() => Emulator.ShellIntegrationNonce = nonce);
         try
         {
             host.Start(info, this);
@@ -423,10 +451,17 @@ public sealed class TerminalSession : ITerminal, IPtyListener, IDisposable
         _exited.Clear();
         _bell.Clear();
         _clipboardWrite.Clear();
+        _commandFinished.Clear();
     }
 
     /// <summary>Waits (tests) until the worker thread ended after <see cref="Dispose"/>.</summary>
     internal bool JoinWorker(TimeSpan timeout) => _worker.Join(timeout);
 
     public override string ToString() => $"{Id}: {Title}";
+}
+
+/// <summary>A finished command for the UI: the command (line, exit code, rows) and the end of its output (at most <see cref="MaxOutputTail"/> characters).</summary>
+public sealed record TerminalCommandSummary(TerminalCommand Command, string OutputTail)
+{
+    public const int MaxOutputTail = 4096;
 }

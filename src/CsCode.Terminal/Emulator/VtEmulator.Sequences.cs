@@ -712,12 +712,23 @@ public sealed partial class VtEmulator
     {
         var line = _screen.Current;
         var kind = data.Length > 0 ? data[0] : '\0';
+        if (kind is 'A' or 'B' or 'C' or 'D' or 'E' or 'P') HasShellIntegration = true;
         switch (kind)
         {
-            case 'A': line.Mark = RowMark.PromptStart; line.Touch(); break;
+            case 'A':
+                line.Mark = RowMark.PromptStart;
+                line.Touch();
+                OnPromptStart();
+                break;
             // the command line usually shares the prompt's row: a prompt mark is never downgraded
-            case 'B': if (line.Mark == RowMark.None) { line.Mark = RowMark.CommandStart; line.Touch(); } break;
-            case 'C': if (line.Mark == RowMark.None) { line.Mark = RowMark.CommandExecuted; line.Touch(); } break;
+            case 'B':
+                if (line.Mark == RowMark.None) { line.Mark = RowMark.CommandStart; line.Touch(); }
+                OnCommandStart();
+                break;
+            case 'C':
+                if (line.Mark == RowMark.None) { line.Mark = RowMark.CommandExecuted; line.Touch(); }
+                OnCommandExecuted();
+                break;
             case 'D':
             {
                 // The exit code belongs to the command whose prompt is above (VS Code decorates that prompt): mark the nearest prompt row.
@@ -727,11 +738,15 @@ public sealed partial class VtEmulator
                     prompt.MarkExitCode = code ?? int.MinValue; // MinValue: finished, code unknown
                     prompt.Touch();
                 }
+                OnCommandFinished(code);
                 CommandFinished?.Invoke(code);
                 break;
             }
+            case 'E' when command == 633:
+                OnCommandLine(data);
+                break;
             case 'P' when command == 633 && data.StartsWith("P;Cwd=", StringComparison.Ordinal):
-                SetCurrentDirectory(data[6..]);
+                SetCurrentDirectory(UnescapeShellIntegrationValue(data[6..]));
                 break;
         }
     }
