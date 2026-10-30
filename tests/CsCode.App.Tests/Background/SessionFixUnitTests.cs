@@ -3,6 +3,8 @@ using CsCode.App.Background;
 using CsCode.App.Startup;
 using CsCode.Core.Diagnostics;
 using CsCode.Core.Lifecycle;
+using CsCode.Sessions;
+using CsCode.Sessions.Ipc;
 using CsCode.Sessions.Launcher;
 using CsCode.TestDoubles;
 using Xunit;
@@ -181,5 +183,40 @@ public class PublishPinTests
         var linked = Run("bash", [script, "--force"], new Dictionary<string, string> { ["NETCOREDBG_TAG"] = "test", ["NETCOREDBG_SHA256"] = sha, ["NETCOREDBG_ARCHIVE"] = evil });
         Assert.Equal(1, linked.Code);
         Assert.Contains("links or special files", linked.Output);
+    }
+}
+
+public class UnusableSessionLockTests
+{
+    [Fact]
+    public async Task A_session_process_whose_data_directory_cannot_hold_locks_says_so_and_never_claims_another_owner()
+    {
+        // sessions-7: with the locks in the data directory, a read-only one made a session process exit with 3, "owned by another CsCode process",
+        // and a process without --session (TakeNewUnnamedSession) tried window-1, window-2, ... for ever.
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Skip("Unix permissions");
+            return;
+        }
+        using var home = new TempDirectory("csl-");
+        var runtime = RuntimeDirectory.Resolve(name => name == "CSCODE_HOME" ? home.Path : null);
+        var store = new SessionStore(home.Combine("data"));
+        Directory.CreateDirectory(store.SessionsDir);
+        File.SetUnixFileMode(store.SessionsDir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            try { File.WriteAllText(Path.Combine(store.SessionsDir, "probe"), ""); Assert.Skip("this user can write into a mode 0500 directory"); }
+            catch (UnauthorizedAccessException) { }
+            foreach (var args in new[] { new[] { "--host", "--session", "U", "--headless-test" }, new[] { "--host", "--headless-test" } })
+            {
+                int? refused = null;
+                var start = Task.Run(() => BackgroundHost.Start(CommandLineOptions.Parse(args), new CrashHandler(home.Combine("crash")), runtime, store, out refused));
+                var host = await start.WaitAsync(TimeSpan.FromSeconds(20)); // it ends (it looped for ever without --session)
+                host?.Dispose();
+                Assert.Null(host); // background mode is unavailable here (the launcher finds that out first and runs the window in its own process)
+                Assert.Null(refused); // not "owned by another CsCode process"
+            }
+        }
+        finally { File.SetUnixFileMode(store.SessionsDir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
     }
 }
