@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do
 done
 case "$workload" in
   synthetic) args=(synthetic --steps 10000) ;;
-  app) args=(app --iterations 10) ;;
+  app) args=(app --iterations 6) ;;
   *) echo "unknown workload $workload" >&2; exit 2 ;;
 esac
 
@@ -56,8 +56,9 @@ for rep in $(seq 1 "$reps"); do
     if [[ -n "$only" && ",$only," != *",$name,"* ]]; then continue; fi
     dll="$(host_dll "$flavour")"
     read -r -a envarr <<<"$envs"
-    line="$(env "${envarr[@]}" dotnet "$dll" "${args[@]}" 2>"$scratch/gc-matrix-last.err" | sed -n 's/^RESULT //p' | tail -1)" || true
-    if [[ -z "$line" ]]; then echo "$name rep $rep: FAILED (see $scratch/gc-matrix-last.err)" >&2; continue; fi
+    err="$scratch/gc-matrix-$workload-$name-$rep.err"
+    line="$(env "${envarr[@]}" dotnet "$dll" "${args[@]}" 2>"$err" | sed -n 's/^RESULT //p' | tail -1)" || true
+    if [[ -z "$line" ]]; then echo "$name rep $rep: FAILED (see $err)" >&2; continue; fi
     echo "{\"name\":\"$name\",\"rep\":$rep,\"load\":\"$(cut -d' ' -f1 /proc/loadavg)\",\"result\":$line}" >> "$out"
     echo "$name rep $rep: $line" >&2
   done

@@ -108,21 +108,23 @@ public sealed class TabsScenario(MemoryAppHost host, IReadOnlyList<string> files
 /// <summary>Scroll a 20k-line file to the end and back, a page per frame.</summary>
 public sealed class ScrollScenario(MemoryAppHost host, string bigFile) : AppScenario(host, "scroll-big-file")
 {
-    private AvaloniaEdit.TextEditor? _editor;
+    private readonly Uri _uri = new(bigFile);
 
-    public override async Task InitializeAsync(CancellationToken ct)
+    public override Task InitializeAsync(CancellationToken ct) => EditorAsync();
+
+    /// <summary>The big file's editor, (re)opened when another scenario closed it in the meantime.</summary>
+    private async Task<AvaloniaEdit.TextEditor> EditorAsync()
     {
         await OpenAsync(bigFile);
-        await Require(() => Editor() is not null, "the editor view");
-        _editor = Editor();
+        AvaloniaEdit.TextEditor? editor = null;
+        await Require(() => (editor = Host.Shell.Well.EditorTabs.FirstOrDefault(t => t.Uri == _uri)?.LiveView?.GetVisualDescendants()
+            .OfType<AvaloniaEdit.TextEditor>().FirstOrDefault()) is { Document: not null }, "the editor view");
+        return editor!;
     }
-
-    private AvaloniaEdit.TextEditor? Editor() =>
-        Host.Shell.Well.EditorTabs.FirstOrDefault()?.LiveView?.GetVisualDescendants().OfType<AvaloniaEdit.TextEditor>().FirstOrDefault();
 
     public override async Task RunIterationAsync(int iteration, CancellationToken ct)
     {
-        var editor = _editor ?? throw new InvalidOperationException("no editor");
+        var editor = await EditorAsync();
         var lines = editor.Document.LineCount;
         for (var line = 1; line < lines; line += Math.Max(1, lines / 40)) { editor.ScrollToLine(line); await MemoryAppHost.SettleAsync(1); }
         for (var line = lines; line > 1; line -= Math.Max(1, lines / 40)) { editor.ScrollToLine(line); await MemoryAppHost.SettleAsync(1); }
