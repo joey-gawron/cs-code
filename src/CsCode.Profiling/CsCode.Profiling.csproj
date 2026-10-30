@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- Memory monitor, pressure policy and trims (IMemoryMonitor), plus the leak / soak / responsiveness toolkit (CsCode.Profiling.Testing) any test
+       project can use. References Core only (ARCHITECTURE section 2); never Avalonia. docs/MEMORY.md. -->
   <ItemGroup>
     <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
   </ItemGroup>
@@ -7,6 +9,12 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.MemoryTests" />
+    <!-- The recommended runtime configuration (GC matrix, docs/MEMORY.md); build/MemoryDefaults.props encodes the same as MSBuild properties. -->
+    <None Include="runtimeconfig.recommended.json" />
   </ItemGroup>
 
 </Project>
