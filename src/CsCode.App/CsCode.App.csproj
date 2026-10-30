@@ -4,6 +4,8 @@
     <OutputType>WinExe</OutputType>
     <AssemblyName>cscode</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The Windows executable's icon (assets/branding: 16-256 px); the window icon and the title-bar logo use the PNGs below (Views/AppIcon.cs). -->
+    <ApplicationIcon>../../assets/branding/cscode.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
     <TrimMode>partial</TrimMode>
@@ -32,6 +34,12 @@
     <ProjectReference Include="../CsCode.Remote/CsCode.Remote.csproj" />
     <!-- the headless server ships next to the app: cscode.languageHost = process runs it as a child (docs/REMOTE.md) -->
     <ProjectReference Include="../CsCode.Server/CsCode.Server.csproj" />
+  </ItemGroup>
+
+  <!-- The app icon in every size the artwork comes in (assets/branding), as Avalonia resources avares://cscode/Assets/Branding/cscode-<size>.png
+       and cscode.ico: the window icon, the tray icon and the title-bar logo pick the size that fits (Views/AppIcon.cs). -->
+  <ItemGroup>
+    <AvaloniaResource Include="../../assets/branding/cscode-*.png;../../assets/branding/cscode.ico" Link="Assets/Branding/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

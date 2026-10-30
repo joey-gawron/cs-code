@@ -1,0 +1,21 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=CsCode
+GenericName=Code Editor
+Comment=Edit, build and debug code
+Exec=@EXEC@ %F
+TryExec=@TRYEXEC@
+Icon=cscode
+Terminal=false
+StartupNotify=true
+StartupWMClass=cscode
+Categories=Development;IDE;TextEditor;
+Keywords=code;editor;IDE;debugger;csharp;dotnet;rust;typescript;
+MimeType=text/x-csharp;text/x-csrc;text/x-chdr;text/x-c++src;text/x-c++hdr;text/x-java;text/x-kotlin;text/x-scala;text/x-go;text/rust;text/x-python;text/x-python3;text/javascript;application/json;application/xml;text/html;text/css;text/x-scss;text/markdown;application/x-shellscript;application/x-powershell;application/yaml;application/toml;application/sql;text/x-makefile;text/x-cmake;text/x-lua;application/x-ruby;application/x-perl;application/x-php;text/x-haskell;text/x-elixir;text/x-erlang;text/x-ocaml;text/x-dsrc;text/x-patch;
+Actions=new-window;
+X-CsCode-Installer=tools/install.sh (@MARKER@)
+
+[Desktop Action new-window]
+Name=New Window
+Exec=@EXEC@ --new-window %F

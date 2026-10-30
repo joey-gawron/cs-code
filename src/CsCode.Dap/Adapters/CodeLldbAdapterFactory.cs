@@ -18,8 +18,9 @@ namespace CsCode.Dap.Adapters;
 /// debuggee inherit), tracked, with the environment marker the debuggee inherits; <c>PYTHONHOME</c>/<c>PYTHONPATH</c> are removed from its
 /// environment (it embeds its own Python 3.12, as VS Code's extension does).
 /// <para>Lookup: setting <c>cscode.debug.codelldbPath</c> → environment variable <c>CSCODE_CODELLDB</c> → the installed copy
-/// <c>{ToolsDir}/codelldb/&lt;version&gt;</c> → <c>codelldb</c> on PATH; a path may name the adapter itself, CodeLLDB's <c>extension/</c> directory
-/// or the install directory. When none exists the user is OFFERED the pinned download (<see cref="CodeLldbInstaller"/>; never silent).</para>
+/// <c>{ToolsDir}/codelldb/&lt;version&gt;</c> → the copy installed with the app (<see cref="BundledAdapters"/>) → <c>codelldb</c> on PATH; a path may
+/// name the adapter itself, CodeLLDB's <c>extension/</c> directory or the install directory. When none exists the user is OFFERED the pinned
+/// download (<see cref="CodeLldbInstaller"/>; never silent).</para>
 /// <para>Started with <c>--settings {"sourceLanguages": […]}</c> (the configuration's <c>sourceLanguages</c>, else Rust): CodeLLDB then loads the
 /// Rust toolchain's LLDB formatters (<c>rustc --print sysroot</c>, run in the folder) and offers its "Rust: on panic" filter. The provider fills in
 /// what VS Code's CodeLLDB extension would: the <c>cargo</c> key (CodeLLDB's extension resolves it, not the adapter), <c>relativePathBase</c>,
@@ -100,6 +101,7 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
         if (_p.Configuration?.Get<string>(SettingPath) is { Length: > 0 } configured && ResolveAdapter(configured) is { } fromSetting) return fromSetting;
         if (Environment(EnvironmentVariable) is { Length: > 0 } env && ResolveAdapter(env) is { } fromEnv) return fromEnv;
         if (_p.Paths is { } paths && File.Exists(CodeLldbInstaller.AdapterPath(paths.ToolsDir))) return CodeLldbInstaller.AdapterPath(paths.ToolsDir);
+        if (BundledAdapters.CodeLldb(_p.Paths) is { } bundled) return bundled;
         return RustToolchainLocator.FindOnPath(Environment, CodeLldbInstaller.AdapterExecutableName);
     }
 

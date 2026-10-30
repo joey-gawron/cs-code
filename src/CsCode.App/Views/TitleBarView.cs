@@ -37,7 +37,7 @@ public sealed class TitleBarView : Border
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto") };
 
-        var logo = new Border { Width = 30, Height = 30, Child = new Icon("symbol-class", 16) { Foreground = ThemeBrushes.Get("focusBorder"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
+        var logo = new Border { Width = 30, Height = 30, Child = new AppLogo { Width = 16, Height = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
         grid.Children.Add(logo);
 
         var menu = new ShellMenuBar(menus);

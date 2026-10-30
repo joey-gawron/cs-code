@@ -20,7 +20,8 @@ public sealed record BuiltinDebugAdapter(string Type, string Label, IReadOnlyLis
 
 /// <summary>
 /// The default .NET story: Samsung <b>netcoredbg</b> (MIT; not vsdbg, whose licence forbids non-Microsoft products) launched as
-/// <c>netcoredbg --interpreter=vscode</c>. Binary lookup order: <c>cscode.debug.netcoredbgPath</c> → <c>{ToolsDir}/netcoredbg/netcoredbg</c> → PATH;
+/// <c>netcoredbg --interpreter=vscode</c>. Binary lookup order: <c>cscode.debug.netcoredbgPath</c> → <c>{ToolsDir}/netcoredbg/netcoredbg</c> → the copy
+/// installed with the app (<see cref="BundledAdapters"/>) → PATH;
 /// when none exists the user is OFFERED a download (never silent).
 /// Also provides the initial <c>coreclr</c> launch configuration + the tasks.json build task it refers to.
 /// </summary>
@@ -66,6 +67,7 @@ public sealed partial class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDe
             var tool = Path.Combine(paths.ToolsDir, "netcoredbg", ExecutableName);
             if (File.Exists(tool)) return tool;
         }
+        if (BundledAdapters.NetCoreDbg(_p.Paths) is { } bundled) return bundled;
         foreach (var dir in (PathVariable() ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             try
