@@ -96,7 +96,7 @@ public static class LoginShellEnvironment
     /// </summary>
     public static IReadOnlyList<string> ShellArguments(string shell, string command)
     {
-        var name = Path.GetFileNameWithoutExtension(shell);
+        var name = Path.GetFileName(shell); // a Unix shell's file name is its name (no .exe)
         return name switch
         {
             "csh" or "tcsh" => ["-i", "-c", command],
