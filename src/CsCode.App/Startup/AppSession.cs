@@ -4,6 +4,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using CsCode.Core.Platform;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace CsCode.App.Startup;
 
@@ -279,7 +280,8 @@ public sealed class AppSession
     /// Documents handed over by the system (Finder's Open With, <c>open file</c>, a drop on the Dock icon) open as command-line paths do (a folder as
     /// the workspace, files as editors), and the window comes to the front; a click on the Dock icon (no paths) only brings it back. Before the
     /// main window exists the paths wait for it; it opens them once the layout is restored. Background mode shows the session's window through
-    /// the launcher's own request (<see cref="Sessions.Ipc.IpcVerbs.Show"/>), which also restores a hidden session's views.
+    /// the launcher's own request (<see cref="Sessions.Ipc.IpcVerbs.Show"/>), which also restores a hidden session's views; the warm spare, which has
+    /// no session to show, runs the launcher instead, and a refusal (a session that has begun to quit) is logged.
     /// </summary>
     private void OnActivated(object? sender, DesktopActivation activation)
     {
@@ -312,9 +314,42 @@ public sealed class AppSession
             Paths = activation.Paths.Select(p => new Sessions.Ipc.IpcPath(p)).ToArray(),
         };
         // From the pool, as an IPC request arrives: it checks the paths there and waits (off the UI thread) for the session to be restored.
-        try { await Task.Run(() => background.HandleAsync(request, CancellationToken.None)).ConfigureAwait(true); }
-        catch (Exception ex) { _crash.Report(ex, fatal: false, source: "Activation"); }
+        Sessions.Ipc.IpcMessage reply;
+        try { reply = await Task.Run(() => background.HandleAsync(request, CancellationToken.None)).ConfigureAwait(true); }
+        catch (Exception ex) { _crash.Report(ex, fatal: false, source: "Activation"); return; }
+        if (reply.Ok == true) return;
+        // The warm spare has no session to show (its own Dock icon was clicked, or documents dropped on it): it opens them as cscode would from a
+        // terminal, which claims a spare (this one, when nothing else takes them) and shows the session there.
+        if (background.IsUnclaimedSpare)
+        {
+            await LaunchFromSpareAsync(background, activation).ConfigureAwait(true);
+            return;
+        }
+        // A session that has begun to quit cannot show anything any more (the launcher would wait for this very process to end): it is logged.
+        ActivationLog()?.LogWarning("The system's request to show the window and open {Count} path(s) was refused: {Error}", activation.Paths.Count, reply.Error);
     }
+
+    private async Task LaunchFromSpareAsync(Background.BackgroundHost background, DesktopActivation activation)
+    {
+        var errors = new StringWriter();
+        var launcher = new Sessions.Launcher.SessionLauncher(background.Runtime, background.Store, Sessions.Launcher.LaunchSettings.Read(new Platform.AppPaths().ConfigDir),
+            Sessions.Launcher.ProcessHostSpawner.ForCurrentProcess(), TextWriter.Null, errors);
+        var launch = new Sessions.Launcher.LaunchRequest(Sessions.Launcher.LaunchKind.Open)
+        {
+            Targets = activation.Paths.Select(p => new Sessions.Launcher.LaunchTarget(p, Directory.Exists(p))).ToArray(),
+        };
+        try
+        {
+            var outcome = await launcher.RunAsync(launch).ConfigureAwait(true);
+            if (outcome.ExitCode != 0) ActivationLog()?.LogWarning("The warm spare could not open what the system handed over: {Error}", errors.ToString().Trim());
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        {
+            ActivationLog()?.LogWarning(ex, "The warm spare could not open what the system handed over");
+        }
+    }
+
+    private ILogger? ActivationLog() => _container?.GetService<ILoggerFactory>()?.CreateLogger("CsCode.Activation");
 
     private static StartupTarget[] ToTargets(IEnumerable<string> paths) => paths.Select(p => new StartupTarget(p)).ToArray();
 

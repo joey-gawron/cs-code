@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using CsCode.App.Background;
 using CsCode.App.Docking;
 using CsCode.App.Notifications;
 using CsCode.App.Startup;
@@ -7,6 +8,8 @@ using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
+using CsCode.Sessions;
+using CsCode.Sessions.Ipc;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -152,6 +155,43 @@ public class DesktopActivationTests
 
         dialog.Choose("Don't Save");
         Assert.NotNull(await run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30))); // then the orderly exit
+    }
+
+    // From review: in background mode the system's requests go to the session through the launcher's show request, which the unclaimed warm spare
+    // refuses (it has no session): a click on its Dock icon, or documents dropped on it, did nothing and said nothing. The spare now opens them as
+    // cscode would from a terminal, which claims a spare (this one) and shows them there.
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task Documents_handed_to_the_warm_spare_open_in_a_session_it_takes_for_them()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Skip("Unix sockets");
+        using var env = new RealAppHome();
+        env.WriteUserSettings("""{ "workbench.startupEditor": "none", "cscode.background.showTrayIcon": false }""");
+        var file = env.Workspace.WriteFile("to-the-spare.txt", "dropped on the warm spare's Dock icon\n");
+        var runtime = RuntimeDirectory.Resolve(name => name == "CSCODE_HOME" ? env.Home.Path : null);
+        var store = new SessionStore(env.Home.Combine("data"));
+        var host = BackgroundHost.Start(CommandLineOptions.Parse(["--host", "--spare", "--headless-test"]), new CrashHandler(env.CrashLogs.Path), runtime, store, out _);
+        Assert.NotNull(host);
+        var previous = App.Background;
+        App.Background = host;
+        try
+        {
+            await using var run = new RealAppRun(env);
+            Assert.True(await DevHost.WaitFor(() => host.State == ProcessStates.Spare, 60_000), "not a spare: " + host.State);
+
+            run.Lifetime.Activate(file);
+            Assert.True(await DevHost.WaitFor(() => host.State == ProcessStates.Shown, 60_000), "the spare did not take a session and show it: " + host.State);
+            var well = run.Services.GetRequiredService<DocumentWell>();
+            Assert.True(await DevHost.WaitFor(() => well.Find(new Uri(file)) is not null), "the file handed to the spare was not opened");
+
+            var quit = await Task.Run(() => IpcClient.Request(runtime.EndpointOf(Environment.ProcessId), new IpcMessage { Type = IpcVerbs.Quit, Force = true }, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10)));
+            Assert.True(quit.Ok == true, quit.Error);
+            await run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            App.Background = previous;
+            host.Dispose();
+        }
     }
 
     // ------------------------------------------------------------------ the Avalonia side
