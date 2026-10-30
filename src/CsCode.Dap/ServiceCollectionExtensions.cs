@@ -16,7 +16,8 @@ public static class ServiceCollectionExtensions
     /// Registers the DAP module: <see cref="IDebugService"/> (+ <see cref="IDebugFrameFocus"/>, <see cref="IDebugOutputHistory"/>,
     /// <see cref="IDebugSourceContentProvider"/> resolving to the same instance), <see cref="IBreakpointManager"/>,
     /// <see cref="IDebugConfigurationService"/>, <see cref="ITaskService"/> and the built-in adapter factories (netcoredbg for
-    /// <c>coreclr</c>/<c>netcoredbg</c>; js-debug for <c>pwa-node</c>/<c>node</c>; GDB's native DAP for <c>gdb</c>/<c>rust-gdb</c>). Every Core platform service it can use (settings, state storage, window, commands, output…)
+    /// <c>coreclr</c>/<c>netcoredbg</c>; js-debug for <c>pwa-node</c>/<c>node</c>; GDB's native DAP for <c>gdb</c>/<c>rust-gdb</c>; CodeLLDB for
+    /// <c>lldb</c>). Every Core platform service it can use (settings, state storage, window, commands, output…)
     /// is optional. Resolve <see cref="IDebugService"/> once at startup: its constructor registers the debug commands,
     /// <c>${command:pickProcess}</c> and the context keys.
     /// </summary>
@@ -50,6 +51,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<GdbAdapterFactory>(sp => new GdbAdapterFactory(sp.GetRequiredService<DapPlatform>()));
         foreach (var index in new[] { 0, 1 })
             services.AddSingleton<BuiltinDebugAdapter>(sp => GdbAdapterFactory.Builtins(sp.GetRequiredService<GdbAdapterFactory>()).ElementAt(index));
+        services.AddSingleton<CodeLldbAdapterFactory>(sp => new CodeLldbAdapterFactory(sp.GetRequiredService<DapPlatform>()));
+        services.AddSingleton<BuiltinDebugAdapter>(sp => CodeLldbAdapterFactory.Builtins(sp.GetRequiredService<CodeLldbAdapterFactory>()).Single());
 
         services.AddSingleton<DebugService>(sp => new DebugService(
             sp.GetRequiredService<DebugLane>(), sp.GetRequiredService<DapPlatform>(), sp.GetRequiredService<BreakpointManager>(),

@@ -147,9 +147,12 @@ public sealed partial class GdbAdapterQuirks : DebugAdapterQuirks
     [GeneratedRegex(@"thread '(?<thread>[^'\n]*)' panicked at '(?<message>[\s\S]*?)', (?<location>[^\n]+?:\d+:\d+)", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex LegacyPanic();
 
-    public override DebugExceptionInfo? DescribeSyntheticStop(SyntheticExceptionFilter filter, string recentOutput)
+    public override DebugExceptionInfo? DescribeSyntheticStop(SyntheticExceptionFilter filter, string recentOutput) =>
+        filter.Filter == RustPanicFilter ? DescribeRustPanic(recentOutput) : null;
+
+    /// <summary>The last Rust panic message in the program's output (the exception a panic stop stands for); null when there is none yet.</summary>
+    internal static DebugExceptionInfo? DescribeRustPanic(string recentOutput)
     {
-        if (filter.Filter != RustPanicFilter) return null;
         Match? last = null;
         try
         {
@@ -197,7 +200,10 @@ public sealed partial class GdbAdapterQuirks : DebugAdapterQuirks
 
     // ------------------------------------------------------------------ frames
 
-    public override DebugStackFrame MapFrame(DebugStackFrame frame)
+    public override DebugStackFrame MapFrame(DebugStackFrame frame) => DeemphasizeLibraryFrame(frame);
+
+    /// <summary>The frame, de-emphasised when it is library code (<see cref="IsLibrarySource"/>) or has no source at all.</summary>
+    internal static DebugStackFrame DeemphasizeLibraryFrame(DebugStackFrame frame)
     {
         // A frame without debug information (std's __rust_try, a C library without its debug package) has no source at all: not the user's
         // code either, and it belongs in the same [External Code] run as the library frames around it.

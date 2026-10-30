@@ -58,13 +58,64 @@ public sealed partial class DebugService
             {
                 var choice = await window.ShowMessageAsync(MessageSeverity.Info, "There is no launch configuration. Create a launch.json?",
                     [new MessageAction("Create launch.json"), new MessageAction("Cancel", IsCloseAffordance: true)], ct);
-                if (choice == "Create launch.json" && DebuggerTypes.FirstOrDefault() is { } type)
-                    await _configurations.CreateLaunchJsonAsync(type.Type, null, ct);
+                if (choice == "Create launch.json" && await PickDebugTypeAsync(window, _p.PrimaryFolder, ct) is { } type)
+                    await _configurations.CreateLaunchJsonAsync(type, null, ct);
             }
             return null;
         }
         return await StartAsync(noDebug ? cfg with { NoDebug = true } : cfg, ct);
     }
+
+    /// <summary>
+    /// Setting: the debugger a Rust folder's launch.json is created for — <c>"gdb"</c> (the default: evaluated, nothing to download) or
+    /// <c>"lldb"</c> (CodeLLDB, a download). See docs/DEBUGGING-RUST-TS.md, "Which Rust debugger is the default".
+    /// </summary>
+    public const string RustDebuggerSetting = "cscode.debug.rustDebugger";
+
+    /// <summary>The folder's default debugger (<see cref="DefaultDebugTypeAsync"/>), else the user picks one ("Select debugger", as VS Code asks).</summary>
+    private async Task<string?> PickDebugTypeAsync(IWindowService window, Uri? folder, CancellationToken ct)
+    {
+        if (await DefaultDebugTypeAsync(folder, ct) is { } known) return known;
+        var types = DebuggerTypes;
+        if (types.Count == 0) return null;
+        var picked = await window.ShowQuickPickAsync([.. types.Select(t => new QuickPickItem(t.Label, t.Type, Tag: t.Type))],
+            new QuickPickOptions(Title: "Select debugger", Placeholder: "The debugger the new launch.json is for"), ct);
+        return picked?.Tag as string;
+    }
+
+    /// <summary>
+    /// The debug type "Create launch.json" uses for <paramref name="folder"/>, from the files at its root: <c>Cargo.toml</c> → the Rust debugger
+    /// (<see cref="RustDebuggerSetting"/>), a .NET project or solution → <c>coreclr</c>, <c>tsconfig.json</c>/<c>package.json</c> → <c>pwa-node</c>;
+    /// otherwise the only debugger there is, else null. (The first debugger in label order — what was used before — made a .NET launch.json
+    /// for a cargo package.)
+    /// </summary>
+    internal async Task<string?> DefaultDebugTypeAsync(Uri? folder, CancellationToken ct)
+    {
+        var types = DebuggerTypes;
+        string? Known(string type) => types.FirstOrDefault(t => string.Equals(t.Type, type, StringComparison.OrdinalIgnoreCase))?.Type;
+        if (folder is { IsFile: true } && _p.Workspace is { } ws)
+        {
+            HashSet<string> files;
+            try
+            {
+                files = (await ws.FileSystem.ReadDirectoryAsync(folder, ct)).Where(e => e.Type == FileType.File).Select(e => e.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { files = []; }
+            if (files.Contains("Cargo.toml")) return Known(RustDebugger()) ?? Known(Adapters.GdbAdapterFactory.PrimaryType);
+            if (files.Any(n => n.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) || n.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase)
+                || n.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || n.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)))
+                return Known("coreclr");
+            if (files.Contains("tsconfig.json") || files.Contains("package.json")) return Known(Adapters.JsDebugAdapterFactory.PrimaryType);
+        }
+        return types.Count == 1 ? types[0].Type : null;
+    }
+
+    /// <summary>The Rust debugger's debug type from <see cref="RustDebuggerSetting"/> (<c>codelldb</c> names CodeLLDB's <c>lldb</c> too).</summary>
+    private string RustDebugger() =>
+        _p.Configuration?.Get<string>(RustDebuggerSetting)?.Trim() is { } chosen
+        && (string.Equals(chosen, "lldb", StringComparison.OrdinalIgnoreCase) || string.Equals(chosen, "codelldb", StringComparison.OrdinalIgnoreCase))
+            ? Adapters.CodeLldbAdapterFactory.PrimaryType
+            : Adapters.GdbAdapterFactory.PrimaryType;
 
     /// <summary><c>${command:pickProcess}</c>: lists processes in a quick pick; returns the chosen PID as text (null = cancelled).</summary>
     private async ValueTask<object?> PickProcessAsync(CancellationToken ct)

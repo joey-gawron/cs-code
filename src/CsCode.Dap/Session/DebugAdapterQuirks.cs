@@ -8,7 +8,8 @@ namespace CsCode.Dap.Session;
 /// the filter is enabled, and whose stops it reports as exceptions (reason <c>exception</c>, with the panic's message).
 /// </summary>
 /// <param name="Filter">Filter id (persisted with the user's choice, like an adapter's own filters).</param>
-/// <param name="FunctionName">The function breakpoint that implements it, exactly as the adapter resolves it.</param>
+/// <param name="FunctionName">The function breakpoint that implements it, exactly as the adapter resolves it (for an adapter's own filter in
+/// <see cref="DebugAdapterQuirks.BreakpointExceptionFilters"/>: what the adapter breaks on, for the record only).</param>
 public sealed record SyntheticExceptionFilter(string Filter, string Label, string FunctionName, bool Default = true, string? Description = null);
 
 /// <summary>How a hit condition the user typed reaches the adapter: <see cref="Wire"/> to send, or why it cannot be expressed.</summary>
@@ -49,6 +50,14 @@ public class DebugAdapterQuirks
 
     /// <summary>Exception filters the client implements itself (as function breakpoints); listed after the adapter's own.</summary>
     public virtual IReadOnlyList<SyntheticExceptionFilter> SyntheticExceptionFilters => [];
+
+    /// <summary>
+    /// The adapter's OWN exception filters (by <see cref="SyntheticExceptionFilter.Filter"/> id) whose stops it reports as plain breakpoint stops:
+    /// CodeLLDB's "rust_panic" is an LLDB breakpoint on <c>rust_panic$</c>, so its stop comes as reason <c>breakpoint</c> with the filter's
+    /// breakpoint id (from the <c>setExceptionBreakpoints</c> response) in <c>hitBreakpointIds</c>. The session reports such a stop as the exception
+    /// it stands for, described as a client-side filter's (<see cref="DescribeSyntheticStop"/>); the adapter keeps listing the filter itself.
+    /// </summary>
+    public virtual IReadOnlyList<SyntheticExceptionFilter> BreakpointExceptionFilters => [];
 
     /// <summary>
     /// The exception a stop of <paramref name="filter"/> stands for, from the program's recent output (a Rust panic prints its message before
