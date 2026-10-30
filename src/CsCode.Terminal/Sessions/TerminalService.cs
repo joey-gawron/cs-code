@@ -149,7 +149,7 @@ public sealed class TerminalService : ITerminalService, IDisposable
         int id;
         lock (_gate) id = ++_nextId;
         var backend = Backends?.Invoke() is { } provider && provider.TryCreate(options) is { } first ? new BackendLauncher(provider, options, first) : null;
-        var session = new TerminalSession(id, options, backend is null ? _hostFactory : backend.CreateHost, EmulatorOptions(), columns, rows);
+        var session = new TerminalSession(id, options, backend is null ? _hostFactory : backend.CreateHost, EmulatorOptions(), columns, rows, backend is null ? null : backend.Discard);
         if (backend is not null) _backends.Add(session, backend);
         var subs = new DisposableStore();
         subs.Add(session.TitleChanged.Subscribe(s => _titleChanged.Fire(s)));

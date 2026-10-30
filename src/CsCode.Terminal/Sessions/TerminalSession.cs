@@ -28,6 +28,7 @@ public sealed class TerminalSession : ITerminal, IDisposable
     private readonly object _gate = new();
     private readonly Queue<Work> _queue = new();
     private readonly Func<IPtyHost> _hostFactory;
+    private readonly Action? _discardPrepared;
     private readonly Thread _worker;
     private readonly Emitter<TerminalSession> _frameReady = new();
     private readonly Emitter<TerminalSession> _titleChanged = new();
@@ -64,11 +65,17 @@ public sealed class TerminalSession : ITerminal, IDisposable
         public readonly Action? Action = action;
     }
 
-    internal TerminalSession(int id, TerminalCreateOptions options, Func<IPtyHost> hostFactory, EmulatorOptions emulatorOptions, int columns, int rows)
+    /// <param name="discardPrepared">
+    /// Ends a program started for the next <see cref="Start"/> before it (a remote terminal's: the server started it when the launch was
+    /// resolved) when the session turns out to be closed and <paramref name="hostFactory"/> will not take it.
+    /// </param>
+    internal TerminalSession(int id, TerminalCreateOptions options, Func<IPtyHost> hostFactory, EmulatorOptions emulatorOptions, int columns, int rows,
+        Action? discardPrepared = null)
     {
         Id = id;
         Options = options;
         _hostFactory = hostFactory;
+        _discardPrepared = discardPrepared;
         Emulator = new VtEmulator(columns, rows, emulatorOptions)
         {
             Respond = bytes => _host?.Write(bytes),
@@ -195,11 +202,15 @@ public sealed class TerminalSession : ITerminal, IDisposable
     /// <summary>
     /// Spawns the program (on the calling thread: callers run it off the UI thread). Failures are written into the terminal and reported as an
     /// exit. A session disposed meanwhile (its terminal closed while it was being created or reused) starts nothing: a program spawned then
-    /// would run unseen and never be killed.
+    /// would run unseen and never be killed. A remote one, which the server started while the launch was resolved, is ended.
     /// </summary>
     internal void Start(PtyStartInfo info)
     {
-        if (_disposed) return;
+        if (_disposed)
+        {
+            _discardPrepared?.Invoke();
+            return;
+        }
         // The view may have measured the terminal before the program could start (a split pane's layout during a remote round trip): a local
         // PTY opens at that size, so the program's first query already sees it. (A remote one was opened when the launch was resolved: the
         // size is passed on below; resizing a PTY to the size it has is a no-op in the kernel, no SIGWINCH.)
@@ -287,7 +298,11 @@ public sealed class TerminalSession : ITerminal, IDisposable
     /// <summary>Runs another program in this exited terminal (its buffer stays): a transient terminal reused for the next debug run.</summary>
     internal void Restart(PtyStartInfo info)
     {
-        if (_disposed) return; // closed while it was being claimed for the next run: nothing starts (Start says so too)
+        if (_disposed)
+        {
+            _discardPrepared?.Invoke(); // closed while it was being claimed for the next run: nothing starts (Start says so too)
+            return;
+        }
         if (!_hasExited) throw new InvalidOperationException("The terminal is still running.");
         IPtyHost? old;
         lock (_gate)

@@ -102,12 +102,17 @@ public static class TaskCommandSet
         if (choice == RestartTaskAction) _ = ReportAsync(window, tasks.RunAsync(label));
     }
 
-    /// <summary>A task that could not run at all (unknown, invalid tasks.json, a missing program) says why; its own failures show in its terminal.</summary>
+    /// <summary>
+    /// A task that could not run at all (unknown, invalid tasks.json, a missing program) says why; its own failures show in its terminal. A
+    /// background task that cannot be tracked (no background patterns: common for a dev server or <c>dotnet watch</c>) is not a failure here:
+    /// it runs on in its terminal and nothing is shown, as in VS Code, where only the debugger's preLaunchTask reports it.
+    /// </summary>
     private static async Task ReportAsync(IWindowService window, ValueTask<TaskResult> run)
     {
         TaskResult result;
         try { result = await run.ConfigureAwait(true); }
         catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or OperationCanceledException) { return; }
+        if (result.NotTracked) return;
         if (result.Error is { } error) await window.ShowMessageAsync(MessageSeverity.Error, error).ConfigureAwait(true);
     }
 

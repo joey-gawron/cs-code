@@ -46,10 +46,18 @@ which also registers `TaskTerminalHost` as `ITaskTerminalHost`). The tool window
   noted by the reader at the reap) still carries the session id, so the number never was free; never `kill(-pid)` blindly. That `/proc`
   scan runs on the pool, never on the caller's (UI) thread. Checked
   with a real pid reuse in a private pid namespace (`CSCODE_PIDNS_TEST=1 unshare -Urpfm --mount-proc dotnet test ... --filter
-  FullyQualifiedName~private_pid_namespace`).
+  FullyQualifiedName~private_pid_namespace`). Without `/proc` (macOS) the members cannot be noted: there the grace timer of a hang-up sent
+  while the program ran still SIGKILLs its process group (the program was reaped within the grace, and macOS hands out pids in sequence, so
+  a number freed that recently does not come back), which ends a job in the group that ignored the hang-up; killing or disposing a terminal
+  whose program had already been reaped signals nothing by its number there (VS Code never signals an exited terminal's group either).
+  Tested on Linux with the process table switched off.
 * **Start races** (end pass): a size the view measured before the program could start (a split pane laid out during a remote round trip) is
   the PTY's size from the start, and one that arrives while the host is spawning is passed on once it exists; a terminal closed while it was
-  being created or reused starts nothing (a host spawned meanwhile is disposed at once).
+  being created or reused starts nothing (a host spawned meanwhile is disposed at once). A remote terminal's program is started by the server
+  during the creation's round trip (`term/create`, before the session's start): when the terminal was closed meanwhile it is ended at once
+  (the backend is disposed, which ends the program on the server and the client's delivery thread). A disposed host whose reader thread still
+  waits to reap its program (one ignoring the hang-up, until the SIGKILL) reaches its session only through a listener detached on dispose,
+  so it neither delivers to nor keeps alive a closed terminal.
 * **Windows** (`ConPtyHost`): `CreatePseudoConsole` over two pipes, the process in a kill-on-close job object, same thread layout. **Written,
   never run** (development and tests are Linux only). macOS: written for, untested; known problems below.
 * The shell is tracked with `IMemoryMonitor.TrackChildProcess` (the shell's exit path kills anything left) and keeps normal priority (it is
@@ -196,9 +204,11 @@ user's Run Task / Ctrl+Shift+B shows VS Code's "The task 'build' is already acti
 when the task's problem matchers' background patterns go idle (`endsPattern` after `beginsPattern`, or after the start with `activeBegins`:
 `$tsc-watch`'s "Found N errors. Watching for file changes."), not when the process exits, which it does not; the task keeps running in its
 terminal, each cycle's problems replace the last cycle's when it ends. A preLaunchTask that is already running and idle is ready at once; one
-that is compiling, at the end of that compilation. Without background patterns the task cannot be tracked: after 5 s the run reports VS
-Code's "cannot be tracked" error (the debugger then asks Debug Anyway / Abort) and the task runs on. A process that exits before it was ready
-reports its exit. Unlike VS Code, the debugger does not ask about errors the matchers found when the exit code (or the readiness) says
+that is compiling, at the end of that compilation. Readiness is followed from before the program starts: a fast watcher's whole first cycle
+can be printed while its terminal is still being shown. Without background patterns (no problem matcher, `"problemMatcher": []`, or one
+without `background`, such as `$msCompile` on `dotnet watch`) the task cannot be tracked: after 5 s the run returns VS Code's "cannot be
+tracked" error (`TaskResult.NotTracked`) and the task runs on. As in VS Code only the debugger's preLaunchTask reports it (Debug Anyway /
+Abort); Run Task and Ctrl+Shift+B show nothing. A process that exits before it was ready reports its exit. Unlike VS Code, the debugger does not ask about errors the matchers found when the exit code (or the readiness) says
 success (`debug.onTaskErrors` is not implemented).
 
 ## Screen readers

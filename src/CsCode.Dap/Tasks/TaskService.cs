@@ -323,33 +323,50 @@ public sealed partial class TaskService : ITaskService, IDisposable
         await Task.WhenAll(running.Select(r => r.Ended.Task)).WaitAsync(ct).ConfigureAwait(false);
     }
 
+    /// <summary>A background task's readiness as its matchers report it (on the lane): followed from before its program starts.</summary>
+    private sealed class Readiness
+    {
+        public readonly TaskCompletionSource<TaskResult?> Ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>A cycle began: the task can be tracked (no "cannot be tracked" after five seconds).</summary>
+        public bool Tracked;
+    }
+
     /// <summary>
     /// A background task (<c>isBackground</c>) is ready for whoever waits on it (a preLaunchTask) when its problem matchers' background patterns
-    /// go idle (VS Code's "inactive": the watch task's first compilation ended), not when its process exits, which it does not. Without background
-    /// patterns it cannot be tracked: after five seconds without a begin VS Code's error is the result (the debugger asks Debug Anyway / Abort)
-    /// and the task runs on. Completes with null when the process ended first. On the lane.
+    /// go idle (VS Code's "inactive": the watch task's first compilation ended), not when its process exits, which it does not. Installed before
+    /// the program starts: its first lines are matched while the start is still returning (a terminal's start waits for the UI to show it), and a
+    /// fast watcher can begin and end its first cycle then. Null for a task that is not a background one. On the lane.
     /// </summary>
-    private Task<TaskResult?> WhenReadyAsync(TaskInstance instance, TaskModel task, ProblemCollector? problems, Task finished)
+    private static Readiness? TrackReadiness(TaskInstance instance, TaskModel task, ProblemCollector? problems)
     {
-        var ready = new TaskCompletionSource<TaskResult?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var tracked = false;
-        if (problems is { IsWatching: true })
+        if (!instance.IsBackground) return null;
+        var readiness = new Readiness();
+        if (problems is not { IsWatching: true }) return readiness;
+        problems.BackgroundBegan = () =>
         {
-            problems.BackgroundBegan = () =>
-            {
-                tracked = true;
-                instance.Cycle ??= new TaskCompletionSource<TaskResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-            };
-            problems.BackgroundEnded = () =>
-            {
-                var idle = new TaskResult(task.Label, 0);
-                var cycle = instance.Cycle;
-                instance.Cycle = null;
-                cycle?.TrySetResult(idle);
-                ready.TrySetResult(idle);
-            };
-            if (problems.IsBusy) problems.BackgroundBegan(); // activeBegins: busy from the start
-        }
+            readiness.Tracked = true;
+            instance.Cycle ??= new TaskCompletionSource<TaskResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        };
+        problems.BackgroundEnded = () =>
+        {
+            var idle = new TaskResult(task.Label, 0);
+            var cycle = instance.Cycle;
+            instance.Cycle = null;
+            cycle?.TrySetResult(idle);
+            readiness.Ready.TrySetResult(idle);
+        };
+        if (problems.IsBusy) problems.BackgroundBegan(); // activeBegins: busy from the start
+        return readiness;
+    }
+
+    /// <summary>
+    /// Completes when the background task is ready (<see cref="TrackReadiness"/>), with null when its process ended first. Without background
+    /// patterns it cannot be tracked: after five seconds without a begin VS Code's error is the result, marked <see cref="TaskResult.NotTracked"/>
+    /// (the debugger asks Debug Anyway / Abort; a plain Run Task shows nothing), and the task runs on. On the lane.
+    /// </summary>
+    private static Task<TaskResult?> WhenReadyAsync(Readiness readiness, TaskModel task, Task finished)
+    {
+        var ready = readiness.Ready;
         _ = UntrackedAfterAsync();
         _ = finished.ContinueWith(_ => ready.TrySetResult(null), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         return ready.Task;
@@ -357,8 +374,9 @@ public sealed partial class TaskService : ITaskService, IDisposable
         async Task UntrackedAfterAsync()
         {
             await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(5)), finished);
-            if (!tracked && !finished.IsCompleted)
-                ready.TrySetResult(new TaskResult(task.Label, -1, Error: $"The task '{task.Label}' cannot be tracked: make sure to have a problem matcher with background patterns defined"));
+            if (!readiness.Tracked && !finished.IsCompleted)
+                ready.TrySetResult(new TaskResult(task.Label, -1,
+                    Error: $"The task '{task.Label}' cannot be tracked: make sure to have a problem matcher with background patterns defined") { NotTracked = true });
         }
     }
 
@@ -366,10 +384,10 @@ public sealed partial class TaskService : ITaskService, IDisposable
     /// Waits for a run's process (<paramref name="finished"/>), or for a background task only until it is ready (<see cref="WhenReadyAsync"/>):
     /// then the rest of the run (the process, its output and problems, the instance's end) carries on without the caller.
     /// </summary>
-    private async Task<TaskResult> AwaitRunAsync(TaskInstance instance, TaskModel task, ProblemCollector? problems, Task<TaskResult> finished)
+    private static async Task<TaskResult> AwaitRunAsync(TaskInstance instance, TaskModel task, Readiness? readiness, Task<TaskResult> finished)
     {
-        if (!instance.IsBackground) return await finished;
-        var ready = await WhenReadyAsync(instance, task, problems, finished);
+        if (readiness is null) return await finished;
+        var ready = await WhenReadyAsync(readiness, task, finished);
         if (ready is null || finished.IsCompleted) return await finished;
         instance.Ready = true;
         return ready;
@@ -430,8 +448,9 @@ public sealed partial class TaskService : ITaskService, IDisposable
         }
 
         var problems = StartProblemMatchers(task, folderPath, psi.WorkingDirectory is { Length: > 0 } wd ? wd : folderPath);
+        var readiness = TrackReadiness(instance, task, problems); // before the start: its first output may already be a whole cycle
         if (_p.TaskTerminals?.Invoke() is { } terminals)
-            return await ExecuteInTerminalAsync(terminals, task, psi, taskEnv, channel, problems, instance, key, ct);
+            return await ExecuteInTerminalAsync(terminals, task, psi, taskEnv, channel, problems, readiness, instance, key, ct);
 
         channel?.AppendLine($"> Executing task: {task.Label} <");
         Process process;
@@ -441,7 +460,7 @@ public sealed partial class TaskService : ITaskService, IDisposable
             channel?.AppendLine($"The task '{task.Label}' could not be started: {ex.Message}");
             return new TaskResult(task.Label, -1, Error: $"Could not start '{command}': {ex.Message}");
         }
-        return await AwaitRunAsync(instance, task, problems, RunProcessAsync(process, task, channel, problems, instance, key, ct));
+        return await AwaitRunAsync(instance, task, readiness, RunProcessAsync(process, task, channel, problems, instance, key, ct));
     }
 
     /// <summary>The process path: its output to the "Tasks" channel and the matchers, until it exits (or is killed), then its result.</summary>

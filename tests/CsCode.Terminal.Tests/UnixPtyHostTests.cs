@@ -402,6 +402,56 @@ public sealed class UnixPtyHostTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// macOS has no /proc: who holds a reaped program's number cannot be known there. The rule it follows is run here with the process table
+    /// switched off: a program in the terminal that dies of the hang-up is reaped before the grace timer, which still kills its group (a job in
+    /// it that ignores the hang-up); the number was freed within the grace, which a sequential allocator does not hand out again so soon.
+    /// </summary>
+    [Fact]
+    public async Task Without_a_process_table_the_grace_timer_still_kills_a_job_the_hung_up_program_left_in_its_group()
+    {
+        RequireLinux();
+        var host = new UnixPtyHost { HasProcessTable = false };
+        var output = new RecordingPtyListener();
+        // sh -c has no job control: the background job stays in the program's process group; it ignores SIGHUP, the program does not
+        host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "(trap '' HUP; exec sleep 1000) & echo BG=$!; exec sleep 999"]), output);
+        Assert.True(await output.WaitForAsync("BG="));
+        var bg = int.Parse(System.Text.RegularExpressions.Regex.Match(output.Text, @"BG=(\d+)").Groups[1].Value);
+        await Task.Delay(100);
+        Assert.Equal(host.ProcessId, ProcessTable.Stat(bg)!.Value.Group);
+
+        host.Kill(TimeSpan.FromSeconds(1)); // (Dispose does the same with half a second)
+        Assert.Equal(128 + 1, await output.WaitExitAsync(5_000)); // the program died of the hang-up and was reaped: the timer finds it exited
+        Assert.True(await ProcessChecks.WaitGoneAsync(bg, 5_000), "the job that ignored the hang-up survived the grace timer");
+        host.Dispose();
+    }
+
+    [Fact]
+    public async Task Without_a_process_table_disposing_a_terminal_whose_program_was_reaped_earlier_kills_nothing_by_its_number()
+    {
+        RequireLinux();
+        var host = new UnixPtyHost { HasProcessTable = false };
+        var output = new RecordingPtyListener();
+        host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "trap '' HUP; sleep 1000 & echo BG=$!; exit 0"]), output);
+        Assert.True(await output.WaitForAsync("BG="));
+        await output.WaitExitAsync();
+        var bg = int.Parse(System.Text.RegularExpressions.Regex.Match(output.Text, @"BG=(\d+)").Groups[1].Value);
+        try
+        {
+            // maybe hours later: without a process table the number cannot be shown to be the terminal's still, and nothing is killed by it
+            // (VS Code never signals an exited terminal's group); on Linux the members noted at the reap prove it, and the job goes
+            // (Disposing_an_exited_terminal_still_kills_the_jobs_its_program_left_behind_off_the_callers_thread)
+            host.Dispose();
+            await Task.Delay(700);
+            Assert.True(ProcessChecks.IsAlive(bg), "a job was killed by a number that may have been reused");
+        }
+        finally
+        {
+            try { System.Diagnostics.Process.GetProcessById(bg).Kill(); } catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { }
+            await ProcessChecks.WaitGoneAsync(bg, 5_000);
+        }
+    }
+
     [Fact]
     public void Only_a_session_that_kept_the_number_in_use_since_the_reap_is_killed()
     {

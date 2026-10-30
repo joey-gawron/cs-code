@@ -77,7 +77,7 @@ public sealed partial class TaskService
     }
 
     private async Task<TaskResult> ExecuteInTerminalAsync(ITaskTerminalHost host, TaskModel task, ProcessStartInfo psi, IReadOnlyDictionary<string, string?> env,
-        IOutputChannel? channel, ProblemCollector? problems, TaskInstance instance, string key, CancellationToken ct)
+        IOutputChannel? channel, ProblemCollector? problems, Readiness? readiness, TaskInstance instance, string key, CancellationToken ct)
     {
         var presentation = PresentationOf(task.Presentation);
         var args = psi.ArgumentList.ToArray();
@@ -99,7 +99,8 @@ public sealed partial class TaskService
             return new TaskResult(task.Label, -1, Error: $"The task '{task.Label}' could not be started in a terminal: {ex.Message}");
         }
         lock (_terminalRuns) _terminalRuns.Add(run);
-        return await AwaitRunAsync(instance, task, problems, RunInTerminalAsync(run, task, psi, presentation, pump, channel, problems, instance, key, ct));
+        // (the program has been running and its output matched since the start: readiness was followed from before it)
+        return await AwaitRunAsync(instance, task, readiness, RunInTerminalAsync(run, task, psi, presentation, pump, channel, problems, instance, key, ct));
     }
 
     /// <summary>A task's run in its terminal, until the process exited (or its terminal was closed): its result.</summary>

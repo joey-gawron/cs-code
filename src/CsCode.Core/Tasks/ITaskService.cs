@@ -12,6 +12,13 @@ public sealed record TaskDefinition(string Label, string Type, string? Group = n
 public sealed record TaskResult(string Label, int ExitCode, bool Cancelled = false, string? Error = null)
 {
     public bool Succeeded => !Cancelled && Error is null && ExitCode == 0;
+
+    /// <summary>
+    /// A background task (<c>isBackground</c>) whose readiness cannot be followed (no problem matcher with background patterns): the run returned
+    /// after five seconds with VS Code's "cannot be tracked" as its <see cref="Error"/> and the task runs on. Whoever waits for readiness (the
+    /// debugger's preLaunchTask) shows it; a plain Run Task does not, as in VS Code. Additive (end pass).
+    /// </summary>
+    public bool NotTracked { get; init; }
 }
 
 /// <summary>

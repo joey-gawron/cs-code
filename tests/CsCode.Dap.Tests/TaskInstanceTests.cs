@@ -24,11 +24,18 @@ public sealed class TaskInstanceTests
     {
         public readonly ConcurrentQueue<Run> Runs = new();
 
-        public ValueTask<ITaskTerminalRun> StartAsync(TaskTerminalRequest request, CancellationToken ct = default)
+        /// <summary>
+        /// Runs after the program started and before the start returns: the real host then waits for the UI to show the terminal while the
+        /// program already prints (a fast watcher's whole first cycle).
+        /// </summary>
+        public Func<Run, Task>? WhileStarting;
+
+        public async ValueTask<ITaskTerminalRun> StartAsync(TaskTerminalRequest request, CancellationToken ct = default)
         {
             var run = new Run(request);
             Runs.Enqueue(run);
-            return ValueTask.FromResult<ITaskTerminalRun>(run);
+            if (WhileStarting is { } during) await during(run);
+            return run;
         }
 
         public Run[] Of(string label) => Runs.Where(r => r.Request.Label == label).ToArray();
@@ -243,6 +250,7 @@ public sealed class TaskInstanceTests
         var untracked = await rig.Service.RunAsync("untracked", null, Ct).AsTask().WaitAsync(TimeSpan.FromSeconds(15), Ct);
         Assert.False(untracked.Succeeded);
         Assert.Contains("cannot be tracked", untracked.Error);
+        Assert.True(untracked.NotTracked); // (a plain Run Task shows nothing for it: only the debugger reports it)
         Assert.True(DateTime.UtcNow - started >= TimeSpan.FromSeconds(4.5));
         var run = await StartedAsync(rig, "untracked");
         Assert.False(run.Terminated); // it runs on (VS Code: Debug Anyway is the user's call)
@@ -251,7 +259,36 @@ public sealed class TaskInstanceTests
         // a watch task that dies before it is ready: its exit is the result
         var pre = rig.Service.RunAsync("watch", null, Ct).AsTask();
         (await StartedAsync(rig, "watch")).Exit(2);
-        Assert.Equal(2, (await pre.WaitAsync(TimeSpan.FromSeconds(5), Ct)).ExitCode);
+        var died = await pre.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+        Assert.Equal(2, died.ExitCode);
+        Assert.False(died.NotTracked);
+    }
+
+    [Fact]
+    public async Task A_watch_task_whose_first_cycle_ends_while_its_terminal_is_starting_is_ready()
+    {
+        await using var rig = new Rig(WatchTasks);
+        // a fast watcher (esbuild --watch) prints its whole first cycle while the terminal's start still waits for the UI to show it
+        rig.Host.WhileStarting = async run =>
+        {
+            run.Output("compiling\nsrc/x.c:3: bad\nready\n");
+            await Task.Delay(300, Ct);
+        };
+        var custom = await rig.Service.RunAsync("custom", null, Ct).AsTask().WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        Assert.True(custom.Succeeded, custom.Error); // (missed, the cycle left it "cannot be tracked" after five seconds)
+        Assert.False(rig.Host.Of("custom")[0].Terminated);
+        Assert.Single(rig.Diagnostics.GetAll());
+
+        // activeBegins ($tsc-watch): busy from the start, only its end line printed during the start
+        rig.Host.WhileStarting = async run =>
+        {
+            run.Output("[10:00:02 AM] Found 0 errors. Watching for file changes.\n");
+            await Task.Delay(300, Ct);
+        };
+        var watch = await rig.Service.RunAsync("watch", null, Ct).AsTask().WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        Assert.True(watch.Succeeded, watch.Error);
+        Assert.True(rig.Service.IsActive("watch"));
+        foreach (var r in rig.Host.Runs) r.Exit(0);
     }
 
     [Fact]

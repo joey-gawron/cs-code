@@ -57,6 +57,8 @@ public sealed class SessionRaceTests : IDisposable
         public string? GetForegroundProcessName() => "slowsh";
         public void Dispose() => Disposed = true;
 
+        /// <summary>Still holds its listener after Dispose, as a real host's reader thread does until it has reaped the program.</summary>
+        public bool HasListener => _listener is not null;
         public (int Columns, int Rows) LastSize { get { lock (_gate) return Sizes[^1]; } }
         public void Output(string text) => _listener?.OnOutput(Encoding.UTF8.GetBytes(text));
         public void Exit(int code) { HasExited = true; ExitCode = code; _listener?.OnExited(code); }
@@ -178,6 +180,109 @@ public sealed class SessionRaceTests : IDisposable
         Assert.True(session.IsDisposed);
         Assert.Single(_hosts); // no second host
         Assert.True(restarted); // (the program was found; it was not started because its terminal is gone)
+    }
+
+    /// <summary>A remote terminal's backend: <see cref="Start"/> is the term/create round trip, which returns when the test lets it.</summary>
+    private sealed class FakeBackend : ITerminalBackend
+    {
+        public readonly ManualResetEventSlim InStart = new();
+        public readonly ManualResetEventSlim Release = new();
+        public volatile bool Disposed;
+        public ITerminalBackendListener? Listener;
+
+        public TerminalBackendStarted Start(TerminalCreateOptions options, int columns, int rows)
+        {
+            InStart.Set();
+            Assert.True(Release.Wait(TimeSpan.FromSeconds(10)), "the test never let the round trip return");
+            return new TerminalBackendStarted(7777, "/bin/remote-sh", "/remote/home");
+        }
+
+        public void Attach(ITerminalBackendListener listener) => Listener = listener;
+        public int ProcessId => 7777;
+        public bool HasExited => false;
+        public int? ExitCode => null;
+        public bool Write(ReadOnlySpan<byte> data, bool urgent = false) => true;
+        public long PendingWriteBytes => 0;
+        public long MaxPendingWriteBytes => 1 << 20;
+        public void Resize(int columns, int rows) { }
+        public void Kill(TimeSpan? grace = null) { }
+        public string? GetForegroundProcessName() => "remote-sh";
+        public void Dispose() => Disposed = true;
+    }
+
+    private sealed class FakeBackends(Queue<FakeBackend> backends) : ITerminalBackendProvider
+    {
+        public ITerminalBackend? TryCreate(TerminalCreateOptions options) { lock (backends) return backends.Dequeue(); }
+    }
+
+    [Fact]
+    public async Task A_remote_terminal_closed_during_its_start_round_trip_ends_the_program_the_server_started()
+    {
+        var backend = new FakeBackend();
+        using var service = Service();
+        service.Backends = () => new FakeBackends(new Queue<FakeBackend>([backend]));
+        var creating = service.CreateSessionAsync(Fake(), null, null).AsTask();
+        Assert.True(backend.InStart.Wait(TimeSpan.FromSeconds(10)), "the remote start never began");
+        // the trash button on the pane (it is shown while the server starts the shell over a slow link)
+        await service.KillAsync(Assert.Single(service.Sessions));
+        backend.Release.Set();
+        var session = await creating;
+        Assert.True(session.IsDisposed);
+        Assert.Null(backend.Listener); // never attached
+        Assert.True(backend.Disposed, "the program the server started for the closed terminal was left running");
+        Assert.Empty(_hosts);
+    }
+
+    [Fact]
+    public async Task A_reused_remote_terminal_closed_during_the_restarts_round_trip_ends_the_new_program()
+    {
+        var first = new FakeBackend();
+        var second = new FakeBackend();
+        first.Release.Set();
+        using var service = Service();
+        service.Backends = () => new FakeBackends(new Queue<FakeBackend>([first, second]));
+        var options = Fake("task", transient: true) with { ReuseWhenIdle = true };
+        var session = await service.CreateSessionAsync(options, null, null);
+        Assert.NotNull(first.Listener);
+        first.Listener!.OnExited(0);
+        Assert.True(await TestWait.UntilAsync(() => session.HasExited));
+
+        var reusing = service.CreateSessionAsync(options, null, null).AsTask(); // the next task run claims the idle terminal
+        Assert.True(second.InStart.Wait(TimeSpan.FromSeconds(10)), "the remote restart never began");
+        await service.KillAsync(session);
+        second.Release.Set();
+        Assert.Same(session, await reusing);
+        Assert.True(session.IsDisposed);
+        Assert.Null(second.Listener);
+        Assert.True(second.Disposed, "the program the server started for the closed terminal was left running");
+    }
+
+    // ------------------------------------------------------------------ terminal-9: a closed terminal is not kept alive by its host
+
+    [Fact]
+    public async Task A_closed_terminal_is_not_kept_alive_by_its_host_while_the_host_still_waits_for_its_program()
+    {
+        // A disposed UnixPtyHost's reader thread lives on until it has reaped the program (one that ignores the hang-up: until the SIGKILL after
+        // the grace period, longer for one stuck in the kernel), and that thread holds the host and so its listener. SlowHost keeps its listener
+        // after Dispose the same way, and the test keeps every host.
+        using var service = Service();
+        await LeakAssert.NotRetainedAsync(async () =>
+        {
+            var objects = new List<object>();
+            for (var i = 0; i < 3; i++)
+            {
+                var session = await service.CreateSessionAsync(Fake(), null, null);
+                lock (_hosts) _hosts[^1].Output("some output\r\n");
+                await session.InvokeAsync(e => 0);
+                await service.KillAsync(session);
+                Assert.True(session.JoinWorker(TimeSpan.FromSeconds(10)), "the terminal's worker did not end");
+                objects.Add(session);
+            }
+            return objects.ToArray();
+        });
+        Assert.Equal(3, _hosts.Count);
+        Assert.All(_hosts, h => Assert.True(h.Disposed && h.HasListener)); // the hosts are alive and still hold what they were given
+        lock (_hosts) _hosts.ForEach(h => h.Exit(0)); // a late reap reaches nothing
     }
 
     // ------------------------------------------------------------------ terminal-7: synchronized output that never ends

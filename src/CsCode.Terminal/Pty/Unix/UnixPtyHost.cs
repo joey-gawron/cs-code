@@ -51,6 +51,12 @@ public sealed unsafe class UnixPtyHost : IPtyHost
         _queue = new PtyWriteQueue(maxPendingWriteBytes);
     }
 
+    /// <summary>
+    /// The process table can be read (Linux's /proc): who holds a reaped program's number is then known. Not on macOS, where the grace timer
+    /// alone decides (<see cref="KillSession"/>). Tests switch it off to run that rule on Linux.
+    /// </summary>
+    internal bool HasProcessTable { get; init; } = OperatingSystem.IsLinux();
+
     public int ProcessId => Volatile.Read(ref _pid);
     public bool HasExited => _exited;
     public int? ExitCode => _exited ? Volatile.Read(ref _exitCode) : null;
@@ -287,7 +293,7 @@ public sealed unsafe class UnixPtyHost : IPtyHost
     /// </summary>
     private void Reaped(int exitCode)
     {
-        Volatile.Write(ref _membersAtReap, ProcessTable.SessionMembersWithStart(_pid));
+        if (HasProcessTable) Volatile.Write(ref _membersAtReap, ProcessTable.SessionMembersWithStart(_pid));
         Volatile.Write(ref _exitCode, exitCode);
         _exited = true;
     }
@@ -404,7 +410,7 @@ public sealed unsafe class UnixPtyHost : IPtyHost
             // Reaped already (a finished task's terminal closed or reused, maybe hours later): what is left of its session goes, from the pool
             // (a /proc scan never runs on the caller's thread, which may be the UI's) and only while the session is provably still this
             // terminal's (KillSession).
-            ThreadPool.UnsafeQueueUserWorkItem(static s => s.Host.KillSession(s.Pid), (Host: this, Pid: pid), preferLocal: false);
+            ThreadPool.UnsafeQueueUserWorkItem(static s => s.Host.KillSession(s.Pid, afterHangUp: false), (Host: this, Pid: pid), preferLocal: false);
             return;
         }
         // The timer escalates even if the child exits quickly: what it started in the background (same session) goes too.
@@ -421,7 +427,7 @@ public sealed unsafe class UnixPtyHost : IPtyHost
         {
             lock (KillTimers) KillTimers.Remove(timer!);
             timer!.Dispose();
-            KillSession(pid);
+            KillSession(pid, afterHangUp: true);
         }, null, Timeout.Infinite, Timeout.Infinite);
         lock (KillTimers) KillTimers.Add(timer);
         timer.Change(grace, Timeout.InfiniteTimeSpan);
@@ -430,9 +436,12 @@ public sealed unsafe class UnixPtyHost : IPtyHost
     /// <summary>
     /// SIGKILL to every process still in the child's session (its jobs, which have their own process groups) and its group. Once the child has
     /// been reaped its pid is only a number that the kernel hands out again as soon as nothing uses it as a pid, process group or session id: then
-    /// only <see cref="OrphansToKill"/> are signalled, never the number itself.
+    /// only <see cref="OrphansToKill"/> are signalled. Without a process table (macOS) that cannot be known: the grace timer of a hang-up sent
+    /// while the program ran (<paramref name="afterHangUp"/>) still kills the group, since the leader was reaped within the grace and a number
+    /// freed that recently is not handed out again there (pids are assigned in sequence, wrapping only after the whole range); a terminal killed
+    /// or disposed after its program had already been reaped kills nothing by its number (VS Code never signals an exited terminal's group).
     /// </summary>
-    private void KillSession(int sid)
+    private void KillSession(int sid, bool afterHangUp)
     {
         if (!_exited)
         {
@@ -440,6 +449,11 @@ public sealed unsafe class UnixPtyHost : IPtyHost
             kill(-sid, SIGKILL);
             foreach (var pid in ProcessTable.SessionMembers(sid))
                 kill(pid, SIGKILL);
+            return;
+        }
+        if (!HasProcessTable)
+        {
+            if (afterHangUp) kill(-sid, SIGKILL);
             return;
         }
         var members = OrphansToKill(ProcessTable.SessionMembersWithStart(sid), Volatile.Read(ref _membersAtReap));
@@ -463,7 +477,7 @@ public sealed unsafe class UnixPtyHost : IPtyHost
     }
 
     /// <summary>Tests: the escalation for session <paramref name="sid"/> as the kill timer runs it.</summary>
-    internal void KillSessionForTest(int sid) => KillSession(sid);
+    internal void KillSessionForTest(int sid) => KillSession(sid, afterHangUp: true);
 
     public string? GetForegroundProcessName()
     {

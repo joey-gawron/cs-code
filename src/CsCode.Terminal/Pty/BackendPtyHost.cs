@@ -44,6 +44,13 @@ internal sealed class BackendLauncher(ITerminalBackendProvider provider, Termina
     public IPtyHost CreateHost() =>
         new BackendPtyHost(Interlocked.Exchange(ref _started, null) ?? throw new PtySpawnException("The remote terminal was not started."));
 
+    /// <summary>
+    /// The terminal was closed before its session took the backend <see cref="Start"/> started (during that round trip): the backend goes, and
+    /// with it the program on the other side, which would otherwise run unseen (a persistent server keeps it) with a delivery thread waiting for
+    /// a listener that never comes. Called on the thread that called <see cref="Start"/>.
+    /// </summary>
+    public void Discard() => Interlocked.Exchange(ref _started, null)?.Dispose();
+
     /// <summary>Starts a backend on the other side (blocking: called off the UI thread) and describes it for the session.</summary>
     public PtyStartInfo Start(int columns, int rows)
     {
