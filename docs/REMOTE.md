@@ -261,4 +261,5 @@ Run without `SSH_AUTH_SOCK` and without a display (the tests set `SSH_AUTH_SOCK`
   Skips with a reason when no sshd exists.
 * **App composition** (`tests/CsCode.App.Tests/RemoteCompositionTests.cs`, headless, real app start/exit): a remote folder opens in the Explorer, a file is
   opened, edited and saved through the editor and the save command onto the remote disk, an Explorer create goes remote, quick open walks the remote,
-  the status-bar indicator follows the connection; `cscode.languageHost = process` runs the child and the app's exit stops it; `ssh://` command-line targets.
+  the status-bar indicator follows the connection; `cscode.languageHost = process` runs the child and the app's exit stops it; `ssh://` command-line targets;
+  `cscode --askpass` answers without starting the GUI.
