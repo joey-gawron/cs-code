@@ -766,10 +766,17 @@ public sealed class FileWatcher : IFileWatcher, IDisposable
             return false;
         }
 
-        private static bool IsAtOrBelow(string path, string dir) =>
-            path.StartsWith(dir, PathComparer == StringComparer.Ordinal ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)
-            && (path.Length == dir.Length || path[dir.Length] == '/' || path[dir.Length] == '\\' || dir.EndsWith('/'));
+        private static bool IsAtOrBelow(string path, string dir) => FileWatcher.IsAtOrBelow(path, dir, PathComparer);
     }
+
+    /// <summary>
+    /// <paramref name="path"/> is <paramref name="dir"/> or below it, its leading part compared the way <paramref name="comparer"/> compares
+    /// paths: on macOS that is the volume's own case rule, so on a case-sensitive volume a wanted tree "Pkg" does not cover "pkg".
+    /// </summary>
+    internal static bool IsAtOrBelow(string path, string dir, IEqualityComparer<string> comparer) =>
+        path.Length >= dir.Length
+        && (path.Length == dir.Length || path[dir.Length] == '/' || path[dir.Length] == '\\' || dir.EndsWith('/'))
+        && (path.StartsWith(dir, StringComparison.Ordinal) || comparer.Equals(path[..dir.Length], dir));
 
     private sealed class Subscription : IDisposable
     {

@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using CsCode.Core.Platform;
 using CsCode.Platform.FileSystem;
 using CsCode.Platform.Io;
+using CsCode.Platform.Watching;
 using CsCode.TestDoubles;
 using Xunit;
 
@@ -597,6 +598,25 @@ public class LocalFileSystemTests : IDisposable
         Assert.Equal(["/v/Foo"], asked); // only a pair that differs in nothing but case costs a question to the volume
         Assert.Equal(2, new HashSet<string>(["/v/Foo", "/v/foo"], sensitive).Count);
         Assert.Single(new HashSet<string>(["/v/Foo", "/v/foo"], insensitive));
+    }
+
+    // The watcher's wanted-tree check folded case on every macOS volume (it only kept case for the Ordinal comparer), so on a case-sensitive
+    // APFS volume a wanted node_modules/Pkg/ also let through events for its sibling node_modules/pkg/ despite the exclude.
+    [Fact]
+    public void A_wanted_tree_covers_a_path_differing_in_case_only_on_a_case_insensitive_volume()
+    {
+        var sensitive = new VolumePathComparer(_ => true);
+        var insensitive = new VolumePathComparer(_ => false);
+
+        Assert.False(FileWatcher.IsAtOrBelow("/v/proj/node_modules/pkg/x.js", "/v/proj/node_modules/Pkg", sensitive));
+        Assert.True(FileWatcher.IsAtOrBelow("/v/proj/node_modules/pkg/x.js", "/v/proj/node_modules/Pkg", insensitive));
+        Assert.True(FileWatcher.IsAtOrBelow("/v/proj/node_modules/Pkg/x.js", "/v/proj/node_modules/Pkg", sensitive));
+        Assert.True(FileWatcher.IsAtOrBelow("/v/proj/node_modules/Pkg", "/v/proj/node_modules/Pkg", sensitive));
+        Assert.True(FileWatcher.IsAtOrBelow("/v/a/b", "/", sensitive));
+        Assert.False(FileWatcher.IsAtOrBelow("/v/proj/node_modules/Pkg2/x.js", "/v/proj/node_modules/Pkg", insensitive));
+        Assert.False(FileWatcher.IsAtOrBelow("/v/proj", "/v/proj/node_modules", insensitive));
+        Assert.False(FileWatcher.IsAtOrBelow("/v/Proj/a", "/v/proj", StringComparer.Ordinal));
+        Assert.True(FileWatcher.IsAtOrBelow("C:\\Proj\\a", "c:\\proj", StringComparer.OrdinalIgnoreCase));
     }
 
     [Fact]
