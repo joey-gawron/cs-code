@@ -78,6 +78,64 @@ public class EndPassDebugTests
         Assert.Contains("\"make\"", File.ReadAllText(Path.Combine(h.Dir.Path, ".vscode", "tasks.json")), StringComparison.Ordinal);
     }
 
+    /// <summary>The user's default build task has another label: the template's "build" is added, as a plain build task (one default per group).</summary>
+    [Fact]
+    public async Task Next_to_the_users_default_build_task_the_template_build_task_is_added_as_a_plain_build_task()
+    {
+        await using var h = new ServiceHarness();
+        h.Dir.WriteFile("App.csproj", "<Project/>");
+        h.Dir.WriteFile(".vscode/tasks.json", """
+            { "version": "2.0.0", "tasks": [ { "label": "make all", "type": "shell", "command": "make", "group": { "kind": "build", "isDefault": true } } ] }
+            """);
+        await h.Configurations.CreateLaunchJsonAsync("coreclr", h.Dir.Uri, Ct);
+        var tasks = await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct);
+        Assert.Equal(["make all", "build"], tasks.Select(t => t.Label));
+        Assert.Equal("make all", Assert.Single(tasks, t => t.IsDefaultBuild).Label);
+        Assert.Equal(("build", false), (tasks[1].Group, tasks[1].IsDefault));
+    }
+
+    /// <summary>A default TEST task is no default build task: the template's build task stays the folder's default build task.</summary>
+    [Fact]
+    public async Task A_default_test_task_does_not_keep_the_template_build_task_from_being_the_default_build_task()
+    {
+        await using var h = new ServiceHarness();
+        h.Dir.WriteFile("App.csproj", "<Project/>");
+        h.Dir.WriteFile(".vscode/tasks.json", """
+            { "version": "2.0.0", "tasks": [ { "label": "test", "type": "shell", "command": "make test", "group": { "kind": "test", "isDefault": true } } ] }
+            """);
+        await h.Configurations.CreateLaunchJsonAsync("coreclr", h.Dir.Uri, Ct);
+        var tasks = await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct);
+        Assert.Equal(["test", "build"], tasks.Select(t => t.Label));
+        Assert.Equal("build", Assert.Single(tasks, t => t.IsDefaultBuild).Label);
+        Assert.Equal(("test", true), (tasks[0].Group, tasks[0].IsDefault));
+    }
+
+    [Theory]
+    [InlineData("""{ "tasks": [ { "label": "b", "group": { "kind": "build", "isDefault": true } } ] }""", null)] // label present: nothing to add
+    [InlineData("""{ "tasks": [ { "label": "x", "group": { "kind": "build", "isDefault": true } } ] }""", "\"build\"")]
+    [InlineData("""{ "tasks": [ { "label": "x", "group": { "kind": "BUILD", "isDefault": true } } ] }""", "\"build\"")]
+    [InlineData("""{ "tasks": [ { "label": "x", "group": { "kind": "test", "isDefault": true } } ] }""", "{\"kind\":\"build\",\"isDefault\":true}")]
+    [InlineData("""{ "tasks": [ { "label": "x", "group": { "kind": "build", "isDefault": false } } ] }""", "{\"kind\":\"build\",\"isDefault\":true}")]
+    [InlineData("""{ "tasks": [ { "label": "x", "group": "build" } ] }""", "{\"kind\":\"build\",\"isDefault\":true}")]
+    public void A_default_build_task_is_demoted_only_next_to_another_default_build_task(string text, string? group)
+    {
+        var offered = new JsonObject { ["label"] = "b", ["group"] = new JsonObject { ["kind"] = "build", ["isDefault"] = true } };
+        var edit = DebugConfigurationService.AddTasks(text, [offered], out var problem);
+        Assert.Null(problem);
+        if (group is null) { Assert.Null(edit); return; }
+        var added = JsonNode.Parse(edit!.Value.ApplyTo(text))!["tasks"]!.AsArray()[^1]!;
+        Assert.Equal(("b", group), (added["label"]!.GetValue<string>(), added["group"]!.ToJsonString()));
+    }
+
+    [Fact]
+    public void A_tasks_json_that_does_not_parse_is_not_edited_and_says_why()
+    {
+        Assert.Null(DebugConfigurationService.AddTasks("{ \"tasks\": [ ", [new JsonObject { ["label"] = "b" }], out var problem));
+        Assert.Contains("does not parse", problem, StringComparison.Ordinal);
+        Assert.Null(DebugConfigurationService.AddTasks("{ \"tasks\": 3 }", [new JsonObject { ["label"] = "b" }], out problem));
+        Assert.Contains("not a list", problem, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Without_any_tasks_json_the_companion_goes_to_cscode_as_before()
     {

@@ -300,8 +300,7 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
 
     /// <summary>
     /// Adds the template's tasks whose labels <paramref name="existing"/> lacks to its <c>tasks</c> list, keeping the user's text (comments,
-    /// layout) as it is. A template task that would be a second default build task is added as a plain build task. A file that does not parse
-    /// is left alone.
+    /// layout) as it is (<see cref="AddTasks"/>). A file that does not parse is left alone.
     /// </summary>
     private async Task MergeTasksAsync(Uri existing, string template, CancellationToken ct)
     {
@@ -309,28 +308,52 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
         try
         {
             var text = Encoding.UTF8.GetString(await ws.FileSystem.ReadFileAsync(existing, ct));
-            if (JsonNode.Parse(text, documentOptions: Lenient) is not JsonObject current || JsonNode.Parse(template, documentOptions: Lenient)?["tasks"] is not JsonArray offered) return;
-            var tasks = current["tasks"] as JsonArray;
-            var labels = tasks?.OfType<JsonObject>().Select(t => t["label"]?.GetValueKind() == JsonValueKind.String ? t["label"]!.GetValue<string>() : null).OfType<string>().ToHashSet(StringComparer.Ordinal) ?? [];
-            var hasDefaultBuild = tasks?.OfType<JsonObject>().Any(t => t["group"] is JsonObject g && g["isDefault"]?.GetValueKind() == JsonValueKind.True) ?? false;
-            var missing = new List<JsonNode>();
-            foreach (var task in offered.OfType<JsonObject>())
+            if (JsonNode.Parse(template, documentOptions: Lenient)?["tasks"] is not JsonArray offered) return;
+            if (AddTasks(text, offered.OfType<JsonObject>(), out var problem) is not { } edit)
             {
-                if (task["label"]?.GetValueKind() != JsonValueKind.String || labels.Contains(task["label"]!.GetValue<string>())) continue;
-                var copy = (JsonObject)task.DeepClone();
-                if (hasDefaultBuild && copy["group"] is JsonObject { } group && group["kind"]?.GetValueKind() == JsonValueKind.String) copy["group"] = group["kind"]!.GetValue<string>();
-                missing.Add(copy);
-            }
-            if (missing.Count == 0) return;
-            if (JsoncText.AppendToArray(text, "tasks", missing) is not { } edit)
-            {
-                _logger.LogWarning("Could not add the build task to {File}: its 'tasks' is not a list", existing);
+                if (problem is not null) _logger.LogWarning("Could not add the template's task to {File}: {Problem}", existing, problem);
                 return;
             }
             await ws.FileSystem.WriteFileAsync(existing, Encoding.UTF8.GetBytes(edit.ApplyTo(text)), createParents: false, ct);
         }
-        catch (JsonException ex) { _logger.LogWarning("{File} does not parse; the template's task was not added: {Message}", existing, ex.Message); }
+        catch (JsonException ex) { _logger.LogWarning("The template's tasks.json does not parse: {Message}", ex.Message); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _logger.LogWarning(ex, "Could not add the template's task to {File}", existing); }
+    }
+
+    /// <summary>
+    /// The edit that appends the tasks of <paramref name="offered"/> whose labels <paramref name="text"/> (a tasks.json) lacks to its <c>tasks</c>
+    /// list, keeping the rest of the text as written. A task offered as the default build task is added as a plain build task when the file has
+    /// a default build task already (a default TEST task does not count: VS Code keeps one default per group). Null when nothing is missing, or
+    /// with <paramref name="problem"/> set when the text does not parse or has no <c>tasks</c> list that can be edited.
+    /// </summary>
+    internal static JsoncInsertion? AddTasks(string text, IEnumerable<JsonObject> offered, out string? problem)
+    {
+        problem = null;
+        JsonObject? current;
+        try { current = JsonNode.Parse(text, documentOptions: Lenient) as JsonObject; }
+        catch (JsonException ex) { problem = $"it does not parse ({ex.Message})"; return null; }
+        if (current is null) { problem = "it is not a JSON object"; return null; }
+        var tasks = current["tasks"] as JsonArray;
+        var labels = tasks?.OfType<JsonObject>().Select(t => t["label"]?.GetValueKind() == JsonValueKind.String ? t["label"]!.GetValue<string>() : null).OfType<string>().ToHashSet(StringComparer.Ordinal) ?? [];
+        var hasDefaultBuild = tasks?.OfType<JsonObject>().Any(IsDefaultBuild) ?? false;
+        var missing = new List<JsonNode>();
+        foreach (var task in offered)
+        {
+            if (task["label"]?.GetValueKind() != JsonValueKind.String || !labels.Add(task["label"]!.GetValue<string>())) continue;
+            var copy = (JsonObject)task.DeepClone();
+            if (hasDefaultBuild && IsDefaultBuild(copy)) copy["group"] = ((JsonObject)copy["group"]!)["kind"]!.GetValue<string>();
+            hasDefaultBuild |= IsDefaultBuild(copy);
+            missing.Add(copy);
+        }
+        if (missing.Count == 0) return null;
+        var edit = JsoncText.AppendToArray(text, "tasks", missing);
+        if (edit is null) problem = "its 'tasks' is not a list";
+        return edit;
+
+        // what TaskService counts as the default build task (TaskDefinition.IsDefaultBuild): group { "kind": "build", "isDefault": true }
+        static bool IsDefaultBuild(JsonObject task) =>
+            task["group"] is JsonObject g && g["isDefault"]?.GetValueKind() == JsonValueKind.True
+            && g["kind"]?.GetValueKind() == JsonValueKind.String && string.Equals(g["kind"]!.GetValue<string>(), "build", StringComparison.OrdinalIgnoreCase);
     }
 
     private static readonly JsonDocumentOptions Lenient = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
