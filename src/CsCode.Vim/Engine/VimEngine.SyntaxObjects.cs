@@ -59,7 +59,7 @@ public sealed partial class VimEngine
     {
         var copy = new Cmd();
         c.CopyTo(copy);
-        StartWork(SyntaxOperatorWork(copy, count0));
+        StartSyntaxWork(SyntaxOperatorWork(copy, count0));
     }
 
     /// <summary>A syntax text object in Visual mode (<c>vaf</c>, <c>v2ic</c>) or a syntax motion without an operator (<c>]m</c>, <c>v3[M</c>).</summary>
@@ -67,7 +67,31 @@ public sealed partial class VimEngine
     {
         var copy = new Cmd();
         c.CopyTo(copy);
-        StartWork(SyntaxPlainWork(copy, count0));
+        StartSyntaxWork(SyntaxPlainWork(copy, count0));
+    }
+
+    /// <summary>
+    /// Typed keys, macros, mappings and <c>.</c> suspend the command until the answer. Inside <c>:normal</c> and <c>:g</c> nothing can wait (they
+    /// run their keys to completion within one command, around other work): there only a host that answers at once is served, and a later
+    /// answer ends the command with a message.
+    /// </summary>
+    private void StartSyntaxWork(IEnumerator<int> work)
+    {
+        if (_nest == 0 && !_globalBusy && _work is null)
+        {
+            StartWork(work);
+            return;
+        }
+        using (work)
+        {
+            while (work.MoveNext())
+            {
+                if (!AwaitingHost) continue;
+                CancelSyntaxRequest();
+                Error("af/if, ac/ic, aa/ia and ]m [m cannot wait for the syntax tree inside :normal or :g");
+                return;
+            }
+        }
     }
 
     private IEnumerator<int> SyntaxOperatorWork(Cmd c, int count0)

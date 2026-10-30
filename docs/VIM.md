@@ -151,7 +151,8 @@ and the Neovim-blessed expectations, a 300-editor open/edit/close retention test
   the queries are bundled with the grammars, docs/TREE-SITTER.md), so what an object covers per language is that project's choice (Kotlin's
   `]m` stops at a primary constructor; its `aa` on a declared parameter takes no comma, on a call argument it does). As in Vim, a delete from
   the indentation to a line end over several lines takes the whole lines. On a TextMate document they fail with one message (a macro stops
-  there).
+  there). Inside `:normal` and `:g` nothing can wait (they run their keys to completion within one command): the real editor's answer is
+  always later, so there they fail with a message (macros, mappings and `.` are fine).
 * Big operations are cooperative: `:s` (also with `c`), `:g`, `:v`, `:sort` and their work generators yield every few milliseconds
   (`SliceBudget`, default 3 ms; the first slice runs inside the key that started it). `dG`, `:%s` and `gg=G` compute against the buffer and apply
   ONE batched `ApplyEdits`. Measured on a 100k-line buffer (unoptimised test build, one developer machine): `:%s/a/b/g` longest call 36 ms in 17 calls;

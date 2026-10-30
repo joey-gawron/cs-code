@@ -271,6 +271,27 @@ public class SyntaxObjectTests
         Assert.Contains("changed", e.LastError, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Inside_normal_and_g_only_an_immediate_answer_is_used_and_a_late_one_ends_the_command_without_hanging()
+    {
+        var (e, h) = Create();
+        h.SyntaxRanges = (_, _) => LiveFunctions(h.Buffer);
+        e.TypeKeys(":3normal daf<CR>");                    // a host that answers at once: served inside :normal
+        Assert.Equal("class A {\n    void h() {\n        return;\n    }\n}", Text(h));
+
+        var (late, lh) = Create(deferred: true);
+        lh.Caret = new TextPosition(2, 8);
+        late.TypeKeys(":normal daf<CR>");                  // nothing can wait inside :normal: a message, no hang, nothing deleted
+        Assert.Equal(Code, Text(lh));
+        Assert.Contains("inside :normal", late.LastError, StringComparison.Ordinal);
+        Assert.False(late.IsAwaitingSyntax);
+        late.TypeKeys(":g/return/normal daf<CR>");
+        Assert.Equal(Code, Text(lh));
+        lh.AnswerSyntaxRequests();                         // the late answers are ignored
+        Assert.Equal(Code, Text(lh));
+        Assert.Equal(0, lh.ManualTimer!.PendingCount);     // and no timeout is left behind
+    }
+
     // ---- the choice, directly ----
 
     [Fact]
