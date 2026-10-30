@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using CsCode.Core.Debugging;
+using CsCode.Core.Languages;
 using CsCode.Core.Platform;
+using CsCode.Core.Text;
+using CsCode.Dap.Configuration;
 using CsCode.Dap.Session;
 
 namespace CsCode.Dap.Service;
@@ -33,6 +36,150 @@ public sealed partial class DebugService
             return ValueTask.FromResult<object?>(null);
         });
         Reg(PickProcessCommand, "Pick Process to Attach To", async inv => await PickProcessAsync(inv.Cancellation));
+        Reg(ConfigureCommand, "Open launch.json", async inv => { await _lane.RunAsync(() => OpenLaunchJsonCoreAsync(inv.Cancellation), inv.Cancellation); return null; });
+        Reg(AddConfigurationCommand, "Add Configuration...", async inv => { await _lane.RunAsync(() => AddConfigurationCoreAsync(inv.Cancellation), inv.Cancellation); return null; });
+    }
+
+    /// <summary>VS Code's "Open launch.json" (Debug menu, Run view gear).</summary>
+    public const string ConfigureCommand = "workbench.action.debug.configure";
+    /// <summary>VS Code's "Add Configuration..." (Debug menu).</summary>
+    public const string AddConfigurationCommand = "debug.addConfiguration";
+
+    /// <summary>The folder the debug commands work on: the selected configuration's, else the first workspace folder.</summary>
+    private Uri? CommandFolder => _configurations.Selected?.WorkspaceFolder ?? _p.PrimaryFolder;
+
+    /// <summary>
+    /// Lane. Opens the folder's launch.json; without one it is created first, for the folder's debugger (or the one the user picks), as VS Code
+    /// does. Returns the file (null: no folder, or the user cancelled).
+    /// </summary>
+    private async Task<Uri?> OpenLaunchJsonCoreAsync(CancellationToken ct)
+    {
+        if (CommandFolder is not { } folder)
+        {
+            await ReportAsync("Open a folder to configure debugging: launch.json belongs to a workspace folder.");
+            return null;
+        }
+        var uri = await _configurations.FindLaunchJsonAsync(folder, ct);
+        if (uri is null)
+        {
+            if (_p.Window is not { } window || await PickDebugTypeAsync(window, folder, ct) is not { } type) return null;
+            uri = await CreateLaunchJsonAsync(type, folder, ct);
+            if (uri is null) return null;
+        }
+        if (_p.Navigation is { } navigation) await navigation.OpenAsync(uri, ct: ct);
+        return uri;
+    }
+
+    private async Task<Uri?> CreateLaunchJsonAsync(string type, Uri folder, CancellationToken ct)
+    {
+        try { return await _configurations.CreateLaunchJsonAsync(type, folder, ct); }
+        catch (InvalidOperationException ex)
+        {
+            await ReportAsync(ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Lane. VS Code's "Add Configuration...": the user picks a debugger, then one of its configurations (what a new launch.json for it holds),
+    /// which is appended to the <c>configurations</c> of the folder's launch.json — in the editor, as an edit the user can undo and must save,
+    /// with the rest of the file as written — and revealed. The task its preLaunchTask names comes with it when the folder lacks it
+    /// (<see cref="AddCompanionTasksAsync"/>). Without a launch.json this is "Open launch.json" (which creates one).
+    /// </summary>
+    private async Task AddConfigurationCoreAsync(CancellationToken ct)
+    {
+        if (CommandFolder is not { } folder || _p.Window is not { } window || await _configurations.FindLaunchJsonAsync(folder, ct) is not { } uri)
+        {
+            await OpenLaunchJsonCoreAsync(ct);
+            return;
+        }
+        var types = DebuggerTypes;
+        if (types.Count == 0) { await ReportAsync("No debugger is available. Configure one in the 'cscode.debuggers' setting."); return; }
+        var debugger = await window.ShowQuickPickAsync([.. types.Select(t => new QuickPickItem(t.Label, t.Type, Tag: t.Type))],
+            new QuickPickOptions(Title: "Add Configuration", Placeholder: "Select debugger"), ct);
+        if (debugger?.Tag is not string type) return;
+        var offered = await _configurations.GetConfigurationTemplatesAsync(type, folder, ct);
+        var templates = offered.Configurations;
+        if (templates.Count == 0) { await ReportAsync($"'{debugger.Label}' offers no configurations to add."); return; }
+        var chosen = templates[0];
+        if (templates.Count > 1)
+        {
+            var picked = await window.ShowQuickPickAsync([.. templates.Select(c => new QuickPickItem(c.Name, c.Request, Tag: c))],
+                new QuickPickOptions(Title: "Add Configuration", Placeholder: "Select the configuration to add"), ct);
+            if (picked?.Tag is not DebugConfiguration c) return;
+            chosen = c;
+        }
+
+        var navigation = _p.Navigation;
+        var document = navigation is null ? null : await navigation.OpenAsync(uri, ct: ct);
+        string text;
+        if (document is not null) text = document.GetText(); // what the editor holds, unsaved edits included
+        else if (_p.Workspace is { } ws) text = System.Text.Encoding.UTF8.GetString(await ws.FileSystem.ReadFileAsync(uri, ct));
+        else return;
+        if (DebugConfigurationService.AddConfiguration(text, chosen) is not { } edit)
+        {
+            await ReportAsync($"{uri.LocalPath}: the configuration cannot be added: launch.json has no 'configurations' list that can be edited.");
+            return;
+        }
+        var updated = edit.ApplyTo(text);
+        var at = PositionOf(updated, edit.ElementOffset);
+        if (document is not null && navigation is not null)
+        {
+            var range = new TextRange(document.PositionAt(edit.Position), document.PositionAt(edit.Position + edit.Length));
+            var changes = new Dictionary<Uri, IReadOnlyList<TextEdit>> { [uri] = [new TextEdit(range, edit.Text)] };
+            if (!await navigation.ApplyWorkspaceEditAsync(new WorkspaceEdit(changes), "Add Configuration", ct)) return;
+        }
+        else
+        {
+            await _p.Workspace!.FileSystem.WriteFileAsync(uri, System.Text.Encoding.UTF8.GetBytes(updated), createParents: false, ct);
+            _configurations.Invalidate(folder);
+        }
+        if (navigation is not null) await navigation.OpenAsync(uri, new TextRange(at, at), ct: ct);
+        await AddCompanionTasksAsync(folder, uri, chosen, offered.TasksJson, navigation, ct);
+    }
+
+    /// <summary>
+    /// Lane. The tasks the added configuration runs (its preLaunchTask, postDebugTask) that its debugger's template defines — what Create
+    /// launch.json writes as the companion tasks.json — and the folder's tasks.json lacks: CsCode detects no tasks (in VS Code 'tsc: build' or a
+    /// cargo build task exist without a tasks.json), so without them the new configuration would name a task that exists nowhere and fail at F5.
+    /// They are appended to the tasks.json in use, keeping its text as written — in the editor when it is open there (unsaved, like the
+    /// configuration), else on disk — with no second default build task; without a tasks.json the template's is written next to the launch.json.
+    /// </summary>
+    private async Task AddCompanionTasksAsync(Uri folder, Uri launchJson, DebugConfiguration added, string? tasksJson, INavigationService? navigation, CancellationToken ct)
+    {
+        var needed = DebugConfigurationService.TasksNamedBy(added, tasksJson);
+        if (needed.Count == 0 || _p.Workspace is not { } ws) return;
+        if (await _configurations.FindTasksJsonAsync(folder, ct) is not { } tasksUri)
+        {
+            await ws.FileSystem.WriteFileAsync(new Uri(launchJson, "tasks.json"), System.Text.Encoding.UTF8.GetBytes(tasksJson!), createParents: true, ct);
+            return;
+        }
+        var open = navigation?.OpenDocuments.FirstOrDefault(d => d.Uri == tasksUri);
+        var text = open is not null ? open.GetText() : System.Text.Encoding.UTF8.GetString(await ws.FileSystem.ReadFileAsync(tasksUri, ct));
+        if (DebugConfigurationService.AddTasks(text, needed, out var problem) is not { } edit)
+        {
+            if (problem is not null)
+                await ReportAsync($"{tasksUri.LocalPath}: the task '{needed[0]["label"]}' that '{added.Name}' runs could not be added: {problem}.");
+            return;
+        }
+        if (open is not null && navigation is not null)
+        {
+            var range = new TextRange(open.PositionAt(edit.Position), open.PositionAt(edit.Position + edit.Length));
+            var changes = new Dictionary<Uri, IReadOnlyList<TextEdit>> { [tasksUri] = [new TextEdit(range, edit.Text)] };
+            await navigation.ApplyWorkspaceEditAsync(new WorkspaceEdit(changes), "Add Configuration", ct);
+        }
+        else await ws.FileSystem.WriteFileAsync(tasksUri, System.Text.Encoding.UTF8.GetBytes(edit.ApplyTo(text)), createParents: false, ct);
+    }
+
+    /// <summary>Line and character of <paramref name="offset"/> in <paramref name="text"/> ('\n', '\r\n' and '\r' end lines).</summary>
+    private static TextPosition PositionOf(string text, int offset)
+    {
+        int line = 0, lineStart = 0;
+        for (var i = 0; i < offset && i < text.Length; i++)
+        {
+            if (text[i] == '\n' || (text[i] == '\r' && (i + 1 >= text.Length || text[i + 1] != '\n'))) { line++; lineStart = i + 1; }
+        }
+        return new TextPosition(line, offset - lineStart);
     }
 
     /// <summary>
@@ -47,19 +194,29 @@ public sealed partial class DebugService
         return root;
     }
 
-    /// <summary>Starts the toolbar's selected launch configuration (first one if none selected); offers to create launch.json when there is none.</summary>
+    /// <summary>
+    /// Starts the toolbar's selected launch configuration (first one if none selected). Without any: a launch.json that exists (but holds no
+    /// configuration, or does not parse — its error was shown) is opened; otherwise creating one is offered, and the new file is opened, as
+    /// VS Code does.
+    /// </summary>
     public async ValueTask<IDebugSession?> StartSelectedAsync(bool noDebug, CancellationToken ct = default)
     {
         var configs = await _configurations.GetLaunchConfigurationsAsync(null, ct);
         var cfg = _configurations.Selected ?? configs.FirstOrDefault();
         if (cfg is null)
         {
-            if (_p.Window is { } window && _p.PrimaryFolder is not null)
+            if (_p.Window is { } window && _p.PrimaryFolder is { } folder)
             {
+                if (await _configurations.FindLaunchJsonAsync(folder, ct) is { } existing)
+                {
+                    if (_p.Navigation is { } navigation) await navigation.OpenAsync(existing, ct: ct);
+                    return null;
+                }
                 var choice = await window.ShowMessageAsync(MessageSeverity.Info, "There is no launch configuration. Create a launch.json?",
                     [new MessageAction("Create launch.json"), new MessageAction("Cancel", IsCloseAffordance: true)], ct);
-                if (choice == "Create launch.json" && await PickDebugTypeAsync(window, _p.PrimaryFolder, ct) is { } type)
-                    await _configurations.CreateLaunchJsonAsync(type, null, ct);
+                if (choice == "Create launch.json" && await PickDebugTypeAsync(window, folder, ct) is { } type
+                    && await CreateLaunchJsonAsync(type, folder, ct) is { } created && _p.Navigation is { } nav)
+                    await nav.OpenAsync(created, ct: ct);
             }
             return null;
         }

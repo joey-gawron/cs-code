@@ -64,7 +64,9 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
 
     private readonly OutputHistory _history = new(MaxHistoryLines, MaxHistoryChars);
 
-    private sealed record SessionHooks(IDisposable Subscriptions, string? PostDebugTask, Uri? Folder);
+    /// <param name="OutputSubscription">Kept until the session is released (after <c>terminated</c> the adapter may still send output while
+    /// the session disconnects from it).</param>
+    private sealed record SessionHooks(IDisposable Subscriptions, IDisposable OutputSubscription, string? PostDebugTask, Uri? Folder);
     private sealed class CompoundGroup(bool stopAll) { public bool StopAll { get; } = stopAll; public List<IDebugSession> Members { get; } = new(); }
 
     public DebugService(DebugLane lane, DapPlatform platform, BreakpointManager breakpoints, DebugConfigurationService configurations, ITaskService tasks, IEnumerable<BuiltinDebugAdapter>? builtins = null)
@@ -164,10 +166,73 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
 
     // ------------------------------------------------------------------ starting
 
+    /// <summary>
+    /// Starts a session. From the call on, until its session exists (or the start failed), the debugger counts as starting: the state is
+    /// <see cref="DebugState.Initializing"/> (so F5 means Continue, as in VS Code, not a second start while the preLaunchTask builds), Stop
+    /// cancels the start (and its preLaunchTask), and a second start of the SAME configuration is ignored — it would run a second build at the
+    /// same time and then a second debuggee.
+    /// </summary>
     public ValueTask<IDebugSession?> StartAsync(DebugConfiguration configuration, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        return new ValueTask<IDebugSession?>(_lane.RunAsync(() => StartCoreAsync(configuration, null, ct), ct));
+        var key = StartKey(configuration);
+        PendingStart pending;
+        lock (_gate)
+        {
+            if (_pendingStarts.Exists(p => p.Key == key))
+            {
+                _logger.LogInformation("'{Name}' is already starting: the second start is ignored", configuration.Name);
+                return ValueTask.FromResult<IDebugSession?>(null);
+            }
+            pending = new PendingStart(key, CancellationTokenSource.CreateLinkedTokenSource(ct));
+            _pendingStarts.Add(pending);
+        }
+        _lane.Post(RebuildAfterSessionChange); // debugState "initializing", inDebugMode
+        return new ValueTask<IDebugSession?>(RunStartAsync(configuration, pending, ct));
+    }
+
+    /// <summary>A start that has no session yet (variables, providers, preLaunchTask, adapter download offer, handshake).</summary>
+    private sealed class PendingStart(string key, CancellationTokenSource cancellation)
+    {
+        public string Key { get; } = key;
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+        /// <summary>Stop was pressed while it was starting.</summary>
+        public volatile bool Stopped;
+    }
+
+    private readonly List<PendingStart> _pendingStarts = new(); // guarded by _gate
+
+    private static string StartKey(DebugConfiguration c) => $"{c.WorkspaceFolder}\n{c.Type}\n{c.Name}";
+
+    private async Task<IDebugSession?> RunStartAsync(DebugConfiguration configuration, PendingStart pending, CancellationToken ct)
+    {
+        try
+        {
+            return await _lane.RunAsync(() => StartCoreAsync(configuration, null, pending.Cancellation.Token), pending.Cancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (pending.Stopped && !ct.IsCancellationRequested)
+        {
+            return null; // the user stopped it
+        }
+        finally
+        {
+            lock (_gate) _pendingStarts.Remove(pending);
+            pending.Cancellation.Dispose();
+            _lane.Post(RebuildAfterSessionChange);
+        }
+    }
+
+    /// <summary>Stop pressed while sessions are starting: their starts end (a running preLaunchTask is killed).</summary>
+    private void CancelPendingStarts()
+    {
+        PendingStart[] pending;
+        lock (_gate) pending = [.. _pendingStarts];
+        foreach (var p in pending)
+        {
+            p.Stopped = true;
+            try { p.Cancellation.Cancel(); }
+            catch (ObjectDisposedException) { } // it ended meanwhile
+        }
     }
 
     private async Task<IDebugSession?> StartCoreAsync(DebugConfiguration configuration, DebugSession? parent, CancellationToken ct, CompoundGroup? group = null)
@@ -221,6 +286,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             Logger = _p.Logger("CsCode.Dap.Session"),
             Memory = _p.Memory,
             Terminals = _p.Terminals,
+            TerminalsAreRemote = () => _p.TerminalsAreRemote,
             Settings = SettingsFor(final),
             StartChild = StartChildAsync,
             Quirks = _builtins.GetValueOrDefault(final.Type)?.Quirks ?? DebugAdapterQuirks.None,
@@ -250,7 +316,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
 
     private DebugSessionSettings SettingsFor(DebugConfiguration config)
     {
-        var timeout = _p.Configuration?.Get<double?>("cscode.debug.requestTimeoutSeconds");
+        var timeout = _p.Configuration?.Get<double?>(RequestTimeoutSetting);
         return timeout is > 0 ? new DebugSessionSettings { RequestTimeout = TimeSpan.FromSeconds(timeout.Value) } : new DebugSessionSettings();
     }
 
@@ -342,11 +408,11 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             RecomputeState();
             UpdateContextKeys();
         }));
-        subs.Add(session.Output.Subscribe(OnSessionOutput));
+        var output = session.Output.Subscribe(OnSessionOutput);
         subs.Add(session.Terminated.Subscribe(_ => OnSessionTerminated(session)));
         lock (_gate)
         {
-            _hooks[session] = new SessionHooks(subs, postDebugTask, folder);
+            _hooks[session] = new SessionHooks(subs, output, postDebugTask, folder);
             _sessions = [.. _sessions, session];
             if (group is not null) { group.Members.Add(session); _compounds[session] = group; }
         }
@@ -440,7 +506,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         _sessionTerminated.Fire(session);
 
         // Release the session (and kill its adapter) on the lane without blocking the event that told us it ended.
-        TrackEnding(DisposeSessionAsync(session));
+        TrackEnding(ReleaseSessionAsync(session, hooks.OutputSubscription));
         // Its child sessions live on its adapter (js-debug's children are connections to the server the parent owns): they end with it.
         foreach (var child in Sessions.Where(s => ReferenceEquals(s.Parent, session)).ToArray()) _ = StopQuietlyAsync(child, CancellationToken.None);
         if (group is { StopAll: true } && group.Members.Count > 0)
@@ -459,10 +525,20 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         }, this, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
-    private async Task DisposeSessionAsync(DebugSession session)
+    /// <summary>
+    /// Disposes an ended session. Never inside its <c>Terminated</c> event: the session's own cleanup runs first (after <c>terminated</c> it
+    /// sends <c>disconnect</c> and lets the adapter exit by itself), and the output the adapter sends until then still reaches the history.
+    /// </summary>
+    private async Task ReleaseSessionAsync(DebugSession session, IDisposable output)
     {
+        await Task.Yield(); // on the lane: after the work item that fired Terminated (and started the session's own cleanup)
         try { await session.DisposeAsync(); }
         catch (Exception ex) { _logger.LogDebug(ex, "Disposing session {Session}", session.Id); }
+        finally
+        {
+            output.Dispose();
+            ArchiveHistory(session); // lines that arrived after it ended
+        }
     }
 
     private async Task RunPostTaskAsync(string task, Uri? folder)
@@ -492,7 +568,10 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             Volatile.Write(ref _focusedFrameId, frame.Id);
             SetStopLocation(ToLocation(session, t, frame, reason));
         }
-        catch (Exception ex) when (ex is DebugHandleInvalidatedException or InvalidOperationException or IOException or TimeoutException or ObjectDisposedException)
+        // Every caller discards this task: an adapter's error answer (a thread that exited between `stopped` and `stackTrace`, a thread without
+        // frames the adapter can show) must end here, not as an unobserved exception (the app's crash handler would report it).
+        catch (Exception ex) when (ex is DebugHandleInvalidatedException or InvalidOperationException or IOException or TimeoutException or ObjectDisposedException
+            or DapRequestException or OperationCanceledException)
         {
             _logger.LogDebug(ex, "Could not determine the stop location");
         }
@@ -559,7 +638,8 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         {
             var live = _sessions.Where(s => s.State != DebugSessionState.Terminated).ToArray();
             var basis = _active is { State: not DebugSessionState.Terminated } a ? a : live.LastOrDefault();
-            next = basis is null ? DebugState.Inactive : basis.State switch
+            // A start without its session yet counts as initializing (VS Code's State.Initializing while startDebugging runs).
+            next = basis is null ? (_pendingStarts.Count > 0 ? DebugState.Initializing : DebugState.Inactive) : basis.State switch
             {
                 DebugSessionState.Initializing => DebugState.Initializing,
                 DebugSessionState.Running => DebugState.Running,
@@ -632,7 +712,13 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
 
     // ------------------------------------------------------------------ stopping / disposal
 
-    public ValueTask StopAllAsync(CancellationToken ct = default) =>
+    public ValueTask StopAllAsync(CancellationToken ct = default)
+    {
+        CancelPendingStarts();
+        return StopAllSessionsAsync(ct);
+    }
+
+    private ValueTask StopAllSessionsAsync(CancellationToken ct) =>
         new(_lane.RunAsync(async () =>
         {
             await Task.WhenAll(Sessions.Select(s => StopQuietlyAsync(s, ct)));
@@ -663,7 +749,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
         _contributionTokens.Dispose();
         lock (_gate)
         {
-            foreach (var h in _hooks.Values) h.Subscriptions.Dispose();
+            foreach (var h in _hooks.Values) { h.Subscriptions.Dispose(); h.OutputSubscription.Dispose(); }
             _hooks.Clear();
             _sessions = [];
             _compounds.Clear();

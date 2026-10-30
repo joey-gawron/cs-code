@@ -179,7 +179,23 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   `type: "compound"`, started concurrently, `stopAll`, `preLaunchTask`), `inputs[]`. Platform blocks (`windows`/`linux`/`osx`) deep-merge.
   File changes are watched; a broken file reports one error message and yields no configurations. `Selected` is persisted per workspace and
   refreshed when the file is edited. `CreateLaunchJsonAsync` writes the VS Code template layout (never overwrites an existing file) plus
-  provider-supplied companion files (the coreclr template also writes a `tasks.json` with a default `build` task).
+  provider-supplied companion files (the coreclr template also writes a `tasks.json` with a default `build` task). A companion never shadows
+  the user's own file: when the folder keeps its `tasks.json` in `.vscode/`, the new `launch.json` goes to `.vscode/` and the template's tasks
+  whose labels are missing are appended to that file's `tasks` (text edit, comments kept; a template's default build task is added as a
+  plain build task when the file has a default BUILD task — a default test task does not count); a file that does not parse is left alone
+  (`JsoncText.cs`, `DebugConfigurationService.AddTasks`).
+* **Open launch.json** (`workbench.action.debug.configure`) opens the folder's launch.json, creating it first for the folder's debugger (or a
+  picked one). **Add Configuration...** (`debug.addConfiguration`) picks a debugger, then one of its templates, and appends it to
+  `configurations` in the editor (one undoable edit, unsaved, the rest of the file as written) and reveals it; without a launch.json it is
+  Open launch.json. CsCode detects no tasks (VS Code has `tsc: build` or cargo tasks without a tasks.json), so the task the added
+  configuration's `preLaunchTask`/`postDebugTask` names comes with it when the folder lacks it: appended to the tasks.json in use (in the
+  editor when it is open there, else on disk; comments kept, no second default build task), or the template's tasks.json is written next to
+  the launch.json. F5 opens the launch.json it created, and with a launch.json that holds no configuration (or does not parse) opens it
+  instead of offering Create (VS Code's behaviour).
+* **Starting**: from `StartAsync` until the session exists (variables, providers, `preLaunchTask`, the adapter download offer) the debugger is
+  `initializing` (`inDebugMode`: F5 means Continue, as in VS Code), a second start of the same configuration is ignored (no second build, no
+  second debuggee), and Stop cancels the start and kills its `preLaunchTask`. A stop returns once the session let go of its adapter (after
+  `terminated` the session sends `disconnect` and lets the adapter exit; output it sends until then still reaches the Debug Console).
 * Variables, applied recursively to every string value: `${workspaceFolder}`, `${workspaceFolder:name}`, `${workspaceFolderBasename}`, `${file}`,
   `${fileBasename}`, `${fileBasenameNoExtension}`, `${fileDirname}`, `${fileDirnameBasename}`, `${fileExtname}`, `${fileWorkspaceFolder}`,
   `${relativeFile}`, `${relativeFileDirname}`, `${cwd}`, `${lineNumber}` (1-based), `${selectedText}`, `${env:X}`, `${config:key}`,
@@ -210,7 +226,10 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   Concurrent starts trigger one offer and one download.
 * The provider fills in `cwd` when missing, converts a textual `processId` (from `${command:pickProcess}`) to the number netcoredbg expects, and
   produces the initial **launch** (`program: ${workspaceFolder}/bin/Debug/<tfm>/<Project>.dll`, `preLaunchTask: build`, `stopAtEntry`, `console`,
-  `cwd`) and **attach** (`processId: ${command:pickProcess}`) configurations; project name and target framework come from the folder's `.csproj`.
+  `cwd`) and **attach** (`processId: ${command:pickProcess}`) configurations. The project: the folder's own `.csproj`/`.fsproj`/`.vbproj`,
+  else the projects its `.sln`/`.slnx` lists, else project files up to two levels down (`dotnet new sln` layout); executable ones (OutputType
+  Exe/WinExe, the Web/Worker SDKs, not test projects) first, the user picks the startup project when there are several; `program`, `cwd` and the
+  build task follow that project (its directory, `AssemblyName`, first target framework).
 * Built-in `pwa-node` (and the legacy alias `node`, rewritten to `pwa-node`) → Microsoft's **js-debug** standalone server
   (`node dapDebugServer.js <private socket path>`, a `DebugAdapterServerProcess` with `PrivateSocket`; see "Adapter servers listen privately"):
   the parent session orchestrates and the program runs in the child session
@@ -222,7 +241,10 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   `DebugAdapterStdioProcess`, GDB 14+, nothing to download). For Rust the factory does what rust-gdb does on GDB's command line: the Rust
   pretty-printers from `$(rustc --print sysroot)` and `set substitute-path /rustc/<commit> <sysroot>/lib/rustlib/src/rust`; plus CsCode's
   `cscode_gdb.py` (one-line summaries of Rust structs/enums, which GDB's DAP shows empty). Lookup `cscode.debug.gdbPath` → PATH. The provider moves
-  `env` to `set environment` commands (GDB's `env` replaces the whole environment), turns a textual `pid`/`processId` into a number and resolves
+  `env` to `set environment` commands (GDB's `env` replaces the whole environment), which GDB reads with `-ix` from a 0600 file in a private
+  0700 directory (`PrivateStartupFile`: written afresh for each GDB the descriptor starts — a restart starts a new GDB — and deleted with that
+  GDB) — never on its command line, which every local user can read in `/proc/<pid>/cmdline` — turns a textual
+  `pid`/`processId` into a number and resolves
   CodeLLDB's `"cargo": {"args": […], "filter": {…}}` key (cargo's reported executable becomes `program`: the test-binary template uses it).
   Templates for a cargo package: binary (`cargo: build` process preLaunchTask), unit tests (`cargo` key), attach. `GdbAdapterQuirks`: the Debug
   Console evaluates expressions (`-exec`/backtick for GDB commands), completions through `print`, hit counts as ignore counts, a client-side
@@ -260,12 +282,23 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 ## Commands, context keys, settings
 
 * Commands registered (VS Code ids from `KnownCommands`; **the shell must not register handlers for these again**):
-  `workbench.action.debug.start|run|stop|restart|continue|pause|stepOver|stepInto|stepOut`, `editor.debug.action.toggleBreakpoint`, plus `pickProcess`.
+  `workbench.action.debug.start|run|stop|restart|continue|pause|stepOver|stepInto|stepOut`, `editor.debug.action.toggleBreakpoint`,
+  `workbench.action.debug.configure` (Open launch.json), `debug.addConfiguration` (Add Configuration...), plus `pickProcess`.
 * Context keys (only if `IContextKeyService` resolves): `debugState` (`inactive|initializing|running|stopped`), `inDebugMode`, `debugType`,
   `debuggerAvailable`, `focusedSessionIsAttach`, `breakpointsExist`.
 * Settings registered with `IConfigurationService`: `cscode.debuggers`, `cscode.debug.netcoredbgPath`, `cscode.debug.jsDebugPath`,
   `cscode.debug.nodePath`, `cscode.debug.gdbPath`, `cscode.debug.gdbArgs` (extra GDB arguments, e.g. `["-nx"]`), `cscode.debug.codelldbPath`,
-  `cscode.debug.rustDebugger` (`gdb` | `lldb`), `lldb.consoleMode` (VS Code's CodeLLDB setting, read when set), `cscode.debug.requestTimeoutSeconds`.
+  `cscode.debug.rustDebugger` (`gdb` | `lldb` | `codelldb`), `lldb.consoleMode` (VS Code's CodeLLDB setting: `commands` | `evaluate` |
+  `split`), `cscode.debug.requestTimeoutSeconds`. `DebugService.SettingsRead` lists them; a test checks every key the module's sources name is
+  registered.
+* Environment: CsCode's own `DOTNET_ROOT_<ARCH>` (set by `dotnet run`/`dotnet test`) is folded into `DOTNET_ROOT` for debug adapters (and so
+  the programs they launch), `runInTerminal` debuggees and tasks, as for language servers (`DotnetRootFold.cs`). Not for a terminal of a
+  remote workspace (`DapPlatform.TerminalsAreRemote`, the Remote module's rule: every terminal runs on the remote host there): it starts
+  from the remote host's environment, so a `runInTerminal` debuggee or a task shown there gets only its own `env`.
+* Variables paging: an adapter that answers a later page with more than `count` children starting at the container's first child (it
+  ignores `start`/`count`, as CodeLLDB does) is detected per container; that answer is kept as the container's whole list and its pages are cut
+  by the session, as with the `IgnoresVariablePaging` quirk (no quirk needed: user adapters too). More than `count` alone is not taken as
+  ignoring paging (js-debug adds a row to an honoured page).
 
 ## Integration notes
 
@@ -308,7 +341,7 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   twice per pass; see docs/DEBUGGING-RUST-TS.md (Rust through GDB, known gaps).
 * CodeLLDB: the program's stderr arrives as stdout (LLDB's pseudo-terminal); it does not drain the program's output at exit (the last lines of
   a flood can be lost); expressions are LLDB's (no Rust casts or method calls); a `println!` line stops three times per pass; no `process`
-  event; its `[return value]` row is a variable in its "Local" scope, which Autos does not lift as it does GDB's `returnValue` scope; see
+  event; its `[return value]` row is a variable in its "Local" scope, which Autos lifts (shows first) as it does GDB's `returnValue` scope; see
   docs/DEBUGGING-RUST-TS.md (Rust through CodeLLDB, known gaps).
 * A stop is shown at the first frame the adapter does not de-emphasise (VS Code's rule), so a pause in a library or a panic inside std shows
   the user's code; the Call Stack still lists (folded) the frames above it.

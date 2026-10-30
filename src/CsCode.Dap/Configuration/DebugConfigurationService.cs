@@ -263,36 +263,188 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
     {
         folder ??= _p.PrimaryFolder ?? throw new InvalidOperationException("Open a folder before creating a launch.json.");
         var ws = _p.Workspace ?? throw new InvalidOperationException("No workspace service is available.");
-        var target = Combine(folder, ".cscode/launch.json");
 
         // Never overwrite an existing file (either location).
-        foreach (var rel in LaunchLocations)
-            if (await ws.FileSystem.StatAsync(Combine(folder, rel), ct) is { Type: FileType.File }) return Combine(folder, rel);
+        if (await FindLaunchJsonCoreAsync(folder, ct) is { } existing) return existing;
 
-        var configs = new List<DebugConfiguration>();
-        var extraFiles = new List<(string Path, string Content)>();
-        foreach (var (type, provider) in _providers.Where(p => p.Type == debugType))
-        {
-            configs.AddRange(await provider.ProvideInitialAsync(folder, ct));
-            if (provider is IDebugInitialFilesProvider files) extraFiles.AddRange(await files.ProvideInitialFilesAsync(folder, ct));
-        }
-        if (configs.Count == 0 && _p.Contributions is { } registry)
-            foreach (var c in registry.Of<DebuggerContribution>().Items.Where(i => i.Value.Type == debugType))
-                if (c.Value.InitialConfigurations is { ValueKind: JsonValueKind.Array } arr)
-                    configs.AddRange(arr.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).Select(e => DebugConfiguration.FromJson(e, folder)));
+        var (configs, extraFiles) = await InitialCoreAsync(debugType, folder, withFiles: true, ct);
         if (configs.Count == 0) throw new InvalidOperationException($"No initial configurations are available for debug type '{debugType}'.");
+
+        // A companion file (the tasks.json a template's preLaunchTask names) never shadows the user's own: the reader takes .cscode/ first, so a
+        // new .cscode/tasks.json would hide every task of an existing .vscode/tasks.json. When the folder keeps its tasks.json in .vscode/, the
+        // new launch.json goes next to it and the template's task is added to that file (VS Code's C# assets merge their build task the same way).
+        var dir = ".cscode/";
+        foreach (var (rel, _) in extraFiles)
+            if (!await IsFileAsync(Combine(folder, ".cscode/" + rel), ct) && await IsFileAsync(Combine(folder, ".vscode/" + rel), ct)) { dir = ".vscode/"; break; }
+        var target = Combine(folder, dir + "launch.json");
 
         await ws.FileSystem.WriteFileAsync(target, Encoding.UTF8.GetBytes(LaunchJson.Render(configs)), createParents: true, ct);
         foreach (var (rel, content) in extraFiles)
         {
-            var uri = Combine(Combine(folder, ".cscode/"), rel);
-            if (await ws.FileSystem.StatAsync(uri, ct) is null)
-                await ws.FileSystem.WriteFileAsync(uri, Encoding.UTF8.GetBytes(content), createParents: true, ct);
+            Uri? present = null;
+            foreach (var location in new[] { ".cscode/", ".vscode/" }) // the reader's order: the first that exists is the one in use
+                if (await IsFileAsync(Combine(folder, location + rel), ct)) { present = Combine(folder, location + rel); break; }
+            if (present is null) await ws.FileSystem.WriteFileAsync(Combine(folder, dir + rel), Encoding.UTF8.GetBytes(content), createParents: true, ct);
+            else if (string.Equals(rel, "tasks.json", StringComparison.Ordinal)) await MergeTasksAsync(present, content, ct);
         }
         _cache.Remove(folder);
         _configurationsChanged.Fire(null);
         return target;
     }
+
+    private async Task<bool> IsFileAsync(Uri uri, CancellationToken ct)
+    {
+        try { return await _p.Workspace!.FileSystem.StatAsync(uri, ct) is { Type: FileType.File }; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>
+    /// Adds the template's tasks whose labels <paramref name="existing"/> lacks to its <c>tasks</c> list, keeping the user's text (comments,
+    /// layout) as it is (<see cref="AddTasks"/>). A file that does not parse is left alone.
+    /// </summary>
+    private async Task MergeTasksAsync(Uri existing, string template, CancellationToken ct)
+    {
+        var ws = _p.Workspace!;
+        try
+        {
+            var text = Encoding.UTF8.GetString(await ws.FileSystem.ReadFileAsync(existing, ct));
+            if (JsonNode.Parse(template, documentOptions: Lenient)?["tasks"] is not JsonArray offered) return;
+            if (AddTasks(text, offered.OfType<JsonObject>(), out var problem) is not { } edit)
+            {
+                if (problem is not null) _logger.LogWarning("Could not add the template's task to {File}: {Problem}", existing, problem);
+                return;
+            }
+            await ws.FileSystem.WriteFileAsync(existing, Encoding.UTF8.GetBytes(edit.ApplyTo(text)), createParents: false, ct);
+        }
+        catch (JsonException ex) { _logger.LogWarning("The template's tasks.json does not parse: {Message}", ex.Message); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _logger.LogWarning(ex, "Could not add the template's task to {File}", existing); }
+    }
+
+    /// <summary>
+    /// The edit that appends the tasks of <paramref name="offered"/> whose labels <paramref name="text"/> (a tasks.json) lacks to its <c>tasks</c>
+    /// list, keeping the rest of the text as written. A task offered as the default build task is added as a plain build task when the file has
+    /// a default build task already (a default TEST task does not count: VS Code keeps one default per group). Null when nothing is missing, or
+    /// with <paramref name="problem"/> set when the text does not parse or has no <c>tasks</c> list that can be edited.
+    /// </summary>
+    internal static JsoncInsertion? AddTasks(string text, IEnumerable<JsonObject> offered, out string? problem)
+    {
+        problem = null;
+        JsonObject? current;
+        try { current = JsonNode.Parse(text, documentOptions: Lenient) as JsonObject; }
+        catch (JsonException ex) { problem = $"it does not parse ({ex.Message})"; return null; }
+        if (current is null) { problem = "it is not a JSON object"; return null; }
+        var tasks = current["tasks"] as JsonArray;
+        var labels = tasks?.OfType<JsonObject>().Select(t => t["label"]?.GetValueKind() == JsonValueKind.String ? t["label"]!.GetValue<string>() : null).OfType<string>().ToHashSet(StringComparer.Ordinal) ?? [];
+        var hasDefaultBuild = tasks?.OfType<JsonObject>().Any(IsDefaultBuild) ?? false;
+        var missing = new List<JsonNode>();
+        foreach (var task in offered)
+        {
+            if (task["label"]?.GetValueKind() != JsonValueKind.String || !labels.Add(task["label"]!.GetValue<string>())) continue;
+            var copy = (JsonObject)task.DeepClone();
+            if (hasDefaultBuild && IsDefaultBuild(copy)) copy["group"] = ((JsonObject)copy["group"]!)["kind"]!.GetValue<string>();
+            hasDefaultBuild |= IsDefaultBuild(copy);
+            missing.Add(copy);
+        }
+        if (missing.Count == 0) return null;
+        var edit = JsoncText.AppendToArray(text, "tasks", missing);
+        if (edit is null) problem = "its 'tasks' is not a list";
+        return edit;
+
+        // what TaskService counts as the default build task (TaskDefinition.IsDefaultBuild): group { "kind": "build", "isDefault": true }
+        static bool IsDefaultBuild(JsonObject task) =>
+            task["group"] is JsonObject g && g["isDefault"]?.GetValueKind() == JsonValueKind.True
+            && g["kind"]?.GetValueKind() == JsonValueKind.String && string.Equals(g["kind"]!.GetValue<string>(), "build", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static readonly JsonDocumentOptions Lenient = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
+
+    /// <summary>The initial configurations (and companion files) of a debug type: its providers', else a configured debugger's <c>initialConfigurations</c>.</summary>
+    private async Task<(List<DebugConfiguration> Configs, List<(string Path, string Content)> Files)> InitialCoreAsync(string debugType, Uri folder, bool withFiles, CancellationToken ct)
+    {
+        var configs = new List<DebugConfiguration>();
+        var extraFiles = new List<(string Path, string Content)>();
+        foreach (var (type, provider) in _providers.Where(p => string.Equals(p.Type, debugType, StringComparison.OrdinalIgnoreCase)).ToArray())
+        {
+            configs.AddRange(await provider.ProvideInitialAsync(folder, ct));
+            if (withFiles && provider is IDebugInitialFilesProvider files) extraFiles.AddRange(await files.ProvideInitialFilesAsync(folder, ct));
+        }
+        if (configs.Count == 0 && _p.Contributions is { } registry)
+            foreach (var c in registry.Of<DebuggerContribution>().Items.Where(i => i.Value.Type == debugType))
+                if (c.Value.InitialConfigurations is { ValueKind: JsonValueKind.Array } arr)
+                    configs.AddRange(arr.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).Select(e => DebugConfiguration.FromJson(e, folder)));
+        return (configs, extraFiles);
+    }
+
+    /// <summary>
+    /// What "Add Configuration…" offers for a debug type: the configurations a new launch.json for it would hold, and the companion tasks.json
+    /// that Create launch.json would write with them (the tasks their preLaunchTask names; null when the debugger has none).
+    /// </summary>
+    internal sealed record ConfigurationTemplates(IReadOnlyList<DebugConfiguration> Configurations, string? TasksJson);
+
+    /// <summary>The configurations (and companion tasks.json) "Add Configuration…" offers for a debug type.</summary>
+    internal ValueTask<ConfigurationTemplates> GetConfigurationTemplatesAsync(string debugType, Uri? folder = null, CancellationToken ct = default) =>
+        new(_lane.RunAsync(async () =>
+        {
+            var f = folder ?? _p.PrimaryFolder ?? throw new InvalidOperationException("Open a folder first.");
+            var (configs, files) = await InitialCoreAsync(debugType, f, withFiles: true, ct);
+            return new ConfigurationTemplates(configs, files.Where(x => string.Equals(x.Path, "tasks.json", StringComparison.Ordinal)).Select(x => x.Content).FirstOrDefault());
+        }, ct));
+
+    /// <summary>
+    /// The tasks of <paramref name="tasksJson"/> (a template's companion tasks.json) that <paramref name="configuration"/> runs: its
+    /// <c>preLaunchTask</c> and <c>postDebugTask</c>. Empty when it names none of them, or the text does not parse.
+    /// </summary>
+    internal static IReadOnlyList<JsonObject> TasksNamedBy(DebugConfiguration configuration, string? tasksJson)
+    {
+        var names = new[] { configuration.PreLaunchTask, configuration.PostDebugTask }.OfType<string>().Where(n => n.Length > 0).ToHashSet(StringComparer.Ordinal);
+        if (names.Count == 0 || tasksJson is null) return [];
+        try
+        {
+            return JsonNode.Parse(tasksJson, documentOptions: Lenient)?["tasks"] is JsonArray tasks
+                ? [.. tasks.OfType<JsonObject>().Where(t => t["label"]?.GetValueKind() == JsonValueKind.String && names.Contains(t["label"]!.GetValue<string>()))]
+                : [];
+        }
+        catch (JsonException) { return []; }
+    }
+
+    /// <summary>The tasks.json a folder's tasks come from (TaskService's order: <c>.cscode/</c> first, else <c>.vscode/</c>); null when it has none.</summary>
+    internal ValueTask<Uri?> FindTasksJsonAsync(Uri folder, CancellationToken ct = default) =>
+        new(_lane.RunAsync(async () =>
+        {
+            foreach (var location in new[] { ".cscode/", ".vscode/" })
+                if (_p.Workspace is not null && await IsFileAsync(Combine(folder, location + "tasks.json"), ct)) return Combine(folder, location + "tasks.json");
+            return (Uri?)null;
+        }, ct));
+
+    /// <summary>The launch.json a folder's configurations come from (<c>.cscode/</c> first, else <c>.vscode/</c>); null when it has none.</summary>
+    public ValueTask<Uri?> FindLaunchJsonAsync(Uri? folder = null, CancellationToken ct = default) =>
+        new(_lane.RunAsync(() => (folder ?? _p.PrimaryFolder) is { } f ? FindLaunchJsonCoreAsync(f, ct) : Task.FromResult<Uri?>(null), ct));
+
+    private async Task<Uri?> FindLaunchJsonCoreAsync(Uri folder, CancellationToken ct)
+    {
+        if (_p.Workspace is null) return null;
+        foreach (var rel in LaunchLocations)
+            if (await IsFileAsync(Combine(folder, rel), ct)) return Combine(folder, rel);
+        return null;
+    }
+
+    /// <summary>
+    /// Appends <paramref name="configuration"/> to the <c>configurations</c> of <paramref name="text"/> (a launch.json's content), keeping the
+    /// rest of the text as written. Null when the text has no editable <c>configurations</c> list.
+    /// </summary>
+    internal static JsoncInsertion? AddConfiguration(string text, DebugConfiguration configuration)
+    {
+        var node = new JsonObject();
+        foreach (var (k, v) in configuration.Properties) node[k] = VariableResolver.ToNode(v);
+        return JsoncText.AppendToArray(text, "configurations", [node]);
+    }
+
+    /// <summary>A launch.json changed by someone else than the file watcher could see (an edit applied in the editor, then saved): reread it next time.</summary>
+    internal void Invalidate(Uri folder) => _lane.Post(() =>
+    {
+        _cache.Remove(folder);
+        _configurationsChanged.Fire(null);
+    });
 
     private static Uri Combine(Uri folder, string relative)
     {

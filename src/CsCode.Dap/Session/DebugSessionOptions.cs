@@ -52,6 +52,11 @@ public sealed record DebugSessionOptions(
     /// <summary>The integrated terminal for <c>runInTerminal</c> (null, or null returned: the debuggee runs piped into the Debug Console).</summary>
     public Func<ITerminalService?>? Terminals { get; init; }
     /// <summary>
+    /// Whether <see cref="Terminals"/> runs new terminals on another machine (a remote workspace): a <c>runInTerminal</c> debuggee there gets the
+    /// adapter's environment only, nothing derived from CsCode's own (<see cref="DapPlatform.TerminalsAreRemote"/>).
+    /// </summary>
+    public Func<bool>? TerminalsAreRemote { get; init; }
+    /// <summary>
     /// URIs ⇄ adapter paths for a session of a workspace that is not on this machine (a remote workspace: the adapter runs there and speaks its
     /// paths); null or unhandled URIs keep the <c>file:</c> rules.
     /// </summary>

@@ -450,7 +450,11 @@ public sealed partial class TaskService : ITaskService, IDisposable
         var problems = StartProblemMatchers(task, folderPath, psi.WorkingDirectory is { Length: > 0 } wd ? wd : folderPath);
         var readiness = TrackReadiness(instance, task, problems); // before the start: its first output may already be a whole cycle
         if (_p.TaskTerminals?.Invoke() is { } terminals)
+        {
+            if (!_p.TerminalsAreRemote) // a local terminal starts from CsCode's environment; a remote workspace's from the remote host's
+                foreach (var (k, v) in DotnetRootFold.Overrides(taskEnv)) taskEnv.TryAdd(k, v);
             return await ExecuteInTerminalAsync(terminals, task, psi, taskEnv, channel, problems, readiness, instance, key, ct);
+        }
 
         channel?.AppendLine($"> Executing task: {task.Label} <");
         Process process;

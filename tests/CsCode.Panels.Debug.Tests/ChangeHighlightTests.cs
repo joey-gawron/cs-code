@@ -55,7 +55,7 @@ public class ChangeHighlightTests
         await PanelRig.Eventually(() => locals.Tree.Rows.Count == 0 && autos.Tree.Rows.Count == 0, what: "resumed");
         // One step later in the same function: sum appeared, tmp is gone, b changed, and js-debug added its "Return value" pseudo-variable
         StopInAdd(rig, 20, 2, V("a", "100"), V("b", "2"), V("Return value", "7"), V("sum", "102"), This);
-        await PanelRig.Eventually(() => Names(locals.Tree) == "a,b,Return value,sum,this" && Names(autos.Tree) == "a,b,Return value,sum", what: "after the step");
+        await PanelRig.Eventually(() => Names(locals.Tree) == "a,b,Return value,sum,this" && Names(autos.Tree) == "Return value,a,b,sum", what: "after the step"); // Autos: the returned value first (T52)
         Assert.Equal(["b", "sum"], Changed(locals.Tree)); // b changed; sum is new (Visual Studio shows a new local in red); a and this did not change
         Assert.Equal(["b", "sum"], Changed(autos.Tree));
 

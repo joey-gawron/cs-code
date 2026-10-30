@@ -18,7 +18,7 @@ public class SessionTerminationTests
         await h.Adapter.SendOutputAsync("bye\n", "stdout");
         await h.Adapter.SendExitedAsync(3);
         await h.Adapter.SendTerminatedAsync();
-        await SessionHarness.Eventually(() => h.Session.State == DebugSessionState.Terminated);
+        await h.WaitForTerminatedEventAsync();
         var t = Assert.Single(h.Snapshot(h.TerminatedEvents));
         Assert.Equal(3, t.ExitCode);
         Assert.Equal(3, h.Session.ExitCode);
@@ -33,7 +33,7 @@ public class SessionTerminationTests
         await using var h = await SessionHarness.StartAsync();
         await h.Adapter.SendTerminatedAsync();
         await h.Adapter.SendTerminatedAsync();
-        await SessionHarness.Eventually(() => h.Session.State == DebugSessionState.Terminated);
+        await h.WaitForTerminatedEventAsync();
         await Task.Delay(100, Ct);
         Assert.Single(h.Snapshot(h.TerminatedEvents));
     }
@@ -43,7 +43,7 @@ public class SessionTerminationTests
     {
         await using var h = await SessionHarness.StartAsync();
         h.Adapter.Crash();
-        await SessionHarness.Eventually(() => h.Session.State == DebugSessionState.Terminated);
+        await h.WaitForTerminatedEventAsync();
         var t = Assert.Single(h.Snapshot(h.TerminatedEvents));
         Assert.Contains("closed", t.Reason, StringComparison.OrdinalIgnoreCase);
     }

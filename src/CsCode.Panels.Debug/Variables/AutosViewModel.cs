@@ -36,7 +36,8 @@ public sealed partial class AutosViewModel : FrameVariablesViewModel
         {
             var page = await Services.Ui.OnUi(session.GetVariablesAsync(scope.VariablesReference, 0, MaxCandidates, ct), ct);
             if (token.Generation != Tree.Generation) return;
-            foreach (var v in page.Take(MaxCandidates)) (ScopeSelector.IsReturnValue(scope) ? returned : candidates).Add((v, scope.VariablesReference));
+            foreach (var v in page.Take(MaxCandidates))
+                (ScopeSelector.IsReturnValue(scope) || ScopeSelector.IsReturnValueVariable(v) ? returned : candidates).Add((v, scope.VariablesReference));
         }
 
         var referenced = ReferencedIdentifiers();

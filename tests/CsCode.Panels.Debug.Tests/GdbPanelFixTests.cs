@@ -54,6 +54,28 @@ public class GdbPanelFixTests
         Assert.Equal("52", vm.Tree.Rows[0].DisplayValue);
     }
 
+    /// <summary>
+    /// CodeLLDB lists the returned value as the first variable of "Local" (no scope of its own, no presentation hints): Autos lifts it as it lifts
+    /// GDB's Return scope, also when the stop line names other variables only (T52). js-debug's "Return value" is lifted the same way.
+    /// </summary>
+    [AvaloniaTheory]
+    [InlineData("[return value]")]
+    [InlineData("Return value")]
+    public async Task Autos_lift_a_return_value_listed_among_the_locals(string name)
+    {
+        using var rig = new PanelRig();
+        var uri = new Uri("file:///work/src/main.rs");
+        rig.Session.Frames[1] = [new DebugStackFrame(0, "sample::main", new DebugSource("main.rs", uri.LocalPath), 3, 0)];
+        rig.Session.Scopes[0] = [new DebugScope("Local", 1, false), new DebugScope("Static", 2, false), new DebugScope("Global", 3, false)];
+        rig.Session.Variables[1] = [new DebugVariable(name, "52", "int"), new DebugVariable("x", "51", "int"), new DebugVariable("unused", "0", "int")];
+        using var registration = rig.Documents.Register(new CsCode.Core.Text.InMemoryTextDocument(uri, "rust", "fn main() {\n    let x = add(1, 51);\n    println!(\"{x}\");\n}\n"));
+        using var vm = new AutosViewModel(rig.Services);
+        rig.StopAt(0);
+        await PanelRig.Eventually(() => vm.Tree.Rows.Count > 0, what: "autos");
+        Assert.Equal([name, "x"], vm.Tree.Rows.Select(r => r.Name)); // first, though the lines only mention x
+        Assert.Equal("52", vm.Tree.Rows[0].DisplayValue);
+    }
+
     /// <summary>Answers like GDB 18: <c>filter</c> is ignored (named or indexed, every child), <c>start</c>/<c>count</c> are honoured.</summary>
     private sealed class GdbLikeSession : FakeDebugSession, IDebugSessionVariablePaging
     {

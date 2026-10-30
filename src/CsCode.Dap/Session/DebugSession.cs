@@ -55,6 +55,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private int _unresponsive;
     private int _disposeState;
     private readonly TaskCompletionSource _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    /// <summary>Lane only: the connection cleanups started so far (see <see cref="CleanupAsync"/>).</summary>
+    private Task _cleanups = Task.CompletedTask;
     private DebugAdapterClient? _client;
     private DisposableStore? _clientSubs;
     private BreakpointSync? _sync;
@@ -85,7 +87,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         _recentOutput = _quirks.SyntheticExceptionFilters.Count > 0 || _quirks.BreakpointExceptionFilters.Count > 0 ? new System.Text.StringBuilder() : null;
         _positions = new DapPositions(_settings.LinesStartAt1, _settings.ColumnsStartAt1);
         _output = new OutputBatcher(_lane, this, e => _outputEvent.Fire(e), _settings.OutputWindow);
-        _debuggees = new DebuggeeLauncher(_lane, _logger, (category, text) => _output.Add(category, text), options.Terminals);
+        _debuggees = new DebuggeeLauncher(_lane, _logger, (category, text) => _output.Add(category, text), options.Terminals, options.TerminalsAreRemote);
     }
 
     // ------------------------------------------------------------------ IDebugSession surface (volatile reads, any thread)
@@ -488,7 +490,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private async Task StopCoreAsync(bool quick, CancellationToken ct)
     {
         // The program already ended (the session only waits for its trailing output): nothing to terminate.
-        if (_draining && !_terminatedFired) { FinishTermination(null); await CleanupAsync(quick); return; }
+        if (_draining && !_terminatedFired) { FinishTermination(null); await CleanupAsync(quick); await PendingCleanupsAsync(); return; }
         if (!_terminatedFired && _client is { IsClosed: false })
         {
             _stopping = true;
@@ -516,6 +518,15 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         }
         FinishTermination("stopped"); // hard path: adapter ignored us / timed out
         await CleanupAsync(quick);
+        // The cleanup the adapter's `terminated` started (its `disconnect`, the adapter's exit) is part of the stop: a stopped session has let
+        // go of its adapter. (Returning before it made "stopped" mean "maybe still disconnecting" — a race callers could see under load.)
+        await PendingCleanupsAsync();
+    }
+
+    private async Task PendingCleanupsAsync()
+    {
+        try { await _cleanups; }
+        catch (Exception ex) { _logger.LogDebug(ex, "Cleanup of session {Session}", Id); }
     }
 
     private async Task WaitSignalAsync(TimeSpan timeout, CancellationToken ct)
@@ -524,8 +535,19 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         catch (TimeoutException) { }
     }
 
-    /// <summary>Releases everything tied to the CURRENT connection: breakpoint mirror, debuggee processes, adapter process.</summary>
-    private async Task CleanupAsync(bool quick)
+    /// <summary>
+    /// Releases everything tied to the CURRENT connection: breakpoint mirror, debuggee processes, adapter process. Remembered, so
+    /// <see cref="DisposeAsync"/> waits for a cleanup still under way (the graceful <c>disconnect</c> after <c>terminated</c>) before it lets go
+    /// of the output and the handlers: output the adapter sends until it closes still reaches the Debug Console.
+    /// </summary>
+    private Task CleanupAsync(bool quick)
+    {
+        var cleanup = CleanupCoreAsync(quick);
+        _cleanups = _cleanups.IsCompleted ? cleanup : Task.WhenAll(_cleanups, cleanup);
+        return cleanup;
+    }
+
+    private async Task CleanupCoreAsync(bool quick)
     {
         var sync = Interlocked.Exchange(ref _sync, null);
         sync?.Dispose(); // also clears this session's breakpoint statuses in the manager
@@ -559,8 +581,10 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
                 _handles.Invalidate();
                 _completions.Clear();
                 await RequestAsync("restart", new DapRestartArguments { Arguments = _launchArgs is null ? null : JsonSerializer.SerializeToElement(_launchArgs) }, ct, _settings.LaunchTimeout);
+                // The stop (if any) is over: Continued tells DebugService and the panels to drop it, and nothing of the old run describes the new one.
+                if (State == DebugSessionState.Stopped) ResumedLocally(FocusedThreadId ?? 0, allThreads: true);
+                else { ResetRunState(); SetState(DebugSessionState.Running); }
                 Volatile.Write(ref _focusedThread, -1);
-                SetState(DebugSessionState.Running);
                 return;
             }
             await RelaunchCoreAsync(null, ct);
@@ -589,14 +613,18 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
             }
             await CleanupAsync(quick: true);
 
+            var wasStopped = State == DebugSessionState.Stopped;
             _terminatedFired = false;
             _terminatedSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
             _exitCode = null;
             _handles.Invalidate();
             _completions.Clear();
+            ResetRunState(); // the old run's panic text must not describe the new run's stops
             Volatile.Write(ref _focusedThread, -1);
             Volatile.Write(ref _state, (int)DebugSessionState.Initializing);
             _stateChanged.Fire(DebugSessionState.Initializing);
+            // The old run's stop is over: DebugService and the panels drop its location and data (as on a resume).
+            if (wasStopped) _continued.Fire(new DebugContinuedEventArgs(this, 0, true));
             _lastStopTimestamp = 0;
 
             var transport = await _o.TransportFactory(ct);
@@ -625,7 +653,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         {
             await _lane.RunAsync(async () =>
             {
-                await StopCoreAsync(quick: true, CancellationToken.None);
+                await StopCoreAsync(quick: true, CancellationToken.None); // also waits for a cleanup under way (the graceful `disconnect` after `terminated`)
+                _output.Flush(); // what arrived until the adapter closed
                 _output.Dispose();
                 _handles.Invalidate();
                 _completions.Clear();

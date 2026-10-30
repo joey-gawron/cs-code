@@ -56,13 +56,32 @@ public sealed partial class DebugService
             new ConfigurationProperty(GdbAdapterFactory.ArgsSettingPath, Json(Array.Empty<string>()),
                 "Extra command-line arguments for GDB, before CsCode's own (for example [\"-nx\"] to skip your gdbinit files). User settings only.")
             { Scope = machine },
-            new ConfigurationProperty(CodeLldbAdapterFactory.SettingPath, Json(""),
-                "Path of the CodeLLDB adapter (codelldb) for \"lldb\" debugging (empty: CSCODE_CODELLDB, then the tools directory, then 'codelldb' on PATH). User settings only.")
-            { Scope = machine },
-            new ConfigurationProperty("cscode.debug.requestTimeoutSeconds", Json(10),
+            new ConfigurationProperty(RequestTimeoutSetting, Json(10),
                 "Seconds a debug adapter may take to answer one request before the session reports it unresponsive."),
+            new ConfigurationProperty(RustDebuggerSetting, Json("gdb"),
+                "The debugger a Rust folder's launch.json is created for: 'gdb' (GDB's own Debug Adapter Protocol support, the default) or 'lldb' (CodeLLDB, downloaded on first use; 'codelldb' is accepted too).",
+                Schema("""{"type":"string","enum":["gdb","lldb","codelldb"],"enumDescriptions":["GDB (gdb -i=dap, GDB 14 or newer).","CodeLLDB.","CodeLLDB (same as 'lldb')."]}""")),
+            new ConfigurationProperty(CodeLldbAdapterFactory.SettingPath, Json(""),
+                "Path of the CodeLLDB adapter used for Rust, C and C++ debugging through LLDB: the adapter executable or the extension directory (empty: CSCODE_CODELLDB, then the tools directory, then PATH, then an offer to download it). User settings only.")
+            { Scope = machine },
+            new ConfigurationProperty(CodeLldbAdapterFactory.ConsoleModeSetting, Json(CodeLldbAdapterFactory.DefaultConsoleMode),
+                "CodeLLDB's Debug Console mode (VS Code's CodeLLDB setting): 'evaluate' evaluates expressions (LLDB commands start with '`' or '/cmd'), 'commands' runs LLDB commands, 'split' does both.",
+                Schema("""{"type":"string","enum":["commands","evaluate","split"]}""")),
         ];
     }
+
+    /// <summary>Setting: seconds a debug adapter may take to answer one request.</summary>
+    public const string RequestTimeoutSetting = "cscode.debug.requestTimeoutSeconds";
+
+    private static JsonElement Schema(string json) => JsonDocument.Parse(json).RootElement.Clone();
+
+    /// <summary>Every setting this module reads (each one is registered in <see cref="RegisterSettings"/>, so the Settings editor lists it).</summary>
+    internal static IReadOnlyList<string> SettingsRead =>
+    [
+        DebuggersSetting, NetCoreDbgAdapterFactory.SettingPath, JsDebugAdapterFactory.SettingPath, JsDebugAdapterFactory.NodeSettingPath,
+        GdbAdapterFactory.SettingPath, GdbAdapterFactory.ArgsSettingPath, RequestTimeoutSetting, RustDebuggerSetting,
+        CodeLldbAdapterFactory.SettingPath, CodeLldbAdapterFactory.ConsoleModeSetting,
+    ];
 
     private void InitializeContributions()
     {
@@ -121,6 +140,7 @@ public sealed partial class DebugService
     private void RebuildDebuggerTypes()
     {
         var types = new Dictionary<string, DebuggerType>(StringComparer.OrdinalIgnoreCase);
+        var aliases = _builtins.Values.Where(b => b.IsAlias).Select(b => b.Type).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var b in _builtins.Values) types[b.Type] = new DebuggerType(b.Type, b.Label, b.Languages);
         string[] registered;
         lock (_gate) registered = [.. _factories.Where(kv => kv.Value.Count > 0).Select(kv => kv.Key)];
@@ -128,7 +148,8 @@ public sealed partial class DebugService
         if (_p.Contributions is { } registry)
             foreach (var c in registry.Of<DebuggerContribution>().Items)
                 types[c.Value.Type] = new DebuggerType(c.Value.Type, c.Value.Label, c.Value.Languages ?? []);
-        Volatile.Write(ref _debuggerTypes, [.. types.Values.OrderBy(t => t.Label, StringComparer.CurrentCultureIgnoreCase)]);
+        // The debuggers by label, then the aliases of their types (a "Select debugger" pick offers "coreclr" before "netcoredbg").
+        Volatile.Write(ref _debuggerTypes, [.. types.Values.OrderBy(t => aliases.Contains(t.Type)).ThenBy(t => t.Label, StringComparer.CurrentCultureIgnoreCase)]);
     }
 }
 

@@ -136,13 +136,24 @@ public sealed partial class DebugSession
         _resumeEpoch++;
         _handles.Invalidate();
         _completions.Clear();
+        ResetRunState();
+        if (allThreads) SetState(DebugSessionState.Running);
+        _continued.Fire(new DebugContinuedEventArgs(this, threadId, allThreads));
+    }
+
+    /// <summary>
+    /// Lane only. Forgets what belonged to the stop (or run) that is over: its exception, the client-side filter it hit, a pending pause, and
+    /// the output a panic message is read from — a panic printed from now on belongs to the next stop. On a resume, and on a restart: a stale
+    /// panic left in the output would describe the new run's panic with the old message (<see cref="DescribeSyntheticStopAsync"/> waits only
+    /// while nothing describes the stop).
+    /// </summary>
+    private void ResetRunState()
+    {
         LastException = null;
         _syntheticStop = null;
         _syntheticException = null;
         _pauseRequested = false;
-        _recentOutput?.Clear(); // a panic message printed from now on belongs to the next stop
-        if (allThreads) SetState(DebugSessionState.Running);
-        _continued.Fire(new DebugContinuedEventArgs(this, threadId, allThreads));
+        _recentOutput?.Clear();
     }
 
     private void OnExited(DapExitedEvent e)

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using CsCode.Core.Terminal;
 using CsCode.Dap.Client;
+using CsCode.Dap.Configuration;
 using CsCode.Dap.Protocol;
 using Microsoft.Extensions.Logging;
 
@@ -21,17 +22,20 @@ internal sealed class DebuggeeLauncher : IDisposable
     private readonly ILogger _logger;
     private readonly Action<string, string> _output; // (category, text) — called on the lane
     private readonly List<Process> _processes = new();
-    private readonly List<ITerminal> _terminals = new();
+    /// <summary>The terminals running this session's debuggees, with the debuggee's pid: a terminal is reused for the next run (another session's).</summary>
+    private readonly List<(ITerminal Terminal, int Pid)> _terminals = new();
     private readonly Func<ITerminalService?>? _terminalService;
+    private readonly Func<bool>? _terminalsAreRemote;
     private readonly object _gate = new();
     private bool _disposed;
 
-    public DebuggeeLauncher(DebugLane lane, ILogger logger, Action<string, string> output, Func<ITerminalService?>? terminals = null)
+    public DebuggeeLauncher(DebugLane lane, ILogger logger, Action<string, string> output, Func<ITerminalService?>? terminals = null, Func<bool>? terminalsAreRemote = null)
     {
         _lane = lane;
         _logger = logger;
         _output = output;
         _terminalService = terminals;
+        _terminalsAreRemote = terminalsAreRemote;
     }
 
     public IReadOnlyList<int> LiveProcessIds
@@ -66,6 +70,7 @@ internal sealed class DebuggeeLauncher : IDisposable
                 if (v is null) psi.Environment.Remove(k);
                 else psi.Environment[k] = v;
             }
+        DotnetRootFold.Apply(psi.Environment, a.Env?.Keys);
 
         // fork/exec can take milliseconds: keep it off the lane. We resume on the lane afterwards (context captured).
         var process = await Task.Run(() => Process.Start(psi)) ?? throw new InvalidOperationException($"Could not start '{a.Args[0]}'");
@@ -91,7 +96,9 @@ internal sealed class DebuggeeLauncher : IDisposable
             ShellPath = a.Args[0],
             ShellArgs = a.Args.Skip(1).ToArray(),
             Cwd = string.IsNullOrEmpty(a.Cwd) ? null : a.Cwd,
-            Env = a.Env,
+            // A remote workspace's terminal runs on the remote host, from ITS environment: CsCode's own DOTNET_ROOT_<ARCH> means nothing there
+            // (DOTNET_ROOT=<this machine's path> would send the debuggee's apphost to a runtime directory of this machine).
+            Env = _terminalsAreRemote?.Invoke() == true ? a.Env : WithDotnetRootFold(a.Env),
             IsTransient = true,
             ReuseWhenIdle = true,
             Show = true,
@@ -102,11 +109,21 @@ internal sealed class DebuggeeLauncher : IDisposable
         lock (_gate)
         {
             if (_disposed) { terminal.KillProcess(); throw new ObjectDisposedException(nameof(DebuggeeLauncher)); }
-            _terminals.RemoveAll(t => t.HasExited);
-            _terminals.Add(terminal);
+            _terminals.RemoveAll(t => t.Terminal.HasExited || t.Terminal.ProcessId != t.Pid);
+            _terminals.Add((terminal, pid));
         }
         _logger.LogDebug("Debuggee {Program} runs in terminal {Terminal} (pid {Pid})", a.Args[0], terminal.Id, pid);
         return new DapRunInTerminalResponse { ProcessId = pid };
+    }
+
+    /// <summary>The adapter's environment for the debuggee plus the overrides that fold CsCode's <c>DOTNET_ROOT_&lt;ARCH&gt;</c> (<see cref="DotnetRootFold"/>).</summary>
+    internal static IReadOnlyDictionary<string, string?>? WithDotnetRootFold(IReadOnlyDictionary<string, string?>? env, Func<string, string?>? environment = null)
+    {
+        var fold = DotnetRootFold.Overrides(env, environment);
+        if (fold.Count == 0) return env;
+        var merged = new Dictionary<string, string?>(fold, StringComparer.Ordinal);
+        foreach (var (k, v) in env ?? new Dictionary<string, string?>()) merged[k] = v;
+        return merged;
     }
 
     private async Task PumpAsync(Process process, StreamReader reader, BoundedTextPump pump)
@@ -153,7 +170,7 @@ internal sealed class DebuggeeLauncher : IDisposable
     public void KillAll()
     {
         Process[] all;
-        ITerminal[] terminals;
+        (ITerminal Terminal, int Pid)[] terminals;
         lock (_gate)
         {
             all = [.. _processes];
@@ -161,8 +178,10 @@ internal sealed class DebuggeeLauncher : IDisposable
             terminals = [.. _terminals];
             _terminals.Clear();
         }
-        foreach (var t in terminals)
-            if (!t.HasExited) t.KillProcess(); // the terminal stays (its buffer and exit code); only the debuggee goes
+        // The terminal stays (its buffer and exit code); only OUR debuggee goes. Once it ended, the terminal may already run the next run's
+        // debuggee (it is reused when idle, and this session can end late — js-debug's parent session ends after its program's): never kill that.
+        foreach (var (terminal, pid) in terminals)
+            if (!terminal.HasExited && terminal.ProcessId == pid) terminal.KillProcess();
         foreach (var p in all)
         {
             SafeKill(p); // SIGKILL to the whole tree; the runtime reaps the child asynchronously (never block the lane waiting for it)

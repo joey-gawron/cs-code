@@ -109,6 +109,8 @@ IDebugService / IDebugSession events (any thread)
 * **Autos — documented approximation.** DAP has no "variables used near this line" query. Autos takes the Locals' variables and, when the
   editor has the stop location's file open (`IDocumentManager`/`INavigationService.OpenDocuments`), keeps the ones whose name occurs as an
   identifier on the **current or the preceding line**; with no document (or no match) it shows all of them minus `this` and static-member groups.
+  The value the function just stepped out of returned comes first, whatever the line mentions (Visual Studio's "… returned"): GDB's
+  `returnValue` scope, and a return value an adapter lists among the locals (CodeLLDB's `[return value]`, js-debug's `Return value`).
 * **Watch**: expressions live in `IDebugService.Watches` (so they survive the window being hidden) and are persisted per workspace in
   `IStateStorage` (`debug.watches`, restored when the service has none). `Variables/WatchStore` loads the saved list before the first edit,
   wherever it comes from (Locals' Add Watch, the command), and follows `IWorkspaceService.FoldersChanged`: when the primary folder changes the

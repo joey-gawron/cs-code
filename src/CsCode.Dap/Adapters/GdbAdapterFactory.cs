@@ -62,7 +62,7 @@ public sealed class GdbAdapterFactory : IDebugAdapterFactory, IDebugConfiguratio
     public static IEnumerable<BuiltinDebugAdapter> Builtins(GdbAdapterFactory factory) =>
     [
         new(PrimaryType, "Rust / C / C++ (GDB)", Languages, factory, factory) { Quirks = GdbAdapterQuirks.Instance },
-        new(RustAlias, "Rust (GDB, legacy 'rust-gdb' type)", Languages, factory, factory) { Quirks = GdbAdapterQuirks.Instance },
+        new(RustAlias, "Rust (GDB, legacy 'rust-gdb' type)", Languages, factory, factory) { Quirks = GdbAdapterQuirks.Instance, IsAlias = true },
     ];
 
     // ------------------------------------------------------------------ adapter
@@ -83,10 +83,28 @@ public sealed class GdbAdapterFactory : IDebugAdapterFactory, IDebugConfiguratio
             if (rust.Commit is { Length: > 0 } commit && Directory.Exists(rust.SourceRoot)) Early($"set substitute-path /rustc/{commit} {rust.SourceRoot}");
         }
         if (Path.Combine(HelperDirectory, HelperScript) is var helper && File.Exists(helper)) Early("source " + helper);
-        foreach (var command in EnvironmentCommands(configuration)) Early(command);
+        PrivateStartupFile? privateFile = null;
+        if (EnvironmentCommands(configuration).ToList() is { Count: > 0 } environment)
+        {
+            if (OperatingSystem.IsWindows()) foreach (var command in environment) Early(command); // a command line there is not world-readable
+            else
+            {
+                // The values (often secrets: tokens, passwords) never go on GDB's command line, which every local user can read through
+                // /proc/<pid>/cmdline: GDB reads them from a private file instead, written for each gdb this descriptor starts (a restart starts
+                // a new one) and deleted with that gdb.
+                privateFile = new PrivateStartupFile(EnvironmentFilePrefix, "environment.gdb", environment, "the launch environment") { Root = PrivateRoot };
+                args.Add("-ix");
+                args.Add(PrivateStartupFile.Placeholder);
+            }
+        }
         args.Add("-i=dap");
-        return new DebugAdapterStdioProcess(gdb, args, null, cwd) { DisplayName = "gdb" };
+        return new DebugAdapterStdioProcess(gdb, args, null, cwd) { DisplayName = "gdb", PrivateFile = privateFile };
     }
+
+    internal const string EnvironmentFilePrefix = "cscode-gdbenv";
+
+    /// <summary>Where the private directories are made (null: <see cref="PrivateSocket.DefaultRoot"/>); a seam for tests.</summary>
+    internal string? PrivateRoot { get; init; }
 
     /// <summary>The GDB executable without side effects; null when none is found.</summary>
     public string? Locate()
