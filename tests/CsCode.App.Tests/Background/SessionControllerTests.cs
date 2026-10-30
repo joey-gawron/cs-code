@@ -149,6 +149,51 @@ public class SessionControllerTests
         Assert.Contains(s.Store.Load("s").Session!.Editors, e => e.Uri == new Uri(file).ToString() && e.BackupId is null);
     }
 
+    /// <summary>Save prompts that wait for the test's answer.</summary>
+    private sealed class WaitingDialogs : IModalDialogs
+    {
+        public TaskCompletionSource Asked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<string?> Answer { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<string?> ShowAsync(string title, string message, IReadOnlyList<string> buttons, int defaultIndex = 0)
+        {
+            Asked.TrySetResult();
+            return Answer.Task;
+        }
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
+    public async Task A_quit_backs_up_the_latest_unsaved_changes_before_its_save_prompts()
+    {
+        // The autosave writes nothing while a quit is under way, and the quit's write before its prompts had no backups: text typed in the last
+        // moments before Quit Session was on disk nowhere while a Save prompt waited, so SIGTERM or a crash then lost it.
+        var dialogs = new WaitingDialogs();
+        await using var s = await InProcessSession.StartAsync("b", "\"files.hotExit\": \"off\"", configure: c =>
+        {
+            c.RemoveAll<IModalDialogs>();
+            c.AddSingleton<IModalDialogs>(dialogs);
+        });
+        var file = s.WriteFile("a.txt", "original\n");
+        await s.MustAsync(Show(file));
+        await s.MustAsync(Edit(file, "first "));
+        Assert.True(await DevHost.WaitFor(() => s.Store.Backups.List("b") is [var b] && s.Store.Backups.ReadText("b", b.Id) == "first original\n", 15_000),
+            "the autosave wrote no backup");
+
+        await s.MustAsync(Edit(file, "last ")); // and Quit Session at once, before the autosave's delay
+        var quit = s.RequestAsync(new IpcMessage { Type = IpcVerbs.Quit, Force = false }, 60);
+        await dialogs.Asked.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var backup = Assert.Single(s.Store.Backups.List("b"));
+        Assert.Equal("last first original\n", s.Store.Backups.ReadText("b", backup.Id));
+        // The session file lists the tab, with no backup: the prompt decides the unsaved changes, and a quit that goes ahead leaves none.
+        Assert.Contains(s.Store.Load("b").Session!.Editors, e => e.Uri == new Uri(file).ToString() && e.BackupId is null);
+
+        dialogs.Answer.SetResult("Don't Save");
+        Assert.True((await quit).Ok == true);
+        await s.Run.Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Empty(s.Store.Backups.List("b"));
+        Assert.Equal("original\n", File.ReadAllText(file));
+    }
+
     [AvaloniaFact(Timeout = 180_000)]
     public async Task A_session_written_by_a_newer_version_asks_before_its_unsaved_changes_go_and_refuses_a_forced_quit()
     {

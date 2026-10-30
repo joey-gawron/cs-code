@@ -33,8 +33,16 @@ public sealed partial class SessionWindowController
         void Add(string id, string title, Func<Task> run) =>
             _subs.Add(commands.Register(id, async _ => { await run().ConfigureAwait(true); return null; }, new CommandMetadata(id, title, "Session")));
 
-        Add(SessionCommandIds.SaveSessionAs, "Save Session As...", () => NameSessionAsync(rename: false));
-        Add(SessionCommandIds.RenameSession, "Rename Session...", () => NameSessionAsync(rename: true));
+        // These change or hide this session: run while a quit's close is held by a module's question, they decline it (the user works on), as
+        // they could not go ahead in a window that is about to close (Hide does nothing while a quit is under way, a rename writes the session).
+        void AddWorkingOn(string id, string title, Func<Task> run) => Add(id, title, () =>
+        {
+            if (_quitHeld && !_quitCommitted && !_disposed) DeclineHeldQuit();
+            return run();
+        });
+
+        AddWorkingOn(SessionCommandIds.SaveSessionAs, "Save Session As...", () => NameSessionAsync(rename: false));
+        AddWorkingOn(SessionCommandIds.RenameSession, "Rename Session...", () => NameSessionAsync(rename: true));
         // A session name as argument (the Welcome page's Sessions list, Quick Launch's session: mode) opens that session; none shows the picker.
         _subs.Add(commands.Register(SessionCommandIds.OpenSession, async inv =>
         {
@@ -42,9 +50,9 @@ public sealed partial class SessionWindowController
             else await PickAndOpenAsync(switching: false).ConfigureAwait(true);
             return null;
         }, new CommandMetadata(SessionCommandIds.OpenSession, "Open Session...", "Session")));
-        Add(SessionCommandIds.SwitchSession, "Switch Session...", () => PickAndOpenAsync(switching: true));
+        AddWorkingOn(SessionCommandIds.SwitchSession, "Switch Session...", () => PickAndOpenAsync(switching: true));
         Add(SessionCommandIds.DeleteSession, "Delete Session...", DeleteSessionAsync);
-        Add(SessionCommandIds.CloseWindow, "Close Window (Keep Running)", () => { Hide(); return Task.CompletedTask; });
+        AddWorkingOn(SessionCommandIds.CloseWindow, "Close Window (Keep Running)", () => { Hide(); return Task.CompletedTask; });
         Add(SessionCommandIds.QuitSession, "Quit Session", async () => await QuitAsync(force: false).ConfigureAwait(true));
         Add(SessionCommandIds.ExitAll, "Exit All", ExitAllAsync);
         Add(SessionCommandIds.StartAtLogin, "Start CsCode in the Background at Login...", ToggleStartAtLoginAsync);

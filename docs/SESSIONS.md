@@ -154,6 +154,37 @@ so they stay (and a rename writes them under the new name before the old session
   language servers, watchers and debug sessions stay alive. With it false, closing quits the session (with hot exit).
 * *File ▸ Close Window (Keep Running)*: hide. *File ▸ Quit Session*: persist (with backups, `wasResident` false) and end this process.
   *File ▸ Exit* / *Exit All*: every other CsCode process quits (hot exit), then this one.
+* **A quit commits when its window really closes**, not before: sealing the session, deleting the backups after save prompts, releasing the
+  lock and saying `quitting` in hello happen when the window's close goes ahead (`MainWindow.CloseProceeding`). A module may hold the close
+  after the save prompts (the terminal's `terminal.integrated.confirmOnExit`, see SHELL.md). A held close is **settled** first
+  (`MainWindow.SettleHeldCloseAsync`, at most 3 s, the UI thread never waits): "hasChildProcesses" holds every close while it looks for programs
+  other than the shell (off the UI thread) and closes again without a word when only shells run, so the quit goes ahead then like any other
+  (a forced quit, an eviction, Exit All's quit of a hidden session: no window shown, `OK` replied). Only a question shown since the close
+  began (a notification with actions) counts as asking; a close still held without one after the bound counts the same. Then the quit is
+  not cancelled but **pending**:
+  * the window is shown (a hidden one too, so the question can be answered) and works; hello says `shown`, shows go ahead; the quit answers
+    "the quit waits for an answer in the session's window" (an IPC caller such as Exit All lists it as not quit yet);
+  * nothing is written over the session file the quit wrote before its prompts (the autosave writes nothing while any quit is under way),
+    so the next start restores every tab the prompts closed, as the shell keeps the layout saved when the close began; after save prompts the
+    backups are deleted at once (every tab is closed whatever the answer: "Don't Save" text never comes back, also after a crash meanwhile);
+  * *Terminate* closes the window again and the quit commits (backups discarded as the prompts decided, `wasResident` false, lock released);
+  * the terminal says nothing when its question is declined, so the quit is undone when the user **works on** in the window (a tab opened,
+    closed or activated, an edit, a folder, a tool window): the session is saved as it is now (the tabs the prompts closed stay closed),
+    counts as resident again, its question is withdrawn (dismissed: an answer to it later would close or hide the window behind the session's
+    back), and the window's next close is a new one (background mode hides it).
+  * A new Quit Session while the question is up, or the user's close of the window, asks again: the close starts over as the quit began it and
+    the terminal asks again (the earlier question is withdrawn). A hot-exit quit closes again without save prompts (everything was backed up
+    as it began, and nothing changed since: any change undoes the pending quit), as VS Code's hot exit; one with save prompts asks them again
+    for anything dirty since (normally nothing) and keeps its decision about the backups.
+  * A forced quit (`--quit`) or an eviction never asks: when the terminal asks, the quit is refused, its question withdrawn and the window
+    stays as it was (hidden for an eviction); the session says `needsPrompt` from then on, so it is not picked for eviction again.
+  * SIGTERM: everything was backed up before the close; the quit is not reported committed while the close is held, so the host's 15 s
+    watchdog ends the process (*Terminate* within that time ends it at once). SIGTERM while a pending quit's question is up leaves its
+    decisions as they are on disk.
+  * A user's close while a quit's save prompts are up, its last write is under way or its held close settles is ignored (the quit answers it):
+    a second close used to close the window behind the quit, without its commit.
+* Before a quit's save prompts the session is written with every tab (no editor names a backup: the prompts decide) **and** the backups of the
+  latest unsaved text: the autosave writes nothing during the prompts, so SIGTERM or a crash while a prompt waits restores that text.
 * *File ▸ Sessions ▸* Open Session…, Switch Session… (`workbench.action.switchSession`, **Ctrl+Alt+S**; shows the other session and hides
   this one), Save Session As… (the old session stays as saved), Rename Session…, Delete Session… (only sessions that are not running),
   Start in the Background at Login….
@@ -165,8 +196,9 @@ so they stay (and a rename writes them under the new name before the old session
   then one trim: the memory monitor's `IMemoryMonitor.TrimNowAsync(Aggressive)` runs the registered trimmables, then a compacting full GC
   including the large object heap and `malloc_trim`. (A second, process-level trim after it only paused every thread again; it is used alone
   when there is no monitor.)
-* A hidden session that could only quit by asking (dirty documents with `files.hotExit` off, over the backup limit, or a session a newer
-  CsCode wrote) says so in `hello` (`needsPrompt`) and is never evicted; an eviction that reaches it anyway is refused, its window stays hidden.
+* A hidden session that could only quit by asking (dirty documents with `files.hotExit` off, over the backup limit, a session a newer
+  CsCode wrote, or a window whose close a module held with a question before) says so in `hello` (`needsPrompt`) and is never evicted; an
+  eviction that reaches it anyway is refused, its window stays hidden.
 * After `cscode.background.idleServerTimeoutMinutes` (15; 0 = never) the running language servers are stopped and restarted when the window is
   shown again; a running debug session keeps them (and keeps the process from being evicted).
 * Before showing again, the active tab of each group gets its view back, so the first frame shows the editors.
@@ -411,12 +443,20 @@ when `codesign` exists.
   runtime directory's ownership and link checks and its `/run/user` and `/tmp` fallbacks, autosave debouncing and the hidden-session policy
   with a manual clock, settings parsing, the serial lane, leak checks.
 * `SessionControllerTests` — a session process's window side run in the test process (headless; save prompts answered by a fake): no backup
-  survives a quit with save prompts, a newer version's session asks before its unsaved changes go and refuses a forced quit or an eviction,
+  survives a quit with save prompts, the text typed just before a quit is backed up while its save prompt waits, a newer version's session asks before its unsaved changes go and refuses a forced quit or an eviction,
   `--wait` with several files / a closed window / a quit, a hidden session that would prompt refuses an eviction, a committed quit releases
   the session at once and answers a late show with `quitting`, the autosave capture builds no document text on the UI thread, remote backups
   go back into their documents once the file system answers. After save prompts: a relaunch during the shutdown starts the session afresh
   (the launcher against the real host), a show during the prompts goes ahead and one during the last write waits for the quit, a cancelled
   or refused quit keeps `--wait` waiting, and the backups of remote documents waiting for their connection survive the discard and a rename.
+* `HeldQuitTests` — the same, with the real terminal module (idle fake PTYs) and `confirmOnExit` "always": a quit whose close the terminal
+  holds after "Don't Save" keeps the session file it wrote before the prompts and leaves no backup (answered at once or after the autosave
+  delay), "Save" then Terminate, Cancel then working on (the autosave resumes, the next close hides, the next quit asks again), a hot-exit quit
+  keeps the session's lock until the window closes, an eviction and a forced quit are refused and their question withdrawn, and SIGTERM is
+  left to the watchdog; a hidden session's quit shows the question; the user's close (the platform's, not `Close()`) or a new quit while the
+  question is up asks again: a hot-exit quit without save prompts (its backups and the text stay), one after "Don't Save" keeping its discard.
+  With "hasChildProcesses" and only shells running, a forced quit, an eviction and a hidden session's quit quit without a question or showing
+  the window; with a program running, a forced quit is refused, its question withdrawn, and once the program ends the next quit goes ahead.
 * `SessionFixProcessTests` — REAL processes: SIGTERM saves the unsaved changes, an unusable runtime directory never opens a window for
   `--list-sessions`/`--quit`/`--background`, a relative `CSCODE_HOME`, reopening a session while its process waits for a language server that
   ignores shutdown (a fresh start, no copy), two runtime directories over one data directory (one owner, the other launch opens a copy).
