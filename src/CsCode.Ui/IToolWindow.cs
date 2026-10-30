@@ -23,8 +23,8 @@ public interface IToolWindow
     /// Command id that shows, activates and focuses this window the way its module needs (no argument): what View &gt; Tool Windows runs when it is
     /// registered, as Visual Studio's View menu puts the keyboard in the window it shows. The Terminal's creates a terminal when there is none and
     /// focuses it; Find in Files seeds its query from the selection and focuses the query box. Null (the default): the shell shows the window
-    /// and focuses its view itself (<see cref="IToolWindowFocus"/>, else the view's first focusable element in tab order that is not a button or
-    /// a splitter).
+    /// and focuses its view itself (<see cref="IToolWindowFocus"/>, else the view's first focusable element in tab order that is not a button, a
+    /// splitter or a drop-down).
     /// </summary>
     string? ShowCommandId => null;
     /// <summary>Context-key `when` clause: window auto-shows while true (e.g. "inDebugMode" for debug panes). Null = manual.</summary>
@@ -36,8 +36,9 @@ public interface IToolWindow
 /// <summary>
 /// Implemented by a tool window's view (the control <see cref="IToolWindow.CreateView"/> returns) that knows where the keyboard belongs when
 /// View &gt; Tool Windows activates the window: its list, tree or input, not the first button of its toolbar or the splitter of its column header,
-/// which is where tab order alone would put it. A view without it gets the keyboard on its first focusable element in tab order that is not a
-/// button or a GridSplitter (with none, the window itself takes it). Called on the UI thread once the view is laid out.
+/// which is where tab order alone would put it. A view without it, or whose <see cref="FocusPreferred"/> finds nothing, gets the keyboard on its
+/// first focusable element in tab order that is not a button, a GridSplitter or a ComboBox (with none, the window itself takes it). Called on the
+/// UI thread once the view is laid out.
 /// </summary>
 public interface IToolWindowFocus
 {

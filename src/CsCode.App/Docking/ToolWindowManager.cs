@@ -109,8 +109,8 @@ public sealed class ToolWindowManager : IDisposable
 
     /// <summary>
     /// Puts the keyboard into a shown tool's view, as Visual Studio's View menu does for the window it shows (typing next goes there, not into the
-    /// editor): on the element the view prefers (<see cref="IToolWindowFocus"/>), else on its first content element in tab order (never a button
-    /// or splitter, see <see cref="FirstContentElement"/>), else, for a view with nothing else that can take it, on its host
+    /// editor): on the element the view prefers (<see cref="IToolWindowFocus"/>), else on its first content element in tab order (never a button,
+    /// splitter or drop-down, see <see cref="FirstContentElement"/>), else, for a view with nothing else that can take it, on its host
     /// (<see cref="ToolTab.FocusHost"/>). <see cref="Show"/> only creates the view and Dock presents it on a later layout pass, so this runs after
     /// layout and waits (bounded) until the view is on screen. Nothing happens when the tool was hidden meanwhile or a later request superseded
     /// this one.
@@ -137,10 +137,11 @@ public sealed class ToolWindowManager : IDisposable
 
     /// <summary>
     /// The first element of <paramref name="view"/> in tab order that is the window's content, not its chrome: never a button (ToggleButton,
-    /// CheckBox and the rest are buttons too) or a GridSplitter, which is what leads the tab order of a window with a toolbar or a column header.
-    /// The keyboard left there by the View menu does what the user did not ask for: the next Enter presses Clear Console or Continue, the next
-    /// arrow resizes the columns of Locals; Visual Studio puts it in the window's list or input. Null when nothing else in the view can take the
-    /// keyboard (the caller then focuses the host).
+    /// CheckBox and the rest are buttons too), a GridSplitter or a ComboBox (a toolbar's closed drop-down), which is what leads the tab order of
+    /// a window with a toolbar or a column header. The keyboard left there by the View menu does what the user did not ask for: the next Enter
+    /// presses Clear Console or Continue, the next arrow resizes the columns of Locals or switches the Output window's channel (and a letter
+    /// searches the channels); Visual Studio puts it in the window's list or input. Null when nothing else in the view can take the keyboard
+    /// (the caller then focuses the host), as in the Output window with no line to focus.
     /// </summary>
     internal static IInputElement? FirstContentElement(Control view)
     {
@@ -150,7 +151,7 @@ public sealed class ToolWindowManager : IDisposable
              e is Avalonia.Visual v && (ReferenceEquals(v, view) || view.IsVisualAncestorOf(v)) && seen.Add(e);
              e = focus?.FindNextElement(NavigationDirection.Next, new FindNextElementOptions { FocusedElement = e }))
         {
-            if (e is not (Button or GridSplitter)) return e;
+            if (e is not (Button or GridSplitter or ComboBox)) return e;
         }
         return null;
     }

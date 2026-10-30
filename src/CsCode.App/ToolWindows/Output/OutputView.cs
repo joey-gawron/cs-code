@@ -78,7 +78,11 @@ public sealed class OutputView : UserControl, IDisposable, IClipboardTarget, ITo
         }
     }
 
-    /// <summary>View &gt; Tool Windows &gt; Output: the keyboard on a line (the selected one, else one on screen), not on the channel picker.</summary>
+    /// <summary>
+    /// View &gt; Tool Windows &gt; Output: the keyboard on a line (the selected one, else one on screen), not on the channel picker, where Down
+    /// switches the channel. With no line (an empty channel, or after Clear Output) there is none, and the shell's fallback passes the picker by
+    /// for the window itself.
+    /// </summary>
     public bool FocusPreferred() => ToolWindowFocus.FocusRow(_list);
 
     public bool CanCopy => _list.SelectedItems?.Count > 0 && _window is not null;

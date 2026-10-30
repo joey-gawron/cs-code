@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -120,8 +121,8 @@ public class MenuBarTests
                 Assert.True(await RealAppHost.WaitFor(() => (tab.LiveView?.Parent as Control)?.IsKeyboardFocusWithin == true, 20_000),
                     $"View > Tool Windows > {item.Header} (click {click}) left the keyboard on {Focused(host)}");
                 // A ToggleButton (a CheckBox too) is a Button.
-                Assert.False(host.Window.FocusManager?.GetFocusedElement() is Button or GridSplitter,
-                    $"View > Tool Windows > {item.Header} (click {click}) put the keyboard on {Focused(host)}, where Enter presses it or the arrows drag it");
+                Assert.False(host.Window.FocusManager?.GetFocusedElement() is Button or GridSplitter or ComboBox,
+                    $"View > Tool Windows > {item.Header} (click {click}) put the keyboard on {Focused(host)}, where Enter presses it, the arrows drag it or switch it");
             }
         }
         Assert.Single(host.Get<ITerminalService>().Terminals); // the Terminal's view and its focus command did not each start one
@@ -216,6 +217,34 @@ public class MenuBarTests
         Assert.IsType<ListBoxItem>(host.Window.FocusManager?.GetFocusedElement());
         Assert.Equal(CsCode.App.Input.FocusArea.Explorer, host.Shell.ContextKeys.Focus);
         Assert.False(editor.Controller.IsFocused);
+    }
+
+    // Found in review: with no line (an empty channel, or after Clear Output) the Output window has no row to take the keyboard, and tab order
+    // put it on the channel picker, where Down switched the channel and a letter searched the channels. Visual Studio puts it in the window.
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task View_Tool_Windows_Output_with_no_line_puts_the_keyboard_in_the_window_not_on_the_channel_picker()
+    {
+        await using var host = await RealAppHost.Create(h => h.Files.WriteFile("a.txt", "alpha beta\n")).StartAsync();
+        var editor = await host.Shell.Well.OpenAsync(new Uri(host.Files.Combine("a.txt")));
+        Assert.True(await RealAppHost.WaitFor(() => editor.Controller is not null && editor.LiveView!.IsAttachedToVisualTree()));
+        host.Get<IOutputService>().GetOrCreate("Tests").AppendLine("x"); // a channel nothing else writes to, so it stays empty once cleared
+        host.Shell.Tools.Show("output");
+        var output = host.Shell.Tools.Get("output")!;
+        Assert.True(await RealAppHost.WaitFor(() => output.LiveView is { } v && v.IsAttachedToVisualTree()));
+        var model = (ToolWindows.Output.OutputViewModel)output.LiveView!.DataContext!;
+        model.SelectedChannel = "Tests";
+        await DevScene.SettleAsync(5);
+        model.Clear();
+        Assert.True(await RealAppHost.WaitFor(() => model.Lines.Count == 0 && !output.LiveView.GetVisualDescendants().OfType<ListBoxItem>().Any(r => r.IsEffectivelyVisible)));
+        editor.Controller!.Focus();
+
+        await ClickToolWindowItemAsync(host, "Output");
+
+        Assert.True(await RealAppHost.WaitFor(() => (output.LiveView.Parent as Control)?.IsKeyboardFocusWithin == true), $"the keyboard is on {Focused(host)}");
+        Assert.False(host.Window.FocusManager?.GetFocusedElement() is ComboBox, $"the keyboard is on {Focused(host)}, where Down switches the channel");
+        host.Window.KeyPress(Avalonia.Input.Key.Down, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.ArrowDown, null);
+        await DevScene.SettleAsync(5);
+        Assert.Equal("Tests", model.SelectedChannel);
     }
 
     // Found in review: a tool with neither a ShowCommandId nor IToolWindowFocus got the keyboard on its first element in tab order, which in a

@@ -323,10 +323,10 @@ public sealed class ToolTab : Tool, IDisposable, IRecyclingDataTemplate
     }
 
     /// <summary>
-    /// The last resort of <see cref="ToolWindowManager.FocusView"/>, for a view with nothing that can take the keyboard but its buttons and
-    /// splitters (the Call Stack or Locals outside a debug session: an empty list under a header): the host takes it, so it still leaves the
-    /// editor for the window Visual Studio would have activated. Focusable only until the keyboard leaves it, so a click on the window's blank
-    /// space keeps doing what it did (nothing).
+    /// The last resort of <see cref="ToolWindowManager.FocusView"/>, for a view with nothing that can take the keyboard but its buttons, splitters
+    /// and drop-downs (the Call Stack or Locals outside a debug session: an empty list under a header; the Output window with no line: an empty
+    /// list under the channel picker): the host takes it, so it still leaves the editor for the window Visual Studio would have activated.
+    /// Focusable only until the keyboard leaves it, so a click on the window's blank space keeps doing what it did (nothing).
     /// </summary>
     internal bool FocusHost()
     {
