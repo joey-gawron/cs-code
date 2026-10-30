@@ -71,9 +71,12 @@ public sealed class SessionProcessHarness : IDisposable
     /// <summary>Runs <c>cscode --headless-test args...</c> to completion (bounded) and measures it from process start to exit.</summary>
     public async Task<LauncherRun> RunAsync(params string[] args) => await RunAsync(TimeSpan.FromSeconds(90), args);
 
-    public async Task<LauncherRun> RunAsync(TimeSpan timeout, params string[] args)
+    public Task<LauncherRun> RunAsync(TimeSpan timeout, params string[] args) => RunWithAsync(null, null, timeout, args);
+
+    /// <summary>The same from another working directory and with environment changes (a null value removes the variable).</summary>
+    public async Task<LauncherRun> RunWithAsync(string? workingDirectory, IReadOnlyDictionary<string, string?>? environment, TimeSpan timeout, params string[] args)
     {
-        using var p = Start(args);
+        using var p = Start(workingDirectory, environment, args);
         var clock = Stopwatch.StartNew();
         var output = p.StandardOutput.ReadToEndAsync();
         var error = p.StandardError.ReadToEndAsync();
@@ -89,12 +92,14 @@ public sealed class SessionProcessHarness : IDisposable
     }
 
     /// <summary>Starts the launcher without waiting (for <c>--wait</c>). The caller disposes the process.</summary>
-    public Process Start(params string[] args)
+    public Process Start(params string[] args) => Start(null, null, args);
+
+    public Process Start(string? workingDirectory, IReadOnlyDictionary<string, string?>? environment, params string[] args)
     {
         var psi = new ProcessStartInfo(Executable)
         {
             UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
-            WorkingDirectory = Workspace,
+            WorkingDirectory = workingDirectory ?? Workspace,
         };
         psi.ArgumentList.Add("--headless-test");
         foreach (var a in args) psi.ArgumentList.Add(a);
@@ -105,6 +110,11 @@ public sealed class SessionProcessHarness : IDisposable
         psi.Environment.Remove("DISPLAY");
         psi.Environment.Remove("WAYLAND_DISPLAY");
         psi.Environment.Remove("SSH_AUTH_SOCK");
+        foreach (var (key, value) in environment ?? new Dictionary<string, string?>())
+        {
+            if (value is null) psi.Environment.Remove(key);
+            else psi.Environment[key] = value;
+        }
         var p = Process.Start(psi)!;
         p.StandardInput.Close();
         return p;

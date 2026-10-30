@@ -526,7 +526,8 @@ public sealed partial class SessionWindowController : IDisposable
                 _window.CloseWithoutPrompt();
                 return IpcMessage.Reply();
             }
-            _wasResident = false;
+            // A quit the user asked for leaves the session out of the next login's restore (restoreOnLogin); SIGTERM (logout) does not.
+            _wasResident = terminate;
             var hotExit = _config?.Get(BackgroundSettings.HotExit, BackgroundSettings.HotExitOnExitAndWindowClose) ?? BackgroundSettings.HotExitOnExitAndWindowClose;
             var backUp = force || hotExit == BackgroundSettings.HotExitOnExitAndWindowClose || (hotExit == BackgroundSettings.HotExitOnExit && !windowClose);
             var dirty = _shell.Well.EditorTabs.Any(t => t.IsDirty);
