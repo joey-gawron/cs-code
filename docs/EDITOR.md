@@ -238,7 +238,8 @@ Debug build, shared 22-core Linux machine; ranges are the spread of repeated run
 comes in — dotted keys as written, `{"editor.tabSize": 2}`, the nested form the Platform settings service hands back, `{"editor": {"tabSize": 2}}`,
 or a mix (T30: only the flat form was read, so in the real app every per-language editor setting was ignored); a wrongly typed override falls
 back to the global value; `files.*` and `editor.formatOnSave` per language at save; the size limits are global; `.editorconfig` indent style/size
-win over settings as in VS Code):
+win over settings as in VS Code, and the status bar's indent item shows that same result through `EditorSettings.IndentationFor` (it read the
+settings alone, so a project's `.editorconfig` could make it say "Spaces: 4" while the editor indented with tabs or by 2)):
 `editor.fontFamily`, `editor.fontSize`, `editor.fontLigatures` (on by default; §8), `editor.lineHeightFactor`, `editor.tabSize`, `editor.insertSpaces`, `editor.wordWrap` (on/off), `editor.renderWhitespace` (`boundary` is treated as `all`), `editor.lineNumbers` (on/off), `editor.rulers`, `editor.mouseWheelZoom`, `editor.guides.indentation`,
 `editor.renderLineHighlight`, `editor.bracketPairColorization.enabled`, `editor.matchBrackets`, `editor.occurrencesHighlight`, `editor.folding`, `editor.quickSuggestions`, `editor.quickSuggestionsDelay`, `editor.suggestOnTriggerCharacters`, `editor.autoClosingBrackets/Quotes`, `editor.autoSurround`,
 `editor.formatOnSave/OnType/OnPaste`, `editor.emptySelectionClipboard`, `editor.selectionClipboard`, `editor.autoIndentOnPaste`, `editor.autoIndent`, `editor.hover.delay`, `editor.inlayHints.enabled`, `workbench.colorTheme`, `files.encoding`, `files.eol`, `files.insertFinalNewline`, `files.trimFinalNewlines`, `files.trimTrailingWhitespace`, `files.associations`, and the module's own `cscode.editor.undoLimit` (default 1000 groups),

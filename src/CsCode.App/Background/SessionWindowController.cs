@@ -118,6 +118,7 @@ public sealed partial class SessionWindowController : IDisposable
         window.CloseInterceptor = OnCloseRequested;
         window.CloseProceeding += OnCloseProceeding;
         window.Closed += OnWindowClosed;
+        window.PositionChanged += OnWindowMoved;
 
         if (_config is not null) _subs.Add(_config.RegisterProperties(BackgroundSettings.Properties));
         if (services.GetService<IContributionRegistry>() is { } contributions)
@@ -205,7 +206,9 @@ public sealed partial class SessionWindowController : IDisposable
             _host.SetState(ProcessStates.Starting);
             _readOnly = prepared.Status == SessionLoadStatus.TooNew;
             UpdateSessionIdentity();
-            if (prepared.Document?.Window is { } bounds) ApplyBounds(bounds);
+            // Where the other shown windows are: asked now, answered (in a millisecond each) while the session restores.
+            var others = hidden ? null : ResidentDiscovery.DiscoverAsync(_host.Runtime, IpcClient.DefaultConnectTimeout, excludePid: Environment.ProcessId);
+            var savedSpot = prepared.Document?.Window is { } bounds ? ApplyBounds(bounds) : null;
             _shell.RestoreOverride = () => RestoreAsync(prepared);
             SessionTrace.Mark("host: restore start");
             try { await _shell.StartDeferredAsync().ConfigureAwait(true); }
@@ -220,7 +223,11 @@ public sealed partial class SessionWindowController : IDisposable
                 _host.SetState(ProcessStates.Hidden);
                 _policy.OnHidden();
             }
-            else await ShowWindowAsync().ConfigureAwait(true);
+            else
+            {
+                if (others is not null) await PlaceAmongOthersAsync(others, savedSpot).ConfigureAwait(true);
+                await ShowWindowAsync().ConfigureAwait(true);
+            }
             ReportLoadProblem(prepared);
         }
         finally { _activated.TrySetResult(); }
@@ -367,7 +374,8 @@ public sealed partial class SessionWindowController : IDisposable
         else tab.SetViewStateForNextView(state);
     }
 
-    private void ApplyBounds(SessionWindow w)
+    /// <summary>Restores the saved size, state and position; returns the position when it was applied (a screen is still there).</summary>
+    private PixelPoint? ApplyBounds(SessionWindow w)
     {
         if (w.Width >= _window.MinWidth && w.Height >= _window.MinHeight)
         {
@@ -375,14 +383,41 @@ public sealed partial class SessionWindowController : IDisposable
             _window.Height = w.Height;
         }
         var screens = _window.Screens?.All ?? [];
+        PixelPoint? applied = null;
         // Only where a screen still is (the monitor may be gone): otherwise the window manager places it.
         if (screens.Any(s => s.WorkingArea.Contains(new PixelPoint(w.X + 40, w.Y + 15))))
         {
             _window.WindowStartupLocation = WindowStartupLocation.Manual;
             _window.Position = new PixelPoint(w.X, w.Y);
+            applied = _window.Position;
         }
         _normalBounds = w with { State = "normal" };
         _window.WindowState = w.State switch { "maximized" => WindowState.Maximized, "fullscreen" => WindowState.FullScreen, _ => WindowState.Normal };
+        return applied;
+    }
+
+    /// <summary>
+    /// A window with no saved spot, or whose saved spot holds another shown CsCode window, opens cascaded from the newest one instead of exactly on
+    /// top of it (<see cref="WindowPlacement"/>). Discovery that has not answered in time (a wedged process) leaves the window where it is.
+    /// </summary>
+    private async Task PlaceAmongOthersAsync(Task<IReadOnlyList<ResidentProcess>> discovery, PixelPoint? savedSpot)
+    {
+        IReadOnlyList<ResidentProcess> found;
+        try { found = await discovery.WaitAsync(IpcClient.DefaultConnectTimeout).ConfigureAwait(true); }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { return; } // never in the way of the window showing
+        if (_window.IsVisible || _disposed) return;
+        var others = found.Where(p => p is { State: ProcessStates.Shown, WindowPosition: not null })
+            .Select(p => new WindowPlacement.OtherWindow(new PixelPoint(p.WindowPosition!.Value.X, p.WindowPosition.Value.Y), p.LastShownUtc)).ToArray();
+        var screens = (_window.Screens?.All ?? []).Select(s => new WindowPlacement.ScreenArea(s.WorkingArea, s.Scaling)).ToArray();
+        if (WindowPlacement.Place(savedSpot, new Size(_window.Width, _window.Height), others, screens) is not { } position) return;
+        _window.WindowStartupLocation = WindowStartupLocation.Manual;
+        _window.Position = position;
+        if (_normalBounds is { } normal) _normalBounds = normal with { X = position.X, Y = position.Y };
+    }
+
+    private void OnWindowMoved(object? sender, PixelPointEventArgs e)
+    {
+        if (_window.IsVisible) _host.WindowPosition = (e.Point.X, e.Point.Y);
     }
 
     private void ReportLoadProblem(PreparedSession prepared)
@@ -454,6 +489,7 @@ public sealed partial class SessionWindowController : IDisposable
             _window.Show();
             SessionTrace.Mark("host: shown");
         }
+        _host.WindowPosition = (_window.Position.X, _window.Position.Y);
         _window.Activate();
         await WaitForPaintAsync().ConfigureAwait(true);
         SessionTrace.Mark("host: painted");
@@ -1050,6 +1086,7 @@ public sealed partial class SessionWindowController : IDisposable
         if (_disposed) return;
         _window.Closed -= OnWindowClosed;
         _window.CloseProceeding -= OnCloseProceeding;
+        _window.PositionChanged -= OnWindowMoved;
         _disposed = true;
         EndWaits();
         QuitPhaseChanged();

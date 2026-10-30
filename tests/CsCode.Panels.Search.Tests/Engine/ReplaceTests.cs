@@ -399,6 +399,22 @@ public class ReplaceTests : IDisposable
         Assert.Equal(expected, ReplaceService.PreviewReplacement(new SearchQuery(pattern, IsRegex: regex), regex ? "user@example" : "foo", new ReplaceOptions(with)));
 
     [Fact]
+    public async Task A_preview_whose_regex_times_out_says_so_and_never_shows_the_template()
+    {
+        // The UI thread under CPU pressure, forced here with a tiny timeout on a long matched text: the row showed the template, a literal "$1".
+        var query = new SearchQuery(@"(a+)b", IsRegex: true);
+        var slow = new System.Text.RegularExpressions.Regex(@"(a+)b", System.Text.RegularExpressions.RegexOptions.NonBacktracking, TimeSpan.FromTicks(1));
+        var preview = ReplaceService.CreatePreviewer(new ReplacePreviewPattern(query, slow), new ReplaceOptions("[$1]"));
+        Assert.Equal(ReplaceService.PreviewUnavailable, preview(new string('a', 4_000_000) + "b"));
+        Assert.Equal(ReplaceService.PreviewUnavailable, ReplaceService.CreatePreviewer(new ReplacePreviewPattern(query, slow), new ReplaceOptions("[$1]", PreserveCase: true))(new string('a', 4_000_000) + "b"));
+        // ...and what Replace writes is still the expanded replacement, matched from the file with the search's own timeout.
+        Assert.Equal("[aa]", ReplaceService.CreatePreviewer(ReplaceService.CreatePreviewPattern(query), new ReplaceOptions("[$1]"))("aab"));
+        _h.Write("a.txt", "xaab");
+        var plan = await Plan(query, "[$1]");
+        Assert.Equal("[aa]", plan.Files.Single().Items.Single().NewText);
+    }
+
+    [Fact]
     public void Escapes_are_expanded_only_for_n_t_and_backslash() =>
         Assert.Equal("a\nb\tc\\d\\x", ReplaceService.ExpandEscapes(@"a\nb\tc\\d\x"));
 }

@@ -48,6 +48,16 @@ public class IpcTests
     }
 
     [Fact]
+    public void A_hellos_window_position_survives_the_codec_and_is_absent_from_old_messages()
+    {
+        var hello = IpcCodec.Decode(IpcCodec.Encode(new IpcMessage { Type = IpcVerbs.Hello, WindowX = -1200, WindowY = 30 }));
+        Assert.Equal((-1200, 30), (hello.WindowX, hello.WindowY));
+        var old = IpcCodec.Decode("{\"type\":\"hello\",\"state\":\"shown\"}"u8);
+        Assert.Null(old.WindowX);
+        Assert.Null(old.WindowY);
+    }
+
+    [Fact]
     public async Task A_request_gets_its_reply_and_the_endpoint_is_private()
     {
         using var rt = new TestRuntime();

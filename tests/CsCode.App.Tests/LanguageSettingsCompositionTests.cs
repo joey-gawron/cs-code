@@ -91,4 +91,33 @@ public class LanguageSettingsCompositionTests
         Assert.True(cs.Modal.InsertSpaces);
         Assert.Equal(4, py.Modal.TabSize);
     }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task The_status_bar_shows_the_editorconfig_indentation_the_editor_uses()
+    {
+        await using var host = RealAppHost.Create(h =>
+        {
+            AddSettings(h, """
+                "vim.enable": false,
+                "editor.tabSize": 4,
+                "editor.insertSpaces": true
+                """);
+            h.Files.WriteFile(".editorconfig", "root = true\n\n[*.cs]\nindent_style = tab\nindent_size = 2\n\n[*.py]\nindent_size = 3\n");
+            h.Files.WriteFile("a.cs", "class C\n{\n}\n");
+            h.Files.WriteFile("b.py", "x = 1\n");
+        });
+        await host.StartAsync();
+        var well = host.Shell.Well;
+        string? Indent() => host.Get<IStatusBarService>().Items.FirstOrDefault(i => i.Id == "editor.indent")?.Text;
+
+        var cs = await OpenAsync(well, host.Files.Combine("a.cs"));
+        Assert.Equal(2, cs.Modal.TabSize);
+        Assert.False(cs.Modal.InsertSpaces);
+        Assert.True(await RealAppHost.WaitFor(() => Indent() == "Tab Size: 2"), Indent()); // was "Spaces: 4", the settings alone
+
+        // only the size from .editorconfig: the style still comes from the settings
+        var py = await OpenAsync(well, host.Files.Combine("b.py"));
+        Assert.Equal(3, py.Modal.TabSize);
+        Assert.True(await RealAppHost.WaitFor(() => Indent() == "Spaces: 3"), Indent());
+    }
 }

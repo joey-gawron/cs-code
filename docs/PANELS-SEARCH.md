@@ -117,7 +117,9 @@ command `revealInExplorer` exists), Expand/Collapse, Exclude This Folder, Replac
 * **Replace preview** follows the query that produced the results (what Replace writes), not the form: toggling `.*` or editing the pattern without searching
   again does not change it. Its regex is compiled once per query (a keystroke in the replace box builds a closure only) and only kept when it runs on the
   `NonBacktracking` engine; for a pattern that needs the backtracking engine (lookarounds, backreferences) the preview shows the template with its escapes expanded
-  but `$` groups not substituted, because re-matching the clipped matched text on the UI thread could take the whole regex timeout per row.
+  but `$` groups not substituted, because re-matching the clipped matched text on the UI thread could take the whole regex timeout per row. When even
+  the linear-time match times out (250 ms; the UI thread under CPU pressure) the row shows `(preview unavailable)`, not the template (it showed a literal
+  `$1` as if that were what Replace writes); Replace itself matches the file again with the search's own timeout.
 * **Bulk removal.** Exclude This Folder and the clean-up after Replace All remove their rows with one rebuild of the flat list (one reset notification), not one
   `IndexOf`/`RemoveRange`/reset per file; Dismiss of a single row stays incremental.
 
