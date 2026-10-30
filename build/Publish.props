@@ -1,0 +1,25 @@
+<Project>
+
+  <!--
+    How CsCode is published for installing (imported by src/CsCode.App/CsCode.App.csproj; docs/SESSIONS.md, "Publishing"). The command is
+    tools/publish-app.sh, which runs `dotnet publish src/CsCode.App -c Release -r linux-x64` with the self-contained switch.
+    Everything here applies only to a build for a runtime identifier (-r), so `dotnet build`, `dotnet test` and `dotnet run` are untouched.
+    The self-contained switch must be on the command line, not only here: the App references the cscode-server executable, and a
+    self-contained executable may only reference self-contained ones (NETSDK1150).
+  -->
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <!-- Self-contained: the installed app carries its own runtime, so it runs without a dotnet on the machine (or the Nix shell). -->
+    <SelfContained Condition="'$(SelfContained)' == ''">true</SelfContained>
+    <!-- ReadyToRun: the app, package and framework assemblies are precompiled, so start-up does not JIT them. -->
+    <PublishReadyToRun Condition="'$(PublishReadyToRun)' == '' and '$(PublishAot)' != 'true'">true</PublishReadyToRun>
+    <!-- One composite image of the app and the framework (cross-assembly inlining; the framework's code compiled for this app): measured on
+         this machine (docs/SESSIONS.md, "Start-up performance") a cold start of 0.93 s against 1.23 s with per-assembly ReadyToRun and 1.97 s
+         with the JIT; +41 MB on disk and +27 MB of clean, shared file pages per process, private memory unchanged. -->
+    <PublishReadyToRunComposite Condition="'$(PublishReadyToRunComposite)' == '' and '$(PublishReadyToRun)' == 'true'">true</PublishReadyToRunComposite>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <Import Project="NuGetRuntimePacks.props" />
+
+</Project>

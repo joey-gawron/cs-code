@@ -9,6 +9,9 @@
     <TrimMode>partial</TrimMode>
   </PropertyGroup>
 
+  <!-- How the installed app is published (self-contained, ReadyToRun; only for `dotnet publish -r <rid>`): docs/SESSIONS.md, "Publishing". -->
+  <Import Project="../../build/Publish.props" />
+
   <ItemGroup>
     <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
     <ProjectReference Include="../CsCode.Platform/CsCode.Platform.csproj" />
