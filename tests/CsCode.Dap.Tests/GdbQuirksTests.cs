@@ -244,6 +244,37 @@ public class GdbQuirksTests
         Assert.Empty(h.AdapterFor(0).RequestsOf("setFunctionBreakpoints")[1].Args<DapSetFunctionBreakpointsArguments>().Breakpoints);
     }
 
+    /// <summary>
+    /// Restart while stopped on a panic: the new run's panic (its message arriving just after the stop) is described by its own message, not
+    /// the previous run's, which stayed in the output the description is read from (end-pass debug-11).
+    /// </summary>
+    [Fact]
+    public async Task After_a_restart_a_panic_is_described_by_its_own_message_not_the_previous_runs()
+    {
+        await using var h = Harness();
+        var session = (DebugSession)await h.StartAsync(Config(h));
+        await h.AdapterFor(0).WaitForRequestAsync("setFunctionBreakpoints");
+        await h.AdapterFor(0).SendOutputAsync("thread 'main' panicked at src/a.rs:1:1:\nboom A\n", "stdout");
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", hitBreakpointIds: [1001]);
+        await SessionHarness.Eventually(() => session.LastException is { Description: "boom A" });
+        await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+
+        await session.RestartAsync(Ct); // GDB has no `restart`: a new connection, the whole handshake again
+        Assert.Null(session.LastException);
+        Assert.Null(h.Service.StopLocation); // the old run's stop is over
+        await h.WaitForAdapters(2);
+        await h.AdapterFor(1).WaitForRequestAsync("setFunctionBreakpoints");
+        DebugStoppedEventArgs? stop = null;
+        session.Stopped.Subscribe(e => stop = e);
+        await h.AdapterFor(1).SendStoppedAsync("breakpoint", hitBreakpointIds: [1001]);
+        await SessionHarness.Eventually(() => stop is not null);
+        await Task.Delay(100, Ct);
+        await h.AdapterFor(1).SendOutputAsync("thread 'main' panicked at src/b.rs:2:2:\nboom B\n", "stdout");
+        await SessionHarness.Eventually(() => session.LastException is not null);
+        Assert.Equal(("boom B", "thread 'main' panicked at src/b.rs:2:2"), (session.LastException!.Description, session.LastException.StackTrace));
+        Assert.NotEqual("boom A", stop!.Text);
+    }
+
     /// <summary>The panic message can arrive just AFTER the stop (GDB reads the program's output on another thread): exceptionInfo waits for it.</summary>
     [Fact]
     public async Task A_panic_message_that_arrives_after_the_stop_still_describes_it()
