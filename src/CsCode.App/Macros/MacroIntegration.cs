@@ -92,7 +92,14 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
         if (vim is not null)
             _subscriptions.Add(vim.Service.EnabledChanged.Subscribe(on =>
             {
-                if (on) _ui.Post(() => { if (!_disposed && _service.IsRecording) _service.StopRecording("Recording stopped: Vim emulation was switched on."); });
+                if (!on) return;
+                void Stop()
+                {
+                    if (!_disposed && _service.IsRecording) _service.StopRecording("Recording stopped: Vim emulation was switched on.");
+                }
+                // at once on the UI thread: no key may be recorded between the switch and the stop
+                if (_ui.CheckAccess()) Stop();
+                else _ui.Post(Stop);
             }));
         if (_windowHolder.Window is { } top)
         {
@@ -117,7 +124,9 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
         catch (Exception ex) when (ex is not OutOfMemoryException) { _service.ShowStatus("Macros could not be loaded: " + ex.Message); }
     }
 
-    private bool VimOn => _vim?.Enabled == true;
+    // The Vim service's switch, not the adapter's: the adapter follows it on a later dispatcher turn, and a macro step right after vim.toggle
+    // must already see Vim on (its keys would otherwise reach the editor while Vim takes over).
+    private bool VimOn => _vim?.Service.Enabled == true;
 
     // ------------------------------------------------------------------------------------------------------------ keys (IKeyboardTap)
 

@@ -302,7 +302,7 @@ public class MacroRealAppTests(ITestOutputHelper output)
         await app.SettleAsync();
 
         Assert.Equal("def", app.Text);
-        Assert.Equal([new TextStep("12"), new CommandStep("vim.toggle")], app.Service.Last!.Steps);
+        Assert.Equal([new TextStep("12")], app.Service.Last!.Steps); // the stop comes inside vim.toggle: the toggle itself is not part of the macro
         Assert.Contains(app.Notifications, n => n.StartsWith("Recording stopped: Vim emulation was switched on."));
     }
 

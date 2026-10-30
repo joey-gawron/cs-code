@@ -301,6 +301,7 @@ public sealed class MacroPlayer
                 try { await pending.AsTask().WaitAsync(root.Token).ConfigureAwait(true); }
                 finally
                 {
+                    root.EndSlice(); // a nested macro's last slice (this continuation normally runs in the callback that finished it)
                     await root.HopAsync();
                     root.BeginSlice();
                 }
