@@ -29,6 +29,12 @@ public sealed partial class VimEngine
                 else if (c.Op != OpType.Yank) Beginline(BL.White | BL.Fix);
             }
         }
+        else if (IsSyntaxObject(c.M) || IsSyntaxMotion(c.M))
+        {
+            // from the host's syntax tree: the operator runs when its answer arrives (VimEngine.SyntaxObjects.cs)
+            StartSyntaxOperator(c, count0);
+            return;
+        }
         else if (c.M.Key is 'a' or 'i') ok = RunTextObject(c.M, count0, oap);
         else ok = RunMotion(c.M, count0, oap);
 

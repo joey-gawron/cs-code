@@ -162,6 +162,37 @@ internal sealed partial class TreeSitterLanguageFeatures(TokenizationManager man
         _ => SymbolKind.Variable,
     };
 
+    // ---- syntax text objects (a modal layer's af/if, ac/ic, aa/ia and ]m [m: EditorModalSurface.RequestSyntaxObjects) ----
+
+    /// <summary>
+    /// The ranges of <paramref name="capture"/> in the grammar's <c>textobjects.scm</c> for the document's version at this call. Null at once
+    /// (on the caller's thread) when tree-sitter does not parse the document; otherwise computed on the syntax lane (the caller only gets a task),
+    /// completing with null when no tree of that version arrives in time, the text changes meanwhile or the grammar has no text objects.
+    /// </summary>
+    internal Task<IReadOnlyList<TextRange>?>? TextObjectRangesAsync(ITextDocument document, string capture)
+    {
+        if (manager.SessionFor(document) is not { TreeSitterWanted: true }) return null;
+        var version = document.Version;
+        return Task.Run(async () =>
+        {
+            try
+            {
+                var ranges = await OnTreeAsync(document, CancellationToken.None, (syntax, text) =>
+                {
+                    if (text.Snapshot.Version != version) return null; // the tree of a later version: the caller's positions are stale
+                    return syntax.TextObjectRanges(text, capture) is { } spans
+                        ? (IReadOnlyList<TextRange>)spans.Select(s => ToRange(text.Snapshot, s.Start, s.End)).ToList()
+                        : null;
+                }).ConfigureAwait(false);
+                return document.Version == version ? ranges : null;
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+            {
+                return null;
+            }
+        });
+    }
+
     // ---- plumbing ----
 
     private bool Others<T>(ITextDocument document) where T : class, ILanguageProvider =>

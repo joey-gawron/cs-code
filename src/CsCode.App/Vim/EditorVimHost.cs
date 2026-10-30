@@ -247,4 +247,31 @@ internal sealed class EditorVimHost : IVimHost
         using (_buffer.BeginTyping()) _surface.TypeText(text);
         return true;
     }
+
+    /// <summary>
+    /// af/if, ac/ic, aa/ia and ]m [m ]M [M: nvim-treesitter-textobjects' captures in the document's tree-sitter tree. The editor computes them on
+    /// the syntax lane; the answer comes back as an engine call of its own on the UI thread (the engine has suspended the command and queues
+    /// the keys typed meanwhile), so the UI thread never waits for the lane. False at once for a document tree-sitter does not parse.
+    /// </summary>
+    public bool RequestSyntaxRanges(VimSyntaxObjectKind kind, bool inner, Action<IReadOnlyList<VimSyntaxRange>?> answer)
+    {
+        var capture = kind switch
+        {
+            VimSyntaxObjectKind.Function => "function",
+            VimSyntaxObjectKind.Class => "class",
+            _ => "parameter",
+        } + (inner ? ".inner" : ".outer");
+        if (View is not { } view || _surface.RequestSyntaxObjects(capture) is not { } task) return false;
+        _ = DeliverAsync();
+        return true;
+
+        async Task DeliverAsync()
+        {
+            IReadOnlyList<TextRange>? found = null;
+            try { found = await task.ConfigureAwait(false); } // completes off the UI thread; nothing waits for it
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or InvalidOperationException) { }
+            IReadOnlyList<VimSyntaxRange>? ranges = found?.Select(r => new VimSyntaxRange(r.Start, r.End)).ToArray();
+            _owner.PostToEngine(view, () => answer(ranges));
+        }
+    }
 }

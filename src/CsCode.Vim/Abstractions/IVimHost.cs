@@ -112,6 +112,20 @@ public interface IVimHost
     /// </summary>
     bool InsertTypedText(string text) => false;
 
+    // ---------------------------------------------------------------- syntax objects (the syntax tree)
+
+    /// <summary>
+    /// The syntax objects of <paramref name="kind"/> in the buffer (their inner part when <paramref name="inner"/>), from the buffer's syntax tree,
+    /// for the text objects <c>af if ac ic aa ia</c> and the motions <c>]m [m ]M [M</c> (nvim-treesitter-textobjects' <c>@function</c>,
+    /// <c>@class</c> and <c>@parameter</c> captures). The tree lives elsewhere (another thread), so the answer is ASYNCHRONOUS: the host calls
+    /// <paramref name="answer"/> exactly once, on the engine's thread (at once, or later), with the ranges for the buffer as it is at the time
+    /// of the call, or null when it could not get them (no tree in time, the text changed meanwhile). The engine never waits: the command is
+    /// suspended and keys typed meanwhile queue behind it (at most <see cref="VimEngine.SyntaxRequestTimeout"/>). Returns false, without
+    /// calling <paramref name="answer"/>, when the buffer has no syntax tree at all (a language the host does not parse): the engine reports
+    /// that. The default: no syntax tree.
+    /// </summary>
+    bool RequestSyntaxRanges(VimSyntaxObjectKind kind, bool inner, Action<IReadOnlyList<VimSyntaxRange>?> answer) => false;
+
     // ---------------------------------------------------------------- time
 
     IVimTimer Timer { get; }

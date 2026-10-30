@@ -40,7 +40,8 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
                 OnEngineSettingChanged();
         }));
         // Expand Selection, folding and the outline from the tree, for documents tree-sitter colours (a language server's providers rank first)
-        _subscriptions.Add(services.Features.Register(Core.Text.DocumentSelector.All, new TreeSitterLanguageFeatures(this, services.Features), "tree-sitter"));
+        Structure = new TreeSitterLanguageFeatures(this, services.Features);
+        _subscriptions.Add(services.Features.Register(Core.Text.DocumentSelector.All, Structure, "tree-sitter"));
         if (services.Commands is { } commands && !commands.Has(ClearQuarantineCommand))
             _subscriptions.Add(commands.Register(ClearQuarantineCommand, _ =>
             {
@@ -62,6 +63,9 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
 
     /// <summary>The tree-sitter engine's shared state (<c>editor.syntaxEngine</c>, its syntax lane, the isolation).</summary>
     internal TreeSitterService TreeSitter { get; }
+
+    /// <summary>The structural features from the tree (registered as providers) and the modal layer's syntax text objects.</summary>
+    internal TreeSitterLanguageFeatures Structure { get; }
 
     public int SessionCount
     {

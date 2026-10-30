@@ -10,4 +10,9 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- the syntax text objects' choice of object is tested directly (VimEngine.SyntaxObjects.cs) -->
+    <InternalsVisibleTo Include="CsCode.Vim.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -152,7 +152,8 @@ public sealed partial class VimEngine : IDisposable
     /// <summary>Fires true when sliced work is waiting for <see cref="RunPendingWork"/>, false when it finished.</summary>
     public IEventSource<bool> PendingWorkChanged => _workPending;
 
-    public bool HasPendingWork => (_work is not null && !_awaitKey) || _stuff.Count > 0 || _typed.Count > 0;
+    /// <remarks>False while a command only waits for the host (<see cref="IsAwaitingSyntax"/>): its answer resumes the work, nothing needs to poll.</remarks>
+    public bool HasPendingWork => !AwaitingHost && ((_work is not null && !_awaitKey) || _stuff.Count > 0 || _typed.Count > 0);
 
     /// <summary>Time budget per slice of sliced work (default 3 ms, so a dispatcher callback stays under its 4 ms budget).</summary>
     public TimeSpan SliceBudget
@@ -449,7 +450,7 @@ public sealed partial class VimEngine : IDisposable
     {
         if (_inPump) return;
         _inPump = true;
-        var wasPending = (_work is not null && !_awaitKey) || _stuff.Count > 0;
+        var wasPending = !AwaitingHost && ((_work is not null && !_awaitKey) || _stuff.Count > 0);
         try
         {
             var deadline = budgetTicks >= long.MaxValue / 8 ? long.MaxValue : Stopwatch.GetTimestamp() + budgetTicks;
@@ -512,7 +513,7 @@ public sealed partial class VimEngine : IDisposable
                     }
                 }
                 FlushHost();
-                var pending = (_work is not null && !_awaitKey) || _stuff.Count > 0 || _typed.Count > 0;
+                var pending = HasPendingWork;
                 if (pending != wasPending) _workPending.Fire(pending);
             }
         }
@@ -532,7 +533,7 @@ public sealed partial class VimEngine : IDisposable
                 if (_deferredLastCmd is not null) { _s.Registers.LastCommandLine = _deferredLastCmd; _deferredLastCmd = null; }
                 return true;
             }
-            if (_awaitKey) return false;
+            if (_awaitKey || AwaitingHost) return false; // a prompt's key, or the host's answer (syntax objects), resumes it
             if (deadline != long.MaxValue && Stopwatch.GetTimestamp() > deadline) return false;
         }
     }
@@ -549,6 +550,7 @@ public sealed partial class VimEngine : IDisposable
         var w = _work;
         _work = null;
         _awaitKey = false;
+        CancelSyntaxRequest();
         w?.Dispose();
     }
 
