@@ -474,9 +474,9 @@ public sealed class MacroService : IDisposable
         _disposables.Add(_commands.Register(MacroCommands.Record, _ => Run(ToggleRecording), Meta(MacroCommands.Record, "Record Macro (Start/Stop)")));
         _disposables.Add(_commands.Register(MacroCommands.Stop, _ => Run(Stop), Meta(MacroCommands.Stop, "Stop Recording or Playing Macro")));
         _disposables.Add(_commands.Register(MacroCommands.PlayLast, PlayLastAsync, Meta(MacroCommands.PlayLast, "Play Last Macro")));
-        _disposables.Add(_commands.Register(MacroCommands.Play, PlayCommandAsync, Meta(MacroCommands.Play, "Play Macro…")));
-        _disposables.Add(_commands.Register(MacroCommands.PlayNamed, PlayNamedAsync, Meta(MacroCommands.PlayNamed, "Play Saved Macro…")));
-        _disposables.Add(_commands.Register(MacroCommands.Save, SaveCommandAsync, Meta(MacroCommands.Save, "Save Last Macro As…")));
+        _disposables.Add(_commands.Register(MacroCommands.Play, PlayCommandAsync, Meta(MacroCommands.Play, "Play Macro...")));
+        _disposables.Add(_commands.Register(MacroCommands.PlayNamed, PlayNamedAsync, Meta(MacroCommands.PlayNamed, "Play Saved Macro...")));
+        _disposables.Add(_commands.Register(MacroCommands.Save, SaveCommandAsync, Meta(MacroCommands.Save, "Save Last Macro As...")));
         _disposables.Add(_commands.Register(MacroCommands.Edit, EditAsync, Meta(MacroCommands.Edit, "Edit Saved Macros (macros.json)")));
     }
 
@@ -600,7 +600,7 @@ public sealed class MacroService : IDisposable
         QuickPickItem[] items =
         [
             new("Once", Tag: MacroRepeat.Times),
-            new("Several times…", "asks how many", Tag: "times"),
+            new("Several times...", "asks how many", Tag: "times"),
             new("Until the end of the file", "again while each run moves the caret down", Tag: MacroRepeat.UntilEndOfFile),
             new("Until the search fails", "again until a recorded search finds nothing more", Tag: MacroRepeat.UntilSearchFails),
             new("On each selected line", "once per line of the selection, from the start of the line", Tag: MacroRepeat.OnSelectedLines),
