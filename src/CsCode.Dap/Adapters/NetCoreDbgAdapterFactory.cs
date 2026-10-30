@@ -53,8 +53,9 @@ public sealed partial class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDe
     {
         if (!Types.Contains(configuration.Type, StringComparer.OrdinalIgnoreCase)) return null;
         var path = Locate() ?? await OfferInstallAsync(ct) ??
-            throw new DebugSessionStartException(
-                "netcoredbg was not found. Install it with tools/fetch-netcoredbg.sh, put it on PATH, or set 'cscode.debug.netcoredbgPath' (or accept the download offer).");
+            throw new DebugSessionStartException(NetCoreDbgInstaller.CurrentPlatformAsset() is null
+                ? "netcoredbg was not found. " + NetCoreDbgInstaller.NoBuildMessage
+                : "netcoredbg was not found. Install it with tools/fetch-netcoredbg.sh, put it on PATH, or set 'cscode.debug.netcoredbgPath' (or accept the download offer).");
         return new DebugAdapterExecutable(path, ["--interpreter=vscode"]);
     }
 
@@ -95,7 +96,9 @@ public sealed partial class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDe
             return await window.WithProgressAsync("Downloading netcoredbg", cancellable: true,
                 (progress, token) => _installer.InstallAsync(paths.ToolsDir, progress, token));
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or UnsafeArchiveException or PlatformNotSupportedException or TaskCanceledException)
+        // InvalidOperationException: the release has no asset for this machine, or the archive has no netcoredbg in it.
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or UnsafeArchiveException or PlatformNotSupportedException
+                                   or InvalidOperationException or TaskCanceledException)
         {
             _logger.LogWarning(ex, "netcoredbg download failed");
             await window.ShowMessageAsync(MessageSeverity.Error, $"Could not install netcoredbg: {ex.Message}", null, CancellationToken.None);
