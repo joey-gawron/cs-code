@@ -26,6 +26,14 @@ public sealed partial class TaskService
         foreach (var r in runs) r.Terminate();
     }
 
+    /// <summary>Completes once everything queued on the lane so far (output flushes) has run.</summary>
+    private Task DrainLaneAsync()
+    {
+        var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _lane.Post(() => drained.TrySetResult());
+        return drained.Task;
+    }
+
     /// <summary>The task's problem matchers, their earlier problems cleared (null: none, or no diagnostics service).</summary>
     private ProblemCollector? StartProblemMatchers(TaskModel task, string? workspaceFolder, string? cwd)
     {
@@ -100,7 +108,7 @@ public sealed partial class TaskService
             {
                 // the output's last flush is queued on this lane: let it run before the last line is matched
                 pump.Complete();
-                await Task.Yield();
+                await DrainLaneAsync();
                 problems!.Complete();
             }
             if (exit.Terminated || ct.IsCancellationRequested || Volatile.Read(ref _disposed) != 0)

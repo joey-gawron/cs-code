@@ -308,8 +308,11 @@ public sealed partial class TaskService : ITaskService, IDisposable
             }
             catch (TimeoutException) { /* a grandchild keeps the pipes open: the task itself has finished */ }
 
-            // (on the lane, after the pumps' last flushes)
-            problems?.Complete();
+            if (problems is not null)
+            {
+                await DrainLaneAsync(); // the pumps' last flushes are queued on the lane: the matchers see all output first
+                problems.Complete();
+            }
             if (Volatile.Read(ref _disposed) != 0) return new TaskResult(task.Label, -1, Cancelled: true); // killed by the shutdown
             await RevealProblemsAsync(task, problems);
             channel?.AppendLine($"> Task '{task.Label}' finished with exit code {process.ExitCode}.");
