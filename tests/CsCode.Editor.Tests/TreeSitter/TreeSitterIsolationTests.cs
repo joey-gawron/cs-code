@@ -212,6 +212,10 @@ public class TreeSitterIsolationTests
             var (_, toml, _) = await host.OpenAsync("[a]\nb = 1\n", "a.toml");
             await WaitForTreeSitter(toml, 1);
             Assert.True(File.Exists(file));
+            // the files (quarantine, crash records, this recorder) and the native runtime were touched on the lane, never the UI thread
+            var service = host.Factory.Tokens.TreeSitter;
+            Assert.Equal(service.Lane.Thread.ManagedThreadId, service.RegistryCreatedOnThread);
+            Assert.NotEqual(Environment.CurrentManagedThreadId, service.RegistryCreatedOnThread);
             Assert.Empty(FlightRecorder.CollectCrashes(Path.Combine(dir.Path, "flight"))); // a live process is never "crashed"
         }
         finally

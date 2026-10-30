@@ -150,11 +150,24 @@ internal sealed class TreeSitterService : IDisposable
     /// <summary>The syntax lane: the one thread every tree-sitter object belongs to. Created on first use; replaced after a hang.</summary>
     public EditorWorker Lane => State.Lane;
 
-    /// <summary>Lane only. The registry (created, and the runtime loaded, on first use).</summary>
-    public GrammarRegistry Registry => State.Registry;
+    /// <summary>
+    /// Lane only. The registry, created on first use ON THE LANE together with everything that touches files: the quarantine, the crash
+    /// records of earlier processes, this process's flight recorder, the runtime library and the bundle (none of it on the UI thread).
+    /// </summary>
+    public GrammarRegistry Registry
+    {
+        get
+        {
+            var state = State;
+            return state.Registry ??= CreateRegistry();
+        }
+    }
 
     /// <summary>Lane only. Interns tree-sitter scope stacks into the same ids TextMate tokens use.</summary>
     public IScopeStacks Stacks => State.Stacks;
+
+    /// <summary>The thread the registry (and the file and native-library work with it) was last created on (tests: never the UI thread).</summary>
+    internal int RegistryCreatedOnThread { get; private set; }
 
     /// <summary>How many lanes were given up because a grammar hung in them (tests, diagnostics).</summary>
     public int AbandonedLanes => Volatile.Read(ref _abandonedLanes);
@@ -183,32 +196,46 @@ internal sealed class TreeSitterService : IDisposable
         lock (_gate) return ReferenceEquals(_lane?.Lane, lane);
     }
 
+    /// <summary>Cheap (a thread): this may run on the UI thread, the first time a document is scheduled for tree-sitter.</summary>
     private LaneState CreateLane()
     {
+        var lane = new EditorWorker("cscode-syntax-lane", ThreadPriority.Normal);
+        lane.OnError = ex => _log.LogError(ex, "tree-sitter job failed");
+        return new LaneState(lane, new InternerScopeStacks(Interner));
+    }
+
+    /// <summary>Lane only (it reads and writes files and loads the native runtime).</summary>
+    private GrammarRegistry CreateRegistry()
+    {
+        RegistryCreatedOnThread = Environment.CurrentManagedThreadId;
         var userDir = _services.AppPaths?.UserDataDir is { } d ? Path.Combine(d, "tree-sitter") : null;
-        if (_quarantine is null)
+        GrammarQuarantine quarantine;
+        FlightRecorder? recorder;
+        lock (_gate)
         {
-            var isolationDir = IsolationDirectoryOverride ?? userDir;
-            _quarantine = new GrammarQuarantine(isolationDir is null ? null : Path.Combine(isolationDir, "quarantine.json"));
-            if (isolationDir is not null)
+            if (_quarantine is null)
             {
-                // processes that died inside a grammar since the last start (their flight files are left behind), then this process's own recorder
-                foreach (var (grammar, identity) in FlightRecorder.CollectCrashes(Path.Combine(isolationDir, "flight")))
+                var isolationDir = IsolationDirectoryOverride ?? userDir;
+                _quarantine = new GrammarQuarantine(isolationDir is null ? null : Path.Combine(isolationDir, "quarantine.json"));
+                if (isolationDir is not null)
                 {
-                    _log.LogWarning("an earlier CsCode process ended while running the tree-sitter grammar {Grammar} ({Identity})", grammar, identity);
-                    if (_quarantine.RecordCrash(grammar, identity)) Tell($"CsCode closed unexpectedly while colouring with the tree-sitter grammar '{grammar}', more than once. Files that need it are coloured by TextMate now (Clear Quarantined Tree-sitter Grammars tries it again).");
+                    // processes that died inside a grammar since the last start (their flight files are left behind), then this process's own recorder
+                    foreach (var (grammar, identity) in FlightRecorder.CollectCrashes(Path.Combine(isolationDir, "flight")))
+                    {
+                        _log.LogWarning("an earlier CsCode process ended while running the tree-sitter grammar {Grammar} ({Identity})", grammar, identity);
+                        if (_quarantine.RecordCrash(grammar, identity)) Tell($"CsCode closed unexpectedly while colouring with the tree-sitter grammar '{grammar}', more than once. Files that need it are coloured by TextMate now (Clear Quarantined Tree-sitter Grammars tries it again).");
+                    }
+                    _recorder = FlightRecorder.Open(Path.Combine(isolationDir, "flight"));
                 }
-                _recorder = FlightRecorder.Open(Path.Combine(isolationDir, "flight"));
+                else _recorder = FlightRecorder.InMemory();
+                _watchdog ??= new Timer(_ => Watch(), null, WatchdogPeriod, WatchdogPeriod);
             }
-            else _recorder = FlightRecorder.InMemory();
-            _watchdog = new Timer(_ => Watch(), null, WatchdogPeriod, WatchdogPeriod);
+            quarantine = _quarantine;
+            recorder = _recorder;
         }
         TsRuntime.Load(userDir is null ? null : [userDir, Path.Combine(userDir, "lib")]);
         var locator = LocatorOverride ?? GrammarLocator.CreateDefault(userDir is null ? null : Path.Combine(userDir, "grammars"));
-        var lane = new EditorWorker("cscode-syntax-lane", ThreadPriority.Normal);
-        lane.OnError = ex => _log.LogError(ex, "tree-sitter job failed");
-        var registry = new GrammarRegistry(locator, TreeSitterLanguages.RootScopeFor) { Quarantine = _quarantine, Recorder = _recorder };
-        return new LaneState(lane, registry, new InternerScopeStacks(Interner));
+        return new GrammarRegistry(locator, TreeSitterLanguages.RootScopeFor) { Quarantine = quarantine, Recorder = recorder };
     }
 
     /// <summary>Lane only. The grammar bundle for a document, or null (logged once) — the caller falls back to TextMate.</summary>
@@ -238,13 +265,21 @@ internal sealed class TreeSitterService : IDisposable
     /// <summary>Forgets every quarantined grammar (they are tried again on the next document that needs them). Any thread.</summary>
     public void ClearQuarantine()
     {
-        _quarantine?.Clear();
-        lock (_gate)
+        LaneState? state;
+        lock (_gate) state = _lane;
+        if (state is null)
         {
-            if (_lane is { } state) state.Lane.Post(WorkPriority.Interactive, null, _ => state.Registry.ForgetFailures());
+            // no lane yet (nothing on tree-sitter in this process): the file is cleared off the caller's thread, the next start reads it clean
+            if (_quarantine is { } quarantine) _ = Task.Run(quarantine.Clear);
+            return;
         }
-        ForgetReports();
-        LaneReplaced?.Invoke(); // documents re-evaluate their engine
+        state.Lane.Post(WorkPriority.Interactive, null, _ =>
+        {
+            _quarantine?.Clear(); // a file write: on the lane, not the caller's (UI) thread
+            state.Registry?.ForgetFailures();
+            ForgetReports();
+            LaneReplaced?.Invoke(); // documents re-evaluate their engine
+        });
     }
 
     // ---- the watchdog ----
@@ -307,13 +342,19 @@ internal sealed class TreeSitterService : IDisposable
         // the injection parsers and the recorder's writer belong to the lane: free them there, then stop it
         state.Lane.Post(WorkPriority.Interactive, null, _ =>
         {
-            state.Registry.Dispose();
+            state.Registry?.Dispose();
             recorder?.Dispose();
             state.Lane.Dispose();
         });
     }
 
-    private sealed record LaneState(EditorWorker Lane, GrammarRegistry Registry, InternerScopeStacks Stacks);
+    /// <summary>One syntax lane and what lives on it (the registry is created there, on first use).</summary>
+    private sealed class LaneState(EditorWorker lane, InternerScopeStacks stacks)
+    {
+        public EditorWorker Lane { get; } = lane;
+        public InternerScopeStacks Stacks { get; } = stacks;
+        public GrammarRegistry? Registry { get; set; }
+    }
 
     /// <summary>
     /// <see cref="IScopeStacks"/> over the editor's <see cref="ScopeInterner"/>: tree-sitter stacks become ordinary interned scope stacks, so the
