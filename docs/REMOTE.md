@@ -365,6 +365,7 @@ docker and wsl transports too.
   the server's resolver resolves; once W2 lands, the server's resolver injects shell integration the same way, and tasks shown in terminals will run in
   remote terminals (the task decorator here runs them through the server's task runner).
 * Remote workspace settings apply on the server (language servers, terminals, tasks) but not to client-side editor options.
+* Find in Files over a remote workspace counts only the files with matches in its "files searched" figure (the server's own count is not passed on).
 * Docker: a container must already run (no image or compose management), and the image needs glibc, OpenSSL, `tar`, `gzip`, `sha256sum` (Microsoft's
   `dotnet/runtime-deps` images have them; `debian:*-slim` lacks libssl). Container names reopen case-insensitively from URIs (see Transports).
 * A persistent server whose client crashed keeps running for the grace period (3 h by default), like VS Code's; its language servers and terminals with it.
