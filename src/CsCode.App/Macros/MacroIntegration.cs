@@ -49,7 +49,6 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
     private readonly EditorViewFactory _editors;
     private readonly DocumentWell _well;
     private readonly ICommandService _commands;
-    private readonly IContextKeyService? _keys;
     private readonly IUiDispatcher _ui;
     private readonly WindowHolder _windowHolder;
     private readonly IContributionRegistry? _contributions;
@@ -66,7 +65,6 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
         _editors = editors;
         _well = sp.GetRequiredService<DocumentWell>();
         _commands = sp.GetRequiredService<ICommandService>();
-        _keys = sp.GetService<IContextKeyService>();
         _ui = sp.GetRequiredService<IUiDispatcher>();
         _windowHolder = sp.GetRequiredService<WindowHolder>();
         _contributions = sp.GetService<IContributionRegistry>();
@@ -127,12 +125,16 @@ public sealed class MacroIntegration : IKeyboardTap, IMacroHost, IDisposable
     {
         if (_injecting) return KeyDispatch.PassThrough; // a replayed key: the editor's, as recorded (never a binding)
         if (_service.State != MacroState.Playing) return null;
-        if (stroke is { Key: "escape", Ctrl: false, Shift: false, Alt: false, Meta: false } && _keys?.Get("quickInputVisible") is not true)
+        var focused = Focused();
+        var inEditor = FocusedEditor() is not null;
+        // Esc stops the macro from the editor (or when nothing has the focus); in a prompt a step is waiting for (the palette, an input box, a
+        // Save dialog) it keeps its own meaning, and the status bar item still stops the macro
+        if (stroke is { Key: "escape", Ctrl: false, Shift: false, Alt: false, Meta: false } && (inEditor || focused is null or TopLevel))
         {
             _service.Stop();
             return KeyDispatch.Handled;
         }
-        return FocusedEditor() is not null ? KeyDispatch.Handled : null; // the user's keys must not interleave with the macro's
+        return inEditor ? KeyDispatch.Handled : null; // the user's keys must not interleave with the macro's
     }
 
     public void AfterResolve(KeyStroke stroke, KeyDispatch dispatch)
