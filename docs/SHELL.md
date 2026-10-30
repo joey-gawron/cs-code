@@ -472,7 +472,10 @@ A heartbeat posts a tick to the real dispatcher every 10 ms and records how late
 | **all at once** | **18.7 ms (budget 16 not met)** | 19.8-28.8 ms | 9-16 ms |
 
 **Theme previews** (`ThemeSwitchingCostTests`, the real composition with an editor and the Settings page's dropdown open; preview requests at key-repeat rate,
-about 30 a second, through all 24 themes): p99 14.7 ms, max 18.1 ms, longest UI callback 8.2 ms (the Fluent palette step; brushes < 0.1 ms), 11
+about 30 a second, through all 24 themes): p99 14.7 ms, max 18.1 ms, longest UI callback 8.2 ms (the Fluent palette step; brushes < 0.1 ms; wave 3, T4: the
+failures under load were real, every preview ran that step because the burst window was shorter than the preview interval; with the 400 ms window
+the step runs once when the arrowing stops: first attempt p99 15.0 ms, max 15.4 ms, longest UI callback 0.7 ms at load average 10-12, where all five
+attempts had failed before with p99 19-87 ms and palette steps of 9-30 ms), 11
 theme applies in 2.5 s (throttled); 100 switches through the closed dropdown leave the managed heap flat (+52 KB) and never rebuild its list. What
 these numbers do **not** include: frame rendering. The headless platform renders only when a test forces a frame, and then on the test's own thread
 with software Skia (a full-window repaint after a theme change takes ~100 ms that way under load); on a desktop the rasterisation runs on Avalonia's
