@@ -28,6 +28,7 @@ public sealed class CommandService : ICommandService
     private readonly object _gate = new();
     private readonly ConcurrentDictionary<string, Entry[]> _table = new(StringComparer.Ordinal);
     private readonly Emitter<string> _registered = new();
+    private readonly Emitter<CommandExecuted> _executed = new();
     private readonly ILogger _log;
     private Func<string, CancellationToken, ValueTask<bool>>[] _resolvers = [];
 
@@ -37,6 +38,17 @@ public sealed class CommandService : ICommandService
     }
 
     public IEventSource<string> Registered => _registered;
+
+    /// <summary>
+    /// Fires after a handler completed (<see cref="ICommandService.Executed"/>). The callers come from an async-local chain of the commands whose
+    /// handlers are running in the current flow, so a command executed by another command's handler (also after an await) names it.
+    /// </summary>
+    public IEventSource<CommandExecuted> Executed => _executed;
+
+    /// <summary>The innermost command whose handler is running in the current async flow (linked to its own caller).</summary>
+    private sealed record CallFrame(string Id, CallFrame? Caller);
+
+    private static readonly AsyncLocal<CallFrame?> s_current = new();
 
     public IDisposable Register(string id, Func<CommandInvocation, ValueTask<object?>> handler, CommandMetadata? metadata = null)
     {
@@ -118,9 +130,15 @@ public sealed class CommandService : ICommandService
             if (entry is null) throw new CommandNotFoundException(id);
         }
 
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var caller = s_current.Value;
+        // Only this method's flow (and what the handler starts from it) sees the frame: the async state machine restores the caller's context.
+        s_current.Value = new CallFrame(id, caller);
         try
         {
-            return await entry.Handler(new CommandInvocation(id, args ?? [])).ConfigureAwait(false);
+            var result = await entry.Handler(new CommandInvocation(id, args ?? [])).ConfigureAwait(false);
+            if (_executed.SubscriberCount > 0) _executed.Fire(new CommandExecuted(id, args ?? [], Callers(caller), started));
+            return result;
         }
         catch (Exception ex)
         {
@@ -134,6 +152,17 @@ public sealed class CommandService : ICommandService
 
     /// <summary>The id of the command whose handler raised <paramref name="ex"/> (innermost), if it came through <see cref="ExecuteAsync"/>.</summary>
     public static string? GetFailedCommandId(Exception ex) => ex.Data[FailedCommandIdDataKey] as string;
+
+    /// <summary>The ids of <paramref name="frame"/> and its callers, outermost first (empty at top level).</summary>
+    private static IReadOnlyList<string> Callers(CallFrame? frame)
+    {
+        if (frame is null) return [];
+        var depth = 0;
+        for (var f = frame; f is not null; f = f.Caller) depth++;
+        var ids = new string[depth];
+        for (var f = frame; f is not null; f = f.Caller) ids[--depth] = f.Id;
+        return ids;
+    }
 
     private Entry? Top(string id) => _table.TryGetValue(id, out var s) && s.Length > 0 ? s[^1] : null;
 

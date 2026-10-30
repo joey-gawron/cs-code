@@ -14,6 +14,14 @@ public interface ICommandService
     IReadOnlyList<CommandMetadata> All { get; }
     ValueTask<object?> ExecuteAsync(string id, params object?[] args);
     IEventSource<string> Registered { get; }
+
+    // ---- additive members (macros; the default keeps other implementations compiling) ----
+
+    /// <summary>
+    /// Fires after a command ran to completion through <see cref="ExecuteAsync"/> (not when its handler threw or was cancelled), on the thread
+    /// the handler finished on. Macro recording uses it to record what the user ran (a key chord, a menu, the palette) as the command itself.
+    /// </summary>
+    IEventSource<CommandExecuted> Executed => EventSource.Never<CommandExecuted>();
 }
 
 /// <summary>Thrown by <see cref="ICommandService.ExecuteAsync"/> for an unknown command id.</summary>

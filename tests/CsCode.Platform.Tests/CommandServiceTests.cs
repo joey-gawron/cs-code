@@ -297,4 +297,90 @@ public class CommandServiceTests
         gate.SetResult();
         Assert.Equal(1, await task);
     }
+
+    // ---- Executed (macro recording) ----
+
+    [Fact]
+    public async Task Executed_fires_after_a_successful_run_with_id_arguments_and_no_callers_at_top_level()
+    {
+        var svc = new CommandService();
+        var seen = new List<CommandExecuted>();
+        using var sub = svc.Executed.Subscribe(seen.Add);
+        var ran = false;
+        svc.Register("x.top", _ => { ran = true; Assert.Empty(seen); return ValueTask.FromResult<object?>(null); }); // not before the handler ran
+        var before = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        await svc.ExecuteAsync("x.top", "a", 2);
+
+        Assert.True(ran);
+        var e = Assert.Single(seen);
+        Assert.Equal("x.top", e.Id);
+        Assert.Equal(new object?[] { "a", 2 }, e.Args);
+        Assert.Empty(e.Callers);
+        Assert.True(e.IsTopLevel);
+        Assert.InRange(e.StartedTimestamp, before, System.Diagnostics.Stopwatch.GetTimestamp());
+    }
+
+    [Fact]
+    public async Task Executed_names_the_commands_whose_handlers_ran_a_command_also_after_awaits()
+    {
+        var svc = new CommandService();
+        var seen = new List<CommandExecuted>();
+        using var sub = svc.Executed.Subscribe(e => { lock (seen) seen.Add(e); });
+        svc.Register("inner", _ => ValueTask.FromResult<object?>(1));
+        svc.Register("middle", async _ =>
+        {
+            await Task.Yield();
+            return await svc.ExecuteAsync("inner");
+        });
+        svc.Register("outer", async _ =>
+        {
+            await Task.Delay(1);
+            return await svc.ExecuteAsync("middle");
+        });
+
+        await svc.ExecuteAsync("outer");
+        await svc.ExecuteAsync("inner"); // the caller's own flow is top level again
+
+        Assert.Equal(["inner", "middle", "outer", "inner"], seen.Select(e => e.Id));
+        Assert.Equal(["outer", "middle"], seen[0].Callers);
+        Assert.Equal(["outer"], seen[1].Callers);
+        Assert.Empty(seen[2].Callers);
+        Assert.Empty(seen[3].Callers);
+    }
+
+    [Fact]
+    public async Task Executed_does_not_fire_for_a_failing_cancelled_or_unknown_command()
+    {
+        var svc = new CommandService();
+        var seen = new List<CommandExecuted>();
+        using var sub = svc.Executed.Subscribe(seen.Add);
+        svc.Register("boom", _ => throw new InvalidOperationException("x"));
+        svc.Register("cancel", _ => throw new OperationCanceledException());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await svc.ExecuteAsync("boom"));
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await svc.ExecuteAsync("cancel"));
+        await Assert.ThrowsAsync<CommandNotFoundException>(async () => await svc.ExecuteAsync("missing"));
+
+        Assert.Empty(seen);
+    }
+
+    [Fact]
+    public async Task A_command_started_from_a_handler_that_already_returned_still_names_its_caller()
+    {
+        // Work a handler starts and leaves running (fire and forget) runs commands on its behalf: they are not the user's.
+        var svc = new CommandService();
+        var seen = new TaskCompletionSource<CommandExecuted>();
+        using var sub = svc.Executed.Subscribe(e => { if (e.Id == "later") seen.TrySetResult(e); });
+        svc.Register("later", _ => ValueTask.FromResult<object?>(null));
+        svc.Register("starter", inv =>
+        {
+            _ = Task.Run(async () => await svc.ExecuteAsync("later"));
+            return ValueTask.FromResult<object?>(null);
+        });
+
+        await svc.ExecuteAsync("starter");
+
+        Assert.Equal(["starter"], (await seen.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).Callers);
+    }
 }
