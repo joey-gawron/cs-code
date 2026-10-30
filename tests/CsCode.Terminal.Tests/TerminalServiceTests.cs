@@ -123,7 +123,8 @@ public sealed class TerminalServiceTests : IDisposable
         var arch = Core.Platform.InheritedDotnetRoot.ArchRootVariable;
         var sdk = _sandbox.Dir.Combine("sdk");
         using var service = new TerminalService(_config, environment: () => _sandbox.Environment(new Dictionary<string, string> { [arch] = sdk }));
-        var t = (TerminalSession)await service.CreateAsync(Bash());
+        // wide enough that the sandbox path (long under macOS's /var/folders temp directory) is not wrapped
+        var t = (TerminalSession)await service.CreateAsync(Bash() with { InitialSize = (250, 24) });
         await t.SendTextAsync($"echo \"[${{{arch}-unset}}|$DOTNET_ROOT]\"");
         await WaitScreenAsync(t, $"[unset|{sdk}]");
     }

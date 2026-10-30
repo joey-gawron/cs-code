@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using CsCode.Terminal.Pty;
+using ProcessTable = CsCode.Terminal.Pty.Unix.ProcessTable;
 using CsCode.TestDoubles;
 
 namespace CsCode.Terminal.Tests.Support;
@@ -111,11 +112,16 @@ public sealed class RecordingPtyListener : IPtyListener
     public async Task<int> WaitExitAsync(int timeoutMs = 10_000) => await Exit.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs));
 }
 
+/// <summary>Process and descriptor checks: Linux reads /proc, macOS the terminal's own process table (libproc) and /dev/fd.</summary>
 public static class ProcessChecks
 {
+    /// <summary>This process's descriptors, one entry each (Linux's /proc/self/fd, macOS's /dev/fd).</summary>
+    private static string DescriptorDirectory => OperatingSystem.IsMacOS() ? "/dev/fd" : "/proc/self/fd";
+
     public static bool IsAlive(int pid)
     {
         if (pid <= 0) return false;
+        if (OperatingSystem.IsMacOS()) return ProcessTable.Stat(pid) is { State: not 'Z' };
         try
         {
             var stat = File.ReadAllText($"/proc/{pid}/stat");
@@ -125,8 +131,8 @@ public static class ProcessChecks
         catch (IOException) { return false; }
     }
 
-    /// <summary>Any entry in /proc for the pid, zombies included.</summary>
-    public static bool Exists(int pid) => Directory.Exists($"/proc/{pid}");
+    /// <summary>Any entry in /proc for the pid (macOS: in the process table), zombies included.</summary>
+    public static bool Exists(int pid) => OperatingSystem.IsMacOS() ? ProcessTable.Stat(pid) is not null : Directory.Exists($"/proc/{pid}");
 
     public static async Task<bool> WaitGoneAsync(int pid, int timeoutMs = 5_000)
     {
@@ -139,11 +145,11 @@ public static class ProcessChecks
         return !Exists(pid);
     }
 
-    public static int OpenDescriptors() => Directory.GetFileSystemEntries("/proc/self/fd").Length;
+    public static int OpenDescriptors() => Directory.GetFileSystemEntries(DescriptorDirectory).Length;
 
     /// <summary>"fd -> target" for every open descriptor (to name a leak).</summary>
     public static IReadOnlyList<string> DescriptorTargets() =>
-        Directory.GetFileSystemEntries("/proc/self/fd").Select(f =>
+        Directory.GetFileSystemEntries(DescriptorDirectory).Select(f =>
         {
             try { return Path.GetFileName(f) + "->" + (new FileInfo(f).LinkTarget ?? "?"); }
             catch (IOException) { return Path.GetFileName(f) + "->gone"; }

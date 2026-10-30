@@ -3,15 +3,19 @@ using System.Runtime.InteropServices;
 namespace CsCode.Terminal.Pty.Unix;
 
 /// <summary>
-/// libc calls of the Unix PTY host. Linux (glibc) is the tested platform; the macOS constants are written from its headers and untested here.
-/// The variadic <c>ioctl</c>/<c>fcntl</c> are declared with their one fixed extra argument, which is passed like a named argument on
-/// x86-64 and arm64 Linux (not on Apple arm64: see docs/TERMINAL.md, known gaps).
+/// libc calls of the Unix PTY host. Linux (glibc) is the tested platform; the macOS constants are written from its headers.
+/// The variadic <c>ioctl</c>/<c>fcntl</c> take their one extra argument like a named one on x86-64 and on arm64 Linux. Apple arm64 passes
+/// every variadic argument on the stack: there six unused register arguments fill x2 to x7, so the real one lands where the callee's
+/// <c>va_arg</c> reads it.
 /// </summary>
 internal static unsafe class UnixNative
 {
     private const string Libc = "libc";
 
     public static readonly bool IsLinux = OperatingSystem.IsLinux();
+
+    /// <summary>Apple arm64: variadic arguments go on the stack (<see cref="fcntl"/>, <see cref="ioctl"/>).</summary>
+    private static readonly bool VariadicOnStack = OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64;
 
     // ---- open(2) flags
     public static int O_RDWR => 2;
@@ -95,14 +99,26 @@ internal static unsafe class UnixNative
     [DllImport(Libc)] public static extern int sigfillset(void* set);
     [DllImport(Libc)] public static extern int posix_spawn(int* pid, byte* path, void* fileActions, void* attr, byte** argv, byte** envp);
 
-    [DllImport(Libc, SetLastError = true)] public static extern int ioctl(int fd, nuint request, void* arg);
-    [DllImport(Libc, SetLastError = true)] public static extern int fcntl(int fd, int cmd, int arg);
+    public static int ioctl(int fd, nuint request, void* arg) =>
+        VariadicOnStack ? ioctl_stack(fd, request, 0, 0, 0, 0, 0, 0, arg) : ioctl_named(fd, request, arg);
+
+    public static int fcntl(int fd, int cmd, int arg) =>
+        VariadicOnStack ? fcntl_stack(fd, cmd, 0, 0, 0, 0, 0, 0, arg) : fcntl_named(fd, cmd, arg);
+
+    [DllImport(Libc, EntryPoint = "ioctl", SetLastError = true)] private static extern int ioctl_named(int fd, nuint request, void* arg);
+    [DllImport(Libc, EntryPoint = "fcntl", SetLastError = true)] private static extern int fcntl_named(int fd, int cmd, int arg);
+    [DllImport(Libc, EntryPoint = "ioctl", SetLastError = true)]
+    private static extern int ioctl_stack(int fd, nuint request, nint x2, nint x3, nint x4, nint x5, nint x6, nint x7, void* arg);
+    [DllImport(Libc, EntryPoint = "fcntl", SetLastError = true)]
+    private static extern int fcntl_stack(int fd, int cmd, nint x2, nint x3, nint x4, nint x5, nint x6, nint x7, nint arg);
     [DllImport(Libc, SetLastError = true)] public static extern int kill(int pid, int sig);
     [DllImport(Libc, SetLastError = true)] public static extern int waitpid(int pid, int* status, int options);
     [DllImport(Libc, SetLastError = true)] public static extern int pidfd_open(int pid, uint flags);
     [DllImport(Libc, SetLastError = true)] public static extern int poll(PollFd* fds, nuint nfds, int timeout);
     [DllImport(Libc, SetLastError = true)] public static extern nint read(int fd, byte* buf, nuint count);
     [DllImport(Libc, SetLastError = true)] public static extern nint write(int fd, byte* buf, nuint count);
+    /// <summary><c>open</c> without <c>O_CREAT</c>: its variadic mode is never read.</summary>
+    [DllImport(Libc, SetLastError = true)] public static extern int open(byte* path, int flags);
     [DllImport(Libc, SetLastError = true)] public static extern int close(int fd);
     [DllImport(Libc, SetLastError = true)] public static extern int pipe(int* fds);
     [DllImport(Libc, SetLastError = true)] public static extern int tcgetpgrp(int fd);

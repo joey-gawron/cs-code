@@ -18,15 +18,21 @@ public sealed class UnixPtyHostTests : IDisposable
 
     public void Dispose() => _sandbox.Dispose();
 
+    private static void RequireUnix()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS(), "The Unix PTY host is tested on Linux and macOS.");
+    }
+
+    /// <summary>For a test that reads the child's /proc entries.</summary>
     private static void RequireLinux()
     {
-        Assert.SkipUnless(OperatingSystem.IsLinux(), "The Unix PTY host is tested on Linux.");
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "The test reads /proc, which only Linux has.");
     }
 
     [Fact]
     public async Task Spawns_a_program_reads_its_output_and_reports_the_exit_code()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "echo hello-from-pty; exit 3"]), output);
@@ -79,7 +85,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task An_interactive_bash_echoes_input_and_runs_commands()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.BashInfo(), output);
@@ -93,7 +99,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Resize_reaches_the_program_as_the_window_size()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.BashInfo(columns: 80, rows: 24), output);
@@ -109,7 +115,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Ctrl_C_is_delivered_as_SIGINT_to_the_foreground_process_quickly()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.Command(ShellSandbox.Bash, ["--noprofile", "--norc", "-c", "trap 'echo GOT-INT; exit 7' INT; echo ready; while :; do sleep 0.02; done"]), output);
@@ -124,7 +130,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Ctrl_C_interrupts_a_foreground_job_of_an_interactive_shell()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.BashInfo(), output);
@@ -148,7 +154,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [InlineData("kill -KILL $$", 128 + 9)]
     public async Task Exit_codes_are_reported_as_shells_report_them(string script, int expected)
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", script]), output);
@@ -160,7 +166,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Kill_ends_the_shell_its_foreground_job_and_its_background_jobs()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.BashInfo(), output);
@@ -183,7 +189,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Kill_escalates_to_SIGKILL_when_the_shell_ignores_the_hang_up()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "trap '' HUP; echo armed; sleep 1000 & while :; do sleep 1; done"]), output);
@@ -201,7 +207,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task A_program_that_stops_reading_never_blocks_a_writer()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost(maxPendingWriteBytes: 256 * 1024);
         var output = new RecordingPtyListener();
         // sleep never reads its input: the PTY's input buffer fills, then the bounded queue does.
@@ -229,7 +235,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Dispose_kills_a_running_shell_and_reaps_it()
     {
-        RequireLinux();
+        RequireUnix();
         var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.BashInfo(), output);
@@ -244,7 +250,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public void A_missing_program_fails_to_start_with_a_message()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var ex = Assert.Throws<PtySpawnException>(() => host.Start(_sandbox.Command("/nonexistent/program", []), new RecordingPtyListener()));
         Assert.Contains("/nonexistent/program", ex.Message);
@@ -253,7 +259,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Environment_and_working_directory_are_the_given_ones()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         var info = _sandbox.Command(ShellSandbox.Sh, ["-c", "pwd; echo FOO=$FOO; echo HOME=$HOME"]) with
@@ -271,7 +277,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Output_written_just_before_exit_is_not_lost()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "i=0; while [ $i -lt 2000 ]; do echo line-$i; i=$((i+1)); done; echo LAST"]), output);
@@ -282,7 +288,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Twenty_spawned_and_disposed_hosts_leave_no_descriptor_thread_or_process_behind()
     {
-        RequireLinux();
+        RequireUnix();
         // warm up (first-use allocations of the runtime, and the assemblies the measurements themselves load)
         await RunOnce();
         _ = ProcessChecks.ThreadCount();
@@ -319,7 +325,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Disposing_an_exited_terminal_never_kills_a_process_that_took_its_number_later()
     {
-        RequireLinux();
+        RequireUnix();
         using var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "exit 0"]), output);
@@ -345,7 +351,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Disposing_an_exited_terminal_still_kills_the_jobs_its_program_left_behind_off_the_callers_thread()
     {
-        RequireLinux();
+        RequireUnix();
         var host = new UnixPtyHost();
         var output = new RecordingPtyListener();
         // a background job that outlives the program: it keeps the session (and so the number) in use
@@ -410,7 +416,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Without_a_process_table_the_grace_timer_still_kills_a_job_the_hung_up_program_left_in_its_group()
     {
-        RequireLinux();
+        RequireUnix();
         var host = new UnixPtyHost { HasProcessTable = false };
         var output = new RecordingPtyListener();
         // sh -c has no job control: the background job stays in the program's process group; it ignores SIGHUP, the program does not
@@ -429,7 +435,7 @@ public sealed class UnixPtyHostTests : IDisposable
     [Fact]
     public async Task Without_a_process_table_disposing_a_terminal_whose_program_was_reaped_earlier_kills_nothing_by_its_number()
     {
-        RequireLinux();
+        RequireUnix();
         var host = new UnixPtyHost { HasProcessTable = false };
         var output = new RecordingPtyListener();
         host.Start(_sandbox.Command(ShellSandbox.Sh, ["-c", "trap '' HUP; sleep 1000 & echo BG=$!; exit 0"]), output);
@@ -466,9 +472,9 @@ public sealed class UnixPtyHostTests : IDisposable
     }
 
     [Fact]
-    public void A_process_start_time_is_read_from_proc()
+    public void A_process_start_time_is_read_from_the_process_table()
     {
-        RequireLinux();
+        RequireUnix();
         var self = ProcessTable.Stat(Environment.ProcessId)!.Value;
         Assert.True(self.StartTicks > 0);
         Assert.Equal(self.StartTicks, ProcessTable.Stat(Environment.ProcessId)!.Value.StartTicks);
