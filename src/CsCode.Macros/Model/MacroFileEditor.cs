@@ -24,11 +24,13 @@ public static class MacroFileEditor
         var map = Scan(bytes);
         if (map.Macros is null)
         {
-            // no "macros" property yet: add it as the last property of the root object
-            var before = LastNonSpace(bytes, map.RootEnd);
-            var comma = before >= 0 && bytes[before] != (byte)'{' && bytes[before] != (byte)',' ? "," : "";
-            var insert = $"{comma}{newline}  \"macros\": [{newline}    {MacroJson.FormatMacro(macro, "    ", "  ", newline)}{newline}  ]{newline}";
-            return Splice(bytes, before + 1, map.RootEnd, insert);
+            // no "macros" property yet: add it as the last property of the root object, after whatever follows the last property (a comment on
+            // its line stays there). The separating comma goes right after the last property's value: after a comment it would be inside it.
+            var end = LastNonSpace(bytes, map.RootEnd) + 1;
+            var property = $"{newline}  \"macros\": [{newline}    {MacroJson.FormatMacro(macro, "    ", "  ", newline)}{newline}  ]{newline}";
+            var tail = property + Encoding.UTF8.GetString(bytes, map.RootEnd, bytes.Length - map.RootEnd);
+            if (map.LastValueEnd < 0 || HasComma(bytes, map.LastValueEnd, map.RootEnd)) return Encoding.UTF8.GetString(bytes, 0, end) + tail;
+            return Encoding.UTF8.GetString(bytes, 0, map.LastValueEnd) + "," + Encoding.UTF8.GetString(bytes, map.LastValueEnd, end - map.LastValueEnd) + tail;
         }
         var array = map.Macros;
         if (array.Items.FirstOrDefault(i => i.Name == macro.Name) is { } existing)
@@ -103,7 +105,8 @@ public static class MacroFileEditor
 
     private sealed record Item(int Start, int End, string? Name);
     private sealed record ArraySpan(int Start, int End, List<Item> Items);
-    private sealed record FileMap(int RootEnd, ArraySpan? Macros);
+    /// <param name="LastValueEnd">Where the root object's last property value ends (-1: the object has no property).</param>
+    private sealed record FileMap(int RootEnd, ArraySpan? Macros, int LastValueEnd);
 
     private static FileMap Scan(byte[] bytes)
     {
@@ -112,13 +115,14 @@ public static class MacroFileEditor
             var reader = new Utf8JsonReader(bytes, s_reader);
             if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) throw new MacroFileException($"{MacroCommands.FileName} must contain an object with a \"macros\" array: fix it first.");
             ArraySpan? macros = null;
+            var lastValueEnd = -1;
             while (reader.Read())
             {
                 if (reader.TokenType == JsonTokenType.EndObject && reader.CurrentDepth == 0)
                 {
                     var rootEnd = (int)reader.TokenStartIndex;
                     if (reader.Read()) throw new MacroFileException($"{MacroCommands.FileName} has text after its closing brace: fix it first.");
-                    return new FileMap(rootEnd, macros);
+                    return new FileMap(rootEnd, macros, lastValueEnd);
                 }
                 if (reader.TokenType != JsonTokenType.PropertyName || reader.CurrentDepth != 1) continue;
                 var isMacros = reader.ValueTextEquals("macros"u8);
@@ -127,6 +131,7 @@ public static class MacroFileEditor
                 {
                     if (isMacros) throw new MacroFileException("\"macros\" in " + MacroCommands.FileName + " is not an array: fix it first.");
                     reader.Skip();
+                    lastValueEnd = (int)reader.BytesConsumed; // the end of the value (comments after it are not read yet)
                     continue;
                 }
                 var start = (int)reader.TokenStartIndex;
@@ -155,6 +160,7 @@ public static class MacroFileEditor
                     items.Add(new Item(itemStart, (int)reader.BytesConsumed, name));
                 }
                 macros = new ArraySpan(start, (int)reader.TokenStartIndex, items);
+                lastValueEnd = (int)reader.BytesConsumed;
             }
             throw new MacroFileException($"{MacroCommands.FileName} ends too early: fix it first.");
         }
@@ -187,7 +193,7 @@ public static class MacroFileEditor
 
     private static int LastNonSpace(byte[] bytes, int before)
     {
-        // skips whitespace and comments backwards only as far as whitespace goes; a comment right before the brace keeps the insert after it
+        // skips whitespace only: a comment right before the brace keeps the insert after it
         var i = before - 1;
         while (i >= 0 && bytes[i] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n') i--;
         return i;

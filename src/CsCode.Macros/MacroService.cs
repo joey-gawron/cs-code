@@ -387,6 +387,8 @@ public sealed class MacroService : IDisposable
     {
         options ??= MacroPlayOptions.Once;
         if (RefusedWhileRecording() is { } refused) return refused;
+        // played by a step of a playing macro: part of that playback, whose own call reports it once (its result is the outer one's, shared)
+        var nested = Player.IsInPlayback;
         MacroPlayResult result;
         try { result = await Player.PlayAsync(macro, options, ct).ConfigureAwait(true); }
         catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -394,7 +396,7 @@ public sealed class MacroService : IDisposable
             _log.LogError(ex, "Macro playback failed");
             result = new MacroPlayResult(MacroPlayStatus.Failed, 0, 0, ex.Message);
         }
-        Report(macro, options, result);
+        if (!nested) Report(macro, options, result);
         return result;
     }
 

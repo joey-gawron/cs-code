@@ -135,9 +135,13 @@ public sealed class MacroStore : IDisposable
         {
             var text = await ReadAsync(ct).ConfigureAwait(false);
             var updated = await Task.Run(() => MacroFileEditor.Upsert(text, macro), ct).ConfigureAwait(false);
-            await _fs.WriteFileAsync(FileUri, Encoding.UTF8.GetBytes(updated), createParents: true, ct).ConfigureAwait(false);
             var max = MaxStepsPerMacro();
-            Publish(await Task.Run(() => MacroJson.ParseFile(updated, max), ct).ConfigureAwait(false), updated);
+            var parsed = await Task.Run(() => MacroJson.ParseFile(updated, max), ct).ConfigureAwait(false);
+            // checked before writing: a file that would not load the saved macro (an edit that broke the JSON) is never written over the user's
+            if (!parsed.Macros.Any(m => m.Name == macro.Name))
+                throw new MacroFileException($"the changed {MacroCommands.FileName} would not load it ({parsed.Errors.FirstOrDefault() ?? "no reason given"}); the file was not changed.");
+            await _fs.WriteFileAsync(FileUri, Encoding.UTF8.GetBytes(updated), createParents: true, ct).ConfigureAwait(false);
+            Publish(parsed, updated);
         }
         finally { _gate.Release(); }
     }

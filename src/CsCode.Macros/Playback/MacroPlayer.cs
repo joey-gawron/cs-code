@@ -52,6 +52,12 @@ public sealed class MacroPlayer
 
     public bool IsPlaying => _active is not null;
 
+    /// <summary>
+    /// Whether a <see cref="PlayAsync"/> call from the current flow would join a running playback (a command step of it, such as
+    /// <c>macro.run.&lt;name&gt;</c>, plays a macro): its result is the playback's, which the outer call reports.
+    /// </summary>
+    public bool IsInPlayback => s_current.Value is { Root.IsOver: false };
+
     /// <summary>Fires on the UI thread when a playback starts (true) and ends (false).</summary>
     public IEventSource<bool> PlayingChanged => _playingChanged;
 

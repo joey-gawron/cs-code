@@ -84,6 +84,26 @@ public class MacroFileEditorTests
         Assert.Equal(["a"], Parse(MacroFileEditor.Upsert("{}", M("a"))).Macros.Select(m => m.Name));
     }
 
+    [Theory]
+    // vim-macros-clipboard-8: the separating comma goes after the last property's value, never into a comment that follows it
+    [InlineData("{\n  \"version\": 1 // mine\n}")]
+    [InlineData("{\n  \"version\": 1 // mine\n}\n")]
+    [InlineData("{\n  \"version\": 1, // mine, with a trailing comma\n}")]
+    [InlineData("{\n  \"version\": 1 /* block */\n}")]
+    [InlineData("{\n  \"version\": 1\n  /* after */\n}")]
+    [InlineData("{\n  \"a\": { \"b\": [1, 2] } // nested\n}")]
+    [InlineData("{ /* only a comment */ }")]
+    [InlineData("{\n  // only a comment\n}")]
+    [InlineData("{\r\n  \"version\": 1 // mine\r\n}\r\n")]
+    public void A_file_without_macros_whose_last_property_is_followed_by_a_comment_stays_valid(string original)
+    {
+        var text = MacroFileEditor.Upsert(original, M("m", "x"));
+        Assert.Equal([M("m", "x")], Parse(text).Macros);
+        foreach (var comment in new[] { "// mine", "/* block */", "/* after */", "// nested", "/* only a comment */", "// only a comment" })
+            if (original.Contains(comment, StringComparison.Ordinal)) Assert.Contains(comment, text);
+        Assert.DoesNotContain("mine,\n", text.Replace("\r\n", "\n"));
+    }
+
     [Fact]
     public void Windows_line_endings_are_kept()
     {
