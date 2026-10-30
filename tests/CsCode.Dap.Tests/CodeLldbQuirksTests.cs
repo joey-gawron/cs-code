@@ -94,6 +94,9 @@ public class CodeLldbQuirksTests
         h.Breakpoints.SetExceptionFilters([.. h.Breakpoints.ExceptionFilters.Select(f => f.Filter == "rust_panic" ? f with { Enabled = false } : f)]);
         await h.AdapterFor(0).WaitForRequestAsync("setExceptionBreakpoints", 2);
         Assert.Empty(h.AdapterFor(0).RequestsOf("setExceptionBreakpoints")[^1].Args<DapSetExceptionBreakpointsArguments>().Filters);
+        // The fake answers in order: once a request sent after it has its answer, the session has also handled the setExceptionBreakpoints
+        // response (its continuation was queued on the lane first). A stop the adapter sends before that response is read cannot be told apart.
+        await session.GetThreadsAsync(Ct);
 
         DebugStoppedEventArgs? stop = null;
         session.Stopped.Subscribe(e => stop = e);

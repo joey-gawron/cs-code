@@ -74,7 +74,8 @@ public class DefaultDebuggerTests
     public async Task A_folder_that_does_not_tell_lets_the_user_pick_the_debugger()
     {
         await using var h = Harness();
-        await SessionHarness.Eventually(() => h.Service.DebuggerTypes.Any(t => t.Type == "lldb"), 5000, "debugger types");
+        // the list is rebuilt on the lane as types arrive (the harness registers its "fake" type after construction): read it once complete
+        await SessionHarness.Eventually(() => h.Service.DebuggerTypes.Any(t => t.Type == "lldb") && h.Service.DebuggerTypes.Any(t => t.Type == "fake"), 5000, "debugger types");
         var index = h.Service.DebuggerTypes.Select(t => t.Type).ToList().IndexOf("lldb");
         h.Window.QuickPickResponses.Enqueue(index);
         Assert.All(await CreateViaF5Async(h), t => Assert.Equal("lldb", t));
