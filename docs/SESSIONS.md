@@ -437,10 +437,12 @@ Without a session bus, D-Bus would autolaunch daemons (`dbus-launch --autolaunch
 desktop always has one, so the test provides its own.
 
 Windows (`tools/install.ps1`, untested): `%LOCALAPPDATA%\Programs\CsCode\<version>` with a `current` junction, `bin\cscode.cmd` on the user's
-PATH (it sets no `DOTNET_ROOT` either), a Start Menu shortcut, `install-manifest.json`, `-Uninstall`. macOS (`tools/macos/make-app-bundle.sh`,
-untested on a Mac; `--from DIR`, or `--unpinned` to publish now with the osx packs restore picks: they are not pinned): `CsCode.app` with
-the publish in `Contents/MacOS`, `Info.plist` and `Resources/cscode.icns` (`make-icns.py`: the committed PNGs as PNG icon types), signed ad hoc
-when `codesign` exists.
+PATH (it sets no `DOTNET_ROOT` either), a Start Menu shortcut, `install-manifest.json`, `-Uninstall`. macOS (`tools/package-macos.sh`, on a
+Mac: the publish with the osx packs restore picks, which are not pinned, and the server bundles, then `tools/macos/make-app-bundle.sh`):
+`CsCode.app` with the publish in `Contents/MacOS` (the server bundles in `Contents/MacOS/server-bundles`), `Info.plist` with the document
+types and `Resources/cscode.icns` (iconutil on a Mac; elsewhere `make-icns.py`: the committed PNGs as PNG icon types), signed ad hoc and
+verified; `--install` copies it to `~/Applications` and writes a `cscode` script that execs the bundle's binary into a directory on PATH
+(README, "macOS").
 
 ## Tests
 
