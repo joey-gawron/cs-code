@@ -158,7 +158,9 @@ public class RemoteCompositionTests
             });
             var server = ((CsCode.Remote.Client.RemoteConnectionManager)manager).Session!.Server.ProcessId;
             Assert.True(IsDescendant(t.ProcessId!.Value, server), $"terminal pid {t.ProcessId} is not under the server {server}");
-            Assert.Equal(TempDirectory.PhysicalPath(env.Workspace.Path), t.CurrentDirectory); // the shell reports /private/var for macOS's /var
+            // the directory the shell reports once it runs: through macOS's /var link it is /private/var (before that, the folder as asked)
+            var workspace = TempDirectory.PhysicalPath(env.Workspace.Path);
+            Assert.True(await DevHost.WaitFor(() => t.CurrentDirectory == workspace, 10_000), $"{t.CurrentDirectory} is not {workspace}");
             await terminals.KillAsync(t);
         }
         Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
