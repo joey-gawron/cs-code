@@ -586,6 +586,14 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
         InvalidateVisual();
     }
 
+    /// <summary>Find: selects a match and scrolls it into view (to the middle when it is off screen).</summary>
+    internal void ShowMatch(TerminalMatch match)
+    {
+        SetSelection(new TerminalSelection(new GridPoint(match.Line, match.StartColumn), new GridPoint(match.Line, match.EndColumn), SelectionMode.Character));
+        if (_snapshot is { } snap && (match.Line < snap.ViewportTop || match.Line >= snap.ViewportTop + snap.RowCount))
+            ScrollTo(Math.Max(snap.ScrollbackTop, match.Line - snap.RowCount / 2));
+    }
+
     /// <summary>Sets the selection (tests, Find).</summary>
     internal void SetSelection(TerminalSelection? selection)
     {

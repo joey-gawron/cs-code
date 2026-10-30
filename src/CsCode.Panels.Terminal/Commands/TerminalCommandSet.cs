@@ -36,11 +36,16 @@ public static class TerminalCommandSet
     public const string ToggleMaximized = "workbench.action.toggleMaximizedPanel";
     public const string ScrollToPreviousCommand = "workbench.action.terminal.scrollToPreviousCommand";
     public const string ScrollToNextCommand = "workbench.action.terminal.scrollToNextCommand";
+    public const string FocusFind = "workbench.action.terminal.focusFind";
+    public const string FindNext = "workbench.action.terminal.findNext";
+    public const string FindPrevious = "workbench.action.terminal.findPrevious";
+    public const string HideFind = "workbench.action.terminal.hideFind";
 
     public static readonly string[] Ids =
     [
         New, NewHere, Toggle, Focus, Kill, Clear, FocusNext, FocusPrevious, Rename, SelectAll, CopySelection, Paste, ScrollUp, ScrollDown, ScrollUpPage,
         ScrollDownPage, ScrollToTop, ScrollToBottom, RunSelectedText, RunActiveFile, SendSequence, ScrollToPreviousCommand, ScrollToNextCommand,
+        FocusFind, FindNext, FindPrevious, HideFind,
     ];
 
     private const string Focused = "terminalFocus";
@@ -63,6 +68,7 @@ public static class TerminalCommandSet
         new(ScrollToBottom, "ctrl+end", When: FocusedPrimary),
         new(ScrollToPreviousCommand, "ctrl+up", When: FocusedPrimary),
         new(ScrollToNextCommand, "ctrl+down", When: FocusedPrimary),
+        new(FocusFind, "ctrl+f", When: Focused),
         new(FocusNext, "ctrl+pagedown", When: Focused),
         new(FocusPrevious, "ctrl+pageup", When: Focused),
     ];
@@ -112,6 +118,14 @@ public static class TerminalCommandSet
         Add(ScrollToBottom, "Scroll to Bottom", _ => { runtime.View?.Control.ScrollToBottom(); return Task.CompletedTask; });
         Add(ScrollToPreviousCommand, "Scroll To Previous Command", _ => { runtime.View?.Control.ScrollToCommand(-1); return Task.CompletedTask; });
         Add(ScrollToNextCommand, "Scroll To Next Command", _ => { runtime.View?.Control.ScrollToCommand(+1); return Task.CompletedTask; });
+        Add(FocusFind, "Focus Find", async _ =>
+        {
+            if (runtime.View is not { IsShown: true }) await runtime.ShowAsync(focus: true).ConfigureAwait(true);
+            runtime.View?.ShowFind();
+        }, "search");
+        Add(FindNext, "Find Next", async _ => { if (runtime.View is { IsFindVisible: true } v) await v.FindAsync(backward: false).ConfigureAwait(true); });
+        Add(FindPrevious, "Find Previous", async _ => { if (runtime.View is { IsFindVisible: true } v) await v.FindAsync(backward: true).ConfigureAwait(true); });
+        Add(HideFind, "Hide Find", _ => { runtime.View?.HideFind(); return Task.CompletedTask; });
         Add(RunSelectedText, "Run Selected Text In Active Terminal", async inv =>
         {
             var text = inv.Arg<string>(0) ?? SelectedOrCurrentLine(runtime);

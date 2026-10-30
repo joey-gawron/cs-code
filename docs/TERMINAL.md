@@ -135,6 +135,11 @@ output flows).
   Rename..., Kill Terminal (no Split: not implemented).
 * **Scrolling** (C5): wheel, Shift+PgUp/PgDn, Ctrl+Shift+Up/Down (line), Ctrl+Home/End (all only on the primary screen), the scrollbar; the
   view follows the output at the bottom and keeps its place while the user reads the scrollback; typing returns to the bottom.
+* **Find** (C5, SHOULD): Ctrl+F opens a find bar over the terminal (the selection, if one line, is the query). Typing searches up from
+  the bottom of the output, Enter goes further up (VS Code's direction in the terminal), Shift+Enter or F3 down, Shift+F3 up, past either end
+  it wraps; Match Case toggle; "No results". The match is selected and scrolled to the middle of the view when it is off screen. The search
+  runs on the terminal's worker over the lines in place (scrollback and screen; the alternate screen alone while a full-screen program runs).
+  F3/Shift+F3/Enter/Escape are the find box's own keys, not keybindings, so F3 still reaches programs in the terminal.
 * **Links** (C6, Ctrl+click; underlined with a hand cursor while Ctrl is held): OSC 8 targets, URLs (any `scheme://`, `mailto:`, `file:`;
   trailing punctuation trimmed) — http/https open with the OS opener, other schemes after an `IWindowService` confirmation — and file paths
   (`path`, `path:line`, `path:line:col`, MSBuild's `path(line,col)`; absolute, `~/`, `./`, relative, or a bare `name.ext:line`) resolved off the
@@ -159,13 +164,16 @@ output flows).
 | `workbench.action.terminal.scrollUpPage` / `scrollDownPage` | Shift+PgUp / PgDn | same |
 | `workbench.action.terminal.scrollToTop` / `scrollToBottom` | Ctrl+Home / Ctrl+End | same |
 | `workbench.action.terminal.scrollToPreviousCommand` / `scrollToNextCommand` | Ctrl+Up / Ctrl+Down | same; shell-integration prompts |
+| `workbench.action.terminal.focusFind` | Ctrl+F (terminal focus) | the find bar (below); `findNext` / `findPrevious` / `hideFind` without keys |
 | `workbench.action.terminal.runSelectedText` | | the editor's selection, else its current line (or a text argument) |
 | `workbench.action.terminal.runActiveFile` | | saves and sends the active file's quoted path |
 | `workbench.action.terminal.sendSequence` | | `{ "text": "..." }` sent as is |
 
 Differences from VS Code's Linux defaults (decisions for the user): Select All has no default key in VS Code on Linux — CsCode binds
 Ctrl+Shift+A (terminal focus only); Ctrl+PgDn / Ctrl+PgUp for the next/previous terminal and Ctrl+Insert for copy are CsCode's additions (the
-brief asks for Ctrl+Insert/Shift+Insert). Everything else matches VS Code. All of them are contributions, so `keybindings.json` can remove them.
+brief asks for Ctrl+Insert/Shift+Insert); Find's F3/Shift+F3/Enter/Shift+Enter work inside the find box only (VS Code also binds F3 while the
+find widget is open and the terminal has focus). Everything else matches VS Code. All of them are contributions, so `keybindings.json` can
+remove them.
 
 ### Settings
 
@@ -280,7 +288,8 @@ Screenshots (headless, git-ignored): `.scratch/screenshots/terminal/terminal-ls-
 
 ## Known gaps and limits
 
-* **Not done (SHOULD/STRETCH)**: split terminals; Find in terminal (Ctrl+F goes to the shell); shell-integration script injection, command
+* **Not done (SHOULD/STRETCH)**: split terminals; Find's match highlighting, whole word and regex (it selects one match at a time, matches do
+  not span rows); shell-integration script injection, command
   hover/re-run menus and sticky scroll (the marks, exit-code decorations and Ctrl+Up/Down are done); tasks in terminals; the remote terminal (R3,
   `IPtyHost` is ready for it); screen-reader text; image protocols (no).
 * Windows ConPTY: written, never run. macOS: `posix_spawn` cannot make the slave the controlling terminal there (BSD needs `TIOCSCTTY`), so job

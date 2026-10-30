@@ -9,6 +9,7 @@ using CsCode.Core.Terminal;
 using CsCode.Terminal.Emulator;
 using CsCode.Terminal.Sessions;
 using CsCode.Ui.Icons;
+using ToggleButton = Avalonia.Controls.Primitives.ToggleButton;
 using CsCode.Ui.Menus;
 using CsCode.Ui.Theming;
 using DockSide = Avalonia.Controls.Dock;
@@ -38,6 +39,12 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
     private readonly ScrollBar _scroll;
     private bool _updatingScroll;
     private bool _altBuffer;
+    private readonly Border _findBar;
+    private readonly TextBox _findBox;
+    private readonly ToggleButton _matchCase;
+    private readonly TextBlock _findStatus;
+    private TerminalMatch? _match;
+    private int _findSeq;
     private double? _restoreProportion;
 
     public TerminalView(TerminalPanelRuntime runtime)
@@ -63,6 +70,31 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
         SetDock(header, DockSide.Top);
         Children.Add(header);
 
+        // Find (VS Code's terminal find widget): Enter searches up the output, Shift+Enter down, Escape closes
+        _findBox = new TextBox { Width = 220, MinHeight = 22, Padding = new Thickness(4, 1), PlaceholderText = "Find", VerticalContentAlignment = VerticalAlignment.Center };
+        Avalonia.Automation.AutomationProperties.SetName(_findBox, "Find in terminal");
+        _findBox.KeyDown += OnFindKeyDown;
+        _findBox.TextChanged += (_, _) => { _match = null; _ = FindAsync(backward: true); };
+        _matchCase = new ToggleButton { Content = new Icon("case-sensitive", 16), Padding = new Thickness(3), VerticalAlignment = VerticalAlignment.Center };
+        ToolTip.SetTip(_matchCase, "Match Case");
+        Avalonia.Automation.AutomationProperties.SetName(_matchCase, "Match Case");
+        _matchCase.IsCheckedChanged += (_, _) => { _match = null; _ = FindAsync(backward: true); };
+        _findStatus = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0), MinWidth = 70 };
+        var findRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 2), HorizontalAlignment = HorizontalAlignment.Right };
+        findRow.Children.Add(_findBox);
+        findRow.Children.Add(_matchCase);
+        findRow.Children.Add(_findStatus);
+        findRow.Children.Add(Button("arrow-up", "Previous Match (Enter)", null, () => _ = FindAsync(backward: true)));
+        findRow.Children.Add(Button("arrow-down", "Next Match (Shift+Enter)", null, () => _ = FindAsync(backward: false)));
+        findRow.Children.Add(Button("close", "Close (Escape)", null, HideFind));
+        _findBar = new Border
+        {
+            Child = findRow, IsVisible = false,
+            Background = ThemeBrushes.Get("panel.background"), BorderBrush = ThemeBrushes.Get("panel.border"), BorderThickness = new Thickness(0, 0, 0, 1),
+        };
+        SetDock(_findBar, DockSide.Top);
+        Children.Add(_findBar);
+
         _scroll = new ScrollBar { Orientation = Orientation.Vertical, Minimum = 0, Maximum = 0, ViewportSize = 1, AllowAutoHide = false };
         _scroll.Scroll += (_, e) =>
         {
@@ -87,6 +119,80 @@ public sealed class TerminalView : DockPanel, IDisposable, IClipboardTarget
 
     public TerminalControl Control { get; }
     public bool IsDisposed { get; private set; }
+
+    // ------------------------------------------------------------------ find
+
+    public bool IsFindVisible => _findBar.IsVisible;
+    internal TextBox FindBox => _findBox;
+    internal string FindStatus => _findStatus.Text ?? "";
+
+    /// <summary>Ctrl+F: shows the find bar with the selection (one line) as the query, and focuses it.</summary>
+    public void ShowFind()
+    {
+        _findBar.IsVisible = true;
+        _ = ShowFindAsync();
+    }
+
+    private async Task ShowFindAsync()
+    {
+        if (Control.Selection is not null && await Control.GetSelectionTextAsync().ConfigureAwait(true) is { Length: > 0 } text && !text.Contains('\n', StringComparison.Ordinal))
+            _findBox.Text = text;
+        _findBox.Focus();
+        _findBox.SelectAll();
+    }
+
+    public void HideFind()
+    {
+        _findBar.IsVisible = false;
+        _match = null;
+        _findStatus.Text = "";
+        Control.Focus();
+    }
+
+    private void OnFindKeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
+    {
+        var shift = (e.KeyModifiers & Avalonia.Input.KeyModifiers.Shift) != 0;
+        switch (e.Key)
+        {
+            case Avalonia.Input.Key.Enter or Avalonia.Input.Key.F3:
+                // Enter goes up the output (VS Code), F3 down; Shift reverses either
+                _ = FindAsync(backward: e.Key == Avalonia.Input.Key.Enter ? !shift : shift);
+                e.Handled = true;
+                break;
+            case Avalonia.Input.Key.Escape:
+                HideFind();
+                e.Handled = true;
+                break;
+        }
+    }
+
+    /// <summary>The next match above (<paramref name="backward"/>) or below the current one (none yet: from the bottom), selected and scrolled into view.</summary>
+    public async Task FindAsync(bool backward)
+    {
+        if (Control.Session is not { } session) return;
+        var query = _findBox.Text ?? "";
+        var matchCase = _matchCase.IsChecked == true;
+        var seq = ++_findSeq;
+        if (query.Length == 0)
+        {
+            _match = null;
+            _findStatus.Text = "";
+            return;
+        }
+        var (fromLine, fromColumn) = _match is { } m ? (m.Line, m.StartColumn) : backward ? (long.MaxValue, 0) : (long.MinValue, 0);
+        TerminalMatch? found;
+        try { found = await session.InvokeAsync(e => e.Find(query, fromLine, fromColumn, backward, matchCase)).ConfigureAwait(true); }
+        catch (ObjectDisposedException) { return; }
+        if (seq != _findSeq || IsDisposed) return; // typed on meanwhile
+        _match = found;
+        if (found is not { } match)
+        {
+            _findStatus.Text = "No results";
+            return;
+        }
+        _findStatus.Text = "";
+        Control.ShowMatch(match);
+    }
 
     /// <summary>On screen (the tool window is shown and this is its visible tab).</summary>
     public bool IsShown => this.IsAttachedToVisualTree() && IsEffectivelyVisible;

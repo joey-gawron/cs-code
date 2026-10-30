@@ -490,6 +490,30 @@ public sealed class EmulatorTests
     }
 
     [Fact]
+    public void Find_searches_scrollback_and_screen_both_ways_wrapping_around_with_case_and_wide_characters()
+    {
+        var t = Term(20, 3, new EmulatorOptions { ScrollbackLines = 100 });
+        t.Feed("alpha one\r\nbeta ONE\r\n漢字 one\r\ngamma\r\ndelta");
+        Assert.Equal(2, t.ScreenTop); // rows 0-1 are in the scrollback
+        // backward from the bottom (VS Code's first Enter), then on from each match
+        var m = t.Find("one", long.MaxValue, 0, backward: true, matchCase: false);
+        Assert.Equal(new TerminalMatch(2, 5, 7), m);
+        m = t.Find("one", m!.Value.Line, m.Value.StartColumn, backward: true, matchCase: false);
+        Assert.Equal(new TerminalMatch(1, 5, 7), m);
+        Assert.Equal(new TerminalMatch(0, 6, 8), t.Find("one", 1, 5, backward: true, matchCase: true)); // "ONE" does not match
+        Assert.Equal(new TerminalMatch(2, 5, 7), t.Find("one", 0, 6, backward: true, matchCase: true)); // wraps to the bottom
+        // forward
+        Assert.Equal(new TerminalMatch(0, 6, 8), t.Find("one", long.MinValue, 0, backward: false, matchCase: false));
+        Assert.Equal(new TerminalMatch(1, 5, 7), t.Find("ONE", 0, 6, backward: false, matchCase: false));
+        Assert.Equal(new TerminalMatch(0, 6, 8), t.Find("one", 2, 5, backward: false, matchCase: false)); // wraps to the top
+        // a wide character's match ends on its second cell; a lone match is found again from itself
+        Assert.Equal(new TerminalMatch(2, 0, 3), t.Find("漢字", long.MinValue, 0, backward: false, matchCase: true));
+        Assert.Equal(new TerminalMatch(3, 0, 4), t.Find("gamma", 3, 0, backward: false, matchCase: true));
+        Assert.Null(t.Find("zeta", long.MaxValue, 0, backward: true, matchCase: false));
+        Assert.Null(t.Find("", long.MaxValue, 0, backward: true, matchCase: false));
+    }
+
+    [Fact]
     public void Bell_is_reported()
     {
         var t = Term();

@@ -178,6 +178,56 @@ public sealed class PanelTests
     }
 
     [AvaloniaFact]
+    public async Task Find_selects_matches_up_and_down_the_output_and_scrolls_them_into_view()
+    {
+        await using var rig = await new PanelRig().ReadyAsync();
+        var lines = string.Concat(Enumerable.Range(0, 120).Select(i => i % 40 == 5 ? $"line {i} has a Needle\r\n" : $"line {i}\r\n"));
+        await rig.OutputAsync(lines + "end", "end");
+        await rig.Commands.ExecuteAsync(TerminalCommandSet.FocusFind);
+        Assert.True(await PanelRig.Pump(() => rig.View.IsFindVisible && rig.View.FindBox.IsKeyboardFocusWithin), "Ctrl+F did not open and focus the find bar");
+
+        // typing searches up from the bottom: the last match first; each match is selected and on screen
+        rig.View.FindBox.Text = "needle";
+        Assert.Equal(("Needle", 85), await Selected(rig));
+        // Enter: further up; Shift+Enter: back down; past the top it wraps to the bottom
+        rig.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.Equal(("Needle", 45), await Selected(rig, after: 85));
+        rig.Window.KeyPress(Key.Enter, RawInputModifiers.Shift, PhysicalKey.Enter, null);
+        Assert.Equal(("Needle", 85), await Selected(rig, after: 45));
+        rig.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.Equal(("Needle", 45), await Selected(rig, after: 85));
+        rig.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.Equal(("Needle", 5), await Selected(rig, after: 45));
+        rig.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+        Assert.Equal(("Needle", 85), await Selected(rig, after: 5));
+
+        // Escape goes back to the terminal; a missing text says so
+        rig.Window.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        Assert.True(await PanelRig.Pump(() => !rig.View.IsFindVisible && rig.Control.IsKeyboardFocusWithin), "Escape did not close the find bar");
+        await rig.Commands.ExecuteAsync(TerminalCommandSet.FocusFind);
+        Assert.True(await PanelRig.Pump(() => rig.View.FindBox.IsKeyboardFocusWithin));
+        rig.View.FindBox.Text = "haystack";
+        Assert.True(await PanelRig.Pump(() => rig.View.FindStatus == "No results"), "no 'No results' for a missing text");
+    }
+
+    /// <summary>Waits until the selection is on screen on a "line N" row other than <paramref name="after"/>: the selected text and N.</summary>
+    private static async Task<(string Text, int SourceLine)> Selected(PanelRig rig, int after = -1)
+    {
+        (string, int) result = ("", -1);
+        await PanelRig.Pump(() =>
+        {
+            if (rig.Control.Selection is not { } sel || rig.Control.Snapshot is not { } snap) return false;
+            var index = sel.Start.Line - snap.ViewportTop;
+            if (index < 0 || index >= snap.RowCount) return false; // not scrolled into view (yet)
+            var row = snap.Rows[index];
+            var n = int.TryParse(row.GetText().Split(' ').ElementAtOrDefault(1), out var v) ? v : -1;
+            result = (row.GetText(sel.Start.Column, sel.End.Column + 1), n);
+            return n >= 0 && n != after;
+        });
+        return result;
+    }
+
+    [AvaloniaFact]
     public async Task Double_click_selects_a_word_and_triple_click_the_line()
     {
         await using var rig = await new PanelRig().ReadyAsync();

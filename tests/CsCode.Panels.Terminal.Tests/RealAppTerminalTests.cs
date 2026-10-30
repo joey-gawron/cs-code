@@ -85,12 +85,24 @@ public sealed class RealAppTerminalTests
         var host = hosts[0];
         host.ClearWritten();
 
-        // Ctrl+F is bound (Find) but not in commandsToSkipShell: the shell gets ^F (readline: forward-char)
-        app.Window.KeyPress(Key.F, RawInputModifiers.Control, PhysicalKey.F, "f");
+        // Ctrl+H is bound (the editor's Replace) but not in commandsToSkipShell: the shell gets ^H (readline: backward-delete-char)
+        var ctrlH = app.Get<IKeybindingService>().All.Where(b => b.Chord.Count == 1 && b.Chord[0] == KeyStrokeParser.ParseStroke("ctrl+h"))
+            .Select(b => b.Command).Where(app.Get<ICommandService>().Has).ToArray();
+        Assert.True(ctrlH.Length > 0, "precondition: Ctrl+H runs a registered command outside the terminal");
+        app.Window.KeyPress(Key.H, RawInputModifiers.Control, PhysicalKey.H, "h");
         // Ctrl+C: ^C to the shell (the editor's copy binding is for the editor)
         app.Window.KeyPress(Key.C, RawInputModifiers.Control, PhysicalKey.C, "c");
         await TerminalAppHost.SettleAsync(5);
-        Assert.Equal("\x06\x03", host.Written);
+        Assert.Equal("\x08\x03", host.Written);
+
+        // Ctrl+F is the terminal's own Find (VS Code): the find bar opens and the shell gets nothing
+        host.ClearWritten();
+        app.Window.KeyPress(Key.F, RawInputModifiers.Control, PhysicalKey.F, "f");
+        Assert.True(await TerminalAppHost.WaitFor(() => app.View!.IsFindVisible && app.View.FindBox.IsKeyboardFocusWithin), "Ctrl+F did not open Find");
+        Assert.Equal("", host.Written);
+        app.Window.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+        Assert.True(await TerminalAppHost.WaitFor(() => !app.View!.IsFindVisible && app.View.Control.IsKeyboardFocusWithin), "Escape did not close Find");
+        Assert.Equal("", host.Written);
 
         // Ctrl+Shift+P (showCommands) is in commandsToSkipShell: the palette opens and the shell gets nothing
         host.ClearWritten();
