@@ -274,6 +274,11 @@ reaches the focused control (F3 gets to the editor's own find); a chord prefix w
 too (AvaloniaEdit marks its text area's GotFocus handled, so the editor taking focus used to go unseen and the area stayed stale, T7) and writes
 every focus key on each focus change, after the control's own handler: it agrees with what the terminal sets for itself (T22), so the keys are
 right synchronously, without a dispatcher turn (`FocusContextKeyTests`). Floating windows get the same handlers (see *Floating windows*).
+**The keyboard comes back** when the quick input or a modal prompt closes (`OverlayFocus`, as in VS Code and Visual Studio; it used to go nowhere:
+typing reached no editor and `inputFocus` stayed set): a dispatcher turn after the close, unless something outside the overlay took it meanwhile,
+it goes to the editor that became active (a palette entry opened another), else to what had it when the overlay opened (if still on screen), else
+to the active editor. Activating a document tab (`DocumentWell.Activate` without `preserveFocus`: Go to File, Ctrl+Tab, opening a file) gives its
+editor the keyboard once Dock shows it, when the keyboard was nowhere or in the editor it replaces; a preview opened from the Explorer leaves it there.
 
 The order a key press goes through (all on the UI thread, inside the key event; nothing here waits):
 
@@ -331,14 +336,23 @@ moves it into a native window of its own: Dock.Avalonia's `HostWindow`, owned by
 layout root of its own (`IRootDock.Windows`). The factory creates the host windows (`ShellDockFactory.HostWindowCreated`), and the main window gives
 each one the shell's Dock styles and the same window-level handlers it has itself: Vim and the keyboard pipeline (every key binding works in a
 floating window), the focus context keys, the right-click menus and the Edit menu's clipboard routing (which follows the window that last took
-focus). A floating document is still one of the well's tabs (`DocumentWell.Tabs` covers the floating groups: Save, Ctrl+Tab, the live-view budget,
+focus), the modules' own per-window hooks (`ShellController.AttachWindow`: Vim's end of a key and its clipboard-register refresh on activation, the
+macro recorder's end of input and the player's typing guard, the idle trim's activity), and the MRU switcher closing when the window loses
+activation. Keyboard focus is global in Avalonia 12, but a key or text event is routed through the window that holds the focused control only, so
+each of these must be on every window (without them a recording in a floating editor lost every command after the first typed character, typing
+there mixed with a playing macro, and the idle trim's blocking collection could run mid-typing). The overlays that take the keyboard (the quick
+input, a modal prompt, the Ctrl+Tab switcher) are shown in the window that has the keyboard, as VS Code shows them in an auxiliary window: in a
+floating window as an adorner over its dock (an owned window stays above the main one, so the main window's overlays could be hidden under it);
+toasts stay in the main window. When a floating window closes with the keyboard in it, the keyboard returns to the main window's active editor.
+A floating document is still one of the well's tabs (`DocumentWell.Tabs` covers the floating groups: Save, Ctrl+Tab, the live-view budget,
 close prompts, the session all see it). Dock (tool) / Dock as Tabbed Document (document; `workbench.action.restoreEditorsToMainWindow` docks them
 all) returns it to the well or group it came from (else its default well, or the primary group). A floating window closes once it is empty (its
 last tab closed, docked or hidden). Its own close button (Alt+F4) empties it the shell's way: tools are hidden, documents closed with their Save
 prompts (Cancel keeps the window). A tool window hidden while it floats goes back to its well hidden, and its window's place is remembered: showing
 it again (its command, View menu, Reset excepted) floats it there again, as in Visual Studio. The floating windows hide and show with the main
 window (background mode hides the main window instead of closing it), and when the main window really closes, everything floating is docked back
-after the layout was saved. Reset Window Layout docks everything. Not done: dragging a tab out of the window to float it relies on Dock's own drag
+after the layout was saved. Only the main window decides whether it closes (`ClosingBehavior = OwnerWindowOnly`, WPF's behaviour): with Avalonia's
+default the owned floating windows were asked first, one emptied itself and cancelled the main window's close, which then neither closed nor saved. Reset Window Layout docks everything. Not done: dragging a tab out of the window to float it relies on Dock's own drag
 (not tested), and a floating window holds either tools or documents (Dock gives a floating root one kind of dock), never both.
 
 **Layout.** `LayoutPersistence`: tool placement, visibility, Auto Hide (`ToolLayout.AutoHide`: an auto-hidden tool is on its well's edge strip again after a

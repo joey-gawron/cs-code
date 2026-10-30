@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Recycling;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
@@ -39,6 +40,13 @@ public sealed class MainWindow : Window, IWindowChrome
     private readonly TitleBarView _titleBar;
     private readonly Border _switcher = new();
     private readonly StackPanel _switcherItems = new() { Spacing = 1 };
+    // The overlays that take the keyboard (MRU switcher, quick input, modal prompt) are shown in the window that has it: this one's overlay grid, or
+    // a floating window's (as an adorner over its dock; an owned floating window stays above this one and would hide them). Toasts stay here.
+    private readonly Grid _overlays = new() { IsHitTestVisible = true };
+    private readonly Grid _keyboardOverlays = new();
+    private readonly QuickInputView _quick;
+    private Control? _overlaysAdorning; // the floating window's dock the keyboard overlays adorn (null: they are in this window)
+    private TopLevel? _overlayHost; // that floating window
     private bool _closeConfirmed, _zen, _switcherActive;
     private string? _sessionName;
     private int _switcherIndex;
@@ -82,20 +90,26 @@ public sealed class MainWindow : Window, IWindowChrome
         Grid.SetRow(_status, 3);
         rows.Children.Add(_status);
 
-        var overlays = new Grid { IsHitTestVisible = true };
-        overlays.Children.Add(new NotificationsView(_sp.GetRequiredService<NotificationCenter>()) { IsHitTestVisible = true });
+        _overlays.Children.Add(new NotificationsView(_sp.GetRequiredService<NotificationCenter>()) { IsHitTestVisible = true });
         BuildSwitcher();
-        overlays.Children.Add(_switcher);
+        _keyboardOverlays.Children.Add(_switcher);
+        // Before the views subscribe: an overlay moves into the window that has the keyboard before it shows and takes the keyboard.
+        var quickVm = _sp.GetRequiredService<QuickInputViewModel>();
+        var dialogVm = _sp.GetRequiredService<DialogHostViewModel>();
+        quickVm.PropertyChanged += OnOverlayVisibilityChanged;
+        dialogVm.PropertyChanged += OnOverlayVisibilityChanged;
+        _disposables.Add(Disposable.Create(() => { quickVm.PropertyChanged -= OnOverlayVisibilityChanged; dialogVm.PropertyChanged -= OnOverlayVisibilityChanged; }));
         // The palette and the prompts give the keyboard back when they close (to the editor a palette entry opened, else to what had it).
         object? ActiveTab() => _shell.Well.Active;
         void FocusActiveEditor() => _shell.Well.FocusActiveEditor();
-        var quick = new QuickInputView(_sp.GetRequiredService<QuickInputViewModel>(), ActiveTab, FocusActiveEditor) { Margin = new Thickness(0, 30, 0, 0) };
-        overlays.Children.Add(quick);
-        overlays.Children.Add(new DialogHostView(_sp.GetRequiredService<DialogHostViewModel>(), ActiveTab, FocusActiveEditor));
+        _quick = new QuickInputView(quickVm, ActiveTab, FocusActiveEditor) { Margin = new Thickness(0, 30, 0, 0) };
+        _keyboardOverlays.Children.Add(_quick);
+        _keyboardOverlays.Children.Add(new DialogHostView(dialogVm, ActiveTab, FocusActiveEditor));
+        _overlays.Children.Add(_keyboardOverlays);
 
         var root = new Grid();
         root.Children.Add(rows);
-        root.Children.Add(overlays);
+        root.Children.Add(_overlays);
         AddResizeGrips(root, useCustomChrome);
         Content = root;
 
@@ -201,10 +215,48 @@ public sealed class MainWindow : Window, IWindowChrome
         {
             window.Opened -= OnOpened;
             window.Closed -= OnClosedHost;
+            if (ReferenceEquals(_overlayHost, window)) HostKeyboardOverlays(this); // back home: the window's tree goes
             input.Dispose();
+            // The keyboard was in the window that closed (a closing tab hands it to its window): it comes back to this window's active editor, as in
+            // Visual Studio. Left there, the closed window stayed the focused element and kept itself, its last tab's view and document alive.
+            if (FocusManager?.GetFocusedElement() is Visual focused && (ReferenceEquals(focused, window) || window.IsVisualAncestorOf(focused) || !focused.IsAttachedToVisualTree()))
+            {
+                if (!Focus()) FocusManager?.Focus(null);
+                _shell.Well.FocusActiveEditor();
+            }
         }
         window.Opened += OnOpened;
         window.Closed += OnClosedHost;
+    }
+
+    // ------------------------------------------------------------------ overlays that take the keyboard
+
+    /// <summary>The window the switcher, quick input and modal prompt are shown in now (this one, or a floating window).</summary>
+    internal TopLevel OverlayWindow => _overlayHost ?? this;
+
+    private void OnOverlayVisibilityChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(QuickInputViewModel.IsVisible)) return; // (DialogHostViewModel's has the same name)
+        var opening = sender switch { QuickInputViewModel q => q.IsVisible, DialogHostViewModel d => d.IsVisible, _ => false };
+        if (opening) HostKeyboardOverlays(FocusManager?.GetFocusedElement() is Visual focused ? TopLevel.GetTopLevel(focused) : null);
+    }
+
+    /// <summary>
+    /// Shows the keyboard overlays in <paramref name="target"/>: a visible floating window gets them over its dock (an adorner: arranged to the
+    /// dock's bounds, in the window's own tree, so focus and keys work there); anything else (this window, nothing) puts them back here.
+    /// </summary>
+    private void HostKeyboardOverlays(TopLevel? target)
+    {
+        Control? dock = target is HostWindow { IsVisible: true } floating && !ReferenceEquals(floating, this)
+            ? floating.GetVisualDescendants().OfType<DockControl>().FirstOrDefault() : null;
+        if (ReferenceEquals(dock, _overlaysAdorning)) return;
+        if (_overlaysAdorning is { } adorned) AdornerLayer.SetAdorner(adorned, null);
+        else _overlays.Children.Remove(_keyboardOverlays);
+        _overlaysAdorning = dock;
+        _overlayHost = dock is null ? null : target;
+        _quick.Margin = new Thickness(0, dock is null ? 30 : 0, 0, 0); // this window's card sits under its title bar
+        if (dock is not null) AdornerLayer.SetAdorner(dock, _keyboardOverlays);
+        else _overlays.Children.Add(_keyboardOverlays);
     }
 
     private void OnVisibilityChanged(bool visible)
@@ -293,6 +345,7 @@ public sealed class MainWindow : Window, IWindowChrome
         // Ctrl+Tab / Ctrl+Shift+Tab: MRU editor switcher overlay (committed when Ctrl is released).
         if (e.Key == Key.Tab && e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Alt))
         {
+            if (!_switcherActive) HostKeyboardOverlays(sender as TopLevel); // in the window the keys are pressed in
             StepSwitcher(e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : +1);
             e.Handled = true;
             return;
