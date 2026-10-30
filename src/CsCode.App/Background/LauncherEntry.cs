@@ -40,6 +40,7 @@ internal static class LauncherEntry
             NewWindow = o.NewWindow,
             Wait = o.Wait,
             Targets = o.Targets.Select(t => new LaunchTarget(t.Path, Directory.Exists(t.Path), t.Line, t.Column)).ToArray(),
+            RemoteTargets = o.RemoteTargets, // ssh:// folders: the session process connects and opens them (remote.openFolder)
         };
     }
 }

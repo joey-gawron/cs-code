@@ -61,6 +61,10 @@ public class BackgroundCommandLineTests
         Assert.Equal(LaunchKind.Background, LauncherEntry.ToRequest(CommandLineOptions.Parse(["--background"])).Kind);
         var quit = LauncherEntry.ToRequest(CommandLineOptions.Parse(["--quit", "--all"]));
         Assert.Equal((LaunchKind.Quit, true), (quit.Kind, quit.All));
+        // T5: ssh:// targets go through the launcher to the session (background mode is the default for `cscode`).
+        var remote = LauncherEntry.ToRequest(CommandLineOptions.Parse(["ssh://me@box:2222/home/me/src", "proj"], dir.Path));
+        Assert.Equal(["ssh://me@box:2222/home/me/src"], remote.RemoteTargets);
+        Assert.Equal([new LaunchTarget(dir.Combine("proj"), true)], remote.Targets);
     }
 
     [Fact]

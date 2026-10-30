@@ -23,6 +23,19 @@ public class IpcTests
     }
 
     [Fact]
+    public void Remote_folders_survive_the_codec_and_old_messages_have_none()
+    {
+        var show = new IpcMessage { Type = IpcVerbs.Show, Paths = [new IpcPath("/a.cs", 1, 2)], Remotes = ["ssh://me@box/home/me/src", "ssh://[::1]:22/x%20y"] };
+        var back = IpcCodec.Decode(IpcCodec.Encode(show));
+        Assert.Equal(show.Remotes, back.Remotes);
+        Assert.Equal(show.Paths, back.Paths);
+        Assert.Null(IpcCodec.Decode(IpcCodec.Encode(new IpcMessage { Type = IpcVerbs.Show })).Remotes);
+        // A newer launcher's unknown entries are skipped, not fatal.
+        var odd = IpcCodec.Decode("{\"type\":\"show\",\"remotes\":[\"ssh://h/p\",1,{\"x\":2},\"\"]}"u8);
+        Assert.Equal(["ssh://h/p"], odd.Remotes);
+    }
+
+    [Fact]
     public async Task A_request_gets_its_reply_and_the_endpoint_is_private()
     {
         using var rt = new TestRuntime();

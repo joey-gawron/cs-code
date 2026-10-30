@@ -57,6 +57,9 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
         return this;
     }
 
+    /// <summary>True for the folder URI of a remote workspace (<c>ssh://host/path</c>): the session restore reconnects instead of opening it directly.</summary>
+    public static bool IsRemoteFolder(Uri uri) => uri.IsAbsoluteUri && RemoteSchemes.IsRemote(uri.Scheme);
+
     private static async ValueTask<object?> Run(Task work)
     {
         await work.ConfigureAwait(false);

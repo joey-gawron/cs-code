@@ -93,7 +93,9 @@ public sealed partial class SessionWindowController : IDisposable
         {
             case IpcVerbs.Show:
                 var targets = Classify(request.Paths);
-                return await OnUiAsync(() => ShowAsync(targets, request.Wait == true, ct)).ConfigureAwait(false);
+                var reply = await OnUiAsync(() => ShowAsync(targets, request.Wait == true, ct)).ConfigureAwait(false);
+                OpenRemoteTargets(request.Remotes);
+                return reply;
             case IpcVerbs.FocusFile:
                 var files = Classify(request.Paths);
                 return await OnUiAsync(async () => { await OpenPathsAsync(files).ConfigureAwait(true); return IpcMessage.Reply(); }).ConfigureAwait(false);
@@ -106,6 +108,17 @@ public sealed partial class SessionWindowController : IDisposable
             default:
                 return IpcMessage.Failure("unknown request " + request.Type);
         }
+    }
+
+    /// <summary>
+    /// <c>cscode ssh://host/path</c> through the launcher: the session connects and opens the folder (<c>remote.openFolder</c>, as a foreground start
+    /// does). Not awaited: connecting may wait for an ssh prompt, and the launcher's show must not.
+    /// </summary>
+    private void OpenRemoteTargets(IReadOnlyList<string>? remotes)
+    {
+        if (remotes is not { Count: > 0 } || _sp.GetService<ICommandService>() is not { } commands) return;
+        foreach (var remote in remotes)
+            _ = _ui.InvokeAsync(() => commands.ExecuteAsync(CsCode.Remote.Shell.RemoteShellContributions.OpenFolder, remote).AsTask());
     }
 
     /// <summary>Directory checks are file I/O: done here on the pool thread, never on the UI thread.</summary>
@@ -159,7 +172,14 @@ public sealed partial class SessionWindowController : IDisposable
     {
         var well = _shell.Well;
         var doc = prepared.Document;
-        if (doc?.Folders.FirstOrDefault() is { } folder && Uri.TryCreate(folder, UriKind.Absolute, out var folderUri) && _workspace is not null)
+        if (doc?.Folders.FirstOrDefault() is { } remoteFolder && Uri.TryCreate(remoteFolder, UriKind.Absolute, out var remoteUri)
+            && CsCode.Remote.Shell.RemoteShellContributions.IsRemoteFolder(remoteUri) && _sp.GetService<ICommandService>() is { } commands)
+        {
+            // A remote workspace comes back by reconnecting (remote.openFolder connects, then opens the folder). Not awaited: the connection may wait
+            // for an ssh prompt; the editors below load as soon as it is up (remote reads wait for a connection in progress).
+            _ = commands.ExecuteAsync(CsCode.Remote.Shell.RemoteShellContributions.OpenFolder, remoteUri.ToString()).AsTask();
+        }
+        else if (doc?.Folders.FirstOrDefault() is { } folder && Uri.TryCreate(folder, UriKind.Absolute, out var folderUri) && _workspace is not null)
         {
             try { await _workspace.OpenFolderAsync(folderUri).ConfigureAwait(true); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { Notify(MessageSeverity.Warning, $"Could not reopen the folder {folderUri}: {ex.Message}"); }

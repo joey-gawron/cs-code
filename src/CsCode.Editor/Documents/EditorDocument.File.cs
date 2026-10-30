@@ -411,7 +411,12 @@ public sealed partial class EditorDocument
     private void StartWatching()
     {
         var svc = _svc;
-        if (svc is null || !Uri.IsFile) return;
+        if (svc is null || IsUntitled) return;
+        if (!Uri.IsFile)
+        {
+            StartWatchingProvider(svc);
+            return;
+        }
         _watch?.Dispose();
         var dir = Path.GetDirectoryName(Uri.LocalPath);
         if (string.IsNullOrEmpty(dir)) return;
@@ -420,6 +425,28 @@ public sealed partial class EditorDocument
         {
             foreach (var c in changes)
                 if (c.Uri.IsFile && string.Equals(c.Uri.LocalPath, local, StringComparison.Ordinal))
+                {
+                    _ = HandleExternalChangeAsync();
+                    return;
+                }
+        });
+    }
+
+    /// <summary>
+    /// A document of another file system (a remote <c>ssh:</c> file): watched through the routing watcher like a local one (its provider reports the
+    /// file's own URI, built with the same escaping the document was opened with). A scheme without a watcher provider gets a no-op watch.
+    /// </summary>
+    private void StartWatchingProvider(EditorServices svc)
+    {
+        _watch?.Dispose();
+        var text = Uri.AbsoluteUri;
+        var slash = text.LastIndexOf('/');
+        if (slash <= text.IndexOf("://", StringComparison.Ordinal) + 2) return;
+        var self = Uri;
+        _watch = svc.FileWatcher.Watch(new Uri(text[..(slash + 1)]), false, null, changes =>
+        {
+            foreach (var c in changes)
+                if (c.Uri == self)
                 {
                     _ = HandleExternalChangeAsync();
                     return;

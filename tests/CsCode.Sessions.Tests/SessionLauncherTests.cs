@@ -32,6 +32,27 @@ public class SessionLauncherTests
     }
 
     [Fact]
+    public async Task Remote_targets_reach_the_session_in_its_show_request()
+    {
+        // T5: `cscode ssh://me@box/home/me/src` in background mode: the launcher forwards the remote folder to the session process (which runs
+        // remote.openFolder); before, it forwarded only local paths and the remote target was dropped.
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        using var work = new FakeHost(rt.Runtime, "work", ProcessStates.Hidden);
+
+        var outcome = await Launcher(rt, spawner).RunAsync(new LaunchRequest(LaunchKind.Open)
+        {
+            Session = "work", RemoteTargets = ["ssh://me@box:2222/home/me/my%20src", "ssh://other/x"],
+        });
+
+        Assert.Equal(0, outcome.ExitCode);
+        var show = Assert.Single(work.Received, m => m.Type == IpcVerbs.Show);
+        Assert.Equal(["ssh://me@box:2222/home/me/my%20src", "ssh://other/x"], show.Remotes);
+        Assert.Empty(show.Paths!);
+        Assert.False(show.Wait); // nothing local to wait for
+    }
+
+    [Fact]
     public async Task A_saved_session_claims_the_spare_and_a_new_spare_is_started()
     {
         using var rt = new TestRuntime();

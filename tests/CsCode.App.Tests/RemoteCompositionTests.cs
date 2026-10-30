@@ -92,6 +92,41 @@ public class RemoteCompositionTests
     }
 
     [AvaloniaFact(Timeout = 180_000)]
+    public async Task A_remote_document_changed_on_the_server_reloads_and_its_tab_shows_the_real_file_name()
+    {
+        // T12: the editor watched file: documents only (a remote file changed on the server was never offered for reload), and tab titles of
+        // ssh: documents showed the escaped path ("my%20notes.txt").
+        Assert.SkipUnless(File.Exists(ServerAssembly), "cscode-server.dll is not next to the tests");
+        using var env = new RealAppHome();
+        using var serverData = new TempDirectory("cscode-app-remote-");
+        var marker = "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
+        var file = env.Workspace.WriteFile("my notes.txt", "first\n");
+        await using (var run = new RealAppRun(env, s => Remote(s, serverData, marker)))
+        {
+            await run.MainWindowAsync();
+            var sp = run.Services;
+            var manager = sp.GetRequiredService<IRemoteConnectionManager>();
+            await manager.ConnectAsync("tester@box");
+            await sp.GetRequiredService<IWorkspaceService>().OpenFolderAsync(manager.ToUri(env.Workspace.Path + "/")!);
+            var uri = manager.ToUri(file)!;
+            Assert.Contains("my%20notes.txt", uri.AbsoluteUri, StringComparison.Ordinal);
+
+            var tab = await sp.GetRequiredService<DocumentWell>().OpenAsync(uri);
+            Assert.Equal("my notes.txt", tab.Title);
+            var doc = tab.Doc;
+            Assert.Equal("first\n", doc.GetText().Replace("\r\n", "\n", StringComparison.Ordinal));
+
+            // changed on the "remote" disk (the server's machine): the clean document reloads, as a local one does
+            await Task.Delay(300); // the server's watch is armed when the document opened; give the first event a fresh mtime
+            File.WriteAllText(file, "second, from the server\n");
+            Assert.True(await DevHost.WaitFor(() => doc.GetText().Replace("\r\n", "\n", StringComparison.Ordinal) == "second, from the server\n", 20_000),
+                "the remote document was not reloaded: " + doc.GetText());
+            Assert.False(doc.IsDirty);
+        }
+        Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
     public async Task With_languageHost_process_the_language_client_runs_in_a_child_and_stops_with_the_app()
     {
         Assert.SkipUnless(File.Exists(ServerAssembly), "cscode-server.dll is not next to the tests");

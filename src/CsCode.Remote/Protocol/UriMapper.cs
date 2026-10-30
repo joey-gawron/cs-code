@@ -32,6 +32,20 @@ public abstract class UriMapper
     }
 }
 
+/// <summary>URI schemes of remote workspaces: <c>ssh://[user@]host[:port]/path</c>, <c>docker://container/path</c>, <c>wsl://distro/path</c>.</summary>
+public static class RemoteSchemes
+{
+    public const string Ssh = "ssh";
+    public const string Docker = "docker";
+    public const string Wsl = "wsl";
+
+    public static IReadOnlyList<string> All { get; } = [Ssh, Docker, Wsl];
+
+    public static bool IsRemote(string scheme) =>
+        string.Equals(scheme, Ssh, StringComparison.OrdinalIgnoreCase) || string.Equals(scheme, Docker, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(scheme, Wsl, StringComparison.OrdinalIgnoreCase);
+}
+
 /// <summary>
 /// <c>ssh://[user@]host[:port]/abs/path</c> ⇄ remote path ⇄ the server's <c>file:</c> URI.
 /// <list type="bullet">

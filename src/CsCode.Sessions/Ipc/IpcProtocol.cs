@@ -23,7 +23,8 @@ public static class ProcessStates
 /// <list type="bullet">
 /// <item><c>hello {protocolVersion}</c> → pid, session, state, lastShownUnixMs, debugging, workingSetBytes.</item>
 /// <item><c>show {paths?, wait?}</c> → shows the window (opening the paths) and replies once it painted; with <c>wait</c> the reply comes when the
-/// (single) opened file's tab closes (<c>cscode --wait</c>, e.g. as the git editor).</item>
+/// (single) opened file's tab closes (<c>cscode --wait</c>, e.g. as the git editor). <c>remotes</c> (remote folder URIs, <c>cscode ssh://host/path</c>):
+/// the session connects and opens them once the window is up; the reply does not wait for the connection.</item>
 /// <item><c>hide</c>, <c>claim {session, paths?, hidden?}</c> (a warm spare takes a session), <c>listSessions</c>, <c>quit {force}</c>,
 /// <c>focusFile {paths}</c> (open without changing the window's visibility).</item>
 /// <item>Test-only verbs, accepted only by a process started with <c>--headless-test</c>: <c>inspect</c>, <c>testEdit</c>, <c>testCloseTab</c>,
@@ -46,6 +47,8 @@ public sealed record IpcMessage
     public long? WorkingSetBytes { get; init; }
     public bool? Debugging { get; init; }
     public IReadOnlyList<IpcPath>? Paths { get; init; }
+    /// <summary>Show: remote folder URIs from the command line (<c>cscode ssh://host/path</c>).</summary>
+    public IReadOnlyList<string>? Remotes { get; init; }
     public bool? Wait { get; init; }
     public bool? Force { get; init; }
     public bool? Hidden { get; init; }
