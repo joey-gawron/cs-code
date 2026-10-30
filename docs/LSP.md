@@ -68,7 +68,9 @@ Tests: `ProtocolRoundTripTests` (spec shapes, unions, optional/null handling, un
   runtime CsCode runs on, and the server log says so. A definition whose `env` sets either variable is never changed.
   **Only when the host's own lookup would not do** (lsp-core-5): with `DOTNET_ROOT` set, the Linux host looks nowhere else, so a distro or
   global runtime (`/etc/dotnet/install_location[_<arch>]`, else `/usr/share/dotnet`, `/usr/local/share/dotnet` on macOS) that served the server
-  is left to the host when it has the frameworks the server's `.runtimeconfig.json` asks for (beside the apphost, or in a tool shim's `.store`;
+  is left to the host when it has the frameworks the server's `.runtimeconfig.json` asks for (beside the apphost; for a tool shim, the one beside
+  the `.dll` whose path `dotnet tool install` wrote into the shim, i.e. the target framework the shim really runs — when that path cannot be read,
+  every runtimeconfig of the newest `.store` version must be satisfied, since a tool packed for net8.0 and net9.0 has one per framework;
   roll-forward policy honoured, `DOTNET_ROLL_FORWARD` too) — or when nothing says what it asks for. Otherwise the first candidate above that has
   those frameworks is chosen (or the first one, said so in the log line, which names the root and the reason).
 * Per-message size guard (`FramingGuardStream`, `cscode.lsp.maxMessageBytes`, default 64 MB): a header announcing more drops the connection (the

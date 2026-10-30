@@ -124,58 +124,119 @@ public static class DotnetLaunchEnvironment
 
     /// <summary>
     /// The frameworks named by the program's <c>.runtimeconfig.json</c>: beside the executable (or the file a symlink to it ends at), or, for a
-    /// <c>dotnet tool</c> shim, in its <c>.store</c> (<c>.store/&lt;tool&gt;/&lt;version&gt;/&lt;tool&gt;/&lt;version&gt;/tools/&lt;tfm&gt;/any/</c>). Empty when there is none.
+    /// <c>dotnet tool</c> shim, the one of the program the shim runs (<see cref="ShimAppPath"/>: the path <c>dotnet tool install</c> wrote into it,
+    /// <c>.store/&lt;tool&gt;/&lt;version&gt;/&lt;tool&gt;/&lt;version&gt;/tools/&lt;tfm&gt;/any/&lt;program&gt;.dll</c>). When that path cannot be read, the newest
+    /// <c>.store</c> version is used, and if it was packed for several target frameworks (<c>tools/net8.0</c> and <c>tools/net9.0</c>) the
+    /// requirements of ALL of them are returned: not knowing which one runs, a root is only good enough when it has each (lsp-core-5 follow-up:
+    /// the first file found used to decide, by file-system order). Empty when there is none.
     /// </summary>
     internal static IReadOnlyList<RequiredFramework> RequiredFrameworks(string executable, string? rollForwardOverride = null)
     {
-        foreach (var config in RuntimeConfigCandidates(executable))
+        foreach (var group in RuntimeConfigCandidates(executable))
         {
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(config));
-                if (!doc.RootElement.TryGetProperty("runtimeOptions", out var options)) continue;
-                var rollForward = rollForwardOverride
-                    ?? (options.TryGetProperty("rollForward", out var rf) && rf.ValueKind == System.Text.Json.JsonValueKind.String ? rf.GetString() : null)
-                    ?? "Minor";
-                var result = new List<RequiredFramework>();
-                IEnumerable<System.Text.Json.JsonElement> frameworks = options.TryGetProperty("frameworks", out var many) && many.ValueKind == System.Text.Json.JsonValueKind.Array
-                    ? many.EnumerateArray()
-                    : options.TryGetProperty("framework", out var one) ? [one] : [];
-                foreach (var f in frameworks)
-                    if (f.TryGetProperty("name", out var n) && f.TryGetProperty("version", out var v) && ParseVersion(v.GetString()) is { } version)
-                        result.Add(new RequiredFramework(n.GetString() ?? "", version, rollForward));
-                return result;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException) { }
+            List<RequiredFramework>? all = null;
+            foreach (var config in group)
+                if (ReadRuntimeConfig(config, rollForwardOverride) is { } frameworks)
+                    foreach (var f in frameworks)
+                        if (!(all ??= []).Contains(f)) all.Add(f);
+            if (all is not null) return all;
         }
         return [];
     }
 
-    private static IEnumerable<string> RuntimeConfigCandidates(string executable)
+    private static List<RequiredFramework>? ReadRuntimeConfig(string config, string? rollForwardOverride)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(config));
+            if (!doc.RootElement.TryGetProperty("runtimeOptions", out var options)) return null;
+            var rollForward = rollForwardOverride
+                ?? (options.TryGetProperty("rollForward", out var rf) && rf.ValueKind == System.Text.Json.JsonValueKind.String ? rf.GetString() : null)
+                ?? "Minor";
+            var result = new List<RequiredFramework>();
+            IEnumerable<System.Text.Json.JsonElement> frameworks = options.TryGetProperty("frameworks", out var many) && many.ValueKind == System.Text.Json.JsonValueKind.Array
+                ? many.EnumerateArray()
+                : options.TryGetProperty("framework", out var one) ? [one] : [];
+            foreach (var f in frameworks)
+                if (f.TryGetProperty("name", out var n) && f.TryGetProperty("version", out var v) && ParseVersion(v.GetString()) is { } version)
+                    result.Add(new RequiredFramework(n.GetString() ?? "", version, rollForward));
+            return result;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException) { return null; }
+    }
+
+    /// <summary>Groups of runtimeconfig files, in order; within a group any one may be the program that runs (several target frameworks).</summary>
+    private static IEnumerable<IReadOnlyList<string>> RuntimeConfigCandidates(string executable)
     {
         foreach (var file in new[] { executable, FinalTarget(executable) }.Distinct(StringComparer.Ordinal))
         {
             var dir = Path.GetDirectoryName(file);
             if (string.IsNullOrEmpty(dir)) continue;
             var beside = Path.Combine(dir, Stem(file) + ".runtimeconfig.json");
-            if (File.Exists(beside)) yield return beside;
+            if (File.Exists(beside)) yield return [beside];
+            if (!Directory.Exists(Path.Combine(dir, ".store"))) continue;
+            if (ShimAppPath(file) is { } app)
+            {
+                var exact = Path.ChangeExtension(app, ".runtimeconfig.json");
+                if (File.Exists(exact)) { yield return [exact]; continue; } // the program the shim runs: nothing else matters
+            }
             var store = Path.Combine(dir, ".store", Stem(file).ToLowerInvariant());
             if (!Directory.Exists(store)) continue;
-            IEnumerable<string> found;
-            try
-            {
-                found = Directory.EnumerateDirectories(store).OrderByDescending(static d => ParseVersion(Path.GetFileName(d)) ?? new Version())
-                    .SelectMany(static d => SafeFiles(d, "*.runtimeconfig.json"));
-            }
+            string[] versions;
+            try { versions = Directory.EnumerateDirectories(store).OrderByDescending(static d => ParseVersion(Path.GetFileName(d)) ?? new Version()).ToArray(); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
-            foreach (var config in found) yield return config;
+            foreach (var version in versions)
+                if (SafeFiles(version, "*.runtimeconfig.json") is { Length: > 0 } configs) yield return configs;
         }
     }
 
-    private static IEnumerable<string> SafeFiles(string dir, string pattern)
+    private static string[] SafeFiles(string dir, string pattern)
     {
-        try { return Directory.EnumerateFiles(dir, pattern, new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 6, IgnoreInaccessible = true }).ToArray(); }
+        try
+        {
+            return Directory.EnumerateFiles(dir, pattern, new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 6, IgnoreInaccessible = true })
+                .Order(StringComparer.Ordinal).ToArray();
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+    }
+
+    /// <summary>An apphost is ~100 KB; anything much larger beside a <c>.store</c> is not a tool shim and is not read.</summary>
+    private const int MaxShimBytes = 4 * 1024 * 1024;
+
+    /// <summary>
+    /// The program a <c>dotnet tool</c> shim runs. The shim is an apphost: <c>dotnet tool install</c> wrote the path of the tool's <c>.dll</c> for the
+    /// target framework it chose into it (a NUL-terminated UTF-8 string, relative to the shim's directory, e.g.
+    /// <c>.store/csharp-ls/0.28.0/csharp-ls/0.28.0/tools/net10.0/any/CSharpLanguageServer.dll</c>). That is the file the .NET host loads, so its
+    /// runtimeconfig.json is the one that decides which runtime is needed. Null when <paramref name="shim"/> holds no such path.
+    /// </summary>
+    internal static string? ShimAppPath(string shim)
+    {
+        byte[] bytes;
+        try
+        {
+            var info = new FileInfo(shim);
+            if (!info.Exists || info.Length > MaxShimBytes) return null;
+            bytes = File.ReadAllBytes(shim);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
+
+        ReadOnlySpan<byte> marker = ".store"u8;
+        var span = bytes.AsSpan();
+        for (var from = 0; from < span.Length;)
+        {
+            var at = span[from..].IndexOf(marker);
+            if (at < 0) return null;
+            at += from;
+            from = at + marker.Length;
+            if (from >= span.Length || span[from] is not ((byte)'/' or (byte)'\\')) continue;
+            var length = span[at..].IndexOf((byte)0);
+            if (length is <= 0 or > 4096) continue;
+            var text = System.Text.Encoding.UTF8.GetString(span.Slice(at, length));
+            if (!text.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || text.Any(char.IsControl)) continue;
+            try { return Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(shim))!, text.Replace('\\', Path.DirectorySeparatorChar))); }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { continue; }
+        }
+        return null;
     }
 
     /// <summary>Whether <paramref name="root"/> has a version of every required framework that its roll-forward policy accepts.</summary>

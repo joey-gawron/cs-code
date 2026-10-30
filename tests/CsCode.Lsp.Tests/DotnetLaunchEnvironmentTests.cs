@@ -273,6 +273,94 @@ public class DotnetLaunchEnvironmentTests
         Assert.Equal(new Version(8, 0, 0), required.Version);
     }
 
+    /// <summary>
+    /// A tool packed for net8.0 and net9.0, installed as <c>fsautocomplete</c>: both runtimeconfigs in its .store, and a shim whose embedded app path
+    /// (as <c>dotnet tool install</c> writes it into the apphost) names <paramref name="runs"/>, or a shim without one (a script) when null.
+    /// </summary>
+    private static string MultiTargetToolShim(TempDirectory dir, string? runs)
+    {
+        var shim = dir.Combine("tools", "fsautocomplete");
+        Directory.CreateDirectory(Path.GetDirectoryName(shim)!);
+        if (runs is null) Executable(shim, "#!/bin/sh\n");
+        else
+        {
+            // apphost bytes around the placeholder: code before, the NUL-terminated relative path, padding and more code after
+            var embedded = $".store/fsautocomplete/0.70.0/fsautocomplete/0.70.0/tools/{runs}/any/fsautocomplete.dll";
+            byte[] bytes = [.. "\u007fELF\u0002\u0001"u8, .. new byte[300], .. "store.store.dll .store-ish"u8, 0, .. System.Text.Encoding.UTF8.GetBytes(embedded), .. new byte[700], .. "GLIBC_2.34"u8, 0];
+            File.WriteAllBytes(shim, bytes);
+        }
+        foreach (var (tfm, version) in new[] { ("net8.0", "8.0.0"), ("net9.0", "9.0.0") })
+        {
+            var any = dir.Combine("tools", ".store", "fsautocomplete", "0.70.0", "fsautocomplete", "0.70.0", "tools", tfm, "any");
+            Directory.CreateDirectory(any);
+            File.WriteAllText(Path.Combine(any, "fsautocomplete.runtimeconfig.json"),
+                $$"""{ "runtimeOptions": { "tfm": "{{tfm}}", "framework": { "name": "Microsoft.NETCore.App", "version": "{{version}}" } } }""");
+        }
+        return shim;
+    }
+
+    [Fact]
+    public void A_tool_shim_packed_for_several_frameworks_needs_the_one_its_embedded_path_runs()
+    {
+        // The reviewer's case: the shim runs the net9.0 build, the global runtime has only 8.0, the net8.0 runtimeconfig sorts first. Reading
+        // that one left DOTNET_ROOT unset ("You must install .NET"); the shim's own path says net9.0, so the dotnet on PATH (9.0) is used.
+        using var dir = new TempDirectory("cscode-dotnet-");
+        var global = FakeDotnetRootWith(dir, "global", "8.0.11");
+        var path = FakeDotnetRootWith(dir, "path", "9.0.1");
+        var shim = MultiTargetToolShim(dir, runs: "net9.0");
+
+        Assert.Equal(Path.Combine(dir.Path, "tools", ".store", "fsautocomplete", "0.70.0", "fsautocomplete", "0.70.0", "tools", "net9.0", "any", "fsautocomplete.dll"),
+            DotnetLaunchEnvironment.ShimAppPath(shim));
+        var required = Assert.Single(DotnetLaunchEnvironment.RequiredFrameworks(shim));
+        Assert.Equal(new Version(9, 0, 0), required.Version);
+
+        var env = Env(("PATH", path));
+        var log = new List<string>();
+        DotnetLaunchEnvironment.Apply(env, Def("fsautocomplete"), shim, null, [], log.Add, hostDefaultRoot: global);
+        Assert.Equal(path, env[Root]);
+        Assert.Contains(log, l => l.Contains("Microsoft.NETCore.App 9.0.0", StringComparison.Ordinal) && l.Contains("has it", StringComparison.Ordinal));
+
+        // and when it runs the net8.0 build, the global 8.0 is left to the host
+        using var dir8 = new TempDirectory("cscode-dotnet-");
+        var global8 = FakeDotnetRootWith(dir8, "global", "8.0.11");
+        var shim8 = MultiTargetToolShim(dir8, runs: "net8.0");
+        var env8 = Env(("PATH", FakeDotnetRootWith(dir8, "path", "9.0.1")));
+        DotnetLaunchEnvironment.Apply(env8, Def("fsautocomplete"), shim8, null, [], null, hostDefaultRoot: global8);
+        Assert.False(env8.ContainsKey(Root));
+    }
+
+    [Fact]
+    public void A_multi_framework_tool_whose_shim_cannot_be_read_needs_every_framework_it_was_packed_for()
+    {
+        using var dir = new TempDirectory("cscode-dotnet-");
+        var global = FakeDotnetRootWith(dir, "global", "8.0.11");
+        var both = FakeDotnetRootWith(dir, "both", "8.0.4", "9.0.1");
+        var shim = MultiTargetToolShim(dir, runs: null);
+        Assert.Null(DotnetLaunchEnvironment.ShimAppPath(shim));
+        var required = DotnetLaunchEnvironment.RequiredFrameworks(shim);
+        Assert.Equal([new Version(8, 0, 0), new Version(9, 0, 0)], required.Select(f => f.Version).Order().ToArray());
+        Assert.False(DotnetLaunchEnvironment.Satisfies(global, required)); // which build runs is unknown: 8.0 alone is not enough
+
+        var env = Env(("PATH", FakeDotnetRootWith(dir, "path", "9.0.1")));
+        DotnetLaunchEnvironment.Apply(env, Def("fsautocomplete"), shim, [both], [], null, hostDefaultRoot: global);
+        Assert.Equal(both, env[Root]);
+    }
+
+    [Fact]
+    public void The_embedded_app_path_of_a_real_dotnet_tool_shim_is_read()
+    {
+        var shim = new LspSettings().SearchDirs.SelectMany(d => new[] { "csharp-ls", "fsautocomplete", "dotnet-counters", "dotnet-trace" }.Select(t => Path.Combine(d, t)))
+            .FirstOrDefault(p => File.Exists(p) && Directory.Exists(Path.Combine(Path.GetDirectoryName(p)!, ".store")));
+        if (shim is null) { Assert.Skip("no dotnet tool shim is installed in the cscode.lsp.searchDirs (dotnet tool install --global csharp-ls)"); return; }
+        var app = DotnetLaunchEnvironment.ShimAppPath(shim);
+        Assert.NotNull(app);
+        Assert.True(File.Exists(app), $"{shim} names {app}, which does not exist");
+        Assert.Contains(Path.DirectorySeparatorChar + ".store" + Path.DirectorySeparatorChar, app, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.ChangeExtension(app, ".runtimeconfig.json")), $"no runtimeconfig.json beside {app}");
+        Assert.NotEmpty(DotnetLaunchEnvironment.RequiredFrameworks(shim));
+        TestContext.Current.SendDiagnosticMessage($"{shim} runs {app}");
+    }
+
     [Fact]
     public void A_server_that_is_not_a_dotnet_program_gets_no_DOTNET_ROOT()
     {
