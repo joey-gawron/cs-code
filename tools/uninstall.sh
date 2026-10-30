@@ -54,17 +54,24 @@ cscode_remove_version() {
     list="$dir/.cscode-install/files.tsv"
     [ -d "$dir" ] && [ ! -L "$dir" ] || return 0
     [ -f "$list" ] || { cscode_warn "$dir has no file list (.cscode-install/files.tsv); left in place"; return 1; }
-    local dirs=()
+    local dirs=() files=()
     while IFS=$'\t' read -r kind path; do
         case "$path" in ''|/*|..|../*|*/../*|*/..) continue ;; esac # only paths inside the version directory
         case "$kind" in
-            file) if [ -f "$dir/$path" ] || [ -L "$dir/$path" ]; then rm -f -- "$dir/$path"; fi ;;
+            file) files+=("$path") ;;
             dir) dirs+=("$path") ;;
         esac
     done < "$list"
+    # Every parent of a listed file is a listed directory: when none of them has become a symlink, no removal can reach outside the version.
+    local d f
+    for d in "${dirs[@]+"${dirs[@]}"}"; do
+        if [ -L "$dir/$d" ]; then cscode_warn "kept $dir: $d is now a symbolic link"; return 1; fi
+    done
+    for f in "${files[@]+"${files[@]}"}"; do
+        if [ -f "$dir/$f" ] || [ -L "$dir/$f" ]; then rm -f -- "$dir/$f"; fi
+    done
     rm -f -- "$list"
     # deepest first: a directory is removed once its listed contents are gone, and only when nothing else is in it
-    local d
     while IFS= read -r d; do
         [ -n "$d" ] && rmdir -- "$dir/$d" 2>/dev/null || true
     done < <(printf '%s\n' "${dirs[@]+"${dirs[@]}"}" | awk '{ print gsub("/", "/") "\t" $0 }' | sort -rn | cut -f2-)

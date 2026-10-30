@@ -50,6 +50,7 @@ function Read-Manifest {
 
 function Test-InUse([string] $Directory) {
     # A process whose executable lies under the version (the app, or an adapter it started).
+    if (-not (Test-Path -LiteralPath $Directory)) { return $false }
     $prefix = (Resolve-Path -LiteralPath $Directory).Path.TrimEnd('\') + '\'
     foreach ($p in Get-Process -ErrorAction SilentlyContinue) {
         try { if ($p.Path -and $p.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $true } } catch { }
@@ -133,6 +134,7 @@ try {
     if (-not $NoAdapters) {
         # Laid out as src\CsCode.Dap\Adapters\BundledAdapters.cs expects (the tools directory's layout under debug-adapters\); nothing is downloaded.
         $adapters = Join-Path $stage 'debug-adapters'
+        New-Item -ItemType Directory -Force -Path $adapters | Out-Null
         if ($NetCoreDbg) {
             $dir = if (Test-Path -LiteralPath $NetCoreDbg -PathType Leaf) { Split-Path -Parent $NetCoreDbg } else { $NetCoreDbg }
             if (Test-Path -LiteralPath (Join-Path $dir 'netcoredbg.exe')) { Copy-Item -LiteralPath $dir -Destination (Join-Path $adapters 'netcoredbg') -Recurse }

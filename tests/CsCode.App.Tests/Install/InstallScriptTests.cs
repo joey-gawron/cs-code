@@ -318,6 +318,25 @@ public sealed class InstallScriptTests
     }
 
     [Fact]
+    public async Task Uninstall_never_follows_a_folder_of_the_version_that_became_a_symbolic_link()
+    {
+        using var box = new InstallSandbox();
+        Ok(await box.InstallAsync("--from", box.FakePublish(), "--version", "1", "--no-adapters", "--no-tree-sitter", "--no-server-bundles"));
+        var outside = Path.Combine(box.Root, "precious");
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "data.txt"), "not the installer's");
+        var nested = Path.Combine(box.AppRoot, "1", "nested"); // listed in files.tsv with nested/data.txt
+        Directory.Delete(nested, recursive: true);
+        Directory.CreateSymbolicLink(nested, outside);
+
+        var run = await box.UninstallAsync();
+        Ok(run);
+        Assert.Contains("nested is now a symbolic link", run.Error);
+        Assert.Equal("not the installer's", File.ReadAllText(Path.Combine(outside, "data.txt")));
+        Assert.False(File.Exists(box.Launcher)); // the rest of the uninstall went ahead
+    }
+
+    [Fact]
     public async Task Uninstall_refuses_while_the_installed_app_runs()
     {
         using var box = new InstallSandbox();

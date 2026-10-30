@@ -133,6 +133,29 @@ public class AppIconTests
         finally { host.Window.SetRenderScaling(1); }
     }
 
+    /// <summary>The logo listens to its window's scaling while it is shown; taken out of the window, the window must not keep it alive.</summary>
+    [AvaloniaFact]
+    public void A_logo_removed_from_its_window_is_not_retained_by_the_window()
+    {
+        var host = new Avalonia.Controls.StackPanel();
+        var window = new Avalonia.Controls.Window { Content = host, Width = 200, Height = 100 };
+        window.Show();
+        try
+        {
+            TestDoubles.LeakAssert.NotRetained(() =>
+            {
+                var logo = new AppLogo { Width = 16, Height = 16 };
+                host.Children.Add(logo);
+                window.UpdateLayout();
+                Assert.Equal(16, logo.PixelSize);
+                host.Children.Remove(logo);
+                Dispatcher.UIThread.RunJobs();
+                return [logo];
+            });
+        }
+        finally { window.Close(); }
+    }
+
     private static WriteableBitmap Capture(RealAppHost host)
     {
         Dispatcher.UIThread.RunJobs();
