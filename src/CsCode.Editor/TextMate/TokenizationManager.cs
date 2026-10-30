@@ -39,6 +39,8 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
             if (e.Affects(TreeSitterService.SettingKey) || e.Affects(TreeSitterService.LegacySettingKey) || e.AffectedKeys.Any(k => k.StartsWith('[')))
                 OnEngineSettingChanged();
         }));
+        // Expand Selection, folding and the outline from the tree, for documents tree-sitter colours (a language server's providers rank first)
+        _subscriptions.Add(services.Features.Register(Core.Text.DocumentSelector.All, new TreeSitterLanguageFeatures(this, services.Features), "tree-sitter"));
         if (services.Commands is { } commands && !commands.Has(ClearQuarantineCommand))
             _subscriptions.Add(commands.Register(ClearQuarantineCommand, _ =>
             {
@@ -87,6 +89,19 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
     internal void Remove(TokenizationSession session)
     {
         lock (_gate) _sessions.Remove(session);
+    }
+
+    /// <summary>The session of <paramref name="document"/> (the editor's document, or another with its URI), or null when it has none.</summary>
+    internal TokenizationSession? SessionFor(Core.Text.ITextDocument document)
+    {
+        lock (_gate)
+        {
+            foreach (var s in _sessions)
+                if (ReferenceEquals(s.Document, document)) return s;
+            foreach (var s in _sessions)
+                if (s.Document.Uri == document.Uri) return s;
+            return null;
+        }
     }
 
     private void OnEngineSettingChanged()

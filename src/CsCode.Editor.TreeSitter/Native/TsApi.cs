@@ -189,6 +189,10 @@ internal static unsafe partial class TsApi
     [LibraryImport(Library)] public static partial TSNode ts_node_named_child(TSNode node, uint index);
     [LibraryImport(Library)] public static partial uint ts_node_descendant_count(TSNode node);
     [LibraryImport(Library)] public static partial TSNode ts_node_named_descendant_for_byte_range(TSNode node, uint start, uint end);
+    [LibraryImport(Library)] public static partial TSNode ts_node_descendant_for_byte_range(TSNode node, uint start, uint end);
+    [LibraryImport(Library)] public static partial TSNode ts_node_next_named_sibling(TSNode node);
+    [LibraryImport(Library)] public static partial TSNode ts_node_prev_named_sibling(TSNode node);
+    [LibraryImport(Library)] public static partial byte ts_node_is_extra(TSNode node);
     [LibraryImport(Library)] public static partial byte* ts_node_string(TSNode node);
 
     // ---- query ----

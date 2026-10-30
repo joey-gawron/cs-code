@@ -41,15 +41,24 @@ public static partial class QueryLoader
                 break;
             }
         }
-        if (path is null) return false;
-        string text;
-        try
+        string? text;
+        if (path is null)
         {
-            text = File.ReadAllText(path);
+            // no file anywhere: CsCode's own query of that kind, if it writes one (outline symbols, Vim text objects)
+            text = OwnQueries.Read(name, kind);
+            if (text is null) return false;
+            path = $"cscode:{name}/{kind}.scm";
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        else
         {
-            return false;
+            try
+            {
+                text = File.ReadAllText(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
         }
 
         if (followInherits)

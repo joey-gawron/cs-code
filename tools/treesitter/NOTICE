@@ -16,7 +16,8 @@ has one, is in licenses/<source>.txt.
    Copyright (c) 2018-2021 Max Brunsfeld under the MIT License), tree-sitter-erlang (WhatsApp), tree-sitter-hcl (tree-sitter-grammars).
 
 3. Queries (grammars/queries/<name>/*.scm): copied unmodified from nvim-treesitter (https://github.com/nvim-treesitter/nvim-treesitter,
-   runtime/queries/) at the commit named in bundle.json.
+   runtime/queries/) at the commit named in bundle.json, except tags.scm, which is the grammar project's own queries/tags.scm (under that
+   grammar's licence, above), concatenated as its tree-sitter.json lists them.
    Copyright The nvim-treesitter contributors. Licensed under the Apache License, Version 2.0 (the "License"); you may not use these files
    except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0 (also in
    licenses/nvim-treesitter.txt). Unless required by applicable law or agreed to in writing, software distributed under the License is

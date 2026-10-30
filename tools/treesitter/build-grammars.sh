@@ -139,6 +139,25 @@ for name in $(jq -r '.grammars[].name' "$manifest"); do
     [ -f "$tmp/grammars/queries/$name/highlights.scm" ] || { echo "build-grammars: no highlights.scm for $name" >&2; exit 1; }
 done
 
+# 5b. the grammar's own tags.scm (definitions for the outline when no language server runs), as its tree-sitter.json lists them; a path into
+#     node_modules/tree-sitter-X/ is that grammar's source here (TypeScript's tags = its own + JavaScript's). nvim-treesitter ships no tags.
+jq -r '.grammars[] | "\(.name) \(.source)"' "$manifest" | while read -r name source; do
+    src="$work/$source"
+    [ -f "$src/tree-sitter.json" ] || continue
+    paths=$(jq -r --arg n "$name" '.grammars[] | select((.name | gsub("-"; "_")) == $n) | .tags // empty | if type == "array" then .[] else . end' "$src/tree-sitter.json")
+    [ -n "$paths" ] || continue
+    out_tags="$tmp/grammars/queries/$name/tags.scm"
+    : >"$out_tags"
+    for p in $paths; do
+        case "$p" in
+            node_modules/tree-sitter-*/*) dep=${p#node_modules/}; file="$work/${dep%%/*}/${dep#*/}" ;;
+            *) file="$src/$p" ;;
+        esac
+        [ -f "$file" ] || { echo "build-grammars: $name: tags file $p not found" >&2; exit 1; }
+        { echo "; ---- $(basename "$(dirname "$(dirname "$file")")")/${file##*/} ($source)"; cat "$file"; echo; } >>"$out_tags"
+    done
+done
+
 # 6. bundle.json (what the app checks: target, ABI range, each file's digest) and the NOTICE
 grammars_json=$(for name in $(jq -r '.grammars[].name' "$manifest"); do
     read -r _ abi <"$work/$name.abi"

@@ -14,6 +14,11 @@
     <InternalsVisibleTo Include="CsCode.App.Tests" />
   </ItemGroup>
 
+  <!-- CsCode's own queries (outline symbols, Vim text objects): OwnQueries/<grammar>/<kind>.scm -->
+  <ItemGroup>
+    <EmbeddedResource Include="OwnQueries/**/*.scm" LogicalName="cscode.queries/$([System.String]::Copy('%(RecursiveDir)').Replace('\','/'))%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <!-- The bundle tools/treesitter/build-grammars.sh builds (git-ignored artifacts/tree-sitter/<rid>/: runtime, grammars, queries, licences,
        NOTICE, bundle.json) is copied as tree-sitter/ into the output and the publish folder of every project that references this one
        (the app, its tests). No bundle (the script was not run) = nothing is copied and the engine falls back to what the machine has. -->

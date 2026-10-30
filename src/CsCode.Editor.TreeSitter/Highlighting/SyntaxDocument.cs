@@ -26,7 +26,7 @@ namespace CsCode.Editor.TreeSitter.Highlighting;
 /// like TextMate's nested scopes. Injections (<c>injections.scm</c>: fenced code in Markdown, script/style in HTML, …) are parsed with
 /// included ranges and painted as layers on top, recursively up to <see cref="MaxInjectionDepth"/>.
 /// </summary>
-public sealed unsafe class SyntaxDocument : IDisposable
+public sealed unsafe partial class SyntaxDocument : IDisposable
 {
     public const int InputBufferChars = 8 * 1024;
     public const int MaxInjectionDepth = 4;
