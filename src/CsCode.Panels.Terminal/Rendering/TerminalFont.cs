@@ -53,11 +53,17 @@ internal sealed class TerminalFont
     public static TerminalFont Create(string families, double size, double lineHeight = 1, double letterSpacing = 0)
     {
         size = Math.Clamp(size, 4, 100);
-        foreach (var name in families.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        // The font manager answers a missing family with its default face, so a candidate counts only when the face it returns is that
+        // family (or, for the generic "monospace", any fixed-pitch face).
+        foreach (var raw in families.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Append("DejaVu Sans Mono").Append("Noto Sans Mono").Append("Liberation Mono").Append("monospace"))
         {
-            var family = new FontFamily(name.Trim('\'', '"'));
-            if (Face(family, FontWeight.Normal, FontStyle.Normal) is { } face && face.FamilyName.Length > 0 && Lookup(face, 'M') != 0)
-                return new TerminalFont(family, face, size, lineHeight, letterSpacing);
+            var name = raw.Trim('\'', '"');
+            var family = new FontFamily(name);
+            if (Face(family, FontWeight.Normal, FontStyle.Normal) is not { } face || Lookup(face, 'M') == 0) continue;
+            var matches = name.Equals("monospace", StringComparison.OrdinalIgnoreCase)
+                ? face.Metrics.IsFixedPitch
+                : face.FamilyName.Equals(name, StringComparison.OrdinalIgnoreCase) || face.TypographicFamilyName.Equals(name, StringComparison.OrdinalIgnoreCase);
+            if (matches) return new TerminalFont(new FontFamily(face.FamilyName), face, size, lineHeight, letterSpacing);
         }
         var fallback = FontFamily.Default;
         var regular = Face(fallback, FontWeight.Normal, FontStyle.Normal) ?? throw new InvalidOperationException("No font is available.");

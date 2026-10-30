@@ -85,16 +85,38 @@ public sealed class TerminalPanelRuntime : IDisposable
     public TerminalService Service { get; }
     public IUiDispatcher Ui { get; }
     internal IServiceProvider ServiceProvider => _sp;
-    public ICommandService? Commands => _sp.GetService<ICommandService>();
-    public IContextKeyService? Keys => _sp.GetService<IContextKeyService>();
-    public IKeybindingService? Bindings => _sp.GetService<IKeybindingService>();
-    public IConfigurationService? Config => _sp.GetService<IConfigurationService>();
-    public IWindowService? Window => _sp.GetService<IWindowService>();
-    public IClipboardService? Clipboard => _sp.GetService<IClipboardService>();
-    public INavigationService? Navigation => _sp.GetService<INavigationService>();
-    public IWorkspaceService? Workspace => _sp.GetService<IWorkspaceService>();
-    public IViewActivator? Views => _sp.GetService<IViewActivator>();
-    public IContributionRegistry? Contributions => _sp.GetService<IContributionRegistry>();
+    public ICommandService? Commands => Lazy(ref _commands);
+    public IContextKeyService? Keys => Lazy(ref _keys);
+    public IKeybindingService? Bindings => Lazy(ref _bindings);
+    public IConfigurationService? Config => Lazy(ref _config);
+    public IWindowService? Window => Lazy(ref _window);
+    public IClipboardService? Clipboard => Lazy(ref _clipboard);
+    public INavigationService? Navigation => Lazy(ref _navigation);
+    public IWorkspaceService? Workspace => Lazy(ref _workspace);
+    public IViewActivator? Views => Lazy(ref _views);
+    public IContributionRegistry? Contributions => Lazy(ref _contributions);
+
+    private ICommandService? _commands;
+    private IContextKeyService? _keys;
+    private IKeybindingService? _bindings;
+    private IConfigurationService? _config;
+    private IWindowService? _window;
+    private IClipboardService? _clipboard;
+    private INavigationService? _navigation;
+    private IWorkspaceService? _workspace;
+    private IViewActivator? _views;
+    private IContributionRegistry? _contributions;
+
+    /// <summary>
+    /// Resolved on first use (this object is built while the shell enumerates the tool windows, before most services can be built) and kept,
+    /// so views disposed while the container shuts down never ask a disposed provider.
+    /// </summary>
+    private T? Lazy<T>(ref T? field) where T : class
+    {
+        if (field is not null) return field;
+        try { return field = _sp.GetService<T>(); }
+        catch (ObjectDisposedException) { return null; }
+    }
 
     /// <summary>Font, colours or cursor settings changed: views re-read them (fires on any thread).</summary>
     public IEventSource<object?> AppearanceChanged => _appearance;

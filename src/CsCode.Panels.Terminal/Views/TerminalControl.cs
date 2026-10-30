@@ -35,6 +35,7 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
     private DisposableStore? _sessionSubs;
     private TerminalSession? _session;
     private TerminalSnapshot? _snapshot;
+    private TerminalSnapshot? _notified;
     private TerminalFont _font;
     private TerminalColors? _colors;
     private TerminalSelection? _selection;
@@ -129,7 +130,12 @@ public sealed class TerminalControl : Control, IClipboardTarget, IDisposable
                     new Size(Math.Max(0, bounds.Width), Math.Max(0, bounds.Height)));
                 if (_preedit is { Length: > 0 } preedit && snap.CursorY >= 0) DrawPreedit(context, snap, preedit);
             }
-            FrameDrawn?.Invoke(snap);
+            if (!ReferenceEquals(snap, _notified))
+            {
+                // other visuals (the scrollbar) must not change during the render pass: tell the view right after it
+                _notified = snap;
+                Dispatcher.UIThread.Post(() => { if (!_disposed) FrameDrawn?.Invoke(snap); });
+            }
         }
         else context.FillRectangle(_painter.Brush(_colors.Background), new Rect(bounds));
         session?.RequestFrame();
