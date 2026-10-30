@@ -44,6 +44,37 @@ public class BundledAdapterTests
         Assert.Equal(Path.Combine(install.Path, "debug-adapters"), BundledAdapters.Root(paths));
     }
 
+    /// <summary>
+    /// CsCode.app: the program is in <c>Contents/MacOS</c> and tools/package-macos.sh puts the adapters in <c>Contents/Resources/debug-adapters</c>
+    /// (below Contents/MacOS codesign takes <c>codelldb/v1.12.3</c> for a nested bundle and refuses the app). Before, only the program's own
+    /// folder was looked in, so the bundled adapters were never found and each session offered a download.
+    /// </summary>
+    [Fact]
+    public void A_macos_app_bundle_finds_the_adapters_in_its_resources_and_a_folder_beside_the_program_still_wins()
+    {
+        using var root = new TempDirectory("cscode-app-");
+        var program = root.Combine("CsCode.app", "Contents", "MacOS");
+        Directory.CreateDirectory(program);
+        using var paths = new TestAppPaths { InstallDir = program + Path.DirectorySeparatorChar }; // AppContext.BaseDirectory ends with a separator
+        var bundled = Bundle(root.Combine("CsCode.app", "Contents", "Resources"));
+        var platform = new DapPlatform { Paths = paths, Configuration = new TestConfigurationService() };
+        var env = NoVariables();
+
+        Assert.Equal(root.Combine("CsCode.app", "Contents", "Resources", "debug-adapters"), BundledAdapters.Root(paths));
+        Assert.Equal(bundled.NetCoreDbg, new NetCoreDbgAdapterFactory(platform) { PathVariable = () => null }.Locate());
+        Assert.Equal(bundled.JsDebug, new JsDebugAdapterFactory(platform) { Environment = n => env.GetValueOrDefault(n) }.Locate());
+        Assert.Equal(bundled.CodeLldb, new CodeLldbAdapterFactory(platform) { Environment = n => env.GetValueOrDefault(n) }.Locate());
+
+        var beside = Bundle(program).CodeLldb;
+        Assert.Equal(beside, BundledAdapters.CodeLldb(paths));
+
+        // only a bundle's Contents/MacOS looks in its Resources
+        using var plain = new TempDirectory("cscode-install-");
+        Bundle(Path.Combine(plain.Path, "Resources"));
+        using var plainPaths = new TestAppPaths { InstallDir = Path.Combine(plain.Path, "MacOS") };
+        Assert.Null(BundledAdapters.CodeLldb(plainPaths));
+    }
+
     [Fact]
     public void A_development_build_without_the_folder_finds_nothing_there()
     {

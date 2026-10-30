@@ -12,6 +12,12 @@ Everything below is already built one way (my pick first). Say a number and "swi
 3. **Install size**: one installed version is 437 MB (app 248, CodeLLDB 166, grammars 47, remote server bundles 14), and the previous version is kept for rollback (up to 2x).
    - (a) bundle CodeLLDB (pick) vs leave it out (-166 MB; Rust uses GDB, CodeLLDB is offered as a download on first use);
    - (b) keep one previous version (pick) vs none.
+
+   **Decided 2026-10-30**: debug adapters (netcoredbg, js-debug, CodeLLDB) are BUNDLED on both OSes; the download on first use stays as the
+   fallback for one a package lacks. Done: tools/package-macos.sh bundles them into CsCode.app as tools/install.sh does on Linux (from
+   `--netcoredbg`/`--js-debug`/`--codelldb` or `CSCODE_*`, else fetched by the pinned tools/fetch-*.sh into the shared `.scratch/tools`), in
+   `Contents/Resources/debug-adapters` (codesign refuses dotted folders such as `codelldb/v1.12.3` below `Contents/MacOS`), each executable and
+   library signed ad hoc before the bundle; the app finds them from its program in `Contents/MacOS`. The Mac app grows by about 155 MB.
 4. **Startup build**: ReadyToRun composite, 198 MB, 0.87 s cold start (pick), or per-assembly, 157 MB, 1.27 s. A tiny NativeAOT launcher would save another ~25 ms per `cscode` call: not done unless you want it.
 5. **Copy**: Ctrl+C copies plain text and "Copy with Formatting" copies HTML (pick), or every Ctrl+C also carries HTML like VS Code (`editor.copyWithSyntaxHighlighting`).
 6. **Sticky scroll**: off by default (pick; VS Code has it on). It is implemented and costs < 16 ms per scroll step.
@@ -42,4 +48,5 @@ Everything below is already built one way (my pick first). Say a number and "swi
 - "Open Remote Settings" command / a Remote tab in Settings (the remote machine settings file is edited by path for now).
 - A close-veto API so the terminal can say "asking / declined / proceeding" instead of the 3 s settle the background quit uses.
 - The status bar's indentation ignores `.editorconfig`.
-- Windows installer and macOS bundle scripts are written but untested (Linux only here).
+- Windows installer and macOS bundle scripts are written but untested (Linux only here). (The macOS scripts have since run on a Mac:
+  docs/handoff/macos-audit.md.)

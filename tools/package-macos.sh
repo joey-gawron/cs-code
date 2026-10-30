@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Packages CsCode for macOS, on a Mac: publishes the app (tools/publish-app.sh), builds the remote server bundles (tools/publish-server.sh),
-# assembles CsCode.app with them (tools/macos/make-app-bundle.sh: Info.plist with the document types, an .icns from assets/branding made with
-# sips and iconutil, an ad-hoc signature), checks it with plutil -lint and codesign --verify, and with --install puts the app in
-# ~/Applications and a `cscode` command on PATH.
+# gathers the debug adapters, assembles CsCode.app with them (tools/macos/make-app-bundle.sh: Info.plist with the document types, an .icns
+# from assets/branding made with sips and iconutil, an ad-hoc signature of the adapters' executables and of the bundle), checks it with
+# plutil -lint and codesign --verify, and with --install puts the app in ~/Applications and a `cscode` command on PATH.
 #
-#   tools/package-macos.sh [--rid osx-arm64|osx-x64]... [--from DIR] [--out DIR] [--server-bundles DIR | --no-server-bundles] [--no-sign]
+#   tools/package-macos.sh [--rid osx-arm64|osx-x64]... [--from DIR] [--out DIR] [--server-bundles DIR | --no-server-bundles]
+#                          [--netcoredbg PATH] [--js-debug PATH] [--codelldb PATH] [--no-adapters] [--no-sign]
 #                          [--install [--app-dir DIR] [--bin-dir DIR] [--force]]
 #
 #   --rid               a macOS runtime to package (repeatable; default: this Mac's, osx-arm64 on Apple silicon). Each goes to <out>/<rid>/CsCode.app.
@@ -12,6 +13,13 @@
 #   --out DIR           output directory (default: .scratch/macos)
 #   --server-bundles DIR  ship these remote server bundles (tools/publish-server.sh's output); default: built now (linux-x64 + portable)
 #   --no-server-bundles ship none (remote editing then needs remote.ssh.serverBundles)
+#   --netcoredbg PATH   netcoredbg to bundle: its executable or its folder (default: $CSCODE_NETCOREDBG, else the shared cache's
+#                       .scratch/tools/netcoredbg, fetched there now by tools/fetch-netcoredbg.sh when missing)
+#   --js-debug PATH     js-debug to bundle: dapDebugServer.js, the js-debug folder or the folder holding it (default: $CSCODE_JSDEBUG, else
+#                       .scratch/tools/js-debug/<version>, fetched by tools/fetch-js-debug.sh when missing)
+#   --codelldb PATH     CodeLLDB to bundle: its adapter, extension/ folder or install folder (default: $CSCODE_CODELLDB, else
+#                       .scratch/tools/codelldb/<version>, fetched by tools/fetch-codelldb.sh when missing)
+#   --no-adapters       bundle no debug adapter (the app offers the downloads when a debug session needs one)
 #   --no-sign           leave the bundle unsigned (Apple silicon will not start it)
 #   --install           copy the bundle for this Mac's runtime to the app directory and install the `cscode` command
 #   --app-dir DIR       where --install puts CsCode.app (default: ~/Applications; /Applications needs an administrator)
@@ -22,10 +30,17 @@
 # The osx runtime packs are not pinned (only linux-x64's are: tools/fetch-publish-packs.sh), so the publish takes the ones restore picks from
 # nuget.org (publish-app.sh --unpinned). The signature is ad hoc: the app runs on the Mac that built it; a copy for other Macs needs a
 # Developer ID signature and notarization (docs/handoff/macos-audit.md, pkg-2). Runs on macOS's bash 3.2.
+#
+# Debug adapters are bundled as tools/install.sh bundles them on Linux, in Contents/Resources/debug-adapters laid out as the app reads them
+# (src/CsCode.Dap/Adapters/BundledAdapters.cs), so the app debugs .NET, Node.js/TypeScript and Rust/C/C++ (CodeLLDB, the Mac's default) without
+# a download. A missing one is fetched into the shared cache (the main checkout's .scratch/tools) by the fetch scripts, which refuse anything
+# but the pinned versions and digests (the app's own); one that cannot be had, or is built for another architecture than the --rid, is left
+# out with a warning, and the app then offers its download when a session needs it. Only this Mac's architecture is fetched.
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 rids=""; from=""; out="$repo/.scratch/macos"; servers=""; no_servers=0; sign=1
+adapters=1; netcoredbg_src=""; jsdebug_src=""; codelldb_src=""
 install=0; app_dir="$HOME/Applications"; bin_dir=""; force=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -34,6 +49,10 @@ while [ $# -gt 0 ]; do
         --out) out=$2; shift 2 ;;
         --server-bundles) servers=$2; shift 2 ;;
         --no-server-bundles) no_servers=1; shift ;;
+        --netcoredbg) netcoredbg_src=$2; shift 2 ;;
+        --js-debug) jsdebug_src=$2; shift 2 ;;
+        --codelldb) codelldb_src=$2; shift 2 ;;
+        --no-adapters) adapters=0; shift ;;
         --no-sign) sign=0; shift ;;
         --install) install=1; shift ;;
         --app-dir) app_dir=$2; shift 2 ;;
@@ -45,6 +64,7 @@ while [ $# -gt 0 ]; do
 done
 
 die() { echo "package-macos.sh: $*" >&2; exit 1; }
+warn() { echo "package-macos.sh: warning: $*" >&2; }
 [ "$(uname -s)" = Darwin ] || die "run this on a Mac (it needs sips, iconutil, codesign and plutil); tools/macos/make-app-bundle.sh builds an unsigned bundle elsewhere"
 for tool in sips iconutil plutil ditto; do command -v "$tool" >/dev/null || die "$tool is required"; done
 [ "$sign" = 0 ] || command -v codesign >/dev/null || die "codesign is required (install the Xcode command line tools: xcode-select --install), or pass --no-sign"
@@ -64,17 +84,95 @@ elif [ -z "$servers" ]; then
     "$repo/tools/publish-server.sh" --out "$servers"
 fi
 
+# ------------------------------------------------------------------ debug adapters
+# Their sources, settled once: the option, else the variable, else the shared cache, fetched into it when missing (this Mac's architecture).
+# The pinned versions are the app's own (the bundled copies must sit where the adapter factories look).
+pinned() { sed -n 's/.*public const string Version = "\(v[0-9.]*\)".*/\1/p' "$repo/src/CsCode.Dap/Adapters/$1" | head -n1; }
+jsdebug_version=$(pinned JsDebugInstaller.cs)
+codelldb_version=$(pinned CodeLldbInstaller.cs)
+[ -n "$jsdebug_version" ] && [ -n "$codelldb_version" ] || die "cannot read the pinned js-debug/CodeLLDB versions from src/CsCode.Dap/Adapters"
+# Downloads and tools are shared by every worktree of the repository (the main checkout's .scratch), as tools/install.sh reads them.
+main=$repo
+common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+[ -n "$common" ] && [ -d "$(dirname "$common")" ] && main=$(dirname "$common")
+cache="$main/.scratch/tools"
+fetched() { # <name> <path in the cache> <fetch script> <its destination variable>=<dir>: the cached copy, fetched now when missing
+    if [ ! -e "$2" ]; then
+        echo "Fetching $1 into $cache (pinned version and digest)…" >&2 # stdout is the path
+        env "$4" bash "$repo/tools/$3" >&2 || { warn "$1: the fetch failed; not bundled"; return 1; }
+    fi
+    [ -e "$2" ] && printf '%s' "$2"
+}
+if [ "$adapters" = 1 ]; then
+    [ -n "$netcoredbg_src" ] || netcoredbg_src=${CSCODE_NETCOREDBG:-$(fetched netcoredbg "$cache/netcoredbg/netcoredbg" fetch-netcoredbg.sh "NETCOREDBG_DEST=$cache/netcoredbg" || true)}
+    [ -n "$jsdebug_src" ] || jsdebug_src=${CSCODE_JSDEBUG:-$(fetched "js-debug $jsdebug_version" "$cache/js-debug/$jsdebug_version/js-debug/src/dapDebugServer.js" fetch-js-debug.sh "JSDEBUG_DEST=$cache/js-debug" || true)}
+    [ -n "$codelldb_src" ] || codelldb_src=${CSCODE_CODELLDB:-$(fetched "CodeLLDB $codelldb_version" "$cache/codelldb/$codelldb_version/extension/adapter/codelldb" fetch-codelldb.sh "CODELLDB_DEST=$cache/codelldb" || true)}
+fi
+
+# Whether a Mach-O file runs on the runtime's architecture (a universal binary names each of its own).
+built_for() { case "$2" in osx-arm64) file -b "$1" | grep -q 'arm64' ;; osx-x64) file -b "$1" | grep -q 'x86_64' ;; esac; }
+# Each copies one adapter into the staging folder <stage>, laid out as BundledAdapters reads it (and as tools/install.sh writes it).
+stage_netcoredbg() { # <source> <stage> <rid>
+    local s=$1 dir
+    if [ -f "$s" ]; then dir=$(dirname "$s"); else dir=$s; fi
+    [ -f "$dir/netcoredbg" ] || { [ -f "$dir/netcoredbg/netcoredbg" ] && dir="$dir/netcoredbg"; }
+    [ -x "$dir/netcoredbg" ] || { warn "netcoredbg: $s holds no netcoredbg executable; not bundled"; return 1; }
+    # Its folder is copied whole (it needs its libraries), so it must BE netcoredbg's folder, not e.g. /usr/local/bin.
+    [ -f "$dir/libdbgshim.dylib" ] || [ -f "$dir/ManagedPart.dll" ] || { warn "netcoredbg: $dir does not look like netcoredbg's own folder; not bundled"; return 1; }
+    built_for "$dir/netcoredbg" "$3" || { warn "netcoredbg: $dir/netcoredbg is not built for $3; not bundled in its app"; return 1; }
+    mkdir -p "$2/netcoredbg" && ditto "$dir" "$2/netcoredbg" || die "netcoredbg: copying $dir failed"
+}
+stage_jsdebug() { # <source> <stage>
+    local s=$1 dir=""
+    if [ -f "$s" ] && [ "$(basename "$s")" = dapDebugServer.js ]; then dir=$(dirname "$(dirname "$s")")
+    elif [ -f "$s/src/dapDebugServer.js" ]; then dir=$s
+    elif [ -f "$s/js-debug/src/dapDebugServer.js" ]; then dir="$s/js-debug"
+    fi
+    [ -n "$dir" ] || { warn "js-debug: no src/dapDebugServer.js under $s; not bundled"; return 1; }
+    case "$(cd "$dir/.." && pwd)" in */v[0-9]*) [ "$(basename "$(cd "$dir/.." && pwd)")" = "$jsdebug_version" ] || { warn "js-debug: $dir is not $jsdebug_version (the version the app pins); not bundled"; return 1; } ;; esac
+    mkdir -p "$2/js-debug/$jsdebug_version/js-debug" && ditto "$dir" "$2/js-debug/$jsdebug_version/js-debug" || die "js-debug: copying $dir failed"
+}
+stage_codelldb() { # <source> <stage> <rid>
+    local s=$1 inst="" have="" f
+    if [ -f "$s" ] && [ "$(basename "$(dirname "$s")")" = adapter ]; then inst=$(cd "$(dirname "$s")/../.." && pwd)
+    elif [ -f "$s/adapter/codelldb" ]; then inst=$(cd "$s/.." && pwd)
+    elif [ -f "$s/extension/adapter/codelldb" ]; then inst=$s
+    fi
+    [ -n "$inst" ] && [ -x "$inst/extension/adapter/codelldb" ] || { warn "CodeLLDB: no extension/adapter/codelldb under $s; not bundled"; return 1; }
+    if [ -f "$inst/VERSION" ]; then have=$(tr -d ' \n\r' < "$inst/VERSION")
+    else have=v$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$inst/extension/package.json" 2>/dev/null | head -n1); fi
+    [ "$have" = "$codelldb_version" ] || { warn "CodeLLDB: $inst is ${have:-of unknown version}, the app pins $codelldb_version; not bundled"; return 1; }
+    built_for "$inst/extension/adapter/codelldb" "$3" || { warn "CodeLLDB: $inst is not built for $3; not bundled in its app"; return 1; }
+    mkdir -p "$2/codelldb/$codelldb_version/extension" && ditto "$inst/extension" "$2/codelldb/$codelldb_version/extension" || die "CodeLLDB: copying $inst failed"
+    for f in VERSION PLATFORM; do [ ! -f "$inst/$f" ] || cp -p "$inst/$f" "$2/codelldb/$codelldb_version/" || die "CodeLLDB: copying $f failed"; done
+}
+
 bundle_args=()
 [ "$sign" = 1 ] || bundle_args+=(--no-sign)
 [ -z "$servers" ] || bundle_args+=(--server-bundles "$servers")
 for rid in $rids; do
+    rid_args=()
+    stage="$out/.debug-adapters-$rid"
+    rm -rf "$stage"
+    if [ "$adapters" = 1 ]; then
+        bundled=""
+        if [ -n "$netcoredbg_src" ]; then stage_netcoredbg "$netcoredbg_src" "$stage" "$rid" && bundled="$bundled netcoredbg" || true
+        else warn "netcoredbg: none found (pass --netcoredbg or set CSCODE_NETCOREDBG); not bundled"; fi
+        if [ -n "$jsdebug_src" ]; then stage_jsdebug "$jsdebug_src" "$stage" && bundled="$bundled js-debug-$jsdebug_version" || true
+        else warn "js-debug: none found (pass --js-debug or set CSCODE_JSDEBUG); not bundled"; fi
+        if [ -n "$codelldb_src" ]; then stage_codelldb "$codelldb_src" "$stage" "$rid" && bundled="$bundled CodeLLDB-$codelldb_version" || true
+        else warn "CodeLLDB: none found (pass --codelldb or set CSCODE_CODELLDB); not bundled"; fi
+        echo "Debug adapters for $rid:${bundled:- none}"
+        [ ! -d "$stage" ] || rid_args+=(--debug-adapters "$stage")
+    fi
     if [ -n "$from" ]; then publish=$from
     else
         publish="$repo/.scratch/publish/$rid"
         "$repo/tools/publish-app.sh" --rid "$rid" --unpinned --out "$publish"
     fi
     # ${a[@]+...}: bash 3.2 calls an empty array unbound under set -u.
-    "$repo/tools/macos/make-app-bundle.sh" --rid "$rid" --from "$publish" --out "$out/$rid" ${bundle_args[@]+"${bundle_args[@]}"}
+    "$repo/tools/macos/make-app-bundle.sh" --rid "$rid" --from "$publish" --out "$out/$rid" ${bundle_args[@]+"${bundle_args[@]}"} ${rid_args[@]+"${rid_args[@]}"}
+    rm -rf "$stage"
     app="$out/$rid/CsCode.app"
     plutil -lint "$app/Contents/Info.plist"
     if [ "$sign" = 1 ]; then codesign --verify --deep --strict --verbose=1 "$app"; fi

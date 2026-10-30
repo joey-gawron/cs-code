@@ -439,9 +439,11 @@ desktop always has one, so the test provides its own.
 Windows (`tools/install.ps1`, untested): `%LOCALAPPDATA%\Programs\CsCode\<version>` with a `current` junction, `bin\cscode.cmd` on the user's
 PATH (it sets no `DOTNET_ROOT` either), a Start Menu shortcut, `install-manifest.json`, `-Uninstall`. macOS (`tools/package-macos.sh`, on a
 Mac: the publish with the osx packs restore picks, which are not pinned, and the server bundles, then `tools/macos/make-app-bundle.sh`):
-`CsCode.app` with the publish in `Contents/MacOS` (the server bundles in `Contents/MacOS/server-bundles`), `Info.plist` with the document
-types and `Resources/cscode.icns` (iconutil on a Mac; elsewhere `make-icns.py`: the committed PNGs as PNG icon types), signed ad hoc and
-verified; `--install` copies it to `~/Applications` and writes a `cscode` script that execs the bundle's binary into a directory on PATH
+`CsCode.app` with the publish in `Contents/MacOS` (the server bundles in `Contents/MacOS/server-bundles`), the debug adapters in
+`Contents/Resources/debug-adapters` (laid out as on Linux; `BundledAdapters` looks there from a program in `Contents/MacOS`, because codesign
+takes a dotted folder such as `codelldb/v1.12.3` below `Contents/MacOS` for a nested bundle), `Info.plist` with the document types and
+`Resources/cscode.icns` (iconutil on a Mac; elsewhere `make-icns.py`: the committed PNGs as PNG icon types), signed ad hoc (the adapters'
+executables and libraries one by one, then the bundle) and verified; `--install` copies it to `~/Applications` and writes a `cscode` script that execs the bundle's binary into a directory on PATH
 (README, "macOS").
 
 ## Tests

@@ -63,8 +63,14 @@ public sealed class PackagingTests
         var publish = box.FakePublish();
         File.WriteAllText(Path.Combine(publish, "cscode.deps.json"), "{\n  \"targets\": {\n    \".NETCoreApp,Version=v10.0/osx-arm64\": {\n      \"cscode/1.2.3\": {\n");
         var out1 = Path.Combine(box.Root, "out");
-        Ok(await box.ScriptAsync(Tool("macos", "make-app-bundle.sh"), ["--from", publish, "--out", out1, "--no-sign"]));
+        var adapters = Path.Combine(box.Root, "adapters"); // as tools/package-macos.sh stages them
+        Directory.CreateDirectory(Path.Combine(adapters, "codelldb", "v1.12.3", "extension", "adapter"));
+        File.WriteAllText(Path.Combine(adapters, "codelldb", "v1.12.3", "extension", "adapter", "codelldb"), "#!/bin/sh\n");
+        Ok(await box.ScriptAsync(Tool("macos", "make-app-bundle.sh"), ["--from", publish, "--out", out1, "--debug-adapters", adapters, "--no-sign"]));
         var app = Path.Combine(out1, "CsCode.app", "Contents");
+        // in Resources, where the app looks from Contents/MacOS: below Contents/MacOS codesign takes the dotted v1.12.3 for a nested bundle
+        Assert.True(File.Exists(Path.Combine(app, "Resources", "debug-adapters", "codelldb", "v1.12.3", "extension", "adapter", "codelldb")));
+        Assert.False(Directory.Exists(Path.Combine(app, "MacOS", "debug-adapters")));
         Assert.True(File.GetUnixFileMode(Path.Combine(app, "MacOS", "cscode")).HasFlag(UnixFileMode.UserExecute));
         Assert.True(File.Exists(Path.Combine(app, "MacOS", "nested", "data.txt")), "the whole publish is in Contents/MacOS");
         Assert.Equal("APPL????", File.ReadAllText(Path.Combine(app, "PkgInfo")));
