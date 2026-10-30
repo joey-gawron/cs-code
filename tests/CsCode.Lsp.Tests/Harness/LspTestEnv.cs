@@ -25,6 +25,8 @@ public sealed class FakeWorkspace : IWorkspaceService, IFileWatcher
     public IReadOnlyList<Uri> RecentFolders => [];
     public int ActiveWatches { get { lock (_watches) return _watches.Count; } }
     public List<(Uri Root, IReadOnlyList<string>? Exclude)> WatchRequests { get; } = new();
+    /// <summary>The <see cref="FileWatchWants"/> each watch was given (null: none), in the order of <see cref="WatchRequests"/>.</summary>
+    public List<FileWatchWants?> WatchWants { get; } = new();
 
     public void AddFolder(string path)
     {
@@ -47,11 +49,15 @@ public sealed class FakeWorkspace : IWorkspaceService, IFileWatcher
         yield break;
     }
 
-    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges)
+    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges) =>
+        Watch(root, recursive, excludeGlobs, onChanges, null);
+
+    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges, FileWatchWants? wants)
     {
         var entry = (root, onChanges);
         lock (_watches) _watches.Add(entry);
         WatchRequests.Add((root, excludeGlobs));
+        WatchWants.Add(wants);
         return Disposable.Create(() => { lock (_watches) _watches.Remove(entry); });
     }
 

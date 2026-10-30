@@ -151,6 +151,26 @@ public class DynamicRegistrationTests
     }
 
     [Fact]
+    public async Task A_watched_file_registration_inside_a_cache_directory_asks_the_folder_watch_for_its_base()
+    {
+        // rust-analyzer watches each build script's OUT_DIR, which lies in target/: Cargo tags that as a cache directory, which the folder's
+        // watch leaves out. The base is asked for as a wanted tree of the folder's watch (no watch of its own); a base outside such a part
+        // (here the folder itself) is not.
+        await using var env = new LspTestEnv();
+        env.Dir.WriteFile("target/CACHEDIR.TAG", "Signature: 8a477f597d28d172789f06886806bc55\n");
+        Directory.CreateDirectory(env.Dir.Combine("target", "debug", "build", "foo-1", "out"));
+        var (server, _) = await env.StartAsync();
+        var outDir = new Uri(env.Dir.Combine("target", "debug", "build", "foo-1", "out") + "/");
+        await Register(server, "w2", P.LspMethods.WorkspaceDidChangeWatchedFiles,
+            "{\"watchers\":[{\"globPattern\":{\"baseUri\":\"" + outDir.AbsoluteUri + "\",\"pattern\":\"**/*.rs\"}},{\"globPattern\":{\"baseUri\":\"" + env.Dir.Uri.AbsoluteUri + "\",\"pattern\":\"src/**/*.rs\"}}]}");
+        Assert.Equal(1, env.Workspace.ActiveWatches);
+        var wants = env.Workspace.WatchWants[^1];
+        Assert.NotNull(wants);
+        Assert.Equal([outDir.AbsoluteUri], wants.Trees.Select(static u => u.AbsoluteUri));
+        Assert.Empty(wants.Directories);
+    }
+
+    [Fact]
     public async Task Dynamic_executeCommand_registration_bridges_commands()
     {
         await using var env = new LspTestEnv();

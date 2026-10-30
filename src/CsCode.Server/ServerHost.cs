@@ -169,7 +169,7 @@ public sealed class ServerHost : IAsyncDisposable
         _clientGzip = p.Capabilities.Contains(RemoteProtocol.Capabilities.Gzip);
         _services.GetRequiredService<ServerTaskTerminals>().OnHello(p.Capabilities);
         _log.LogInformation("Client {Version} connected (mode {Mode}, connection {N})", p.ClientVersion, p.Mode, Connections);
-        List<string> capabilities = [RemoteProtocol.Capabilities.Gzip, RemoteProtocol.Capabilities.Watch, RemoteProtocol.Capabilities.Search, RemoteProtocol.Capabilities.Languages,
+        List<string> capabilities = [RemoteProtocol.Capabilities.Gzip, RemoteProtocol.Capabilities.Watch, RemoteProtocol.Capabilities.WatchWants, RemoteProtocol.Capabilities.Search, RemoteProtocol.Capabilities.Languages,
             RemoteProtocol.Capabilities.Debug, RemoteProtocol.Capabilities.Tasks];
         if (Terminal.Pty.PtyHosts.IsSupported) capabilities.Add(RemoteProtocol.Capabilities.Terminals);
         if (_stdio is null) capabilities.Add(RemoteProtocol.Capabilities.Persistent);

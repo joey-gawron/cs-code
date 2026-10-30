@@ -24,6 +24,9 @@ internal sealed class SchemeWatcher(string scheme, IFileWatcherProvider inner) :
     public string Scheme => scheme;
     public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges) =>
         inner.Watch(root, recursive, excludeGlobs, onChanges);
+
+    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges, FileWatchWants? wants) =>
+        inner.Watch(root, recursive, excludeGlobs, onChanges, wants);
 }
 
 internal sealed class SchemeSearch(string scheme, RemoteSearch inner) : IFileSearchProvider, ITextSearchProvider

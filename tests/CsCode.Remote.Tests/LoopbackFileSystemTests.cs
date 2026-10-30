@@ -197,6 +197,55 @@ public class LoopbackFileSystemTests
     }
 
     [Fact]
+    public async Task The_remote_watcher_carries_wanted_paths_to_the_server()
+    {
+        // The Explorer's watch of an ssh folder excludes node_modules/; the folder expanded there is asked for, with the watch and as it changes,
+        // and the server's watch reports it (and only it).
+        await using var host = new RemoteTestHost();
+        await host.ConnectAsync();
+        host.Workspace.WriteFile("node_modules/pkg/index.js", "1");
+        host.Workspace.WriteFile("node_modules/other/x.js", "1");
+        var batches = new List<FileChange>();
+        var wants = new FileWatchWants([host.Remote("node_modules/pkg/")], []);
+        using var watch = host.Services.GetRequiredService<IFileWatcher>().Watch(host.Remote(), true, ["**/node_modules/**"], changes => { lock (batches) batches.AddRange(changes); }, wants);
+        await ((RemoteWatcher.Handle)watch).Ready.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        bool Seen(string rel) { lock (batches) return batches.Any(c => c.Uri == host.Remote(rel)); }
+
+        host.Workspace.WriteFile("node_modules/other/no.js", "1");
+        host.Workspace.WriteFile("node_modules/pkg/yes.js", "1");
+        await TestEnv.WaitUntilAsync(() => Seen("node_modules/pkg/yes.js"), TimeSpan.FromSeconds(15), "the wanted folder's change");
+        await Task.Delay(300, Ct);
+        Assert.False(Seen("node_modules/other/no.js"));
+
+        await wants.SetAsync([host.Remote("node_modules/pkg/"), host.Remote("node_modules/other/")], []).WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        host.Workspace.WriteFile("node_modules/other/now.js", "1");
+        await TestEnv.WaitUntilAsync(() => Seen("node_modules/other/now.js"), TimeSpan.FromSeconds(15), "the folder asked for later");
+    }
+
+    [Fact]
+    public async Task Wanted_paths_changed_while_the_watch_is_being_armed_reach_the_server()
+    {
+        // The Explorer opens an ssh folder and restores its expanded folders at once: the wants change while watch/start is still out (the server
+        // answers once its walk is done). They must reach the server's watch, and SetAsync must not complete before they have.
+        await using var host = new RemoteTestHost();
+        await host.ConnectAsync();
+        host.Workspace.WriteFile("node_modules/pkg/index.js", "1");
+        host.Workspace.WriteFile("node_modules/other/x.js", "1");
+        var batches = new List<FileChange>();
+        var wants = new FileWatchWants();
+        using var watch = host.Services.GetRequiredService<IFileWatcher>().Watch(host.Remote(), true, ["**/node_modules/**"], changes => { lock (batches) batches.AddRange(changes); }, wants);
+        var ready = ((RemoteWatcher.Handle)watch).Ready;
+        var applied = wants.SetAsync([host.Remote("node_modules/other/")], []);
+        Assert.False(ready.IsCompleted);                                                                     // (the race this is about)
+        await applied.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        Assert.True(ready.IsCompleted);                                                                      // applied means armed with them
+        bool Seen(string rel) { lock (batches) return batches.Any(c => c.Uri == host.Remote(rel)); }
+
+        host.Workspace.WriteFile("node_modules/other/now.js", "1");
+        await TestEnv.WaitUntilAsync(() => Seen("node_modules/other/now.js"), TimeSpan.FromSeconds(15), "the folder asked for while the watch was armed");
+    }
+
+    [Fact]
     public async Task Calls_while_not_connected_fail_with_an_io_exception_naming_the_host()
     {
         await using var host = new RemoteTestHost();

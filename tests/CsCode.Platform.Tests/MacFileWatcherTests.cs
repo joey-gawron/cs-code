@@ -276,7 +276,7 @@ public class MacFileWatcherTests : IDisposable
         // overflow, not a dead watch: polling the root for the rest of the session would lose the real-time watch for good.
         Assert.SkipUnless(OperatingSystem.IsMacOS(), "FSEvents rescan requests");
         FswBackend? backend = null;
-        using var f = new WatchFixture(factory: (root, recursive, sink, fatal) => backend = new FswBackend(root, recursive, sink, fatal));
+        using var f = new WatchFixture(factory: (root, recursive, _, sink, fatal, _) => backend = new FswBackend(root, recursive, sink, fatal));
         var (events, h) = f.Start();
         await h.Ready;
 
@@ -297,8 +297,8 @@ public class MacFileWatcherTests : IDisposable
     {
         // files-9: a stream is always recursive, so watching ~ for ~/.zshrc would bring every event under ~/Library into the process.
         Assert.SkipUnless(OperatingSystem.IsMacOS(), "kqueue backend");
-        using var nonRecursive = OsWatchBackend.Create(_f.Temp.Path, recursive: false, (_, _, _) => { }, _ => { }, TimeSpan.FromSeconds(1));
-        using var recursive = OsWatchBackend.Create(_f.Temp.Path, recursive: true, (_, _, _) => { }, _ => { }, TimeSpan.FromSeconds(1));
+        using var nonRecursive = FileWatcher.DefaultBackend(_f.Temp.Path, recursive: false, _ => WatchVerdict.Watch, (_, _, _) => { }, _ => { }, () => { }, TimeSpan.FromSeconds(1));
+        using var recursive = FileWatcher.DefaultBackend(_f.Temp.Path, recursive: true, _ => WatchVerdict.Watch, (_, _, _) => { }, _ => { }, () => { }, TimeSpan.FromSeconds(1));
         Assert.IsType<KqueueDirectoryBackend>(nonRecursive);
         Assert.IsType<FswBackend>(recursive);
     }

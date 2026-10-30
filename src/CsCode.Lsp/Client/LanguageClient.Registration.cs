@@ -197,12 +197,38 @@ internal sealed partial class LanguageClient
         var exclude = _ctx.Services.Configuration?.Get<Dictionary<string, bool>>(SettingKeys.FilesWatcherExclude)?.Where(kv => kv.Value).Select(kv => kv.Key).ToArray();
         var store = new DisposableStore();
         foreach (var root in roots)
-            store.Add(watcher.Watch(root, true, exclude, changes => OnWatchedChanges(matchers, changes)));
+        {
+            var wants = WantedBases(root, matchers, exclude ?? WatchExclusion.DefaultExcludes);
+            store.Add(wants is null
+                ? watcher.Watch(root, true, exclude, changes => OnWatchedChanges(matchers, changes))
+                : watcher.Watch(root, true, exclude, changes => OnWatchedChanges(matchers, changes), wants));
+        }
         lock (_dynamicResources)
         {
             if (_dynamicResources.Remove(id, out var old)) old.Dispose();
             _dynamicResources[id] = store;
         }
+    }
+
+    /// <summary>
+    /// The bases of the RelativePattern watchers that lie where the folder's watch leaves things out — excluded by files.watcherExclude, or in a
+    /// cache directory: rust-analyzer watches each build script's OUT_DIR, <c>target/debug/build/&lt;crate&gt;/out</c>, and Cargo tags
+    /// <c>target/</c> as a cache directory. They are asked for as wanted trees: the folder's one OS watch walks down to them and watches them,
+    /// instead of all of <c>target/</c> or a watch of their own. Null when there are none. Reads the disk (a cache tag per ancestor).
+    /// </summary>
+    private static FileWatchWants? WantedBases(Uri root, List<WatchMatcher> matchers, IReadOnlyList<string> exclude)
+    {
+        if (!root.IsFile) return null; // a remote watch would ignore them
+        var rootPath = root.LocalPath;
+        List<Uri>? trees = null;
+        foreach (var m in matchers)
+        {
+            if (m.BasePath is not { } basePath) continue;
+            var rel = WatchExclusion.Relative(rootPath, basePath);
+            if (rel.Length == 0 || rel.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(rel)) continue; // the root itself, or outside it
+            if (WatchExclusion.IsInExcludedArea(rootPath, basePath, exclude)) (trees ??= []).Add(new Uri(Path.TrimEndingDirectorySeparator(basePath) + "/"));
+        }
+        return trees is null ? null : new FileWatchWants([], trees);
     }
 
     private void OnWatchedChanges(List<WatchMatcher> matchers, IReadOnlyList<FileChange> changes)

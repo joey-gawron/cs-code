@@ -271,21 +271,36 @@ public sealed class DiskFileSystem : IFileSystem
 /// <summary>Watcher double: tests call <see cref="Raise"/> to deliver a batch of changes to everything watching.</summary>
 public sealed class FakeFileWatcher : IFileWatcher
 {
-    private readonly List<(Uri Root, Action<IReadOnlyList<FileChange>> Handler)> _watches = new();
+    private readonly List<(Uri Root, IReadOnlyList<string>? Excludes, Action<IReadOnlyList<FileChange>> Handler, FileWatchWants? Wants)> _watches = new();
     public int ActiveWatches { get { lock (_watches) return _watches.Count; } }
     public IReadOnlyList<Uri> ActiveRoots { get { lock (_watches) return _watches.Select(w => w.Root).ToArray(); } }
+    /// <summary>The exclude globs each active watch passed (null = files.watcherExclude), in the order of <see cref="ActiveRoots"/>.</summary>
+    public IReadOnlyList<IReadOnlyList<string>?> ActiveExcludes { get { lock (_watches) return _watches.Select(w => w.Excludes).ToArray(); } }
+    /// <summary>The <see cref="FileWatchWants"/> each active watch was given (live: read its current paths), in the order of <see cref="ActiveRoots"/>.</summary>
+    public IReadOnlyList<FileWatchWants?> ActiveWants { get { lock (_watches) return _watches.Select(w => w.Wants).ToArray(); } }
 
-    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges)
+    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges) =>
+        Watch(root, recursive, excludeGlobs, onChanges, null);
+
+    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges, FileWatchWants? wants)
     {
-        var entry = (root, onChanges);
+        var entry = (root, excludeGlobs, onChanges, wants);
         lock (_watches) _watches.Add(entry);
         return Disposable.Create(() => { lock (_watches) _watches.Remove(entry); });
     }
 
     public void Raise(params FileChange[] changes)
     {
-        (Uri Root, Action<IReadOnlyList<FileChange>> Handler)[] snapshot;
+        (Uri Root, IReadOnlyList<string>? Excludes, Action<IReadOnlyList<FileChange>> Handler, FileWatchWants? Wants)[] snapshot;
         lock (_watches) snapshot = _watches.ToArray();
+        foreach (var w in snapshot) w.Handler(changes);
+    }
+
+    /// <summary>Delivers a batch to the watches of <paramref name="root"/> only (nested workspace folders each have their own).</summary>
+    public void RaiseTo(Uri root, params FileChange[] changes)
+    {
+        (Uri Root, IReadOnlyList<string>? Excludes, Action<IReadOnlyList<FileChange>> Handler, FileWatchWants? Wants)[] snapshot;
+        lock (_watches) snapshot = _watches.Where(w => w.Root == root).ToArray();
         foreach (var w in snapshot) w.Handler(changes);
     }
 }

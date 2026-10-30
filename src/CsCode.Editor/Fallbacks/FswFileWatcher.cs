@@ -6,13 +6,17 @@ namespace CsCode.Editor.Fallbacks;
 
 /// <summary>
 /// <see cref="IFileWatcher"/> over <see cref="FileSystemWatcher"/>, debounced (changes inside the window are coalesced per URI)
-/// and exclude-aware. Used when the Platform watcher is not registered. Disposing stops the OS watch and the timer.
+/// and exclude-aware. Used when the Platform watcher is not registered. Disposing stops the OS watch and the timer. Wanted paths
+/// (<see cref="FileWatchWants"/>) are reported although excluded; a FileSystemWatcher watches everything anyway.
 /// </summary>
 internal sealed class FswFileWatcher : IFileWatcher
 {
     private static readonly TimeSpan Debounce = TimeSpan.FromMilliseconds(80);
 
-    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges)
+    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges) =>
+        Watch(root, recursive, excludeGlobs, onChanges, null);
+
+    public IDisposable Watch(Uri root, bool recursive, IReadOnlyList<string>? excludeGlobs, Action<IReadOnlyList<FileChange>> onChanges, FileWatchWants? wants)
     {
         if (!root.IsFile) return Disposable.Empty;
         var path = root.LocalPath;
@@ -48,7 +52,7 @@ internal sealed class FswFileWatcher : IFileWatcher
 
         void Add(string fullPath, FileChangeKind kind)
         {
-            if (excludeGlobs is { Count: > 0 } && excludeGlobs.Any(g => Glob.IsMatch(g, fullPath))) return;
+            if (excludeGlobs is { Count: > 0 } && excludeGlobs.Any(g => Glob.IsMatch(g, fullPath)) && !Wanted(wants, fullPath)) return;
             lock (gate)
             {
                 if (disposed) return;
@@ -81,6 +85,18 @@ internal sealed class FswFileWatcher : IFileWatcher
             fsw.EnableRaisingEvents = false;
             fsw.Dispose();
         });
+    }
+
+    // An entry of a wanted directory (or that directory), or anything in a wanted tree.
+    private static bool Wanted(FileWatchWants? wants, string fullPath)
+    {
+        if (wants is null) return false;
+        var parent = Path.GetDirectoryName(fullPath);
+        foreach (var d in wants.Directories)
+            if (d.IsFile && Path.TrimEndingDirectorySeparator(d.LocalPath) is var dir && (dir == fullPath || dir == parent)) return true;
+        foreach (var t in wants.Trees)
+            if (t.IsFile && Path.TrimEndingDirectorySeparator(t.LocalPath) is var tree && (fullPath == tree || fullPath.StartsWith(tree + "/", StringComparison.Ordinal))) return true;
+        return false;
     }
 
     private static FileChangeKind Merge(FileChangeKind previous, FileChangeKind next) => (previous, next) switch

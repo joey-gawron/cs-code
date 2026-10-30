@@ -2,12 +2,16 @@ using CsCode.Core.Platform;
 
 namespace CsCode.Platform.Watching;
 
-internal enum RawKind { Created, Changed, Deleted, Renamed }
+/// <summary>
+/// What a backend (or the watcher's own scan) reports. <see cref="Announced"/>: found by the scan of a directory that appeared, or was re-armed,
+/// unseen — a creation, also after a Changed in the same window (the new watch saw a write to a file nobody had announced yet).
+/// </summary>
+internal enum RawKind { Created, Changed, Deleted, Renamed, Announced }
 
 /// <summary>
 /// Merges a burst of raw file events into the minimal set of changes, keyed by path:
 /// Created+Changed → Created · Created+Deleted → nothing · Changed+Changed → Changed · Changed+Deleted → Deleted ·
-/// Deleted+Created → Changed (the file was replaced) · Renamed(a→b) → Deleted(a) + Created(b).
+/// Deleted+Created → Changed (the file was replaced) · Renamed(a→b) → Deleted(a) + Created(b) · Announced is Created, and turns a Changed into Created.
 /// When a directory is deleted, events for everything below it in the same batch are dropped (the parent's deletion says it all).
 /// Bounded: past <see cref="MaxPaths"/> distinct paths it degrades to a single "something changed, rescan" marker instead of growing.
 /// Not thread-safe; the owner locks.
@@ -34,6 +38,10 @@ internal sealed class ChangeCoalescer
             case RawKind.Renamed:
                 if (oldPath is not null) Apply(oldPath, FileChangeKind.Deleted);
                 Apply(path, FileChangeKind.Created);
+                break;
+            case RawKind.Announced:
+                if (_pending.TryGetValue(path, out var prev) && prev == FileChangeKind.Changed) _pending[path] = FileChangeKind.Created;
+                else Apply(path, FileChangeKind.Created);
                 break;
         }
     }
