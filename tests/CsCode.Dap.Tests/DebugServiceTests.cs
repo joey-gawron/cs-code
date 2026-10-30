@@ -402,7 +402,10 @@ public class DebugServiceStopLocationTests
         Assert.Null(h.Service.StopLocation);
 
         await h.AdapterFor(0).SendStoppedAsync("breakpoint", threadId: 3);
-        await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+        // Wait for the NOTIFICATION, not the property: the property is published first and the subscribers are told right after, on the
+        // debug lane (see the next test), so a test that saw the property could find the list still empty (end-pass triage T3, seen once
+        // in a full run under heavy load: "Assert.Single() Failure: the collection was empty").
+        await SessionHarness.Eventually(() => { lock (locations) return locations.Count > 0; });
 
         var loc = h.Service.StopLocation!;
         Assert.Same(session, loc.Session);
@@ -412,6 +415,41 @@ public class DebugServiceStopLocationTests
         Assert.Equal("breakpoint", loc.Reason);
         Assert.Equal(DebugState.Stopped, h.Service.State);
         lock (locations) Assert.Equal(loc, Assert.Single(locations));
+    }
+
+    /// <summary>
+    /// The order T3's flake came from, made deterministic: the stop location is readable BEFORE its subscribers are told (a subscriber that
+    /// reads <see cref="IDebugService.StopLocation"/> in its handler sees the value it was told about), so "the property is set" does not
+    /// mean "every subscriber has run". A first subscriber that holds the lane keeps the second one waiting while the property is visible.
+    /// </summary>
+    [Fact]
+    public async Task The_stop_location_is_published_before_its_subscribers_are_told()
+    {
+        await using var h = new ServiceHarness();
+        using var release = new ManualResetEventSlim();
+        var seenInHandler = new List<(DebugStopLocation? Told, DebugStopLocation? Read)>();
+        var second = new List<DebugStopLocation?>();
+        h.Service.StopLocationChanged.Subscribe(l =>
+        {
+            lock (seenInHandler) seenInHandler.Add((l, h.Service.StopLocation));
+            if (l is not null) release.Wait(TimeSpan.FromSeconds(10));
+        });
+        h.Service.StopLocationChanged.Subscribe(l => { lock (second) second.Add(l); });
+        await h.StartAsync();
+
+        await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
+        await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+        lock (second) Assert.Empty(second); // what the old wait condition of the test above could observe
+        release.Set();
+        await SessionHarness.Eventually(() => { lock (second) return second.Count > 0; });
+
+        lock (seenInHandler)
+        {
+            var (told, read) = Assert.Single(seenInHandler);
+            Assert.NotNull(told);
+            Assert.Same(told, read);
+        }
+        lock (second) Assert.Same(h.Service.StopLocation, Assert.Single(second));
     }
 
     [Fact]
@@ -585,6 +623,7 @@ public class DebugServiceStopLocationTests
         var session = await h.StartAsync();
         await h.AdapterFor(0).SendStoppedAsync("breakpoint", 1);
         await SessionHarness.Eventually(() => h.Service.StopLocation is not null);
+        await h.Lane.Run(() => 0, Ct); // the stop's own notification has been delivered (it follows the property on the lane): not counted below
         var before = h.Service.StopLocation!;
         var published = new List<DebugStopLocation?>();
         h.Service.StopLocationChanged.Subscribe(l => { lock (published) published.Add(l); });
