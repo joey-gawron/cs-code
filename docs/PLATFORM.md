@@ -117,7 +117,8 @@ Layers, lowest to highest: **registered defaults → user `settings.json` → wo
   its environment or its search path is machine-scoped, so a cloned repository's `.vscode/settings.json` cannot start anything through settings:
   `cscode.languageServers.*.command|args|env|workingDirectory`, `cscode.lsp.searchDirs`, `cscode.debuggers`, `cscode.debug.{netcoredbg,jsDebug,node,gdb,codelldb}Path`,
   `cscode.debug.gdbArgs`, `terminal.integrated.{profiles,defaultProfile,env}.<os>` (+ `inheritEnv`, application), every `remote.ssh.*`, `remote.docker.path`,
-  `remote.wsl.path` (`cscode.languageHost` is application-scoped). The audit list is `SettingScopeTests.ProgramSettings` (Remote.Tests); the remote server
+  `remote.wsl.path`, `vim.vimrc.path` and the ten `vim.*ModeKeyBindings*` settings (a binding's `commands` run any command on a key press)
+  (`cscode.languageHost` is application-scoped). The audit list is `SettingScopeTests.ProgramSettings` (Remote.Tests); the remote server
   registers the terminal and debugger scopes itself (it has no TerminalService/DebugService). A module must register an executable setting machine-scoped
   **before** it first reads it; an unregistered key is window-scoped. Not covered by scopes (Workspace Trust territory, not implemented): `tasks.json` and
   `launch.json` run commands by design, and language servers themselves execute project content (rust-analyzer build scripts and proc macros, a project's
