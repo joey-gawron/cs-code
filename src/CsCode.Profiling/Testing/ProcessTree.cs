@@ -1,7 +1,14 @@
 namespace CsCode.Profiling.Testing;
 
 /// <summary>A process of the tree under this one, with its resident set.</summary>
-public sealed record ProcessTreeEntry(int Pid, int ParentPid, string Name, long ResidentBytes);
+public sealed record ProcessTreeEntry(int Pid, int ParentPid, string Name, long ResidentBytes)
+{
+    /// <summary>
+    /// A readable label: the program and, for interpreters (node, python, dotnet), the script it runs — node renames its main thread, so
+    /// <see cref="Name"/> (the kernel's comm) says "MainThread" for every node process.
+    /// </summary>
+    public string Label => ProcessTree.Label(Pid) ?? Name;
+}
 
 /// <summary>
 /// The processes below a pid (Linux <c>/proc</c>: every process's <c>stat</c> parent field), with their resident sets — so a budget can count the
@@ -40,6 +47,19 @@ public static class ProcessTree
             }
         }
         return result;
+    }
+
+    internal static string? Label(int pid)
+    {
+        try
+        {
+            var args = File.ReadAllText($"/proc/{pid}/cmdline").Split('\0', StringSplitOptions.RemoveEmptyEntries);
+            if (args.Length == 0) return null;
+            var program = Path.GetFileName(args[0]);
+            var script = args.Skip(1).FirstOrDefault(a => !a.StartsWith('-'));
+            return program is "node" or "python3" or "python" or "dotnet" && script is not null ? program + " " + Path.GetFileName(script) : program;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
     /// <summary>VmRSS of a process (bytes), 0 when it is gone or a zombie.</summary>

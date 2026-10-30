@@ -201,7 +201,7 @@ public static class Program
             ["nativeAnonMb"] = RunMetrics.Mb(breakdown.NativeAnonymousBytes),
             ["threads"] = d.ThreadCount,
             ["childrenRssMb"] = RunMetrics.Mb(children.Sum(c => c.ResidentBytes)),
-            ["children"] = string.Join(", ", children.GroupBy(c => c.Name).Select(g => $"{g.Key}×{g.Count()} {RunMetrics.Mb(g.Sum(c => c.ResidentBytes))} MB")),
+            ["children"] = string.Join(", ", children.GroupBy(c => c.Label).Select(g => $"{g.Key}×{g.Count()} {RunMetrics.Mb(g.Sum(c => c.ResidentBytes))} MB")),
             ["appRssAfterIdleTrimMb"] = RunMetrics.Mb(trimmed.WorkingSetAfter),
             ["gcHeapAfterIdleTrimMb"] = RunMetrics.Mb(trimmed.GcHeapAfter),
             ["regions"] = string.Join("; ", breakdown.Regions.Take(8).Select(r => $"{r.Name} {RunMetrics.Mb(r.ResidentBytes)}")),
