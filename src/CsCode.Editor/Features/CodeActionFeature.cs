@@ -30,6 +30,9 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
     private readonly Border _bulb;
     private readonly Shape _bulbShape;
     private CancellationTokenSource? _bulbCts, _debounce;
+    /// <summary>A provider offered actions for the caret line: the bulb is placed (or hidden while its spot is off screen) until the caret or the text changes.</summary>
+    private bool _offered;
+    private bool _relayoutPosted;
     private bool _disposed;
 
     public CodeActionFeature(CodeEditorControl view)
@@ -51,10 +54,12 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
         _d.Add(view.Controller.CaretChanged.Subscribe(_ => ScheduleBulb()));
         _d.Add(view.Document.Changed.Subscribe(_ => HideBulb()));
         view.TextView.ScrollOffsetChanged += OnScrolled;
+        view.TextView.VisualLinesChanged += OnVisualLinesChanged;
         _d.Add(Disposable.Create(() =>
         {
             _bulb.PointerPressed -= OnBulbPressed;
             view.TextView.ScrollOffsetChanged -= OnScrolled;
+            view.TextView.VisualLinesChanged -= OnVisualLinesChanged;
         }));
     }
 
@@ -87,6 +92,7 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
     private void HideBulb()
     {
         _bulbCts?.Cancel();
+        _offered = false;
         _bulb.IsVisible = false;
     }
 
@@ -102,6 +108,7 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
         var actions = await GatherAsync(null, CodeActionTriggerKind.Automatic, cts.Token).ConfigureAwait(true);
         if (_disposed || cts.IsCancellationRequested || _v.Document.Version != version || _v.Controller.Caret.Line != caretLine) return;
         if (actions.Count == 0 || actions.All(a => a.Action.DisabledReason is not null)) return;
+        _offered = true;
         PositionBulb(caretLine);
     }
 
@@ -109,46 +116,98 @@ internal sealed class CodeActionFeature : ICodeActionFeature, IThemeAware, IDisp
     /// The lightbulb never sits in the breakpoint margin: a click there must always set a breakpoint (reported from the desktop: the bulb of the
     /// caret line covered the whole 18 px glyph column, so the first click opened the code actions instead). It goes where VS Code draws it, in
     /// the text: into the caret line's indentation when that is wide enough, else into the line just above or below when that one is blank or
-    /// indented enough, and otherwise into the folding column right against the text.
+    /// indented enough, and otherwise into the folding column right against the text, but never left of the glyph margin's right edge (with
+    /// line numbers off and a small font that column is narrower than the 18 px bulb).
+    /// Everything is measured on screen, not in the document (review of that change): the text starts at the text view's left edge, not at
+    /// column 0, which scrolls off to the left with a long line and takes the indentation with it (the bulb landed over the gutter, or off the
+    /// editor), so only indentation right of that edge is room; a neighbouring line counts only on a row of its own (a line hidden in a
+    /// collapsed fold reports its fold header's row, whose text the bulb then covered) that lies wholly in the view (with the caret line the
+    /// first visible row the bulb went above it, clipped, and still counted as shown). It shows whenever the caret line's row is wholly in
+    /// view, and is then kept inside the view (review of that fix, which decided from the bulb's own rectangle: a row is often shorter than
+    /// the bulb, at font 14 about 16.3 px against 18, so the bulb reaches below its row, and on the last row, where Down or a click on a
+    /// half-shown row leaves the caret line with its bottom on the view's, it reached below the view and hid).
     /// </summary>
     private void PositionBulb(int line)
     {
+        var textView = _v.TextView;
+        var overlay = _v.Overlay;
+        var view = new Rect(textView.TranslatePoint(default, overlay) ?? default, textView.Bounds.Size);
         var (top, bottom) = OverlayPopup.AnchorFor(_v, new TextPosition(line, 0));
+        if (!OwnRow(line) || !InView(top.Y, bottom.Y))
+        {
+            _bulb.IsVisible = false; // the caret line is folded away itself (its row is another line's), scrolled out, or only partly in view
+            return;
+        }
+        var glyph = _v.Feature<DebugFeature>()?.Margin;
+        var floor = (glyph is null ? _v.TextArea.TranslatePoint(default, overlay) : glyph.TranslatePoint(new Point(glyph.Bounds.Width, 0), overlay))?.X ?? 0;
         var height = bottom.Y - top.Y;
-        var textLeft = top.X;
-        var x = textLeft + 1;
-        var y = top.Y + Math.Max(0, (height - _bulb.Height) / 2);
+        var x = view.Left + 1;
+        var y = Middle(top.Y, bottom.Y);
         if (!Fits(line))
         {
             if ((Neighbour(line - 1) ?? Neighbour(line + 1)) is { } other) y = other;
-            else x = textLeft - _bulb.Width;
+            else x = view.Left - _bulb.Width;
         }
+        x = Math.Max(x, floor);
+        if (view.Height >= _bulb.Height) y = Math.Clamp(y, view.Top, view.Bottom - _bulb.Height); // its row is in view: so is all of the bulb
         Canvas.SetLeft(_bulb, x);
         Canvas.SetTop(_bulb, y);
-        _bulb.IsVisible = top.Y >= -1 && bottom.Y <= _v.Overlay.Bounds.Height + 1;
+        _bulb.IsVisible = true;
 
-        // Blank, or indented by at least the bulb's width: the bulb covers no text there.
+        double Middle(double t, double b) => t + Math.Max(0, (b - t - _bulb.Height) / 2);
+
+        bool InView(double from, double to) => from >= view.Top - 1 && to <= view.Bottom + 1;
+
+        // Blank, or indented by at least the bulb's width right of the text view's left edge: the bulb covers no text there.
         bool Fits(int l)
         {
             var text = _v.Document.GetLineText(l);
             var indent = text.Length - text.TrimStart(' ', '\t').Length;
             if (indent == text.Length) return true;
-            return indent > 0 && OverlayPopup.AnchorFor(_v, new TextPosition(l, indent)).Top.X - textLeft >= _bulb.Width + 2;
+            return indent > 0 && OverlayPopup.AnchorFor(_v, new TextPosition(l, indent)).Top.X - view.Left >= _bulb.Width + 2;
         }
 
-        // A line next to the caret line on screen (not one hidden in a fold, nor a wrapped line's far end) where the bulb fits.
+        // Shown on a row of its own: a line inside a collapsed fold has none (its visual line is the fold header's, and so is its position).
+        bool OwnRow(int l)
+        {
+            var documentLine = textView.Document.GetLineByNumber(l + 1);
+            if (textView.GetOrConstructVisualLine(documentLine).FirstDocumentLine != documentLine) return false;
+            return _v.Feature<FoldingFeature>() is not { } folding || !folding.TryGetClosedFold(l, out var start, out _) || start == l;
+        }
+
+        // A line next to the caret line on screen (not one hidden in a fold, nor a wrapped line's far end) where the bulb fits, with its row
+        // wholly in the view (the bulb on it is kept inside the view like the caret line's).
         double? Neighbour(int candidate)
         {
-            if (candidate < 0 || candidate >= _v.Document.LineCount || !Fits(candidate)) return null;
+            if (candidate < 0 || candidate >= _v.Document.LineCount || !OwnRow(candidate) || !Fits(candidate)) return null;
             var (t, b) = OverlayPopup.AnchorFor(_v, new TextPosition(candidate, 0));
-            if (Math.Abs(Math.Abs(t.Y - top.Y) - height) > 1) return null;
-            return t.Y + Math.Max(0, (b.Y - t.Y - _bulb.Height) / 2);
+            if (Math.Abs(Math.Abs(t.Y - top.Y) - height) > 1 || !InView(t.Y, b.Y)) return null;
+            return Middle(t.Y, b.Y);
         }
     }
 
+    /// <summary>The bulb follows its line, and shows again when that line comes back into view: it is offered until the caret or the text changes, not only while shown.</summary>
     private void OnScrolled(object? sender, EventArgs e)
     {
-        if (_bulb.IsVisible && !_disposed) PositionBulb(_v.Controller.Caret.Line);
+        if (_offered && !_disposed) PositionBulb(_v.Controller.Caret.Line);
+    }
+
+    /// <summary>
+    /// The text view was laid out again with the caret and the scroll offset unchanged — a fold opened or closed above the caret line, line
+    /// numbers or the font size changed, Ctrl+wheel zoom — so the caret line's row or the text's left edge may have moved from under the bulb
+    /// (review: it stayed where it was, over the text or the line numbers). This fires from the text view's measure, before the margins are
+    /// arranged, so the bulb is placed (or hidden) once that layout pass is over; coalesced, and nothing at all while no bulb is offered (every
+    /// keystroke lays the text view out again, and typing hides the bulb).
+    /// </summary>
+    private void OnVisualLinesChanged(object? sender, EventArgs e)
+    {
+        if (!_offered || _disposed || _relayoutPosted) return;
+        _relayoutPosted = true;
+        _v.Post(() =>
+        {
+            _relayoutPosted = false;
+            if (_offered && !_disposed) PositionBulb(_v.Controller.Caret.Line);
+        });
     }
 
     private void OnBulbPressed(object? sender, PointerPressedEventArgs e)
