@@ -88,7 +88,7 @@ public class R4Tests
         Assert.Equal(first.InstanceId, second.InstanceId); // the same server process: resumed
         Assert.Equal(first.ProcessId, second.ProcessId);
 
-        var screen = await TerminalProbe.WaitForTextAsync(t, "got-typed-while-down", TimeSpan.FromSeconds(60));
+        var screen = await TerminalProbe.WaitForTextAsync(t, "\ngot-typed-while-down", TimeSpan.FromSeconds(60)); // the output, not the echo
         var lines = Regex.Matches(screen, @"^line-(\d+)$", RegexOptions.Multiline).Select(m => int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
         Assert.True(Enumerable.Range(1, 300).SequenceEqual(lines), // every line once, in order: nothing lost, nothing replayed twice
             $"missing: {string.Join(',', Enumerable.Range(1, 300).Except(lines))}; repeated: {string.Join(',', lines.GroupBy(l => l).Where(g => g.Count() > 1).Select(g => g.Key))}; count {lines.Length}\n{screen}");
