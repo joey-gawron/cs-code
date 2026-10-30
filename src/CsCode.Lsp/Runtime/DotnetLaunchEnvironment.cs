@@ -44,15 +44,19 @@ public static class DotnetLaunchEnvironment
     /// <param name="log">Receives one <c>[client]</c> line when DOTNET_ROOT is provided (or could not be), and why.</param>
     public static void Apply(IDictionary<string, string?> environment, LanguageServerDefinition definition, string executable,
         IReadOnlyList<string>? searchDirs, Action<string>? log = null) =>
-        Apply(environment, definition, executable, searchDirs, DefaultFallbackRoots(), log, HostDefaultRoot());
+        Apply(environment, definition, executable, searchDirs, DefaultFallbackRoots(), log, HostDefaultRoot(), prependRootToPath: OperatingSystem.IsMacOS());
 
     /// <param name="hostDefaultRoot">
     /// Where the .NET host looks by itself when DOTNET_ROOT is unset (<see cref="HostDefaultRoot"/>; null: nowhere usable). lsp-core-5: rule 2 used to
     /// set DOTNET_ROOT even then, which on Linux makes the host look ONLY there: a distro or global runtime that served the server before was
     /// replaced by whatever dotnet came first on PATH, which may lack the server's framework.
     /// </param>
+    /// <param name="prependRootToPath">
+    /// lsp-3 (macOS): a DOTNET_ROOT provided here is also put first on the server's PATH (unless the definition's <c>env</c> sets PATH), so the
+    /// <c>dotnet</c> the server runs itself (csharp-ls loading MSBuild) is the installation it runs on, also when CsCode's PATH has none.
+    /// </param>
     internal static void Apply(IDictionary<string, string?> environment, LanguageServerDefinition definition, string executable,
-        IReadOnlyList<string>? searchDirs, IEnumerable<string> fallbackRoots, Action<string>? log, string? hostDefaultRoot = null)
+        IReadOnlyList<string>? searchDirs, IEnumerable<string> fallbackRoots, Action<string>? log, string? hostDefaultRoot = null, bool prependRootToPath = false)
     {
         if (definition.Env is { } own && (own.ContainsKey(RootVariable) || own.ContainsKey(ArchRootVariable))) return;
 
@@ -88,6 +92,12 @@ public static class DotnetLaunchEnvironment
         if (chosen is not null)
         {
             environment[RootVariable] = chosen;
+            if (prependRootToPath && definition.Env?.ContainsKey("PATH") != true)
+            {
+                var path = Get(environment, "PATH");
+                if (!(path ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).Any(d => SameDirectory(d, chosen)))
+                    environment["PATH"] = path is null ? chosen : chosen + Path.PathSeparator + path;
+            }
             log?.Invoke($"[client] {definition.Command} is a .NET program{need} and DOTNET_ROOT is not set: using {chosen} ({reason})");
         }
         else log?.Invoke($"[client] {definition.Command} is a .NET program{need}, DOTNET_ROOT is not set and no dotnet was found (PATH, cscode.lsp.searchDirs, ~/.dotnet)");

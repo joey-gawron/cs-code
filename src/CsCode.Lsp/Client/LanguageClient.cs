@@ -170,7 +170,13 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         {
             var cwd = RootFolder ?? Definition.WorkingDirectory;
             var log = _log; // capture the log only: a callback held by the transport must not keep the whole client alive
-            var launch = Definition with { Args = LaunchVariables.Expand(Definition.Args, RootFolder) };
+            // the login shell's environment first (macOS, started from the Dock: lsp-1): PATH lookup and ${env:NAME} read CsCode's environment
+            await LoginShellEnvironment.WaitAsync(ct).ConfigureAwait(false);
+            var launch = Definition with
+            {
+                Args = LaunchVariables.Expand(Definition.Args, RootFolder),
+                Env = LaunchVariables.ExpandEnvironment(Definition.Env, RootFolder),
+            };
             var connection = await _ctx.Connections.ConnectAsync(
                 new LspLaunchRequest(launch, _ctx.Services.Paths?.ToolsDir, Definition.WorkingDirectory ?? cwd, settings.Priority, line => log.Add(line), settings.CpuQuotaPercent,
                     settings.SearchDirs, BuiltinLanguageServers.AlternativesFor(Definition)), ct).ConfigureAwait(false);

@@ -19,9 +19,13 @@ public static class ToolResolver
         ]
         : OperatingSystem.IsMacOS()
             ?
+            // Homebrew (Apple Silicon, Intel), MacPorts, Nix; Go's own bin; the dotnet installer's root (lsp-3); keg-only Homebrew llvm for clangd
+            // (lsp-4); Node, Ruby and Python version managers' shims (lsp-5)
             [
-                "/opt/homebrew/bin", "/usr/local/bin", "~/.nix-profile/bin", "/nix/var/nix/profiles/default/bin", "~/.cargo/bin", "~/.local/bin",
-                "~/go/bin", "~/.dotnet/tools", "~/Library/Application Support/Coursier/bin", "~/.ghcup/bin",
+                "/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "~/.nix-profile/bin", "/nix/var/nix/profiles/default/bin", "~/.cargo/bin",
+                "~/.local/bin", "~/go/bin", "/usr/local/go/bin", "~/.dotnet/tools", "/usr/local/share/dotnet", "/opt/homebrew/opt/llvm/bin",
+                "/usr/local/opt/llvm/bin", "~/.volta/bin", "~/Library/pnpm", "~/.bun/bin", "~/.asdf/shims", "~/.local/share/mise/shims", "~/.rbenv/shims",
+                "~/.pyenv/shims", "~/Library/Application Support/Coursier/bin", "~/.ghcup/bin",
             ]
             :
             [
@@ -71,6 +75,26 @@ public static class ToolResolver
                     if (IsExecutableFile(candidate)) return candidate;
 
         return toolsDir is null ? null : FindInToolsDir(command, Path.Combine(toolsDir, "lsp"));
+    }
+
+    /// <summary>
+    /// lsp-2: the PATH of a server started on macOS (where an app started from the Dock may still have launchd's short PATH): the executable's own
+    /// directory first when <paramref name="path"/> lacks it (an npm, Volta or pnpm launcher runs the <c>node</c> installed beside it), then
+    /// <paramref name="path"/>, then each search directory it lacks (what the server itself starts: <c>go</c> for gopls, <c>cargo</c> for
+    /// rust-analyzer). Directories are compared as written, trailing separators aside; <paramref name="path"/> is returned as is when nothing is missing.
+    /// </summary>
+    public static string ExtendPath(string? path, string executable, IReadOnlyList<string>? searchDirs)
+    {
+        var entries = (path ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
+        var known = new HashSet<string>(entries.Select(Normalize), StringComparer.Ordinal);
+        var front = Path.GetDirectoryName(executable) is { Length: > 0 } dir && known.Add(Normalize(dir)) ? dir : null;
+        var back = (searchDirs ?? []).Where(d => d.Length > 0 && known.Add(Normalize(d))).ToList();
+        if (front is null && back.Count == 0) return path ?? "";
+        if (front is not null) entries.Insert(0, front);
+        entries.AddRange(back);
+        return string.Join(Path.PathSeparator, entries);
+
+        static string Normalize(string d) => d.Length > 1 ? Path.TrimEndingDirectorySeparator(d) : d;
     }
 
     public static string? FindOnPath(string command, string? pathOverride)
