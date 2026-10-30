@@ -175,6 +175,7 @@ public sealed class MacroService : IDisposable
         var pauses = _config?.Get(MacroSettings.RecordPauses, false) == true ? TimeSpan.FromMilliseconds(250) : (TimeSpan?)null;
         _recorder = new MacroRecorder(Setting(MacroSettings.MaxRecordedSteps, MacroSettings.DefaultMaxRecordedSteps), pauses, _time);
         _recordingStarted = System.Diagnostics.Stopwatch.GetTimestamp(); // the clock of CommandExecuted.StartedTimestamp
+        _inputOpen = false; // an input a window never reported done must not swallow this recording's commands
         _inputWindowCount = 0;
         _pausedWindowCount = 0;
         _pausedSince = PausedNow() ? _recordingStarted : -1;

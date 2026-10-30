@@ -9,15 +9,18 @@ namespace CsCode.App.Services;
 /// <summary>
 /// The shell's part of memory profiling (docs/MEMORY.md): starts the memory monitor with the window (<c>StartCsCodeProfiling</c>: the sampling
 /// thread and the "Memory" output channel), and reports the user's input — keys, text, pointer — as activity, so the idle trim
-/// (<c>cscode.memory.trimOnIdle</c>) waits until the user has stopped. The handlers are tunnel handlers on the window that also see handled events
-/// and cost one timestamp write per event. Disposing removes them and stops the channel writer; the container stops the monitor.
+/// (<c>cscode.memory.trimOnIdle</c>) waits until the user has stopped. The handlers are tunnel handlers on every shell window (the main one and each
+/// floating one: input is routed through the window that holds the focused control) that also see handled events and cost one timestamp write
+/// per event. Disposing removes them and stops the channel writer; the container stops the monitor.
 /// </summary>
 internal static class ProfilingShell
 {
-    public static IDisposable Attach(IServiceProvider services)
+    /// <summary>Starts the monitor's shell part; dispose to stop the channel writer.</summary>
+    public static IDisposable Start(IServiceProvider services) => services.StartCsCodeProfiling();
+
+    /// <summary>Reports <paramref name="window"/>'s input as user activity. Dispose to remove the handlers.</summary>
+    public static IDisposable AttachWindow(IUserActivityMonitor activity, Interactive window)
     {
-        var started = services.StartCsCodeProfiling();
-        if (services.GetService<IUserActivityMonitor>() is not { } activity || services.GetService<WindowHolder>()?.Window is not { } window) return started;
         EventHandler<KeyEventArgs> key = (_, _) => activity.NotifyActivity();
         EventHandler<TextInputEventArgs> text = (_, _) => activity.NotifyActivity();
         EventHandler<PointerPressedEventArgs> press = (_, _) => activity.NotifyActivity();
@@ -36,7 +39,6 @@ internal static class ProfilingShell
             window.RemoveHandler(InputElement.PointerPressedEvent, press);
             window.RemoveHandler(InputElement.PointerMovedEvent, move);
             window.RemoveHandler(InputElement.PointerWheelChangedEvent, wheel);
-            started.Dispose();
         });
     }
 }

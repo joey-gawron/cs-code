@@ -48,7 +48,10 @@ public sealed class ShellController : IDisposable
     private UiStallWatchdog? _watchdog;
     private Func<UiStallWatchdog>? _startWatchdog;
     private readonly HashSet<string> _autoShown = new(StringComparer.Ordinal);
+    // What every shell window (the main one and each floating one) must carry for the modules wired in Initialize: see AttachWindow.
+    private readonly List<Func<Avalonia.Controls.TopLevel, IDisposable>> _windowHooks = [];
     private bool _started, _restoring, _disposed;
+    private int _closing; // closes in progress (a second click on X while a Save prompt waits starts another)
 
     public ShellController(IServiceProvider sp, IUiDispatcher ui)
     {
@@ -120,8 +123,11 @@ public sealed class ShellController : IDisposable
         var state = _sp.GetService<IStateStorage>();
 
         // Saved sessions for the Welcome page and Quick Launch's session: mode (opened through File > Sessions, which session processes register).
-        Sessions = new SessionCatalog(commands, _sp.GetService<IAppPaths>()?.UserDataDir, () => (chrome as MainWindow)?.SessionName,
-            App.Background is { } background ? list => background.Lane.RunAsync(list) : null);
+        // The session this window shows is left out of both lists. The session process's own name, unnamed sessions (window-N) included: the
+        // window's SessionName is only set for a named one (it is the title's part).
+        var background = App.Background;
+        Sessions = new SessionCatalog(commands, _sp.GetService<IAppPaths>()?.UserDataDir, () => background?.SessionName ?? (chrome as MainWindow)?.SessionName,
+            background is not null ? list => background.Lane.RunAsync(list) : null);
         Palette = new PaletteController(quick, new PaletteContext(commands, nav, well, keys, _sp.GetService<IKeybindingService>(), workspace, state,
             _sp.GetService<ILanguageFeatureRegistry>(), _sp.GetService<IMemoryMonitor>(), Sessions), _ui, window);
         _disposables.Add(Palette);
@@ -152,6 +158,7 @@ public sealed class ShellController : IDisposable
         {
             vim.Start(() => Keyboard.IsChordPending);
             _disposables.Add(vim);
+            _windowHooks.Add(vim.AttachWindow);
         }
 
         // General macros (docs/MACROS.md): record and replay through the keyboard pipeline's tap and the editor views.
@@ -160,6 +167,7 @@ public sealed class ShellController : IDisposable
         {
             macros.Start(Keyboard, Vim);
             _disposables.Add(macros);
+            _windowHooks.Add(macros.AttachWindow);
         }
 
         Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs, id => Tools.IsVisible(id));
@@ -210,8 +218,10 @@ public sealed class ShellController : IDisposable
 
         // Re-creatable memory held by the design system joins the memory-pressure policy.
         if (_sp.GetService<IMemoryMonitor>() is { } monitor) _disposables.Add(monitor.Register(new IconCacheTrimmable()));
-        // The memory monitor (CsCode.Profiling, docs/MEMORY.md) starts with the window, hears the user's input for its idle trim, writes the Memory channel.
-        _disposables.Add(ProfilingShell.Attach(_sp));
+        // The memory monitor (CsCode.Profiling, docs/MEMORY.md) starts with the window, hears the user's input (in every shell window) for its idle
+        // trim, writes the Memory channel.
+        _disposables.Add(ProfilingShell.Start(_sp));
+        if (_sp.GetService<CsCode.Profiling.IUserActivityMonitor>() is { } activity) _windowHooks.Add(w => ProfilingShell.AttachWindow(activity, w));
 
         // Persist the layout (debounced) whenever tabs or tool windows move.
         _disposables.Add(well.TabsChanged.Subscribe(_ => ScheduleSaveLayout()));
@@ -337,9 +347,9 @@ public sealed class ShellController : IDisposable
 
     private void ScheduleSaveLayout()
     {
-        if (_restoring) return;
+        if (_restoring || _closing > 0) return;
         _saveTimer?.Dispose();
-        _saveTimer = _time.CreateTimer(_ => _ui.Post(() => { if (!_disposed) Layout.Save(); }), null, TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
+        _saveTimer = _time.CreateTimer(_ => _ui.Post(() => { if (!_disposed && _closing == 0) Layout.Save(); }), null, TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>Saves the layout immediately (window closing).</summary>
@@ -348,6 +358,39 @@ public sealed class ShellController : IDisposable
         _saveTimer?.Dispose();
         _saveTimer = null;
         Layout.Save();
+    }
+
+    /// <summary>
+    /// The window is closing: the layout is saved now (with every tab, so the next start restores them) and no save runs while the tabs close one by
+    /// one, also not while a Save prompt waits (it would keep only the tabs not closed yet), nor when the user closes again meanwhile (a second
+    /// click on X cancels the first prompt and asks again). Pair each call with <see cref="EndClose"/>.
+    /// </summary>
+    public void BeginClose()
+    {
+        if (_closing++ == 0) SaveLayoutNow();
+    }
+
+    /// <summary>
+    /// A close ended. Closed: nothing may overwrite the layout saved when the close began. Cancelled (a Save prompt): once no other close is in
+    /// progress, the layout is saved as it is now (the tabs closed so far stay closed) and the debounced saves resume.
+    /// </summary>
+    public void EndClose(bool cancelled)
+    {
+        if (!cancelled) return; // the window closes now
+        if (_closing > 0 && --_closing > 0) return;
+        Layout.Save();
+    }
+
+    /// <summary>
+    /// Gives <paramref name="window"/> (the main window, or a floating one) the per-window hooks of the modules wired in <see cref="Initialize"/>: Vim's
+    /// end-of-key and activation handlers, the macro recorder's end-of-input and the player's typing guard, the idle trim's activity handlers. Keyboard
+    /// focus is global, but a key or text event is routed through the window that holds the focused control only. Dispose to remove them.
+    /// </summary>
+    public IDisposable AttachWindow(Avalonia.Controls.TopLevel window)
+    {
+        var store = new DisposableStore();
+        foreach (var hook in _windowHooks) store.Add(hook(window));
+        return store;
     }
 
     /// <summary>
@@ -372,6 +415,7 @@ public sealed class ShellController : IDisposable
         _watchdog = null;
         _saveTimer?.Dispose();
         _disposables.Dispose();
+        _windowHooks.Clear();
     }
 
     private sealed class IconCacheTrimmable : IMemoryTrimmable

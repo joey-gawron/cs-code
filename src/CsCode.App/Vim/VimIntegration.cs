@@ -148,23 +148,34 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         _subscriptions.Add(_editors.ViewClosing.Subscribe(Detach));
         if (_documents is not null)
             _subscriptions.Add(_documents.Closed.Subscribe(e => _ui.Post(() => ReleaseBuffer(e.Document))));
-        if (_windowHolder.Window is { } top)
-        {
-            // runs after every handler of a key press (bubbling, handled or not): the editor has done whatever it does with a key Vim left it
-            void OnKeyDownDone(object? s, KeyEventArgs e) => EndEditorKey();
-            top.AddHandler(InputElement.KeyDownEvent, OnKeyDownDone, RoutingStrategies.Bubble, handledEventsToo: true);
-            _subscriptions.Add(Disposable.Create(() => top.RemoveHandler(InputElement.KeyDownEvent, OnKeyDownDone)));
-        }
-        if (_windowHolder.Window is WindowBase window)
-        {
-            // Text copied or selected in another application reaches "+p / "*p (and <C-r>+, @+, :put + ...): both are read when the window becomes
-            // active; the clipboard also on editor focus.
-            void OnActivated(object? s, EventArgs e) => _ = Clipboard.RefreshAllAsync();
-            window.Activated += OnActivated;
-            _subscriptions.Add(Disposable.Create(() => window.Activated -= OnActivated));
-        }
         InstallIntegrationBindings();
         SetEnabled(_vim.Enabled);
+    }
+
+    /// <summary>
+    /// The per-window part (the shell calls it for the main window and for every floating one, <see cref="ShellController.AttachWindow"/>): the end
+    /// of a key's route, and the clipboard refresh when the window becomes active. Dispose to remove them.
+    /// </summary>
+    public IDisposable AttachWindow(TopLevel top)
+    {
+        // runs after every handler of a key press (bubbling, handled or not): the editor has done whatever it does with a key Vim left it. A key
+        // ends its route at the window that holds the focused editor, so a floating window needs its own.
+        top.AddHandler(InputElement.KeyDownEvent, OnKeyDownDone, RoutingStrategies.Bubble, handledEventsToo: true);
+        // Text copied or selected in another application reaches "+p / "*p (and <C-r>+, @+, :put + ...): both are read when a window of the shell
+        // becomes active; the clipboard also on editor focus.
+        if (top is WindowBase window) window.Activated += OnWindowActivated;
+        return Disposable.Create(() =>
+        {
+            top.RemoveHandler(InputElement.KeyDownEvent, OnKeyDownDone);
+            if (top is WindowBase w) w.Activated -= OnWindowActivated;
+        });
+    }
+
+    private void OnKeyDownDone(object? sender, KeyEventArgs e) => EndEditorKey();
+
+    private void OnWindowActivated(object? sender, EventArgs e)
+    {
+        if (!_disposed) _ = Clipboard.RefreshAllAsync();
     }
 
     // ------------------------------------------------------------------------------------------------------------ on / off

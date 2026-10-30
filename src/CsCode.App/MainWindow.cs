@@ -98,6 +98,10 @@ public sealed class MainWindow : Window, IWindowChrome
 
         AddDockStyles(this);
         _disposables.Add(AttachShellInput(this));
+        // Only this window decides whether it closes (WPF's behaviour). Avalonia's default asks the owned (floating) windows first and lets any of them
+        // cancel: a floating window's Closing empties it instead (Save prompts, tools hidden) and cancels, so the main window's X closed the floating
+        // documents and stayed open, without saving the layout. OnClosing docks the floating windows back itself once the close is confirmed.
+        ClosingBehavior = WindowClosingBehavior.OwnerWindowOnly;
         Closing += OnClosing;
         Opened += OnOpened;
 
@@ -124,11 +128,15 @@ public sealed class MainWindow : Window, IWindowChrome
     // ------------------------------------------------------------------ shell input and styles (main and floating windows)
 
     /// <summary>
-    /// The window-level handlers every shell window needs: Vim and the keyboard pipeline (tunnelling KeyDown / TextInput / KeyUp), the focus
-    /// context keys, the right-click menus and the Edit menu's focus routing. Dispose to remove them.
+    /// The window-level handlers every shell window needs: the modules' own (<see cref="ShellController.AttachWindow"/>: Vim's end of a key and
+    /// clipboard refresh on activation, the macro recorder's and player's guards, the idle trim's activity), Vim and the keyboard pipeline
+    /// (tunnelling KeyDown / TextInput / KeyUp), the focus context keys, the right-click menus, the Edit menu's focus routing, and the MRU switcher
+    /// ending when the window loses activation. Dispose to remove them.
     /// </summary>
     private IDisposable AttachShellInput(Window window)
     {
+        // first: the modules' tunnel handlers run before the window's own, as they did when they were attached to the main window directly
+        var hooks = _shell.AttachWindow(window);
         window.AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         window.AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
         window.AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
@@ -138,15 +146,26 @@ public sealed class MainWindow : Window, IWindowChrome
         window.AddHandler(GotFocusEvent, OnGotFocus, RoutingStrategies.Bubble, handledEventsToo: true);
         var menus = _shell.ContextMenus.Attach(window);
         var clipboard = _shell.Clipboard.Attach(window);
+        window.Deactivated += OnShellWindowDeactivated;
         return Disposable.Create(() =>
         {
             window.RemoveHandler(KeyDownEvent, OnPreviewKeyDown);
             window.RemoveHandler(TextInputEvent, OnPreviewTextInput);
             window.RemoveHandler(KeyUpEvent, OnPreviewKeyUp);
             window.RemoveHandler(GotFocusEvent, OnGotFocus);
+            window.Deactivated -= OnShellWindowDeactivated;
             menus.Dispose();
             clipboard.Dispose();
+            hooks.Dispose();
         });
+    }
+
+    // Ctrl released while another application (or window) had the keyboard: this window never sees the KeyUp that commits the switcher, so it
+    // closes without switching (VS Code's and Visual Studio's switchers close the same way). Left open, the next Ctrl press and release here
+    // would activate a tab picked from a stale list.
+    private void OnShellWindowDeactivated(object? sender, EventArgs e)
+    {
+        if (_switcherActive) HideSwitcher(commit: false);
     }
 
     /// <summary>The shell's Dock styles (empty wells take no room, italic preview tabs, the active tab's accent bar), in every shell window.</summary>
@@ -387,23 +406,26 @@ public sealed class MainWindow : Window, IWindowChrome
             return;
         }
         e.Cancel = true;
+        var closed = false;
         try
         {
-            _shell.SaveLayoutNow(); // before tabs close, so the next start restores them
+            _shell.BeginClose(); // saves the layout before tabs close, so the next start restores them
             if (await _shell.Well.CloseAllAsync().ConfigureAwait(true))
             {
+                closed = true;
                 _closeConfirmed = true;
                 ReleaseFloatingWindows();
                 Close();
             }
-            else _shell.Layout.Save(); // the user cancelled a Save prompt: keep the layout as it is
         }
         catch (Exception ex)
         {
             _sp.GetService<Startup.CrashHandler>()?.Report(ex, fatal: false, source: "Closing");
+            closed = true;
             _closeConfirmed = true;
             Close();
         }
+        finally { _shell.EndClose(cancelled: !closed); } // cancelled (a Save prompt): keep the layout as it is now
     }
 
     /// <summary>Closes without any save prompts (tests and crash recovery).</summary>
@@ -416,12 +438,18 @@ public sealed class MainWindow : Window, IWindowChrome
 
     public async Task<bool> RequestExitAsync()
     {
-        _shell.SaveLayoutNow();
-        if (!await _shell.Well.CloseAllAsync().ConfigureAwait(true)) return false;
-        _closeConfirmed = true;
-        ReleaseFloatingWindows();
-        Close();
-        return true;
+        _shell.BeginClose();
+        var closed = false;
+        try
+        {
+            if (!await _shell.Well.CloseAllAsync().ConfigureAwait(true)) return false;
+            closed = true;
+            _closeConfirmed = true;
+            ReleaseFloatingWindows();
+            Close();
+            return true;
+        }
+        finally { _shell.EndClose(cancelled: !closed); }
     }
 
     // ------------------------------------------------------------------ window modes

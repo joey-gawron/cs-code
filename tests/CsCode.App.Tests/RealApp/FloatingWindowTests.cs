@@ -174,6 +174,135 @@ public class FloatingWindowTests
     }
 
     [AvaloniaFact(Timeout = 60_000)]
+    public async Task Closing_the_main_window_with_floating_windows_saves_them_in_the_layout_and_closes_without_emptying_them()
+    {
+        // The main window's own X (title bar) and Alt+F4 are Window.Close(). Avalonia asked the owned floating windows first by default: one emptied
+        // itself (its documents closed, its tools hidden) and cancelled the main window's close, which then neither closed nor saved the layout.
+        await using var host = await StartAsync();
+        var shell = host.Shell;
+        var factory = shell.Factory;
+        var b = shell.Well.EditorTabs.Single(t => t.Title == "b.txt");
+        shell.Tools.Float("output");
+        shell.Well.Float(b);
+        await DevScene.SettleAsync(10);
+        Assert.Equal(2, factory.FloatingWindows.Count);
+        var closed = false;
+        host.Window.Closed += (_, _) => closed = true;
+
+        host.Window.Close();
+        Assert.True(await RealAppHost.WaitFor(() => closed), "the main window did not close");
+        Assert.Empty(factory.FloatingWindows);
+        // saved before anything closed: the next start floats them again
+        var saved = LayoutSerializer.Deserialize(host.Get<IStateStorage>().Get<string>(LayoutPersistence.StateKey, StorageScope.Application))!;
+        Assert.NotNull(saved.Floating);
+        Assert.Contains(saved.Floating, f => f.Tools.SequenceEqual(["output"]));
+        Assert.Contains(saved.Floating, f => f.Documents.SequenceEqual([b.Uri.ToString()]));
+        Assert.Contains(saved.Documents, d => d.Uri == b.Uri.ToString());
+        Assert.Contains(saved.Tools, t => t.Id == "output" && t.Visible);
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task In_background_mode_closing_the_main_window_hides_it_with_its_floating_windows_as_they_are()
+    {
+        await using var host = await StartAsync();
+        var shell = host.Shell;
+        var factory = shell.Factory;
+        var b = shell.Well.EditorTabs.Single(t => t.Title == "b.txt");
+        b.Doc.ApplyEdits([new Core.Text.TextEdit(Core.Text.TextRange.At(0, 0), "dirty ")]); // hot exit keeps it: no Save prompt
+        shell.Tools.Float("output");
+        shell.Well.Float(b);
+        await DevScene.SettleAsync(10);
+        var windows = factory.FloatingWindows.Select(w => (Window)w.Host!).ToArray();
+        Assert.Equal(2, windows.Length);
+        // What the session controller does: the close hides the window (docs/SESSIONS.md).
+        host.Window.CloseInterceptor = _ => { host.Window.Hide(); return true; };
+
+        host.Window.Close();
+        await DevScene.SettleAsync(10);
+        Assert.False(host.Window.IsVisible);
+        Assert.All(windows, w => Assert.False(w.IsVisible));
+        Assert.False(host.Get<Notifications.DialogHostViewModel>().IsVisible); // no Save prompt
+        Assert.True(shell.Tools.IsFloating("output") && shell.Tools.IsVisible("output"));
+        Assert.True(shell.Well.IsFloating(b) && b.IsDirty);
+
+        host.Window.Show();
+        await DevScene.SettleAsync(10);
+        Assert.All(windows, w => Assert.True(w.IsVisible));
+        host.Window.CloseInterceptor = null;
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task Typing_in_a_floating_window_is_user_activity_for_the_idle_trim()
+    {
+        await using var host = await StartAsync();
+        var shell = host.Shell;
+        var b = shell.Well.EditorTabs.Single(t => t.Title == "b.txt");
+        shell.Well.Float(b);
+        Assert.True(await RealAppHost.WaitFor(() => WindowOf(b.LiveView) is HostWindow { IsVisible: true } && b.Controller is not null));
+        var floating = (HostWindow)WindowOf(b.LiveView)!;
+        b.Controller!.Focus();
+        var activity = host.Get<CsCode.Profiling.IUserActivityMonitor>();
+        activity.NotifyActivity();
+        await Task.Delay(400);
+        Assert.True(activity.IdleTime >= TimeSpan.FromMilliseconds(350), activity.IdleTime.ToString());
+
+        floating.KeyTextInput("q");
+        Assert.Contains('q', b.Doc.GetText());
+        Assert.True(activity.IdleTime < TimeSpan.FromMilliseconds(300), $"idle {activity.IdleTime.TotalMilliseconds} ms after typing in the floating window");
+        await Task.Delay(400);
+        floating.MouseMove(new Avalonia.Point(20, 20));
+        Assert.True(activity.IdleTime < TimeSpan.FromMilliseconds(300), $"idle {activity.IdleTime.TotalMilliseconds} ms after moving the mouse in it");
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task The_Ctrl_Tab_switcher_closes_without_switching_when_its_window_loses_activation()
+    {
+        await using var host = await StartAsync();
+        var well = host.Shell.Well;
+        var a = well.EditorTabs.Single(t => t.Title == "a.txt");
+        var b = well.EditorTabs.Single(t => t.Title == "b.txt");
+        well.Activate(a);
+        well.Activate(b);
+        await DevScene.SettleAsync(5);
+        var switcher = host.Window.GetVisualDescendants().OfType<Border>().Single(x => x.MinWidth == 300 && x.Child is StackPanel);
+
+        host.Window.KeyPress(Key.Tab, RawInputModifiers.Control, PhysicalKey.Tab, null); // Ctrl held: the switcher stays open
+        await DevScene.SettleAsync(2);
+        Assert.True(switcher.IsVisible);
+        Deactivate(host.Window); // Alt+Tab to another application with Ctrl still down: the Ctrl release goes there
+        await DevScene.SettleAsync(2);
+        Assert.False(switcher.IsVisible);
+        Assert.Same(b, well.ActiveEditor);
+        // Back in CsCode, a plain Ctrl press and release (Ctrl+S...) does not switch to the tab the stale switcher had selected.
+        host.Window.KeyPress(Key.LeftCtrl, RawInputModifiers.Control, PhysicalKey.ControlLeft, null);
+        host.Window.KeyRelease(Key.LeftCtrl, RawInputModifiers.None, PhysicalKey.ControlLeft, null);
+        await DevScene.SettleAsync(2);
+        Assert.Same(b, well.ActiveEditor);
+
+        // The same in a floating window.
+        well.Float(b);
+        Assert.True(await RealAppHost.WaitFor(() => WindowOf(b.LiveView) is HostWindow { IsVisible: true } && b.Controller is not null));
+        var floating = (HostWindow)WindowOf(b.LiveView)!;
+        b.Controller!.Focus();
+        floating.KeyPress(Key.Tab, RawInputModifiers.Control, PhysicalKey.Tab, null);
+        await DevScene.SettleAsync(2);
+        Assert.True(switcher.IsVisible);
+        Deactivate(floating);
+        await DevScene.SettleAsync(2);
+        Assert.False(switcher.IsVisible);
+        Assert.Same(b, well.ActiveEditor);
+    }
+
+    /// <summary>What the platform reports when another application takes the keyboard (the headless platform has no other application).</summary>
+    private static void Deactivate(Window window)
+    {
+        var impl = (object)window.PlatformImpl!;
+        var deactivated = impl.GetType().GetProperty("Deactivated", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("the headless window has no Deactivated callback");
+        ((Action)deactivated.GetValue(impl)!).Invoke();
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
     public async Task Floating_windows_hide_and_show_with_the_main_window()
     {
         await using var host = await StartAsync();
