@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CsCode.Core.Platform;
+using CsCode.Core.Text;
 using CsCode.Core.Theming;
 using CsCode.Editor.Documents;
 
@@ -60,13 +61,27 @@ public sealed record EditorSettings
 
     public bool ShowLineNumbers => LineNumbers != "off";
 
+    /// <summary>
+    /// The indentation a view of <paramref name="document"/> uses: its <c>.editorconfig</c> indent style/size over the language's settings, as
+    /// <see cref="Read"/> takes them. The status bar shows this, so it never says "Spaces: 4" while the editor indents with tabs or by 2.
+    /// </summary>
+    public static (int TabSize, bool InsertSpaces) IndentationFor(IConfigurationService cfg, IEditorDocument document) =>
+        Indentation(cfg, document.LanguageId, (document as EditorDocument)?.EditorConfigProperties);
+
+    private static (int TabSize, bool InsertSpaces) Indentation(IConfigurationService cfg, string? languageId, EditorConfigProperties? editorConfig)
+    {
+        var defaults = new EditorSettings();
+        var tabSize = editorConfig?.EffectiveIndentSize ?? cfg.GetOr(SettingKeys.EditorTabSize, languageId, defaults.TabSize);
+        var insertSpaces = editorConfig?.IndentStyle is { } style ? style == "space" : cfg.GetOr(SettingKeys.EditorInsertSpaces, languageId, defaults.InsertSpaces);
+        return (Math.Clamp(tabSize, 1, 16), insertSpaces);
+    }
+
     /// <summary>Reads every key; unset ones keep the documented defaults above. Never throws on a wrongly typed value.</summary>
     public static EditorSettings Read(IConfigurationService cfg, string? languageId, EditorConfigProperties? editorConfig = null)
     {
         T G<T>(string key, T fallback) => cfg.GetOr(key, languageId, fallback);
         var defaults = new EditorSettings();
-        var tabSize = editorConfig?.EffectiveIndentSize ?? G(SettingKeys.EditorTabSize, defaults.TabSize);
-        var insertSpaces = editorConfig?.IndentStyle is { } style ? style == "space" : G(SettingKeys.EditorInsertSpaces, defaults.InsertSpaces);
+        var (tabSize, insertSpaces) = Indentation(cfg, languageId, editorConfig);
         var wrap = G(SettingKeys.EditorWordWrap, "off");
         return new EditorSettings
         {
@@ -74,7 +89,7 @@ public sealed record EditorSettings
             FontFeatures = string.Join(", ", FontFamilies.LigatureFeatures(cfg.GetRawFor(SettingKeys.EditorFontLigatures, languageId))),
             FontSize = Math.Clamp(G(SettingKeys.EditorFontSize, defaults.FontSize), 6, 72),
             LineHeightFactor = Math.Clamp(G("editor.lineHeightFactor", defaults.LineHeightFactor), 0.8, 3),
-            TabSize = Math.Clamp(tabSize, 1, 16),
+            TabSize = tabSize,
             InsertSpaces = insertSpaces,
             WordWrap = wrap is "on" or "wordWrapColumn" or "bounded",
             RenderWhitespace = G(SettingKeys.EditorRenderWhitespace, defaults.RenderWhitespace),
