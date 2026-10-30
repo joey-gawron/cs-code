@@ -765,6 +765,34 @@ public class RealGdbRustTests
         await rig.AssertNothingLeftRunningAsync();
     }
 
+    /// <summary>
+    /// GDB has no <c>restart</c>: the session starts a NEW gdb from the same descriptor. Its launch environment (read from a private file, never
+    /// from the command line) must reach the restarted program too: the first gdb's file went with the first gdb (end-pass review, debug-2).
+    /// </summary>
+    [Fact]
+    public async Task Env_still_reaches_the_program_after_a_restart()
+    {
+        await using var rig = await RealGdbRig.CreateAsync();
+        rig.PanicStops(false);
+        rig.H.Breakpoints.Add(rig.MainUri, InMain("start"));
+        var session = await rig.StartAsync(rig.Config(extra: new Dictionary<string, object?> { ["env"] = new Dictionary<string, string?> { ["CSCODE_GDB_TEST"] = "after restart too" } }));
+        await rig.WaitForStopAsync(1);
+        var firstGdb = session.AdapterProcessId!.Value;
+        Assert.Contains("CSCODE_GDB_TEST=after restart too", File.ReadAllText($"/proc/{session.DebuggeeProcessId}/environ").Split('\0'));
+
+        await session.RestartAsync(Ct);
+        await rig.WaitForStopAsync(2);
+        Assert.NotEqual(firstGdb, session.AdapterProcessId);
+        var environ = File.ReadAllText($"/proc/{session.DebuggeeProcessId}/environ").Split('\0');
+        Note("debuggee environment after restart: " + string.Join(" ", environ.Where(e => e.StartsWith("CSCODE", StringComparison.Ordinal))));
+        Assert.Contains("CSCODE_GDB_TEST=after restart too", environ);
+        var cmdline = File.ReadAllText($"/proc/{session.AdapterProcessId}/cmdline");
+        Assert.DoesNotContain("after restart too", cmdline, StringComparison.Ordinal); // still not on the new gdb's command line
+        await rig.Service.StopAllAsync(Ct);
+        await rig.WaitForEndAsync();
+        await rig.AssertNothingLeftRunningAsync();
+    }
+
     // ------------------------------------------------------------------ flood, soak
 
     /// <summary>

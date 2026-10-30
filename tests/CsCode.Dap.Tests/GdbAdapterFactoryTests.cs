@@ -124,20 +124,88 @@ public class GdbAdapterFactoryTests
         using var root = new TempDirectory("gdbenv-");
         var factory = Make(env: new() { ["PATH"] = "/usr/bin:/bin" }, privateRoot: root.Path);
         var d = Assert.IsType<DebugAdapterStdioProcess>(await factory.CreateDescriptorAsync(resolved, Ct) ?? throw new Xunit.Sdk.XunitException("no descriptor"));
-        // The values (often secrets) are not on GDB's command line (/proc/<pid>/cmdline is world-readable): GDB reads them from a private file.
+        // The values (often secrets) are not on GDB's command line (/proc/<pid>/cmdline is world-readable): GDB reads them from a private file,
+        // written when a gdb starts (each start: see Each_gdb_started_from_the_descriptor_gets_its_own_private_environment_file...).
         Assert.DoesNotContain(d.Args, a => a.Contains("RUST_BACKTRACE", StringComparison.Ordinal) || a.Contains("a b", StringComparison.Ordinal));
-        var file = d.Args[d.Args.ToList().IndexOf("-ix") + 1];
-        Assert.Equal(d.PrivateDirectory, Path.GetDirectoryName(file));
-        Assert.Equal(["set environment RUST_BACKTRACE=1", "set environment SPACED=a b", "unset environment LANG"], File.ReadAllLines(file));
+        Assert.Equal(PrivateStartupFile.Placeholder, d.Args[d.Args.ToList().IndexOf("-ix") + 1]);
         Assert.True(d.Args.ToList().IndexOf("-ix") < d.Args.ToList().IndexOf("-i=dap"));
-        if (OperatingSystem.IsWindows()) return; // (satisfies the platform analyzer; skipped above)
-        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(file));
-        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(d.PrivateDirectory!));
+        Assert.Equal(["set environment RUST_BACKTRACE=1", "set environment SPACED=a b", "unset environment LANG"], d.PrivateFile!.Lines);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(root.Path)); // nothing written before a gdb starts
+        Assert.DoesNotContain("RUST_BACKTRACE", d.ToString(), StringComparison.Ordinal); // a logged descriptor shows no value
+    }
+
+    /// <summary>
+    /// GDB has no <c>restart</c> request: a restart starts a NEW gdb from the same descriptor, after the first gdb's file was deleted with it
+    /// (end-pass review, debug-2). Each start writes its own private file (0600 in a 0700 directory), which goes with that gdb; a start that
+    /// fails leaves nothing behind. A stand-in gdb records what its <c>-ix</c> file holds.
+    /// </summary>
+    [Fact]
+    public async Task Each_gdb_started_from_the_descriptor_gets_its_own_private_environment_file_which_goes_with_it()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "POSIX shell stand-in, GNU stat");
+        using var dir = new TempDirectory("gdbenv-starts-");
+        var root = dir.Combine("private");
+        Directory.CreateDirectory(root);
+        var seen = dir.Combine("seen");
+        Directory.CreateDirectory(seen);
+        var gdb = Script(dir.Combine("bin"), "gdb", $$"""
+            while [ $# -gt 0 ]; do
+              if [ "$1" = -ix ]; then
+                { cat "$2"; echo "modes $(stat -c %a "$2") $(stat -c %a "$(dirname "$2")") $(dirname "$2")"; } > "{{seen}}/$$.tmp" && mv "{{seen}}/$$.tmp" "{{seen}}/$$"
+              fi
+              shift
+            done
+            exec cat > /dev/null
+
+            """);
+        var settings = new TestConfigurationService();
+        settings.Set(GdbAdapterFactory.SettingPath, gdb);
+        var factory = Make(settings, new() { ["PATH"] = "/usr/bin:/bin" }, privateRoot: root);
+        var config = Cfg(new { type = "gdb", request = "launch", name = "r", program = "/bin/sh", __cscodeEnvironment = new { CSCODE_SECRET_PROBE = "s3cret value" } });
+        var d = Assert.IsType<DebugAdapterStdioProcess>(await factory.CreateDescriptorAsync(config, Ct));
+
+        async Task<string[]> RunOnceAsync()
+        {
+            var transport = ProcessTransport.Start(d, NullLogger.Instance);
+            string[] lines;
+            try
+            {
+                var record = Path.Combine(seen, transport.ProcessId!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                await SessionHarness.Eventually(() => File.Exists(record), 10_000, "the stand-in gdb read its -ix file");
+                lines = File.ReadAllLines(record);
+                var cmdline = File.ReadAllText($"/proc/{transport.ProcessId}/cmdline");
+                Assert.DoesNotContain("s3cret", cmdline, StringComparison.Ordinal);
+            }
+            finally { await transport.DisposeAsync(); }
+            Assert.Empty(Directory.EnumerateFileSystemEntries(root)); // the directory went with that gdb
+            return lines;
+        }
+
+        var first = await RunOnceAsync();
+        var second = await RunOnceAsync(); // a restart: the same descriptor, a new gdb
+        foreach (var lines in new[] { first, second })
+        {
+            Assert.Equal("set environment CSCODE_SECRET_PROBE=s3cret value", lines[0]);
+            Assert.StartsWith("modes 600 700 " + root + "/" + GdbAdapterFactory.EnvironmentFilePrefix + "-", lines[1], StringComparison.Ordinal);
+        }
+        Assert.NotEqual(first[1], second[1]); // a fresh directory each time
+
+        // a gdb that cannot be started leaves no private directory behind: started directly (the start throws) or through nice (which exits)
+        var missing = d with { Command = dir.Combine("bin", "no-such-gdb") };
+        Assert.Throws<InvalidOperationException>(() => ProcessTransport.Start(missing with { BelowNormalPriority = false }, NullLogger.Instance));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(root));
+        var throughNice = ProcessTransport.Start(missing, NullLogger.Instance);
+        try
+        {
+            await throughNice.Completion.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+            Assert.Empty(Directory.EnumerateFileSystemEntries(root)); // gone when it exited, before it is disposed
+        }
+        finally { await throughNice.DisposeAsync(); }
     }
 
     /// <summary>
     /// A real <c>gdb -i=dap</c> started from the descriptor: no argument of the running GDB carries a launch environment value, and the private
-    /// file is gone once GDB is. (That GDB applies the commands is covered by RealGdbRustTests' env test.)
+    /// file is gone once GDB is. (That GDB applies the commands, also after a restart, is covered by RealGdbRustTests' env tests.)
     /// </summary>
     [Fact]
     public async Task A_real_gdb_gets_the_launch_environment_from_the_private_file_and_the_file_goes_with_gdb()
@@ -154,10 +222,11 @@ public class GdbAdapterFactoryTests
         {
             var cmdline = File.ReadAllText($"/proc/{transport.ProcessId}/cmdline").Replace('\0', ' ');
             Assert.DoesNotContain("s3cret-value", cmdline, StringComparison.Ordinal);
-            Assert.Contains("-ix", cmdline, StringComparison.Ordinal);
+            Assert.Contains("-ix " + root.Path + "/" + GdbAdapterFactory.EnvironmentFilePrefix + "-", cmdline, StringComparison.Ordinal);
+            Assert.Single(Directory.EnumerateDirectories(root.Path));
         }
         finally { await transport.DisposeAsync(); }
-        Assert.False(Directory.Exists(d.PrivateDirectory), "the private directory outlived GDB");
+        Assert.Empty(Directory.EnumerateFileSystemEntries(root.Path)); // the private directory did not outlive GDB
     }
 
     [Fact]

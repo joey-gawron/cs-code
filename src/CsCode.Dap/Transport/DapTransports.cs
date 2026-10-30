@@ -81,10 +81,12 @@ public sealed record DebugAdapterStdioProcess(
     /// <summary>Environment variables removed from the adapter's environment (and so from the debuggee's): the user's ssh-agent socket, …</summary>
     public IReadOnlyList<string> RemoveEnv { get; init; } = [];
     /// <summary>
-    /// A private (0700) directory of startup files the adapter reads that must not be on its command line, which every local user can read
-    /// through <c>/proc/&lt;pid&gt;/cmdline</c> (GDB's launch environment: <c>-ix</c> commands). Deleted when the adapter exited or is closed.
+    /// A startup file the adapter reads that must not be on its command line, which every local user can read through
+    /// <c>/proc/&lt;pid&gt;/cmdline</c> (GDB's launch environment: <c>-ix</c> commands). Written afresh to a new private directory each time an
+    /// adapter is started from this descriptor (a restart without a <c>restart</c> request starts another one), and deleted with that adapter;
+    /// see <see cref="PrivateStartupFile"/>.
     /// </summary>
-    public string? PrivateDirectory { get; init; }
+    public PrivateStartupFile? PrivateFile { get; init; }
 }
 
 /// <summary>
@@ -106,10 +108,11 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
     private int _disposed;
     private int _killedByUs;
 
-    private ProcessTransport(Process process, ILogger logger, string? marker = null, string? name = null)
+    private ProcessTransport(Process process, ILogger logger, string? marker = null, string? name = null, string? privateDirectory = null)
     {
         _process = process;
         _logger = logger;
+        _privateDirectory = privateDirectory; // before the exit handler is attached: an adapter that exits at once takes it along
         ProcessId = process.Id;
         Marker = marker;
         Description = $"{name ?? process.StartInfo.FileName} (pid {process.Id})";
@@ -118,7 +121,11 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
         _stderrPump = Task.Run(PumpStderrAsync);
         // Read right after the start, while the adapter is certainly alive (its pid cannot have been reused yet).
         _sessionId = marker is null ? null : AdapterProcessReaper.SessionOf(process.Id);
-        if (process.HasExited) _completion.TrySetResult(); // exited before the handler was attached
+        if (process.HasExited) // exited before the handler was attached
+        {
+            ReleasePrivateDirectory();
+            _completion.TrySetResult();
+        }
     }
 
     /// <summary>The environment marker of an adapter started from a <see cref="DebugAdapterStdioProcess"/> (null otherwise).</summary>
@@ -188,7 +195,17 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
         if (nice is not null) launch.AddRange([nice, "-n", "10"]);
         launch.Add(descriptor.Command);
         psi.FileName = launch[0];
-        foreach (var a in launch.Skip(1).Concat(descriptor.Args)) psi.ArgumentList.Add(a);
+        var args = descriptor.Args;
+        string? privateDirectory = null;
+        if (descriptor.PrivateFile is { } file)
+        {
+            // Written for THIS adapter process: the descriptor may start another one later (a restart), after this one's file is gone.
+            string path;
+            try { (path, privateDirectory) = file.Write(); }
+            catch (IOException ex) { throw new InvalidOperationException($"{file.Description} cannot be passed to {descriptor.DisplayName} privately: {ex.Message}", ex); }
+            args = [.. args.Select(a => a == PrivateStartupFile.Placeholder ? path : a)];
+        }
+        foreach (var a in launch.Skip(1).Concat(args)) psi.ArgumentList.Add(a);
         if (!string.IsNullOrEmpty(descriptor.Cwd) && Directory.Exists(descriptor.Cwd)) psi.WorkingDirectory = descriptor.Cwd;
         foreach (var name in descriptor.RemoveEnv) psi.Environment.Remove(name);
         if (descriptor.Env is not null)
@@ -204,13 +221,13 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException or DirectoryNotFoundException)
         {
             process.Dispose();
-            DeletePrivateDirectory(descriptor.PrivateDirectory);
+            DeletePrivateDirectory(privateDirectory);
             throw new InvalidOperationException($"Could not start {descriptor.DisplayName} '{descriptor.Command}': {ex.Message}", ex);
         }
         catch
         {
             process.Dispose();
-            DeletePrivateDirectory(descriptor.PrivateDirectory);
+            DeletePrivateDirectory(privateDirectory);
             throw;
         }
         if (descriptor.BelowNormalPriority && nice is null)
@@ -219,10 +236,10 @@ public sealed class ProcessTransport : IDapTransport, IKillableTransport
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { /* best effort */ }
         }
         logger.LogDebug("Started {Name} {Command} (pid {Pid})", descriptor.DisplayName, descriptor.Command, process.Id);
-        return new ProcessTransport(process, logger, marker, descriptor.DisplayName) { _privateDirectory = descriptor.PrivateDirectory };
+        return new ProcessTransport(process, logger, marker, descriptor.DisplayName, privateDirectory);
     }
 
-    /// <summary>The adapter's private startup files (<see cref="DebugAdapterStdioProcess.PrivateDirectory"/>); deleted once it exited or is closed.</summary>
+    /// <summary>The private directory of this adapter's startup file (<see cref="DebugAdapterStdioProcess.PrivateFile"/>); deleted once it exited or is closed.</summary>
     private string? _privateDirectory;
 
     private static void DeletePrivateDirectory(string? directory)

@@ -238,7 +238,8 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   pretty-printers from `$(rustc --print sysroot)` and `set substitute-path /rustc/<commit> <sysroot>/lib/rustlib/src/rust`; plus CsCode's
   `cscode_gdb.py` (one-line summaries of Rust structs/enums, which GDB's DAP shows empty). Lookup `cscode.debug.gdbPath` → PATH. The provider moves
   `env` to `set environment` commands (GDB's `env` replaces the whole environment), which GDB reads with `-ix` from a 0600 file in a private
-  0700 directory (deleted with GDB) — never on its command line, which every local user can read in `/proc/<pid>/cmdline` — turns a textual
+  0700 directory (`PrivateStartupFile`: written afresh for each GDB the descriptor starts — a restart starts a new GDB — and deleted with that
+  GDB) — never on its command line, which every local user can read in `/proc/<pid>/cmdline` — turns a textual
   `pid`/`processId` into a number and resolves
   CodeLLDB's `"cargo": {"args": […], "filter": {…}}` key (cargo's reported executable becomes `program`: the test-binary template uses it).
   Templates for a cargo package: binary (`cargo: build` process preLaunchTask), unit tests (`cargo` key), attach. `GdbAdapterQuirks`: the Debug
