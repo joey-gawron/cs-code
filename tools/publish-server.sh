@@ -89,7 +89,7 @@ fi
 # no remote has). Pointing the pack root at an empty directory makes the SDK resolve every pack from the NuGet cache.
 mkdir -p "$work/no-local-packs"
 for rid in "${rids[@]}"; do
-  echo "Publishing self-contained $rid…"
+  echo "Publishing self-contained ${rid}…"
   dotnet publish "$project" --nologo -v:q -c Release -r "$rid" --self-contained true \
     -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none "${trim_args[@]}" \
     -p:NetCoreTargetingPackRoot="$work/no-local-packs" -p:AllowMissingPrunePackageData=true \
