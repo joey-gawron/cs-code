@@ -215,6 +215,21 @@ public class MultiCursorViewTests
         Assert.All(view.MultiCursor.Current.Carets, c => Assert.False(c.IsEmpty));
     }
 
+    [AvaloniaFact]
+    public async Task Shift_Backspace_deletes_at_every_caret_like_Backspace()
+    {
+        var (host, doc, view, window) = await Open("aaa\nbbb\nccc");
+        using var _ = host;
+        view.Controller.SetSelections([TextRange.At(0, 3), TextRange.At(1, 3), TextRange.At(2, 3)]);
+        Press(window, Avalonia.Input.Key.Back, RawInputModifiers.Shift);
+        Assert.Equal("aa\nbb\ncc", doc.GetText());
+        Assert.Equal([2, 5, 8], Actives(view));
+        view.Controller.Undo();
+        ViewHost.Pump();
+        Assert.Equal("aaa\nbbb\nccc", doc.GetText());
+        Assert.Equal([3, 7, 11], Actives(view));
+    }
+
     // ------------------------------------------------------------------ collapsing, edits from elsewhere
 
     [AvaloniaFact]

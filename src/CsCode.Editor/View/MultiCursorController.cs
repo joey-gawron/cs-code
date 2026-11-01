@@ -479,7 +479,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
             case Key.End when plain:
                 Move(MultiCaretOperations.MoveEnd(buffer, set, shift));
                 break;
-            case Key.Back when (plain || word) && !shift && !readOnly:
+            case Key.Back when (plain || (word && !shift)) && !readOnly: // Shift+Backspace is Backspace (AvaloniaEdit would delete at the primary alone)
                 ApplyBatch(set, MultiCaretOperations.Backspace(buffer, set, word));
                 break;
             case Key.Delete when (plain || word) && !shift && !readOnly:
