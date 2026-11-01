@@ -276,7 +276,7 @@ A process with services and the main window built but no session. After start-up
    overlay layer and rendered the same way, then rendered again once its colours arrived (grammar loading, the TextMate engine and its regex
    library, the colouriser), then taken out and disposed: no view, tokenisation session or document is left. A claim in the middle of it takes
    the editor out before it restores anything. Opening and painting the claimed session's first file was the biggest part of a claim after the
-   window's first frame; it now takes about half as long (macOS publish 46 → 20 ms, Linux publish 44 → 30 ms, Debug 110-130 → 55-60 ms). Cost:
+   window's first frame; it now takes about half as long (macOS publish 34-46 → 20-23 ms, Linux publish 44 → 30 ms, Debug 110-130 → 55-60 ms). Cost:
    ≈ 9 MB (Linux, private dirty) to 15 MB (macOS footprint) more in the idle spare, mostly the C# grammar it keeps loaded.
 
 Then it trims and waits. A claim takes the session's lock, restores the session into the still-hidden window and the launcher's show makes it
@@ -298,8 +298,8 @@ before it is free again. Not done on Windows.
 
 | | macOS arm64 (laptop, load 3-15) | Linux arm64 (6-core VM, idle) |
 |---|---|---|
-| Cold start → painted with the file | 450-540 ms | 340-390 ms |
-| Warm-spare claim → painted with the file | 175-190 ms | 150-160 ms |
+| Cold start → painted with the file | 450-540 ms | 338-418 ms |
+| Warm-spare claim → painted with the file | 172-191 ms | 145-163 ms |
 | Saved per open of a session that is not running | ≈ 300 ms | ≈ 220 ms |
 | Idle spare's memory | 153 MB phys_footprint (208 MB resident) | 58 MB private dirty (190 MB resident, mostly clean pages of the ReadyToRun image shared with the sessions) |
 | Resident session shown again (no spare involved) | 68 ms | 49 ms (Debug) |
@@ -420,8 +420,8 @@ On Linux: launcher 41-54 ms, first frame 56-58 ms, opening 9-12 ms, painting the
   it copies the image's code into an anonymous, private region (vmmap shows a 105 MB `Untagged` rwx region, fully dirty, right after the 16 KB
   file mappings of `cscode.r2r.dll`; a PE section alignment of 16 KB, `--custom-pe-section-alignment`, and `DOTNET_EnableWriteXorExecute=0`
   change nothing). The composite holds the whole framework's code, so every process paid ≈ 105 MB private for it (a spare 204 MB footprint
-  against 137 MB per-assembly, a session's resident set 321 against 243 MB) and every launcher run ≈ 35 ms to copy it (`--version` 75 against
-  35 ms). Per-assembly images are copied only for the assemblies a process loads. Cold start and spare claim measured within each other's noise
+  against 137 MB per-assembly, measured before the editor warm-up, 219 against 151 MB with it; a session's resident set 321 against 243 MB)
+  and every launcher run ≈ 35 ms to copy it (`--version` 75 against 35 ms). Per-assembly images are copied only for the assemblies a process loads. Cold start and spare claim measured within each other's noise
   (465/606 against 489/578 ms, 224/251 against 264/201 ms in two interleaved rounds); a resident show, which is mostly the launcher, got faster.
   Rooting the composite in the app's own assemblies (`PublishReadyToRunCompositeRoots`, framework code compiled only where reachable) shrank it to
   108 MB but kept the 65 ms launcher and saved only 15 MB: not adopted. On Linux the composite is mapped from the file (clean, shared pages), so
