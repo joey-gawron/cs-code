@@ -15,6 +15,7 @@ using CsCode.Dap;
 using CsCode.Editor;
 using CsCode.Lsp;
 using CsCode.Panels.Debug;
+using CsCode.Panels.Git;
 using CsCode.Panels.Search;
 using CsCode.Panels.Terminal;
 using CsCode.Platform;
@@ -58,6 +59,7 @@ public static class AppServices
         services.AddCsCodeDebugPanels();
         services.AddCsCodeSearchPanels();
         services.AddCsCodeTerminal(); // the integrated terminal (ITerminalService) and its Terminal tool window
+        services.AddCsCodeGit(); // source control: git status, Source Control window, Explorer decorations, gutter markers, blame
         services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
         configure?.Invoke(services); // dev/test host: replace anything above
         AddChildProcessTracking(services); // last: wraps whichever memory monitor ended up registered
@@ -120,6 +122,9 @@ public static class AppServices
             sp.GetService<IWorkspaceService>()?.FileSystem, sp.GetService<Core.Text.IDocumentManager>(), sp.GetService<IWindowService>(), sp.GetService<IConfigurationService>(),
             sp.GetService<FileParticipants>()));
         services.AddSingleton<INavigationService>(sp => sp.GetRequiredService<NavigationService>());
+        // Diff editor tabs (Source Control, Compare with Saved / Clipboard / Selected); the well is resolved on first use.
+        services.AddSingleton(sp => new DiffEditorService(sp.GetRequiredService<IUiDispatcher>(), sp.GetRequiredService<IEditorViewFactory>(), () => sp.GetRequiredService<DocumentWell>()));
+        services.AddSingleton<Core.Scm.IDiffEditorService>(sp => sp.GetRequiredService<DiffEditorService>());
 
         services.AddSingleton<IToolWindow, ExplorerToolWindow>();
         services.AddSingleton<IToolWindow, OutputToolWindow>();

@@ -35,6 +35,11 @@ public sealed class ExplorerNode : ObservableObject
     public bool IsCut { get => _isCut; internal set => SetProperty(ref _isCut, value); }
     public string EditText { get => _editText; set => SetProperty(ref _editText, value); }
 
+    private Core.Scm.FileDecoration? _decoration;
+
+    /// <summary>The source-control decoration (status letter and colour), set by the view-model from <see cref="Core.Scm.IFileDecorationProvider"/>.</summary>
+    public Core.Scm.FileDecoration? Decoration { get => _decoration; internal set => SetProperty(ref _decoration, value); }
+
     public double IndentWidth => Depth * 14;
     public string IconKey => IsDirectory ? (_isExpanded ? "folder-opened" : "folder") : ExplorerIcons.For(Name).Key;
     public string IconColor => IsDirectory ? "#DCB67A" : ExplorerIcons.For(Name).Color;

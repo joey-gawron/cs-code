@@ -110,5 +110,11 @@
   { "key": "ctrl+shift+e",       "command": "workbench.view.explorer",            "mac": "cmd+shift+e" },
   { "key": "ctrl+shift+u",       "command": "workbench.action.output.toggleOutput", "mac": "cmd+shift+u" },
   { "key": "ctrl+shift+m",       "command": "workbench.actions.view.problems",    "mac": "cmd+shift+m" },
-  { "key": "ctrl+`",             "command": "workbench.action.terminal.toggleTerminal", "mac": "ctrl+`" }
+  { "key": "ctrl+`",             "command": "workbench.action.terminal.toggleTerminal", "mac": "ctrl+`" },
+
+  // ---- source control and diff (VS Code's: Ctrl+Shift+G, and ⌃⇧G on a Mac where ⌘⇧G is Find Previous) ----
+  { "key": "ctrl+shift+g",       "command": "workbench.view.scm",                 "mac": "ctrl+shift+g" },
+  { "key": "ctrl+enter",         "command": "git.commit",                         "when": "scmInputFocus", "mac": "cmd+enter" },
+  { "key": "alt+f5",             "command": "workbench.action.compareEditor.nextChange",     "when": "textCompareEditorVisible" },
+  { "key": "shift+alt+f5",       "command": "workbench.action.compareEditor.previousChange", "when": "textCompareEditorVisible" }
 ]

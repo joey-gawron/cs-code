@@ -30,6 +30,7 @@
     <ProjectReference Include="../CsCode.Vim/CsCode.Vim.csproj" />
     <ProjectReference Include="../CsCode.Macros/CsCode.Macros.csproj" />
     <ProjectReference Include="../CsCode.Panels.Terminal/CsCode.Panels.Terminal.csproj" />
+    <ProjectReference Include="../CsCode.Panels.Git/CsCode.Panels.Git.csproj" />
     <ProjectReference Include="../CsCode.Sessions/CsCode.Sessions.csproj" />
     <ProjectReference Include="../CsCode.Remote/CsCode.Remote.csproj" />
     <!-- the headless server ships next to the app: cscode.languageHost = process runs it as a child (docs/REMOTE.md) -->
