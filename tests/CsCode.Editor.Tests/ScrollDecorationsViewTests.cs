@@ -22,7 +22,7 @@ using Xunit;
 
 namespace CsCode.Editor.Tests;
 
-/// <summary>The overview ruler on the scrollbar and the minimap, in real views (docs/EDITOR.md §7c).</summary>
+/// <summary>The overview ruler on the scrollbar and the minimap, in real views (docs/EDITOR.md §7f).</summary>
 public class ScrollDecorationsViewTests(ITestOutputHelper output)
 {
     private static string Lines(int n, Func<int, string>? line = null) => string.Join('\n', Enumerable.Range(0, n).Select(line ?? (i => $"int value{i} = {i}; // line {i}")));

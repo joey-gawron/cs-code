@@ -12,7 +12,7 @@ using CsCode.Editor.Features;
 namespace CsCode.Editor.View.Decorations;
 
 /// <summary>
-/// The overview ruler and the minimap of one view (VS Code's scrollbar decorations and minimap; docs/EDITOR.md §7c). Owns both controls, which
+/// The overview ruler and the minimap of one view (VS Code's scrollbar decorations and minimap; docs/EDITOR.md §7f). Owns both controls, which
 /// sit in the view's grid over the editor's right edge (the minimap left of the ruler, or at the left edge with <c>editor.minimap.side: left</c>),
 /// and reserves their width with the text area's margin so no text runs under them. Collects the marks both draw from the view's features
 /// (diagnostics, find matches, occurrence highlights, source-control changes, breakpoints, the carets), offsets turned into lines on the UI

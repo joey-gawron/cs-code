@@ -86,7 +86,7 @@ internal sealed class Minimap : IDisposable
     /// <summary>Renders finished (tests: typing must not render once per keystroke, a scroll inside the window must not render at all).</summary>
     internal int Renders { get; private set; }
 
-    /// <summary>UI-thread milliseconds of the last render: capturing its rows, and copying its pixels into the bitmap (tests, docs/EDITOR.md §7c).</summary>
+    /// <summary>UI-thread milliseconds of the last render: capturing its rows, and copying its pixels into the bitmap (tests, docs/EDITOR.md §7f).</summary>
     internal double LastCaptureMs { get; private set; }
     internal double LastBlitMs { get; private set; }
 

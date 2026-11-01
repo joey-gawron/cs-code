@@ -180,7 +180,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     /// <summary>The extra carets of this view (Add Next Occurrence, Insert Cursor Above/Below, Alt+Click) and editing at all of them.</summary>
     internal MultiCursorController MultiCursor { get; }
 
-    /// <summary>The overview ruler and the minimap of this view (docs/EDITOR.md §7c).</summary>
+    /// <summary>The overview ruler and the minimap of this view (docs/EDITOR.md §7f).</summary>
     internal ScrollDecorations? ScrollDecorations => _decorations;
 
     /// <summary>
