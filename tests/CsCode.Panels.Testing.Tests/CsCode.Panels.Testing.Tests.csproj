@@ -14,6 +14,7 @@
     <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
     <ProjectReference Include="../../src/CsCode.Ui/CsCode.Ui.csproj" />
     <ProjectReference Include="../../src/CsCode.Testing/CsCode.Testing.csproj" />
+    <ProjectReference Include="../../src/CsCode.Panels.Testing/CsCode.Panels.Testing.csproj" />
     <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
   </ItemGroup>
 

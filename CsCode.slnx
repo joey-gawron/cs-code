@@ -15,6 +15,7 @@
     <Project Path="src/CsCode.Sessions/CsCode.Sessions.csproj" />
     <Project Path="src/CsCode.Terminal/CsCode.Terminal.csproj" />
     <Project Path="src/CsCode.Testing/CsCode.Testing.csproj" />
+    <Project Path="src/CsCode.Panels.Testing/CsCode.Panels.Testing.csproj" />
     <Project Path="src/CsCode.Remote/CsCode.Remote.csproj" />
     <Project Path="src/CsCode.Server/CsCode.Server.csproj" />
     <Project Path="src/CsCode.Ui/CsCode.Ui.csproj" />
