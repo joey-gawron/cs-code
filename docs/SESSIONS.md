@@ -291,7 +291,9 @@ do this: an unprivileged process can never lower its nice value again, so a clai
 `setpriority(..., 0)`. Linux: the nice value of the process's scheduler autogroup (`/proc/self/autogroup`, 10; a CsCode process leads a session
 of its own, so the autogroup holds only it), raised back to 0 without privileges; the kernel takes one autogroup change per 100 ms system-wide,
 so leaving retries a few times. It works where autogroups are in use (`kernel.sched_autogroup_enabled`, the desktop default) and is a no-op in a
-cgroup with its own CPU controller. A claim that fails (its session is owned by another process) puts the spare back at the low priority
+cgroup with its own CPU controller. Only a process that leads its own session (`getsid(0) == getpid()`) changes it: one started from a shell
+directly (`cscode --host --spare`, where `setsid` fails because the shell made it a process-group leader) shares the shell's autogroup, and
+lowering that would slow the whole terminal session (and a claim would reset it to 0), so such a spare waits at normal priority. A claim that fails (its session is owned by another process) puts the spare back at the low priority
 before it is free again. Not done on Windows.
 
 **Why it stays off** (2026-11-01, publishes, headless; the macOS one per-assembly ReadyToRun, the Linux one the composite):

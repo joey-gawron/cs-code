@@ -13,6 +13,9 @@ internal static class UnixNative
     [DllImport("libc", EntryPoint = "setsid", SetLastError = true)]
     private static extern int SetSid();
 
+    [DllImport("libc", EntryPoint = "getsid")]
+    private static extern int GetSid(int pid);
+
     [DllImport("libc", EntryPoint = "malloc_trim")]
     private static extern int MallocTrim(nuint pad);
 
@@ -32,6 +35,18 @@ internal static class UnixNative
     {
         if (OperatingSystem.IsWindows()) return false;
         try { return SetSid() >= 0; }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { return false; }
+    }
+
+    /// <summary>
+    /// Whether this process leads its own session (<c>getsid(0) == getpid()</c>): <see cref="TryDetachFromTerminal"/> succeeded, or whatever started
+    /// it made it a session leader (systemd does). False on Windows, when libc is unavailable, and for a process started from a shell directly,
+    /// which shares the shell's session (and on Linux its scheduler autogroup).
+    /// </summary>
+    public static bool LeadsOwnSession()
+    {
+        if (OperatingSystem.IsWindows()) return false;
+        try { return GetSid(0) == Environment.ProcessId; }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { return false; }
     }
 
