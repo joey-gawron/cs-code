@@ -97,6 +97,8 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     {
         SessionTrace.Mark("host: main");
         ProcessMemory.DetachFromTerminal();
+        // The spare starts and waits at a low, reversible priority (it was started right after a claim, or at login): the claim lifts it.
+        if (options.Spare && ProcessPriority.EnterBackground()) SessionTrace.Mark("host: background priority");
         var host = Start(options, crash, RuntimeDirectory.Resolve(), new SessionStore(new AppPaths().UserDataDir), out refusedExitCode);
         if (host is not null && !OperatingSystem.IsWindows()) host._terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, host.OnTerminate);
         return host;
@@ -351,6 +353,7 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
             if (!Options.Spare || _claimed) return IpcMessage.Failure($"this process is not a free spare (state {_state})");
             _claimed = true;
         }
+        ProcessPriority.LeaveBackground(); // first: everything from here on is the user waiting for a window
         bool took;
         try { took = TryTakeSession(name!, request.Unnamed == true); }
         catch (IOException ex)
