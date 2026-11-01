@@ -139,6 +139,14 @@ internal sealed class TextMateColorizer : DocumentColorizingTransformer, IDispos
         _session.SetViewport(lines[0].FirstDocumentLine.LineNumber - 1, lines[^1].LastDocumentLine.LineNumber - 1);
     }
 
+    /// <summary>
+    /// Redraws the built visual lines of the published rows, and no others. <c>TextView.Redraw(offset, length)</c> drops every built line
+    /// whose range, delimiter included, touches [offset, offset + length] at either end, so a range starting at a line's first character also
+    /// dropped the line BEFORE it (its end is that offset): redrawing the edited line rebuilt its neighbour above on every keystroke. Starting
+    /// one character in keeps the comparison off the previous line; the end stops before the last line's delimiter, so the next line is spared
+    /// too. (An empty line has nothing to start into: there the range is the line's start, as before.) Built lines outside the viewport are
+    /// redrawn as well, such as the caret's line built by the caret before the next layout.
+    /// </summary>
     private void OnTokensChanged((int First, int Last) range)
     {
         var doc = _textView.Document;
@@ -147,7 +155,8 @@ internal sealed class TextMateColorizer : DocumentColorizingTransformer, IDispos
         var last = Math.Clamp(range.Last, first, doc.LineCount - 1);
         var a = doc.GetLineByNumber(first + 1);
         var b = doc.GetLineByNumber(last + 1);
-        _textView.Redraw(a.Offset, b.EndOffset - a.Offset);
+        var start = a.Length > 0 ? a.Offset + 1 : a.Offset;
+        _textView.Redraw(start, Math.Max(0, b.EndOffset - start));
     }
 
     public void Dispose() => _subscriptions.Dispose();
