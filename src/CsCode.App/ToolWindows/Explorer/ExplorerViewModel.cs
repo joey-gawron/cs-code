@@ -57,9 +57,17 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     private bool _restoring;
 
     public ExplorerViewModel(IWorkspaceService workspace, IUiDispatcher ui, INavigationService? navigation = null, IConfigurationService? config = null,
-        IStateStorage? state = null, IModalDialogs? dialogs = null, DocumentWell? well = null, FileParticipants? participants = null)
+        IStateStorage? state = null, IModalDialogs? dialogs = null, DocumentWell? well = null, FileParticipants? participants = null,
+        Core.Scm.IFileDecorationProvider? decorations = null)
     {
         _participants = participants;
+        _decorations = decorations;
+        if (decorations is not null)
+        {
+            // decorations follow the rows shown (dictionary lookups on the UI thread) and every change of the provider's (coalesced)
+            Rows.CollectionChanged += (_, _) => Decorate();
+            _subs.Add(decorations.DecorationsChanged.Subscribe(_ => ui.PostCoalesced("explorer.decorations", Decorate)));
+        }
         _workspace = workspace;
         _ui = ui;
         _fs = workspace.FileSystem;
@@ -73,6 +81,14 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     }
 
     private Task _refresh = Task.CompletedTask;
+    private readonly Core.Scm.IFileDecorationProvider? _decorations;
+
+    /// <summary>Puts each shown row's source-control decoration on it (UI thread).</summary>
+    private void Decorate()
+    {
+        if (_decorations is null) return;
+        foreach (var node in Rows) node.Decoration = _decorations.GetDecoration(node.Uri, node.IsDirectory);
+    }
 
     /// <summary>The most recently started root refresh (completes when roots and restored expansion are loaded).</summary>
     public Task RefreshCompleted => _refresh;

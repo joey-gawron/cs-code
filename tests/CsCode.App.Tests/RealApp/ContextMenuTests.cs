@@ -315,6 +315,8 @@ public class RealAppContextMenuTests
         var entries = explorer.MenuFor(file);
         Assert.DoesNotContain(entries, e => e.AccessibleName is "New File..." or "Find in Folder...");
         Assert.Contains(entries, e => e.AccessibleName == "Open in Terminal"); // the integrated terminal opens in the file's folder
+        Assert.Contains(entries, e => e.AccessibleName == "Select for Compare"); // contributed by source control, for files only
+        Assert.DoesNotContain(entries, e => e.AccessibleName == "Compare with Selected"); // nothing selected yet
         await entries.First(e => e.AccessibleName == "Copy Relative Path").Run!();
         Assert.Equal(Path.Combine("src", "a.cs"), (await host.Get<IClipboardService>().ReadAsync())?.Text);
         Assert.Equal(PlatformKeys.Label("Ctrl+C", "⌘C"), entries.First(e => e.AccessibleName == "Copy").Gesture);

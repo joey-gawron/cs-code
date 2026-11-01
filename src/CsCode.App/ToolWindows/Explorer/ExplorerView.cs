@@ -114,7 +114,15 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
 
     private Control RowFor(ExplorerNode node)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,16,18,*"), Height = 22, Background = Brushes.Transparent };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,16,18,*,Auto"), Height = 22, Background = Brushes.Transparent };
+        // source control: the name in the status colour, the letter after it, ignored rows dimmed, deleted ones struck through
+        var badge = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 8, 0), FontSize = 11 };
+        badge.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.Decoration)) { Converter = DecorationBadge });
+        badge.Bind(TextBlock.ForegroundProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.Decoration)) { Converter = DecorationBrush });
+        Grid.SetColumn(badge, 4);
+        grid.Children.Add(badge);
+        grid.Bind(OpacityProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.Decoration)) { Converter = DecorationOpacity });
+        badge.Bind(ToolTip.TipProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.Decoration) + "." + nameof(Core.Scm.FileDecoration.Tooltip)));
         grid.Children.Add(new Border { Width = node.IndentWidth, Height = 1 });
         var chevron = new Icon { Size = 12, Foreground = ThemeBrushes.Get("descriptionForeground"), HorizontalAlignment = HorizontalAlignment.Center };
         chevron.Bind(Icon.KindProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.Chevron)));
@@ -131,6 +139,11 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
         name.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.Name)));
         name.Bind(OpacityProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.IsCut)) { Converter = new Avalonia.Data.Converters.FuncValueConverter<bool, double>(cut => cut ? 0.5 : 1.0) });
         name.Bind(IsVisibleProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.IsEditing)) { Converter = Avalonia.Data.Converters.BoolConverters.Not });
+        name.Bind(TextBlock.ForegroundProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.Decoration)) { Converter = DecorationBrush });
+        name.Bind(TextBlock.TextDecorationsProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.Decoration))
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<Core.Scm.FileDecoration?, TextDecorationCollection?>(d => d?.Strikethrough == true ? TextDecorations.Strikethrough : null),
+        });
         Grid.SetColumn(name, 3);
         grid.Children.Add(name);
 
@@ -156,6 +169,22 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
         Grid.SetColumn(edit, 3);
         grid.Children.Add(edit);
         return grid;
+    }
+
+    private static readonly Avalonia.Data.Converters.IValueConverter DecorationBadge =
+        new Avalonia.Data.Converters.FuncValueConverter<Core.Scm.FileDecoration?, string>(d => d?.Badge ?? "");
+
+    /// <summary>The decoration's theme colour; no decoration leaves the inherited foreground (UnsetValue).</summary>
+    private static readonly Avalonia.Data.Converters.IValueConverter DecorationBrush = new DecorationBrushConverter();
+
+    private static readonly Avalonia.Data.Converters.IValueConverter DecorationOpacity =
+        new Avalonia.Data.Converters.FuncValueConverter<Core.Scm.FileDecoration?, double>(d => d?.Faded == true ? 0.6 : 1.0);
+
+    private sealed class DecorationBrushConverter : Avalonia.Data.Converters.IValueConverter
+    {
+        public object? Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) =>
+            value is Core.Scm.FileDecoration d ? ThemeBrushes.Get(d.ColorKey) : AvaloniaProperty.UnsetValue;
+        public object? ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) => throw new NotSupportedException();
     }
 
     // ------------------------------------------------------------------ input
@@ -253,6 +282,7 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
     {
         var uri = node.Uri;
         var folder = node.IsDirectory ? uri : node.Parent?.Uri ?? uri;
+        _keys?.Set("explorerResourceIsFolder", node.IsDirectory); // VS Code's key: contributed items for files only (Select for Compare)
         MenuEntry? Command(string header, string id, string? icon = null, params object?[] args) => _menus?.Command(header, id, icon, args: args);
         return MenuSections.Join(
             node.IsDirectory ?

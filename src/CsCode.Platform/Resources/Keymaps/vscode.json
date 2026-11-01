@@ -136,5 +136,10 @@
   // ---- Markdown preview (docs/MARKDOWN.md): VS Code's keys, in both presets ----
   { "key": "ctrl+shift+v",       "command": "markdown.showPreview",               "when": "editorLangId == 'markdown' && !markdownPreviewFocus", "mac": "cmd+shift+v" },
   { "key": "ctrl+k v",           "command": "markdown.showPreviewToSide",         "when": "editorLangId == 'markdown' && !markdownPreviewFocus", "mac": "cmd+k v" },
-  { "key": "ctrl+shift+v",       "command": "markdown.showSource",                "when": "markdownPreviewFocus", "mac": "cmd+shift+v" }
+  { "key": "ctrl+shift+v",       "command": "markdown.showSource",                "when": "markdownPreviewFocus", "mac": "cmd+shift+v" },
+  // ---- source control and diff (VS Code's: Ctrl+Shift+G, and ⌃⇧G on a Mac where ⌘⇧G is Find Previous) ----
+  { "key": "ctrl+shift+g",       "command": "workbench.view.scm",                 "mac": "ctrl+shift+g" },
+  { "key": "ctrl+enter",         "command": "git.commit",                         "when": "scmInputFocus", "mac": "cmd+enter" },
+  { "key": "alt+f5",             "command": "workbench.action.compareEditor.nextChange",     "when": "textCompareEditorVisible" },
+  { "key": "shift+alt+f5",       "command": "workbench.action.compareEditor.previousChange", "when": "textCompareEditorVisible" }
 ]

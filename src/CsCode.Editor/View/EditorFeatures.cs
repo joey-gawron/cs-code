@@ -31,6 +31,11 @@ internal static class EditorFeatures
         };
         // the breakpoint margin, stop-line arrow and breakpoint tracking exist only when a debugger is registered
         if (view.Services.Debug is { } debug) list.Add(new Features.DebugFeature(view, debug));
+        // source control: gutter change markers and inline blame, only for files and only when a provider (the git module) is registered
+        if (view.Document.Uri.IsFile && view.Services.Provider?.GetService(typeof(Core.Scm.IQuickDiffProvider)) is Core.Scm.IQuickDiffProvider quickDiff)
+            list.Add(new Features.QuickDiffFeature(view, quickDiff));
+        if (view.Document.Uri.IsFile && view.Services.Provider?.GetService(typeof(Core.Scm.ILineBlameProvider)) is Core.Scm.ILineBlameProvider blame)
+            list.Add(new Features.InlineBlameFeature(view, blame));
         return list;
     }
 }
