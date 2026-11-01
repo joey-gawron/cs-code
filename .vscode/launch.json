@@ -1,0 +1,29 @@
+// Debugging CsCode itself: F5 in CsCode (which reads .cscode/launch.json, else this file) or in VS Code with the C# extension.
+// docs/RUN-AND-DEBUG.md, "Debugging CsCode itself".
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // A window in the debugged process (--foreground: without it the process would hand the window to a background session and
+            // exit), with its own settings, sessions, state and logs under .scratch/debug-home (git-ignored), so it never touches the CsCode
+            // you are working in. Add folders or files to open after "--foreground"; remove "env" to run with your own settings.
+            "name": "CsCode (sandboxed window)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build app",
+            "program": "${workspaceFolder}/src/CsCode.App/bin/Debug/net10.0/cscode.dll",
+            "args": ["--foreground"],
+            "cwd": "${workspaceFolder}",
+            "env": { "CSCODE_HOME": "${workspaceFolder}/.scratch/debug-home" },
+            "stopAtEntry": false,
+            "console": "internalConsole"
+        },
+        {
+            // A running CsCode process: a background session's process (its PID: cscode --list-sessions) or a --foreground window.
+            "name": "CsCode: attach to a process",
+            "type": "coreclr",
+            "request": "attach",
+            "processId": "${command:pickProcess}"
+        }
+    ]
+}

@@ -1,0 +1,30 @@
+// Tasks for working on CsCode itself (Terminal > Run Task..., Run Build Task...). launch.json's preLaunchTask builds only the app.
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build app",
+            "type": "process",
+            "command": "dotnet",
+            "args": ["build", "${workspaceFolder}/src/CsCode.App/CsCode.App.csproj", "/property:GenerateFullPaths=true", "/consoleloggerparameters:NoSummary"],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "build",
+            "type": "process",
+            "command": "dotnet",
+            "args": ["build", "${workspaceFolder}/CsCode.slnx", "/property:GenerateFullPaths=true", "/consoleloggerparameters:NoSummary"],
+            "problemMatcher": "$msCompile",
+            "group": { "kind": "build", "isDefault": true }
+        },
+        {
+            // Ends every process of the sandboxed window's CSCODE_HOME (launch.json's "CsCode (sandboxed window)"), never your own CsCode.
+            "label": "quit sandboxed CsCode",
+            "type": "process",
+            "command": "dotnet",
+            "args": ["run", "--no-build", "--project", "${workspaceFolder}/src/CsCode.App", "--", "--quit", "--all"],
+            "options": { "env": { "CSCODE_HOME": "${workspaceFolder}/.scratch/debug-home" } },
+            "problemMatcher": []
+        }
+    ]
+}
