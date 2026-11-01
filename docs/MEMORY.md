@@ -540,6 +540,12 @@ Measured here, owned elsewhere — for the end pass (nothing below was changed o
    under 16 ms; the rest is GC (in-window p99 16–30 ms; the headless window allocates a new 4 MB `WriteableBitmap` per frame, whose
    `AddMemoryPressure` drives the `induced_noforce` gen2s — headless only). The baseline row passed (load 16.6: dispatcher p99 15.5 ms, typing
    p99 3.0 ms) once frames stopped rasterising on the UI thread.
+11. **perf-typing (2026-11-01): typing copied the whole document per keystroke.** AvaloniaEdit's text-area theme bound its watermark to
+   `Document.Text`, so each edit allocated twice the file's size (24 MB per key in a 12 MB file, on the large object heap: a gen-2 collection
+   every few keys and the large-file typing p99 of 35–40 ms on macOS). Disposed in every text area (docs/EDITOR.md §5); typing now allocates
+   ≈ 90 KB per keystroke whatever the size. The same pass removed per-keystroke viewport work: an expanded fold's redraw of all visible lines,
+   the line-number margin's shaping of every number, the folding margin's new markers (the 166 `FoldingMarginMarker`s of item 10) and a
+   redraw of the line above the caret.
 
 ## 13. Tests
 

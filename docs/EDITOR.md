@@ -83,8 +83,9 @@ What the shell must know:
 * **Breakpoints follow edits** by calling `IBreakpointManager.ApplyLineShift(uri, fromLine, delta)`. The editor's contract (the Core interface does not say): every breakpoint at
   a line `>= fromLine` moves by `delta`; breakpoints on lines that no longer exist are `Remove`d by the editor itself *before* it calls `ApplyLineShift`.
   (A newline typed at column 0 shifts from that line; deleting whole lines from column 0 removes exactly those lines' breakpoints.)
-* **GC mode**: the figures in §6 were measured with `GCSettings.LatencyMode = SustainedLowLatency` (no blocking gen-2 collections while typing). AvaloniaEdit itself allocates
-  hundreds of KB per keystroke in a big document (§5); the shell should run the app in that mode.
+* **GC mode**: the figures in §6 were measured with `GCSettings.LatencyMode = SustainedLowLatency` (no blocking gen-2 collections while typing); the shell should run
+  the app in that mode. Typing allocates ≈ 90 KB per keystroke on the UI thread whatever the document's size (§6; it was hundreds of KB to
+  tens of MB before the fixes in §5).
 * `docs/briefs/editor.md` says to add Codicon attribution to `THIRD-PARTY-NOTICES.md`: the completion kind badges are *generated* (a letter/glyph on a coloured tile) so no icon font is shipped
   and nothing needs attributing for them. See §10 for what else is bundled.
 
@@ -215,7 +216,30 @@ AvaloniaEdit 12.0.0 (`Avalonia.AvaloniaEdit`):
   nothing) instead of the held matches, which after an edit are only moved until the re-search lands: VS Code does the same (a model search
   past `MATCHES_LIMIT` decorations, `replaceAll` searching the model again). These are command bindings placed before the panel's own, which
   decline whenever the held matches answer the command exactly, and a tunnelling Enter handler on the panel.
-* **AvaloniaEdit allocates in proportion to the document's line count on every edit** (≈ 90 B per line per keystroke: 19 KB for a 50-line file, 538 KB for 6000 lines, measured on a bare themed `TextEditor`), and keeps ≈ 130 B per line per view for its height tree. Nothing in this module can change that.
+* **The text-area theme read the whole document on every edit** (perf-typing): its watermark's `IsVisible` is bound to
+  `$templatedParent.Document.Text` with `StringConverters.IsNullOrEmpty`, and the document raises `PropertyChanged("Text")` after each change,
+  so every keystroke built the full text as a string — twice the file's size in bytes, on the large object heap (24 MB per key in a 12 MB
+  file: a gen-2 collection every few keys, the 35–40 ms large-file typing p99 on macOS; the ≈ 90 B per line per keystroke this section used to
+  call AvaloniaEdit's own per-line cost). `TextAreaWatermarkBinding` disposes that binding in every text area as its template is applied
+  (template priority: `ClearValue` does not stop it, the expression's `Dispose` does) and keeps the unused watermark hidden; a bare
+  themed `TextEditor` now allocates ≈ 14 KB per keystroke at 50 lines and at 6000 (`TextAreaWatermarkBindingTests`, `KeystrokeAllocationTests`).
+  AvaloniaEdit still keeps ≈ 130 B per line per view for its height tree.
+* **An expanded fold redraws its whole range on every edit inside it**: `FoldingSection.OnSegmentChanged` calls `FoldingManager.Redraw(this)`
+  whenever an edit changes the section's length, folded or not, and in code nearly every keystroke is inside a namespace or class region, so
+  every keystroke threw away and re-shaped all visible lines (35 per key in `FoldRedrawFilterTests`, ~60 in a full-height editor). An expanded
+  section contributes nothing to a visual line, so `FoldRedrawFilter` hides the manager's text views (its internal `TextViews`, all that
+  `Redraw(section)` walks) between the document's `Changing` and `Changed` unless a folded section overlaps the edit up to the end of its line
+  (reflection against 12.0.0; inert if the member is gone).
+* **The folding margin re-creates every marker on every change of the visual lines** (each keystroke): `DetachingFoldingMargin` keeps them when
+  the markers it would make (same visual lines, sections and expanded states: AvaloniaEdit's own rule) are the ones it has, and only
+  re-arranges and redraws (reflection against the internal `FoldingMarginMarker`; it rebuilds always if that changes).
+* **The line-number margin shapes every visible number on every keystroke**: it re-measures and re-renders after each change of the visual
+  lines with a new `FormattedText` per number (formatted and shaped again when drawn, once more for the width): about a fifth of the UI
+  thread's work per key in a profile on macOS. `CachedLineNumberMargin` replaces it (after `ShowLineNumbers` inserts it) and keeps the laid-out
+  number (`TextLayout`) of each line drawn in the last frame; its frame is pixel-identical to the stock margin's (`CachedLineNumberMarginTests`).
+* `TextView.Redraw(offset, length)` **also drops the line before the range**: it compares the range start with each line's end *including the
+  delimiter* inclusively, so a range starting at a line's first character takes the previous line too. The colorizer starts its row redraw one
+  character into the first line (`TokenRedrawTests`).
 
 TextMateSharp 2.0.3:
 
@@ -230,16 +254,17 @@ TextMateSharp 2.0.3:
 
 ## 6. Measured performance and memory
 
-Debug build, shared 22-core Linux machine; ranges are the spread of repeated runs.
+Debug build, shared 22-core Linux machine unless a row names the arm64 Mac (shared with other agents: the load average is given); ranges are the spread of repeated runs.
 
 | What | Result |
 |---|---|
 | Open 1 MB C# file | 9–13 ms; view + first layout 47–54 ms; ≈ 8 MB managed (a fixed ≈ 7 MB of tables included) |
 | Open 10 MB (large-file mode) | 74–81 ms; UI thread blocked ≤ 0.3 ms during the open; view + layout 138 ms; 15 MB managed after open (1.5 × file size), 64 MB with a view |
 | Open 50 MB (large-file mode) | 604–688 ms; UI latency during open max 1.1–13 ms; view + layout 575 ms; 101–114 MB after open (2.0–2.3 ×), 342–355 MB with a view (AvaloniaEdit's per-line height tree) |
-| Typing in a 12 MB file (large-file mode) | p50 3.7 ms, p99 6.2–6.9 ms per keystroke (AvaloniaEdit's own per-line cost) |
+| Typing in a 12 MB file (large-file mode) | p50 0.02 ms, p99 0.17 ms per keystroke on Linux (was p50 3.7 ms, p99 6.2–6.9 ms); on the arm64 Mac p50 0.14–0.21 ms, p99 0.36–0.81 ms, against p50 2.3–2.8 ms, p99 23–40 ms on main, all under load 9–37 (perf-typing: the whole text was built as a string per keystroke, §5) |
+| Typing in a 400 KB C# file, full-height view (1400×1000), keystroke + the frame after it | arm64 Mac, under load 9–37: frame p50 4.5–7.3 ms, p90 9.6–15 ms (main: p50 13–17.6 ms, p90 22–34 ms); 0.4–0.5 MB allocated per key (main: 2.7–3.0 MB); the keystroke itself p50 1.0–1.3 ms (main 0.8–1.1 ms: the edited line is built once in both). Linux: frame p50 3.5 ms, p90 7.4 ms, 0.39 MB per key (perf-typing: the fold redraw, line-number shaping, folding-margin markers and the neighbour redraw, §5) |
 | Tokeniser memory | 2 MB of C# (66,026 lines): token store 4.1 MB per MB of source (estimate); whole process delta incl. view, colour tables and document 22.4 MB per MB; after the last view is disposed the token arrays are freed (2.0 MB of per-line slots remain) |
-| Steady-state typing allocation, UI thread | 50-line document: 158 KB/keystroke (bare AvaloniaEdit: 19 KB); 6000 lines: 678 KB (bare: 538 KB). This module's overhead ≈ 140 KB, **independent of document size**; most of it is the TextMate colorizer's `ChangeLinePart` calls on the edited line (it grows with the number of tokens on that line) |
+| Steady-state typing allocation, UI thread | 50-line document: 89 KB/keystroke (bare AvaloniaEdit: 14 KB); 6000 lines: 93 KB (bare: 14 KB); before perf-typing 158 KB and 678 KB (bare 19 KB and 538 KB, the watermark binding of §5). This module's overhead ≈ 75–80 KB, **independent of document size**; most of it is the TextMate colorizer's `ChangeLinePart` calls on the edited line (it grows with the number of tokens on that line) |
 | Memory flatness | 500 documents + views opened/closed: every document, view, editor and buffer collected; 500 view recreations from saved state with an edit in each: none retained (`PerfMemoryTests`) |
 
 ## 7. Settings, commands, large files
@@ -409,6 +434,7 @@ Not done, or done only in part — none of this is faked:
 * `EditorDocumentFuzzTests` (oracle comparison), `EditorDocumentFileTests` (encodings, EOL, atomic save, watcher, conflicts, large files), `LanguageServiceTests`, `ThemeTests` (real Dark+/Monokai/TypeScript/Python/C# JSON), `TextMateTests` (golden scopes), `SnippetEngineTests`, `EditingOperationsTests`, `EditorConfigTests`.
 * View tests: `EditorViewTests`, `CompletionViewTests`, `DiagnosticsHoverTests`, `SignatureActionsNavigationTests`, `BracketsHighlightsDebugTests`, `ShouldHaveFeatureTests`, `MultiCursorViewTests` (and the pure `MultiCaretModelTests`).
 * Hostile/perf/leak: `HostileProviderTests`, `BlockingDetectorTests`, `KeystrokeAllocationTests`, `PerfMemoryTests` (opens 1/10/50 MB files, tokeniser memory, 500× open/close, 500× recreate, popups open). Leak failures print the chain of strong references (`RetentionPath`).
+* Typing cost (perf-typing): `TextAreaWatermarkBindingTests` (bytes per keystroke in 0.5–6 MB documents, the watermark unbound), `FoldRedrawFilterTests` (visual lines built per keystroke inside an expanded fold; folding, a folded region edited while collapsed, a multi-change update), `CachedLineNumberMarginTests` (no number laid out while typing, the stock margin's exact pixels), `TokenRedrawTests` (the line above the caret is not rebuilt; a line built before the next layout is redrawn), `FoldingMarginLeakTests.Typing_keeps_the_markers…`.
 * `ScreenshotTests` write PNGs of the dark and light themes (code with squiggles, breakpoints, the execution line, a folded region, bracket/occurrence highlights; the completion, hover and signature popups) to `.scratch/screenshots/` (git-ignored) and assert the content really is on screen. Visual defects found by looking at them and fixed: invisible match highlight on the selected completion row in the light theme (the "focus highlight" colour was missing).
 
 ## 10. Third-party content
