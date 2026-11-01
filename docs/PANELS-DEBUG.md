@@ -183,6 +183,11 @@ contract cannot update a function breakpoint, so its checkbox is read-only.
   `ArchiveHistory`, and an oversize batch whose head the history cut (`with { Output = tail }`: matched neither by reference nor by its
   `Output` string before, so the line was replayed at the top). A line whose event left the history goes after the output that came before it.
   Lines entered in this console take the same path (through the pump, placed with the same rule), so the live console and a replay agree.
+  They have a queue of their own in the pump: the output queue's drop-oldest bound (4 MB) never drops the user's echo or result during a
+  flood (it did when both shared one queue: a dropped REPL line freed no characters, so the loop went on to the next item). A drain takes the
+  REPL lines before the output, so the output a line followed is always in the same batch. A batch's 5,000-line budget counts the REPL lines
+  and the "not shown" note first and gives the output what is left, so they are not trimmed away either (a line whose output was dropped goes
+  at the top of the batch, next to the note, which is where a trim to 5,000 lines used to cut). Output dropped by the 4 MB bound gets no note.
 
 ### Exception Helper, Modules (SHOULD)
 
@@ -216,7 +221,7 @@ real Skia headless platform.
 
 | Suite | What it proves |
 |---|---|
-| `VariablesTests`, `WatchTests`, `CallStackTests`, `BreakpointsTests`, `ConsoleTests`, `ExceptionAndModulesTests` | view-model behaviour against fake `IDebugService`/`IDebugSession` (lazy expansion, paging, chunked inserts racing collapse/re-expansion, change highlighting incl. Autos, handle invalidation, edits, watch persistence and folder switches, frame focus incl. a declined focus, breakpoint states, console bounding/history/completions, REPL state across console views and across a session end, exception helper, modules) |
+| `VariablesTests`, `WatchTests`, `CallStackTests`, `BreakpointsTests`, `ConsoleTests`, `ExceptionAndModulesTests` | view-model behaviour against fake `IDebugService`/`IDebugSession` (lazy expansion, paging, chunked inserts racing collapse/re-expansion, change highlighting incl. Autos, handle invalidation, edits, watch persistence and folder switches, frame focus incl. a declined focus, breakpoint states, console bounding/history/completions, REPL lines kept while a flood overflows the output queue or the batch's line budget, REPL state across console views and across a session end, exception helper, modules) |
 | `InvalidationTests` | adapter `invalidated`: Locals/Watch reload in a live frame, a variables-only one without a stack request or a pending focus, renumbered frames, one shared stack request, no ended session kept by a tracker that outlives it |
 | `ChangeHighlightTests` | change highlighting by the frame's function (js-debug on Node.js 24 shapes): names added and removed between stops of one frame, a new local marked, a block scope coming and going, one shared identity request per stop, no identity of an earlier stop's caller frame, the name fallback without an identity |
 | `RuntimeTests` | `debug.addToWatch` with the Watch tab hidden / on screen / brought forward, and the Ctrl+Alt+W contribution |
