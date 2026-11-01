@@ -71,6 +71,17 @@ public class SshArgsTests
         Assert.Equal(["-G", "-F", "/tmp/cfg", "-o", "Compression=yes", "-l", "me", "--", "box"], SshArgs.ResolveConfig(o, new RemoteAuthority("box", "me")));
     }
 
+    [Fact]
+    public void Going_around_a_shared_connection_puts_ControlPath_none_before_the_user_s_options()
+    {
+        // ssh takes the first value of a repeated -o option: a user's "ControlPath=…" in remote.ssh.options must not win over it.
+        var o = new SshOptions { ExtraOptions = ["ControlPath=/tmp/mine", "ControlMaster=auto"], BypassConnectionSharing = true };
+        var args = SshArgs.Command(o, new RemoteAuthority("box"), "true");
+        Assert.Equal(["-T", "-o", "ControlPath=none", "-o", "ControlPath=/tmp/mine", "-o", "ControlMaster=auto"], args.Take(7));
+        Assert.Equal(["-G", "-o", "ControlPath=none"], SshArgs.ResolveConfig(o, new RemoteAuthority("box")).Take(3));
+        Assert.DoesNotContain("ControlPath=none", SshArgs.Command(o with { BypassConnectionSharing = false }, new RemoteAuthority("box"), "true"));
+    }
+
     [Theory]
     [InlineData("-oProxyCommand=touch /tmp/x")]
     [InlineData("box name")]

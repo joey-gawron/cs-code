@@ -82,6 +82,9 @@ public sealed class RemoteBootstrapException(string message, Exception? inner = 
     /// is thrown, never inferred from the message, which carries host names, paths and ssh's own text.
     /// </summary>
     public bool IsPermanent { get; init; }
+
+    /// <summary>The transport never answered within its start timeout (no greeting, no exit): a hung connection rather than a refusal.</summary>
+    public bool TimedOut { get; init; }
 }
 
 public sealed record ServerLaunchOptions
@@ -126,6 +129,8 @@ public sealed class ShellServerTransport(IRemoteShell shell, ServerLaunchOptions
                 Options.PersistSession ?? "", Options.PersistSession is null ? "" : Options.GraceSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), .. hashes]);
             var start = await Greeting.StartAsync(launch, Shell.Description, Options.StartTimeout, ct).ConfigureAwait(false);
             if (start.Channel is { } channel) return channel;
+            if (start.TimedOut)
+                throw new RemoteBootstrapException($"No answer from {Shell.Description} within {Options.StartTimeout.TotalSeconds:0} s: {LastLines(start.Stderr)}") { TimedOut = true };
             if (start.ProbeOutput is null)
                 throw new RemoteBootstrapException($"The server did not start ({Shell.Description}, exit code {start.ExitCode}): {LastLines(start.Stderr)}");
             if (attempt > 0)
@@ -182,15 +187,29 @@ public sealed class LoopbackTransport(ProcessLaunch launch) : IRemoteTransport
 /// <summary>Starts a process and reads its stdout up to the server greeting (or the start script's not-installed report).</summary>
 internal static class Greeting
 {
-    public sealed record Outcome(RemoteChannel? Channel, string? ProbeOutput, int ExitCode, string Stderr);
+    public sealed record Outcome(RemoteChannel? Channel, string? ProbeOutput, int ExitCode, string Stderr, bool TimedOut = false);
 
-    public static Task<Outcome> StartAsync(ProcessLaunch launch, string description, TimeSpan timeout, CancellationToken ct) =>
-        BlockingWork.RunAsync("start", () =>
+    /// <summary>After the start timeout killed the process: how long the reading thread gets to see the end of its output before it is left behind.</summary>
+    internal static readonly TimeSpan GiveUpGrace = TimeSpan.FromSeconds(5);
+
+    public static async Task<Outcome> StartAsync(ProcessLaunch launch, string description, TimeSpan timeout, CancellationToken ct)
+    {
+        // Killing the process normally ends the read below (EOF). Not when another process holds the pipe's other end: an ssh session multiplexed over
+        // a ControlMaster hands its stdin/stdout to the master, so a stale master keeps the read blocked after its client is killed (found against a
+        // real host: the reconnect loop waited for ever). Then the attempt is given up as timed out without that thread, which ends with the master.
+        var gaveUp = new TaskCompletionSource<Outcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var work = BlockingWork.RunAsync("start", () =>
         {
             var process = ProcessChannel.Start(launch);
             var ok = false;
+            var timedOut = 0;
             using var killer = ct.Register(() => _ = process.DisposeAsync());
-            using var timer = new Timer(_ => _ = process.DisposeAsync(), null, timeout, Timeout.InfiniteTimeSpan);
+            using var timer = new Timer(_ =>
+            {
+                Volatile.Write(ref timedOut, 1);
+                _ = process.DisposeAsync();
+                _ = Task.Delay(GiveUpGrace).ContinueWith(_ => gaveUp.TrySetResult(new Outcome(null, null, -1, process.StderrTail, TimedOut: true)), TaskScheduler.Default);
+            }, null, timeout, Timeout.InfiniteTimeSpan);
             try
             {
                 var junk = new StringBuilder();
@@ -205,7 +224,7 @@ internal static class Greeting
                     {
                         ct.ThrowIfCancellationRequested();
                         var code = process.Exited.Wait(TimeSpan.FromSeconds(5)) ? process.Exited.Result : -1;
-                        return new Outcome(null, null, code, process.StderrTail + (junk.Length > 0 ? "\n" + junk : ""));
+                        return new Outcome(null, null, code, process.StderrTail + (junk.Length > 0 ? "\n" + junk : ""), Volatile.Read(ref timedOut) == 1);
                     }
                     if (++total > 1024 * 1024) throw new RemoteBootstrapException($"{description}: no server greeting in the first megabyte of output");
                     if (b != '\n') { line.Add((byte)b); continue; }
@@ -230,4 +249,6 @@ internal static class Greeting
                 if (!ok) process.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(6));
             }
         });
+        return await (await Task.WhenAny(work, gaveUp.Task).ConfigureAwait(false)).ConfigureAwait(false);
+    }
 }

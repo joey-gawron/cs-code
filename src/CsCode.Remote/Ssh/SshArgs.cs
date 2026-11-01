@@ -14,6 +14,12 @@ public sealed record SshOptions
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(30);
     /// <summary>Environment changes for the ssh process (null value = remove; askpass variables, SSH_AUTH_SOCK for tests).</summary>
     public IReadOnlyDictionary<string, string?>? Environment { get; init; }
+    /// <summary>
+    /// <c>-o ControlPath=none</c>: a connection of its own instead of the user's shared one (ControlMaster). Set after an attempt got no answer at all,
+    /// which is what a stale master does: its link died silently and every session multiplexed over it hangs (it was started by another ssh,
+    /// without our keep-alive, so it may never notice).
+    /// </summary>
+    public bool BypassConnectionSharing { get; init; }
 }
 
 /// <summary>
@@ -52,6 +58,7 @@ public static class SshArgs
     {
         var args = new List<string> { "-T" };
         if (options.ConfigFile is { Length: > 0 } cfg) args.AddRange(["-F", cfg]);
+        if (options.BypassConnectionSharing) args.AddRange(["-o", "ControlPath=none"]); // first: of repeated -o options ssh takes the first
         foreach (var o in options.ExtraOptions)
         {
             if (string.IsNullOrWhiteSpace(o)) continue;

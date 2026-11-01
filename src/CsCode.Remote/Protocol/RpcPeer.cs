@@ -82,6 +82,11 @@ public sealed class RpcPeer : IRpcEndpoint, IDisposable
     public JsonSerializerOptions Json => _json;
     public bool IsClosed => Volatile.Read(ref _isClosed) != 0;
 
+    private long _lastReceived = Environment.TickCount64;
+
+    /// <summary><see cref="Environment.TickCount64"/> when the last message arrived (or the peer was made): the client's liveness check.</summary>
+    public long LastReceivedTicks => Interlocked.Read(ref _lastReceived);
+
     /// <summary>Completes when the connection is closed; the result is the reason (null = orderly EOF / dispose).</summary>
     public Task<Exception?> Completion => _completion.Task;
 
@@ -375,6 +380,7 @@ public sealed class RpcPeer : IRpcEndpoint, IDisposable
                 try
                 {
                     input.ReadExactly(body, 0, length);
+                    Interlocked.Exchange(ref _lastReceived, Environment.TickCount64);
                     Dispatch(body.AsMemory(0, length));
                 }
                 finally { ArrayPool<byte>.Shared.Return(body); }
@@ -579,8 +585,16 @@ public sealed class RpcPeer : IRpcEndpoint, IDisposable
         _work.CompleteAdding();
         _outSignal.Release();
         while (_outQueue.TryDequeue(out _)) Interlocked.Decrement(ref _outCount);
-        try { _output.Dispose(); } catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
-        try { _input.Dispose(); } catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+        // Off this thread: on Unix, disposing a process pipe with a read (or a write) still in flight waits for that call to return, and over a link
+        // that went silent (its process alive, no bytes coming) it never does, so Close hung and the reconnect never started (found against a real
+        // host). The streams close once the transport process is stopped, which the owner of the connection does next.
+        var output = _output;
+        var input = _input;
+        _ = Task.Run(() =>
+        {
+            try { output.Dispose(); } catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+            try { input.Dispose(); } catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+        });
         _completion.TrySetResult(reason);
         _closed.Fire(reason);
         _closed.Clear();

@@ -127,7 +127,13 @@ public sealed class ProcessChannel : IAsyncDisposable
     /// <summary>Closes stdin (an orderly "goodbye" for servers that exit at EOF) without killing anything.</summary>
     public void CloseOutput()
     {
-        try { Output.Dispose(); } catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+        // Bounded: on Unix disposing a pipe waits for a write still in flight, which a peer that stopped reading (a silent link) never finishes; the
+        // dispose then completes when the process is killed (DisposeAsync kills before it waits for anything else).
+        var dispose = Task.Run(() =>
+        {
+            try { Output.Dispose(); } catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+        });
+        dispose.Wait(TimeSpan.FromSeconds(1));
     }
 
     /// <summary>Waits up to <paramref name="grace"/> for the process to exit on its own, then kills its tree.</summary>
@@ -140,13 +146,13 @@ public sealed class ProcessChannel : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        CloseOutput();
         if (!HasExited)
         {
-            try { _process.Kill(entireProcessTree: true); }
+            try { _process.Kill(entireProcessTree: true); } // first: it ends any read or write still in flight on the pipes, so closing them cannot wait
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
             await Task.WhenAny(Exited, Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
         }
+        CloseOutput();
         try { Input.Dispose(); } catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
         _process.Dispose();
     }
