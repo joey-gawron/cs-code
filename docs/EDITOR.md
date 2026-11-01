@@ -227,8 +227,8 @@ AvaloniaEdit 12.0.0 (`Avalonia.AvaloniaEdit`):
   hit-testable over the zones only. The element needs `HandlesLineBorders` and its own caret stops, or Home stops before it and Left at the text
   start stays on the line; the editor's own gutters (breakpoints, test glyphs, quick diff, inline blame, snippet markers) add `LineZones.HeightOf`
   / `ZoneOffset`. AvaloniaEdit asks no element generator about an empty line, so an empty line cannot carry a zone. At one offset AvaloniaEdit
-  goes on through the generators while each element it gets is zero-length and stops at the first that covers text (the next generator is
-  asked from the next offset), so the order of `TextView.ElementGenerators` decides what is kept where several start at one offset: the zone
+  goes on through the generators while each element it gets is zero-length and stops at the first that covers text (construction goes on
+  at that element's end, so the generators after it are never asked about this offset), so the order of `TextView.ElementGenerators` decides what is kept where several start at one offset: the zone
   generator is first, then inlay hints, then AvaloniaEdit's own (folding, whitespace markers and control-character boxes). Column 0 of a lens
   line keeps the zone, an inlay hint and the first indentation's `editor.renderWhitespace` marker; an inlay hint where a whitespace marker
   or a folded region starts (the end of a fold's first line) is drawn before it.
