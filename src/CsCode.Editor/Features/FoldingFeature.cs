@@ -273,15 +273,55 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
     /// logical parent, which makes it their property-inheritance parent too: the margin's inheritance children list held every marker it ever
     /// made, and each marker its visual line (drawing visuals, text lines, glyph runs), so scrolling a big file grew the heap by megabytes per
     /// pass until the tab closed. The markers being replaced are detached from the logical tree first; everything else is AvaloniaEdit's.
+    ///
+    /// The visual lines also change on every keystroke, and the margin threw away and re-created every marker control each time (allocation,
+    /// logical and visual tree attach, layout of each). When the markers it would make are the ones it has — the same visual lines, folds and
+    /// expanded states, as after typing on a line that starts no fold — they are kept and only re-arranged and redrawn (a kept visual line's
+    /// position is updated in place by the text view). Reflection against 12.0.0's internal marker type; without it the margin rebuilds always.
     /// </summary>
     internal sealed class DetachingFoldingMargin : FoldingMargin
     {
+        private static readonly Type? MarkerType = typeof(FoldingMargin).Assembly.GetType("AvaloniaEdit.Folding.FoldingMarginMarker");
+        private static readonly System.Reflection.FieldInfo? LineField = MarkerType?.GetField("VisualLine", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+        private static readonly System.Reflection.FieldInfo? SectionField = MarkerType?.GetField("FoldingSection", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+        private static readonly System.Reflection.PropertyInfo? ExpandedProperty = MarkerType?.GetProperty("IsExpanded");
+
+        /// <summary>Times the markers were kept instead of rebuilt (tests).</summary>
+        internal int Kept { get; private set; }
+
         protected override void OnTextViewVisualLinesChanged()
         {
+            if (MarkersAreCurrent())
+            {
+                Kept++;
+                InvalidateArrange();
+                InvalidateVisual();
+                return;
+            }
             foreach (var child in VisualChildren)
                 if (child is Avalonia.Controls.ISetLogicalParent marker && ReferenceEquals(((Avalonia.LogicalTree.ILogical)child).LogicalParent, this))
                     marker.SetParent(null);
             base.OnTextViewVisualLinesChanged();
+        }
+
+        /// <summary>Whether the markers AvaloniaEdit would make now (its own rule, line by line) are exactly the ones in place.</summary>
+        private bool MarkersAreCurrent()
+        {
+            if (LineField is null || SectionField is null || ExpandedProperty is null || TextView is not { VisualLinesValid: true } textView || FoldingManager is not { } manager)
+                return false;
+            var markers = VisualChildren;
+            var index = 0;
+            foreach (var line in textView.VisualLines)
+            {
+                var fold = manager.GetNextFolding(line.FirstDocumentLine.Offset);
+                if (fold is null || fold.StartOffset > line.LastDocumentLine.Offset + line.LastDocumentLine.Length) continue;
+                if (index >= markers.Count) return false;
+                var marker = markers[index++];
+                if (marker.GetType() != MarkerType || !ReferenceEquals(LineField.GetValue(marker), line) || !ReferenceEquals(SectionField.GetValue(marker), fold)
+                    || (bool)ExpandedProperty.GetValue(marker)! == fold.IsFolded)
+                    return false;
+            }
+            return index == markers.Count;
         }
     }
 
