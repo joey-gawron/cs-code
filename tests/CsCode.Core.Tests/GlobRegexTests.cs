@@ -277,8 +277,8 @@ public sealed class GlobRegexTests
 
 /// <summary>
 /// The heap measurement of <see cref="GlobRegexTests"/>: the live heap is the whole process's, so a test of another class running at the
-/// same time (LineDiffTests builds 50,000-line arrays) counted its objects as the matchers' ("16194 B per compiled pattern" in full runs on a
-/// busy Mac, 912 B alone). It runs alone, after the parallel tests.
+/// same time counted its objects as the matchers' ("16194 B per compiled pattern" in a full run on a busy Mac, 912 B alone; a concurrent
+/// allocating test reproduces it at 245-271 KB). It runs alone, after the parallel tests.
 /// </summary>
 [Collection(GlobRegexMemoryTests.Name)]
 public sealed class GlobRegexMemoryTests

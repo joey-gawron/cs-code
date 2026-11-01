@@ -274,7 +274,7 @@ Regex: 60–470 ns at the same load) and 80 ns when the suffix rejects. Platform
 `.editorconfig` reader use it too (they were the NonBacktracking regexes of item 2 below). `GlobRegexTests` (Core) checks it against .NET's
 Regex on 18,000 random patterns × texts, on both simulations; `GlobRegexMemoryTests` measures the bytes kept per compiled pattern (~0.9 KB on
 Apple arm64, budget 2 KB) in a collection of its own that runs after the parallel tests, since the live heap is the whole process's (with
-`LineDiffTests` running beside it a full run measured 16 KB). Patterns longer than 8,192 characters are refused; the `.editorconfig` readers'
+another class's test running beside it a busy full run measured 16 KB). Patterns longer than 8,192 characters are refused; the `.editorconfig` readers'
 numeric ranges (`{num1..num2}`, up to 1000 numbers as before) are therefore built with `GlobRegex.IntegerRange` from digit classes
 (`{10000000..10000999}` → `10000[0-9][0-9][0-9]`, length proportional to the digits) instead of one alternative per number, which reached ~9,000
 characters and made such a section silently never match (T38 follow-up; checked against the alternation on 300 random ranges).
