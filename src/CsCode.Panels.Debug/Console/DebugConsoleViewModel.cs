@@ -167,8 +167,19 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
             return;
         }
         var newest = batch.Max(l => l.Sequence);
-        // The note borrows the first line's sequence so it never makes the "already applied" watermark skip older queued lines.
-        if (dropped > 0) batch.Insert(0, new ConsoleLine(batch[0].Sequence, ConsoleLineKind.Info, $"… {dropped:N0} lines were not shown (the console could not keep up)"));
+        if (dropped > 0)
+        {
+            // The note takes the top row of a full batch (the oldest line it pushes out is counted with the dropped ones), so cutting the
+            // batch to the bound never cuts the note. It borrows the first kept line's sequence so it never makes the "already applied"
+            // watermark skip older queued lines.
+            var over = batch.Count - (MaxLines - 1);
+            if (over > 0)
+            {
+                batch.RemoveRange(0, over);
+                dropped += over;
+            }
+            batch.Insert(0, new ConsoleLine(batch[0].Sequence, ConsoleLineKind.Info, $"… {dropped:N0} lines were not shown (the console could not keep up)"));
+        }
         if (batch.Count >= MaxLines)
             Lines.ReplaceAll(batch.Count == MaxLines ? batch : batch.GetRange(batch.Count - MaxLines, MaxLines));
         else

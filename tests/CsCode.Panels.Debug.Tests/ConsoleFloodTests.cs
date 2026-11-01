@@ -44,6 +44,28 @@ public class ConsoleFloodTests
     }
 
     [AvaloniaFact]
+    public async Task Lines_dropped_while_the_ui_thread_was_behind_are_reported_by_a_note_above_the_newest_lines()
+    {
+        using var rig = new PanelRig();
+        using var vm = new DebugConsoleViewModel(rig.Services);
+        await Task.Delay(50); // the (empty) seed has been drained
+
+        // The UI thread is busy (a long layout or GC pause) while 12,000 lines arrive: the queue for the UI keeps the newest 5,000.
+        for (var batch = 0; batch < 3; batch++) rig.Debug.EmitOutput(new DebugOutputEventArgs(rig.Session, "stdout", Lines(batch * 4_000, 4_000)));
+        Thread.Sleep(500); // blocks the UI thread while the pump delivers everything
+        Assert.Equal(0, vm.Applied);
+
+        await PanelRig.Eventually(() => vm.Lines.Count > 0 && vm.Lines[^1].Text == "flood line 11999", what: "the newest line");
+        Assert.Equal(DebugConsoleViewModel.MaxLines, vm.Lines.Count);
+        // Before: the note was inserted at the top of a 5,001-line batch and cut with the oldest line.
+        Assert.Contains("lines were not shown (the console could not keep up)", vm.Lines[0].Text);
+        Assert.Equal(ConsoleLineKind.Info, vm.Lines[0].Kind);
+        Assert.Equal("flood line 7001", vm.Lines[1].Text);
+        // How many were cut before the queue (by the console history) depends on the pump's timing; the note counts at least the queue's.
+        Assert.Matches(@"^… [1-9][0-9,]* lines were not shown", vm.Lines[0].Text);
+    }
+
+    [AvaloniaFact]
     public async Task Many_events_within_one_frame_are_applied_together()
     {
         using var rig = new PanelRig();
