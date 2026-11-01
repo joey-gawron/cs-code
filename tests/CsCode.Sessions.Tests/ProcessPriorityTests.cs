@@ -53,8 +53,10 @@ public class ProcessPriorityTests
     public void The_linux_autogroup_file_is_written_and_read_as_the_kernel_lays_it_out()
     {
         var previous = ProcessPriority.LinuxAutogroupPath;
+        var previousLeads = ProcessPriority.LinuxLeadsOwnSession;
         var file = Path.Combine(Path.GetTempPath(), "cscode-autogroup-" + Guid.NewGuid().ToString("N"));
         ProcessPriority.LinuxAutogroupPath = file;
+        ProcessPriority.LinuxLeadsOwnSession = () => true; // as a CsCode process the launcher started (setsid)
         try
         {
             File.WriteAllText(file, "/autogroup-4711 nice 0\n");
@@ -77,7 +79,45 @@ public class ProcessPriorityTests
         finally
         {
             ProcessPriority.LinuxAutogroupPath = previous;
+            ProcessPriority.LinuxLeadsOwnSession = previousLeads;
             File.Delete(file);
         }
+    }
+
+    /// <summary>
+    /// A process that shares its session (started from a shell directly: <c>cscode --host --spare</c>, where <c>setsid</c> fails because the shell
+    /// made it a process-group leader) shares that session's autogroup: lowering it would slow the user's whole terminal session, and a claim would
+    /// then reset it to 0. This test process is such a process (the test runner started it without a session of its own).
+    /// </summary>
+    [Fact]
+    public void A_process_that_shares_its_session_leaves_the_shared_linux_autogroup_alone()
+    {
+        if (!OperatingSystem.IsLinux()) Assert.Skip("Linux: /proc/self/autogroup");
+        var sid = RunCapture("ps", "-o", "sid=", "-p", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)).Trim();
+        if (sid == Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)) Assert.Skip("this test process leads its own session");
+        var previous = ProcessPriority.LinuxAutogroupPath;
+        var file = Path.Combine(Path.GetTempPath(), "cscode-autogroup-" + Guid.NewGuid().ToString("N"));
+        ProcessPriority.LinuxAutogroupPath = file;
+        try
+        {
+            File.WriteAllText(file, "/autogroup-4711 nice 3\n"); // the terminal session's own value, whatever it is
+            Assert.False(ProcessPriority.EnterBackground());
+            Assert.Equal("/autogroup-4711 nice 3\n", File.ReadAllText(file));
+            Assert.True(ProcessPriority.LeaveBackground()); // it never left normal priority, and the session's value is not reset to 0
+            Assert.Equal("/autogroup-4711 nice 3\n", File.ReadAllText(file));
+        }
+        finally
+        {
+            ProcessPriority.LinuxAutogroupPath = previous;
+            File.Delete(file);
+        }
+    }
+
+    private static string RunCapture(string file, params string[] args)
+    {
+        using var p = Process.Start(new ProcessStartInfo(file, args) { RedirectStandardOutput = true, UseShellExecute = false })!;
+        var output = p.StandardOutput.ReadToEnd();
+        p.WaitForExit(10_000);
+        return output;
     }
 }

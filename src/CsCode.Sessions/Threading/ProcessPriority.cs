@@ -13,7 +13,10 @@ namespace CsCode.Sessions;
 /// <item>Linux: the nice value of the process's scheduler autogroup (<c>/proc/self/autogroup</c>; a CsCode process started by the launcher leads a
 /// session of its own, <c>setsid</c>, so the autogroup holds only it). Raising it back to 0 needs no privilege, unlike a task's nice value. It
 /// has an effect only where autogroups are in use (<c>kernel.sched_autogroup_enabled</c>, the default on desktop distributions, and a process
-/// that is not in a cgroup with its own CPU controller, which systemd units can be); elsewhere it is a harmless no-op.</item>
+/// that is not in a cgroup with its own CPU controller, which systemd units can be); elsewhere it is a harmless no-op. Only a process that leads
+/// its own session touches it: one that shares a session (started from a shell directly, e.g. <c>cscode --host --spare</c>, where <c>setsid</c>
+/// fails because the shell made it a process-group leader) shares that session's autogroup, and lowering it would slow the whole terminal
+/// session; such a process stays at normal priority (entering returns false, leaving writes nothing).</item>
 /// <item>Windows: not done (false).</item>
 /// </list>
 /// Best effort: every call returns false instead of throwing when the OS refuses or lacks it.
@@ -35,6 +38,9 @@ public static class ProcessPriority
 
     /// <summary>Where Linux keeps this process's autogroup (tests point it elsewhere).</summary>
     internal static string LinuxAutogroupPath { get; set; } = "/proc/self/autogroup";
+
+    /// <summary>Whether this process leads its own session, so its autogroup is its alone (tests replace it).</summary>
+    internal static Func<bool> LinuxLeadsOwnSession { get; set; } = Ipc.UnixNative.LeadsOwnSession;
 
     /// <summary>Lowers this process's priority (see the class remarks). True when it took effect.</summary>
     public static bool EnterBackground() => Set(background: true);
@@ -68,6 +74,8 @@ public static class ProcessPriority
             if (OperatingSystem.IsLinux())
             {
                 if (!File.Exists(LinuxAutogroupPath)) return false;
+                // Another session's autogroup (a shell's) is not this process's to change: never lowered, so never raised either.
+                if (!LinuxLeadsOwnSession()) return !background;
                 var value = background ? LinuxBackgroundNice.ToString(System.Globalization.CultureInfo.InvariantCulture) : "0";
                 // The kernel takes one autogroup change per 100 ms, system-wide (EAGAIN otherwise, e.g. two spares starting together): a few tries,
                 // so a claim never leaves its session in the background.

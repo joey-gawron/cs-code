@@ -104,7 +104,8 @@ Internal switches (how the launcher starts processes; not part of the interface)
   `quit {force, evict}`, `focusFile {paths}`. A process whose quit is certain says `quitting` in hello from then on (also after save prompts,
   which show the window) and answers `show`/`focusFile` with the `quitting` error; one whose quit is still writing makes them wait for the
   outcome. The message format did not change with the lock move (new fields are optional), so the protocol version is still 1. Test-only
-  (served only with `--headless-test`): `inspect`, `testEdit`, `testCaret`, `testFold`, `testCloseTab`, `testCloseWindow`.
+  (served only with `--headless-test`): `inspect`, `testEdit`, `testCaret`, `testFold`, `testCloseTab`, `testCloseWindow`. A spare's `inspect` says what its warm-up did (`WarmedUp`) and whether it ended (`SpareWarm`): tests
+  wait for that, since at background priority on a loaded machine the warm-up takes seconds, not the ≈ 0.6 s it takes on an idle one.
 * **Timeouts**: connect + handshake 300 ms (past it a process counts as wedged and is never waited for), show reply 30 s (a cold restore),
   started-process hello 30 s, quit wait 20 s.
 * **Locks**: `{UserDataDir}/sessions/.locks/<session>.lock`, an exclusive `flock` held by the owning process (released by the kernel on
@@ -291,7 +292,9 @@ do this: an unprivileged process can never lower its nice value again, so a clai
 `setpriority(..., 0)`. Linux: the nice value of the process's scheduler autogroup (`/proc/self/autogroup`, 10; a CsCode process leads a session
 of its own, so the autogroup holds only it), raised back to 0 without privileges; the kernel takes one autogroup change per 100 ms system-wide,
 so leaving retries a few times. It works where autogroups are in use (`kernel.sched_autogroup_enabled`, the desktop default) and is a no-op in a
-cgroup with its own CPU controller. A claim that fails (its session is owned by another process) puts the spare back at the low priority
+cgroup with its own CPU controller. Only a process that leads its own session (`getsid(0) == getpid()`) changes it: one started from a shell
+directly (`cscode --host --spare`, where `setsid` fails because the shell made it a process-group leader) shares the shell's autogroup, and
+lowering that would slow the whole terminal session (and a claim would reset it to 0), so such a spare waits at normal priority. A claim that fails (its session is owned by another process) puts the spare back at the low priority
 before it is free again. Not done on Windows.
 
 **Why it stays off** (2026-11-01, publishes, headless; the macOS one per-assembly ReadyToRun, the Linux one the composite):
