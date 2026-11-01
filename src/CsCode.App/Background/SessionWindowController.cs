@@ -137,7 +137,11 @@ public sealed partial class SessionWindowController : IDisposable
     internal async Task<IpcMessage> HandleAsync(IpcMessage request, CancellationToken ct)
     {
         if (request.Type == IpcVerbs.Quit) return await OnUiAsync(() => QuitAsync(request.Force == true, evict: request.Evict == true)).ConfigureAwait(false);
-        if (_host.IsUnclaimedSpare) return IpcMessage.Failure("the warm spare has no session yet (claim it first)");
+        if (_host.IsUnclaimedSpare)
+        {
+            // inspect (headless tests only) reports what the spare warmed and its priority; everything else needs a session
+            return request.Type == IpcVerbs.Inspect ? await InspectAsync(request).ConfigureAwait(false) : IpcMessage.Failure("the warm spare has no session yet (claim it first)");
+        }
         await _activated.Task.WaitAsync(ct).ConfigureAwait(false);
         switch (request.Type)
         {
