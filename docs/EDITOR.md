@@ -458,7 +458,8 @@ glyph on the text), `SemanticTokenTests` (style resolution with VS Code's scorin
 edits and CRLF, range mode memory and the token cap, colours in a view with the setting and the theme flag, no flicker, stale answers, refresh,
 range requests for the viewport of a big file), `ThemeTests` (the theme flag), `PerfMemoryTests` (a view with lenses and tokens is collectable),
 `ScreenshotTests.Code_lenses_and_semantic_tokens` (Dark+, Light+, Visual Studio Dark), `TestingHostTests` / `TestExplorerCompositionTests` (the
-Test Explorer's lenses).
+Test Explorer's lenses, and that results during a run do not refresh them). All of these pass on macOS (arm64) and on Linux (Ubuntu arm64,
+headless), zone geometry, pixel counts and screenshots included.
 
 ## 8. Known gaps (honest list)
 
