@@ -75,6 +75,8 @@ public sealed class ShellController : IDisposable
     public IShellKeyInterceptor? KeyInterceptor => Vim;
     /// <summary>General macros (null when the composition has no macro module or no real editor): the keyboard pipeline's tap.</summary>
     public Macros.MacroIntegration? Macros { get; private set; }
+    /// <summary>The Markdown preview's commands and tabs (null when the composition has no editor module).</summary>
+    public Markdown.MarkdownPreviewIntegration? Markdown { get; private set; }
     public ClipboardRouter Clipboard { get; private set; } = null!;
     public ShellContextMenus ContextMenus { get; private set; } = null!;
     public ShellDockFactory Factory => _sp.GetRequiredService<ShellDockFactory>();
@@ -170,6 +172,14 @@ public sealed class ShellController : IDisposable
             macros.Start(Keyboard, Vim);
             _disposables.Add(macros);
             _windowHooks.Add(macros.AttachWindow);
+        }
+
+        // Markdown preview (docs/MARKDOWN.md): Open Preview / Open Preview to the Side, one preview tab per file.
+        Markdown = global::CsCode.App.Markdown.MarkdownPreviewIntegration.TryCreate(_sp);
+        if (Markdown is { } markdown)
+        {
+            markdown.Start();
+            _disposables.Add(markdown);
         }
 
         Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs);

@@ -118,5 +118,10 @@
   { "key": "ctrl+alt+l",         "command": "workbench.view.explorer",            "mac": "cmd+alt+l" },
   { "key": "ctrl+alt+o",         "command": "workbench.action.output.toggleOutput", "mac": "cmd+alt+o" },
   { "key": "ctrl+\\ ctrl+e",     "command": "workbench.actions.view.problems",    "mac": "cmd+\\ cmd+e" },
-  { "key": "ctrl+`",             "command": "workbench.action.terminal.toggleTerminal", "mac": "ctrl+`" } // Cmd+` cycles windows
+  { "key": "ctrl+`",             "command": "workbench.action.terminal.toggleTerminal", "mac": "ctrl+`" }, // Cmd+` cycles windows
+
+  // ---- Markdown preview (docs/MARKDOWN.md): VS Code's keys, in both presets ----
+  { "key": "ctrl+shift+v",       "command": "markdown.showPreview",               "when": "editorLangId == 'markdown' && !markdownPreviewFocus", "mac": "cmd+shift+v" },
+  { "key": "ctrl+k v",           "command": "markdown.showPreviewToSide",         "when": "editorLangId == 'markdown' && !markdownPreviewFocus", "mac": "cmd+k v" },
+  { "key": "ctrl+shift+v",       "command": "markdown.showSource",                "when": "markdownPreviewFocus", "mac": "cmd+shift+v" }
 ]

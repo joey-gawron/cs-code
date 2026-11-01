@@ -47,6 +47,25 @@ Code extension manifests (with `"license": "MIT"`) for its grammars but none for
 licence and on VS Code's repository licence (MIT) for the files that come from it; the upstream repositories could not be consulted offline. \* The
 palette designers are credited from general knowledge of these well-known schemes, not from anything in the package; no file of theirs is included.
 
+## Markdown preview: Markdig (BSD-2-Clause)
+
+The Markdown preview (`src/CsCode.Editor/Markdown/Preview`, docs/MARKDOWN.md) parses with **Markdig** 1.4.1, Copyright (c) Alexandre Mutel (the
+nuspec's copyright and authors fields), licensed under the BSD 2-Clause "Simplified" License (licence expression `BSD-2-Clause` in its nuspec). Source:
+<https://github.com/xoofx/markdig>. Used unmodified as a NuGet package dependency; the licence requires the copyright notice and the licence's
+conditions and disclaimer to be retained in binary distributions:
+
+> Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+> 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+> 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the
+>    documentation and/or other materials provided with the distribution.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+> TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+> CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+> PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+> LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+> SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 ## Development-time only (not shipped)
 
 | Component | Licence | Notes |

@@ -36,6 +36,13 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<SnippetService>(),
             sp.GetRequiredService<EditorWorker>()));
         services.AddSingleton<IEditorViewFactory>(sp => sp.GetRequiredService<EditorViewFactory>());
+        // Markdown preview (docs/MARKDOWN.md): views the shell hosts in document tabs.
+        services.AddSingleton(sp => new Markdown.Preview.MarkdownPreviewFactory(
+            sp.GetRequiredService<EditorServices>(),
+            sp.GetRequiredService<EditorWorker>(),
+            sp.GetRequiredService<ColorThemeService>(),
+            sp.GetRequiredService<TokenizationManager>(),
+            sp.GetRequiredService<LanguageService>()));
         return services;
     }
 }

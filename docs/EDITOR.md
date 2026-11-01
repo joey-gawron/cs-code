@@ -50,6 +50,13 @@ chords; docs/SHELL.md "Keyboard", docs/TERMINAL.md), and none of those keys reac
 | `OpenUndoGroup()` | Holds an undo group of the view's document open until the result is disposed: every change of the document meanwhile (typing, keys, commands, in any view, over any number of dispatcher callbacks) becomes ONE undo step. Handles of one document nest; the group also closes when the document closes; typing right before or after it is a step of its own; disposing twice, or after the view or document is gone, does nothing. Off the UI thread: `EditorDocument.OpenUndoGroup` throws, a handle's `Dispose` is posted. |
 | `StartNewUndoStep()` | The next change starts an undo step of its own (a typed run does not continue the last one), inside a held group too. |
 
+**Scroll hooks and the Markdown preview (docs/MARKDOWN.md).** `IEditorViewController.TopLine` (the 0-based line at the top, fractional: from
+AvaloniaEdit's visual lines, so folding and wrapping count), `Scrolled` (raised with the new top line when the view scrolls; hooked to
+`TextView.ScrollOffsetChanged` on first subscription) and `ScrollToLine(line)` (sets the scroll offset, leaves the caret) couple an editor with
+its preview. The preview itself (`Markdown/Preview`, `MarkdownPreviewFactory` registered by `AddCsCodeEditor`) parses with Markdig on the editor
+worker and colours code blocks with `CodeHighlighter.HighlightCode` (same grammars and theme as the editor); the hover/completion `MarkdownParser`
+is unchanged. In Markdown files Visual Studio's Cycle Clipboard Ring key (Ctrl+Shift+V / Cmd+Shift+V) is left to Open Preview.
+
 While a group is held, **Undo and Redo never throw** (AvaloniaEdit's `UndoStack.Undo` does with a group open, and forgets its open groups): the
 controller's `Undo`/`Redo`, `EditorDocument.Undo`/`Redo` and the text area's `ApplicationCommands.Undo`/`Redo` (Ctrl+Z / Ctrl+Y, `TextEditor.Undo`;
 each view puts its own bindings in front of AvaloniaEdit's, active only while a group is held) reverse and re-apply the steps made inside the
