@@ -201,6 +201,7 @@ public sealed partial class SessionWindowController : IDisposable
     internal async Task ActivateAsync(PreparedSession prepared, bool hidden)
     {
         _ui.AssertUiThread();
+        EndWarmUp(); // a spare claimed in the middle of its editor warm-up: the throwaway editor leaves the window before anything else
         try
         {
             _host.SetState(ProcessStates.Starting);
