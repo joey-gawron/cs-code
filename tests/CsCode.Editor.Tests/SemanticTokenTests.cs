@@ -235,6 +235,12 @@ public class SemanticTokenTests
         var token = Assert.Single(feature.TokensOf(3));
         Assert.Equal((17, 5, "variable", "readonly"), (token.Start, token.Length, token.Type, string.Join(",", token.Modifiers)));
 
+        var calls = provider.Calls;
+        host.Config.Set("editor.tabSize", 2);
+        await Task.Delay((int)SemanticTokensFeature.Delay.TotalMilliseconds + 200);
+        Assert.Equal(calls, provider.Calls); // another setting changing restyles, it does not ask the server again
+        Assert.Equal(readonlyVariable, ForegroundAt(view, countAt));
+
         provider.Gate = new TaskCompletionSource(); // the server is slow now
         view.Controller.SetSelection(TextRange.At(3, 4));
         Type(view, "  ");

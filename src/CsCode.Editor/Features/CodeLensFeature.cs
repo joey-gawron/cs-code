@@ -60,7 +60,7 @@ internal sealed partial class CodeLensFeature : ILineZoneSource, ISettingsAware,
     private Dictionary<int, Item[]>? _byLine; // line (1-based) → its lenses in display order; rebuilt lazily after a change that moves lines
     private int _hoverLine = -1;
     private Point? _hoverPoint;
-    private bool _disposed;
+    private bool _disposed, _wasEnabled;
 
     public CodeLensFeature(CodeEditorControl view)
     {
@@ -81,6 +81,7 @@ internal sealed partial class CodeLensFeature : ILineZoneSource, ISettingsAware,
             foreach (var s in _providerSubs.Values) s.Dispose();
             _providerSubs.Clear();
         }));
+        _wasEnabled = view.Settings.CodeLens;
         Schedule(TimeSpan.Zero);
     }
 
@@ -112,11 +113,13 @@ internal sealed partial class CodeLensFeature : ILineZoneSource, ISettingsAware,
 
     public void OnSettingsChanged()
     {
-        if (!_v.Settings.CodeLens) Apply([]);
+        var was = _wasEnabled;
+        _wasEnabled = _v.Settings.CodeLens;
+        if (!_wasEnabled) Apply([]);
         else
         {
             _zones.Invalidate(); // the zone height follows the font settings
-            Schedule(TimeSpan.Zero);
+            if (!was) Schedule(TimeSpan.Zero); // turned on: ask (another setting changing does not)
         }
     }
 

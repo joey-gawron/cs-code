@@ -320,6 +320,10 @@ public class CodeLensViewTests
         var feature = view.Feature<CodeLensFeature>()!;
         await ViewHost.WaitFor(() => feature.Placements.Count == 1, "lens placed");
         var normal = feature.ZoneHeight;
+        var calls = provider.Calls;
+        host.Config.Set("editor.tabSize", 2);
+        await Task.Delay((int)CodeLensFeature.Delay.TotalMilliseconds + 200);
+        Assert.Equal(calls, provider.Calls); // another setting changing does not ask the server again
 
         host.Config.Set(LanguageRenderSettings.CodeLensFontSizeKey, 30);
         await ViewHost.WaitFor(() => feature.ZoneHeight > normal + 10, "a bigger lens font makes a taller zone");

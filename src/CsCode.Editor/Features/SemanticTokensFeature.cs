@@ -43,7 +43,7 @@ internal sealed class SemanticTokensFeature : ISettingsAware, IThemeAware, IDisp
     private CancellationTokenSource? _debounce, _request;
     private StyleTable? _styles;
     private SemanticTokensLegend? _legend;
-    private bool _rangeMode, _disposed;
+    private bool _rangeMode, _disposed, _wasEnabled;
 
     public SemanticTokensFeature(CodeEditorControl view)
     {
@@ -63,6 +63,7 @@ internal sealed class SemanticTokensFeature : ISettingsAware, IThemeAware, IDisp
             if (t == typeof(ISemanticTokensProvider) || t == typeof(ISemanticTokensRangeProvider)) _v.Post(() => Schedule(TimeSpan.Zero));
         }));
         view.TextView.ScrollOffsetChanged += OnScrolled;
+        _wasEnabled = Enabled;
         _d.Add(Disposable.Create(() =>
         {
             view.TextView.ScrollOffsetChanged -= OnScrolled;
@@ -94,11 +95,13 @@ internal sealed class SemanticTokensFeature : ISettingsAware, IThemeAware, IDisp
     private void Refresh()
     {
         _styles = null; // the theme's rules or the font changed
-        if (!Enabled) Clear();
+        var was = _wasEnabled;
+        _wasEnabled = Enabled;
+        if (!_wasEnabled) Clear();
         else
         {
             _v.TextView.Redraw();
-            Schedule(TimeSpan.Zero);
+            if (!was) Schedule(TimeSpan.Zero); // turned on: ask (a change that leaves it on only restyles what is there)
         }
     }
 
