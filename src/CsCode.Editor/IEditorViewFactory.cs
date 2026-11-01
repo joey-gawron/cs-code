@@ -138,6 +138,17 @@ public interface IEditorViewController
     /// group too, where it decides what an Undo inside the group reverses). Macro playback marks every step this way. UI thread.
     /// </summary>
     void StartNewUndoStep() { }
+
+    // ---- additive members (scroll synchronisation, used by the Markdown preview; defaults keep other implementations compiling) ----
+
+    /// <summary>The 0-based document line at the top of the view, with the fraction of it scrolled out of sight (12.5: half of line 12 is hidden). UI thread.</summary>
+    double TopLine => 0;
+
+    /// <summary>Raised on the UI thread when the view scrolled vertically (by the user or by code), with the new <see cref="TopLine"/>.</summary>
+    Core.Lifecycle.IEventSource<double> Scrolled => Core.Lifecycle.EventSource.Never<double>();
+
+    /// <summary>Scrolls so that document line <paramref name="line"/> (0-based, fractional as <see cref="TopLine"/>) is at the top. The caret does not move. UI thread.</summary>
+    void ScrollToLine(double line) { }
 }
 
 /// <summary>Everything needed to recreate a destroyed view. Positions are 0-based lines/UTF-16 columns so they survive edits made while no view existed.</summary>

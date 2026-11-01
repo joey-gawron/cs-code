@@ -232,6 +232,62 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
     public ValueTask<IReadOnlyList<string>> GetBreadcrumbsAsync(CancellationToken ct = default) =>
         BreadcrumbsHandler?.Invoke(ct) ?? ValueTask.FromResult<IReadOnlyList<string>>([]);
 
+    // ---- scroll synchronisation (the Markdown preview)
+
+    private Emitter<double>? _scrolled;
+
+    public double TopLine
+    {
+        get
+        {
+            if (_disposed || view.IsDisposed) return 0;
+            var tv = view.TextView;
+            var y = tv.ScrollOffset.Y;
+            if (tv.VisualLinesValid && tv.GetVisualLineFromVisualTop(y) is { } visual)
+            {
+                var within = visual.Height > 0 ? Math.Clamp((y - visual.VisualTop) / visual.Height, 0, 0.999) : 0;
+                return visual.FirstDocumentLine.LineNumber - 1 + within;
+            }
+            var lineHeight = tv.DefaultLineHeight;
+            if (lineHeight <= 0) return 0;
+            var top = tv.GetDocumentLineByVisualTop(y);
+            return top is null ? 0 : top.LineNumber - 1 + Math.Clamp((y - tv.GetVisualTopByDocumentLine(top.LineNumber)) / lineHeight, 0, 0.999);
+        }
+    }
+
+    public IEventSource<double> Scrolled
+    {
+        get
+        {
+            if (_scrolled is null)
+            {
+                _scrolled = new Emitter<double>();
+                if (!_disposed) view.TextView.ScrollOffsetChanged += OnScrollOffsetChanged; // hooked on first use: most views never have a preview
+            }
+            return _scrolled;
+        }
+    }
+
+    private void OnScrollOffsetChanged(object? sender, EventArgs e)
+    {
+        if (!_disposed) _scrolled?.Fire(TopLine);
+    }
+
+    public void ScrollToLine(double line)
+    {
+        if (_disposed || view.IsDisposed) return;
+        var doc = view.Editor.Document;
+        if (doc is null || doc.LineCount == 0) return;
+        var tv = view.TextView;
+        line = Math.Clamp(line, 0, doc.LineCount - 1);
+        var number = (int)Math.Floor(line) + 1;
+        var top = tv.GetVisualTopByDocumentLine(number);
+        var height = tv.DefaultLineHeight;
+        if (tv.VisualLinesValid && tv.GetVisualLine(number) is { } visual) height = visual.Height;
+        var y = top + (line - (number - 1)) * height;
+        ((Avalonia.Controls.Primitives.IScrollable)view.TextArea).Offset = new Avalonia.Vector(tv.ScrollOffset.X, Math.Max(0, y));
+    }
+
     internal void RaiseCaretChanged()
     {
         if (!_disposed) _caretChanged.Fire(Caret);
@@ -245,6 +301,11 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
     public void Dispose()
     {
         DetachScrollRetry();
+        if (_scrolled is not null)
+        {
+            view.TextView.ScrollOffsetChanged -= OnScrollOffsetChanged;
+            _scrolled.Clear();
+        }
         _disposed = true;
         _caretChanged.Clear();
         _selectionChanged.Clear();

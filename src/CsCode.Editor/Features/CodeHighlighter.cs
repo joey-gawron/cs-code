@@ -40,6 +40,19 @@ internal static class CodeHighlighter
         return result;
     }
 
+    /// <summary>
+    /// The spans of one piece of code (the Markdown preview's code blocks): <paramref name="info"/> is a fence's language (id, alias or
+    /// extension), null or unknown for plain text. Worker thread only, like <see cref="HighlightBlocks"/>.
+    /// </summary>
+    public static IReadOnlyList<CodeSpan>? HighlightCode(string? info, string code, TokenizationManager tokens, LanguageService languages,
+        ColorTheme theme, Rgba defaultForeground, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (code.Length == 0 || code.Length > MaxCodeLength) return null;
+        if (ResolveLanguage(info, languages) is not { } language || tokens.Grammars.GrammarForLanguage(language) is not { } grammar) return null;
+        return Spans(code, grammar, new TokenColorResolver(theme, defaultForeground), tokens.Interner);
+    }
+
     private static IEnumerable<MdCodeBlock> Walk(IReadOnlyList<MdBlock> blocks)
     {
         foreach (var b in blocks)
