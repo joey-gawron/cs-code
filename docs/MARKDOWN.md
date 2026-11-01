@@ -98,9 +98,11 @@ milliseconds. The pipeline: pipe tables, task lists, strikethrough, autolinks (s
 (setting), precise source location.
 
 **Blocks and reuse keys.** The document is a list of top-level blocks, each with the source lines it spans and a key (block type, length, 64-bit
-FNV-1a hash of its source text). After an edit, `MarkdownBlockPanel.SetBlocks` keeps the controls and measured heights of every block whose key is
+FNV-1a hash of its source text; for a block with a `[` outside code, also a hash of the document's link reference definitions, since a
+`[label]` link takes its target from one, so editing, adding or removing a definition rebuilds the blocks that may use it). After an edit, `MarkdownBlockPanel.SetBlocks` keeps the controls and measured heights of every block whose key is
 unchanged, so typing in one paragraph rebuilds that paragraph only, and the code colours of an unchanged top-level code block are carried over
-from the previous parse instead of re-tokenising it. A theme or settings change rebuilds everything.
+from the previous parse instead of re-tokenising it. A theme or settings change rebuilds everything (also when a later update, a keystroke's or
+a refresh, supersedes its render before it is shown: the preview stays marked stale until a full rebuild has been applied).
 
 **Virtualisation.** `MarkdownBlockPanel` is a `Panel` inside the preview's `ScrollViewer` that builds controls only for the blocks within one
 viewport above and below the visible area (from `EffectiveViewportChanged`) and drops those more than two viewports away. A block never shown
@@ -132,7 +134,8 @@ a heading, a paragraph with bold, code and a link, a list and a C# code block) r
 character**, almost all of it Markdig's syntax tree (≈ 13 MB for this file measured on its own: 40,000 nodes) plus the code spans; **20 blocks**
 have controls. The test's budget is 120 bytes per character and 150 realised blocks. A typical README (10–50 KB) costs 1–4 MB. A source above
 4,000,000 characters is cut there, with a note at the top of the preview. Decoded images are cached per preview (64 entries, downscaled to 2048 px
-wide) and disposed with it. Everything a preview holds goes when its tab closes (release test) or its view is dropped by the well's view budget.
+wide) and disposed with it; an image dropped from the cache is no longer held by the preview (a control still showing it keeps it, and
+the GC frees it after that), so scrolling a README with hundreds of images stays within the cache's size. Everything a preview holds goes when its tab closes (release test) or its view is dropped by the well's view budget.
 
 ## Known limits
 
