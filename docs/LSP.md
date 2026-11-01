@@ -153,9 +153,9 @@ Providers are registered **per feature interface**, only while the server advert
 | rename (+prepareRename) | implemented / partial | `defaultBehavior:true` → empty range (the editor picks the word) |
 | formatting / rangeFormatting / onTypeFormatting | implemented | |
 | foldingRange, selectionRange | implemented | |
-| semanticTokens full + **delta** + **range** | implemented | `ISemanticTokensProvider` (+ additive `ISemanticTokensRangeProvider`); previous result cached (bounded, `IMemoryTrimmable`); capped at `maxSemanticTokens` |
+| semanticTokens full + **delta** + **range** | implemented | `ISemanticTokensProvider` (+ additive `ISemanticTokensRangeProvider`); previous result cached (bounded, `IMemoryTrimmable`); capped at `maxSemanticTokens`; coloured over the grammar by the editor (docs/EDITOR.md §7e; range requests for the viewport of documents over 5000 lines) |
 | inlayHint | implemented / partial | `inlayHint/resolve` is not exposed (Core has no resolve hook) |
-| codeLens (+resolve) | implemented | |
+| codeLens (+resolve) | implemented | drawn above their lines by the editor, resolved near the viewport, commands through `workspace/executeCommand` or the editor's mapping of VS Code's reference commands (docs/EDITOR.md §7e) |
 | documentColor | implemented / partial | `colorPresentation` not implemented |
 | linkedEditingRange, callHierarchy, typeHierarchy | implemented | additive Core interfaces; UI: linked editing in the editor (docs/EDITOR.md §7d), the Hierarchy window (docs/NAVIGATION.md) |
 | `workspace/executeCommand` bridge | implemented | `executeCommandProvider.commands` registered into `ICommandService` (optional dependency) |

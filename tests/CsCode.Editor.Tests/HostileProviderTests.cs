@@ -62,6 +62,16 @@ public class HostileProviderTests(ITestOutputHelper output)
         features.Register<ICodeActionProvider>(DocumentSelector.All, new FakeCodeActionProvider(async (_, _, _, ct) => { await Never(ct).ConfigureAwait(false); return null; }));
         features.Register<IDocumentHighlightProvider>(DocumentSelector.All, new FakeHighlightProvider(async (_, _) => { await Task.Delay(Timeout.Infinite).ConfigureAwait(false); return null; }));
         features.Register<IDefinitionProvider>(DocumentSelector.All, new FakeDefinitionProvider(async (_, _, _) => { await Task.Delay(Timeout.Infinite).ConfigureAwait(false); return null; }));
+
+        // what is drawn into the text (docs/EDITOR.md §5b): semantic tokens for every identifier of the document, a fresh answer each time, and a
+        // code lens every 25 lines (on the typed line too) whose resolve is slow — typing must not feel either
+        features.Register<ISemanticTokensProvider>(DocumentSelector.All, new SemanticTokenTests.FakeSemantic(SemanticTokenTests.Legend, d =>
+            SemanticTokenTests.Encode([.. Enumerable.Range(1, d.LineCount - 1).SelectMany(l => new[] { (l, 0, 4, 1, 0), (l, 7, 5, 1, 2) })])));
+        features.Register<ICodeLensProvider>(DocumentSelector.All, new CodeLensViewTests.FakeLenses(d =>
+            [.. Enumerable.Range(0, d.LineCount / 25).Select(i => CodeLensViewTests.Lens(i * 25, 0, null))])
+        {
+            Resolve = l => { Thread.Sleep(200); return l with { Command = new Command("3 references", "test.lens") }; },
+        });
     }
 
     [AvaloniaFact]

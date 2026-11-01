@@ -118,7 +118,7 @@ internal sealed class InlineBlameFeature : IThemeAware, IDisposable
             if (visual is null) return;
             var endPos = visual.GetVisualPosition(visual.VisualLengthWithEndOfLineMarker, VisualYPosition.LineTop);
             var x = endPos.X - textView.ScrollOffset.X + textView.WideSpaceWidth * 3;
-            var y = endPos.Y - textView.ScrollOffset.Y;
+            var y = endPos.Y + LineZones.ZoneOffset(visual, visual.VisualLengthWithEndOfLineMarker, true) - textView.ScrollOffset.Y; // below a code lens
             var p = owner._v.Palette;
             var ft = new FormattedText(current.Blame.Text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
                 new Typeface(owner._v.Editor.FontFamily, FontStyle.Italic), owner._v.Editor.FontSize, p.CodeLens);

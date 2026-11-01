@@ -22,6 +22,7 @@ public sealed class TestGutterProvider : ITestGutterProvider, IDisposable
     private readonly TestingHost _host;
     private readonly IUiDispatcher _ui;
     private readonly Emitter<Uri?> _changed = new();
+    private readonly Emitter<Uri?> _testsChanged = new();
     private volatile Dictionary<string, Entry[]> _index = new(PathComparer);
     private bool _disposed;
 
@@ -34,6 +35,12 @@ public sealed class TestGutterProvider : ITestGutterProvider, IDisposable
     }
 
     public IEventSource<Uri?> StatesChanged => _changed;
+
+    /// <summary>
+    /// Fires (after <see cref="StatesChanged"/>) only when a rebuild changed which tests a file has or where they are, not for outcome-only
+    /// changes: the run/debug code lenses depend on nothing else, and refreshing them asks every code lens provider (the server's too) again.
+    /// </summary>
+    internal IEventSource<Uri?> TestsChanged => _testsChanged;
 
     /// <summary>The tree changed: rebuild the index (coalesced, background priority) and tell the editors.</summary>
     internal void Invalidate() => _ui.PostCoalesced("testing.gutterIndex", Rebuild, UiPriority.Background);
@@ -48,8 +55,23 @@ public sealed class TestGutterProvider : ITestGutterProvider, IDisposable
             if (!map.TryGetValue(loc.FilePath, out var list)) map[loc.FilePath] = list = [];
             list.Add(new Entry(id, t.Project.Key, t.Project.ProviderId, t.Outcome, t.Message, loc));
         }
+        var old = _index;
         _index = map.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray(), PathComparer);
         _changed.Fire(null);
+        if (!SameTests(old, _index)) _testsChanged.Fire(null);
+    }
+
+    /// <summary>Whether two indexes have the same tests at the same places (outcomes and messages ignored).</summary>
+    internal static bool SameTests(Dictionary<string, Entry[]> a, Dictionary<string, Entry[]> b)
+    {
+        if (a.Count != b.Count) return false;
+        foreach (var (file, x) in a)
+        {
+            if (!b.TryGetValue(file, out var y) || x.Length != y.Length) return false;
+            for (var i = 0; i < x.Length; i++)
+                if (x[i].TestId != y[i].TestId || x[i].ProviderId != y[i].ProviderId || x[i].ProjectKey != y[i].ProjectKey || x[i].Location != y[i].Location) return false;
+        }
+        return true;
     }
 
     public ValueTask<IReadOnlyList<TestGutterItem>?> ProvideTestsAsync(ITextDocument document, CancellationToken ct)
@@ -124,5 +146,6 @@ public sealed class TestGutterProvider : ITestGutterProvider, IDisposable
     {
         _disposed = true;
         _changed.Clear();
+        _testsChanged.Clear();
     }
 }

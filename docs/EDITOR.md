@@ -167,6 +167,8 @@ Numbers refer to the brief's MUST list.
 
 16. **Linked editing** (`editor.linkedEditing`: tag pairs edited together): see §7d.
 
+17. **Code lens and semantic highlighting** (the LSP results the client had but nothing drew): see §7e.
+
 SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version and per set of symbol providers: a language server that starts after the file was opened is asked at the next request, without an edit), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
 ## 4. Threading rules and how they are verified
@@ -212,6 +214,17 @@ AvaloniaEdit 12.0.0 (`Avalonia.AvaloniaEdit`):
   (renderers, visual lines, popups) until the entry scrolls off the undo limit. `UndoStackScrubber` clears those selections for the disposed view's entries (reflection against the 12.0.0 layout; a no-op if the layout differs). Found with `RetentionPath` (below).
 * `TextEditor.ScrollToVerticalOffset` does nothing for absolute positions on a fresh view; restoring a scroll offset goes through `((IScrollable)TextArea).Offset`, re-applied on `LayoutUpdated` until the extent exists.
 * `AbstractMargin` margins are placed through `TextArea.LeftMargins`; toggling line numbers re-inserts the line-number margin at index 0, so the breakpoint margin re-pins itself leftmost. `TextArea.TextPasted` fires after a paste (the pasted range is taken from the last document change).
+* **There are no view zones** (space between lines that is not text). A visual line's height is the sum of its text rows' heights, and
+  `VisualLine.Height` and the height tree are set inside `BuildVisualLine` with no hook between them. `LineZones` (code lens, §7e) opens a zone
+  by making the line's FIRST ROW taller upwards: a zero-width, zero-length element at the line start whose `DrawableTextRun` is as tall as the
+  zone plus the text's ascent and sits on the baseline. Everything that follows the baseline (`VisualYPosition.TextTop`, the line numbers, the
+  folding markers, hit-testing in the text) is right at once; what uses the row's `LineTop`/`LineBottom` is not: **the caret rectangle spans the
+  whole row** (`Caret.CalculateCaretRectangle` = `LineTop`..`LineBottom`), and so do the selection and the current-line highlight. A layer
+  inserted above `KnownLayer.Caret` paints each zone with the editor background (then the lens text), which hides all three there, and is
+  hit-testable over the zones only. The element needs `HandlesLineBorders` and its own caret stops, or Home stops before it and Left at the text
+  start stays on the line; the editor's own gutters (breakpoints, test glyphs, quick diff, inline blame, snippet markers) add `LineZones.HeightOf`
+  / `ZoneOffset`. AvaloniaEdit asks no element generator about an empty line, so an empty line cannot carry a zone. After a zero-document-length
+  element AvaloniaEdit asks the generators again from the next offset, so an inlay hint at column 0 of a lens line is not shown.
 * `EnableHyperlinks` makes AvaloniaEdit start the browser itself; the editor turns it off and opens URLs through `IWindowService`.
 * **The stock search panel searched the whole document on the UI thread on every edit while open**, without a result limit, with a regex that
   had no match timeout. `FindSearch` (reflection against the 12.0.0 layout; the stock panel stays when it differs) gives it VS Code's find-widget
@@ -289,8 +302,10 @@ settings alone, so a project's `.editorconfig` could make it say "Spaces: 4" whi
 `editor.formatOnSave/OnType/OnPaste`, `editor.emptySelectionClipboard`, `editor.selectionClipboard`, `editor.autoIndentOnPaste`, `editor.autoIndent`, `editor.hover.delay`, `editor.inlayHints.enabled`, `workbench.colorTheme`, `files.encoding`, `files.eol`, `files.insertFinalNewline`, `files.trimFinalNewlines`, `files.trimTrailingWhitespace`, `files.associations`, and the module's own `cscode.editor.undoLimit` (default 1000 groups),
 `cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB),
 `editor.syntaxEngine` (`auto`; the old `editor.experimental.treeSitter` is read as an alias; see docs/TREE-SITTER.md), and
-`editor.multiCursorLimit` (10,000) / `editor.multiCursorPaste` (`spread`) (§7b; the factory registers both, so the Settings panel lists them), and
-`editor.linkedEditing` (off, VS Code's default; §7d; registered by the factory too).
+`editor.multiCursorLimit` (10,000) / `editor.multiCursorPaste` (`spread`) (§7b; the factory registers both, so the Settings panel lists them),
+`editor.linkedEditing` (off, VS Code's default; §7d; registered by the factory too),
+`editor.codeLens` (true), `editor.codeLensFontSize` (0 = 90 % of the editor's), `editor.codeLensFontFamily` ("" = the editor's) and
+`editor.semanticHighlighting.enabled` (`configuredByTheme`) (§7e; registered by the factory too).
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
 `sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.showHover` (at the caret),
@@ -498,6 +513,68 @@ setting's registration), `RealApp/LanguageNavigationTests` (Vim's `a`…`Esc` mi
 
 **Large-file mode**: above `cscode.editor.largeFileThresholdBytes` (default 5 MB) or with a line longer than 20,000 characters the document's language is forced to `plaintext`, and its views get no tokenisation, folding, squiggles, bracket matching or any other language feature (just text); files over 200 MB are refused with a clear `FileTooLargeException` message.
 
+### 7e. Code lens and semantic highlighting
+
+**Code lens** (`CodeLensFeature`, `CodeLensCommands`, `LineZones`). Every `ICodeLensProvider` of the document (the LSP client's, the Test
+Explorer's) is asked 500 ms after the text stops changing, at once when a provider comes or goes (the LSP client re-registers its provider on
+`workspace/codeLens/refresh`) or fires `ICodeLensProvider.CodeLensesChanged` (additive Core member; the Test Explorer fires it when discovery
+changes which tests a file has or their lines, never for results: a refresh asks every provider, the server's too, and re-resolves its lenses), off the UI thread with a 5 s deadline; an answer for an older version of the text is dropped (the next request is scheduled).
+At most 5000 lenses are kept. Each lens is anchored to its range start, so it moves with the text, and the lenses on screen stay until the next
+answer replaces them: typing never removes and re-adds zones, so the caret line does not jump. When the set does change, the first visible line
+keeps its place on screen (VS Code's `StableEditorScrollState`).
+
+Drawing: the lenses of a line are one line of text in `editorCodeLens.foreground`, at the line's indentation, titles joined by " | ", in a
+zone above the line (`LineZones`, §5) as tall as the editor's line height (a set `editor.codeLensFontSize` gives `size × max(1.3, line height /
+font size)`, VS Code's rule); the font is 90 % of the editor's and its family unless the settings say otherwise. VS Code's `$(icon)` syntax is
+dropped from titles (no Codicons are embedded). A lens without a command holds its zone (so its resolve does not move the text) and is resolved
+(`codeLens/resolve`) only when it is within 20 lines of the viewport, once; until then a lens that replaced one at the same place on its line shows
+that one's title. A title with a command is a link: under the pointer it takes `editorLink.activeForeground`, underlined, with the hand cursor,
+and a click runs it. A click anywhere in a zone never moves the caret. Folded lines show no zone (the fold's first line keeps its own).
+
+What a click runs (`CodeLensCommands`): the reference commands servers borrow from VS Code (`editor.action.showReferences`,
+`editor.action.peekLocations`, `editor.action.goToLocations`, `editor.action.findReferences`, `rust-analyzer.showReferences`,
+`roslyn.client.peekReferences`) open the references UI with the locations in their arguments (none: a status-bar message; one: opened; several:
+`cscode.references.show`, the shell's Find Symbol Results, else a quick pick; a command without locations asks the reference providers at its
+position). Everything else goes through `ICommandService` with the lens's arguments: a server's own commands are registered there by the LSP
+client (`workspace/executeCommand`), CsCode's own (the Test Explorer's `testing.codeLens.run` / `debug`) by their modules; an unknown command
+says so in the status bar. rust-analyzer's `rust-analyzer.runSingle` / `debugSingle` lenses (client-side commands of its VS Code extension) are
+hidden: the Test Explorer's "Run Test | Debug Test" lenses (docs/TESTING.md) replace them.
+
+**Semantic highlighting** (`SemanticTokensFeature`, `SemanticTokenStore`, `SemanticTokenStyleResolver`). On per
+`editor.semanticHighlighting.enabled`: `true`, `false`, or `configuredByTheme` (the default) = the theme's own `"semanticHighlighting": true`
+(read from theme JSON through `include` chains: Dark+, Light+, Monokai and most of VS Code's own themes; set on the Visual Studio 2022 themes, which
+colour classified names). The first `ISemanticTokensProvider` is asked (the LSP client does full/delta itself and hands back whole data), 300 ms
+after the text stops changing, when a provider comes or goes (`workspace/semanticTokens/refresh` re-registers it) and after a theme or setting
+change; a document of more than 5000 lines with an `ISemanticTokensRangeProvider` asks for the visible lines ± 100 instead, again 150 ms after
+scrolling, and keeps tokens only within 400 lines of the asked range. An answer for older text is dropped; a failed or timed-out one keeps what is
+shown. Between answers the tokens follow every edit (`EditorDocument.BeforeChange`): tokens after an edit on its line shift, lines below move, an
+edit inside a token grows or shrinks it (typing an identifier character at its end grows it), and only tokens an edit cuts are dropped until the
+next answer: no flicker back to the grammar's colours while typing. At most 200,000 tokens are kept (4 ints each).
+
+Colours, VS Code's rules: a selector `type.modifier…:language` (`*` for any type) matches a token whose type is the selector's or a sub-type of
+it (`class`, `struct`, `interface`, `enum`, `typeParameter` → `type`; rust-analyzer's `builtinType`, `typeAlias`, `union` → `type`,
+`selfKeyword`/`selfTypeKeyword` → `keyword`), that has all its modifiers, in its language; score 100 − super-type distance, + 100 per modifier,
++ 10 for a language. Two rule sets compete property by property (foreground, bold, italic, underline, strikethrough), the higher score winning,
+the theme winning ties: VS Code's defaults, which map each standard type (and `variable.readonly`, `*.defaultLibrary` …) to TextMate scopes looked
+up in the theme's `tokenColors` (the first scope a rule matches; no match sets nothing), then the theme's `semanticTokenColors`. A token nothing
+styles keeps the grammar's colour (TextMate or tree-sitter). The colorizer runs right after the grammar's (which is now always the first line
+transformer, also after a language change), so bracket pair colours still win, as in VS Code; styles are cached per (type, modifiers) of the
+legend, so colouring a line allocates nothing beyond AvaloniaEdit's own element splits.
+
+Typing cost: `HostileProviderTests` types with semantic tokens on every line of a 3000-line file and a slowly resolving lens every 25 lines on top
+of the hostile providers and the diagnostics flood: keystroke p99 4.5 ms (budget 5), editor UI job max 0.9 ms (budget 16), dispatcher latency p99
+5.4 ms (budget 16) on this Mac; `KeystrokeAllocationTests` is unchanged (≈ 90 KB/keystroke of our own, independent of the document's size).
+
+Tests: `CodeLensViewTests` (the zone geometry and the caret keys, the zone hiding selection / current line / caret in pixels, a click running the
+command with its arguments and never moving the caret, the reference command mapping, resolve near the viewport once, old lenses kept while typing,
+the old title until the new resolve, the first visible line kept on screen, the settings and both refresh paths, folding and edits, the breakpoint
+glyph on the text), `SemanticTokenTests` (style resolution with VS Code's scoring and real Dark+, the store following single-line and multi-line
+edits and CRLF, range mode memory and the token cap, colours in a view with the setting and the theme flag, no flicker, stale answers, refresh,
+range requests for the viewport of a big file), `ThemeTests` (the theme flag), `PerfMemoryTests` (a view with lenses and tokens is collectable),
+`ScreenshotTests.Code_lenses_and_semantic_tokens` (Dark+, Light+, Visual Studio Dark), `TestingHostTests` / `TestExplorerCompositionTests` (the
+Test Explorer's lenses, and that results during a run do not refresh them). All of these pass on macOS (arm64) and on Linux (Ubuntu arm64,
+headless), zone geometry, pixel counts and screenshots included.
+
 ## 8. Known gaps (honest list)
 
 Not done, or done only in part — none of this is faked:
@@ -508,7 +585,13 @@ Not done, or done only in part — none of this is faked:
   carets are not kept in the view state (a recreated view has one); `editor.multiCursorModifier` (Ctrl+Click to add carets) is not read;
   Backspace in leading spaces deletes one space, not one indentation unit. Rectangular selection is AvaloniaEdit's own (Alt+drag; Ctrl+Option+drag
   on macOS) and its rows act as carets for the clipboard (§7a).
-* **Minimap, code lens, semantic-token overlay, overview-ruler markers on the scrollbar** are not implemented (settings for them are read but have no effect). Sticky scroll is (`editor.stickyScroll.enabled`, off by default; docs/TREE-SITTER.md §5).
+* **Code lens** (§7e): no keyboard access to a lens (VS Code's "Show CodeLens Commands For Current Line" is not implemented); a lens on an
+  empty line, or an inlay hint at column 0 of a lens line, is not shown (§5); split views of one document ask (and resolve) separately; lenses
+  and semantic tokens are not `IMemoryTrimmable` (both are bounded and die with the view).
+* **Semantic highlighting** (§7e): only the first full provider and the first range provider are used (VS Code also picks one); custom token
+  types and modifiers declared by a server's VS Code extension (`semanticTokenTypes` / `semanticTokenScopes` contributions) are not known beyond
+  the few super-types listed in §7e; `editor.semanticTokenColorCustomizations` is not read.
+* **Minimap, overview-ruler markers on the scrollbar** are not implemented (settings for them are read but have no effect). Sticky scroll is (`editor.stickyScroll.enabled`, off by default; docs/TREE-SITTER.md §5).
 * **Peek** (§7c): a file that is not open in the shell is peeked read-only (VS Code opens it editable; opening it here would register it with
   the language servers and leave the peek to decide when to close a document the shell may meanwhile have opened). The list has one row per
   location (VS Code groups references by file), there is no "open to the side", the height is fixed while the peek is open (VS Code's sash
@@ -527,6 +610,7 @@ Not done, or done only in part — none of this is faked:
 `dotnet test tests/CsCode.Editor.Tests` (headless Avalonia; real temp files, real `FileSystemWatcher`, real TextMate grammars and the native Oniguruma). ≈ 650 tests, ≈ 1.5 minutes. Highlights:
 
 * `EditorDocumentFuzzTests` (oracle comparison), `EditorDocumentFileTests` (encodings, EOL, atomic save, watcher, conflicts, large files), `LanguageServiceTests`, `ThemeTests` (real Dark+/Monokai/TypeScript/Python/C# JSON), `TextMateTests` (golden scopes), `SnippetEngineTests`, `EditingOperationsTests`, `EditorConfigTests`.
+* Language rendering: `CodeLensViewTests`, `SemanticTokenTests` (§7e).
 * View tests: `EditorViewTests`, `CompletionViewTests`, `DiagnosticsHoverTests`, `SignatureActionsNavigationTests`, `BracketsHighlightsDebugTests`, `ShouldHaveFeatureTests`, `MultiCursorViewTests` (and the pure `MultiCaretModelTests`).
 * Hostile/perf/leak: `HostileProviderTests`, `BlockingDetectorTests`, `KeystrokeAllocationTests`, `PerfMemoryTests` (opens 1/10/50 MB files, tokeniser memory, 500× open/close, 500× recreate, popups open). Leak failures print the chain of strong references (`RetentionPath`).
 * Typing cost (perf-typing): `TextAreaWatermarkBindingTests` (bytes per keystroke in 0.5–6 MB documents, the watermark unbound), `FoldRedrawFilterTests` (visual lines built per keystroke inside an expanded fold; folding, a folded region edited while collapsed, a multi-change update), `CachedLineNumberMarginTests` (no number laid out while typing, the stock margin's exact pixels), `TokenRedrawTests` (the line above the caret is not rebuilt; a line built before the next layout is redrawn), `FoldingMarginLeakTests.Typing_keeps_the_markers…`.

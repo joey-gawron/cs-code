@@ -306,8 +306,9 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
                 }
                 if (!any && start == end)
                 {
-                    var p = textView.GetVisualPosition(new AvaloniaEdit.TextViewPosition(textView.Document.GetLocation(start)), VisualYPosition.LineTop) - textView.ScrollOffset;
-                    context.DrawRectangle(fill, null, new Rect(p.X, p.Y, 2, textView.DefaultLineHeight));
+                    var at = new AvaloniaEdit.TextViewPosition(textView.Document.GetLocation(start));
+                    var p = textView.GetVisualPosition(at, VisualYPosition.LineTop) - textView.ScrollOffset;
+                    context.DrawRectangle(fill, null, new Rect(p.X, p.Y + LineZones.ZoneOffset(textView, at), 2, textView.DefaultLineHeight));
                 }
             }
         }

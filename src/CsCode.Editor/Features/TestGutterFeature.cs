@@ -229,7 +229,7 @@ internal sealed class TestGutterFeature : IThemeAware, ISettingsAware, IDisposab
             {
                 var line = vl.FirstDocumentLine.LineNumber - 1;
                 if (_owner.ItemAt(line) is not { } item) continue;
-                var top = vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineTop) - textView.VerticalOffset;
+                var top = vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineTop) + LineZones.HeightOf(vl) - textView.VerticalOffset; // below a code lens
                 var bottom = vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineBottom) - textView.VerticalOffset;
                 var c = new Point(MarginWidth / 2, (top + bottom) / 2);
                 var r = Math.Min(MarginWidth, bottom - top) / 2 - 2.5;

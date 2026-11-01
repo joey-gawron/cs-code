@@ -100,6 +100,34 @@ public sealed class TokenColorResolver
         return new ResolvedTokenStyle(fg, bg, (style & Bold) != 0, (style & Italic) != 0, (style & Underline) != 0, (style & Strikethrough) != 0);
     }
 
+    /// <summary>
+    /// What the theme's rules give ONE scope on its own (no enclosing scopes): the foreground and font style set by the rules that match it,
+    /// most specific last, each null when no matching rule sets it; null when no rule matches at all. Semantic highlighting uses it for VS
+    /// Code's token-type → TextMate-scope fallback, where only a matching rule may colour a token (the grammar's colour stays otherwise).
+    /// </summary>
+    public (Rgba? Foreground, string? FontStyle)? MatchScope(string scope)
+    {
+        var candidates = new List<Rule>(4);
+        for (var end = scope.IndexOf('.'); ; end = scope.IndexOf('.', end + 1))
+        {
+            var prefix = end < 0 ? scope : scope[..end];
+            if (_byTarget.TryGetValue(prefix, out var rules))
+                foreach (var rule in rules)
+                    if (rule.Parents.Length == 0) candidates.Add(rule);
+            if (end < 0) break;
+        }
+        if (candidates.Count == 0) return null;
+        candidates.Sort(Ascending);
+        Rgba? fg = null;
+        string? style = null;
+        foreach (var r in candidates)
+        {
+            if (r.Foreground is { } f) fg = f;
+            if (r.FontStyle is { } fs) style = fs;
+        }
+        return (fg, style);
+    }
+
     /// <summary>Least specific first, so applying in order lets the most specific rule have the last word.</summary>
     private static int Ascending(Rule a, Rule b)
     {

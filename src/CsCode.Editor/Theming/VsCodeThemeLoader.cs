@@ -15,7 +15,7 @@ public interface IThemeFileReader
 /// Parses VS Code colour-theme JSON (JSONC: comments and trailing commas) into a Core <see cref="ColorTheme"/>:
 /// <c>name</c>, <c>type</c>, <c>include</c> chains (the included theme first, then this one overrides), <c>colors</c> (workbench/editor keys),
 /// <c>tokenColors</c> (scope string with commas, or an array; <c>settings</c> with foreground/background/fontStyle) and
-/// <c>semanticTokenColors</c>. The legacy top-level <c>settings</c> array is treated as <c>tokenColors</c>. A <c>tokenColors</c> that is a path to a
+/// <c>semanticTokenColors</c> and <c>semanticHighlighting</c>. The legacy top-level <c>settings</c> array is treated as <c>tokenColors</c>. A <c>tokenColors</c> that is a path to a
 /// <c>.tmTheme</c> plist is not supported (ignored); values that are not valid hex colours are skipped.
 /// </summary>
 public static class VsCodeThemeLoader
@@ -30,6 +30,7 @@ public static class VsCodeThemeLoader
         public readonly Dictionary<string, Rgba> Colors = new(StringComparer.Ordinal);
         public readonly List<TokenColorRule> TokenColors = [];
         public readonly Dictionary<string, TokenColorRule> Semantic = new(StringComparer.Ordinal);
+        public bool? SemanticHighlighting;
     }
 
     /// <param name="id">Theme id (contribution id / file name).</param>
@@ -40,7 +41,7 @@ public static class VsCodeThemeLoader
     {
         var raw = await ParseAsync(text, sourcePath, reader, [sourcePath], 0, ct).ConfigureAwait(false);
         var kind = KindFromUiTheme(uiTheme) ?? raw.Kind ?? InferKind(raw.Colors);
-        return new ColorTheme(id, label ?? raw.Name ?? id, kind, raw.Colors, raw.TokenColors, raw.Semantic.Count == 0 ? null : raw.Semantic);
+        return new ColorTheme(id, label ?? raw.Name ?? id, kind, raw.Colors, raw.TokenColors, raw.Semantic.Count == 0 ? null : raw.Semantic) { SemanticHighlighting = raw.SemanticHighlighting == true };
     }
 
     /// <summary>Synchronous parse of a self-contained theme (no <c>include</c>), for tests and tools.</summary>
@@ -49,7 +50,7 @@ public static class VsCodeThemeLoader
         var raw = ParseOne(text, out var include);
         if (include is not null) throw new InvalidOperationException("Theme has an include; use LoadAsync with a reader.");
         var kind = KindFromUiTheme(uiTheme) ?? raw.Kind ?? InferKind(raw.Colors);
-        return new ColorTheme(id, label ?? raw.Name ?? id, kind, raw.Colors, raw.TokenColors, raw.Semantic.Count == 0 ? null : raw.Semantic);
+        return new ColorTheme(id, label ?? raw.Name ?? id, kind, raw.Colors, raw.TokenColors, raw.Semantic.Count == 0 ? null : raw.Semantic) { SemanticHighlighting = raw.SemanticHighlighting == true };
     }
 
     /// <summary>
@@ -61,7 +62,7 @@ public static class VsCodeThemeLoader
     {
         var raw = ParseSync(text, sourcePath, readRelative, [sourcePath], 0);
         var kind = KindFromUiTheme(uiTheme) ?? raw.Kind ?? InferKind(raw.Colors);
-        return new ColorTheme(id, label ?? raw.Name ?? id, kind, raw.Colors, raw.TokenColors, raw.Semantic.Count == 0 ? null : raw.Semantic);
+        return new ColorTheme(id, label ?? raw.Name ?? id, kind, raw.Colors, raw.TokenColors, raw.Semantic.Count == 0 ? null : raw.Semantic) { SemanticHighlighting = raw.SemanticHighlighting == true };
     }
 
     private static Raw ParseSync(string text, string path, Func<string, string, (string Path, string Text)?> readRelative, HashSet<string> visiting, int depth)
@@ -89,7 +90,7 @@ public static class VsCodeThemeLoader
     /// <summary>The including theme overrides: its colours win key by key; its token rules come AFTER the included ones (later rules win ties).</summary>
     private static Raw Merge(Raw parent, Raw own)
     {
-        var merged = new Raw { Name = own.Name ?? parent.Name, Kind = own.Kind ?? parent.Kind };
+        var merged = new Raw { Name = own.Name ?? parent.Name, Kind = own.Kind ?? parent.Kind, SemanticHighlighting = own.SemanticHighlighting ?? parent.SemanticHighlighting };
         foreach (var (k, v) in parent.Colors) merged.Colors[k] = v;
         foreach (var (k, v) in own.Colors) merged.Colors[k] = v;
         merged.TokenColors.AddRange(parent.TokenColors);
@@ -117,6 +118,8 @@ public static class VsCodeThemeLoader
             _ => null,
         };
         include = Str(root, "include");
+        if (root.TryGetProperty("semanticHighlighting", out var semanticOn) && semanticOn.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            raw.SemanticHighlighting = semanticOn.ValueKind == JsonValueKind.True;
 
         if (root.TryGetProperty("colors", out var colors) && colors.ValueKind == JsonValueKind.Object)
             foreach (var p in colors.EnumerateObject())

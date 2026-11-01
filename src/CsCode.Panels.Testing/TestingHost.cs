@@ -79,11 +79,18 @@ public sealed class TestingHost : IDisposable
             id => _config?.Get<bool?>(TestingSettings.EnabledKey(id)) ?? true);
         if (services.GetService<IDebugService>() is { } debug) Controller.Debugger = new DebugLauncher(debug, _ui);
         Gutter = new TestGutterProvider(this, _ui);
+        Lenses = new TestCodeLensProvider(Gutter, () => _config?.Get<bool?>(TestingSettings.CodeLens) ?? true);
+        _store.Add(Lenses);
 
         if (_config is not null) _store.Add(_config.RegisterProperties(TestingSettings.Properties()));
         if (services.GetService<ICommandService>() is { } commands) RegisterCommands(commands);
         if (services.GetService<ILanguageFeatureRegistry>() is { } features)
-            _store.Add(features.Register<ITestGutterProvider>(DocumentSelector.ForLanguages([.. providers.SelectMany(p => p.LanguageIds).Distinct()]), Gutter, "testing"));
+        {
+            var languages = DocumentSelector.ForLanguages([.. providers.SelectMany(p => p.LanguageIds).Distinct()]);
+            _store.Add(features.Register<ITestGutterProvider>(languages, Gutter, "testing"));
+            _store.Add(features.Register<ICodeLensProvider>(languages, Lenses, "testing")); // "Run Test | Debug Test" above each test
+        }
+        if (_config is not null) _store.Add(_config.Changed.Subscribe(e => { if (e.Affects(TestingSettings.CodeLens)) Lenses.Invalidate(); }));
         _store.Add(Controller.Changed.Subscribe(OnTreeChanged));
         _store.Add(Controller.Errors.Subscribe(message => { if (_window is not null) _ = _window.ShowMessageAsync(MessageSeverity.Warning, message); }));
         _store.Add(Controller.RunFinished.Subscribe(_ => OnRunFinished()));
@@ -97,6 +104,7 @@ public sealed class TestingHost : IDisposable
 
     public TestController Controller { get; }
     public TestGutterProvider Gutter { get; }
+    internal TestCodeLensProvider Lenses { get; }
     internal IWorkspaceService? Workspace { get; }
     internal IServiceProvider Services => _sp;
     internal IUiDispatcher Ui => _ui;
@@ -262,6 +270,8 @@ public sealed class TestingHost : IDisposable
             if (_sp.GetService<ICommandService>() is { } c && c.Has("workbench.action.output.show")) await c.ExecuteAsync("workbench.action.output.show", OutputChannelName);
             return null;
         });
+        Reg(TestCodeLensProvider.RunCommand, "Run Test (CodeLens)", inv => TestCodeLensProvider.RunAsync(Gutter, inv, debug: false));
+        Reg(TestCodeLensProvider.DebugCommand, "Debug Test (CodeLens)", inv => TestCodeLensProvider.RunAsync(Gutter, inv, debug: true));
         Reg(CollapseAll, "Collapse All Tests", _ => { LiveExplorer?.CollapseAll(); return ValueTask.FromResult<object?>(null); });
     }
 

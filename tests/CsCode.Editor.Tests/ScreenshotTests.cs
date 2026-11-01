@@ -174,4 +174,48 @@ public class ScreenshotTests
         ViewHost.Pump();
         Save(window, $"editor-{name}-signature");
     }
+
+    /// <summary>Code lenses above Main and Compute (one resolved later, a selection across a lens line, the caret on one) and semantic tokens.</summary>
+    [AvaloniaTheory]
+    [InlineData("dark", "vscode.dark-plus")]
+    [InlineData("light", "vscode.light-plus")]
+    [InlineData("vs-dark", "Visual Studio Dark (TextMateSharp)")]
+    public async Task Code_lenses_and_semantic_tokens(string name, string theme)
+    {
+        using var host = ViewHost.Create();
+        await host.Factory.Themes.SetCurrentAsync(theme);
+        var lines = Source.Split('\n');
+        int Line(string text) => Array.FindIndex(lines, l => l.Contains(text, StringComparison.Ordinal));
+        host.Factory.Services.Features.Register<ICodeLensProvider>(DocumentSelector.All, new CodeLensViewTests.FakeLenses(_ =>
+        [
+            CodeLensViewTests.Lens(Line("class Program"), 4, "2 references", "editor.action.showReferences"),
+            CodeLensViewTests.Lens(Line("int Main"), 8, "0 references", "editor.action.showReferences"),
+            CodeLensViewTests.Lens(Line("int Main"), 8, "$(beaker) Run Test", "test.lens"),
+            CodeLensViewTests.Lens(Line("int Main"), 8, "Debug Test", "test.lens"),
+            CodeLensViewTests.Lens(Line("int Compute"), 8, "1 reference", "editor.action.showReferences"),
+        ]));
+        // "message" and "arg" as readonly variables, "Compute" as a static method, "args" as parameters
+        var tokens = new List<(int, int, int, int, int)>();
+        for (var l = 0; l < lines.Length; l++)
+        {
+            foreach (var (word, type, mods) in new[] { ("message", 1, 2), ("args", 3, 0), ("Compute", 2, 0) })
+                for (var c = lines[l].IndexOf(word, StringComparison.Ordinal); c >= 0; c = lines[l].IndexOf(word, c + word.Length, StringComparison.Ordinal))
+                    tokens.Add((l, c, word.Length, type, mods));
+        }
+        tokens.Sort();
+        host.Factory.Services.Features.Register<ISemanticTokensProvider>(DocumentSelector.All, new SemanticTokenTests.FakeSemantic(SemanticTokenTests.Legend, _ => SemanticTokenTests.Encode([.. tokens])));
+        host.Config.Set(LanguageRenderSettings.SemanticHighlightingKey, true);
+        var (doc, view, window) = await host.OpenAsync(Source, "Program.cs", 900, 520);
+        var lens = view.Feature<CodeLensFeature>()!;
+        await ViewHost.WaitFor(() => lens.Placements.Count == 5, "lenses");
+        await ViewHost.WaitFor(() => view.Feature<SemanticTokensFeature>()!.TokenCount == tokens.Count, "semantic tokens");
+        var main = doc.Buffer.GetLineByNumber(Line("int Main") + 1);
+        view.Editor.Select(main.Offset - 6, 26); // a selection over the end of one line into the lens line (start, length)
+        Save(window, $"editor-{name}-codelens");
+        view.TextArea.ClearSelection();
+        view.Editor.CaretOffset = doc.Buffer.GetLineByNumber(Line("int Compute") + 1).Offset + 8;
+        Save(window, $"editor-{name}-codelens-caret");
+        var lensColor = ((Avalonia.Media.ISolidColorBrush)view.Palette.CodeLens).Color;
+        Assert.True(CountPixels(window.CaptureRenderedFrame()!, lensColor, 30) > 50, "the lens titles are on screen");
+    }
 }

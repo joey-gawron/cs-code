@@ -34,7 +34,10 @@ services.AddCsCodeTestExplorer();   // TestingHost + the "testing" tool window (
 | Discover again | — | — | `testing.refreshTests` | the explorer's Refresh button |
 
 Every command is in the palette under "Test:" (Ctrl+Shift+P). In the editor, the glyph left of a test (right of the breakpoint margin) runs it
-on a click and offers Run Test / Debug Test / Reveal in Test Explorer on right-click. In the explorer: the toolbar's Run All, Run (the
+on a click and offers Run Test / Debug Test / Reveal in Test Explorer on right-click, and the "Run Test | Debug Test" code lens above it
+(`TestCodeLensProvider`, the same tests as the glyphs, through the editor's code lens: docs/EDITOR.md §7e; refreshed only when the
+tests of a file or their lines change, `TestGutterProvider.TestsChanged`, not on every result during a run) runs or debugs it
+(`testing.codeLens.run` / `testing.codeLens.debug` with the test's id). In the explorer: the toolbar's Run All, Run (the
 selected node, else everything), Debug, Rerun Failed and Cancel; double-click or Enter opens a test's source; the context menu has Run, Debug,
 Go to Test, Go to Failure, Copy Name, Copy Message.
 
@@ -158,6 +161,7 @@ selection (a rebuild resets the list, which used to drop it).
 | Key | Default | Meaning |
 |---|---|---|
 | `testing.gutterEnabled` | `true` | Run/result glyphs in the editor. |
+| `testing.codeLens` | `true` | "Run Test \| Debug Test" code lenses above each test (shown while `editor.codeLens` is on). |
 | `testing.defaultGutterClickAction` | `"run"` | `run`, `debug` or `contextMenu`. |
 | `testing.openTesting` | `"openOnTestStart"` | `neverOpen`, `openOnTestStart` / `openExplorerOnTestStart` (show the explorer when a run starts), `openOnTestFailure`. Shown without taking the keyboard. |
 | `cscode.testing.autoDiscover` | `true` | Discover when an editor shows a file that declares tests (a Rust package is built to list them). Tests are always discovered when the explorer is first shown, a test command runs, or Refresh, and never just because a folder opened. Off: only then. |
@@ -206,7 +210,8 @@ Also read: `cscode.debug.rustDebugger` (the Rust debugger) and `cscode.debug.nod
 * **Controller**: grouping, aggregation, filters per selection, rerun failed/last, cases, cancel, rediscovery, results for unknown tests, debug
   without a debugger, batching.
 * **Host and window** (headless): commands/settings/provider registration, Error List entries and context keys, `testing.openTesting`, the
-  glyph provider (states, lines following edits), run at cursor / current file, disposal; the view's rows, toolbar, filter, details, context menu,
+  glyph provider (states, lines following edits), the code lens provider (lenses per test, their commands, refresh when the tests change but not on results, the setting),
+  run at cursor / current file, disposal; the view's rows, toolbar, filter, details, context menu,
   keys, reveal, an empty workspace, a leak test, and a screenshot (Visual Studio Dark) saved to `.scratch/screenshots/test-explorer.png`.
 
 `tests/CsCode.Editor.Tests/TestGutterFeatureTests.cs`: glyphs on the test lines, following edits, new states, click (run / debug as set),
@@ -218,8 +223,8 @@ then Continue and the result comes back from the session — under CodeLLDB on m
 
 ## Known gaps / next steps
 
-* **Code lens.** The editor has no code lens rendering, so there is no "Run Test | Debug Test" text above a method; the glyph (VS Code's
-  testing gutter) is what there is. Rendering code lenses (for LSP servers too) is an editor feature of its own.
+* **Code lens.** "Run Test | Debug Test" only: no "Run All Tests" lens above a test class and no result in the lens text (the glyph shows the
+  result). rust-analyzer's own run/debug lenses are hidden in favour of these (docs/EDITOR.md §7e).
 * **Microsoft.Testing.Platform-only projects** (MSTest runner / NUnit / TUnit without the VSTest adapter) run through `dotnet test` with the
   VSTest TRX logger, which they may not support: they need `--report-trx` (MTP) and, for debugging, `--filter-uid` and a launch of the test
   executable. xUnit v3 projects (MTP or VSTest) are fine: they run directly.

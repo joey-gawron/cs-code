@@ -142,6 +142,18 @@ public class ThemeTests : IDisposable
         Assert.False(t.SemanticTokenColors.ContainsKey("worse"));
     }
 
+    [Fact]
+    public void The_themes_semantic_highlighting_flag_is_read_and_inherited_through_includes()
+    {
+        Assert.True(VsCodeThemeLoader.Parse("x", null, null, """{ "semanticHighlighting": true }""").SemanticHighlighting);
+        Assert.False(VsCodeThemeLoader.Parse("x", null, null, """{ "semanticHighlighting": false }""").SemanticHighlighting);
+        Assert.False(VsCodeThemeLoader.Parse("x", null, null, "{ }").SemanticHighlighting);
+        Assert.True(LoadBuiltin("dark_plus.json").SemanticHighlighting); // VS Code's Dark+ turns it on
+        (string, string)? Parent(string from, string rel) => ("parent.json", """{ "semanticHighlighting": true }""");
+        Assert.True(VsCodeThemeLoader.LoadSync("c", null, null, """{ "include": "parent.json" }""", "child.json", Parent).SemanticHighlighting);
+        Assert.False(VsCodeThemeLoader.LoadSync("c", null, null, """{ "include": "parent.json", "semanticHighlighting": false }""", "child.json", Parent).SemanticHighlighting);
+    }
+
     [Theory]
     [InlineData("dark", null, ThemeKind.Dark)]
     [InlineData("light", null, ThemeKind.Light)]
