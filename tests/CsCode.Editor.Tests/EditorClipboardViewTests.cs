@@ -528,7 +528,10 @@ public class EditorClipboardViewTests
         Assert.Contains(mac.All, b => b.Command == EditorMenus.SurroundWithSnippet && b.Chord.SequenceEqual(KeyStrokeParser.ParseChord("cmd+k cmd+s")));
 
         static string[] Terms(string? when) => when is null ? [] : [.. when.Split("&&", StringSplitOptions.TrimEntries)];
-        static bool Exclusive(string? a, string? b) => Terms(a).Any(t => Terms(b).Contains(t.StartsWith('!') ? t[1..] : "!" + t));
+        // "!k" excludes "k", and "k != 'v'" excludes "k == 'v'" (the Markdown preview's keys share Cmd+Shift+V with the clipboard ring that way)
+        static string Negated(string t) => t.Contains("!=", StringComparison.Ordinal) ? t.Replace("!=", "==", StringComparison.Ordinal)
+            : t.Contains("==", StringComparison.Ordinal) ? t.Replace("==", "!=", StringComparison.Ordinal) : t.StartsWith('!') ? t[1..] : "!" + t;
+        static bool Exclusive(string? a, string? b) => Terms(a).Any(t => Terms(b).Contains(Negated(t)));
         var all = mac.All.Where(b => !b.IsNegative).ToArray();
         var clashes = (from x in all
                        from y in all

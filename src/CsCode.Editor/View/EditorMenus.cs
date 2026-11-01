@@ -116,7 +116,8 @@ internal static class EditorMenus
         new(Copy, "ctrl+c", Mac: "cmd+c", When: "editorTextFocus"),
         new(Paste, "shift+insert", When: "editorTextFocus && !editorReadonly"),
         new(Paste, "ctrl+v", Mac: "cmd+v", When: "editorTextFocus && !editorReadonly"),
-        new(CycleClipboardRing, "ctrl+shift+v", Mac: "cmd+shift+v", When: "editorTextFocus && !editorReadonly"),
+        // In a Markdown file the key opens the preview, as in VS Code (markdown.showPreview, docs/MARKDOWN.md); Edit > Cycle Clipboard Ring stays.
+        new(CycleClipboardRing, "ctrl+shift+v", Mac: "cmd+shift+v", When: "editorTextFocus && !editorReadonly && editorLangId != 'markdown' && !markdownPreviewFocus"),
         new(RunToCursor, "ctrl+f10", Mac: "cmd+f10", When: "editorTextFocus && " + BreakpointsAvailableKey),
         new(QuickWatch, "shift+f9", When: "editorTextFocus && debugState == 'stopped'"),
         new(ToggleBreakpointEnabled, "ctrl+f9", Mac: "cmd+f9", When: "editorTextFocus && " + BreakpointsAvailableKey),
