@@ -313,7 +313,7 @@ settings alone, so a project's `.editorconfig` could make it say "Spaces: 4" whi
 `editor.linkedEditing` (off, VS Code's default; §7d; registered by the factory too),
 `editor.codeLens` (true), `editor.codeLensFontSize` (0 = 90 % of the editor's), `editor.codeLensFontFamily` ("" = the editor's) and
 `editor.semanticHighlighting.enabled` (`configuredByTheme`) (§7e; registered by the factory too),
-and the minimap's and overview ruler's `editor.minimap.enabled` (true), `.side`, `.renderCharacters`, `.maxColumn`, `.showSlider`, `.scale`,
+and the minimap's and overview ruler's `editor.minimap.enabled` (true), `.side`, `.renderCharacters` (true, VS Code's default), `.maxColumn`, `.showSlider`, `.scale`,
 `editor.overviewRulerLanes`, `editor.overviewRulerBorder`, `editor.hideCursorInOverviewRuler`, `debug.showBreakpointsInOverviewRuler` (§7f).
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
@@ -618,7 +618,7 @@ its left border (`editorOverviewRuler.border`), `editorOverviewRuler.background`
   columns. The width is `maxColumn` columns, at most 30 % of the editor, and the minimap is hidden below 24 DIPs.
 * Each non-blank character is a cell in its token's colour (the published token rows of the TextMate or tree-sitter session, resolved against
   the theme with `TokenColorResolver`), blended over `minimap.background`; tabs go to the next tab stop. `editor.minimap.renderCharacters`
-  (default true) shapes the cells by character class (capitals, digits and brackets full height, lower case shorter, punctuation a low, light
+  (default true, as in VS Code) shapes the cells by character class (capitals, digits and brackets full height, lower case shorter, punctuation a low, light
   mark), so words read as words; false draws runs of non-blank text as solid blocks. Large-file mode has no tokens: plain foreground.
 * The slider covers the rows on screen (`minimapSlider.background`, `hoverBackground`, `activeBackground` while dragging), shown while the
   pointer is over the minimap with `editor.minimap.showSlider: mouseover` (the default) or always with `always`. A press on the slider drags it
