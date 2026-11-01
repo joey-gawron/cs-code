@@ -21,6 +21,7 @@ internal static class EditorFeatures
             new Features.SignatureFeature(view),
             new Features.CodeActionFeature(view),
             new Features.NavigationFeature(view),
+            new Features.PeekFeature(view), // Peek Definition / References: an editor embedded under the line (needs navigation's lookups)
             new Features.FormattingFeature(view),
             new Features.BracketFeature(view),
             new Features.HighlightFeature(view),

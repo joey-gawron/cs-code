@@ -138,6 +138,23 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     public EditorDocument Document { get; }
     internal TextEditor Editor { get; }
     internal Canvas Overlay { get; }
+
+    /// <summary>
+    /// A layer over the editor for widgets the user works in (the peek's embedded editor and list): unlike <see cref="Overlay"/> its children
+    /// take the pointer and the keyboard, while its own empty area lets the pointer through to the editor. Created on first use.
+    /// </summary>
+    internal Canvas WidgetLayer
+    {
+        get
+        {
+            if (_widgetLayer is not null) return _widgetLayer;
+            _widgetLayer = new Canvas { ClipToBounds = true }; // no background: only its children are hit-testable
+            ((Grid)Content!).Children.Add(_widgetLayer);
+            return _widgetLayer;
+        }
+    }
+
+    private Canvas? _widgetLayer;
     internal EditorServices Services { get; }
     internal EditorViewController Controller { get; }
     internal EditorPalette Palette { get; private set; }

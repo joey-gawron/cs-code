@@ -182,6 +182,13 @@ internal static class EditorCommands
         Cmd("editor.action.goToTypeDefinition", "Go to Type Definition", (view, _) => view.Feature<INavigationFeature>()?.GoToDefinitionAsync(DefinitionKind.TypeDefinition) ?? Task.CompletedTask);
         Cmd("editor.action.goToImplementation", "Go to Implementation", (view, _) => view.Feature<INavigationFeature>()?.GoToDefinitionAsync(DefinitionKind.Implementation) ?? Task.CompletedTask);
         Cmd(KnownCommands.FindReferences, "Go to References", (view, _) => view.Feature<INavigationFeature>()?.FindReferencesAsync() ?? Task.CompletedTask);
+        // ---- peek (an editor embedded under the line: PeekFeature) ----
+        Cmd(PeekFeature.PeekDefinitionCommand, "Peek Definition", (view, _) => view.Feature<PeekFeature>()?.PeekDefinitionAsync() ?? Task.CompletedTask);
+        Cmd(PeekFeature.PeekDeclarationCommand, "Peek Declaration", (view, _) => view.Feature<PeekFeature>()?.PeekDefinitionAsync(DefinitionKind.Declaration) ?? Task.CompletedTask);
+        Cmd(PeekFeature.PeekTypeDefinitionCommand, "Peek Type Definition", (view, _) => view.Feature<PeekFeature>()?.PeekDefinitionAsync(DefinitionKind.TypeDefinition) ?? Task.CompletedTask);
+        Cmd(PeekFeature.PeekImplementationCommand, "Peek Implementations", (view, _) => view.Feature<PeekFeature>()?.PeekDefinitionAsync(DefinitionKind.Implementation) ?? Task.CompletedTask);
+        Cmd(PeekFeature.PeekReferencesCommand, "Peek References", (view, _) => view.Feature<PeekFeature>()?.PeekReferencesAsync() ?? Task.CompletedTask);
+        Cmd(PeekFeature.CloseCommand, "Close Peek", (view, _) => { PeekFeature.CloseFor(view); return Task.CompletedTask; });
         Cmd(KnownCommands.Rename, "Rename Symbol", (view, _) => view.Feature<INavigationFeature>()?.RenameAsync() ?? Task.CompletedTask);
         Cmd(KnownCommands.FormatDocument, "Format Document", (view, _) => view.Feature<IFormattingFeature>()?.FormatDocumentAsync() ?? Task.CompletedTask);
         Cmd("editor.action.formatSelection", "Format Selection", (view, _) => view.Feature<IFormattingFeature>()?.FormatSelectionAsync() ?? Task.CompletedTask);
