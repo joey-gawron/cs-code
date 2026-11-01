@@ -337,7 +337,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         Tokens = session;
         _styleTable = BuildStyleTable(session);
         _colorizer = new TextMateColorizer(session, TextView, _styleTable);
-        TextView.LineTransformers.Add(_colorizer);
+        TextView.LineTransformers.Insert(0, _colorizer); // first: the grammar's colours are the base the others (semantic tokens, bracket pairs) paint over
     }
 
     private ScopeStyleTable BuildStyleTable(TokenizationSession session)
