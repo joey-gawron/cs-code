@@ -133,6 +133,7 @@ public static class MarkdownPreviewParser
         var blocks = new List<PreviewBlock>(doc.Count);
         var spans = new Dictionary<LeafBlock, IReadOnlyList<CodeSpan>>();
         var anchors = new Dictionary<string, int>(StringComparer.Ordinal);
+        var references = ReferencesHash(doc);
         foreach (var block in doc)
         {
             ct.ThrowIfCancellationRequested();
@@ -140,7 +141,12 @@ public static class MarkdownPreviewParser
             var start = Math.Clamp(block.Span.Start, 0, text.Length);
             var end = Math.Clamp(block.Span.End, start - 1, text.Length - 1);
             var length = end - start + 1;
-            var key = new PreviewBlockKey(block.GetType(), length, Hash(text.AsSpan(start, Math.Max(0, length))));
+            var source = text.AsSpan(start, Math.Max(0, length));
+            var hash = Hash(source);
+            // A [label] link takes its target from a definition elsewhere in the document (or is plain text without one): such a block's
+            // rendering depends on the definitions too, so they are part of its key. Code does not resolve links.
+            if (references != 0 && block is not CodeBlock && source.Contains('[')) hash = (hash ^ references) * 1099511628211UL;
+            var key = new PreviewBlockKey(block.GetType(), length, hash);
             var startLine = LineOf(lineStarts, start);
             var endLine = Math.Max(startLine, LineOf(lineStarts, Math.Max(start, end)));
             var item = new PreviewBlock(block, startLine, endLine, key);
@@ -220,6 +226,31 @@ public static class MarkdownPreviewParser
     {
         var i = Array.BinarySearch(starts, offset);
         return i >= 0 ? i : ~i - 1;
+    }
+
+    /// <summary>A hash of every link reference definition of the document (label, destination, title); 0 when it has none.</summary>
+    private static ulong ReferencesHash(MarkdownDocument doc)
+    {
+        if (doc.GetLinkReferenceDefinitions(false) is not { Links.Count: > 0 } group) return 0;
+        var h = 14695981039346656037UL;
+        foreach (var (label, definition) in group.Links.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            h = Mix(h, label);
+            h = Mix(h, definition.Url);
+            h = Mix(h, definition.Title);
+        }
+        return h == 0 ? 1 : h;
+    }
+
+    private static ulong Mix(ulong h, string? s)
+    {
+        h = (h ^ (ulong)(s?.Length ?? -1)) * 1099511628211UL;
+        foreach (var c in s.AsSpan())
+        {
+            h ^= c;
+            h *= 1099511628211UL;
+        }
+        return h;
     }
 
     // FNV-1a, 64 bit: stable, allocation-free; a collision only costs a stale block until the next edit of it.

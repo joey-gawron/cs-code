@@ -237,6 +237,23 @@ public class MarkdownPreviewViewTests
     }
 
     [AvaloniaFact]
+    public async Task Editing_a_link_definition_updates_the_paragraph_that_references_it()
+    {
+        using var host = ViewHost.Create();
+        var (doc, view, window) = await OpenAsync(host, "see [foo]\n\n[foo]: https://a.example/\n");
+        var para = (SelectableTextBlock)view.Blocks.RealizedControl(0)!;
+        Assert.Equal("https://a.example/", MarkdownBlockRenderer.GetLinks(para)![0].Url);
+
+        doc.ApplyEdits([new TextEdit(new TextRange(new TextPosition(2, 15), new TextPosition(2, 16)), "b")]);
+        await ViewHost.WaitFor(() => view.Document.Version == doc.Version, "the re-render");
+        ViewHost.Pump();
+        para = (SelectableTextBlock)view.Blocks.RealizedControl(0)!;
+        Assert.Equal("https://b.example/", MarkdownBlockRenderer.GetLinks(para)![0].Url);
+        window.Close();
+        view.Dispose();
+    }
+
+    [AvaloniaFact]
     public async Task Local_and_data_images_load_and_remote_ones_are_blocked_by_default()
     {
         using var host = ViewHost.Create();

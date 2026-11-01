@@ -109,6 +109,21 @@ public class MarkdownPreviewParserTests
     }
 
     [Fact]
+    public void Changing_adding_or_removing_a_link_definition_changes_the_key_of_blocks_that_may_use_it_only()
+    {
+        var a = MarkdownPreviewParser.Parse("see [foo]\n\nplain\n\n[foo]: https://a.example/\n", 1);
+        var b = MarkdownPreviewParser.Parse("see [foo]\n\nplain\n\n[foo]: https://b.example/\n", 2);
+        var none = MarkdownPreviewParser.Parse("see [foo]\n\nplain\n", 3);
+        Assert.NotEqual(a.Blocks[0].Key, b.Blocks[0].Key);
+        Assert.NotEqual(a.Blocks[0].Key, none.Blocks[0].Key);
+        Assert.NotEqual(b.Blocks[0].Key, none.Blocks[0].Key);
+        Assert.Equal(a.Blocks[1].Key, b.Blocks[1].Key); // no bracket: cannot use a definition
+        Assert.Equal(a.Blocks[1].Key, none.Blocks[1].Key);
+        // the same definitions give the same keys
+        Assert.Equal(a.Blocks[0].Key, MarkdownPreviewParser.Parse("see [foo]\n\nplain\n\n[foo]: https://a.example/\n", 4).Blocks[0].Key);
+    }
+
+    [Fact]
     public void Code_blocks_are_coloured_with_their_fence_language_and_unchanged_blocks_reuse_the_previous_spans()
     {
         var calls = new List<(string? Info, string Code)>();
