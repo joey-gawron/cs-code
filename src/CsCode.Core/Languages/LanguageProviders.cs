@@ -1,3 +1,4 @@
+using CsCode.Core.Lifecycle;
 using CsCode.Core.Text;
 
 namespace CsCode.Core.Languages;
@@ -106,6 +107,12 @@ public interface ICodeLensProvider : ILanguageProvider
 {
     ValueTask<IReadOnlyList<CodeLens>?> ProvideCodeLensesAsync(ITextDocument document, CancellationToken ct);
     ValueTask<CodeLens> ResolveCodeLensAsync(CodeLens lens, CancellationToken ct) => ValueTask.FromResult(lens);
+
+    /// <summary>
+    /// Fires when the lenses of a document may have changed without an edit (the Test Explorer discovered tests): the document's URI, or null
+    /// for every document. Additive: language servers re-register on <c>workspace/codeLens/refresh</c> instead, so the default never fires.
+    /// </summary>
+    IEventSource<Uri?> CodeLensesChanged => EventSource.Never<Uri?>();
 }
 
 public interface IDocumentColorProvider : ILanguageProvider

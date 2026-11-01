@@ -304,15 +304,17 @@ internal sealed class QuickDiffFeature : IThemeAware, ISettingsAware, IDisposabl
             foreach (var vl in tv.VisualLines)
             {
                 var line = vl.FirstDocumentLine.LineNumber - 1;
-                var top = vl.VisualTop - scroll;
+                var zone = LineZones.HeightOf(vl); // a code lens above the line: the bar marks the text, not the lens
+                var top = vl.VisualTop + zone - scroll;
+                var height = vl.Height - zone;
                 foreach (var c in owner._changes)
                 {
                     if (c.ModifiedLength > 0 && line >= c.ModifiedStart && line < c.ModifiedEnd)
-                        context.FillRectangle(c.OriginalLength == 0 ? added : modified, new Rect(1, top, 3, vl.Height));
+                        context.FillRectangle(c.OriginalLength == 0 ? added : modified, new Rect(1, top, 3, height));
                     else if (c.ModifiedLength == 0 && line == Math.Min(c.ModifiedStart, tv.Document.LineCount - 1))
                     {
                         // a wedge on the line boundary where lines were deleted
-                        var y = c.ModifiedStart < tv.Document.LineCount ? top : top + vl.Height;
+                        var y = c.ModifiedStart < tv.Document.LineCount ? top : top + height;
                         var geo = new StreamGeometry();
                         using (var g = geo.Open())
                         {

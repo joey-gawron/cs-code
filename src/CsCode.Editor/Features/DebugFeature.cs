@@ -268,8 +268,9 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
             foreach (var vl in textView.VisualLines)
             {
                 var line = vl.FirstDocumentLine.LineNumber - 1;
-                var top = vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineTop) - textView.VerticalOffset;
-                var height = vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineBottom) - vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineTop);
+                var zone = LineZones.HeightOf(vl); // a code lens above the line: the glyph goes by the text
+                var top = vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineTop) + zone - textView.VerticalOffset;
+                var height = vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineBottom) - vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineTop) - zone;
                 var center = new Point(MarginWidth / 2, top + height / 2);
                 var radius = Math.Min(MarginWidth, height) / 2 - 3;
                 var bp = _owner.BreakpointAt(line);
