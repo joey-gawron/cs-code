@@ -129,11 +129,11 @@ public sealed class VmFixture : IDisposable
     public FindInFilesViewModel NewFind() => new(Services);
 
     /// <summary>The same services with another window service and/or navigation service (shell behaviours the default fakes do not have).</summary>
-    public SearchServices With(IWindowService? windows = null, INavigationService? navigation = null) => new()
+    public SearchServices With(IWindowService? windows = null, INavigationService? navigation = null, CsCode.Core.Remote.IRemoteMachineSettings? remote = null) => new()
     {
         Workspace = Services.Workspace, Ui = Services.Ui, Engine = Services.Engine, Replace = Services.Replace, Configuration = Services.Configuration,
         Documents = Services.Documents, Navigation = navigation ?? Services.Navigation, Windows = windows ?? Services.Windows, State = Services.State,
-        Commands = Services.Commands, Keybindings = Services.Keybindings, ContextKeys = Services.ContextKeys, FileSystem = Services.FileSystem,
+        Commands = Services.Commands, Keybindings = Services.Keybindings, ContextKeys = Services.ContextKeys, FileSystem = Services.FileSystem, RemoteSettings = remote ?? Services.RemoteSettings,
     };
 
     public async Task SearchAsync(FindInFilesViewModel vm, string query)

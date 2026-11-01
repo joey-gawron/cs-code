@@ -263,6 +263,22 @@ public sealed class ConfigurationService : IConfigurationService, IWorkspaceBoun
         return new ValueTask(_lane.RunAsync(token => UpdateCore(path, key, node, token), ct));
     }
 
+    /// <summary>
+    /// Sets (null removes) <paramref name="key"/> in this remote host's machine settings file (<see cref="MachineSettingsPath"/>), with the same
+    /// comment-preserving editor and atomic write as <see cref="UpdateAsync"/>, and applies it at once. The client's Remote settings tab and
+    /// <c>settings/updateMachine</c> write through here. Refused while this is not a remote window (no machine file) and for an application-scoped
+    /// setting, which the machine file cannot set (it would be ignored).
+    /// </summary>
+    public ValueTask UpdateMachineAsync(string key, object? value, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(key);
+        var path = MachineSettingsPath ?? throw new InvalidOperationException("This is not a remote window: there is no machine settings file to update");
+        if (value is not null && UserOnlyScopeOf(key) == ConfigurationScope.Application)
+            throw new InvalidOperationException($"'{key}' can only be set in the user settings of the client (application scope), not in a remote host's settings.");
+        var node = ToNode(value);
+        return new ValueTask(_lane.RunAsync(token => UpdateCore(path, key, node, token), ct));
+    }
+
     /// <summary>The user-only scope that covers <paramref name="key"/> (the key itself, a key below it, or a machine-scoped member), or null.</summary>
     private ConfigurationScope? UserOnlyScopeOf(string key)
     {

@@ -42,6 +42,9 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton(sp => new ProcessLanguageHost(sp, sp.GetRequiredService<RemoteOptions>()));
         services.TryAddSingleton(sp => new RemoteConnectionManager(sp, sp.GetRequiredService<RemoteOptions>()));
         services.TryAddSingleton<IRemoteConnectionManager>(sp => sp.GetRequiredService<RemoteConnectionManager>());
+        services.TryAddSingleton(sp => new RemoteMachineSettings(sp.GetRequiredService<RemoteConnectionManager>(), sp.GetService<IFileWatcher>,
+            sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger("CsCode.Remote.MachineSettings")));
+        services.TryAddSingleton<IRemoteMachineSettings>(sp => sp.GetRequiredService<RemoteMachineSettings>()); // the Settings page's Remote tab
         services.AddSingleton<IFileSystemProvider>(sp => sp.GetRequiredService<RemoteConnectionManager>().FileSystem);
         services.AddSingleton<IFileWatcherProvider>(sp => sp.GetRequiredService<RemoteConnectionManager>().Watcher);
         services.AddSingleton<IFileSearchProvider>(sp => sp.GetRequiredService<RemoteConnectionManager>().Search);

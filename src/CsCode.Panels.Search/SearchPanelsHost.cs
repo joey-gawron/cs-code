@@ -34,6 +34,11 @@ public sealed class SearchPanelsHost : IDisposable
     public const string OpenSettingsJson = "workbench.action.openSettingsJson";
     public const string OpenKeybindings = "workbench.action.openGlobalKeybindings";
     public const string OpenKeybindingsJson = "workbench.action.openGlobalKeybindingsFile";
+    public const string OpenRemoteSettings = "workbench.action.openRemoteSettings";
+    public const string OpenRemoteSettingsJson = "workbench.action.openRemoteSettingsFile";
+
+    /// <summary>Context key set by the Remote module while a remote host is connected (VS Code's: <c>ssh-remote</c>, <c>attached-container</c>, <c>wsl</c>).</summary>
+    public const string RemoteNameKey = "remoteName";
 
     private readonly IServiceProvider _sp;
     private readonly Lazy<SearchServices> _services;
@@ -42,6 +47,7 @@ public sealed class SearchPanelsHost : IDisposable
     private FindRequest? _pendingFind;
     private SettingsViewModel? _liveSettings;
     private string? _pendingSettingsQuery;
+    private SettingsScope? _pendingSettingsScope;
 
     public SearchPanelsHost(IServiceProvider services)
     {
@@ -106,6 +112,11 @@ public sealed class SearchPanelsHost : IDisposable
             _pendingSettingsQuery = null;
             vm.SearchText = q;
         }
+        if (_pendingSettingsScope is { } scope)
+        {
+            _pendingSettingsScope = null;
+            vm.SelectedScope = scope;
+        }
         return vm;
     }
 
@@ -119,12 +130,12 @@ public sealed class SearchPanelsHost : IDisposable
 
     private void RegisterCommands(ICommandService commands)
     {
-        void Reg(string id, string title, Func<CommandInvocation, ValueTask<object?>> handler)
+        void Reg(string id, string title, Func<CommandInvocation, ValueTask<object?>> handler, string? enablement = null)
         {
             if (commands.Has(id)) return; // the shell (or another module) owns it
             // VS Code's palette categories: "Search: Find in Files", "Preferences: Open Keyboard Shortcuts".
             var category = id is FindInFiles or ReplaceInFiles || id.StartsWith("search.", StringComparison.Ordinal) ? "Search" : "Preferences";
-            _store.Add(commands.Register(id, handler, new CommandMetadata(id, title, category)));
+            _store.Add(commands.Register(id, handler, new CommandMetadata(id, title, category, Enablement: enablement)));
         }
 
         Reg(FindInFiles, "Find in Files", inv => FindAsync(inv, replace: false));
@@ -147,6 +158,26 @@ public sealed class SearchPanelsHost : IDisposable
         Reg(OpenSettingsJson, "Open Settings (JSON)", async _ => { await OpenJsonFileAsync("settings.json"); return null; });
         Reg(OpenKeybindings, "Open Keyboard Shortcuts", async _ => { await ShowAsync(KeybindingsViewId); return null; });
         Reg(OpenKeybindingsJson, "Open Keyboard Shortcuts (JSON)", async _ => { await OpenJsonFileAsync("keybindings.json"); return null; });
+        // VS Code's remote settings commands: the Settings page on its Remote tab, and the remote host's machine settings.json in the editor. Shown in
+        // the palette only while a remote host is connected.
+        Reg(OpenRemoteSettings, "Open Remote Settings", async inv =>
+        {
+            if (Services.RemoteSettings?.SettingsUri is null) { await NoRemoteHostAsync(); return null; }
+            var query = inv.Arg<string>(0);
+            if (_liveSettings is { } s)
+            {
+                s.SelectedScope = SettingsScope.Remote;
+                if (!string.IsNullOrWhiteSpace(query)) s.SearchText = query;
+            }
+            else
+            {
+                _pendingSettingsScope = SettingsScope.Remote;
+                if (!string.IsNullOrWhiteSpace(query)) _pendingSettingsQuery = query;
+            }
+            await ShowAsync(SettingsViewId);
+            return null;
+        }, RemoteNameKey);
+        Reg(OpenRemoteSettingsJson, "Open Remote Settings (JSON)", async _ => { await OpenRemoteJsonAsync(); return null; }, RemoteNameKey);
     }
 
     private async ValueTask<object?> FindAsync(CommandInvocation inv, bool replace)
@@ -251,6 +282,30 @@ public sealed class SearchPanelsHost : IDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             if (s.Windows is not null) await s.Windows.ShowMessageAsync(MessageSeverity.Error, $"Could not open {fileName}: {ex.Message}");
+        }
+    }
+
+    private async Task NoRemoteHostAsync()
+    {
+        if (Services.Windows is { } w)
+            await w.ShowMessageAsync(MessageSeverity.Info, "No remote host is connected: remote settings are the settings of a connected host (Remote: Connect to Host...).");
+    }
+
+    /// <summary>The connected host's machine settings.json in the editor (created with <c>{}</c> first, as the user file is).</summary>
+    private async Task OpenRemoteJsonAsync()
+    {
+        var s = Services;
+        if (s.RemoteSettings?.SettingsUri is not { } uri) { await NoRemoteHostAsync(); return; }
+        if (s.Navigation is null) return;
+        var fs = s.FileSystem ?? s.Workspace.FileSystem;
+        try
+        {
+            if (await fs.StatAsync(uri) is null) await fs.WriteFileAsync(uri, "{\n}\n"u8.ToArray(), createParents: true);
+            await s.Navigation.OpenAsync(uri);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TimeoutException)
+        {
+            if (s.Windows is not null) await s.Windows.ShowMessageAsync(MessageSeverity.Error, "Could not open the remote settings: " + ex.Message);
         }
     }
 

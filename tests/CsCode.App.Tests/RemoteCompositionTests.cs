@@ -136,6 +136,50 @@ public class RemoteCompositionTests
     }
 
     [AvaloniaFact(Timeout = 180_000)]
+    public async Task Open_Remote_Settings_shows_the_settings_page_on_the_remote_tab_and_its_edits_land_in_the_host_s_machine_file()
+    {
+        Assert.SkipUnless(File.Exists(ServerAssembly), "cscode-server.dll is not next to the tests");
+        using var env = new RealAppHome();
+        using var serverData = new TempDirectory("cscode-app-remote-");
+        var marker = "cscode-test-" + Guid.NewGuid().ToString("N")[..12];
+        await using (var run = new RealAppRun(env, s => Remote(s, serverData, marker)))
+        {
+            await run.MainWindowAsync();
+            var sp = run.Services;
+            var commands = sp.GetRequiredService<ICommandService>();
+            var keys = sp.GetRequiredService<IContextKeyService>();
+            var open = commands.All.Single(c => c.Id == "workbench.action.openRemoteSettings");
+            Assert.False(keys.Evaluate(open.Enablement));                                     // not in the palette while nothing is connected
+
+            var manager = sp.GetRequiredService<IRemoteConnectionManager>();
+            await manager.ConnectAsync("tester@box");
+            Assert.True(await DevHost.WaitFor(() => keys.Evaluate(open.Enablement), 10_000), "remoteName was not set");
+
+            await commands.ExecuteAsync("workbench.action.openRemoteSettings");
+            var panels = sp.GetRequiredService<CsCode.Panels.Search.SearchPanelsHost>();
+            Assert.True(await DevHost.WaitFor(() => panels.LiveSettings is not null, 10_000), "the settings page did not open");
+            var page = panels.LiveSettings!;
+            Assert.Equal(CsCode.Panels.Search.Settings.SettingsScope.Remote, page.SelectedScope);
+            Assert.Equal("Remote [SSH: tester@box]", page.RemoteTabTitle);
+
+            var tabSize = (CsCode.Panels.Search.Settings.NumberSettingViewModel)page.AllItems.Single(i => i.Key == "editor.tabSize");
+            tabSize.Text = "3";
+            await page.FlushAsync();
+            var machine = CsCode.Server.ServerHost.MachineSettingsPath(serverData.Path);
+            Assert.True(await DevHost.WaitFor(() => File.Exists(machine) && File.ReadAllText(machine).Contains("\"editor.tabSize\": 3", StringComparison.Ordinal), 10_000),
+                "the edit did not reach the host's machine settings file");
+            Assert.DoesNotContain("editor.tabSize", File.Exists(sp.GetRequiredService<IConfigurationService>().UserSettingsPath)
+                ? File.ReadAllText(sp.GetRequiredService<IConfigurationService>().UserSettingsPath) : "", StringComparison.Ordinal);
+
+            await commands.ExecuteAsync("workbench.action.openRemoteSettingsFile");
+            var navigation = sp.GetRequiredService<INavigationService>();
+            Assert.True(await DevHost.WaitFor(() => navigation.ActiveDocument?.Uri.Scheme == "ssh", 10_000), "the remote settings file did not open");
+            Assert.EndsWith("/machine/settings.json", navigation.ActiveDocument!.Uri.AbsolutePath, StringComparison.Ordinal);
+        }
+        Assert.True(await DevHost.WaitFor(() => !ProcessesWithMarker(marker), 15_000), "server processes left after the app exited");
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
     public async Task In_the_real_app_a_remote_workspace_terminal_runs_on_the_server()
     {
         // R3 in the real composition: the Terminal module asks the Remote module's provider; a remote folder's terminal is the server's child.

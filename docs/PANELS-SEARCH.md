@@ -28,7 +28,9 @@ Find in Files (with replace), the Settings editor and the Keyboard Shortcuts vie
 * Commands registered (only if not already registered by someone else; palette categories "Search" and "Preferences", as in VS Code): `workbench.action.findInFiles`, `workbench.action.replaceInFiles`,
   `search.action.focusNextSearchResult` (F4), `search.action.focusPreviousSearchResult` (Shift+F4), `search.action.clearSearchResults`,
   `search.action.collapseSearchResults`, `search.action.findInFolder` (argument: folder URI), `workbench.action.openSettings` (optional query argument),
-  `workbench.action.openSettingsJson`, `workbench.action.openGlobalKeybindings`, `workbench.action.openGlobalKeybindingsFile`.
+  `workbench.action.openSettingsJson`, `workbench.action.openGlobalKeybindings`, `workbench.action.openGlobalKeybindingsFile`, and while a remote host is
+  connected (enablement `remoteName`) `workbench.action.openRemoteSettings` (the page on its Remote tab; optional query argument) and
+  `workbench.action.openRemoteSettingsFile` (the host's machine settings.json in the editor).
   `findInFiles`/`replaceInFiles` take VS Code's argument object (`query`, `replace`, `filesToInclude`, `filesToExclude`, `isRegex`, `isCaseSensitive`,
   `matchWholeWord`, `preserveCase`, `useExcludeSettingsAndIgnoreFiles`, `triggerSearch`) or a plain string, and seed the query from
   `IActiveSelectionProvider.SelectedText` (single line) or the word at the caret.
@@ -140,13 +142,18 @@ Mapping from `ConfigurationProperty` (default + JSON-schema fragment) to control
   (`cscode.memory.budgetMb` is Memory). Titles are humanised ("Editor › Minimap: Enabled").
 * **Search** is a fuzzy filter (`FuzzyMatcher`): each word must be a substring of title/key/description or a fuzzy match of title+key; searching ignores the selected category.
   `@modified` (alone or with words) shows only changed settings.
-* **Scope tabs** User / Workspace (`ConfigurationTarget`); the Workspace tab is disabled without an open folder. Core's `IConfigurationService` has no per-scope
+* **Scope tabs** User / Workspace / Remote (`SettingsScope`); the Workspace tab is disabled without an open folder. Core's `IConfigurationService` has no per-scope
   "inspect" API, so the view reads the settings files itself, **the same files in the same order as the platform's `ConfigurationService`**: the user
   `settings.json`, the primary folder's `.vscode/settings.json` and `.cscode/settings.json`, then every other folder's `.cscode/settings.json` (flattened, nested and
   dotted keys equivalent, comments and a UTF-8 BOM allowed). The User tab writes the user file, the Workspace tab the primary `.cscode/settings.json`. Values shown for
   a tab come from its file, falling back to the effective value. *Modified* (blue bar, Reset enabled) = set in the tab's own file, or, when no file mentions the key,
   different from the default. A key set elsewhere is not modified in a tab that cannot reset it; "(also modified in …)" names every other file that sets it
   ("Workspace", "User", ".vscode/settings.json", "<folder>/.cscode/settings.json").
+* **Remote tab** ("Remote [SSH: box]", only while a remote host is connected; `IRemoteMachineSettings`, optional in `SearchServices`): the connected host's
+  machine settings file (`<server data dir>/machine/settings.json`), read through the remote file system and written through the remote server
+  (`IRemoteMachineSettings.UpdateAsync`, the same comment-preserving writer on the host). Application-scoped settings are not listed; a machine-scoped setting
+  the file does not set shows its default (the client's value names a program on the client's machine). The page refreshes on the service's `Changed`
+  (own writes, the file watched on the host) and goes back to the User tab when the host disconnects. Details: docs/REMOTE.md, "Remote machine settings".
 * **Writes** always go through `IConfigurationService.UpdateAsync(key, value, target)` (the platform's comment-preserving JSONC writer; verified against the real
   `ConfigurationService` in `RealPlatformTests`). **Reset Setting** = `UpdateAsync(key, null)` (removes the key). A refresh never overwrites a box the user is typing in:
   neither one with an edit waiting for its debounce nor one holding text that is not valid yet (an emptied number box, a lone "-", a string breaking its pattern;

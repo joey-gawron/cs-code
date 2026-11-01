@@ -42,6 +42,8 @@ above across dropped connections for `remote.ssh.reconnectGracePeriod` seconds.
   `FileSearchOptions`; Platform `FileSystemRouter`, `FileWatcherRouter`, the search-provider hook of `WorkspaceService.FindFilesAsync`; Lsp: the in-process
   manager serves only `file:`/`untitled:` documents; App: `AddCsCodeRemote()`, `RemoteShellContributions.Start()`, the File menu entry, `ssh://` command-line
   targets, `cscode --askpass`, the remote connection in the graceful shutdown.
+* Remote settings, additive: Core `IRemoteMachineSettings` (the connected host's machine settings file; Panels.Search's Remote settings tab and Open
+  Remote Settings commands), Platform `ConfigurationService.UpdateMachineAsync`.
 * Wave 3 (R3/R4) hooks, all additive: Core `ITerminalBackendProvider`/`ITerminalBackend` (Terminal: `BackendPtyHost`, `TerminalService.Backends`),
   `DebugAdapterStreamDescriptor`/`IDebugAdapterStreamConnection`/`IDebugPathMapper` (Dap: `StreamTransport`, `DebugSessionOptions.PathMapper`,
   `IBreakpointSyncHost.AdapterPathOf`, `DapPlatform.PathMappers`), `ITextSearchProvider` (Panels.Search: `SearchEngine` takes them, `RootSet` keys
@@ -60,7 +62,7 @@ greeting line `CSCODE-SERVER-READY v1` before the framed stream; the client skip
 | files | `fs/stat` (with an etag = mtime ticks + size), `fs/readDir`, `fs/read` (≤ 256 KB range), `fs/write` (≤ 256 KB, optional expected etag), `fs/writeBegin` / `fs/writeChunk` / `fs/writeCommit` / `fs/writeAbort` (chunked upload, committed with one atomic write), `fs/mkdir`, `fs/delete`, `fs/rename`, `fs/copy` |
 | watch | `watch/start` (answers once the OS watch is armed; with the `watchWants` capability it carries the watch's wanted paths), `watch/wants` (wanted paths changed; answers once the OS watch follows; a change made while `watch/start` is out is sent after it answers), `watch/stop`, `watch/keep` (after a (re)connect: the watches the client still has; the rest stop); server → client `watch/changes` |
 | search | `search/files`, `search/text` start a session; `search/next` pulls the next batch (natural back-pressure); `search/cancel` |
-| workspace | `workspace/setFolders`, `settings/setUser` |
+| workspace | `workspace/setFolders`, `settings/setUser`, `settings/updateMachine` (one key of the host's machine settings file: the Remote settings tab) |
 | documents (R2) | `doc/open` (full text + client version), `doc/change` (the editor's own incremental changes and versions), `doc/close`, `doc/saved`, `doc/language` — handled inline, in order |
 | languages (R2) | server → client `lang/registered` / `lang/unregistered`; `lang/list`, `lang/invoke` (registration id + op + document + args), `lang/willSave`, `lang/fileOperation`, server → client `diag/publish`, `lsp/servers`, `commands/changed`; `lsp/control`, `lsp/addDefinition`, `lsp/removeDefinition`, `commands/execute` |
 | UI (R2, server → client) | `window/showMessage`, `window/quickPick`, `window/inputBox`, `window/openExternal`, `window/clipboard`, `window/status`, `window/progress` (+ client → server `window/progressCancel`), `nav/open`, `nav/applyEdit`, `output/append` |
@@ -348,7 +350,7 @@ mode (a composition that resolves every service), the host stays idle: it starts
 `RemoteShellContributions.Start()` (called by `ShellController`) registers: `remote.connect` *Remote: Connect to Host…* (quick pick of the ssh_config `Host`
 names without wildcards, `Include`s followed, + *Add New SSH Host…*, which also takes `docker://container` / `wsl://distro`), `remote.openFolder`
 *Remote: Open Remote Folder…* (File menu; takes a remote URI from the command line: `cscode ssh://me@box/home/me/src`, also through the launcher in
-background mode — T5), `remote.disconnect`, `remote.reconnect`, `remote.reinstallServer`, `remote.showLog`; the remote debug factory/provider; and the
+background mode — T5), `remote.disconnect`, `remote.reconnect`, `remote.reinstallServer`, `remote.showLog`; the `remoteName` context key; the remote debug factory/provider; and the
 remote indicator at the left of the status bar, drawn as a **badge** in the theme's `statusBarItem.remoteBackground` / `statusBarItem.remoteForeground`
 (VS Code's ids; white on `#16825D` in the VS 2022 themes, 4.8:1) in every state (`$(remote)` when disconnected → click to connect;
 `$(sync~spin) SSH: host` connecting/reconnecting; `$(remote) SSH: host` connected; `$(error) SSH: host (disconnected)` → click to reconnect). A
@@ -399,8 +401,25 @@ The file is created by hand (or through the remote file system: open `<data dir>
 keeps the last good values. The local process language host (`cscode.languageHost: process`) runs on the client's machine and keeps the client's
 values (`settings/setUser` carries `RemoteWindow`; an older client sends none and keeps the previous behaviour). Tests:
 `SettingScopeTests.A_remote_server_takes_machine_settings_from_its_host_s_machine_file…`, `…A_remote_terminal_gets_the_environment_of_the_server_host_s_machine_settings…`
-(Remote.Tests), `ConfigurationScopeTests.A_remote_window_takes_machine_settings…` (Platform.Tests). Not yet there: a "Remote" tab in the Settings
-page and VS Code's *Open Remote Settings* command.
+(Remote.Tests), `ConfigurationScopeTests.A_remote_window_takes_machine_settings…` (Platform.Tests).
+
+**Remote settings tab and Open Remote Settings** (VS Code's). While a host is connected the Settings page has a third scope tab, **Remote [SSH: box]**
+(`Docker: …`, `WSL: …`), and the palette offers *Preferences: Open Remote Settings* (`workbench.action.openRemoteSettings`: the page on that tab,
+an optional search text as argument) and *Preferences: Open Remote Settings (JSON)* (`workbench.action.openRemoteSettingsFile`: the file in the
+editor, created with `{}` first). Both are enabled by VS Code's `remoteName` context key (`ssh-remote`, `attached-container`, `wsl`; set by
+`RemoteShellContributions` while connected, kept while reconnecting). The tab:
+* lists every setting except the application-scoped ones (a remote host never takes those); a machine-scoped setting the file does not set shows its
+  default, not the client's value (which names a program on the client's machine), as the server resolves it;
+* reads the file through the remote file system (`IRemoteMachineSettings.SettingsUri`, Core: `ssh://…/<data dir>/machine/settings.json`, the data dir
+  from `hello`); "modified" and "(also modified in Remote [SSH: box])" work across the User and Remote tabs as they do for User and Workspace;
+* writes through the server (`settings/updateMachine` → `ConfigurationService.UpdateMachineAsync`): the same comment-preserving JSONC editor and atomic
+  write as the user settings.json, applied by the server at once; an application-scoped key is refused there too; Reset removes the key;
+* refreshes when the file changes: own writes, and the remote watcher on `<data dir>/machine/` (an edit saved from the editor, a change made on the
+  host); a disconnect removes the tab and switches the page back to User.
+`RemoteMachineSettings` (Remote, `IRemoteMachineSettings`) follows the connection status; the page and the commands live in Panels.Search
+(`SettingsViewModel`'s `SettingsScope.Remote`, `SearchPanelsHost`). Tests: `RemoteSettingsTabTests`, `RemoteSettingsCommandTests`,
+`RemoteSettingsViewTests` (Panels.Search.Tests), `RemoteMachineSettingsTests` (Remote.Tests, real loopback server), `ConfigurationScopeTests.
+The_remote_settings_tab_writes_the_host_s_machine_file…` (Platform.Tests), and the real-host suite below.
 
 `RemoteOptions` (DI, not settings) carries what the host program or tests supply: ssh environment changes, the askpass command and directory, bundles,
 a process marker, reconnect policy, clock, call timeout, the reconnect wait, the grace period and a fixed server session id, a transport factory, the local

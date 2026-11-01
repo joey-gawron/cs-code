@@ -29,6 +29,23 @@ internal sealed class WorkspaceHandlers(WorkspaceService workspace, Configuratio
             await SetUserSettingsAsync(p.Text, p.RemoteWindow, ct).ConfigureAwait(false);
             return Empty.Value;
         });
+        peer.OnRequest<UpdateMachineSettingParams, Empty>(RemoteMethods.SettingsUpdateMachine, async (p, ct) =>
+        {
+            await UpdateMachineSettingAsync(p.Key, p.Value, ct).ConfigureAwait(false);
+            return Empty.Value;
+        });
+    }
+
+    /// <summary>
+    /// The client's Remote settings tab: one key of this host's machine settings file, written by the configuration service (comment-preserving,
+    /// atomic, applied at once). A client that has not announced a remote window yet (settings/setUser comes first on every connect) gets it turned
+    /// on here, so the write lands in the file the server reads.
+    /// </summary>
+    public async Task UpdateMachineSettingAsync(string key, System.Text.Json.JsonElement? value, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(key);
+        if (configuration.MachineSettingsPath is null) await configuration.SetRemoteMachineSettingsAsync(machineSettingsPath, ct).ConfigureAwait(false);
+        await configuration.UpdateMachineAsync(key, value is { ValueKind: not System.Text.Json.JsonValueKind.Null } v ? v : null, ct).ConfigureAwait(false);
     }
 
     public async Task SetFoldersAsync(IReadOnlyList<string> folders, CancellationToken ct)

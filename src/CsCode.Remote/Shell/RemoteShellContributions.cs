@@ -49,6 +49,14 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
         // R3: sessions of a remote workspace start their adapter on the server (asked before the built-in, local factories).
         if (sp.GetService<CsCode.Core.Debugging.IDebugService>() is { } debug && sp.GetService<Bridge.RemoteDebugging>() is { } remoteDebug)
             _store.Add(remoteDebug.RegisterWith(debug));
+        if (sp.GetService<IContextKeyService>() is { } contextKeys)
+        {
+            // VS Code's remoteName: when-clauses (the Open Remote Settings commands) see whether a remote host is connected, and which kind.
+            var manager = Manager;
+            contextKeys.Set(RemoteNameKey, RemoteName(manager.Status));
+            _store.Add(manager.StatusChanged.Subscribe(s => { if (s.State != RemoteConnectionState.Reconnecting) contextKeys.Set(RemoteNameKey, RemoteName(s)); }));
+            _store.Add(Disposable.Create(() => contextKeys.Set(RemoteNameKey, null)));
+        }
         if (sp.GetService<IStatusBarService>() is { } statusBar)
         {
             // Resolving the manager here is cheap (everything it needs is resolved lazily) and makes the indicator follow it from the start.
@@ -83,8 +91,19 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
         _ => new(IndicatorId, "$(remote)", "Open a remote window (Connect to Host…)", Connect, StatusBarAlignment.Left, 10_000),
     }) with { ColorKey = BadgeForeground, BackgroundColorKey = BadgeBackground };
 
+    /// <summary>The <c>remoteName</c> context key (VS Code's name and values).</summary>
+    public const string RemoteNameKey = "remoteName";
+
+    /// <summary>VS Code's <c>remoteName</c> while connected (<c>ssh-remote</c>, <c>attached-container</c>, <c>wsl</c>); null otherwise.</summary>
+    internal static string? RemoteName(RemoteConnectionStatus s) => s.State != RemoteConnectionState.Connected ? null : s.Authority?.Scheme switch
+    {
+        RemoteSchemes.Docker => "attached-container",
+        RemoteSchemes.Wsl => "wsl",
+        _ => "ssh-remote",
+    };
+
     /// <summary>"SSH: host", "Docker: container", "WSL: distro" — by the connection's URI scheme.</summary>
-    private static string Label(RemoteConnectionStatus s) => s.Authority?.Scheme switch
+    internal static string Label(RemoteConnectionStatus s) => s.Authority?.Scheme switch
     {
         RemoteSchemes.Docker => "Docker: " + Bare(s.Host, RemoteSchemes.Docker),
         RemoteSchemes.Wsl => "WSL: " + Bare(s.Host, RemoteSchemes.Wsl),
