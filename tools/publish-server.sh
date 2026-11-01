@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Builds the cscode-server bundles that the client uploads to remote hosts (docs/REMOTE.md, "Server bootstrap"):
 #
-#   cscode-server-<rid>.tar.gz       self-contained single-file build per runtime id (default: linux-x64)
+#   cscode-server-<rid>.tar.gz       self-contained single-file build per runtime id (default: the four POSIX platforms the client bootstraps)
 #   cscode-server-portable.tar.gz    framework-dependent build for any host with a .NET 10 runtime (launched through `dotnet`)
 #   manifest.json                    flavour, rid, file, sha256 and install hash (first 16 hex digits of the sha256) of each bundle
 #
 # Usage: tools/publish-server.sh [--out DIR] [--rid RID]... [--all] [--no-portable] [--no-trim]
 #   --out DIR      output directory (default: .scratch/server-bundles; the client also looks there when it runs from a source tree)
-#   --rid RID      add a self-contained runtime id (repeatable; default linux-x64). A RID whose runtime pack is not in the NuGet cache is
+#   --rid RID      build this self-contained runtime id instead of the default set (repeatable). Default: linux-x64 linux-arm64 osx-arm64
+#                  osx-x64, every platform the client can bootstrap, so an arm64 VM, a Raspberry Pi or a Mac remote finds its bundle
+#                  (with linux-x64 alone they were 'unsupported' unless the host had a .NET 10 runtime on its PATH). A RID whose runtime pack is not in the NuGet cache is
 #                  restored from nuget.org by `dotnet publish` (tools/fetch-server-runtime-packs.sh pins and verifies those packs).
 #   --all          the five supported RIDs: linux-x64 linux-arm64 osx-x64 osx-arm64 win-x64
 #   --no-portable  skip the framework-dependent bundle
@@ -34,11 +36,11 @@ while [ $# -gt 0 ]; do
     --no-portable) portable=0; shift ;;
     --no-trim) trim=0; shift ;;
     --trim) trim=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "publish-server.sh: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
-[ ${#rids[@]} -gt 0 ] || rids=(linux-x64)
+[ ${#rids[@]} -gt 0 ] || rids=(linux-x64 linux-arm64 osx-arm64 osx-x64)
 
 project="$repo/src/CsCode.Server/CsCode.Server.csproj"
 work=$(mktemp -d "${TMPDIR:-/tmp}/cscode-publish.XXXXXX")

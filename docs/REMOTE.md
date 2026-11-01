@@ -42,6 +42,8 @@ above across dropped connections for `remote.ssh.reconnectGracePeriod` seconds.
   `FileSearchOptions`; Platform `FileSystemRouter`, `FileWatcherRouter`, the search-provider hook of `WorkspaceService.FindFilesAsync`; Lsp: the in-process
   manager serves only `file:`/`untitled:` documents; App: `AddCsCodeRemote()`, `RemoteShellContributions.Start()`, the File menu entry, `ssh://` command-line
   targets, `cscode --askpass`, the remote connection in the graceful shutdown.
+* Remote settings, additive: Core `IRemoteMachineSettings` (the connected host's machine settings file; Panels.Search's Remote settings tab and Open
+  Remote Settings commands), Platform `ConfigurationService.UpdateMachineAsync`.
 * Wave 3 (R3/R4) hooks, all additive: Core `ITerminalBackendProvider`/`ITerminalBackend` (Terminal: `BackendPtyHost`, `TerminalService.Backends`),
   `DebugAdapterStreamDescriptor`/`IDebugAdapterStreamConnection`/`IDebugPathMapper` (Dap: `StreamTransport`, `DebugSessionOptions.PathMapper`,
   `IBreakpointSyncHost.AdapterPathOf`, `DapPlatform.PathMappers`), `ITextSearchProvider` (Panels.Search: `SearchEngine` takes them, `RootSet` keys
@@ -60,7 +62,7 @@ greeting line `CSCODE-SERVER-READY v1` before the framed stream; the client skip
 | files | `fs/stat` (with an etag = mtime ticks + size), `fs/readDir`, `fs/read` (≤ 256 KB range), `fs/write` (≤ 256 KB, optional expected etag), `fs/writeBegin` / `fs/writeChunk` / `fs/writeCommit` / `fs/writeAbort` (chunked upload, committed with one atomic write), `fs/mkdir`, `fs/delete`, `fs/rename`, `fs/copy` |
 | watch | `watch/start` (answers once the OS watch is armed; with the `watchWants` capability it carries the watch's wanted paths), `watch/wants` (wanted paths changed; answers once the OS watch follows; a change made while `watch/start` is out is sent after it answers), `watch/stop`, `watch/keep` (after a (re)connect: the watches the client still has; the rest stop); server → client `watch/changes` |
 | search | `search/files`, `search/text` start a session; `search/next` pulls the next batch (natural back-pressure); `search/cancel` |
-| workspace | `workspace/setFolders`, `settings/setUser` |
+| workspace | `workspace/setFolders`, `settings/setUser`, `settings/updateMachine` (one key of the host's machine settings file: the Remote settings tab) |
 | documents (R2) | `doc/open` (full text + client version), `doc/change` (the editor's own incremental changes and versions), `doc/close`, `doc/saved`, `doc/language` — handled inline, in order |
 | languages (R2) | server → client `lang/registered` / `lang/unregistered`; `lang/list`, `lang/invoke` (registration id + op + document + args), `lang/willSave`, `lang/fileOperation`, server → client `diag/publish`, `lsp/servers`, `commands/changed`; `lsp/control`, `lsp/addDefinition`, `lsp/removeDefinition`, `commands/execute` |
 | UI (R2, server → client) | `window/showMessage`, `window/quickPick`, `window/inputBox`, `window/openExternal`, `window/clipboard`, `window/status`, `window/progress` (+ client → server `window/progressCancel`), `nav/open`, `nav/applyEdit`, `output/append` |
@@ -283,6 +285,26 @@ connection that created or reattached it, so the replay always comes before newe
   `{GlobalStorageDir}/remote/sessions/` with its owner's pid: a client that finds the previous owner dead (a crash) reuses the id and reattaches to the
   server it left running (warm language servers); two live windows never share one. Terminals are not restored after a restart (the accepted default):
   a reattached server ends the channels, watches and task runs the new client does not claim (`chan/keep`, `watch/keep`, `task/keep`).
+* **A link that goes silent** (remote-11, found against a real host). A network that stops carrying packets kills no process; ssh's own keep-alive
+  (`ServerAliveInterval=15`, 4 misses, on every ssh CsCode starts) notices for a connection of its own. Not for a session multiplexed over the
+  user's ssh **ControlMaster** when another ssh (`ssh box` in a terminal) started the master without keep-alive: the client stayed "connected" with
+  every call timing out, and every reconnect attempt went through the same stale master and hung. Now:
+  - the client checks liveness itself (`RemoteClient.Heartbeat`, `HeartbeatPolicy.Default` = 15 s / 60 s, `RemoteOptions.Heartbeat`): a link
+    that carried nothing for 15 s gets a `$/ping`, one that carried nothing at all for 60 s is treated as lost ("No answer from box for 60 s" in the
+    Remote log) and reconnected, as for any drop (a persistent server is resumed). Any message counts, so a long transfer keeps a link alive;
+  - closing such a connection never waits: on Unix disposing a process pipe with a read (or write) in flight waits for that call, i.e. for ever on
+    a silent link, which hung `RpcPeer.Close` and so the reconnect; the pipes are now closed off the caller's thread, and `ProcessChannel` kills
+    the process before it closes them;
+  - a connection attempt that gets no answer within the start timeout (3 min; `RemoteOptions.StartTimeout`) fails as **timed out**
+    (`RemoteBootstrapException.TimedOut`) even when another process keeps its output open (an ssh mux client hands its stdin/stdout to the
+    master, so killing the client does not end the read: the attempt is given up 5 s later and its reading thread ends with the master);
+  - a cancelled attempt (Disconnect, closing the window, during a reconnect over such a master) is given up the same way 1 s after the
+    cancellation, as a **cancellation**: it is not a timeout and does not switch the host's later attempts off connection sharing (it waited for
+    the start timeout, so Disconnect could block for up to 3 minutes);
+  - after a timed-out attempt the host's later attempts connect on their own: `-o ControlPath=none` (placed before the user's options, as ssh takes
+    the first value) — the user's master is left alone; the Remote log says so.
+  A stale master therefore costs one heartbeat period and one start timeout (about 4 minutes with the defaults) instead of a hang. Tested with a
+  frozen transport (`LivenessTests`) and against a real host whose master's sshd is stopped (`RealHostTests.A_stale_shared_ssh_connection…`).
 * **Permanent failures** end the reconnect loop at once only when flagged where they are thrown (`RemoteBootstrapException.IsPermanent`: no bundle for
   the platform, the install script's own refusals of the bundle — exit 3 no SHA-256 tool, 4 checksum mismatch, 5 no server in it —, still not
   installed after the upload, a protocol mismatch, no local server build); never from the message text, which carries host names and ssh's own
@@ -306,7 +328,10 @@ case-insensitively. Docker container names are case-sensitive: use lower-case na
 
 ## Server bundles
 
-`tools/publish-server.sh --all` builds self-contained single-file bundles for **linux-x64, linux-arm64, osx-x64, osx-arm64 and win-x64** plus the portable
+`tools/publish-server.sh` (no `--rid`) builds the four platforms the client bootstraps — **linux-x64, linux-arm64, osx-arm64, osx-x64** — plus the
+portable bundle (remote-10, the macOS audit's unmerged-14: the default used to be linux-x64 alone, so an aarch64 VM, a Raspberry Pi or a Mac remote
+was refused unless it had a .NET 10 runtime on its PATH; found on a real arm64 VM). `--rid` builds only the named ones; a refusal for a
+supported platform names the bundles there are and the `--rid` that builds the missing one. `tools/publish-server.sh --all` builds self-contained single-file bundles for **linux-x64, linux-arm64, osx-x64, osx-arm64 and win-x64** plus the portable
 (framework-dependent) one, into `.scratch/server-bundles/` with `manifest.json` (flavour, rid, file, sha256, install hash = first 16 hex digits of the
 sha256). The runtime, apphost and targeting packs come **from NuGet only** (`NetCoreTargetingPackRoot` pointed at an empty directory): a distribution's
 SDK may patch its bundled packs for itself — the Nix SDK's linux-x64 apphost had the ELF loader `/nix/store/…-glibc/lib/ld-linux-x86-64.so.2`, so that
@@ -348,7 +373,7 @@ mode (a composition that resolves every service), the host stays idle: it starts
 `RemoteShellContributions.Start()` (called by `ShellController`) registers: `remote.connect` *Remote: Connect to Host…* (quick pick of the ssh_config `Host`
 names without wildcards, `Include`s followed, + *Add New SSH Host…*, which also takes `docker://container` / `wsl://distro`), `remote.openFolder`
 *Remote: Open Remote Folder…* (File menu; takes a remote URI from the command line: `cscode ssh://me@box/home/me/src`, also through the launcher in
-background mode — T5), `remote.disconnect`, `remote.reconnect`, `remote.reinstallServer`, `remote.showLog`; the remote debug factory/provider; and the
+background mode — T5), `remote.disconnect`, `remote.reconnect`, `remote.reinstallServer`, `remote.showLog`; the `remoteName` context key; the remote debug factory/provider; and the
 remote indicator at the left of the status bar, drawn as a **badge** in the theme's `statusBarItem.remoteBackground` / `statusBarItem.remoteForeground`
 (VS Code's ids; white on `#16825D` in the VS 2022 themes, 4.8:1) in every state (`$(remote)` when disconnected → click to connect;
 `$(sync~spin) SSH: host` connecting/reconnecting; `$(remote) SSH: host` connected; `$(error) SSH: host (disconnected)` → click to reconnect). A
@@ -357,7 +382,8 @@ connection (server and ssh stopped).
 
 ## Setup and settings
 
-1. Build the bundles once: `bash .scratch/notes/with-nix-env.sh tools/publish-server.sh` (or with a normal `dotnet`: `tools/publish-server.sh`).
+1. Build the bundles once: `bash .scratch/notes/with-nix-env.sh tools/publish-server.sh` (or with a normal `dotnet`: `tools/publish-server.sh`; Linux
+   x64/arm64 and macOS arm64/x64 + portable, about a minute; `--rid linux-arm64` for just one).
 2. Make sure `ssh <host>` works non-interactively or with prompts (keys, agent, ~/.ssh/config). The remote needs a POSIX login shell, `tar`, `gzip`,
    `sha256sum` or `shasum`, OpenSSL (libssl) and glibc on Linux x64/arm64 or macOS x64/arm64 (or any OS with a .NET 10 runtime for the portable bundle).
 3. *File ▸ Open Remote Folder…* or the status-bar remote button.
@@ -399,8 +425,25 @@ The file is created by hand (or through the remote file system: open `<data dir>
 keeps the last good values. The local process language host (`cscode.languageHost: process`) runs on the client's machine and keeps the client's
 values (`settings/setUser` carries `RemoteWindow`; an older client sends none and keeps the previous behaviour). Tests:
 `SettingScopeTests.A_remote_server_takes_machine_settings_from_its_host_s_machine_file…`, `…A_remote_terminal_gets_the_environment_of_the_server_host_s_machine_settings…`
-(Remote.Tests), `ConfigurationScopeTests.A_remote_window_takes_machine_settings…` (Platform.Tests). Not yet there: a "Remote" tab in the Settings
-page and VS Code's *Open Remote Settings* command.
+(Remote.Tests), `ConfigurationScopeTests.A_remote_window_takes_machine_settings…` (Platform.Tests).
+
+**Remote settings tab and Open Remote Settings** (VS Code's). While a host is connected the Settings page has a third scope tab, **Remote [SSH: box]**
+(`Docker: …`, `WSL: …`), and the palette offers *Preferences: Open Remote Settings* (`workbench.action.openRemoteSettings`: the page on that tab,
+an optional search text as argument) and *Preferences: Open Remote Settings (JSON)* (`workbench.action.openRemoteSettingsFile`: the file in the
+editor, created with `{}` first). Both are enabled by VS Code's `remoteName` context key (`ssh-remote`, `attached-container`, `wsl`; set by
+`RemoteShellContributions` while connected, kept while reconnecting). The tab:
+* lists every setting except the application-scoped ones (a remote host never takes those); a machine-scoped setting the file does not set shows its
+  default, not the client's value (which names a program on the client's machine), as the server resolves it;
+* reads the file through the remote file system (`IRemoteMachineSettings.SettingsUri`, Core: `ssh://…/<data dir>/machine/settings.json`, the data dir
+  from `hello`); "modified" and "(also modified in Remote [SSH: box])" work across the User and Remote tabs as they do for User and Workspace;
+* writes through the server (`settings/updateMachine` → `ConfigurationService.UpdateMachineAsync`): the same comment-preserving JSONC editor and atomic
+  write as the user settings.json, applied by the server at once; an application-scoped key is refused there too; Reset removes the key;
+* refreshes when the file changes: own writes, and the remote watcher on `<data dir>/machine/` (an edit saved from the editor, a change made on the
+  host); a disconnect removes the tab and switches the page back to User.
+`RemoteMachineSettings` (Remote, `IRemoteMachineSettings`) follows the connection status; the page and the commands live in Panels.Search
+(`SettingsViewModel`'s `SettingsScope.Remote`, `SearchPanelsHost`). Tests: `RemoteSettingsTabTests`, `RemoteSettingsCommandTests`,
+`RemoteSettingsViewTests` (Panels.Search.Tests), `RemoteMachineSettingsTests` (Remote.Tests, real loopback server), `ConfigurationScopeTests.
+The_remote_settings_tab_writes_the_host_s_machine_file…` (Platform.Tests), and the real-host suite below.
 
 `RemoteOptions` (DI, not settings) carries what the host program or tests supply: ssh environment changes, the askpass command and directory, bundles,
 a process marker, reconnect policy, clock, call timeout, the reconnect wait, the grace period and a fixed server session id, a transport factory, the local
@@ -442,7 +485,9 @@ docker and wsl transports too.
   (`shellIntegration/` is in every bundle, the trimmed single-file ones included — checked by running the R3 suite against an extracted linux-x64
   bundle) and `term/create` hands the client the shell's nonce, so command lines are trusted as in a local terminal. Tasks run in remote terminals
   (see Tasks).
-* Remote workspace settings apply on the server (language servers, terminals, tasks) but not to client-side editor options.
+* Remote workspace settings apply on the server (language servers, terminals, tasks) but not to client-side editor options, and the Settings page
+  does not edit them: its Workspace tab is off in a remote window (edit the folder's `.vscode/settings.json` in the editor; the server reads it).
+  Likewise the Remote tab's values apply to what runs on the host, not to the client's editor options (VS Code applies both to the window).
 * Find in Files over a remote workspace counts only the files with matches in its "files searched" figure (the server's own count is not passed on).
 * Docker: a container must already run (no image or compose management), and the image needs glibc, OpenSSL, `tar`, `gzip`, `sha256sum` (Microsoft's
   `dotnet/runtime-deps` images have them; `debian:*-slim` lacks libssl). Container names reopen case-insensitively from URIs (see Transports).
@@ -522,3 +567,54 @@ Run without `SSH_AUTH_SOCK` and without a display (the tests set `SSH_AUTH_SOCK`
   opened, edited and saved through the editor and the save command onto the remote disk, an Explorer create goes remote, quick open walks the remote,
   the status-bar indicator follows the connection; `cscode.languageHost = process` runs the child and the app's exit stops it; `ssh://` command-line targets;
   `cscode --askpass` answers without starting the GUI.
+* **Real host** (opt-in, never in CI): see below.
+
+### Testing against a real host
+
+`RealHostTests` (Remote.Tests) and `RealHostAppTests` (App.Tests) run the whole stack against a real machine reached with the system `ssh` — a VM,
+a server — and are skipped unless `CSCODE_TEST_SSH_HOST` names it:
+
+| Variable | |
+|---|---|
+| `CSCODE_TEST_SSH_HOST` | the ssh destination: `[user@]host[:port]` or a `Host` of the config file |
+| `CSCODE_TEST_SSH_CONFIG` | an ssh config file for it (`remote.ssh.configFile`, `ssh -F`); optional |
+| `CSCODE_TEST_SSH_DIR` | the host's temp directory, absolute, its name containing `cscode-realhost`; default `/tmp/cscode-realhost-<random>` |
+| `CSCODE_TEST_SSH_RUST_ANALYZER` | a rust-analyzer on the host, for the language-server test; optional (that test skips without it) |
+| `CSCODE_SERVER_BUNDLES` | the bundle directory if not `.scratch/server-bundles`; it needs the host's platform (`tools/publish-server.sh` builds it) |
+
+Everything the suite makes on the host — the server install (`remote.ssh.serverInstallPath`), its data dir (`remote.ssh.serverDataPath`: machine
+settings, logs, the persistent server's socket) and the workspaces — is inside that one directory; at the end its server processes are ended and the
+directory is removed (the App test uses its own `/tmp/cscode-realhost-app-<random>`). Nothing is written to the host's `~/.cscode-server`. The tests:
+bootstrap uploads and installs the host's bundle (its `uname -sm` decides which; the test checks the hash), files round-trip (names with spaces, a
+3 MB chunked transfer checked with `wc -c` on the host, rename, recursive delete), a file written on the host by another program reaches a watcher;
+quick open and Find in Files run on the host, a terminal with the user's own login shell and one with a plain bash run there (`uname -sm`, the
+workspace folder as the working directory), a `tasks.json` task runs there with its exit code; rust-analyzer, chosen in the host's machine settings
+through `IRemoteMachineSettings` (the Remote tab's service), publishes a diagnostic and answers a hover through the bridge; killing the local `ssh`
+process reconnects to the same persistent server (same `InstanceId`) and a running terminal loses and repeats no output (input typed during the outage
+arrives); a link that goes silent (the host's sshd process of the connection stopped with SIGSTOP: no process dies, only ssh's keep-alive notices,
+about 60 s) reconnects and resumes too; with a shared connection (a ControlMaster started by another ssh, without keep-alive, its sshd stopped)
+the heartbeat notices, the attempt through the stale master times out and the next one goes around it (`-o ControlPath=none`) to the same
+server; a deliberate disconnect ends the server on the host; the machine settings file is written through the server
+and an edit made on the host raises `Changed`. The App test drives the real app (nothing overridden but the user settings): `remote.openFolder
+ssh://host/dir/`, a file edited and saved through the editor lands on the host's disk, Open Remote Settings shows the Remote tab (the Workspace tab
+is off), and the app's exit leaves no server process on the host.
+
+**Against the Lima VM** (macOS arm64 client, `jiffy-ubuntu`: Ubuntu aarch64). Lima writes an ssh config for its VMs (`limactl show-ssh --format=config
+<vm>`, deprecated in favour of the file it names, `~/.lima/<vm>/ssh.config`; host `127.0.0.1`, the port `limactl list` shows, user `lima`, identity
+`~/.lima/_config/user`). Use a copy of that file with `ControlPath` moved to a short path of your own, so the test's ssh master stays apart from
+Lima's (a socket path must stay under 104 bytes on macOS); both suites pass with it, `ControlMaster auto` / `ControlPersist yes` included, and with a
+plain config (`HostName 127.0.0.1`, `Port`, `User lima`, `IdentityFile ~/.lima/_config/user`, `IdentitiesOnly yes`, `ControlMaster no`):
+
+```
+tools/publish-server.sh --rid linux-arm64          # or the default set; the VM is aarch64
+sed 's|^  ControlPath .*|  ControlPath "/tmp/cscode-test-cm.sock"|' ~/.lima/jiffy-ubuntu/ssh.config > /tmp/cscode-test-ssh.config
+export CSCODE_TEST_SSH_HOST=lima-jiffy-ubuntu CSCODE_TEST_SSH_CONFIG=/tmp/cscode-test-ssh.config
+export CSCODE_TEST_SSH_RUST_ANALYZER=/nix/store/…-rust-analyzer-…/bin/rust-analyzer   # optional: `command -v rust-analyzer` there is rustup's proxy without the component
+dotnet test tests/CsCode.Remote.Tests --filter "FullyQualifiedName~RealHostTests"   # ~2 min (the silent-link test waits for ssh's keep-alive)
+dotnet test tests/CsCode.App.Tests --filter "FullyQualifiedName~RealHostAppTests"
+```
+
+Measured on 2026-11-01 (macOS arm64 → jiffy-ubuntu over Lima's port forward): all 7 + 1 pass, with the plain config and with Lima's ControlMaster one;
+first connect including the 10 MB upload and install ≈ 1 s; afterwards no `/tmp/cscode-realhost-*` directory and no `cscode-server` process are
+left on the VM. Afterwards `ssh -F /tmp/cscode-test-ssh.config -O exit lima-jiffy-ubuntu` ends the test's ControlPersist master (Lima's own is never
+touched).

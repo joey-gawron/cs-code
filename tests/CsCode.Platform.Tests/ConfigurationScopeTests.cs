@@ -320,6 +320,38 @@ public sealed class ConfigurationScopeTests : IDisposable
         Assert.Null(svc.LastError);
     }
 
+    [Fact]
+    public async Task The_remote_settings_tab_writes_the_host_s_machine_file_in_place_and_applies_it_at_once()
+    {
+        _f.WriteUser("""{ "cscode.debug.gdbPath": "/client/bin/gdb", "editor.tabSize": 3 }""");
+        var machine = _f.Temp.Combine("server-data", "machine", "settings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(machine)!);
+        File.WriteAllText(machine, "// this host's own settings\n{\n  \"editor.tabSize\": 5 // tabs here\n}\n");
+        using var svc = Create();
+        using var reg = svc.RegisterProperties(RemoteRegistry);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await svc.UpdateMachineAsync("editor.tabSize", 2, Ct)); // a local window has no machine file
+
+        await svc.SetRemoteMachineSettingsAsync(machine, Ct);
+        await svc.UpdateMachineAsync("cscode.debug.gdbPath", "/opt/gdb-14/bin/gdb", Ct);
+        Assert.Equal("/opt/gdb-14/bin/gdb", svc.Get("cscode.debug.gdbPath", "?")); // applied without waiting for the watcher
+        await svc.UpdateMachineAsync("editor.tabSize", 8, Ct);
+        Assert.Equal(8, svc.Get("editor.tabSize", 0));
+        var text = File.ReadAllText(machine);
+        Assert.Contains("// this host's own settings", text);                        // comments survive: edited in place, as the user file is
+        Assert.Contains("\"editor.tabSize\": 8", text);
+        Assert.Contains("// tabs here", text);
+        Assert.Contains("\"cscode.debug.gdbPath\": \"/opt/gdb-14/bin/gdb\"", text);
+        Assert.DoesNotContain("gdb-14", File.ReadAllText(_f.SettingsPath));            // the client's (mirrored) user file is untouched
+
+        // An application-scoped setting is one value for the whole application: the machine file would ignore it, so it is refused.
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(async () => await svc.UpdateMachineAsync("terminal.integrated.inheritEnv", false, Ct));
+        Assert.Contains("application scope", refused.Message);
+
+        await svc.UpdateMachineAsync("editor.tabSize", null, Ct);                     // removed: the user value shows through again
+        Assert.Equal(3, svc.Get("editor.tabSize", 0));
+        Assert.DoesNotContain("editor.tabSize", File.ReadAllText(machine));
+    }
+
     // ---- lsp-core-7: every folder's settings are watched ----------------------------------------------------------------------------
 
     [Fact]

@@ -20,6 +20,16 @@ public interface IRemoteParticipant
     void OnDisconnected();
 }
 
+/// <summary>
+/// The connected session's liveness check (<see cref="RemoteClient.Heartbeat"/>): <c>$/ping</c> after <paramref name="Interval"/> without a message
+/// from the server, the connection treated as lost after <paramref name="DeadAfter"/> without one (any message counts: a long transfer keeps it alive).
+/// The default matches ssh's own keep-alive (15 s, 4 misses).
+/// </summary>
+public sealed record HeartbeatPolicy(TimeSpan Interval, TimeSpan DeadAfter)
+{
+    public static readonly HeartbeatPolicy Default = new(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(60));
+}
+
 /// <summary>Reconnect delays: exponential (0.5 s doubling, capped at 30 s) with ±20 % jitter, then give up.</summary>
 public sealed class ReconnectPolicy(int maxAttempts = 8, Func<double>? random = null)
 {
@@ -85,6 +95,14 @@ public sealed class RemoteClient : IAsyncDisposable
 
     /// <summary>Per-call timeout for the RPC peer (tests shorten it).</summary>
     public TimeSpan CallTimeout { get; init; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// The liveness check of a connected session (null = none): a link that carries nothing for <see cref="HeartbeatPolicy.Interval"/> gets a
+    /// <c>$/ping</c>; one that has carried nothing at all for <see cref="HeartbeatPolicy.DeadAfter"/> is treated as lost and reconnected. ssh's own
+    /// keep-alive covers a connection of its own, but not a session multiplexed over a user's ControlMaster that was started without it, whose link
+    /// can die silently and leave every call timing out while the client still says "connected" (found against a real host).
+    /// </summary>
+    public HeartbeatPolicy? Heartbeat { get; init; }
 
     /// <summary>What this client offers the server beyond gzip (handshake capabilities, e.g. task terminals).</summary>
     public IReadOnlyList<string> Capabilities { get; init; } = [];
@@ -167,9 +185,41 @@ public sealed class RemoteClient : IAsyncDisposable
         // Watch for the drop on the session itself: whatever thread notices, the reconnect runs detached from it.
         session.Peer.Closed.Subscribe(reason => _ = OnLostAsync(generation, reason));
         if (session.Peer.IsClosed) _ = OnLostAsync(generation, null);
+        if (Heartbeat is { } heartbeat) WatchLiveness(session, generation, heartbeat);
         SetStatus(new RemoteConnectionStatus(RemoteConnectionState.Connected, Host, Authority,
             $"Connected to {Host} (server {session.Server.ServerVersion}, {session.Server.Os} {session.Server.Arch}{(session.Resumed ? "; resumed: terminals, debug sessions and tasks kept" : "")})"));
         _sessionChanged.Fire(session);
+    }
+
+    /// <summary>Pings a quiet link and closes one that stays silent (its peer's Closed then starts the reconnect, as for any drop).</summary>
+    private void WatchLiveness(RemoteSession session, int generation, HeartbeatPolicy policy)
+    {
+        var peer = session.Peer;
+        var pinging = 0;
+        var tick = TimeSpan.FromTicks(Math.Max(TimeSpan.FromMilliseconds(100).Ticks, Math.Min(policy.Interval.Ticks, policy.DeadAfter.Ticks / 4)));
+        Timer? timer = null;
+        timer = new Timer(_ =>
+        {
+            if (peer.IsClosed || Volatile.Read(ref _generation) != generation) { timer?.Dispose(); return; }
+            var quiet = TimeSpan.FromMilliseconds(Environment.TickCount64 - peer.LastReceivedTicks);
+            if (quiet >= policy.DeadAfter)
+            {
+                timer?.Dispose();
+                _log.LogWarning("No answer from {Host} for {Seconds:0} s: the connection is treated as lost", Host, quiet.TotalSeconds);
+                _logLine?.Invoke($"No answer from {Host} for {quiet.TotalSeconds:0} s: the connection is treated as lost");
+                peer.Close(new RemoteDisconnectedException($"No answer from {Host} for {quiet.TotalSeconds:0} s"));
+                return;
+            }
+            if (quiet >= policy.Interval && Interlocked.Exchange(ref pinging, 1) == 0) _ = PingAsync();
+        }, null, tick, tick);
+        peer.Closed.Subscribe(_ => timer.Dispose());
+
+        async Task PingAsync()
+        {
+            try { await peer.InvokeAsync<Empty, Empty>(RemoteMethods.Ping, Empty.Value, CancellationToken.None, policy.DeadAfter).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException or ObjectDisposedException) { /* the timer decides */ }
+            finally { Volatile.Write(ref pinging, 0); }
+        }
     }
 
     private sealed class Progress(RemoteClient client) : IProgress<string>

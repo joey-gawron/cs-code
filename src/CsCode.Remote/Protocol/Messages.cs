@@ -85,6 +85,8 @@ public static class RemoteMethods
 
     public const string WorkspaceSetFolders = "workspace/setFolders";
     public const string SettingsSetUser = "settings/setUser";
+    /// <summary>Sets (or removes) one setting in the server host's machine settings file (the client's Remote settings tab).</summary>
+    public const string SettingsUpdateMachine = "settings/updateMachine";
 
     // ---- R2: documents and language features
     public const string DocOpen = "doc/open";
@@ -275,6 +277,10 @@ public sealed record SetFoldersParams(IReadOnlyList<string> Folders);
 /// Absent (an older client): false, the previous behaviour.
 /// </param>
 public sealed record SetUserSettingsParams(string Text, bool RemoteWindow = false);
+
+/// <summary>One setting of the server host's machine settings file (<c>&lt;data dir&gt;/machine/settings.json</c>): <paramref name="Value"/> null removes it.
+/// The server writes it with the comment-preserving settings editor and applies it at once; an application-scoped key is refused.</summary>
+public sealed record UpdateMachineSettingParams(string Key, JsonElement? Value);
 
 // ------------------------------------------------------------------------------------------------------------------- documents (R2)
 

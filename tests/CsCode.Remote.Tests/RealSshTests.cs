@@ -179,7 +179,7 @@ public class RealSshTests(SshdFixture sshd) : IClassFixture<SshdFixture>
         Assert.Contains($"Resolved cscode-test: {Environment.UserName}@127.0.0.1:{sshd.Port}", output); // ssh -G with the temp config
         Assert.Equal(RemoteConnectionState.Connected, host.Manager.Status.State);
         Assert.Equal(sshd.RemoteHome, host.Manager.Session!.Server.Home); // the session ran with the fixture's environment
-        Assert.True(File.Exists(Path.Combine(sshd.Dir.Combine("remote-install"), "bin", InstallerTests.PublishedBundles()!.SelfContained("linux-x64")!.Hash, "cscode-server")));
+        Assert.True(File.Exists(Path.Combine(sshd.Dir.Combine("remote-install"), "bin", InstallerTests.PublishedBundles()!.SelfContained(InstallerTests.LocalRid)!.Hash, "cscode-server")));
 
         // file operations through the router
         var fs = host.FileSystem;
@@ -237,7 +237,7 @@ public class RealSshTests(SshdFixture sshd) : IClassFixture<SshdFixture>
         Assert.Equal(RemoteConnectionState.Connected, host.Manager.Status.State);
         Assert.Contains(window.Confirmations, p => p.Contains("continue connecting", StringComparison.OrdinalIgnoreCase)); // StrictHostKeyChecking=ask
         Assert.Contains(window.Prompts, p => p.Prompt.Contains("passphrase", StringComparison.OrdinalIgnoreCase) && p.Password);
-        Assert.Empty(Directory.GetDirectories(host.ClientHome, "cscode-askpass-*")); // the socket directory died with the attempt
+        Assert.Empty(Directory.GetDirectories(host.AskpassDirectory, "cscode-askpass-*")); // the socket directory died with the attempt
         await host.Manager.DisconnectAsync(Ct);
     }
 

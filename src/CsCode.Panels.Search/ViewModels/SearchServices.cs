@@ -1,5 +1,6 @@
 using CsCode.Core.Debugging;
 using CsCode.Core.Platform;
+using CsCode.Core.Remote;
 using CsCode.Core.Text;
 using CsCode.Core.Theming;
 using CsCode.Panels.Search.Engine;
@@ -31,6 +32,8 @@ public sealed class SearchServices
     public IFileSystem? FileSystem { get; init; }
     /// <summary>The colour themes (the Settings page's Color Theme dropdown); optional.</summary>
     public IColorThemeService? Themes { get; init; }
+    /// <summary>The connected remote host's machine settings file (the Settings page's Remote tab); optional (null without remote editing).</summary>
+    public IRemoteMachineSettings? RemoteSettings { get; init; }
 
     public static SearchServices From(IServiceProvider sp)
     {
@@ -55,6 +58,7 @@ public sealed class SearchServices
             Selection = sp.GetService<IActiveSelectionProvider>(),
             FileSystem = workspace.FileSystem,
             Themes = sp.GetService<IColorThemeService>(),
+            RemoteSettings = sp.GetService<IRemoteMachineSettings>(),
         };
     }
 }

@@ -278,7 +278,7 @@ public sealed class RemoteTestHost : IAsyncDisposable
             GracePeriod = persistent ?? TimeSpan.Zero,
             TransportFactory = !loopback ? null : (_, _) => wrap is null ? Loopback() : wrap(Loopback()),
             SshEnvironment = new Dictionary<string, string?> { ["SSH_AUTH_SOCK"] = null, ["SSH_AGENT_PID"] = null },
-            AskpassDirectory = _home.Path,
+            AskpassDirectory = AskpassDirectory,
             Reconnect = new ReconnectPolicy(3, () => 0.5),
             CallTimeout = TimeSpan.FromSeconds(60),
         };
@@ -323,6 +323,13 @@ public sealed class RemoteTestHost : IAsyncDisposable
     public string ServerDataDir => _sharedServerData ?? _serverData.Path;
     public string ClientHome => _home.Path;
 
+    /// <summary>
+    /// Where askpass makes its socket directory: the client home, or a short directory of its own when that path would not fit a Unix socket
+    /// address (104 bytes on macOS, whose temp directory alone is ~50 characters: the socket bind failed there).
+    /// </summary>
+    public string AskpassDirectory => _home.Path.Length + "/cscode-askpass-0123456789abcdef/s".Length <= 100 ? _home.Path : _shortAskpass.Value;
+    private readonly Lazy<string> _shortAskpass = new(() => Directory.CreateDirectory("/tmp/cscode-ap-" + Guid.NewGuid().ToString("N")[..8]).FullName);
+
     public RemoteConnectionManager Manager => Services.GetRequiredService<RemoteConnectionManager>();
     public IFileSystem FileSystem => Services.GetRequiredService<IFileSystem>();
     public IWorkspaceService WorkspaceService => Services.GetRequiredService<IWorkspaceService>();
@@ -345,6 +352,7 @@ public sealed class RemoteTestHost : IAsyncDisposable
         await TestEnv.AssertNoProcessesAsync(Marker);
         Workspace.Dispose();
         _serverData.Dispose();
+        if (_shortAskpass.IsValueCreated) try { Directory.Delete(_shortAskpass.Value, recursive: true); } catch (IOException) { }
         if (_ownsHome) _home.Dispose();
     }
 

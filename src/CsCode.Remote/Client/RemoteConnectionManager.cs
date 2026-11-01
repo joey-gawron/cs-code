@@ -204,10 +204,12 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
         var serverSession = grace > 0 ? _options.ServerSession ?? _sessions.Claim(authority.Root.AbsoluteUri) : null;
         // T49: with the integrated terminal composed, the remote folder's tasks run in terminals (on the server's PTYs), as local tasks do.
         var taskTerminals = Get<ITaskTerminalHost>() is not null;
-        var client = new RemoteClient(host, () => CreateTransport(host, authority, serverSession, grace), mapper, "ssh", _options.Reconnect ?? new ReconnectPolicy(attempts),
+        var sharing = new ConnectionSharing();
+        var client = new RemoteClient(host, () => CreateTransport(host, authority, serverSession, grace, sharing), mapper, "ssh", _options.Reconnect ?? new ReconnectPolicy(attempts),
             _options.Time, _log, Log, authority.Root)
         {
             CallTimeout = _options.CallTimeout,
+            Heartbeat = _options.Heartbeat,
             Capabilities = taskTerminals ? [RemoteProtocol.Capabilities.TaskTerminals] : [],
         };
         var owned = new DisposableStore();
@@ -269,7 +271,34 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
         client.AddParticipant(new CommandsBridge(sp.GetService<ICommandService>, log));
     }
 
-    private IRemoteTransport CreateTransport(string host, RemoteAuthority authority, string? serverSession, int graceSeconds)
+    /// <summary>Per host: whether its ssh connections go around the user's shared connection (ControlMaster) from now on.</summary>
+    private sealed class ConnectionSharing
+    {
+        public volatile bool Bypass;
+    }
+
+    /// <summary>
+    /// Watches an ssh attempt: one that got no answer at all within the start timeout switches the host's later attempts to connections of their
+    /// own (<c>-o ControlPath=none</c>). A multiplexing master whose link died silently (a network that stopped carrying packets, a suspended VM)
+    /// takes every new session and hangs it; when another ssh started it without keep-alive it may never notice. Found against a real host.
+    /// </summary>
+    private sealed class SharingAwareTransport(IRemoteTransport inner, ConnectionSharing sharing, Action<string> log) : IRemoteTransport
+    {
+        public string Description => inner.Description;
+
+        public async Task<RemoteChannel> ConnectAsync(IProgress<string>? progress, CancellationToken ct)
+        {
+            try { return await inner.ConnectAsync(progress, ct).ConfigureAwait(false); }
+            catch (RemoteBootstrapException ex) when (ex.TimedOut && !sharing.Bypass)
+            {
+                sharing.Bypass = true;
+                log($"{inner.Description} did not answer: the next attempts use a connection of their own (-o ControlPath=none), not a shared ssh connection (ControlMaster) that may be stale");
+                throw;
+            }
+        }
+    }
+
+    private IRemoteTransport CreateTransport(string host, RemoteAuthority authority, string? serverSession, int graceSeconds, ConnectionSharing? sharing = null)
     {
         if (_options.TransportFactory is { } factory) return factory(host, authority);
         var config = Get<IConfigurationService>();
@@ -280,6 +309,7 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
             ExtraOptions = RemoteSettings.For<string[]>(config, host, RemoteSettings.Options, []),
             ConnectTimeout = TimeSpan.FromSeconds(Math.Clamp(RemoteSettings.For(config, host, RemoteSettings.ConnectTimeout, 30), 1, 600)),
             Environment = _options.SshEnvironment,
+            BypassConnectionSharing = sharing?.Bypass == true,
         };
         var bundles = _options.Bundles ?? ServerBundleSet.Find(NullIfEmpty(RemoteSettings.For(config, host, RemoteSettings.ServerBundles, "")),
             Get<IAppPaths>()?.InstallDir ?? AppContext.BaseDirectory);
@@ -292,6 +322,7 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
             ForceReinstall = Interlocked.Exchange(ref _forceReinstall, false),
             PersistSession = serverSession,
             GraceSeconds = graceSeconds,
+            StartTimeout = _options.StartTimeout ?? TimeSpan.FromMinutes(3),
         };
         if (authority.Scheme != RemoteSchemes.Ssh)
         {
@@ -303,8 +334,9 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
             return new ShellServerTransport(shell, launch);
         }
         var askpass = RemoteSettings.For(config, host, RemoteSettings.UseAskpass, true) && !OperatingSystem.IsWindows() ? Get<IWindowService>() : null;
-        Log($"Connecting to {host} with {ssh.SshPath}{(ssh.ConfigFile is null ? "" : " -F " + ssh.ConfigFile)}; bundles: {bundles?.Directory ?? "(none found)"}");
-        return new SshServerTransport(ssh, authority, launch, askpass, _options.AskpassCommand ?? RemoteOptions.DefaultAskpassCommand(), _log, _options.AskpassDirectory);
+        Log($"Connecting to {host} with {ssh.SshPath}{(ssh.ConfigFile is null ? "" : " -F " + ssh.ConfigFile)}{(ssh.BypassConnectionSharing ? " -o ControlPath=none" : "")}; bundles: {bundles?.Directory ?? "(none found)"}");
+        IRemoteTransport transport = new SshServerTransport(ssh, authority, launch, askpass, _options.AskpassCommand ?? RemoteOptions.DefaultAskpassCommand(), _log, _options.AskpassDirectory);
+        return sharing is null ? transport : new SharingAwareTransport(transport, sharing, Log);
     }
 
     private static string? NullIfEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;

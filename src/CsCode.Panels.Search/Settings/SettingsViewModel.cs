@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
+using CsCode.Core.Remote;
 using CsCode.Core.Text;
 using CsCode.Core.Theming;
 using CsCode.Panels.Search.ViewModels;
@@ -13,16 +14,19 @@ using CsCode.Ui.Threading;
 
 namespace CsCode.Panels.Search.Settings;
 
-public enum SettingsScope { User, Workspace }
+/// <summary>The scope tabs: the user settings.json, the primary folder's .cscode/settings.json, and the connected remote host's machine settings file.</summary>
+public enum SettingsScope { User, Workspace, Remote }
 
 /// <summary>One row of the category tree on the left (Level 0 = category, 1 = sub-category; Id "" = all settings).</summary>
 public sealed record CategoryNode(string Id, string Title, int Level, int Count);
 
 /// <summary>
 /// The Settings document view: every registered <see cref="ConfigurationProperty"/> rendered by its schema, grouped by key prefix,
-/// filtered with the fuzzy matcher (and <c>@modified</c>), edited per scope (User / Workspace). Values are read from
+/// filtered with the fuzzy matcher (and <c>@modified</c>), edited per scope (User / Workspace / Remote). Values are read from
 /// <see cref="IConfigurationService"/> and follow its <c>Changed</c> event; edits go back through <c>UpdateAsync</c> (the platform's
-/// comment-preserving writer), debounced for text and numbers so typing never writes per keystroke. UI-thread object.
+/// comment-preserving writer), debounced for text and numbers so typing never writes per keystroke. The Remote tab (while a remote host is
+/// connected, <see cref="IRemoteMachineSettings"/>) edits that host's machine settings file, written by its server with the same editor; it
+/// lists every setting but the application-scoped ones, which a remote host never takes. UI-thread object.
 /// </summary>
 public sealed class SettingsViewModel : ObservableObject, IDisposable
 {
@@ -31,6 +35,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     private readonly List<SettingItemViewModel> _all = new();
     private readonly Dictionary<string, PendingWrite> _pending = new(StringComparer.Ordinal);
     private readonly string _refreshKey = "settings.refresh." + Guid.NewGuid().ToString("N");
+    private readonly string _remoteKey = "settings.remote." + Guid.NewGuid().ToString("N");
     private readonly int _debounceMs;
     private IReadOnlyList<ScopeFile> _scopeFiles = [];
     private string _searchText = "";
@@ -38,11 +43,11 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     private SettingsScope _scope = SettingsScope.User;
     private bool _disposed;
 
-    private sealed class PendingWrite(CancellationTokenSource cts, object? value, ConfigurationTarget target, Task completion)
+    private sealed class PendingWrite(CancellationTokenSource cts, object? value, SettingsScope target, Task completion)
     {
         public CancellationTokenSource Cts { get; } = cts;
         public object? Value { get; } = value;
-        public ConfigurationTarget Target { get; } = target;
+        public SettingsScope Target { get; } = target;
         public Task Completion { get; set; } = completion;
         private int _claimed;
 
@@ -65,6 +70,8 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
             if (!IsWorkspaceAvailable && _scope == SettingsScope.Workspace) SelectedScope = SettingsScope.User;
             _ = RefreshAsync();
         })));
+        if (services.RemoteSettings is { } remote)
+            _subs.Add(remote.Changed.Subscribe(_ => services.Ui.PostCoalesced(_remoteKey, OnRemoteChanged, UiPriority.Background)));
         _ = RefreshAsync();
     }
 
@@ -83,7 +90,27 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     public IUiDispatcher Ui => _s.Ui;
     public IConfigurationService? Configuration => _s.Configuration;
     public int ModifiedCount => _all.Count(i => i.IsModified);
-    public bool IsWorkspaceAvailable => _s.Workspace.Folders.Count > 0;
+    /// <summary>
+    /// A local folder is open: the Workspace tab edits its .cscode/settings.json. A remote folder's workspace settings are its own files on the host
+    /// (read there by the server); the platform cannot write them, so the tab is off in a remote window rather than failing every edit with
+    /// "No folder is open" (found against a real ssh host).
+    /// </summary>
+    public bool IsWorkspaceAvailable => _s.Workspace.Folders is { Count: > 0 } folders && folders[0].IsFile;
+
+    /// <summary>A remote host is connected: the Remote tab is shown and edits its machine settings file.</summary>
+    public bool IsRemoteAvailable => _s.RemoteSettings?.SettingsUri is not null;
+
+    /// <summary>The Remote tab's caption, VS Code's: "Remote [SSH: box]".</summary>
+    public string RemoteTabTitle => _s.RemoteSettings?.HostLabel is { Length: > 0 } label ? $"Remote [{label}]" : "Remote";
+
+    private void OnRemoteChanged()
+    {
+        if (_disposed) return;
+        OnPropertyChanged(nameof(IsRemoteAvailable));
+        OnPropertyChanged(nameof(RemoteTabTitle));
+        if (!IsRemoteAvailable && _scope == SettingsScope.Remote) SelectedScope = SettingsScope.User; // disconnected: back to the user settings
+        _ = RefreshAsync();
+    }
     public int DebounceMs => _debounceMs;
 
     public string SearchText
@@ -104,10 +131,12 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         set
         {
             if (value == SettingsScope.Workspace && !IsWorkspaceAvailable) return;
+            if (value == SettingsScope.Remote && !IsRemoteAvailable) return;
             if (!SetProperty(ref _scope, value)) return;
             foreach (var item in _all) item.DiscardInvalidEdit(); // half-typed text belonged to the other scope's value
             OnPropertyChanged(nameof(IsUserScope));
             OnPropertyChanged(nameof(IsWorkspaceScope));
+            OnPropertyChanged(nameof(IsRemoteScope));
             _ = RefreshAsync();
         }
     }
@@ -115,8 +144,15 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     /// <summary>Two-way friendly flags for the scope tabs.</summary>
     public bool IsUserScope { get => _scope == SettingsScope.User; set { if (value) SelectedScope = SettingsScope.User; else OnPropertyChanged(nameof(IsUserScope)); } }
     public bool IsWorkspaceScope { get => _scope == SettingsScope.Workspace; set { if (value) SelectedScope = SettingsScope.Workspace; else OnPropertyChanged(nameof(IsWorkspaceScope)); } }
+    public bool IsRemoteScope { get => _scope == SettingsScope.Remote; set { if (value) SelectedScope = SettingsScope.Remote; else OnPropertyChanged(nameof(IsRemoteScope)); } }
 
-    private ConfigurationTarget Target => _scope == SettingsScope.Workspace ? ConfigurationTarget.Workspace : ConfigurationTarget.User;
+    /// <summary>The scope an edit is written to now: the selected tab, or User when that tab's file is gone (folder closed, host disconnected).</summary>
+    private SettingsScope WriteScope => _scope switch
+    {
+        SettingsScope.Workspace when IsWorkspaceAvailable => SettingsScope.Workspace,
+        SettingsScope.Remote when IsRemoteAvailable => SettingsScope.Remote,
+        _ => SettingsScope.User,
+    };
 
     // -------------------------------------------------------------------------------------- building
 
@@ -158,8 +194,8 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         if (_disposed) return;
         var registered = (_s.Configuration?.Properties ?? []).Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
         var files = new List<ScopeFile>();
-        foreach (var (label, target, path) in SettingsFiles())
-            files.Add(new ScopeFile(label, target, await ReadScopeAsync(path, registered)));
+        foreach (var (label, target, uri) in SettingsFiles())
+            files.Add(new ScopeFile(label, target, await ReadScopeAsync(uri, registered)));
         if (_disposed) return;
         _scopeFiles = files;
         foreach (var item in _all) LoadItem(item, _scopeFiles);
@@ -175,12 +211,15 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         var cfg = _s.Configuration;
         var merged = cfg?.GetRaw(item.Key);
         if (merged is { ValueKind: JsonValueKind.Null }) merged = null;
+        // A remote host never takes the client's value of a machine-scoped setting (a program on the client's machine): there it is the default
+        // unless the host's own file sets it.
+        if (_scope == SettingsScope.Remote && item.Property.Scope == ConfigurationScope.Machine) merged = null;
         JsonElement? own = null;
         List<string>? elsewhere = null;
         foreach (var file in files ?? [])
         {
             if (file.Values is null || !file.Values.TryGetValue(item.Key, out var value)) continue;
-            if (file.Target == Target) own = value;
+            if (file.Target == _scope) own = value;
             else (elsewhere ??= []).Add(file.Label);
         }
         item.Load(own ?? merged ?? item.Default);
@@ -194,50 +233,70 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
 
     private static bool Same(JsonElement a, JsonElement? b) => b is { } e && a.GetRawText() == e.GetRawText();
 
-    /// <summary>One settings file of the layering; <see cref="Target"/> is set for the two files the tabs write (User, Workspace).</summary>
-    private sealed record ScopeFile(string Label, ConfigurationTarget? Target, IReadOnlyDictionary<string, JsonElement>? Values);
+    /// <summary>One settings file of the layering; <see cref="Target"/> is set for the files the tabs write (User, Workspace, Remote).</summary>
+    private sealed record ScopeFile(string Label, SettingsScope? Target, IReadOnlyDictionary<string, JsonElement>? Values);
 
     /// <summary>
     /// The settings files, in the order the platform's <c>ConfigurationService</c> layers them. Core's <see cref="IConfigurationService"/> has
     /// no per-scope "inspect", so the panel reads the same files itself: the user settings.json, then the primary folder's
-    /// .vscode/settings.json and .cscode/settings.json (the Workspace tab's file), then every other folder's .cscode/settings.json.
+    /// .vscode/settings.json and .cscode/settings.json (the Workspace tab's file), then every other folder's .cscode/settings.json. The connected
+    /// remote host's machine settings file (the Remote tab's) comes after the user file, where the remote server layers it.
     /// </summary>
-    internal IEnumerable<(string Label, ConfigurationTarget? Target, string Path)> SettingsFiles()
+    internal IEnumerable<(string Label, SettingsScope? Target, Uri File)> SettingsFiles()
     {
-        if (_s.Configuration?.UserSettingsPath is { Length: > 0 } user) yield return ("User", ConfigurationTarget.User, user);
+        if (_s.Configuration?.UserSettingsPath is { Length: > 0 } user) yield return ("User", SettingsScope.User, FileUri(user));
+        if (_s.RemoteSettings?.SettingsUri is { } remote) yield return (RemoteTabTitle, SettingsScope.Remote, remote);
         var folders = _s.Workspace.Folders;
         if (folders.Count == 0) yield break;
         if (folders[0] is { IsFile: true } primary)
         {
-            yield return (".vscode/settings.json", null, Path.Combine(primary.LocalPath, ".vscode", "settings.json"));
-            yield return ("Workspace", ConfigurationTarget.Workspace, Path.Combine(primary.LocalPath, ".cscode", "settings.json"));
+            yield return (".vscode/settings.json", null, FileUri(Path.Combine(primary.LocalPath, ".vscode", "settings.json")));
+            yield return ("Workspace", SettingsScope.Workspace, FileUri(Path.Combine(primary.LocalPath, ".cscode", "settings.json")));
         }
         foreach (var folder in folders.Skip(1).Where(f => f.IsFile))
-            yield return (Path.GetFileName(folder.LocalPath.TrimEnd('/', '\\')) + "/.cscode/settings.json", null, Path.Combine(folder.LocalPath, ".cscode", "settings.json"));
+            yield return (Path.GetFileName(folder.LocalPath.TrimEnd('/', '\\')) + "/.cscode/settings.json", null, FileUri(Path.Combine(folder.LocalPath, ".cscode", "settings.json")));
     }
 
-    private async Task<IReadOnlyDictionary<string, JsonElement>?> ReadScopeAsync(string path, ISet<string> registered)
+    private async Task<IReadOnlyDictionary<string, JsonElement>?> ReadScopeAsync(Uri uri, ISet<string> registered)
     {
         var fs = _s.FileSystem ?? _s.Workspace.FileSystem;
         try
         {
-            var uri = FileUri(path);
             if (await fs.StatAsync(uri) is null) return new Dictionary<string, JsonElement>();
             var bytes = await fs.ReadFileAsync(uri);
             return Flatten(bytes, registered);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException or TimeoutException)
         {
-            return null; // unreadable or invalid: unknown, fall back to the effective values
+            return null; // unreadable or invalid (or a remote host that does not answer): unknown, fall back to the effective values
         }
     }
 
-    internal string? SettingsFilePath(ConfigurationTarget scope)
+    /// <summary>The settings file a tab writes, or null when it has none now.</summary>
+    internal Uri? SettingsFileUri(SettingsScope scope)
     {
-        if (scope == ConfigurationTarget.User) return _s.Configuration?.UserSettingsPath;
-        var folder = _s.Workspace.Folders.FirstOrDefault();
-        return folder is { IsFile: true } ? Path.Combine(folder.LocalPath, ".cscode", "settings.json") : null;
+        switch (scope)
+        {
+            case SettingsScope.User:
+                return _s.Configuration?.UserSettingsPath is { Length: > 0 } user ? FileUri(user) : null;
+            case SettingsScope.Remote:
+                return _s.RemoteSettings?.SettingsUri;
+            default:
+                var folder = _s.Workspace.Folders.FirstOrDefault();
+                return folder is { IsFile: true } ? FileUri(Path.Combine(folder.LocalPath, ".cscode", "settings.json")) : null;
+        }
     }
+
+    /// <summary>Writes one value (null removes it) into a tab's file: the platform's writer for User/Workspace, the remote server for Remote.</summary>
+    private ValueTask WriteScopeAsync(SettingsScope scope, string key, object? value) => scope switch
+    {
+        SettingsScope.Remote => _s.RemoteSettings is { } remote ? remote.UpdateAsync(key, value) : throw new IOException("No remote host is connected"),
+        SettingsScope.Workspace => _s.Configuration!.UpdateAsync(key, value, ConfigurationTarget.Workspace),
+        _ => _s.Configuration!.UpdateAsync(key, value, ConfigurationTarget.User),
+    };
+
+    /// <summary>The Remote tab leaves out application-scoped settings: one value for the whole application, never a remote host's.</summary>
+    private bool InScope(SettingItemViewModel item) => _scope != SettingsScope.Remote || item.Property.Scope != ConfigurationScope.Application;
 
     private static Uri FileUri(string path) => new(new Uri("file:///"), path.StartsWith('/') ? path : "/" + path.Replace('\\', '/'));
 
@@ -276,7 +335,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
             text = System.Text.RegularExpressions.Regex.Replace(text, "@modified", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
         }
         var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        IEnumerable<SettingItemViewModel> source = _all;
+        IEnumerable<SettingItemViewModel> source = _scope == SettingsScope.Remote ? _all.Where(InScope) : _all;
 
         if (words.Length == 0)
         {
@@ -320,7 +379,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     internal void Write(SettingItemViewModel item, object value, bool debounce)
     {
         if (_disposed || _s.Configuration is null) return;
-        var target = IsWorkspaceAvailable && _scope == SettingsScope.Workspace ? ConfigurationTarget.Workspace : ConfigurationTarget.User;
+        var target = WriteScope;
         if (_pending.Remove(item.Key, out var old))
         {
             old.TryClaim(); // superseded: it writes nothing unless its write already started
@@ -343,10 +402,10 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
             }
             // the delay may have ended just before a flush or a newer edit took the write: then it is theirs
             if (pending.Cts.IsCancellationRequested || !pending.TryClaim()) return;
-            await _s.Configuration!.UpdateAsync(item.Key, pending.Value, pending.Target);
+            await WriteScopeAsync(pending.Target, item.Key, pending.Value);
             item.IsModified = true;
         }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or TimeoutException)
         {
             item.ReportError("Could not save: " + ex.Message);
         }
@@ -371,8 +430,8 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
                 continue;
             }
             if (item is null || _s.Configuration is null) continue;
-            try { await _s.Configuration.UpdateAsync(key, pending.Value, pending.Target); item.IsModified = true; }
-            catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException) { item.ReportError("Could not save: " + ex.Message); }
+            try { await WriteScopeAsync(pending.Target, key, pending.Value); item.IsModified = true; }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or TimeoutException) { item.ReportError("Could not save: " + ex.Message); }
         }
     }
 
@@ -390,9 +449,9 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         try
         {
             // null removes the key from the file; the effective value falls back to the next scope or the default.
-            await _s.Configuration.UpdateAsync(item.Key, null, Target);
+            await WriteScopeAsync(WriteScope, item.Key, null);
         }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or TimeoutException)
         {
             item.ReportError("Could not reset: " + ex.Message);
             return;
@@ -407,19 +466,16 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
 
     // ------------------------------------------------------------------------------- settings.json
 
-    public Task OpenSettingsJsonAsync() => OpenFileAtAsync(Target, null, null);
+    public Task OpenSettingsJsonAsync() => OpenFileAtAsync(WriteScope, null, null);
 
     /// <summary>Opens the scope's settings.json with the key selected, adding it with its current value first if the file does not mention it.</summary>
-    public Task EditInJsonAsync(SettingItemViewModel item) => OpenFileAtAsync(Target, item.Key, item);
+    public Task EditInJsonAsync(SettingItemViewModel item) => OpenFileAtAsync(WriteScope, item.Key, item);
 
-    private async Task OpenFileAtAsync(ConfigurationTarget target, string? key, SettingItemViewModel? item)
+    private async Task OpenFileAtAsync(SettingsScope target, string? key, SettingItemViewModel? item)
     {
         if (_s.Navigation is null || _s.Configuration is null) return;
-        if (target == ConfigurationTarget.Workspace && !IsWorkspaceAvailable) target = ConfigurationTarget.User;
-        var path = SettingsFilePath(target);
-        if (path is null) return;
+        if (SettingsFileUri(target) is not { } uri) return;
         var fs = _s.FileSystem ?? _s.Workspace.FileSystem;
-        var uri = FileUri(path);
         try
         {
             if (await fs.StatAsync(uri) is null) await fs.WriteFileAsync(uri, "{\n}\n"u8.ToArray(), createParents: true);
@@ -430,8 +486,8 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
                 var needle = "\"" + key + "\"";
                 if (text.IndexOf(needle, StringComparison.Ordinal) < 0 && item is not null)
                 {
-                    var value = _s.Configuration.GetRaw(key) ?? item.Default;
-                    await _s.Configuration.UpdateAsync(key, value, target);
+                    var value = (target == SettingsScope.Remote && item.Property.Scope == ConfigurationScope.Machine ? null : _s.Configuration.GetRaw(key)) ?? item.Default;
+                    await WriteScopeAsync(target, key, value);
                     text = System.Text.Encoding.UTF8.GetString(await fs.ReadFileAsync(uri));
                 }
                 var at = text.IndexOf(needle, StringComparison.Ordinal);
@@ -443,7 +499,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
             }
             await _s.Navigation.OpenAsync(uri, selection);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or TimeoutException)
         {
             if (_s.Windows is not null) await _s.Windows.ShowMessageAsync(MessageSeverity.Error, "Could not open the settings file: " + ex.Message);
         }

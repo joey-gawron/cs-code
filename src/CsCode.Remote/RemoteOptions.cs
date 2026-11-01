@@ -39,6 +39,12 @@ public sealed class RemoteOptions
     /// <summary>How long a file operation (and a new terminal, debug adapter or task) waits for a connection being made or remade before failing.</summary>
     public TimeSpan ReconnectWait { get; set; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>The liveness check of a connected host (<see cref="HeartbeatPolicy"/>); null turns it off. Tests shorten it.</summary>
+    public HeartbeatPolicy? Heartbeat { get; set; } = HeartbeatPolicy.Default;
+
+    /// <summary>How long a connection attempt may take to bring up the server (ssh authentication included); null = 3 minutes. Tests shorten it.</summary>
+    public TimeSpan? StartTimeout { get; set; }
+
     /// <summary>Overrides <c>remote.ssh.reconnectGracePeriod</c> (tests); <see cref="TimeSpan.Zero"/> turns persistence off.</summary>
     public TimeSpan? GracePeriod { get; set; }
 

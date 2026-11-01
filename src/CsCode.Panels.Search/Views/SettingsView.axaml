@@ -133,6 +133,8 @@
       <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="20,0,20,0">
         <ToggleButton Classes="tab" IsChecked="{Binding IsUserScope, Mode=TwoWay}" Content="User" />
         <ToggleButton Classes="tab" IsChecked="{Binding IsWorkspaceScope, Mode=TwoWay}" IsEnabled="{Binding IsWorkspaceAvailable}" Content="Workspace" />
+        <ToggleButton Classes="tab" IsChecked="{Binding IsRemoteScope, Mode=TwoWay}" IsVisible="{Binding IsRemoteAvailable}" Content="{Binding RemoteTabTitle}"
+                      AutomationProperties.Name="Remote settings" ToolTip.Tip="The connected remote host's machine settings: they apply to what runs on that host" />
       </StackPanel>
       <ListBox Grid.Row="3" x:Name="SettingsList" ItemsSource="{Binding Items}" Background="Transparent" BorderThickness="0" Margin="0,6,0,0" SelectionMode="Single"
                AutomationProperties.Name="Settings">
