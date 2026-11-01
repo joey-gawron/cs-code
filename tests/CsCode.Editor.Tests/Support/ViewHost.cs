@@ -97,9 +97,16 @@ public sealed class ViewHost : IDisposable
         _windows.Remove(window);
     }
 
+    /// <summary>
+    /// Closes the windows, then the views and every document still open: a file document watches its folder (the Editor's fallback watcher is a
+    /// FileSystemWatcher, one inotify instance each on Linux), and documents left open exhausted the user's instances (128 by default) in a
+    /// full Editor test run, failing later tests with "The configured user limit (128) on the number of inotify instances has been reached".
+    /// </summary>
     public void Dispose()
     {
         foreach (var w in _windows.ToArray()) w.Close();
+        Factory.Dispose();
+        foreach (var doc in Documents.Documents.ToArray()) (doc as IDisposable)?.Dispose();
         Provider.Dispose();
         Dir.Dispose();
     }
