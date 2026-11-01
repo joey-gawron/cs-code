@@ -20,7 +20,11 @@ public class InstallerTests
         ServerBundleSet.Find(Environment.GetEnvironmentVariable("CSCODE_SERVER_BUNDLES"), AppContext.BaseDirectory);
 
     /// <summary>The bundle the local "remote" (this machine's /bin/sh) takes: linux-x64 on the Linux CI host, osx-arm64 on an Apple-silicon Mac.</summary>
-    internal static string LocalRid => System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier;
+    /// <remarks>Built from the OS and architecture (what the start script's <c>uname</c> reports), not RuntimeInformation.RuntimeIdentifier, which a
+    /// distribution's own .NET build may report as a non-portable id (ubuntu.24.04-x64).</remarks>
+    internal static string LocalRid =>
+        (OperatingSystem.IsMacOS() ? "osx" : OperatingSystem.IsWindows() ? "win" : "linux") + "-" +
+        System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant();
 
     internal static ServerBundleSet RequireBundles()
     {
