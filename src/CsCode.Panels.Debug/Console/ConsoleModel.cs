@@ -27,14 +27,19 @@ public enum ConsoleLineKind
 /// <summary>One immutable, single-line entry of the Debug Console.</summary>
 public sealed class ConsoleLine
 {
-    internal ConsoleLine(long sequence, ConsoleLineKind kind, string text, DebugSource? source = null, int? line = null)
+    internal ConsoleLine(long sequence, ConsoleLineKind kind, string text, DebugSource? source = null, int? line = null, ConsoleSpan[]? spans = null)
     {
         Sequence = sequence;
         Kind = kind;
         Text = text;
         Source = source;
         Line = line;
+        Spans = spans;
     }
+
+    /// <summary>Runs of <see cref="Text"/> styled by ANSI escapes (colours, bold…), parsed off the UI thread; null when the line is plain.
+    /// <see cref="Text"/> never contains the escapes themselves (filter and copy see what is shown).</summary>
+    public IReadOnlyList<ConsoleSpan>? Spans { get; }
 
     /// <summary>Monotonic per console; lets the filter and the live append path agree on what has been applied.</summary>
     public long Sequence { get; }

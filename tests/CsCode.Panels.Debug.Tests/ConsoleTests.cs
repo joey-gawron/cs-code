@@ -74,9 +74,9 @@ public class ConsolePumpTests
         var second = new DebugOutputEventArgs(s, "stdout", "three\n");
         var lines = pump.ToLines([first, second], 100,
         [
-            new ReplLine(ConsoleLineKind.Input, "> a", new OutputAnchor(trimmed)),
-            new ReplLine(ConsoleLineKind.Input, "> b", new OutputAnchor(first)),
-            new ReplLine(ConsoleLineKind.Result, "2", new OutputAnchor(first)),
+            new ReplLine(ConsoleLineKind.Input, "> a", trimmed.Sequence),
+            new ReplLine(ConsoleLineKind.Input, "> b", first.Sequence),
+            new ReplLine(ConsoleLineKind.Result, "2", first.Sequence),
         ]);
         Assert.Equal(["> a", "one", "two", "> b", "2", "three"], lines.Select(l => l.Text));
         Assert.True(lines.Zip(lines.Skip(1)).All(p => p.First.Sequence < p.Second.Sequence));
@@ -87,21 +87,21 @@ public class ConsolePumpTests
     public void Repl_lines_find_the_archived_copies_of_an_ended_sessions_output_but_not_output_that_merely_has_the_same_text()
     {
         // Regression (dbgp-life-1, review): DebugService.ArchiveHistory replaces an ended session's history entries with `with { Session = ended }`
-        // copies; the copy shares the Output string instance, a different event with the same text does not.
+        // copies; the copy keeps the event's sequence, a different event with the same text does not have it.
         using var pump = new ConsoleOutputPump(new ConsoleBuffer(), _ => true, _ => { });
         var s = new FakeDebugSession();
         var ended = new FakeDebugSession(s.Id, s.Name);
-        var tick1 = new DebugOutputEventArgs(s, "stdout", new string("tick\n".AsSpan()));
-        var tick2 = new DebugOutputEventArgs(s, "stdout", new string("tick\n".AsSpan()));
-        var done = new DebugOutputEventArgs(s, "stdout", new string("done\n".AsSpan()));
-        var lost = new DebugOutputEventArgs(s, "stdout", new string("lost\n".AsSpan())); // its archived copy was replaced (a trimmed giant batch)
+        var tick1 = new DebugOutputEventArgs(s, "stdout", "tick\n");
+        var tick2 = new DebugOutputEventArgs(s, "stdout", "tick\n");
+        var lost = new DebugOutputEventArgs(s, "stdout", "lost\n"); // left the history (dropped from a flood): goes after what came before it
+        var done = new DebugOutputEventArgs(s, "stdout", "done\n");
         DebugOutputEventArgs[] archived = [tick1 with { Session = ended }, tick2 with { Session = ended }, done with { Session = ended }];
         var lines = pump.ToLines([.. archived], 100,
         [
-            new ReplLine(ConsoleLineKind.Input, "> a", new OutputAnchor(tick2)),
-            new ReplLine(ConsoleLineKind.Result, "1", new OutputAnchor(tick2)),
-            new ReplLine(ConsoleLineKind.Input, "> b", new OutputAnchor(lost)),
-            new ReplLine(ConsoleLineKind.Input, "> c", new OutputAnchor(done)),
+            new ReplLine(ConsoleLineKind.Input, "> a", tick2.Sequence),
+            new ReplLine(ConsoleLineKind.Result, "1", tick2.Sequence),
+            new ReplLine(ConsoleLineKind.Input, "> b", lost.Sequence),
+            new ReplLine(ConsoleLineKind.Input, "> c", done.Sequence),
         ]);
         Assert.Equal(["tick", "tick", "> a", "1", "> b", "done", "> c"], lines.Select(l => l.Text));
         GC.KeepAlive(lost);
