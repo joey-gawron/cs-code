@@ -77,7 +77,8 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
         await PickAndOpenAsync(targets.Select(t => new Location(t.TargetUri, t.TargetSelectionRange)).ToList(), "Go to Definition").ConfigureAwait(true);
     }
 
-    private async Task<IReadOnlyList<LocationLink>> FindDefinitionsAsync(int offset, DefinitionKind kind, CancellationToken ct)
+    /// <summary>The providers' definitions (of <paramref name="kind"/>) of the symbol at <paramref name="offset"/>, merged, at most 200 (Go to and Peek).</summary>
+    internal async Task<IReadOnlyList<LocationLink>> FindDefinitionsAsync(int offset, DefinitionKind kind, CancellationToken ct)
     {
         var doc = _v.Document;
         var providers = _v.Services.Features.GetProviders<IDefinitionProvider>(doc);
@@ -117,17 +118,10 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
     public async Task FindReferencesAsync()
     {
         if (_disposed) return;
-        var doc = _v.Document;
-        var providers = _v.Services.Features.GetProviders<IReferenceProvider>(doc);
-        if (providers.Count == 0) return;
+        if (_v.Services.Features.GetProviders<IReferenceProvider>(_v.Document).Count == 0) return;
         var offset = _v.Editor.CaretOffset;
-        var position = doc.PositionAt(offset);
-        var calls = providers.Select(p => FeatureSupport.CallAsync(_v, c => p.ProvideReferencesAsync(doc, position, true, c), CancellationToken.None, TimeSpan.FromSeconds(8))).ToList();
-        var all = new List<Location>();
-        foreach (var call in calls)
-            if (await call.ConfigureAwait(true) is { } list) all.AddRange(list);
+        var references = await FindReferenceLocationsAsync(offset).ConfigureAwait(true);
         if (_disposed) return;
-        var references = all.Distinct().Take(5000).ToList();
         var word = FeatureSupport.WordAt(_v.Editor.Document, offset);
         var symbol = word.End > word.Start ? _v.Editor.Document.GetText(word.Start, word.End - word.Start) : "symbol";
         if (references.Count == 0)
@@ -148,6 +142,20 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
             }
         }
         await PickAndOpenAsync(references, $"References to '{symbol}'").ConfigureAwait(true);
+    }
+
+    /// <summary>The providers' references (declaration included) of the symbol at <paramref name="offset"/>, merged, at most 5000 (Find and Peek).</summary>
+    internal async Task<IReadOnlyList<Location>> FindReferenceLocationsAsync(int offset)
+    {
+        var doc = _v.Document;
+        var providers = _v.Services.Features.GetProviders<IReferenceProvider>(doc);
+        if (providers.Count == 0) return [];
+        var position = doc.PositionAt(offset);
+        var calls = providers.Select(p => FeatureSupport.CallAsync(_v, c => p.ProvideReferencesAsync(doc, position, true, c), CancellationToken.None, TimeSpan.FromSeconds(8))).ToList();
+        var all = new List<Location>();
+        foreach (var call in calls)
+            if (await call.ConfigureAwait(true) is { } list) all.AddRange(list);
+        return all.Distinct().Take(5000).ToList();
     }
 
     // ---- rename ----
@@ -322,6 +330,10 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
                 break;
             case (Key.F12, KeyModifiers.Shift):
                 _ = FindReferencesAsync();
+                e.Handled = true;
+                break;
+            case (Key.F12, KeyModifiers.Alt):
+                _ = _v.Feature<PeekFeature>()?.PeekDefinitionAsync();
                 e.Handled = true;
                 break;
             case (Key.F2, KeyModifiers.None):

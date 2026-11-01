@@ -356,6 +356,8 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
             // a snippet session ends with Insert mode; hover and parameter hints close as well
             if (insert && (popups & EditorPopups.Snippet) != 0) v.Surface.EndSnippet();
             v.Surface.CloseInfoPopups();
+            // a peek closes on Normal mode's Esc only (VS Code's Vim): the Esc that leaves Insert, Visual or an operator keeps it open
+            if (mode == VimMode.Normal && v.Surface.ClosePeek()) { _lastKeyDownToVim = true; return true; }
         }
         var handled = Feed(v, stroke, null);
         _lastKeyDownToVim = handled;

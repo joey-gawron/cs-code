@@ -77,7 +77,7 @@ What the shell must know:
   that outlives it (tests: 500 destroy/recreate cycles, 500 open/close cycles, every disposed view collectable). Move keyboard focus away when you destroy
   the focused view: Avalonia's focus / input-method machinery keeps a *focused* `TextEditor` reachable until focus moves (true of a bare AvaloniaEdit editor too).
 * **Commands** are registered with `ICommandService` under VS Code ids (§7) and act on the view that last had focus. Keybindings are the shell's job; only when
-  *no* `ICommandService` exists (standalone) does the editor bind F12 / Shift+F12 / F2 itself.
+  *no* `ICommandService` exists (standalone) does the editor bind F12 / Shift+F12 / Alt+F12 / F2 itself.
 * **Find references**: with more than one result the editor runs the command `cscode.references.show` (args: `IReadOnlyList<Location>`, a title string) if the shell registered
   it — the shell's Find Results presents them — and otherwise shows them in `IWindowService.ShowQuickPickAsync`. One result just navigates.
 * **Breakpoints follow edits** by calling `IBreakpointManager.ApplyLineShift(uri, fromLine, delta)`. The editor's contract (the Core interface does not say): every breakpoint at
@@ -162,6 +162,10 @@ Numbers refer to the brief's MUST list.
     `cscode-warmup:`, the same kind of document as a diff side), for the warm spare to render once before it is claimed so the first file a
     session opens does not pay the editor's first construction, layout, grammar load and tokenisation; `Dispose` leaves no view, tokenisation
     session or document behind (docs/SESSIONS.md, "The warm spare"; `EditorWarmUpTests`).
+
+15. **Peek** (Peek Definition / References / Declaration / Type Definition / Implementations: an editor embedded under the line): see §7c.
+
+16. **Linked editing** (`editor.linkedEditing`: tag pairs edited together): see §7d.
 
 SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version and per set of symbol providers: a language server that starts after the file was opened is asked at the next request, without an edit), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
@@ -285,13 +289,16 @@ settings alone, so a project's `.editorconfig` could make it say "Spaces: 4" whi
 `editor.formatOnSave/OnType/OnPaste`, `editor.emptySelectionClipboard`, `editor.selectionClipboard`, `editor.autoIndentOnPaste`, `editor.autoIndent`, `editor.hover.delay`, `editor.inlayHints.enabled`, `workbench.colorTheme`, `files.encoding`, `files.eol`, `files.insertFinalNewline`, `files.trimFinalNewlines`, `files.trimTrailingWhitespace`, `files.associations`, and the module's own `cscode.editor.undoLimit` (default 1000 groups),
 `cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB),
 `editor.syntaxEngine` (`auto`; the old `editor.experimental.treeSitter` is read as an alias; see docs/TREE-SITTER.md), and
-`editor.multiCursorLimit` (10,000) / `editor.multiCursorPaste` (`spread`) (§7b; the factory registers both, so the Settings panel lists them).
+`editor.multiCursorLimit` (10,000) / `editor.multiCursorPaste` (`spread`) (§7b; the factory registers both, so the Settings panel lists them), and
+`editor.linkedEditing` (off, VS Code's default; §7d; registered by the factory too).
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
 `sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.showHover` (at the caret),
 `editor.action.marker.next`/`marker.prev` (next / previous problem, wrapping; the caret goes there and the hover shows it), `editor.action.startFindReplace` (`actions.find` and it put the keyboard in the find box at once, also the first time the panel opens and headless: T20), `workbench.action.gotoLine`, `editor.action.triggerSuggest`, `triggerParameterHints`, `quickFix`, `organizeImports`, `revealDefinition`, `goToDeclaration`, `goToTypeDefinition`,
 `goToImplementation`, `goToReferences`, `rename`, `formatDocument`, `formatSelection`, `editor.fold`, `foldRecursively`, `unfold`, `unfoldRecursively`, `toggleFold`, `foldAll`, `unfoldAll`, `editor.action.insertSnippet`, `editor.debug.action.toggleBreakpoint`,
-and multi-cursor's `editor.action.addSelectionToNextFindMatch`, `moveSelectionToNextFindMatch`, `selectHighlights`, `insertCursorAbove`, `insertCursorBelow`, `cursorUndo`, `removeSecondaryCursors` (§7b).
+multi-cursor's `editor.action.addSelectionToNextFindMatch`, `moveSelectionToNextFindMatch`, `selectHighlights`, `insertCursorAbove`, `insertCursorBelow`, `cursorUndo`, `removeSecondaryCursors` (§7b),
+the peek's `editor.action.peekDefinition`, `peekDeclaration`, `peekTypeDefinition`, `peekImplementation`, `referenceSearch.trigger` (Peek References), `closeReferenceSearch` (§7c)
+and `editor.action.linkedEditing` (Start Linked Editing, §7d).
 
 ### 7a. Clipboard and the right-click menu
 
@@ -336,7 +343,8 @@ the pure `Editing/ClipboardOperations.cs` and applied as ONE undo unit:
 
 **Right-click menu** (`View/EditorMenus.cs`): the editor contributes its menu to the shell through `IContributionRegistry` (`editor/context`), in
 Visual Studio 2022's wording and order: Quick Actions and Refactorings... (Ctrl+.), Rename... | Peek Definition, Go To Definition, Go To Declaration,
-Go To Implementation, Find All References | Breakpoint > (Insert Breakpoint / Delete Breakpoint, Disable / Enable Breakpoint, Conditions...), Run To
+Go To Implementation, Find All References (then View Call Hierarchy and View Type Hierarchy, contributed by the Hierarchy window's module,
+docs/NAVIGATION.md) | Breakpoint > (Insert Breakpoint / Delete Breakpoint, Disable / Enable Breakpoint, Conditions...), Run To
 Cursor (Ctrl+F10), Add Watch, QuickWatch... (Shift+F9) | Snippet > (Insert Snippet... Ctrl+K Ctrl+X, Surround With... Ctrl+K Ctrl+S) | Cut, Copy,
 Paste | Format Document, Format Selection, Comment Selection, Uncomment Selection | Command Palette.... Items that cannot apply are hidden: the
 language items follow VS Code's provider keys the editor keeps for the focused document (`editorHasCodeActionsProvider`, `editorHasRenameProvider`,
@@ -344,7 +352,7 @@ language items follow VS Code's provider keys the editor keeps for the focused d
 come and go together, `editorHasReferenceProvider`, `editorHasDocumentFormattingProvider`, `editorHasDocumentSelectionFormattingProvider`); the
 debug items follow `inDebugMode` / `debugState` and the caret-line keys `cscode.editor.breakpointsAvailable`, `lineHasBreakpoint`,
 `lineBreakpointEnabled`, which the view sets when the menu is requested (`PrepareContextKeys`, O(1)); Cut/Copy follow `cscode.editor.canCutCopy`;
-Peek Definition stays hidden (not implemented). Rename enables when the server's prepareRename answers; Paste when the clipboard says it holds
+Peek Definition shows with a definition provider (§7c; it was hidden while no module registered its command). Rename enables when the server's prepareRename answers; Paste when the clipboard says it holds
 text (`EnablementCheck`, never awaited on the UI thread). Shift+F10, the Menu key and `editor.action.showContextMenu` open it at the caret
 (`IEditorViewController.GetCaretBounds`).
 
@@ -412,6 +420,82 @@ Tests: `MultiCaretModelTests` (the caret set, every edit and movement, the occur
 elsewhere, collapsing, Vim, read-only, the limit, 10,000 carets with their undo and redo, drawing and the blink timer), `RealApp/MultiCursorTests` (the preset keys
 through the real keyboard pipeline, `editorHasMultipleSelections`, Vim on), `KeybindingServiceTests` (both presets on Linux and macOS).
 
+### 7c. Peek
+
+`Features/PeekFeature.cs` (one per view, not in large-file mode): VS Code's peek view and Visual Studio's Peek Definition. **Alt+F12** (both
+presets; `editor.action.peekDefinition`, the right-click menu's Peek Definition), `peekDeclaration`, `peekTypeDefinition`, `peekImplementation`
+and **Peek References** (`editor.action.referenceSearch.trigger`, Shift+F12 in the VS Code preset as in VS Code, where Find All References moves
+to Shift+Alt+F12; the Visual Studio preset keeps Shift+F12 for Find All References) ask the same providers as Go to Definition / Find All
+References (`NavigationFeature.FindDefinitionsAsync`, `FindReferenceLocationsAsync`) and open the peek under the caret's line; no answer says
+"No definition found for 'x'" in the status bar.
+
+* **A real zone, not a popup over the code.** The lines below the anchor line move down by the widget's height: a `VisualLineElementGenerator`
+  puts a zero-length `InlineObjectElement` at the end of the anchor line whose spacer (1 px wide, line height + widget height tall) has its
+  `TextBlock.BaselineOffset` at the line's baseline, so the line's text stays at the top of its (now tall) visual line and the rest hangs below
+  it (AvaloniaEdit 12 honours an inline object's baseline offset and allows zero-length elements). The widget lives on the view's
+  `WidgetLayer` (a canvas over the editor whose children take the pointer and the keyboard, unlike `Overlay`, which is not hit-testable) and is
+  placed in the zone on every scroll and visual-lines change; edits above move it with its line (a `TextAnchor` at the line's end); deleting
+  the line closes the peek. With word wrap the spacer sits on the line's last row, so the widget's top is the visual line's bottom less the
+  zone (not one row under the line's top). Height: 40 % of the view, between 8 and 18 lines, plus the title bar; the peek is scrolled into
+  sight when it opens (the line's rows and the zone; the line's top wins when both do not fit).
+* **The embedded editor** is a full `CodeEditorControl`. When the target's document is open in the shell (`EditorViewFactory.TryGetOpenDocument`,
+  or the view's own document) it is a second view of THAT document: edits go straight into it, with its undo and its language features. Otherwise
+  it is read-only over the file's text (read through `IFileSystem`, decoded like a file, coloured as its language): a snapshot document that is
+  never registered with the document manager (no language server sees it), released when the peek closes or shows another file. The target
+  range is highlighted (`peekViewEditor.matchHighlightBackground`), the caret goes to its start and the view scrolls so it is the fourth line.
+  Colours: VS Code's `peekView.border`, `peekViewTitle.background`, `peekViewTitleLabel.foreground`, `peekViewTitleDescription.foreground`,
+  `peekViewResult.background`, `peekViewEditor.background` (the missing defaults were added to `DefaultColors`).
+* **Several locations** (references, a symbol defined twice): a list on the right (file:line and the line's text) picks which one the embedded
+  editor shows; the title says "2 of 5 references · directory".
+* **Keys**: Esc closes it from the view (a tunnelling handler registered after the completion list's, parameter hints', snippets' and
+  multi-cursor's, so they take Esc first when they have something to close), from the list and from the embedded editor (whose own popups and
+  carets keep their Esc and Enter first); with Vim on, Esc in Normal mode calls `EditorModalSurface.ClosePeek`, which closes a peek of the
+  view or of the peek the view is embedded in, while the Esc that leaves Insert, Visual or an operator only changes the mode (VS Code's Vim),
+  so `i`, typing, Esc and more edits work in the embedded editor; `CloseInfoPopups` (every Vim Esc) closes hover and parameter hints only. Enter in the list or in a read-only embedded editor, a double-click in either, or a click on the
+  title opens the location as Go to Definition does (this view when it is the same file, else a tab through the shell) and closes the peek. The
+  ✕ button closes it. While a peek is open the context key `referenceSearchVisible` (VS Code's) is true.
+* **Lifetime**: closing the peek disposes the embedded editor (it leaves the factory's views) and releases its snapshot document; disposing the
+  view closes its peek. Closing the last tab of the peeked document destroys every view over it, the embedded one too (the factory's
+  `ViewClosing`): the peek lets go of it and shows the same location again, read-only over the file on disk. Opening and closing a peek
+  leaves nothing reachable (`PeekViewTests`, weak references over four cycles).
+
+Tests: `PeekViewTests` (the zone and the widget's place, the read-only and the in-place editable embedded editor with its undo, the list and
+Enter, the same file, Esc from the view / the embedded editor / a modal layer (`ClosePeek` closes, `CloseInfoPopups` does not), the widget
+under a word-wrapped anchor line and its reveal, the peeked document's tab closed, no definition, edits above and deletion of the anchor line,
+the menu item, lifetime, a screenshot `.scratch/screenshots/editor-peek-definition.png` checked for the border colour), `RealApp/LanguageNavigationTests`
+(Alt+F12 and Vim's Esc in the real app; in the embedded editor `ix<Esc>` and `v<Esc>` keep the peek and Normal mode's Esc closes it), `RealAppContextMenuTests` (the item and its key).
+
+### 7d. Linked editing
+
+`Features/LinkedEditingFeature.cs` (one per view, not in large-file mode): VS Code's linked editing. With `editor.linkedEditing` on (off by
+default, as in VS Code; per language), once the caret has rested 100 ms the first `ILinkedEditingRangeProvider` (`textDocument/linkedEditingRange`)
+is asked for the ranges at the caret (off the UI thread, 2 s deadline; an answer for older text or a caret that moved is dropped; fewer than two,
+overlapping, or ranges that do not contain the caret are ignored). **Start Linked Editing** (`editor.action.linkedEditing`, Ctrl+Shift+F2 /
+Cmd+Shift+F2 in both presets) asks at once, with the setting on or off, and ends the session when pressed during one ("No linked ranges at the
+caret" when there is nothing to link).
+
+* **Mirroring.** The ranges are document offsets that follow every change of the buffer (an insertion at a range's edge grows it, VS Code's
+  `AlwaysGrowsWhenTypingAtEdges`). An edit inside one range is mirrored into the others; only the part that differs is replaced (a common prefix
+  and suffix stay). The mirror is applied right AFTER the edit's change event (posted at normal priority, so before the next key), never inside
+  it: every listener — the language client's document sync above all — sees the edit and then the mirror as two ordered changes. It is applied
+  in `EditorDocument.BeginUndoGroup(continueLast: true)`, so it joins the edit's undo step, and `TypingBehaviors.FollowEdit` lets a typed run
+  continue across it: a word typed into a tag name is ONE undo step for both tags (a mirror before the caret moves the caret with it).
+* **Ending.** An edit outside the ranges or across a boundary ends the session; so does an edited range that no longer matches the word
+  pattern as a whole (the server's `wordPattern`, a JavaScript regex compiled with a 50 ms timeout, else the language configuration's): a space
+  typed into a tag name is not mirrored and ends it, as in VS Code. The caret leaving the ranges ends it and asks again where it rests (with the
+  setting on). Turning the setting off ends a session it started.
+* **Several carets** (multi-cursor): carets editing every range the same way change each once and keep the session; edits at several places that
+  leave the ranges different are led by the range with the primary caret if it was edited, else end the session.
+* **Vim**: Vim's edits are ordinary edits. An Insert session's typing is mirrored, and since the Vim layer holds its undo group open for the
+  session, the mirrors are part of that one Vim change (`u` undoes both tags); a Normal-mode change (`x`, `r`) gets its mirror joined to its step.
+* Drawn with `editor.linkedEditingBackground` (VS Code's default, translucent red) on the selection layer while a session is on. Costs nothing
+  while off: the change and caret handlers return at once.
+
+Tests: `LinkedEditingViewTests` (over a provider that answers like vscode-html-language-server: typing in either tag, one undo step for a typed
+word, delete-and-retype, the word pattern (the server's and the language's), edits outside or across a boundary, the setting off and Start Linked
+Editing, the caret leaving, a stale answer, the order listeners see the edit and the mirror in, several carets, a modal layer's undo group, the
+setting's registration), `RealApp/LanguageNavigationTests` (Vim's `a`…`Esc` mirrored, one `u`), `KeybindingServiceTests` (the keys of both presets).
+
 **Large-file mode**: above `cscode.editor.largeFileThresholdBytes` (default 5 MB) or with a line longer than 20,000 characters the document's language is forced to `plaintext`, and its views get no tokenisation, folding, squiggles, bracket matching or any other language feature (just text); files over 200 MB are refused with a clear `FileTooLargeException` message.
 
 ## 8. Known gaps (honest list)
@@ -424,7 +508,13 @@ Not done, or done only in part — none of this is faked:
   carets are not kept in the view state (a recreated view has one); `editor.multiCursorModifier` (Ctrl+Click to add carets) is not read;
   Backspace in leading spaces deletes one space, not one indentation unit. Rectangular selection is AvaloniaEdit's own (Alt+drag; Ctrl+Option+drag
   on macOS) and its rows act as carets for the clipboard (§7a).
-* **Minimap, code lens, semantic-token overlay, Alt+F12 peek, overview-ruler markers on the scrollbar** are not implemented (settings for them are read but have no effect). Sticky scroll is (`editor.stickyScroll.enabled`, off by default; docs/TREE-SITTER.md §5).
+* **Minimap, code lens, semantic-token overlay, overview-ruler markers on the scrollbar** are not implemented (settings for them are read but have no effect). Sticky scroll is (`editor.stickyScroll.enabled`, off by default; docs/TREE-SITTER.md §5).
+* **Peek** (§7c): a file that is not open in the shell is peeked read-only (VS Code opens it editable; opening it here would register it with
+  the language servers and leave the peek to decide when to close a document the shell may meanwhile have opened). The list has one row per
+  location (VS Code groups references by file), there is no "open to the side", the height is fixed while the peek is open (VS Code's sash
+  resizes it), and a view has one peek at a time.
+* **Linked editing** (§7d): with several carets a typed run is not continued across the mirror (each character is its own undo step, each
+  with its mirror); a server's word pattern that .NET's regex engine rejects (rare JavaScript-only syntax) checks nothing.
 * `editor.cursorStyle`, `editor.cursorBlinking` and `editor.smoothScrolling` are not applied (AvaloniaEdit offers no equivalent). Font ligatures are on by default (`editor.fontLigatures`; VS Code defaults to off, but the bundled Fira Code is chosen for them, and they keep one glyph per character): `false` turns them off. AvaloniaEdit 12 has no font-feature setting, so `EditorFontFeatures`, a line transformer, then gives each element's run properties `-liga, -calt` (reaching the private `VisualLineElement.TextRunProperties` setter by reflection; `CodeFontTests` fails if an upgrade removes it). `true` (the default) leaves the font's own ligatures (Fira Code's keep one glyph per character, so carets stay on columns) and a string is VS Code's CSS feature list (`"'ss01', 'zero'"`). The code panels follow the same setting through `ui:CodeFontFeatures`. `editor.wordWrap` supports on/off only. Drag-and-drop of text is AvaloniaEdit's own behaviour; bidirectional text and IME composition were not tested.
 * **Typing allocation**: the TextMate colorizer allocates per token on the edited line (§6). A single pre-merged element list would cut it; not done.
 * The `previousLineText` guard of `onEnterRules` (which Core's `OnEnterRule` record cannot carry) is handled editor-side through `ExtendedLanguageConfiguration`/`EnterRuleEx`; the Core record is unchanged.

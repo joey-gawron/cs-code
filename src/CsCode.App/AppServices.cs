@@ -16,6 +16,7 @@ using CsCode.Editor;
 using CsCode.Lsp;
 using CsCode.Panels.Debug;
 using CsCode.Panels.Git;
+using CsCode.Panels.Navigation;
 using CsCode.Panels.Search;
 using CsCode.Panels.Testing;
 using CsCode.Panels.Terminal;
@@ -61,6 +62,7 @@ public static class AppServices
         services.AddCsCodeSearchPanels();
         services.AddCsCodeTestExplorer(); // the Test Explorer (.NET, Rust, Jest/Vitest tests), its commands and the editor's test glyphs
         services.AddCsCodeTerminal(); // the integrated terminal (ITerminalService) and its Terminal tool window
+        services.AddCsCodeNavigationPanels(); // the Hierarchy window: call and type hierarchy (docs/NAVIGATION.md)
         services.AddCsCodeGit(); // source control: git status, Source Control window, Explorer decorations, gutter markers, blame
         services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
         configure?.Invoke(services); // dev/test host: replace anything above

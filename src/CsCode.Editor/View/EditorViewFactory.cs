@@ -53,6 +53,7 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         // Snippets are offered through the same registry as language-server completions, so the popup merges them with the same code.
         // multi-cursor's settings (editor.multiCursorLimit, editor.multiCursorPaste), so the Settings panel lists them
         _disposables.Add(services.Config.RegisterProperties(MultiCursorController.Properties));
+        _disposables.Add(services.Config.RegisterProperties(Features.LinkedEditingFeature.Properties)); // editor.linkedEditing
         _disposables.Add(services.Features.Register<ICompletionProvider>(DocumentSelector.All, new SnippetCompletionProvider(snippets), "cscode.snippets"));
         if (services.Commands is { } commands)
         {
@@ -142,6 +143,12 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         {
             lock (_gate) _opening.Remove(uri);
         }
+    }
+
+    /// <summary>The document open for <paramref name="uri"/> (a tab's, so a peek can edit it in place), or null.</summary>
+    internal EditorDocument? TryGetOpenDocument(Uri uri)
+    {
+        lock (_gate) return _documents.TryGetValue(uri, out var doc) ? doc : null;
     }
 
     public IEditorDocument CreateUntitled(string? languageId = null)
@@ -285,6 +292,8 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         keys.Set("editorHasReferenceProvider", Has<IReferenceProvider>());
         keys.Set("editorHasDocumentFormattingProvider", formatting);
         keys.Set("editorHasDocumentSelectionFormattingProvider", formatting);
+        keys.Set("editorHasCallHierarchyProvider", Has<ICallHierarchyProvider>()); // the Hierarchy window's items (docs/NAVIGATION.md)
+        keys.Set("editorHasTypeHierarchyProvider", Has<ITypeHierarchyProvider>());
     }
 
     /// <summary>The per-view feature components (completion, hover, diagnostics, folding…), created by the control after its core is up.</summary>

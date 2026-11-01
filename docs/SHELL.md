@@ -267,7 +267,7 @@ to the `IShellKeyInterceptor` (the Vim adapter, `src/CsCode.App/Vim`, docs/VIM.m
 focused editor with Vim on, never the second key of a pending chord, and decides key presses with `VimKeyPolicy` (Vim owns its Ctrl keys and Esc in
 Normal/Visual mode; `Ctrl+Shift+…`, `Alt+…`, F-keys, `Ctrl+S` and the other application keys keep working; `vim.handleKeys` overrides per key).
 What it passes through reaches the pipeline and the editor as before. A binding whose command **no module registered** (`ICommandService.Has`) counts as absent: the presets bind ids of modules that may not be composed
-(F3 `editor.action.nextMatchFindAction`, Ctrl+] `jumpToBracket`, Alt+F12 `peekDefinition`, Ctrl+\` terminal...), so a registered lower-precedence binding of the same keys runs instead, else the key
+(F3 `editor.action.nextMatchFindAction`, Ctrl+] `jumpToBracket`, Ctrl+\` terminal...), so a registered lower-precedence binding of the same keys runs instead, else the key
 reaches the focused control (F3 gets to the editor's own find); a chord prefix whose every continuation is unregistered is not a chord. Context keys (`ContextKeyTracker`): `editorTextFocus`, `editorHasSelection`, `editorHasMultipleSelections` (multi-cursor, docs/EDITOR.md §7b), `editorReadonly`, `editorLangId`, `resourceExtname`, `resourceFilename`,
 `resourceScheme`, `explorerViewletFocus`, `listFocus`, `panelFocus`, `inputFocus`, `terminalFocus`, `inDebugMode`, `debugState`, `isMac/isLinux/isWindows`, `workspaceFolderCount`, `hasOpenEditors`,
 `activeEditorIsDirty`, `quickInputVisible`. Focus areas come from the `ShellFocus.Area` attached property on the tabs' view hosts (a focused
@@ -607,8 +607,8 @@ auto-hide/peek animations, taskbar jump list, `--diff`, toolbar overflow (all SH
 `reloadWindow` only refreshes menus. Find in Files is the Search panel's tool window (`CsCode.Panels.Search`); Find Results hosts the references delivered by `cscode.references.show`. Explorer filter searches loaded nodes only.
 
 Clipboard and menus, not done: a native Wayland primary selection
-(Avalonia 12 runs through XWayland here); Peek Definition and QuickWatch's tree (Peek is not implemented by the editor, so the item stays hidden;
-QuickWatch shows the value in a notification with Add Watch). Not verified headless: the Wayland <-> XWayland round trip with native KDE
+(Avalonia 12 runs through XWayland here); QuickWatch's tree (QuickWatch shows the value in a notification with Add Watch). Peek Definition
+is implemented (docs/EDITOR.md §7c) and its item shows. Not verified headless: the Wayland <-> XWayland round trip with native KDE
 applications (Kate, Konsole, Firefox) and screenshots on the real desktop are the integrator's check. The menu-open budget is met in quiet runs
 only (above). (The stale focus area found while testing, the main window not seeing the editor take focus, is fixed: *Keyboard* above.)
 
