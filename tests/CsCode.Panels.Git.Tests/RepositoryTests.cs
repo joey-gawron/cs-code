@@ -139,6 +139,49 @@ public sealed class RepositoryTests : IDisposable
     }
 
     [Fact]
+    public async Task With_two_repositories_a_slow_rebuild_never_publishes_its_older_decorations_over_a_newer_one()
+    {
+        Assert.SkipUnless(TestRepo.GitAvailable, "git is not installed");
+        using var parent = new TempDirectory("cscode-git-parent-");
+        var one = Own(new TestRepo(path: Path.Combine(parent.Path, "one")));
+        var two = Own(new TestRepo(path: Path.Combine(parent.Path, "two")));
+        Seed(one);
+        Seed(two);
+        using var ws = new TestWorkspace(false, parent.Uri);
+        using var git = new GitService(ws, new TestConfigurationService());
+        await git.Initialization;
+        var r1 = git.Repositories.Single(r => r.Name == "one");
+        var r2 = git.Repositories.Single(r => r.Name == "two");
+
+        // the first rebuild (after repository one's refresh) is held after building its snapshot, before publishing it
+        using var hold = new ManualResetEventSlim();
+        using var held = new ManualResetEventSlim();
+        var first = 1;
+        git.DecorationsBuilt = () =>
+        {
+            if (Interlocked.Exchange(ref first, 0) == 0) return;
+            held.Set();
+            hold.Wait(TimeSpan.FromSeconds(20));
+        };
+        one.Write("a.txt", "changed in one\n");
+        var refresh1 = Task.Run(() => r1.RefreshAsync());
+        Assert.True(held.Wait(TimeSpan.FromSeconds(15)), "the first rebuild did not run");
+
+        // meanwhile repository two changes and its refresh rebuilds (on another lane thread)
+        two.Write("a.txt", "changed in two\n");
+        var refresh2 = Task.Run(() => r2.RefreshAsync());
+        var deadline = Environment.TickCount64 + 15_000;
+        while (!r2.Status.Entries.Any(e => e.Path == "a.txt") && Environment.TickCount64 < deadline) await Task.Delay(20);
+        Assert.Contains(r2.Status.Entries, e => e.Path == "a.txt");
+        await Task.WhenAny(refresh2, Task.Delay(300)); // without serialization the second snapshot is published here
+        hold.Set();
+        await Task.WhenAll(refresh1, refresh2).WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal("M", git.GetDecoration(one.FileUri("a.txt"), false)?.Badge);
+        Assert.Equal("M", git.GetDecoration(two.FileUri("a.txt"), false)?.Badge); // the held, older snapshot did not overwrite it
+    }
+
+    [Fact]
     public async Task Stage_unstage_discard_and_commit()
     {
         var (repo, git, _) = await OpenAsync(Seed);

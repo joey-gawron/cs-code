@@ -66,6 +66,9 @@ added > untracked), and the set of ignored paths (a path is ignored when it or o
 (`ExplorerViewModel`, new optional `IFileDecorationProvider` argument) sets `ExplorerNode.Decoration` for every shown row whenever its rows change,
 and again (coalesced) on `DecorationsChanged`: dictionary lookups only. The row draws the name in the colour, the letter after it, ignored rows at
 60 % opacity, deleted ones struck through. Colours are VS Code's `gitDecoration.*` keys (already in the built-in themes). Off with `git.decorations.enabled`.
+Repositories refresh on different lane threads, so two rebuilds can overlap: building and publishing a snapshot happen under one lock, so the
+snapshot published last was built from statuses read after every earlier one (an older snapshot published after a newer one left stale
+decorations with several repositories; test `With_two_repositories_a_slow_rebuild_never_publishes_its_older_decorations_over_a_newer_one`).
 
 ## Source Control window (`scm`, docked on the right next to the Explorer)
 
