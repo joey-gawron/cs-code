@@ -58,7 +58,7 @@ internal sealed class LineZones : IDisposable
         _v = view;
         _source = source;
         _generator = new Generator(this);
-        view.TextView.ElementGenerators.Insert(0, _generator); // first: a zone opens the line, before an inlay hint at column 0
+        view.TextView.ElementGenerators.Insert(0, _generator); // first: a zone opens the line, before an inlay hint or a whitespace marker at column 0
         _layer = new ZoneLayer(this);
         view.TextView.InsertLayer(_layer, KnownLayer.Caret, LayerInsertionPosition.Above);
         view.TextView.VisualLinesChanged += OnVisualLinesChanged;
@@ -73,6 +73,9 @@ internal sealed class LineZones : IDisposable
     }
 
     internal Control Layer => _layer;
+
+    /// <summary>Whether <paramref name="generator"/> is a zone generator (it stays first: a zone opens its line).</summary>
+    internal static bool IsZoneGenerator(VisualLineElementGenerator generator) => generator is Generator;
 
     /// <summary>The zone height of a built visual line (0 when it has none).</summary>
     public static double HeightOf(VisualLine visualLine) =>
