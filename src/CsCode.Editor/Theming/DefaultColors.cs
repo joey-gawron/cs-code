@@ -180,6 +180,7 @@ public static class DefaultColors
         Def("peekViewTitleLabel.foreground", "#FFFFFF", "#000000", "#FFFFFF", "#292929");
         Def("peekViewTitleDescription.foreground", "#CCCCCCB3", "#616161", "#FFFFFF99", "#292929B3");
         Alias("peekViewResult.fileForeground", "foreground");
+        Def("editor.linkedEditingBackground", "#FF00004D", "#FF00004D", "#FF00004D", "#FFFFFF");
         Def("diffEditor.insertedTextBackground", "#9CCC2C33", "#9CCC2C40");
         Def("diffEditor.removedTextBackground", "#FF000033", "#FF000033");
         Def("diffEditor.insertedLineBackground", "#9BB95533", "#9BB95533");

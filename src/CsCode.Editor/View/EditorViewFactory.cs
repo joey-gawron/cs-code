@@ -53,6 +53,7 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         // Snippets are offered through the same registry as language-server completions, so the popup merges them with the same code.
         // multi-cursor's settings (editor.multiCursorLimit, editor.multiCursorPaste), so the Settings panel lists them
         _disposables.Add(services.Config.RegisterProperties(MultiCursorController.Properties));
+        _disposables.Add(services.Config.RegisterProperties(Features.LinkedEditingFeature.Properties)); // editor.linkedEditing
         _disposables.Add(services.Features.Register<ICompletionProvider>(DocumentSelector.All, new SnippetCompletionProvider(snippets), "cscode.snippets"));
         if (services.Commands is { } commands)
         {

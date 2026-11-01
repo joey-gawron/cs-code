@@ -225,6 +225,29 @@ public class KeybindingServiceTests : IDisposable
     }
 
     [Theory]
+    [MemberData(nameof(PresetsOnLinuxAndMac))]
+    public async Task The_language_navigation_keys_reach_call_hierarchy_peek_and_linked_editing(string preset, HostOs os)
+    {
+        using var svc = _f.Create(os);
+        await svc.SetPresetAsync(preset, Ct);
+        _f.Context.Set("editorTextFocus", true);
+        var mac = os == HostOs.MacOs;
+        var vs = preset == "visualstudio";
+        // View Call Hierarchy: Visual Studio's Ctrl+K Ctrl+T, VS Code's Shift+Alt+H; only while the document has a call hierarchy provider
+        var hierarchy = vs ? (mac ? "cmd+k cmd+t" : "ctrl+k ctrl+t") : "shift+alt+h";
+        Assert.NotEqual("editor.showCallHierarchy", Cmd(Press(svc, hierarchy)));
+        svc.ResetChord();
+        _f.Context.Set("editorHasCallHierarchyProvider", true);
+        Assert.Equal("editor.showCallHierarchy", Cmd(Press(svc, hierarchy)));
+        Assert.Equal("editor.action.peekDefinition", Cmd(Press(svc, "alt+f12")));
+        Assert.Equal(vs ? "editor.action.goToReferences" : "editor.action.referenceSearch.trigger", Cmd(Press(svc, "shift+f12")));
+        if (!vs) Assert.Equal("editor.action.goToReferences", Cmd(Press(svc, "shift+alt+f12")));
+        Assert.Equal("editor.action.linkedEditing", Cmd(Press(svc, mac ? "cmd+shift+f2" : "ctrl+shift+f2")));
+        Assert.Equal(mac ? "⇧⌘F2" : "Ctrl+Shift+F2", svc.GetLabel("editor.action.linkedEditing"));
+        Assert.DoesNotContain(_f.Log.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Theory]
     [MemberData(nameof(PresetNames))]
     public async Task Off_the_Mac_Ctrl_W_starts_the_chord_and_Ctrl_F4_closes_the_editor_on_the_Mac_Cmd_W_does(string preset)
     {

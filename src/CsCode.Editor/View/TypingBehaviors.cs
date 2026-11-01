@@ -67,6 +67,17 @@ internal sealed class TypingBehaviors : IDisposable, ISettingsAware
         _groupOpen = true;
     }
 
+    /// <summary>
+    /// Another feature edited the document right after a typed character, as part of its undo step (linked editing's mirror): a typed run
+    /// that would have continued still continues, so a typed word stays one undo step.
+    /// </summary>
+    internal void FollowEdit(int versionBefore, int caretBefore)
+    {
+        if (_expectedVersion != versionBefore || _expectedCaret != caretBefore) return;
+        _expectedVersion = _v.Document.Version;
+        _expectedCaret = _v.Editor.CaretOffset;
+    }
+
     private void EndTypingGroup(string text)
     {
         if (!_groupOpen) return;

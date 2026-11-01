@@ -31,6 +31,7 @@
 
   // ---- editing ----
   { "key": "f2",                 "command": "editor.action.rename",               "when": "editorTextFocus && !editorReadonly" },
+  { "key": "ctrl+shift+f2",      "command": "editor.action.linkedEditing",        "when": "editorTextFocus && !editorReadonly", "mac": "cmd+shift+f2" }, // Start Linked Editing
   { "key": "shift+alt+f",        "command": "editor.action.formatDocument",       "when": "editorTextFocus && !editorReadonly", "mac": "shift+alt+f", "linux": "ctrl+shift+i" },
   { "key": "ctrl+k ctrl+f",      "command": "editor.action.formatSelection",      "when": "editorTextFocus && !editorReadonly", "mac": "cmd+k cmd+f" },
   { "key": "ctrl+k ctrl+c",      "command": "editor.action.addCommentLine",       "when": "editorTextFocus && !editorReadonly", "mac": "cmd+k cmd+c" },
