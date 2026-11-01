@@ -56,7 +56,9 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
   32 frames, so one flooding adapter cannot starve other sessions. Debuggee output spawned by `runInTerminal` goes through a bounded pump with
   at most one queued flush. The Debug Console history (`Service/OutputHistory`) keeps the newest ≤ 5,000 lines (≤ 4 MB): whole old events go
   while they fit in the excess, otherwise the oldest event's head is cut by an **offset** (no copy), so a big batch followed by thousands of
-  one-line events costs O(line) per event under the service lock.
+  one-line events costs O(line) per event under the service lock. Every `DebugOutputEventArgs` carries a `Sequence` (Core: process-wide,
+  increasing in creation order, kept by `with` copies): the history's copies (a cut batch read as `with { Output = tail }`, an ended session's
+  events relabelled `with { Session = … }`) keep it, so the Debug Console recognises them (seed deduplication, REPL line placement).
 * **Hostile payloads.** Frames larger than `MaxFrameBytes` (16 MB per session; 32 MB default for the raw client) are *skipped without
   buffering* (a short prefix is kept to fail the right request); variable pages are capped at 10,000 items even if the adapter ignores `count`;
   stack pages at 1,000 frames; module/loaded-source lists at 2,000.
