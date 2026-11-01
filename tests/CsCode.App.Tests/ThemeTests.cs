@@ -110,6 +110,21 @@ public class BuiltInThemeTests
         foreach (var f in typeof(IconKey).GetFields().Where(f => f.IsLiteral))
             Assert.True(IconCatalog.Contains((string)f.GetRawConstantValue()!), $"IconKey.{f.Name} = {f.GetRawConstantValue()} is not in the catalog");
     }
+
+    /// <summary>
+    /// Icon draws every path as if it filled a 100-unit box with y in [-100, 0]. Ten Codicons (search, files, debug, terminal...) came in a
+    /// 150-unit box, so they drew 1.5x their size and lost their top: the search boxes' magnifier was cut off.
+    /// </summary>
+    [AvaloniaFact]
+    public void Every_icon_fits_the_100_unit_box_icon_draws_it_in()
+    {
+        var outside = IconCatalog.Names
+            .Select(n => (Name: n, Bounds: IconCatalog.Get(n)!.Bounds))
+            .Where(i => i.Bounds.Left < -0.5 || i.Bounds.Right > 100.5 || i.Bounds.Top < -100.5 || i.Bounds.Bottom > 0.5)
+            .Select(i => $"{i.Name} {i.Bounds}")
+            .ToArray();
+        Assert.True(outside.Length == 0, "outside the icon box: " + string.Join("; ", outside));
+    }
 }
 
 public class ThemeApplierTests

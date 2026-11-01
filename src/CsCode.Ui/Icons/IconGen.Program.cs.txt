@@ -37,10 +37,14 @@ foreach (var name in wanted)
 {
     var key = Pascal(name);
     if (!map.TryGetValue(key, out var data) || data.Length == 0) { missing.Add(name); continue; }
+    // A few icons (search, files, debug, terminal...) come in a 150-unit box: scale those into the 100-unit one, or they draw 1.5x too big and
+    // are cut off at the top. Their paths use absolute commands only (M L C Q Z), so every number scales.
+    var inv = System.Globalization.CultureInfo.InvariantCulture;
+    var scale = System.Text.RegularExpressions.Regex.Matches(data, @"-?\d+(\.\d+)?").Any(m => Math.Abs(double.Parse(m.Value, inv)) > 100.5) ? 100.0 / 150 : 1.0;
     // 1 unit = 0.16 px at 16 px, so one decimal is far below visible precision; this shrinks the catalog ~3x.
-    data = System.Text.RegularExpressions.Regex.Replace(data, @"-?\d+\.\d+", m =>
+    data = System.Text.RegularExpressions.Regex.Replace(data, scale == 1 ? @"-?\d+\.\d+" : @"-?\d+(\.\d+)?", m =>
     {
-        var s = Math.Round(double.Parse(m.Value, System.Globalization.CultureInfo.InvariantCulture), 1).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+        var s = Math.Round(double.Parse(m.Value, inv) * scale, 1).ToString("0.#", inv);
         return s == "-0" ? "0" : s;
     });
     sb.Append("        (\"").Append(name).Append("\", \"").Append(data.Replace("\\", "\\\\").Replace("\"", "\\\"")).AppendLine("\"),");
