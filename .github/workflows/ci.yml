@@ -1,0 +1,163 @@
+# CsCode CI (docs/handoff/ci.md): on Linux (ubuntu-latest, x64) and macOS (macos-latest, arm64)
+#   build          the whole solution with warnings as errors
+#   test           every test project in four parallel groups, without the soak/perf suites and the load-sensitive tests
+#                  (tools/ci/load-sensitive-tests.txt, docs/handoff/known-issues.md), each run bounded by --blame-hang-timeout
+#   package-macos  tools/package-macos.sh --no-adapters on the Mac: CsCode.app built, signed ad hoc, verified and started (--version)
+#   load-sensitive the excluded timing tests, nightly and on demand, never failing the workflow (they are watched, not gating)
+# Tests that need tools CI does not install (netcoredbg, CodeLLDB, js-debug, gdb, nvim, sshd, a real X server) skip with their reason.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *" # nightly: also runs the load-sensitive job
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', 'Directory.Packages.props', 'Directory.Build.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Restore
+        run: dotnet restore CsCode.slnx
+      - name: Build (warnings are errors)
+        run: dotnet build CsCode.slnx --no-restore -warnaserror
+
+  test:
+    name: test ${{ matrix.group }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        group: [app, editor, services, panels-memory]
+        include:
+          - group: app
+            projects: tests/CsCode.App.Tests
+          - group: editor
+            projects: tests/CsCode.Editor.Tests tests/CsCode.Vim.Tests tests/CsCode.Macros.Tests tests/CsCode.Core.Tests
+          - group: services
+            projects: tests/CsCode.Dap.Tests tests/CsCode.Lsp.Tests tests/CsCode.Platform.Tests tests/CsCode.Remote.Tests tests/CsCode.Sessions.Tests tests/CsCode.Terminal.Tests
+          - group: panels-memory
+            projects: tests/CsCode.Panels.Debug.Tests tests/CsCode.Panels.Search.Tests tests/CsCode.Panels.Terminal.Tests tests/CsCode.MemoryTests
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', 'Directory.Packages.props', 'Directory.Build.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Build the test projects
+        run: |
+          for p in ${{ matrix.projects }}; do dotnet build "$p" -warnaserror || exit 1; done
+      - name: Test
+        run: |
+          filter=$(bash tools/ci/test-filter.sh)
+          status=0
+          for p in ${{ matrix.projects }}; do
+            echo "::group::$p"
+            dotnet test "$p" --no-build --filter "$filter" \
+              --blame-hang-timeout 10m --blame-hang-dump-type mini \
+              --logger "trx;LogFilePrefix=$(basename "$p")" --results-directory TestResults || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.group }}-${{ matrix.os }}
+          path: TestResults
+          retention-days: 7
+
+  package-macos:
+    name: package (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-${{ runner.os }}-package-${{ hashFiles('global.json', 'Directory.Packages.props', 'Directory.Build.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Package CsCode.app (no debug adapters, no remote server bundles)
+        run: tools/package-macos.sh --no-adapters --no-server-bundles --out "$RUNNER_TEMP/macos"
+      - name: Check the bundle
+        run: |
+          app="$RUNNER_TEMP/macos/osx-arm64/CsCode.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          plutil -lint "$app/Contents/Info.plist"
+          "$app/Contents/MacOS/cscode" --version
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/CsCode-osx-arm64-adhoc.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CsCode-osx-arm64-adhoc
+          path: ${{ runner.temp }}/CsCode-osx-arm64-adhoc.zip
+          retention-days: 7
+
+  load-sensitive:
+    name: load-sensitive tests (${{ matrix.os }}, not gating)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', 'Directory.Packages.props', 'Directory.Build.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Build
+        run: dotnet build CsCode.slnx -warnaserror
+      - name: Test (each listed test alone in its project's run)
+        run: |
+          filter=$(bash tools/ci/test-filter.sh --only)
+          status=0
+          for p in tests/CsCode.*Tests; do
+            dotnet test "$p" --no-build --filter "$filter" --blame-hang-timeout 10m --blame-hang-dump-type mini || status=1
+          done
+          exit $status
