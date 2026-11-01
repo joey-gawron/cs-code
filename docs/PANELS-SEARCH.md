@@ -142,7 +142,9 @@ Mapping from `ConfigurationProperty` (default + JSON-schema fragment) to control
   (`cscode.memory.budgetMb` is Memory). Titles are humanised ("Editor › Minimap: Enabled").
 * **Search** is a fuzzy filter (`FuzzyMatcher`): each word must be a substring of title/key/description or a fuzzy match of title+key; searching ignores the selected category.
   `@modified` (alone or with words) shows only changed settings.
-* **Scope tabs** User / Workspace / Remote (`SettingsScope`); the Workspace tab is disabled without an open folder. Core's `IConfigurationService` has no per-scope
+* **Scope tabs** User / Workspace / Remote (`SettingsScope`); the Workspace tab is disabled without an open local folder — also in a remote window,
+  whose folder's settings are files on the host that the platform cannot write (it used to stay enabled there and fail every edit with "No folder is
+  open"; found against a real ssh host). Core's `IConfigurationService` has no per-scope
   "inspect" API, so the view reads the settings files itself, **the same files in the same order as the platform's `ConfigurationService`**: the user
   `settings.json`, the primary folder's `.vscode/settings.json` and `.cscode/settings.json`, then every other folder's `.cscode/settings.json` (flattened, nested and
   dotted keys equivalent, comments and a UTF-8 BOM allowed). The User tab writes the user file, the Workspace tab the primary `.cscode/settings.json`. Values shown for

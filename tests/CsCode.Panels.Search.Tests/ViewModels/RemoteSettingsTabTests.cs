@@ -6,6 +6,7 @@ using CsCode.Core.Platform;
 using CsCode.Core.Remote;
 using CsCode.Core.Text;
 using CsCode.Panels.Search.Settings;
+using CsCode.Panels.Search.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -154,6 +155,45 @@ public class RemoteSettingsTabTests : IDisposable
         _remote.ChangedOnHost("{ \"cscode.debug.gdbPath\": \"/opt/gdb-14/bin/gdb\" }");     // edited on the host (or in the editor)
         await _f.Ui.PumpUntilAsync(() => ((StringSettingViewModel)Item(vm, "cscode.debug.gdbPath")).Value == "/opt/gdb-14/bin/gdb");
         Assert.True(Item(vm, "cscode.debug.gdbPath").IsModified);
+    }
+
+    /// <summary>The harness workspace with its folder list replaced by remote folders (what a remote window's workspace reports).</summary>
+    private sealed class RemoteFolders(IWorkspaceService inner, params Uri[] folders) : IWorkspaceService
+    {
+        public IReadOnlyList<Uri> Folders => folders;
+        public string? Name => "remote";
+        public ValueTask OpenFolderAsync(Uri folder, CancellationToken ct = default) => ValueTask.CompletedTask;
+        public ValueTask CloseFolderAsync(CancellationToken ct = default) => ValueTask.CompletedTask;
+        public IEventSource<WorkspaceFoldersChangedEventArgs> FoldersChanged => inner.FoldersChanged;
+        public IFileSystem FileSystem => inner.FileSystem;
+        public IFileWatcher Watcher => inner.Watcher;
+        public IReadOnlyList<Uri> RecentFolders => [];
+        public IAsyncEnumerable<Uri> FindFilesAsync(string? includeGlob, int maxResults, CancellationToken ct = default) => inner.FindFilesAsync(includeGlob, maxResults, ct);
+    }
+
+    [Fact]
+    public async Task In_a_remote_window_the_workspace_tab_is_off_instead_of_failing_every_edit()
+    {
+        // Found against a real ssh host: with an ssh: folder open the Workspace tab was enabled, and every edit failed with "Could not save: No folder is
+        // open" (the platform writes only a local folder's .cscode/settings.json; a remote folder's settings are files on the host).
+        _owned.Add(_f.ConfigStore.RegisterProperties([P("editor.tabSize", 4, schema: """{"type":"integer","minimum":1}""")]));
+        var s = _f.With(remote: _remote);
+        var services = new SearchServices
+        {
+            Workspace = new RemoteFolders(_f.Harness.Workspace, new Uri("ssh://me@box/home/me/src/")), Ui = s.Ui, Engine = s.Engine, Replace = s.Replace,
+            Configuration = s.Configuration, Documents = s.Documents, Navigation = s.Navigation, Windows = s.Windows, FileSystem = s.FileSystem, RemoteSettings = _remote,
+        };
+        var vm = new SettingsViewModel(services, 10);
+        _owned.Add(vm);
+        Assert.False(vm.IsWorkspaceAvailable);
+        vm.SelectedScope = SettingsScope.Workspace;
+        Assert.Equal(SettingsScope.User, vm.SelectedScope);
+        vm.SelectedScope = SettingsScope.Remote;                      // the host's settings are edited here instead
+        ((NumberSettingViewModel)Item(vm, "editor.tabSize")).Text = "2";
+        await vm.FlushAsync();
+        Assert.Contains(_remote.Writes, w => w.Key == "editor.tabSize");
+        Assert.Null(Item(vm, "editor.tabSize").Error);
+        await Task.CompletedTask;
     }
 
     [Fact]

@@ -90,7 +90,12 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     public IUiDispatcher Ui => _s.Ui;
     public IConfigurationService? Configuration => _s.Configuration;
     public int ModifiedCount => _all.Count(i => i.IsModified);
-    public bool IsWorkspaceAvailable => _s.Workspace.Folders.Count > 0;
+    /// <summary>
+    /// A local folder is open: the Workspace tab edits its .cscode/settings.json. A remote folder's workspace settings are its own files on the host
+    /// (read there by the server); the platform cannot write them, so the tab is off in a remote window rather than failing every edit with
+    /// "No folder is open" (found against a real ssh host).
+    /// </summary>
+    public bool IsWorkspaceAvailable => _s.Workspace.Folders is { Count: > 0 } folders && folders[0].IsFile;
 
     /// <summary>A remote host is connected: the Remote tab is shown and edits its machine settings file.</summary>
     public bool IsRemoteAvailable => _s.RemoteSettings?.SettingsUri is not null;

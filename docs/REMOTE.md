@@ -465,7 +465,9 @@ docker and wsl transports too.
   (`shellIntegration/` is in every bundle, the trimmed single-file ones included — checked by running the R3 suite against an extracted linux-x64
   bundle) and `term/create` hands the client the shell's nonce, so command lines are trusted as in a local terminal. Tasks run in remote terminals
   (see Tasks).
-* Remote workspace settings apply on the server (language servers, terminals, tasks) but not to client-side editor options.
+* Remote workspace settings apply on the server (language servers, terminals, tasks) but not to client-side editor options, and the Settings page
+  does not edit them: its Workspace tab is off in a remote window (edit the folder's `.vscode/settings.json` in the editor; the server reads it).
+  Likewise the Remote tab's values apply to what runs on the host, not to the client's editor options (VS Code applies both to the window).
 * Find in Files over a remote workspace counts only the files with matches in its "files searched" figure (the server's own count is not passed on).
 * Docker: a container must already run (no image or compose management), and the image needs glibc, OpenSSL, `tar`, `gzip`, `sha256sum` (Microsoft's
   `dotnet/runtime-deps` images have them; `debian:*-slim` lacks libssl). Container names reopen case-insensitively from URIs (see Transports).
