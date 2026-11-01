@@ -254,8 +254,11 @@ then `.vscode/`; VS Code needs its C# extension) has:
 
 `.vscode/tasks.json` also has `build` (the whole solution, the default build task) and `quit sandboxed background sessions` (`--quit --all`
 for `.scratch/debug-home`: background sessions started under that home, for example by running `cscode` in the debugged window's terminal).
-Neither it nor `--quit --all` reaches the debugged window itself, a `--foreground` process: stop it with Shift+F5 (Stop Debugging) or close it. In CsCode the adapter is netcoredbg (it stops in CsCode's own code on an arm64 Mac too); in VS Code it is the C#
-extension's debugger.
+Neither it nor `--quit --all` reaches the debugged window itself, a `--foreground` process: stop it with Shift+F5 (Stop Debugging) or close it.
+In CsCode the adapter is netcoredbg (it stops in CsCode's own code on an arm64 Mac too); in VS Code it is the C# extension's debugger.
+`tests/CsCode.Docs.Tests` presses F5 on **CsCode (sandboxed window)** end to end with the real netcoredbg (the `build app` task, a stop at a
+breakpoint in `Program.RunApp`, the running window, Stop Debugging), on macOS (Avalonia.Native) and on Linux (X11; under `xvfb-run` without a
+display); it skips until `tools/fetch-netcoredbg.sh` has run. VS Code's C# extension is not tested.
 
 **From Rider or Visual Studio**: run the `CsCode.App` project with program arguments `--foreground` (plus any paths) and, for a sandbox, the
 environment variable `CSCODE_HOME=<repo>/.scratch/debug-home`. Without `--foreground` the debugged process is only the launcher, which hands
