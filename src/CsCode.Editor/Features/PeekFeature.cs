@@ -293,24 +293,32 @@ internal sealed class PeekFeature : IThemeAware, IDisposable
             var tv = _v.TextView;
             tv.EnsureVisualLines();
             var top = tv.GetVisualTopByDocumentLine(Anchor.Line);
-            var bottom = top + tv.DefaultLineHeight + Height;
+            var bottom = top + tv.GetOrConstructVisualLine(AnchorLine()).Height; // the line's (wrapped) rows and the zone under them
             var view = tv.ScrollOffset.Y;
             var viewport = tv.Bounds.Height;
-            if (bottom > view + viewport) _v.Editor.ScrollToVerticalOffset(Math.Min(top, bottom - viewport));
-            else if (top < view) _v.Editor.ScrollToVerticalOffset(top);
+            if (bottom > view + viewport) ScrollTo(Math.Min(top, bottom - viewport));
+            else if (top < view) ScrollTo(top);
             Position();
         }
+
+        /// <summary>Scrolls the view to <paramref name="y"/> (TextEditor.ScrollToVerticalOffset is a no-op for absolute positions).</summary>
+        private void ScrollTo(double y) => ((Avalonia.Controls.Primitives.IScrollable)_v.TextArea).Offset = new Vector(_v.TextView.ScrollOffset.X, Math.Max(0, y));
 
         private void OnLayerSized(object? sender, SizeChangedEventArgs e) => Position();
         private void OnViewMoved(object? sender, EventArgs e) => Position();
 
-        /// <summary>Puts the widget in the zone: right under the anchor line's text, across the editor.</summary>
+        /// <summary>
+        /// Puts the widget in the zone: right under the anchor line's text, across the editor. The zone hangs below the line's last row (the
+        /// spacer sits at the line's end), so the widget's top is the visual line's bottom less the zone, whatever rows word wrap made.
+        /// </summary>
         private void Position()
         {
             if (_disposed) return;
             var tv = _v.TextView;
             var layer = _v.WidgetLayer;
-            var y = tv.GetVisualTopByDocumentLine(Anchor.Line) + tv.DefaultLineHeight - tv.ScrollOffset.Y;
+            var top = tv.GetVisualTopByDocumentLine(Anchor.Line);
+            // a visual line only exists while it is in sight, and the zone is part of it: off screen, the one-row estimate puts the widget off screen too
+            var y = (tv.GetVisualLine(Anchor.Line) is { } visual ? visual.VisualTop + visual.Height - Height : top + tv.DefaultLineHeight) - tv.ScrollOffset.Y;
             var origin = tv.TranslatePoint(new Point(0, y), layer) ?? new Point(0, y);
             var right = tv.TranslatePoint(new Point(tv.Bounds.Width, 0), layer)?.X ?? layer.Bounds.Width;
             Canvas.SetLeft(Root, 0);
@@ -318,11 +326,9 @@ internal sealed class PeekFeature : IThemeAware, IDisposable
             Root.Width = Math.Max(120, right);
         }
 
-        private void RedrawAnchorLine()
-        {
-            var line = _v.Editor.Document.GetLineByNumber(Math.Clamp(Anchor.Line, 1, _v.Editor.Document.LineCount));
-            _v.TextView.Redraw(line);
-        }
+        private DocumentLine AnchorLine() => _v.Editor.Document.GetLineByNumber(Math.Clamp(Anchor.Line, 1, _v.Editor.Document.LineCount));
+
+        private void RedrawAnchorLine() => _v.TextView.Redraw(AnchorLine());
 
         /// <summary>An edit in the view: the anchor follows its line; a deleted line closes the peek.</summary>
         private void OnHostChanged()

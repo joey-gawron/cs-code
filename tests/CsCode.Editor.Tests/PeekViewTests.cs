@@ -133,6 +133,37 @@ public class PeekViewTests
     }
 
     [AvaloniaFact]
+    public async Task With_word_wrap_the_widget_sits_under_the_anchor_lines_last_wrapped_row_in_the_reserved_zone()
+    {
+        using var host = ViewHost.Create();
+        var targetUri = new Uri(host.Dir.WriteFile("Target.cs", Target));
+        host.Factory.Services.Features.Register<IDefinitionProvider>(DocumentSelector.All,
+            new FakeDefinitionProvider((_, _, _) => Task.FromResult<IReadOnlyList<LocationLink>?>([Link(targetUri, 20, 11, 18)])));
+        host.Config.Set("editor.wordWrap", "on");
+        var wrapped = "    var total = Compute(1, 2); " + string.Join(" ", Enumerable.Range(0, 60).Select(i => $"word{i}"));
+        var text = string.Join("\n", Enumerable.Range(0, 60).Select(i => i == 20 ? wrapped : $"    // line {i}"));
+        var (_, view, _) = await host.OpenAsync(text, "Program.cs", width: 400, height: 700);
+        ViewHost.Pump();
+        var tv = view.TextView;
+        var lineHeight = tv.DefaultLineHeight;
+        var rowsHeight = tv.GetVisualTopByDocumentLine(22) - tv.GetVisualTopByDocumentLine(21);
+        Assert.True(rowsHeight > lineHeight * 3, $"the anchor line wraps: {rowsHeight} vs {lineHeight}");
+        view.Controller.SetSelection(TextRange.At(20, 18)); // on Compute
+        ViewHost.Pump();
+
+        await OpenPeekAsync(host, view);
+
+        var peek = Peek(view);
+        var zoneTop = tv.GetVisualTopByDocumentLine(21) + rowsHeight; // the zone hangs below the line's last row
+        Assert.InRange(tv.GetVisualTopByDocumentLine(22) - (zoneTop + peek.ZoneHeight), -0.01, 1);
+        // revealed whole, as VS Code does: the line's rows and the zone go past the view's bottom (a one-row estimate of the line would not scroll)
+        await ViewHost.WaitFor(() => zoneTop + peek.ZoneHeight <= tv.ScrollOffset.Y + tv.Bounds.Height + 1, "the zone's bottom in sight", timeoutMs: 3000);
+        ViewHost.Pump();
+        var widgetTop = peek.Widget!.TranslatePoint(default, tv)!.Value.Y + tv.ScrollOffset.Y;
+        Assert.InRange(widgetTop - zoneTop, -2, 2); // whole pixels, scrolled; not one row under the line's top, over its wrapped rows
+    }
+
+    [AvaloniaFact]
     public async Task A_document_open_in_the_shell_is_edited_in_place_in_the_peek_with_its_undo()
     {
         var (host, view, _, targetUri) = await OpenWithDefinitionAsync(targetOpen: true);

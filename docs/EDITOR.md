@@ -405,7 +405,9 @@ References (`NavigationFeature.FindDefinitionsAsync`, `FindReferenceLocationsAsy
   it (AvaloniaEdit 12 honours an inline object's baseline offset and allows zero-length elements). The widget lives on the view's
   `WidgetLayer` (a canvas over the editor whose children take the pointer and the keyboard, unlike `Overlay`, which is not hit-testable) and is
   placed in the zone on every scroll and visual-lines change; edits above move it with its line (a `TextAnchor` at the line's end); deleting
-  the line closes the peek. Height: 40 % of the view, between 8 and 18 lines, plus the title bar; the peek is scrolled into sight when it opens.
+  the line closes the peek. With word wrap the spacer sits on the line's last row, so the widget's top is the visual line's bottom less the
+  zone (not one row under the line's top). Height: 40 % of the view, between 8 and 18 lines, plus the title bar; the peek is scrolled into
+  sight when it opens (the line's rows and the zone; the line's top wins when both do not fit).
 * **The embedded editor** is a full `CodeEditorControl`. When the target's document is open in the shell (`EditorViewFactory.TryGetOpenDocument`,
   or the view's own document) it is a second view of THAT document: edits go straight into it, with its undo and its language features. Otherwise
   it is read-only over the file's text (read through `IFileSystem`, decoded like a file, coloured as its language): a snapshot document that is
@@ -426,7 +428,8 @@ References (`NavigationFeature.FindDefinitionsAsync`, `FindReferenceLocationsAsy
   view closes its peek. Opening and closing a peek leaves nothing reachable (`PeekViewTests`, weak references over four cycles).
 
 Tests: `PeekViewTests` (the zone and the widget's place, the read-only and the in-place editable embedded editor with its undo, the list and
-Enter, the same file, Esc from the view / the embedded editor / a modal layer (`ClosePeek` closes, `CloseInfoPopups` does not), no definition, edits above and deletion of the anchor line, the
+Enter, the same file, Esc from the view / the embedded editor / a modal layer (`ClosePeek` closes, `CloseInfoPopups` does not), the widget
+under a word-wrapped anchor line and its reveal, no definition, edits above and deletion of the anchor line, the
 menu item, lifetime, a screenshot `.scratch/screenshots/editor-peek-definition.png` checked for the border colour), `RealApp/LanguageNavigationTests`
 (Alt+F12 and Vim's Esc in the real app; in the embedded editor `ix<Esc>` and `v<Esc>` keep the peek and Normal mode's Esc closes it), `RealAppContextMenuTests` (the item and its key).
 
