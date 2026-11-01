@@ -23,6 +23,7 @@ public static class ProcessPriority
     /// <summary>The autogroup nice value of a process in the background (0 is normal, 19 the lowest).</summary>
     public const int LinuxBackgroundNice = 10;
 
+    private const int LinuxWriteAttempts = 6;
     private const int PrioDarwinProcess = 4; // <sys/resource.h> PRIO_DARWIN_PROCESS
     private const int PrioDarwinBg = 0x1000; // PRIO_DARWIN_BG
 
@@ -67,8 +68,18 @@ public static class ProcessPriority
             if (OperatingSystem.IsLinux())
             {
                 if (!File.Exists(LinuxAutogroupPath)) return false;
-                File.WriteAllText(LinuxAutogroupPath, background ? LinuxBackgroundNice.ToString(System.Globalization.CultureInfo.InvariantCulture) : "0");
-                return true;
+                var value = background ? LinuxBackgroundNice.ToString(System.Globalization.CultureInfo.InvariantCulture) : "0";
+                // The kernel takes one autogroup change per 100 ms, system-wide (EAGAIN otherwise, e.g. two spares starting together): a few tries,
+                // so a claim never leaves its session in the background.
+                for (var attempt = 0; ; attempt++)
+                {
+                    try
+                    {
+                        File.WriteAllText(LinuxAutogroupPath, value);
+                        return true;
+                    }
+                    catch (IOException) when (attempt < LinuxWriteAttempts - 1) { Thread.Sleep(40); }
+                }
             }
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or IOException or UnauthorizedAccessException) { }
