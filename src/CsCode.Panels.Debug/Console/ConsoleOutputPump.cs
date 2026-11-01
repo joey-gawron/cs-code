@@ -158,11 +158,14 @@ internal sealed class ConsoleOutputPump : IDisposable
     /// Splits events into lines keeping only the newest <paramref name="maxLines"/> (older text is dropped without being split: counting
     /// newlines is cheap, creating a million strings is not). A note line says how many were not shown. Each of the <paramref name="repl"/>
     /// lines (in the order they were entered) goes after the last shown event whose <see cref="DebugOutputEventArgs.Sequence"/> is not greater
-    /// than the one it followed, and never before the line entered before it.
+    /// than the one it followed, and never before the line entered before it. The REPL lines and the note are counted in
+    /// <paramref name="maxLines"/> (the output gets what is left), so a flood never trims the user's line away.
     /// </summary>
     internal List<ConsoleLine> ToLines(List<DebugOutputEventArgs> events, int maxLines, IReadOnlyList<ReplLine>? repl = null)
     {
-        var budget = maxLines;
+        // With REPL lines, room is kept for them and for the note: trimming the batch's head afterwards would take exactly those (a line
+        // whose output was dropped goes at the top, next to the note).
+        var budget = repl is { Count: > 0 } ? Math.Max(0, maxLines - repl.Count - 1) : maxLines;
         long dropped = 0;
         var kept = new List<(DebugOutputEventArgs Event, string Text)>();
         for (var i = events.Count - 1; i >= 0; i--)
@@ -187,7 +190,7 @@ internal sealed class ConsoleOutputPump : IDisposable
         }
         kept.Reverse();
 
-        var lines = new List<ConsoleLine>(maxLines - budget + 1 + (repl?.Count ?? 0));
+        var lines = new List<ConsoleLine>(maxLines + 1);
         if (dropped > 0) lines.Add(new ConsoleLine(NextSequence(), ConsoleLineKind.Info, $"… {dropped:N0} lines of output were not shown (the program wrote faster than the console can display)"));
         if (repl is not { Count: > 0 })
         {
@@ -214,6 +217,7 @@ internal sealed class ConsoleOutputPump : IDisposable
             if (after[i] is { } list)
                 foreach (var r in list) lines.Add(new ConsoleLine(NextSequence(), r.Kind, r.Text));
         }
+        // Only when the REPL lines alone exceed maxLines (a transcript longer than the console): the oldest go.
         if (lines.Count > maxLines) lines.RemoveRange(0, lines.Count - maxLines);
         return lines;
     }

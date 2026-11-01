@@ -140,8 +140,64 @@ public class ConsolePumpTests
         Assert.Contains("> x", texts);
         Assert.Contains("42", texts);
         Assert.True(texts.IndexOf("> x") < texts.IndexOf("42"));
-        // placed after the output it followed: "first" came in the earlier batch, so the echo heads the next one (after the drop note)
+        // placed after the output it followed: "first" came in the earlier batch, so the echo heads the next one (about 1,050 lines: under the
+        // 5,000-line budget, so no "not shown" note; the 4 MB queue bound adds none)
         Assert.True(texts.IndexOf("first") < texts.IndexOf("> x"));
+    }
+
+    [Fact]
+    public async Task A_repl_line_survives_a_flood_of_short_lines_that_overflows_the_line_budget()
+    {
+        // Regression (review): 6,000 short lines (12 KB, far below the 4 MB bound) leave the batch over the 5,000-line budget; the echo, whose
+        // output came in an earlier batch, went at the top next to the "not shown" note and the trim to 5,000 lines removed exactly those.
+        var delivered = new ConcurrentQueue<ConsoleLine>();
+        using var busy = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        using var pump = new ConsoleOutputPump(new ConsoleBuffer(), _ => true, b =>
+        {
+            foreach (var l in b) delivered.Enqueue(l);
+            busy.Set();
+            release.Wait(TimeSpan.FromSeconds(10));
+        });
+        var s = new FakeDebugSession();
+        var first = new DebugOutputEventArgs(s, "stdout", "first\n");
+        pump.Enqueue(first);
+        Assert.True(busy.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+
+        pump.EnqueueRepl(new ReplLine(ConsoleLineKind.Input, "> x", first.Sequence));
+        pump.EnqueueRepl(new ReplLine(ConsoleLineKind.Result, "42", first.Sequence));
+        for (var i = 0; i < 6_000; i++) pump.Enqueue(new DebugOutputEventArgs(s, "stdout", "o\n"));
+        release.Set();
+
+        var sw = Stopwatch.StartNew();
+        while (delivered.Count(l => l.Text == "o") < ConsoleBuffer.DefaultCapacity - 3 && sw.ElapsedMilliseconds < 5_000)
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        var texts = delivered.Select(l => l.Text).ToList();
+        Assert.Contains("> x", texts);
+        Assert.Contains("42", texts);
+        Assert.Contains(texts, t => t.Contains("lines of output were not shown"));
+        Assert.True(texts.IndexOf("first") < texts.IndexOf("> x"));
+        Assert.True(texts.IndexOf("> x") < texts.IndexOf("42"));
+    }
+
+    [Fact]
+    public void The_line_budget_keeps_room_for_the_repl_lines_and_the_note()
+    {
+        using var pump = new ConsoleOutputPump(new ConsoleBuffer(), _ => true, _ => { });
+        var s = new FakeDebugSession();
+        var before = new DebugOutputEventArgs(s, "stdout", "before\n"); // not in this batch: the REPL lines go at the top
+        var flood = new DebugOutputEventArgs(s, "stdout", string.Concat(Enumerable.Range(0, 200).Select(i => "L" + i + "\n")));
+        var lines = pump.ToLines([flood], 100,
+        [
+            new ReplLine(ConsoleLineKind.Input, "> x", before.Sequence),
+            new ReplLine(ConsoleLineKind.Result, "42", before.Sequence),
+        ]);
+        Assert.Equal(100, lines.Count);
+        Assert.Contains("103 lines of output were not shown", lines[0].Text);
+        Assert.Equal(["> x", "42", "L103"], lines.Skip(1).Take(3).Select(l => l.Text));
+        Assert.Equal("L199", lines[^1].Text);
+        GC.KeepAlive(before);
     }
 
     [Fact]
