@@ -79,7 +79,7 @@ public sealed class SourceControlView : UserControl, IDisposable, IToolWindowFoc
         _commit.Bind(ContentProperty, new Avalonia.Data.Binding(nameof(SourceControlViewModel.CommitLabel)));
         _commit.Bind(IsEnabledProperty, new Avalonia.Data.Binding(nameof(SourceControlViewModel.CanCommit)));
         _commit.Click += (_, _) => _ = vm.CommitAsync();
-        ToolTip.SetTip(_commit, "Commit (Ctrl+Enter)");
+        _commit.Bind(ToolTip.TipProperty, new Avalonia.Data.Binding(nameof(SourceControlViewModel.CommitToolTip)));
         _amend = new CheckBox { Content = "Amend", Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center };
         _amend.Bind(Avalonia.Controls.Primitives.ToggleButton.IsCheckedProperty, new Avalonia.Data.Binding(nameof(SourceControlViewModel.Amend)) { Mode = Avalonia.Data.BindingMode.TwoWay });
         var commitRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
