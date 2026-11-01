@@ -38,6 +38,11 @@ public interface IEditorViewFactory
     /// (inactive tabs: destroy the view, keep the document, recreate from the saved state — that is what keeps memory flat).
     /// </summary>
     void DisposeView(Control view);
+
+    // ---- additive members (diff editor; the default keeps other implementations compiling) ----
+
+    /// <summary>A diff editor view for <paramref name="request"/> (disposable; the shell disposes it with its tab), or null when not supported. UI thread.</summary>
+    Control? CreateDiffView(Core.Scm.DiffEditorRequest request) => null;
 }
 
 /// <summary>Imperative handle on one editor view (menu/command/navigation code drives the editor through this).</summary>

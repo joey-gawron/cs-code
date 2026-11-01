@@ -75,7 +75,9 @@ public sealed record DiffSide(string Label, Uri? Uri = null, string? Text = null
 
 /// <summary>
 /// What the diff editor shows. <see cref="Key"/> identifies the tab (opening the same comparison again activates it); <see cref="LanguageHint"/>
-/// is a file name or URI whose language colours both sides. <see cref="RevealLine"/> (0-based, modified side) is scrolled to.
+/// is a file name or URI whose language colours both sides. <see cref="RevealLine"/> (0-based, modified side) is scrolled to. An original with
+/// neither <see cref="DiffSide.Uri"/> nor <see cref="DiffSide.Text"/> means "nothing to compare with": the modified side is shown alone, as a
+/// read-only document (Git: Blame uses this).
 /// </summary>
 public sealed record DiffEditorRequest(DiffSide Original, DiffSide Modified, string Title, string? LanguageHint = null, int? RevealLine = null)
 {

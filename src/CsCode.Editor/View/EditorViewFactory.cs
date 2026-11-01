@@ -169,6 +169,26 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
 
     public IEditorViewController? GetController(Control view) => (view as CodeEditorControl)?.Controller;
 
+    /// <summary>A diff editor over the request's two sides (<see cref="Diff.DiffEditorControl"/>). UI thread.</summary>
+    public Control? CreateDiffView(Core.Scm.DiffEditorRequest request) => new Diff.DiffEditorControl(this, request);
+
+    /// <summary>
+    /// A read-only document over fixed text, NOT registered with the document manager (no language server sees it, no tab owns it): one side of
+    /// a diff. Coloured like a file of <paramref name="languageId"/>. Release it with <see cref="ReleaseSnapshotDocument"/>. UI thread.
+    /// </summary>
+    internal EditorDocument CreateSnapshotDocument(Uri uri, string text, string languageId)
+    {
+        var doc = new EditorDocument(uri, languageId, EditorDocument.CreateBuffer(text, Services.Ui), Services.Ui, undoLimit: 0) { IsReadOnly = true };
+        return doc;
+    }
+
+    internal void ReleaseSnapshotDocument(EditorDocument doc)
+    {
+        lock (_gate)
+            if (_sessions.Remove(doc, out var session)) session.Dispose();
+        doc.Dispose();
+    }
+
     public void DisposeView(Control view)
     {
         if (view is CodeEditorControl v) v.Dispose();
