@@ -8,10 +8,11 @@ using Xunit;
 namespace CsCode.Editor.Tests;
 
 /// <summary>
-/// Steady-state typing allocation on the UI thread. The honest yardstick is a plain, themed AvaloniaEdit <c>TextEditor</c> over a document of the
-/// same size: AvaloniaEdit itself allocates in proportion to the number of lines on every edit (measured below: roughly 90 B per line per
-/// keystroke), which is outside this module's control — so the editor's own overhead is the DIFFERENCE, and that must stay small and independent of
-/// the document's size. The per-feature breakdown is printed so a regression names its culprit.
+/// Steady-state typing allocation on the UI thread. The yardstick is a plain, themed AvaloniaEdit <c>TextEditor</c> over a document of the
+/// same size, so the editor's own overhead is the DIFFERENCE, and that must stay small and independent of the document's size. The bare editor
+/// used to allocate ≈ 90 B per line per keystroke — its theme's watermark binding read the whole text on every edit — until
+/// <see cref="TextAreaWatermarkBinding"/> stopped it (covered by <see cref="TextAreaWatermarkBindingTests"/>); it must not grow with the document
+/// either now. The per-feature breakdown is printed so a regression names its culprit.
 /// </summary>
 public class KeystrokeAllocationTests(ITestOutputHelper output)
 {
@@ -65,13 +66,14 @@ public class KeystrokeAllocationTests(ITestOutputHelper output)
         var plainBig = Plain(6000);
         var oursSmall = await Ours(50);
         var oursBig = await Ours(6000);
-        output.WriteLine($"plain AvaloniaEdit : 50 lines {plainSmall:N0} B/keystroke, 6000 lines {plainBig:N0} B/keystroke  (grows with the document: AvaloniaEdit's own cost)");
+        output.WriteLine($"plain AvaloniaEdit : 50 lines {plainSmall:N0} B/keystroke, 6000 lines {plainBig:N0} B/keystroke");
         output.WriteLine($"CodeEditorControl  : 50 lines {oursSmall:N0} B/keystroke, 6000 lines {oursBig:N0} B/keystroke");
         var overheadSmall = oursSmall - plainSmall;
         var overheadBig = oursBig - plainBig;
         output.WriteLine($"this module's overhead per keystroke: {overheadSmall:N0} B (50 lines), {overheadBig:N0} B (6000 lines)");
         Assert.True(overheadSmall < 300_000, $"overhead {overheadSmall:N0} B per keystroke in a small document");
         Assert.True(overheadBig < overheadSmall + 60_000, $"our overhead must not scale with document size: {overheadSmall:N0} B (50 lines) vs {overheadBig:N0} B (6000 lines)");
+        Assert.True(plainBig < plainSmall + 60_000, $"the bare editor must not allocate per line on every edit: {plainSmall:N0} B (50 lines) vs {plainBig:N0} B (6000 lines)");
     }
 
     [AvaloniaFact]
