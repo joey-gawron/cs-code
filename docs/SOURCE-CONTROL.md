@@ -48,14 +48,26 @@ the context key). Everything is optional: without the module the Explorer shows 
     one-time token, `cscode --askpass`) and `git.useIntegratedAskPass` is on, each operation gets its own helper: `SSH_ASKPASS` +
     `SSH_ASKPASS_REQUIRE=force` (key passphrases, passwords, host-key confirmations) and `GIT_ASKPASS` (HTTPS user names and passwords), answered in
     CsCode's input box / Yes-No message, deleted when the operation ends. Without one, ssh runs with `-o BatchMode=yes` and fails instead of
-    asking. Credential helpers (osxkeychain, libsecret, GCM) and ssh agents work either way.
-  * **No terminal**: git starts in a session of its own (util-linux `setsid --wait` on Linux, else perl's `POSIX::setsid` + exec, the same
-    process), so neither ssh nor a credential helper can open the terminal CsCode was started from (`/dev/tty`); without either program
-    (Windows, a minimal system) the batch mode / askpass above still keeps ssh off the terminal.
+    asking. Credential helpers (osxkeychain, libsecret, GCM) and ssh agents work either way. With the setting on, CsCode's helper replaces the
+    user's own for these operations: `GIT_ASKPASS` beats `core.askPass`, and `SSH_ASKPASS_REQUIRE=force` makes ssh use CsCode's `SSH_ASKPASS`
+    (so e.g. KDE's ksshaskpass is not asked). With `git.useIntegratedAskPass: false` one's own `GIT_ASKPASS` / `core.askPass` answer HTTPS
+    prompts, and ssh gets `BatchMode=yes` unless one's ssh command or ssh configuration sets `BatchMode` (e.g. `BatchMode no`, which lets one's
+    own `SSH_ASKPASS` answer: ssh has no terminal).
+  * **No terminal**: git starts in a session of its own (`setsid` on Linux, util-linux's or busybox's, with no option as busybox's takes none but
+    `-c`; else perl's `POSIX::setsid` + exec), so neither ssh nor a credential helper can open the terminal CsCode was started from (`/dev/tty`);
+    without either program (Windows, a minimal system) the batch mode / askpass above still keeps ssh off the terminal. Either way git is the same
+    process (killing it kills git, its exit code is git's): a child of .NET is never a process-group leader, so `setsid` calls `setsid()` and
+    execs rather than forking, and util-linux's `--wait` (2.29+, and refused by busybox) is not needed.
   * **Timeouts**: ssh gets `-o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4` (a host that does not answer in 30 s, or a link
-    silent for a minute, fails), HTTP transfers slower than 1 KB/s for 60 s are given up (`GIT_HTTP_LOW_SPEED_LIMIT/TIME`, unless the user set
-    `http.lowSpeedLimit/Time`), and the whole operation is stopped after `git.networkTimeout` (1800 s; 0 = no limit) with *"git fetch timed out
-    after 30 min"*. Any operation can be cancelled from its progress notification.
+    silent for a minute, fails), each only when the user's ssh configuration does not set that keyword: options on ssh's command line beat
+    `~/.ssh/config`, so ours are left out when `~/.ssh/config`, `/etc/ssh/ssh_config` (on Windows `%ProgramData%\ssh\ssh_config` and Git for Windows' `etc\ssh\ssh_config`) or a file they `Include` (or the user's ssh command's `-F`
+    file instead) sets it in any `Host`/`Match` block (`GitNetwork.ConfiguredSshKeywords`, read on the git lane before each operation); a
+    `ConnectTimeout 120` there gives 120 s, not 30 (the same goes for `BatchMode`). The scan is per keyword, not per host (`ssh -G` would need the host and costs a process): a keyword set for one host leaves ours out for every host, and such a host's neighbours then rely on `git.networkTimeout` and the OS connect timeout. HTTP transfers get no low-speed limit (as in git and VS Code): curl's
+    `GIT_HTTP_LOW_SPEED_LIMIT/TIME` abort a transfer whose average stays under the limit, and a live server counting or compressing objects
+    without bitmaps, or running a slow pre-receive hook, sends only progress lines and keep-alives (tens of bytes a second) for minutes; the user's
+    own `http.lowSpeedLimit/Time` still apply. The whole operation is stopped after `git.networkTimeout` (1800 s; 0 = no limit, and so is a value
+    above the 49.7 days a timer takes) with *"git fetch timed out after 30 min"*; curl's TCP keep-alive ends a dead HTTPS peer sooner. Any
+    operation can be cancelled from its progress notification.
   * **The user's own ssh command** is kept. `GIT_SSH_COMMAND` or `core.sshCommand` (the last value of all scopes, as git reads it) running `ssh`
     gets the options appended after the user's own (ssh takes an option's first value, so an explicit `-o BatchMode=no` or `ConnectTimeout` of
     the user wins); any other program (a wrapper, plink) and `GIT_SSH` are left exactly as they are.
@@ -202,7 +214,7 @@ Keys (both presets): `ctrl+shift+g` → `workbench.view.scm` (mac `ctrl+shift+g`
 
 Settings (registered by `GitService`, `GitSettings.Properties`): `git.enabled` (true), `git.path` (null, machine scope), `git.autorefresh` (true),
 `git.decorations.enabled` (true), `git.blame.editorDecoration.enabled` (false), `git.confirmSync` (true), `git.enableSmartCommit` (false),
-`git.useIntegratedAskPass` (true), `git.networkTimeout` (1800 seconds, 0 = none),
+`git.useIntegratedAskPass` (true), `git.networkTimeout` (1800 seconds, 0 or above 49.7 days = none),
 `scm.diffDecorations` ("all" | "none"), `diffEditor.renderSideBySide` (true), `diffEditor.ignoreTrimWhitespace` (true). The editor reads the last
 three as nullable, so it keeps VS Code's defaults when the git module is absent.
 
@@ -227,9 +239,11 @@ immutable and replaced wholesale.
   initial repository; branches; push/pull/fetch with ahead/behind against a local bare remote; network errors; quick-diff original and its change
   event; hunk staging and unstaging; blame; the real file watcher refreshing status and history; coalescing; remote folders; missing git; disabling.
 * `tests/CsCode.Panels.Git.Tests/NetworkTests.cs`: the network environment (batch mode without askpass, the askpass variables with it, the
-  user's ssh command appended to or left alone, the user's HTTP stall limits kept), and real git against a fake ssh (`core.sshCommand`, a script
-  that records what it got): batch mode, an askpass answer reaching ssh and the helper ended afterwards, the setting turning askpass off, git in
-  a process group (session) of its own, a hanging operation stopped at `git.networkTimeout`. `tests/CsCode.Remote.Tests` checks `AskpassService`.
+  user's ssh command appended to or left alone, no HTTP low-speed limit, ssh options the user's ssh configuration sets (`Include`d files, `-F`)
+  left out), `setsid` (busybox's applet and util-linux's, on Linux) giving a new session and the exit code of what it runs, and real git against
+  a fake ssh (`core.sshCommand` with `-F /dev/null`, a script that records what it got): batch mode, an askpass answer reaching ssh and the
+  helper ended afterwards, the setting turning askpass off, git in a process group (session) of its own, a hanging operation stopped at
+  `git.networkTimeout`, a `git.networkTimeout` beyond what a timer takes meaning no limit. `tests/CsCode.Remote.Tests` checks `AskpassService`.
 * `tests/CsCode.Panels.Git.Tests/SourceControlWindowTests.cs` (headless): rows and stage/unstage, Ctrl/Cmd+Enter commit, Commit All prompt,
   discard confirmation, the versions each Open Changes compares, Enter/Space on rows, status bar items, command registration and error surfacing,
   branch create/switch, Select for Compare, Compare with Saved, Git: Blame, the remote message, view-model disposal.
