@@ -397,7 +397,7 @@ to it, whatever the SDK bundles: a newer SDK cannot quietly restore newer, unche
 
 `tools/install.sh` installs the published app for the current user (no sudo, nothing outside `$HOME`; README.md, "Install"). Without `--from DIR`
 it builds everything first: the tree-sitter grammars (`tools/treesitter/fetch-grammars.sh --offline`, then `build-grammars.sh`: the pinned sources
-must already be downloaded), the publish above, and the remote server bundles (`tools/publish-server.sh`: linux-x64 + portable). On a machine
+must already be downloaded), the publish above, and the remote server bundles (`tools/publish-server.sh`: linux-x64/arm64, osx-arm64/x64 + portable). On a machine
 other than x86_64 (aarch64: linux-arm64) the publish would be unpinned, which publish-app.sh refuses unless told: install.sh refuses at once,
 before any work, unless it gets `--unpinned` (handed on to publish-app.sh; the summary and `.cscode-install/info` say so) or `--from DIR`.
 On x86_64, or with `--from`, `--unpinned` has no effect: install.sh warns and neither hands it on nor records it (linux-x64's publish is the

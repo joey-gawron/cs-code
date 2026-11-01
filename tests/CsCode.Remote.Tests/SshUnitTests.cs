@@ -203,6 +203,19 @@ public class InstallerDecisionTests
     }
 
     [Fact]
+    public void A_missing_bundle_for_a_supported_platform_says_which_bundles_there_are_and_how_to_build_the_missing_one()
+    {
+        // Found on a real aarch64 VM: bundles built with the old linux-x64-only default refused it with no way forward.
+        var arm = InstallDecision.Decide(new RemoteProbe("Linux", "aarch64", null, null, []), Bundles(Sc, Fd));
+        Assert.Equal(InstallAction.Unsupported, arm.Action);
+        Assert.Contains("The bundles in /bundles are for linux-x64", arm.Reason);
+        Assert.Contains("tools/publish-server.sh --rid linux-arm64", arm.Reason);
+        Assert.Contains("remote.ssh.serverBundles", arm.Reason);
+        Assert.Contains("tools/publish-server.sh --rid osx-arm64", InstallDecision.Decide(new RemoteProbe("Darwin", "arm64", null, null, []), Bundles(Sc)).Reason);
+        Assert.DoesNotContain("publish-server.sh --rid", InstallDecision.Decide(new RemoteProbe("SunOS", "i86pc", null, null, []), Bundles(Sc)).Reason); // nothing to build
+    }
+
+    [Fact]
     public void Manifests_round_trip_and_bad_hashes_are_rejected()
     {
         using var dir = new TempDirectory("cscode-manifest-");

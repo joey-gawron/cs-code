@@ -21,7 +21,7 @@
 #   --tree-sitter DIR      the tree-sitter bundle to ship (a folder with bundle.json); default: the one the publish carries, after
 #                          tools/treesitter/build-grammars.sh built it offline from the pinned sources
 #   --no-tree-sitter       ship no tree-sitter bundle (TextMate colours every language that has a TextMate grammar)
-#   --server-bundles DIR   the remote server bundles to ship (tools/publish-server.sh's output); default: built now (linux-x64 + portable)
+#   --server-bundles DIR   the remote server bundles to ship (tools/publish-server.sh's output); default: built now (linux-x64/arm64, osx-arm64/x64 + portable)
 #   --no-server-bundles    ship none (remote editing then needs remote.ssh.serverBundles)
 #   --no-refresh           do not refresh the desktop's caches (update-desktop-database, kbuildsycoca6, gtk-update-icon-cache); for tests
 #

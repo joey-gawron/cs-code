@@ -11,7 +11,7 @@
 #   --rid               a macOS runtime to package (repeatable; default: this Mac's, osx-arm64 on Apple silicon). Each goes to <out>/<rid>/CsCode.app.
 #   --from DIR          bundle this existing osx publish instead of publishing (one --rid only)
 #   --out DIR           output directory (default: .scratch/macos)
-#   --server-bundles DIR  ship these remote server bundles (tools/publish-server.sh's output); default: built now (linux-x64 + portable)
+#   --server-bundles DIR  ship these remote server bundles (tools/publish-server.sh's output); default: built now (linux-x64/arm64, osx-arm64/x64 + portable)
 #   --no-server-bundles ship none (remote editing then needs remote.ssh.serverBundles)
 #   --netcoredbg PATH   netcoredbg to bundle: its executable or its folder (default: $CSCODE_NETCOREDBG, else the shared cache's
 #                       .scratch/tools/netcoredbg, fetched there now by tools/fetch-netcoredbg.sh when missing)

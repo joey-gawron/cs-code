@@ -155,8 +155,20 @@ public static class InstallDecision
             if (probe.DotnetRuntimes.Any(v => v.Major == need.Major && v >= need))
                 return new InstallPlan(InstallAction.Upload, fd, $"framework-dependent bundle on the remote's .NET {probe.DotnetRuntimes.Where(v => v.Major == need.Major).Max()}");
             return new InstallPlan(InstallAction.Unsupported, null,
-                $"No server bundle for {probe.Os}/{probe.Arch}{(probe.Rid is null ? " (unsupported platform)" : $" ({probe.Rid})")} and the remote has no .NET {need.Major} runtime for the portable one.");
+                $"No server bundle for {probe.Os}/{probe.Arch}{(probe.Rid is null ? " (unsupported platform)" : $" ({probe.Rid})")} and the remote has no .NET {need.Major} runtime for the portable one.{Remedy(probe, bundles)}");
         }
-        return new InstallPlan(InstallAction.Unsupported, null, $"No server bundle for {probe.Os}/{probe.Arch}{(probe.Rid is null ? " (unsupported platform)" : $" ({probe.Rid})")}.");
+        return new InstallPlan(InstallAction.Unsupported, null, $"No server bundle for {probe.Os}/{probe.Arch}{(probe.Rid is null ? " (unsupported platform)" : $" ({probe.Rid})")}.{Remedy(probe, bundles)}");
+    }
+
+    /// <summary>
+    /// What to do about a missing bundle for a platform the server supports: which bundles there are, and the command that builds the missing one
+    /// (found on a real arm64 VM: bundles built with the old linux-x64-only default left it "unsupported" with no way forward in the message).
+    /// </summary>
+    private static string Remedy(RemoteProbe probe, ServerBundleSet bundles)
+    {
+        if (probe.Rid is not { } rid || rid is "linux-arm" or "freebsd-x64") return "";
+        var have = string.Join(", ", bundles.Bundles.Where(b => b.Flavour == BundleFlavour.SelfContained).Select(b => b.Rid).Order(StringComparer.Ordinal));
+        return $" The bundles in {bundles.Directory} are for {(have.Length == 0 ? "no self-contained platform" : have)}: build the {rid} one with "
+            + $"tools/publish-server.sh --rid {rid} (or the default set, which includes it), or point remote.ssh.serverBundles at a directory that has it.";
     }
 }

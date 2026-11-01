@@ -308,7 +308,10 @@ case-insensitively. Docker container names are case-sensitive: use lower-case na
 
 ## Server bundles
 
-`tools/publish-server.sh --all` builds self-contained single-file bundles for **linux-x64, linux-arm64, osx-x64, osx-arm64 and win-x64** plus the portable
+`tools/publish-server.sh` (no `--rid`) builds the four platforms the client bootstraps — **linux-x64, linux-arm64, osx-arm64, osx-x64** — plus the
+portable bundle (remote-10, the macOS audit's unmerged-14: the default used to be linux-x64 alone, so an aarch64 VM, a Raspberry Pi or a Mac remote
+was refused unless it had a .NET 10 runtime on its PATH; found on a real arm64 VM). `--rid` builds only the named ones; a refusal for a
+supported platform names the bundles there are and the `--rid` that builds the missing one. `tools/publish-server.sh --all` builds self-contained single-file bundles for **linux-x64, linux-arm64, osx-x64, osx-arm64 and win-x64** plus the portable
 (framework-dependent) one, into `.scratch/server-bundles/` with `manifest.json` (flavour, rid, file, sha256, install hash = first 16 hex digits of the
 sha256). The runtime, apphost and targeting packs come **from NuGet only** (`NetCoreTargetingPackRoot` pointed at an empty directory): a distribution's
 SDK may patch its bundled packs for itself — the Nix SDK's linux-x64 apphost had the ELF loader `/nix/store/…-glibc/lib/ld-linux-x86-64.so.2`, so that
@@ -359,7 +362,8 @@ connection (server and ssh stopped).
 
 ## Setup and settings
 
-1. Build the bundles once: `bash .scratch/notes/with-nix-env.sh tools/publish-server.sh` (or with a normal `dotnet`: `tools/publish-server.sh`).
+1. Build the bundles once: `bash .scratch/notes/with-nix-env.sh tools/publish-server.sh` (or with a normal `dotnet`: `tools/publish-server.sh`; Linux
+   x64/arm64 and macOS arm64/x64 + portable, about a minute; `--rid linux-arm64` for just one).
 2. Make sure `ssh <host>` works non-interactively or with prompts (keys, agent, ~/.ssh/config). The remote needs a POSIX login shell, `tar`, `gzip`,
    `sha256sum` or `shasum`, OpenSSL (libssl) and glibc on Linux x64/arm64 or macOS x64/arm64 (or any OS with a .NET 10 runtime for the portable bundle).
 3. *File ▸ Open Remote Folder…* or the status-bar remote button.
