@@ -182,8 +182,8 @@ Later entries win; `{"command":"-foo"}` removes **earlier** entries of that comm
   Visual Studio preset: F5 start / continue (when `inDebugMode`), Ctrl+F5 run, Shift+F5 stop, Ctrl+Shift+F5 restart, F9 breakpoint, F10/F11/Shift+F11 step, F12 definition, Shift+F12 references,
   Ctrl+F12 implementation, F2 and Ctrl+R Ctrl+R rename, Ctrl+K Ctrl+D format document, Ctrl+K Ctrl+C/U comment/uncomment, Ctrl+/ toggle comment, Ctrl+. quick fix, Ctrl+Space / Ctrl+Shift+Space suggest / parameter hints,
   Ctrl+Q and Ctrl+Shift+P palette (Quick Launch opens the palette), Ctrl+T and Ctrl+, go to all, Ctrl+P quick open, Ctrl+Shift+F find in files, Ctrl+F / Ctrl+H / Ctrl+G, Ctrl+S / Ctrl+Shift+S (save all),
-  Ctrl+Tab MRU, Ctrl+F4 close, Ctrl+Alt+L explorer, Ctrl+Alt+O output, Ctrl+\ Ctrl+E error list, Ctrl+\` terminal, Alt+Up/Down move lines, Ctrl+D duplicate, Ctrl+L delete line, folding chords.
-  VS Code preset: the VS Code defaults for the same feature set (e.g. Shift+Alt+F format — Ctrl+Shift+I on Linux, Ctrl+Shift+K delete line, Ctrl+Shift+E/U/M views, Ctrl+K S save all).
+  Ctrl+Tab MRU, Ctrl+F4 close, Ctrl+Alt+L explorer, Ctrl+Alt+O output, Ctrl+\ Ctrl+E error list, Ctrl+\` terminal, Alt+Up/Down move lines, Ctrl+D duplicate, Ctrl+L delete line, folding chords, multi-caret Shift+Alt+. / Shift+Alt+; / Ctrl+Alt+Up/Down / Ctrl+U (docs/EDITOR.md §7b).
+  VS Code preset: the VS Code defaults for the same feature set (e.g. Shift+Alt+F format — Ctrl+Shift+I on Linux, Ctrl+Shift+K delete line, Ctrl+Shift+E/U/M views, Ctrl+K S save all, Ctrl+D / Ctrl+K Ctrl+D / Ctrl+Shift+L / Ctrl+Alt+Up/Down / Ctrl+U multi-cursor).
   Both presets: Vim's window commands with Vim off, only while an editor has the keyboard (`editorTextFocus && !vim.active`; the terminal keeps Ctrl+W, and with Vim on
   the engine's own Ctrl-W does the same through the shell): Ctrl+W then `v` split right, `s`/`S` split down, `h`/`j`/`k`/`l` focus the group left / below / above / right,
   `w` next group (wraps), `W`/`p` previous group, `o` close the editors of the other groups (`:only`), `c`/`q` close the editor (with the save prompt), `n` a new untitled editor

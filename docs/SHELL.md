@@ -267,7 +267,7 @@ focused editor with Vim on, never the second key of a pending chord, and decides
 Normal/Visual mode; `Ctrl+Shift+…`, `Alt+…`, F-keys, `Ctrl+S` and the other application keys keep working; `vim.handleKeys` overrides per key).
 What it passes through reaches the pipeline and the editor as before. A binding whose command **no module registered** (`ICommandService.Has`) counts as absent: the presets bind ids of modules that may not be composed
 (F3 `editor.action.nextMatchFindAction`, Ctrl+] `jumpToBracket`, Alt+F12 `peekDefinition`, Ctrl+\` terminal...), so a registered lower-precedence binding of the same keys runs instead, else the key
-reaches the focused control (F3 gets to the editor's own find); a chord prefix whose every continuation is unregistered is not a chord. Context keys (`ContextKeyTracker`): `editorTextFocus`, `editorHasSelection`, `editorReadonly`, `editorLangId`, `resourceExtname`, `resourceFilename`,
+reaches the focused control (F3 gets to the editor's own find); a chord prefix whose every continuation is unregistered is not a chord. Context keys (`ContextKeyTracker`): `editorTextFocus`, `editorHasSelection`, `editorHasMultipleSelections` (multi-cursor, docs/EDITOR.md §7b), `editorReadonly`, `editorLangId`, `resourceExtname`, `resourceFilename`,
 `resourceScheme`, `explorerViewletFocus`, `listFocus`, `panelFocus`, `inputFocus`, `terminalFocus`, `inDebugMode`, `debugState`, `isMac/isLinux/isWindows`, `workspaceFolderCount`, `hasOpenEditors`,
 `activeEditorIsDirty`, `quickInputVisible`. Focus areas come from the `ShellFocus.Area` attached property on the tabs' view hosts (a focused
 `TerminalControl` is the terminal area; its window's find box and buttons are the panel). The main window follows `GotFocus` with handled events
