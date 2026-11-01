@@ -20,7 +20,6 @@ public interface IRemoteParticipant
     void OnDisconnected();
 }
 
-/// <summary>Reconnect delays: exponential (0.5 s doubling, capped at 30 s) with ±20 % jitter, then give up.</summary>
 /// <summary>
 /// The connected session's liveness check (<see cref="RemoteClient.Heartbeat"/>): <c>$/ping</c> after <paramref name="Interval"/> without a message
 /// from the server, the connection treated as lost after <paramref name="DeadAfter"/> without one (any message counts: a long transfer keeps it alive).
@@ -31,6 +30,7 @@ public sealed record HeartbeatPolicy(TimeSpan Interval, TimeSpan DeadAfter)
     public static readonly HeartbeatPolicy Default = new(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(60));
 }
 
+/// <summary>Reconnect delays: exponential (0.5 s doubling, capped at 30 s) with ±20 % jitter, then give up.</summary>
 public sealed class ReconnectPolicy(int maxAttempts = 8, Func<double>? random = null)
 {
     private readonly Func<double> _random = random ?? Random.Shared.NextDouble;
