@@ -50,6 +50,7 @@ public sealed class RepositoryDebugSetupTests : IAsyncLifetime
     public async ValueTask DisposeAsync()
     {
         await _configurations.DisposeAsync();
+        _tasks.Dispose(); // kills a preLaunchTask (the build F5 runs) a failed or cancelled test left running
         _lane.Dispose();
         _io.Dispose();
     }
