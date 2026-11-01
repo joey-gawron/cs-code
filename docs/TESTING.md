@@ -54,7 +54,10 @@ Linux install; GDB comes from the system).
   TUnit, `IsTestProject`) is **evaluated** with `dotnet msbuild <proj> -getProperty:IsTestProject -getProperty:TargetPath
   -getProperty:TargetFramework -getProperty:TargetFrameworks -getItem:PackageReference` (no build; about 0.2 s each with the build server
   warm, four at a time). `IsTestProject=true` makes it a test project; an `xunit.v3` (or `xunit.v3.core*`) reference makes it **xUnit v3**,
-  anything else **VSTest**. A multi-targeted project uses its first target framework (`-f`).
+  anything else **VSTest**. A project with `<TargetFrameworks>` (several, or a single entry) uses its first target framework: it is built
+  and run with `-f <tfm>`, and since MSBuild's outer (cross-targeting) evaluation has an empty `TargetPath`, an xUnit v3 project is
+  evaluated once more with `-p:TargetFramework=<tfm> -getProperty:TargetPath` for the assembly to run or debug (`bin/Debug/<tfm>/X.dll`).
+  A project still without a `TargetPath` reports that instead of starting a runner with no assembly.
 * **Discovery** is a scan of the project's C# files (`CSharpTestScanner`; nested projects and `bin`/`obj` excluded): methods with an xUnit
   (`[Fact]`, `[Theory]`, every `*Fact`/`*Theory` such as `[AvaloniaFact]`), NUnit (`[Test]`, `[TestCase]`, `[TestCaseSource]`) or MSTest
   (`[TestMethod]`, `[DataTestMethod]`) attribute, with their namespace (block or file-scoped), class (nested classes joined with `+`, as the
