@@ -3,6 +3,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.LogicalTree;
 using Avalonia.VisualTree;
 using AvaloniaEdit.Folding;
+using CsCode.Core.Text;
 using CsCode.Editor.Features;
 using CsCode.Editor.Tests.Support;
 using Xunit;
@@ -80,5 +81,56 @@ public class FoldingMarginLeakTests
         host.Factory.DisposeView(view);
         Assert.DoesNotContain(area.LeftMargins, m => m is FoldingMargin);
         Assert.Null(margin.FoldingManager);
+    }
+
+    [AvaloniaFact]
+    public async Task Typing_keeps_the_markers_unless_the_folds_on_screen_change()
+    {
+        using var host = ViewHost.Create();
+        var (_, view, _) = await host.OpenAsync(Blocks(400), "a.txt");
+        var folding = view.Feature<FoldingFeature>()!;
+        await ViewHost.WaitFor(() => folding.RangeCount >= 99, "indentation folds");
+        var margin = (FoldingFeature.DetachingFoldingMargin)folding.Margin;
+        view.Controller.SetSelection(TextRange.At(41, 8)); // inside a block, on a line that starts no fold
+        ViewHost.Pump();
+        var markers = margin.GetVisualChildren().ToList();
+        Assert.True(markers.Count > 5, $"markers on screen: {markers.Count}");
+        var keptBefore = margin.Kept;
+        for (var i = 0; i < 10; i++)
+        {
+            view.TextArea.PerformTextInput("x");
+            ViewHost.Pump();
+        }
+        Assert.True(margin.Kept - keptBefore >= 10, $"kept {margin.Kept - keptBefore} times in 10 keystrokes");
+        Assert.Equal(markers, margin.GetVisualChildren().ToList()); // the same marker controls, not new ones
+
+        // a keystroke on a line that starts a fold rebuilds them (that line's visual line is new)
+        view.Controller.SetSelection(TextRange.At(40, 5));
+        view.TextArea.PerformTextInput("y");
+        ViewHost.Pump();
+        Assert.NotEqual(markers, margin.GetVisualChildren().ToList());
+        Assert.All(margin.GetVisualChildren(), m => Assert.Same(margin, ((ILogical)m).LogicalParent));
+
+        // folding a block on screen changes the markers too: one fewer line, and the folded one shows collapsed
+        markers = margin.GetVisualChildren().ToList();
+        view.Controller.SetSelection(TextRange.At(44, 0));
+        folding.Fold();
+        ViewHost.Pump();
+        Assert.NotEqual(markers, margin.GetVisualChildren().ToList());
+        Assert.Contains(44, folding.FoldedStartLines);
+
+        // Enter below the folds moves lines down: the kept markers follow their lines (arranged again), and the next layout still matches
+        view.Controller.SetSelection(TextRange.At(42, 4));
+        ViewHost.Pump();
+        var tops = margin.GetVisualChildren().ToDictionary(m => m, m => m.Bounds.Y);
+        view.TextArea.PerformTextInput("\n");
+        ViewHost.Pump();
+        var lineHeight = view.TextView.VisualLines[0].Height;
+        var kept = margin.GetVisualChildren().Where(tops.ContainsKey).ToList();
+        var moved = kept.Count(m => Math.Abs(m.Bounds.Y - tops[m] - lineHeight) < 1.5);
+        Assert.True(moved >= 1, $"{moved} kept markers moved down one line with their lines");
+        Assert.All(kept, m => Assert.True(Math.Abs(m.Bounds.Y - tops[m]) < 1.5 || Math.Abs(m.Bounds.Y - tops[m] - lineHeight) < 1.5, $"a marker above the new line stays, one below moves one line: {tops[m]} -> {m.Bounds.Y}"));
+        foreach (var marker in margin.GetVisualChildren())
+            Assert.True(marker.Bounds.Height > 0 && ((Avalonia.Layout.Layoutable)marker).IsArrangeValid, "every marker is arranged");
     }
 }

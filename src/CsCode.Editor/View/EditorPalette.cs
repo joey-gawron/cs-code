@@ -18,6 +18,7 @@ internal static class EditorStyles
 
     public static void Ensure()
     {
+        TextAreaWatermarkBinding.Ensure(); // before any text area exists: its theme would read the whole document on every change
         var app = Application.Current;
         if (app is null || Applied.TryGetValue(app, out _)) return;
         Applied.Add(app, new object());
