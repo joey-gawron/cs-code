@@ -237,10 +237,15 @@ public sealed class SourceControlViewModel : INotifyPropertyChanged, IDisposable
 
     public Task RefreshAsync() => _repository?.RefreshAsync(historyChanged: true) ?? Task.CompletedTask;
 
-    /// <summary>Runs one of the module's commands (pull, push, fetch, sync, checkout, create branch): they pick this window's repository.</summary>
+    /// <summary>
+    /// Runs one of the module's commands (pull, push, fetch, sync, checkout, create branch) on this window's repository: its root goes as the
+    /// command's argument, so they do not act on the active document's repository while the window shows another one.
+    /// </summary>
     public async Task RunCommandAsync(string id)
     {
-        if (_host.Commands is { } commands) await commands.ExecuteAsync(id).ConfigureAwait(true);
+        if (_host.Commands is not { } commands) return;
+        if (_repository is { } r) await commands.ExecuteAsync(id, r.Root).ConfigureAwait(true);
+        else await commands.ExecuteAsync(id).ConfigureAwait(true);
     }
 
     private Task Run(Func<GitRepository, Task> op) => _repository is { } r ? _host.Guard(() => op(r)) : Task.CompletedTask;

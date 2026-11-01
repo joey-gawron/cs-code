@@ -49,13 +49,30 @@ public sealed class SourceControlWindowTests
         }
     }
 
-    private static async Task<Harness> CreateAsync()
+    /// <summary>A repository as the workspace folder, or (<paramref name="twoRepositories"/>) a plain folder holding the repositories one and two.</summary>
+    private static async Task<Harness> CreateAsync(bool twoRepositories = false)
     {
         Assert.SkipUnless(TestRepo.GitAvailable, "git is not installed");
-        var repo = new TestRepo();
-        repo.Write("a.txt", "one\ntwo\n");
-        repo.Write("b.txt", "b\n");
-        repo.Commit("initial");
+        var repo = new TestRepo(init: !twoRepositories);
+        if (twoRepositories)
+        {
+            foreach (var name in new[] { "one", "two" })
+            {
+                var dir = repo.Path(name);
+                Directory.CreateDirectory(dir);
+                TestRepo.RunGit(dir, "init", "-q", "-b", "main");
+                TestRepo.Configure(dir);
+                repo.Write(name + "/a.txt", "a\n");
+                TestRepo.RunGit(dir, "add", "-A");
+                TestRepo.RunGit(dir, "commit", "-q", "-m", "initial");
+            }
+        }
+        else
+        {
+            repo.Write("a.txt", "one\ntwo\n");
+            repo.Write("b.txt", "b\n");
+            repo.Commit("initial");
+        }
         var ws = new TestWorkspace(false, repo.Uri);
         var window = new RecordingWindowService();
         var diffs = new RecordingDiffs();
@@ -306,6 +323,35 @@ public sealed class SourceControlWindowTests
         h.Window.QuickPickResponses.Enqueue(2);
         await h.Commands.ExecuteAsync(GitHost.Checkout);
         Assert.Equal("main", h.Repository.Status.Branch.Head);
+    }
+
+    [AvaloniaFact]
+    public async Task The_windows_header_commands_act_on_the_repository_it_shows_not_the_active_documents()
+    {
+        using var h = await CreateAsync(twoRepositories: true);
+        var one = h.Git.Repositories.Single(r => r.Name == "one");
+        var two = h.Git.Repositories.Single(r => r.Name == "two");
+        h.Navigation.ActiveDocument = new EditorDocumentAdapter(new InMemoryTextDocument(one.ToUri("a.txt"), "plaintext", "a\n"));
+        var (view, window) = Show(h);
+        var vm = (SourceControlViewModel)view.DataContext!;
+        vm.Repository = two;
+        Pump();
+
+        h.Window.InputResponses.Enqueue("feature/two");
+        await vm.RunCommandAsync(GitHost.Branch);
+        Assert.Equal("feature/two", two.Status.Branch.Head);
+        Assert.Equal("main", one.Status.Branch.Head);
+        // Checkout from the window: item 0 is "create new branch", then feature/two, main
+        h.Window.QuickPickResponses.Enqueue(2);
+        await vm.RunCommandAsync(GitHost.Checkout);
+        Assert.Equal("main", two.Status.Branch.Head);
+
+        // the command run from elsewhere (palette, status bar) still acts on the active document's repository
+        h.Window.InputResponses.Enqueue("feature/one");
+        await h.Commands.ExecuteAsync(GitHost.Branch);
+        Assert.Equal("feature/one", one.Status.Branch.Head);
+        Assert.Equal("main", two.Status.Branch.Head);
+        window.Close();
     }
 
     [AvaloniaFact]

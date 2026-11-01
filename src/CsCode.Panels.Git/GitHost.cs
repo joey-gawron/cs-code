@@ -176,9 +176,9 @@ public sealed class GitHost : IDisposable
         Reg(Refresh, "Refresh", _ => Git.RefreshAllAsync());
         Reg(Commit, "Commit", _ => CommitFromBoxAsync(amend: false));
         Reg(CommitAmend, "Commit (Amend)", _ => CommitFromBoxAsync(amend: true));
-        Reg(StageAll, "Stage All Changes", _ => WithRepo(r => r.StageAllAsync()));
-        Reg(UnstageAll, "Unstage All Changes", _ => WithRepo(r => r.UnstageAllAsync()));
-        Reg(CleanAll, "Discard All Changes", _ => WithRepo(r => DiscardAsync(r, [.. r.Status.Unstaged])));
+        Reg(StageAll, "Stage All Changes", inv => WithRepo(inv, r => r.StageAllAsync()));
+        Reg(UnstageAll, "Unstage All Changes", inv => WithRepo(inv, r => r.UnstageAllAsync()));
+        Reg(CleanAll, "Discard All Changes", inv => WithRepo(inv, r => DiscardAsync(r, [.. r.Status.Unstaged])));
         Reg(Stage, "Stage Changes", inv => OnFiles(inv, (r, paths) => r.StageAsync(paths)));
         Reg(Unstage, "Unstage Changes", inv => OnFiles(inv, (r, paths) => r.UnstageAsync(paths)));
         Reg(Clean, "Discard Changes", inv => OnFiles(inv, (r, paths) => DiscardAsync(r, [.. r.Status.Entries.Where(e => paths.Contains(e.Path) && e.IsUnstaged)])));
@@ -191,12 +191,12 @@ public sealed class GitHost : IDisposable
         {
             foreach (var p in paths.Take(10)) if (Navigation is not null) await Navigation.OpenAsync(r.ToUri(p)).ConfigureAwait(false);
         }));
-        Reg(Checkout, "Checkout to...", _ => WithRepo(CheckoutAsync));
-        Reg(Branch, "Create Branch...", _ => WithRepo(CreateBranchAsync));
-        Reg(Pull, "Pull", _ => WithRepo(r => NetworkAsync(r, "Pulling", ct => r.PullAsync(ct))));
-        Reg(Push, "Push", _ => WithRepo(PushAsync));
-        Reg(Fetch, "Fetch", _ => WithRepo(r => NetworkAsync(r, "Fetching", ct => r.FetchAsync(ct))));
-        Reg(Sync, "Sync", _ => WithRepo(SyncAsync));
+        Reg(Checkout, "Checkout to...", inv => WithRepo(inv, CheckoutAsync));
+        Reg(Branch, "Create Branch...", inv => WithRepo(inv, CreateBranchAsync));
+        Reg(Pull, "Pull", inv => WithRepo(inv, r => NetworkAsync(r, "Pulling", ct => r.PullAsync(ct))));
+        Reg(Push, "Push", inv => WithRepo(inv, PushAsync));
+        Reg(Fetch, "Fetch", inv => WithRepo(inv, r => NetworkAsync(r, "Fetching", ct => r.FetchAsync(ct))));
+        Reg(Sync, "Sync", inv => WithRepo(inv, SyncAsync));
         Reg(Blame, "Blame (Show File Annotations)", _ => BlameActiveFileAsync());
         Reg(ToggleBlame, "Toggle Inline Blame", async _ =>
         {
@@ -217,10 +217,15 @@ public sealed class GitHost : IDisposable
         return s is not null && Uri.TryCreate(s, UriKind.Absolute, out var parsed) ? parsed : null;
     }
 
-    private async Task WithRepo(Func<GitRepository, Task> run)
+    /// <summary>
+    /// Runs a repository command on the repository named by its first argument (a repository root, as the Source Control window passes its
+    /// own), else on <see cref="ActiveRepository"/>.
+    /// </summary>
+    private async Task WithRepo(CommandInvocation inv, Func<GitRepository, Task> run)
     {
         await Git.Initialization.ConfigureAwait(false);
-        var repo = ActiveRepository();
+        var root = inv.Args.Count > 0 ? inv.Args[0] as string : null;
+        var repo = (root is null ? null : Git.Repositories.FirstOrDefault(r => string.Equals(r.Root, root, StringComparison.Ordinal))) ?? ActiveRepository();
         if (repo is null)
         {
             await Info(Git.Unavailable ?? "There is no git repository in the workspace.").ConfigureAwait(false);

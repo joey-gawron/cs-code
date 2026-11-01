@@ -73,7 +73,8 @@ Visual Studio's Git Changes / VS Code's Source Control view in one:
 
 * Header: branch button (switch/create), Fetch, Pull, Push, Refresh, `…` (Commit, Commit (Amend), Pull, Push, Fetch, Sync, Checkout to...,
   Create Branch..., Stage/Unstage/Discard All, Show Git Output). A repository picker appears when the workspace has more than one; the window
-  follows the active editor's repository.
+  follows the active editor's repository. The header's commands act on the repository the window shows (it passes that repository's root as the
+  command argument); run from the palette or the status bar they act on the active editor's repository.
 * Commit box (placeholder `Message (Ctrl+Enter to commit on 'main')`), **Commit** (Ctrl/Cmd+Enter in the box, also bound in the keymaps as
   `git.commit` when `scmInputFocus`), **Amend** (fills the box with the last message; an empty message amends with `--no-edit`). With nothing staged
   the button says **Commit All** and asks *"There are no staged changes to commit. Stage all your changes and commit them directly?"* (Yes /
