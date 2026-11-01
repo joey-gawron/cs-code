@@ -32,7 +32,7 @@ public static class TestingSettings
             """{"type":"string","enum":["run","debug","contextMenu"],"enumDescriptions":["Run the test.","Debug the test.","Open the menu of test actions."]}"""),
         P(OpenTesting, "openOnTestStart", "When the Test Explorer is shown during a run.",
             """{"type":"string","enum":["neverOpen","openOnTestStart","openOnTestFailure","openExplorerOnTestStart"],"enumDescriptions":["Never show it.","Show it when a run starts.","Show it when a test fails.","Show it when a run starts."]}"""),
-        P(AutoDiscover, true, "Discover the tests of a folder when it opens (a Rust package is built to list its tests). Off: only when the Test Explorer's Refresh runs.", """{"type":"boolean"}"""),
+        P(AutoDiscover, true, "Discover the workspace's tests when an editor shows a file that declares tests (a Rust package is built to list them). Tests are always discovered when the Test Explorer is first shown, a test command runs, or Refresh; never just because a folder opened. Off: only then.", """{"type":"boolean"}"""),
         P(DotNetEnabled, true, "Find .NET test projects (xUnit v3 run directly, xUnit v2 / NUnit / MSTest through dotnet test).", """{"type":"boolean"}"""),
         P(RustEnabled, true, "Find cargo packages and their #[test] functions.", """{"type":"boolean"}"""),
         P(JavaScriptEnabled, true, "Find JavaScript / TypeScript packages that use Jest or Vitest.", """{"type":"boolean"}"""),

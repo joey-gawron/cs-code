@@ -123,9 +123,10 @@ internal sealed class HostRig : IDisposable
     public ServiceProvider Services { get; }
     public TestingHost Host { get; }
 
-    /// <summary>Waits (pumping nothing: the dispatcher is inline) until discovery has filled the tree.</summary>
+    /// <summary>Asks for discovery (nothing is discovered before tests are needed) and waits (pumping nothing: the dispatcher is inline) until it has filled the tree.</summary>
     public async Task DiscoveredAsync()
     {
+        _ = Host.EnsureDiscoveredAsync();
         for (var i = 0; i < 500 && (Host.Controller.Tree.TestCount == 0 || Host.Controller.IsDiscovering); i++) await Task.Delay(5);
     }
 

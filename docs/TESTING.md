@@ -160,7 +160,7 @@ selection (a rebuild resets the list, which used to drop it).
 | `testing.gutterEnabled` | `true` | Run/result glyphs in the editor. |
 | `testing.defaultGutterClickAction` | `"run"` | `run`, `debug` or `contextMenu`. |
 | `testing.openTesting` | `"openOnTestStart"` | `neverOpen`, `openOnTestStart` / `openExplorerOnTestStart` (show the explorer when a run starts), `openOnTestFailure`. Shown without taking the keyboard. |
-| `cscode.testing.autoDiscover` | `true` | Discover when a folder opens (a Rust package is built to list its tests). Off: when the explorer is first shown, or Refresh. |
+| `cscode.testing.autoDiscover` | `true` | Discover when an editor shows a file that declares tests (a Rust package is built to list them). Tests are always discovered when the explorer is first shown, a test command runs, or Refresh, and never just because a folder opened. Off: only then. |
 | `cscode.testing.dotnet.enabled` / `.rust.enabled` / `.javascript.enabled` | `true` | Turn a provider off. |
 
 Also read: `cscode.debug.rustDebugger` (the Rust debugger) and `cscode.debug.nodePath` (node for Jest/Vitest runs).
@@ -174,6 +174,13 @@ Also read: `cscode.debug.rustDebugger` (the Rust debugger) and `cscode.debug.nod
 * **Context keys.** `testing.isRunning`, `testing.hasFailedTests` (the Test menu's `when` clauses).
 * **Saving** a C# file or a JS/TS test file rescans its project (debounced 500 ms; a text scan, no build). A Rust package is discovered again
   only by Refresh (it needs a build).
+* **When discovery starts.** Not when a folder opens (a cargo package would be built, `cargo test --no-run`, for a user who never looks at
+  its tests): the first time tests are needed (`TestingHost.EnsureDiscoveredAsync`), i.e. the Test Explorer is shown, a test command runs
+  (Run All, Run Test at Cursor, ... wait for that discovery, then run), Refresh, or, with `cscode.testing.autoDiscover` (default), an editor
+  shows a file in which the glyph provider's text scan finds tests (its glyphs appear when discovery ends). From then on a change of the
+  workspace folders discovers again. Tests: `Opening_a_folder_discovers_nothing_until_the_test_explorer_is_first_shown`,
+  `A_test_command_or_refresh_before_any_discovery_discovers_first`, `An_editor_showing_a_file_with_tests_starts_discovery_unless_auto_discovery_is_off`,
+  and the real-app Rust test (no discovery before the explorer is shown).
 * **Folders.** Only local (`file:`) workspace folders are searched. A remote (ssh) folder has no tests in the explorer yet.
 * **Editor glyphs.** `TestGutterProvider` is registered in `ILanguageFeatureRegistry` for every provider language (csharp, rust, javascript,
   typescript, javascriptreact, typescriptreact). The editor asks it 300 ms after an edit and when it fires `StatesChanged`; it scans the

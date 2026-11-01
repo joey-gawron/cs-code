@@ -56,6 +56,13 @@ public sealed class TestGutterProvider : ITestGutterProvider, IDisposable
     {
         if (!document.Uri.IsFile) return ValueTask.FromResult<IReadOnlyList<TestGutterItem>?>(null);
         var path = document.Uri.LocalPath;
+        if (!_host.DiscoveryStarted)
+        {
+            // nothing discovered yet: a file that declares tests is the first sign they are wanted (the glyphs appear when discovery is done)
+            if (_host.DiscoverFromEditors && _host.Controller.Providers.Any(p => p.LanguageIds.Contains(document.LanguageId) && p.ScanSource(path, document.GetText()).Count > 0))
+                _ui.Post(() => _ = _host.EnsureDiscoveredAsync());
+            return ValueTask.FromResult<IReadOnlyList<TestGutterItem>?>(null);
+        }
         if (!_index.TryGetValue(path, out var entries) || entries.Length == 0) return ValueTask.FromResult<IReadOnlyList<TestGutterItem>?>(null);
         var text = document.GetText();
         ct.ThrowIfCancellationRequested();

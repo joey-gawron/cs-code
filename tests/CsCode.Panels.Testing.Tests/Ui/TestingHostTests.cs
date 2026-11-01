@@ -27,7 +27,64 @@ public sealed class TestingHostTests
     }
 
     [Fact]
-    public async Task Opening_the_folder_discovers_and_run_all_publishes_failures_to_the_error_list()
+    public async Task Opening_a_folder_discovers_nothing_until_the_test_explorer_is_first_shown()
+    {
+        using var rig = new HostRig();
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        Assert.Equal(0, rig.Provider.Detections); // a cargo package would have been built here (cargo test --no-run)
+        rig.Workspace.Folders = [new Uri("file:///w/"), new Uri("file:///other/")];
+        Assert.Equal(0, rig.Provider.Detections);
+
+        var vm = rig.Host.CreateExplorer();
+        await rig.DiscoveredAsync();
+        Assert.Equal(3, rig.Host.Controller.Tree.TestCount);
+        Assert.Equal(2, rig.Provider.Detections); // both folders, once
+        rig.Host.ReleaseExplorer(vm);
+    }
+
+    [Fact]
+    public async Task A_test_command_or_refresh_before_any_discovery_discovers_first()
+    {
+        using (var rig = new HostRig())
+        {
+            await rig.Commands.ExecuteAsync("testing.runAll");
+            Assert.Equal(3, rig.Host.Controller.Tree.TestCount);
+            Assert.Equal(3, Assert.Single(rig.Provider.Runs).TestIds?.Count ?? 3);
+            Assert.Equal(TestOutcome.Failed, rig.Host.Controller.Tree.FindTest("Calc.MathTests.Subtracts")!.Outcome);
+        }
+        using (var rig = new HostRig())
+        {
+            await rig.Commands.ExecuteAsync("testing.refreshTests");
+            Assert.Equal(3, rig.Host.Controller.Tree.TestCount);
+        }
+    }
+
+    [Fact]
+    public async Task An_editor_showing_a_file_with_tests_starts_discovery_unless_auto_discovery_is_off()
+    {
+        using (var rig = new HostRig())
+        {
+            var plain = new InMemoryTextDocument(new Uri("file:///w/calc/Plain.cs"), "csharp", "namespace Calc; public class Plain { }");
+            Assert.Null(await rig.Host.Gutter.ProvideTestsAsync(plain, TestContext.Current.CancellationToken));
+            Assert.Equal(0, rig.Provider.Detections); // no tests in it: nothing wanted yet
+            var doc = new InMemoryTextDocument(new Uri("file://" + HostRig.MathFile), "csharp", HostRig.MathSource);
+            Assert.Null(await rig.Host.Gutter.ProvideTestsAsync(doc, TestContext.Current.CancellationToken)); // the glyphs come after discovery
+            await rig.DiscoveredAsync();
+            Assert.Equal(1, rig.Provider.Detections);
+            Assert.Equal(2, (await rig.Host.Gutter.ProvideTestsAsync(doc, TestContext.Current.CancellationToken))!.Count);
+        }
+        using (var rig = new HostRig())
+        {
+            rig.Config.Set(TestingSettings.AutoDiscover, false);
+            var doc = new InMemoryTextDocument(new Uri("file://" + HostRig.MathFile), "csharp", HostRig.MathSource);
+            Assert.Null(await rig.Host.Gutter.ProvideTestsAsync(doc, TestContext.Current.CancellationToken));
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+            Assert.Equal(0, rig.Provider.Detections);
+        }
+    }
+
+    [Fact]
+    public async Task Run_all_publishes_failures_to_the_error_list()
     {
         using var rig = new HostRig();
         await rig.DiscoveredAsync();
