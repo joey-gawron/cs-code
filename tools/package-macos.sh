@@ -48,6 +48,12 @@
 # out with a warning, and the app then offers its download when a session needs it. Only this Mac's architecture is fetched.
 set -euo pipefail
 
+# The SDK installer (dotnet-install.sh) puts dotnet in ~/.dotnet without adding it to PATH; use it from there when PATH has none.
+if ! command -v dotnet >/dev/null 2>&1 && [[ -x "${DOTNET_ROOT:-$HOME/.dotnet}/dotnet" ]]; then
+  export DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}"
+  export PATH="$DOTNET_ROOT:$PATH"
+fi
+
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 rids=""; from=""; out="$repo/.scratch/macos"; servers=""; no_servers=0; sign=1
 adapters=1; netcoredbg_src=""; jsdebug_src=""; codelldb_src=""
