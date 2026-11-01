@@ -1,0 +1,116 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="90b8c3da-a555-4c41-a54d-a8e0d0e58db8" name="@build-host 2026-10-31 23:56:21" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-31T23:56:21.2169390-07:00" queuing="2026-10-31T23:56:21.2169390-07:00" start="2026-10-31T23:56:20.5220910-07:00" finish="2026-10-31T23:56:21.2189410-07:00" />
+  <TestSettings name="default" id="ef2f8b91-a000-4b02-bea2-b636453074a9">
+    <Deployment runDeploymentRoot="_build-host_2026-10-31_23_56_21" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="282e4df6-279b-40f1-889f-bb9751f610d5" testId="8d3546cb-2908-ce63-08d9-f7bc62160cdb" testName="Sample.Ns.CalcTests.Th(x: 1)" computerName="build-host" duration="00:00:00.0000680" startTime="2026-10-31T23:56:21.1741270-07:00" endTime="2026-10-31T23:56:21.1742050-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="282e4df6-279b-40f1-889f-bb9751f610d5" />
+    <UnitTestResult executionId="a24c40db-af0a-4be2-a1a9-4ddf56c2b02b" testId="85011db5-09bb-e2de-acd3-d63409cccdbb" testName="Sample.Ns.CalcTests.Fails" computerName="build-host" duration="00:00:00.0071610" startTime="2026-10-31T23:56:21.1557870-07:00" endTime="2026-10-31T23:56:21.1707710-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a24c40db-af0a-4be2-a1a9-4ddf56c2b02b">
+      <Output>
+        <StdOut>hello out</StdOut>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Values differ
+Expected: 3
+Actual:   2</Message>
+          <StackTrace>   at Sample.Ns.CalcTests.Fails() in /work/xs/T.cs:line 6
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="b3139f3e-d4e5-4e81-acf7-415ef6f6c749" testId="0077257f-d063-9103-b0fa-10543ce5c37a" testName="Sample.Ns.CalcTests.Adds" computerName="build-host" duration="00:00:00.0003315" startTime="2026-10-31T23:56:21.1728990-07:00" endTime="2026-10-31T23:56:21.1734040-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b3139f3e-d4e5-4e81-acf7-415ef6f6c749" />
+    <UnitTestResult executionId="27fe02bf-ae06-4384-8d23-0871b5f7c15d" testId="a638639c-a907-d6f4-0281-9c6e60a6bb0f" testName="Sample.Ns.CalcTests.Th(x: -2)" computerName="build-host" duration="00:00:00.0002001" startTime="2026-10-31T23:56:21.1737490-07:00" endTime="2026-10-31T23:56:21.1740250-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="27fe02bf-ae06-4384-8d23-0871b5f7c15d">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.True() Failure
+Expected: True
+Actual:   False</Message>
+          <StackTrace>   at Sample.Ns.CalcTests.Th(Int32 x) in /work/xs/T.cs:line 8
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="1d3c0a08-b93e-4be1-97c3-966bbce0c9bb" testId="4b5483fc-d901-4c3c-e3c0-97309a70bf26" testName="Sample.Ns.CalcTests.Skipped" computerName="build-host" duration="00:00:00.0010000" startTime="2026-10-31T23:56:21.1742970-07:00" endTime="2026-10-31T23:56:21.1744960-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="NotExecuted" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1d3c0a08-b93e-4be1-97c3-966bbce0c9bb">
+      <Output>
+        <ErrorInfo>
+          <Message>later</Message>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Sample.Ns.CalcTests.Fails" storage="/private/tmp/claude-502/-users-joseph-gawron--claude-spares-spare-n9jyfh/95920388-b88c-46af-b527-0924c8b56e62/scratchpad/xs/bin/debug/net10.0/xs.dll" id="85011db5-09bb-e2de-acd3-d63409cccdbb">
+      <Execution id="a24c40db-af0a-4be2-a1a9-4ddf56c2b02b" />
+      <TestMethod codeBase="/work/xs/bin/Debug/net10.0/xs.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Ns.CalcTests" name="Fails" />
+    </UnitTest>
+    <UnitTest name="Sample.Ns.CalcTests.Adds" storage="/private/tmp/claude-502/-users-joseph-gawron--claude-spares-spare-n9jyfh/95920388-b88c-46af-b527-0924c8b56e62/scratchpad/xs/bin/debug/net10.0/xs.dll" id="0077257f-d063-9103-b0fa-10543ce5c37a">
+      <Execution id="b3139f3e-d4e5-4e81-acf7-415ef6f6c749" />
+      <TestMethod codeBase="/work/xs/bin/Debug/net10.0/xs.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Ns.CalcTests" name="Adds" />
+    </UnitTest>
+    <UnitTest name="Sample.Ns.CalcTests.Th(x: -2)" storage="/private/tmp/claude-502/-users-joseph-gawron--claude-spares-spare-n9jyfh/95920388-b88c-46af-b527-0924c8b56e62/scratchpad/xs/bin/debug/net10.0/xs.dll" id="a638639c-a907-d6f4-0281-9c6e60a6bb0f">
+      <Execution id="27fe02bf-ae06-4384-8d23-0871b5f7c15d" />
+      <TestMethod codeBase="/work/xs/bin/Debug/net10.0/xs.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Ns.CalcTests" name="Th" />
+    </UnitTest>
+    <UnitTest name="Sample.Ns.CalcTests.Th(x: 1)" storage="/private/tmp/claude-502/-users-joseph-gawron--claude-spares-spare-n9jyfh/95920388-b88c-46af-b527-0924c8b56e62/scratchpad/xs/bin/debug/net10.0/xs.dll" id="8d3546cb-2908-ce63-08d9-f7bc62160cdb">
+      <Execution id="282e4df6-279b-40f1-889f-bb9751f610d5" />
+      <TestMethod codeBase="/work/xs/bin/Debug/net10.0/xs.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Ns.CalcTests" name="Th" />
+    </UnitTest>
+    <UnitTest name="Sample.Ns.CalcTests.Skipped" storage="/private/tmp/claude-502/-users-joseph-gawron--claude-spares-spare-n9jyfh/95920388-b88c-46af-b527-0924c8b56e62/scratchpad/xs/bin/debug/net10.0/xs.dll" id="4b5483fc-d901-4c3c-e3c0-97309a70bf26">
+      <Execution id="1d3c0a08-b93e-4be1-97c3-966bbce0c9bb" />
+      <TestMethod codeBase="/work/xs/bin/Debug/net10.0/xs.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Ns.CalcTests" name="Skipped" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="8d3546cb-2908-ce63-08d9-f7bc62160cdb" executionId="282e4df6-279b-40f1-889f-bb9751f610d5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="85011db5-09bb-e2de-acd3-d63409cccdbb" executionId="a24c40db-af0a-4be2-a1a9-4ddf56c2b02b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0077257f-d063-9103-b0fa-10543ce5c37a" executionId="b3139f3e-d4e5-4e81-acf7-415ef6f6c749" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a638639c-a907-d6f4-0281-9c6e60a6bb0f" executionId="27fe02bf-ae06-4384-8d23-0871b5f7c15d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4b5483fc-d901-4c3c-e3c0-97309a70bf26" executionId="1d3c0a08-b93e-4be1-97c3-966bbce0c9bb" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="5" executed="4" passed="2" failed="2" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)
+[xUnit.net 00:00:00.19]   Discovering: xs
+[xUnit.net 00:00:00.31]   Discovered:  xs
+[xUnit.net 00:00:00.42]   Starting:    xs
+[xUnit.net 00:00:00.46]       Assert.Equal() Failure: Values differ
+[xUnit.net 00:00:00.46]       Expected: 3
+[xUnit.net 00:00:00.46]       Actual:   2
+[xUnit.net 00:00:00.46]       Stack Trace:
+[xUnit.net 00:00:00.46]         /work/xs/T.cs(6,0): at Sample.Ns.CalcTests.Fails()
+[xUnit.net 00:00:00.46]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+[xUnit.net 00:00:00.46]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.46]       Output:
+[xUnit.net 00:00:00.46]         hello out
+[xUnit.net 00:00:00.46]       Assert.True() Failure
+[xUnit.net 00:00:00.46]       Expected: True
+[xUnit.net 00:00:00.46]       Actual:   False
+[xUnit.net 00:00:00.46]       Stack Trace:
+[xUnit.net 00:00:00.46]         /work/xs/T.cs(8,0): at Sample.Ns.CalcTests.Th(Int32 x)
+[xUnit.net 00:00:00.46]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+[xUnit.net 00:00:00.46]            at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.46]       later
+[xUnit.net 00:00:00.46]   Finished:    xs
+Test 'Sample.Ns.CalcTests.Skipped' was skipped in the test run.
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="build-host" outcome="Error" timestamp="2026-10-31T23:56:21.1735230-07:00">
+        <Text>[xUnit.net 00:00:00.46]     Sample.Ns.CalcTests.Fails [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="build-host" outcome="Error" timestamp="2026-10-31T23:56:21.1779230-07:00">
+        <Text>[xUnit.net 00:00:00.46]     Sample.Ns.CalcTests.Th(x: -2) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="build-host" outcome="Warning" timestamp="2026-10-31T23:56:21.1784420-07:00">
+        <Text>[xUnit.net 00:00:00.46]     Sample.Ns.CalcTests.Skipped [SKIP]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

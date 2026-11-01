@@ -254,7 +254,7 @@ The list is generated from `WorkbenchColors.All`; a test fails if this document 
 
 ## Behaviour
 
-**Menus.** File, Edit, View, Go, Debug, Terminal, Tools, Window, Help (`ShellMenus`). Items run command ids; enablement = command registered **and** `when` true; shortcut text from
+**Menus.** File, Edit, View, Go, Debug, Test, Terminal, Tools, Window, Help (`ShellMenus`; Test: the Test Explorer's commands, docs/TESTING.md). Items run command ids; enablement = command registered **and** `when` true; shortcut text from
 `IKeybindingService.GetLabel`; check marks for tool windows; Open Recent; Alt mnemonics. Menus regenerate when they open, so state is always current. There are no extension or marketplace entries.
 Contributed items (`IContributionRegistry.Of<MenuContribution>()`) feed the right-click menus (see *Right-click menus* below: `editor/context`,
 `editor/title/context`, `explorer/context`, ...); `ContributedMenus.Get` still serves `commandPalette` and `editor/title`.

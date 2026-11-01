@@ -1,0 +1,56 @@
+{
+  "numFailedTestSuites": 2,
+  "numFailedTests": 1,
+  "numPassedTestSuites": 0,
+  "numPassedTests": 1,
+  "numPendingTests": 1,
+  "numTotalTests": 3,
+  "success": false,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["math", "add"],
+          "duration": 3,
+          "failureMessages": [],
+          "fullName": "math add adds two numbers",
+          "location": { "column": 5, "line": 4 },
+          "status": "passed",
+          "title": "adds two numbers"
+        },
+        {
+          "ancestorTitles": ["math"],
+          "duration": 7,
+          "failureMessages": [
+            "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: \u001b[32m5\u001b[39m\nReceived: \u001b[31m4\u001b[39m\n    at Object.toBe (/work/js/src/math.test.js:9:19)\n    at Promise.then.completed (/work/js/node_modules/jest-circus/build/utils.js:298:28)"
+          ],
+          "fullName": "math subtracts",
+          "location": { "column": 3, "line": 8 },
+          "status": "failed",
+          "title": "subtracts"
+        },
+        {
+          "ancestorTitles": [],
+          "duration": null,
+          "failureMessages": [],
+          "fullName": "later",
+          "location": { "column": 1, "line": 12 },
+          "status": "pending",
+          "title": "later"
+        }
+      ],
+      "endTime": 1730000000100,
+      "message": "",
+      "name": "/work/js/src/math.test.js",
+      "startTime": 1730000000000,
+      "status": "failed",
+      "summary": ""
+    },
+    {
+      "assertionResults": [],
+      "message": "  \u001b[1m● \u001b[22mTest suite failed to run\n\n    SyntaxError: Unexpected token (3:4)",
+      "name": "/work/js/src/broken.test.js",
+      "status": "failed"
+    }
+  ]
+}

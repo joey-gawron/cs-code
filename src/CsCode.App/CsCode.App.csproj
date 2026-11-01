@@ -27,6 +27,7 @@
     <ProjectReference Include="../CsCode.Profiling/CsCode.Profiling.csproj" />
     <ProjectReference Include="../CsCode.Panels.Debug/CsCode.Panels.Debug.csproj" />
     <ProjectReference Include="../CsCode.Panels.Search/CsCode.Panels.Search.csproj" />
+    <ProjectReference Include="../CsCode.Panels.Testing/CsCode.Panels.Testing.csproj" />
     <ProjectReference Include="../CsCode.Vim/CsCode.Vim.csproj" />
     <ProjectReference Include="../CsCode.Macros/CsCode.Macros.csproj" />
     <ProjectReference Include="../CsCode.Panels.Terminal/CsCode.Panels.Terminal.csproj" />

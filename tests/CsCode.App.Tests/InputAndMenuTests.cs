@@ -401,7 +401,7 @@ public class MenuModelTests
     public void The_menu_bar_has_exactly_the_nine_visual_studio_menus_in_order()
     {
         using var rig = new Rig();
-        Assert.Equal(["File", "Edit", "View", "Go", "Debug", "Terminal", "Tools", "Window", "Help"], rig.Menu.Roots.Select(r => r.Header.Replace("_", "")));
+        Assert.Equal(["File", "Edit", "View", "Go", "Debug", "Test", "Terminal", "Tools", "Window", "Help"], rig.Menu.Roots.Select(r => r.Header.Replace("_", "")));
     }
 
     [Fact]

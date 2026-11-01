@@ -107,6 +107,18 @@
   { "key": "ctrl+pagedown",      "command": "workbench.action.nextEditor",        "mac": "cmd+alt+right" },
   { "key": "ctrl+pageup",        "command": "workbench.action.previousEditor",    "mac": "cmd+alt+left" },
 
+  // ---- testing (VS Code's Ctrl+; chords) ----
+  { "key": "ctrl+; a",           "command": "testing.runAll",                     "mac": "cmd+; a" },
+  { "key": "ctrl+; ctrl+a",      "command": "testing.debugAll",                   "mac": "cmd+; cmd+a" },
+  { "key": "ctrl+; c",           "command": "testing.runAtCursor",                "when": "editorTextFocus", "mac": "cmd+; c" },
+  { "key": "ctrl+; ctrl+c",      "command": "testing.debugAtCursor",              "when": "editorTextFocus", "mac": "cmd+; cmd+c" },
+  { "key": "ctrl+; f",           "command": "testing.runCurrentFile",             "when": "editorTextFocus", "mac": "cmd+; f" },
+  { "key": "ctrl+; ctrl+f",      "command": "testing.debugCurrentFile",           "when": "editorTextFocus", "mac": "cmd+; cmd+f" },
+  { "key": "ctrl+; e",           "command": "testing.reRunFailTests",             "mac": "cmd+; e" },
+  { "key": "ctrl+; ctrl+e",      "command": "testing.debugFailTests",             "mac": "cmd+; cmd+e" },
+  { "key": "ctrl+; l",           "command": "testing.reRunLastRun",               "mac": "cmd+; l" },
+  { "key": "ctrl+; ctrl+l",      "command": "testing.debugLastRun",               "mac": "cmd+; cmd+l" },
+
   // ---- views ----
   { "key": "ctrl+shift+e",       "command": "workbench.view.explorer",            "mac": "cmd+shift+e" },
   { "key": "ctrl+shift+u",       "command": "workbench.action.output.toggleOutput", "mac": "cmd+shift+u" },
