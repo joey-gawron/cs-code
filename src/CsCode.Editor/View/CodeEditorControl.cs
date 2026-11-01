@@ -299,6 +299,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         Editor.FontSize = s.FontSize;
         Editor.WordWrap = s.WordWrap;
         Editor.ShowLineNumbers = s.ShowLineNumbers;
+        CachedLineNumberMargin.ReplaceStock(Editor); // the stock margin shapes every visible number again on each keystroke
         Editor.IsReadOnly = Document.IsReadOnly;
         var o = Editor.Options;
         o.IndentationSize = s.TabSize;
