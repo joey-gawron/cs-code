@@ -230,6 +230,7 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
         _v = view;
         _manager = FoldingManager.Install(view.TextArea);
         Margin = ReplaceMargin(view.TextArea, _manager);
+        RedrawFilter = new FoldRedrawFilter(_manager, view.Document.Buffer); // an edit inside an expanded fold redraws its line, not the fold
         _d.Add(view.Document.Changed.Subscribe(_ => Schedule()));
         _d.Add(view.Services.Features.ProvidersChanged.Subscribe(t =>
         {
@@ -247,6 +248,9 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
 
     /// <summary>The +/- margin (ours, see <see cref="DetachingFoldingMargin"/>).</summary>
     internal FoldingMargin Margin { get; }
+
+    /// <summary>Stops AvaloniaEdit redrawing a whole expanded fold on every edit inside it (see <see cref="FoldRedrawFilter"/>).</summary>
+    internal FoldRedrawFilter RedrawFilter { get; }
 
     /// <summary>Puts a <see cref="DetachingFoldingMargin"/> where the installation put AvaloniaEdit's own margin (which is then unused).</summary>
     private static FoldingMargin ReplaceMargin(AvaloniaEdit.Editing.TextArea area, FoldingManager manager)
@@ -591,6 +595,7 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
         _d.Dispose();
         _v.Controller.FoldedLinesProvider = null;
         _v.Controller.FoldRestorer = null;
+        RedrawFilter.Dispose();
         FoldingManager.Uninstall(_manager);
         _v.TextArea.LeftMargins.Remove(Margin); // ours, not the one the installation knows
         Margin.FoldingManager = null;
