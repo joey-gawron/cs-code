@@ -4,7 +4,6 @@ Triaged against main on 2026-10-30: entries found already fixed were removed (ca
 
 Debugger (most handled by the TypeScript/js-debug wave; check its docs before redoing):
 * DebugFocusTracker waits out its 400 ms PendingGrace after a variables/threads-only invalidation (Locals/Watch show "Loading…" briefly).
-* REPL line placement after a flood: an oversize output batch replaced with `with { Output = tail }` loses identity; needs a sequence number on DebugOutputEventArgs.
 * IDebugSessionModules has no change event (Modules window refreshes at stops and on Refresh only).
 
 Shell:
@@ -19,4 +18,4 @@ Platform / Search:
 * Editor's fallback FswFileWatcher has neither missing-root waiting nor polling-after-losses; DebugConfigurationService.cs:211 comment partly stale.
 
 Deferred to the performance/profiling wave (user decision 2026-10-29):
-* Debug Console under a realistic 1M-line flood (one console.log per line, console on screen): dispatcher p99 17-25 ms, max 53/70 ms once each (budget 16/50). The unfinished attempt (one apply per frame, recycled rows in a custom ConsoleLineList, GC-pressure diagnostics) was lost when /tmp was wiped by the 2026-10-29 13:57 reboot.
+* (done on feat/perf-console: Debug Console 1M-line flood and REPL placement after a flood, see docs/PANELS-DEBUG.md "Debug Console" and docs/DEBUGGING-RUST-TS.md) Left from it: with scrolling locked during a flood, trimming the oldest lines moves the rows on screen (no first-row anchoring); the headless flood tests see gen2 GCs induced by the headless framebuffer (Avalonia's headless window allocates a new WriteableBitmap, with GC.AddMemoryPressure, for every rendered frame: "induced_noforce" in the reported GC pauses, max ~23 ms on a loaded Mac), which the real app does not have.
