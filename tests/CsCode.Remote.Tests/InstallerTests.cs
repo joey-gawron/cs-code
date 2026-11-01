@@ -19,6 +19,9 @@ public class InstallerTests
     internal static ServerBundleSet? PublishedBundles() =>
         ServerBundleSet.Find(Environment.GetEnvironmentVariable("CSCODE_SERVER_BUNDLES"), AppContext.BaseDirectory);
 
+    /// <summary>The bundle the local "remote" (this machine's /bin/sh) takes: linux-x64 on the Linux CI host, osx-arm64 on an Apple-silicon Mac.</summary>
+    internal static string LocalRid => System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier;
+
     internal static ServerBundleSet RequireBundles()
     {
         var set = PublishedBundles();
@@ -67,7 +70,7 @@ public class InstallerTests
         Assert.Equal(RemoteProtocol.Version, hello.ProtocolVersion);
         Assert.Contains(progress, p => p.StartsWith("Installing the server", StringComparison.Ordinal));
         var installed = Directory.GetDirectories(Path.Combine(remote.Root, "bin")).Select(d => Path.GetFileName(d)!).ToArray();
-        var sc = bundles.SelfContained("linux-x64");
+        var sc = bundles.SelfContained(LocalRid);
         Assert.Equal([sc?.Hash ?? bundles.FrameworkDependent!.Hash], installed); // self-contained preferred; no temp dirs left behind
         if (!OperatingSystem.IsWindows()) Assert.True(File.GetUnixFileMode(Path.Combine(remote.Root, "bin", installed[0], "cscode-server")).HasFlag(UnixFileMode.UserExecute));
         Assert.Equal(remote.Data, hello.DataDir);
@@ -101,7 +104,7 @@ public class InstallerTests
     public async Task A_corrupted_bundle_is_refused_and_nothing_is_installed()
     {
         var bundles = RequireBundles();
-        var good = bundles.SelfContained("linux-x64") ?? bundles.FrameworkDependent!;
+        var good = bundles.SelfContained(LocalRid) ?? bundles.FrameworkDependent!;
         var tampered = new ServerBundleSet(bundles.Directory, [good with { Sha256 = new string('0', 64), Hash = "00000000000000aa" }]);
         using var remote = new Remote();
         var ex = await Assert.ThrowsAsync<RemoteBootstrapException>(() => ConnectOnceAsync(remote.Transport(tampered)));
@@ -124,7 +127,7 @@ public class InstallerTests
         Directory.CreateDirectory(Path.Combine(bin, "not-a-hash")); // never touched
         await ConnectOnceAsync(remote.Transport(bundles));
         var left = Directory.GetDirectories(bin).Select(d => Path.GetFileName(d)!).Order(StringComparer.Ordinal).ToArray();
-        var current = (bundles.SelfContained("linux-x64") ?? bundles.FrameworkDependent!).Hash;
+        var current = (bundles.SelfContained(LocalRid) ?? bundles.FrameworkDependent!).Hash;
         Assert.Equal(new[] { "3333333333333333", "4444444444444444", current, "not-a-hash" }.Order(StringComparer.Ordinal), left);
     }
 
@@ -185,6 +188,6 @@ public class InstallerTests
         var otherPlatform = new ServerBundleSet(bundles.Directory, bundles.Bundles.Where(b => b.Flavour == BundleFlavour.SelfContained).Select(b => b with { Rid = "linux-riscv64" }).ToArray());
         using var remote = new Remote();
         var ex = await Assert.ThrowsAsync<RemoteBootstrapException>(() => ConnectOnceAsync(remote.Transport(otherPlatform)));
-        Assert.Contains("No server bundle for Linux", ex.Message);
+        Assert.Contains("No server bundle for " + (OperatingSystem.IsMacOS() ? "Darwin" : "Linux"), ex.Message); // the local "remote" is this machine
     }
 }
