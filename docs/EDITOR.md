@@ -157,6 +157,9 @@ Numbers refer to the brief's MUST list.
 
 13. **Multi-cursor** (Add Next Occurrence, Select All Occurrences, Insert Cursor Above/Below, Alt+Click, editing at every caret as one undo step): see §7b.
 
+14. **Overview ruler and minimap** (marks for problems, find matches, occurrences, source-control changes, breakpoints and the carets on the
+    scrollbar; a token-coloured minimap with a draggable slider, drawn off the UI thread): see §7c.
+
 SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version and per set of symbol providers: a language server that starts after the file was opened is asked at the next request, without an edit), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
 ## 4. Threading rules and how they are verified
@@ -255,13 +258,15 @@ settings alone, so a project's `.editorconfig` could make it say "Spaces: 4" whi
 `editor.formatOnSave/OnType/OnPaste`, `editor.emptySelectionClipboard`, `editor.selectionClipboard`, `editor.autoIndentOnPaste`, `editor.autoIndent`, `editor.hover.delay`, `editor.inlayHints.enabled`, `workbench.colorTheme`, `files.encoding`, `files.eol`, `files.insertFinalNewline`, `files.trimFinalNewlines`, `files.trimTrailingWhitespace`, `files.associations`, and the module's own `cscode.editor.undoLimit` (default 1000 groups),
 `cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB),
 `editor.syntaxEngine` (`auto`; the old `editor.experimental.treeSitter` is read as an alias; see docs/TREE-SITTER.md), and
-`editor.multiCursorLimit` (10,000) / `editor.multiCursorPaste` (`spread`) (§7b; the factory registers both, so the Settings panel lists them).
+`editor.multiCursorLimit` (10,000) / `editor.multiCursorPaste` (`spread`) (§7b; the factory registers both, so the Settings panel lists them),
+and the minimap's and overview ruler's `editor.minimap.enabled` (true), `.side`, `.renderCharacters`, `.maxColumn`, `.showSlider`, `.scale`,
+`editor.overviewRulerLanes`, `editor.overviewRulerBorder`, `editor.hideCursorInOverviewRuler`, `debug.showBreakpointsInOverviewRuler` (§7c).
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
 `sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.showHover` (at the caret),
 `editor.action.marker.next`/`marker.prev` (next / previous problem, wrapping; the caret goes there and the hover shows it), `editor.action.startFindReplace` (`actions.find` and it put the keyboard in the find box at once, also the first time the panel opens and headless: T20), `workbench.action.gotoLine`, `editor.action.triggerSuggest`, `triggerParameterHints`, `quickFix`, `organizeImports`, `revealDefinition`, `goToDeclaration`, `goToTypeDefinition`,
 `goToImplementation`, `goToReferences`, `rename`, `formatDocument`, `formatSelection`, `editor.fold`, `foldRecursively`, `unfold`, `unfoldRecursively`, `toggleFold`, `foldAll`, `unfoldAll`, `editor.action.insertSnippet`, `editor.debug.action.toggleBreakpoint`,
-and multi-cursor's `editor.action.addSelectionToNextFindMatch`, `moveSelectionToNextFindMatch`, `selectHighlights`, `insertCursorAbove`, `insertCursorBelow`, `cursorUndo`, `removeSecondaryCursors` (§7b).
+and multi-cursor's `editor.action.addSelectionToNextFindMatch`, `moveSelectionToNextFindMatch`, `selectHighlights`, `insertCursorAbove`, `insertCursorBelow`, `cursorUndo`, `removeSecondaryCursors` (§7b), and `editor.action.toggleMinimap` (View: Toggle Minimap, §7c).
 
 ### 7a. Clipboard and the right-click menu
 
@@ -382,6 +387,73 @@ Tests: `MultiCaretModelTests` (the caret set, every edit and movement, the occur
 elsewhere, collapsing, Vim, read-only, the limit, 10,000 carets with their undo and redo, drawing and the blink timer), `RealApp/MultiCursorTests` (the preset keys
 through the real keyboard pipeline, `editorHasMultipleSelections`, Vim on), `KeybindingServiceTests` (both presets on Linux and macOS).
 
+### 7c. Overview ruler and minimap
+
+`View/Decorations` (one `ScrollDecorations` per view, also in large-file mode and in split views) adds VS Code's two scroll aids. Both controls
+sit in the view's grid over the editor's right edge, below the popup overlay, and their width is reserved with the text area's margin, so no
+text (and no sticky-scroll row) runs under them: text | minimap | ruler (the ruler over the vertical scrollbar), or minimap | gutter | text |
+ruler with `editor.minimap.side: left`.
+
+**Overview ruler** (the scrollbar's lanes; `OverviewRuler`, `OverviewRulerModel`):
+
+| Lane | Marks (theme key) |
+|---|---|
+| left | source-control changes from the gutter's quick diff (`editorOverviewRuler.addedForeground`, `modifiedForeground`, `deletedForeground`: the gutter colours at 60 %), breakpoints with `debug.showBreakpointsInOverviewRuler` (off by default, as in VS Code; `debugIcon.breakpointForeground`) |
+| centre | find matches while the find panel is open (`editorOverviewRuler.findMatchForeground`), occurrence highlights (`wordHighlightForeground`, writes `wordHighlightStrongForeground`) |
+| right | errors, warnings, information (`editorOverviewRuler.errorForeground`, `warningForeground`, `infoForeground`; hints are not marked, as in VS Code) |
+| all | the caret lines, every caret of multi-cursor (`editorCursor.foreground`; `editor.hideCursorInOverviewRuler` hides them) |
+
+A mark is placed where its lines are in the scrollable height over the scrollbar's track (between its arrow buttons), from AvaloniaEdit's height
+tree, so folded lines take no room, wrapped lines their rows, and marks line up with the thumb. Laying out does one height-tree lookup per
+pixel row (the line at the top of each row) and places each mark by binary search in that table; marks are bucketed per pixel row and lane,
+the more severe kind winning, and drawn as one rectangle per run. 19,999 find matches on a 1M-line file are collected and laid out in about
+2 ms on the UI thread (it was 18 ms with a lookup per mark). The marks are recollected per source only when that source changed (each feature
+calls `CodeEditorControl.NotifyMarkersChanged`; the find panel's searches, opening and closing; the carets), and after an edit once typing has
+paused for 100 ms, so a keystroke costs a flag and a timer start; scrolling lays nothing out. A left press on the scrollbar's track (not the
+thumb, not the arrows) scrolls that position to the middle of the view, VS Code's default instead of paging. The ruler takes no pointer
+input itself, so the scrollbar keeps its hover, thumb and arrows. `editor.overviewRulerLanes: 0` hides it, `editor.overviewRulerBorder` draws
+its left border (`editorOverviewRuler.border`), `editorOverviewRuler.background` fills it when a theme sets one.
+
+**Minimap** (`Minimap`, `MinimapRowMap`, `MinimapGeometry`, `MinimapRasterizer`):
+
+* One row per document line, 2 DIPs high and one DIP per character at `editor.minimap.scale` 1 (2 and 3 multiply both). Lines hidden by a
+  collapsed fold have no row (a hidden line maps to its header's row); a wrapped line is one row of its first `editor.minimap.maxColumn`
+  columns. The width is `maxColumn` columns, at most 30 % of the editor, and the minimap is hidden below 24 DIPs.
+* Each non-blank character is a cell in its token's colour (the published token rows of the TextMate or tree-sitter session, resolved against
+  the theme with `TokenColorResolver`), blended over `minimap.background`; tabs go to the next tab stop. `editor.minimap.renderCharacters`
+  (default true) shapes the cells by character class (capitals, digits and brackets full height, lower case shorter, punctuation a low, light
+  mark), so words read as words; false draws runs of non-blank text as solid blocks. Large-file mode has no tokens: plain foreground.
+* The slider covers the rows on screen (`minimapSlider.background`, `hoverBackground`, `activeBackground` while dragging), shown while the
+  pointer is over the minimap with `editor.minimap.showSlider: mouseover` (the default) or always with `always`. A press on the slider drags it
+  (the editor follows; the slider stays under the pointer), a press elsewhere centres the slider there and goes on dragging, the wheel scrolls
+  the editor.
+* A file longer than the minimap scrolls it in proportion (VS Code's proportional minimap): the window's first row is the same fraction of
+  the rows it cannot show as the editor's top row is of the rows it can scroll, so the slider reaches the bottom at the end of the file. Only
+  the window's rows are ever drawn.
+* Over the rows: find matches (`minimap.findMatchHighlight`), errors and warnings (`minimap.errorHighlight`, `minimap.warningHighlight`), the
+  caret lines (`minimap.selectionHighlight`), and source-control changes in a 2-DIP gutter (`minimapGutter.addedBackground`, ...), from the
+  ruler's marks.
+* **Threading and memory.** The UI thread captures the window's rows (each line's offset and length, its token row; consecutive lines by
+  `NextLine`) and the document's immutable snapshot, a pool thread draws them into a premultiplied BGRA buffer (allocation-free after the
+  first render), and the UI thread copies the buffer into a `WriteableBitmap`. One render runs at a time; requests while it runs coalesce into
+  one more, so a keystroke only marks the minimap stale and posts one background job. A scroll within the window only moves the slider; a new
+  window, an edit, newly coloured lines in the window, a fold, a theme or a setting draw again. Measured (Debug, loaded shared Mac): a
+  350-row window of a 1M-line file costs the UI thread 0.2 ms to capture and 0.02 ms to copy at scale 1; drawing 600 rows of 120 columns at
+  a 2x screen takes about 4 ms on the pool thread. The view holds the bitmap and one buffer of the minimap's size in device pixels (120 × 1000
+  DIPs at 2x: 2 × 1.9 MB); both are released when the minimap is turned off or the view is disposed. Rendering is on the pool, not the editor
+  worker, so it never delays a tokenisation slice.
+* Settings apply live (`editor.minimap.enabled`, `.side`, `.renderCharacters`, `.maxColumn`, `.showSlider`, `.scale`); **View: Toggle
+  Minimap** (`editor.action.toggleMinimap`) flips `editor.minimap.enabled` in the user settings. The diff editor's panes have no minimap
+  (`CodeEditorControl.AllowMinimap = false`, as in VS Code) but keep the ruler. The factory registers the settings so the Settings panel
+  lists them.
+
+Tests: `ScrollDecorationsModelTests` (rows under folds, the proportional window and slider and its inverse, bucketing and priorities, the
+rasteriser's colours, tab stops, `maxColumn`, character shapes, a full window's cost and zero allocation), `ScrollDecorationsViewTests`
+(placement and the reserved margin, every setting live, narrow editors, diff panes, the toggle command, token colours and typing in the
+minimap, click / drag / wheel, the slider's visibility, folding, each source of marks on the ruler, word wrap, a press on the scrollbar's track,
+theme changes, disposal, sticky scroll's insets, a 1M-line file, typing that renders nothing on the keystroke, and screenshots in the dark and
+light themes written to `.scratch/screenshots/minimap-*.png`).
+
 **Large-file mode**: above `cscode.editor.largeFileThresholdBytes` (default 5 MB) or with a line longer than 20,000 characters the document's language is forced to `plaintext`, and its views get no tokenisation, folding, squiggles, bracket matching or any other language feature (just text); files over 200 MB are refused with a clear `FileTooLargeException` message.
 
 ## 8. Known gaps (honest list)
@@ -394,7 +466,12 @@ Not done, or done only in part — none of this is faked:
   carets are not kept in the view state (a recreated view has one); `editor.multiCursorModifier` (Ctrl+Click to add carets) is not read;
   Backspace in leading spaces deletes one space, not one indentation unit. Rectangular selection is AvaloniaEdit's own (Alt+drag; Ctrl+Option+drag
   on macOS) and its rows act as carets for the clipboard (§7a).
-* **Minimap, code lens, semantic-token overlay, Alt+F12 peek, overview-ruler markers on the scrollbar** are not implemented (settings for them are read but have no effect). Sticky scroll is (`editor.stickyScroll.enabled`, off by default; docs/TREE-SITTER.md §5).
+* **Code lens, semantic-token overlay, Alt+F12 peek** are not implemented (settings for them are read but have no effect). The minimap and
+  the overview ruler are (§7c), with these gaps: a wrapped line is one minimap row (VS Code draws each wrapped row); `editor.minimap.size`
+  (`fill` / `fit`), `editor.minimap.autohide`, `editor.minimap.sectionHeader*` and the minimap's own hover / selection rendering of the
+  text (it marks whole rows) are not read; the ruler has three fixed lanes (`editor.overviewRulerLanes` 1 and 2 are drawn as 3) and does
+  not mark selection highlights, bracket matches or the debugger's stop line; `editor.scrollbar.scrollByPage` is not read (a track press
+  always jumps). Sticky scroll is (`editor.stickyScroll.enabled`, off by default; docs/TREE-SITTER.md §5).
 * `editor.cursorStyle`, `editor.cursorBlinking` and `editor.smoothScrolling` are not applied (AvaloniaEdit offers no equivalent). Font ligatures are on by default (`editor.fontLigatures`; VS Code defaults to off, but the bundled Fira Code is chosen for them, and they keep one glyph per character): `false` turns them off. AvaloniaEdit 12 has no font-feature setting, so `EditorFontFeatures`, a line transformer, then gives each element's run properties `-liga, -calt` (reaching the private `VisualLineElement.TextRunProperties` setter by reflection; `CodeFontTests` fails if an upgrade removes it). `true` (the default) leaves the font's own ligatures (Fira Code's keep one glyph per character, so carets stay on columns) and a string is VS Code's CSS feature list (`"'ss01', 'zero'"`). The code panels follow the same setting through `ui:CodeFontFeatures`. `editor.wordWrap` supports on/off only. Drag-and-drop of text is AvaloniaEdit's own behaviour; bidirectional text and IME composition were not tested.
 * **Typing allocation**: the TextMate colorizer allocates per token on the edited line (§6). A single pre-merged element list would cut it; not done.
 * The `previousLineText` guard of `onEnterRules` (which Core's `OnEnterRule` record cannot carry) is handled editor-side through `ExtendedLanguageConfiguration`/`EnterRuleEx`; the Core record is unchanged.
@@ -407,7 +484,7 @@ Not done, or done only in part — none of this is faked:
 `dotnet test tests/CsCode.Editor.Tests` (headless Avalonia; real temp files, real `FileSystemWatcher`, real TextMate grammars and the native Oniguruma). ≈ 650 tests, ≈ 1.5 minutes. Highlights:
 
 * `EditorDocumentFuzzTests` (oracle comparison), `EditorDocumentFileTests` (encodings, EOL, atomic save, watcher, conflicts, large files), `LanguageServiceTests`, `ThemeTests` (real Dark+/Monokai/TypeScript/Python/C# JSON), `TextMateTests` (golden scopes), `SnippetEngineTests`, `EditingOperationsTests`, `EditorConfigTests`.
-* View tests: `EditorViewTests`, `CompletionViewTests`, `DiagnosticsHoverTests`, `SignatureActionsNavigationTests`, `BracketsHighlightsDebugTests`, `ShouldHaveFeatureTests`, `MultiCursorViewTests` (and the pure `MultiCaretModelTests`).
+* View tests: `EditorViewTests`, `CompletionViewTests`, `DiagnosticsHoverTests`, `SignatureActionsNavigationTests`, `BracketsHighlightsDebugTests`, `ShouldHaveFeatureTests`, `MultiCursorViewTests` (and the pure `MultiCaretModelTests`), `ScrollDecorationsViewTests` (and the pure `ScrollDecorationsModelTests`).
 * Hostile/perf/leak: `HostileProviderTests`, `BlockingDetectorTests`, `KeystrokeAllocationTests`, `PerfMemoryTests` (opens 1/10/50 MB files, tokeniser memory, 500× open/close, 500× recreate, popups open). Leak failures print the chain of strong references (`RetentionPath`).
 * `ScreenshotTests` write PNGs of the dark and light themes (code with squiggles, breakpoints, the execution line, a folded region, bracket/occurrence highlights; the completion, hover and signature popups) to `.scratch/screenshots/` (git-ignored) and assert the content really is on screen. Visual defects found by looking at them and fixed: invisible match highlight on the selected completion row in the light theme (the "focus highlight" colour was missing).
 
