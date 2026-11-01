@@ -173,16 +173,17 @@ public class ResponsivenessTests
         var uiCpu = ThreadCpu.CurrentThreadMs();
         var sw = Stopwatch.StartNew();
         long produced = 0;
-        // Two producers ("the debug lane" of each session), ~25,000 one-line events/s each, for 3 s: 150,000 events.
+        // Two producers ("the debug lane" of each session), ~12,500 one-line events/s each (js-debug delivered 1,000,002 events in ~40 s on
+        // Linux and ~20 s on a Mac), for 3 s.
         await Task.WhenAll(new[] { sc.Session, child }.Select((session, n) => Task.Run(async () =>
         {
             var i = 0;
             var start = Stopwatch.GetTimestamp();
             while (Stopwatch.GetElapsedTime(start).TotalMilliseconds < 3_000)
             {
-                for (var k = 0; k < 250; k++)
+                for (var k = 0; k < 125; k++)
                     sc.Rig.Debug.EmitOutput(new DebugOutputEventArgs(session, "stdout", $"log line {n}:{i++}\n"));
-                Interlocked.Add(ref produced, 250);
+                Interlocked.Add(ref produced, 125);
                 await Task.Delay(10).ConfigureAwait(false);
             }
         })));
@@ -192,7 +193,7 @@ public class ResponsivenessTests
         var cpu = ThreadCpu.CurrentThreadMs() - uiCpu;
         var measurement = await probe.StopAsync() with { Note = $"{produced:N0} events in {elapsedMs:F0} ms, {adds} list adds, UI thread CPU {cpu:F0} ms" };
 
-        Assert.True(produced > 100_000, $"only produced {produced} events");
+        Assert.True(produced > 50_000, $"only produced {produced} events");
         Assert.True(model.Lines.Count <= DebugConsoleViewModel.MaxLines);
         // One pump batch per ≥ 16 ms frame and one Add per batch (before: one per 150 lines, ~6 per frame at this rate).
         Assert.True(adds <= elapsedMs / 12 + 10, $"{adds} list changes in {elapsedMs:F0} ms: more than one per frame");
