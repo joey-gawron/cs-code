@@ -72,8 +72,14 @@ Linux install; GDB comes from the system).
   `Ns.Class.Method`) become **cases** under the test, which shows the worst of them. More than 300 requested tests drop the filter (the whole
   project runs).
 * **Run, VSTest** (xUnit v2, NUnit, MSTest): `dotnet test <proj> --logger "trx;LogFileName=<tmp>/results.trx" --results-directory <tmp>
-  --filter "FullyQualifiedName=A|FullyQualifiedName=B"` (filter characters escaped); the TRX file is read at the end (`TrxReader`:
-  `UnitTestResult` joined with its `UnitTest`'s class and method; Passed, Failed/Error/Timeout/Aborted, NotExecuted/Skipped).
+  --filter "FullyQualifiedName=A|FullyQualifiedName~A\(|FullyQualifiedName=B|FullyQualifiedName~B\("` (filter characters escaped); the TRX
+  file is read at the end (`TrxReader`: `UnitTestResult` joined with its `UnitTest`'s class and method; Passed, Failed/Error/Timeout/Aborted,
+  NotExecuted/Skipped). The `~A\(` half is for NUnit, whose parameterized cases (`[TestCase]`, `[TestCaseSource]`) have the fully qualified
+  name `Ns.Class.Method(1,2)`, which the exact condition never matches (running such a test ran nothing); the `(` is the boundary that keeps
+  `Ns.Class.Add` from running `Ns.Class.AddMany`. The filter has no "starts with", so a test of another class whose full name merely ends
+  with the id followed by `(` runs too (and is reported); a parameterized NUnit fixture (`Ns.Fixture(1).Method`) is not matched by its
+  method's id. Test: `Running_an_NUnit_parameterized_test_runs_each_of_its_cases_…` (a scripted `dotnet test` that applies the filter as the
+  test host does).
 * **Debug.** xUnit v3: the same assembly and arguments launched under netcoredbg (`{"type": "coreclr", "request": "launch", "program":
   <TargetPath>, "args": [...], "cwd": <output dir>, "console": "internalConsole"}`); the JSON reporter's lines are read from the session's
   output events (re-joined into lines). VSTest: `dotnet test` with `VSTEST_HOST_DEBUG=1`; the "Process Id: N" it prints is attached to
