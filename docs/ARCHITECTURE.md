@@ -29,6 +29,7 @@ and a GUI/editing path that is isolated from language-server load.
    ├── CsCode.Dap ─┤   workspace-bound services — hostable in-process OR in the headless CsCode.Server (remote / local process isolation)
    ├── CsCode.Platform (commands, when-clauses, config, keybindings, FS, watcher, workspace, state, logging)
    ├── CsCode.Vim (engine over IVimHost; no UI)            ├── CsCode.Remote / CsCode.Server  [wave 2]
+   ├── CsCode.Testing (Test Explorer engine: .NET/cargo/Jest-Vitest providers, run controller; no UI) ── CsCode.Panels.Testing (tool window; docs/TESTING.md)
    ├── CsCode.Profiling (memory monitor, soak/leak/responsiveness harness)
    └── all depend only on ↓
                           CsCode.Core
@@ -101,7 +102,7 @@ dispatcher latency p99 ≤ 16 ms / max ≤ 50 ms, typing latency p99 ≤ 20 ms, 
 
 ## 7. UI spec — Visual Studio 2022 look and feel (Shell module)
 
-* **Chrome**: custom title bar — left: app icon + menu bar (**File Edit View Go Debug Terminal Tools Window Help**), centre: Quick Launch box (Ctrl+Q), right: window controls. Native menu bar on macOS/DBus global menu where available.
+* **Chrome**: custom title bar — left: app icon + menu bar (**File Edit View Go Debug Test Terminal Tools Window Help**), centre: Quick Launch box (Ctrl+Q), right: window controls. Native menu bar on macOS/DBus global menu where available.
 * **Standard toolbar**: back/forward, new/open/save/save-all, undo/redo, launch-configuration dropdown, green ▶ *Start* (F5), *Start Without Debugging* (Ctrl+F5), step buttons while debugging, find-in-files.
 * **Layout (Dock.Avalonia)**: Explorer docked right (VS default), Output / Error List / Find Results / Terminal / Debug Console in the bottom tool well, Locals / Autos / Watch / Call Stack / Breakpoints / Threads shown while debugging. VS-style document tabs (preview tab italic, pin, dirty dot, split). Tool windows dock, float, auto-hide, tab-group. Layout persisted per workspace.
 * **Status bar**: VS blue (`#007ACC`) normally, **orange (`#CA5100`) while debugging**, purple (`#68217A`) when no folder is open; left: ready/progress/remote indicator, right: Ln/Col, indent, encoding, EOL, language, diagnostics counts, Vim mode, memory.
