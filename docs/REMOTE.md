@@ -285,6 +285,23 @@ connection that created or reattached it, so the replay always comes before newe
   `{GlobalStorageDir}/remote/sessions/` with its owner's pid: a client that finds the previous owner dead (a crash) reuses the id and reattaches to the
   server it left running (warm language servers); two live windows never share one. Terminals are not restored after a restart (the accepted default):
   a reattached server ends the channels, watches and task runs the new client does not claim (`chan/keep`, `watch/keep`, `task/keep`).
+* **A link that goes silent** (remote-11, found against a real host). A network that stops carrying packets kills no process; ssh's own keep-alive
+  (`ServerAliveInterval=15`, 4 misses, on every ssh CsCode starts) notices for a connection of its own. Not for a session multiplexed over the
+  user's ssh **ControlMaster** when another ssh (`ssh box` in a terminal) started the master without keep-alive: the client stayed "connected" with
+  every call timing out, and every reconnect attempt went through the same stale master and hung. Now:
+  - the client checks liveness itself (`RemoteClient.Heartbeat`, `HeartbeatPolicy.Default` = 15 s / 60 s, `RemoteOptions.Heartbeat`): a link
+    that carried nothing for 15 s gets a `$/ping`, one that carried nothing at all for 60 s is treated as lost ("No answer from box for 60 s" in the
+    Remote log) and reconnected, as for any drop (a persistent server is resumed). Any message counts, so a long transfer keeps a link alive;
+  - closing such a connection never waits: on Unix disposing a process pipe with a read (or write) in flight waits for that call, i.e. for ever on
+    a silent link, which hung `RpcPeer.Close` and so the reconnect; the pipes are now closed off the caller's thread, and `ProcessChannel` kills
+    the process before it closes them;
+  - a connection attempt that gets no answer within the start timeout (3 min; `RemoteOptions.StartTimeout`) fails as **timed out**
+    (`RemoteBootstrapException.TimedOut`) even when another process keeps its output open (an ssh mux client hands its stdin/stdout to the
+    master, so killing the client does not end the read: the attempt is given up 5 s later and its reading thread ends with the master);
+  - after a timed-out attempt the host's later attempts connect on their own: `-o ControlPath=none` (placed before the user's options, as ssh takes
+    the first value) — the user's master is left alone; the Remote log says so.
+  A stale master therefore costs one heartbeat period and one start timeout (about 4 minutes with the defaults) instead of a hang. Tested with a
+  frozen transport (`LivenessTests`) and against a real host whose master's sshd is stopped (`RealHostTests.A_stale_shared_ssh_connection…`).
 * **Permanent failures** end the reconnect loop at once only when flagged where they are thrown (`RemoteBootstrapException.IsPermanent`: no bundle for
   the platform, the install script's own refusals of the bundle — exit 3 no SHA-256 tool, 4 checksum mismatch, 5 no server in it —, still not
   installed after the upload, a protocol mismatch, no local server build); never from the message text, which carries host names and ssh's own
@@ -547,3 +564,54 @@ Run without `SSH_AUTH_SOCK` and without a display (the tests set `SSH_AUTH_SOCK`
   opened, edited and saved through the editor and the save command onto the remote disk, an Explorer create goes remote, quick open walks the remote,
   the status-bar indicator follows the connection; `cscode.languageHost = process` runs the child and the app's exit stops it; `ssh://` command-line targets;
   `cscode --askpass` answers without starting the GUI.
+* **Real host** (opt-in, never in CI): see below.
+
+### Testing against a real host
+
+`RealHostTests` (Remote.Tests) and `RealHostAppTests` (App.Tests) run the whole stack against a real machine reached with the system `ssh` — a VM,
+a server — and are skipped unless `CSCODE_TEST_SSH_HOST` names it:
+
+| Variable | |
+|---|---|
+| `CSCODE_TEST_SSH_HOST` | the ssh destination: `[user@]host[:port]` or a `Host` of the config file |
+| `CSCODE_TEST_SSH_CONFIG` | an ssh config file for it (`remote.ssh.configFile`, `ssh -F`); optional |
+| `CSCODE_TEST_SSH_DIR` | the host's temp directory, absolute, its name containing `cscode-realhost`; default `/tmp/cscode-realhost-<random>` |
+| `CSCODE_TEST_SSH_RUST_ANALYZER` | a rust-analyzer on the host, for the language-server test; optional (that test skips without it) |
+| `CSCODE_SERVER_BUNDLES` | the bundle directory if not `.scratch/server-bundles`; it needs the host's platform (`tools/publish-server.sh` builds it) |
+
+Everything the suite makes on the host — the server install (`remote.ssh.serverInstallPath`), its data dir (`remote.ssh.serverDataPath`: machine
+settings, logs, the persistent server's socket) and the workspaces — is inside that one directory; at the end its server processes are ended and the
+directory is removed (the App test uses its own `/tmp/cscode-realhost-app-<random>`). Nothing is written to the host's `~/.cscode-server`. The tests:
+bootstrap uploads and installs the host's bundle (its `uname -sm` decides which; the test checks the hash), files round-trip (names with spaces, a
+3 MB chunked transfer checked with `wc -c` on the host, rename, recursive delete), a file written on the host by another program reaches a watcher;
+quick open and Find in Files run on the host, a terminal with the user's own login shell and one with a plain bash run there (`uname -sm`, the
+workspace folder as the working directory), a `tasks.json` task runs there with its exit code; rust-analyzer, chosen in the host's machine settings
+through `IRemoteMachineSettings` (the Remote tab's service), publishes a diagnostic and answers a hover through the bridge; killing the local `ssh`
+process reconnects to the same persistent server (same `InstanceId`) and a running terminal loses and repeats no output (input typed during the outage
+arrives); a link that goes silent (the host's sshd process of the connection stopped with SIGSTOP: no process dies, only ssh's keep-alive notices,
+about 60 s) reconnects and resumes too; with a shared connection (a ControlMaster started by another ssh, without keep-alive, its sshd stopped)
+the heartbeat notices, the attempt through the stale master times out and the next one goes around it (`-o ControlPath=none`) to the same
+server; a deliberate disconnect ends the server on the host; the machine settings file is written through the server
+and an edit made on the host raises `Changed`. The App test drives the real app (nothing overridden but the user settings): `remote.openFolder
+ssh://host/dir/`, a file edited and saved through the editor lands on the host's disk, Open Remote Settings shows the Remote tab (the Workspace tab
+is off), and the app's exit leaves no server process on the host.
+
+**Against the Lima VM** (macOS arm64 client, `jiffy-ubuntu`: Ubuntu aarch64). Lima writes an ssh config for its VMs (`limactl show-ssh --format=config
+<vm>`, deprecated in favour of the file it names, `~/.lima/<vm>/ssh.config`; host `127.0.0.1`, the port `limactl list` shows, user `lima`, identity
+`~/.lima/_config/user`). Use a copy of that file with `ControlPath` moved to a short path of your own, so the test's ssh master stays apart from
+Lima's (a socket path must stay under 104 bytes on macOS); both suites pass with it, `ControlMaster auto` / `ControlPersist yes` included, and with a
+plain config (`HostName 127.0.0.1`, `Port`, `User lima`, `IdentityFile ~/.lima/_config/user`, `IdentitiesOnly yes`, `ControlMaster no`):
+
+```
+tools/publish-server.sh --rid linux-arm64          # or the default set; the VM is aarch64
+sed 's|^  ControlPath .*|  ControlPath "/tmp/cscode-test-cm.sock"|' ~/.lima/jiffy-ubuntu/ssh.config > /tmp/cscode-test-ssh.config
+export CSCODE_TEST_SSH_HOST=lima-jiffy-ubuntu CSCODE_TEST_SSH_CONFIG=/tmp/cscode-test-ssh.config
+export CSCODE_TEST_SSH_RUST_ANALYZER=/nix/store/…-rust-analyzer-…/bin/rust-analyzer   # optional: `command -v rust-analyzer` there is rustup's proxy without the component
+dotnet test tests/CsCode.Remote.Tests --filter "FullyQualifiedName~RealHostTests"   # ~2 min (the silent-link test waits for ssh's keep-alive)
+dotnet test tests/CsCode.App.Tests --filter "FullyQualifiedName~RealHostAppTests"
+```
+
+Measured on 2026-11-01 (macOS arm64 → jiffy-ubuntu over Lima's port forward): all 7 + 1 pass, with the plain config and with Lima's ControlMaster one;
+first connect including the 10 MB upload and install ≈ 1 s; afterwards no `/tmp/cscode-realhost-*` directory and no `cscode-server` process are
+left on the VM. Afterwards `ssh -F /tmp/cscode-test-ssh.config -O exit lima-jiffy-ubuntu` ends the test's ControlPersist master (Lima's own is never
+touched).
