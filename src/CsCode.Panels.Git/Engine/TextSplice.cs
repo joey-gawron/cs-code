@@ -56,6 +56,28 @@ public static class TextSplice
     }
 
     /// <summary>
+    /// <see cref="Apply"/> on bytes: <paramref name="original"/> with the picked changes towards <paramref name="modified"/> applied. Both are
+    /// compared byte for byte (each byte read as one Latin-1 character, which maps back to the same byte), so the lines that are not picked keep
+    /// their exact bytes in any ASCII-compatible encoding (UTF-8, Windows-1252, Latin-1, Shift-JIS, ...) and nothing is decoded or re-encoded.
+    /// A UTF-8 BOM is not a line's content: <paramref name="original"/>'s BOM, or its lack of one, is kept and <paramref name="modified"/>'s is
+    /// ignored. Null when no change was picked.
+    /// </summary>
+    public static byte[]? ApplyBytes(byte[] original, byte[] modified, Func<DiffChange, bool> select)
+    {
+        var bom = HasUtf8Bom(original) ? 3 : 0;
+        var modifiedBom = HasUtf8Bom(modified) ? 3 : 0;
+        var next = Apply(Encoding.Latin1.GetString(original, bom, original.Length - bom), Encoding.Latin1.GetString(modified, modifiedBom, modified.Length - modifiedBom), select);
+        if (next is null) return null;
+        var body = Encoding.Latin1.GetBytes(next);
+        return bom == 0 ? body : [.. original.AsSpan(0, bom), .. body];
+    }
+
+    private static bool HasUtf8Bom(byte[] b) => b.Length >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF;
+
+    /// <summary>Binary as git sees it: a NUL in the first 8000 bytes (UTF-16 text included; hunks of such files are not staged).</summary>
+    public static bool IsBinary(byte[] bytes) => bytes.AsSpan(0, Math.Min(bytes.Length, 8000)).Contains((byte)0);
+
+    /// <summary>
     /// True when change <paramref name="c"/> touches the modified-side lines <paramref name="startLine"/>..<paramref name="endLine"/> (0-based,
     /// inclusive). A pure deletion sits between two lines and is picked by either of them.
     /// </summary>

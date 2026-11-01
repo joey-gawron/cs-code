@@ -45,7 +45,28 @@ public sealed class TestRepo : IDisposable
         File.WriteAllText(full, content);
     }
 
+    public void WriteBytes(string rel, byte[] content)
+    {
+        var full = Path(rel);
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(full)!);
+        File.WriteAllBytes(full, content);
+    }
+
     public string Read(string rel) => File.ReadAllText(Path(rel));
+
+    /// <summary>git's standard output as bytes (blob contents, not decoded).</summary>
+    public byte[] GitBytes(params string[] args)
+    {
+        var psi = new ProcessStartInfo("git") { WorkingDirectory = Root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        using var p = Process.Start(psi)!;
+        using var ms = new MemoryStream();
+        var error = p.StandardError.ReadToEndAsync();
+        p.StandardOutput.BaseStream.CopyTo(ms);
+        p.WaitForExit();
+        if (p.ExitCode != 0) throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {error.GetAwaiter().GetResult()}");
+        return ms.ToArray();
+    }
 
     public string Git(params string[] args) => RunGit(Root, args);
 

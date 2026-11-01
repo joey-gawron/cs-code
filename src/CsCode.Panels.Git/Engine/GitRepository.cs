@@ -178,12 +178,15 @@ public sealed class GitRepository : IDisposable
     /// The text of <paramref name="relativePath"/> at <paramref name="revision"/> (<c>""</c> = the index, <c>HEAD</c>, a commit); null when the file
     /// is not there (new file, initial repository) or is binary (a NUL in its first 8 KB).
     /// </summary>
-    public async Task<string?> ShowAsync(string revision, string relativePath, CancellationToken ct = default)
+    public async Task<string?> ShowAsync(string revision, string relativePath, CancellationToken ct = default) =>
+        await ShowBytesAsync(revision, relativePath, ct).ConfigureAwait(false) is { } bytes ? Decode(bytes) : null;
+
+    /// <summary>The bytes of <paramref name="relativePath"/> at <paramref name="revision"/> as checkout would write them; null when the file is not there.</summary>
+    public async Task<byte[]?> ShowBytesAsync(string revision, string relativePath, CancellationToken ct = default)
     {
         // cat-file --filters: the blob as checkout would write it (core.autocrlf, .gitattributes eol), so it compares line by line with the file
         var r = await _git.RunAsync(Root, ["cat-file", "--filters", $"{revision}:{relativePath}"], throwOnError: false, ct: ct).ConfigureAwait(false);
-        if (!r.Ok) return null;
-        return Decode(r.Output);
+        return r.Ok ? r.Output : null;
     }
 
     /// <summary>UTF-8 (BOM stripped), or null for binary content.</summary>
@@ -341,33 +344,67 @@ public sealed class GitRepository : IDisposable
     }
 
     /// <summary>
-    /// Stages the changes of <paramref name="workingText"/> (the editor's text of the file) that touch its lines <paramref name="startLine"/>..
-    /// <paramref name="endLine"/>: the index version with those changes applied is hashed and written to the index. False when nothing was picked.
+    /// Stages the changes of <paramref name="workingText"/> (the editor's text of the file, which it saves in <paramref name="encoding"/>, UTF-8
+    /// when null) that touch its lines <paramref name="startLine"/>..<paramref name="endLine"/>. See the byte overload.
     /// </summary>
-    public Task<bool> StageRangeAsync(string relativePath, string workingText, int startLine, int endLine) => MutateAsync(async () =>
+    public Task<bool> StageRangeAsync(string relativePath, string workingText, int startLine, int endLine, Encoding? encoding = null) =>
+        StageRangeAsync(relativePath, (encoding ?? Utf8NoBom).GetBytes(workingText), startLine, endLine);
+
+    /// <summary>
+    /// Stages the changes of <paramref name="workingBytes"/> (the file's content as it is or would be saved) that touch its lines
+    /// <paramref name="startLine"/>..<paramref name="endLine"/>: the index version with those changes applied is hashed and written to the index.
+    /// The splice works on bytes, so the lines it does not pick keep their bytes whatever the file's encoding, and the index keeps its UTF-8 BOM
+    /// (or its lack of one). False when nothing was picked or either side is binary.
+    /// </summary>
+    public Task<bool> StageRangeAsync(string relativePath, byte[] workingBytes, int startLine, int endLine) => MutateAsync(async () =>
     {
-        var index = await ShowAsync("", relativePath).ConfigureAwait(false) ?? "";
-        var next = TextSplice.Apply(index, workingText, c => TextSplice.TouchesModifiedLines(c, startLine, endLine));
+        var index = await ShowBytesAsync("", relativePath).ConfigureAwait(false) ?? [];
+        if (TextSplice.IsBinary(index) || TextSplice.IsBinary(workingBytes)) return false;
+        var next = TextSplice.ApplyBytes(index, workingBytes, c => TextSplice.TouchesModifiedLines(c, startLine, endLine));
         if (next is null) return false;
         await WriteIndexAsync(relativePath, next).ConfigureAwait(false);
         return true;
     });
 
-    /// <summary>Unstages the staged changes touching the index lines <paramref name="startLine"/>..<paramref name="endLine"/> (the index gets HEAD's lines back there).</summary>
+    /// <summary>
+    /// Unstages the staged changes touching the index lines <paramref name="startLine"/>..<paramref name="endLine"/> (the index gets HEAD's lines
+    /// back there; the other lines keep their bytes, see <see cref="StageRangeAsync(string, byte[], int, int)"/>).
+    /// </summary>
     public Task<bool> UnstageRangeAsync(string relativePath, int startLine, int endLine) => MutateAsync(async () =>
     {
-        var index = await ShowAsync("", relativePath).ConfigureAwait(false) ?? "";
-        var head = await ShowAsync("HEAD", relativePath).ConfigureAwait(false) ?? "";
-        var next = TextSplice.Apply(index, head, c => TextSplice.TouchesOriginalLines(c, startLine, endLine));
+        var index = await ShowBytesAsync("", relativePath).ConfigureAwait(false) ?? [];
+        var head = await ShowBytesAsync("HEAD", relativePath).ConfigureAwait(false) ?? [];
+        if (TextSplice.IsBinary(index) || TextSplice.IsBinary(head)) return false;
+        var next = TextSplice.ApplyBytes(index, head, c => TextSplice.TouchesOriginalLines(c, startLine, endLine));
         if (next is null) return false;
         await WriteIndexAsync(relativePath, next).ConfigureAwait(false);
         return true;
     });
 
-    private async Task WriteIndexAsync(string relativePath, string text)
+    private static readonly UTF8Encoding Utf8NoBom = new(false);
+
+    /// <summary>
+    /// The encoding an editor document named <paramref name="name"/> (<see cref="CsCode.Core.Text.IEditorDocument.EncodingName"/>, VS Code ids)
+    /// saves in; UTF-8 for unknown names.
+    /// </summary>
+    public static Encoding EncodingFor(string? name)
+    {
+        switch (name?.Replace("-", "").Replace("_", "").ToLowerInvariant())
+        {
+            case "windows1252" or "cp1252":
+                Encoding.RegisterProvider(CodePagesEncodingProvider.Instance); // idempotent
+                return Encoding.GetEncoding(1252);
+            case "iso88591" or "latin1": return Encoding.Latin1;
+            case "utf16le": return new UnicodeEncoding(false, false);
+            case "utf16be": return new UnicodeEncoding(true, false);
+            default: return Utf8NoBom;
+        }
+    }
+
+    private async Task WriteIndexAsync(string relativePath, byte[] content)
     {
         var mode = Status.Entries.FirstOrDefault(e => e.Path == relativePath)?.IndexMode is { Length: 6 } m && m != "000000" ? m : "100644";
-        var hash = await _git.RunAsync(Root, ["hash-object", "-w", "--stdin", "--path", relativePath], Encoding.UTF8.GetBytes(text)).ConfigureAwait(false);
+        var hash = await _git.RunAsync(Root, ["hash-object", "-w", "--stdin", "--path", relativePath], content).ConfigureAwait(false);
         var sha = hash.Text.Trim();
         await _git.RunAsync(Root, ["update-index", "--add", "--cacheinfo", $"{mode},{sha},{relativePath}"]).ConfigureAwait(false);
     }

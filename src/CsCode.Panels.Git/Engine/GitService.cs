@@ -350,14 +350,11 @@ public sealed class GitService : IFileDecorationProvider, IQuickDiffProvider, IL
     public async ValueTask<bool> StageRangeAsync(Uri uri, int startLine, int endLine, CancellationToken ct = default)
     {
         if (RepositoryFor(uri) is not { } repo || repo.RelativePath(uri) is not { Length: > 0 } rel) return false;
-        var text = _documents?.Get(uri)?.GetText();
-        if (text is null)
-        {
-            var bytes = await _workspace.FileSystem.ReadFileAsync(uri, ct).ConfigureAwait(false);
-            text = GitRepository.Decode(bytes);
-            if (text is null) return false;
-        }
-        return await repo.StageRangeAsync(rel, text, startLine, endLine).ConfigureAwait(false);
+        // the open document's text as it would be saved (its encoding), else the file's bytes as they are
+        if (_documents?.Get(uri) is { } doc)
+            return await repo.StageRangeAsync(rel, doc.GetText(), startLine, endLine, GitRepository.EncodingFor((doc as IEditorDocument)?.EncodingName)).ConfigureAwait(false);
+        var bytes = await _workspace.FileSystem.ReadFileAsync(uri, ct).ConfigureAwait(false);
+        return await repo.StageRangeAsync(rel, bytes, startLine, endLine).ConfigureAwait(false);
     }
 
     // ------------------------------------------------------------------------------------- blame

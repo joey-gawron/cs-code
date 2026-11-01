@@ -309,6 +309,59 @@ public sealed class RepositoryTests : IDisposable
         Assert.Equal("", repo.Git("diff", "--cached"));
     }
 
+    private static readonly byte[] Bom = [0xEF, 0xBB, 0xBF];
+
+    private static byte[] Latin1(string s) => System.Text.Encoding.Latin1.GetBytes(s);
+
+    [Fact]
+    public async Task Staging_a_range_of_a_file_with_a_bom_keeps_the_bom_and_the_lines_it_did_not_pick()
+    {
+        var (repo, git, _) = await OpenAsync(r =>
+        {
+            r.WriteBytes("f.txt", [.. Bom, .. Latin1("one\ntwo\nthree\n")]);
+            r.Commit();
+        });
+        var r = git.Repositories[0];
+        repo.WriteBytes("f.txt", [.. Bom, .. Latin1("one\nTWO\nthree\nfour\n")]);
+        await r.RefreshAsync();
+
+        // the editor's text (no BOM: the editor keeps it apart)
+        Assert.True(await r.StageRangeAsync("f.txt", "one\nTWO\nthree\nfour\n", 1, 1));
+        Assert.Equal([.. Bom, .. Latin1("one\nTWO\nthree\n")], repo.GitBytes("cat-file", "-p", ":f.txt"));
+        Assert.True(await r.UnstageRangeAsync("f.txt", 1, 1));
+        Assert.Equal("", repo.Git("diff", "--cached"));
+
+        // the file on disk (no open document): its BOM is not a change of line 0
+        Assert.True(await git.StageRangeAsync(repo.FileUri("f.txt"), 3, 3));
+        Assert.Equal([.. Bom, .. Latin1("one\ntwo\nthree\nfour\n")], repo.GitBytes("cat-file", "-p", ":f.txt"));
+    }
+
+    [Fact]
+    public async Task Staging_a_range_of_a_non_utf8_file_keeps_the_bytes_of_the_lines_it_did_not_pick()
+    {
+        var head = Latin1("caf\u00e9\ntwo\nna\u00efve\nend\n"); // Windows-1252 / Latin-1 bytes E9 and EF
+        var (repo, git, _) = await OpenAsync(r =>
+        {
+            r.WriteBytes("f.txt", head);
+            r.WriteBytes("sjis.txt", [0x93, 0xFA, 0x96, 0x7B, 0x0A, .. Latin1("two\n")]); // Shift-JIS: a line of two characters, then ASCII
+            r.Commit();
+        });
+        var r = git.Repositories[0];
+        repo.WriteBytes("f.txt", Latin1("caf\u00e9\nTWO\nna\u00efve\nEND\n"));
+        repo.WriteBytes("sjis.txt", [0x93, 0xFA, 0x96, 0x7B, 0x0A, .. Latin1("TWO\n")]);
+        await r.RefreshAsync();
+
+        // the editor's text of a Windows-1252 document
+        Assert.True(await r.StageRangeAsync("f.txt", "caf\u00e9\nTWO\nna\u00efve\nEND\n", 1, 1, GitRepository.EncodingFor("windows1252")));
+        Assert.Equal(Latin1("caf\u00e9\nTWO\nna\u00efve\nend\n"), repo.GitBytes("cat-file", "-p", ":f.txt"));
+        Assert.True(await r.UnstageRangeAsync("f.txt", 1, 1));
+        Assert.Equal(head, repo.GitBytes("cat-file", "-p", ":f.txt"));
+
+        // the bytes on disk, in an encoding the editor does not know
+        Assert.True(await git.StageRangeAsync(repo.FileUri("sjis.txt"), 1, 1));
+        Assert.Equal([0x93, 0xFA, 0x96, 0x7B, 0x0A, .. Latin1("TWO\n")], repo.GitBytes("cat-file", "-p", ":sjis.txt"));
+    }
+
     [Fact]
     public async Task Blame_of_a_line_names_the_author_and_unsaved_lines_are_uncommitted()
     {

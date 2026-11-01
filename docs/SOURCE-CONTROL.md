@@ -144,7 +144,10 @@ turns the markers off.
 **Hunk staging** (`GitRepository.StageRangeAsync`): the index version (with filters) and the editor's text are diffed **with line terminators**
 (so a final newline added or CRLF turned to LF is a change of its own), the changes touching the given lines are spliced into the index text
 (`TextSplice`), and the result is written straight to the index (`git hash-object -w --stdin --path` + `git update-index --cacheinfo <mode>`),
-the way VS Code stages selected ranges. `UnstageRangeAsync` splices HEAD's lines back into the index the same way.
+the way VS Code stages selected ranges. `UnstageRangeAsync` splices HEAD's lines back into the index the same way. The splice works on **bytes**
+(each byte read as one Latin-1 character), so lines it does not pick keep their exact bytes in any ASCII-compatible encoding (UTF-8,
+Windows-1252, Shift-JIS, ...) and the index keeps its UTF-8 BOM, or its lack of one; the editor's text is encoded in the document's encoding
+(`GitRepository.EncodingFor`) first, a file that is not open is taken as its bytes on disk, and binary (NUL) content is not staged.
 
 ## Blame
 
