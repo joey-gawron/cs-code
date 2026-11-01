@@ -392,4 +392,49 @@ public class CodeLensViewTests
         Assert.True(onText > 20, $"the glyph is on the text row ({onText})");
         Assert.True(inZone < 3, $"nothing of it in the zone ({inZone})");
     }
+
+    private sealed class FakeInlayHints(params InlayHint[] hints) : IInlayHintsProvider
+    {
+        public ValueTask<IReadOnlyList<InlayHint>?> ProvideInlayHintsAsync(ITextDocument document, TextRange range, CancellationToken ct) =>
+            ValueTask.FromResult<IReadOnlyList<InlayHint>?>(hints);
+    }
+
+    [AvaloniaFact]
+    public async Task Whitespace_markers_inlay_hints_and_folded_regions_at_the_start_or_end_of_a_lens_line_are_all_drawn()
+    {
+        using var host = ViewHost.Create();
+        host.Config.Set("editor.renderWhitespace", "all");
+        host.Factory.Services.Features.Register<ICodeLensProvider>(DocumentSelector.All, new FakeLenses(_ => [Lens(2, 4, "2 references"), Lens(6, 4, "0 references")]));
+        host.Factory.Services.Features.Register<IFoldingRangeProvider>(DocumentSelector.All, new FakeFolds(new FoldingRange(2, 4)));
+        host.Factory.Services.Features.Register<IInlayHintsProvider>(DocumentSelector.All, new FakeInlayHints(
+            new InlayHint(new TextPosition(6, 0), "lens:", InlayHintKind.Type), // column 0 of a lens line, before an indentation space
+            new InlayHint(new TextPosition(3, 0), "plain:", InlayHintKind.Type), // before an indentation space of a line without a lens
+            new InlayHint(new TextPosition(2, 12), ": void", InlayHintKind.Type))); // at the end of line 2, where its folded region starts
+        var (_, view, _) = await host.OpenAsync(Code, "a.cs");
+        var lenses = view.Feature<CodeLensFeature>()!;
+        var hints = view.Feature<InlayHintFeature>()!;
+        await ViewHost.WaitFor(() => lenses.Placements.Count == 2 && hints.Placements.Count == 3, "lenses and hints placed");
+        ViewHost.Pump();
+
+        // a lens line: the zone opens it, then the hint, then the first indentation space's marker, as on a line without a lens
+        var lensLine = Visual(view, 6).Elements;
+        var plainLine = Visual(view, 3).Elements;
+        Assert.IsType<LineZones.Spacer>(lensLine[0]);
+        Assert.IsType<InlineObjectElement>(lensLine[1]);
+        Assert.IsType<InlineObjectElement>(plainLine[0]);
+        Assert.IsNotType<VisualLineText>(plainLine[1]); // the whitespace marker
+        Assert.Equal(plainLine[1].GetType(), lensLine[2].GetType());
+        Assert.Equal(lenses.ZoneHeight, LineZones.HeightOf(Visual(view, 6)));
+
+        // a lens line folded: zone, markers, text, the hint at the line end, then the folded region's placeholder
+        var folding = view.Feature<FoldingFeature>()!;
+        await ViewHost.WaitFor(() => folding.Ranges.Contains((2, 4)), "the fold from line 3 to 5");
+        view.Controller.SetSelection(TextRange.At(2, 6));
+        folding.Fold();
+        ViewHost.Pump();
+        var folded = Visual(view, 2).Elements;
+        Assert.IsType<LineZones.Spacer>(folded[0]);
+        Assert.Single(folded.OfType<InlineObjectElement>());
+        Assert.Equal(lenses.ZoneHeight, LineZones.HeightOf(Visual(view, 2)));
+    }
 }

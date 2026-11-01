@@ -35,7 +35,13 @@ internal sealed class InlayHintFeature : ISettingsAware, IThemeAware, IDisposabl
     {
         _v = view;
         _generator = new Generator(this);
-        view.TextView.ElementGenerators.Add(_generator);
+        // Before AvaloniaEdit's own generators (folding, whitespace markers): at one offset AvaloniaEdit keeps constructing elements while they
+        // are zero-length and stops at the first that covers text, so a hint after them would be lost where a whitespace marker, a control
+        // character box or a folded region starts. After a code lens zone, which opens its line.
+        var generators = view.TextView.ElementGenerators;
+        var at = 0;
+        while (at < generators.Count && LineZones.IsZoneGenerator(generators[at])) at++;
+        generators.Insert(at, _generator);
         view.TextView.ScrollOffsetChanged += OnScrolled;
         _d.Add(view.Document.Changed.Subscribe(_ => Schedule()));
         _d.Add(view.Services.Features.ProvidersChanged.Subscribe(t =>

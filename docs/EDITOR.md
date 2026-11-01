@@ -226,8 +226,12 @@ AvaloniaEdit 12.0.0 (`Avalonia.AvaloniaEdit`):
   inserted above `KnownLayer.Caret` paints each zone with the editor background (then the lens text), which hides all three there, and is
   hit-testable over the zones only. The element needs `HandlesLineBorders` and its own caret stops, or Home stops before it and Left at the text
   start stays on the line; the editor's own gutters (breakpoints, test glyphs, quick diff, inline blame, snippet markers) add `LineZones.HeightOf`
-  / `ZoneOffset`. AvaloniaEdit asks no element generator about an empty line, so an empty line cannot carry a zone. After a zero-document-length
-  element AvaloniaEdit asks the generators again from the next offset, so an inlay hint at column 0 of a lens line is not shown.
+  / `ZoneOffset`. AvaloniaEdit asks no element generator about an empty line, so an empty line cannot carry a zone. At one offset AvaloniaEdit
+  goes on through the generators while each element it gets is zero-length and stops at the first that covers text (construction goes on
+  at that element's end, so the generators after it are never asked about this offset), so the order of `TextView.ElementGenerators` decides what is kept where several start at one offset: the zone
+  generator is first, then inlay hints, then AvaloniaEdit's own (folding, whitespace markers and control-character boxes). Column 0 of a lens
+  line keeps the zone, an inlay hint and the first indentation's `editor.renderWhitespace` marker; an inlay hint where a whitespace marker
+  or a folded region starts (the end of a fold's first line) is drawn before it.
 * `EnableHyperlinks` makes AvaloniaEdit start the browser itself; the editor turns it off and opens URLs through `IWindowService`.
 * **The stock search panel searched the whole document on the UI thread on every edit while open**, without a result limit, with a regex that
   had no match timeout. `FindSearch` (reflection against the 12.0.0 layout; the stock panel stays when it differs) gives it VS Code's find-widget
@@ -309,7 +313,7 @@ settings alone, so a project's `.editorconfig` could make it say "Spaces: 4" whi
 `editor.linkedEditing` (off, VS Code's default; §7d; registered by the factory too),
 `editor.codeLens` (true), `editor.codeLensFontSize` (0 = 90 % of the editor's), `editor.codeLensFontFamily` ("" = the editor's) and
 `editor.semanticHighlighting.enabled` (`configuredByTheme`) (§7e; registered by the factory too),
-and the minimap's and overview ruler's `editor.minimap.enabled` (true), `.side`, `.renderCharacters`, `.maxColumn`, `.showSlider`, `.scale`,
+and the minimap's and overview ruler's `editor.minimap.enabled` (true), `.side`, `.renderCharacters` (true, VS Code's default), `.maxColumn`, `.showSlider`, `.scale`,
 `editor.overviewRulerLanes`, `editor.overviewRulerBorder`, `editor.hideCursorInOverviewRuler`, `debug.showBreakpointsInOverviewRuler` (§7f).
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
@@ -614,7 +618,7 @@ its left border (`editorOverviewRuler.border`), `editorOverviewRuler.background`
   columns. The width is `maxColumn` columns, at most 30 % of the editor, and the minimap is hidden below 24 DIPs.
 * Each non-blank character is a cell in its token's colour (the published token rows of the TextMate or tree-sitter session, resolved against
   the theme with `TokenColorResolver`), blended over `minimap.background`; tabs go to the next tab stop. `editor.minimap.renderCharacters`
-  (default true) shapes the cells by character class (capitals, digits and brackets full height, lower case shorter, punctuation a low, light
+  (default true, as in VS Code) shapes the cells by character class (capitals, digits and brackets full height, lower case shorter, punctuation a low, light
   mark), so words read as words; false draws runs of non-blank text as solid blocks. Large-file mode has no tokens: plain foreground.
 * The slider covers the rows on screen (`minimapSlider.background`, `hoverBackground`, `activeBackground` while dragging), shown while the
   pointer is over the minimap with `editor.minimap.showSlider: mouseover` (the default) or always with `always`. A press on the slider drags it
@@ -660,7 +664,7 @@ Not done, or done only in part — none of this is faked:
   Backspace in leading spaces deletes one space, not one indentation unit. Rectangular selection is AvaloniaEdit's own (Alt+drag; Ctrl+Option+drag
   on macOS) and its rows act as carets for the clipboard (§7a).
 * **Code lens** (§7e): no keyboard access to a lens (VS Code's "Show CodeLens Commands For Current Line" is not implemented); a lens on an
-  empty line, or an inlay hint at column 0 of a lens line, is not shown (§5); split views of one document ask (and resolve) separately; lenses
+  empty line is not shown (§5); split views of one document ask (and resolve) separately; lenses
   and semantic tokens are not `IMemoryTrimmable` (both are bounded and die with the view).
 * **Semantic highlighting** (§7e): only the first full provider and the first range provider are used (VS Code also picks one); custom token
   types and modifiers declared by a server's VS Code extension (`semanticTokenTypes` / `semanticTokenScopes` contributions) are not known beyond
