@@ -23,6 +23,7 @@
     <Project Path="tests/CsCode.App.Tests/CsCode.App.Tests.csproj" />
     <Project Path="tests/CsCode.Core.Tests/CsCode.Core.Tests.csproj" />
     <Project Path="tests/CsCode.Dap.Tests/CsCode.Dap.Tests.csproj" />
+    <Project Path="tests/CsCode.Docs.Tests/CsCode.Docs.Tests.csproj" />
     <Project Path="tests/CsCode.Editor.Tests/CsCode.Editor.Tests.csproj" />
     <Project Path="tests/CsCode.Lsp.Tests/CsCode.Lsp.Tests.csproj" />
     <Project Path="tests/CsCode.Macros.Tests/CsCode.Macros.Tests.csproj" />

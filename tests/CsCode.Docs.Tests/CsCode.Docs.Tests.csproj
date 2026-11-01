@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Checks the user-facing docs against the code they describe (docs/RUN-AND-DEBUG.md: its key tables against the keymap presets and the
+       modules' built-in keys, the repository's own .vscode/launch.json and tasks.json through the real debug services). -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
+    <ProjectReference Include="../../src/CsCode.Platform/CsCode.Platform.csproj" />
+    <ProjectReference Include="../../src/CsCode.Dap/CsCode.Dap.csproj" />
+    <ProjectReference Include="../../src/CsCode.Editor/CsCode.Editor.csproj" />
+    <ProjectReference Include="../../src/CsCode.Panels.Debug/CsCode.Panels.Debug.csproj" />
+    <ProjectReference Include="../../src/CsCode.Panels.Terminal/CsCode.Panels.Terminal.csproj" />
+  </ItemGroup>
+
+</Project>
