@@ -107,16 +107,26 @@ public sealed class RepositoryDebugSetupTests : IAsyncLifetime
         Assert.Equal(["build", "${workspaceFolder}/CsCode.slnx"], Args(Task(defaultBuild.Label))[..2]);
     }
 
-    /// <summary>The quit task ends only the sandboxed window's processes: --quit --all under the launch configuration's CSCODE_HOME.</summary>
+    /// <summary>
+    /// The quit task quits the background sessions of the sandboxed window's home (--quit --all under the launch configuration's CSCODE_HOME);
+    /// the debugged --foreground window has no session endpoint, so it cannot reach that (ForegroundProcessTests in CsCode.App.Tests).
+    /// </summary>
     [Fact]
     public async Task The_quit_task_uses_the_sandboxed_windows_home()
     {
         var launch = Assert.Single(await _configurations.GetLaunchConfigurationsAsync(null, Ct), c => c.Name == Sandboxed);
-        var quit = Task("quit sandboxed CsCode");
+        var quit = Task("quit sandboxed background sessions");
         var args = quit.GetProperty("args").EnumerateArray().Select(a => a.GetString()!).ToArray();
         Assert.Equal(["--quit", "--all"], args[^2..]);
         Assert.Contains("--no-build", args);
         Assert.Equal(launch.Properties["env"].GetProperty("CSCODE_HOME").GetString(), quit.GetProperty("options").GetProperty("env").GetProperty("CSCODE_HOME").GetString());
+
+        // The guide names the task and says what stops the debugged window, which the task cannot reach.
+        var guide = RepoDocs.Read("docs/RUN-AND-DEBUG.md");
+        var paragraph = guide[guide.IndexOf("`.vscode/tasks.json` also has", StringComparison.Ordinal)..];
+        paragraph = paragraph[..paragraph.IndexOf("\n\n", StringComparison.Ordinal)];
+        Assert.Contains("`quit sandboxed background sessions`", paragraph);
+        Assert.Contains("stop it with Shift+F5", paragraph);
     }
 
     /// <summary>The guide's lldb-dap example, put in settings, becomes a debugger a new launch.json can be created for.</summary>

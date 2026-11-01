@@ -231,15 +231,16 @@ SDK `source tools/nix-dev-env.sh` first. Build with `dotnet build CsCode.slnx` (
 dotnet run --project src/CsCode.App -- --foreground [paths...]    # the window runs in this process; closing it exits
 dotnet run --project src/CsCode.App -- [paths...]                 # background mode: returns once the window is up
 dotnet run --project src/CsCode.App -- --list-sessions            # saved and running sessions, with their PIDs
-dotnet run --project src/CsCode.App -- --quit --all               # quit every CsCode process (of this CSCODE_HOME)
+dotnet run --project src/CsCode.App -- --quit --all               # quit every background CsCode process (of this CSCODE_HOME)
 dotnet run --project src/CsCode.App -- --help
 ```
 
 Without `--foreground`, `dotnet run` is the **launcher**: it starts (or reuses) a session process that keeps the window and outlives the
 command, so a later run shows the same window; quit it with `--quit --all` or *File ▸ Quit Session*. To keep a development build away
 from your real settings and sessions, give it its own home: `CSCODE_HOME=/tmp/cscode-dev dotnet run --project src/CsCode.App -- --foreground`
-puts config, data, cache, logs and the session sockets under that folder (`config/`, `data/`, `cache/`, `logs/`, `run/`), and `--quit --all`
-with the same `CSCODE_HOME` only quits those processes.
+puts config, data, cache, logs and the session sockets under that folder (`config/`, `data/`, `cache/`, `logs/`, `run/`). `--list-sessions`
+and `--quit --all` with the same `CSCODE_HOME` see only that home's background processes, and never a `--foreground` window (it has no
+session endpoint): close that window, or stop it with Shift+F5 when it runs under a debugger.
 
 ### Debugging CsCode itself
 
@@ -251,8 +252,9 @@ then `.vscode/`; VS Code needs its C# extension) has:
 | **CsCode (sandboxed window)** | builds the app (`build app` task), starts `cscode.dll --foreground` under the debugger with `CSCODE_HOME=.scratch/debug-home`, so the debugged window has its own settings, sessions and logs and never meets the CsCode you are working in. Add paths after `--foreground` to open them; remove `env` to use your own settings. |
 | **CsCode: attach to a process** | attaches to a running CsCode process picked from a list |
 
-`.vscode/tasks.json` also has `build` (the whole solution, the default build task) and `quit sandboxed CsCode` (`--quit --all` for
-`.scratch/debug-home`). In CsCode the adapter is netcoredbg (it stops in CsCode's own code on an arm64 Mac too); in VS Code it is the C#
+`.vscode/tasks.json` also has `build` (the whole solution, the default build task) and `quit sandboxed background sessions` (`--quit --all`
+for `.scratch/debug-home`: background sessions started under that home, for example by running `cscode` in the debugged window's terminal).
+Neither it nor `--quit --all` reaches the debugged window itself, a `--foreground` process: stop it with Shift+F5 (Stop Debugging) or close it. In CsCode the adapter is netcoredbg (it stops in CsCode's own code on an arm64 Mac too); in VS Code it is the C#
 extension's debugger.
 
 **From Rider or Visual Studio**: run the `CsCode.App` project with program arguments `--foreground` (plus any paths) and, for a sandbox, the
