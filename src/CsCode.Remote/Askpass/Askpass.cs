@@ -224,3 +224,28 @@ public static class AskpassClient
         }
     }
 }
+
+/// <summary>
+/// <see cref="IAskpassService"/> over <see cref="AskpassServer"/>, for local child processes that may prompt (git's fetch, pull and push over ssh or
+/// HTTPS): one server per operation, with the same wrapper script, socket and one-time token as a remote connection's.
+/// </summary>
+public sealed class AskpassService(Func<IWindowService?> window, IReadOnlyList<string> command, string? directory = null, ILogger? log = null) : IAskpassService
+{
+    public IAskpassSession? Start()
+    {
+        if (OperatingSystem.IsWindows() || window() is not { } w) return null;
+        try { return new Session(AskpassServer.Start(w, command, log, directory)); }
+        catch (Exception ex) when (ex is IOException or SocketException or UnauthorizedAccessException)
+        {
+            log?.LogWarning(ex, "askpass: could not start");
+            return null;
+        }
+    }
+
+    private sealed class Session(AskpassServer server) : IAskpassSession
+    {
+        public string Program => server.ScriptPath;
+        public IReadOnlyDictionary<string, string?> Environment => server.Environment;
+        public void Dispose() => server.Dispose();
+    }
+}

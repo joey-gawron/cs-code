@@ -45,12 +45,18 @@ public sealed class GitService : IFileDecorationProvider, IQuickDiffProvider, IL
     private int _discoveryGeneration;
     private bool _disposed;
 
-    public GitService(IWorkspaceService workspace, IConfigurationService? config = null, IMemoryMonitor? memory = null, IDocumentManager? documents = null, GitRunner? runner = null)
+    public GitService(IWorkspaceService workspace, IConfigurationService? config = null, IMemoryMonitor? memory = null, IDocumentManager? documents = null, GitRunner? runner = null,
+        IAskpassService? askpass = null)
     {
         _workspace = workspace;
         _config = config;
         _documents = documents;
         _runner = runner ?? new GitRunner(() => _config?.Get<string?>(PathSetting, null), memory);
+        _runner.Askpass ??= askpass;
+        _runner.UseAskpass = () => _config?.Get(GitSettings.UseIntegratedAskPass, true) ?? true;
+        _runner.NetworkTimeout = () => _config?.Get<double?>(GitSettings.NetworkTimeout, null) is { } s
+            ? s > 0 ? TimeSpan.FromSeconds(s) : Timeout.InfiniteTimeSpan
+            : GitRunner.DefaultNetworkTimeout;
         if (config is not null) _store.Add(config.RegisterProperties(GitSettings.Properties()));
         _store.Add(workspace.FoldersChanged.Subscribe(_ => Discover()));
         if (config is not null)

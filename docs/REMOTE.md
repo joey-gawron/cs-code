@@ -140,7 +140,9 @@ the first time a workspace opens — instead the start fails with "No usable ver
   socket (0600) and a 0700 wrapper script `exec '<cscode>' --askpass "$@"`, and a random 256-bit one-time token. ssh gets `SSH_ASKPASS=<script>`,
   `SSH_ASKPASS_REQUIRE=force` and the socket/token variables; `cscode --askpass "<prompt>"` sends token + prompt; the server compares the token in constant
   time, asks through `IWindowService` (a Yes/No message for host-key confirmations, a masked input box for passphrases/passwords/PINs, an unmasked one for
-  codes and user names) and answers. Nothing is stored; the directory, socket and token are deleted when the attempt ends.
+  codes and user names) and answers. Nothing is stored; the directory, socket and token are deleted when the attempt ends. The same helper serves
+  local git's fetch, pull and push (`IAskpassService` in Core, `AskpassService` here, registered by `AddCsCodeRemote`; one server per operation,
+  also as `GIT_ASKPASS` for HTTPS credentials: docs/SOURCE-CONTROL.md).
 * **CsCode never reads `~/.ssh` keys or `known_hosts` itself.** The only file under `~/.ssh` it reads is `~/.ssh/config` (or `remote.ssh.configFile`), and
   only to list `Host` names when the user runs *Connect to Host…* — off the UI thread, never written.
 * The remote server writes only below its install root and data directory (and whatever the language servers it starts write).

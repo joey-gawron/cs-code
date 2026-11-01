@@ -38,6 +38,13 @@ public static class ServiceCollectionExtensions
         DecorateTaskService(services);
 
         services.TryAddSingleton(new RemoteOptions());
+        // prompts of local child processes too (git's fetch/pull/push over ssh or HTTPS), through the same askpass helper as remote connections
+        services.TryAddSingleton<IAskpassService>(sp =>
+        {
+            var options = sp.GetRequiredService<RemoteOptions>();
+            return new Askpass.AskpassService(sp.GetService<IWindowService>, options.AskpassCommand ?? RemoteOptions.DefaultAskpassCommand(), options.AskpassDirectory,
+                sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger("CsCode.Remote.Askpass"));
+        });
         services.TryAddSingleton(sp => new LanguageHostMode(sp));
         services.TryAddSingleton(sp => new ProcessLanguageHost(sp, sp.GetRequiredService<RemoteOptions>()));
         services.TryAddSingleton(sp => new RemoteConnectionManager(sp, sp.GetRequiredService<RemoteOptions>()));
