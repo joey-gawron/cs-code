@@ -7,6 +7,7 @@ namespace CsCode.Panels.Testing;
 public static class TestingSettings
 {
     public const string GutterEnabled = "testing.gutterEnabled";
+    public const string CodeLens = "testing.codeLens";
     public const string DefaultGutterClickAction = "testing.defaultGutterClickAction";
     public const string OpenTesting = "testing.openTesting";
     public const string AutoDiscover = "cscode.testing.autoDiscover";
@@ -28,6 +29,7 @@ public static class TestingSettings
     public static IReadOnlyList<ConfigurationProperty> Properties() =>
     [
         P(GutterEnabled, true, "Whether the editor shows a run / debug glyph (with the last result) next to each test the Test Explorer knows.", """{"type":"boolean"}"""),
+        P(CodeLens, true, "Whether the editor shows \"Run Test | Debug Test\" above each test the Test Explorer knows (when editor.codeLens is on).", """{"type":"boolean"}"""),
         P(DefaultGutterClickAction, "run", "What a click on a test's glyph in the editor does (right-click always offers every action).",
             """{"type":"string","enum":["run","debug","contextMenu"],"enumDescriptions":["Run the test.","Debug the test.","Open the menu of test actions."]}"""),
         P(OpenTesting, "openOnTestStart", "When the Test Explorer is shown during a run.",

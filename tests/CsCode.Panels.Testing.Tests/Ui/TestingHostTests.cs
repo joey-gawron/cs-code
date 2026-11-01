@@ -91,6 +91,36 @@ public sealed class TestingHostTests
     }
 
     [Fact]
+    public async Task Each_known_test_gets_run_and_debug_lenses_that_run_it_and_follow_discovery_and_the_setting()
+    {
+        using var rig = new HostRig();
+        var doc = new InMemoryTextDocument(new Uri("file://" + HostRig.MathFile), "csharp", HostRig.MathSource);
+        var provider = Assert.Single(rig.Features.GetProviders<ICodeLensProvider>(doc));
+        Assert.Empty(rig.Features.GetProviders<ICodeLensProvider>(new InMemoryTextDocument(new Uri("file:///w/x.md"), "markdown")));
+        var changed = new List<Uri?>();
+        using var sub = provider.CodeLensesChanged.Subscribe(changed.Add);
+        await rig.DiscoveredAsync();
+        rig.Host.Gutter.Invalidate(); // what a change of the explorer's tree does
+        Assert.Contains(null, changed); // the tree changed: the editors ask again
+        var lenses = await provider.ProvideCodeLensesAsync(doc, TestContext.Current.CancellationToken);
+        Assert.Equal([(4, "Run Test"), (4, "Debug Test"), (7, "Run Test"), (7, "Debug Test")], lenses!.Select(l => (l.Range.Start.Line, l.Command!.Title)));
+
+        var subtracts = lenses!.Single(l => l.Range.Start.Line == 7 && l.Command!.Title == "Run Test").Command!;
+        Assert.True(rig.Commands.Has(subtracts.CommandId));
+        await rig.Commands.ExecuteAsync(subtracts.CommandId, [.. subtracts.Arguments!.Select(a => (object?)a)]);
+        Assert.Equal(["Calc.MathTests.Subtracts"], rig.Provider.Runs.Last().TestIds);
+        var debug = lenses!.Single(l => l.Range.Start.Line == 4 && l.Command!.Title == "Debug Test").Command!;
+        await rig.Commands.ExecuteAsync(debug.CommandId, [.. debug.Arguments!.Select(a => (object?)a)]);
+        Assert.Contains(rig.Window.Messages, m => m.Message.Contains("debugger", StringComparison.Ordinal)); // debug went to the launcher (none here)
+
+        changed.Clear();
+        rig.Config.Set(TestingSettings.CodeLens, false);
+        Assert.Contains(null, changed);
+        Assert.Null(await provider.ProvideCodeLensesAsync(doc, TestContext.Current.CancellationToken));
+        Assert.Contains(rig.Config.Properties, p => p.Key == TestingSettings.CodeLens && p.Description is { Length: > 0 });
+    }
+
+    [Fact]
     public async Task Run_at_cursor_runs_the_test_above_the_caret_and_current_file_runs_all_of_it()
     {
         using var rig = new HostRig();
