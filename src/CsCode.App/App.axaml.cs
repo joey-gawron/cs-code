@@ -35,7 +35,10 @@ public sealed class App : Application
         // items as the app starts (Avalonia's "About Avalonia" otherwise): they run the commands of the run the main window connects.
         Name = "CsCode";
         ApplicationMenu = Menus.NativeMenuExport.BuildApplicationMenu();
+        ApplicationMenu.NewWindow = () => _session?.NewWindow();
         NativeMenu.SetMenu(this, ApplicationMenu.Menu);
+        // The Dock icon's menu: New Window, also after the last window closed (the app runs on: AppSession, audit ui-6).
+        NativeDock.SetMenu(this, Menus.NativeMenuExport.BuildDockMenu(() => _session?.NewWindow()));
     }
 
     /// <summary>macOS: the application menu's own items (About CsCode, Settings...); null elsewhere.</summary>

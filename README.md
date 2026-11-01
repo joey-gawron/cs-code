@@ -26,6 +26,10 @@ cscode --quit [NAME | --all]   quit a session's process, or every CsCode process
 cscode --foreground [paths]    no background mode: the window runs in this process and closing it exits
 ```
 
+On macOS CsCode follows the Mac convention in both modes: closing the last window leaves the app in the Dock with its menu bar, and a click
+on the Dock icon, *New Window* (application menu or Dock menu, ⇧⌘N) or opening a file brings a window back; ⌘Q quits
+(`cscode.macos.keepRunningWithoutWindows: false` makes closing the window quit).
+
 From a source tree, `--foreground` gives the classic single-process run (what a debugger or `dotnet run` users usually want):
 
 ```

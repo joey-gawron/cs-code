@@ -97,7 +97,7 @@ public class NativeMenuTests
         using var rig = new Rig();
         using var app = NativeMenuExport.BuildApplicationMenu();
         var items = app.Menu.Items.OfType<NativeMenuItem>().Where(i => i is not NativeMenuItemSeparator).ToArray();
-        Assert.Equal(["About CsCode", "Settings…"], items.Select(i => i.Header));
+        Assert.Equal(["About CsCode", "Settings…", "New Window"], items.Select(i => i.Header));
         var settings = items[1];
         Assert.Equal(new KeyGesture(Key.OemComma, KeyModifiers.Meta), settings.Gesture);
 

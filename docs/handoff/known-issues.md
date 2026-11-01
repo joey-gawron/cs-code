@@ -1,5 +1,13 @@
 # Known issues found during integration (not fixed yet)
 
+* **First-run retention of a closed window** (found 2026-10-31 by WindowlessRunTests, macOS): in a brand-new CsCode home, the first
+  application-scope state write (the layout saved as the window closes) creates `data/globalStorage` while file watches wait in the home
+  directory for folders below `data/` (themes, snippets, ...) to appear. After that, a closed window's MainWindow, container and shell stay
+  reachable after `AppShutdown.RunAsync` disposed the container; no static field reaches them (a native or IO-lane-thread root: likely a watch
+  backend whose `Dispose` was posted to the IO lane by `FileWatcher.Dispose` and cancelled by `IoLane.Dispose`, which drops queued items).
+  A home that has run CsCode before (the data folders exist) does not show it, and before macOS kept the process after the last window
+  closed the process ended anyway. The leak test creates `data/globalStorage` first; the watcher shutdown needs a look by the Platform owner.
+
 * **Editor PerfMemoryTests 10 MB open budget (4.5x) fails inside the full Editor.Tests run** (6.4x on integration, 5.9x on the editor agent's own branch 62b9445), passes alone (2.6x) and when only PerfMemoryTests runs. Serializing the class did not help; the following 1 MB case reads -85 MB, so earlier cases' memory is released lazily during later measurements. Pre-existing, order-dependent; belongs to the parked memory-profiling wave (do not loosen the budget).
 * **Editor TextMateTests.Tokenisation_happens_on_the_editor_worker...** stalls under full-suite load ("tokenised 58/300 lines in 30000 ms"); passes alone. TokenizationSession.RunSlice waits for a UI Changed handler the test never pumps. Load-dependent.
 * **Panels.Search SettingsViewModelTests.Invalid_numbers_show_an_inline_error_and_are_not_written("101")**: flaky (fails some full runs, also on 44bc116).

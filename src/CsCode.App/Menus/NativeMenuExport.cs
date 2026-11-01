@@ -24,6 +24,8 @@ public sealed class NativeMenuExport : IDisposable
     /// <summary>The application menu's Settings... item, and the stroke and gesture it would take (⌘,).</summary>
     internal static readonly (KeyStroke Stroke, KeyGesture Gesture) SettingsKey = (KeyStrokeParser.ParseStroke("cmd+,"), new KeyGesture(Key.OemComma, KeyModifiers.Meta));
     internal static readonly (KeyStroke Stroke, KeyGesture Gesture) MinimizeKey = (KeyStrokeParser.ParseStroke("cmd+m"), new KeyGesture(Key.M, KeyModifiers.Meta));
+    /// <summary>The application menu's New Window item (⇧⌘N, VS Code's on a Mac).</summary>
+    internal static readonly (KeyStroke Stroke, KeyGesture Gesture) NewWindowKey = (KeyStrokeParser.ParseStroke("cmd+shift+n"), new KeyGesture(Key.N, KeyModifiers.Meta | KeyModifiers.Shift));
 
     private readonly DisposableStore _subs = new();
     private readonly List<(NativeMenuItem Item, (KeyStroke Stroke, KeyGesture Gesture) Key)> _keyed = new();
@@ -70,8 +72,10 @@ public sealed class NativeMenuExport : IDisposable
     }
 
     /// <summary>
-    /// The application menu's own items: About CsCode, Settings... (Avalonia adds the standard ones below them). It belongs to the application, not
-    /// to a run: set before the first window (macOS reads it as the app starts), its items do nothing until a run is <see cref="Connect"/>ed.
+    /// The application menu's own items: About CsCode, Settings..., New Window (Avalonia adds the standard ones below them). It belongs to the
+    /// application, not to a run: set before the first window (macOS reads it as the app starts), About and Settings do nothing until a run is
+    /// <see cref="Connect"/>ed. New Window runs <see cref="NewWindow"/> (the app's, which works with no window at all: the menu bar is all a Mac
+    /// app shows after its last window closed), and carries ⇧⌘N while no keybinding takes the stroke (always while no window is open).
     /// </summary>
     public static NativeMenuExport BuildApplicationMenu()
     {
@@ -80,8 +84,16 @@ public sealed class NativeMenuExport : IDisposable
         export.Menu.Items.Add(new NativeMenuItemSeparator());
         export.Menu.Items.Add(export.Keyed(Item("Settings…", () => export.Run(KnownCommands.OpenSettings)), SettingsKey));
         export.Menu.Items.Add(new NativeMenuItemSeparator());
+        export.Menu.Items.Add(export.Keyed(Item("New Window", () => export.NewWindow?.Invoke()), NewWindowKey));
+        export.Menu.Items.Add(new NativeMenuItemSeparator());
         return export;
     }
+
+    /// <summary>The Dock icon's menu (macOS, above the system's Options, Show in Finder, Hide and Quit): New Window, running <paramref name="newWindow"/>.</summary>
+    public static NativeMenu BuildDockMenu(Action newWindow) => new() { Items = { Item("New Window", newWindow) } };
+
+    /// <summary>What the application menu's New Window does (the app's <see cref="Startup.AppSession.NewWindow"/>); null: nothing.</summary>
+    public Action? NewWindow { get; set; }
 
     /// <summary>The application menu runs <paramref name="services"/>' commands and follows its keybindings until the result is disposed.</summary>
     public IDisposable Connect(IServiceProvider services)

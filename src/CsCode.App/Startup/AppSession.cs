@@ -35,6 +35,12 @@ public interface IDesktopHost
     /// </summary>
     event EventHandler<DesktopQuitRequest>? QuitRequested;
 
+    /// <summary>
+    /// The platform's apps keep running when their last window closes (macOS: the app stays in the Dock with its menu bar, and a click on the Dock
+    /// icon, a document opened or New Window builds a new window). False elsewhere: closing the last window of a foreground run ends it.
+    /// </summary>
+    bool KeepsRunningWithoutWindows => false;
+
     void Shutdown(int exitCode);
 }
 
@@ -73,6 +79,7 @@ public sealed class AvaloniaDesktopHost : IDesktopHost
     public event EventHandler? Exited;
     public event EventHandler<DesktopActivation>? Activated;
     public event EventHandler<DesktopQuitRequest>? QuitRequested;
+    public bool KeepsRunningWithoutWindows => OperatingSystem.IsMacOS();
     public void TakeOverExit() => _desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
     public void Shutdown(int exitCode) => _desktop.Shutdown(exitCode);
 
@@ -120,6 +127,16 @@ public sealed class AppSession
     private bool _quitAsked;
     /// <summary>The desktop session ends and the window closed without prompts: its close ends the run synchronously (<see cref="ExitForSystemShutdown"/>).</summary>
     private bool _systemShutdown;
+    /// <summary>The services of a window closed on macOS, while they shut down (<see cref="CloseWindowAsync"/>); null otherwise.</summary>
+    private ServiceProvider? _retiring;
+    /// <summary>Asked for while <see cref="_retiring"/> shut down: a new window (Dock click, documents, New Window), or the end of the run (⌘Q).</summary>
+    private bool _reopenAfterRetiring, _quitAfterRetiring;
+
+    /// <summary>
+    /// macOS without background mode: whether closing the main window leaves the app running without a window (default true; false quits, as
+    /// closing the window does on Linux and Windows). Read from the closing window's own settings.
+    /// </summary>
+    public const string KeepRunningSetting = "cscode.macos.keepRunningWithoutWindows";
 
     /// <param name="background">Background mode (a session process or the warm spare): the host decides when the window is shown; closing it may
     /// only hide it (<see cref="Background.SessionWindowController"/>). Null: the window shows at once and closing it ends the run.</param>
@@ -139,6 +156,18 @@ public sealed class AppSession
 
     /// <summary>Completes once the lifetime was ended, with the orderly shutdown's report (null when there was nothing to shut down).</summary>
     public Task<ShutdownReport?> Ended => _ended.Task;
+
+    /// <summary>
+    /// macOS: the main window was closed and its services have shut down; the app runs on in the Dock with its menu bar, without a window, until
+    /// a new one is asked for (<see cref="NewWindow"/>, a Dock click, documents handed over) or the app quits.
+    /// </summary>
+    public bool IsWindowless { get; private set; }
+
+    /// <summary>The orderly shutdown of the services of the last window that closed without ending the run (macOS); null before any.</summary>
+    public ShutdownReport? LastWindowReport { get; private set; }
+
+    /// <summary>How many main windows this run opened (a new one after each macOS close the app ran on through).</summary>
+    public int WindowsOpened { get; private set; }
 
     public void Start()
     {
@@ -173,6 +202,7 @@ public sealed class AppSession
                 return;
             }
             var window = new MainWindow(_container);
+            WindowsOpened++;
             Present(window);
             _crash.Reported += OnCrashReported; // from now on failures are shown in the main window
             if (_pendingPaths.Count > 0) window.OpenTargets(ToTargets(_pendingPaths)); // after the command line's, once the layout is restored
@@ -209,8 +239,76 @@ public sealed class AppSession
         window.Closed += (_, _) =>
         {
             if (_systemShutdown) ExitForSystemShutdown();
+            else if (KeepsRunningAfterClosing(window)) _ = CloseWindowAsync(window);
             else _ = ShutdownAsync();
         };
+    }
+
+    /// <summary>
+    /// Mac convention (audit ui-6): closing the main window of a foreground run leaves the app running, in the Dock and with its menu bar, unless
+    /// the close is File &gt; Exit's (⌘Q runs it) or <see cref="KeepRunningSetting"/> is false. Background mode never gets here: its window hides
+    /// on close (<see cref="Background.SessionWindowController"/>) and its process stays anyway. Linux and Windows: never (the run ends).
+    /// </summary>
+    private bool KeepsRunningAfterClosing(Window window) =>
+        _background is null && _desktop.KeepsRunningWithoutWindows && window is MainWindow { IsExiting: false } && ReferenceEquals(window, Window)
+        && (_container?.GetService<IConfigurationService>()?.Get(KeepRunningSetting, true) ?? true);
+
+    /// <summary>
+    /// The main window closed and the app runs on (macOS): its services shut down as at an exit (state flushed, language servers and debug
+    /// sessions stopped, children killed after the deadline, the container disposed), so nothing of that window stays in memory, and the run
+    /// waits without a window. A new window gets a new container (<see cref="OpenNewWindow"/>): Core services are bound to one workspace and one
+    /// window, so a container per window is what keeps them correct. A new window or a quit asked meanwhile happens once this is done.
+    /// </summary>
+    private async Task CloseWindowAsync(Window window)
+    {
+        if (Volatile.Read(ref _shuttingDown) != 0) return;
+        _crash.Reported -= OnCrashReported;
+        var container = _container;
+        _container = null;
+        Window = null;
+        if (ReferenceEquals(_desktop.MainWindow, window)) _desktop.MainWindow = null;
+        _retiring = container;
+        try
+        {
+            if (container is not null) LastWindowReport = await AppShutdown.RunAsync(container, _deadline).ConfigureAwait(true);
+        }
+        catch (Exception ex) { _crash.Report(ex, fatal: false, source: "Shutdown"); }
+        finally { _retiring = null; }
+        if (Volatile.Read(ref _shuttingDown) != 0) return; // the lifetime ended meanwhile
+        if (_quitAfterRetiring)
+        {
+            await ShutdownAsync().ConfigureAwait(true);
+            return;
+        }
+        IsWindowless = true;
+        if (!_reopenAfterRetiring) return;
+        _reopenAfterRetiring = false;
+        OpenNewWindow();
+    }
+
+    /// <summary>A new main window, with services of its own, opening the paths handed over meanwhile (macOS, after the last one closed).</summary>
+    private void OpenNewWindow()
+    {
+        IsWindowless = false;
+        CsCode.Sessions.SessionTrace.Mark("window: new main window after the last one closed");
+        // No command-line arguments: those were the first window's (its files and folder); the new window restores the last workspace as a start does.
+        _ = OpenWindowAsync(AppStartup.BuildServicesAsync([], _configure));
+    }
+
+    /// <summary>
+    /// The application menu's and the Dock menu's New Window (macOS): with no window (all closed, or a hidden session), a new or the hidden one
+    /// comes as a click on the Dock icon brings it; background mode with its window shown opens a new unnamed session as <c>cscode -n</c> does;
+    /// a foreground run has one window, which comes to the front.
+    /// </summary>
+    public void NewWindow()
+    {
+        if (Volatile.Read(ref _shuttingDown) != 0) return;
+        if (_background is { } background && Window is { IsVisible: true })
+        {
+            _ = RunLauncherAsync(background, new Sessions.Launcher.LaunchRequest(Sessions.Launcher.LaunchKind.Open) { NewWindow = true });
+            return;
+        }
+        OnActivated(this, DesktopActivation.Reopen);
     }
 
     /// <summary>A main window that failed while opening is closed (no prompts: nothing was edited yet) so only the crash window remains.</summary>
@@ -246,7 +344,7 @@ public sealed class AppSession
         if (Interlocked.Exchange(ref _shuttingDown, 1) != 0) return;
         _crash.Reported -= OnCrashReported;
         Unsubscribe();
-        if (_container is { } container) AppShutdown.RunAbrupt(container);
+        if ((_container ?? _retiring) is { } container) AppShutdown.RunAbrupt(container);
         _ended.TrySetResult(null);
     }
 
@@ -260,7 +358,7 @@ public sealed class AppSession
         if (Interlocked.Exchange(ref _shuttingDown, 1) != 0) return;
         _crash.Reported -= OnCrashReported;
         Unsubscribe();
-        if (_container is { } container) AppShutdown.RunAbrupt(container);
+        if ((_container ?? _retiring) is { } container) AppShutdown.RunAbrupt(container);
         _ended.TrySetResult(null);
         // Normally the process is gone before this runs. Should the log out be cancelled after all (another app refused it), nothing would bring the
         // closed window back: the run ends here.
@@ -295,6 +393,8 @@ public sealed class AppSession
         {
             case null:
                 _pendingPaths.AddRange(activation.Paths); // the main window shows itself when it opens
+                if (_retiring is not null) _reopenAfterRetiring = true; // macOS: the last window's services are still shutting down
+                else if (IsWindowless) OpenNewWindow(); // macOS: the app ran on without a window
                 return;
             case MainWindow main:
                 main.BringToFront();
@@ -329,15 +429,18 @@ public sealed class AppSession
         ActivationLog()?.LogWarning("The system's request to show the window and open {Count} path(s) was refused: {Error}", activation.Paths.Count, reply.Error);
     }
 
-    private async Task LaunchFromSpareAsync(Background.BackgroundHost background, DesktopActivation activation)
+    private Task LaunchFromSpareAsync(Background.BackgroundHost background, DesktopActivation activation) =>
+        RunLauncherAsync(background, new Sessions.Launcher.LaunchRequest(Sessions.Launcher.LaunchKind.Open)
+        {
+            Targets = activation.Paths.Select(p => new Sessions.Launcher.LaunchTarget(p, Directory.Exists(p))).ToArray(),
+        });
+
+    /// <summary>Runs <paramref name="launch"/> as <c>cscode</c> would from a terminal (background mode); a failure is logged.</summary>
+    private async Task RunLauncherAsync(Background.BackgroundHost background, Sessions.Launcher.LaunchRequest launch)
     {
         var errors = new StringWriter();
         var launcher = new Sessions.Launcher.SessionLauncher(background.Runtime, background.Store, Sessions.Launcher.LaunchSettings.Read(new Platform.AppPaths().ConfigDir),
             Sessions.Launcher.ProcessHostSpawner.ForCurrentProcess(), TextWriter.Null, errors);
-        var launch = new Sessions.Launcher.LaunchRequest(Sessions.Launcher.LaunchKind.Open)
-        {
-            Targets = activation.Paths.Select(p => new Sessions.Launcher.LaunchTarget(p, Directory.Exists(p))).ToArray(),
-        };
         try
         {
             var outcome = await launcher.RunAsync(launch).ConfigureAwait(true);
@@ -363,7 +466,17 @@ public sealed class AppSession
     /// </summary>
     private void OnQuitRequested(object? sender, DesktopQuitRequest e)
     {
-        if (Volatile.Read(ref _shuttingDown) != 0 || Window is not MainWindow main || _container is not { } services) return;
+        if (Volatile.Read(ref _shuttingDown) != 0) return;
+        if (Window is null && (IsWindowless || _retiring is not null))
+        {
+            // macOS, no window (the last one closed and the app ran on): nothing to ask, the run ends (after the last window's shutdown, if it runs).
+            if (e.IsOSShutdown) { ExitForSystemShutdown(); return; }
+            e.Cancel = true;
+            if (_retiring is not null) _quitAfterRetiring = true;
+            else _ = ShutdownAsync();
+            return;
+        }
+        if (Window is not MainWindow main || _container is not { } services) return;
         if (e.IsOSShutdown)
         {
             if (_background is not null) return; // background mode: the session controller handles a system shutdown (OnCloseRequested)
