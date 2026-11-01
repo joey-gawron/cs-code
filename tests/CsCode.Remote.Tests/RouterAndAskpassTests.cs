@@ -217,7 +217,30 @@ public class AskpassTests
         Assert.Equal(1, AskpassClient.Run("x", new StringWriter(), new StringWriter(), _ => null)); // not started by CsCode
     }
 
+    [Fact]
+    public async Task The_askpass_service_gives_local_git_a_session_of_its_own_that_asks_the_window_and_ends_when_disposed()
+    {
+        if (OperatingSystem.IsWindows()) { Assert.Skip("Unix sockets / askpass are Unix-only here"); return; }
+        Assert.Null(new AskpassService(() => null, ["/opt/cscode/cscode"]).Start()); // no window: nothing can ask
+        using var dir = new TempDirectory("ap-");
+        var window = new RecordingWindowService();
+        window.InputResponses.Enqueue("me");
+        var service = new AskpassService(() => window, ["/opt/cscode/cscode"], dir.Path);
+        var session = service.Start()!;
+        Assert.Equal(session.Program, session.Environment["SSH_ASKPASS"]);
+        Assert.Equal("force", session.Environment["SSH_ASKPASS_REQUIRE"]);
+        Assert.Contains("--askpass", File.ReadAllText(session.Program));
+        var env = session.Environment;
+        var stdout = new StringWriter();
+        Assert.Equal(0, await Task.Run(() => AskpassClient.Run("Username for 'https://example.com': ", stdout, TextWriter.Null, n => env.TryGetValue(n, out var v) ? v : null), Ct));
+        Assert.Equal("me\n", stdout.ToString());
+        session.Dispose();
+        Assert.False(File.Exists(session.Program));
+    }
+
     [Theory]
+    [InlineData("Username for 'https://github.com': ", false, false)]
+    [InlineData("Password for 'https://me@github.com': ", false, true)]
     [InlineData("Are you sure you want to continue connecting (yes/no/[fingerprint])?", true, false)]
     [InlineData("Enter passphrase for key '/home/me/.ssh/id_ed25519':", false, true)]
     [InlineData("me@box's password:", false, true)]

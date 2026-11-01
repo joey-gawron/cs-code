@@ -428,7 +428,7 @@ Clipboard and menus (`ShellContextMenus`, `ClipboardRouter`): `editor.action.cli
 (focus routing, see *Command ownership*), and VS Code's file commands, which take a URI (else the active file): `copyFilePath`, `copyRelativeFilePath`,
 `revealFileInOS` (Open Containing Folder / Reveal in File Manager), `revealInExplorer`.
 Everything else in the menus (`editor.action.*`, `debug.*`, terminal, tasks) is owned by other modules and stays disabled until they register it.
-Markdown preview (`Markdown/MarkdownPreviewIntegration.cs`, docs/MARKDOWN.md): `markdown.showPreview` (Ctrl+Shift+V / Cmd+Shift+V),
+Markdown preview (`Markdown/MarkdownPreviewIntegration.cs`, docs/MARKDOWN.md): `markdown.showPreview` (Ctrl+Shift+V / Cmd+Shift+V in the VS Code keymap),
 `markdown.showPreviewToSide` (Ctrl+K V / Cmd+K V), `markdown.showSource`; one preview tab per file (`OpenView("markdown.preview:<uri>")`), context
 key `markdownPreviewFocus` while a preview is the active tab.
 

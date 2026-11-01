@@ -220,11 +220,22 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
         return !reporter.SawMessages && exit != 0 ? new TestRunOutcome(exit, $"The test runner of {project.Name} exited with code {exit} before reporting: see the Tests output.") : new TestRunOutcome(exit);
     }
 
-    /// <summary>The <c>dotnet test --filter</c> expression for the tests (null: no filter). Names are escaped for the filter syntax.</summary>
+    /// <summary>
+    /// The <c>dotnet test --filter</c> expression for the tests (null: no filter). Names are escaped for the filter syntax. A test id is the
+    /// scanner's <c>Ns.Class.Method</c>, but NUnit gives each case of a parameterized test (<c>[TestCase]</c>, <c>[TestCaseSource]</c>) the
+    /// fully qualified name <c>Ns.Class.Method(1,2)</c>, which an exact <c>FullyQualifiedName=</c> never matches (nothing ran). So a method id
+    /// also matches the names that contain it followed by <c>(</c>: the opening parenthesis is the boundary that keeps <c>Ns.Class.Add</c> from
+    /// matching <c>Ns.Class.AddMany</c>. (VSTest's filter has no "starts with": a test of another class whose full name ends with this id
+    /// would run too, and is reported like any other result.)
+    /// </summary>
     internal static string? VsTestFilter(IReadOnlyList<string>? testIds)
     {
         if (testIds is not { Count: > 0 and <= MaxFilteredTests }) return null;
-        return string.Join('|', testIds.Select(id => "FullyQualifiedName=" + FilterEscape().Replace(id, m => "\\" + m.Value)));
+        return string.Join('|', testIds.Select(id =>
+        {
+            var escaped = FilterEscape().Replace(id, m => "\\" + m.Value);
+            return id.Contains('(') ? "FullyQualifiedName=" + escaped : $"FullyQualifiedName={escaped}|FullyQualifiedName~{escaped}\\(";
+        }));
     }
 
     private async Task<TestRunOutcome> RunVsTestAsync(TestRunRequest request, ProjectInfo info, ITestRunSink sink, Func<int, Task>? onHostProcess, CancellationToken ct)

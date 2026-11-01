@@ -18,6 +18,9 @@ namespace CsCode.Panels.Testing;
 /// failures to the Error List (<see cref="IDiagnosticService"/>, owner <c>tests</c>) and tool output to the "Tests" output channel, sets the
 /// context keys <c>testing.isRunning</c> / <c>testing.hasFailedTests</c>, and registers the editor's test glyph provider. Resolved at startup
 /// (the tool window depends on it). Everything here runs on the UI thread except where noted.
+/// <para>Discovery waits until tests are first needed (<see cref="EnsureDiscoveredAsync"/>): the Test Explorer shown, a test command run, or
+/// (with <c>cscode.testing.autoDiscover</c>) an editor showing a file in which the glyph provider's text scan finds tests. Opening a folder
+/// discovers nothing, so a cargo package is not built (<c>cargo test --no-run</c>) at startup for a user who never looks at its tests.</para>
 /// </summary>
 public sealed class TestingHost : IDisposable
 {
@@ -54,6 +57,8 @@ public sealed class TestingHost : IDisposable
     private readonly IOutputChannel? _channel;
     private readonly HashSet<Uri> _diagnosticUris = [];
     private readonly Dictionary<string, CancellationTokenSource> _pendingRediscovery = new(StringComparer.Ordinal);
+    private Task? _discovered;
+    private volatile bool _discoveryStarted;
     private bool _disposed;
 
     public TestingHost(IServiceProvider services) : this(services, null) { }
@@ -85,8 +90,7 @@ public sealed class TestingHost : IDisposable
         if (services.GetService<IWorkspaceService>() is { } workspace)
         {
             Workspace = workspace;
-            _store.Add(workspace.FoldersChanged.Subscribe(e => _ui.Post(() => _ = SyncFoldersAsync())));
-            _ui.Post(() => _ = SyncFoldersAsync(initial: true), UiPriority.Background);
+            _store.Add(workspace.FoldersChanged.Subscribe(e => _ui.Post(() => { if (_discovered is not null) _ = SyncFoldersAsync(); })));
         }
         if (services.GetService<IDocumentManager>() is { } documents) _store.Add(documents.Saved.Subscribe(e => _ui.Post(() => OnSaved(e.Document.Uri))));
     }
@@ -104,8 +108,30 @@ public sealed class TestingHost : IDisposable
     {
         var vm = new TestExplorerViewModel(this);
         LiveExplorer = vm;
-        if (Controller.Tree.Projects.Count == 0 && !Controller.IsDiscovering && _config?.Get<bool?>(TestingSettings.AutoDiscover) == false) _ = Controller.RefreshAsync();
+        _ = EnsureDiscoveredAsync();
         return vm;
+    }
+
+    /// <summary>True once discovery has been asked for (any thread: the glyph provider reads it on the editor's worker).</summary>
+    internal bool DiscoveryStarted => _discoveryStarted;
+
+    /// <summary>Whether a file with tests shown in an editor may start discovery (<c>cscode.testing.autoDiscover</c>).</summary>
+    internal bool DiscoverFromEditors => _config?.Get<bool?>(TestingSettings.AutoDiscover) ?? true;
+
+    /// <summary>
+    /// UI thread: discovers the workspace folders' tests the first time this is called (later calls wait for that discovery, then return at
+    /// once); from then on a change of folders discovers again. Completes once the discovered tree has landed on the UI thread.
+    /// </summary>
+    internal async Task EnsureDiscoveredAsync()
+    {
+        if (_disposed || _discovered is { IsCompleted: true }) return;
+        _discoveryStarted = true;
+        _discovered ??= SyncFoldersAsync();
+        await _discovered.ConfigureAwait(true);
+        // the controller hands the tree over in background-priority posts: let them land before a command reads it
+        var landed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ui.Post(() => landed.TrySetResult(), UiPriority.Background);
+        await landed.Task.ConfigureAwait(true);
     }
 
     public void ReleaseExplorer(TestExplorerViewModel vm)
@@ -116,11 +142,10 @@ public sealed class TestingHost : IDisposable
 
     // ------------------------------------------------------------------------------------------------ workspace
 
-    private async Task SyncFoldersAsync(bool initial = false)
+    private async Task SyncFoldersAsync()
     {
         if (_disposed || Workspace is null) return;
         var folders = Workspace.Folders.Where(f => f.IsFile).Select(f => f.LocalPath.TrimEnd('/', '\\') is { Length: > 0 } p ? p : f.LocalPath).ToList();
-        if (initial && _config?.Get<bool?>(TestingSettings.AutoDiscover) == false) return;
         await Controller.SetFoldersAsync(folders).ConfigureAwait(true);
     }
 
@@ -229,7 +254,7 @@ public sealed class TestingHost : IDisposable
         Reg(RunCurrentFile, "Run Tests in Current File", _ => Run(() => RunCurrentFileAsync(debug: false)));
         Reg(DebugCurrentFile, "Debug Tests in Current File", _ => Run(() => RunCurrentFileAsync(debug: true)));
         Reg(CancelRun, "Cancel Test Run", _ => { Controller.Cancel(); return ValueTask.FromResult<object?>(null); });
-        Reg(Refresh, "Refresh Tests", _ => new ValueTask<object?>(Controller.RefreshAsync().ContinueWith(_ => (object?)null, TaskScheduler.Default)));
+        Reg(Refresh, "Refresh Tests", _ => new ValueTask<object?>(RefreshAsync()));
         Reg(ClearResults, "Clear All Results", _ => { Controller.ClearResults(); return ValueTask.FromResult<object?>(null); });
         Reg(ShowOutput, "Show Output", async _ =>
         {
@@ -240,8 +265,17 @@ public sealed class TestingHost : IDisposable
         Reg(CollapseAll, "Collapse All Tests", _ => { LiveExplorer?.CollapseAll(); return ValueTask.FromResult<object?>(null); });
     }
 
+    /// <summary>Refresh: the first discovery when there has been none, else a new one.</summary>
+    private async Task<object?> RefreshAsync()
+    {
+        if (_discovered is null) await EnsureDiscoveredAsync().ConfigureAwait(true);
+        else await Controller.RefreshAsync().ConfigureAwait(true);
+        return null;
+    }
+
     private async Task<object?> StartAndShow(Func<Task<bool>> start)
     {
+        await EnsureDiscoveredAsync().ConfigureAwait(true); // a test command before anything was discovered
         var mode = OpenMode();
         var run = start();
         if (mode is "openOnTestStart" or "openExplorerOnTestStart" && Controller.IsRunning) await ShowViewAsync().ConfigureAwait(true);

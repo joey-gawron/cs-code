@@ -72,6 +72,8 @@ public sealed class SourceControlViewModel : INotifyPropertyChanged, IDisposable
         _host = host;
         _ui = ui ?? AvaloniaUiDispatcher.Instance;
         _store.Add(host.Git.RepositoriesChanged.Subscribe(_ => _ui.Post(OnRepositoriesChanged)));
+        if (host.Bindings is not null)
+            _store.Add(host.Bindings.Changed.Subscribe(_ => _ui.Post(() => { OnChanged(nameof(Watermark)); OnChanged(nameof(CommitToolTip)); })));
         if (host.Navigation is not null)
             _store.Add(host.Navigation.ActiveDocumentChanged.Subscribe(doc => _ui.Post(() =>
             {
@@ -136,7 +138,9 @@ public sealed class SourceControlViewModel : INotifyPropertyChanged, IDisposable
 
     public bool CanCommit => _repository is not null && _busy is null && (_amend || !string.IsNullOrWhiteSpace(_commitMessage));
 
-    public string Watermark => _repository is { } r ? $"Message (Ctrl+Enter to commit on '{r.Status.Branch.DisplayName}')" : "Message";
+    public string Watermark => _repository is { } r ? $"Message ({_host.CommitKeyLabel} to commit on '{r.Status.Branch.DisplayName}')" : "Message";
+
+    public string CommitToolTip => $"Commit ({_host.CommitKeyLabel})";
 
     public string BranchText => _repository is { } r ? r.Status.Branch.DisplayName : "";
 

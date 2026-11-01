@@ -50,7 +50,7 @@ public sealed class SourceControlWindowTests
     }
 
     /// <summary>A repository as the workspace folder, or (<paramref name="twoRepositories"/>) a plain folder holding the repositories one and two.</summary>
-    private static async Task<Harness> CreateAsync(bool twoRepositories = false)
+    private static async Task<Harness> CreateAsync(bool twoRepositories = false, Func<IContributionRegistry, IContextKeyService, IKeybindingService>? bindings = null)
     {
         Assert.SkipUnless(TestRepo.GitAvailable, "git is not installed");
         var repo = new TestRepo(init: !twoRepositories);
@@ -94,6 +94,7 @@ public sealed class SourceControlWindowTests
         services.AddSingleton<INavigationService>(nav);
         services.AddSingleton<IContributionRegistry>(contributions);
         services.AddSingleton<IOutputService>(new InMemoryOutputService());
+        if (bindings is not null) services.AddSingleton(bindings(contributions, keys));
         services.AddCsCodeGit();
         var sp = services.BuildServiceProvider();
         var git = sp.GetRequiredService<GitService>();
@@ -181,6 +182,32 @@ public sealed class SourceControlWindowTests
         await WaitFor(() => h.Repo.Git("log", "-1", "--format=%s").Trim() == "Change a", "committed");
         await WaitFor(() => vm.CommitMessage == "" && vm.StagedCount == 0, "box cleared");
         Assert.False(view.CommitButton.IsEnabled);
+        window.Close();
+    }
+
+    [AvaloniaTheory]
+    [InlineData(CsCode.Platform.HostOs.MacOs, "⌘↩")]
+    [InlineData(CsCode.Platform.HostOs.Linux, "Ctrl+Enter")]
+    public async Task The_message_box_placeholder_and_the_commit_tooltip_name_the_keymaps_commit_key_of_the_platform(CsCode.Platform.HostOs os, string key)
+    {
+        using var temp = new TempDirectory("cscode-scm-kb-");
+        using var lane = new CsCode.Platform.Io.IoLane("test.scm.kb", 1);
+        var paths = new CsCode.Platform.AppPaths(k => k == "CSCODE_HOME" ? temp.Combine("home") : null, os, "/home/test");
+        CsCode.Platform.Keybindings.KeybindingService? service = null;
+        using var h = await CreateAsync(bindings: (registry, context) => service = new CsCode.Platform.Keybindings.KeybindingService(context, paths, lane, registry, os: os));
+        using var _ = service;
+        var (view, window) = Show(h);
+        var vm = (SourceControlViewModel)view.DataContext!;
+        await WaitFor(() => vm.Watermark != "Message", "repository shown");
+        Assert.Equal($"Message ({key} to commit on 'main')", vm.Watermark);
+        Assert.Equal($"Message ({key} to commit on 'main')", view.MessageBox.PlaceholderText);
+        Assert.Equal($"Commit ({key})", ToolTip.GetTip(view.CommitButton));
+
+        // a keymap change (preset, keybindings.json) updates both
+        var changed = new List<string?>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+        await service!.SetPresetAsync("vscode", TestContext.Current.CancellationToken);
+        await WaitFor(() => { Pump(); return changed.Contains(nameof(SourceControlViewModel.Watermark)) && changed.Contains(nameof(SourceControlViewModel.CommitToolTip)); }, "keymap change");
         window.Close();
     }
 

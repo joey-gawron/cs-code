@@ -308,18 +308,18 @@ public sealed class GitRepository : IDisposable
     }
 
     public Task FetchAsync(CancellationToken ct = default) =>
-        MutateAsync(() => _git.RunAsync(Root, ["fetch", "--prune"], timeout: Timeout.InfiniteTimeSpan, ct: ct));
+        MutateAsync(() => _git.RunNetworkAsync(Root, ["fetch", "--prune"], ct: ct));
 
     public Task PullAsync(CancellationToken ct = default) =>
-        MutateAsync(() => _git.RunAsync(Root, ["pull", "--no-edit"], timeout: Timeout.InfiniteTimeSpan, ct: ct));
+        MutateAsync(() => _git.RunNetworkAsync(Root, ["pull", "--no-edit"], ct: ct));
 
     /// <summary>Pushes the current branch; a branch without an upstream is published to <paramref name="remote"/> (default <c>origin</c>) and tracks it.</summary>
     public Task PushAsync(CancellationToken ct = default, string? remote = null) => MutateAsync(async () =>
     {
         var branch = Status.Branch;
         if (branch.Upstream is null && branch.Head is { } head)
-            await _git.RunAsync(Root, ["push", "-u", remote ?? "origin", head], timeout: Timeout.InfiniteTimeSpan, ct: ct).ConfigureAwait(false);
-        else await _git.RunAsync(Root, ["push"], timeout: Timeout.InfiniteTimeSpan, ct: ct).ConfigureAwait(false);
+            await _git.RunNetworkAsync(Root, ["push", "-u", remote ?? "origin", head], ct: ct).ConfigureAwait(false);
+        else await _git.RunNetworkAsync(Root, ["push"], ct: ct).ConfigureAwait(false);
     });
 
     public async Task<IReadOnlyList<string>> RemotesAsync()

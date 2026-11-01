@@ -40,9 +40,25 @@ the context key). Everything is optional: without the module the Explorer shows 
   its input first).
 * Each process gets `GIT_TERMINAL_PROMPT=0` (never waits for a password nobody can type; credential helpers still work), `GIT_OPTIONAL_LOCKS=0`
   (status never takes the index lock from the user's own git), no pager, `GIT_EDITOR=true`, `-c core.quotepath=false -c color.ui=false`, and
-  `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` removed (a CsCode started from a git hook must not inherit them). Local commands time out after 60 s,
-  network ones never (they are cancellable from their progress notification); cancelling kills the process tree. Child processes are reported to
-  `IMemoryMonitor.TrackChildProcess`.
+  `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` removed (a CsCode started from a git hook must not inherit them). Local commands time out after 60 s;
+  cancelling kills the process tree. Child processes are reported to `IMemoryMonitor.TrackChildProcess`.
+* **Network operations** (fetch, pull, push: `GitRunner.RunNetworkAsync`, environment built by `GitNetwork`) can neither prompt on a terminal nor
+  hang for ever:
+  * **Prompts**: when an `IAskpassService` is registered (the Remote module's, the same `AskpassServer` remote connections use: a 0700 directory, a
+    one-time token, `cscode --askpass`) and `git.useIntegratedAskPass` is on, each operation gets its own helper: `SSH_ASKPASS` +
+    `SSH_ASKPASS_REQUIRE=force` (key passphrases, passwords, host-key confirmations) and `GIT_ASKPASS` (HTTPS user names and passwords), answered in
+    CsCode's input box / Yes-No message, deleted when the operation ends. Without one, ssh runs with `-o BatchMode=yes` and fails instead of
+    asking. Credential helpers (osxkeychain, libsecret, GCM) and ssh agents work either way.
+  * **No terminal**: git starts in a session of its own (util-linux `setsid --wait` on Linux, else perl's `POSIX::setsid` + exec, the same
+    process), so neither ssh nor a credential helper can open the terminal CsCode was started from (`/dev/tty`); without either program
+    (Windows, a minimal system) the batch mode / askpass above still keeps ssh off the terminal.
+  * **Timeouts**: ssh gets `-o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4` (a host that does not answer in 30 s, or a link
+    silent for a minute, fails), HTTP transfers slower than 1 KB/s for 60 s are given up (`GIT_HTTP_LOW_SPEED_LIMIT/TIME`, unless the user set
+    `http.lowSpeedLimit/Time`), and the whole operation is stopped after `git.networkTimeout` (1800 s; 0 = no limit) with *"git fetch timed out
+    after 30 min"*. Any operation can be cancelled from its progress notification.
+  * **The user's own ssh command** is kept. `GIT_SSH_COMMAND` or `core.sshCommand` (the last value of all scopes, as git reads it) running `ssh`
+    gets the options appended after the user's own (ssh takes an option's first value, so an explicit `-o BatchMode=no` or `ConnectTimeout` of
+    the user wins); any other program (a wrapper, plink) and `GIT_SSH` are left exactly as they are.
 * Mutating operations of one repository run one at a time (a semaphore) and each ends with a status refresh. Events (`StatusChanged`,
   `HistoryChanged`, `DecorationsChanged`, `OriginalChanged`) fire on lane/timer threads; view-models post to the UI thread.
 
@@ -66,6 +82,9 @@ added > untracked), and the set of ignored paths (a path is ignored when it or o
 (`ExplorerViewModel`, new optional `IFileDecorationProvider` argument) sets `ExplorerNode.Decoration` for every shown row whenever its rows change,
 and again (coalesced) on `DecorationsChanged`: dictionary lookups only. The row draws the name in the colour, the letter after it, ignored rows at
 60 % opacity, deleted ones struck through. Colours are VS Code's `gitDecoration.*` keys (already in the built-in themes). Off with `git.decorations.enabled`.
+Repositories refresh on different lane threads, so two rebuilds can overlap: building and publishing a snapshot happen under one lock, so the
+snapshot published last was built from statuses read after every earlier one (an older snapshot published after a newer one left stale
+decorations with several repositories; test `With_two_repositories_a_slow_rebuild_never_publishes_its_older_decorations_over_a_newer_one`).
 
 ## Source Control window (`scm`, docked on the right next to the Explorer)
 
@@ -75,7 +94,7 @@ Visual Studio's Git Changes / VS Code's Source Control view in one:
   Create Branch..., Stage/Unstage/Discard All, Show Git Output). A repository picker appears when the workspace has more than one; the window
   follows the active editor's repository. The header's commands act on the repository the window shows (it passes that repository's root as the
   command argument); run from the palette or the status bar they act on the active editor's repository.
-* Commit box (placeholder `Message (Ctrl+Enter to commit on 'main')`), **Commit** (Ctrl/Cmd+Enter in the box, also bound in the keymaps as
+* Commit box (placeholder `Message (Ctrl+Enter to commit on 'main')`, `⌘↩` on a Mac: the active keymap's label of `git.commit`, as is the Commit button's tooltip, both following keymap changes), **Commit** (Ctrl/Cmd+Enter in the box, also bound in the keymaps as
   `git.commit` when `scmInputFocus`), **Amend** (fills the box with the last message; an empty message amends with `--no-edit`). With nothing staged
   the button says **Commit All** and asks *"There are no staged changes to commit. Stage all your changes and commit them directly?"* (Yes /
   Always (sets `git.enableSmartCommit`) / Cancel). The message goes through stdin (`commit -F - --cleanup=strip`).
@@ -183,6 +202,7 @@ Keys (both presets): `ctrl+shift+g` → `workbench.view.scm` (mac `ctrl+shift+g`
 
 Settings (registered by `GitService`, `GitSettings.Properties`): `git.enabled` (true), `git.path` (null, machine scope), `git.autorefresh` (true),
 `git.decorations.enabled` (true), `git.blame.editorDecoration.enabled` (false), `git.confirmSync` (true), `git.enableSmartCommit` (false),
+`git.useIntegratedAskPass` (true), `git.networkTimeout` (1800 seconds, 0 = none),
 `scm.diffDecorations` ("all" | "none"), `diffEditor.renderSideBySide` (true), `diffEditor.ignoreTrimWhitespace` (true). The editor reads the last
 three as nullable, so it keeps VS Code's defaults when the git module is absent.
 
@@ -206,6 +226,10 @@ immutable and replaced wholesale.
   `/var`), from a subfolder, nested repositories; status kinds; decorations and folder propagation; stage/unstage/discard/commit/amend; commit all;
   initial repository; branches; push/pull/fetch with ahead/behind against a local bare remote; network errors; quick-diff original and its change
   event; hunk staging and unstaging; blame; the real file watcher refreshing status and history; coalescing; remote folders; missing git; disabling.
+* `tests/CsCode.Panels.Git.Tests/NetworkTests.cs`: the network environment (batch mode without askpass, the askpass variables with it, the
+  user's ssh command appended to or left alone, the user's HTTP stall limits kept), and real git against a fake ssh (`core.sshCommand`, a script
+  that records what it got): batch mode, an askpass answer reaching ssh and the helper ended afterwards, the setting turning askpass off, git in
+  a process group (session) of its own, a hanging operation stopped at `git.networkTimeout`. `tests/CsCode.Remote.Tests` checks `AskpassService`.
 * `tests/CsCode.Panels.Git.Tests/SourceControlWindowTests.cs` (headless): rows and stage/unstage, Ctrl/Cmd+Enter commit, Commit All prompt,
   discard confirmation, the versions each Open Changes compares, Enter/Space on rows, status bar items, command registration and error surfacing,
   branch create/switch, Select for Compare, Compare with Saved, Git: Blame, the remote message, view-model disposal.

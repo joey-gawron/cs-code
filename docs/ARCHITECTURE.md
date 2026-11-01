@@ -57,7 +57,7 @@ Dependency rules (enforced by project references, checked in review):
 | `VimEngine` over `IVimHost` (+ Vim macros) | **Vim** (adapter to the editor in wave 2) |
 | `IWindowService`, `IStatusBarService`, `IOutputService`, `INavigationService`, views/view-models, VS2022 themes, menus, keymap | **Shell (App + Ui)** |
 | `IMemoryMonitor`, `IMemoryTrimmable` policy, GC configuration, soak/leak/responsiveness harness | **Profiling** (+ `tests/CsCode.MemoryTests`) |
-| `IRemoteConnectionManager`, `ssh:` file system provider, remote bridges | **Remote** + **Server** (wave 2) |
+| `IRemoteConnectionManager`, `ssh:` file system provider, remote bridges, `IAskpassService` (ssh and git prompts in the GUI) | **Remote** + **Server** (wave 2) |
 | `LineDiff` (Core), `IFileDecorationProvider`, `IQuickDiffProvider`, `ILineBlameProvider` | **Panels.Git** (git CLI engine + Source Control window, `docs/SOURCE-CONTROL.md`) |
 | `IDiffEditorService` (diff tabs) | **Shell**, over the editor's `DiffEditorControl` (`IEditorViewFactory.CreateDiffView`) |
 

@@ -62,6 +62,18 @@ public sealed class GitRunner : IDisposable
         }
     }
 
+    /// <summary>The overall limit of one network operation when <see cref="NetworkTimeout"/> is not set (stalls end sooner: <see cref="GitNetwork"/>).</summary>
+    public static readonly TimeSpan DefaultNetworkTimeout = TimeSpan.FromMinutes(30);
+
+    /// <summary>Answers the prompts of network operations (ssh passphrases and host keys, HTTPS credentials) in the GUI; null: nothing can prompt.</summary>
+    public IAskpassService? Askpass { get; set; }
+
+    /// <summary>Whether network operations use <see cref="Askpass"/> (setting <c>git.useIntegratedAskPass</c>).</summary>
+    public Func<bool> UseAskpass { get; set; } = () => true;
+
+    /// <summary>The overall limit of one network operation (setting <c>git.networkTimeout</c>); <see cref="Timeout.InfiniteTimeSpan"/> = none.</summary>
+    public Func<TimeSpan> NetworkTimeout { get; set; } = () => DefaultNetworkTimeout;
+
     /// <summary>True on one of the lane's threads (tests).</summary>
     public bool IsLaneThread => Array.IndexOf(_threads, Thread.CurrentThread) >= 0;
 
@@ -112,7 +124,7 @@ public sealed class GitRunner : IDisposable
             if (!IsExecutable(candidate)) continue;
             try
             {
-                var r = RunSync(candidate, null, ["--version"], null, null, TimeSpan.FromSeconds(10), CancellationToken.None);
+                var r = RunSync(candidate, null, ["--version"], null, null, TimeSpan.FromSeconds(10), CancellationToken.None, null);
                 if (r.Ok && r.Text.StartsWith("git version", StringComparison.Ordinal))
                 {
                     ExecutablePath = candidate;
@@ -139,7 +151,35 @@ public sealed class GitRunner : IDisposable
         TimeSpan? timeout = null, CancellationToken ct = default, IReadOnlyDictionary<string, string>? environment = null)
     {
         var exe = await ResolveAsync().ConfigureAwait(false) ?? throw new InvalidOperationException(Unavailable ?? "Git is not available.");
-        var result = await RunOnLane(() => RunSync(exe, workingDirectory, args, stdin, environment, timeout ?? TimeSpan.FromSeconds(60), ct)).ConfigureAwait(false);
+        var result = await RunOnLane(() => RunSync(exe, workingDirectory, args, stdin, environment, timeout ?? TimeSpan.FromSeconds(60), ct, null)).ConfigureAwait(false);
+        return Checked(args, result, throwOnError);
+    }
+
+    /// <summary>
+    /// Runs a network operation (fetch, pull, push) as <see cref="RunAsync"/> does, but so that it can neither prompt on a terminal nor hang for
+    /// ever (<see cref="GitNetwork"/>): ssh in batch mode or with the GUI askpass helper, connect and stall timeouts, git in a session of its own,
+    /// and an overall limit (<see cref="NetworkTimeout"/>). Cancelling kills the process tree as usual.
+    /// </summary>
+    public async Task<GitResult> RunNetworkAsync(string workingDirectory, IReadOnlyList<string> args, bool throwOnError = true, CancellationToken ct = default)
+    {
+        var exe = await ResolveAsync().ConfigureAwait(false) ?? throw new InvalidOperationException(Unavailable ?? "Git is not available.");
+        var config = await RunAsync(workingDirectory, ["config", "--get-regexp", GitNetwork.ConfigPattern], throwOnError: false, timeout: TimeSpan.FromSeconds(15), ct: ct).ConfigureAwait(false);
+        using var askpass = UseAskpass() ? StartAskpass() : null;
+        var env = GitNetwork.Environment(Environment.GetEnvironmentVariable, GitNetwork.ParseConfig(config.Ok ? config.Text : ""),
+            askpass is null ? null : (askpass.Program, askpass.Environment));
+        var timeout = NetworkTimeout();
+        var result = await RunOnLane(() => RunSync(exe, workingDirectory, args, null, env, timeout, ct, GitNetwork.DetachLauncher)).ConfigureAwait(false);
+        return Checked(args, result, throwOnError);
+    }
+
+    private IAskpassSession? StartAskpass()
+    {
+        try { return Askpass?.Start(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { return null; }
+    }
+
+    private static GitResult Checked(IReadOnlyList<string> args, GitResult result, bool throwOnError)
+    {
         if (throwOnError && !result.Ok)
         {
             // some refusals go to standard output ("nothing to commit, working tree clean")
@@ -174,10 +214,12 @@ public sealed class GitRunner : IDisposable
         catch (ObjectDisposedException) { }
     }
 
-    private GitResult RunSync(string exe, string? cwd, IReadOnlyList<string> args, byte[]? stdin, IReadOnlyDictionary<string, string>? env, TimeSpan timeout, CancellationToken ct)
+    /// <param name="launcher">A program (and its arguments) that git runs under, given git's path and arguments after its own (setsid).</param>
+    private GitResult RunSync(string exe, string? cwd, IReadOnlyList<string> args, byte[]? stdin, IReadOnlyDictionary<string, string>? env, TimeSpan timeout, CancellationToken ct,
+        IReadOnlyList<string>? launcher)
     {
         ct.ThrowIfCancellationRequested();
-        var psi = new ProcessStartInfo(exe)
+        var psi = new ProcessStartInfo(launcher is { Count: > 0 } ? launcher[0] : exe)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -187,6 +229,11 @@ public sealed class GitRunner : IDisposable
             StandardOutputEncoding = null,
             StandardErrorEncoding = Encoding.UTF8,
         };
+        if (launcher is { Count: > 0 })
+        {
+            for (var i = 1; i < launcher.Count; i++) psi.ArgumentList.Add(launcher[i]);
+            psi.ArgumentList.Add(exe);
+        }
         if (cwd is not null) { psi.ArgumentList.Add("-C"); psi.ArgumentList.Add(cwd); psi.WorkingDirectory = cwd; }
         // No pager, no editor, no credential prompt on a terminal: a GUI has none. Credential helpers (osxkeychain, libsecret, GCM) still work.
         psi.ArgumentList.Add("-c"); psi.ArgumentList.Add("core.quotepath=false");
@@ -223,9 +270,11 @@ public sealed class GitRunner : IDisposable
         ct.ThrowIfCancellationRequested();
         string err;
         lock (stderr) err = stderr.ToString();
-        if (Volatile.Read(ref killed) == 1) return new GitResult(-1, output.ToArray(), $"git {(args.Count > 0 ? args[0] : "")} timed out after {timeout.TotalSeconds:0} s");
+        if (Volatile.Read(ref killed) == 1) return new GitResult(-1, output.ToArray(), $"git {(args.Count > 0 ? args[0] : "")} timed out after {Describe(timeout)}");
         return new GitResult(process.ExitCode, output.ToArray(), err);
     }
+
+    private static string Describe(TimeSpan t) => t.TotalSeconds < 120 ? $"{t.TotalSeconds:0} s" : $"{t.TotalMinutes:0} min";
 
     private IDisposable? TrackSafe(Process p)
     {
@@ -251,7 +300,7 @@ public sealed class GitRunner : IDisposable
         return null;
     }
 
-    private static bool IsExecutable(string path)
+    internal static bool IsExecutable(string path)
     {
         try
         {

@@ -59,6 +59,11 @@ public class TestExplorerRealAppTests
         await host.StartAsync([host.Files.Path]);
         var testing = host.Get<TestingHost>();
         var tree = testing.Controller.Tree;
+        // nothing is discovered (no cargo build) when the folder opens: showing the Test Explorer starts it
+        await Task.Delay(500, TestContext.Current.CancellationToken);
+        Assert.Equal(0, tree.TestCount);
+        Assert.False(testing.Controller.IsDiscovering);
+        await host.Get<Core.Platform.ICommandService>().ExecuteAsync(TestingHost.FocusView);
         Assert.True(await RealAppHost.WaitFor(() => tree.FindTest("lib/tests::adds") is not null && !testing.Controller.IsDiscovering, 180_000),
             "discovered: " + string.Join(", ", tree.AllTests().Select(t => t.TestId)) + "; output: " + host.Get<Core.Platform.IOutputService>().GetOrCreate(TestingHost.OutputChannelName).GetText());
         var lib = host.Files.Combine("src", "lib.rs");

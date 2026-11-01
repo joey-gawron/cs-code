@@ -132,7 +132,7 @@ public sealed class DebugTests
         await provider.DebugAsync(new TestRunRequest(project, ["Sample.Ns.CalcTests.Fails"]), sink, launcher, TestContext.Current.CancellationToken);
         var test = processes.Started.Single(s => s.Arguments.Count > 0 && s.Arguments[0] == "test");
         Assert.Equal("1", test.Environment!["VSTEST_HOST_DEBUG"]);
-        Assert.Contains("FullyQualifiedName=Sample.Ns.CalcTests.Fails", test.Arguments);
+        Assert.Contains(@"FullyQualifiedName=Sample.Ns.CalcTests.Fails|FullyQualifiedName~Sample.Ns.CalcTests.Fails\(", test.Arguments);
         var attach = Assert.Single(launcher.Started);
         Assert.Equal(("coreclr", "attach", 4242), (attach.Type, attach.Request, attach.Properties["processId"].GetInt32()));
         Assert.Equal(TestOutcome.Failed, sink.Result("Sample.Ns.CalcTests.Fails").Outcome); // from the TRX

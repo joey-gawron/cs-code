@@ -64,6 +64,7 @@ public sealed class GitHost : IDisposable
         StatusBar = services.GetService<IStatusBarService>();
         Config = services.GetService<IConfigurationService>();
         Commands = services.GetService<ICommandService>();
+        Bindings = services.GetService<IKeybindingService>();
         if (Commands is { } commands) RegisterCommands(commands);
         if (services.GetService<IContributionRegistry>() is { } contributions) _store.Add(contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory, Menus));
         _store.Add(git.RepositoriesChanged.Subscribe(_ => OnRepositoriesChanged()));
@@ -82,6 +83,13 @@ public sealed class GitHost : IDisposable
     public IStatusBarService? StatusBar { get; }
     public IConfigurationService? Config { get; }
     public ICommandService? Commands { get; }
+    public IKeybindingService? Bindings { get; }
+
+    /// <summary>
+    /// The key that commits from the message box, as the active keymap labels it on this OS (<c>⌘↩</c> on a Mac, <c>Ctrl+Enter</c> elsewhere, or the
+    /// user's own binding of <c>git.commit</c>); the platform's default without a keybinding service.
+    /// </summary>
+    public string CommitKeyLabel => Bindings?.GetLabel(Commit) ?? (OperatingSystem.IsMacOS() ? "⌘↩" : "Ctrl+Enter");
 
     /// <summary>The live Source Control view-model (null while the window is closed): the commit box lives there.</summary>
     public SourceControlViewModel? LiveView { get; private set; }

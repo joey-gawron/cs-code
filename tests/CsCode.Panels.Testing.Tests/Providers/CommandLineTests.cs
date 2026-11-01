@@ -24,9 +24,89 @@ public sealed class CommandLineTests
     [Fact]
     public void VsTest_filter_names_each_test_and_escapes_the_filter_syntax()
     {
-        Assert.Equal("FullyQualifiedName=N.C.A|FullyQualifiedName=N.C.B", DotNetTestProvider.VsTestFilter(["N.C.A", "N.C.B"]));
+        Assert.Equal(@"FullyQualifiedName=N.C.A|FullyQualifiedName~N.C.A\(|FullyQualifiedName=N.C.B|FullyQualifiedName~N.C.B\(", DotNetTestProvider.VsTestFilter(["N.C.A", "N.C.B"]));
         Assert.Equal(@"FullyQualifiedName=N.C\(x\)\=1", DotNetTestProvider.VsTestFilter(["N.C(x)=1"]));
         Assert.Null(DotNetTestProvider.VsTestFilter(null));
+    }
+
+    /// <summary>
+    /// VSTest's <c>--filter</c> over <c>FullyQualifiedName</c> as the test host evaluates it: <c>|</c>-separated conditions, <c>=</c> exact and
+    /// <c>~</c> contains (case-insensitive), <c>\</c> escaping the filter syntax.
+    /// </summary>
+    private static bool VsTestMatches(string filter, string fullyQualifiedName)
+    {
+        var conditions = new List<string>();
+        var current = new System.Text.StringBuilder();
+        for (var i = 0; i < filter.Length; i++)
+        {
+            if (filter[i] == '\\' && i + 1 < filter.Length) { current.Append(filter[i]).Append(filter[++i]); continue; }
+            if (filter[i] == '|') { conditions.Add(current.ToString()); current.Clear(); continue; }
+            current.Append(filter[i]);
+        }
+        conditions.Add(current.ToString());
+        foreach (var c in conditions)
+        {
+            var op = c.IndexOfAny(['=', '~']);
+            Assert.Equal("FullyQualifiedName", c[..op]);
+            var value = System.Text.RegularExpressions.Regex.Replace(c[(op + 1)..], @"\\(.)", "$1");
+            if (c[op] == '=' ? string.Equals(fullyQualifiedName, value, StringComparison.OrdinalIgnoreCase) : fullyQualifiedName.Contains(value, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    [Fact]
+    public async Task Running_an_NUnit_parameterized_test_runs_each_of_its_cases_and_not_a_test_whose_name_only_starts_the_same()
+    {
+        using var dir = new TempDirectory();
+        // the test host's tests: NUnit names each case of a [TestCase] method with its arguments
+        string[] hostTests = ["Sample.Calc.Adds(1,2)", "Sample.Calc.Adds(-1,1)", "Sample.Calc.AddsMany(3)", "Sample.Calc.Plain", "Sample.Calc.PlainToo"];
+        string? filter = null;
+        var processes = new ScriptedProcesses
+        {
+            Answer = spec =>
+            {
+                if (spec.Arguments.Contains("msbuild"))
+                    return (0, ["{\"Properties\":{\"IsTestProject\":\"true\",\"TargetPath\":\"/p/p.dll\",\"TargetFramework\":\"net10.0\",\"TargetFrameworks\":\"\"},\"Items\":{\"PackageReference\":[{\"Identity\":\"NUnit\"}]}}"], []);
+                var args = spec.Arguments.ToList();
+                filter = args[args.IndexOf("--filter") + 1];
+                var ran = hostTests.Where(t => VsTestMatches(filter, t)).ToList();
+                var logger = args[args.IndexOf("--logger") + 1];
+                File.WriteAllText(logger["trx;LogFileName=".Length..], Trx(ran));
+                return (0, [], []);
+            },
+        };
+        var provider = new DotNetTestProvider(new TestProviderContext(processes));
+        var project = new TestProject("dotnet", "nu", dir.Combine("nu.csproj"), dir.Path, DotNetTestProvider.FrameworkVsTest);
+        var sink = new RecordingSink();
+        var outcome = await provider.RunAsync(new TestRunRequest(project, ["Sample.Calc.Adds", "Sample.Calc.Plain"]), sink, TestContext.Current.CancellationToken);
+        Assert.Null(outcome.Error);
+        Assert.NotNull(filter);
+
+        // both cases of the parameterized test ran (an exact FullyQualifiedName=Sample.Calc.Adds matched neither), and the plain test
+        Assert.Equal(TestOutcome.Passed, sink.Result("Sample.Calc.Adds", "Adds(1,2)").Outcome);
+        Assert.Equal(TestOutcome.Passed, sink.Result("Sample.Calc.Adds", "Adds(-1,1)").Outcome);
+        Assert.Equal(TestOutcome.Passed, sink.Result("Sample.Calc.Plain").Outcome);
+        // the '(' boundary: AddsMany and PlainToo were not asked for and did not run
+        Assert.DoesNotContain(sink.Results, r => r.TestId is "Sample.Calc.AddsMany" or "Sample.Calc.PlainToo");
+        Assert.Equal(3, sink.Results.Count);
+    }
+
+    /// <summary>A results file with one passed NUnit result per name (class and method in the definition, the case's name as the result's).</summary>
+    private static string Trx(IReadOnlyList<string> names)
+    {
+        var results = new System.Text.StringBuilder();
+        var definitions = new System.Text.StringBuilder();
+        foreach (var (name, i) in names.Select((n, i) => (n, i)))
+        {
+            var id = $"00000000-0000-0000-0000-{i:000000000000}";
+            var paren = name.IndexOf('(');
+            var method = paren < 0 ? name : name[..paren];
+            var cls = method[..method.LastIndexOf('.')];
+            var shortName = name[(cls.Length + 1)..];
+            results.Append($"""<UnitTestResult testId="{id}" testName="{System.Security.SecurityElement.Escape(shortName)}" duration="00:00:00.0010000" outcome="Passed" />""");
+            definitions.Append($"""<UnitTest name="{System.Security.SecurityElement.Escape(shortName)}" id="{id}"><TestMethod className="{cls}" name="{System.Security.SecurityElement.Escape(shortName)}" /></UnitTest>""");
+        }
+        return $"""<?xml version="1.0" encoding="utf-8"?><TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><Results>{results}</Results><TestDefinitions>{definitions}</TestDefinitions></TestRun>""";
     }
 
     [Fact]

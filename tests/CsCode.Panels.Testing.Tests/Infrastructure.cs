@@ -66,8 +66,15 @@ internal sealed class FakeProvider(string id = "fake") : ITestProvider
         return p;
     }
 
-    public Task<IReadOnlyList<TestProject>> DetectAsync(string folder, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<TestProject>>([.. Projects.Where(p => p.Directory.StartsWith(folder, StringComparison.Ordinal))]);
+    /// <summary>How many times a folder was looked at (discovery started).</summary>
+    public int Detections => Volatile.Read(ref _detections);
+    private int _detections;
+
+    public Task<IReadOnlyList<TestProject>> DetectAsync(string folder, CancellationToken ct)
+    {
+        Interlocked.Increment(ref _detections);
+        return Task.FromResult<IReadOnlyList<TestProject>>([.. Projects.Where(p => p.Directory.StartsWith(folder, StringComparison.Ordinal))]);
+    }
 
     public Task<IReadOnlyList<DiscoveredTest>> DiscoverAsync(TestProject project, ITestRunSink log, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<DiscoveredTest>>(Tests[project.Key]);

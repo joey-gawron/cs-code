@@ -12,6 +12,8 @@ public static class GitSettings
     public const string DiffIgnoreTrimWhitespace = "diffEditor.ignoreTrimWhitespace";
     public const string ConfirmSync = "git.confirmSync";
     public const string EnableSmartCommit = "git.enableSmartCommit";
+    public const string UseIntegratedAskPass = "git.useIntegratedAskPass";
+    public const string NetworkTimeout = "git.networkTimeout";
 
     public static IEnumerable<ConfigurationProperty> Properties()
     {
@@ -27,5 +29,7 @@ public static class GitSettings
         yield return new ConfigurationProperty(DiffIgnoreTrimWhitespace, J(true), "Whether the diff editor ignores changes of leading and trailing whitespace.", S("""{"type":"boolean"}"""));
         yield return new ConfigurationProperty(ConfirmSync, J(true), "Ask before pulling and pushing with Sync.", S("""{"type":"boolean"}"""));
         yield return new ConfigurationProperty(EnableSmartCommit, J(false), "Commit all changes when nothing is staged, without asking.", S("""{"type":"boolean"}"""));
+        yield return new ConfigurationProperty(UseIntegratedAskPass, J(true), "Ask in CsCode for what fetch, pull and push need (ssh key passphrases and passwords, host key confirmations, HTTPS user names and passwords). Off: ssh runs in batch mode and fails instead of asking; credential helpers and ssh agents work either way.", S("""{"type":"boolean"}"""));
+        yield return new ConfigurationProperty(NetworkTimeout, J(1800), "Seconds after which a fetch, pull or push is stopped however far it got (0: no limit). A connection that is not up in 30 s or goes silent for a minute fails sooner; any operation can be cancelled from its progress notification.", S("""{"type":"number","minimum":0}"""));
     }
 }

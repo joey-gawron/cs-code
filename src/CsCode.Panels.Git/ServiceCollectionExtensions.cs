@@ -33,7 +33,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddCsCodeGit(this IServiceCollection services)
     {
         services.TryAddSingleton(sp => new GitService(sp.GetRequiredService<IWorkspaceService>(), sp.GetService<IConfigurationService>(), sp.GetService<IMemoryMonitor>(),
-            sp.GetService<IDocumentManager>()));
+            sp.GetService<IDocumentManager>(), askpass: sp.GetService<IAskpassService>()));
         services.TryAddSingleton<IFileDecorationProvider>(sp => sp.GetRequiredService<GitService>());
         services.TryAddSingleton<IQuickDiffProvider>(sp => sp.GetRequiredService<GitService>());
         services.TryAddSingleton<ILineBlameProvider>(sp => sp.GetRequiredService<GitService>());

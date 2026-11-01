@@ -36,6 +36,7 @@ public sealed class GitService : IFileDecorationProvider, IQuickDiffProvider, IL
     private readonly Emitter<Uri?> _originalChanged = new();
     private readonly Emitter<object?> _blameChanged = new();
     private readonly object _gate = new();
+    private readonly object _decorationsGate = new();
     private readonly Dictionary<GitRepository, IDisposable> _repoSubscriptions = new();
     private readonly LinkedList<(string Path, Task<QuickDiffOriginal?> Text)> _originals = new();
     private GitRepository[] _repos = [];
@@ -44,12 +45,18 @@ public sealed class GitService : IFileDecorationProvider, IQuickDiffProvider, IL
     private int _discoveryGeneration;
     private bool _disposed;
 
-    public GitService(IWorkspaceService workspace, IConfigurationService? config = null, IMemoryMonitor? memory = null, IDocumentManager? documents = null, GitRunner? runner = null)
+    public GitService(IWorkspaceService workspace, IConfigurationService? config = null, IMemoryMonitor? memory = null, IDocumentManager? documents = null, GitRunner? runner = null,
+        IAskpassService? askpass = null)
     {
         _workspace = workspace;
         _config = config;
         _documents = documents;
         _runner = runner ?? new GitRunner(() => _config?.Get<string?>(PathSetting, null), memory);
+        _runner.Askpass ??= askpass;
+        _runner.UseAskpass = () => _config?.Get(GitSettings.UseIntegratedAskPass, true) ?? true;
+        _runner.NetworkTimeout = () => _config?.Get<double?>(GitSettings.NetworkTimeout, null) is { } s
+            ? s > 0 ? TimeSpan.FromSeconds(s) : Timeout.InfiniteTimeSpan
+            : GitRunner.DefaultNetworkTimeout;
         if (config is not null) _store.Add(config.RegisterProperties(GitSettings.Properties()));
         _store.Add(workspace.FoldersChanged.Subscribe(_ => Discover()));
         if (config is not null)
@@ -273,7 +280,21 @@ public sealed class GitService : IFileDecorationProvider, IQuickDiffProvider, IL
         _ => 0,
     };
 
+    /// <summary>Called after a decoration snapshot was built, before it is published (tests: hold one rebuild while another runs).</summary>
+    internal Action? DecorationsBuilt { get; set; }
+
+    /// <summary>
+    /// Rebuilds the snapshot from every repository's current status and publishes it. Repositories refresh on different lane threads, so two
+    /// rebuilds can run at once: they are serialized (build + publish under one lock), so the last snapshot published is built from statuses read
+    /// after every earlier one's (an older snapshot published after a newer one left stale Explorer decorations with several repositories).
+    /// </summary>
     private void RebuildDecorations()
+    {
+        lock (_decorationsGate) BuildAndPublishDecorations();
+        _decorationsChanged.Fire(null);
+    }
+
+    private void BuildAndPublishDecorations()
     {
         var enabled = _config?.Get(DecorationsSetting, true) ?? true;
         var files = new Dictionary<string, FileDecoration>(PathComparer);
@@ -295,8 +316,9 @@ public sealed class GitService : IFileDecorationProvider, IQuickDiffProvider, IL
                         folders[dir] = new FileDecoration("●", deco.ColorKey, "Contains changes");
                     }
                 }
-        Volatile.Write(ref _decorations, new Decorations(files, folders, ignored, enabled ? repos.Select(r => r.Root).ToArray() : []));
-        _decorationsChanged.Fire(null);
+        var snapshot = new Decorations(files, folders, ignored, enabled ? repos.Select(r => r.Root).ToArray() : []);
+        DecorationsBuilt?.Invoke();
+        Volatile.Write(ref _decorations, snapshot);
     }
 
     // ------------------------------------------------------------------------------------- quick diff
