@@ -26,7 +26,7 @@ public sealed record MenuNode(
 }
 
 /// <summary>
-/// The standard Visual Studio menu bar: File, Edit, View, Go, Debug, Terminal, Tools, Window, Help. Every item is bound to a command id
+/// The standard Visual Studio menu bar: File, Edit, View, Go, Debug, Test, Terminal, Tools, Window, Help. Every item is bound to a command id
 /// (VS Code ids where they exist) and gated by an optional `when` clause; the shell does not hard-wire behaviour here. There are no
 /// extension or marketplace entries: CsCode has no extension system.
 /// </summary>
@@ -154,6 +154,20 @@ public static class ShellMenus
             M("Toggle _Breakpoint", KnownCommands.DebugToggleBreakpoint, "hasOpenEditors"),
             M("Open _launch.json", "workbench.action.debug.configure"),
             M("_Add Configuration...", "debug.addConfiguration")),
+
+        // Visual Studio's Test menu (the Test Explorer: CsCode.Panels.Testing, docs/TESTING.md)
+        Sub("Te_st",
+            M("_Run All Tests", "testing.runAll", "!testing.isRunning", "run-all"),
+            M("_Debug All Tests", "testing.debugAll", "!testing.isRunning"),
+            M("Run _Failed Tests", "testing.reRunFailTests", "testing.hasFailedTests && !testing.isRunning", "debug-rerun"),
+            M("Repeat _Last Run", "testing.reRunLastRun", "!testing.isRunning"),
+            S,
+            M("Run _Tests at Cursor", "testing.runAtCursor", "hasOpenEditors && !testing.isRunning", "play"),
+            M("D_ebug Tests at Cursor", "testing.debugAtCursor", "hasOpenEditors && !testing.isRunning"),
+            M("Run Tests in Current F_ile", "testing.runCurrentFile", "hasOpenEditors && !testing.isRunning"),
+            M("_Cancel Test Run", "testing.cancelRun", "testing.isRunning", "debug-stop"),
+            S,
+            M("Test E_xplorer", "workbench.view.testing.focus", icon: "checklist")),
 
         Sub("_Terminal",
             M("_New Terminal", "workbench.action.terminal.new", icon: IconKey.Terminal),

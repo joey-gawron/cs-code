@@ -113,6 +113,17 @@
   { "key": "ctrl+pagedown",      "command": "workbench.action.nextEditor",        "mac": "cmd+alt+right" },
   { "key": "ctrl+pageup",        "command": "workbench.action.previousEditor",    "mac": "cmd+alt+left" },
 
+  // ---- testing (Visual Studio's Ctrl+R chords; Test Explorer: Ctrl+E, T) ----
+  { "key": "ctrl+r a",           "command": "testing.runAll",                     "mac": "cmd+r a" },
+  { "key": "ctrl+r ctrl+a",      "command": "testing.debugAll",                   "mac": "cmd+r cmd+a" },
+  { "key": "ctrl+r t",           "command": "testing.runAtCursor",                "when": "editorTextFocus", "mac": "cmd+r t" },
+  { "key": "ctrl+r ctrl+t",      "command": "testing.debugAtCursor",              "when": "editorTextFocus", "mac": "cmd+r cmd+t" },
+  { "key": "ctrl+r f",           "command": "testing.reRunFailTests",             "mac": "cmd+r f" },
+  { "key": "ctrl+r ctrl+f",      "command": "testing.debugFailTests",             "mac": "cmd+r cmd+f" },
+  { "key": "ctrl+r l",           "command": "testing.reRunLastRun",               "mac": "cmd+r l" },
+  { "key": "ctrl+r ctrl+l",      "command": "testing.debugLastRun",               "mac": "cmd+r cmd+l" },
+  { "key": "ctrl+e t",           "command": "workbench.view.testing.focus",       "mac": "cmd+e t" },
+
   // ---- tool windows ----
   { "key": "ctrl+alt+l",         "command": "workbench.view.explorer",            "mac": "cmd+alt+l" },
   { "key": "ctrl+alt+o",         "command": "workbench.action.output.toggleOutput", "mac": "cmd+alt+o" },

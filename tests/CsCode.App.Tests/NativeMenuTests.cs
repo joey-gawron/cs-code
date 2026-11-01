@@ -28,7 +28,7 @@ public class NativeMenuTests
         var window = new Window();
         using var export = NativeMenuExport.BuildWindowMenu(rig.Menu, window, rig.Bindings, rig.Ui);
 
-        Assert.Equal(["File", "Edit", "View", "Go", "Debug", "Terminal", "Tools", "Window", "Help"], export.Menu.Items.OfType<NativeMenuItem>().Select(i => i.Header));
+        Assert.Equal(["File", "Edit", "View", "Go", "Debug", "Test", "Terminal", "Tools", "Window", "Help"], export.Menu.Items.OfType<NativeMenuItem>().Select(i => i.Header));
         var file = Items(export, "File");
         Assert.Contains("Open File…", file.Select(i => i.Header)); // a Mac ellipsis
         Assert.Contains("Save All", file.Select(i => i.Header));
