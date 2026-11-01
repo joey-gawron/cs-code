@@ -32,6 +32,8 @@
   <ItemGroup>
     <InternalsVisibleTo Include="CsCode.Editor.Tests" />
     <InternalsVisibleTo Include="CsCode.MemoryTests" />
+    <!-- docs/RUN-AND-DEBUG.md quotes the editor's debugging keys (EditorMenus.Keybindings); the docs tests check them -->
+    <InternalsVisibleTo Include="CsCode.Docs.Tests" />
   </ItemGroup>
 
 </Project>
