@@ -115,6 +115,9 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
     internal List<LineMarker> Cursors { get; } = [];
     internal int MarksVersion { get; private set; }
 
+    /// <summary>The sources the last collection read again (tests).</summary>
+    internal Sources LastCollected { get; private set; }
+
     /// <summary>Every list of marks, lowest priority first (the order they are drawn in).</summary>
     internal IEnumerable<List<LineMarker>> AllMarks()
     {
@@ -208,7 +211,7 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
 
     // ---------------------------------------------------------------------------------------------- marks
 
-    private void OnMarkersChanged() => Invalidate(Sources.All & ~Sources.Cursors);
+    private void OnMarkersChanged(Sources source) => Invalidate(source & ~Sources.Cursors);
 
     private void OnDocumentChanged()
     {
@@ -249,6 +252,7 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
         if (dirty == Sources.None) return;
         var doc = _v.Editor.Document;
         if (doc is null) return;
+        LastCollected = dirty;
         if (dirty.HasFlag(Sources.Diagnostics)) CollectDiagnostics(doc);
         if (dirty.HasFlag(Sources.Highlights)) CollectRanges(doc, Highlights, _v.Feature<HighlightFeature>()?.Ranges.Select(r => (r.Start, r.End, r.Strong ? MarkerKind.WordHighlightStrong : MarkerKind.WordHighlight)));
         if (dirty.HasFlag(Sources.Find)) CollectRanges(doc, FindMatches, _v.Feature<FindSearch>()?.Matches.Select(m => (m.Start, m.End, MarkerKind.FindMatch)));

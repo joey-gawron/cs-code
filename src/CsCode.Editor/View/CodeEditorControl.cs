@@ -181,10 +181,13 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     }
 
     /// <summary>Set by the overview ruler: features call <see cref="NotifyMarkersChanged"/> when the marks it draws changed.</summary>
-    internal Action? MarkersChanged { get; set; }
+    internal Action<Decorations.ScrollDecorations.Sources>? MarkersChanged { get; set; }
 
-    /// <summary>A feature's marks changed (diagnostics, occurrences, find matches, source-control changes, breakpoints). UI thread.</summary>
-    internal void NotifyMarkersChanged() => MarkersChanged?.Invoke();
+    /// <summary>
+    /// A feature's marks changed (diagnostics, occurrences, find matches, source-control changes, breakpoints): only <paramref name="source"/>'s
+    /// marks are collected again. UI thread.
+    /// </summary>
+    internal void NotifyMarkersChanged(Decorations.ScrollDecorations.Sources source) => MarkersChanged?.Invoke(source);
 
     /// <summary>Cut/Copy/Paste, the clipboard ring, PRIMARY and middle-click paste of this view.</summary>
     internal EditorClipboard Clipboard { get; }

@@ -175,6 +175,22 @@ public class ScrollDecorationsViewTests(ITestOutputHelper output)
         Assert.True(sticky.Panel.Margin.Left > 0, "the rows still start past the line numbers");
     }
 
+    /// <summary>A feature's change used to recollect every source (all find matches, problems, changes and breakpoints), not just its own.</summary>
+    [AvaloniaFact]
+    public async Task A_feature_change_recollects_only_that_features_marks()
+    {
+        using var host = ViewHost.Create();
+        var (_, view, _) = await host.OpenAsync(Lines(300), "a.cs");
+        await Settle(view);
+        view.Controller.SetSelection(TextRange.At(5, 1), reveal: false);
+        await ViewHost.WaitFor(() => Deco(view).Highlights.Count > 0, "occurrence highlights on the ruler");
+        Assert.Equal(ScrollDecorations.Sources.Highlights, Deco(view).LastCollected & ~ScrollDecorations.Sources.Cursors);
+
+        view.NotifyMarkersChanged(ScrollDecorations.Sources.Breakpoints);
+        Deco(view).FlushForTests();
+        Assert.Equal(ScrollDecorations.Sources.Breakpoints, Deco(view).LastCollected);
+    }
+
     [AvaloniaFact]
     public async Task Diff_editor_panes_have_no_minimap_but_keep_the_ruler()
     {

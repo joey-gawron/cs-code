@@ -408,8 +408,9 @@ tree, so folded lines take no room, wrapped lines their rows, and marks line up 
 pixel row (the line at the top of each row) and places each mark by binary search in that table; marks are bucketed per pixel row and lane,
 the more severe kind winning, and drawn as one rectangle per run. 19,999 find matches on a 1M-line file are collected and laid out in about
 2 ms on the UI thread (it was 18 ms with a lookup per mark). The marks are recollected per source only when that source changed (each feature
-calls `CodeEditorControl.NotifyMarkersChanged`; the find panel's searches, opening and closing; the carets), and after an edit once typing has
-paused for 100 ms, so a keystroke costs a flag and a timer start; scrolling lays nothing out. A left press on the scrollbar's track (not the
+calls `CodeEditorControl.NotifyMarkersChanged` with its own source, so new occurrence highlights do not re-read the find matches; the find
+panel's searches, opening and closing; the carets), and after an edit once typing has paused for 100 ms, so a keystroke costs a flag and a
+timer start; scrolling lays nothing out. A left press on the scrollbar's track (not the
 thumb, not the arrows) scrolls that position to the middle of the view, VS Code's default instead of paging. The ruler takes no pointer
 input itself, so the scrollbar keeps its hover, thumb and arrows. `editor.overviewRulerLanes: 0` hides it, `editor.overviewRulerBorder` draws
 its left border (`editorOverviewRuler.border`), `editorOverviewRuler.background` fills it when a theme sets one.

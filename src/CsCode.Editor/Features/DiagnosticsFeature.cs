@@ -171,7 +171,7 @@ internal sealed class DiagnosticsFeature : IThemeAware, IDisposable
             return;
         }
         _segments = into;
-        _v.NotifyMarkersChanged(); // the overview ruler and the minimap
+        _v.NotifyMarkersChanged(View.Decorations.ScrollDecorations.Sources.Diagnostics); // the overview ruler and the minimap
         _v.TextView.InvalidateLayer(KnownLayer.Selection);
         _v.TextView.Redraw();
     }

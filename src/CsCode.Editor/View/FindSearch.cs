@@ -226,7 +226,7 @@ internal sealed class FindSearch : IDisposable
     /// <summary>The panel opened or closed: its matches appear on or leave the overview ruler.</summary>
     private void OnPanelPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
     {
-        if (e.Property.Name is "VisualParent" or "IsVisible") _view.Post(_view.NotifyMarkersChanged); // closing takes the panel out of the tree (IsClosed is a plain property)
+        if (e.Property.Name is "VisualParent" or "IsVisible") _view.Post(() => _view.NotifyMarkersChanged(Decorations.ScrollDecorations.Sources.Find)); // closing takes the panel out of the tree (IsClosed is a plain property)
     }
 
     /// <summary>The text area got another document: the panel subscribes its handler to it after this runs, so the swap happens a turn later.</summary>
@@ -521,7 +521,7 @@ internal sealed class FindSearch : IDisposable
         _firstHeld = capped ? results[0] as TextSegment : null;
         _lastHeld = capped ? results[MaxResults - 1] as TextSegment : null;
         if (timedOut || capped) _view.Post(ShowMessage); // after the panel's own label update, which runs when this search returns
-        _view.Post(_view.NotifyMarkersChanged); // the overview ruler, once the panel holds these
+        _view.Post(() => _view.NotifyMarkersChanged(Decorations.ScrollDecorations.Sources.Find)); // the overview ruler, once the panel holds these
         return results;
     }
 
