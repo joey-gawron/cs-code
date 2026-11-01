@@ -50,6 +50,14 @@
   { "key": "ctrl+k ctrl+0",      "command": "editor.foldAll",                     "when": "editorTextFocus", "mac": "cmd+k cmd+0" },
   { "key": "ctrl+k ctrl+j",      "command": "editor.unfoldAll",                   "when": "editorTextFocus", "mac": "cmd+k cmd+j" },
 
+  // ---- multiple carets (Alt+Click adds one; Escape removes the others) ----
+  { "key": "ctrl+d",             "command": "editor.action.addSelectionToNextFindMatch", "when": "editorTextFocus", "mac": "cmd+d" },
+  { "key": "ctrl+k ctrl+d",      "command": "editor.action.moveSelectionToNextFindMatch", "when": "editorTextFocus", "mac": "cmd+k cmd+d" },
+  { "key": "ctrl+shift+l",       "command": "editor.action.selectHighlights",     "when": "editorTextFocus", "mac": "cmd+shift+l" },
+  { "key": "ctrl+alt+up",        "command": "editor.action.insertCursorAbove",    "when": "editorTextFocus", "mac": "cmd+alt+up" },
+  { "key": "ctrl+alt+down",      "command": "editor.action.insertCursorBelow",    "when": "editorTextFocus", "mac": "cmd+alt+down" },
+  { "key": "ctrl+u",             "command": "cursorUndo",                         "when": "editorTextFocus && !vim.active", "mac": "cmd+u" },
+
   // ---- find ----
   { "key": "ctrl+f",             "command": "actions.find",                       "mac": "cmd+f" },
   { "key": "ctrl+h",             "command": "editor.action.startFindReplace",     "mac": "cmd+alt+f" },

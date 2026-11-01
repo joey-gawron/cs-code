@@ -642,6 +642,45 @@ public class KeybindingServiceTests : IDisposable
         Assert.DoesNotContain(_f.Log.Entries, e => e.Level >= LogLevel.Warning);
     }
 
+    [Theory]
+    [InlineData(HostOs.Linux)]
+    [InlineData(HostOs.MacOs)]
+    public async Task The_VS_Code_preset_binds_VS_Codes_multi_cursor_keys(HostOs os)
+    {
+        using var svc = _f.Create(os);
+        await svc.SetPresetAsync(KeybindingService.VsCodePreset, Ct);
+        _f.Context.Set("editorTextFocus", true);
+        var mac = os == HostOs.MacOs;
+        Assert.Equal("editor.action.addSelectionToNextFindMatch", Cmd(Press(svc, mac ? "cmd+d" : "ctrl+d")));
+        Assert.Equal("editor.action.moveSelectionToNextFindMatch", Cmd(Press(svc, mac ? "cmd+k cmd+d" : "ctrl+k ctrl+d")));
+        Assert.Equal("editor.action.selectHighlights", Cmd(Press(svc, mac ? "cmd+shift+l" : "ctrl+shift+l")));
+        Assert.Equal("editor.action.insertCursorAbove", Cmd(Press(svc, mac ? "cmd+alt+up" : "ctrl+alt+up")));
+        Assert.Equal("editor.action.insertCursorBelow", Cmd(Press(svc, mac ? "cmd+alt+down" : "ctrl+alt+down")));
+        Assert.Equal("cursorUndo", Cmd(Press(svc, mac ? "cmd+u" : "ctrl+u")));
+        _f.Context.Set("vim.active", true); // Vim owns Ctrl+U (and multi-cursor is off with it)
+        Assert.Equal(KeyResolution.None, Press(svc, mac ? "cmd+u" : "ctrl+u").Kind);
+    }
+
+    [Theory]
+    [InlineData(HostOs.Linux)]
+    [InlineData(HostOs.MacOs)]
+    public async Task The_visual_studio_preset_keeps_its_own_keys_and_uses_Visual_Studios_multi_caret_keys(HostOs os)
+    {
+        using var svc = _f.Create(os);
+        await svc.SetPresetAsync(VisualStudioPresetName, Ct);
+        _f.Context.Set("editorTextFocus", true);
+        var mac = os == HostOs.MacOs;
+        // Ctrl+D, Ctrl+K Ctrl+D and Ctrl+Shift+L stay Duplicate, Format Document and Delete Line, as in Visual Studio
+        Assert.Equal("editor.action.copyLinesDownAction", Cmd(Press(svc, mac ? "cmd+d" : "ctrl+d")));
+        Assert.Equal("editor.action.formatDocument", Cmd(Press(svc, mac ? "cmd+k cmd+d" : "ctrl+k ctrl+d")));
+        Assert.Equal("editor.action.deleteLines", Cmd(Press(svc, mac ? "cmd+shift+k" : "ctrl+shift+l")));
+        Assert.Equal("editor.action.addSelectionToNextFindMatch", Cmd(Press(svc, "shift+alt+.")));
+        Assert.Equal("editor.action.selectHighlights", Cmd(Press(svc, "shift+alt+;")));
+        Assert.Equal("editor.action.insertCursorAbove", Cmd(Press(svc, mac ? "cmd+alt+up" : "ctrl+alt+up")));
+        Assert.Equal("editor.action.insertCursorBelow", Cmd(Press(svc, mac ? "cmd+alt+down" : "ctrl+alt+down")));
+        Assert.Equal("cursorUndo", Cmd(Press(svc, mac ? "cmd+u" : "ctrl+u")));
+    }
+
     [Fact]
     public async Task The_VS_Code_preset_binds_no_toggle_fold_on_Linux()
     {
