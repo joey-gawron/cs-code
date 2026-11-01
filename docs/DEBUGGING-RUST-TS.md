@@ -11,6 +11,7 @@ regression test that fails without the fix), and what is an adapter limitation.
 | **TypeScript / JavaScript** | Microsoft **js-debug v1.140.0** (`js-debug-dap`, MIT), built in | **evaluated, defects fixed** — every row below |
 | **Rust** (default on Linux) | **GDB 18.1**'s native DAP (`gdb -i=dap`, no download), built in; GDB 16.3, which the brief assumed, was replaced by the system update | **evaluated, defects fixed** — [Rust through GDB](#rust-through-gdb) |
 | **Rust** (default on macOS) | **CodeLLDB v1.12.3** (MIT, with its own LLDB; a pinned 56 MB download the app offers, shipped in CsCode.app), built in as `lldb` | **evaluated, defects fixed** — [Rust through CodeLLDB](#rust-through-codelldb); [which one is the default](#which-rust-debugger-is-the-default) (GDB on Linux, CodeLLDB on macOS) |
+| **Rust / C / C++** (alternative) | **LLVM's lldb-dap** (Apple's with Xcode or its Command Line Tools, LLVM's on Linux; nothing to download), built in as `lldb-dap` | **wired, not evaluated row by row** — [lldb-dap](#rust-c-and-c-through-lldb-dap) |
 
 ## TypeScript / JavaScript through js-debug
 
@@ -429,6 +430,23 @@ dotnet test tests/CsCode.App.Tests --filter "FullyQualifiedName~RealAppRustDebug
 Every real test skips with the reason when gdb (14+, with Python), cargo or rustc is missing, and builds the sample offline. Run them with
 `DISPLAY` and `SSH_AUTH_SOCK` unset and `CSCODE_HOME` pointing at a temp directory; set `CSCODE_DAP_TEST_METRICS=<file>` to collect the evidence
 lines quoted above.
+
+## Rust, C and C++ through lldb-dap
+
+LLVM's own DAP server for LLDB is built in as **`lldb-dap`** (the type of LLVM's VS Code extension, so its launch.json files work), beside
+CodeLLDB: on a Mac with Xcode or its Command Line Tools it is already there (`xcrun -f lldb-dap`; LLVM 21 in Xcode 26), on Linux it comes
+with LLDB (`lldb-dap`, `lldb-dap-NN` on Debian/Ubuntu, `lldb-vscode` before LLVM 18). How it is found and what the provider fills in:
+[DAP.md](DAP.md), "netcoredbg and other adapters". Choose it for a new Rust launch.json with `cscode.debug.rustDebugger: "lldb-dap"`, or
+pick "Rust / C / C++ (lldb-dap)" in *Add Configuration…*.
+
+* Tests: `LldbDapAdapterFactoryTests` (lookup order, provider, templates, registration; a real `cargo build` for the `cargo` key),
+  `LldbDapStandInTests` (a stand-in through the real DebugService: stdio, no arguments, niced, in the folder, the filled-in launch),
+  `RealLldbDapTests` (the real adapter: the `initialize` handshake wherever it is found — passes on macOS with Apple's lldb-dap 21; a C program
+  to a breakpoint, its locals, continue and exit, which on macOS needs Developer Mode: with it off, `DevToolsSecurity -status` says so and the
+  test skips, because starting a debuggee would wait for an administrator in a dialog).
+* Not done: the Rust evaluation matrix has not been run against lldb-dap (only CodeLLDB's and GDB's); lldb-dap has no Rust panic filter
+  (CodeLLDB's "Rust: on panic" and GDB's client-side one are not offered for it); hit counts and the Debug Console are lldb-dap's own
+  (`--repl-mode auto`). Run the C session test on a Mac with `sudo DevToolsSecurity -enable` once.
 
 ## Rust through CodeLLDB
 

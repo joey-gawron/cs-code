@@ -346,6 +346,8 @@ public sealed class MainWindow : Window, IWindowChrome
         {
             try { await _shell.StartDeferredAsync().ConfigureAwait(true); }
             catch (Exception ex) { _sp.GetService<Startup.CrashHandler>()?.Report(ex, fatal: false, source: "Startup"); }
+            // macOS: About or Settings... chosen in the application menu while there was no window runs now, in this one.
+            if (!_windowClosed) App.ApplicationMenu?.Started(_sp);
         }, DispatcherPriority.Background);
     }
 
@@ -556,6 +558,7 @@ public sealed class MainWindow : Window, IWindowChrome
             e.Cancel = true; // hidden (background mode): a held close stays held
             return;
         }
+        if (!(e.IsProgrammatic && held == HeldClose.Prompted)) IsExiting = false; // a close of its own (the close button), not File > Exit's repeat
         _held = HeldClose.None;
         e.Cancel = true;
         await CloseWithPromptsAsync().ConfigureAwait(true);
@@ -616,7 +619,19 @@ public sealed class MainWindow : Window, IWindowChrome
     /// </summary>
     public ShellController.CloseEnd CloseWithoutPrompt() => CloseConfirmed(HeldClose.WithoutPrompt);
 
-    public async Task<bool> RequestExitAsync() => await CloseWithPromptsAsync().ConfigureAwait(true) == ShellController.CloseEnd.Closed;
+    public async Task<bool> RequestExitAsync()
+    {
+        IsExiting = true;
+        var end = await CloseWithPromptsAsync().ConfigureAwait(true);
+        if (end == ShellController.CloseEnd.Cancelled) IsExiting = false; // a Save prompt was cancelled: the user works on
+        return end == ShellController.CloseEnd.Closed;
+    }
+
+    /// <summary>
+    /// The close under way (or the one a module holds) is File &gt; Exit's (also ⌘Q's, which runs it), which ends the app; false for a close of the
+    /// window alone (its close button), which on macOS leaves the app running without a window (<see cref="Startup.AppSession"/>).
+    /// </summary>
+    public bool IsExiting { get; private set; }
 
     /// <summary>An editor has changes not saved yet (what the Save prompts of a close would ask about).</summary>
     public bool HasUnsavedChanges => _shell.Well.EditorTabs.Any(t => t.IsDirty);

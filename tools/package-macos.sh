@@ -5,7 +5,8 @@
 # plutil -lint and codesign --verify, and with --install puts the app in ~/Applications and a `cscode` command on PATH.
 #
 #   tools/package-macos.sh [--rid osx-arm64|osx-x64]... [--from DIR] [--out DIR] [--server-bundles DIR | --no-server-bundles]
-#                          [--netcoredbg PATH] [--js-debug PATH] [--codelldb PATH] [--no-adapters] [--no-sign]
+#                          [--netcoredbg PATH] [--js-debug PATH] [--codelldb PATH] [--no-adapters]
+#                          [--no-sign | --sign-identity ID [--notarize --notary-profile NAME]]
 #                          [--install [--app-dir DIR] [--bin-dir DIR] [--force]]
 #
 #   --rid               a macOS runtime to package (repeatable; default: this Mac's, osx-arm64 on Apple silicon). Each goes to <out>/<rid>/CsCode.app.
@@ -21,6 +22,15 @@
 #                       .scratch/tools/codelldb/<version>, fetched by tools/fetch-codelldb.sh when missing)
 #   --no-adapters       bundle no debug adapter (the app offers the downloads when a debug session needs one)
 #   --no-sign           leave the bundle unsigned (Apple silicon will not start it)
+#   --sign-identity ID  sign for other Macs: a "Developer ID Application: Name (TEAMID)" identity in your keychain (security find-identity -v
+#                       -p codesigning lists them). Hardened runtime, secure timestamp, packaging/macos/*.entitlements, inside out
+#                       (tools/macos/make-app-bundle.sh). Without it the signature is ad hoc, which only the Mac that built it accepts
+#   --notarize          then notarize: zip the app, `xcrun notarytool submit --keychain-profile NAME --wait`, staple the ticket
+#                       (`xcrun stapler staple`, `stapler validate`), check it as Gatekeeper does (`spctl --assess --type execute`) and write
+#                       <out>/<rid>/CsCode-<version>-<rid>.zip, the stapled app to hand out. Needs --sign-identity and --notary-profile
+#   --notary-profile NAME  the notarytool keychain profile, stored once with: xcrun notarytool store-credentials NAME --apple-id <id>
+#                       --team-id <TEAMID> (it asks for an app-specific password; or --key/--key-id/--issuer for an App Store Connect API key)
+#   XCRUN=PATH, SPCTL=PATH, CODESIGN=PATH  the tools to run (default xcrun, spctl, codesign; tests put recording stand-ins here)
 #   --install           copy the bundle for this Mac's runtime to the app directory and install the `cscode` command
 #   --app-dir DIR       where --install puts CsCode.app (default: ~/Applications; /Applications needs an administrator)
 #   --bin-dir DIR       where --install puts `cscode` (default: the first writable of /opt/homebrew/bin, /usr/local/bin, ~/.local/bin, ~/bin that
@@ -28,8 +38,8 @@
 #   --force             let --install replace a `cscode` in the bin directory that it did not write
 #
 # The osx runtime packs are not pinned (only linux-x64's are: tools/fetch-publish-packs.sh), so the publish takes the ones restore picks from
-# nuget.org (publish-app.sh --unpinned). The signature is ad hoc: the app runs on the Mac that built it; a copy for other Macs needs a
-# Developer ID signature and notarization (docs/handoff/macos-audit.md, pkg-2). Runs on macOS's bash 3.2.
+# nuget.org (publish-app.sh --unpinned). By default the signature is ad hoc: the app runs on the Mac that built it; a copy for other Macs
+# needs --sign-identity and --notarize (README, "Signing for other Macs"). Runs on macOS's bash 3.2.
 #
 # Debug adapters are bundled as tools/install.sh bundles them on Linux, in Contents/Resources/debug-adapters laid out as the app reads them
 # (src/CsCode.Dap/Adapters/BundledAdapters.cs), so the app debugs .NET, Node.js/TypeScript and Rust/C/C++ (CodeLLDB, the Mac's default) without
@@ -42,6 +52,8 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 rids=""; from=""; out="$repo/.scratch/macos"; servers=""; no_servers=0; sign=1
 adapters=1; netcoredbg_src=""; jsdebug_src=""; codelldb_src=""
 install=0; app_dir="$HOME/Applications"; bin_dir=""; force=0
+identity=""; notarize=0; notary_profile=""
+xcrun=${XCRUN:-xcrun}; spctl=${SPCTL:-spctl}
 while [ $# -gt 0 ]; do
     case "$1" in
         --rid) rids="$rids $2"; shift 2 ;;
@@ -54,6 +66,9 @@ while [ $# -gt 0 ]; do
         --codelldb) codelldb_src=$2; shift 2 ;;
         --no-adapters) adapters=0; shift ;;
         --no-sign) sign=0; shift ;;
+        --sign-identity) identity=$2; shift 2 ;;
+        --notarize) notarize=1; shift ;;
+        --notary-profile) notary_profile=$2; shift 2 ;;
         --install) install=1; shift ;;
         --app-dir) app_dir=$2; shift 2 ;;
         --bin-dir) bin_dir=$2; shift 2 ;;
@@ -67,7 +82,14 @@ die() { echo "package-macos.sh: $*" >&2; exit 1; }
 warn() { echo "package-macos.sh: warning: $*" >&2; }
 [ "$(uname -s)" = Darwin ] || die "run this on a Mac (it needs sips, iconutil, codesign and plutil); tools/macos/make-app-bundle.sh builds an unsigned bundle elsewhere"
 for tool in sips iconutil plutil ditto; do command -v "$tool" >/dev/null || die "$tool is required"; done
-[ "$sign" = 0 ] || command -v codesign >/dev/null || die "codesign is required (install the Xcode command line tools: xcode-select --install), or pass --no-sign"
+[ "$sign" = 0 ] || command -v "${CODESIGN:-codesign}" >/dev/null || die "codesign is required (install the Xcode command line tools: xcode-select --install), or pass --no-sign"
+if [ -n "$identity" ] && [ "$sign" = 0 ]; then echo "package-macos.sh: --sign-identity and --no-sign contradict each other" >&2; exit 2; fi
+if [ "$notarize" = 1 ]; then
+    [ -n "$identity" ] || { echo "package-macos.sh: --notarize needs --sign-identity \"Developer ID Application: …\" (Apple notarizes only Developer ID signatures)" >&2; exit 2; }
+    [ -n "$notary_profile" ] || { echo "package-macos.sh: --notarize needs --notary-profile NAME (store one with: xcrun notarytool store-credentials NAME)" >&2; exit 2; }
+    command -v "$xcrun" >/dev/null || die "--notarize needs xcrun (Xcode's command line tools)"
+fi
+if [ -n "$notary_profile" ] && [ "$notarize" = 0 ]; then warn "--notary-profile without --notarize: not notarizing"; fi
 
 if [ "$(uname -m)" = x86_64 ]; then here_rid=osx-x64; else here_rid=osx-arm64; fi
 [ -n "$rids" ] || rids=$here_rid
@@ -147,8 +169,40 @@ stage_codelldb() { # <source> <stage> <rid>
     for f in VERSION PLATFORM; do [ ! -f "$inst/$f" ] || cp -p "$inst/$f" "$2/codelldb/$codelldb_version/" || die "CodeLLDB: copying $f failed"; done
 }
 
+# ------------------------------------------------------------------ notarization
+# The signed app goes to Apple's notary service as a zip (ditto keeps the signature and the bundle's symlinks), the ticket is stapled to the
+# app so Gatekeeper accepts it offline, Gatekeeper's own assessment must say "accepted" (source=Notarized Developer ID), and the stapled app is
+# zipped again for distribution. A rejection prints notarytool's log, which names every file that failed and why.
+notarize_app() { # <app> <rid>
+    local app=$1 rid=$2 dir zip submission status id version
+    dir=$(dirname "$app")
+    zip="$dir/.CsCode-notarize.zip"
+    rm -f "$zip"
+    ditto -c -k --sequesterRsrc --keepParent "$app" "$zip" || die "zipping $app for the notary service failed"
+    echo "Submitting $app to Apple's notary service (profile $notary_profile); this usually takes a few minutes…"
+    submission=$("$xcrun" notarytool submit "$zip" --keychain-profile "$notary_profile" --wait --output-format plist) \
+        || { rm -f "$zip"; die "notarytool submit failed (is the keychain profile '$notary_profile' stored? xcrun notarytool store-credentials $notary_profile)"; }
+    rm -f "$zip"
+    status=$(printf '%s' "$submission" | plutil -extract status raw -o - - 2>/dev/null || true)
+    id=$(printf '%s' "$submission" | plutil -extract id raw -o - - 2>/dev/null || true)
+    if [ "$status" != Accepted ]; then
+        echo "package-macos.sh: notarization of $app: ${status:-no status} (submission ${id:-unknown}). notarytool's log:" >&2
+        [ -z "$id" ] || "$xcrun" notarytool log "$id" --keychain-profile "$notary_profile" >&2 || true
+        exit 1
+    fi
+    echo "Notarized (submission $id); stapling the ticket…"
+    "$xcrun" stapler staple "$app" || die "stapling the notarization ticket to $app failed"
+    "$xcrun" stapler validate "$app" || die "the stapled ticket of $app does not validate"
+    "$spctl" --assess --type execute --verbose=4 "$app" || die "Gatekeeper (spctl --assess) rejects $app"
+    version=$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist" 2>/dev/null || echo 0.0.0)
+    rm -f "$dir/CsCode-$version-$rid.zip"
+    ditto -c -k --sequesterRsrc --keepParent "$app" "$dir/CsCode-$version-$rid.zip" || die "zipping the stapled app failed"
+    echo "Ready to hand out: $dir/CsCode-$version-$rid.zip (signed, notarized, stapled)"
+}
+
 bundle_args=()
 [ "$sign" = 1 ] || bundle_args+=(--no-sign)
+[ -z "$identity" ] || bundle_args+=(--sign-identity "$identity")
 [ -z "$servers" ] || bundle_args+=(--server-bundles "$servers")
 for rid in $rids; do
     rid_args=()
@@ -175,7 +229,11 @@ for rid in $rids; do
     rm -rf "$stage"
     app="$out/$rid/CsCode.app"
     plutil -lint "$app/Contents/Info.plist"
-    if [ "$sign" = 1 ]; then codesign --verify --deep --strict --verbose=1 "$app"; fi
+    if [ "$sign" = 1 ]; then "${CODESIGN:-codesign}" --verify --deep --strict --verbose=1 "$app"; fi
+    [ "$notarize" = 0 ] || notarize_app "$app" "$rid"
+    if [ -n "$identity" ] && [ "$notarize" = 0 ]; then
+        echo "Signed with \"$identity\" but not notarized: Gatekeeper on other Macs refuses it until it is (--notarize --notary-profile NAME)."
+    fi
 done
 
 [ "$install" = 1 ] || { echo "Done. Install with: tools/package-macos.sh --install (or drag $out/$here_rid/CsCode.app to Applications)"; exit 0; }

@@ -33,7 +33,7 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
 | `Service/` | `DebugService : IDebugService` (+ `IDebugFrameFocus`, `IDebugOutputHistory`, `IDebugSourceContentProvider`), commands, `cscode.debuggers` contributions. |
 | `Configuration/` | `DebugConfigurationService`, `LaunchJson`, `VariableResolver`, `DapPlatform` (optional Core services bundle). |
 | `Tasks/TaskService.cs` | Minimal `tasks.json` runner (`ITaskService`). |
-| `Adapters/` | `NetCoreDbgAdapterFactory`, `NetCoreDbgInstaller`, `JsDebugAdapterFactory`, `JsDebugInstaller` (Node.js/TypeScript), `GdbAdapterFactory` + `GdbAdapterQuirks` + `CargoArtifacts` (Rust/C/C++ through GDB's native DAP; `Gdb/cscode_gdb.py`, copied to the output, summarises Rust values), `CodeLldbAdapterFactory` + `CodeLldbAdapterQuirks` + `CodeLldbInstaller` (Rust/C/C++ through CodeLLDB), `RustToolchain` (the folder's sysroot and rustc commit, shared). |
+| `Adapters/` | `NetCoreDbgAdapterFactory`, `NetCoreDbgInstaller`, `JsDebugAdapterFactory`, `JsDebugInstaller` (Node.js/TypeScript), `GdbAdapterFactory` + `GdbAdapterQuirks` + `CargoArtifacts` (Rust/C/C++ through GDB's native DAP; `Gdb/cscode_gdb.py`, copied to the output, summarises Rust values), `CodeLldbAdapterFactory` + `CodeLldbAdapterQuirks` + `CodeLldbInstaller` (Rust/C/C++ through CodeLLDB), `LldbDapAdapterFactory` (Rust/C/C++ through LLVM's lldb-dap), `RustToolchain` (the folder's sysroot and rustc commit, shared). |
 | `Session/DebugAdapterQuirks.cs` | What a built-in adapter does differently, compensated in one place (REPL input, completions, hit conditions, client-side and breakpoint-backed exception filters, output categories, frames, trailing output, `noDebug`, variable paging done by the session, a pause reported as a signal, frame ids renumbered per request); `BuiltinDebugAdapter.Quirks`, applied to every session of the type. |
 | `tools/fetch-netcoredbg.sh` | Fetches netcoredbg into `.scratch/tools/netcoredbg/` (SHA-256 verified, safe extraction). |
 | `tools/fetch-js-debug.sh` | Fetches the pinned js-debug v1.140.0 into `.scratch/tools/js-debug/v1.140.0/` (pinned SHA-256; `JSDEBUG_ARCHIVE=` installs from a local archive without downloading). |
@@ -271,6 +271,19 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   (`RenumbersFramesPerRequest`: CodeLLDB numbers frames anew per `stackTrace`), and Debug Console completions through LLDB's `frame variable`
   with their positions put back at the caret. Templates like GDB's. Evaluation:
   [docs/DEBUGGING-RUST-TS.md](DEBUGGING-RUST-TS.md#rust-through-codelldb).
+* Built-in `lldb-dap` → **LLVM's lldb-dap** (Apple ships it with Xcode and its Command Line Tools; `lldb-vscode` before LLVM 18; audit dbg-1),
+  beside CodeLLDB, never instead of it: `nice -n 10 lldb-dap` on **stdio**, no arguments, in the folder (`LldbDapAdapterFactory`, a
+  `DebugAdapterStdioProcess`, no quirks). Nothing is downloaded. Lookup: `cscode.debug.lldbDapPath` (the executable or its `bin` directory) →
+  on macOS `xcrun --find lldb-dap`, asked once per run and only when `xcode-select -p` names a developer directory (a Mac without the tools
+  would otherwise get their install dialog) → `lldb-dap`, then `lldb-vscode` on PATH → the newest `lldb-dap-NN` on PATH (Debian/Ubuntu) →
+  Homebrew's LLVM (`/opt/homebrew/opt/llvm/bin`, `/usr/local/opt/llvm/bin`) on macOS, the newest `/usr/lib/llvm-NN/bin` on Linux; without one
+  the start fails saying where to get it on this OS. The provider: CodeLLDB's `cargo` key (the shared `CargoArtifacts`; the key is removed
+  afterwards), `cwd`, `env` as the `"NAME=value"` list every lldb-dap reads (nulls dropped), `console: integratedTerminal` as `runInTerminal`
+  only when there is a terminal (the key is removed: LLVM 21 reads it itself), a textual `pid` as a number, CodeLLDB's object `sourceMap` as
+  `[from, to]` pairs, and for Rust (a `cargo` key, `sourceLanguages: ["rust"]` or a `Cargo.toml` in the folder) what `rust-lldb` loads, the
+  toolchain's `lldb_lookup.py` and `lldb_commands` (`initCommands`, before the user's), plus the standard library mapped onto rust-src.
+  Templates ("Add Configuration…", a new launch.json): cargo build / cargo test / attach for a cargo package, launch `a.out` / attach otherwise.
+  `cscode.debug.rustDebugger: "lldb-dap"` makes it the Rust debugger of a new launch.json.
 * **The Rust default**: F5 with no launch configuration offers "Create launch.json" for the folder's debugger — `Cargo.toml` → the Rust debugger
   (`cscode.debug.rustDebugger`: `gdb` or `lldb`; the default is `lldb`, CodeLLDB, on macOS, where GDB cannot debug native arm64 programs,
   and `gdb` on Linux), a .NET project or solution → `coreclr`, `tsconfig.json`/`package.json` → `pwa-node`, else a "Select debugger" pick (it
@@ -293,7 +306,7 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   `debuggerAvailable`, `focusedSessionIsAttach`, `breakpointsExist`.
 * Settings registered with `IConfigurationService`: `cscode.debuggers`, `cscode.debug.netcoredbgPath`, `cscode.debug.jsDebugPath`,
   `cscode.debug.nodePath`, `cscode.debug.gdbPath`, `cscode.debug.gdbArgs` (extra GDB arguments, e.g. `["-nx"]`), `cscode.debug.codelldbPath`,
-  `cscode.debug.rustDebugger` (`gdb` | `lldb` | `codelldb`; default `lldb` on macOS, `gdb` elsewhere), `lldb.consoleMode` (VS Code's CodeLLDB setting: `commands` | `evaluate` |
+  `cscode.debug.lldbDapPath`, `cscode.debug.rustDebugger` (`gdb` | `lldb` | `codelldb` | `lldb-dap`; default `lldb` on macOS, `gdb` elsewhere), `lldb.consoleMode` (VS Code's CodeLLDB setting: `commands` | `evaluate` |
   `split`), `cscode.debug.requestTimeoutSeconds`. `DebugService.SettingsRead` lists them; a test checks every key the module's sources name is
   registered.
 * Environment: CsCode's own `DOTNET_ROOT_<ARCH>` (set by `dotnet run`/`dotnet test`) is folded into `DOTNET_ROOT` for the programs the

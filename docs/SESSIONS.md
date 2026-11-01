@@ -20,7 +20,7 @@ chosen in `Main` before Avalonia is touched:
 |---|---|---|
 | **Launcher** (default) | `cscode [options] [paths]` | Talks to the running CsCode processes over IPC (show / claim / start / quit / list) and exits. No Avalonia, no services. |
 | **CsCode process** | `cscode --host --session NAME` or `--host --spare` (started by the launcher) | Takes the session's lock, opens its IPC endpoint at once, builds the services and the window, restores the session. |
-| **In-process window** | `cscode --foreground [paths]`, or automatically when background mode is unavailable (no private runtime directory, or a data directory that cannot hold the session locks) | The classic single-process run: the window opens in this process and closing it exits. |
+| **In-process window** | `cscode --foreground [paths]`, or automatically when background mode is unavailable (no private runtime directory, or a data directory that cannot hold the session locks) | The classic single-process run: the window opens in this process and closing it exits (on macOS the app stays in the Dock without a window instead: see *Window lifecycle*). |
 
 A process started by the launcher detaches from the launcher's terminal (`setsid`) and has no stdio; it logs to `{LogsDir}` as usual.
 
@@ -207,7 +207,38 @@ so they stay (and a rename writes them under the new name before the old session
 * *File ▸ Sessions ▸* Open Session…, Switch Session… (`workbench.action.switchSession`, **Ctrl+Alt+S**; shows the other session and hides
   this one), Save Session As… (the old session stays as saved), Rename Session…, Delete Session… (only sessions that are not running),
   Start in the Background at Login….
+* *File ▸ New Window* (`workbench.action.newWindow`, **Ctrl+Shift+N**, ⇧⌘N on a Mac, in both keymaps): a new unnamed session in a window and
+  process of its own, as `cscode -n` (registered by session processes; disabled in a `--foreground` run, which is one window).
 * The window title is `file - session — folder - CsCode` for named sessions; the status bar shows the session (click: Switch Session).
+
+### macOS: the app outlives its last window (audit ui-6)
+
+Mac apps keep running when their last window closes: the Dock icon stays (with its dot) and the menu bar shows the app's menu. CsCode does
+the same in both modes, and nothing changes on Linux or Windows.
+
+* **Background mode** already did: closing the window hides it and the session process stays (above). A click on the Dock icon shows the
+  hidden session again (the launcher's `show`, `AppSession.OnActivated`), as do documents dropped on the icon.
+* **Foreground runs** (`cscode --foreground`, `dotnet run -- --foreground`, or background mode unavailable): closing the window with its
+  close button no longer ends the process. The window's services shut down exactly as at an exit (`AppShutdown.RunAsync`: state flushed,
+  language servers, debug sessions and the remote connection stopped, children killed after the deadline, the container disposed), so
+  nothing of that window stays in memory, and the process waits with only the menu bar (`AppSession.IsWindowless`). A click on the Dock
+  icon, a document handed over (Finder's *Open With*, `open -a CsCode file`, a drop on the icon), or **New Window** (application menu,
+  ⇧⌘N while no keybinding takes the stroke; also the Dock icon's menu) builds a new main window with a **new container**: Core services are
+  bound to one workspace and one window, so a container per window keeps them correct. The new window starts as a start without arguments
+  does (the last workspace and layout come back); handed-over paths open in it. A request that arrives while the old services still shut
+  down waits for them.
+* **Quitting**: *File ▸ Exit* and ⌘Q (which runs Exit, with its Save prompts) still end the process from a window (`MainWindow.IsExiting`
+  tells the exit's close from the close button's; a cancelled Save prompt clears it). With no window, ⌘Q or the Dock's *Quit* ends the
+  process at once (after the last window's shutdown if it still runs); a log out with no window goes ahead at once.
+* With no window, the application menu's **About CsCode** and **Settings…** (⌘,) open a new window and run there once its start is done
+  (`NativeMenuExport.Started`, called by `MainWindow` after the layout restore): Settings shows the Settings editor in it.
+* `cscode.macos.keepRunningWithoutWindows` (default `true`): `false` makes closing the window quit, as before.
+* With its window shown, **New Window** in background mode (the application menu's, or *File ▸ New Window*) opens a new unnamed session
+  (`cscode -n`, a process of its own); a foreground run has one window (one container, one workspace), which the application menu's New
+  Window brings to the front, and its *File ▸ New Window* is disabled.
+* Not done: each background session process still has its own Dock icon (audit ui-12/unmerged-2: hidden hosts as accessory processes).
+* Tests: `tests/CsCode.App.Tests/WindowlessRunTests.cs` (real composition; the test lifetime says it keeps running without windows, as
+  `AvaloniaDesktopHost` does on macOS only, so the same tests run on Linux).
 
 ## Hidden sessions: resource policy (`HiddenSessionPolicy`)
 

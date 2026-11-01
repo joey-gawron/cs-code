@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements of the debug adapters CsCode.app bundles (Contents/Resources/debug-adapters: netcoredbg, CodeLLDB, and their
+  libraries) when tools/macos/make-app-bundle.sh signs them with a Developer ID identity.
+  * debugger: they attach to and control other processes (task_for_pid); a hardened debugger without it debugs nothing.
+  * allow-jit, allow-unsigned-executable-memory: netcoredbg hosts the .NET runtime for its managed part; CodeLLDB embeds Python and LLDB's
+    expression evaluator, which writes and runs code in its own process.
+  * disable-library-validation: netcoredbg loads libdbgshim and the CoreCLR of the user's .NET install (signed by Microsoft, another team);
+    CodeLLDB loads Python extension modules and the Rust toolchain's formatters.
+  Not verified against a notarized build (no Apple credentials where this was written): the owner's first notarized run checks them
+  (README, "Signing for other Macs").
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.debugger</key>
+    <true/>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

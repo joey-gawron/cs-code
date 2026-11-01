@@ -215,7 +215,7 @@ public class TitleBarLayoutTests
         var menus = NativeMenu.GetMenu(host.Window) ?? throw new InvalidOperationException("the window exports no menu bar");
         Assert.Equal(["File", "Edit", "View", "Go", "Debug", "Terminal", "Tools", "Window", "Help"], menus.Items.OfType<NativeMenuItem>().Select(i => i.Header));
         var appMenu = NativeMenu.GetMenu(Application.Current!) ?? throw new InvalidOperationException("no application menu");
-        Assert.Equal(["About CsCode", "Settings…"], appMenu.Items.OfType<NativeMenuItem>().Where(i => i is not NativeMenuItemSeparator).Select(i => i.Header));
+        Assert.Equal(["About CsCode", "Settings…", "New Window"], appMenu.Items.OfType<NativeMenuItem>().Where(i => i is not NativeMenuItemSeparator).Select(i => i.Header));
         Assert.Equal("CsCode", Application.Current!.Name);
     }
 

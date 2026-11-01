@@ -309,6 +309,24 @@ public class SessionShellTests
     }
 
     [AvaloniaFact(Timeout = 120_000)]
+    public async Task File_New_Window_is_bound_to_ctrl_shift_N_and_cmd_shift_N_in_both_keymaps_and_stays_disabled_in_a_foreground_run()
+    {
+        await using var host = await RealAppHost.Create().StartAsync();
+        var bindings = host.Get<CsCode.Core.Platform.IKeybindingService>();
+        var stroke = CsCode.Core.Platform.KeyStrokeParser.ParseStroke(OperatingSystem.IsMacOS() ? "cmd+shift+n" : "ctrl+shift+n");
+        foreach (var preset in new[] { "visualstudio", "vscode" })
+        {
+            await bindings.SetPresetAsync(preset, TestContext.Current.CancellationToken);
+            Assert.True(bindings.GetBindingsFor(SessionCommandIds.NewWindow).Any(b => b.Chord.Count == 1 && b.Chord[0] == stroke), $"{preset}: New Window is not on {stroke}");
+        }
+        // A foreground run is one window (docs/SESSIONS.md): no session process registers the command, so the item is there but disabled.
+        host.Shell.Menus.Refresh();
+        var item = host.Shell.Menus.Roots.Single(r => r.Header == "_File").Children.Single(c => c.Header == "New Win_dow");
+        Assert.Equal(SessionCommandIds.NewWindow, item.CommandId);
+        Assert.False(item.IsEnabled);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
     public async Task A_close_interceptor_keeps_the_window_open_and_the_session_name_is_in_the_title()
     {
         await using var host = await RealAppHost.Create().StartAsync();

@@ -28,6 +28,10 @@ cscode --quit [NAME | --all]   quit a session's process, or every CsCode process
 cscode --foreground [paths]    no background mode: the window runs in this process and closing it exits
 ```
 
+On macOS CsCode follows the Mac convention in both modes: closing the last window leaves the app in the Dock with its menu bar, and a click
+on the Dock icon, *New Window* (application menu or Dock menu, ⇧⌘N) or opening a file brings a window back; ⌘Q quits
+(`cscode.macos.keepRunningWithoutWindows: false` makes closing the window quit).
+
 From a source tree, `--foreground` gives the classic single-process run (what a debugger or `dotnet run` users usually want):
 
 ```
@@ -109,7 +113,7 @@ tools/package-macos.sh --rid osx-arm64 --rid osx-x64   # both runtimes, each in 
 * The bundle is signed ad hoc (`codesign --sign -`; each debug adapter's executables and libraries first, on their own), checked with
   `plutil -lint` and `codesign --verify --deep --strict`. That is enough for
   the Mac that built it; a copy given to another Mac is stopped by Gatekeeper until it is signed with a Developer ID and notarized
-  (not done: pkg-2).
+  (below).
 * `--install` copies the app to `~/Applications/CsCode.app` (`--app-dir /Applications` for every user, with an administrator account)
   and writes `cscode`, a two-line script that execs `CsCode.app/Contents/MacOS/cscode` with every argument, into the first writable
   directory on your PATH of `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` and `~/bin` (`--bin-dir DIR` to choose). When none is on
@@ -117,3 +121,36 @@ tools/package-macos.sh --rid osx-arm64 --rid osx-x64   # both runtimes, each in 
 * Rerunning `--install` upgrades in place. To uninstall: quit CsCode (`cscode --quit --all`), then delete `~/Applications/CsCode.app` and
   the `cscode` script; settings, sessions and data stay in `~/Library/Application Support/CsCode` (caches and logs in
   `~/Library/Caches/CsCode` and `~/Library/Logs/CsCode`).
+
+### Signing for other Macs (Developer ID and notarization)
+
+Ad hoc stays the default. To build a `CsCode.app` that any Mac opens, you need an Apple Developer Program membership. Once per machine:
+
+1. In Xcode (Settings ▸ Accounts ▸ Manage Certificates ▸ + ▸ Developer ID Application), or on developer.apple.com, create a **Developer ID
+   Application** certificate; `security find-identity -v -p codesigning` then lists it as `"Developer ID Application: Your Name (TEAMID)"`.
+2. Create an app-specific password for your Apple ID (account.apple.com ▸ Sign-In and Security), then store the notary credentials in the
+   keychain under a profile name: `xcrun notarytool store-credentials cscode-notary --apple-id you@example.com --team-id TEAMID` (it asks
+   for the password; an App Store Connect API key works too: `--key AuthKey_XXXX.p8 --key-id XXXX --issuer <uuid>`).
+
+Then each release:
+
+```
+tools/package-macos.sh --sign-identity "Developer ID Application: Your Name (TEAMID)" --notarize --notary-profile cscode-notary
+```
+
+* Signing (`tools/macos/make-app-bundle.sh`) goes inside out, every Mach-O file with the **hardened runtime** and a **secure timestamp**:
+  the bundled debug adapters with `packaging/macos/debug-adapters.entitlements` (debugger, JIT, unsigned executable memory, library
+  validation off), every other file in `Contents/MacOS` (libraries and assemblies, then `cscode-server`: codesign refuses a bundle with any
+  unsigned file there), then the bundle with `packaging/macos/cscode.entitlements`: `com.apple.security.cs.allow-jit` (the .NET JIT) and
+  `com.apple.security.cs.disable-library-validation` (tree-sitter grammars built by you, Homebrew or Nix; audit gap-13).
+  `allow-unsigned-executable-memory` is not needed: a test runs the app's own apphost under the hardened runtime with exactly these two and
+  shows it cannot start with fewer, and the real osx-arm64 publish, signed this way (ad hoc in place of the identity), starts and runs.
+  Never `--deep`. Then `codesign --verify --deep --strict`.
+* Notarization zips the app (`ditto`), submits it with `xcrun notarytool submit --keychain-profile cscode-notary --wait` (usually a few
+  minutes), staples the ticket (`xcrun stapler staple`, `stapler validate`), checks it as Gatekeeper does (`spctl --assess --type execute`:
+  "source=Notarized Developer ID") and writes **`.scratch/macos/<rid>/CsCode-<version>-<rid>.zip`**, the file to hand out. A rejection stops
+  the script and prints `notarytool log`, which names each file and the reason.
+* `--sign-identity` without `--notarize` signs only (Gatekeeper on other Macs still refuses the app; useful to check the signature before
+  submitting). Neither has been run against Apple's service from this repository (no credentials here): the script's calls are tested with
+  stand-ins for codesign, notarytool, stapler and spctl (`tests/CsCode.App.Tests/Install/MacSigningTests.cs`), so the first real run is the
+  owner's; if notarization rejects a file, the log says which entitlement or signature is missing.

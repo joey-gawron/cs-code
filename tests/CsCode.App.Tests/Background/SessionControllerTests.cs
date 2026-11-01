@@ -131,6 +131,16 @@ public class SessionControllerTests
     private static IpcMessage Edit(string path, string text) => new() { Type = IpcVerbs.TestEdit, Uri = new Uri(path).ToString(), Line = 0, Column = 0, Text = text };
 
     [AvaloniaFact(Timeout = 180_000)]
+    public async Task A_session_process_registers_New_Window_and_offers_it_in_the_File_menu()
+    {
+        await using var s = await InProcessSession.StartAsync("new-window");
+        Assert.True(s.Run.Services.GetRequiredService<ICommandService>().Has(SessionCommandIds.NewWindow));
+        var menus = s.Run.Services.GetRequiredService<ShellController>().Menus;
+        menus.Refresh();
+        Assert.True(menus.Roots.Single(r => r.Header == "_File").Children.Single(c => c.Header == "New Win_dow").IsEnabled);
+    }
+
+    [AvaloniaFact(Timeout = 180_000)]
     public async Task Quitting_with_save_prompts_leaves_no_backup_to_bring_discarded_changes_back()
     {
         // sessions-2: with hot exit off the autosave still backs up (crash recovery, as VS Code does); after "Don't Save" those backups were left

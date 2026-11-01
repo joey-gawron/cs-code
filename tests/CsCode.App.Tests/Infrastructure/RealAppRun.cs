@@ -61,15 +61,16 @@ public sealed class RealAppRun : IAsyncDisposable
     private readonly CrashHandler _previousCrash = App.Crash;
     private readonly TimeSpan _previousDeadline = App.ShutdownDeadline;
 
-    public RealAppRun(RealAppHome env, Action<IServiceCollection>? configure = null, TimeSpan? shutdownDeadline = null)
+    public RealAppRun(RealAppHome env, Action<IServiceCollection>? configure = null, TimeSpan? shutdownDeadline = null, TestDesktopLifetime? lifetime = null)
     {
+        Lifetime = lifetime ?? new TestDesktopLifetime();
         App.ConfigureServices = s => { env.Configure(s); configure?.Invoke(s); };
         App.Crash = new CrashHandler(env.CrashLogs.Path);
         if (shutdownDeadline is { } d) App.ShutdownDeadline = d;
         Session = ((App)Application.Current!).Start(Lifetime);
     }
 
-    public TestDesktopLifetime Lifetime { get; } = new();
+    public TestDesktopLifetime Lifetime { get; }
     public AppSession Session { get; }
     public IServiceProvider Services => Session.Services ?? throw new InvalidOperationException("the app has no services (not started, or already shut down)");
 
@@ -93,8 +94,11 @@ public sealed class RealAppRun : IAsyncDisposable
             if (!Session.Ended.IsCompleted && Session.Window is { } w)
             {
                 if (w is MainWindow main) main.CloseWithoutPrompt(); else w.Close();
-                await Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
+                // A run that keeps going without a window (macOS) is quit from there, as ⌘Q would.
+                if (Lifetime.KeepsRunningWithoutWindows) await DevHost.WaitFor(() => Session.Ended.IsCompleted || Session.IsWindowless, 30_000);
             }
+            if (!Session.Ended.IsCompleted && Session.IsWindowless) Lifetime.RequestQuit();
+            if (!Session.Ended.IsCompleted && (Session.Window is not null || Session.IsWindowless)) await Session.Ended.WaitAsync(TimeSpan.FromSeconds(30));
         }
         finally
         {

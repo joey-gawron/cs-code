@@ -6,7 +6,7 @@
 # with the publish, the remote server bundles and the install of the app and the `cscode` command.
 #
 #   tools/macos/make-app-bundle.sh [--rid osx-arm64|osx-x64] (--from DIR | --unpinned) [--out DIR] [--server-bundles DIR] [--debug-adapters DIR]
-#                                  [--no-sign]
+#                                  [--no-sign | --sign-identity ID [--entitlements FILE] [--adapter-entitlements FILE]]
 #
 #   --rid             the macOS runtime (default: this Mac's; osx-arm64 elsewhere)
 #   --from            an existing publish for that runtime
@@ -20,6 +20,14 @@
 #                     the app looks from its program in Contents/MacOS (there codesign would take a dotted folder such as codelldb/v1.12.3 for a
 #                     nested bundle and refuse the app); tools/package-macos.sh assembles it. Each Mach-O file in it is signed ad hoc before the bundle
 #   --no-sign         skip the ad-hoc signature (codesign --sign -), which Apple silicon needs for a bundle built or changed locally
+#   --sign-identity ID  sign for other Macs instead of ad hoc: ID is a "Developer ID Application: Name (TEAMID)" identity in the keychain (or its
+#                     SHA-1). Inside out, each with the hardened runtime (--options runtime) and a secure timestamp: every Mach-O file of the
+#                     debug adapters (with --adapter-entitlements), every other file in Contents/MacOS (libraries and assemblies first, then
+#                     the apphosts such as cscode-server: codesign wants everything there signed), then the bundle (with --entitlements); never
+#                     --deep, which Apple advises against for signing. Notarization is tools/package-macos.sh's (--notarize)
+#   --entitlements FILE           the app's entitlements (default packaging/macos/cscode.entitlements: allow-jit, disable-library-validation)
+#   --adapter-entitlements FILE   the debug adapters' (default packaging/macos/debug-adapters.entitlements)
+#   CODESIGN=PATH     the codesign to run (default codesign; tests put a recording stand-in here)
 #
 # Install: tools/package-macos.sh --install, or drag CsCode.app to /Applications (or ~/Applications). The tree-sitter bundle needs a macOS
 # build (tools/treesitter/build-grammars.sh --target <rid> with a macOS compiler); without it the app colours with TextMate. A debug adapter
@@ -29,6 +37,8 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 rid=""; from=""; out="$repo/.scratch/macos"; sign=1; unpinned=0; servers=""; adapters=""
+identity="-"; entitlements="$repo/packaging/macos/cscode.entitlements"; adapter_entitlements="$repo/packaging/macos/debug-adapters.entitlements"
+codesign=${CODESIGN:-codesign}
 while [ $# -gt 0 ]; do
     case "$1" in
         --rid) rid=$2; shift 2 ;;
@@ -38,6 +48,9 @@ while [ $# -gt 0 ]; do
         --server-bundles) servers=$2; shift 2 ;;
         --debug-adapters) adapters=$2; shift 2 ;;
         --no-sign) sign=0; shift ;;
+        --sign-identity) identity=$2; shift 2 ;;
+        --entitlements) entitlements=$2; shift 2 ;;
+        --adapter-entitlements) adapter_entitlements=$2; shift 2 ;;
         -h|--help) sed -n '2,/^[^#]/p' "$0" | sed -e '/^[^#]/d'; exit 0 ;; # the header comment
         *) echo "make-app-bundle.sh: unknown argument '$1'" >&2; exit 2 ;;
     esac
@@ -46,6 +59,12 @@ if [ -z "$rid" ]; then
     if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = x86_64 ]; then rid=osx-x64; else rid=osx-arm64; fi
 fi
 case "$rid" in osx-x64|osx-arm64) ;; *) echo "make-app-bundle.sh: --rid must be osx-x64 or osx-arm64" >&2; exit 2 ;; esac
+if [ -z "$identity" ]; then echo "make-app-bundle.sh: --sign-identity needs an identity (\"Developer ID Application: Name (TEAMID)\")" >&2; exit 2; fi
+if [ "$identity" != "-" ]; then
+    [ "$sign" = 1 ] || { echo "make-app-bundle.sh: --sign-identity and --no-sign contradict each other" >&2; exit 2; }
+    for f in "$entitlements" "$adapter_entitlements"; do [ -f "$f" ] || { echo "make-app-bundle.sh: entitlements file $f not found" >&2; exit 2; }; done
+    command -v "$codesign" >/dev/null 2>&1 || { echo "make-app-bundle.sh: --sign-identity needs codesign (Xcode's command line tools: xcode-select --install)" >&2; exit 1; }
+fi
 # tools/publish-app.sh refuses a runtime whose packs are not pinned unless told (only linux-x64's are): say so before anything is done.
 if [ -z "$from" ] && [ "$unpinned" != 1 ]; then
     echo "make-app-bundle.sh: only linux-x64's runtime packs are pinned (tools/fetch-publish-packs.sh): pass --unpinned to publish $rid with the packs restore picks (unchecked), or bundle an existing publish with --from DIR" >&2
@@ -183,15 +202,47 @@ printf 'APPL????' > "$tmp/Contents/PkgInfo"
 if command -v plutil >/dev/null 2>&1; then plutil -lint -s "$tmp/Contents/Info.plist"; fi
 rm -rf "$app"
 mv "$tmp" "$app"
-if [ "$sign" = 1 ] && command -v codesign >/dev/null 2>&1; then
+# Whether a file is Mach-O (one `file -b` per file: parsing `file`'s list breaks on a universal binary, whose description holds colons).
+macho() { case "$(file -b "$1")" in Mach-O*) return 0 ;; *) return 1 ;; esac; }
+if [ "$sign" = 1 ] && [ "$identity" != "-" ]; then
+    # Developer ID, for other Macs (then notarized by tools/package-macos.sh --notarize): inside out, every Mach-O file with the hardened
+    # runtime and a secure timestamp, as notarization requires of each; the bundle last, which seals the rest (Contents/Resources as files).
+    sign_one() { # <file> <entitlements>
+        "$codesign" --force --sign "$identity" --options runtime --timestamp --entitlements "$2" "$1" \
+            || { echo "make-app-bundle.sh: codesign failed for $1" >&2; exit 1; }
+    }
+    echo "Signing with \"$identity\" (hardened runtime, timestamp)…"
+    if [ -d "$app/Contents/Resources/debug-adapters" ]; then
+        while IFS= read -r -d '' bin; do macho "$bin" && sign_one "$bin" "$adapter_entitlements"; done \
+            < <(find "$app/Contents/Resources/debug-adapters" -type f -print0 | sort -z)
+    fi
+    # Contents/MacOS holds code only, for codesign: every file there is signed, the assemblies, .json files and remote server bundles too
+    # (their signature goes in extended attributes, which ditto keeps), or the bundle's signature fails with "code object is not signed at all
+    # In subcomponent: …/Avalonia.Remote.Protocol.dll" (found running this on the real publish; Avalonia's macOS deployment guide signs every
+    # file there the same way). Libraries and other files before the executables that load them; the main executable (Contents/MacOS/cscode)
+    # is signed with the bundle.
+    executable() { # a Mach-O program (not a library: a .dylib or .so by name, or what `file` calls a shared library or bundle)
+        case "$1" in *.dylib|*.so) return 1 ;; esac
+        macho "$1" && case "$(file -b "$1")" in *executable*) return 0 ;; *) return 1 ;; esac
+    }
+    while IFS= read -r -d '' bin; do
+        [ "$bin" = "$app/Contents/MacOS/cscode" ] && continue
+        executable "$bin" || sign_one "$bin" "$entitlements"
+    done < <(find "$app/Contents/MacOS" -type f -print0 | sort -z)
+    while IFS= read -r -d '' bin; do
+        [ "$bin" = "$app/Contents/MacOS/cscode" ] && continue
+        executable "$bin" && sign_one "$bin" "$entitlements"
+    done < <(find "$app/Contents/MacOS" -type f -print0 | sort -z)
+    sign_one "$app" "$entitlements"
+    "$codesign" --verify --deep --strict --verbose=2 "$app" || { echo "make-app-bundle.sh: the signed bundle does not verify" >&2; exit 1; }
+elif [ "$sign" = 1 ] && command -v codesign >/dev/null 2>&1; then
     # Ad hoc (no identity): enough for this Mac, and what Apple silicon requires of a bundle built or changed locally. A copy downloaded
     # from elsewhere is still stopped by Gatekeeper; that needs a Developer ID signature and notarization (docs/handoff/macos-audit.md, pkg-2).
     # The debug adapters' executables and libraries first, each on its own (in Contents/Resources the bundle's signature seals them as
     # files, it does not sign them), keeping whatever entitlements and flags their own signature had; then the bundle, which seals them.
-    # One `file -b` per file: parsing `file`'s list breaks on a universal binary, whose description holds colons of its own.
     if [ -d "$app/Contents/Resources/debug-adapters" ]; then
         find "$app/Contents/Resources/debug-adapters" -type f -print0 | while IFS= read -r -d '' bin; do
-            case "$(file -b "$bin")" in Mach-O*) ;; *) continue ;; esac
+            macho "$bin" || continue
             codesign --force --sign - --preserve-metadata=entitlements,flags,runtime "$bin" 2>/dev/null || codesign --force --sign - "$bin"
             codesign --verify --strict "$bin"
         done

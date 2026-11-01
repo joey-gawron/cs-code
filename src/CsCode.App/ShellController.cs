@@ -197,6 +197,7 @@ public sealed class ShellController : IDisposable
                 new ConfigurationProperty(DocumentWell.LiveViewsSetting, System.Text.Json.JsonSerializer.SerializeToElement(DocumentWell.DefaultLiveViews), "How many editor views stay alive besides the active tab of each group; older ones are disposed and recreated on demand."),
                 new ConfigurationProperty(NavigationService.ConfirmMultiFileSetting, System.Text.Json.JsonSerializer.SerializeToElement(true), "Ask for confirmation before applying a workspace edit (rename, refactor) that spans several files."),
                 new ConfigurationProperty(UiStallSetting, System.Text.Json.JsonSerializer.SerializeToElement(0), "Log a diagnostic when the UI thread has not pumped for this many milliseconds (0 = off; Debug builds default to 100)."),
+                new ConfigurationProperty(Startup.AppSession.KeepRunningSetting, System.Text.Json.JsonSerializer.SerializeToElement(true), "macOS, without background mode: closing the window leaves CsCode running in the Dock, as Mac apps do (a click on the Dock icon, New Window or opening a file brings a new window; ⌘Q quits). false: closing the window quits."),
                 .. ToolbarView.Groups.Select(g => new ConfigurationProperty(g.SettingKey, System.Text.Json.JsonSerializer.SerializeToElement(true),
                     $"Show the {g.Title} toolbar (View > Toolbars).")),
             ]));

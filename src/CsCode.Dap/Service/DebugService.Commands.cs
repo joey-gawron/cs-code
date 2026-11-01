@@ -276,11 +276,12 @@ public sealed partial class DebugService
     /// <summary>The Rust debugger's debug type from <see cref="RustDebuggerSetting"/>, else this OS's default.</summary>
     private string RustDebugger() => RustDebugType(_p.Configuration?.Get<string>(RustDebuggerSetting), OperatingSystem.IsMacOS());
 
-    /// <summary>The debug type <paramref name="setting"/> names (<c>codelldb</c> names CodeLLDB's <c>lldb</c> too); unset or empty: the OS's
+    /// <summary>The debug type <paramref name="setting"/> names (<c>codelldb</c> names CodeLLDB's <c>lldb</c> too, <c>lldb-dap</c> LLVM's adapter); unset or empty: the OS's
     /// default (<see cref="DefaultRustDebugger"/>).</summary>
     internal static string RustDebugType(string? setting, bool macOS)
     {
         var chosen = setting?.Trim() is { Length: > 0 } s ? s : DefaultRustDebugger(macOS);
+        if (string.Equals(chosen, Adapters.LldbDapAdapterFactory.PrimaryType, StringComparison.OrdinalIgnoreCase)) return Adapters.LldbDapAdapterFactory.PrimaryType;
         return string.Equals(chosen, "lldb", StringComparison.OrdinalIgnoreCase) || string.Equals(chosen, "codelldb", StringComparison.OrdinalIgnoreCase)
             ? Adapters.CodeLldbAdapterFactory.PrimaryType
             : Adapters.GdbAdapterFactory.PrimaryType;

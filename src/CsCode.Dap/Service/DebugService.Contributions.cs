@@ -59,10 +59,13 @@ public sealed partial class DebugService
             new ConfigurationProperty(RequestTimeoutSetting, Json(10),
                 "Seconds a debug adapter may take to answer one request before the session reports it unresponsive."),
             new ConfigurationProperty(RustDebuggerSetting, Json(DefaultRustDebugger(OperatingSystem.IsMacOS())),
-                "The debugger a Rust folder's launch.json is created for: 'gdb' (GDB's own Debug Adapter Protocol support, the default on Linux) or 'lldb' (CodeLLDB, the default on macOS, where GDB cannot debug native arm64 programs; 'codelldb' is accepted too).",
-                Schema("""{"type":"string","enum":["gdb","lldb","codelldb"],"enumDescriptions":["GDB (gdb -i=dap, GDB 14 or newer).","CodeLLDB.","CodeLLDB (same as 'lldb')."]}""")),
+                "The debugger a Rust folder's launch.json is created for: 'gdb' (GDB's own Debug Adapter Protocol support, the default on Linux), 'lldb' (CodeLLDB, the default on macOS, where GDB cannot debug native arm64 programs; 'codelldb' is accepted too) or 'lldb-dap' (LLVM's lldb-dap, which Xcode's Command Line Tools and LLVM's packages carry).",
+                Schema("""{"type":"string","enum":["gdb","lldb","codelldb","lldb-dap"],"enumDescriptions":["GDB (gdb -i=dap, GDB 14 or newer).","CodeLLDB.","CodeLLDB (same as 'lldb').","LLVM's lldb-dap."]}""")),
             new ConfigurationProperty(CodeLldbAdapterFactory.SettingPath, Json(""),
                 "Path of the CodeLLDB adapter used for Rust, C and C++ debugging through LLDB: the adapter executable or the extension directory (empty: CSCODE_CODELLDB, then the tools directory, then PATH, then an offer to download it). User settings only.")
+            { Scope = machine },
+            new ConfigurationProperty(LldbDapAdapterFactory.SettingPath, Json(""),
+                "Path of LLVM's lldb-dap (lldb-vscode before LLVM 18) used for Rust, C and C++ debugging with type 'lldb-dap': the executable or the directory holding it. Empty: on macOS 'xcrun -f lldb-dap' (Xcode or its Command Line Tools), then lldb-dap or lldb-vscode on PATH, then lldb-dap-NN on PATH, then Homebrew's LLVM (macOS) or /usr/lib/llvm-NN/bin (Linux). User settings only.")
             { Scope = machine },
             new ConfigurationProperty(CodeLldbAdapterFactory.ConsoleModeSetting, Json(CodeLldbAdapterFactory.DefaultConsoleMode),
                 "CodeLLDB's Debug Console mode (VS Code's CodeLLDB setting): 'evaluate' evaluates expressions (LLDB commands start with '`' or '/cmd'), 'commands' runs LLDB commands, 'split' does both.",
@@ -80,7 +83,7 @@ public sealed partial class DebugService
     [
         DebuggersSetting, NetCoreDbgAdapterFactory.SettingPath, JsDebugAdapterFactory.SettingPath, JsDebugAdapterFactory.NodeSettingPath,
         GdbAdapterFactory.SettingPath, GdbAdapterFactory.ArgsSettingPath, RequestTimeoutSetting, RustDebuggerSetting,
-        CodeLldbAdapterFactory.SettingPath, CodeLldbAdapterFactory.ConsoleModeSetting,
+        CodeLldbAdapterFactory.SettingPath, CodeLldbAdapterFactory.ConsoleModeSetting, LldbDapAdapterFactory.SettingPath,
     ];
 
     private void InitializeContributions()
