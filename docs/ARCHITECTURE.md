@@ -57,6 +57,8 @@ Dependency rules (enforced by project references, checked in review):
 | `IWindowService`, `IStatusBarService`, `IOutputService`, `INavigationService`, views/view-models, VS2022 themes, menus, keymap | **Shell (App + Ui)** |
 | `IMemoryMonitor`, `IMemoryTrimmable` policy, GC configuration, soak/leak/responsiveness harness | **Profiling** (+ `tests/CsCode.MemoryTests`) |
 | `IRemoteConnectionManager`, `ssh:` file system provider, remote bridges | **Remote** + **Server** (wave 2) |
+| `LineDiff` (Core), `IFileDecorationProvider`, `IQuickDiffProvider`, `ILineBlameProvider` | **Panels.Git** (git CLI engine + Source Control window, `docs/SOURCE-CONTROL.md`) |
+| `IDiffEditorService` (diff tabs) | **Shell**, over the editor's `DiffEditorControl` (`IEditorViewFactory.CreateDiffView`) |
 
 ## 3. Language features: one registry, bridged when remote
 
