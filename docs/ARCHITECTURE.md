@@ -30,6 +30,7 @@ and a GUI/editing path that is isolated from language-server load.
    ├── CsCode.Platform (commands, when-clauses, config, keybindings, FS, watcher, workspace, state, logging)
    ├── CsCode.Vim (engine over IVimHost; no UI)            ├── CsCode.Remote / CsCode.Server  [wave 2]
    ├── CsCode.Testing (Test Explorer engine: .NET/cargo/Jest-Vitest providers, run controller; no UI) ── CsCode.Panels.Testing (tool window; docs/TESTING.md)
+   ├── CsCode.Panels.Navigation (the Hierarchy window: call and type hierarchy over ILanguageFeatureRegistry; docs/NAVIGATION.md)
    ├── CsCode.Profiling (memory monitor, soak/leak/responsiveness harness)
    └── all depend only on ↓
                           CsCode.Core

@@ -157,7 +157,7 @@ Providers are registered **per feature interface**, only while the server advert
 | inlayHint | implemented / partial | `inlayHint/resolve` is not exposed (Core has no resolve hook) |
 | codeLens (+resolve) | implemented | |
 | documentColor | implemented / partial | `colorPresentation` not implemented |
-| linkedEditingRange, callHierarchy, typeHierarchy | implemented (no UI yet) | additive Core interfaces |
+| linkedEditingRange, callHierarchy, typeHierarchy | implemented | additive Core interfaces; UI: linked editing in the editor (docs/EDITOR.md §7d), the Hierarchy window (docs/NAVIGATION.md) |
 | `workspace/executeCommand` bridge | implemented | `executeCommandProvider.commands` registered into `ICommandService` (optional dependency) |
 | diagnostics: `publishDiagnostics` (version-checked), pull (`textDocument/diagnostic`, `workspace/diagnostic`) | implemented | cleared on close (push-only servers) and on stop/crash |
 | `willRenameFiles` / `didRenameFiles` / `didCreateFiles` / `didDeleteFiles` | implemented | `IFileOperationParticipant`, filters honoured |
