@@ -45,7 +45,7 @@ public static class AutostartEntry
         (true, true) => "the warm spare and the sessions that were running, hidden; no window opens",
         (true, false) => "the warm spare; no window opens",
         (false, true) => "the sessions that were running, hidden; no window opens",
-        _ => $"nothing yet: turn on {LaunchSettings.WarmSpareKey} (a pre-started process, about 100-130 MB) or {LaunchSettings.RestoreOnLoginKey} first",
+        _ => $"nothing yet: turn on {LaunchSettings.WarmSpareKey} (a pre-started process, about 60-150 MB) or {LaunchSettings.RestoreOnLoginKey} first",
     };
 
     public static string Content(string executable) => new StringBuilder()

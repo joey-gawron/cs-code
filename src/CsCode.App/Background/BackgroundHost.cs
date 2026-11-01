@@ -97,6 +97,8 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
     {
         SessionTrace.Mark("host: main");
         ProcessMemory.DetachFromTerminal();
+        // The spare starts and waits at a low, reversible priority (it was started right after a claim, or at login): the claim lifts it.
+        if (options.Spare && ProcessPriority.EnterBackground()) SessionTrace.Mark("host: background priority");
         var host = Start(options, crash, RuntimeDirectory.Resolve(), new SessionStore(new AppPaths().UserDataDir), out refusedExitCode);
         if (host is not null && !OperatingSystem.IsWindows()) host._terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, host.OnTerminate);
         return host;
@@ -351,18 +353,11 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
             if (!Options.Spare || _claimed) return IpcMessage.Failure($"this process is not a free spare (state {_state})");
             _claimed = true;
         }
+        ProcessPriority.LeaveBackground(); // first: everything from here on is the user waiting for a window
         bool took;
         try { took = TryTakeSession(name!, request.Unnamed == true); }
-        catch (IOException ex)
-        {
-            lock (_gate) _claimed = false;
-            return IpcMessage.Failure(ex.Message);
-        }
-        if (!took)
-        {
-            lock (_gate) _claimed = false;
-            return IpcMessage.Failure($"session '{name}' is owned by another CsCode process");
-        }
+        catch (IOException ex) { return ClaimFailed(ex.Message); }
+        if (!took) return ClaimFailed($"session '{name}' is owned by another CsCode process");
         _state = ProcessStates.Starting;
         SessionTrace.Mark("host: claim " + name);
         var prepared = await PrepareAsync(name!, request.Unnamed == true).ConfigureAwait(false);
@@ -377,6 +372,14 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         await controller.ActivateOnUiAsync(prepared, hidden: request.Hidden == true).ConfigureAwait(false);
         SessionTrace.Mark("host: claim done");
         return IpcMessage.Reply();
+    }
+
+    /// <summary>The claim did not take its session (e.g. two launchers raced for it): the process is a free spare again, back at its low priority.</summary>
+    private IpcMessage ClaimFailed(string error)
+    {
+        ProcessPriority.EnterBackground(); // before the spare is free again, so it never undoes the LeaveBackground of the next claim
+        lock (_gate) _claimed = false;
+        return IpcMessage.Failure(error);
     }
 
     private void OnCrashReported(string summary, string path, bool fatal)

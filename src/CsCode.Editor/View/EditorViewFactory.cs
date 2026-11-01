@@ -79,6 +79,7 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
     internal TokenizationManager Tokens { get; }
     internal SnippetService Snippets { get; }
     internal EditorWorker Worker { get; }
+    internal bool IsDisposed => _disposed;
 
     /// <summary>The view that most recently had keyboard focus (what editor commands act on), or null.</summary>
     internal CodeEditorControl? ActiveView

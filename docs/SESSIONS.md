@@ -260,17 +260,54 @@ the same in both modes, and nothing changes on Linux or Windows.
 
 ## The warm spare (`cscode.background.warmSpare`, default **false**)
 
-Off by default (the user's decision, docs/briefs/wave-3.md): a spare is a whole idle CsCode process (≈100-130 MB) kept for every user just to
-make the first open of a session that is not running faster, while a resident session is shown just as fast without it. With it off, the
-launcher never starts a spare (a spare left running from when it was on is still claimed, and not replaced), and `cscode --background` starts
-nothing unless `restoreOnLogin` is on (it prints why). *Start in the Background at Login…* says in its confirmation what would start with the
-current settings. Turned on, the spare works as below.
+Off by default (the user's decision, docs/briefs/wave-3.md, re-checked with numbers on 2026-11-01, below): a spare is a whole idle CsCode process
+kept for every user just to make the first open of a session that is not running faster, while a resident session is shown just as fast without
+it. With it off, the launcher never starts a spare (a spare left running from when it was on is still claimed, and not replaced), and
+`cscode --background` starts nothing unless `restoreOnLogin` is on (it prints why). *Start in the Background at Login…* says in its confirmation
+what would start with the current settings. Turned on, the spare works as below.
 
-A process with services and the main window built but no session. After start-up it lays the hidden window out and renders it once into an
-off-screen bitmap (templates, styles, layout, Skia and their JIT), then trims. A claim takes the session's lock, restores the session into the
-still-hidden window and the launcher's show makes it visible; the launcher then starts the next spare. A spare that is still starting is not
-counted as missing, and if two spares come up anyway the one with the higher pid quits. Not warmed: the compositor's first frame of the real
-window (it needs a shown window), which is most of the remaining claim latency.
+A process with services and the main window built but no session. After start-up it warms, off screen and in small steps at background priority
+(`SessionWindowController.WarmUpSpareAsync`; a claim arriving meanwhile waits for one step at most and the rest is skipped):
+
+1. **The window**: it lays the hidden window out and renders it once into a bitmap (templates, styles, layout, Skia's glyph and geometry caches
+   and the JIT of all of it).
+2. **The first editor** (`EditorWarmUp`, Editor module): a throwaway editor view over a read-only C# sample whose document is *not* registered
+   with the document manager (no language server, file watcher, tab or session sees it; URI scheme `cscode-warmup:`) is put in the window's
+   overlay layer and rendered the same way, then rendered again once its colours arrived (grammar loading, the TextMate engine and its regex
+   library, the colouriser), then taken out and disposed: no view, tokenisation session or document is left. A claim in the middle of it takes
+   the editor out before it restores anything. Opening and painting the claimed session's first file was the biggest part of a claim after the
+   window's first frame; it now takes about half as long (macOS publish 34-46 → 20-23 ms, Linux publish 44 → 30 ms, Debug 110-130 → 55-60 ms). Cost:
+   ≈ 9 MB (Linux, private dirty) to 15 MB (macOS footprint) more in the idle spare, mostly the C# grammar it keeps loaded.
+
+Then it trims and waits. A claim takes the session's lock, restores the session into the still-hidden window and the launcher's show makes it
+visible; the launcher then starts the next spare. A spare that is still starting is not counted as missing, and if two spares come up anyway the
+one with the higher pid quits. Not warmed: the compositor's first frame of the real window (it needs a shown window), now the largest part of
+the host's share of a claim (≈ 40-60 ms of a publish's ≈ 180 ms on macOS).
+
+**Background priority** (`ProcessPriority`): a spare starts (and waits) at a low priority that its claim lifts again first thing, so the
+replacement spare the launcher starts right after a claim (≈ 0.3-0.8 s of CPU) does not compete with the window just opened. Plain `nice` cannot
+do this: an unprivileged process can never lower its nice value again, so a claimed spare would stay slow. macOS: the Darwin background state
+(`setpriority(PRIO_DARWIN_PROCESS, 0, PRIO_DARWIN_BG)`, lowest CPU priority, efficiency cores, throttled disk I/O), cleared with
+`setpriority(..., 0)`. Linux: the nice value of the process's scheduler autogroup (`/proc/self/autogroup`, 10; a CsCode process leads a session
+of its own, so the autogroup holds only it), raised back to 0 without privileges; the kernel takes one autogroup change per 100 ms system-wide,
+so leaving retries a few times. It works where autogroups are in use (`kernel.sched_autogroup_enabled`, the desktop default) and is a no-op in a
+cgroup with its own CPU controller. A claim that fails (its session is owned by another process) puts the spare back at the low priority
+before it is free again. Not done on Windows.
+
+**Why it stays off** (2026-11-01, publishes, headless; the macOS one per-assembly ReadyToRun, the Linux one the composite):
+
+| | macOS arm64 (laptop, load 3-15) | Linux arm64 (6-core VM, idle) |
+|---|---|---|
+| Cold start → painted with the file | 450-540 ms | 338-418 ms |
+| Warm-spare claim → painted with the file | 172-191 ms | 145-163 ms |
+| Saved per open of a session that is not running | ≈ 300 ms | ≈ 220 ms |
+| Idle spare's memory | 153 MB phys_footprint (208 MB resident) | 58 MB private dirty (190 MB resident, mostly clean pages of the ReadyToRun image shared with the sessions) |
+| Resident session shown again (no spare involved) | 68 ms | 49 ms (Debug) |
+
+The saving applies only to opening a session whose process is not running (the first open after login, or after it quit or was evicted); with
+`keepRunning` every later open is a resident show, below 100 ms with or without a spare. A cold start is now under 0.6 s on both systems. For
+that, every user would keep a process of 58-153 MB resident at all times and pay a replacement's start-up after each claim. Turn it on when you
+often open sessions that are not running (many short-lived `cscode <folder>` calls, a small `maxResidentSessions`).
 
 ## Tray icon (`cscode.background.showTrayIcon`)
 
@@ -288,7 +325,7 @@ work. The menu model (`TrayMenuModel`) is unit-tested; the icon itself was not e
 | `cscode.background.trimAfterSeconds` | `30` | Hidden → views disposed + memory trimmed |
 | `cscode.background.idleServerTimeoutMinutes` | `15` | Hidden → language servers stopped (0 = never) |
 | `cscode.background.maxResidentSessions` | `3` | LRU eviction of hidden sessions |
-| `cscode.background.warmSpare` | `false` | Keep a pre-started process (≈100-130 MB idle) |
+| `cscode.background.warmSpare` | `false` | Keep a pre-started process (idle: ≈ 60 MB private on Linux, ≈ 150 MB on macOS) |
 | `cscode.background.restoreOnLogin` | `false` | `--background` also restarts the sessions that were resident (hidden) |
 | `cscode.sessions.default` | `"last"` | `last`, `new` or a session name |
 | `cscode.sessions.maxBackupMb` | `200` | Hot-exit backup bound per session |
@@ -360,6 +397,39 @@ opened and painted too. Medians; nine builders were running at the same time, so
   module's service constructors would then run before Avalonia's UI dispatcher exists, and one that touched it would bind the dispatcher to the
   wrong thread: not done without an audit of all of them.
 
+### macOS arm64 and Linux arm64 (2026-11-01)
+
+Measured on an Apple silicon laptop shared with six other builders (load 3-20, so ranges) and in a 6-core Linux arm64 VM (idle), headless, by
+`StartupBenchmarkTests` and by timing `cscode --session S file` with `CSCODE_SESSION_TRACE` (launcher wall time; the trace splits it). "Before"
+is main with the composite publish on both systems.
+
+| Build | `--version` | Cold start | Resident show | Warm-spare claim | Idle spare memory |
+|---|---|---|---|---|---|
+| macOS, Debug (the suite's build), before → after | 32-42 ms | 0.94-1.4 s | — | 404-478 → 327-408 ms | — |
+| macOS, composite publish, before | 62-76 ms | 430-606 ms | 89-113 ms | 208-251 ms | 204 MB phys_footprint |
+| macOS, per-assembly publish, before | 31-40 ms | 489-578 ms | 70-74 ms | 201-264 ms | 137 MB |
+| **macOS, per-assembly publish, after (the publish now)** | 35 ms | 450-540 ms | 68 ms | **172-191 ms** | 153 MB |
+| Linux arm64, composite publish, before → after | 14-16 ms | 338-418 ms | — | 148-177 → 145-163 ms | 49 → 58 MB private dirty |
+| Linux arm64, Debug, after | — | 864 ms | 49 ms | 331 ms | — |
+
+Where a claim goes now (macOS publish, medians of five, trace): the launcher until its claim is sent 60 ms (runtime start 30-55 ms, its own work,
+one `hello` per running process), claim + restore 6 ms, `Show` → first painted frame 60 ms, opening the file 11 ms, painting it 23 ms (was 34-46).
+On Linux: launcher 41-54 ms, first frame 56-58 ms, opening 9-12 ms, painting the file 30 ms (was 44).
+
+* **No ReadyToRun composite on macOS** (build/Publish.props). On macOS the runtime does not map ReadyToRun code from the file: when an image loads
+  it copies the image's code into an anonymous, private region (vmmap shows a 105 MB `Untagged` rwx region, fully dirty, right after the 16 KB
+  file mappings of `cscode.r2r.dll`; a PE section alignment of 16 KB, `--custom-pe-section-alignment`, and `DOTNET_EnableWriteXorExecute=0`
+  change nothing). The composite holds the whole framework's code, so every process paid ≈ 105 MB private for it (a spare 204 MB footprint
+  against 137 MB per-assembly, measured before the editor warm-up, 219 against 151 MB with it; a session's resident set 321 against 243 MB)
+  and every launcher run ≈ 35 ms to copy it (`--version` 75 against 35 ms). Per-assembly images are copied only for the assemblies a process loads. Cold start and spare claim measured within each other's noise
+  (465/606 against 489/578 ms, 224/251 against 264/201 ms in two interleaved rounds); a resident show, which is mostly the launcher, got faster.
+  Rooting the composite in the app's own assemblies (`PublishReadyToRunCompositeRoots`, framework code compiled only where reachable) shrank it to
+  108 MB but kept the 65 ms launcher and saved only 15 MB: not adopted. On Linux the composite is mapped from the file (clean, shared pages), so
+  it stays there.
+* **What is left in the launcher** (≈ 60 ms of a 180 ms claim on macOS): runtime start and assembly loading before `Main`'s launcher code runs,
+  then one `hello` per running process; spawning the replacement spare after the reply takes 17-30 ms more before the launcher exits (the window is
+  already painted by then). A NativeAOT launcher (below) is the remaining lever for that part.
+
 Set `CSCODE_SESSION_TRACE=/path/file` to get a per-phase timeline from the launcher and every CsCode process (start-up phases included).
 
 The first measurements (before ReadyToRun; Release and Debug JIT builds, load 6-24), for comparison:
@@ -411,8 +481,8 @@ to it, whatever the SDK bundles: a newer SDK cannot quietly restore newer, unche
 `cscode-server.deps.json` does not name the pinned runtime pack. The pin is imported by the App (through `build/Publish.props`) and by
 `CsCode.Server.csproj`: the app's publish builds `cscode-server` as a project of its own and ships it next to `cscode`. Only linux-x64 is pinned; another runtime identifier needs `--unpinned` (the packs restore picks, unchecked).
 
-* `build/Publish.props` (imported by the App; only for a build with a runtime identifier): self-contained, ReadyToRun, composite, English
-  satellite resources only. The self-contained switch must also be on the command line: the App references the `cscode-server` executable, and
+* `build/Publish.props` (imported by the App; only for a build with a runtime identifier): self-contained, ReadyToRun, composite (per-assembly
+  images on macOS, see *Start-up performance*), English satellite resources only. The self-contained switch must also be on the command line: the App references the `cscode-server` executable, and
   a self-contained executable may only reference self-contained ones (NETSDK1150).
 * `build/NuGetRuntimePacks.props` (imported by Publish.props and by `CsCode.Server.csproj`): on a Nix-provided SDK the bundled packs are patched
   for the Nix store (the apphost's ELF interpreter is `/nix/store/…-glibc/lib/ld-linux-x86-64.so.2`, the runtime's RUNPATH points into the store),

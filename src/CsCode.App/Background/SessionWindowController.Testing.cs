@@ -12,7 +12,7 @@ public sealed record InspectedTab(string Uri, string Title, bool Dirty, bool Act
 /// <summary>What <c>inspect</c> reports about the process (served only with <c>--headless-test</c>).</summary>
 public sealed record InspectedState(string? Session, bool Unnamed, string State, bool Visible, string Title, IReadOnlyList<string> Folders, string? Active,
     IReadOnlyList<InspectedTab> Tabs, int LiveViews, long WorkingSet, long ManagedHeap, int Trims, long LastTrimWorkingSet, int Autosaves, int AutosaveFailures,
-    string? LastAutosaveError);
+    string? LastAutosaveError, IReadOnlyList<string>? WarmedUp = null, bool? BackgroundPriority = null);
 
 public sealed partial class SessionWindowController
 {
@@ -31,11 +31,11 @@ public sealed partial class SessionWindowController
             }).ToArray();
             return new InspectedState(_host.SessionName, _host.IsUnnamed, _host.State, _window.IsVisible, _window.Title ?? "", _workspace?.Folders.Select(f => f.ToString()).ToArray() ?? [],
                 well.ActiveEditor?.Uri.ToString(), tabs, well.Tabs.Count(t => t.LiveView is not null), 0, 0, Volatile.Read(ref _trims),
-                Interlocked.Read(ref _lastTrimWorkingSet), _autosave.SaveCount, _autosave.FailureCount, _autosave.LastError?.Message);
+                Interlocked.Read(ref _lastTrimWorkingSet), _autosave.SaveCount, _autosave.FailureCount, _autosave.LastError?.Message, [.. _warmedUp]);
         }).ConfigureAwait(false);
         var heap = GC.GetTotalMemory(forceFullCollection: request.Force == true);
         using var self = System.Diagnostics.Process.GetCurrentProcess();
-        state = state with { ManagedHeap = heap, WorkingSet = self.WorkingSet64 };
+        state = state with { ManagedHeap = heap, WorkingSet = self.WorkingSet64, BackgroundPriority = Sessions.ProcessPriority.IsBackground() };
         return IpcMessage.Reply() with { Data = JsonSerializer.SerializeToElement(state) };
     }
 

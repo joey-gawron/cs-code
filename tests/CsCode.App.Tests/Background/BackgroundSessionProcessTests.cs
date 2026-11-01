@@ -168,6 +168,90 @@ public class BackgroundSessionProcessTests
         Assert.True(claim.Elapsed.TotalMilliseconds < 500, $"warm-spare open took {claim.Elapsed.TotalMilliseconds:0} ms (budget 500 ms)\n{h.Trace()}");
     }
 
+    /// <summary>Whether this OS can lower a process's priority reversibly (<see cref="ProcessPriority"/>): macOS, and Linux with autogroups.</summary>
+    private static bool ReversiblePriorityAvailable => OperatingSystem.IsMacOS() || (OperatingSystem.IsLinux() && File.Exists("/proc/self/autogroup"));
+
+    [Fact]
+    public async Task A_warm_spare_waits_warmed_up_at_background_priority_and_its_claim_runs_at_normal_priority()
+    {
+        using var h = new SessionProcessHarness(SpareOn);
+        h.WriteFile("Widget.cs", Source);
+        var sparePid = await SpareAsync(h);
+        var spare = h.Inspect(sparePid);
+        Assert.Equal(ProcessStates.Spare, spare.State);
+        Assert.Equal(["window", "editor", "colours"], spare.WarmedUp);
+        Assert.Equal(0, spare.LiveViews);
+        if (ReversiblePriorityAvailable) Assert.True(spare.BackgroundPriority, "the spare does not wait at background priority");
+
+        var open = await h.RunAsync("--session", "P", Path.Combine(h.Workspace, "Widget.cs"));
+        Assert.True(open.ExitCode == 0, open.Error);
+        var claimed = h.Inspect(sparePid);
+        Assert.Equal(ProcessStates.Shown, claimed.State);
+        Assert.Single(claimed.Tabs);
+        if (ReversiblePriorityAvailable) Assert.False(claimed.BackgroundPriority, "the claimed spare still runs at background priority");
+        // The replacement spare starts at background priority too.
+        var next = await h.WaitForAsync(p => p.IsSpare && p.Pid != sparePid, what: "replacement spare");
+        if (ReversiblePriorityAvailable)
+            Assert.True(await SessionProcessHarness.WaitUntilAsync(() => h.Inspect(next.Pid).BackgroundPriority == true, 30_000), "the replacement spare is not at background priority");
+
+        // A claim that fails (the session is owned by another process, as when two launchers race for it) leaves a free spare, back at background priority.
+        var refused = h.Request(next.Pid, new IpcMessage { Type = IpcVerbs.Claim, Session = "P" });
+        Assert.NotEqual(true, refused.Ok);
+        Assert.Contains("owned by another CsCode process", refused.Error);
+        var stillSpare = h.Inspect(next.Pid);
+        Assert.Equal(ProcessStates.Spare, stillSpare.State);
+        if (ReversiblePriorityAvailable) Assert.True(stillSpare.BackgroundPriority, "a spare whose claim failed stays at normal priority");
+    }
+
+    /// <summary>
+    /// The latency budget of the warm spare (docs/SESSIONS.md, "Start-up performance"): invocation → window painted with the file, median of three
+    /// claims of a warmed spare against median of three cold starts of the same build on the same machine at the same time. A ratio, so the budget
+    /// holds for the Debug build the suite runs as well as the publish (<c>CSCODE_TEST_EXECUTABLE</c>), and machine load moves both sides; the
+    /// absolute numbers are reported.
+    /// </summary>
+    [Fact]
+    public async Task Latency_a_warm_spare_claim_takes_under_half_a_cold_start()
+    {
+        double Median(List<double> xs) => xs.Order().ElementAt(xs.Count / 2);
+        var cold = new List<double>();
+        using (var h = new SessionProcessHarness("\"cscode.background.warmSpare\": false", trace: false))
+        {
+            var file = h.WriteFile("Widget.cs", Source);
+            await h.RunAsync("--version"); // the executable's pages in the cache, as for every later run
+            for (var i = 0; i < 3; i++)
+            {
+                var run = await h.RunAsync("--session", "C" + i, file);
+                Assert.True(run.ExitCode == 0, run.Error);
+                cold.Add(run.Elapsed.TotalMilliseconds);
+                Assert.Equal(0, (await h.RunAsync("--quit", "--all")).ExitCode);
+                Assert.True(await SessionProcessHarness.WaitUntilAsync(() => h.Discover().Count == 0, 20_000));
+            }
+        }
+        var claims = new List<double>();
+        using (var h = new SessionProcessHarness(SpareOn, trace: false))
+        {
+            var file = h.WriteFile("Widget.cs", Source);
+            var spare = await SpareAsync(h);
+            for (var i = 0; i < 3; i++)
+            {
+                if (i > 0)
+                {
+                    spare = (await h.WaitForAsync(p => p.IsSpare, what: "replacement spare")).Pid;
+                    Assert.True(await SessionProcessHarness.WaitUntilAsync(() => h.Inspect(spare).WarmedUp?.Count == 3, 60_000), "the replacement spare did not warm up");
+                    await Task.Delay(1000); // its trim
+                }
+                var run = await h.RunAsync("--session", "S" + i, file);
+                Assert.True(run.ExitCode == 0, run.Error);
+                Assert.Equal(spare, Owner(h, "S" + i).Pid);
+                claims.Add(run.Elapsed.TotalMilliseconds);
+            }
+        }
+        var ratio = Median(claims) / Median(cold);
+        TestContext.Current.SendDiagnosticMessage($"invocation→painted with the file: cold {string.Join(", ", cold.Select(c => c.ToString("0")))} ms (median {Median(cold):0}); " +
+            $"warm spare {string.Join(", ", claims.Select(c => c.ToString("0")))} ms (median {Median(claims):0}); ratio {ratio:0.00}");
+        Assert.True(ratio < 0.5, $"a warm-spare claim (median {Median(claims):0} ms) is not under half a cold start (median {Median(cold):0} ms): ratio {ratio:0.00}");
+    }
+
     [Fact]
     public async Task Cold_start_without_a_spare_opens_the_session_and_reports_its_latency()
     {
