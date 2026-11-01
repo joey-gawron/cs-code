@@ -417,17 +417,18 @@ References (`NavigationFeature.FindDefinitionsAsync`, `FindReferenceLocationsAsy
   editor shows; the title says "2 of 5 references · directory".
 * **Keys**: Esc closes it from the view (a tunnelling handler registered after the completion list's, parameter hints', snippets' and
   multi-cursor's, so they take Esc first when they have something to close), from the list and from the embedded editor (whose own popups and
-  carets keep their Esc and Enter first); with Vim on, the adapter's Esc calls `EditorModalSurface.CloseInfoPopups`, which closes a peek of the
-  view or of the peek the view is embedded in. Enter in the list or in a read-only embedded editor, a double-click in either, or a click on the
+  carets keep their Esc and Enter first); with Vim on, Esc in Normal mode calls `EditorModalSurface.ClosePeek`, which closes a peek of the
+  view or of the peek the view is embedded in, while the Esc that leaves Insert, Visual or an operator only changes the mode (VS Code's Vim),
+  so `i`, typing, Esc and more edits work in the embedded editor; `CloseInfoPopups` (every Vim Esc) closes hover and parameter hints only. Enter in the list or in a read-only embedded editor, a double-click in either, or a click on the
   title opens the location as Go to Definition does (this view when it is the same file, else a tab through the shell) and closes the peek. The
   ✕ button closes it. While a peek is open the context key `referenceSearchVisible` (VS Code's) is true.
 * **Lifetime**: closing the peek disposes the embedded editor (it leaves the factory's views) and releases its snapshot document; disposing the
   view closes its peek. Opening and closing a peek leaves nothing reachable (`PeekViewTests`, weak references over four cycles).
 
 Tests: `PeekViewTests` (the zone and the widget's place, the read-only and the in-place editable embedded editor with its undo, the list and
-Enter, the same file, Esc from the view / the embedded editor / a modal layer, no definition, edits above and deletion of the anchor line, the
+Enter, the same file, Esc from the view / the embedded editor / a modal layer (`ClosePeek` closes, `CloseInfoPopups` does not), no definition, edits above and deletion of the anchor line, the
 menu item, lifetime, a screenshot `.scratch/screenshots/editor-peek-definition.png` checked for the border colour), `RealApp/LanguageNavigationTests`
-(Alt+F12 and Vim's Esc in the real app), `RealAppContextMenuTests` (the item and its key).
+(Alt+F12 and Vim's Esc in the real app; in the embedded editor `ix<Esc>` and `v<Esc>` keep the peek and Normal mode's Esc closes it), `RealAppContextMenuTests` (the item and its key).
 
 ### 7d. Linked editing
 

@@ -34,7 +34,7 @@ services.AddCsCodeNavigationPanels();   // HierarchyHost + the "hierarchy" tool 
 The keys are in the keymap presets (`src/CsCode.Platform/Resources/Keymaps`), each Ctrl key with its Mac key. The call hierarchy key is bound with
 `editorHasCallHierarchyProvider`, and the right-click items show while VS Code's `editorHasCallHierarchyProvider` / `editorHasTypeHierarchyProvider`
 are true (the editor sets them with its other provider keys, from the registry, for the focused document; never for a large file). With Vim on
-(the default) Ctrl+K, Alt+F12 and Ctrl+Shift+F2 are the shell's (VimKeyPolicy), and Vim's Esc closes a peek.
+(the default) Ctrl+K, Alt+F12 and Ctrl+Shift+F2 are the shell's (VimKeyPolicy), and Vim's Esc in Normal mode closes a peek (the Esc that leaves Insert or Visual mode keeps it).
 
 ## The Hierarchy window
 

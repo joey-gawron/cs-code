@@ -92,6 +92,40 @@ public class LanguageNavigationTests
     }
 
     [AvaloniaFact(Timeout = 120_000)]
+    public async Task In_the_peeks_editor_Vims_Escape_out_of_Insert_or_Visual_mode_keeps_the_peek_and_Normal_modes_Escape_closes_it()
+    {
+        await using var app = await VimApp.StartAsync(Source, "Program.cs");
+        var uri = app.View.Document.Uri;
+        using var reg = app.Host.Get<ILanguageFeatureRegistry>().Register<IDefinitionProvider>(DocumentSelector.All, new Definitions(uri));
+        await DevScene.SettleAsync(5);
+        app.SetCaret(4, 9);
+        CodeEditorControl? Embedded() => app.View.GetVisualDescendants().OfType<CodeEditorControl>().FirstOrDefault();
+        app.Press(Key.F12, RawInputModifiers.Alt);
+        Assert.True(await RealAppHost.WaitFor(() => Embedded() is not null), "the peek opened");
+        var embedded = Embedded()!;
+        embedded.Modal.Controller.Focus();
+        await DevScene.SettleAsync(3);
+        Assert.True(await RealAppHost.WaitFor(() => app.Vim.EngineOf(embedded) is not null), "Vim drives the peek's editor");
+        var engine = app.Vim.EngineOf(embedded)!;
+
+        await app.KeysAsync("ix");
+        Assert.Equal(CsCode.Vim.VimMode.Insert, engine.Mode);
+        await app.KeysAsync("<Esc>");
+        Assert.Equal(CsCode.Vim.VimMode.Normal, engine.Mode);
+        Assert.Same(embedded, Embedded()); // still open, still the keyboard's
+        Assert.Contains("x", app.View.Document.GetLineText(7));
+        Assert.True(embedded.Modal.Controller.IsFocused);
+
+        await app.KeysAsync("v<Esc>");
+        Assert.Equal(CsCode.Vim.VimMode.Normal, engine.Mode);
+        Assert.Same(embedded, Embedded());
+
+        await app.KeysAsync("<Esc>"); // Normal mode's Esc closes it, and the keyboard goes back to the view
+        Assert.Null(Embedded());
+        Assert.True(app.View.Modal.Controller.IsFocused);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
     public async Task Linked_editing_mirrors_Vims_insert_mode_typing_and_one_u_undoes_both_tags()
     {
         const string html = "<div>\n  <span>text</span>\n</div>\n";

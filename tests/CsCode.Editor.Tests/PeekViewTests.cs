@@ -114,16 +114,22 @@ public class PeekViewTests
     }
 
     [AvaloniaFact]
-    public async Task A_modal_layers_escape_closes_the_peek_too()
+    public async Task A_modal_layer_closes_the_peek_with_ClosePeek_and_its_popup_closing_escape_leaves_it_open()
     {
         var (host, view, _, _) = await OpenWithDefinitionAsync();
         using var _h = host;
         await OpenPeekAsync(host, view);
-        Peek(view).Embedded!.Modal.CloseInfoPopups(); // what the Vim adapter does on Esc, in the embedded editor
+        // what the Vim adapter does on every Esc (leaving Insert or Visual mode too): hover and parameter hints close, the peek stays
+        Peek(view).Embedded!.Modal.CloseInfoPopups();
+        view.Modal.CloseInfoPopups();
+        Assert.True(Peek(view).IsOpen);
+        Assert.True(Peek(view).Embedded!.Modal.ClosePeek()); // Normal mode's Esc, in the embedded editor
         Assert.False(Peek(view).IsOpen);
+        Assert.True(view.TextArea.IsKeyboardFocusWithin);
         await OpenPeekAsync(host, view);
-        view.Modal.CloseInfoPopups(); // and in the view itself
+        Assert.True(view.Modal.ClosePeek()); // and in the view itself
         Assert.False(Peek(view).IsOpen);
+        Assert.False(view.Modal.ClosePeek()); // nothing open
     }
 
     [AvaloniaFact]

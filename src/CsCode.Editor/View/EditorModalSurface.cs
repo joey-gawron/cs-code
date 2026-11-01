@@ -357,13 +357,18 @@ public sealed class EditorModalSurface : IDisposable
     /// <summary>Ends the snippet tab-stop session, keeping the text.</summary>
     public void EndSnippet() => _v.Feature<SnippetFeature>()?.End();
 
-    /// <summary>Closes the hover and parameter-hint popups, and a peek (Esc).</summary>
+    /// <summary>Closes the hover and parameter-hint popups (a peek stays: see <see cref="ClosePeek"/>).</summary>
     public void CloseInfoPopups()
     {
         _v.Feature<HoverFeature>()?.Hide();
         _v.Feature<SignatureFeature>()?.Close();
-        PeekFeature.CloseFor(_v); // Esc closes a peek (in the view, or in the peek's own editor) with Vim on as with it off
     }
+
+    /// <summary>
+    /// Closes the peek this view shows, or the one it is embedded in, and returns the keyboard to the view the peek is in; true when one was
+    /// open. A modal layer calls it for its "close" Esc only (Vim: Esc in Normal mode), not for the Esc that leaves Insert or Visual mode.
+    /// </summary>
+    public bool ClosePeek() => PeekFeature.CloseFor(_v);
 
     // ---------------------------------------------------------------- decorations
 
