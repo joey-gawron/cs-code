@@ -56,7 +56,7 @@ AvaloniaEdit's visual lines, so folding and wrapping count), `Scrolled` (raised 
 `TextView.ScrollOffsetChanged` on first subscription) and `ScrollToLine(line)` (sets the scroll offset, leaves the caret) couple an editor with
 its preview. The preview itself (`Markdown/Preview`, `MarkdownPreviewFactory` registered by `AddCsCodeEditor`) parses with Markdig on the editor
 worker and colours code blocks with `CodeHighlighter.HighlightCode` (same grammars and theme as the editor); the hover/completion `MarkdownParser`
-is unchanged. In Markdown files Visual Studio's Cycle Clipboard Ring key (Ctrl+Shift+V / Cmd+Shift+V) is left to Open Preview.
+is unchanged. In Markdown files Visual Studio's Cycle Clipboard Ring key (Ctrl+Shift+V / Cmd+Shift+V) is left to Open Preview in the VS Code keymap; the Visual Studio keymap keeps it for the ring there too.
 
 While a group is held, **Undo and Redo never throw** (AvaloniaEdit's `UndoStack.Undo` does with a group open, and forgets its open groups): the
 controller's `Undo`/`Redo`, `EditorDocument.Undo`/`Redo` and the text area's `ApplicationCommands.Undo`/`Redo` (Ctrl+Z / Ctrl+Y, `TextEditor.Undo`;

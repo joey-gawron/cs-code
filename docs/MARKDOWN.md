@@ -12,7 +12,8 @@ in the stack, so the preview is native: Markdig parses, and the syntax tree is r
   `ShellController.Initialize`) and `MarkdownPreviewHost` (a tab's content: scroll coupling with the editor, links, double-click, clipboard).
 * Hooks in other files (additive): `IEditorViewController.TopLine` / `Scrolled` / `ScrollToLine` (implemented by `EditorViewController`);
   `CodeHighlighter.HighlightCode`; `MarkdownView.AddColoredRuns` made internal for reuse; the three key bindings at the end of both keymap presets;
-  Visual Studio's Cycle Clipboard Ring key (`EditorMenus`) yields Ctrl+Shift+V / Cmd+Shift+V in Markdown files and previews.
+  Visual Studio's Cycle Clipboard Ring key (`EditorMenus`) yields Ctrl+Shift+V / Cmd+Shift+V in Markdown files and previews for the VS Code
+  keymap; the Visual Studio keymap binds the ring in Markdown files itself, so there the key stays Visual Studio's everywhere.
 * Tests: `tests/CsCode.Editor.Tests/MarkdownPreviewParserTests.cs` (parse, lines, anchors, keys, code colour reuse, limits),
   `MarkdownBlockRendererTests.cs` (one test per construct), `MarkdownPreviewViewTests.cs` (the view over the real editor module: live updates,
   incremental rendering, theme, a 6,000-block document, the memory budget, scrolling, anchors, images, a closed file, release on dispose, the
@@ -23,7 +24,7 @@ in the stack, so the preview is native: Markdig parses, and the syntax tree is r
 
 | Action | Command (palette: "Markdown: …") | Visual Studio keymap | VS Code keymap |
 |---|---|---|---|
-| Open Preview (in the editor's group, as a tab) | `markdown.showPreview` | **Ctrl+Shift+V** (macOS **Cmd+Shift+V**) | same |
+| Open Preview (in the editor's group, as a tab) | `markdown.showPreview` | palette (Ctrl+Shift+V stays Visual Studio's Cycle Clipboard Ring) | **Ctrl+Shift+V** (macOS **Cmd+Shift+V**) |
 | Open Preview to the Side (group on the right; the editor keeps the keyboard) | `markdown.showPreviewToSide` | **Ctrl+K V** (macOS **Cmd+K V**) | same |
 | Show Source (from a preview: its editor) | `markdown.showSource` | **Ctrl+Shift+V** in a preview | same |
 

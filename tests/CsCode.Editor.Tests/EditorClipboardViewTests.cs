@@ -510,6 +510,43 @@ public class EditorClipboardViewTests
     public static TheoryData<string> PresetNames => [.. KeybindingService.Presets];
 
     /// <summary>
+    /// Ctrl+Shift+V (Cmd+Shift+V) in a Markdown editor: Visual Studio's Cycle Clipboard Ring in the Visual Studio keymap (the key used to open the
+    /// Markdown preview there, so a Visual Studio user lost the ring in every .md file), VS Code's Open Preview in the VS Code keymap; elsewhere
+    /// the ring in both, and Show Source from a preview in both.
+    /// </summary>
+    [Theory]
+    [InlineData("visualstudio", HostOs.Linux, "ctrl+shift+v", "cscode.editor.cycleClipboardRing")]
+    [InlineData("visualstudio", HostOs.MacOs, "cmd+shift+v", "cscode.editor.cycleClipboardRing")]
+    [InlineData("vscode", HostOs.Linux, "ctrl+shift+v", "markdown.showPreview")]
+    [InlineData("vscode", HostOs.MacOs, "cmd+shift+v", "markdown.showPreview")]
+    public async Task Ctrl_Shift_V_in_a_Markdown_editor_follows_the_keymap(string preset, HostOs os, string key, string inMarkdown)
+    {
+        using var temp = new TempDirectory("cscode-kb-");
+        using var lane = new IoLane("test.kb", 1);
+        var registry = new ContributionRegistry();
+        using var _ = registry.Contribute(ContributionSources.Builtin, "", EditorMenus.Keybindings);
+        var paths = new AppPaths(k => k == "CSCODE_HOME" ? temp.Combine("home") : null, os, "/home/test");
+        var context = new ContextKeyService();
+        using var keys = new KeybindingService(context, paths, lane, registry, os: os);
+        await keys.SetPresetAsync(preset, TestContext.Current.CancellationToken);
+        string? Resolve()
+        {
+            keys.ResetChord();
+            var r = keys.Resolve(KeyStrokeParser.ParseStroke(key));
+            return r.Kind == KeyResolution.Matched ? r.Binding!.Command : null;
+        }
+
+        context.Set("editorTextFocus", true);
+        context.Set("editorLangId", "markdown");
+        Assert.Equal(inMarkdown, Resolve());
+        context.Set("editorLangId", "csharp");
+        Assert.Equal("cscode.editor.cycleClipboardRing", Resolve());
+        context.Set("editorTextFocus", false);
+        context.Set("markdownPreviewFocus", true);
+        Assert.Equal("markdown.showSource", Resolve());
+    }
+
+    /// <summary>
     /// On macOS the presets' Cmd keys and the editor's contributed Cmd keys share one keyboard: two commands on the same keys whose `when`
     /// clauses can hold together make one unreachable, and a key that is also the first stroke of a chord makes the chord unreachable (or
     /// the key, depending on precedence). Two `when` clauses exclude each other only when one negates a term of the other.

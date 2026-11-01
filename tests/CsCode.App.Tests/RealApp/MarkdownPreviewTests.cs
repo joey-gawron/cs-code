@@ -23,11 +23,11 @@ public class MarkdownPreviewTests
     private static string Long(int sections) =>
         string.Concat(Enumerable.Range(0, sections).Select(i => $"## Section {i}\n\nText of section {i}, long enough to wrap maybe.\n\n"));
 
-    private static async Task<RealAppHost> StartAsync(string text, string name = "README.md")
+    private static async Task<RealAppHost> StartAsync(string text, string name = "README.md", string? keymap = null)
     {
         var host = RealAppHost.Create(h =>
         {
-            h.Home.WriteFile("config/settings.json", "{ \"" + MarkdownPreviewSettings.UpdateDelay + "\": 10 }");
+            h.Home.WriteFile("config/settings.json", "{ \"" + MarkdownPreviewSettings.UpdateDelay + "\": 10" + (keymap is null ? "" : ", \"cscode.keymap\": \"" + keymap + "\"") + " }");
             h.Files.WriteFile(name, text);
             h.Files.WriteFile("notes.txt", "plain text\n");
             h.Files.WriteFile("docs/other.md", "# Other\n\nline 2\nline 3\nline 4\n");
@@ -50,7 +50,8 @@ public class MarkdownPreviewTests
     [AvaloniaFact(Timeout = 60_000)]
     public async Task Open_Preview_key_opens_one_preview_tab_per_file_sets_the_context_key_and_the_same_key_shows_the_source()
     {
-        await using var host = await StartAsync("# Hello\n\nworld\n");
+        // VS Code's key (the Visual Studio keymap keeps Ctrl+Shift+V for its Cycle Clipboard Ring, Markdown files included)
+        await using var host = await StartAsync("# Hello\n\nworld\n", keymap: "vscode");
         var well = host.Shell.Well;
         var keys = host.Get<IContextKeyService>();
         var editor = well.ActiveEditor!;
