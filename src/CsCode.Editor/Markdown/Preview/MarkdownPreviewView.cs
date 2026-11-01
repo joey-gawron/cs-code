@@ -262,8 +262,8 @@ public sealed class MarkdownPreviewView : UserControl, IDisposable
         _parseCts?.Dispose();
         var cts = _parseCts = new CancellationTokenSource();
         var request = ++_requested;
+        // Stays stale until a full render has been applied: a later request that cancels the theme's or the settings' render rebuilds everything too.
         var reuse = !_colorsStale;
-        _colorsStale = false;
         _ = RenderAsync(request, reuse, cts.Token);
     }
 
@@ -314,6 +314,7 @@ public sealed class MarkdownPreviewView : UserControl, IDisposable
 
     private void Apply(PreviewDocument parsed, bool reuse)
     {
+        if (!reuse) _colorsStale = false;
         _current = parsed;
         _context = Context(parsed);
         _notice.IsVisible = parsed.Truncated;

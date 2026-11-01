@@ -254,6 +254,22 @@ public class MarkdownPreviewViewTests
     }
 
     [AvaloniaFact]
+    public async Task A_theme_change_still_restyles_every_block_when_another_render_supersedes_its_own()
+    {
+        using var host = ViewHost.Create();
+        var (_, view, window) = await OpenAsync(host, "text\n\nmore text\n");
+        var firstRender = view.Document;
+
+        await host.Factory.Themes.SetCurrentAsync("vscode.light-plus", TestContext.Current.CancellationToken);
+        view.Refresh(); // e.g. a debounced keystroke firing while the theme's render is in flight
+        await ViewHost.WaitFor(() => !ReferenceEquals(view.Document, firstRender), "the re-render after the theme change");
+        ViewHost.Pump();
+        Assert.All(view.Blocks.GetLogicalDescendants().OfType<SelectableTextBlock>(), t => Assert.Same(view.Style.Foreground, t.Foreground));
+        window.Close();
+        view.Dispose();
+    }
+
+    [AvaloniaFact]
     public async Task Local_and_data_images_load_and_remote_ones_are_blocked_by_default()
     {
         using var host = ViewHost.Create();
