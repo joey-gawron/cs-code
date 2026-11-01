@@ -7,6 +7,8 @@ language servers (`cscode.languageServers`) and debug adapters (`cscode.debugger
 TextMate grammars and snippets dropped into the user data folder.
 
 * Architecture and module boundaries: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+* Running and debugging (F5, Start Without Debugging, launch.json, the debug windows, and how to run, debug and test CsCode itself):
+  [docs/RUN-AND-DEBUG.md](docs/RUN-AND-DEBUG.md)
 * Build: `dotnet build CsCode.slnx` · Test: `dotnet test CsCode.slnx`
 * Linux only: on a Nix-provided `dotnet` (non-NixOS host), `source tools/nix-dev-env.sh` first.
 * macOS: see [macOS](#macos) below.
@@ -35,6 +37,9 @@ dotnet run --project src/CsCode.App -- --foreground [paths...]
 Without it, `dotnet run` returns as soon as the window is up and the window keeps running in its own process (`cscode --quit --all`,
 or `dotnet run --project src/CsCode.App -- --quit --all`, ends it). The pre-started "warm spare" process is off by default
 (`cscode.background.warmSpare`).
+
+F5 in CsCode (or VS Code) on this repository debugs CsCode in a sandboxed window (`.vscode/launch.json`;
+[docs/RUN-AND-DEBUG.md](docs/RUN-AND-DEBUG.md#debugging-cscode-itself)).
 
 ## Publishing
 
