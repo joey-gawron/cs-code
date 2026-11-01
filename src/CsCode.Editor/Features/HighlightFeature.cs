@@ -78,6 +78,7 @@ internal sealed class HighlightFeature : IThemeAware, ISettingsAware, IDisposabl
     {
         if (_ranges.Count == 0) return;
         _ranges = [];
+        _v.NotifyMarkersChanged(View.Decorations.ScrollDecorations.Sources.Highlights);
         _v.TextView.InvalidateLayer(KnownLayer.Selection);
     }
 
@@ -128,6 +129,7 @@ internal sealed class HighlightFeature : IThemeAware, ISettingsAware, IDisposabl
             return;
         }
         _ranges = result;
+        _v.NotifyMarkersChanged(View.Decorations.ScrollDecorations.Sources.Highlights); // the overview ruler
         _v.TextView.InvalidateLayer(KnownLayer.Selection);
     }
 

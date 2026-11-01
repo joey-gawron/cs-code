@@ -35,6 +35,7 @@ internal sealed class StickyScrollFeature : ISettingsAware, IThemeAware, IDispos
     private IBrush _hover = Brushes.Transparent;
     private IBrush _border = Brushes.Transparent;
     private bool _disposed;
+    private double _insetLeft, _insetRight;
 
     public StickyScrollFeature(CodeEditorControl view)
     {
@@ -62,6 +63,23 @@ internal sealed class StickyScrollFeature : ISettingsAware, IThemeAware, IDispos
         ApplyBrushes();
         Update();
     }
+
+    /// <summary>The minimap and the overview ruler take this much of the view's sides: the pinned rows stay over the text, as in VS Code.</summary>
+    /// <remarks>
+    /// <see cref="Place"/> keeps the right inset whenever it lines the rows up with the text (the left one is in the text view's origin), and
+    /// places them again once the new margin is laid out.
+    /// </remarks>
+    internal void SetHorizontalInsets(double left, double right)
+    {
+        if (_insetLeft == left && _insetRight == right) return;
+        _insetLeft = left;
+        _insetRight = right;
+        Place();
+        _v.Post(Place); // the text view's origin moves with the text area's new margin at the next layout pass
+    }
+
+    /// <summary>The panel of pinned rows (tests).</summary>
+    internal Control Panel => _panel;
 
     private void OnDocumentChanged()
     {
@@ -194,9 +212,14 @@ internal sealed class StickyScrollFeature : ISettingsAware, IThemeAware, IDispos
     /// <summary>Lines the rows up with the text: past the line numbers and folding margins, scrolled horizontally with it.</summary>
     private void Place()
     {
-        if (!_panel.IsVisible) return;
+        if (_disposed) return;
+        if (!_panel.IsVisible)
+        {
+            _panel.Margin = new Thickness(_insetLeft, 0, _insetRight, 0);
+            return;
+        }
         var origin = _v.TextView.TranslatePoint(default, _v) ?? default;
-        _panel.Margin = new Thickness(origin.X, origin.Y, 0, 0);
+        _panel.Margin = new Thickness(origin.X, origin.Y, _insetRight, 0);
         var shift = -_v.TextView.ScrollOffset.X;
         foreach (var row in _panel.Children.OfType<Border>()) row.Child!.Margin = new Thickness(shift, 0, 0, 0);
     }

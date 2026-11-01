@@ -88,7 +88,7 @@ internal sealed class QuickDiffFeature : IThemeAware, ISettingsAware, IDisposabl
         var enabled = Enabled();
         if (enabled == _enabled) return;
         _enabled = enabled;
-        if (!enabled) { _changes = []; _margin.InvalidateVisual(); _peek.Hide(); }
+        if (!enabled) { _changes = []; _margin.InvalidateVisual(); _peek.Hide(); _v.NotifyMarkersChanged(View.Decorations.ScrollDecorations.Sources.Scm); }
         else Schedule(TimeSpan.Zero, reloadOriginal: true);
     }
 
@@ -117,7 +117,7 @@ internal sealed class QuickDiffFeature : IThemeAware, ISettingsAware, IDisposabl
                 original = o?.Text;
                 if (original is null)
                 {
-                    _v.Post(() => { if (!ct.IsCancellationRequested) { _changes = []; _margin.InvalidateVisual(); } });
+                    _v.Post(() => { if (!ct.IsCancellationRequested) { _changes = []; _margin.InvalidateVisual(); _v.NotifyMarkersChanged(View.Decorations.ScrollDecorations.Sources.Scm); } });
                     return;
                 }
             }
@@ -130,6 +130,7 @@ internal sealed class QuickDiffFeature : IThemeAware, ISettingsAware, IDisposabl
                 _original = original;
                 _changes = changes;
                 _margin.InvalidateVisual();
+                _v.NotifyMarkersChanged(View.Decorations.ScrollDecorations.Sources.Scm); // the overview ruler and the minimap's gutter
             }).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }

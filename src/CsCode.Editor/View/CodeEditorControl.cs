@@ -18,6 +18,7 @@ using CsCode.Editor.Editing;
 using CsCode.Editor.TextMate;
 using CsCode.Editor.Theming;
 using CsCode.Editor.Threading;
+using CsCode.Editor.View.Decorations;
 
 namespace CsCode.Editor.View;
 
@@ -39,6 +40,8 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     private TextMateColorizer? _colorizer;
     private ScopeStyleTable? _styleTable;
     private EditorModalSurface? _modal;
+    private ScrollDecorations? _decorations;
+    private bool _allowMinimap = true;
     private bool _disposed, _disposing;
 
     internal CodeEditorControl(EditorViewFactory factory, EditorDocument document)
@@ -85,6 +88,9 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         // the find panel's search: bounded, and re-run after edits only once the typing pauses, off the UI thread (editor-4)
         _components.Add(new FindSearch(this));
         foreach (var feature in _factory.CreateFeatures(this)) _components.Add(feature);
+        // the overview ruler on the scrollbar and the minimap (after the features: they draw the features' marks)
+        _decorations = new ScrollDecorations(this, grid);
+        _components.Add(_decorations);
 
         // live updates: theme, settings, language, read-only
         _disposables.Add(factory.Themes.Changed.Subscribe(_ => Post(OnThemeChanged)));
@@ -173,6 +179,32 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     internal bool IsDisposed => _disposed;
     /// <summary>The extra carets of this view (Add Next Occurrence, Insert Cursor Above/Below, Alt+Click) and editing at all of them.</summary>
     internal MultiCursorController MultiCursor { get; }
+
+    /// <summary>The overview ruler and the minimap of this view (docs/EDITOR.md §7c).</summary>
+    internal ScrollDecorations? ScrollDecorations => _decorations;
+
+    /// <summary>
+    /// False hides the minimap of this view whatever <c>editor.minimap.enabled</c> says (the diff editor's panes, as in VS Code). UI thread.
+    /// </summary>
+    internal bool AllowMinimap
+    {
+        get => _allowMinimap;
+        set
+        {
+            if (_allowMinimap == value) return;
+            _allowMinimap = value;
+            _decorations?.OnAllowMinimapChanged();
+        }
+    }
+
+    /// <summary>Set by the overview ruler: features call <see cref="NotifyMarkersChanged"/> when the marks it draws changed.</summary>
+    internal Action<Decorations.ScrollDecorations.Sources>? MarkersChanged { get; set; }
+
+    /// <summary>
+    /// A feature's marks changed (diagnostics, occurrences, find matches, source-control changes, breakpoints): only <paramref name="source"/>'s
+    /// marks are collected again. UI thread.
+    /// </summary>
+    internal void NotifyMarkersChanged(Decorations.ScrollDecorations.Sources source) => MarkersChanged?.Invoke(source);
 
     /// <summary>Cut/Copy/Paste, the clipboard ring, PRIMARY and middle-click paste of this view.</summary>
     internal EditorClipboard Clipboard { get; }

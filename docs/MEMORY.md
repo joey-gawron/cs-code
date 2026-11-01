@@ -316,6 +316,12 @@ document retains 23 MB with its preview open (≈ 80 bytes per source character,
 near the viewport; budget 120 B/char and 150 realised blocks. Sources are cut at 4 M characters; images are downscaled to 2048 px and cached
 per preview (64 entries).
 
+**Minimap** (docs/EDITOR.md §7f): a view with the minimap holds one bitmap and one pixel buffer of the minimap's size in device pixels,
+independent of the document (120 × 1000 DIPs on a 2x screen: 2 × 1.9 MB), and per render only the window's rows (≈ 500 line references);
+nothing per document line. Both are freed when the minimap is turned off or the view is disposed. Drawing a window allocates nothing after
+the first render (`ScrollDecorationsModelTests`); the overview ruler keeps one byte per pixel row per lane and one int per pixel row of the
+track.
+
 ## 8. Profiling playbook (MUST 7)
 
 All scripts run from anywhere, set up the Nix runtime libraries, never open a display and never touch your config (the profiling host uses a temp

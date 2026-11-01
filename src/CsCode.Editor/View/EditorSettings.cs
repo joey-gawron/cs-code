@@ -44,7 +44,7 @@ public sealed record EditorSettings
     public bool OccurrencesHighlight { get; init; } = true;
     public bool Folding { get; init; } = true;
     public bool BracketMatching { get; init; } = true;
-    public bool Minimap { get; init; }
+    public bool Minimap { get; init; } = true; // VS Code's default
     public bool StickyScroll { get; init; }
     public bool InlayHints { get; init; } = true;
     public bool CodeLens { get; init; } = true;

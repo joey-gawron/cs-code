@@ -16,13 +16,13 @@ namespace CsCode.Editor.Tests.TreeSitter;
 /// </summary>
 public class StickyScrollTests
 {
-    private static string Methods(int count, int bodyLines) =>
+    internal static string Methods(int count, int bodyLines) =>
         "namespace Demo\n{\n    public class Big\n    {\n" +
         string.Concat(Enumerable.Range(0, count).Select(m =>
             $"        public void Method{m}()\n        {{\n" + string.Concat(Enumerable.Range(0, bodyLines).Select(i => $"            var x{i} = {i};\n")) + "        }\n")) +
         "    }\n}\n";
 
-    private static async Task ScrollToLineAsync(CodeEditorControl view, int line)
+    internal static async Task ScrollToLineAsync(CodeEditorControl view, int line)
     {
         // Half a pixel into the line (TextEditor.ScrollToVerticalOffset ignores absolute positions): with a fractional line height (Fira Code at
         // 14 is 17.2307…) line * DefaultLineHeight, or the line's summed top, can land a rounding step above the line, which then counts the
