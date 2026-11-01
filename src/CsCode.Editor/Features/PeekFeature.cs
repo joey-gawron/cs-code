@@ -116,7 +116,7 @@ internal sealed class PeekFeature : IThemeAware, IDisposable
         }
         Close();
         var line = _v.Editor.Document.GetLineByOffset(Math.Clamp(offset, 0, _v.Editor.Document.TextLength));
-        // the current file's location first when there is one (the definition beside the caret), otherwise in the providers' order
+        // the locations in the providers' order; the first one is shown
         var session = _session = new Session(this, line, locations, what);
         session.Open();
         _v.Services.ContextKeys?.Set(VisibleKey, true);
