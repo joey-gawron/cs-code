@@ -9,7 +9,8 @@ namespace CsCode.Testing.Providers.DotNet;
 /// <summary>
 /// .NET test projects (C#). <b>Detection</b>: every project file under the folder whose text (or a <c>Directory.Build.props</c> above it) mentions a
 /// test framework is evaluated with <c>dotnet msbuild -getProperty</c> (no build: <c>IsTestProject</c>, <c>TargetPath</c>, <c>TargetFramework(s)</c>,
-/// the package references); <c>IsTestProject=true</c> makes it a test project, and an <c>xunit.v3</c> reference makes it an xUnit v3 one.
+/// the package references); <c>IsTestProject=true</c> makes it a test project, and an <c>xunit.v3</c> reference makes it an xUnit v3 one. A
+/// <c>TargetFrameworks</c> project uses its first framework, whose <c>TargetPath</c> comes from a second evaluation with <c>-p:TargetFramework</c>.
 /// <b>Discovery</b> scans the project's C# files (<see cref="CSharpTestScanner"/>): instant, no build, every test has its file and line; tests the
 /// scan cannot see (inherited, generated) are added when a run reports them. <b>Running</b>: an xUnit v3 project is built
 /// (<c>dotnet build</c>) and its test assembly run directly with <c>-reporter json</c> and one <c>-method</c> per requested test, so each result
@@ -69,18 +70,52 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
 
     private async Task<TestProject?> EvaluateAsync(string projectFile, CancellationToken ct)
     {
-        var json = new System.Text.StringBuilder();
         var dir = Path.GetDirectoryName(projectFile)!;
-        var exit = await context.Processes.RunAsync(new ProcessSpec(ProcessRunner.FindDotnet(),
-            ["msbuild", projectFile, "-nologo", "-getProperty:IsTestProject", "-getProperty:TargetPath", "-getProperty:TargetFramework", "-getProperty:TargetFrameworks", "-getItem:PackageReference"],
-            dir, NoLogo), l => json.AppendLine(l), _ => { }, ct).ConfigureAwait(false);
-        if (exit != 0) return null;
-        var parsed = ParseEvaluation(json.ToString());
+        var json = await MsbuildAsync(projectFile, dir,
+            ["-getProperty:IsTestProject", "-getProperty:TargetPath", "-getProperty:TargetFramework", "-getProperty:TargetFrameworks", "-getItem:PackageReference"], ct).ConfigureAwait(false);
+        var parsed = json is null ? null : ParseEvaluation(json);
         if (parsed is null || !parsed.Value.IsTestProject) return null;
         var (_, targetPath, tfm, xunitV3) = parsed.Value;
+        if (targetPath.Length == 0 && tfm is not null)
+        {
+            // a <TargetFrameworks> project (even with one entry): the outer, cross-targeting evaluation has no TargetPath; the inner one for the
+            // framework that is built and run has it
+            var inner = await MsbuildAsync(projectFile, dir, ["-p:TargetFramework=" + tfm, "-getProperty:TargetPath"], ct).ConfigureAwait(false);
+            targetPath = inner is null ? "" : ParseTargetPath(inner);
+        }
         var project = new TestProject(ProviderId, Path.GetFileNameWithoutExtension(projectFile), projectFile, dir, xunitV3 ? FrameworkXunitV3 : FrameworkVsTest);
         _info[project.Key] = new ProjectInfo(targetPath, tfm, xunitV3);
         return project;
+    }
+
+    /// <summary><c>dotnet msbuild</c> of the project with these <c>-getProperty</c>/<c>-p</c> arguments: its standard output, or null when it failed.</summary>
+    private async Task<string?> MsbuildAsync(string projectFile, string dir, IEnumerable<string> arguments, CancellationToken ct)
+    {
+        var output = new System.Text.StringBuilder();
+        var exit = await context.Processes.RunAsync(new ProcessSpec(ProcessRunner.FindDotnet(), ["msbuild", projectFile, "-nologo", .. arguments], dir, NoLogo),
+            l => output.AppendLine(l), _ => { }, ct).ConfigureAwait(false);
+        return exit == 0 ? output.ToString() : null;
+    }
+
+    /// <summary>
+    /// The answer of an evaluation that asked for <c>TargetPath</c> alone: MSBuild prints the bare value for a single property (the JSON
+    /// form, <c>{"Properties":{"TargetPath":...}}</c>, is read too). "" when there is none.
+    /// </summary>
+    internal static string ParseTargetPath(string output)
+    {
+        var text = output.Trim();
+        if (text.StartsWith('{'))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                if (doc.RootElement.TryGetProperty("Properties", out var p) && p.TryGetProperty("TargetPath", out var v) && v.ValueKind == JsonValueKind.String) return v.GetString()!;
+                if (doc.RootElement.TryGetProperty("TargetPath", out var t) && t.ValueKind == JsonValueKind.String) return t.GetString()!;
+            }
+            catch (JsonException) { }
+            return "";
+        }
+        return text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? "";
     }
 
     /// <summary>The evaluation's answer (<c>-getProperty</c>/<c>-getItem</c> JSON), or null when it is not JSON.</summary>
@@ -174,6 +209,7 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
         var built = await BuildAsync(project, info, sink, ct).ConfigureAwait(false);
         if (built is null) return TestRunOutcome.Cancelled;
         if (built != 0) return new TestRunOutcome(built, $"The build of {project.Name} failed: see the Tests output.");
+        if (info.TargetPath.Length == 0) return NoTargetPath(project);
         sink.Status($"Running {project.Name}…");
         var reporter = new XunitJsonReporter(project, sink);
         var args = XunitArguments(info.TargetPath, request.TestIds);
@@ -249,6 +285,7 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
         var built = await BuildAsync(project, info, sink, ct).ConfigureAwait(false);
         if (built is null) return TestRunOutcome.Cancelled;
         if (built != 0) return new TestRunOutcome(built, $"The build of {project.Name} failed: see the Tests output.");
+        if (info.TargetPath.Length == 0) return NoTargetPath(project);
         var args = XunitArguments(info.TargetPath, request.TestIds);
         var launch = Configuration("launch", $"Debug tests: {project.Name}", project, new()
         {
@@ -266,6 +303,9 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
         var exit = await DebugSessions.PumpOutputAsync(session, reporter.OnLine, ct).ConfigureAwait(false);
         return new TestRunOutcome(exit ?? 0);
     }
+
+    private static TestRunOutcome NoTargetPath(TestProject project) =>
+        new(-1, $"dotnet msbuild gave no TargetPath for {project.FilePath}, so there is no test assembly to run.");
 
     private static DebugConfiguration Configuration(string request, string name, TestProject project, Dictionary<string, object> props)
     {

@@ -66,6 +66,59 @@ public sealed class CommandLineTests
     }
 
     [Fact]
+    public async Task A_multi_targeted_xunit_v3_project_runs_the_assembly_of_its_first_framework()
+    {
+        // the outer (cross-targeting) evaluation of a <TargetFrameworks> project has no TargetPath; it is asked again for the first framework
+        using var dir = new TempDirectory();
+        dir.WriteFile("M/M.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"xunit.v3\" /></ItemGroup></Project>");
+        var inner = dir.Combine("M", "bin", "Debug", "net10.0", "M.dll");
+        var processes = new ScriptedProcesses
+        {
+            Answer = spec => spec.Arguments.Contains("-p:TargetFramework=net10.0") ? (0, [inner], [])
+                : spec.Arguments.Contains("msbuild") ? (0, ["{\"Properties\":{\"IsTestProject\":\"true\",\"TargetPath\":\"\",\"TargetFramework\":\"\",\"TargetFrameworks\":\"net10.0;net9.0\"},\"Items\":{\"PackageReference\":[{\"Identity\":\"xunit.v3\"}]}}"], [])
+                : (0, [], []),
+        };
+        var provider = new DotNetTestProvider(new TestProviderContext(processes));
+        var ct = TestContext.Current.CancellationToken;
+        var project = Assert.Single(await provider.DetectAsync(dir.Path, ct));
+        await provider.RunAsync(new TestRunRequest(project, ["N.C.A"]), new RecordingSink(), ct);
+        var started = processes.Started.ToList();
+        var build = Assert.Single(started, s => s.Arguments.Contains("build"));
+        Assert.Equal(["-f", "net10.0"], build.Arguments.SkipWhile(a => a != "-f").Take(2));
+        var run = started.Last();
+        Assert.Equal(inner, run.Arguments[0]);
+        Assert.Equal(["-method", "N.C.A"], run.Arguments.TakeLast(2));
+        Assert.Equal(dir.Combine("M", "bin", "Debug", "net10.0"), run.WorkingDirectory);
+    }
+
+    [Fact]
+    public async Task A_dotnet_project_without_a_target_path_is_not_run_with_an_empty_assembly()
+    {
+        using var dir = new TempDirectory();
+        dir.WriteFile("M/M.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"xunit.v3\" /></ItemGroup></Project>");
+        var processes = new ScriptedProcesses
+        {
+            Answer = spec => spec.Arguments.Contains("-p:TargetFramework=net10.0") ? (0, [""], [])
+                : spec.Arguments.Contains("msbuild") ? (0, ["{\"Properties\":{\"IsTestProject\":\"true\",\"TargetPath\":\"\",\"TargetFramework\":\"\",\"TargetFrameworks\":\"net10.0\"},\"Items\":{\"PackageReference\":[{\"Identity\":\"xunit.v3\"}]}}"], [])
+                : (0, [], []),
+        };
+        var provider = new DotNetTestProvider(new TestProviderContext(processes));
+        var ct = TestContext.Current.CancellationToken;
+        var project = Assert.Single(await provider.DetectAsync(dir.Path, ct));
+        var outcome = await provider.RunAsync(new TestRunRequest(project, null), new RecordingSink(), ct);
+        Assert.Contains("no TargetPath", outcome.Error);
+        Assert.DoesNotContain(processes.Started, s => s.Arguments.Count > 0 && s.Arguments[0].Length == 0);
+    }
+
+    [Fact]
+    public void A_single_property_evaluation_answers_with_the_bare_value()
+    {
+        Assert.Equal("/p/bin/Debug/net10.0/p.dll", DotNetTestProvider.ParseTargetPath("/p/bin/Debug/net10.0/p.dll\n"));
+        Assert.Equal("/p/x.dll", DotNetTestProvider.ParseTargetPath("""{"Properties":{"TargetPath":"/p/x.dll"}}"""));
+        Assert.Equal("", DotNetTestProvider.ParseTargetPath("\n"));
+    }
+
+    [Fact]
     public async Task Dotnet_discovery_scans_the_project_sources_but_not_nested_projects_or_build_output()
     {
         using var dir = new TempDirectory();

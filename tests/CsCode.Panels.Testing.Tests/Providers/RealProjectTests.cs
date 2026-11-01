@@ -68,6 +68,42 @@ public sealed class RealProjectTests
         Assert.Equal(["Calc.MathTests.Adds"], one.Results.Select(r => r.TestId));
     }
 
+    [Fact]
+    public async Task Dotnet_xunit_v3_project_with_TargetFrameworks_is_built_and_run_for_its_first_framework()
+    {
+        // <TargetFrameworks> (one entry is enough): the outer evaluation has no TargetPath, the run needs the inner one's assembly
+        var ct = TestContext.Current.CancellationToken;
+        using var dir = new TempDirectory("cscode-dotnet-tfms-");
+        dir.WriteFile("Multi.Tests/Multi.Tests.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFrameworks>net10.0</TargetFrameworks><ImplicitUsings>enable</ImplicitUsings><OutputType>Exe</OutputType><IsTestProject>true</IsTestProject></PropertyGroup>
+              <ItemGroup>
+                <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+                <PackageReference Include="xunit.v3" Version="3.2.2" />
+                <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+              </ItemGroup>
+            </Project>
+            """);
+        dir.WriteFile("Multi.Tests/T.cs", """
+            using Xunit;
+            namespace Multi;
+            public class T
+            {
+                [Fact] public void Passes() { }
+                [Fact] public void Fails() => Assert.Fail("no");
+            }
+            """);
+        var provider = new DotNetTestProvider(Context());
+        var project = Assert.Single(await provider.DetectAsync(dir.Path, ct));
+        Assert.Equal(DotNetTestProvider.FrameworkXunitV3, project.Framework);
+        var sink = new RecordingSink();
+        var outcome = await provider.RunAsync(new TestRunRequest(project, null), sink, ct);
+        Assert.True(outcome.Error is null, outcome.Error + "\n" + string.Join("\n", sink.Lines));
+        Assert.Contains(sink.Lines, l => l.StartsWith("> dotnet ", StringComparison.Ordinal) && l.Contains(Path.Combine("bin", "Debug", "net10.0", "Multi.Tests.dll"), StringComparison.Ordinal));
+        Assert.Equal(TestOutcome.Passed, sink.Result("Multi.T.Passes").Outcome);
+        Assert.Equal(TestOutcome.Failed, sink.Result("Multi.T.Fails").Outcome);
+    }
+
     private static string TestDirectory(string path) => TempDirectory.PhysicalPath(path);
 
     [Fact]
