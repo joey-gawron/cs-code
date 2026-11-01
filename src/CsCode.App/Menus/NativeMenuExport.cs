@@ -32,6 +32,8 @@ public sealed class NativeMenuExport : IDisposable
     private IKeybindingService? _bindings;
     /// <summary>The application menu: the run whose commands its items run (<see cref="Connect"/>); null while there is none.</summary>
     private IServiceProvider? _services;
+    /// <summary>A command chosen while no run was connected: it runs in the window asked for, once that window's start is done.</summary>
+    private string? _pending;
     private bool _disposed;
 
     private NativeMenuExport(IKeybindingService? bindings, IUiDispatcher? ui)
@@ -73,9 +75,11 @@ public sealed class NativeMenuExport : IDisposable
 
     /// <summary>
     /// The application menu's own items: About CsCode, Settings..., New Window (Avalonia adds the standard ones below them). It belongs to the
-    /// application, not to a run: set before the first window (macOS reads it as the app starts), About and Settings do nothing until a run is
-    /// <see cref="Connect"/>ed. New Window runs <see cref="NewWindow"/> (the app's, which works with no window at all: the menu bar is all a Mac
-    /// app shows after its last window closed), and carries ⇧⌘N while no keybinding takes the stroke (always while no window is open).
+    /// application, not to a run: set before the first window (macOS reads it as the app starts). About and Settings run the
+    /// <see cref="Connect"/>ed run's commands; with no run (the last window closed: the menu bar is all a Mac app shows then) they ask for a new
+    /// window (<see cref="NewWindow"/>) and run in it once its start is done (<see cref="Started"/>), as a Mac app's Settings opens a window.
+    /// New Window runs <see cref="NewWindow"/> (the app's, which works with no window at all), and carries ⇧⌘N while no keybinding takes the
+    /// stroke (always while no window is open).
     /// </summary>
     public static NativeMenuExport BuildApplicationMenu()
     {
@@ -110,6 +114,17 @@ public sealed class NativeMenuExport : IDisposable
             _bindings = null;
             UpdateKeys();
         });
+    }
+
+    /// <summary>
+    /// The window of <paramref name="services"/> finished its start (layout restored, command-line files open): a command chosen in this menu
+    /// while there was no window (<see cref="Run"/>) runs now, in it.
+    /// </summary>
+    internal void Started(IServiceProvider services)
+    {
+        if (_disposed || _pending is not { } id || !ReferenceEquals(_services, services)) return;
+        _pending = null;
+        Run(id);
     }
 
     // Keybindings reload off the UI thread (keybindings.json edited): the key equivalents follow on it.
@@ -197,7 +212,16 @@ public sealed class NativeMenuExport : IDisposable
 
     private async void Run(string id)
     {
-        if (_services?.GetService(typeof(ICommandService)) is not ICommandService commands) return;
+        if (_disposed) return;
+        if (_services is null)
+        {
+            // No window (macOS, after the last one closed): the item opens one and runs there (Started), rather than doing nothing.
+            if (NewWindow is not { } newWindow) return;
+            _pending = id;
+            newWindow();
+            return;
+        }
+        if (_services.GetService(typeof(ICommandService)) is not ICommandService commands) return;
         try { await commands.ExecuteAsync(id).ConfigureAwait(true); }
         catch (CommandNotFoundException) { /* not registered in this composition: the item does nothing */ }
     }

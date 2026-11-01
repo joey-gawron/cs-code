@@ -41,8 +41,8 @@ public sealed class App : Application
         NativeDock.SetMenu(this, Menus.NativeMenuExport.BuildDockMenu(() => _session?.NewWindow()));
     }
 
-    /// <summary>macOS: the application menu's own items (About CsCode, Settings...); null elsewhere.</summary>
-    internal static Menus.NativeMenuExport? ApplicationMenu { get; private set; }
+    /// <summary>macOS: the application menu's own items (About CsCode, Settings...); null elsewhere (tests stand one in on every OS).</summary>
+    internal static Menus.NativeMenuExport? ApplicationMenu { get; set; }
 
     public override void OnFrameworkInitializationCompleted()
     {

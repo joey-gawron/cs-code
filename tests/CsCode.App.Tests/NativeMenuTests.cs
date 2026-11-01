@@ -116,6 +116,40 @@ public class NativeMenuTests
         Assert.Equal(new KeyGesture(Key.OemComma, KeyModifiers.Meta), settings.Gesture);
     }
 
+    [AvaloniaFact]
+    public void With_no_run_connected_About_and_Settings_ask_for_a_window_and_run_in_it_once_its_start_is_done()
+    {
+        using var rig = new Rig();
+        using var app = NativeMenuExport.BuildApplicationMenu();
+        var items = app.Menu.Items.OfType<NativeMenuItem>().Where(i => i is not NativeMenuItemSeparator).ToDictionary(i => i.Header!);
+        var ran = new List<string>();
+        rig.Commands.Register(KnownCommands.OpenSettings, _ => { ran.Add("settings"); return ValueTask.FromResult<object?>(null); });
+        rig.Commands.Register(ShellMenus.About, _ => { ran.Add("about"); return ValueTask.FromResult<object?>(null); }, new CommandMetadata(ShellMenus.About));
+        var windows = 0;
+        app.NewWindow = () => windows++;
+
+        items["Settings…"].RaiseClick(); // macOS after the last window closed: the menu bar is all there is
+        Assert.Equal(1, windows);
+        Assert.Empty(ran);
+        using (app.Connect(rig.Services)) // the new window's run
+        {
+            Assert.Empty(ran); // not before its layout is restored
+            app.Started(rig.Services);
+            Assert.Equal(["settings"], ran);
+            app.Started(rig.Services); // once
+            Assert.Equal(["settings"], ran);
+            items["About CsCode"].RaiseClick(); // with a window: runs at once, no new window
+            Assert.Equal(["settings", "about"], ran);
+            Assert.Equal(1, windows);
+        }
+
+        items["About CsCode"].RaiseClick();
+        using var other = new Rig();
+        app.Started(other.Services); // a window this menu is not connected to does not run it
+        Assert.Equal(["settings", "about"], ran);
+        Assert.Equal(2, windows);
+    }
+
     [Theory]
     [InlineData("_File", "File")]
     [InlineData("Save A_ll", "Save All")]

@@ -238,6 +238,30 @@ public class WindowlessRunTests
 
     // ------------------------------------------------------------------ the menus
 
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task Settings_in_the_application_menu_with_no_window_opens_a_window_showing_the_Settings_editor()
+    {
+        using var env = new RealAppHome();
+        env.WriteUserSettings("""{ "workbench.startupEditor": "none" }""");
+        var previous = App.ApplicationMenu;
+        using var menu = NativeMenuExport.BuildApplicationMenu(); // macOS's own (App.Initialize); stood in on every OS
+        App.ApplicationMenu = menu;
+        try
+        {
+            await using var run = new RealAppRun(env, lifetime: Mac());
+            menu.NewWindow = run.Session.NewWindow;
+            var first = await run.MainWindowAsync();
+            first.Close();
+            Assert.True(await DevHost.WaitFor(() => run.Session.IsWindowless, 30_000));
+
+            menu.Menu.Items.OfType<NativeMenuItem>().Single(i => i.Header == "Settings…").RaiseClick();
+            Assert.True(await DevHost.WaitFor(() => run.Session.Window is MainWindow m && !ReferenceEquals(m, first), 60_000), "Settings… with no window opened no window");
+            var well = run.Services.GetRequiredService<DocumentWell>();
+            Assert.True(await DevHost.WaitFor(() => well.Active is ShellDocument { Id: "view:settings" }, 30_000), "the new window does not show the Settings editor");
+        }
+        finally { App.ApplicationMenu = previous; }
+    }
+
     [AvaloniaFact]
     public void The_application_menu_s_New_Window_runs_the_app_s_and_carries_shift_command_N_while_no_keybinding_takes_it()
     {

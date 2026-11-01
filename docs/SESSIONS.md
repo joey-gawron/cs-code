@@ -228,6 +228,8 @@ the same in both modes, and nothing changes on Linux or Windows.
 * **Quitting**: *File ▸ Exit* and ⌘Q (which runs Exit, with its Save prompts) still end the process from a window (`MainWindow.IsExiting`
   tells the exit's close from the close button's; a cancelled Save prompt clears it). With no window, ⌘Q or the Dock's *Quit* ends the
   process at once (after the last window's shutdown if it still runs); a log out with no window goes ahead at once.
+* With no window, the application menu's **About CsCode** and **Settings…** (⌘,) open a new window and run there once its start is done
+  (`NativeMenuExport.Started`, called by `MainWindow` after the layout restore): Settings shows the Settings editor in it.
 * `cscode.macos.keepRunningWithoutWindows` (default `true`): `false` makes closing the window quit, as before.
 * With its window shown, **New Window** in background mode opens a new unnamed session (`cscode -n`, a process of its own); a foreground run
   has one window, which New Window brings to the front.

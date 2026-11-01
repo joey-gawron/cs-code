@@ -346,6 +346,8 @@ public sealed class MainWindow : Window, IWindowChrome
         {
             try { await _shell.StartDeferredAsync().ConfigureAwait(true); }
             catch (Exception ex) { _sp.GetService<Startup.CrashHandler>()?.Report(ex, fatal: false, source: "Startup"); }
+            // macOS: About or Settings... chosen in the application menu while there was no window runs now, in this one.
+            if (!_windowClosed) App.ApplicationMenu?.Started(_sp);
         }, DispatcherPriority.Background);
     }
 
