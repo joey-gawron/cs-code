@@ -6,7 +6,9 @@ using CsCode.Core.Platform;
 using CsCode.Dap.Client;
 using CsCode.Dap.Breakpoints;
 using CsCode.Dap.Configuration;
+using CsCode.Dap.Adapters;
 using CsCode.Dap.Service;
+using CsCode.Dap.Session;
 using CsCode.Dap.Tasks;
 using CsCode.Platform.FileSystem;
 using CsCode.Platform.Io;
@@ -30,6 +32,7 @@ public sealed class RepositoryDebugSetupTests : IAsyncLifetime
     private readonly RepoWorkspace _workspace;
     private readonly TestConfigurationService _settings = new();
     private readonly ContributionRegistry _contributions = new();
+    private readonly RecordingWindowService _window = new();
     private readonly DapPlatform _platform;
     private readonly TaskService _tasks;
     private readonly DebugConfigurationService _configurations;
@@ -37,7 +40,7 @@ public sealed class RepositoryDebugSetupTests : IAsyncLifetime
     public RepositoryDebugSetupTests()
     {
         _workspace = new RepoWorkspace(new Uri(RepoDocs.Root.TrimEnd('/') + "/"), _io);
-        _platform = new DapPlatform { Workspace = _workspace, Configuration = _settings, Contributions = _contributions };
+        _platform = new DapPlatform { Workspace = _workspace, Configuration = _settings, Contributions = _contributions, Window = _window };
         _tasks = new TaskService(_lane, _platform);
         _configurations = new DebugConfigurationService(_lane, _platform, () => _tasks);
     }
@@ -152,6 +155,100 @@ public sealed class RepositoryDebugSetupTests : IAsyncLifetime
         var config = RepoDocs.CodeBlockAfter(guide, "\"languages\": [\"c\", \"cpp\", \"rust\"]", "json");
         var parsed = Assert.Single(LaunchJson.Parse("{\"configurations\":[" + config + "]}", null, "guide").Configurations);
         Assert.Equal(("lldb-dap", "launch"), (parsed.Type, parsed.Request));
+    }
+
+    /// <summary>
+    /// F5 on "CsCode (sandboxed window)" end to end, through the real debug service, task runner and netcoredbg: the preLaunchTask builds the
+    /// app, the debugged process stops at a breakpoint in Program.RunApp, continues to a running window (a real one: Avalonia.Native on macOS,
+    /// X11 on Linux) that writes no crash log, and Stop (Shift+F5) ends it. Only the CSCODE_HOME is a temp folder instead of .scratch/debug-home.
+    /// Skips without netcoredbg (tools/fetch-netcoredbg.sh) or, on Linux, without a DISPLAY.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "RealAdapter")]
+    public async Task F5_on_the_sandboxed_window_builds_stops_at_a_breakpoint_runs_the_window_and_stop_ends_it()
+    {
+        var netcoredbg = FindNetCoreDbg();
+        Assert.SkipUnless(netcoredbg is not null, "netcoredbg is not available: run tools/fetch-netcoredbg.sh (expects .scratch/tools/netcoredbg/) or set CSCODE_NETCOREDBG");
+        Assert.SkipWhen(OperatingSystem.IsLinux() && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY")), "DISPLAY is not set: no X server for the debugged window");
+        Assert.SkipUnless(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS(), "netcoredbg's Unix build");
+        _settings.Set(NetCoreDbgAdapterFactory.SettingPath, netcoredbg);
+        using var home = new TempDirectory("cscode-f5-");
+
+        var launch = Assert.Single(await _configurations.GetLaunchConfigurationsAsync(null, Ct), c => c.Name == Sandboxed);
+        var properties = new Dictionary<string, JsonElement>(launch.Properties)
+        {
+            ["env"] = JsonSerializer.SerializeToElement(new Dictionary<string, string> { ["CSCODE_HOME"] = home.Path }),
+        };
+        var config = launch with { Properties = properties };
+
+        var program = RepoDocs.PathOf("src/CsCode.App/Program.cs");
+        var line = Array.FindIndex(File.ReadAllLines(program), l => l.Trim() == "BackgroundHost? host = null;");
+        Assert.True(line >= 0, "Program.RunApp's first statement after the crash handler moved: update this test");
+
+        await using var breakpoints = new BreakpointManager(null, _workspace);
+        breakpoints.Toggle(new Uri(program), line);
+        await using var service = new DebugService(_lane, _platform, breakpoints, _configurations, _tasks,
+            NetCoreDbgAdapterFactory.Builtins(new NetCoreDbgAdapterFactory(_platform))); // as the app registers it
+        var session = (DebugSession?)await service.StartAsync(config, Ct);
+        Assert.True(session is not null, "F5 started no session (the preLaunchTask failed or the adapter did not start): " + string.Join(" | ", _window.Messages.Select(m => m.Message)));
+        var stops = 0;
+        var terminated = false;
+        session.Stopped.Subscribe(_ => Interlocked.Increment(ref stops));
+        session.Terminated.Subscribe(_ => terminated = true);
+        try
+        {
+            await Eventually(() => Volatile.Read(ref stops) >= 1 && service.StopLocation is not null, 120_000, "the stop at Program.RunApp");
+            Assert.Equal(program, service.StopLocation!.Uri?.LocalPath);
+            Assert.Equal(line, service.StopLocation.Line);
+            var pid = session.DebuggeeProcessId;
+            Assert.NotNull(pid);
+
+            await session.ContinueAsync(ct: Ct);
+            await System.Threading.Tasks.Task.Delay(10_000, Ct); // services, the main window: all up well within this
+            Assert.False(terminated, "the debugged window exited instead of running");
+            Assert.True(IsRunning((int)pid.Value), "the debugged process is gone");
+            var logs = Path.Combine(home.Path, "logs");
+            var crashes = Directory.Exists(logs) ? Directory.GetFiles(logs, "crash-*.log") : [];
+            Assert.True(crashes.Length == 0, "the debugged window reported a crash:\n" + string.Join("\n", crashes.Select(File.ReadAllText)));
+
+            await service.StopAllAsync(Ct); // Shift+F5 (Stop Debugging)
+            await Eventually(() => terminated && !IsRunning((int)pid.Value), 30_000, "the end of the debugged window after Stop");
+        }
+        finally
+        {
+            // the debuggee, and anything it started in the test's home (without --foreground: the background session it handed the window to)
+            foreach (var left in ProcessTable.WithEnvironment("CSCODE_HOME", home.Path).Append((int)(session.DebuggeeProcessId ?? 0)).Where(p => p > 0 && IsRunning(p)))
+                try { using var p = System.Diagnostics.Process.GetProcessById(left); p.Kill(); } catch (InvalidOperationException) { } catch (ArgumentException) { }
+        }
+    }
+
+    private static bool IsRunning(int pid)
+    {
+        try { using var p = System.Diagnostics.Process.GetProcessById(pid); return !p.HasExited; }
+        catch (ArgumentException) { return false; }
+        catch (InvalidOperationException) { return false; }
+    }
+
+    private static async System.Threading.Tasks.Task Eventually(Func<bool> condition, int timeoutMs, string what)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException("timed out waiting for " + what);
+            await System.Threading.Tasks.Task.Delay(50, Ct);
+        }
+    }
+
+    /// <summary>netcoredbg: CSCODE_NETCOREDBG, else .scratch/tools/netcoredbg/ in a folder above the tests (where tools/fetch-netcoredbg.sh puts it).</summary>
+    private static string? FindNetCoreDbg()
+    {
+        if (Environment.GetEnvironmentVariable("CSCODE_NETCOREDBG") is { Length: > 0 } fromEnv && File.Exists(fromEnv)) return fromEnv;
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, ".scratch", "tools", "netcoredbg", NetCoreDbgAdapterFactory.ExecutableName);
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
     }
 
     /// <summary>The repository folder on the real file system; no file watching (the tests read the files once).</summary>
