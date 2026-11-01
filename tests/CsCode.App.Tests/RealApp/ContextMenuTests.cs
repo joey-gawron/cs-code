@@ -120,13 +120,36 @@ public class RealAppContextMenuTests
         var view = EditorView(host);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var menu = await RightClickAsync(host, view, PointOfOffset(view, 4, 13));
-        Assert.Equal(["Rename...", "-", "Go To Definition", "Go To Declaration", "Go To Implementation"], Headers(menu).Take(5));
+        Assert.Equal(["Rename...", "-", "Peek Definition", "Go To Definition", "Go To Declaration", "Go To Implementation"], Headers(menu).Take(6));
+        Assert.Equal(PlatformKeys.Label("Alt+F12", "⌥F12"), Entries(menu).Single(e => e.AccessibleName == "Peek Definition").Gesture);
         var renameItem = ContextMenus.ItemsOf(menu).First(i => ContextMenus.EntryOf(i)!.AccessibleName == "Rename...");
         Assert.Equal(PlatformKeys.Label("Ctrl+R, Ctrl+R", "⌘R ⌘R"), ContextMenus.EntryOf(renameItem)!.Gesture);
         Assert.False(renameItem.IsEnabled); // the server has not answered prepareRename yet: the menu did not wait for it
         prepared.SetResult(new PrepareRenameResult(TextRange.FromLines(4, 12, 4, 18), null));
         Assert.True(await RealAppHost.WaitFor(() => renameItem.IsEnabled), "Rename enabled when prepareRename answered");
         menu.Close();
+    }
+
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task A_call_hierarchy_provider_adds_View_Call_Hierarchy_after_the_navigation_items_with_its_key()
+    {
+        await using var host = await StartWithFileAsync();
+        using var calls = host.Get<ILanguageFeatureRegistry>().Register<ICallHierarchyProvider>(DocumentSelector.All, new NoCalls());
+        await DevScene.SettleAsync(10);
+        var view = EditorView(host);
+        var menu = await RightClickAsync(host, view, PointOfOffset(view, 4, 13));
+        var headers = Headers(menu);
+        Assert.Equal(["View Call Hierarchy", "-"], headers.Take(2));
+        Assert.Equal(PlatformKeys.Label("Ctrl+K, Ctrl+T", "⌘K ⌘T"), Entries(menu).Single(e => e.AccessibleName == "View Call Hierarchy").Gesture);
+        Assert.DoesNotContain("View Type Hierarchy", headers); // no type hierarchy provider
+        menu.Close();
+    }
+
+    private sealed class NoCalls : ICallHierarchyProvider
+    {
+        public ValueTask<IReadOnlyList<HierarchyItem>?> PrepareCallHierarchyAsync(ITextDocument document, TextPosition position, CancellationToken ct) => ValueTask.FromResult<IReadOnlyList<HierarchyItem>?>(null);
+        public ValueTask<IReadOnlyList<CallHierarchyIncomingCall>?> IncomingCallsAsync(HierarchyItem item, CancellationToken ct) => ValueTask.FromResult<IReadOnlyList<CallHierarchyIncomingCall>?>(null);
+        public ValueTask<IReadOnlyList<CallHierarchyOutgoingCall>?> OutgoingCallsAsync(HierarchyItem item, CancellationToken ct) => ValueTask.FromResult<IReadOnlyList<CallHierarchyOutgoingCall>?>(null);
     }
 
     [AvaloniaFact(Timeout = 60_000)]
