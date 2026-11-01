@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Avalonia.Headless.XUnit;
 using CsCode.Core.Debugging;
@@ -105,6 +106,42 @@ public class ConsolePumpTests
         ]);
         Assert.Equal(["tick", "tick", "> a", "1", "> b", "done", "> c"], lines.Select(l => l.Text));
         GC.KeepAlive(lost);
+    }
+
+    [Fact]
+    public async Task A_repl_line_survives_output_overflowing_the_queue_while_a_drain_is_busy()
+    {
+        var delivered = new ConcurrentQueue<ConsoleLine>();
+        using var busy = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        using var pump = new ConsoleOutputPump(new ConsoleBuffer(), _ => true, b =>
+        {
+            foreach (var l in b) delivered.Enqueue(l);
+            busy.Set();
+            release.Wait(TimeSpan.FromSeconds(10)); // the first batch holds the drain: the UI is behind, the queue fills
+        });
+        var s = new FakeDebugSession();
+        var first = new DebugOutputEventArgs(s, "stdout", "first\n");
+        pump.Enqueue(first);
+        Assert.True(busy.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+
+        pump.EnqueueRepl(new ReplLine(ConsoleLineKind.Input, "> x", first.Sequence));
+        pump.EnqueueRepl(new ReplLine(ConsoleLineKind.Result, "42", first.Sequence));
+        // > 4 MB of 4,000-character lines: the oldest output is dropped, never the user's lines
+        var line = new string('o', ConsoleOutputPump.MaxLineChars - 1) + "\n";
+        for (var i = 0; i < ConsoleOutputPump.MaxQueuedChars / line.Length + 100; i++)
+            pump.Enqueue(new DebugOutputEventArgs(s, "stdout", line));
+        release.Set();
+
+        var sw = Stopwatch.StartNew();
+        while (!delivered.Any(l => l.Text == "42") && sw.ElapsedMilliseconds < 5_000)
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        var texts = delivered.Select(l => l.Text).ToList();
+        Assert.Contains("> x", texts);
+        Assert.Contains("42", texts);
+        Assert.True(texts.IndexOf("> x") < texts.IndexOf("42"));
+        // placed after the output it followed: "first" came in the earlier batch, so the echo heads the next one (after the drop note)
+        Assert.True(texts.IndexOf("first") < texts.IndexOf("> x"));
     }
 
     [Fact]

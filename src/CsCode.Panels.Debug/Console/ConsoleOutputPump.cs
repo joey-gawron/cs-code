@@ -13,22 +13,22 @@ namespace CsCode.Panels.Debug.Console;
 /// into lines, parses their ANSI escapes (<see cref="AnsiParser"/>) and hands one immutable batch to <c>deliver</c>.</item>
 /// </list>
 /// A debuggee printing a million lines a second therefore costs the UI one small batch per frame and costs memory nothing.
-/// <para>REPL lines (what the user evaluated and its result) go through the same queue (<see cref="EnqueueRepl"/>) and are placed among the
-/// output by <see cref="DebugOutputEventArgs.Sequence"/>, with the same rule a new console uses to replay the transcript: after the newest
-/// output that had arrived when the line was entered.</para>
+/// <para>REPL lines (what the user evaluated and its result) have a queue of their own (<see cref="EnqueueRepl"/>), which the output bound never
+/// drops from (a flood cannot take the user's line away), and are placed among the output by <see cref="DebugOutputEventArgs.Sequence"/>, with
+/// the same rule a new console uses to replay the transcript: after the newest output that had arrived when the line was entered.</para>
 /// </summary>
 internal sealed class ConsoleOutputPump : IDisposable
 {
     public const int MaxQueuedChars = 4 * 1024 * 1024;
     public const int MaxLineChars = 4_000;
 
-    private readonly record struct Item(DebugOutputEventArgs? Event, ReplLine? Repl);
-
     private readonly ConsoleBuffer _buffer;
     private readonly Func<ConsoleLine, bool> _accept;
     private readonly Action<IReadOnlyList<ConsoleLine>> _deliver;
     private readonly TimeSpan _interval;
-    private readonly ConcurrentQueue<Item> _queue = new();
+    private readonly ConcurrentQueue<DebugOutputEventArgs> _queue = new();
+    // Separate from the output so the drop-oldest bound never drops one (a few lines per Enter, nothing to bound).
+    private readonly ConcurrentQueue<ReplLine> _replQueue = new();
     private readonly object _gate = new();
     private readonly object _drainGate = new();
     // One ANSI style state per output category (stdout's colours do not leak into stderr); used under _drainGate only.
@@ -75,10 +75,10 @@ internal sealed class ConsoleOutputPump : IDisposable
     public void Enqueue(DebugOutputEventArgs e)
     {
         if (Volatile.Read(ref _disposed) != 0) return;
-        _queue.Enqueue(new Item(e, null));
+        _queue.Enqueue(e);
         var total = Interlocked.Add(ref _queuedChars, e.Output.Length);
         while (total > MaxQueuedChars && _queue.TryDequeue(out var dropped))
-            total = Interlocked.Add(ref _queuedChars, -(dropped.Event?.Output.Length ?? 0)); // drop-oldest: the newest output is what a console is for
+            total = Interlocked.Add(ref _queuedChars, -dropped.Output.Length); // drop-oldest: the newest output is what a console is for
         Arm(null);
     }
 
@@ -86,7 +86,7 @@ internal sealed class ConsoleOutputPump : IDisposable
     public void EnqueueRepl(ReplLine line)
     {
         if (Volatile.Read(ref _disposed) != 0) return;
-        _queue.Enqueue(new Item(null, line));
+        _replQueue.Enqueue(line);
         Arm(null);
     }
 
@@ -131,14 +131,13 @@ internal sealed class ConsoleOutputPump : IDisposable
             var events = new List<DebugOutputEventArgs>(seed.Length + _queue.Count);
             events.AddRange(seed);
             List<ReplLine>? repl = seedRepl.Count > 0 ? [.. seedRepl] : null;
-            while (_queue.TryDequeue(out var item))
+            // REPL lines first: the output a line follows was enqueued before it, so it is in this batch too (taken after) and the line is
+            // never shown ahead of it.
+            while (_replQueue.TryDequeue(out var r)) (repl ??= new List<ReplLine>()).Add(r);
+            while (_queue.TryDequeue(out var e))
             {
-                if (item.Event is { } e)
-                {
-                    Interlocked.Add(ref _queuedChars, -e.Output.Length);
-                    if (seedSequences is null || !seedSequences.Contains(e.Sequence)) events.Add(e);
-                }
-                else if (item.Repl is { } r) (repl ??= new List<ReplLine>()).Add(r);
+                Interlocked.Add(ref _queuedChars, -e.Output.Length);
+                if (seedSequences is null || !seedSequences.Contains(e.Sequence)) events.Add(e);
             }
             if (events.Count > 0 || repl is not null)
             {
@@ -152,7 +151,7 @@ internal sealed class ConsoleOutputPump : IDisposable
             }
         }
         // More may have arrived while we worked.
-        if (!_queue.IsEmpty) Arm(null);
+        if (!_queue.IsEmpty || !_replQueue.IsEmpty) Arm(null);
     }
 
     /// <summary>
@@ -295,6 +294,7 @@ internal sealed class ConsoleOutputPump : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _timer.Dispose();
         while (_queue.TryDequeue(out _)) { }
+        while (_replQueue.TryDequeue(out _)) { }
         lock (_gate) { _seed = []; _seedSequences = null; _seedRepl = []; }
     }
 }
