@@ -8,7 +8,8 @@ namespace CsCode.Panels.Testing;
 
 /// <summary>
 /// "Run Test | Debug Test" above each test the Test Explorer knows (the C# Dev Kit / rust-analyzer look), through the editor's code lens: the
-/// same tests as the gutter glyphs (<see cref="TestGutterProvider"/>), so they appear after discovery and follow the explorer's tree. A click runs
+/// same tests as the gutter glyphs (<see cref="TestGutterProvider"/>), so they appear after discovery and follow the explorer's tree; only a
+/// change of the tests or their places refreshes them (<see cref="TestGutterProvider.TestsChanged"/>), never a result during a run. A click runs
 /// <see cref="RunCommand"/> / <see cref="DebugCommand"/> with the test's id. <c>testing.codeLens</c> = false turns them off.
 /// </summary>
 internal sealed class TestCodeLensProvider : ICodeLensProvider, IDisposable
@@ -25,7 +26,7 @@ internal sealed class TestCodeLensProvider : ICodeLensProvider, IDisposable
     {
         _tests = tests;
         _enabled = enabled;
-        _subscription = tests.StatesChanged.Subscribe(_changed.Fire);
+        _subscription = tests.TestsChanged.Subscribe(_changed.Fire); // not StatesChanged: outcomes do not change the lenses
     }
 
     public IEventSource<Uri?> CodeLensesChanged => _changed;

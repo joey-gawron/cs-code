@@ -100,8 +100,6 @@ public sealed class TestingHostTests
         var changed = new List<Uri?>();
         using var sub = provider.CodeLensesChanged.Subscribe(changed.Add);
         await rig.DiscoveredAsync();
-        rig.Host.Gutter.Invalidate(); // what a change of the explorer's tree does
-        Assert.Contains(null, changed); // the tree changed: the editors ask again
         var lenses = await provider.ProvideCodeLensesAsync(doc, TestContext.Current.CancellationToken);
         Assert.Equal([(4, "Run Test"), (4, "Debug Test"), (7, "Run Test"), (7, "Debug Test")], lenses!.Select(l => (l.Range.Start.Line, l.Command!.Title)));
 
@@ -118,6 +116,31 @@ public sealed class TestingHostTests
         Assert.Contains(null, changed);
         Assert.Null(await provider.ProvideCodeLensesAsync(doc, TestContext.Current.CancellationToken));
         Assert.Contains(rig.Config.Properties, p => p.Key == TestingSettings.CodeLens && p.Description is { Length: > 0 });
+    }
+
+    [Fact]
+    public async Task Test_results_leave_the_lenses_alone_and_a_change_of_the_tests_refreshes_them()
+    {
+        using var rig = new HostRig();
+        await rig.DiscoveredAsync();
+        var doc = new InMemoryTextDocument(new Uri("file://" + HostRig.MathFile), "csharp", HostRig.MathSource);
+        var provider = Assert.Single(rig.Features.GetProviders<ICodeLensProvider>(doc));
+        var lensChanges = new List<Uri?>();
+        var stateChanges = 0;
+        using var sub = provider.CodeLensesChanged.Subscribe(lensChanges.Add);
+        using var states = rig.Host.Gutter.StatesChanged.Subscribe(_ => stateChanges++);
+
+        // a run changes outcomes only: the glyphs refresh, the editors are not asked to re-request every code lens (the server's too)
+        await rig.Commands.ExecuteAsync("testing.runAll");
+        rig.Host.Gutter.Invalidate();
+        Assert.True(stateChanges > 0);
+        Assert.Empty(lensChanges);
+
+        // a test moved to another line (rediscovery): the lenses follow
+        rig.Provider.Tests[rig.Project.Key][1] = FakeProvider.Test("Calc.MathTests.Subtracts", HostRig.MathFile, 9);
+        await rig.Commands.ExecuteAsync(TestingHost.Refresh);
+        for (var i = 0; i < 400 && lensChanges.Count == 0; i++) await Task.Delay(5, TestContext.Current.CancellationToken);
+        Assert.Contains(null, lensChanges);
     }
 
     [Fact]

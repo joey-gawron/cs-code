@@ -403,8 +403,8 @@ through the real keyboard pipeline, `editorHasMultipleSelections`, Vim on), `Key
 
 **Code lens** (`CodeLensFeature`, `CodeLensCommands`, `LineZones`). Every `ICodeLensProvider` of the document (the LSP client's, the Test
 Explorer's) is asked 500 ms after the text stops changing, at once when a provider comes or goes (the LSP client re-registers its provider on
-`workspace/codeLens/refresh`) or fires `ICodeLensProvider.CodeLensesChanged` (additive Core member; the Test Explorer fires it when discovery or
-results change), off the UI thread with a 5 s deadline; an answer for an older version of the text is dropped (the next request is scheduled).
+`workspace/codeLens/refresh`) or fires `ICodeLensProvider.CodeLensesChanged` (additive Core member; the Test Explorer fires it when discovery
+changes which tests a file has or their lines, never for results: a refresh asks every provider, the server's too, and re-resolves its lenses), off the UI thread with a 5 s deadline; an answer for an older version of the text is dropped (the next request is scheduled).
 At most 5000 lenses are kept. Each lens is anchored to its range start, so it moves with the text, and the lenses on screen stay until the next
 answer replaces them: typing never removes and re-adds zones, so the caret line does not jump. When the set does change, the first visible line
 keeps its place on screen (VS Code's `StableEditorScrollState`).

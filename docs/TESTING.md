@@ -35,7 +35,8 @@ services.AddCsCodeTestExplorer();   // TestingHost + the "testing" tool window (
 
 Every command is in the palette under "Test:" (Ctrl+Shift+P). In the editor, the glyph left of a test (right of the breakpoint margin) runs it
 on a click and offers Run Test / Debug Test / Reveal in Test Explorer on right-click, and the "Run Test | Debug Test" code lens above it
-(`TestCodeLensProvider`, the same tests as the glyphs, through the editor's code lens: docs/EDITOR.md §7c) runs or debugs it
+(`TestCodeLensProvider`, the same tests as the glyphs, through the editor's code lens: docs/EDITOR.md §7c; refreshed only when the
+tests of a file or their lines change, `TestGutterProvider.TestsChanged`, not on every result during a run) runs or debugs it
 (`testing.codeLens.run` / `testing.codeLens.debug` with the test's id). In the explorer: the toolbar's Run All, Run (the
 selected node, else everything), Debug, Rerun Failed and Cancel; double-click or Enter opens a test's source; the context menu has Run, Debug,
 Go to Test, Go to Failure, Copy Name, Copy Message.
@@ -196,7 +197,7 @@ Also read: `cscode.debug.rustDebugger` (the Rust debugger) and `cscode.debug.nod
 * **Controller**: grouping, aggregation, filters per selection, rerun failed/last, cases, cancel, rediscovery, results for unknown tests, debug
   without a debugger, batching.
 * **Host and window** (headless): commands/settings/provider registration, Error List entries and context keys, `testing.openTesting`, the
-  glyph provider (states, lines following edits), the code lens provider (lenses per test, their commands, refresh on tree changes, the setting),
+  glyph provider (states, lines following edits), the code lens provider (lenses per test, their commands, refresh when the tests change but not on results, the setting),
   run at cursor / current file, disposal; the view's rows, toolbar, filter, details, context menu,
   keys, reveal, an empty workspace, a leak test, and a screenshot (Visual Studio Dark) saved to `.scratch/screenshots/test-explorer.png`.
 
