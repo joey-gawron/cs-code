@@ -14,8 +14,9 @@ namespace CsCode.App.Tests.RealApp;
 /// <summary>
 /// The Test Explorer in the REAL application (<see cref="RealAppHost"/>) on a cargo package: the folder opens and its tests are discovered
 /// (cargo builds, the test binary lists them); Run All runs them, a failure lands in the Error List at the panic's line; then Debug of one test
-/// starts the test binary under GDB (the Linux default), stops at a breakpoint in the test, and after Continue the test's result comes back from
-/// the session's output. Linux only (GDB 14+, as the other real GDB tests); skips with the reason when gdb, cargo or rustc is missing.
+/// starts the test binary under the platform's Rust debugger — GDB on Linux, CodeLLDB on macOS (each the default there) — stops at a breakpoint
+/// in the test, and after Continue the test's result comes back from the session's output. Skips with the reason when the debugger (GDB 14+, or
+/// CodeLLDB's adapter: <see cref="CodeLldbToolchain.FindAdapter"/>), cargo or rustc is missing.
 /// </summary>
 public class TestExplorerRealAppTests
 {
@@ -38,7 +39,11 @@ public class TestExplorerRealAppTests
     [AvaloniaFact(Timeout = 240_000)]
     public async Task Rust_tests_are_discovered_run_and_debugged_to_a_breakpoint_in_the_real_app()
     {
-        Assert.SkipWhen(GdbToolchain.SkipReason() is not null, GdbToolchain.SkipReason() ?? "");
+        var codelldb = OperatingSystem.IsMacOS() ? CodeLldbToolchain.FindAdapter() : null;
+        var skip = OperatingSystem.IsMacOS()
+            ? codelldb is null ? "CodeLLDB's adapter was not found (tools/fetch-codelldb.sh, or CSCODE_CODELLDB)" : GdbToolchain.FindCargo() is null ? "cargo is not on PATH" : null
+            : GdbToolchain.SkipReason();
+        Assert.SkipWhen(skip is not null, skip ?? "");
         await using var host = RealAppHost.Create(h =>
         {
             h.Files.WriteFile("Cargo.toml", "[package]\nname = \"rs_sample\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
@@ -46,7 +51,8 @@ public class TestExplorerRealAppTests
             var settingsPath = h.Home.Combine("config", "settings.json");
             var settings = JsonNode.Parse(File.ReadAllText(settingsPath))!.AsObject();
             settings[GdbAdapterFactory.ArgsSettingPath] = new JsonArray("-nx");
-            settings["cscode.debug.rustDebugger"] = "gdb";
+            settings["cscode.debug.rustDebugger"] = codelldb is null ? "gdb" : "lldb";
+            if (codelldb is not null) settings[CodeLldbAdapterFactory.SettingPath] = codelldb;
             settings[TestingSettings.OpenTesting] = "neverOpen";
             File.WriteAllText(settingsPath, settings.ToJsonString());
         });
@@ -62,16 +68,19 @@ public class TestExplorerRealAppTests
         await testing.Controller.RunAllAsync();
         Assert.True(await RealAppHost.WaitFor(() => !testing.Controller.IsRunning && tree.FindTest("lib/tests::fails")!.Outcome == TestOutcome.Failed, 60_000), "the run finished");
         Assert.Equal(TestOutcome.Passed, tree.FindTest("lib/tests::adds")!.Outcome);
-        Assert.True(await RealAppHost.WaitFor(() => host.Get<IDiagnosticService>().Get(new Uri(lib)).Any(d => d.Source == "Test Explorer" && d.Range.Start.Line == 12), 10_000), "the failure in the Error List");
+        Assert.True(await RealAppHost.WaitFor(() => host.Get<IDiagnosticService>().Get(new Uri(lib)).Any(d => d.Source == "Test Explorer" && d.Range.Start.Line == 11), 10_000), "the failure in the Error List");
 
         // Debug one test: a breakpoint in it stops the test binary there
         var debug = host.Get<IDebugService>();
-        var line = 8; // let sum = add(1, 2);
-        debug.Breakpoints.Add(new Uri(lib), line);
+        var line = 7; // let sum = add(1, 2);
+        // rustc records the directory it ran in as the OS resolves it (macOS: /private/var/... for the temp folder's /var/...), and the debugger
+        // matches breakpoints by that path: set it on the resolved path, as a user's breakpoint in a folder without links is
+        var source = new Uri(TempDirectory.PhysicalPath(lib));
+        debug.Breakpoints.Add(source, line);
         var run = testing.Controller.RunAsync([tree.FindTest("lib/tests::adds")!], debug: true);
         Assert.True(await RealAppHost.WaitFor(() => debug.State == DebugState.Stopped && debug.StopLocation is not null, 120_000),
             $"stopped (state {debug.State}); output: " + host.Get<Core.Platform.IOutputService>().GetOrCreate(TestingHost.OutputChannelName).GetText());
-        Assert.Equal((new Uri(lib), line), (debug.StopLocation!.Uri, debug.StopLocation.Line));
+        Assert.Equal((source.LocalPath, line), (TempDirectory.PhysicalPath(debug.StopLocation!.Uri!.LocalPath), debug.StopLocation.Line));
         Assert.Equal(TestOutcome.Running, tree.FindTest("lib/tests::adds")!.Outcome);
         debug.Breakpoints.RemoveAll();
         await debug.ActiveSession!.ContinueAsync();
