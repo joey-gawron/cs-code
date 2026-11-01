@@ -308,6 +308,10 @@ public class PerfMemoryTests(ITestOutputHelper output)
         using var host = ViewHost.Create();
         host.Factory.Services.Features.Register<CsCode.Core.Languages.ICompletionProvider>(DocumentSelector.All, FakeCompletionProvider.Items("alpha", "alphabet"));
         host.Factory.Services.Features.Register<CsCode.Core.Languages.IHoverProvider>(DocumentSelector.All, new FakeHoverProvider((_, _, _) => Task.FromResult<CsCode.Core.Languages.Hover?>(new CsCode.Core.Languages.Hover([CsCode.Core.Languages.MarkupContent.Markdown("**hi**")]))));
+        var lenses = new CodeLensViewTests.FakeLenses(_ => [CodeLensViewTests.Lens(0, 0, "1 reference")]);
+        host.Factory.Services.Features.Register<CsCode.Core.Languages.ICodeLensProvider>(DocumentSelector.All, lenses); // its zone layer sits in the text view
+        host.Factory.Services.Features.Register<CsCode.Core.Languages.ISemanticTokensProvider>(DocumentSelector.All,
+            new SemanticTokenTests.FakeSemantic(SemanticTokenTests.Legend, _ => SemanticTokenTests.Encode((0, 4, 5, 1, 0))));
         // (not focused: a FOCUSED AvaloniaEdit editor stays reachable from Avalonia's focus / input-method machinery until focus moves elsewhere — the
         //  same is true of a bare TextEditor — and the shell moves focus when it closes a tab)
         var path = host.Dir.WriteFile("leak.txt", "alp alpha\n");
@@ -319,6 +323,8 @@ public class PerfMemoryTests(ITestOutputHelper output)
         ViewTestHelpers.Type(view, "al");
         await ViewHost.WaitFor(() => view.Feature<CsCode.Editor.Features.CompletionFeature>()!.IsOpen, "completion popup open");
         await view.Feature<CsCode.Editor.Features.HoverFeature>()!.HoverAtAsync(1);
+        await ViewHost.WaitFor(() => view.Feature<CsCode.Editor.Features.CodeLensFeature>()!.Placements.Count == 1, "a code lens shown");
+        await ViewHost.WaitFor(() => view.Feature<CsCode.Editor.Features.SemanticTokensFeature>()!.TokenCount == 1, "semantic tokens applied");
         ViewHost.Pump();
         var weak = new[] { new WeakReference(view), new WeakReference(view.Editor), new WeakReference(view.Overlay) };
         window.Content = null;

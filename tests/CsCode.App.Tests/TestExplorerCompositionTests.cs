@@ -35,6 +35,12 @@ public class TestExplorerCompositionTests
             var features = sp.GetRequiredService<ILanguageFeatureRegistry>();
             Assert.Single(features.GetProviders<ITestGutterProvider>(new InMemoryTextDocument(new Uri("file:///w/T.cs"), "csharp")));
             Assert.Single(features.GetProviders<ITestGutterProvider>(new InMemoryTextDocument(new Uri("file:///w/lib.rs"), "rust")));
+            // "Run Test | Debug Test" code lenses through the editor's code lens, with their commands
+            Assert.Single(features.GetProviders<ICodeLensProvider>(new InMemoryTextDocument(new Uri("file:///w/T.cs"), "csharp")));
+            Assert.True(commands.Has("testing.codeLens.run") && commands.Has("testing.codeLens.debug"));
+            var config = sp.GetRequiredService<IConfigurationService>();
+            foreach (var key in new[] { "testing.codeLens", "editor.codeLens", "editor.codeLensFontSize", "editor.codeLensFontFamily", "editor.semanticHighlighting.enabled" })
+                Assert.Contains(config.Properties, p => p.Key == key && p.Description is { Length: > 0 });
             Assert.Contains(Menus.ShellMenus.Build(), r => r.Header == "Te_st" && r.Children!.Any(c => c.CommandId == TestingHost.RunAll));
         }
         finally
