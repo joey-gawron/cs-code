@@ -391,8 +391,8 @@ through the real keyboard pipeline, `editorHasMultipleSelections`, Vim on), `Key
 
 `View/Decorations` (one `ScrollDecorations` per view, also in large-file mode and in split views) adds VS Code's two scroll aids. Both controls
 sit in the view's grid over the editor's right edge, below the popup overlay, and their width is reserved with the text area's margin, so no
-text (and no sticky-scroll row) runs under them: text | minimap | ruler (the ruler over the vertical scrollbar), or minimap | gutter | text |
-ruler with `editor.minimap.side: left`.
+text (and no sticky-scroll row: its panel keeps the right inset while it lines the rows up with the text) runs under them: text | minimap |
+ruler (the ruler over the vertical scrollbar), or minimap | gutter | text | ruler with `editor.minimap.side: left`.
 
 **Overview ruler** (the scrollbar's lanes; `OverviewRuler`, `OverviewRulerModel`):
 

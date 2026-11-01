@@ -138,6 +138,43 @@ public class ScrollDecorationsViewTests(ITestOutputHelper output)
         Assert.Equal(new Thickness(120, 0, Deco(view).Ruler.Width, 0), sticky.Panel.Margin);
     }
 
+    /// <summary>
+    /// The pinned rows used to lose the right inset as soon as any were shown (lining them up with the text set the panel's margin to the text
+    /// view's origin and 0 on the right), so they ran over the minimap and the ruler and took their clicks; a resize then dropped the origin.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task Pinned_sticky_scroll_rows_end_at_the_minimap_and_keep_lining_up_with_the_text_after_a_resize()
+    {
+        using var host = ViewHost.Create();
+        host.Config.Set("editor.stickyScroll.enabled", true);
+        var text = TreeSitter.StickyScrollTests.Methods(3, 40);
+        var (_, view, window) = await host.OpenAsync(text, "Big.cs", 900, 400);
+        var sticky = view.Feature<StickyScrollFeature>()!;
+        await ViewHost.WaitFor(() => view.Feature<FoldingFeature>()!.RangeCount >= 5, "folds");
+        await Settle(view);
+        var method1 = text.Split('\n').ToList().FindIndex(l => l.Contains("Method1", StringComparison.Ordinal));
+        await TreeSitter.StickyScrollTests.ScrollToLineAsync(view, method1 + 10);
+        await ViewHost.WaitFor(() => sticky.PinnedLines.Count >= 3, $"pinned: {string.Join(" | ", sticky.PinnedTexts)}");
+
+        void AssertBetweenTextAndMinimap(string when)
+        {
+            ViewHost.Pump();
+            var panel = sticky.Panel.Bounds;
+            var minimapLeft = Deco(view).Minimap.Control.Bounds.Left;
+            var textLeft = view.TextView.TranslatePoint(default, view)!.Value.X;
+            Assert.True(Deco(view).Minimap.Control.IsVisible, when);
+            Assert.True(panel.Width > 0, when);
+            Assert.True(panel.Right <= minimapLeft + 0.5, $"{when}: rows end at {panel.Right}, the minimap starts at {minimapLeft}");
+            Assert.Equal(textLeft, panel.Left, 1);
+        }
+
+        AssertBetweenTextAndMinimap("pinned");
+        window.Width = 1100;
+        await ViewHost.WaitFor(() => view.Bounds.Width > 1000, "resized");
+        AssertBetweenTextAndMinimap("after a resize");
+        Assert.True(sticky.Panel.Margin.Left > 0, "the rows still start past the line numbers");
+    }
+
     [AvaloniaFact]
     public async Task Diff_editor_panes_have_no_minimap_but_keep_the_ruler()
     {
