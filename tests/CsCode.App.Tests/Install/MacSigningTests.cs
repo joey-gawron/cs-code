@@ -124,15 +124,18 @@ public sealed class MacSigningTests : IDisposable
         {
             Path.Combine(bundled, "adapter", "codelldb"), Path.Combine(bundled, "lldb", "lib", "liblldb.dylib"), // the adapters first
             Path.Combine(App, "Contents", "MacOS", "libSkiaSharp.dylib"), Path.Combine(App, "Contents", "MacOS", "libcoreclr.dylib"), // libraries
-            Path.Combine(App, "Contents", "MacOS", "cscode-server"), // the other executables
+            // and every other file in Contents/MacOS: codesign refuses a bundle with an unsigned file there ("code object is not signed at all
+            // In subcomponent: …/Avalonia.Remote.Protocol.dll", seen with the real publish)
+            Path.Combine(App, "Contents", "MacOS", "cscode.dll"), Path.Combine(App, "Contents", "MacOS", "cscode.deps.json"),
+            Path.Combine(App, "Contents", "MacOS", "cscode-server"), // the other executables after what they load
             App, // the bundle (and its main executable) last
         };
         Assert.True(expected.Length == order.Count, string.Join("\n", order));
         foreach (var path in expected) Assert.Contains(path, order);
         Assert.True(order.IndexOf(expected[0]) < order.IndexOf(expected[2]) && order.IndexOf(expected[1]) < order.IndexOf(expected[3]), string.Join("\n", order));
-        Assert.True(order.IndexOf(expected[3]) < order.IndexOf(expected[4]) && order.IndexOf(expected[2]) < order.IndexOf(expected[4]), string.Join("\n", order));
+        Assert.True(expected[2..6].All(p => order.IndexOf(p) < order.IndexOf(expected[6])), string.Join("\n", order));
         Assert.Equal(App, order[^1]);
-        Assert.DoesNotContain(Path.Combine(App, "Contents", "MacOS", "cscode.dll"), order); // not Mach-O
+        Assert.DoesNotContain(Path.Combine(App, "Contents", "MacOS", "cscode"), order); // the main executable: signed with the bundle
         Assert.All(signs.Where(c => Target(c).Contains(BundledAdapters.FolderName, StringComparison.Ordinal)), c => Assert.Equal("debug-adapters.entitlements", EntitlementsOf(c)));
         Assert.All(signs.Where(c => !Target(c).Contains(BundledAdapters.FolderName, StringComparison.Ordinal)), c => Assert.Equal("cscode.entitlements", EntitlementsOf(c)));
         Assert.Contains(calls, c => c is ["codesign", "--verify", "--deep", "--strict", ..] && Target(c) == App); // and checked

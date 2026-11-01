@@ -135,10 +135,12 @@ tools/package-macos.sh --sign-identity "Developer ID Application: Your Name (TEA
 
 * Signing (`tools/macos/make-app-bundle.sh`) goes inside out, every Mach-O file with the **hardened runtime** and a **secure timestamp**:
   the bundled debug adapters with `packaging/macos/debug-adapters.entitlements` (debugger, JIT, unsigned executable memory, library
-  validation off), the app's libraries and its other executables (`cscode-server`), then the bundle with `packaging/macos/cscode.entitlements`:
-  `com.apple.security.cs.allow-jit` (the .NET JIT) and `com.apple.security.cs.disable-library-validation` (tree-sitter grammars built by you,
-  Homebrew or Nix; audit gap-13). `allow-unsigned-executable-memory` is not needed: a test runs the app's own apphost under the hardened
-  runtime with exactly these two, and shows it cannot start with fewer. Never `--deep`. Then `codesign --verify --deep --strict`.
+  validation off), every other file in `Contents/MacOS` (libraries and assemblies, then `cscode-server`: codesign refuses a bundle with any
+  unsigned file there), then the bundle with `packaging/macos/cscode.entitlements`: `com.apple.security.cs.allow-jit` (the .NET JIT) and
+  `com.apple.security.cs.disable-library-validation` (tree-sitter grammars built by you, Homebrew or Nix; audit gap-13).
+  `allow-unsigned-executable-memory` is not needed: a test runs the app's own apphost under the hardened runtime with exactly these two and
+  shows it cannot start with fewer, and the real osx-arm64 publish, signed this way (ad hoc in place of the identity), starts and runs.
+  Never `--deep`. Then `codesign --verify --deep --strict`.
 * Notarization zips the app (`ditto`), submits it with `xcrun notarytool submit --keychain-profile cscode-notary --wait` (usually a few
   minutes), staples the ticket (`xcrun stapler staple`, `stapler validate`), checks it as Gatekeeper does (`spctl --assess --type execute`:
   "source=Notarized Developer ID") and writes **`.scratch/macos/<rid>/CsCode-<version>-<rid>.zip`**, the file to hand out. A rejection stops

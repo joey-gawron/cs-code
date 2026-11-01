@@ -22,8 +22,8 @@
 #   --no-sign         skip the ad-hoc signature (codesign --sign -), which Apple silicon needs for a bundle built or changed locally
 #   --sign-identity ID  sign for other Macs instead of ad hoc: ID is a "Developer ID Application: Name (TEAMID)" identity in the keychain (or its
 #                     SHA-1). Inside out, each with the hardened runtime (--options runtime) and a secure timestamp: every Mach-O file of the
-#                     debug adapters (with --adapter-entitlements), every other Mach-O library and executable in Contents/MacOS (the apphosts
-#                     cscode and cscode-server, the runtime's and Skia's dylibs, tree-sitter's), then the bundle (with --entitlements); never
+#                     debug adapters (with --adapter-entitlements), every other file in Contents/MacOS (libraries and assemblies first, then
+#                     the apphosts such as cscode-server: codesign wants everything there signed), then the bundle (with --entitlements); never
 #                     --deep, which Apple advises against for signing. Notarization is tools/package-macos.sh's (--notarize)
 #   --entitlements FILE           the app's entitlements (default packaging/macos/cscode.entitlements: allow-jit, disable-library-validation)
 #   --adapter-entitlements FILE   the debug adapters' (default packaging/macos/debug-adapters.entitlements)
@@ -216,14 +216,22 @@ if [ "$sign" = 1 ] && [ "$identity" != "-" ]; then
         while IFS= read -r -d '' bin; do macho "$bin" && sign_one "$bin" "$adapter_entitlements"; done \
             < <(find "$app/Contents/Resources/debug-adapters" -type f -print0 | sort -z)
     fi
-    # Libraries before the executables that load them; the main executable (Contents/MacOS/cscode) is signed with the bundle.
+    # Contents/MacOS holds code only, for codesign: every file there is signed, the assemblies, .json files and remote server bundles too
+    # (their signature goes in extended attributes, which ditto keeps), or the bundle's signature fails with "code object is not signed at all
+    # In subcomponent: …/Avalonia.Remote.Protocol.dll" (found running this on the real publish; Avalonia's macOS deployment guide signs every
+    # file there the same way). Libraries and other files before the executables that load them; the main executable (Contents/MacOS/cscode)
+    # is signed with the bundle.
+    executable() { # a Mach-O program (not a library: a .dylib or .so by name, or what `file` calls a shared library or bundle)
+        case "$1" in *.dylib|*.so) return 1 ;; esac
+        macho "$1" && case "$(file -b "$1")" in *executable*) return 0 ;; *) return 1 ;; esac
+    }
     while IFS= read -r -d '' bin; do
         [ "$bin" = "$app/Contents/MacOS/cscode" ] && continue
-        macho "$bin" && case "$bin" in *.dylib|*.so) sign_one "$bin" "$entitlements" ;; esac
+        executable "$bin" || sign_one "$bin" "$entitlements"
     done < <(find "$app/Contents/MacOS" -type f -print0 | sort -z)
     while IFS= read -r -d '' bin; do
         [ "$bin" = "$app/Contents/MacOS/cscode" ] && continue
-        macho "$bin" && case "$bin" in *.dylib|*.so) ;; *) sign_one "$bin" "$entitlements" ;; esac
+        executable "$bin" && sign_one "$bin" "$entitlements"
     done < <(find "$app/Contents/MacOS" -type f -print0 | sort -z)
     sign_one "$app" "$entitlements"
     "$codesign" --verify --deep --strict --verbose=2 "$app" || { echo "make-app-bundle.sh: the signed bundle does not verify" >&2; exit 1; }
