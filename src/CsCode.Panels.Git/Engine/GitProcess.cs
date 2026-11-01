@@ -62,7 +62,7 @@ public sealed class GitRunner : IDisposable
         }
     }
 
-    /// <summary>The overall limit of one network operation when <see cref="NetworkTimeout"/> is not set (stalls end sooner: <see cref="GitNetwork"/>).</summary>
+    /// <summary>The overall limit of one network operation when <see cref="NetworkTimeout"/> is not set (an ssh connection that does not come up or goes silent ends sooner: <see cref="GitNetwork"/>; HTTPS has no stall limit of ours).</summary>
     public static readonly TimeSpan DefaultNetworkTimeout = TimeSpan.FromMinutes(30);
 
     /// <summary>The longest timeout a timer takes (about 49.7 days); a longer one means none.</summary>
@@ -174,7 +174,8 @@ public sealed class GitRunner : IDisposable
         {
             // the user's ssh configuration is read here, on the lane (file reads stay off the UI thread)
             var sshFiles = GitNetwork.SshConfigFiles(GitNetwork.UserSshCommand(Environment.GetEnvironmentVariable, gitConfig),
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                GitNetwork.SystemSshConfigFiles(OperatingSystem.IsWindows(), Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), exe));
             var env = GitNetwork.Environment(Environment.GetEnvironmentVariable, gitConfig, askpass is null ? null : (askpass.Program, askpass.Environment),
                 GitNetwork.ConfiguredSshKeywords(sshFiles));
             return RunSync(exe, workingDirectory, args, null, env, timeout, ct, GitNetwork.DetachLauncher);

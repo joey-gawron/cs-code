@@ -103,6 +103,13 @@ public sealed class NetworkTests : IDisposable
         Assert.Equal([Path.Combine("/home/u", ".ssh", "config"), "/etc/ssh/ssh_config"], GitNetwork.SshConfigFiles(null, "/home/u"));
         Assert.Equal([Path.Combine("/home/u", "cfg")], GitNetwork.SshConfigFiles("ssh -F ~/cfg -i key", "/home/u"));
         Assert.Equal(["/opt/c"], GitNetwork.SshConfigFiles("ssh -F/opt/c", "/home/u"));
+        // on Windows the system-wide files are Windows OpenSSH's (%ProgramData%) and Git for Windows' own ssh's (etc of its install), not /etc
+        Assert.Equal(["/etc/ssh/ssh_config"], GitNetwork.SystemSshConfigFiles(false, "/pd", "/usr/bin/git"));
+        Assert.Equal([Path.Join("/pd", "ssh", "ssh_config"), Path.Join("/G", "etc", "ssh", "ssh_config")],
+            GitNetwork.SystemSshConfigFiles(true, "/pd", Path.Join("/G", "cmd", "git.exe")));
+        Assert.Equal([Path.Join("/G", "etc", "ssh", "ssh_config")], GitNetwork.SystemSshConfigFiles(true, null, Path.Join("/G", "mingw64", "bin", "git.exe")));
+        Assert.Equal([Path.Join("/G", "etc", "ssh", "ssh_config")], GitNetwork.SystemSshConfigFiles(true, "", Path.Join("/G", "bin", "git.exe")));
+        Assert.Equal([Path.Combine("/home/u", ".ssh", "config"), "C:/pd/ssh/ssh_config"], GitNetwork.SshConfigFiles(null, "/home/u", ["C:/pd/ssh/ssh_config"]));
     }
 
     [Fact]

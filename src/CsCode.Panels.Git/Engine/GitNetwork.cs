@@ -83,9 +83,10 @@ public static class GitNetwork
 
     /// <summary>
     /// The ssh configuration files ssh reads for <paramref name="userCommand"/> (null: plain <c>ssh</c>): the file of its <c>-F</c> option (ssh then
-    /// reads no other), else <c>~/.ssh/config</c> and <c>/etc/ssh/ssh_config</c>.
+    /// reads no other), else <c>~/.ssh/config</c> and the system-wide files (<paramref name="systemFiles"/>, default
+    /// <c>/etc/ssh/ssh_config</c>; on Windows <see cref="SystemSshConfigFiles"/>).
     /// </summary>
-    public static IReadOnlyList<string> SshConfigFiles(string? userCommand, string home)
+    public static IReadOnlyList<string> SshConfigFiles(string? userCommand, string home, IReadOnlyList<string>? systemFiles = null)
     {
         if (userCommand is not null && RunsSsh(userCommand))
         {
@@ -98,7 +99,31 @@ public static class GitNetwork
                 return [file == "~" || file.StartsWith("~/", StringComparison.Ordinal) ? Path.Combine(home, file.Length > 2 ? file[2..] : "") : file];
             }
         }
-        return [Path.Combine(home, ".ssh", "config"), "/etc/ssh/ssh_config"];
+        return [Path.Combine(home, ".ssh", "config"), .. systemFiles ?? ["/etc/ssh/ssh_config"]];
+    }
+
+    /// <summary>
+    /// The system-wide ssh configuration files: <c>/etc/ssh/ssh_config</c>, but on Windows (<paramref name="windows"/>) both the one Windows'
+    /// OpenSSH reads (<c>%ProgramData%\ssh\ssh_config</c>) and the one Git for Windows' own ssh reads (<c>etc\ssh\ssh_config</c> of its install,
+    /// found from <paramref name="gitExe"/>: <c>cmd\git.exe</c>, <c>bin\git.exe</c> or <c>mingw64\bin\git.exe</c>); either ssh may run git's
+    /// transport, and a file that does not exist counts as empty.
+    /// </summary>
+    public static IReadOnlyList<string> SystemSshConfigFiles(bool windows, string? programData, string? gitExe)
+    {
+        if (!windows) return ["/etc/ssh/ssh_config"];
+        var files = new List<string>();
+        if (!string.IsNullOrEmpty(programData)) files.Add(Path.Join(programData, "ssh", "ssh_config"));
+        var dir = string.IsNullOrEmpty(gitExe) ? null : Path.GetDirectoryName(gitExe);
+        if (dir is not null)
+        {
+            var name = Path.GetFileName(dir).ToLowerInvariant();
+            var parent = Path.GetDirectoryName(dir);
+            // mingw64\bin (or clangarm64\bin, usr\bin): the install is two up; cmd or bin: one up
+            var root = name == "bin" && parent is not null && Path.GetFileName(parent).ToLowerInvariant() is "mingw64" or "mingw32" or "clangarm64" or "usr"
+                ? Path.GetDirectoryName(parent) : parent;
+            if (root is not null) files.Add(Path.Join(root, "etc", "ssh", "ssh_config"));
+        }
+        return files;
     }
 
     /// <summary>

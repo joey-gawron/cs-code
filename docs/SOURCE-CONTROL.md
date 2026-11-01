@@ -60,9 +60,9 @@ the context key). Everything is optional: without the module the Explorer shows 
     execs rather than forking, and util-linux's `--wait` (2.29+, and refused by busybox) is not needed.
   * **Timeouts**: ssh gets `-o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4` (a host that does not answer in 30 s, or a link
     silent for a minute, fails), each only when the user's ssh configuration does not set that keyword: options on ssh's command line beat
-    `~/.ssh/config`, so ours are left out when `~/.ssh/config`, `/etc/ssh/ssh_config` or a file they `Include` (or the user's ssh command's `-F`
+    `~/.ssh/config`, so ours are left out when `~/.ssh/config`, `/etc/ssh/ssh_config` (on Windows `%ProgramData%\ssh\ssh_config` and Git for Windows' `etc\ssh\ssh_config`) or a file they `Include` (or the user's ssh command's `-F`
     file instead) sets it in any `Host`/`Match` block (`GitNetwork.ConfiguredSshKeywords`, read on the git lane before each operation); a
-    `ConnectTimeout 120` there gives 120 s, not 30 (the same goes for `BatchMode`). HTTP transfers get no low-speed limit (as in git and VS Code): curl's
+    `ConnectTimeout 120` there gives 120 s, not 30 (the same goes for `BatchMode`). The scan is per keyword, not per host (`ssh -G` would need the host and costs a process): a keyword set for one host leaves ours out for every host, and such a host's neighbours then rely on `git.networkTimeout` and the OS connect timeout. HTTP transfers get no low-speed limit (as in git and VS Code): curl's
     `GIT_HTTP_LOW_SPEED_LIMIT/TIME` abort a transfer whose average stays under the limit, and a live server counting or compressing objects
     without bitmaps, or running a slow pre-receive hook, sends only progress lines and keep-alives (tens of bytes a second) for minutes; the user's
     own `http.lowSpeedLimit/Time` still apply. The whole operation is stopped after `git.networkTimeout` (1800 s; 0 = no limit, and so is a value
