@@ -157,6 +157,11 @@ Numbers refer to the brief's MUST list.
 
 13. **Multi-cursor** (Add Next Occurrence, Select All Occurrences, Insert Cursor Above/Below, Alt+Click, editing at every caret as one undo step): see §7b.
 
+14. **Warm-up editor** (`EditorWarmUp`): a real view over a read-only document that is not registered with `IDocumentManager` (URI scheme
+    `cscode-warmup:`, the same kind of document as a diff side), for the warm spare to render once before it is claimed so the first file a
+    session opens does not pay the editor's first construction, layout, grammar load and tokenisation; `Dispose` leaves no view, tokenisation
+    session or document behind (docs/SESSIONS.md, "The warm spare"; `EditorWarmUpTests`).
+
 SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version and per set of symbol providers: a language server that starts after the file was opened is asked at the next request, without an edit), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
 ## 4. Threading rules and how they are verified
