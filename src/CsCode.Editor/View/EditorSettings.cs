@@ -48,7 +48,12 @@ public sealed record EditorSettings
     public bool StickyScroll { get; init; }
     public bool InlayHints { get; init; } = true;
     public bool CodeLens { get; init; } = true;
-    public bool SemanticHighlighting { get; init; } = true;
+    /// <summary><c>editor.codeLensFontSize</c>: 0 (the default) = 90 % of the editor's font size, as in VS Code.</summary>
+    public double CodeLensFontSize { get; init; }
+    /// <summary><c>editor.codeLensFontFamily</c>: empty (the default) = the editor's font.</summary>
+    public string CodeLensFontFamily { get; init; } = "";
+    /// <summary><c>editor.semanticHighlighting.enabled</c>: "true", "false" or "configuredByTheme" (the default: on when the theme says so).</summary>
+    public string SemanticHighlighting { get; init; } = LanguageRenderSettings.ConfiguredByTheme;
     public int QuickSuggestionsDelayMs { get; init; } = 10;
     public int HoverDelayMs { get; init; } = 300;
     public int UndoLimit { get; init; } = 1000;
@@ -117,8 +122,10 @@ public sealed record EditorSettings
             Minimap = G(SettingKeys.EditorMinimapEnabled, defaults.Minimap),
             StickyScroll = G("editor.stickyScroll.enabled", defaults.StickyScroll),
             InlayHints = G("editor.inlayHints.enabled", "on") != "off",
-            CodeLens = G("editor.codeLens", defaults.CodeLens),
-            SemanticHighlighting = G("editor.semanticHighlighting.enabled", true),
+            CodeLens = G(LanguageRenderSettings.CodeLensKey, defaults.CodeLens),
+            CodeLensFontSize = Math.Clamp(G(LanguageRenderSettings.CodeLensFontSizeKey, defaults.CodeLensFontSize), 0, 100),
+            CodeLensFontFamily = G(LanguageRenderSettings.CodeLensFontFamilyKey, defaults.CodeLensFontFamily) ?? "",
+            SemanticHighlighting = LanguageRenderSettings.ReadSemanticHighlighting(cfg.GetRawFor(LanguageRenderSettings.SemanticHighlightingKey, languageId)),
             QuickSuggestionsDelayMs = Math.Clamp(G("editor.quickSuggestionsDelay", defaults.QuickSuggestionsDelayMs), 0, 2000),
             HoverDelayMs = Math.Clamp(G("editor.hover.delay", defaults.HoverDelayMs), 0, 5000),
             UndoLimit = Math.Max(0, G(EditorSettingKeys.UndoLimit, defaults.UndoLimit)),

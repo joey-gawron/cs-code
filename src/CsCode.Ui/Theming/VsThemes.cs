@@ -414,7 +414,8 @@ public static class VsThemes
 
         if (overrides is not null)
             foreach (var (key, hex) in overrides) c[key] = Rgba.Parse(hex);
-        return new ColorTheme(id, label, kind, c, tokens);
+        // Visual Studio colours what the language service classifies (types, locals, members), so its themes take semantic tokens (VS Code's rule).
+        return new ColorTheme(id, label, kind, c, tokens) { SemanticHighlighting = true };
     }
 
     /// <summary>Lightens (amount &gt; 0) or darkens (amount &lt; 0) a colour by mixing towards white/black.</summary>

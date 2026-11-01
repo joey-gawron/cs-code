@@ -69,6 +69,12 @@ public sealed record ColorTheme(
     IReadOnlyDictionary<string, TokenColorRule>? SemanticTokenColors = null)
 {
     public bool TryGetColor(string key, out Rgba color) => Colors.TryGetValue(key, out color);
+
+    /// <summary>
+    /// The theme's <c>"semanticHighlighting": true</c>: with <c>editor.semanticHighlighting.enabled</c> at its default ("configuredByTheme") the
+    /// editor colours language-server semantic tokens on top of the grammar's colours only for themes that say so (VS Code's rule).
+    /// </summary>
+    public bool SemanticHighlighting { get; init; }
 }
 
 public interface IColorThemeService
