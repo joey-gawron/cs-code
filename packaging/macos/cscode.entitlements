@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CsCode.app's hardened-runtime entitlements: tools/macos/make-app-bundle.sh signs the app, its apphosts and its libraries with them when it is
+  given a Developer ID identity (docs/handoff/macos-audit.md pkg-2 and gap-13; README, "Signing for other Macs").
+  * allow-jit: the .NET runtime compiles IL to machine code at run time (MAP_JIT); without it the app dies before its first frame.
+  * disable-library-validation: the .NET host loads the runtime's own libraries, and tree-sitter grammars built by the user, Homebrew or Nix
+    (cscode.editor.treeSitter) are dylibs signed by no one or by another team; a hardened app refuses to load them otherwise.
+  Not granted, because the app runs without them (tests/CsCode.App.Tests MacPackagingTests starts the app's own apphost under the hardened
+  runtime with exactly these two, and shows it fails with none): allow-unsigned-executable-memory (.NET maps its JIT code W^X through MAP_JIT,
+  which allow-jit covers) and allow-dyld-environment-variables (the app reads no DYLD_* variable).
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
