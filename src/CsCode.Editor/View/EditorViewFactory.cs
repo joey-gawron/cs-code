@@ -143,6 +143,12 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         }
     }
 
+    /// <summary>The document open for <paramref name="uri"/> (a tab's, so a peek can edit it in place), or null.</summary>
+    internal EditorDocument? TryGetOpenDocument(Uri uri)
+    {
+        lock (_gate) return _documents.TryGetValue(uri, out var doc) ? doc : null;
+    }
+
     public IEditorDocument CreateUntitled(string? languageId = null)
     {
         EditorDocument? doc = null;
@@ -284,6 +290,8 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         keys.Set("editorHasReferenceProvider", Has<IReferenceProvider>());
         keys.Set("editorHasDocumentFormattingProvider", formatting);
         keys.Set("editorHasDocumentSelectionFormattingProvider", formatting);
+        keys.Set("editorHasCallHierarchyProvider", Has<ICallHierarchyProvider>()); // the Hierarchy window's items (docs/NAVIGATION.md)
+        keys.Set("editorHasTypeHierarchyProvider", Has<ITypeHierarchyProvider>());
     }
 
     /// <summary>The per-view feature components (completion, hover, diagnostics, folding…), created by the control after its core is up.</summary>

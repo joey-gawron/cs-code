@@ -1,0 +1,29 @@
+M:System.Threading.Tasks.Task.Wait();Never block a thread on a task: await it (UI thread rule, docs/briefs/00-common.md)
+M:System.Threading.Tasks.Task.Wait(System.Int32);Never block a thread on a task: await it
+M:System.Threading.Tasks.Task.Wait(System.TimeSpan);Never block a thread on a task: await it
+M:System.Threading.Tasks.Task.Wait(System.Threading.CancellationToken);Never block a thread on a task: await it
+M:System.Threading.Tasks.Task.Wait(System.Int32,System.Threading.CancellationToken);Never block a thread on a task: await it
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[]);Never block a thread on tasks: await Task.WhenAll
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[]);Never block a thread on tasks: await Task.WhenAny
+P:System.Threading.Tasks.Task`1.Result;Never block on a task result: await it
+M:System.Runtime.CompilerServices.TaskAwaiter.GetResult();No sync-over-async
+M:System.Runtime.CompilerServices.TaskAwaiter`1.GetResult();No sync-over-async
+M:System.Runtime.CompilerServices.ValueTaskAwaiter.GetResult();No sync-over-async
+M:System.Runtime.CompilerServices.ValueTaskAwaiter`1.GetResult();No sync-over-async
+M:System.Runtime.CompilerServices.ConfiguredTaskAwaitable.ConfiguredTaskAwaiter.GetResult();No sync-over-async
+M:System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1.ConfiguredTaskAwaiter.GetResult();No sync-over-async
+M:System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable.ConfiguredValueTaskAwaiter.GetResult();No sync-over-async
+M:System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1.ConfiguredValueTaskAwaiter.GetResult();No sync-over-async
+M:System.Threading.Thread.Sleep(System.Int32);Never sleep a thread: use a timer or await Task.Delay
+M:System.Threading.Thread.Sleep(System.TimeSpan);Never sleep a thread: use a timer or await Task.Delay
+M:System.IO.File.ReadAllText(System.String);Sync file I/O: go through IFileSystem on the IO lane
+M:System.IO.File.ReadAllText(System.String,System.Text.Encoding);Sync file I/O: go through IFileSystem on the IO lane
+M:System.IO.File.ReadAllBytes(System.String);Sync file I/O: go through IFileSystem on the IO lane
+M:System.IO.File.ReadAllLines(System.String);Sync file I/O: go through IFileSystem on the IO lane
+M:System.IO.File.WriteAllText(System.String,System.String);Sync file I/O: go through IFileSystem on the IO lane
+M:System.IO.File.WriteAllBytes(System.String,System.Byte[]);Sync file I/O: go through IFileSystem on the IO lane
+M:System.IO.File.OpenRead(System.String);Sync file I/O: go through IFileSystem on the IO lane
+M:System.IO.File.Exists(System.String);Sync file I/O: go through IFileSystem on the IO lane
+M:System.IO.Directory.Exists(System.String);Sync file I/O: go through IFileSystem on the IO lane
+M:System.IO.Directory.GetFiles(System.String);Sync file I/O: go through IFileSystem on the IO lane
+M:System.IO.Directory.EnumerateFiles(System.String);Sync file I/O: go through IFileSystem on the IO lane

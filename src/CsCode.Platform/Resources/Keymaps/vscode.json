@@ -18,6 +18,7 @@
   { "key": "ctrl+f12",           "command": "editor.action.goToImplementation",   "when": "editorTextFocus", "mac": "cmd+f12" },
   { "key": "alt+f12",            "command": "editor.action.peekDefinition",       "when": "editorTextFocus" },
   { "key": "shift+f12",          "command": "editor.action.goToReferences",       "when": "editorTextFocus" },
+  { "key": "shift+alt+h",        "command": "editor.showCallHierarchy",           "when": "editorTextFocus && editorHasCallHierarchyProvider" },
   { "key": "ctrl+g",             "command": "workbench.action.gotoLine",          "mac": "ctrl+g" },
   { "key": "ctrl+t",             "command": "workbench.action.showAllSymbols",    "mac": "cmd+t" },
   { "key": "ctrl+shift+o",       "command": "workbench.action.gotoSymbol",        "mac": "cmd+shift+o" },

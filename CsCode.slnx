@@ -9,6 +9,7 @@
     <Project Path="src/CsCode.Macros/CsCode.Macros.csproj" />
     <Project Path="src/CsCode.Panels.Debug/CsCode.Panels.Debug.csproj" />
     <Project Path="src/CsCode.Panels.Git/CsCode.Panels.Git.csproj" />
+    <Project Path="src/CsCode.Panels.Navigation/CsCode.Panels.Navigation.csproj" />
     <Project Path="src/CsCode.Panels.Search/CsCode.Panels.Search.csproj" />
     <Project Path="src/CsCode.Panels.Terminal/CsCode.Panels.Terminal.csproj" />
     <Project Path="src/CsCode.Platform/CsCode.Platform.csproj" />
@@ -33,6 +34,7 @@
     <Project Path="tests/CsCode.MemoryTests/CsCode.MemoryTests.csproj" />
     <Project Path="tests/CsCode.Panels.Debug.Tests/CsCode.Panels.Debug.Tests.csproj" />
     <Project Path="tests/CsCode.Panels.Git.Tests/CsCode.Panels.Git.Tests.csproj" />
+    <Project Path="tests/CsCode.Panels.Navigation.Tests/CsCode.Panels.Navigation.Tests.csproj" />
     <Project Path="tests/CsCode.Panels.Search.Tests/CsCode.Panels.Search.Tests.csproj" />
     <Project Path="tests/CsCode.Panels.Terminal.Tests/CsCode.Panels.Terminal.Tests.csproj" />
     <Project Path="tests/CsCode.Panels.Testing.Tests/CsCode.Panels.Testing.Tests.csproj" />

@@ -66,7 +66,7 @@ jobs:
           - group: services
             projects: tests/CsCode.Dap.Tests tests/CsCode.Lsp.Tests tests/CsCode.Platform.Tests tests/CsCode.Remote.Tests tests/CsCode.Sessions.Tests tests/CsCode.Terminal.Tests
           - group: panels-memory
-            projects: tests/CsCode.Panels.Debug.Tests tests/CsCode.Panels.Search.Tests tests/CsCode.Panels.Terminal.Tests tests/CsCode.Panels.Git.Tests tests/CsCode.Panels.Testing.Tests tests/CsCode.MemoryTests
+            projects: tests/CsCode.Panels.Debug.Tests tests/CsCode.Panels.Search.Tests tests/CsCode.Panels.Terminal.Tests tests/CsCode.Panels.Git.Tests tests/CsCode.Panels.Testing.Tests tests/CsCode.Panels.Navigation.Tests tests/CsCode.MemoryTests
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
