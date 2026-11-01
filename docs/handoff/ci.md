@@ -19,11 +19,14 @@ Panels.Terminal, MemoryTests). NuGet packages are cached per OS, keyed on `globa
 
 * `Category=Soak` and `Category=Perf`: the soak suites and benchmarks (long, measured by hand; docs/MEMORY.md).
 * The **load-sensitive tests** in `tools/ci/load-sensitive-tests.txt`: timing budgets and environment checks that fail on a loaded or shared
-  machine and pass alone, each named in docs/handoff/known-issues.md. One fully qualified name (or a class) per line; `CiWorkflowTests` fails
-  when an entry names no test, so a rename cannot silently put it back into the gating runs. Remove a line once its test is fixed; add one
-  only with a known-issues entry.
-* Locally: `dotnet test tests/CsCode.App.Tests --filter "$(tools/ci/test-filter.sh)"` is the gating selection, `--filter
-  "$(tools/ci/test-filter.sh --only)"` the excluded one.
+  machine and pass alone, each named in docs/handoff/known-issues.md. One test method's fully qualified name per line (a theory leaves out
+  all its cases), never a class, so the rest of a class keeps gating; a line marked `macos:` or `linux:` leaves its test out on that OS only
+  (most entries are macOS failures: on Linux the background-session process tests and the memory toolkit's probes are real checks and gate),
+  an unmarked line on both. `test-filter.sh` uses the runner's OS (`uname`; `--os macos|linux` to choose). `CiWorkflowTests` fails when an
+  entry names no test method or a whole class, so a rename cannot silently put it back into the gating runs. Remove a line once its test is
+  fixed; add one only with a known-issues entry, marked for the OS it fails on.
+* Locally: `dotnet test tests/CsCode.App.Tests --filter "$(tools/ci/test-filter.sh)"` is the gating selection of this machine's OS,
+  `--filter "$(tools/ci/test-filter.sh --only)"` the excluded one.
 
 Tests that need tools the runners lack skip with their reason: netcoredbg, CodeLLDB, js-debug (`tools/fetch-*.sh` are not run), gdb, nvim,
 sshd and Docker (remote), a real X server. `RealLldbDapTests` runs its handshake on macos-latest (Xcode's lldb-dap) and skips the C session

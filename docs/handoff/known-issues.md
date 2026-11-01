@@ -1,7 +1,8 @@
 # Known issues found during integration (not fixed yet)
 
 CI (docs/handoff/ci.md) leaves the load-sensitive tests below out of its gating runs: `tools/ci/load-sensitive-tests.txt` lists them, and its
-nightly `load-sensitive` job still runs them without failing the workflow. Add a test there only with an entry here; remove it once fixed.
+nightly `load-sensitive` job still runs them without failing the workflow. Add a test there only with an entry here, one test per line and
+marked `macos:` or `linux:` when it fails on one OS only; remove it once fixed.
 
 * **First-run retention of a closed window** (found 2026-10-31 by WindowlessRunTests, macOS): in a brand-new CsCode home, the first
   application-scope state write (the layout saved as the window closes) creates `data/globalStorage` while file watches wait in the home

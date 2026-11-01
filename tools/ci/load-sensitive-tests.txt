@@ -1,10 +1,13 @@
 # Tests CI leaves out of its required runs: timing budgets and environment checks that fail on a loaded or shared machine and pass alone
-# (docs/handoff/known-issues.md names each one and why). One fully qualified name, or a prefix of one (a class), per line; '#' starts a
-# comment. tools/ci/test-filter.sh turns this list into the `dotnet test --filter` expression. The CI workflow's "load-sensitive" job runs
-# exactly these, without failing the build, so they are still watched. Remove a line once its test is fixed.
+# (docs/handoff/known-issues.md names each one and why). One test per line: a test method's fully qualified name (a theory's every case),
+# never a whole class, so the rest of its class keeps gating. A line starting "macos:" or "linux:" leaves the test out on that OS only (where
+# known-issues saw it fail); a line without one, on both. '#' starts a comment. tools/ci/test-filter.sh turns this list into the
+# `dotnet test --filter` expression of the OS it runs on. The CI workflow's "load-sensitive" job runs exactly these, without failing the
+# build, so they are still watched. Remove a line once its test is fixed.
 
-# Editor: memory and latency budgets of big files; the tokeniser stall under full-suite load
-CsCode.Editor.Tests.PerfMemoryTests
+# Editor: the big-file open budget inside the full run (order-dependent); large-file-mode typing on macOS; the tokeniser stall under load
+CsCode.Editor.Tests.PerfMemoryTests.Opening_a_big_file_is_quick_bounded_in_memory_and_does_not_freeze_the_ui
+macos: CsCode.Editor.Tests.PerfMemoryTests.A_big_file_stays_scrollable_and_editable_in_large_file_mode
 CsCode.Editor.Tests.TextMateTests.Tokenisation_happens_on_the_editor_worker
 
 # Panels.Search: a flaky inline error; a cancellation that assumes the scan still runs after 400 ms
@@ -14,21 +17,26 @@ CsCode.Panels.Search.Tests.Hostile.HostileTests.Cancelling_a_search_of_200k_file
 # Dap: races the fake adapter's command record in full runs
 CsCode.Dap.Tests.SessionTerminationTests.Stop_prefers_terminate_when_supported_then_disconnects
 
-# App: UI-thread budgets and storms under load; theme switching; resident-show latency; a real-process harness that cannot see macOS processes
-CsCode.App.Tests.ResponsivenessTests
-CsCode.App.Tests.RealApp.ThemeSwitchingCostTests
-CsCode.App.Tests.Background.BackgroundSessionProcessTests
-CsCode.App.Tests.RealApp.Macros.MacroRealAppTests.Playing_ten_thousand_times
+# App: the two dispatcher storms under load; the theme preview-rate budget; on macOS the hundred-switch wait, the resident-show and macro
+# budgets, and the background-session checks whose harness cannot see macOS processes
+CsCode.App.Tests.ResponsivenessTests.Each_hostile_source_alone_stays_within_the_dispatcher_latency_budget
+CsCode.App.Tests.ResponsivenessTests.Everything_at_once_keeps_the_ui_responsive_but_misses_the_16ms_p99_target
+CsCode.App.Tests.RealApp.ThemeSwitchingCostTests.Previewing_themes_at_key_repeat_rate_keeps_the_dispatcher_within_budget
+macos: CsCode.App.Tests.RealApp.ThemeSwitchingCostTests.A_hundred_theme_switches_leave_the_managed_heap_flat_and_rebuild_nothing
+macos: CsCode.App.Tests.Background.BackgroundSessionProcessTests.Latency_resident_show_and_warm_spare_claim_are_within_budget
+macos: CsCode.App.Tests.Background.BackgroundSessionProcessTests.Cold_start_without_a_spare_opens_the_session_and_reports_its_latency
+macos: CsCode.App.Tests.Background.BackgroundSessionProcessTests.Concurrent_launches_of_one_session_start_one_process
+macos: CsCode.App.Tests.RealApp.Macros.MacroRealAppTests.Playing_ten_thousand_times
 
-# Panels.Debug, Panels.Terminal: a 20 ms enqueue budget; a task terminal's output order in the full run; the real netcoredbg end to end on macOS
-CsCode.Panels.Debug.Tests.ConsolePumpTests.The_producer_side_only_enqueues_and_a_flood_stays_bounded
-CsCode.Panels.Debug.Tests.RealDebuggerEndToEndTests
-CsCode.Panels.Terminal.Tests.RealAppTaskTests.A_pre_launch_task_runs_in_a_terminal_before_the_debugger_starts
+# Panels.Debug, Panels.Terminal (macOS): a 20 ms enqueue budget; the real netcoredbg end to end; a task terminal's output order in the full run
+macos: CsCode.Panels.Debug.Tests.ConsolePumpTests.The_producer_side_only_enqueues_and_a_flood_stays_bounded
+macos: CsCode.Panels.Debug.Tests.RealDebuggerEndToEndTests.The_panels_show_what_the_real_adapter_reports_through_a_whole_debug_session
+macos: CsCode.Panels.Terminal.Tests.RealAppTaskTests.A_pre_launch_task_runs_in_a_terminal_before_the_debugger_starts
 
-# Platform: a cancel-mid-write timing; the macOS watcher's replaced-root race under load
-CsCode.Platform.Tests.LocalFileSystemTests.Cancelling_mid_write_leaves_the_original_untouched
-CsCode.Platform.Tests.MacFileWatcherTests.A_recursively_watched_directory_replaced_in_an_instant
+# Platform (macOS): a cancel-mid-write timing; the watcher's replaced-root race under load
+macos: CsCode.Platform.Tests.LocalFileSystemTests.Cancelling_mid_write_leaves_the_original_untouched
+macos: CsCode.Platform.Tests.MacFileWatcherTests.A_recursively_watched_directory_replaced_in_an_instant
 
-# MemoryTests: responsiveness and census budgets (the soak suites are left out by their Category=Soak trait)
-CsCode.MemoryTests.Toolkit.ToolkitTests
-CsCode.MemoryTests.App.AppSoakTests
+# MemoryTests (macOS): the responsiveness and census budgets (the soak suites, AppSoakTests among them, are left out by Category=Soak)
+macos: CsCode.MemoryTests.Toolkit.ToolkitTests.ResponsivenessProbe_measures_queue_latency_and_sees_a_blocked_thread
+macos: CsCode.MemoryTests.Toolkit.ToolkitTests.ResourceCensus_sees_threads_and_descriptors_and_waits_for_them_to_go

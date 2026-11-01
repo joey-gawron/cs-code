@@ -1,6 +1,6 @@
 # CsCode CI (docs/handoff/ci.md): on Linux (ubuntu-latest, x64) and macOS (macos-latest, arm64)
 #   build          the whole solution with warnings as errors
-#   test           every test project in four parallel groups, without the soak/perf suites and the load-sensitive tests
+#   test           every test project in four parallel groups, without the soak/perf suites and the runner OS's load-sensitive tests
 #                  (tools/ci/load-sensitive-tests.txt, docs/handoff/known-issues.md), each run bounded by --blame-hang-timeout
 #   package-macos  tools/package-macos.sh --no-adapters on the Mac: CsCode.app built, signed ad hoc, verified and started (--version)
 #   load-sensitive the excluded timing tests, nightly and on demand, never failing the workflow (they are watched, not gating)
