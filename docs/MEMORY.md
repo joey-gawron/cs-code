@@ -311,6 +311,11 @@ Avalonia's visual tree and composition objects (`ServerCompositionDrawListVisual
 editor views kept alive. (`dotnet-gcdump` on .NET 10 warns that its lossy event buffering can drop objects on large heaps — its per-type totals
 did not add up here; use `dotnet-dump` for exact numbers.)
 
+**Markdown preview** (docs/MARKDOWN.md, "Memory"; `A_long_document_preview_stays_within_its_memory_budget`, macOS arm64): a 301 KB, 8,000-block
+document retains 23 MB with its preview open (≈ 80 bytes per source character, mostly Markdig's syntax tree), with controls for only the ~20 blocks
+near the viewport; budget 120 B/char and 150 realised blocks. Sources are cut at 4 M characters; images are downscaled to 2048 px and cached
+per preview (64 entries).
+
 ## 8. Profiling playbook (MUST 7)
 
 All scripts run from anywhere, set up the Nix runtime libraries, never open a display and never touch your config (the profiling host uses a temp

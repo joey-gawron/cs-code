@@ -52,7 +52,7 @@ Dependency rules (enforced by project references, checked in review):
 | `ICommandService`, `IContextKeyService`, `IConfigurationService`, `IKeybindingService`, `IWorkspaceService`, `IFileSystem`, `IFileWatcher`, `IStateStorage`, `IAppPaths`, logging | **Platform** |
 | `ILanguageServerManager` (+ native LSP providers into `ILanguageFeatureRegistry`, diagnostics into `IDiagnosticService`) | **Lsp** |
 | `IDebugService`, `IDebugSession`, `IBreakpointManager`, `IDebugConfigurationService`, `ITaskService`, DAP client, netcoredbg factory | **Dap** |
-| `IEditorViewFactory`, `IEditorViewController`, `IEditorDocument` impl, `ILanguageService`, `IColorThemeService` (+ VS Code theme JSON loader), TextMate wiring, user themes/grammars/snippets folders, snippets, folding, squiggles, completion/hover/signature UI | **Editor** |
+| `IEditorViewFactory`, `IEditorViewController`, `IEditorDocument` impl, `ILanguageService`, `IColorThemeService` (+ VS Code theme JSON loader), TextMate wiring, user themes/grammars/snippets folders, snippets, folding, squiggles, completion/hover/signature UI, Markdown preview (`MarkdownPreviewFactory`, docs/MARKDOWN.md) | **Editor** |
 | `VimEngine` over `IVimHost` (+ Vim macros) | **Vim** (adapter to the editor in wave 2) |
 | `IWindowService`, `IStatusBarService`, `IOutputService`, `INavigationService`, views/view-models, VS2022 themes, menus, keymap | **Shell (App + Ui)** |
 | `IMemoryMonitor`, `IMemoryTrimmable` policy, GC configuration, soak/leak/responsiveness harness | **Profiling** (+ `tests/CsCode.MemoryTests`) |
