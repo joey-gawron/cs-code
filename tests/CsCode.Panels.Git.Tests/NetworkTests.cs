@@ -34,8 +34,6 @@ public sealed class NetworkTests : IDisposable
         Assert.Equal("ssh " + GitNetwork.SshOptions + " -o BatchMode=yes", env["GIT_SSH_COMMAND"]);
         Assert.Contains("ConnectTimeout=30", env["GIT_SSH_COMMAND"]);
         Assert.Contains("ServerAliveInterval=15", env["GIT_SSH_COMMAND"]);
-        Assert.Equal("1000", env["GIT_HTTP_LOW_SPEED_LIMIT"]);
-        Assert.Equal("60", env["GIT_HTTP_LOW_SPEED_TIME"]);
         Assert.False(env.ContainsKey("SSH_ASKPASS"));
         Assert.False(env.ContainsKey("GIT_ASKPASS"));
     }
@@ -72,12 +70,72 @@ public sealed class NetworkTests : IDisposable
     }
 
     [Fact]
-    public void The_users_own_http_stall_limits_are_kept()
+    public void Http_transfers_get_no_low_speed_limit_so_a_slow_server_side_phase_is_not_given_up()
     {
-        Assert.False(GitNetwork.Environment(Env(), new Dictionary<string, string> { ["http.lowspeedtime"] = "600" }, null).ContainsKey("GIT_HTTP_LOW_SPEED_TIME"));
-        Assert.False(GitNetwork.Environment(Env(("GIT_HTTP_LOW_SPEED_LIMIT", "1")), NoConfig, null).ContainsKey("GIT_HTTP_LOW_SPEED_LIMIT"));
-        Assert.Equal(new Dictionary<string, string> { ["core.sshcommand"] = "ssh -v", ["http.lowspeedtime"] = "600" },
-            GitNetwork.ParseConfig("core.sshcommand ssh -i global-key\ncore.sshcommand ssh -v\nhttp.lowSpeedTime 600\n")); // the repository's value (last) wins
+        // curl gives up a transfer whose average stays under GIT_HTTP_LOW_SPEED_LIMIT bytes/s for GIT_HTTP_LOW_SPEED_TIME seconds: a server busy
+        // counting or compressing objects, or running a slow pre-receive hook, sends only progress lines and keep-alives for minutes. As in git and
+        // VS Code nothing is set (the user's http.lowSpeedLimit/Time still apply, git reads them itself); git.networkTimeout ends a real hang.
+        var env = GitNetwork.Environment(Env(), NoConfig, null);
+        Assert.False(env.ContainsKey("GIT_HTTP_LOW_SPEED_LIMIT"));
+        Assert.False(env.ContainsKey("GIT_HTTP_LOW_SPEED_TIME"));
+        Assert.Equal(new Dictionary<string, string> { ["core.sshcommand"] = "ssh -v" },
+            GitNetwork.ParseConfig("core.sshcommand ssh -i global-key\ncore.sshcommand ssh -v\n")); // the repository's value (last) wins
+    }
+
+    [Fact]
+    public void Ssh_options_the_users_ssh_config_sets_are_not_passed_so_the_config_wins()
+    {
+        using var dir = new TempDirectory("cscode-git-sshcfg-");
+        var config = Path.Combine(dir.Path, "config");
+        File.WriteAllText(config, "# ConnectTimeout 5\nInclude work.conf\nHost *.corp\n  ServerAliveInterval=30\n");
+        File.WriteAllText(Path.Combine(dir.Path, "work.conf"), "Host build\n  connecttimeout 120\n");
+        var set = GitNetwork.ConfiguredSshKeywords([config]);
+        Assert.Contains("connecttimeout", set);       // from the included file (relative to the including file's directory), in any case
+        Assert.Contains("serveraliveinterval", set);  // keyword=value
+        Assert.DoesNotContain("serveralivecountmax", set);
+        Assert.Equal("-o ServerAliveCountMax=4", GitNetwork.SshOptionsFor(set));
+        Assert.Equal("ssh -o ServerAliveCountMax=4 -o BatchMode=yes", GitNetwork.Environment(Env(), NoConfig, null, set)["GIT_SSH_COMMAND"]);
+        // a BatchMode of the configuration (e.g. no, to let one's own SSH_ASKPASS answer) is not overridden either
+        Assert.Equal("ssh " + GitNetwork.SshOptions, GitNetwork.Environment(Env(), NoConfig, null, new HashSet<string> { "batchmode" })["GIT_SSH_COMMAND"]);
+        // nothing configured: all of ours
+        Assert.Equal(GitNetwork.SshOptions, GitNetwork.SshOptionsFor(GitNetwork.ConfiguredSshKeywords([Path.Combine(dir.Path, "missing")])));
+        // the files read: ~/.ssh/config and the system's, or only the user's -F file (ssh then reads no other)
+        Assert.Equal([Path.Combine("/home/u", ".ssh", "config"), "/etc/ssh/ssh_config"], GitNetwork.SshConfigFiles(null, "/home/u"));
+        Assert.Equal([Path.Combine("/home/u", "cfg")], GitNetwork.SshConfigFiles("ssh -F ~/cfg -i key", "/home/u"));
+        Assert.Equal(["/opt/c"], GitNetwork.SshConfigFiles("ssh -F/opt/c", "/home/u"));
+    }
+
+    [Fact]
+    public void Network_operations_start_under_setsid_even_when_it_is_busyboxs_and_get_gits_exit_code()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "setsid is used on Linux only");
+        var busybox = new[] { "/bin/busybox", "/usr/bin/busybox" }.FirstOrDefault(File.Exists);
+        var utilLinux = new[] { "/usr/bin/setsid", "/bin/setsid" }
+            .FirstOrDefault(p => File.Exists(p) && File.ResolveLinkTarget(p, true)?.FullName.EndsWith("busybox", StringComparison.Ordinal) != true);
+        Assert.SkipWhen(busybox is null && utilLinux is null, "neither busybox nor util-linux setsid is installed");
+        using var dir = new TempDirectory("cscode-git-setsid-");
+        var candidates = new List<string>();
+        if (busybox is not null)
+        {
+            var applet = Path.Combine(dir.Path, "setsid"); // busybox picks the applet by the name it is started as (Alpine's /usr/bin/setsid)
+            File.CreateSymbolicLink(applet, busybox);
+            candidates.Add(applet);
+        }
+        if (utilLinux is not null) candidates.Add(utilLinux);
+        foreach (var setsid in candidates)
+        {
+            var launcher = GitNetwork.ResolveDetach([setsid], []);
+            Assert.NotNull(launcher);
+            var psi = new ProcessStartInfo(launcher[0]) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            foreach (var a in launcher.Skip(1)) psi.ArgumentList.Add(a);
+            foreach (var a in new[] { "/bin/sh", "-c", "ps -o sid= -p $$; exit 3" }) psi.ArgumentList.Add(a);
+            using var p = Process.Start(psi)!;
+            var output = p.StandardOutput.ReadToEnd();
+            var error = p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            Assert.True(p.ExitCode == 3, $"{setsid}: exit {p.ExitCode}: {error}");
+            Assert.NotEqual(Ps("sid=", Environment.ProcessId), output.Trim());
+        }
     }
 
     // ------------------------------------------------------------------------------------- real git, fake ssh
@@ -116,7 +174,7 @@ public sealed class NetworkTests : IDisposable
             exit 255
             """.Replace("\r", ""));
         MakeExecutable(ssh);
-        repo.Git("config", "core.sshCommand", ssh);
+        repo.Git("config", "core.sshCommand", ssh + " -F /dev/null"); // no ssh configuration of the machine running the tests
         repo.Git("remote", "add", "origin", "ssh://example.invalid/project.git");
         var config = new TestConfigurationService();
         var ws = Own(new TestWorkspace(false, repo.Uri));
@@ -196,15 +254,29 @@ public sealed class NetworkTests : IDisposable
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20), $"took {watch.Elapsed}");
     }
 
+    [Fact]
+    public async Task A_network_timeout_too_long_for_a_timer_means_no_limit_instead_of_failing_every_operation()
+    {
+        var (_, git, config, _) = await OpenWithFakeSshAsync(askpass: null);
+        foreach (var seconds in new[] { 10_000_000d, 1e300 }) // 115 days (a timer takes at most 49.7), and more than a TimeSpan holds
+        {
+            config.Set(GitSettings.NetworkTimeout, seconds);
+            var ex = await Assert.ThrowsAsync<GitException>(() => git.Repositories[0].FetchAsync());
+            Assert.Contains("Could not resolve hostname", ex.Message);
+        }
+    }
+
     private static void MakeExecutable(string path)
     {
         if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
-    private static string ProcessGroupOf(int pid)
+    private static string ProcessGroupOf(int pid) => Ps("pgid=", pid);
+
+    private static string Ps(string field, int pid)
     {
         var psi = new ProcessStartInfo("ps") { RedirectStandardOutput = true, UseShellExecute = false };
-        foreach (var a in new[] { "-o", "pgid=", "-p", pid.ToString(System.Globalization.CultureInfo.InvariantCulture) }) psi.ArgumentList.Add(a);
+        foreach (var a in new[] { "-o", field, "-p", pid.ToString(System.Globalization.CultureInfo.InvariantCulture) }) psi.ArgumentList.Add(a);
         using var p = Process.Start(psi)!;
         var text = p.StandardOutput.ReadToEnd().Trim();
         p.WaitForExit();

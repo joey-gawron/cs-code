@@ -65,6 +65,9 @@ public sealed class GitRunner : IDisposable
     /// <summary>The overall limit of one network operation when <see cref="NetworkTimeout"/> is not set (stalls end sooner: <see cref="GitNetwork"/>).</summary>
     public static readonly TimeSpan DefaultNetworkTimeout = TimeSpan.FromMinutes(30);
 
+    /// <summary>The longest timeout a timer takes (about 49.7 days); a longer one means none.</summary>
+    public static readonly TimeSpan MaxTimeout = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+
     /// <summary>Answers the prompts of network operations (ssh passphrases and host keys, HTTPS credentials) in the GUI; null: nothing can prompt.</summary>
     public IAskpassService? Askpass { get; set; }
 
@@ -165,10 +168,17 @@ public sealed class GitRunner : IDisposable
         var exe = await ResolveAsync().ConfigureAwait(false) ?? throw new InvalidOperationException(Unavailable ?? "Git is not available.");
         var config = await RunAsync(workingDirectory, ["config", "--get-regexp", GitNetwork.ConfigPattern], throwOnError: false, timeout: TimeSpan.FromSeconds(15), ct: ct).ConfigureAwait(false);
         using var askpass = UseAskpass() ? StartAskpass() : null;
-        var env = GitNetwork.Environment(Environment.GetEnvironmentVariable, GitNetwork.ParseConfig(config.Ok ? config.Text : ""),
-            askpass is null ? null : (askpass.Program, askpass.Environment));
+        var gitConfig = GitNetwork.ParseConfig(config.Ok ? config.Text : "");
         var timeout = NetworkTimeout();
-        var result = await RunOnLane(() => RunSync(exe, workingDirectory, args, null, env, timeout, ct, GitNetwork.DetachLauncher)).ConfigureAwait(false);
+        var result = await RunOnLane(() =>
+        {
+            // the user's ssh configuration is read here, on the lane (file reads stay off the UI thread)
+            var sshFiles = GitNetwork.SshConfigFiles(GitNetwork.UserSshCommand(Environment.GetEnvironmentVariable, gitConfig),
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+            var env = GitNetwork.Environment(Environment.GetEnvironmentVariable, gitConfig, askpass is null ? null : (askpass.Program, askpass.Environment),
+                GitNetwork.ConfiguredSshKeywords(sshFiles));
+            return RunSync(exe, workingDirectory, args, null, env, timeout, ct, GitNetwork.DetachLauncher);
+        }).ConfigureAwait(false);
         return Checked(args, result, throwOnError);
     }
 
@@ -257,7 +267,7 @@ public sealed class GitRunner : IDisposable
         var killed = 0;
         void Kill() { if (Interlocked.Exchange(ref killed, 1) == 0) try { process.Kill(entireProcessTree: true); } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { } }
         using var cancel = ct.Register(Kill);
-        using var timer = timeout > TimeSpan.Zero && timeout != Timeout.InfiniteTimeSpan ? new Timer(_ => Kill(), null, timeout, Timeout.InfiniteTimeSpan) : null;
+        using var timer = timeout > TimeSpan.Zero && timeout <= MaxTimeout ? new Timer(_ => Kill(), null, timeout, Timeout.InfiniteTimeSpan) : null;
         try
         {
             if (stdin is not null) process.StandardInput.BaseStream.Write(stdin);

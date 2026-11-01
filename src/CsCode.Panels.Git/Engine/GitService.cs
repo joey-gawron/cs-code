@@ -55,7 +55,7 @@ public sealed class GitService : IFileDecorationProvider, IQuickDiffProvider, IL
         _runner.Askpass ??= askpass;
         _runner.UseAskpass = () => _config?.Get(GitSettings.UseIntegratedAskPass, true) ?? true;
         _runner.NetworkTimeout = () => _config?.Get<double?>(GitSettings.NetworkTimeout, null) is { } s
-            ? s > 0 ? TimeSpan.FromSeconds(s) : Timeout.InfiniteTimeSpan
+            ? s > 0 && s <= GitRunner.MaxTimeout.TotalSeconds ? TimeSpan.FromSeconds(s) : Timeout.InfiniteTimeSpan // 0, or longer than a timer takes: none
             : GitRunner.DefaultNetworkTimeout;
         if (config is not null) _store.Add(config.RegisterProperties(GitSettings.Properties()));
         _store.Add(workspace.FoldersChanged.Subscribe(_ => Discover()));
