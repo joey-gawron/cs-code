@@ -28,6 +28,14 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
     /// <summary>Beyond this many requested tests the filter is dropped and the whole project runs (command lines have limits).</summary>
     internal const int MaxFilteredTests = 300;
 
+    /// <summary>
+    /// The longest test filter in characters (the <c>--filter</c> expression, or the <c>-method</c> arguments together) beyond which it is
+    /// dropped and the whole project runs. Windows' CreateProcess takes a command line of at most 32,767 characters, which also holds the tool,
+    /// the project and TRX paths and the options (Linux limits one argument to 128 KiB). The test count alone does not bound it: 300 VSTest
+    /// ids of 80 characters make a 62,000-character filter, each id appearing twice.
+    /// </summary>
+    internal const int MaxFilterChars = 24_000;
+
     private readonly ConcurrentDictionary<string, ProjectInfo> _info = new(StringComparer.Ordinal);
 
     internal sealed record ProjectInfo(string TargetPath, string? TargetFramework, bool XunitV3);
@@ -198,7 +206,7 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
     internal static List<string> XunitArguments(string targetPath, IReadOnlyList<string>? testIds)
     {
         var args = new List<string> { targetPath, "-reporter", "json", "-noColor", "-noLogo" };
-        if (testIds is { Count: > 0 and <= MaxFilteredTests })
+        if (testIds is { Count: > 0 and <= MaxFilteredTests } && testIds.Sum(id => " -method ".Length + id.Length + 2L) <= MaxFilterChars)
             foreach (var id in testIds) { args.Add("-method"); args.Add(id); }
         return args;
     }
@@ -226,16 +234,17 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
     /// fully qualified name <c>Ns.Class.Method(1,2)</c>, which an exact <c>FullyQualifiedName=</c> never matches (nothing ran). So a method id
     /// also matches the names that contain it followed by <c>(</c>: the opening parenthesis is the boundary that keeps <c>Ns.Class.Add</c> from
     /// matching <c>Ns.Class.AddMany</c>. (VSTest's filter has no "starts with": a test of another class whose full name ends with this id
-    /// would run too, and is reported like any other result.)
+    /// would run too, and is reported like any other result.) A filter longer than <see cref="MaxFilterChars"/> is dropped (null).
     /// </summary>
     internal static string? VsTestFilter(IReadOnlyList<string>? testIds)
     {
         if (testIds is not { Count: > 0 and <= MaxFilteredTests }) return null;
-        return string.Join('|', testIds.Select(id =>
+        var filter = string.Join('|', testIds.Select(id =>
         {
             var escaped = FilterEscape().Replace(id, m => "\\" + m.Value);
             return id.Contains('(') ? "FullyQualifiedName=" + escaped : $"FullyQualifiedName={escaped}|FullyQualifiedName~{escaped}\\(";
         }));
+        return filter.Length <= MaxFilterChars ? filter : null;
     }
 
     private async Task<TestRunOutcome> RunVsTestAsync(TestRunRequest request, ProjectInfo info, ITestRunSink sink, Func<int, Task>? onHostProcess, CancellationToken ct)
