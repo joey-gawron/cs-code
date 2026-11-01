@@ -425,12 +425,14 @@ References (`NavigationFeature.FindDefinitionsAsync`, `FindReferenceLocationsAsy
   title opens the location as Go to Definition does (this view when it is the same file, else a tab through the shell) and closes the peek. The
   ✕ button closes it. While a peek is open the context key `referenceSearchVisible` (VS Code's) is true.
 * **Lifetime**: closing the peek disposes the embedded editor (it leaves the factory's views) and releases its snapshot document; disposing the
-  view closes its peek. Opening and closing a peek leaves nothing reachable (`PeekViewTests`, weak references over four cycles).
+  view closes its peek. Closing the last tab of the peeked document destroys every view over it, the embedded one too (the factory's
+  `ViewClosing`): the peek lets go of it and shows the same location again, read-only over the file on disk. Opening and closing a peek
+  leaves nothing reachable (`PeekViewTests`, weak references over four cycles).
 
 Tests: `PeekViewTests` (the zone and the widget's place, the read-only and the in-place editable embedded editor with its undo, the list and
 Enter, the same file, Esc from the view / the embedded editor / a modal layer (`ClosePeek` closes, `CloseInfoPopups` does not), the widget
-under a word-wrapped anchor line and its reveal, no definition, edits above and deletion of the anchor line, the
-menu item, lifetime, a screenshot `.scratch/screenshots/editor-peek-definition.png` checked for the border colour), `RealApp/LanguageNavigationTests`
+under a word-wrapped anchor line and its reveal, the peeked document's tab closed, no definition, edits above and deletion of the anchor line,
+the menu item, lifetime, a screenshot `.scratch/screenshots/editor-peek-definition.png` checked for the border colour), `RealApp/LanguageNavigationTests`
 (Alt+F12 and Vim's Esc in the real app; in the embedded editor `ix<Esc>` and `v<Esc>` keep the peek and Normal mode's Esc closes it), `RealAppContextMenuTests` (the item and its key).
 
 ### 7d. Linked editing

@@ -164,6 +164,39 @@ public class PeekViewTests
     }
 
     [AvaloniaFact]
+    public async Task Closing_the_peeked_documents_tab_shows_the_location_again_read_only_from_the_file()
+    {
+        var (host, view, _, targetUri) = await OpenWithDefinitionAsync(targetOpen: true);
+        using var _h = host;
+        await OpenPeekAsync(host, view);
+        var peek = Peek(view);
+        var embedded = peek.Embedded!;
+        var doc = embedded.Document;
+        Assert.False(doc.IsReadOnly); // the shell's document
+
+        await host.Factory.CloseDocumentAsync(doc); // its last tab closed: the shell destroys every view over it, the peek's included
+        Assert.True(embedded.IsDisposed);
+        await ViewHost.WaitFor(() => peek.Embedded is { IsDisposed: false }, "the peek's new editor");
+        await peek.Shown;
+        ViewHost.Pump();
+
+        Assert.True(peek.IsOpen);
+        var again = peek.Embedded!;
+        Assert.NotSame(embedded, again);
+        Assert.True(again.Document.IsReadOnly);
+        Assert.Equal(Target, again.Document.GetText());
+        Assert.Equal(new TextPosition(20, 11), again.Controller.Caret);
+        Assert.Same(again, peek.Widget!.GetVisualDescendants().OfType<CodeEditorControl>().Single());
+        Assert.Same(peek, PeekFeature.OwnerOf(again));
+        Assert.Null(PeekFeature.OwnerOf(embedded));
+        Assert.Null(host.Factory.TryGetOpenDocument(targetUri));
+
+        peek.Close();
+        Assert.True(again.IsDisposed);
+        Assert.DoesNotContain(again, host.Factory.Views);
+    }
+
+    [AvaloniaFact]
     public async Task A_document_open_in_the_shell_is_edited_in_place_in_the_peek_with_its_undo()
     {
         var (host, view, _, targetUri) = await OpenWithDefinitionAsync(targetOpen: true);

@@ -282,6 +282,7 @@ internal sealed class PeekFeature : IThemeAware, IDisposable
                 Root.Child = null;
             }));
             _d.Add(_v.Document.Changed.Subscribe(_ => OnHostChanged()));
+            _d.Add(_v.Factory.ViewClosing.Subscribe(OnViewClosing));
             RedrawAnchorLine();
             // the zone and the widget in sight, as VS Code reveals a peek
             _v.Post(Reveal);
@@ -336,6 +337,20 @@ internal sealed class PeekFeature : IThemeAware, IDisposable
             if (_disposed) return;
             if (Anchor.IsDeleted) { _owner.Close(); return; }
             Position();
+        }
+
+        /// <summary>
+        /// The embedded editor disposed from outside: it was a second view of a document open in the shell, and closing that document's last tab
+        /// destroys every view over it. The peek lets go of it and shows the same location again, now read-only over the file on disk.
+        /// </summary>
+        private void OnViewClosing(CodeEditorControl view)
+        {
+            if (_disposed || !ReferenceEquals(view, Editor)) return; // SetEditor clears Editor before it disposes one itself
+            Detach(view);
+            Editor = null;
+            _highlight = null;
+            // after the close has run to its end: the document is no longer open in the shell then, so the file is read again
+            _v.Post(() => { if (!_disposed && Editor is null) _ = Select(Index); });
         }
 
         public void ApplyTheme()
@@ -511,15 +526,13 @@ internal sealed class PeekFeature : IThemeAware, IDisposable
         {
             if (Editor is { } old)
             {
-                EmbeddedOwners.Remove(old);
+                Editor = null; // first: disposing it raises the factory's ViewClosing, which must not take it for a close from outside
                 var oldDoc = old.Document;
-                _editorHost.Child = null;
-                old.DoubleTapped -= OnOpenGesture;
+                Detach(old);
                 old.Dispose();
                 _highlight = null;
                 Release(oldDoc);
             }
-            Editor = null;
             if (doc is null) return;
             var editor = new CodeEditorControl(_v.Factory, doc);
             EmbeddedOwners.AddOrUpdate(editor, _owner);
@@ -531,6 +544,13 @@ internal sealed class PeekFeature : IThemeAware, IDisposable
             _editorHost.Child = editor;
             Editor = editor;
             ApplyTheme();
+        }
+
+        private void Detach(CodeEditorControl editor)
+        {
+            EmbeddedOwners.Remove(editor);
+            if (ReferenceEquals(_editorHost.Child, editor)) _editorHost.Child = null;
+            editor.DoubleTapped -= OnOpenGesture;
         }
 
         private void Release(EditorDocument doc)
