@@ -104,7 +104,8 @@ Internal switches (how the launcher starts processes; not part of the interface)
   `quit {force, evict}`, `focusFile {paths}`. A process whose quit is certain says `quitting` in hello from then on (also after save prompts,
   which show the window) and answers `show`/`focusFile` with the `quitting` error; one whose quit is still writing makes them wait for the
   outcome. The message format did not change with the lock move (new fields are optional), so the protocol version is still 1. Test-only
-  (served only with `--headless-test`): `inspect`, `testEdit`, `testCaret`, `testFold`, `testCloseTab`, `testCloseWindow`.
+  (served only with `--headless-test`): `inspect`, `testEdit`, `testCaret`, `testFold`, `testCloseTab`, `testCloseWindow`. A spare's `inspect` says what its warm-up did (`WarmedUp`) and whether it ended (`SpareWarm`): tests
+  wait for that, since at background priority on a loaded machine the warm-up takes seconds, not the ≈ 0.6 s it takes on an idle one.
 * **Timeouts**: connect + handshake 300 ms (past it a process counts as wedged and is never waited for), show reply 30 s (a cold restore),
   started-process hello 30 s, quit wait 20 s.
 * **Locks**: `{UserDataDir}/sessions/.locks/<session>.lock`, an exclusive `flock` held by the owning process (released by the kernel on

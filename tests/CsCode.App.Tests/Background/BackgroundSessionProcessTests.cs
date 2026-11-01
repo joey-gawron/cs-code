@@ -43,12 +43,16 @@ public class BackgroundSessionProcessTests
         var background = await h.RunAsync("--background");
         Assert.True(background.ExitCode == 0, background.Error);
         var spare = await h.WaitForAsync(p => p.IsSpare, what: "warm spare");
-        // The spare is claimable at once; give it time to finish its off-screen warm-up and trim so the measurement is of a warm spare
-        // (with tracing, wait for its "warm" mark; without, a fixed settle time).
-        if (h.Trace() != "(no trace)") await SessionProcessHarness.WaitUntilAsync(() => h.Trace().Contains($"pid {spare.Pid} +") && h.Trace().Contains("host: spare warm"), 60_000);
-        else await Task.Delay(5000);
-        await Task.Delay(1000);
+        // The spare is claimable at once; wait for the end of its off-screen warm-up, and for its trim, so the measurement is of a warm spare.
+        await WarmAsync(h, spare.Pid);
         return spare.Pid;
+    }
+
+    /// <summary>Waits until the spare's warm-up ended (<c>inspect</c>'s SpareWarm: at background priority and under load it can take several seconds), then for its trim.</summary>
+    private static async Task WarmAsync(SessionProcessHarness h, int spare)
+    {
+        Assert.True(await SessionProcessHarness.WaitUntilAsync(() => h.Inspect(spare).SpareWarm, 60_000), $"the spare {spare} did not finish its warm-up\n{h.Trace()}");
+        await Task.Delay(1000);
     }
 
     private static ResidentProcess Owner(SessionProcessHarness h, string session) =>
@@ -237,8 +241,7 @@ public class BackgroundSessionProcessTests
                 if (i > 0)
                 {
                     spare = (await h.WaitForAsync(p => p.IsSpare, what: "replacement spare")).Pid;
-                    Assert.True(await SessionProcessHarness.WaitUntilAsync(() => h.Inspect(spare).WarmedUp?.Count == 3, 60_000), "the replacement spare did not warm up");
-                    await Task.Delay(1000); // its trim
+                    await WarmAsync(h, spare);
                 }
                 var run = await h.RunAsync("--session", "S" + i, file);
                 Assert.True(run.ExitCode == 0, run.Error);
