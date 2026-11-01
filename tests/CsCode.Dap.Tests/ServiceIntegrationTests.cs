@@ -230,6 +230,24 @@ public class DebugCommandTests
         Assert.True(int.TryParse(h.AdapterFor(0).RequestsOf("attach")[0].Arguments.GetProperty("processId").GetString(), out _), expected);
     }
 
+    /// <summary>
+    /// ${command:pickProcess} lists every process but the CsCode process asking (docs/RUN-AND-DEBUG.md, "Attach to a process"): another
+    /// process, such as a second CsCode, is offered.
+    /// </summary>
+    [Fact]
+    public void The_process_list_leaves_out_only_the_asking_process()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS(), "needs a process list");
+        using var other = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("sleep", "30") { UseShellExecute = false })!;
+        try
+        {
+            var pids = DebugService.ListProcesses().Select(i => (int)i.Tag!).ToHashSet();
+            Assert.DoesNotContain(Environment.ProcessId, pids);
+            Assert.Contains(other.Id, pids);
+        }
+        finally { other.Kill(); other.WaitForExit(); } // only the PID this test started
+    }
+
     /// <summary>A window whose quick pick chooses the item tagged with a given pid (everything else is a no-op).</summary>
     private sealed class PidPickingWindow(int pid) : IWindowService
     {

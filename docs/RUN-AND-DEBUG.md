@@ -138,7 +138,7 @@ are in the editor's context menu. In the Debug Console a backtick or `-exec` sen
 ### Attach to a process
 
 Use (or add with *Debug ▸ Add Configuration...*) an attach configuration: **.NET: Attach**, **Rust: Attach to &lt;bin&gt;**, **GDB/LLDB: Attach
-to process** use `${command:pickProcess}`, which lists the running processes to pick from (CsCode itself is never listed); **Node.js:
+to process** use `${command:pickProcess}`, which lists the running processes to pick from (the CsCode process you are using is not listed); **Node.js:
 Attach (--inspect)** connects to a program started with `node --inspect` on port 9229. Select it in the toolbar and press F5. Stop
 (Shift+F5) detaches and leaves an attached program running (a launched one is ended). On Linux, GDB and CodeLLDB can only attach to a process that is not
 your own child when `/proc/sys/kernel/yama/ptrace_scope` is 0 (Ubuntu's default is 1).
