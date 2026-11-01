@@ -30,6 +30,28 @@ public sealed class CommandLineTests
     }
 
     /// <summary>
+    /// Windows' CreateProcess takes at most 32,767 characters of command line: 300 typical test ids (80 characters, each named twice in the
+    /// VSTest filter) made a 60,000-character filter and <c>dotnet test</c> did not start. A filter that long is dropped (the whole project
+    /// runs), for VSTest and for xUnit v3's <c>-method</c> arguments; a long one under the limit is kept.
+    /// </summary>
+    [Fact]
+    public void A_filter_too_long_for_a_Windows_command_line_is_dropped_and_the_whole_project_runs()
+    {
+        var ids = Enumerable.Range(0, DotNetTestProvider.MaxFilteredTests)
+            .Select(i => $"Company.Product.Feature.Tests.SomeFixtureTests.A_typical_descriptive_test_name_{i:D4}").ToList();
+        Assert.Equal(DotNetTestProvider.MaxFilteredTests, ids.Count);
+        Assert.Null(DotNetTestProvider.VsTestFilter(ids));
+        Assert.DoesNotContain("-method", DotNetTestProvider.XunitArguments("/o/x.dll", ids));
+
+        var fewer = ids.Take(60).ToList();
+        var filter = DotNetTestProvider.VsTestFilter(fewer);
+        Assert.NotNull(filter);
+        Assert.True(filter.Length <= DotNetTestProvider.MaxFilterChars, $"{filter.Length} characters");
+        Assert.Equal(60, DotNetTestProvider.XunitArguments("/o/x.dll", fewer).Count(a => a == "-method"));
+        Assert.True(DotNetTestProvider.MaxFilterChars < 32_767 - 2_000, "room for the tool, the paths and the options");
+    }
+
+    /// <summary>
     /// VSTest's <c>--filter</c> over <c>FullyQualifiedName</c> as the test host evaluates it: <c>|</c>-separated conditions, <c>=</c> exact and
     /// <c>~</c> contains (case-insensitive), <c>\</c> escaping the filter syntax.
     /// </summary>

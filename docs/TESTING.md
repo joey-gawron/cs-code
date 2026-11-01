@@ -72,8 +72,10 @@ Linux install; GDB comes from the system).
   -reporter json -noColor -noLogo -method Ns.Class.Method …` in its output directory — and every JSON progress message is read as it comes
   (`XunitJsonReporter`): `test-case-starting` (with `SourceFilePath`/`SourceLineNumber`), `test-passed|failed|skipped|not-run` with
   `ExecutionTime`, messages, exception types and stack traces, `test-output` (ITestOutputHelper). A theory's data rows (display name other than
-  `Ns.Class.Method`) become **cases** under the test, which shows the worst of them. More than 300 requested tests drop the filter (the whole
-  project runs).
+  `Ns.Class.Method`) become **cases** under the test, which shows the worst of them. More than 300 requested tests, or a filter longer than
+  24,000 characters (`MaxFilterChars`), drop the filter (the whole project runs): Windows' CreateProcess takes at most 32,767 characters of
+  command line, and the count alone does not bound it (300 VSTest ids of 80 characters, each named twice, make a 62,000-character filter).
+  Test: `A_filter_too_long_for_a_Windows_command_line_is_dropped_…`.
 * **Run, VSTest** (xUnit v2, NUnit, MSTest): `dotnet test <proj> --logger "trx;LogFileName=<tmp>/results.trx" --results-directory <tmp>
   --filter "FullyQualifiedName=A|FullyQualifiedName~A\(|FullyQualifiedName=B|FullyQualifiedName~B\("` (filter characters escaped); the TRX
   file is read at the end (`TrxReader`: `UnitTestResult` joined with its `UnitTest`'s class and method; Passed, Failed/Error/Timeout/Aborted,

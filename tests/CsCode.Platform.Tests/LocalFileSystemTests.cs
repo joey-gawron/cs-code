@@ -267,10 +267,12 @@ public class LocalFileSystemTests : IDisposable
     {
         var path = _f.Temp.WriteFile("doc.txt", "ORIGINAL");
         using var cts = new CancellationTokenSource();
-        _f.Fs.ChunkHook = () => cts.Cancel(); // cancel after the first 64 KB chunk of a 1 MB write
+        // Cancel after the first 64 KB chunk of a 1 MB write, then keep the lane thread a moment before it notices: the cancelled task must not
+        // complete before the write has stopped and removed its temp file (it completed at Cancel(), and the temp file was occasionally still there).
+        _f.Fs.ChunkHook = () => { if (!cts.IsCancellationRequested) { cts.Cancel(); Thread.Sleep(100); } };
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await _f.Fs.WriteFileAsync(_f.U("doc.txt"), Bytes(1_000_000), ct: cts.Token));
         Assert.Equal("ORIGINAL", File.ReadAllText(path));
-        Assert.Single(Directory.GetFileSystemEntries(_f.Temp.Path));
+        Assert.Equal([path], Directory.GetFileSystemEntries(_f.Temp.Path));
     }
 
     [Fact]

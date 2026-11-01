@@ -71,6 +71,11 @@ Mechanics worth knowing:
   "pump" items that re-enqueue themselves and **park** (hold no thread, queue nothing) when the consumer is slow.
   An item drops its delegate once it has run or was cancelled: an idle lane thread may still hold the last item it ran (Debug builds keep the loop's locals alive), and that must not keep
   the caller's closure — a disposed watch's callback — reachable (it made `LeakAssert` tests flaky).
+  Cancelling a **queued** item completes its task at once (even on a jammed lane); a **running** item's task completes when its work returns, so
+  a cancelled write's task ends after the write has stopped and deleted its temp file, and work that finished despite the cancellation (a write
+  that committed) reports its result. Before, the task completed at `Cancel()` while the lane thread was still to clean up (or commit), and
+  `LocalFileSystemTests.Cancelling_mid_write_…` occasionally saw the temp file. Tests: `IoLaneTests.Cancelling_a_running_item_completes_it_when_its_work_returns`,
+  `Cancelling_mid_write_leaves_the_original_untouched` (the lane thread pauses after the cancel).
 * We deliberately do **not** use `FileStream`'s async API: on Unix .NET implements it by queueing blocking calls on the shared thread pool, which is the
   starvation the lane exists to prevent. Blocking on our own lane threads is safe because they are ours.
 * `System.Threading.Timer` is used only to *schedule*; its pool callback does nothing but post a work item to the lane.

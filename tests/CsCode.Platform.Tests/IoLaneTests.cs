@@ -93,6 +93,44 @@ public class IoLaneTests
         Assert.False(ran);
     }
 
+    /// <summary>
+    /// A running item's task completes when its work returns, cancelled or not: a cancelled write's task completed at <c>Cancel()</c>, while the
+    /// lane thread was still to notice and delete its temp file (LocalFileSystemTests saw the temp file), or even to commit.
+    /// </summary>
+    [Fact]
+    public async Task Cancelling_a_running_item_completes_it_when_its_work_returns()
+    {
+        using var lane = new IoLane("test.io", maxThreads: 1);
+        using var gate = new ManualResetEventSlim();
+        using var started = new ManualResetEventSlim();
+        using var cts = new CancellationTokenSource();
+        var cleanedUp = false;
+        var running = lane.RunAsync(token =>
+        {
+            started.Set();
+            gate.Wait();
+            cleanedUp = true;
+            token.ThrowIfCancellationRequested();
+        }, cts.Token);
+        Assert.True(started.Wait(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        cts.Cancel();
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        Assert.False(running.IsCompleted);
+        gate.Set();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.True(cleanedUp);
+
+        // Work that finishes despite the cancellation (a write that committed) reports its result.
+        using var cts2 = new CancellationTokenSource();
+        using var gate2 = new ManualResetEventSlim();
+        using var started2 = new ManualResetEventSlim();
+        var finished = lane.RunAsync(_ => { started2.Set(); gate2.Wait(); return 7; }, cts2.Token);
+        Assert.True(started2.Wait(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        cts2.Cancel();
+        gate2.Set();
+        Assert.Equal(7, await finished.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+    }
+
     [Fact]
     public async Task Exceptions_surface_on_the_returned_task_and_the_lane_keeps_working()
     {

@@ -273,6 +273,17 @@ public sealed class GlobRegexTests
         }
         Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
     }
+}
+
+/// <summary>
+/// The heap measurement of <see cref="GlobRegexTests"/>: the live heap is the whole process's, so a test of another class running at the
+/// same time counted its objects as the matchers' ("16194 B per compiled pattern" in a full run on a busy Mac, 912 B alone; a concurrent
+/// allocating test reproduces it at 245-271 KB). It runs alone, after the parallel tests.
+/// </summary>
+[Collection(GlobRegexMemoryTests.Name)]
+public sealed class GlobRegexMemoryTests
+{
+    public const string Name = "GlobRegexMemory";
 
     [Fact]
     public void A_compiled_matcher_keeps_a_few_hundred_bytes_after_matching()
@@ -295,7 +306,10 @@ public sealed class GlobRegexTests
     {
         var total = GC.GetTotalMemory(forceFullCollection: true);
         if (!OperatingSystem.IsMacOS()) return total;
-        var info = GC.GetGCMemoryInfo();
+        var info = GC.GetGCMemoryInfo(GCKind.FullBlocking); // that collection, not a later one another thread caused
         return info.HeapSizeBytes - info.FragmentedBytes;
     }
 }
+
+[CollectionDefinition(GlobRegexMemoryTests.Name, DisableParallelization = true)]
+public sealed class GlobRegexMemoryCollection;

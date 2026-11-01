@@ -188,13 +188,21 @@ public sealed class IoLane : IDisposable
         private Func<CancellationToken, T>? _work;
         private readonly CancellationToken _ct;
         private CancellationTokenRegistration _reg;
+        private int _state; // Queued, Running or CancelledWhileQueued: whichever of the token and the lane thread gets there first decides
+        private const int Queued = 0, Running = 1, CancelledWhileQueued = 2;
 
         public WorkItem(Func<CancellationToken, T> work, CancellationToken ct)
         {
             _work = work;
             _ct = ct;
-            // Cancelling while still queued completes the caller's task immediately, even when the lane is jammed.
-            if (ct.CanBeCanceled) _reg = ct.Register(static s => ((WorkItem<T>)s!)._tcs.TrySetCanceled(((WorkItem<T>)s)._ct), this);
+            // Cancelling while still queued completes the caller's task immediately, even when the lane is jammed. Once the work runs, its task
+            // completes when it returns: a cancelled write has removed its temp file by then (and one that committed anyway reports success).
+            if (ct.CanBeCanceled)
+                _reg = ct.Register(static s =>
+                {
+                    var item = (WorkItem<T>)s!;
+                    if (Interlocked.CompareExchange(ref item._state, CancelledWhileQueued, Queued) == Queued) item._tcs.TrySetCanceled(item._ct);
+                }, this);
         }
 
         public Task<T> Task => _tcs.Task;
@@ -212,7 +220,7 @@ public sealed class IoLane : IDisposable
             _work = null;
             try
             {
-                if (_tcs.Task.IsCompleted || work is null) return; // cancelled while queued
+                if (Interlocked.CompareExchange(ref _state, Running, Queued) != Queued || _tcs.Task.IsCompleted || work is null) return; // cancelled while queued
                 _ct.ThrowIfCancellationRequested();
                 _tcs.TrySetResult(work(_ct));
             }
