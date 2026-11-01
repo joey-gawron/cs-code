@@ -24,8 +24,9 @@ dedicated I/O thread, `FswFileWatcher`, `InMemoryConfiguration`, `EditorConfigRe
 
 Contract additions (additive only — no existing member was renamed or removed): `IEditorViewFactory.DisposeView`; `IEditorViewController.GetViewState`,
 `RestoreViewState`, `GetBreadcrumbsAsync`, `IsFocused`; the `EditorViewState` record; the clipboard members (§7a); the macro hooks `TextInput`,
-`ReplayText`, `ReplayKey`, `OpenUndoGroup`, `StartNewUndoStep` (below). The later additions are default interface members, so other
-implementations keep compiling. **No change was made to CsCode.Core.**
+`ReplayText`, `ReplayKey`, `OpenUndoGroup`, `StartNewUndoStep` (below); `SetSelections` (multi-cursor, §7b; `Selections` lists the primary
+first, then the other carets in document order). The later additions are default interface members, so other implementations keep
+compiling. **No change was made to CsCode.Core.**
 
 **Modal editing surface (for the shell's Vim adapter).** `CodeEditorControl.Modal` (`EditorModalSurface`, created on first use, disposed with the
 view) is a Vim-free hook surface: the typing path (`TypeText` = `TextArea.PerformTextInput`), `CaretShape` (block / underline / outline / thin
@@ -154,6 +155,8 @@ Numbers refer to the brief's MUST list.
 
 12. **Clipboard and the right-click menu** (clipboard wave, `docs/briefs/clipboard-and-context-menus.md`): see §7a.
 
+13. **Multi-cursor** (Add Next Occurrence, Select All Occurrences, Insert Cursor Above/Below, Alt+Click, editing at every caret as one undo step): see §7b.
+
 SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version and per set of symbol providers: a language server that starts after the file was opened is asked at the next request, without an edit), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
 ## 4. Threading rules and how they are verified
@@ -250,13 +253,15 @@ settings alone, so a project's `.editorconfig` could make it say "Spaces: 4" whi
 `editor.fontFamily`, `editor.fontSize`, `editor.fontLigatures` (on by default; §8), `editor.lineHeightFactor`, `editor.tabSize`, `editor.insertSpaces`, `editor.wordWrap` (on/off), `editor.renderWhitespace` (`boundary` is treated as `all`), `editor.lineNumbers` (on/off), `editor.rulers`, `editor.mouseWheelZoom`, `editor.guides.indentation`,
 `editor.renderLineHighlight`, `editor.bracketPairColorization.enabled`, `editor.matchBrackets`, `editor.occurrencesHighlight`, `editor.folding`, `editor.quickSuggestions`, `editor.quickSuggestionsDelay`, `editor.suggestOnTriggerCharacters`, `editor.autoClosingBrackets/Quotes`, `editor.autoSurround`,
 `editor.formatOnSave/OnType/OnPaste`, `editor.emptySelectionClipboard`, `editor.selectionClipboard`, `editor.autoIndentOnPaste`, `editor.autoIndent`, `editor.hover.delay`, `editor.inlayHints.enabled`, `workbench.colorTheme`, `files.encoding`, `files.eol`, `files.insertFinalNewline`, `files.trimFinalNewlines`, `files.trimTrailingWhitespace`, `files.associations`, and the module's own `cscode.editor.undoLimit` (default 1000 groups),
-`cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB), and
-`editor.syntaxEngine` (`auto`; the old `editor.experimental.treeSitter` is read as an alias; see docs/TREE-SITTER.md).
+`cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB),
+`editor.syntaxEngine` (`auto`; the old `editor.experimental.treeSitter` is read as an alias; see docs/TREE-SITTER.md), and
+`editor.multiCursorLimit` (10,000) / `editor.multiCursorPaste` (`spread`) (§7b; the factory registers both, so the Settings panel lists them).
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
 `sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.showHover` (at the caret),
 `editor.action.marker.next`/`marker.prev` (next / previous problem, wrapping; the caret goes there and the hover shows it), `editor.action.startFindReplace` (`actions.find` and it put the keyboard in the find box at once, also the first time the panel opens and headless: T20), `workbench.action.gotoLine`, `editor.action.triggerSuggest`, `triggerParameterHints`, `quickFix`, `organizeImports`, `revealDefinition`, `goToDeclaration`, `goToTypeDefinition`,
-`goToImplementation`, `goToReferences`, `rename`, `formatDocument`, `formatSelection`, `editor.fold`, `foldRecursively`, `unfold`, `unfoldRecursively`, `toggleFold`, `foldAll`, `unfoldAll`, `editor.action.insertSnippet`, `editor.debug.action.toggleBreakpoint`.
+`goToImplementation`, `goToReferences`, `rename`, `formatDocument`, `formatSelection`, `editor.fold`, `foldRecursively`, `unfold`, `unfoldRecursively`, `toggleFold`, `foldAll`, `unfoldAll`, `editor.action.insertSnippet`, `editor.debug.action.toggleBreakpoint`,
+and multi-cursor's `editor.action.addSelectionToNextFindMatch`, `moveSelectionToNextFindMatch`, `selectHighlights`, `insertCursorAbove`, `insertCursorBelow`, `cursorUndo`, `removeSecondaryCursors` (§7b).
 
 ### 7a. Clipboard and the right-click menu
 
@@ -266,9 +271,12 @@ the pure `Editing/ClipboardOperations.cs` and applied as ONE undo unit:
 * **Whole lines**: Ctrl+C / Ctrl+X on a caret copy / cut the line with its line ending (`editor.emptySelectionClipboard`, default on); pasting such a
   line inserts it above the caret's line, the caret staying on its own line. The clipboard text is plain; the "whole line" shape travels as CsCode
   metadata (`ClipboardText.Shape`), which the shell's clipboard service hands back only while the clipboard still holds that exact text.
-* **Several carets** are the rows of a box selection (Alt+drag; a zero-width box is a column of carets, which is how this editor, without a
-  multi-caret model, expresses Visual Studio's multi-caret). Copy takes one piece per row (or each caret's whole line); a paste puts one line or
-  piece per row when the counts match, a single line into every row, else the whole text at each. The caret ends after the last row's paste.
+* **Several carets** are the carets of multi-cursor (§7b) or the rows of a box selection (Alt+drag on Linux and Windows, Ctrl+Option+drag on
+  macOS, AvaloniaEdit's own gesture; a zero-width box is a column of carets). Copy takes one piece per caret or row (or each caret's whole line);
+  multi-cursor pieces are joined by line breaks as plain text (VS Code), so pasting them at one caret inserts the lines, not a column block. A
+  paste puts one line or piece per caret when the counts match (`editor.multiCursorPaste`: `spread`; `full` puts everything at each), else the
+  whole text at each. Multi-cursor carets stay, one after each piece; after a paste into a box's rows a single caret remains, after the last row's
+  paste. Cut at several carets removes each selection (or each caret's line) and keeps a caret at each.
 * **Box (column) selection** copies as a block (`Shape = Block`, one piece per row) and a block pastes as a block: row *i* at the caret's visual
   column on line caret+*i* (tabs expanded), short lines padded with spaces, missing lines appended.
 * **Line endings** are converted to the document's EOL on paste (CRLF, CR, LF). Unicode is untouched (emoji, combining marks, RTL).
@@ -323,13 +331,69 @@ Ctrl+F10, Shift+F9, Ctrl+F9, Ctrl+K Ctrl+S, Ctrl+K Ctrl+X. Contract additions (d
 Tests: `ClipboardOperationsTests` (pure), `EditorClipboardViewTests` (keys, undo, ring, box, PRIMARY and middle-click, right-click, format on paste,
 read-only, a slow clipboard owner, 10 MB, contributions, context keys, Run To Cursor, retention), `RemoteClipboardTests`.
 
+### 7b. Multi-cursor
+
+`View/MultiCursorController.cs` (one per view, also in large-file mode) adds carets on top of AvaloniaEdit, which has one. The **primary** caret
+and selection stay AvaloniaEdit's own, so every single-caret feature (completion, hover, signature help, find, the status bar's Ln/Col, Vim's
+caret shapes) is untouched; the others live in an immutable `Editing/CaretSet` of document offsets (sorted, merged when they overlap or meet,
+one of them the primary). The editing itself is pure (`Editing/MultiCaretOperations`, unit tested without a view): each operation turns the
+caret set into one batch of edits plus the carets after it; the view applies the batch back to front inside one buffer update, which is ONE
+change event (one LSP `didChange`, one snapshot) and ONE undo step.
+
+| What | How |
+|---|---|
+| **Add Next Occurrence** (`editor.action.addSelectionToNextFindMatch`) | A caret selects its word first; each further press adds the next occurrence after the primary (wrapping) as the new primary, revealed. Started from a word it matches whole words with matching case, from a selection the selected text ignoring case (VS Code's find defaults). An occurrence already selected is skipped; when all are, nothing happens. |
+| **Move to Next Occurrence** (`moveSelectionToNextFindMatch`) | The primary selection jumps to the next occurrence instead of adding one. |
+| **Select All Occurrences** (`selectHighlights`) | Every occurrence of the selection (or of the word at the caret, whole word and case) becomes a selection, the one at the old primary staying primary. Searches a snapshot in 64K chunks; above 4M characters on a worker (dropped if the text changed meanwhile). |
+| **Insert Cursor Above / Below** (`insertCursorAbove` / `insertCursorBelow`) | A caret on the line above / below each caret at the same visual column (tabs expanded; the column is kept across shorter lines); the new outermost one is primary, so repeating extends the column. |
+| **Alt+Click** (Option+Click on macOS) | Adds a caret at the click, or removes the caret clicked on. AvaloniaEdit's own Alt+press (the start of its box selection) is let through: a release within 3 px of the press is a click, anything further is a drag and the box selection (Linux) or stream selection (macOS, where AvaloniaEdit's box wants Ctrl+Option) stands. |
+| **Cursor Undo** (`cursorUndo`) | Back to the carets before the last caret command (the ones above and Alt+Click), up to 50 states; states from before an edit are dropped. |
+| **Escape** / `removeSecondaryCursors` | Back to the primary alone, after the completion list, parameter hints and a snippet session have had their Escape. |
+| Typing, Backspace / Delete (Ctrl / Option for a word; Shift+Backspace is Backspace), Enter, Tab / Shift+Tab | At every caret: each selection replaced; Backspace and Delete take a CRLF or a surrogate pair as one character; word deletes that reach over other carets merge; Enter gives each new line the language's indentation (onEnterRules, brackets: `{|}` splits) and drops the blanks after the caret, as the single-caret Enter does; Tab inserts spaces to the next tab stop (or a tab), or indents the lines of a multi-line selection, Shift+Tab outdents. A typed run is one undo step (continued while nothing else happens, as single-caret typing). |
+| Arrows, Home / End, Ctrl+Left/Right (Option on macOS), ⌘←/⌘→ on macOS, Shift for selection | Every caret moves; Left/Right collapse a selection to its side; Up/Down keep a visual column, the first line's Up goes to its start and the last line's Down to its end; Home is smart (first non-blank, then column 0). Carets that meet merge. Up/Down move by document lines (not wrapped rows). |
+| **Undo / Redo** | An edit's undo step carries two markers (`EditorDocument.AddUndoMarker`): undo puts back the carets from before it, redo the carets after it, applied when the buffer's update ends. Only for edits with at most 1,000 carets (a snapshot per step); above that undo leaves AvaloniaEdit's caret alone. The markers hold the controller weakly, so history never keeps a view alive. |
+| **Clipboard** | §7a: copy joins the selections with line breaks, paste spreads one line per caret, cut keeps a caret at each. |
+| **Completion** | Typing at several carets triggers completion and signature help at the primary (the typing path's `Typed` event); accepting a plain completion replaces the same prefix and suffix around every caret (VS Code's rule), in one step. A snippet completion, Insert Snippet, Format, the line commands (move / copy / comment lines) act at the primary, and the caret move that follows collapses the others. |
+| **Edits from elsewhere** | A language server's edit, another view of the document, undo of an older step: the carets follow all the changes of the buffer's update at once when it ends (`ChangeSequenceMapper`: the same offsets as following each change in turn, but by binary search when the changes run back to front, as a batch and its redo are applied, or front to back, as AvaloniaEdit's undo replays one, so O(carets × log changes); other orders go change by change), then the primary is taken from AvaloniaEdit and carets that met merge. An undo that restores its carets maps nothing. Following each change as it came made undo of a 10,000-caret step take seconds (one change per caret, each moving every caret). |
+| **Collapsing** | Anything else that moves the primary (a click, Page Down, Ctrl+Home, Ctrl+A, Go to Definition, Find Next, `SetSelection`) collapses the others to it, as in VS Code. |
+| **Vim** | While a modal layer is attached (`EditorModalSurface.Attach`, so whenever Vim mode is on, which is the default) multi-cursor is off: attaching collapses the carets, the commands say "Multiple cursors are not available while Vim mode is on" in the status bar and add nothing, Alt+Click adds nothing. Turn Vim off (`vim.enable: false` or Toggle Vim Mode) to use it. |
+| **Macros** | Recorded as what they are: the keys (replayed through `ReplayKey`, which reaches the controller's handler), typed text (`ReplayText`, through `TextEntering`) and the commands. Alt+Click is a mouse gesture and is not recorded. |
+| **Read-only documents** | Carets can be added and moved; typing and the editing keys do nothing (and never edit at the primary alone). |
+| **Limits** | `editor.multiCursorLimit` (default 10,000, VS Code's id and default): the carets nearest the primary are kept and the status bar says "The number of cursors has been limited to N.". A keystroke costs O(carets × log document) plus each caret's own line; nothing per caret scans the document. Drawing visits only the carets in the visible lines (binary search). Measured: typing a character at 10,000 carets is one change event and one undo step, and its undo and redo move the carets along their 10,000 changes at once (`MultiCursorViewTests`). |
+
+Drawing: two `IBackgroundRenderer`s, the secondary selections on the selection layer (theme `editor.selectionBackground`, AvaloniaEdit's corner
+radius) and 2 px carets in `editorCursor.foreground` on the caret layer, blinking every 530 ms while the view has the keyboard. The blink timer
+runs only while there are several carets and the view is focused, and stops on collapse and dispose. With one caret every handler returns at
+once (no allocation on the typing path). Context key: the shell sets VS Code's `editorHasMultipleSelections` from the controller's
+`Selections` (docs/SHELL.md).
+
+Keys (`src/CsCode.Platform/Resources/Keymaps`): the **VS Code** preset has VS Code's Ctrl+D, Ctrl+K Ctrl+D, Ctrl+Shift+L, Ctrl+Alt+Up/Down and
+Ctrl+U (⌘D, ⌘K ⌘D, ⇧⌘L, ⌥⌘↑/↓, ⌘U on macOS). The **Visual Studio** preset (the default) keeps Visual Studio's own meaning of those keys,
+Ctrl+D Duplicate, Ctrl+K Ctrl+D Format Document and Ctrl+Shift+L Delete Line, and binds Visual Studio 2022's multi-caret keys instead:
+Shift+Alt+. (Insert Next Matching Caret = Add Next Occurrence) and Shift+Alt+; (Insert Carets at All Matching = Select All Occurrences), plus
+Ctrl+Alt+Up/Down (⌥⌘↑/↓) and Ctrl+U (⌘U); Move to Next Occurrence has no Visual Studio key (Command Palette). Ctrl+U is bound with
+`!vim.active` in both (Vim owns it). Escape and Alt+Click are the editor's own.
+
+Contract: `IEditorViewController.Selections` lists the primary first, then the other carets in document order; `SetSelections(list)` sets
+several (the first is primary; one only while Vim is on); `SetSelection` collapses them.
+
+Tests: `MultiCaretModelTests` (the caret set, every edit and movement, the occurrence search across chunk seams), `ChangeSequenceMapperTests` (offsets through a batch, its undo and any other order, against change-by-change mapping), `MultiCursorViewTests`
+(each command, Alt+Click and Alt+drag, typing and the keys with undo/redo of text and carets, clipboard, completion, macros' replay, edits from
+elsewhere, collapsing, Vim, read-only, the limit, 10,000 carets with their undo and redo, drawing and the blink timer), `RealApp/MultiCursorTests` (the preset keys
+through the real keyboard pipeline, `editorHasMultipleSelections`, Vim on), `KeybindingServiceTests` (both presets on Linux and macOS).
+
 **Large-file mode**: above `cscode.editor.largeFileThresholdBytes` (default 5 MB) or with a line longer than 20,000 characters the document's language is forced to `plaintext`, and its views get no tokenisation, folding, squiggles, bracket matching or any other language feature (just text); files over 200 MB are refused with a clear `FileTooLargeException` message.
 
 ## 8. Known gaps (honest list)
 
 Not done, or done only in part — none of this is faked:
 
-* **Multi-cursor** (Alt+Click, Ctrl+Alt+Up/Down, Ctrl+D) is not implemented: AvaloniaEdit has no multi-caret model and the stretch goal was not attempted. Rectangular selection (AvaloniaEdit's own) works, and its rows act as carets for the clipboard (§7a); after a paste into several rows a single caret remains.
+* **Multi-cursor** (§7b) is off while Vim mode is on (the default). With several carets, auto-closing brackets and quotes, auto-surround and
+  over-typing are not applied (plain text is typed at each caret); snippets, the line commands (move / copy / comment / indent lines through
+  the commands), Format and code actions act at the primary only and collapse the others; Up/Down move by document lines when words wrap; the
+  carets are not kept in the view state (a recreated view has one); `editor.multiCursorModifier` (Ctrl+Click to add carets) is not read;
+  Backspace in leading spaces deletes one space, not one indentation unit. Rectangular selection is AvaloniaEdit's own (Alt+drag; Ctrl+Option+drag
+  on macOS) and its rows act as carets for the clipboard (§7a).
 * **Minimap, code lens, semantic-token overlay, Alt+F12 peek, overview-ruler markers on the scrollbar** are not implemented (settings for them are read but have no effect). Sticky scroll is (`editor.stickyScroll.enabled`, off by default; docs/TREE-SITTER.md §5).
 * `editor.cursorStyle`, `editor.cursorBlinking` and `editor.smoothScrolling` are not applied (AvaloniaEdit offers no equivalent). Font ligatures are on by default (`editor.fontLigatures`; VS Code defaults to off, but the bundled Fira Code is chosen for them, and they keep one glyph per character): `false` turns them off. AvaloniaEdit 12 has no font-feature setting, so `EditorFontFeatures`, a line transformer, then gives each element's run properties `-liga, -calt` (reaching the private `VisualLineElement.TextRunProperties` setter by reflection; `CodeFontTests` fails if an upgrade removes it). `true` (the default) leaves the font's own ligatures (Fira Code's keep one glyph per character, so carets stay on columns) and a string is VS Code's CSS feature list (`"'ss01', 'zero'"`). The code panels follow the same setting through `ui:CodeFontFeatures`. `editor.wordWrap` supports on/off only. Drag-and-drop of text is AvaloniaEdit's own behaviour; bidirectional text and IME composition were not tested.
 * **Typing allocation**: the TextMate colorizer allocates per token on the edited line (§6). A single pre-merged element list would cut it; not done.
@@ -343,7 +407,7 @@ Not done, or done only in part — none of this is faked:
 `dotnet test tests/CsCode.Editor.Tests` (headless Avalonia; real temp files, real `FileSystemWatcher`, real TextMate grammars and the native Oniguruma). ≈ 650 tests, ≈ 1.5 minutes. Highlights:
 
 * `EditorDocumentFuzzTests` (oracle comparison), `EditorDocumentFileTests` (encodings, EOL, atomic save, watcher, conflicts, large files), `LanguageServiceTests`, `ThemeTests` (real Dark+/Monokai/TypeScript/Python/C# JSON), `TextMateTests` (golden scopes), `SnippetEngineTests`, `EditingOperationsTests`, `EditorConfigTests`.
-* View tests: `EditorViewTests`, `CompletionViewTests`, `DiagnosticsHoverTests`, `SignatureActionsNavigationTests`, `BracketsHighlightsDebugTests`, `ShouldHaveFeatureTests`.
+* View tests: `EditorViewTests`, `CompletionViewTests`, `DiagnosticsHoverTests`, `SignatureActionsNavigationTests`, `BracketsHighlightsDebugTests`, `ShouldHaveFeatureTests`, `MultiCursorViewTests` (and the pure `MultiCaretModelTests`).
 * Hostile/perf/leak: `HostileProviderTests`, `BlockingDetectorTests`, `KeystrokeAllocationTests`, `PerfMemoryTests` (opens 1/10/50 MB files, tokeniser memory, 500× open/close, 500× recreate, popups open). Leak failures print the chain of strong references (`RetentionPath`).
 * `ScreenshotTests` write PNGs of the dark and light themes (code with squiggles, breakpoints, the execution line, a folded region, bracket/occurrence highlights; the completion, hover and signature popups) to `.scratch/screenshots/` (git-ignored) and assert the content really is on screen. Visual defects found by looking at them and fixed: invisible match highlight on the selected completion row in the light theme (the "focus highlight" colour was missing).
 

@@ -12,7 +12,7 @@ public enum FocusArea { None, Editor, Explorer, List, Panel, Input, Terminal }
 
 /// <summary>
 /// Keeps the shell-owned context keys in <see cref="IContextKeyService"/> in sync with reality so menus, keybindings and the palette can
-/// gate on `when` clauses: editorTextFocus, editorHasSelection, editorReadonly, editorLangId, resourceExtname, resourceFilename,
+/// gate on `when` clauses: editorTextFocus, editorHasSelection, editorHasMultipleSelections, editorReadonly, editorLangId, resourceExtname, resourceFilename,
 /// resourceScheme, explorerViewletFocus, listFocus, panelFocus, inputFocus, terminalFocus, inDebugMode, debugState, isMac/isLinux/isWindows,
 /// workspaceFolderCount, hasOpenEditors, activeEditorIsDirty, quickInputVisible. (`config.*` keys belong to Platform.)
 /// All handlers run on the UI thread; debug-service events are marshalled onto it.
@@ -102,6 +102,7 @@ public sealed class ContextKeyTracker : IDisposable
         _keys.Set("resourceFilename", editor is null ? "" : EditorTab.TitleFor(doc!.Uri));
         _keys.Set("resourceExtname", editor is null ? "" : Path.GetExtension(EditorTab.TitleFor(doc!.Uri)));
         _keys.Set("editorHasSelection", false);
+        _keys.Set("editorHasMultipleSelections", false);
         if (editor is null) return;
 
         _selectionSub = doc!.DirtyChanged.Subscribe(_ => _keys.Set("activeEditorIsDirty", doc.IsDirty));
@@ -109,8 +110,13 @@ public sealed class ContextKeyTracker : IDisposable
         {
             if (t.Controller is not { } c) return;
             _keys.Set("editorHasSelection", c.Selections.Any(s => !s.IsEmpty));
+            _keys.Set("editorHasMultipleSelections", c.Selections.Count > 1);
             _viewSub?.Dispose();
-            _viewSub = c.SelectionChanged.Subscribe(sel => _keys.Set("editorHasSelection", sel.Any(s => !s.IsEmpty)));
+            _viewSub = c.SelectionChanged.Subscribe(sel =>
+            {
+                _keys.Set("editorHasSelection", sel.Any(s => !s.IsEmpty));
+                _keys.Set("editorHasMultipleSelections", sel.Count > 1); // multi-cursor (VS Code's key)
+            });
         }
         Attach(editor);
         if (editor.Controller is null)

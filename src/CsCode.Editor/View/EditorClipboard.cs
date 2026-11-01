@@ -55,6 +55,7 @@ internal sealed class EditorClipboard : IDisposable
     /// <summary>The current selection as the clipboard operations see it: a stream selection or caret, or a box selection's rows.</summary>
     internal SelectionSet CurrentSelection()
     {
+        if (_v.MultiCursor.IsActive) return new SelectionSet(_v.MultiCursor.RangesInOrder()); // several carets: one range each, in document order
         var area = _v.TextArea;
         if (area.Selection is RectangleSelection rect)
         {
@@ -66,7 +67,7 @@ internal sealed class EditorClipboard : IDisposable
         return SelectionSet.Single(new TextRange(_v.PositionOf(editor.SelectionStart), _v.PositionOf(editor.SelectionStart + editor.SelectionLength)));
     }
 
-    internal bool HasSelection => !_v.TextArea.Selection.IsEmpty;
+    internal bool HasSelection => !_v.TextArea.Selection.IsEmpty || (_v.MultiCursor.IsActive && _v.MultiCursor.AnySelection);
     internal bool CanCut => !_v.Document.IsReadOnly && (HasSelection || _v.Settings.EmptySelectionClipboard);
     internal bool CanCopy => HasSelection || _v.Settings.EmptySelectionClipboard;
     internal bool CanPaste => !_v.Document.IsReadOnly;
@@ -85,6 +86,7 @@ internal sealed class EditorClipboard : IDisposable
     {
         var selection = CurrentSelection();
         if (_disposed || ClipboardOperations.Copy(_v.Document, selection, _v.GetEditingContext(), _v.Settings.EmptySelectionClipboard) is not { } clip) return;
+        clip = FromCarets(selection, clip);
         if (withFormatting && clip.Text.Length <= HtmlClipboard.MaxChars)
         {
             var capture = CaptureForHtml(selection);
@@ -171,8 +173,9 @@ internal sealed class EditorClipboard : IDisposable
         if (ClipboardOperations.Copy(_v.Document, selection, _v.GetEditingContext(), empty) is not { } clip) return;
         if (ClipboardOperations.Cut(_v.Document, selection, empty) is not { } plan) return;
         // The text is put on the clipboard first (it is already in hand), then removed: the edit does not wait for the clipboard.
-        var write = Clipboard.WriteAsync(clip);
-        _v.ApplyPlan(plan);
+        var write = Clipboard.WriteAsync(FromCarets(selection, clip));
+        if (_v.MultiCursor.IsActive) _v.MultiCursor.ApplyMapped(plan.Edits, keepSelections: false); // each caret stays where its text was
+        else _v.ApplyPlan(plan);
         await write.ConfigureAwait(true);
     }
 
@@ -189,6 +192,11 @@ internal sealed class EditorClipboard : IDisposable
     internal TextRange? Paste(ClipboardText clip, bool formatAfter)
     {
         if (_v.Document.IsReadOnly) return null;
+        if (_v.MultiCursor.IsActive)
+        {
+            _v.MultiCursor.Paste(clip); // one line per caret, or all of it at each (editor.multiCursorPaste)
+            return null;
+        }
         var result = ClipboardOperations.Paste(_v.Document, CurrentSelection(), clip, _v.GetEditingContext(), _v.Settings.AutoIndentOnPaste && clip.Text.Length < LargePaste);
         if (result is null) return null;
         _v.ApplyPlan(result.Plan);
@@ -247,6 +255,13 @@ internal sealed class EditorClipboard : IDisposable
         if (inserted is not null) FeatureSupport.Status(_v, $"Clipboard ring: 1 of {ring.Count}");
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Several carets' selections copy as one piece per caret joined by line breaks (VS Code): a paste at as many carets spreads them, a paste
+    /// at one caret inserts the joined text as it is, not as a column block (that shape is for a box selection's rows).
+    /// </summary>
+    private ClipboardText FromCarets(SelectionSet selection, ClipboardText clip) =>
+        _v.MultiCursor.IsActive && !selection.IsBlock && clip.Shape == ClipboardTextShape.Block ? clip with { Shape = ClipboardTextShape.Normal } : clip;
 
     private static bool EndsWithLineBreak(string text) => text.EndsWith('\n') || text.EndsWith('\r');
 

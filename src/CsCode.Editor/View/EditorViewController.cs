@@ -24,10 +24,12 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
 
     public TextPosition Caret => view.PositionOf(view.Editor.CaretOffset);
 
+    /// <summary>The primary selection first, then the other carets' (multi-cursor) in document order.</summary>
     public IReadOnlyList<TextRange> Selections
     {
         get
         {
+            if (view.MultiCursor.IsActive) return view.MultiCursor.Selections();
             var editor = view.Editor;
             if (editor.SelectionLength == 0) return [TextRange.At(Caret.Line, Caret.Character)];
             return [new TextRange(view.PositionOf(editor.SelectionStart), view.PositionOf(editor.SelectionStart + editor.SelectionLength))];
@@ -36,8 +38,21 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
 
     public void SetSelection(TextRange range, bool reveal = true)
     {
+        view.MultiCursor.Collapse();
         view.SetSelection(range);
         if (reveal) Reveal(range, center: false);
+    }
+
+    /// <summary>Several selections at once (multi-cursor): the first is the primary. Bounded by <c>editor.multiCursorLimit</c>; one only while Vim is on.</summary>
+    public void SetSelections(IReadOnlyList<TextRange> selections, bool reveal = true)
+    {
+        if (_disposed || selections.Count == 0) return;
+        if (selections.Count == 1)
+        {
+            SetSelection(selections[0], reveal);
+            return;
+        }
+        view.MultiCursor.SetSelections(selections, reveal);
     }
 
     public void Reveal(TextRange range, bool center = true)

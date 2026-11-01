@@ -57,6 +57,15 @@
   { "key": "ctrl+m ctrl+o",      "command": "editor.foldAll",                     "when": "editorTextFocus", "mac": "cmd+k cmd+0" },
   { "key": "ctrl+m ctrl+l",      "command": "editor.unfoldAll",                   "when": "editorTextFocus", "mac": "cmd+k cmd+j" },
 
+  // ---- multiple carets: Visual Studio 2022's own keys where it has them (Shift+Alt+. Insert Next Matching Caret, Shift+Alt+; Insert Carets at
+  // All Matching). VS Code's Ctrl+D, Ctrl+Shift+L and Ctrl+K Ctrl+D stay Visual Studio's Duplicate, Delete Line and Format Document here (the
+  // "VS Code" preset has them); Move Last Selection to Next Find Match has no Visual Studio key (Command Palette). Alt+Click adds a caret. ----
+  { "key": "shift+alt+.",        "command": "editor.action.addSelectionToNextFindMatch", "when": "editorTextFocus" },
+  { "key": "shift+alt+;",        "command": "editor.action.selectHighlights",     "when": "editorTextFocus" },
+  { "key": "ctrl+alt+up",        "command": "editor.action.insertCursorAbove",    "when": "editorTextFocus", "mac": "cmd+alt+up" },
+  { "key": "ctrl+alt+down",      "command": "editor.action.insertCursorBelow",    "when": "editorTextFocus", "mac": "cmd+alt+down" },
+  { "key": "ctrl+u",             "command": "cursorUndo",                         "when": "editorTextFocus && !vim.active", "mac": "cmd+u" },
+
   // ---- find ----
   { "key": "ctrl+f",             "command": "actions.find",                       "mac": "cmd+f" },
   { "key": "ctrl+h",             "command": "editor.action.startFindReplace",     "mac": "cmd+alt+f" },

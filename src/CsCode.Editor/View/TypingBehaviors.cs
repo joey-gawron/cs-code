@@ -37,6 +37,9 @@ internal sealed class TypingBehaviors : IDisposable, ISettingsAware
         view.Typed = _typed;
     }
 
+    /// <summary>Text typed at several carets by <see cref="MultiCursorController"/>: the features that follow typing (completion, signature help) see it too.</summary>
+    internal void NotifyTyped(string text) => _typed.Fire(text);
+
     public void OnSettingsChanged()
     {
         // nothing cached: every keystroke reads view.Settings

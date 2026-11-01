@@ -115,6 +115,15 @@ internal static class EditorCommands
             return Task.CompletedTask;
         });
 
+        // ---- multi-cursor (VS Code's ids; MultiCursorController; off while Vim is on) ----
+        Cmd(MultiCursorCommands.AddSelectionToNextFindMatch, "Add Selection to Next Find Match", (view, _) => { view.MultiCursor.AddSelectionToNextFindMatch(); return Task.CompletedTask; });
+        Cmd(MultiCursorCommands.MoveSelectionToNextFindMatch, "Move Last Selection to Next Find Match", (view, _) => { view.MultiCursor.MoveSelectionToNextFindMatch(); return Task.CompletedTask; });
+        Cmd(MultiCursorCommands.SelectHighlights, "Select All Occurrences of Find Match", (view, _) => view.MultiCursor.SelectAllOccurrencesAsync());
+        Cmd(MultiCursorCommands.InsertCursorAbove, "Add Cursor Above", (view, _) => { view.MultiCursor.InsertCursor(below: false); return Task.CompletedTask; });
+        Cmd(MultiCursorCommands.InsertCursorBelow, "Add Cursor Below", (view, _) => { view.MultiCursor.InsertCursor(below: true); return Task.CompletedTask; });
+        Cmd(MultiCursorCommands.CursorUndo, "Cursor Undo", (view, _) => { view.MultiCursor.CursorUndo(); return Task.CompletedTask; });
+        Cmd(MultiCursorCommands.RemoveSecondaryCursors, "Remove Secondary Cursors", (view, _) => { view.MultiCursor.RemoveSecondaryCursors(); return Task.CompletedTask; });
+
         // ---- clipboard (Visual Studio's behaviours: EditorClipboard, ClipboardOperations) and the context menu ----
         Cmd(EditorMenus.Cut, "Cut", (view, _) => view.Clipboard.CutAsync());
         Cmd(EditorMenus.Copy, "Copy", (view, _) => view.Clipboard.CopyAsync());
@@ -247,4 +256,16 @@ internal static class EditorCommands
         if (parts.Length > 1 && (!int.TryParse(parts[1], out column) || column < 1)) return null;
         return (Math.Min(line, lineCount) - 1, column - 1);
     }
+}
+
+/// <summary>The multi-cursor command ids (VS Code's).</summary>
+internal static class MultiCursorCommands
+{
+    public const string AddSelectionToNextFindMatch = "editor.action.addSelectionToNextFindMatch";
+    public const string MoveSelectionToNextFindMatch = "editor.action.moveSelectionToNextFindMatch";
+    public const string SelectHighlights = "editor.action.selectHighlights";
+    public const string InsertCursorAbove = "editor.action.insertCursorAbove";
+    public const string InsertCursorBelow = "editor.action.insertCursorBelow";
+    public const string CursorUndo = "cursorUndo";
+    public const string RemoveSecondaryCursors = "removeSecondaryCursors";
 }

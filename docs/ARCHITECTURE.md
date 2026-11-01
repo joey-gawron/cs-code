@@ -10,7 +10,7 @@ and a GUI/editing path that is isolated from language-server load.
 |---|---|---|
 | Language/runtime | C# 14 / .NET 10 | Requirement. Workstation concurrent GC, tiered PGO. |
 | UI toolkit | **Avalonia 12** | Cross-platform .NET UI with native windows, native menu bars (macOS global menu / DBus on Linux), native file dialogs (`StorageProvider`), OS IME + accessibility. Controls are *rendered* by Skia rather than being OS widgets — that is what lets us reproduce the VS2022 look identically everywhere, and it is the only toolkit we can develop and test on this Linux machine. All logic lives in view-models + Core services, so a WPF/WinUI shell could be added later without touching the rest. |
-| Editor control | **AvaloniaEdit** (rope-backed `TextDocument`, virtualised `TextView`) + **TextMateSharp** | Mature, MIT, large-file capable. We add: language-service UI, diagnostics squiggles, snippets, bracket/indent handling, folding, breakpoint gutter. Known gap: multi-cursor (stretch). |
+| Editor control | **AvaloniaEdit** (rope-backed `TextDocument`, virtualised `TextView`) + **TextMateSharp** | Mature, MIT, large-file capable. We add: language-service UI, diagnostics squiggles, snippets, bracket/indent handling, folding, breakpoint gutter, multi-cursor (a caret layer over AvaloniaEdit's single caret, docs/EDITOR.md §7b). |
 | Docking | **Dock.Avalonia** | VS-style tool windows, document well, floating/auto-hide. Styled to match VS2022. |
 | LSP | Own client on **StreamJsonRpc** + System.Text.Json | Lean, no Newtonsoft; full control of lifecycle, threading and memory. |
 | DAP | Own client (System.Text.Json) | Same. Default .NET adapter: Samsung **netcoredbg** (MIT) — NOT vsdbg (licence forbids non-Microsoft products). |

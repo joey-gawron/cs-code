@@ -547,6 +547,11 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
             if (_v.Feature<SnippetFeature>() is { } snippets) _ = snippets.InsertAsync(text, new TextRange(at, at));
             else doc.ApplyEdits([TextEdit.Insert(at, text)]);
         }
+        else if (_v.MultiCursor.IsActive && additional.Count == 0)
+        {
+            // several carets: the same replacement around each (VS Code: the typed prefix and suffix lengths at the primary)
+            _v.MultiCursor.ReplaceAroundCarets(caretEnd - start, end - caretEnd, text);
+        }
         else
         {
             var edits = new List<TextEdit>(additional) { new(mainRange, text) };
