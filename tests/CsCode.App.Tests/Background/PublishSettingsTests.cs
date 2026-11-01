@@ -13,7 +13,9 @@ public class PublishSettingsTests
     private static async Task<(string ReadyToRun, string Composite, string SelfContained)> EvaluateAsync(string? rid)
     {
         var project = Path.Combine(PublishedAppFixture.RepoRoot(), "src", "CsCode.App", "CsCode.App.csproj");
-        var psi = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        // the dotnet running the tests (dotnet test sets DOTNET_HOST_PATH), else the one on PATH
+        var dotnet = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") is { Length: > 0 } host && File.Exists(host) ? host : "dotnet";
+        var psi = new ProcessStartInfo(dotnet) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var a in new[] { "msbuild", project, "-nologo", "-getProperty:PublishReadyToRun", "-getProperty:PublishReadyToRunComposite", "-getProperty:SelfContained" })
             psi.ArgumentList.Add(a);
         if (rid is not null) psi.ArgumentList.Add("-p:RuntimeIdentifier=" + rid);
