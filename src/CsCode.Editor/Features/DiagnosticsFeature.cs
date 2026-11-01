@@ -87,6 +87,9 @@ internal sealed class DiagnosticsFeature : IThemeAware, IDisposable
         return best ?? wrap;
     }
 
+    /// <summary>Every applied diagnostic's range and severity, in document order (the overview ruler's marks). UI thread.</summary>
+    internal IEnumerable<(int Start, int End, DiagnosticSeverity Severity)> Marks => _segments.Select(s => (s.StartOffset, s.EndOffset, s.Diagnostic.Severity));
+
     internal IReadOnlyList<Diagnostic> Overlapping(int start, int end) =>
         _segments.FindOverlappingSegments(start, Math.Max(0, end - start)).Select(s => s.Diagnostic).OrderBy(d => (int)d.Severity).ToList();
 
@@ -168,6 +171,7 @@ internal sealed class DiagnosticsFeature : IThemeAware, IDisposable
             return;
         }
         _segments = into;
+        _v.NotifyMarkersChanged(); // the overview ruler and the minimap
         _v.TextView.InvalidateLayer(KnownLayer.Selection);
         _v.TextView.Redraw();
     }

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -146,6 +147,10 @@ internal sealed class FindSearch : IDisposable
     /// <summary>Where the matches the panel highlights start, as they are now (moved with the edits since the last search).</summary>
     internal IEnumerable<int> ResultStarts => _panelResults?.OfType<TextSegment>().Select(s => s.StartOffset).ToArray() ?? [];
 
+    /// <summary>The matches the panel highlights, in document order; none while the panel is closed (the overview ruler's marks). UI thread.</summary>
+    internal IEnumerable<(int Start, int End)> Matches =>
+        _panel is { IsClosed: false } && _panelResults is not null ? _panelResults.OfType<TextSegment>().Select(s => (s.StartOffset, s.EndOffset)) : [];
+
     /// <summary>Matches the panel highlights.</summary>
     internal int ResultCount => _panelResults?.OfType<TextSegment>().Count() ?? 0;
 
@@ -191,6 +196,7 @@ internal sealed class FindSearch : IDisposable
         }
         _panel = panel;
         panel.SearchOptionsChanged += OnSearchOptionsChanged;
+        panel.PropertyChanged += OnPanelPropertyChanged;
         // the find box's buttons raise the commands on the panel: ours first there too; Enter / Shift+Enter in its boxes call the panel directly
         for (var i = _bindings.Length - 1; i >= 0; i--) panel.CommandBindings.Insert(0, _bindings[i]);
         panel.AddHandler(InputElement.KeyDownEvent, OnPanelKeyDown, RoutingStrategies.Tunnel);
@@ -203,6 +209,7 @@ internal sealed class FindSearch : IDisposable
         if (_panel is not null)
         {
             _panel.SearchOptionsChanged -= OnSearchOptionsChanged;
+            _panel.PropertyChanged -= OnPanelPropertyChanged;
             foreach (var b in _bindings) _panel.CommandBindings.Remove(b);
             _panel.RemoveHandler(InputElement.KeyDownEvent, OnPanelKeyDown);
         }
@@ -214,6 +221,12 @@ internal sealed class FindSearch : IDisposable
         _selectFrom = null;
         _firstHeld = _lastHeld = null;
         CancelResearch();
+    }
+
+    /// <summary>The panel opened or closed: its matches appear on or leave the overview ruler.</summary>
+    private void OnPanelPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property.Name is "VisualParent" or "IsVisible") _view.Post(_view.NotifyMarkersChanged); // closing takes the panel out of the tree (IsClosed is a plain property)
     }
 
     /// <summary>The text area got another document: the panel subscribes its handler to it after this runs, so the swap happens a turn later.</summary>
@@ -508,6 +521,7 @@ internal sealed class FindSearch : IDisposable
         _firstHeld = capped ? results[0] as TextSegment : null;
         _lastHeld = capped ? results[MaxResults - 1] as TextSegment : null;
         if (timedOut || capped) _view.Post(ShowMessage); // after the panel's own label update, which runs when this search returns
+        _view.Post(_view.NotifyMarkersChanged); // the overview ruler, once the panel holds these
         return results;
     }
 

@@ -219,8 +219,8 @@ public sealed class DiffEditorControl : UserControl, IDisposable
         {
             _leftDoc = Snapshot("original", _originalText);
             _rightDoc = Snapshot("modified", _modifiedText);
-            _left = new CodeEditorControl(_factory, _leftDoc);
-            _right = new CodeEditorControl(_factory, _rightDoc);
+            _left = new CodeEditorControl(_factory, _leftDoc) { AllowMinimap = false }; // no minimap in diff panes (VS Code)
+            _right = new CodeEditorControl(_factory, _rightDoc) { AllowMinimap = false };
             _body.ColumnDefinitions = new ColumnDefinitions("*,4,*");
             _body.Children.Add(_left);
             var splitter = new GridSplitter { Width = 4, Background = EditorPalette.From(_factory.Themes).WidgetBorder, ResizeDirection = GridResizeDirection.Columns };
@@ -243,7 +243,7 @@ public sealed class DiffEditorControl : UserControl, IDisposable
         else
         {
             _inlineDoc = Snapshot("inline", _unified?.Text ?? _modifiedText);
-            _inline = new CodeEditorControl(_factory, _inlineDoc);
+            _inline = new CodeEditorControl(_factory, _inlineDoc) { AllowMinimap = false };
             _body.Children.Add(_inline);
             Attach(_inline, _inlineRenderer);
             if (!IsSingle)

@@ -80,6 +80,7 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
         if (_disposed) return;
         _byLine = IsFileDocument ? _debug.Breakpoints.GetForUri(_v.Document.Uri).GroupBy(b => b.Line).ToDictionary(g => g.Key, g => g.First()) : new();
         _margin.InvalidateVisual();
+        _v.NotifyMarkersChanged(); // the overview ruler (debug.showBreakpointsInOverviewRuler)
     }
 
     private void ShowStop(DebugStopLocation? location)

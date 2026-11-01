@@ -53,10 +53,17 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         // Snippets are offered through the same registry as language-server completions, so the popup merges them with the same code.
         // multi-cursor's settings (editor.multiCursorLimit, editor.multiCursorPaste), so the Settings panel lists them
         _disposables.Add(services.Config.RegisterProperties(MultiCursorController.Properties));
+        // the minimap's and the overview ruler's settings (editor.minimap.side, editor.overviewRulerLanes, ...)
+        _disposables.Add(services.Config.RegisterProperties(View.Decorations.ScrollDecorations.Properties));
         _disposables.Add(services.Features.Register<ICompletionProvider>(DocumentSelector.All, new SnippetCompletionProvider(snippets), "cscode.snippets"));
         if (services.Commands is { } commands)
         {
             _disposables.Add(EditorCommands.Register(this, commands));
+            _disposables.Add(commands.Register("editor.action.toggleMinimap", async _ =>
+            {
+                await services.Config.UpdateAsync(SettingKeys.EditorMinimapEnabled, !services.Config.GetOr(SettingKeys.EditorMinimapEnabled, true)).ConfigureAwait(false);
+                return null;
+            }, new CommandMetadata("editor.action.toggleMinimap", "View: Toggle Minimap", "View")));
             // The right-click menu's items, its submenus and the clipboard keys: the shell builds menus from these, it does not know them.
             _disposables.Add(EditorMenus.Contribute(this, services.Contributions));
         }

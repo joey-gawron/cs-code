@@ -288,6 +288,24 @@ internal sealed class FoldingFeature : IFoldingFeature, ISettingsAware, IThemeAw
     internal IReadOnlyList<(int Start, int End)> Ranges => _manager.AllFoldings.Select(LinesOf).ToList();
 
     /// <summary>
+    /// The lines collapsed folds hide, as (first, last) 0-based and inclusive (the header line stays visible): the minimap's rows skip them.
+    /// O(folds). UI thread.
+    /// </summary>
+    internal List<(int First, int Last)> CollapsedLineRanges()
+    {
+        var result = new List<(int First, int Last)>();
+        var buffer = _v.Document.Buffer;
+        foreach (var f in _manager.AllFoldings)
+        {
+            if (!f.IsFolded) continue;
+            var first = buffer.GetLineByOffset(Math.Clamp(f.StartOffset, 0, buffer.TextLength)).LineNumber; // 1-based header = 0-based first hidden line
+            var last = buffer.GetLineByOffset(Math.Clamp(f.EndOffset, 0, buffer.TextLength)).LineNumber - 1;
+            if (last >= first) result.Add((first, last));
+        }
+        return result;
+    }
+
+    /// <summary>
     /// The installed regions whose lines contain <paramref name="line"/> (header line included), outermost first, as (first line, last line):
     /// what sticky scroll shows. Uses the manager's segment tree (no scan of all regions). UI thread.
     /// </summary>

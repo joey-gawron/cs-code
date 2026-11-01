@@ -146,6 +146,12 @@ public static class DefaultColors
         Alias("editorOverviewRuler.infoForeground", "editorInfo.foreground");
         Def("editorOverviewRuler.findMatchForeground", "#D186167E", "#D186167E");
         Def("editorOverviewRuler.wordHighlightForeground", "#A0A0A0CC", "#A0A0A0CC");
+        Def("editorOverviewRuler.wordHighlightStrongForeground", "#C0A0C0CC", "#C0A0C0CC");
+        Def("editorOverviewRuler.selectionHighlightForeground", "#A0A0A0CC", "#A0A0A0CC");
+        Alpha("editorOverviewRuler.addedForeground", "editorGutter.addedBackground", 0.6);
+        Alpha("editorOverviewRuler.modifiedForeground", "editorGutter.modifiedBackground", 0.6);
+        Alpha("editorOverviewRuler.deletedForeground", "editorGutter.deletedBackground", 0.6);
+        Def("editorOverviewRuler.background", "");
         Def("editorLink.activeForeground", "#4E94CE", "#0000FF", "#21A6FF", "#0F4A85");
         Def("editorCodeLens.foreground", "#999999", "#919191");
         Def("editorInlayHint.foreground", "#969696", "#969696", "#FFFFFF", "#292929");
@@ -184,6 +190,11 @@ public static class DefaultColors
         Alias("minimap.background", "editor.background");
         Def("minimap.selectionHighlight", "#264F78", "#ADD6FF");
         Def("minimap.findMatchHighlight", "#D18616", "#D18616");
+        Def("minimap.errorHighlight", "#FF1212B3", "#FF1212B3");
+        Alias("minimap.warningHighlight", "editorWarning.foreground");
+        Alias("minimapGutter.addedBackground", "editorGutter.addedBackground");
+        Alias("minimapGutter.modifiedBackground", "editorGutter.modifiedBackground");
+        Alias("minimapGutter.deletedBackground", "editorGutter.deletedBackground");
         Alpha("minimapSlider.background", "scrollbarSlider.background", 0.5);
         Alpha("minimapSlider.hoverBackground", "scrollbarSlider.hoverBackground", 0.5);
         Alpha("minimapSlider.activeBackground", "scrollbarSlider.activeBackground", 0.5);

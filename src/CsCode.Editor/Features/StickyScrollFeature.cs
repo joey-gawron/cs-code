@@ -63,6 +63,12 @@ internal sealed class StickyScrollFeature : ISettingsAware, IThemeAware, IDispos
         Update();
     }
 
+    /// <summary>The minimap and the overview ruler take this much of the view's sides: the pinned rows stay over the text, as in VS Code.</summary>
+    internal void SetHorizontalInsets(double left, double right) => _panel.Margin = new Thickness(left, 0, right, 0);
+
+    /// <summary>The panel of pinned rows (tests).</summary>
+    internal Control Panel => _panel;
+
     private void OnDocumentChanged()
     {
         if (_disposed || _lines.Count == 0) return;
