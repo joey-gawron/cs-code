@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Source control (git): the engine (git CLI runner, porcelain parsers, repository status model) under Engine/, UI-free; the Source Control
+       tool window, commands, status bar item and the providers the Explorer and the editor read (decorations, quick diff, blame). -->
+  <PropertyGroup>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../CsCode.Ui/CsCode.Ui.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <!-- UI-facing project: blocking calls (Task.Wait/.Result/GetResult, Thread.Sleep, sync file I/O) are build errors. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <AdditionalFiles Include="BannedSymbols.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Panels.Git.Tests" />
+  </ItemGroup>
+
+</Project>
