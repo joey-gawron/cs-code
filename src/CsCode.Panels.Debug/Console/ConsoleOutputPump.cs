@@ -8,31 +8,40 @@ namespace CsCode.Panels.Debug.Console;
 /// <list type="bullet">
 /// <item><see cref="Enqueue"/> (called on the debug lane for every event) does O(1) work: it appends to a bounded queue (≤ <see cref="MaxQueuedChars"/>
 /// characters, oldest dropped first) and arms a timer.</item>
-/// <item>At most once per <c>interval</c> (≥ 16 ms) a pool thread drains the queue, keeps only the newest <see cref="ConsoleBuffer.DefaultCapacity"/>
-/// lines (the rest cannot be displayed anyway and is reported as "N lines not shown"), splits them into lines and hands one immutable batch
-/// to <c>deliver</c>.</item>
+/// <item>At most once per <c>interval</c> (≥ 16 ms, one frame) a pool thread drains the queue, keeps only the newest
+/// <see cref="ConsoleBuffer.DefaultCapacity"/> lines (the rest cannot be displayed anyway and is reported as "N lines not shown"), splits them
+/// into lines, parses their ANSI escapes (<see cref="AnsiParser"/>) and hands one immutable batch to <c>deliver</c>.</item>
 /// </list>
-/// A debuggee printing a million lines a second therefore costs the UI one small batch per window and costs memory nothing.
+/// A debuggee printing a million lines a second therefore costs the UI one small batch per frame and costs memory nothing.
+/// <para>REPL lines (what the user evaluated and its result) go through the same queue (<see cref="EnqueueRepl"/>) and are placed among the
+/// output by <see cref="DebugOutputEventArgs.Sequence"/>, with the same rule a new console uses to replay the transcript: after the newest
+/// output that had arrived when the line was entered.</para>
 /// </summary>
 internal sealed class ConsoleOutputPump : IDisposable
 {
     public const int MaxQueuedChars = 4 * 1024 * 1024;
     public const int MaxLineChars = 4_000;
 
+    private readonly record struct Item(DebugOutputEventArgs? Event, ReplLine? Repl);
+
     private readonly ConsoleBuffer _buffer;
     private readonly Func<ConsoleLine, bool> _accept;
     private readonly Action<IReadOnlyList<ConsoleLine>> _deliver;
     private readonly TimeSpan _interval;
-    private readonly ConcurrentQueue<DebugOutputEventArgs> _queue = new();
+    private readonly ConcurrentQueue<Item> _queue = new();
     private readonly object _gate = new();
+    private readonly object _drainGate = new();
+    // One ANSI style state per output category (stdout's colours do not leak into stderr); used under _drainGate only.
+    private readonly Dictionary<string, AnsiParser> _parsers = new(StringComparer.Ordinal);
     private readonly Timer _timer;
     private DebugOutputEventArgs[] _seed = [];
-    private HashSet<DebugOutputEventArgs>? _seedSet;
+    private HashSet<long>? _seedSequences;
     private IReadOnlyList<ReplLine> _seedRepl = [];
     private long _queuedChars;
     private long _lastDrainTicks;
     private long _sequence;
     private int _armed;
+    private int _resetStyles;
     private int _disposed;
 
     public ConsoleOutputPump(ConsoleBuffer buffer, Func<ConsoleLine, bool> accept, Action<IReadOnlyList<ConsoleLine>> deliver, TimeSpan? interval = null)
@@ -47,15 +56,16 @@ internal sealed class ConsoleOutputPump : IDisposable
     public long NextSequence() => Interlocked.Increment(ref _sequence);
 
     /// <summary>
-    /// Events already in the debug service's history when the console was opened; shown first, and not shown twice if they also arrive live.
-    /// <paramref name="repl"/> (what earlier consoles evaluated) is shown among them, each line after the output event it followed.
+    /// Events already in the debug service's history when the console was opened; shown first, and not shown twice if they also arrive live
+    /// (recognised by <see cref="DebugOutputEventArgs.Sequence"/>, which the history's copies keep). <paramref name="repl"/> (what earlier
+    /// consoles evaluated) is shown among them, each line after the output event it followed.
     /// </summary>
     public void SetSeed(IReadOnlyList<DebugOutputEventArgs> history, IReadOnlyList<ReplLine>? repl = null)
     {
         lock (_gate)
         {
             _seed = [.. history];
-            _seedSet = new HashSet<DebugOutputEventArgs>(_seed, ReferenceEqualityComparer.Instance as IEqualityComparer<DebugOutputEventArgs>);
+            _seedSequences = [.. _seed.Select(e => e.Sequence)];
             _seedRepl = repl ?? [];
         }
         Arm(TimeSpan.Zero);
@@ -65,12 +75,23 @@ internal sealed class ConsoleOutputPump : IDisposable
     public void Enqueue(DebugOutputEventArgs e)
     {
         if (Volatile.Read(ref _disposed) != 0) return;
-        _queue.Enqueue(e);
+        _queue.Enqueue(new Item(e, null));
         var total = Interlocked.Add(ref _queuedChars, e.Output.Length);
         while (total > MaxQueuedChars && _queue.TryDequeue(out var dropped))
-            total = Interlocked.Add(ref _queuedChars, -dropped.Output.Length); // drop-oldest: the newest output is what a console is for
+            total = Interlocked.Add(ref _queuedChars, -(dropped.Event?.Output.Length ?? 0)); // drop-oldest: the newest output is what a console is for
         Arm(null);
     }
+
+    /// <summary>A REPL line entered in this console: shown in the next batch, after the output that had arrived when it was entered.</summary>
+    public void EnqueueRepl(ReplLine line)
+    {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        _queue.Enqueue(new Item(null, line));
+        Arm(null);
+    }
+
+    /// <summary>The console was cleared: colours left on by earlier output do not carry into what comes next.</summary>
+    public void ResetStyles() => Volatile.Write(ref _resetStyles, 1);
 
     private void Arm(TimeSpan? delay)
     {
@@ -87,37 +108,47 @@ internal sealed class ConsoleOutputPump : IDisposable
     private void Drain()
     {
         if (Volatile.Read(ref _disposed) != 0) return;
-        Volatile.Write(ref _lastDrainTicks, System.Diagnostics.Stopwatch.GetTimestamp());
-        Volatile.Write(ref _armed, 0);
+        // One drain at a time (the timer can fire again while a big batch is being split): batches stay in order, and the ANSI state is the pump's.
+        lock (_drainGate)
+        {
+            Volatile.Write(ref _lastDrainTicks, System.Diagnostics.Stopwatch.GetTimestamp());
+            Volatile.Write(ref _armed, 0);
+            if (Interlocked.Exchange(ref _resetStyles, 0) != 0) _parsers.Clear();
 
-        DebugOutputEventArgs[] seed;
-        HashSet<DebugOutputEventArgs>? seedSet;
-        IReadOnlyList<ReplLine> seedRepl;
-        lock (_gate)
-        {
-            seed = _seed;
-            seedSet = _seedSet;
-            seedRepl = _seedRepl;
-            _seed = [];
-            _seedSet = null;
-            _seedRepl = [];
-        }
-
-        var events = new List<DebugOutputEventArgs>(seed.Length + _queue.Count);
-        events.AddRange(seed);
-        while (_queue.TryDequeue(out var e))
-        {
-            Interlocked.Add(ref _queuedChars, -e.Output.Length);
-            if (seedSet is null || !seedSet.Contains(e)) events.Add(e);
-        }
-        if (events.Count > 0 || seedRepl.Count > 0)
-        {
-            var lines = ToLines(events, ConsoleBuffer.DefaultCapacity, seedRepl);
-            if (lines.Count > 0)
+            DebugOutputEventArgs[] seed;
+            HashSet<long>? seedSequences;
+            IReadOnlyList<ReplLine> seedRepl;
+            lock (_gate)
             {
-                _buffer.Append(lines);
-                var accepted = lines.Where(_accept).ToList();
-                if (accepted.Count > 0) _deliver(accepted);
+                seed = _seed;
+                seedSequences = _seedSequences;
+                seedRepl = _seedRepl;
+                _seed = [];
+                _seedSequences = null;
+                _seedRepl = [];
+            }
+
+            var events = new List<DebugOutputEventArgs>(seed.Length + _queue.Count);
+            events.AddRange(seed);
+            List<ReplLine>? repl = seedRepl.Count > 0 ? [.. seedRepl] : null;
+            while (_queue.TryDequeue(out var item))
+            {
+                if (item.Event is { } e)
+                {
+                    Interlocked.Add(ref _queuedChars, -e.Output.Length);
+                    if (seedSequences is null || !seedSequences.Contains(e.Sequence)) events.Add(e);
+                }
+                else if (item.Repl is { } r) (repl ??= new List<ReplLine>()).Add(r);
+            }
+            if (events.Count > 0 || repl is not null)
+            {
+                var lines = ToLines(events, ConsoleBuffer.DefaultCapacity, repl);
+                if (lines.Count > 0)
+                {
+                    _buffer.Append(lines);
+                    var accepted = lines.Where(_accept).ToList();
+                    if (accepted.Count > 0) _deliver(accepted);
+                }
             }
         }
         // More may have arrived while we worked.
@@ -126,9 +157,9 @@ internal sealed class ConsoleOutputPump : IDisposable
 
     /// <summary>
     /// Splits events into lines keeping only the newest <paramref name="maxLines"/> (older text is dropped without being split: counting
-    /// newlines is cheap, creating a million strings is not). A note line says how many were not shown. <paramref name="repl"/> lines go
-    /// right after the event they followed (or its archived copy, see <see cref="OutputAnchor"/>); those whose event is no longer among
-    /// <paramref name="events"/> (trimmed from the history, or none yet) go right after the line entered before them, or first.
+    /// newlines is cheap, creating a million strings is not). A note line says how many were not shown. Each of the <paramref name="repl"/>
+    /// lines (in the order they were entered) goes after the last shown event whose <see cref="DebugOutputEventArgs.Sequence"/> is not greater
+    /// than the one it followed, and never before the line entered before it.
     /// </summary>
     internal List<ConsoleLine> ToLines(List<DebugOutputEventArgs> events, int maxLines, IReadOnlyList<ReplLine>? repl = null)
     {
@@ -165,20 +196,15 @@ internal sealed class ConsoleOutputPump : IDisposable
             return lines;
         }
 
-        // Where each shown event is, by instance and by its Output instance (an archived copy of an ended session's event shares the latter).
-        var byEvent = new Dictionary<DebugOutputEventArgs, int>(ReferenceEqualityComparer.Instance);
-        var byOutput = new Dictionary<string, int>(ReferenceEqualityComparer.Instance);
-        for (var i = 0; i < kept.Count; i++)
-        {
-            byEvent.TryAdd(kept[i].Event, i);
-            byOutput.TryAdd(kept[i].Event.Output, i);
-        }
+        // newest[i]: the highest sequence among kept[0..i] (non-decreasing, so a binary search finds where a sequence belongs even if a
+        // producer ever delivered out of order).
+        var newest = new long[kept.Count];
+        for (var i = 0; i < kept.Count; i++) newest[i] = Math.Max(i == 0 ? long.MinValue : newest[i - 1], kept[i].Event.Sequence);
         var after = new List<ReplLine>?[kept.Count];
         var previous = -1;
         foreach (var r in repl)
         {
-            // REPL lines are in the order they were entered: none goes before the place of the line entered before it.
-            var at = Math.Max(Place(r.After, byEvent, byOutput), previous);
+            var at = Math.Max(LastNotAfter(newest, r.After), previous);
             previous = at;
             if (at < 0) lines.Add(new ConsoleLine(NextSequence(), r.Kind, r.Text));
             else (after[at] ??= new List<ReplLine>()).Add(r);
@@ -193,17 +219,24 @@ internal sealed class ConsoleOutputPump : IDisposable
         return lines;
     }
 
-    /// <summary>The index of the shown event <paramref name="anchor"/> refers to (the event itself, else an archived copy of it), or -1.</summary>
-    private static int Place(OutputAnchor? anchor, Dictionary<DebugOutputEventArgs, int> byEvent, Dictionary<string, int> byOutput)
+    /// <summary>The index of the last entry of the non-decreasing <paramref name="newest"/> that is ≤ <paramref name="sequence"/>, or -1.</summary>
+    private static int LastNotAfter(long[] newest, long sequence)
     {
-        if (anchor is null) return -1;
-        if (anchor.TryGetEvent(out var e) && byEvent.TryGetValue(e, out var at)) return at;
-        return anchor.TryGetOutput(out var output) && byOutput.TryGetValue(output, out at) ? at : -1;
+        int lo = 0, hi = newest.Length;
+        while (lo < hi)
+        {
+            var mid = (lo + hi) >>> 1;
+            if (newest[mid] <= sequence) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo - 1;
     }
 
     private void AddLines(List<ConsoleLine> lines, DebugOutputEventArgs e, string text)
     {
         var kind = KindOf(e.Category);
+        var parser = ParserFor(e.Category);
+        var styled = parser.Needed(text);
         var start = 0;
         for (var i = 0; i <= text.Length; i++)
         {
@@ -211,9 +244,20 @@ internal sealed class ConsoleOutputPump : IDisposable
             if (i == text.Length && start == text.Length) break;
             var end = i > start && text[i - 1] == '\r' && i < text.Length ? i - 1 : i;
             var segment = text.AsSpan(start, end - start);
-            lines.Add(new ConsoleLine(NextSequence(), kind, segment.Length > MaxLineChars ? segment[..MaxLineChars].ToString() + "…" : segment.ToString(), e.Source, e.Line));
+            if (styled)
+            {
+                var (plain, spans) = parser.ParseLine(segment, MaxLineChars);
+                lines.Add(new ConsoleLine(NextSequence(), kind, plain, e.Source, e.Line, spans));
+            }
+            else lines.Add(new ConsoleLine(NextSequence(), kind, segment.Length > MaxLineChars ? segment[..MaxLineChars].ToString() + "…" : segment.ToString(), e.Source, e.Line));
             start = i + 1;
         }
+    }
+
+    private AnsiParser ParserFor(string category)
+    {
+        if (!_parsers.TryGetValue(category, out var parser)) _parsers[category] = parser = new AnsiParser();
+        return parser;
     }
 
     internal static ConsoleLineKind KindOf(string category) => category switch
@@ -251,6 +295,6 @@ internal sealed class ConsoleOutputPump : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _timer.Dispose();
         while (_queue.TryDequeue(out _)) { }
-        lock (_gate) { _seed = []; _seedSet = null; _seedRepl = []; }
+        lock (_gate) { _seed = []; _seedSequences = null; _seedRepl = []; }
     }
 }

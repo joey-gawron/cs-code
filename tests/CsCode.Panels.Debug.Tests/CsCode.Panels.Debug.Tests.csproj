@@ -17,6 +17,8 @@
     <ProjectReference Include="../../src/CsCode.Panels.Debug/CsCode.Panels.Debug.csproj" />
     <!-- Test project only: the end-to-end test drives the REAL DAP module + netcoredbg (the panels project itself never references Dap). -->
     <ProjectReference Include="../../src/CsCode.Dap/CsCode.Dap.csproj" />
+    <!-- The flood tests report the UI thread's CPU and layout/render time and the GC pauses (ThreadActivityRecorder, GcPauseRecorder). -->
+    <ProjectReference Include="../../src/CsCode.Profiling/CsCode.Profiling.csproj" />
   </ItemGroup>
 
 </Project>

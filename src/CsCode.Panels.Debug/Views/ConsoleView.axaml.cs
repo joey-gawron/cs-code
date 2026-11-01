@@ -1,6 +1,7 @@
 using System.Collections.Specialized;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CsCode.Panels.Debug.Console;
@@ -57,6 +58,8 @@ public sealed partial class ConsoleView : UserControl, IDisposable, IClipboardTa
 
     private DebugConsoleViewModel? _model;
     private bool _scrollQueued;
+    private bool _brushesQueued;
+    private ConsoleBrushes? _brushes;
 
     public ConsoleView()
     {
@@ -67,6 +70,11 @@ public sealed partial class ConsoleView : UserControl, IDisposable, IClipboardTa
         lines.AddHandler(KeyDownEvent, OnLinesKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         lines.ContextRequested += OnLinesContextRequested;
         ToolWindowFocus.KeepOnRows(lines); // Clear All, a filter and the oldest lines trimmed replace or remove the rows
+        // The rows' colours: resolved here once (and again when the theme changes), inherited by every row.
+        AttachedToVisualTree += (_, _) => UpdateBrushes();
+        DetachedFromVisualTree += (_, _) => WatchBrushes(null);
+        ResourcesChanged += (_, _) => QueueBrushes();
+        ActualThemeVariantChanged += (_, _) => QueueBrushes();
         this.FindControl<ListBox>("Completions")!.DoubleTapped += (_, _) =>
         {
             if (_model?.SelectedCompletion is { } c) Accept(c);
@@ -87,6 +95,38 @@ public sealed partial class ConsoleView : UserControl, IDisposable, IClipboardTa
         if (_model is not null) _model.Lines.CollectionChanged -= OnLinesChanged;
         _model = null;
     }
+
+    private void QueueBrushes()
+    {
+        if (_brushesQueued) return;
+        _brushesQueued = true;
+        Dispatcher.UIThread.Post(() => { _brushesQueued = false; UpdateBrushes(); }, DispatcherPriority.Background);
+    }
+
+    private void UpdateBrushes()
+    {
+        if (!this.IsAttachedToVisualTree()) return;
+        IBrush? Brush(string id) => this.TryFindResource(CsCode.Ui.Theming.WorkbenchColors.BrushKey(id), ActualThemeVariant, out var value) ? value as IBrush : null;
+        var brushes = new ConsoleBrushes(Brush("errorForeground"), Brush("descriptionForeground"), Brush("editorWarning.foreground"), Brush("textLink.foreground"),
+            Brush("descriptionForeground"), Brush("panel.background"), [.. ConsoleBrushes.AnsiColorIds.Select(Brush)]);
+        WatchBrushes(brushes);
+        ConsoleLineView.SetBrushes(LinesList, brushes);
+    }
+
+    /// <summary>
+    /// The theme changes colours by mutating its brushes in place (ThemeApplier): rows bake their brushes into text layouts, so they are given
+    /// a new <see cref="ConsoleBrushes"/> and rebuild. Unsubscribed when the view leaves the tree (the brushes live as long as the app).
+    /// </summary>
+    private void WatchBrushes(ConsoleBrushes? brushes)
+    {
+        if (_brushes is not null)
+            foreach (var b in _brushes.All) if (b is Avalonia.AvaloniaObject o) o.PropertyChanged -= OnBrushChanged;
+        _brushes = brushes;
+        if (brushes is not null)
+            foreach (var b in brushes.All) if (b is Avalonia.AvaloniaObject o) o.PropertyChanged += OnBrushChanged;
+    }
+
+    private void OnBrushChanged(object? sender, Avalonia.AvaloniaPropertyChangedEventArgs e) => QueueBrushes();
 
     private void OnLinesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
@@ -162,6 +202,7 @@ public sealed partial class ConsoleView : UserControl, IDisposable, IClipboardTa
 
     public void Dispose()
     {
+        WatchBrushes(null);
         Detach();
         (DataContext as IDisposable)?.Dispose();
     }

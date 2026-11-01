@@ -92,7 +92,19 @@ public enum DebugState { Inactive, Initializing, Running, Stopped }
 
 public sealed record DebugStoppedEventArgs(IDebugSession Session, string Reason, int? ThreadId, bool AllThreadsStopped, string? Description = null, string? Text = null, IReadOnlyList<int>? HitBreakpointIds = null);
 public sealed record DebugContinuedEventArgs(IDebugSession Session, int ThreadId, bool AllThreadsContinued);
-public sealed record DebugOutputEventArgs(IDebugSession Session, string Category, string Output, DebugSource? Source = null, int? Line = null);
+/// <summary>One batch of debuggee/adapter output (category <c>stdout</c>, <c>stderr</c>, <c>console</c>, <c>important</c>…).</summary>
+public sealed record DebugOutputEventArgs(IDebugSession Session, string Category, string Output, DebugSource? Source = null, int? Line = null)
+{
+    private static long s_lastSequence;
+
+    /// <summary>
+    /// The event's identity: process-wide, increasing in the order events are created (every producer creates them on the debug lane, in
+    /// delivery order), and KEPT by <c>with</c> copies, which the history makes when it relabels an ended session's events or cuts the head of
+    /// an oversize batch (<c>with { Output = tail }</c>). A consumer recognises an event in the history, and places something after it, by this
+    /// number rather than by reference.
+    /// </summary>
+    public long Sequence { get; init; } = Interlocked.Increment(ref s_lastSequence);
+}
 public sealed record DebugThreadEventArgs(IDebugSession Session, int ThreadId, string Reason);
 public sealed record DebugTerminatedEventArgs(IDebugSession Session, int? ExitCode, string? Reason);
 /// <summary>The adapter's verdict on one breakpoint (verified, moved to another line, rejected with a message).</summary>

@@ -148,17 +148,20 @@ public class ScreenshotTests
         using var sc = new Scenario();
         sc.Rig.Debug.EmitOutput(new DebugOutputEventArgs(sc.Session, "console", "Loaded '/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.0/System.Runtime.dll'. Skipped loading symbols. Module is optimized.\n"));
         sc.Rig.Debug.EmitOutput(new DebugOutputEventArgs(sc.Session, "stdout", "loop 0\nloop 1\nloop 2\nloop 3\n"));
+        // ANSI colours as a test runner or a coloured logger prints them (parsed off the UI thread, drawn in the theme's terminal colours)
+        sc.Rig.Debug.EmitOutput(new DebugOutputEventArgs(sc.Session, "stdout",
+            "\u001b[32m✓\u001b[0m 12 passed  \u001b[1;31m✗ 1 failed\u001b[0m  \u001b[33mwarn\u001b[0m \u001b[36m{ id: \u001b[35m42\u001b[36m }\u001b[0m \u001b[4munderlined\u001b[24m \u001b[38;5;208m256-colour\u001b[0m \u001b[7m inverse \u001b[0m\n"));
         sc.Rig.Debug.EmitOutput(new DebugOutputEventArgs(sc.Session, "stderr", "warning: the cache is cold\n"));
         sc.Rig.Debug.EmitOutput(new DebugOutputEventArgs(sc.Session, "important", "The program 'Sample' is paused at a breakpoint.\n"));
         var view = sc.View("debug.console");
         var model = (DebugConsoleViewModel)view.DataContext!;
-        await PanelRig.Eventually(() => model.Lines.Count >= 7, what: "history replay");
+        await PanelRig.Eventually(() => model.Lines.Count >= 8, what: "history replay");
         model.Input = "item.Count * 14";
         await model.SubmitAsync();
         model.Input = "nope";
         await model.SubmitAsync();
         sc.Rig.StopAt(0);
-        await PanelRig.Eventually(() => model.Lines.Count >= 11, what: "repl lines");
+        await PanelRig.Eventually(() => model.Lines.Count >= 12, what: "repl lines");
         model.Input = "item.";
         await PanelRig.Eventually(() => model.CompletionsOpen, what: "completions");
         await TestTheme.ShotAsync(view, $"debug-console-{theme}", 900, 300);

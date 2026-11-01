@@ -2,31 +2,16 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:CsCode.Panels.Debug.Console"
              xmlns:icons="using:CsCode.Ui.Icons"
+             xmlns:views="using:CsCode.Panels.Debug.Views"
              x:Class="CsCode.Panels.Debug.Views.ConsoleView"
              x:DataType="vm:DebugConsoleViewModel">
   <UserControl.Styles>
     <StyleInclude Source="avares://CsCode.Panels.Debug/Views/DebugPanelStyles.axaml" />
-    <Style Selector="TextBlock.line">
+    <!-- Rows draw themselves (ConsoleLineView): the code font here, the colours from ConsoleView (ConsoleBrushes, inherited). -->
+    <Style Selector="views|ConsoleLineView">
       <Setter Property="FontFamily" Value="{DynamicResource ui:CodeFontFamily}" />
       <Setter Property="FontFeatures" Value="{DynamicResource ui:CodeFontFeatures}" />
-      <Setter Property="Padding" Value="8,0" />
       <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
-    <Style Selector="TextBlock.line.err">
-      <Setter Property="Foreground" Value="{DynamicResource vsc:errorForeground}" />
-    </Style>
-    <Style Selector="TextBlock.line.dbg">
-      <Setter Property="Foreground" Value="{DynamicResource vsc:descriptionForeground}" />
-    </Style>
-    <Style Selector="TextBlock.line.imp">
-      <Setter Property="Foreground" Value="{DynamicResource vsc:editorWarning.foreground}" />
-    </Style>
-    <Style Selector="TextBlock.line.inp">
-      <Setter Property="Foreground" Value="{DynamicResource vsc:textLink.foreground}" />
-    </Style>
-    <Style Selector="TextBlock.line.info">
-      <Setter Property="Foreground" Value="{DynamicResource vsc:descriptionForeground}" />
-      <Setter Property="FontStyle" Value="Italic" />
     </Style>
     <Style Selector="TextBox.repl">
       <Setter Property="Background" Value="{DynamicResource vsc:input.background}" />
@@ -76,8 +61,7 @@
       <ListBox x:Name="Lines" Classes="debug" ItemsSource="{Binding Lines}" SelectionMode="Multiple" AutomationProperties.Name="Debug Console output">
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="vm:ConsoleLine">
-            <TextBlock Classes="line" Text="{Binding Text}" Classes.err="{Binding IsError}" Classes.dbg="{Binding IsDebuggerMessage}"
-                       Classes.imp="{Binding IsImportant}" Classes.inp="{Binding IsInput}" Classes.info="{Binding IsInfo}" />
+            <views:ConsoleLineView />
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>

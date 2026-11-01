@@ -288,6 +288,31 @@ public class JsDebugReviewFixTests
         Assert.Equal("b\n", history.Snapshot()[^1].Output);
         Assert.EndsWith("a\n", history.Snapshot()[0].Output, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void The_history_copies_of_an_event_keep_its_sequence_when_the_head_is_cut_and_when_the_session_is_relabelled()
+    {
+        // Follow-up "REPL line placement after a flood": the Debug Console places a REPL line after the event it followed by its Sequence; the
+        // history replaces an oversize batch with `with { Output = tail }` and an ended session's events with `with { Session = ended }`.
+        var live = new EndedSession("s1", "session", ServiceHarness.Config());
+        var ended = new EndedSession("s1", "session (ended)", ServiceHarness.Config());
+        var history = new OutputHistory(10, 1_000);
+        var batch = new DebugOutputEventArgs(live, "stdout", string.Concat(Enumerable.Range(0, 30).Select(i => $"line {i}\n")));
+        var after = new DebugOutputEventArgs(live, "stdout", "after\n");
+        Assert.True(after.Sequence > batch.Sequence);
+        history.Add(batch);
+        history.Add(after);
+
+        var cut = history.Snapshot();
+        Assert.NotSame(batch, cut[0]);
+        Assert.StartsWith("line 21\n", cut[0].Output, StringComparison.Ordinal);
+        Assert.Equal([batch.Sequence, after.Sequence], cut.Select(e => e.Sequence));
+
+        history.Relabel(live, ended);
+        var relabelled = history.Snapshot();
+        Assert.All(relabelled, e => Assert.Same(ended, e.Session));
+        Assert.Equal([batch.Sequence, after.Sequence], relabelled.Select(e => e.Sequence));
+    }
 }
 
 /// <summary>

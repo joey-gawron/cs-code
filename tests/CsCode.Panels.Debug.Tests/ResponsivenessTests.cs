@@ -68,10 +68,10 @@ public class ResponsivenessTests
         public void Dispose() => _cts.Dispose();
     }
 
-    private readonly record struct Measurement(double P99, double Max, int Samples, double LongestCallback)
+    private readonly record struct Measurement(double P99, double Max, int Samples, double LongestCallback, string? Note = null)
     {
         public bool WithinBudget => Samples > 20 && P99 < P99BudgetMs && Max < MaxBudgetMs;
-        public override string ToString() => $"p99 {P99:F1} ms, max {Max:F1} ms, {Samples} samples, longest instrumented callback {LongestCallback:F1} ms";
+        public override string ToString() => $"p99 {P99:F1} ms, max {Max:F1} ms, {Samples} samples, longest instrumented callback {LongestCallback:F1} ms{(Note is null ? "" : "; " + Note)}";
     }
 
     private static async Task Budgeted(string what, Func<Task<Measurement>> scenario)
@@ -144,6 +144,63 @@ public class ResponsivenessTests
         view.Dispose();
         var memoryAfter = GC.GetTotalMemory(forceFullCollection: true);
         Assert.True(memoryAfter - memoryBefore < 64L * 1024 * 1024, $"memory grew by {(memoryAfter - memoryBefore) / 1024 / 1024} MB during the flood");
+        return measurement;
+    });
+
+    /// <summary>
+    /// The shape that missed the budget on loaded machines (followups: "Debug Console under a realistic 1M-line flood"): one line per event,
+    /// sustained, from two sessions (js-debug's parent and child), at about js-debug's own rate, with the console on screen and following the
+    /// newest line. The console must change its list once per frame (one Add, at most one Remove), not once per 150 lines (it took ~47% of the
+    /// UI thread's time with 6 passes per frame, and missed under load), and the UI thread must stay within budget.
+    /// </summary>
+    [AvaloniaFact]
+    public Task A_sustained_one_line_per_event_flood_changes_the_console_once_per_frame_and_stays_within_budget() => Budgeted("per-line flood", async () =>
+    {
+        TestTheme.Apply(VsThemes.Dark);
+        using var sc = new Scenario(frame: 2);
+        var child = new FakeDebugSession("s2", "child");
+        var view = (ConsoleView)sc.View("debug.console");
+        var model = (DebugConsoleViewModel)view.DataContext!;
+        var window = new Window { Width = 900, Height = 300, Content = view };
+        window.Show();
+        sc.Rig.Debug.EmitOutput(new DebugOutputEventArgs(sc.Session, "stdout", "warm-up line\n"));
+        await PanelRig.Eventually(() => model.Lines.Count > 0);
+        await Task.Delay(300);
+        var adds = 0;
+        model.Lines.CollectionChanged += (_, e) => { if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Add) adds++; };
+
+        using var probe = new Heartbeat();
+        var uiCpu = ThreadCpu.CurrentThreadMs();
+        var sw = Stopwatch.StartNew();
+        long produced = 0;
+        // Two producers ("the debug lane" of each session), ~12,500 one-line events/s each (js-debug delivered 1,000,002 events in ~40 s on
+        // Linux and ~20 s on a Mac), for 3 s.
+        await Task.WhenAll(new[] { sc.Session, child }.Select((session, n) => Task.Run(async () =>
+        {
+            var i = 0;
+            var start = Stopwatch.GetTimestamp();
+            while (Stopwatch.GetElapsedTime(start).TotalMilliseconds < 3_000)
+            {
+                for (var k = 0; k < 125; k++)
+                    sc.Rig.Debug.EmitOutput(new DebugOutputEventArgs(session, "stdout", $"log line {n}:{i++}\n"));
+                Interlocked.Add(ref produced, 125);
+                await Task.Delay(10).ConfigureAwait(false);
+            }
+        })));
+        await PanelRig.Eventually(() => model.Lines.Count > 0 && model.Lines[^1].Text.StartsWith("log line", StringComparison.Ordinal), what: "the flood shown");
+        await Task.Delay(200); // drain
+        var elapsedMs = sw.Elapsed.TotalMilliseconds;
+        var cpu = ThreadCpu.CurrentThreadMs() - uiCpu;
+        var measurement = await probe.StopAsync() with { Note = $"{produced:N0} events in {elapsedMs:F0} ms, {adds} list adds, UI thread CPU {cpu:F0} ms" };
+
+        Assert.True(produced > 50_000, $"only produced {produced} events");
+        Assert.True(model.Lines.Count <= DebugConsoleViewModel.MaxLines);
+        // One pump batch per ≥ 16 ms frame and one Add per batch (before: one per 150 lines, ~6 per frame at this rate).
+        Assert.True(adds <= elapsedMs / 12 + 10, $"{adds} list changes in {elapsedMs:F0} ms: more than one per frame");
+
+        window.Content = null;
+        window.Close();
+        view.Dispose();
         return measurement;
     });
 

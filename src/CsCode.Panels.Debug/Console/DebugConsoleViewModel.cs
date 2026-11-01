@@ -12,18 +12,18 @@ namespace CsCode.Panels.Debug.Console;
 /// that evaluates in the focused frame.
 ///
 /// Output path (isolation from a flooding debuggee): the debug lane only enqueues into the <see cref="ConsoleOutputPump"/>; a pool thread
-/// turns at most one batch per ≥ 16 ms into immutable lines; the UI thread applies a batch in slices of at most 4 ms
-/// (<c>Lines</c> changes by at most one precise notification per slice) and trims the list to the bound.
+/// turns at most one batch per frame (≥ 16 ms) into immutable lines (ANSI escapes parsed there too); the UI thread applies everything that
+/// is waiting in ONE pass per batch: at most one precise Remove (the oldest lines over the bound) and one precise Add, so the list control
+/// does its per-change work (realising the rows now on screen) once per frame however fast the program writes, and the time it takes does
+/// not grow with the number of lines (the cost per line is a reference copied into the list).
 /// </summary>
 public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
 {
     public const int MaxLines = ConsoleBuffer.DefaultCapacity;
     public const int MaxCompletions = 100;
-    private const double SliceMs = 4;
-    /// <summary>Lines moved into the list per UI callback: small enough that one callback (list notification + container updates) stays ~1-2 ms.</summary>
-    private const int MaxLinesPerSlice = 150;
-    /// <summary>Lines waiting for the UI. A console can show 5,000 lines; if the UI is behind by more than this, older waiting lines are dropped (and said so).</summary>
-    private const int MaxPendingLines = 2_000;
+    /// <summary>Lines waiting for the UI: no more than the console shows (older waiting lines would be trimmed as soon as they were added, so
+    /// they are dropped while waiting, and said so).</summary>
+    private const int MaxPendingLines = MaxLines;
 
     private readonly DebugPanelServices _s;
     private readonly IUiDispatcher _ui;
@@ -32,7 +32,6 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
     private readonly ConsoleOutputPump _pump;
     private readonly Queue<ConsoleLine> _pending = new();
     private readonly object _pendingGate = new();
-    private readonly string _applyKey = "debug.console.apply." + Guid.NewGuid().ToString("N");
     private readonly ReplHistory _history;
     private readonly CancellationTokenSource _lifetime = new();
     // The newest program output event seen: a REPL line is recorded after it, so a later console shows it in the same place.
@@ -64,8 +63,8 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
         // Subscribe first, then read the history: events in both are recognised by reference and shown once.
         _subs.Add(services.Debug.Output.Subscribe(e =>
         {
-            Volatile.Write(ref _lastOutput, e);
             _pump.Enqueue(e);
+            Volatile.Write(ref _lastOutput, e); // after: a REPL line anchored to it is never drained before it
         }));
         IReadOnlyList<DebugOutputEventArgs> seed = [];
         if (services.OutputHistory is { } history)
@@ -144,56 +143,71 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
         _ui.Post(ApplyPending, UiPriority.Background);
     }
 
-    /// <summary>UI thread: moves pending lines into <see cref="Lines"/> in slices of ≤ 4 ms, then trims to the bound.</summary>
+    /// <summary>
+    /// UI thread: moves everything waiting into <see cref="Lines"/> in one pass, oldest lines over the bound removed first (one Remove, one
+    /// Add; a batch as large as the bound replaces the list with one Reset).
+    /// </summary>
     internal void ApplyPending()
     {
         if (IsDisposed) return;
         Volatile.Write(ref _applyQueued, 0);
-        var start = Stopwatch.GetTimestamp();
-        var budget = (long)(SliceMs * Stopwatch.Frequency / 1000.0);
-        var batch = new List<ConsoleLine>();
+        List<ConsoleLine> batch;
         long dropped;
         lock (_pendingGate)
         {
             dropped = _droppedPending;
             _droppedPending = 0;
-            while (_pending.Count > 0 && batch.Count < MaxLinesPerSlice)
-            {
-                var line = _pending.Dequeue();
+            batch = new List<ConsoleLine>(_pending.Count + 1);
+            while (_pending.TryDequeue(out var line))
                 if (line.Sequence > _appliedSequence) batch.Add(line);
-                if (Stopwatch.GetTimestamp() - start >= budget && batch.Count > 0) break;
+        }
+        if (batch.Count == 0)
+        {
+            if (dropped > 0) lock (_pendingGate) _droppedPending += dropped; // report with the next batch
+            return;
+        }
+        var newest = batch.Max(l => l.Sequence);
+        if (dropped > 0)
+        {
+            // The note takes the top row of a full batch (the oldest line it pushes out is counted with the dropped ones), so cutting the
+            // batch to the bound never cuts the note. It borrows the first kept line's sequence so it never makes the "already applied"
+            // watermark skip older queued lines.
+            var over = batch.Count - (MaxLines - 1);
+            if (over > 0)
+            {
+                batch.RemoveRange(0, over);
+                dropped += over;
             }
+            batch.Insert(0, new ConsoleLine(batch[0].Sequence, ConsoleLineKind.Info, $"… {dropped:N0} lines were not shown (the console could not keep up)"));
         }
-        if (batch.Count > 0)
+        if (batch.Count >= MaxLines)
+            Lines.ReplaceAll(batch.Count == MaxLines ? batch : batch.GetRange(batch.Count - MaxLines, MaxLines));
+        else
         {
-            var newest = batch.Max(l => l.Sequence);
-            // The note borrows the first line's sequence so it never makes the "already applied" watermark skip older queued lines.
-            if (dropped > 0) batch.Insert(0, new ConsoleLine(batch[0].Sequence, ConsoleLineKind.Info, $"… {dropped:N0} lines were not shown (the console could not keep up)"));
+            var over = Lines.Count + batch.Count - MaxLines;
+            if (over > 0) Lines.RemoveRange(0, over);
             Lines.AddRange(batch);
-            _appliedSequence = Math.Max(_appliedSequence, newest);
         }
-        else if (dropped > 0)
-        {
-            lock (_pendingGate) _droppedPending += dropped; // report with the next batch
-        }
-        TrimToBound();
-        bool more;
-        lock (_pendingGate) more = _pending.Count > 0;
-        if (more) ScheduleApply();
+        _appliedSequence = Math.Max(_appliedSequence, newest);
+        Applied++;
     }
+
+    /// <summary>Apply passes so far (one per batch the pump delivered, whatever its size).</summary>
+    internal int Applied { get; private set; }
 
     private void TrimToBound()
     {
         if (Lines.Count > MaxLines) Lines.RemoveRange(0, Lines.Count - MaxLines);
     }
 
-    /// <summary>Appends a line made here (the echo of an entered expression, a result or an error); it is also kept for the next console.</summary>
+    /// <summary>
+    /// Appends a line made here (the echo of an entered expression, a result or an error), after the output that has arrived so far; it is also
+    /// kept for the next console, which places it the same way.
+    /// </summary>
     private void Append(ConsoleLineKind kind, string text)
     {
-        var line = new ConsoleLine(_pump.NextSequence(), kind, text.Length > ConsoleOutputPump.MaxLineChars ? text[..ConsoleOutputPump.MaxLineChars] + "…" : text);
-        _s.Repl.Record(kind, line.Text, Volatile.Read(ref _lastOutput));
-        _buffer.Append([line]);
-        if (Accepts(line)) EnqueueForUi([line]);
+        var line = _s.Repl.Record(kind, text.Length > ConsoleOutputPump.MaxLineChars ? text[..ConsoleOutputPump.MaxLineChars] + "…" : text, Volatile.Read(ref _lastOutput));
+        _pump.EnqueueRepl(line);
     }
 
     private async Task RefilterAsync()
@@ -238,6 +252,7 @@ public sealed class DebugConsoleViewModel : ObservableObject, IDisposable
         if (IsDisposed) return;
         _s.Repl.ClearTranscript();
         Volatile.Write(ref _lastOutput, null);
+        _pump.ResetStyles();
         _buffer.Clear();
         lock (_pendingGate) { _pending.Clear(); _droppedPending = 0; }
         _appliedSequence = _pump.NextSequence();

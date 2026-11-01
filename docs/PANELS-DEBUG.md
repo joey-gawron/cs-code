@@ -155,19 +155,34 @@ contract cannot update a function breakpoint, so its checkbox is read-only.
 ### Debug Console
 
 * **Output path** (isolation from a flooding debuggee): the debug lane only calls `ConsoleOutputPump.Enqueue` (O(1), bounded queue,
-  drop-oldest); a pool thread, at most once per ≥ 16 ms, keeps the newest 5,000 lines (older text is *counted*, not split) and builds immutable
-  lines; the UI applies ≤ 150 lines per ≤ 4 ms callback and trims to 5,000. Late subscribers are seeded from `IDebugOutputHistory` (deduplicated by
-  reference), `OutputCleared` is honoured. Categories colour the lines (stdout / stderr red / console dim / important yellow); output events that
-  end without a newline become their own line (no cross-event line joining).
+  drop-oldest); a pool thread, at most once per frame (≥ 16 ms), keeps the newest 5,000 lines (older text is *counted*, not split), parses their
+  ANSI escapes and builds immutable lines; the UI applies **everything waiting in one pass per batch**: at most one precise Remove (the oldest
+  lines over the 5,000 bound) and one precise Add (a batch of 5,000 or more: one Reset). Lines waiting for the UI are bounded to 5,000 too
+  (older ones would be trimmed on arrival: dropped while waiting, with a note that takes the top row). So the list control does its per-change work (realising the
+  rows now on screen) once per frame however fast the program writes; the cost per line on the UI thread is a reference copied into a list.
+  Late subscribers are seeded from `IDebugOutputHistory` (deduplicated by `DebugOutputEventArgs.Sequence`), `OutputCleared` is honoured.
+  Output events that end without a newline become their own line (no cross-event line joining).
+* **Rows** are `Views/ConsoleLineView`, a control that draws its `ConsoleLine` as one text layout (no `TextBlock`, no bindings, no style
+  classes): the list's virtualisation recycles a few dozen of them for any number of lines, and a recycled row builds one layout. Categories
+  colour the lines (stdout in the foreground colour, stderr red, console dim, important yellow, input blue, notes italic); the colours come
+  from the theme's `vsc:*` brushes, resolved once by `ConsoleView` into `ConsoleBrushes` and inherited by the rows (re-resolved when the theme
+  changes or mutates its brushes).
+* **ANSI colours** (`Console/AnsiText.cs`, parsed on the pump thread): SGR sets 16-colour (the theme's `terminal.ansi*`), 256-colour and
+  24-bit foreground and background, bold, dim, italic, underline, strikethrough and inverse; every other escape (cursor movement, erase, OSC
+  titles and hyperlinks, charset selection) is removed, so `Text` (filter, copy) is what is shown. The style carries from line to line and
+  event to event within one category (stdout's colour never leaks into stderr) and is reset by Clear. A line holds its styled runs as
+  `ConsoleSpan`s (none for plain lines: plain output allocates nothing extra).
 * **REPL**: Enter evaluates in the focused frame (context `repl`), Shift+Enter adds a line, ↑/↓ walk a 200-entry history (at the first/last line),
   completions via `CompletionsAsync` (debounced, cancellable; ↑↓ select, Tab/Enter accept, Esc close, Ctrl+Space ask). Clear, text filter
   (off the UI thread), lock-scroll toggle, Ctrl+C copies the selected lines.
 * The shell disposes the console's view-model whenever the window is hidden (also at the end of every session), so the REPL's history and
   transcript live in the app-lifetime `Console/ReplState`: the history is also persisted in `IStateStorage` (`debug.replHistory`, application
   scope), and the transcript (≤ 1,000 lines) is replayed by a new console with each line after the output event it followed. Clear empties it.
-  At the end of a session the debug service replaces that session's history entries with copies that no longer reference it
-  (`ArchiveHistory`), so a line's anchor (`OutputAnchor` in `Console/ReplState.cs`, weak) matches the event itself or, failing that, the copy that shares its
-  `Output` string instance (every DAP output batch has its own); a line whose event left the history goes after the line entered before it.
+  A REPL line records the `Sequence` of the newest output event when it was entered and goes after the last shown event whose sequence is not
+  greater (never before the line entered before it). The history's copies keep the sequence: an ended session's events relabelled by
+  `ArchiveHistory`, and an oversize batch whose head the history cut (`with { Output = tail }`: matched neither by reference nor by its
+  `Output` string before, so the line was replayed at the top). A line whose event left the history goes after the output that came before it.
+  Lines entered in this console take the same path (through the pump, placed with the same rule), so the live console and a replay agree.
 
 ### Exception Helper, Modules (SHOULD)
 
@@ -209,10 +224,11 @@ real Skia headless platform.
 | `ScreenshotTests` | renders every window in the VS Dark/Light/Blue themes → `.scratch/screenshots/debug-*.png` (git-ignored) |
 | `RealDebuggerEndToEndTests` | **real `CsCode.Dap` + real netcoredbg**: breakpoint, real frames, real locals, frame switch, step with a highlighted change, watch, REPL, console stdout, modules from `module` events, clean exit, no stray processes |
 | `RealJsDebugPanelsTests` | **real `CsCode.Dap` + real js-debug** on a TypeScript program compiled by tsc: moved breakpoint in the Breakpoints window, Locals values (classes, `'strings'`, Map/Set, a getter run in place, a 250-element array paged to its end), REPL + completions, set variable from Locals, Autos, Watch errors, the async call stack with Node internals folded by default and shown greyed on a click, an async frame without variables, step highlighting, stderr in red, the Exception window; a 10,000-element array paged to its last element, a getter that throws, a getter's type, an evaluated getter at the next stop |
-| `RealJsDebugResponsivenessTests` | 1,000,000 lines through js-debug with the Debug Console on screen, in two shapes (batched `process.stdout.write`, and one `console.log` per line = one DAP event each): dispatcher p99 < 16 ms, max < 50 ms (numbers in docs/DEBUGGING-RUST-TS.md) |
+| `ConsoleFloodTests`, `ConsoleAnsiTests` | the console under a flood: a 3,000-line batch reaches the list in ONE Add and trimming is ONE Remove, 2,000 one-line events within a frame are applied together, lines dropped while the UI thread was behind reported by a note above the newest 4,999, rows are recycled `ConsoleLineView`s (never one control per line) following the newest line, ANSI colours drawn in the theme's terminal colours (pixels of the rendered frame), a REPL line keeping its place after an oversize batch the history cut; the ANSI parser (SGR 16/256/24-bit, attributes, removed sequences, carry-over per category, cut lines) |
+| `RealJsDebugResponsivenessTests` | 1,000,000 lines through js-debug with the Debug Console on screen, in two shapes (batched `process.stdout.write`, and one `console.log` per line = one DAP event each): dispatcher p99 < 16 ms, max < 50 ms; each attempt also reports the UI thread's CPU time and the GC pauses (`GcPauseRecorder`) (numbers in docs/DEBUGGING-RUST-TS.md) |
 | `JsDebugReviewFixTests` | regression tests of the second round (reviews and the integrator's run on a real display): skipped frames folded by default, the 10,000 cap and its notice, a throwing getter, an evaluated getter at the next stop, a lazy value's type |
 | `JsDebugPanelFixTests` | regression tests of the js-debug wave: deemphasized/label frames, quoted strings, lazy getters, filtered paging, `Return value` shape, opening the stop file, the throwing frame focus (fake and real), hit counts/logpoints per capability |
-| `ResponsivenessTests` | dispatcher heartbeat (p99 < 16 ms, max < 50 ms) under the hostile scenarios; `.scratch/responsiveness.log` has the measured numbers |
+| `ResponsivenessTests` | dispatcher heartbeat (p99 < 16 ms, max < 50 ms) under the hostile scenarios, including a sustained one-line-per-event flood from two sessions (~25,000 events/s for 3 s, about js-debug's rate; needs no Node.js: it runs in CI) that must change the console's list at most once per frame; `.scratch/responsiveness.log` has the measured numbers |
 | `LeakTests` | show/hide ×100 across 20 sessions: nothing reachable, no subscriptions left on service/sessions/breakpoint manager |
 
 ## Trying it by hand
@@ -232,4 +248,7 @@ dotnet run --project src/CsCode.Panels.Debug/Demo -- --start # start the session
   the Modules window for sessions without `IDebugSessionModules`) uses `CustomRequestAsync` because the contracts have no typed API for it;
   the Modules window of such a session refreshes at stops, not live while running; hover pins / DataTips are the editor's job.
 * Console output without a trailing newline is not joined with the next event's text.
+* With scrolling locked during a flood, trimming the oldest lines moves the rows on screen up (the list keeps its offset, not its first row).
+* The ANSI style of output the pump dropped unseen (more than 5,000 lines in one frame) is not tracked: the first line kept starts with the
+  style the stream had before the drop.
 * Value edits refresh only the edited row (dependents update at the next stop or via a reload).

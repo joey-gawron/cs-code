@@ -6,6 +6,7 @@ using CsCode.Core.Debugging;
 using CsCode.Panels.Debug.Console;
 using CsCode.Panels.Debug.Tests.Fakes;
 using CsCode.Panels.Debug.Views;
+using CsCode.Profiling.Testing;
 using CsCode.TestDoubles;
 using CsCode.Ui.Theming;
 using CsCode.Ui.Threading;
@@ -52,8 +53,8 @@ public class RealJsDebugResponsivenessTests
         var attempts = new List<string>();
         for (var attempt = 1; attempt <= 3; attempt++)
         {
-            var (p99, max, samples, lines, elapsed) = await FloodOnceAsync(warmUp, flood, lastLine);
-            var line = $"{what} (attempt {attempt}): dispatcher p99 {p99:F1} ms, max {max:F1} ms, {samples} samples; console kept {lines} lines; session took {elapsed} ms";
+            var (p99, max, samples, lines, elapsed, diagnostics) = await FloodOnceAsync(warmUp, flood, lastLine);
+            var line = $"{what} (attempt {attempt}): dispatcher p99 {p99:F1} ms, max {max:F1} ms, {samples} samples; console kept {lines} lines; session took {elapsed} ms; {diagnostics}";
             attempts.Add(line);
             RealJsDebugPanelsTests.Note(line);
             if (samples > 20 && p99 < P99BudgetMs && max < MaxBudgetMs) return;
@@ -61,7 +62,7 @@ public class RealJsDebugResponsivenessTests
         Assert.Fail("dispatcher latency exceeded the budget on all attempts: " + string.Join(" / ", attempts));
     }
 
-    private static async Task<(double P99, double Max, int Samples, int Lines, long ElapsedMs)> FloodOnceAsync(
+    private static async Task<(double P99, double Max, int Samples, int Lines, long ElapsedMs, string Diagnostics)> FloodOnceAsync(
         Func<RealJsDebugPanelsTests.App, DebugConfiguration> warmUp, Func<RealJsDebugPanelsTests.App, DebugConfiguration> flood, string lastLine)
     {
         TestTheme.Apply(VsThemes.Dark);
@@ -89,18 +90,34 @@ public class RealJsDebugResponsivenessTests
                     try { await Task.Delay(1, cts.Token).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
                 }
             });
+            // Where the UI thread's time went (its CPU, run-queue wait on Linux, Avalonia's measure/arrange/render) and the GC pauses (every
+            // thread stops for those): put next to the latency they say whether a miss was the console's own work, a loaded machine or the GC.
+            using var gc = new GcPauseRecorder();
+            using var activity = new ThreadActivityRecorder("Avalonia.Diagnostic.Meter");
+            var uiCpuBefore = ThreadCpu.CurrentThreadMs();
             var sw = Stopwatch.StartNew();
             _ = await app.Debug.StartAsync(flood(app)) ?? throw new InvalidOperationException("no session");
             await PanelRig.Eventually(() => app.Debug.State == DebugState.Inactive, 240_000, "the flood ran to its end");
-            await PanelRig.Eventually(() => console.Lines.Any(l => l.Text == lastLine), 20_000, "the last line reached the console");
+            try { await PanelRig.Eventually(() => console.Lines.Any(l => l.Text == lastLine), 20_000, "the last line reached the console"); }
+            catch (TimeoutException)
+            {
+                // Say whose it was: the debug service never got the line (the adapter's), or the console did not show what it got (ours).
+                var inHistory = app.Debug is IDebugOutputHistory h && h.GetOutputHistory().Any(e => e.Output.Contains(lastLine, StringComparison.Ordinal));
+                throw new TimeoutException($"'{lastLine}' did not reach the console (in the debug service's history: {inHistory}); its last lines: "
+                    + string.Join(" | ", console.Lines.TakeLast(3).Select(l => l.Text)));
+            }
             sw.Stop();
+            activity.Stop();
+            var uiCpu = ThreadCpu.CurrentThreadMs() - uiCpuBefore;
+            gc.Stop();
             cts.Cancel();
             await heartbeat;
             await Task.Delay(60);
             double[] sorted;
             lock (latencies) sorted = [.. latencies.Order()];
             Assert.True(console.Lines.Count <= DebugConsoleViewModel.MaxLines);
-            return (sorted.Length == 0 ? 0 : sorted[(int)(sorted.Length * 0.99)], sorted.Length == 0 ? 0 : sorted[^1], sorted.Length, console.Lines.Count, sw.ElapsedMilliseconds);
+            return (sorted.Length == 0 ? 0 : sorted[(int)(sorted.Length * 0.99)], sorted.Length == 0 ? 0 : sorted[^1], sorted.Length, console.Lines.Count, sw.ElapsedMilliseconds,
+                $"UI thread CPU {uiCpu:F0} ms ({activity.Report()}); {gc.Report()}");
         }
         finally
         {
