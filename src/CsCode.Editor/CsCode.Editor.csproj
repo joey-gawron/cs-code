@@ -17,6 +17,8 @@
     <PackageReference Include="AvaloniaEdit.TextMate" />
     <PackageReference Include="TextMateSharp" />
     <PackageReference Include="TextMateSharp.Grammars" />
+    <!-- Markdown preview: CommonMark + GFM parsing (docs/MARKDOWN.md) -->
+    <PackageReference Include="Markdig" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <!-- UI-facing project: blocking calls (Task.Wait/.Result/GetResult, Thread.Sleep, sync file I/O) are build errors. See BannedSymbols.txt. -->

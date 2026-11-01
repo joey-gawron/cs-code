@@ -48,6 +48,12 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
   </ItemGroup>
 
+  <!-- ===================== MARKDOWN PREVIEW (module: Editor, src/CsCode.Editor/Markdown/Preview) ===================== -->
+  <!-- Markdig (BSD-2-Clause): CommonMark + GFM parser with source positions; the preview renders its AST to Avalonia controls. -->
+  <ItemGroup>
+    <PackageVersion Include="Markdig" Version="1.4.1" />
+  </ItemGroup>
+
   <!-- ===================== LSP (module: Lsp) ===================== -->
   <ItemGroup>
     <PackageVersion Include="StreamJsonRpc" Version="2.26.150" />

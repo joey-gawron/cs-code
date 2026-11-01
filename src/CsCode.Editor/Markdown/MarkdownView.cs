@@ -168,7 +168,7 @@ public static class MarkdownView
         return run;
     }
 
-    private static void AddColoredRuns(TextBlock tb, string text, IReadOnlyList<CodeSpan> spans)
+    internal static void AddColoredRuns(TextBlock tb, string text, IReadOnlyList<CodeSpan> spans)
     {
         var pos = 0;
         foreach (var s in spans.OrderBy(x => x.Start))
