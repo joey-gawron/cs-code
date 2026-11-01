@@ -70,6 +70,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     private bool _inUpdate;               // the buffer is inside an update (its own changes move the caret)
     private bool _applying;               // a batch of ours is being applied (do not map it again)
     private CaretSet? _pendingRestore;    // undo/redo asked for these carets; applied when the update ends
+    private readonly List<DocumentChangeEventArgs> _pendingChanges = new(); // changes from elsewhere in the current update, not yet mapped
     private bool _blinkOn = true;
     private bool _swallowNewlineText;     // Enter was handled as a key: a platform's "\r" text that follows is not a second Enter
     private (int Version, CaretSet Set)? _typingRun; // the last typed batch, which the next typed character may continue as one undo step
@@ -128,7 +129,17 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     public bool IsActive => _set is { IsMulti: true };
 
     /// <summary>The carets (primary included), in document order; one caret when the feature is not active.</summary>
-    public CaretSet Current => _set is { } s ? s.WithPrimaryRange(PrimaryFromEditor()) : CaretSet.Single(PrimaryFromEditor());
+    public CaretSet Current
+    {
+        get
+        {
+            FollowPendingChanges();
+            return _set is { } s ? s.WithPrimaryRange(PrimaryFromEditor()) : CaretSet.Single(PrimaryFromEditor());
+        }
+    }
+
+    /// <summary>How many times the carets were moved along changes made elsewhere (at the end of a document update, or earlier when something reads them).</summary>
+    internal int FollowCount { get; private set; }
 
     private bool Enabled => !_disposed && !_v.IsDisposed && !_v.ModalAttached;
 
@@ -155,6 +166,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         if (set.Carets.Any(c => c.End > length || c.Start < 0))
             set = CaretSet.Create(set.Carets.Select(c => new CaretRange(Math.Clamp(c.Anchor, 0, length), Math.Clamp(c.Active, 0, length))).ToArray(), set.PrimaryIndex, Limit);
         var wasActive = IsActive;
+        _pendingChanges.Clear(); // they moved the carets being replaced
         _set = set.IsMulti ? set : null;
         if (!set.IsMulti)
         {
@@ -173,6 +185,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     {
         if (_set is null) return;
         _set = null;
+        _pendingChanges.Clear();
         _query = null;
         _typingRun = null;
         _altClick = null;
@@ -224,13 +237,27 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
 
     private void OnBufferChanged(object? sender, DocumentChangeEventArgs e)
     {
-        if (_applying || _set is not { } set) return;
-        // an edit from elsewhere (another view, a language server, undo): every caret follows it, O(carets) per change
+        if (_applying || _set is null) return;
+        // An edit from elsewhere (another view, a language server, undo): the carets follow it when the update ends, through all of its changes
+        // at once. An undo replays a multi-caret step as one change per caret, so mapping every caret at each change would be O(carets²); and
+        // when the undo restores its carets (_pendingRestore, set by the step's first marker after these changes) nothing is mapped at all.
+        _pendingChanges.Add(e);
+        if (!_inUpdate) FollowPendingChanges();
+    }
+
+    /// <summary>Moves the carets along the changes made elsewhere since the last time: O(carets × log changes) for an undo or a batch of edits.</summary>
+    private void FollowPendingChanges()
+    {
+        if (_pendingChanges.Count == 0) return;
+        var mapper = new ChangeSequenceMapper(_pendingChanges);
+        _pendingChanges.Clear();
+        if (_set is not { } set) return;
+        FollowCount++;
         var carets = new CaretRange[set.Count];
         for (var i = 0; i < carets.Length; i++)
         {
             var c = set[i];
-            carets[i] = new CaretRange(e.GetNewOffset(c.Anchor, AnchorMovementType.Default), e.GetNewOffset(c.Active, AnchorMovementType.Default), c.DesiredColumn);
+            carets[i] = new CaretRange(mapper.Map(c.Anchor), mapper.Map(c.Active), c.DesiredColumn);
         }
         _set = CaretSet.Create(carets, set.PrimaryIndex, Limit);
     }
@@ -241,11 +268,13 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         if (_applying || _disposed) return;
         if (_pendingRestore is { } restore)
         {
+            _pendingChanges.Clear(); // the restored carets replace the moved ones
             _pendingRestore = null;
             _typingRun = null;
             SetCarets(restore, reveal: true);
             return;
         }
+        FollowPendingChanges();
         if (_set is not { } set) return;
         // the primary is AvaloniaEdit's: take where its caret went, merge carets the edit brought together
         _set = set.WithPrimaryRange(PrimaryFromEditor());
@@ -743,6 +772,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     /// <summary>The secondary carets in the visible lines (index range into the set), or an empty range.</summary>
     private (CaretSet Set, int From, int To) Visible(TextView textView)
     {
+        FollowPendingChanges();
         if (_set is not { } set || !textView.VisualLinesValid || textView.VisualLines.Count == 0) return (CaretSet.Single(default), 0, 0);
         var first = textView.VisualLines[0].FirstDocumentLine.Offset;
         var last = textView.VisualLines[^1].LastDocumentLine.EndOffset;
@@ -821,6 +851,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         _d.Dispose();
         _set = null;
         _cursorUndo.Clear();
+        _pendingChanges.Clear();
         _pendingRestore = null;
         _lastEndMarker = null;
         _typingRun = null;

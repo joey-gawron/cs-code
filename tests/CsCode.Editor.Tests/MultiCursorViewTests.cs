@@ -446,6 +446,58 @@ public class MultiCursorViewTests
         Assert.Equal(text, doc.GetText());
     }
 
+    [AvaloniaTheory]
+    [InlineData(2_000)]  // above the undo snapshot limit: the carets follow the undo's changes
+    [InlineData(10_000)]
+    public async Task Undo_and_redo_of_a_step_typed_at_thousands_of_carets_move_the_carets_along_all_changes_at_once(int lines)
+    {
+        var text = string.Concat(Enumerable.Repeat("item\n", lines));
+        var (host, doc, view, window) = await Open(text);
+        using var _h = host;
+        view.Controller.SetSelection(TextRange.At(0, 0));
+        await Run(host, MultiCursorCommands.SelectHighlights);
+        Assert.Equal(lines, view.MultiCursor.Current.Count);
+        TypeKeys(window, "s");
+        var follows = view.MultiCursor.FollowCount;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        // AvaloniaEdit replays the step as one change per caret; the carets follow them once at the end (and once more when the undo's selection
+        // restore asks for the selections in the middle), not once per change
+        view.Controller.Undo();
+        ViewHost.Pump();
+        var undo = sw.ElapsedMilliseconds;
+        Assert.Equal(text, doc.GetText());
+        Assert.True(view.MultiCursor.FollowCount - follows <= 2, $"the carets followed {view.MultiCursor.FollowCount - follows} times");
+        Assert.True(view.MultiCursor.IsActive);
+        Assert.All(view.MultiCursor.Current.Carets, c => Assert.Equal(4, doc.PositionAt(c.Active).Character)); // after each restored "item"
+        follows = view.MultiCursor.FollowCount;
+        sw.Restart();
+        view.Controller.Redo();
+        ViewHost.Pump();
+        var redo = sw.ElapsedMilliseconds;
+        Assert.Equal(string.Concat(Enumerable.Repeat("s\n", lines)), doc.GetText());
+        Assert.True(view.MultiCursor.FollowCount - follows <= 2, $"the carets followed {view.MultiCursor.FollowCount - follows} times");
+        Assert.All(view.MultiCursor.Current.Carets, c => Assert.Equal(1, doc.PositionAt(c.Active).Character));
+        Assert.True(undo < 3_000 && redo < 3_000, $"undo took {undo} ms, redo {redo} ms at {lines} carets");
+    }
+
+    [AvaloniaFact]
+    public async Task Carets_follow_a_batch_of_edits_made_elsewhere_in_one_update()
+    {
+        var (host, doc, view, _) = await Open("a b c d\ne f g h");
+        using var _h = host;
+        view.Controller.SetSelections([TextRange.At(0, 3), TextRange.At(0, 7), TextRange.At(1, 1), TextRange.FromLines(1, 4, 1, 7)]);
+        var follows = view.MultiCursor.FollowCount;
+        // a formatter's edits: applied back to front in one update
+        Assert.True(doc.ApplyEdits([TextEdit.Insert(new TextPosition(0, 0), ">> "), new TextEdit(TextRange.FromLines(0, 4, 0, 5), "CCC"), TextEdit.Delete(TextRange.FromLines(1, 2, 1, 3))]));
+        ViewHost.Pump();
+        Assert.Equal(1, view.MultiCursor.FollowCount - follows);
+        Assert.Equal(">> a b CCC d\ne  g h", doc.GetText());
+        Assert.Equal(
+            [new TextPosition(0, 6), new TextPosition(0, 12), new TextPosition(1, 1), new TextPosition(1, 6)],
+            view.MultiCursor.Current.Carets.Select(c => doc.PositionAt(c.Active)));
+        Assert.Equal(new TextPosition(1, 3), doc.PositionAt(view.MultiCursor.Current.Carets[^1].Anchor)); // a selection keeps its anchor
+    }
+
     [AvaloniaFact]
     public async Task Secondary_carets_are_drawn_blink_while_focused_and_stop_with_the_view()
     {
