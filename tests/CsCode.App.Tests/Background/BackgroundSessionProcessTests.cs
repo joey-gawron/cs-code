@@ -193,6 +193,14 @@ public class BackgroundSessionProcessTests
         var next = await h.WaitForAsync(p => p.IsSpare && p.Pid != sparePid, what: "replacement spare");
         if (ReversiblePriorityAvailable)
             Assert.True(await SessionProcessHarness.WaitUntilAsync(() => h.Inspect(next.Pid).BackgroundPriority == true, 30_000), "the replacement spare is not at background priority");
+
+        // A claim that fails (the session is owned by another process, as when two launchers race for it) leaves a free spare, back at background priority.
+        var refused = h.Request(next.Pid, new IpcMessage { Type = IpcVerbs.Claim, Session = "P" });
+        Assert.NotEqual(true, refused.Ok);
+        Assert.Contains("owned by another CsCode process", refused.Error);
+        var stillSpare = h.Inspect(next.Pid);
+        Assert.Equal(ProcessStates.Spare, stillSpare.State);
+        if (ReversiblePriorityAvailable) Assert.True(stillSpare.BackgroundPriority, "a spare whose claim failed stays at normal priority");
     }
 
     /// <summary>

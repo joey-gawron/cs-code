@@ -356,16 +356,8 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         ProcessPriority.LeaveBackground(); // first: everything from here on is the user waiting for a window
         bool took;
         try { took = TryTakeSession(name!, request.Unnamed == true); }
-        catch (IOException ex)
-        {
-            lock (_gate) _claimed = false;
-            return IpcMessage.Failure(ex.Message);
-        }
-        if (!took)
-        {
-            lock (_gate) _claimed = false;
-            return IpcMessage.Failure($"session '{name}' is owned by another CsCode process");
-        }
+        catch (IOException ex) { return ClaimFailed(ex.Message); }
+        if (!took) return ClaimFailed($"session '{name}' is owned by another CsCode process");
         _state = ProcessStates.Starting;
         SessionTrace.Mark("host: claim " + name);
         var prepared = await PrepareAsync(name!, request.Unnamed == true).ConfigureAwait(false);
@@ -380,6 +372,14 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         await controller.ActivateOnUiAsync(prepared, hidden: request.Hidden == true).ConfigureAwait(false);
         SessionTrace.Mark("host: claim done");
         return IpcMessage.Reply();
+    }
+
+    /// <summary>The claim did not take its session (e.g. two launchers raced for it): the process is a free spare again, back at its low priority.</summary>
+    private IpcMessage ClaimFailed(string error)
+    {
+        ProcessPriority.EnterBackground(); // before the spare is free again, so it never undoes the LeaveBackground of the next claim
+        lock (_gate) _claimed = false;
+        return IpcMessage.Failure(error);
     }
 
     private void OnCrashReported(string summary, string path, bool fatal)
