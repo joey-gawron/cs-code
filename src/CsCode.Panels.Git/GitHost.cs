@@ -119,8 +119,8 @@ public sealed class GitHost : IDisposable
     /// <summary>The Explorer's compare items (VS Code's), shown on files.</summary>
     public static IReadOnlyList<MenuContribution> Menus { get; } =
     [
-        new("explorer/context", SelectForCompare, Group: "3_compare@1") { Title = "Select for Compare" },
-        new("explorer/context", CompareSelected, Group: "3_compare@2", When: ScmContextKeys.ResourceSelectedForCompare) { Title = "Compare with Selected" },
+        new("explorer/context", SelectForCompare, Group: "3_compare@1", When: "!explorerResourceIsFolder") { Title = "Select for Compare" },
+        new("explorer/context", CompareSelected, Group: "3_compare@2", When: "!explorerResourceIsFolder && " + ScmContextKeys.ResourceSelectedForCompare) { Title = "Compare with Selected" },
     ];
 
     // ------------------------------------------------------------------------------------- repositories, status bar

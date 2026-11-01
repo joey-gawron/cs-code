@@ -313,7 +313,7 @@ public sealed class SourceControlWindowTests
     {
         using var h = await CreateAsync();
         Assert.Contains(h.Contributions.Of<MenuContribution>().Items, m => m.Value.MenuId == "explorer/context" && m.Value.Command == GitHost.CompareSelected
-            && m.Value.When == ScmContextKeys.ResourceSelectedForCompare);
+            && m.Value.When == "!explorerResourceIsFolder && " + ScmContextKeys.ResourceSelectedForCompare);
         await h.Commands.ExecuteAsync(GitHost.SelectForCompare, h.Repo.FileUri("a.txt").ToString());
         Assert.Equal(true, h.Keys.Get(ScmContextKeys.ResourceSelectedForCompare));
         await h.Commands.ExecuteAsync(GitHost.CompareSelected, h.Repo.FileUri("b.txt").ToString());

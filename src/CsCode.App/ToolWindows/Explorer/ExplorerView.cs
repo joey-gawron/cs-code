@@ -282,6 +282,7 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
     {
         var uri = node.Uri;
         var folder = node.IsDirectory ? uri : node.Parent?.Uri ?? uri;
+        _keys?.Set("explorerResourceIsFolder", node.IsDirectory); // VS Code's key: contributed items for files only (Select for Compare)
         MenuEntry? Command(string header, string id, string? icon = null, params object?[] args) => _menus?.Command(header, id, icon, args: args);
         return MenuSections.Join(
             node.IsDirectory ?
