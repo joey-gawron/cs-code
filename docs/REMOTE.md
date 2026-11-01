@@ -298,6 +298,9 @@ connection that created or reattached it, so the replay always comes before newe
   - a connection attempt that gets no answer within the start timeout (3 min; `RemoteOptions.StartTimeout`) fails as **timed out**
     (`RemoteBootstrapException.TimedOut`) even when another process keeps its output open (an ssh mux client hands its stdin/stdout to the
     master, so killing the client does not end the read: the attempt is given up 5 s later and its reading thread ends with the master);
+  - a cancelled attempt (Disconnect, closing the window, during a reconnect over such a master) is given up the same way 1 s after the
+    cancellation, as a **cancellation**: it is not a timeout and does not switch the host's later attempts off connection sharing (it waited for
+    the start timeout, so Disconnect could block for up to 3 minutes);
   - after a timed-out attempt the host's later attempts connect on their own: `-o ControlPath=none` (placed before the user's options, as ssh takes
     the first value) — the user's master is left alone; the Remote log says so.
   A stale master therefore costs one heartbeat period and one start timeout (about 4 minutes with the defaults) instead of a hang. Tested with a

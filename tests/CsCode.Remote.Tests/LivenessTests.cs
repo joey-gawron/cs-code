@@ -183,4 +183,37 @@ public sealed class LivenessTests
             await kill.WaitForExitAsync(Ct);
         }
     }
+
+    [Fact]
+    public async Task A_cancelled_attempt_ends_promptly_as_a_cancellation_even_when_another_process_keeps_its_output_open()
+    {
+        // Disconnect (or closing the window) while a reconnect waits on a stale ControlMaster: the cancelled attempt waited for the whole start
+        // timeout (3 minutes by default) and then reported a timeout, which also switched the next attempts off connection sharing.
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "POSIX sh");
+        using var dir = new TempDirectory("cscode-start-held-cancel-");
+        const string hash = "0123456789abcdef";
+        var tag = "23." + Random.Shared.Next(1000, 9999).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var server = dir.WriteFile($"root/bin/{hash}/cscode-server", $"#!/bin/sh\n( sleep {tag} & )\nexec sleep 30\n");
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(server, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var transport = new ShellServerTransport(new LocalRemoteShell(), new ServerLaunchOptions
+        {
+            InstallRoot = dir.Combine("root"),
+            DataDir = dir.Combine("data"),
+            Bundles = new ServerBundleSet(dir.Path, [new ServerBundle(BundleFlavour.SelfContained, "linux-x64", "x.tar.gz", "aa", hash)]),
+            StartTimeout = TimeSpan.FromSeconds(15),
+        });
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(1));
+            var started = Environment.TickCount64;
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => transport.ConnectAsync(null, cts.Token)).WaitAsync(TimeSpan.FromSeconds(30), Ct);
+            Assert.InRange(Environment.TickCount64 - started, 900, 8_000); // the cancellation plus its grace, not the 15 s start timeout
+        }
+        finally
+        {
+            using var kill = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("pkill", ["-f", "sleep " + tag]) { UseShellExecute = false })!;
+            await kill.WaitForExitAsync(Ct);
+        }
+    }
 }

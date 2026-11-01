@@ -192,12 +192,18 @@ internal static class Greeting
     /// <summary>After the start timeout killed the process: how long the reading thread gets to see the end of its output before it is left behind.</summary>
     internal static readonly TimeSpan GiveUpGrace = TimeSpan.FromSeconds(5);
 
+    /// <summary>After cancellation killed the process: how long the reading thread gets to see the end of its output before it is left behind.</summary>
+    internal static readonly TimeSpan CancelGrace = TimeSpan.FromSeconds(1);
+
     public static async Task<Outcome> StartAsync(ProcessLaunch launch, string description, TimeSpan timeout, CancellationToken ct)
     {
         // Killing the process normally ends the read below (EOF). Not when another process holds the pipe's other end: an ssh session multiplexed over
         // a ControlMaster hands its stdin/stdout to the master, so a stale master keeps the read blocked after its client is killed (found against a
         // real host: the reconnect loop waited for ever). Then the attempt is given up as timed out without that thread, which ends with the master.
+        // Cancelling (Disconnect, closing the window) gives it up the same way, as a cancellation, after a shorter grace: otherwise it waited for the
+        // start timeout and then reported a timeout, which also made the next attempts bypass connection sharing.
         var gaveUp = new TaskCompletionSource<Outcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancelled = ct.Register(() => _ = Task.Delay(CancelGrace).ContinueWith(_ => gaveUp.TrySetCanceled(ct), TaskScheduler.Default));
         var work = BlockingWork.RunAsync("start", () =>
         {
             var process = ProcessChannel.Start(launch);
@@ -249,6 +255,10 @@ internal static class Greeting
                 if (!ok) process.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(6));
             }
         });
-        return await (await Task.WhenAny(work, gaveUp.Task).ConfigureAwait(false)).ConfigureAwait(false);
+        var first = await Task.WhenAny(work, gaveUp.Task).ConfigureAwait(false);
+        if (first != work)
+            _ = work.ContinueWith(static t => { if (t.IsCompletedSuccessfully && t.Result.Channel is { } late) _ = late.DisposeAsync(); else _ = t.Exception; },
+                TaskScheduler.Default); // the left-behind thread ends with the pipe: nothing it returns is used
+        return await first.ConfigureAwait(false);
     }
 }
