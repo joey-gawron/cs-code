@@ -270,6 +270,20 @@ public class MarkdownPreviewViewTests
     }
 
     [AvaloniaFact]
+    public async Task Images_dropped_from_the_cache_are_no_longer_held_by_the_preview()
+    {
+        using var host = ViewHost.Create();
+        var (_, view, window) = await OpenAsync(host, "text\n");
+        const int count = 100;
+        for (var i = 1; i <= count; i++) view.Images.Create("data:image/png;base64," + Convert.ToBase64String(Png(i, 1)), "img " + i);
+        await ViewHost.WaitFor(() => view.Images.LoadedCount == count, "every image to load");
+        await ViewHost.WaitFor(() => view.Images.DecodedCount <= 64, $"the preview to drop evicted bitmaps (holds {view.Images.DecodedCount})");
+        window.Close();
+        view.Dispose();
+        Assert.Equal(0, view.Images.DecodedCount);
+    }
+
+    [AvaloniaFact]
     public async Task Local_and_data_images_load_and_remote_ones_are_blocked_by_default()
     {
         using var host = ViewHost.Create();
@@ -384,9 +398,11 @@ public class MarkdownPreviewViewTests
     }
 
     /// <summary>A 4x3 PNG (made with Avalonia, so it is valid on every platform).</summary>
-    private static byte[] TinyPng()
+    private static byte[] TinyPng() => Png(4, 3);
+
+    private static byte[] Png(int width, int height)
     {
-        using var bmp = new WriteableBitmap(new PixelSize(4, 3), new Vector(96, 96), Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Premul);
+        using var bmp = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Premul);
         using var ms = new MemoryStream();
         bmp.Save(ms, new PngBitmapEncoderOptions());
         return ms.ToArray();

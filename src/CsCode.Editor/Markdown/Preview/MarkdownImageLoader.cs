@@ -25,7 +25,9 @@ internal sealed class MarkdownImageLoader(IFileSystem files, IUiThread ui, Func<
 
     private readonly Dictionary<string, Task<Bitmap?>> _cache = new(StringComparer.Ordinal);
     private readonly Queue<string> _order = new();
-    private readonly System.Collections.Concurrent.ConcurrentQueue<Bitmap> _decoded = new();
+    // The bitmaps of the cached entries (disposed with the preview). An entry dropped from the cache leaves this set too: an image control may
+    // still show its bitmap, so it is not disposed, and once no control does the GC frees it.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Bitmap, byte> _decoded = new();
     private readonly CancellationTokenSource _cts = new();
     private bool _disposed;
 
@@ -90,19 +92,35 @@ internal sealed class MarkdownImageLoader(IFileSystem files, IUiThread ui, Func<
             var bytes = await load(ct).ConfigureAwait(false);
             var bitmap = bytes is null ? null : Decode(bytes);
             if (bitmap is null) return null;
-            _decoded.Enqueue(bitmap);
+            _decoded.TryAdd(bitmap, 0);
             if (Volatile.Read(ref _disposed))
             {
                 // decoded after the preview went away: nobody will show it
-                while (_decoded.TryDequeue(out var late)) late.Dispose();
+                DisposeDecoded();
                 return null;
             }
             return bitmap;
         }, ct);
         _cache[key] = task;
         _order.Enqueue(key);
-        while (_order.Count > MaxCached) _cache.Remove(_order.Dequeue()); // not disposed: an image control may still show it (the GC frees it)
+        while (_order.Count > MaxCached)
+        {
+            var evicted = _order.Dequeue();
+            if (_cache.Remove(evicted, out var dropped)) _ = ForgetAsync(dropped);
+        }
         return task;
+    }
+
+    private async Task ForgetAsync(Task<Bitmap?> dropped)
+    {
+        try
+        {
+            if (await dropped.ConfigureAwait(false) is { } bitmap) _decoded.TryRemove(bitmap, out _);
+        }
+        catch (Exception)
+        {
+            // failed or cancelled: it holds no bitmap
+        }
     }
 
     /// <summary>Decodes PNG, JPEG, GIF (first frame), BMP, WebP and ICO; null for anything else (SVG included). Wider images are downscaled.</summary>
@@ -187,12 +205,21 @@ internal sealed class MarkdownImageLoader(IFileSystem files, IUiThread ui, Func<
         return buffer.ToArray();
     }
 
+    /// <summary>Bitmaps the preview holds for its cache (tests): at most the cache's size.</summary>
+    internal int DecodedCount => _decoded.Count;
+
+    private void DisposeDecoded()
+    {
+        foreach (var bitmap in _decoded.Keys)
+            if (_decoded.TryRemove(bitmap, out _)) bitmap.Dispose();
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
         _cts.Cancel();
-        while (_decoded.TryDequeue(out var bitmap)) bitmap.Dispose();
+        DisposeDecoded();
         _cache.Clear();
         _order.Clear();
         Loaded = null;
