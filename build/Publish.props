@@ -16,6 +16,13 @@
     <!-- One composite image of the app and the framework (cross-assembly inlining; the framework's code compiled for this app): measured on
          this machine (docs/SESSIONS.md, "Start-up performance") a cold start of 0.93 s against 1.23 s with per-assembly ReadyToRun and 1.97 s
          with the JIT; +41 MB on disk and +27 MB of clean, shared file pages per process, private memory unchanged. -->
+    <!-- Not on macOS: there the runtime cannot map ReadyToRun code from the file, it copies each image's code into private memory when the image
+         loads, so the composite (105 MB of code, the whole framework's) costs every process ≈ 70 MB more private memory (the warm spare's
+         phys_footprint 219 against 151 MB, a session's resident set 321 against 243 MB) and the launcher +35 ms (copying it on each run: `cscode -v` 75 against
+         35 ms). Per-assembly images are copied only for the assemblies a process loads. Measured on arm64 (docs/SESSIONS.md, "Start-up
+         performance"): cold start and spare claim about the same (465-606 against 489-578 ms, 224-251 against 201-264 ms), a resident show
+         faster (89-113 against 70-74 ms). -->
+    <PublishReadyToRunComposite Condition="'$(PublishReadyToRunComposite)' == '' and $(RuntimeIdentifier.StartsWith('osx'))">false</PublishReadyToRunComposite>
     <PublishReadyToRunComposite Condition="'$(PublishReadyToRunComposite)' == '' and '$(PublishReadyToRun)' == 'true'">true</PublishReadyToRunComposite>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>

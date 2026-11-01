@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publishes CsCode for installing (docs/SESSIONS.md, "Publishing"): self-contained, ReadyToRun composite, official runtime packs
+# Publishes CsCode for installing (docs/SESSIONS.md, "Publishing"): self-contained, ReadyToRun composite (per assembly on macOS), official runtime packs
 # (build/Publish.props, build/NuGetRuntimePacks.props). Installs nothing; tools/install.sh calls this and copies the output.
 #
 #   tools/publish-app.sh [--rid RID] [--out DIR] [--artifacts DIR] [--unpinned]
@@ -65,7 +65,8 @@ if [ -e "$out" ]; then
   rm -rf "$out"
 fi
 
-echo "Publishing CsCode ($rid, self-contained, ReadyToRun composite) to $out"
+case "$rid" in osx-*) r2r="ReadyToRun per assembly" ;; *) r2r="ReadyToRun composite" ;; esac # build/Publish.props: no composite on macOS
+echo "Publishing CsCode ($rid, self-contained, $r2r) to $out"
 # The self-contained switch must be global (the App references the cscode-server executable: NETSDK1150); the rest is in build/Publish.props.
 # No build servers: an installer run leaves no MSBuild/compiler daemons behind.
 dotnet publish "$repo/src/CsCode.App/CsCode.App.csproj" --nologo -v:q -c Release -r "$rid" --self-contained true \
