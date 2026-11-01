@@ -45,8 +45,15 @@ public interface IEditorViewController
 {
     IEditorDocument Document { get; }
     TextPosition Caret { get; }
+    /// <summary>The primary selection (or caret) first, then any other carets' (multi-cursor) in document order.</summary>
     IReadOnlyList<TextRange> Selections { get; }
     void SetSelection(TextRange range, bool reveal = true);
+
+    /// <summary>Several selections (multi-cursor; the first is the primary). Default: the first only, for implementations without multi-cursor.</summary>
+    void SetSelections(IReadOnlyList<TextRange> selections, bool reveal = true)
+    {
+        if (selections.Count > 0) SetSelection(selections[0], reveal);
+    }
     void Reveal(TextRange range, bool center = true);
     void Focus();
     bool CanUndo { get; }

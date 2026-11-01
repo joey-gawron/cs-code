@@ -73,6 +73,9 @@ public sealed class CodeEditorControl : UserControl, IDisposable
         AttachTokenization();
 
         Editor.TextArea.IndentationStrategy = new LanguageIndentationStrategy(this);
+        // Multi-cursor first: with several carets its key and typing handlers must run before the typing path's (one caret: they return at once).
+        MultiCursor = new MultiCursorController(this);
+        _components.Add(MultiCursor);
         _components.Add(new TypingBehaviors(this));
         // Clipboard behaviour exists in large-file mode too (it is not a language feature).
         Clipboard = new EditorClipboard(this);
@@ -151,6 +154,9 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     internal TextArea TextArea => Editor.TextArea;
     internal TextView TextView => Editor.TextArea.TextView;
     internal bool IsDisposed => _disposed;
+    /// <summary>The extra carets of this view (Add Next Occurrence, Insert Cursor Above/Below, Alt+Click) and editing at all of them.</summary>
+    internal MultiCursorController MultiCursor { get; }
+
     /// <summary>Cut/Copy/Paste, the clipboard ring, PRIMARY and middle-click paste of this view.</summary>
     internal EditorClipboard Clipboard { get; }
 

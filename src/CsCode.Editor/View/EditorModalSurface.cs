@@ -85,6 +85,7 @@ public sealed class EditorModalSurface : IDisposable
         UndoRedoHandler = undoRedo;
         if (IsAttached) return;
         IsAttached = true;
+        _v.MultiCursor.Collapse(); // multi-cursor is off while a modal layer (Vim) edits
         var tv = _v.TextView;
         tv.BackgroundRenderers.Add(_patternRenderer);
         tv.BackgroundRenderers.Add(_flashRenderer);

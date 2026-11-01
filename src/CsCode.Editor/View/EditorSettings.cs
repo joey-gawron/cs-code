@@ -58,6 +58,10 @@ public sealed record EditorSettings
     public bool SelectionClipboard { get; init; } = OperatingSystem.IsLinux();
     /// <summary><c>editor.autoIndentOnPaste</c> (and <c>editor.autoIndent</c> not "none"): a multi-line paste is re-indented to where it lands.</summary>
     public bool AutoIndentOnPaste { get; init; } = true;
+    /// <summary><c>editor.multiCursorLimit</c>: at most this many carets at once (VS Code's default).</summary>
+    public int MultiCursorLimit { get; init; } = 10_000;
+    /// <summary><c>editor.multiCursorPaste</c>: "spread" (one clipboard line per caret when the counts match) or "full".</summary>
+    public string MultiCursorPaste { get; init; } = "spread";
 
     public bool ShowLineNumbers => LineNumbers != "off";
 
@@ -121,6 +125,8 @@ public sealed record EditorSettings
             EmptySelectionClipboard = G("editor.emptySelectionClipboard", defaults.EmptySelectionClipboard),
             SelectionClipboard = OperatingSystem.IsLinux() && G("editor.selectionClipboard", defaults.SelectionClipboard),
             AutoIndentOnPaste = G("editor.autoIndentOnPaste", defaults.AutoIndentOnPaste) && G("editor.autoIndent", "full") != "none",
+            MultiCursorLimit = Math.Clamp(G(MultiCursorController.LimitKey, defaults.MultiCursorLimit), 1, 100_000),
+            MultiCursorPaste = G(MultiCursorController.PasteKey, defaults.MultiCursorPaste) == "full" ? "full" : "spread",
         };
     }
 
