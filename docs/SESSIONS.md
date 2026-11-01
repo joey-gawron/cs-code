@@ -207,6 +207,8 @@ so they stay (and a rename writes them under the new name before the old session
 * *File ▸ Sessions ▸* Open Session…, Switch Session… (`workbench.action.switchSession`, **Ctrl+Alt+S**; shows the other session and hides
   this one), Save Session As… (the old session stays as saved), Rename Session…, Delete Session… (only sessions that are not running),
   Start in the Background at Login….
+* *File ▸ New Window* (`workbench.action.newWindow`, **Ctrl+Shift+N**, ⇧⌘N on a Mac, in both keymaps): a new unnamed session in a window and
+  process of its own, as `cscode -n` (registered by session processes; disabled in a `--foreground` run, which is one window).
 * The window title is `file - session — folder - CsCode` for named sessions; the status bar shows the session (click: Switch Session).
 
 ### macOS: the app outlives its last window (audit ui-6)
@@ -231,8 +233,9 @@ the same in both modes, and nothing changes on Linux or Windows.
 * With no window, the application menu's **About CsCode** and **Settings…** (⌘,) open a new window and run there once its start is done
   (`NativeMenuExport.Started`, called by `MainWindow` after the layout restore): Settings shows the Settings editor in it.
 * `cscode.macos.keepRunningWithoutWindows` (default `true`): `false` makes closing the window quit, as before.
-* With its window shown, **New Window** in background mode opens a new unnamed session (`cscode -n`, a process of its own); a foreground run
-  has one window, which New Window brings to the front.
+* With its window shown, **New Window** in background mode (the application menu's, or *File ▸ New Window*) opens a new unnamed session
+  (`cscode -n`, a process of its own); a foreground run has one window (one container, one workspace), which the application menu's New
+  Window brings to the front, and its *File ▸ New Window* is disabled.
 * Not done: each background session process still has its own Dock icon (audit ui-12/unmerged-2: hidden hosts as accessory processes).
 * Tests: `tests/CsCode.App.Tests/WindowlessRunTests.cs` (real composition; the test lifetime says it keeps running without windows, as
   `AvaloniaDesktopHost` does on macOS only, so the same tests run on Linux).

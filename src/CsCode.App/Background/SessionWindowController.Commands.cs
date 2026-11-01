@@ -21,6 +21,8 @@ public static class SessionCommandIds
     public const string ExitAll = "cscode.sessions.exitAll";
     /// <summary>Toggles "start CsCode in the background at login" (asks first; <see cref="AutostartEntry"/>).</summary>
     public const string StartAtLogin = "cscode.sessions.startAtLogin";
+    /// <summary>File &gt; New Window (VS Code's id, Ctrl+Shift+N / ⇧⌘N): a new unnamed session in a window of its own, as <c>cscode -n</c>.</summary>
+    public const string NewWindow = "workbench.action.newWindow";
 }
 
 public sealed partial class SessionWindowController
@@ -52,6 +54,7 @@ public sealed partial class SessionWindowController
         }, new CommandMetadata(SessionCommandIds.OpenSession, "Open Session...", "Session")));
         AddWorkingOn(SessionCommandIds.SwitchSession, "Switch Session...", () => PickAndOpenAsync(switching: true));
         Add(SessionCommandIds.DeleteSession, "Delete Session...", DeleteSessionAsync);
+        Add(SessionCommandIds.NewWindow, "New Window", () => LaunchAsync(new SessionChoice(null, true), switching: false));
         AddWorkingOn(SessionCommandIds.CloseWindow, "Close Window (Keep Running)", () => { Hide(); return Task.CompletedTask; });
         Add(SessionCommandIds.QuitSession, "Quit Session", async () => await QuitAsync(force: false).ConfigureAwait(true));
         Add(SessionCommandIds.ExitAll, "Exit All", ExitAllAsync);

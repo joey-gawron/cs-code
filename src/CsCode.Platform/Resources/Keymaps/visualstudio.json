@@ -74,6 +74,7 @@
 
   // ---- files & editors ----
   { "key": "ctrl+n",             "command": "workbench.action.files.newUntitledFile", "mac": "cmd+n" },
+  { "key": "ctrl+shift+n",       "command": "workbench.action.newWindow",         "mac": "cmd+shift+n" },
   { "key": "ctrl+o",             "command": "workbench.action.files.openFile",    "mac": "cmd+o" },
   { "key": "ctrl+shift+o",       "command": "workbench.action.files.openFolder",  "when": "!editorTextFocus", "mac": "cmd+shift+o" },
   { "key": "ctrl+s",             "command": "workbench.action.files.save",        "mac": "cmd+s" },

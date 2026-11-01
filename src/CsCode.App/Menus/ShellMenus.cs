@@ -57,6 +57,8 @@ public static class ShellMenus
     [
         Sub("_File",
             M("_New File", KnownCommands.NewUntitledFile, icon: IconKey.NewFile),
+            // A new unnamed session (background mode: session processes register it); a foreground run is one window, so it stays disabled there.
+            M("New Win_dow", Background.SessionCommandIds.NewWindow),
             M("_Open File...", KnownCommands.OpenFile, icon: IconKey.File),
             M("Open _Folder...", KnownCommands.OpenFolder, icon: IconKey.FolderOpened),
             M("Open Re_mote Folder...", "remote.openFolder", icon: IconKey.Remote),
