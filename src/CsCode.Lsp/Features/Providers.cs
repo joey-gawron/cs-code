@@ -1,3 +1,4 @@
+using System.Text.Json;
 using CsCode.Core.Languages;
 using CsCode.Core.Text;
 using CsCode.Lsp.Client;
@@ -60,6 +61,17 @@ internal sealed class HoverProvider(LanguageClient client) : LspProvider(client,
         Client.DocRequestAsync<Hover>(Kind, Feature(), document, LanePriority.Interactive, async dr =>
         {
             var p = new P.HoverParams { TextDocument = dr.Id, Position = dr.Mapper.ToLsp(position, dr.Uri) };
+            if (Client.Extension is { Extension.WantsRawHover: true } ext)
+            {
+                // members the protocol has no slot for (rust-analyzer's hover actions) need the raw answer
+                var raw = await Client.SendAsync(P.LspRequests.TextDocumentHover.Method, p, dr.Ctx.Priority, dr.Token, dr.Doc).ConfigureAwait(false);
+                if (raw is not { ValueKind: JsonValueKind.Object } answer) return null;
+                await dr.Ctx.ResumeOnLane();
+                var mapped = dr.Mapper.ToCore(Client.Deserialize<P.Hover>(answer, P.LspRequests.TextDocumentHover.Method), dr.Uri);
+                var adjusted = mapped;
+                Client.RunExtension("AdjustHover", () => adjusted = ext.Extension.AdjustHover(ext, answer, mapped, dr.Uri));
+                return adjusted;
+            }
             var h = await dr.SendAsync(P.LspRequests.TextDocumentHover, p).ConfigureAwait(false);
             return dr.Mapper.ToCore(h, dr.Uri);
         }, ct);
@@ -235,7 +247,10 @@ internal sealed class CodeLensProvider(LanguageClient client) : LspProvider(clie
         Client.DocRequestAsync<IReadOnlyList<CodeLens>>(Kind, Feature(), document, LanePriority.Background, async dr =>
         {
             var r = await dr.SendAsync(P.LspRequests.TextDocumentCodeLens, new P.CodeLensParams { TextDocument = dr.Id }, contentModifiedRetries: 2).ConfigureAwait(false);
-            return r is null ? null : r.Take(5000).Select(l => dr.Mapper.ToCore(l, dr.Uri)).ToArray();
+            if (r is null) return null;
+            IReadOnlyList<CodeLens> lenses = r.Take(5000).Select(l => dr.Mapper.ToCore(l, dr.Uri)).ToArray();
+            if (Client.Extension is { } ext) Client.RunExtension("AdjustCodeLenses", () => lenses = ext.Extension.AdjustCodeLenses(ext, lenses, dr.Uri));
+            return lenses;
         }, ct);
 
     public async ValueTask<CodeLens> ResolveCodeLensAsync(CodeLens lens, CancellationToken ct)
