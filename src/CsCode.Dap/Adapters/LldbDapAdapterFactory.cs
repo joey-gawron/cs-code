@@ -369,6 +369,7 @@ public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         }
         else
         {
+            if (await CFolder.ReadAsync(_p, folder, ct) is { } c) configs.AddRange(CFolder.Configurations(c, PrimaryType, "lldb-dap", sourceLanguages: false));
             configs.Add(new JsonObject
             {
                 ["name"] = "lldb-dap: Launch program",
@@ -392,7 +393,8 @@ public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigur
     /// <summary>The <c>cargo: build</c> task the binary template's preLaunchTask refers to (only for a cargo package), as the GDB adapter writes it.</summary>
     public async ValueTask<IReadOnlyList<(string RelativePath, string Content)>> ProvideInitialFilesAsync(Uri? folder, CancellationToken ct)
     {
-        if (await CargoPackage.ReadAsync(_p, folder, ct) is null) return [];
+        if (await CargoPackage.ReadAsync(_p, folder, ct) is null)
+            return await CFolder.ReadAsync(_p, folder, ct) is not null ? [("tasks.json", CFolder.BuildTasksJson)] : []; // the C single-file template's build task
         return [("tasks.json", CargoPackage.BuildTasksJson)];
     }
 }
