@@ -44,6 +44,27 @@ public sealed class ProblemMatcherTests
         Assert.Equal((1, 0), (c.Errors, c.Warnings));
     }
 
+    /// <summary>
+    /// Without a terminal, `dotnet build` (SDK 10.0.403) prints its summary whatever /consoleloggerparameters:NoSummary says (it adds
+    /// -consoleloggerparameters:Summary after it), so each error comes twice: it is found once, as in a terminal.
+    /// </summary>
+    [Fact]
+    public void MsCompile_finds_an_error_the_build_summary_repeats_once()
+    {
+        var c = Collector("\"$msCompile\"");
+        const string error = "/work/proj/Program.cs(1,31): error CS1002: ; expected [/work/proj/W.csproj]\n";
+        Feed(c, "  Determining projects to restore...\n  All projects are up-to-date for restore.\n" + error +
+            "\nBuild FAILED.\n\n" + error + "    0 Warning(s)\n    1 Error(s)\n\nTime Elapsed 00:00:00.35\n");
+        var (_, d) = Single();
+        Assert.Equal(("CS1002", 0, 30), (d.Code, d.Range.Start.Line, d.Range.Start.Character));
+        Assert.Equal((1, 0), (c.Errors, c.Warnings));
+
+        // the same message on another line is another problem
+        var again = Collector("\"$msCompile\"");
+        Feed(again, error + error.Replace("(1,31)", "(2,31)", StringComparison.Ordinal));
+        Assert.Equal(2, _diagnostics.GetAll().Count);
+    }
+
     [Fact]
     public void Tsc_reads_both_output_styles_relative_to_the_working_directory()
     {

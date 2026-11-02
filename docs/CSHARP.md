@@ -249,8 +249,9 @@ Microsoft.Testing.Extensions.TrxReport 2.5.2; an F# xUnit v3 3.2.2 project), `Re
   "src/App/App.csproj"}`: a tasks.json entry of that shape customises the detected task, and one with `args`, `env`, `cwd` or another SDK
   command (`publish`, `pack`) runs `dotnet <command> <project> <args…>` as written. Checked with the real SDK (`DotnetTaskProviderTests`): a
   console project builds, a compile error lands on its file, and `dotnet: watch` is ready once the program started, then stops on Terminate
-  Task. Without a task terminal (the Tasks output channel), MSBuild's summary repeats each error, so it is listed twice; a terminal's build
-  (the SDK's terminal logger) prints it once.
+  Task. Without a task terminal (the Tasks output channel), SDK 10's `dotnet build` prints its summary whatever `NoSummary` says (it adds
+  `-consoleloggerparameters:Summary` after the task's arguments), so each error is printed twice; the Problems list has it once, as VS Code
+  records a marker once per file (a terminal's build, through the SDK's terminal logger, prints it once).
 * **`dotnet watch`.** The tasks.json template written with a new .NET launch.json has `build` and now `watch` (`dotnet watch run --project …`,
   `isBackground`, `"problemMatcher": "$dotnet-watch"`). `$dotnet-watch` is `$msCompile` plus dotnet watch's own error lines
   (`dotnet watch ❌ file(1,44): error CS1002: …`) with background patterns taken from SDK 10's real output: busy from the start; a cycle begins
