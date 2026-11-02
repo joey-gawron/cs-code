@@ -10,9 +10,12 @@ namespace CsCode.Lsp.Features;
 // LanguageClient (ordering, timeouts, cancellation, stale-drop), map the response to immutable Core records.
 // Every public method returns a ValueTask whose synchronous part is just DocRequestAsync's enqueue.
 
-internal abstract class LspProvider(LanguageClient client, ProviderKind kind)
+internal abstract class LspProvider(LanguageClient client, ProviderKind kind) : ILanguageProviderSource
 {
     protected LanguageClient Client { get; } = client;
+    /// <summary>The server definition's id (the <c>cscode.languageServers</c> key): what <c>editor.defaultFormatter</c> names.</summary>
+    public string SourceId => Client.Definition.Id;
+    public string SourceName => Client.Definition.DisplayName;
     protected ProviderKind Kind { get; } = kind;
     protected LspSettings Settings => Client.Settings;
     protected int Feature(int sub = 0) => (int)Kind * 16 + sub;

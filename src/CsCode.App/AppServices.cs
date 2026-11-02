@@ -65,6 +65,7 @@ public static class AppServices
         services.AddCsCodeNavigationPanels(); // the Hierarchy window: call and type hierarchy (docs/NAVIGATION.md)
         services.AddCsCodeGit(); // source control: git status, Source Control window, Explorer decorations, gutter markers, blame
         services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
+        services.AddCodeActionsOnSave(); // after AddCsCodeRemote (see there): editor.codeActionsOnSave, the first will-save participant
         configure?.Invoke(services); // dev/test host: replace anything above
         AddChildProcessTracking(services); // last: wraps whichever memory monitor ended up registered
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
