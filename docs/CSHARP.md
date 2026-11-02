@@ -10,7 +10,7 @@ and what is left. Brief: `docs/briefs/lang-5-csharp.md`.
 | Test Explorer | xUnit v3, VSTest (as before), now also **Microsoft.Testing.Platform** projects (MSTest runner, NUnit runner, TUnit) and **F# / VB** test projects; run and debug | `src/CsCode.Testing/Providers/DotNet/` |
 | Debugging | netcoredbg; breakpoints now bind on macOS (they never did for a project behind a symbolic link) | `src/CsCode.Dap/Session/SourcePathAliases.cs` |
 | Code actions on save | `editor.codeActionsOnSave`'s `source.organizeImports` (**Organize Usings**: Roslyn's remove unnecessary usings, then its sort) and `source.fixAll` (**Fix All in Document**: each analyzer warning's document-wide fix all), built from Roslyn's own actions; also Shift+Alt+O and the palette | `src/CsCode.Lsp/CSharp/RoslynSourceActions.cs` |
-| Tasks | the .NET tasks.json template has a **`watch`** task (`dotnet watch run`, hot reload) tracked through `$dotnet-watch` | `src/CsCode.Dap/Tasks/ProblemMatchers.cs` |
+| Tasks | **detected `dotnet` tasks** (Run Task, `preLaunchTask`): build, test and clean of the solution and of each project, run and **watch** (`dotnet watch run`, hot reload, tracked through `$dotnet-watch`) of each program; the tasks.json template has `build` and `watch` | `src/CsCode.Dap/Tasks/DotnetTaskProvider.cs`, `ProblemMatchers.cs` |
 | NuGet | **NuGet: Add / Update / Remove Package…**, **NuGet: Restore Packages** | `src/CsCode.App/DotNet/` |
 
 ## 1. The two servers
@@ -230,6 +230,25 @@ Microsoft.Testing.Extensions.TrxReport 2.5.2; an F# xUnit v3 3.2.2 project), `Re
 
 ## 6. Tasks and NuGet
 
+* **Detected `dotnet` tasks** (stage 2's `ITaskProvider`; `src/CsCode.Dap/Tasks/DotnetTaskProvider.cs`), listed by Run Task and usable as a
+  `preLaunchTask` or `dependsOn` without a tasks.json. The projects are the ones F5's launch.json picks from (`DotnetProjects.cs`, extracted from
+  the netcoredbg factory): the folder's own project, else what its solution lists, else the projects two levels down.
+  * `dotnet: build`, `dotnet: test`, `dotnet: clean` of the folder's solution (several: `dotnet: build - App.sln` each), or of its one project
+    when it has no solution;
+  * with more than one project, `dotnet: build - App` and `dotnet: clean - App` for each, and `dotnet: test - App.Tests` for each test project
+    (`IsTestProject`, the MSTest SDK, `EnableMSTestRunner`/`EnableNUnitRunner`, or a test framework's package in the project file);
+  * `dotnet: run - App` (`dotnet run --project`) and `dotnet: watch - App` (`dotnet watch run --project`, a background task) for each program
+    (OutputType Exe, the Web and Worker SDKs; a test project is none), without the name when there is one.
+
+  Build, test, clean and run use `$msCompile`, watch `$dotnet-watch`; build and clean pass `/property:GenerateFullPaths=true` and
+  `/consoleloggerparameters:NoSummary` like the template. Paths are relative to the folder, the task's working directory, so MSBuild sees the
+  physical paths a terminal's build sees (section 5). Under a global.json whose `test.runner` is `Microsoft.Testing.Platform`, `dotnet test`
+  gets `--project` (SDK 10 ignores a positional path in that mode). The definitions are `{"type": "dotnet", "command": "build", "project":
+  "src/App/App.csproj"}`: a tasks.json entry of that shape customises the detected task, and one with `args`, `env`, `cwd` or another SDK
+  command (`publish`, `pack`) runs `dotnet <command> <project> <args…>` as written. Checked with the real SDK (`DotnetTaskProviderTests`): a
+  console project builds, a compile error lands on its file, and `dotnet: watch` is ready once the program started, then stops on Terminate
+  Task. Without a task terminal (the Tasks output channel), MSBuild's summary repeats each error, so it is listed twice; a terminal's build
+  (the SDK's terminal logger) prints it once.
 * **`dotnet watch`.** The tasks.json template written with a new .NET launch.json has `build` and now `watch` (`dotnet watch run --project …`,
   `isBackground`, `"problemMatcher": "$dotnet-watch"`). `$dotnet-watch` is `$msCompile` plus dotnet watch's own error lines
   (`dotnet watch ❌ file(1,44): error CS1002: …`) with background patterns taken from SDK 10's real output: busy from the start; a cycle begins
@@ -264,8 +283,6 @@ printed the platform's telemetry banner (the debug launch now passes `TESTINGPLA
 
 * **`dotnet new`: New Project / New Item** — the brief's SHOULD item moved to stage 7 (the New Project page), which owns project creation and
   the template listing (scope change, 2026-11-01). New Item can reuse that listing once stage 7 is merged.
-* **.NET tasks through `ITaskProvider`** (`dotnet build`, `test`, `run`, `clean` per project with `$msCompile`) — stage 2's (Rust) contract is on
-  main since the C# merge (`CargoTaskProvider` is the example); the .NET provider is open.
 
 Stage 2's per-server extension pattern was cherry-picked from the Rust branch (its commits "Add the per-server LSP extension pattern…" and
 "Let server extensions answer server-to-client requests…", at the Rust session's suggestion) and Roslyn is built on it: `RoslynExtension`
