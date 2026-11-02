@@ -1,4 +1,5 @@
 using CsCode.Core.Debugging;
+using CsCode.Core.Lifecycle;
 
 namespace CsCode.Testing.Engine;
 
@@ -37,6 +38,13 @@ public interface ITestProvider
 
     /// <summary>The tests <paramref name="text"/> (the file at <paramref name="filePath"/>) declares, from its text alone. Cheap: runs per edit.</summary>
     IReadOnlyList<SourceTest> ScanSource(string filePath, string text);
+
+    /// <summary>
+    /// Fires (on any thread) when the provider's projects or their tests may have changed without a source file being saved: a build system
+    /// configured or built them. The controller then detects this provider's projects again and discovers them (<see cref="TestController"/>).
+    /// Default: never.
+    /// </summary>
+    IEventSource<bool> ProjectsChanged => EventSource.Never<bool>();
 
     /// <summary>Whether a scanned <paramref name="source"/> test is the discovered <paramref name="test"/> (which may live in another file).</summary>
     bool Matches(DiscoveredTest test, string filePath, SourceTest source) =>

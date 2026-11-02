@@ -32,6 +32,9 @@ public sealed class TestController : IDisposable
     private List<(string ProjectKey, IReadOnlyList<string>? Ids)>? _lastRun;
     private bool _lastRunDebug;
     private bool _disposed;
+    private readonly DisposableStore _subscriptions = new();
+    private readonly HashSet<string> _redetecting = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _redetectPending = new(StringComparer.Ordinal);
 
     public TestController(IReadOnlyList<ITestProvider> providers, Action<Action> post, Action<string>? output = null, Func<string, bool>? providerEnabled = null)
     {
@@ -39,6 +42,7 @@ public sealed class TestController : IDisposable
         _post = post;
         _output = output ?? (_ => { });
         _providerEnabled = providerEnabled ?? (_ => true);
+        foreach (var p in providers) _subscriptions.Add(p.ProjectsChanged.Subscribe(changed => _post(() => _ = RedetectAsync(p))));
     }
 
     public TestTree Tree { get; } = new();
@@ -133,7 +137,7 @@ public sealed class TestController : IDisposable
         {
             Enqueue(_ =>
             {
-                if (ReferenceEquals(_discovery, cts)) { _discovery = null; SetStatus(""); }
+                if (ReferenceEquals(_discovery, cts)) { _discovery = null; SetStatus(""); RedetectPending(); }
                 cts.Dispose();
             });
         }
@@ -158,6 +162,84 @@ public sealed class TestController : IDisposable
             });
         }
         catch (Exception ex) when (ex is not OutOfMemoryException) { _output($"[{provider.Label}] Discovery of {project.Name} failed: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Owner thread: detects one provider's projects again and discovers each (<see cref="ITestProvider.ProjectsChanged"/>: a build system
+    /// configured or built them); projects it no longer finds leave the tree, new ones join it, the other providers' are left as they are. While a
+    /// run, a full discovery or another detection of the provider is going, it is done once that ends. Nothing before the first discovery.
+    /// </summary>
+    internal async Task RedetectAsync(ITestProvider provider)
+    {
+        if (_disposed || _folders.Count == 0 || !_providerEnabled(provider.Id)) return;
+        if (_run is not null || _discovery is not null || !_redetecting.Add(provider.Id))
+        {
+            _redetectPending.Add(provider.Id);
+            return;
+        }
+        var folders = _folders;
+        var sink = new Sink(this);
+        try
+        {
+            var projects = await Task.Run(async () =>
+            {
+                var all = new List<TestProject>();
+                foreach (var folder in folders)
+                {
+                    try { all.AddRange(await provider.DetectAsync(folder, CancellationToken.None).ConfigureAwait(false)); }
+                    catch (Exception ex) when (ex is not OutOfMemoryException) { _output($"[{provider.Label}] Could not look for test projects in {folder}: {ex.Message}"); }
+                }
+                return all;
+            }).ConfigureAwait(false);
+            var placed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Enqueue(changed =>
+            {
+                if (_run is not null || _discovery is not null) { placed.TrySetResult(false); return; }
+                var keep = Tree.Projects.Select(r => r.Project).Where(p => p.ProviderId != provider.Id).Concat(projects).Select(p => p.Key);
+                Tree.RetainProjects(keep.ToHashSet(StringComparer.Ordinal));
+                foreach (var p in projects) changed.Add(Tree.AddProject(p));
+                _structureChanged = true;
+                placed.TrySetResult(true);
+            });
+            if (!await placed.Task.ConfigureAwait(false)) { Enqueue(_ => _redetectPending.Add(provider.Id)); return; }
+            foreach (var project in projects)
+            {
+                IReadOnlyList<DiscoveredTest>? tests = null;
+                string? error = null;
+                try { tests = await Task.Run(() => provider.DiscoverAsync(project, sink, CancellationToken.None)).ConfigureAwait(false); }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    _output($"[{provider.Label}] Discovery of {project.Name} failed: {ex.Message}");
+                    error = ex.Message;
+                }
+                Enqueue(changed =>
+                {
+                    // a run started meanwhile: its results land on these nodes, so the new tree waits for its end
+                    if (_run is not null) { _redetectPending.Add(provider.Id); return; }
+                    if (Tree.FindProject(project.Key) is not { } node) return;
+                    if (tests is not null) { Tree.ReplaceTests(project, tests); _structureChanged = true; }
+                    else node.Error = error;
+                    changed.Add(node);
+                });
+            }
+        }
+        finally
+        {
+            Enqueue(changed =>
+            {
+                _redetecting.Remove(provider.Id);
+                if (_redetectPending.Remove(provider.Id)) _ = RedetectAsync(provider);
+            });
+        }
+    }
+
+    /// <summary>Owner thread: the detections asked for while a run or a discovery was going.</summary>
+    private void RedetectPending()
+    {
+        if (_redetectPending.Count == 0) return;
+        var ids = _redetectPending.ToList();
+        _redetectPending.Clear();
+        foreach (var p in _providers.Where(p => ids.Contains(p.Id))) _ = RedetectAsync(p);
     }
 
     // ------------------------------------------------------------------------------------------------ runs
@@ -295,6 +377,7 @@ public sealed class TestController : IDisposable
                 _output($"========== {(cancelled ? "Cancelled" : "Finished")} in {Format(elapsed)}: {s.Passed} passed, {s.Failed} failed, {s.Skipped} skipped ==========");
                 SetStatus("");
                 _finishedPending = cancelled;
+                RedetectPending();
             });
         }
         return true;
@@ -444,6 +527,7 @@ public sealed class TestController : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _subscriptions.Dispose();
         _run?.Cancel();
         _discovery?.Cancel();
         _changed.Clear();

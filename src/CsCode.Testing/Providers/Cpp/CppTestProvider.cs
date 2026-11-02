@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using CsCode.Core.Build;
 using CsCode.Core.Debugging;
+using CsCode.Core.Lifecycle;
 using CsCode.Testing.Engine;
 using CsCode.Testing.Providers.CTest;
 using CsCode.Testing.Providers.Rust;
@@ -11,14 +12,17 @@ namespace CsCode.Testing.Providers.Cpp;
 /// <summary>
 /// C++ test executables built with GoogleTest, Catch2 (v3; v2 without locations) or doctest. <b>Detection</b>: the files matching the
 /// <c>cscode.testing.cpp.executables</c> globs (else C++ TestMate's <c>testMate.cpp.test.executables</c>, else TestMate's default
-/// <see cref="CppExecutables.DefaultPatterns"/>) that are native executables containing a framework's signature (<see cref="CppExecutables"/>);
+/// <see cref="CppExecutables.DefaultPatterns"/>) that are native executables containing a framework's signature (<see cref="CppExecutables"/>),
+/// and the executable targets of the folder's configured CMake projects that link a framework or were built with one
+/// (<see cref="CMakeExecutables"/>: the CMake integration's File API view, so a target is listed before it is built);
 /// each is a project (its framework shown beside it), except an executable whose tests CTest already lists one by one (<c>gtest_discover_tests</c>,
 /// <c>catch_discover_tests</c>, <c>doctest_discover_tests</c>, <c>gtest_add_tests</c>: <see cref="RegisteredByCTestAsync"/>), which the CTest
 /// provider shows instead. <b>Discovery</b> runs the executable's listing (GoogleTest's JSON listing, Catch2's and
 /// doctest's XML listings, all with file and line), bounded in time and output, and caches it by the executable's size and modification time:
 /// an executable is listed again only after it was rebuilt. A test's id is <c>&lt;executable&gt;/&lt;runner name&gt;</c>
 /// (<c>math_tests/MathTest.Adds</c>, <c>catch_tests/adds numbers</c>, <c>doc_tests/suite::name</c>), so the same test name in two executables
-/// stays two tests. <b>Running</b> runs the executable in its own directory with the framework's filter and reads its results file
+/// stays two tests. <b>Running</b> first builds the executable's CMake target through the CMake integration (<c>cmake.buildBeforeRun</c>), then
+/// runs the executable in its own directory with the framework's filter and reads its results file
 /// (GoogleTest's console as it comes, too); a test the executable was running when it crashed fails with the exit code. <b>Debugging</b>
 /// launches it under <c>cscode.testing.cpp.debugger</c> (unset: the CMake integration's <c>cscode.cmake.debugger</c>, CodeLLDB on macOS, GDB
 /// elsewhere; lldb-dap as an alternative) with the same filter,
@@ -31,6 +35,8 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
     public const string TestMateExecutablesSetting = "testMate.cpp.test.executables";
     public const string DebuggerSetting = "cscode.testing.cpp.debugger";
     public const string BreakOnFailureSetting = "cscode.testing.cpp.breakOnFailure";
+    /// <summary>The CMake integration's setting (stage 3): build a target before running it; the C++ provider builds a test executable's target.</summary>
+    public const string BuildBeforeRunSetting = "cmake.buildBeforeRun";
 
     /// <summary>How long a listing may take (tests shorten it).</summary>
     internal TimeSpan ListTimeout { get; init; } = TimeSpan.FromSeconds(20);
@@ -55,6 +61,36 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
     /// <summary>Whether the CTest provider is on (its executables are then left to it); the host passes the provider's enabled setting.</summary>
     public Func<bool> CTestEnabled { get; init; } = () => true;
 
+    /// <summary>
+    /// Fires when the CMake integration configured a project into new targets (<see cref="CMakeProject.Generation"/>; a project came or went) or
+    /// finished a build: the controller then looks for the executables again (a build makes a target's executable, and CTest's listing of it)
+    /// and lists each again, which runs only the executables that changed (listings are cached by size and modification time).
+    /// </summary>
+    public IEventSource<bool> ProjectsChanged => cmake is null ? EventSource.Never<bool>() : new CMakeChanges(cmake);
+
+    private sealed class CMakeChanges(ICMakeService cmake) : IEventSource<bool>
+    {
+        public IDisposable Subscribe(Action<bool> handler)
+        {
+            var gate = new object();
+            var last = Generations(cmake.Projects);
+            var configured = cmake.ProjectsChanged.Subscribe(projects =>
+            {
+                var now = Generations(projects);
+                lock (gate)
+                {
+                    if (now == last) return;
+                    last = now;
+                }
+                handler(true);
+            });
+            var built = cmake.BuildFinished.Subscribe(e => { if (e.Result.ExitCode is not null) handler(true); });
+            return Disposable.Combine(configured, built);
+        }
+
+        private static string Generations(IReadOnlyList<CMakeProject> projects) => string.Join('\n', projects.Select(p => p.SourceDirectory + "\0" + p.Generation));
+    }
+
     // ------------------------------------------------------------------------------------------------ detection
 
     /// <summary>The executables' globs: our setting when it is set to something other than its default, else TestMate's, else the default.</summary>
@@ -70,7 +106,11 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
     {
         var result = new List<TestProject>();
         var found = _executables.Find(folder, Patterns(), ct).ToList();
+        var seen = found.Select(f => PhysicalPaths.Resolve(f.Path)).ToHashSet(PathComparer);
+        foreach (var target in CMakeExecutables(folder))
+            if (seen.Add(PhysicalPaths.Resolve(target.Path))) found.Add(target);
         if (found.Count == 0) return result;
+        found.Sort((a, b) => string.CompareOrdinal(a.Path, b.Path));
         var registered = await RegisteredByCTestAsync(folder, ct).ConfigureAwait(false);
         foreach (var exe in found)
             if (registered.Count == 0 || !registered.Contains(PhysicalPaths.Resolve(exe.Path)))
@@ -78,31 +118,84 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
         return result;
     }
 
+    private static StringComparer PathComparer => OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+
+    /// <summary>The CMake projects whose source directory is the folder or under it.</summary>
+    private IEnumerable<CMakeProject> ProjectsUnder(string folder)
+    {
+        if (cmake is null) return [];
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+        return cmake.Projects.Where(p => ITestProvider.PathsEqual(p.SourceDirectory, root) || StackTraces.IsUnder(p.SourceDirectory, root));
+    }
+
+    /// <summary>
+    /// The test executables among the executable targets of the folder's configured CMake projects (the CMake File API's targets, through the
+    /// CMake integration): a built one by the framework signature in it (as the globs' finds), one not built yet by the framework it links
+    /// (<see cref="CppExecutables.FromTarget"/>), so that a run can build it. A doctest target links nothing that names doctest: it is listed once built.
+    /// </summary>
+    internal IEnumerable<CppExecutables.Found> CMakeExecutables(string folder)
+    {
+        foreach (var p in ProjectsUnder(folder))
+            foreach (var t in p.Targets)
+            {
+                if (t.Executable is not { } exe) continue;
+                var framework = File.Exists(exe) ? _executables.Classify(exe) : CppExecutables.FromTarget(t);
+                if (framework != CppFramework.None) yield return new CppExecutables.Found(exe, framework);
+            }
+    }
+
+    /// <summary>The CMake project and target that build <paramref name="executable"/> (the File API's artifacts), or null.</summary>
+    internal (CMakeProject Project, CMakeTarget Target)? TargetFor(string executable)
+    {
+        if (cmake is null) return null;
+        var resolved = PhysicalPaths.Resolve(executable);
+        foreach (var p in cmake.Projects)
+            foreach (var t in p.Targets)
+                if (t.Executable is { } e && (ITestProvider.PathsEqual(e, executable) || PathComparer.Equals(PhysicalPaths.Resolve(e), resolved))) return (p, t);
+        return null;
+    }
+
     /// <summary>
     /// The executables (resolved paths) of the folder's CMake projects whose tests CTest lists one by one, so that they are not listed twice: those
     /// a CTest test runs with a single test's filter (GoogleTest's <c>--gtest_filter=</c>, doctest's <c>--test-case=</c>), or with arguments from
-    /// a test that has no <c>add_test</c> line (the discovery modules add theirs from a generated file when ctest runs). Empty when the CTest
-    /// provider is off, or no project under the folder was built with CTest.
+    /// a test that has no <c>add_test</c> line (the discovery modules add theirs from a generated file when ctest runs), and before a build those
+    /// of the discovery modules' placeholders (<c>&lt;target&gt;_NOT_BUILT</c>). Empty when the CTest provider is off, or no project under the
+    /// folder was configured with CTest.
     /// </summary>
     internal async Task<IReadOnlySet<string>> RegisteredByCTestAsync(string folder, CancellationToken ct)
     {
-        var result = new HashSet<string>(OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+        var result = new HashSet<string>(PathComparer);
         if (_ctest is null || cmake is null || !CTestEnabled()) return result;
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
-        foreach (var p in cmake.Projects)
+        foreach (var p in ProjectsUnder(folder))
         {
-            var inFolder = ITestProvider.PathsEqual(p.SourceDirectory, root) || StackTraces.IsUnder(p.SourceDirectory, root);
-            if (!inFolder || !File.Exists(Path.Combine(p.BuildDirectory, "CTestTestfile.cmake"))) continue;
+            if (!File.Exists(Path.Combine(p.BuildDirectory, "CTestTestfile.cmake"))) continue;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(ListTimeout);
             IReadOnlyList<CTestInfo>? tests;
             try { tests = await _ctest.ListAsync(p, Quiet.Instance, timeout.Token).ConfigureAwait(false); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested) { continue; }
             foreach (var t in tests ?? [])
+            {
                 if (t.Executable is { Length: > 0 } exe && RunsSingleTests(t))
                     result.Add(PhysicalPaths.Resolve(Path.IsPathRooted(exe) ? exe : Path.Combine(t.WorkingDirectory ?? p.BuildDirectory, exe)));
+                else if (t.Command.Count == 0 && NotBuiltTarget(t.Name) is { } name && p.Targets.FirstOrDefault(x => x.Name == name)?.Executable is { } artifact)
+                    result.Add(PhysicalPaths.Resolve(artifact));
+            }
         }
         return result;
+    }
+
+    /// <summary>
+    /// The target of a discovery module's placeholder test, which stands for an executable's tests until it is built: GoogleTest's
+    /// <c>&lt;target&gt;_NOT_BUILT</c>, Catch2's and doctest's with a <c>-&lt;hash&gt;</c> suffix; else null.
+    /// </summary>
+    internal static string? NotBuiltTarget(string test)
+    {
+        const string marker = "_NOT_BUILT";
+        var at = test.LastIndexOf(marker, StringComparison.Ordinal);
+        if (at <= 0) return null;
+        var rest = test.AsSpan(at + marker.Length);
+        return rest.Length == 0 || rest[0] == '-' ? test[..at] : null;
     }
 
     private static bool RunsSingleTests(CTestInfo t) =>
@@ -139,7 +232,10 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
     {
         var exe = project.FilePath;
         var info = new FileInfo(exe);
-        if (!info.Exists) throw new TestDiscoveryException($"{exe} does not exist (build it, then Refresh).");
+        if (!info.Exists)
+            throw new TestDiscoveryException(TargetFor(exe) is { } built
+                ? $"Not built yet: running its tests builds {built.Target.Name}."
+                : $"{exe} does not exist (build it, then Refresh).");
         if (_listings.TryGetValue(exe, out var cached) && cached.Size == info.Length && cached.Modified == info.LastWriteTimeUtc) return cached;
         var framework = _executables.Classify(exe);
         if (framework == CppFramework.None) throw new TestDiscoveryException($"{exe} is no longer a GoogleTest, Catch2 or doctest executable.");
@@ -330,9 +426,37 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
         return (names, skipped);
     }
 
+    /// <summary>
+    /// Builds the executable's CMake target through the CMake integration before a run (<see cref="BuildBeforeRunSetting"/>, on unless false),
+    /// then lists its tests again (only when the build changed the executable) and announces the new ones. Null: go on; else how the run ends
+    /// (the build failed, or was cancelled). An executable no CMake project builds is run as it is.
+    /// </summary>
+    private async Task<TestRunOutcome?> BuildFirstAsync(TestProject project, ITestRunSink sink, CancellationToken ct)
+    {
+        if (TargetFor(project.FilePath) is not { } built || !BuildBeforeRun()) return null;
+        var (p, target) = built;
+        sink.Status($"Building {target.Name}…");
+        sink.Output($"> Building {target.Name} (see the CMake output)");
+        var result = await cmake!.BuildAsync(p, [target.Name], ct).ConfigureAwait(false);
+        if (result.ExitCode is null) return ct.IsCancellationRequested || result.Error is null ? TestRunOutcome.Cancelled : new TestRunOutcome(-1, result.Error);
+        if (!result.Succeeded)
+            return new TestRunOutcome(-1, result.Error ?? $"The build of {target.Name} failed{(result.Errors > 0 ? $" with {result.Errors} error(s) (see the Error List)" : "")}.");
+        if (File.Exists(project.FilePath) && _executables.Classify(project.FilePath) != CppFramework.None)
+        {
+            try { foreach (var t in (await ListAsync(project, sink, ct).ConfigureAwait(false)).Tests) sink.Discovered(project, t); }
+            catch (TestDiscoveryException ex) { sink.Output("> " + ex.Message); }
+        }
+        return null;
+    }
+
+    private bool BuildBeforeRun() =>
+        !string.Equals(context.Setting(BuildBeforeRunSetting), "false", StringComparison.OrdinalIgnoreCase)
+        && rawSetting?.Invoke(BuildBeforeRunSetting) is not { ValueKind: JsonValueKind.False };
+
     public async Task<TestRunOutcome> RunAsync(TestRunRequest request, ITestRunSink sink, CancellationToken ct)
     {
         var project = request.Project;
+        if (await BuildFirstAsync(project, sink, ct).ConfigureAwait(false) is { } stopped) return stopped;
         if (!File.Exists(project.FilePath)) return new TestRunOutcome(-1, $"{project.FilePath} does not exist: build it first.");
         var framework = _executables.Classify(project.FilePath);
         if (framework == CppFramework.None) return new TestRunOutcome(-1, $"{project.FilePath} is not a GoogleTest, Catch2 or doctest executable.");
@@ -356,6 +480,7 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
     public async Task<TestRunOutcome> DebugAsync(TestRunRequest request, ITestRunSink sink, ITestDebugLauncher debugger, CancellationToken ct)
     {
         var project = request.Project;
+        if (await BuildFirstAsync(project, sink, ct).ConfigureAwait(false) is { } stopped) return stopped;
         if (!File.Exists(project.FilePath)) return new TestRunOutcome(-1, $"{project.FilePath} does not exist: build it first.");
         var framework = _executables.Classify(project.FilePath);
         if (framework == CppFramework.None) return new TestRunOutcome(-1, $"{project.FilePath} is not a GoogleTest, Catch2 or doctest executable.");

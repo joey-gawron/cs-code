@@ -57,6 +57,9 @@ internal sealed class FakeProvider(string id = "fake") : ITestProvider
     public Func<string, TestResult> Outcome { get; set; } = tid => new TestResult(tid, TestOutcome.Passed, TimeSpan.FromMilliseconds(5));
     public TaskCompletionSource? RunGate { get; set; }
     public Func<string, IReadOnlyList<SourceTest>> Scan { get; set; } = _ => [];
+    /// <summary>Fire to say the projects changed (<see cref="ITestProvider.ProjectsChanged"/>).</summary>
+    public CsCode.Core.Lifecycle.Emitter<bool> Changed { get; } = new();
+    public CsCode.Core.Lifecycle.IEventSource<bool> ProjectsChanged => Changed;
 
     public TestProject AddProject(string name, string dir, params DiscoveredTest[] tests)
     {
