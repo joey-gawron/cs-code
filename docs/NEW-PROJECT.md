@@ -56,7 +56,7 @@ says so.
 | Generator (id) | Tool | What runs | Options | Name rule |
 |---|---|---|---|---|
 | Empty Project (`empty`) | — | nothing | — | a portable folder name |
-| Python (`python`) | python3 3.14 | files written by CsCode, then `python -m venv .venv` (`uv venv --python <python3> .venv` when uv is installed), then `.venv/bin/python -m pip install pytest` (`uv pip install --python .venv/bin/python pytest`) | Application / Package; Create a virtual environment; pytest with `tests/`; Add sample code | PEP 508 project name whose package (normalised: `-` `_` `.` → `_`, lower case) is an identifier, not a keyword, not `test(s)` |
+| Python (`python`) | python3 3.14 (uv 0.13.6, Homebrew) | files written by CsCode, then `python -m venv .venv` (`uv venv --python <python3> .venv` when uv is installed: the interpreter the page checked, never one uv would fetch; uv's venvs have no pip), then `.venv/bin/python -m pip install pytest` (`uv pip install --python .venv/bin/python pytest`) | Application / Package; Create a virtual environment; pytest with `tests/`; Add sample code | PEP 508 project name whose package (normalised: `-` `_` `.` → `_`, lower case) is an identifier, not a keyword, not `test(s)` |
 | Rust (`rust`) | cargo 1.96.1 | `cargo init --bin\|--lib --edition E --vcs V --name N <dir>` (`init`: the page has made the folder) | Binary / Library; edition 2024, 2021, 2018, 2015; version control git, hg, pijul, fossil, none | cargo's: ASCII letters, digits, `-`, `_`, no leading digit, no keyword, not `test`/`std`/`core`/`alloc`/`proc_macro`/`build`/`deps`/… |
 | C (`cmake-c`), C++ (`cmake-cpp`) | CMake 4.4.2, Apple clang 21, Ninja 1.13 | files written by CsCode | C11 / C17 / C23 or C++17 / 20 / 23; Executable / Library; tests: CTest (C), GoogleTest / Catch2 / CTest only / none (C++) | letters, digits, `-`, `_`; not a target CMake reserves (`test`, `all`, `clean`, `install`, …) |
 | C# (`dotnet`) | .NET SDK 10.0.403 | `dotnet new sln --name N [--format slnx\|sln]`, `dotnet new <template> --name N --output src/N [--framework F]`, `dotnet sln add`, optionally `dotnet new xunit` in `tests/N.Tests` + `dotnet add … reference` + `dotnet sln add`, `dotnet new gitignore` | template (from `dotnet new list --type project --language C#`, console / classlib / webapi / xunit first); target framework (from the template's `--help`); solution format (when the SDK has `--format`); xUnit test project | dot-separated C# identifiers, no keyword |
@@ -157,8 +157,6 @@ the page shows the error in red and brings the Output window to the front.
 * **A new window** (another session process) does not get the follow-ups: its CMake integration asks as for any project, and the first F5 or
   Ctrl+Shift+B configures through the `cmake: configure (debug)` task.
 * **`dotnet restore`**: needs no hook: `dotnet new` restores each project as it creates it (the templates' default), so the first build is offline.
-* **uv** is not installed on this Mac: the `uv venv --python` / `uv pip install --python` path is written from uv's documented CLI and untested;
-  its real-tool test skips.
 
 ## Limits
 
@@ -181,7 +179,7 @@ the page shows the error in red and brings the Output window to the front.
 | C++ (17 exe, 20 lib, 23 exe; GoogleTest; Catch2) | yes | as C; GoogleTest and Catch2 tests discovered and passing | yes, configured as C | CodeLLDB stops at `main.cpp:6` |
 | C# (console + xUnit, classlib in .sln) | yes | `dotnet build`, `dotnet test`; the program prints Hello, World! | yes | netcoredbg stops at `Program.cs:1` |
 | JavaScript | yes | `node --test` (1 pass); `node src/index.js` | yes | js-debug stops at `index.js:3` |
-| Python (app with .venv; package with pytest) | yes | `python -m hello_py` with launch.json's PYTHONPATH; pytest installed from PyPI into `.venv`, `python -m pytest` (1 passed) | yes, and its `.venv` is the folder's interpreter | debugpy (bundled 1.8.22) stops at `__main__.py:7` |
+| Python (app with .venv; package with pytest), with `python -m venv` and with uv 0.13.6 | yes | `python -m hello_py` with launch.json's PYTHONPATH; pytest installed from PyPI into `.venv` (`pip`, or `uv pip install --python`), `python -m pytest` (1 passed) | yes, and its `.venv` is the folder's interpreter | debugpy (bundled 1.8.22) stops at `__main__.py:7`, also on a uv-made `.venv` |
 | Empty, Static Website | yes | — | yes | — |
 | TypeScript | yes (typescript and @types/node from the npm registry) | `npm test` (1 pass); `tsc` builds `dist/index.js`, which prints Hello, world! | yes | js-debug stops at `index.ts:3` through the source map |
 | Zig (zig 0.17.0, installed 2026-11-02) | yes | `zig build`, `zig build test` | yes | CodeLLDB stops at `main.zig:8` |
@@ -197,8 +195,8 @@ Screenshots of the page (Rust and C# chosen) and of the Welcome link come from `
 | `tests/CsCode.Panels.NewProject.Tests` | the view model (generators, validation, options and the VCS link, remembering, create/fail/cancel, opening here or in a new window) and the real view headless (keyboard only: Name focused, typing, Enter, arrows, Esc, Alt+L, Alt+G), `LeakAssert` for the view model and the view | `dotnet test tests/CsCode.Panels.NewProject.Tests` |
 | `tests/CsCode.App.Tests` (`RealApp/NewProjectTests`) | the real application (every module, `CSCODE_HOME` in a temp dir, headless window): the menu, the palette command and the Welcome link open the page; per installed toolchain a project made on the page opens with its main file and F5 builds it and stops at a breakpoint in it | `dotnet test tests/CsCode.App.Tests --blame-hang-timeout 12m --filter FullyQualifiedName~RealApp.NewProjectTests` |
 
-Results on this Mac (2026-11-02): ProjectTemplates 115 passed, 4 skipped (uv not installed; pytest and two TypeScript downloads), and with
-`CSCODE_TEST_DOWNLOADS=1` the three download tests pass too; Panels.NewProject 22 passed; Build.CMake 23 passed (`ConfigureWhenOpenedTests`
+Results on this Mac (2026-11-02, uv 0.13.6 installed): ProjectTemplates 116 passed, 3 skipped (pytest and two TypeScript downloads), and with
+`CSCODE_TEST_DOWNLOADS=1` the three download tests pass too (pytest through `uv pip install`); Panels.NewProject 22 passed; Build.CMake 23 passed (`ConfigureWhenOpenedTests`
 among them); RealApp NewProjectTests 13 passed with downloads on (F5 for Rust, C, C++, Zig, C#, JavaScript, TypeScript and Python; 12 passed and
 TypeScript skipped without); with the menu, Welcome, session and Python composition App tests: 51 passed, 6 skipped. Real-tool tests skip with their reason when the tool is missing. Downloads only with the user's go-ahead: pytest and TypeScript run with
 `CSCODE_TEST_DOWNLOADS=1`; the C++ framework tests use the GoogleTest/Catch2 archives the C++ stage fetched into `.scratch/tools/cpp-test-frameworks`
