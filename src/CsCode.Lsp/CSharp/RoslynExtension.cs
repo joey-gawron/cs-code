@@ -1,5 +1,4 @@
 using CsCode.Core.Languages;
-using CsCode.Core.Text;
 using CsCode.Lsp.Extensions;
 
 namespace CsCode.Lsp.CSharp;
@@ -13,6 +12,8 @@ namespace CsCode.Lsp.CSharp;
 /// </summary>
 public sealed class RoslynExtension : LanguageServerExtension
 {
+    private RoslynSourceActions? _sourceActions;
+
     public override string Name => "Roslyn";
 
     public override bool AppliesTo(LanguageServerDefinition definition) => definition.Id == CSharpServers.RoslynId;
@@ -20,8 +21,8 @@ public sealed class RoslynExtension : LanguageServerExtension
     public override void Register(ServerExtensionHost host)
     {
         var sourceActions = new RoslynSourceActions(host, this);
-        if (RoslynCommands.Register(host, this, sourceActions))
-            host.Disposables.Add(host.Services.Registry.Register<ICodeActionProvider>(DocumentSelector.ForLanguages("csharp"), sourceActions));
+        if (RoslynCommands.Register(host, this, sourceActions)) _sourceActions = sourceActions;
+        host.Disposables.Add(sourceActions);
     }
 
     public override void Attach(ServerExtensionSession session)
@@ -35,5 +36,8 @@ public sealed class RoslynExtension : LanguageServerExtension
     public override void OnInitialized(ServerExtensionSession session)
     {
         if (session.State is RoslynSession roslyn) roslyn.OnInitialized();
+        _sourceActions?.SessionStarted(session);
     }
+
+    public override void OnStopped(ServerExtensionSession session) => _sourceActions?.SessionStopped(session);
 }

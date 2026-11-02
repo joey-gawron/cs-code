@@ -23,12 +23,13 @@ namespace CsCode.Lsp.CSharp;
 /// each id, and each fix all is resolved at its diagnostic's own range: over a range that also holds "Sort Usings" (whose fix all has no
 /// Document scope) Roslyn's resolve fails.</item>
 /// </list>
+/// The provider is registered while a Roslyn session runs (none: a C# editor offers no source actions), once however many run.
 /// Each step is a round trip on the text the step before left, so each action is a command (<see cref="OrganizeUsingsCommand"/>,
 /// <see cref="FixAllCommand"/>) that the will-save participant runs. On save it runs under the participant's deadline (the token the
 /// participant asked with, kept with the action): every edit is applied on the calling thread right after the deadline is checked, so none
 /// lands after the save went ahead. Each step's edit is applied only to the text it was computed for.
 /// </summary>
-internal sealed partial class RoslynSourceActions(ServerExtensionHost host, RoslynExtension extension) : ICodeActionProvider
+internal sealed partial class RoslynSourceActions(ServerExtensionHost host, RoslynExtension extension) : ICodeActionProvider, IDisposable
 {
     public const string OrganizeKind = "source.organizeImports.roslyn";
     public const string FixAllKind = "source.fixAll.roslyn";
@@ -47,6 +48,38 @@ internal sealed partial class RoslynSourceActions(ServerExtensionHost host, Rosl
     private sealed record Pending(ITextDocument Document, CancellationToken Deadline, long Created)
     {
         public CancellationTokenRegistration Expiry { get; set; }
+    }
+
+    private readonly object _gate = new();
+    private readonly HashSet<ServerExtensionSession> _sessions = [];
+    private IDisposable? _registration;
+
+    /// <summary>A Roslyn session is running: the provider is registered for C# documents (with the first one).</summary>
+    public void SessionStarted(ServerExtensionSession session)
+    {
+        lock (_gate)
+            if (_sessions.Add(session) && _registration is null)
+                _registration = host.Services.Registry.Register<ICodeActionProvider>(DocumentSelector.ForLanguages("csharp"), this);
+    }
+
+    /// <summary>A Roslyn session stopped: with the last one the provider is unregistered. Any thread.</summary>
+    public void SessionStopped(ServerExtensionSession session)
+    {
+        IDisposable? registration = null;
+        lock (_gate)
+            if (_sessions.Remove(session) && _sessions.Count == 0) (registration, _registration) = (_registration, null);
+        registration?.Dispose();
+    }
+
+    public void Dispose()
+    {
+        IDisposable? registration;
+        lock (_gate)
+        {
+            _sessions.Clear();
+            (registration, _registration) = (_registration, null);
+        }
+        registration?.Dispose();
     }
 
     public ValueTask<IReadOnlyList<CodeAction>?> ProvideCodeActionsAsync(ITextDocument document, TextRange range, CodeActionContext context, CancellationToken ct)
