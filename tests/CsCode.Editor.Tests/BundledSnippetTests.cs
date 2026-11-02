@@ -2,11 +2,15 @@ using CsCode.Core.Contributions;
 using CsCode.Editor.Languages;
 using CsCode.Editor.Snippets;
 using CsCode.Editor.Tests.Support;
+using CsCode.TestDoubles;
 using Xunit;
 
 namespace CsCode.Editor.Tests;
 
-/// <summary>Language stage 1: CsCode's own built-in snippets (Snippets/Builtin/&lt;language&gt;.json), Python first; the user's snippets win.</summary>
+/// <summary>
+/// CsCode's own built-in snippets (Snippets/Builtin/&lt;language&gt;.json): Python (stage 1) and Zig (stage 6); the user's snippets win. The Zig set is
+/// checked against the real zig too (skips without it): every snippet's default expansion parses, and a project made of them builds and tests.
+/// </summary>
 public class BundledSnippetTests
 {
     [Fact]
@@ -95,5 +99,77 @@ public class BundledSnippetTests
         var main = Assert.Single(svc.GetSnippets("python"), s => s.Prefixes.Contains("main"));
         Assert.Equal("My main", main.Name);
         Assert.Contains(svc.GetSnippets("python"), s => s.Prefixes.Contains("ifmain")); // the rest of the built-in set stays
+    }
+
+    [Fact]
+    public void Zig_gets_the_bundled_set()
+    {
+        using var host = TestHost.Create(new ThreadAffinityUiThread());
+        using var svc = new SnippetService(host.Services);
+        var zig = svc.GetSnippets("zig");
+        Assert.Contains(zig, s => s.Prefixes.Contains("main") && s.Body.Contains("std.process.Init", StringComparison.Ordinal));
+        Assert.Contains(zig, s => s.Prefixes.Contains("test") && s.Body.StartsWith("test \"", StringComparison.Ordinal));
+        Assert.Contains(zig, s => s.Prefixes.Contains("build") && s.Body.Contains("b.addExecutable", StringComparison.Ordinal));
+        Assert.True(zig.Count >= 30, $"only {zig.Count} Zig snippets");
+    }
+
+    // ------------------------------------------------------------------ the Zig set against the real zig
+
+    private static IReadOnlyDictionary<string, string> ZigExpansions()
+    {
+        var file = BuiltinLanguages.Catalog.Snippets.Single(s => s.LanguageId == "zig" && s.ResourceName.StartsWith(BuiltinLanguages.OwnSnippetPrefix, StringComparison.Ordinal));
+        return SnippetFileParser.Parse(BuiltinLanguages.ReadText(file.ResourceName)!)
+            .ToDictionary(d => d.Prefixes[0], d => SnippetResolver.Resolve(d.Body).Text, StringComparer.Ordinal);
+    }
+
+    /// <summary>Where a snippet goes: a declaration at the top level, an expression after <c>const x = </c>, a suffix after a call, else a statement.</summary>
+    private static string InContext(string prefix, string code) => prefix switch
+    {
+        "std" or "import" or "main" or "mainv" or "fn" or "pfn" or "test" or "struct" or "enum" or "union" or "error" or "build" => code,
+        "as" => $"const x = {code};\n",
+        "catch" => $"fn f() !void {{\n    const x = g() {code};\n    _ = x;\n}}\n",
+        _ => $"fn f() void {{\n{code}\n}}\n",
+    };
+
+    private static async Task<(int Exit, string Output)> ZigAsync(string zig, string directory, string? stdin, params string[] args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo(zig)
+        {
+            WorkingDirectory = directory, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        if (stdin is not null) await p.StandardInput.WriteAsync(stdin);
+        p.StandardInput.Close();
+        var stdout = p.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var stderr = p.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+        await p.WaitForExitAsync(TestContext.Current.CancellationToken);
+        return (p.ExitCode, await stdout + await stderr);
+    }
+
+    [Fact]
+    [Trait("Category", "RealTools")]
+    public async Task Every_zig_snippet_expands_to_code_zig_parses_and_a_project_made_of_them_builds_runs_and_tests()
+    {
+        Assert.SkipWhen(ZigTools.ZigSkipReason() is not null, ZigTools.ZigSkipReason() ?? "");
+        var zig = ZigTools.FindZig()!;
+        using var dir = new TempDirectory("zigsnippets-");
+        var snippets = ZigExpansions();
+        foreach (var (prefix, code) in snippets)
+        {
+            var (exit, output) = await ZigAsync(zig, dir.Path, InContext(prefix, code), "fmt", "--stdin");
+            Assert.True(exit == 0, $"'{prefix}' does not parse:\n{code}\n{output}");
+        }
+
+        // the declarations whose defaults are whole code, compiled: build.zig from 'build', main.zig from 'std', 'main', 'gpa', 'list', 'map',
+        // 'arena' and 'test' (each allocator in a block of its own: their defaults use the same names)
+        dir.WriteFile("build.zig", snippets["build"]);
+        var blocks = "{\n" + snippets["gpa"] + "\n" + snippets["list"] + "\ntry list.append(allocator, 1);\n" + snippets["map"] + "\ntry map.put(allocator, \"a\", 1);\n}\n"
+            + "{\n" + snippets["arena"] + "\n_ = allocator;\n}\n" + "std.debug.print(\"snippets\\n\", .{});\n";
+        dir.WriteFile("src/main.zig", snippets["std"] + "\n\n" + snippets["main"].Replace("_ = init;", "_ = init;\n" + blocks, StringComparison.Ordinal) + "\n\n" + snippets["test"] + "\n");
+        var run = await ZigAsync(zig, dir.Path, null, "build", "run");
+        Assert.True(run.Exit == 0 && run.Output.Contains("snippets", StringComparison.Ordinal), "zig build run:\n" + run.Output);
+        var test = await ZigAsync(zig, dir.Path, null, "build", "test");
+        Assert.True(test.Exit == 0, "zig build test:\n" + test.Output);
     }
 }

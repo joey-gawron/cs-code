@@ -201,7 +201,7 @@ SQL, …) run one server for all workspace folders. `${workspaceFolder}` (the ro
 | XML `xml` | `.xml` `.xsd` `.ascx` `.atom` `.axml` `.axaml` `.bpmn` `.cpt` +53 more first line `(\<\?xml.*)\|(\<svg)\|(\<\!doctype\s+svg)` | TextMate `text.xml` (VS Code `xml`) | VS Code: `<!-- -->`, pairs | user only | indentation, region markers | none built in | none | none built in |
 | XSL `xsl` | `.xsl` `.xslt` | TextMate `text.xml.xsl` (VS Code `xml`) | VS Code: `<!-- -->`, pairs | user only | indentation | none built in | none | none built in |
 | YAML `yaml` | `.yml` `.eyaml` `.eyml` `.yaml` first line `^#cloud-config` | TextMate `source.yaml` (VS Code `yaml`); tree-sitter `yaml` as an option | VS Code: `#`, pairs, indent rules | user only | indentation (off-side), region markers, syntax tree with tree-sitter, server ranges | `yaml`: yaml-language-server | yaml-language-server (built-in Prettier) | none built in |
-| Zig `zig` | `.zig` `.zon` | tree-sitter `zig` (default) | CsCode: `//`, pairs, indent rules, on-Enter rules, word pattern | user only | syntax tree, server ranges | `zls`: zls | zls (zig fmt) | `lldb` (Rust / C / C++ / Zig (CodeLLDB)); `lldb-dap` (Rust / C / C++ / Zig (lldb-dap)) |
+| Zig `zig` | `.zig` `.zon` | tree-sitter `zig` (default) | CsCode: `//`, pairs, indent rules, on-Enter rules, word pattern | built-in (CsCode) | syntax tree, server ranges | `zls`: zls | zls (zig fmt) | `lldb` (Rust / C / C++ / Zig (CodeLLDB)); `lldb-dap` (Rust / C / C++ / Zig (lldb-dap)) |
 
 ### Built-in language servers
 
