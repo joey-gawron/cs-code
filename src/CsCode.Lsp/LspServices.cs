@@ -28,6 +28,10 @@ public sealed record LspServices(IDocumentManager Documents, ILanguageFeatureReg
     public ILanguageService? Languages { get; init; }
     public ILoggerFactory? Loggers { get; init; }
     public ILspConnectionFactory? Connections { get; init; }
+    /// <summary>Values other modules add to the servers' settings (the selected Python interpreter); see <see cref="ILanguageServerSettingsContributor"/>.</summary>
+    public IReadOnlyList<ILanguageServerSettingsContributor> SettingsContributors { get; init; } = [];
+    /// <summary>The selected Python interpreters: a built-in Python tool server (Ruff, Pyright) runs the environment's own copy when it has one.</summary>
+    public CsCode.Core.Python.IPythonEnvironmentService? PythonEnvironments { get; init; }
 
     public static LspServices FromProvider(IServiceProvider sp) => new(
         sp.GetRequiredService<IDocumentManager>(),
@@ -47,5 +51,7 @@ public sealed record LspServices(IDocumentManager Documents, ILanguageFeatureReg
         Languages = sp.GetService<ILanguageService>(),
         Loggers = sp.GetService<ILoggerFactory>(),
         Connections = sp.GetService<ILspConnectionFactory>(),
+        SettingsContributors = sp.GetServices<ILanguageServerSettingsContributor>().ToArray(),
+        PythonEnvironments = sp.GetService<CsCode.Core.Python.IPythonEnvironmentService>(),
     };
 }

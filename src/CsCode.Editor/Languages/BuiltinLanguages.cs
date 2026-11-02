@@ -44,6 +44,11 @@ internal static class BuiltinLanguages
     internal const string BuiltinPathPrefix = "builtin:";
     /// <summary>Resource names of CsCode's own language configurations (this assembly, see CsCode.Editor.csproj).</summary>
     internal const string OwnConfigurationPrefix = "CsCode.Editor.Languages.Configurations.";
+    /// <summary>
+    /// Resource names of CsCode's own built-in snippets (<c>Snippets/Builtin/&lt;language id&gt;.json</c>): for languages whose VS Code extension ships
+    /// none (Python's does not). Language stage 1; later stages add their languages' files there.
+    /// </summary>
+    internal const string OwnSnippetPrefix = "CsCode.Editor.Snippets.Builtin.";
 
     private static readonly Assembly Asm = typeof(RegistryOptions).Assembly;
     private static readonly Assembly OwnAsm = typeof(BuiltinLanguages).Assembly;
@@ -52,7 +57,7 @@ internal static class BuiltinLanguages
     public static BuiltinCatalog Catalog => CatalogLazy.Value;
 
     public static Stream? Open(string resourceName) =>
-        resourceName.StartsWith(OwnConfigurationPrefix, StringComparison.Ordinal)
+        resourceName.StartsWith(OwnConfigurationPrefix, StringComparison.Ordinal) || resourceName.StartsWith(OwnSnippetPrefix, StringComparison.Ordinal)
             ? OwnAsm.GetManifestResourceStream(resourceName)
             : Asm.GetManifestResourceStream(resourceName);
 
@@ -180,6 +185,9 @@ internal static class BuiltinLanguages
                     if (Asm.GetManifestResourceInfo(res) is not null) snippets.Add(new BuiltinSnippetFile(lang.GetString()!, res));
                 }
         }
+
+        foreach (var res in OwnAsm.GetManifestResourceNames().Where(n => n.StartsWith(OwnSnippetPrefix, StringComparison.Ordinal) && n.EndsWith(".json", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
+            snippets.Add(new BuiltinSnippetFile(res[OwnSnippetPrefix.Length..^".json".Length], res));
 
         foreach (var (id, name, ext, files, config) in Supplements)
         {

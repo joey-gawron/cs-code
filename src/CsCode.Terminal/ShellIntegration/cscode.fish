@@ -8,6 +8,11 @@ set -g __cscode_installed 1
 set -g __cscode_nonce "$CSCODE_NONCE"
 set -e CSCODE_NONCE
 set -e CSCODE_INJECTION
+# Directories CsCode put first on PATH (the selected Python environment's bin), first again after fish's own configuration ran.
+if set -q CSCODE_PATH_PREPEND
+    set -gx PATH (string split : -- $CSCODE_PATH_PREPEND) $PATH
+    set -e CSCODE_PATH_PREPEND
+end
 set -g __cscode_executing 0
 
 # A value in an OSC 633 sequence: backslashes doubled, ';' and the usual control characters as \xHH (any other control character is

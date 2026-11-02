@@ -199,6 +199,9 @@ public sealed class TestTree
         }
         var node = parent.GetOrAdd("t:" + t.Id, t.Label, TestNodeKind.Test);
         node.TestId = t.Id;
+        // cases the provider already knows (pytest's parametrizations), shown before the first run; a run's results update them
+        foreach (var label in t.Cases ?? [])
+            node.GetOrAdd("c:" + label, label, TestNodeKind.Case).TestId = t.Id;
         node.Location = t.Location ?? node.Location;
         node.SkipReason = t.SkipReason;
         return node;

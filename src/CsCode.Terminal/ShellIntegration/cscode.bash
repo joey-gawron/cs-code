@@ -54,6 +54,13 @@ elif [ -r ~/.bashrc ]; then
 fi
 builtin unset __cscode_login __cscode_noprofile __cscode_rcfile
 
+# Directories CsCode put first on PATH (the selected Python environment's bin): /etc/profile's path_helper (macOS) and the user's files may have
+# moved them behind the system's, so they go first again.
+if [ -n "${CSCODE_PATH_PREPEND:-}" ]; then
+    builtin export PATH="$CSCODE_PATH_PREPEND:$PATH"
+    builtin unset CSCODE_PATH_PREPEND
+fi
+
 # The user's files may have installed it already (or this is not an interactive shell after all).
 if [ -n "${__cscode_installed:-}" ] || [[ $- != *i* ]]; then builtin return 0; fi
 __cscode_installed=1

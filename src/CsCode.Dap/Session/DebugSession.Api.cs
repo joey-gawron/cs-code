@@ -359,6 +359,8 @@ public sealed partial class DebugSession
         var tid = await ResolveThreadAsync(threadId, ct);
         if (command is "stepBack" or "reverseContinue" && !_caps.SupportsStepBack) throw new NotSupportedException("The debug adapter does not support reverse debugging.");
 
+        // breakpoint changes made while stopped reach the adapter before the program runs on (they wait for a debounce otherwise)
+        if (_sync is { } sync) await sync.FlushPendingAsync();
         var wasStopped = State == DebugSessionState.Stopped;
         var stopsBefore = _stopCounter;
         // Optimistic: the adapter's `stopped` may follow its response immediately, so we must already be Running when it lands

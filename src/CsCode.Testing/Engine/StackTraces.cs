@@ -61,6 +61,28 @@ public static partial class StackTraces
         return file.StartsWith(dir, comparison);
     }
 
+    /// <summary>
+    /// A Python failure (language stage 1): the LAST frame under <paramref name="rootDirectory"/> of a traceback (<c>File "/p/t.py", line 7, in
+    /// test_x</c>, innermost last) or of pytest's report lines (<c>tests/test_x.py:7: AssertionError</c>, relative to pytest's rootdir).
+    /// </summary>
+    public static TestLocation? FromPython(string? text, string rootDirectory)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+        TestLocation? last = null;
+        foreach (Match m in PythonFrame().Matches(text))
+        {
+            var file = m.Groups["file"].Success ? m.Groups["file"].Value : m.Groups["short"].Value;
+            var lineText = m.Groups["line"].Success ? m.Groups["line"].Value : m.Groups["shortline"].Value;
+            if (!int.TryParse(lineText, out var line)) continue;
+            if (!Path.IsPathRooted(file)) file = Path.GetFullPath(Path.Combine(rootDirectory, file));
+            if (IsUnder(file, rootDirectory)) last = new TestLocation(file, Math.Max(0, line - 1));
+        }
+        return last;
+    }
+
+    [GeneratedRegex(@"File ""(?<file>[^""\n]+\.py)"", line (?<line>\d+)|^(?<short>[^\s:][^:\n]*\.py):(?<shortline>\d+): ", RegexOptions.CultureInvariant | RegexOptions.Multiline)]
+    private static partial Regex PythonFrame();
+
     [GeneratedRegex(@"\bin (?<file>.+?):line (?<line>\d+)", RegexOptions.CultureInvariant)]
     private static partial Regex DotNetFrame();
 
