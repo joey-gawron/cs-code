@@ -96,7 +96,10 @@ public sealed class CppCMakeTargetsTests
             Executable(dir, "unit_runner"),
             Executable(dir, "app", libraries: ["-lpthread"]),
             Executable(dir, "math_tests", libraries: ["/p/lib/libgtest_main.a"]),
-            new CMakeTarget("helpers", CMakeTargetType.StaticLibrary, [dir.Combine("build", "libhelpers.a")], dir.Path, ["gtest"], [], [])));
+            new CMakeTarget("helpers", CMakeTargetType.StaticLibrary, [dir.Combine("build", "libhelpers.a")], dir.Path, ["gtest"], [], []),
+            // googletest's own tests, from FetchContent (gtest_build_tests): its sources are under the build directory
+            new CMakeTarget("googletest-unit", CMakeTargetType.Executable, [dir.Combine("build", "_deps", "googletest-build", "googletest-unit")],
+                dir.Combine("build", "_deps", "googletest-src"), ["gtest_main"], [], [])));
         var provider = new CppTestProvider(new TestProviderContext(new ScriptedProcesses()), cmake: cmake) { CTestEnabled = () => false };
 
         var projects = await provider.DetectAsync(dir.Path, Ct);

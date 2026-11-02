@@ -132,13 +132,14 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
     /// The test executables among the executable targets of the folder's configured CMake projects (the CMake File API's targets, through the
     /// CMake integration): a built one by the framework signature in it (as the globs' finds), one not built yet by the framework it links
     /// (<see cref="CppExecutables.FromTarget"/>), so that a run can build it. A doctest target links nothing that names doctest: it is listed once built.
+    /// A target whose sources are in the build directory is a <c>FetchContent</c> dependency's (<c>_deps/googletest-src</c>): left out, as the globs leave <c>_deps</c>.
     /// </summary>
     internal IEnumerable<CppExecutables.Found> CMakeExecutables(string folder)
     {
         foreach (var p in ProjectsUnder(folder))
             foreach (var t in p.Targets)
             {
-                if (t.Executable is not { } exe) continue;
+                if (t.Executable is not { } exe || StackTraces.IsUnder(t.SourceDirectory, p.BuildDirectory)) continue;
                 var framework = File.Exists(exe) ? _executables.Classify(exe) : CppExecutables.FromTarget(t);
                 if (framework != CppFramework.None) yield return new CppExecutables.Found(exe, framework);
             }

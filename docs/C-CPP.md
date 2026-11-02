@@ -237,7 +237,8 @@ are found with no setting; elsewhere, name them in `cscode.testing.cpp.executabl
   when it links a framework: one of the project's own framework targets among its dependencies (`gtest`, `gtest_main`, `gmock`, `gmock_main`,
   `Catch2`, `Catch2WithMain`, `doctest_with_main`, from `FetchContent` or `add_subdirectory`), or that library on its link line (an imported
   `GTest::gtest_main` shows as `…/libgtest_main.a`; `-lgtest`, `gtest.lib`, `libgtest.so.1.17.0` and the `d` debug postfix count too;
-  `CppExecutables.FromTarget`). doctest is header-only, so a doctest target is found once built. Targets are found whatever they are named
+  `CppExecutables.FromTarget`). doctest is header-only, so a doctest target is found once built. A `FetchContent` dependency's own targets
+  (sources under the build directory, `_deps/googletest-src`) are left out, as the globs leave `_deps`. Targets are found whatever they are named
   (no glob needed) and listed beside the globs' finds (one project per executable). A target not built yet is listed with "Not built yet:
   running its tests builds gtest_tests." in place of its tests.
 * Each executable is one **project** in the explorer, named by its path in the folder (`build/math_tests`) with its framework beside it.
