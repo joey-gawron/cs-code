@@ -18,12 +18,14 @@ namespace CsCode.Lsp.Extensions;
 public sealed class ServerExtensionSession : IDisposable
 {
     private static readonly MethodInfo SinkInvoke = typeof(NotificationSink).GetMethod(nameof(NotificationSink.Invoke))!;
+    private static readonly MethodInfo RequestSinkInvoke = typeof(RequestSink).GetMethod(nameof(RequestSink.InvokeAsync))!;
 
     private readonly LanguageClient _client;
     private JsonRpc? _attaching;
     private int _disposed;
     // The connection may outlive the session (its read loop ends when the stream does): the sinks let go of the session when it ends.
     private readonly List<NotificationSink> _sinks = [];
+    private readonly List<RequestSink> _requestSinks = [];
 
     internal ServerExtensionSession(LanguageClient client, LanguageServerExtension extension, JsonRpc rpc)
     {
@@ -58,6 +60,20 @@ public sealed class ServerExtensionSession : IDisposable
         var sink = new NotificationSink(this, handler, latestWins ? new WorkKey(handler, 0) : default);
         _sinks.Add(sink);
         rpc.AddLocalRpcMethod(SinkInvoke, sink, new JsonRpcMethodAttribute(method) { UseSingleObjectParameterDeserialization = true });
+    }
+
+    /// <summary>
+    /// Answers a server-to-client request (Roslyn's <c>workspace/_roslyn_projectNeedsRestore</c>). Only during
+    /// <see cref="LanguageServerExtension.Attach"/>, like <see cref="OnNotification"/>. <paramref name="handler"/> runs on the Language lane with a copy
+    /// of the params; its result is the response (null: a null result); the token is cancelled when the server cancels the request or the
+    /// session ends. After the server stopped, the request is answered null.
+    /// </summary>
+    public void OnRequest(string method, Func<JsonElement, CancellationToken, Task<object?>> handler)
+    {
+        var rpc = _attaching ?? throw new InvalidOperationException($"{Extension.Name}: request handlers are added in Attach, before the server starts.");
+        var sink = new RequestSink(this, handler);
+        _requestSinks.Add(sink);
+        rpc.AddLocalRpcMethod(RequestSinkInvoke, sink, new JsonRpcMethodAttribute(method) { UseSingleObjectParameterDeserialization = true });
     }
 
     internal void EndAttach() => _attaching = null;
@@ -98,11 +114,45 @@ public sealed class ServerExtensionSession : IDisposable
         _attaching = null;
         foreach (var sink in _sinks) sink.Detach();
         _sinks.Clear();
+        foreach (var sink in _requestSinks) sink.Detach();
+        _requestSinks.Clear();
         try { Extension.OnStopped(this); }
         finally
         {
             State = null;
             Disposables.Dispose();
+        }
+    }
+
+    /// <summary>The target of a server-to-client request: copies the params and answers from the Language lane.</summary>
+    private sealed class RequestSink(ServerExtensionSession session, Func<JsonElement, CancellationToken, Task<object?>> handler)
+    {
+        private ServerExtensionSession? _session = session;
+        private Func<JsonElement, CancellationToken, Task<object?>>? _handler = handler;
+
+        public void Detach()
+        {
+            _session = null;
+            _handler = null;
+        }
+
+        public async Task<object?> InvokeAsync(JsonElement p, CancellationToken ct)
+        {
+            if (_session is not { } session || _handler is not { } handler || Volatile.Read(ref session._disposed) != 0) return null;
+            var copy = p.Clone();
+            try
+            {
+                return await session._client.Context.Queue.RunAsync<object>(LanePriority.Interactive, default, async wc =>
+                {
+                    using var both = CancellationTokenSource.CreateLinkedTokenSource(ct, wc.Token);
+                    return await handler(copy, both.Token).ConfigureAwait(false);
+                }, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
+            {
+                session.Log($"request handler failed: {ex.Message}");
+                throw; // the server gets the error response
+            }
         }
     }
 

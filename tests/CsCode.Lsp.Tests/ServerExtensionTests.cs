@@ -52,6 +52,7 @@ public class ServerExtensionTests
             {
                 lock (Statuses) Statuses.Add((p.GetProperty("s").GetString()!, Environment.CurrentManagedThreadId));
             });
+            session.OnRequest("probe/ask", (p, _) => Task.FromResult<object?>(new { answer = p.GetProperty("q").GetInt32() * 2, thread = Environment.CurrentManagedThreadId }));
             if (ThrowInAttach) throw new InvalidOperationException("attach failed on purpose");
         }
 
@@ -116,6 +117,17 @@ public class ServerExtensionTests
             Assert.Equal(["busy", "ready"], ext.Statuses.Select(s => s.Status));
             Assert.All(ext.Statuses, s => Assert.NotEqual(Environment.CurrentManagedThreadId, s.ThreadId));
         }
+    }
+
+    [Fact]
+    public async Task A_server_to_client_request_is_answered_by_the_extension_on_the_language_lane()
+    {
+        var ext = new ProbeExtension();
+        await using var env = new LspTestEnv(extensions: [ext]);
+        var (server, _) = await env.StartAsync();
+        var answer = await server.RequestAsync("probe/ask", new { q = 21 }).Within();
+        Assert.Equal(42, answer.GetProperty("answer").GetInt32());
+        Assert.NotEqual(Environment.CurrentManagedThreadId, answer.GetProperty("thread").GetInt32());
     }
 
     [Fact]
