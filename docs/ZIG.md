@@ -14,7 +14,7 @@ GitHub release, SHA-256 checked, into `.scratch/tools/zig/0.17.0/`; the user cho
 | zls | already the built-in server; **new**: build-on-save on by default, one clear zig/zls version-mismatch message; real-server tests run on this Mac |
 | Debugging | **new**: `zig` in CodeLLDB's and lldb-dap's languages, `build.zig` templates and tasks, Zig values by value; matrix below |
 | Test Explorer | **new**: `ZigTestProvider` |
-| Tasks | **new**: the `$zig` problem matcher; the `zig build` task provider is open (on stage 2's `ITaskProvider`) |
+| Tasks | **new**: the `$zig` problem matcher; the `zig build` task provider (`zig build`, its steps from `zig build -l`) |
 | Snippets | open (stage 1's bundled snippets) |
 
 ## Using it
@@ -126,8 +126,17 @@ The sample (`RealZigDebuggingTests.Source`) is built with `zig build-exe` (Debug
 * `$zig` problem matcher (`src/CsCode.Dap/Tasks/ProblemMatchers.cs`): `file:line:col: error|note: message` (owner and source `zig`); paths
   relative to the task's folder (`${cwd}`) or absolute; notes are Information; test stack-trace lines (`file:line:col: 0x… in f (test)`) do not
   match.
-* The Zig **task provider** (`zig build`, `zig build run`, `zig build test` and the steps of `zig build -l`) on stage 2's `ITaskProvider` is
-  still open (see "Open items"). Until then Run Task shows what tasks.json has: Create launch.json in a build.zig folder writes `zig: build`.
+* The Zig **task provider** (`src/CsCode.Dap/Tasks/ZigTaskProvider.cs`, stage 2's `ITaskProvider`, registered beside cargo's): a folder with a
+  build.zig gets `zig: build` (the default step, build group) and `zig: build <step>` for every other step `zig build -l` lists (`run`,
+  `test` in the test group, `check` in the build group, `uninstall`, the project's own), each with `$zig` and the step's description under it in
+  Run Task. `zig build -l` compiles the build script: 0.1 s on a warm cache, 48 s on a cold one (measured, zig 0.17.0, `zig init`). So it runs
+  in the background (bounded at 3 minutes, its output at 256 KB and 200 steps); Run Task waits for it at most 4 s and lists `zig: build`,
+  `zig: build run` and `zig: build test` until it has answered, or when it fails (a build.zig that does not compile: the build task then shows
+  why in Problems). The answer is cached per folder until build.zig or build.zig.zon changes, or another zig is configured. tasks.json entries:
+  `{"type": "zig", "step": "run"}` customises a detected task; with `args` (after the step), `env` or `cwd` it runs `zig build [step] [args…]`
+  as written. Evidence: `ZigTaskProviderTests` (a real `zig init` project lists install's siblings, runs `zig: build test` and puts a compile
+  error of `zig: build` in Problems on its line). The launch templates' tasks.json still writes its own `zig: build` (a tasks.json label wins
+  over a detected one of the same label) and the per-file test-binary task, which needs `${file}`.
 
 ## zls (`src/CsCode.Lsp/Extensions/Zls/ZlsExtension.cs`)
 
@@ -155,7 +164,6 @@ pattern's `HandleShowMessage` hook (added for it: an extension may keep a server
 
 | Item | Builds on |
 |---|---|
-| Zig task provider (`zig build`, `run`, `test`, `zig build -l` steps; bounded, cached until build.zig changes) | stage 2's `ITaskProvider` (Core `Tasks/ITaskProvider.cs`) |
 | Matrix rows: Memory window, Disassembly window (and data breakpoints) | stage 2's native debugging windows (CodeLLDB and lldb-dap already advertise the capabilities) |
 | Zig snippets | stage 1's bundled snippets (`src/CsCode.Editor/Snippets/Builtin/zig.json`) |
 
