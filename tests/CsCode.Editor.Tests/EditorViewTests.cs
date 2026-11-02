@@ -94,14 +94,19 @@ public class EditorViewTests
     {
         using var host = ViewHost.Create();
         var (_, view, _) = await host.OpenAsync("int x = 1;\n");
-        await ViewHost.WaitFor(() => view.Tokens is { } t && t.Store.ValidLines >= 1, "tokens");
-        var jobsBefore = host.Factory.Worker.CompletedJobs;
+        await ViewHost.WaitFor(() => view.Tokens is { } t && t.Store.LineCount > 0 && t.Store.ValidLines >= t.Store.LineCount, "every line tokenised");
+        // Not the worker's job count: brackets, folding and word highlights post their debounced jobs to the same worker, and under load they ran
+        // during the switch. A line tokenised again is a new array in the store, so the arrays themselves say whether that happened.
+        var tokens = Enumerable.Range(0, view.Tokens!.Store.LineCount).Select(view.Tokens.Store.GetTokens).ToArray();
         await host.Factory.Themes.SetCurrentAsync("vscode.light-plus", TestContext.Current.CancellationToken);
         await ViewHost.WaitFor(() => view.Editor.Background is ISolidColorBrush b && b.Color.R == 255, "editor background switches to light");
-        view.TextView.EnsureVisualLines();
-        var keyword = view.TextView.VisualLines[0].Elements.Select(e => (e.TextRunProperties.ForegroundBrush as ISolidColorBrush)?.Color).First(c => c is { } cc && cc.B > cc.R);
-        Assert.NotNull(keyword);
-        Assert.Equal(jobsBefore, host.Factory.Worker.CompletedJobs); // no tokenisation job ran for a pure colour change
+        await ViewHost.WaitFor(() =>
+        {
+            view.TextView.EnsureVisualLines();
+            return view.TextView.VisualLines is [var first, ..]
+                && first.Elements.Any(e => e.TextRunProperties.ForegroundBrush is ISolidColorBrush { Color: var c } && c == Color.FromRgb(0, 0, 0xFF));
+        }, "the keyword in Light+'s blue");
+        Assert.All(tokens, (line, i) => Assert.Same(line, view.Tokens!.Store.GetTokens(i))); // no line was tokenised again for a pure colour change
     }
 
     // ---- typing behaviours in the real control ----
