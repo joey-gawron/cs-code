@@ -107,6 +107,23 @@ public class FormatterChoiceAndCodeActionsOnSaveTests
     }
 
     [AvaloniaFact]
+    public async Task Format_on_save_without_a_default_formatter_uses_the_first_that_answers_with_edits()
+    {
+        using var host = ViewHost.Create();
+        host.Config.Set("editor.formatOnSave", true);
+        // basedpyright registers formatting and answers nothing; the registry hands it out first (the newest registration)
+        host.Factory.Services.Features.Register<IDocumentFormattingProvider>(DocumentSelector.All, new ServerFormatter("ruff", "by ruff\n"));
+        host.Factory.Services.Features.Register<IDocumentFormattingProvider>(DocumentSelector.All,
+            new FakeFormattingProvider((_, _) => Task.FromResult<IReadOnlyList<TextEdit>?>(null)));
+        var (doc, _, _) = await host.OpenAsync("x = 1\n", "a.py");
+        doc.ApplyEdits([TextEdit.Insert(TextPosition.Zero, "#")]);
+        var save = doc.SaveAsync();
+        await ViewHost.WaitFor(() => save.IsCompleted, "save finished");
+        await save;
+        Assert.Equal("by ruff\n", await File.ReadAllTextAsync(doc.Uri.LocalPath));
+    }
+
+    [AvaloniaFact]
     public async Task Format_document_with_offers_every_formatter_marks_the_default_and_runs_the_picked_one_once()
     {
         using var host = ViewHost.Create();

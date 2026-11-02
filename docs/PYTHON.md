@@ -36,7 +36,8 @@ Two pieces are language-neutral and reused by later stages: **formatter choice /
 
 * **`editor.defaultFormatter`** (global or `"[python]": { … }`): a language server id (the `cscode.languageServers` key: `ruff`, `python`
   for Pyright); a VS Code extension id ending in it (`charliermarsh.ruff`) names it too. Format Document / Selection / on save / on paste / on
-  type use only that server. Unset: the first formatter that answers, as before. A chosen server that is not running formats nothing and says
+  type use only that server. Unset: the first formatter that answers with edits (basedpyright registers formatting and answers nothing, so
+  Ruff formats). A chosen server that is not running formats nothing and says
   so in the status bar. Providers say which server they come from through the additive `ILanguageProviderSource`; a remote workspace's bridged
   providers cannot yet, and keep formatting as before. **Format Document With…** (Edit menu, editor context menu,
   `editor.action.formatDocument.multiple`) picks one for a single run, the default marked.
