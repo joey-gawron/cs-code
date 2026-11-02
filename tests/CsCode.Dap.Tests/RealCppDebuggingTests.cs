@@ -14,8 +14,9 @@ namespace CsCode.Dap.Tests;
 /// C++20 program built with the system's clang++ (libc++ on macOS) debugged under CodeLLDB (type <c>lldb</c>, <c>sourceLanguages: ["cpp"]</c>)
 /// and lldb-dap, row for row: libc++ values through LLDB's formatters, the dynamic type of a polymorphic object, template and lambda frames,
 /// the C++ exception filters (throw, catch), and <c>std::thread</c> / <c>std::jthread</c>. The renderings are recorded as evidence
-/// (<c>CSCODE_DAP_TEST_METRICS=&lt;file&gt;</c>); the assertions are what a user reads. Skips when the adapter, clang++ or (macOS) Developer
-/// Mode is missing. The Memory / Disassembly rows wait for those windows (stage 2).
+/// (<c>CSCODE_DAP_TEST_METRICS=&lt;file&gt;</c>); the assertions are what a user reads. The Memory and Disassembly rows read what those
+/// windows (stage 2) ask the session for: a <c>std::vector</c>'s buffer, and the instructions of an inlined function with its source lines.
+/// Skips when the adapter, clang++ or (macOS) Developer Mode is missing.
 /// </summary>
 [Trait("Category", RealAdapterSupport.Category)]
 [Collection(SerialCollection.Name)]
@@ -48,6 +49,10 @@ public class RealCppDebuggingTests
 
         static int worker_value = 0;
 
+        __attribute__((always_inline)) inline int square(int x) {
+          return x * x; // @inlined
+        }
+
         int main() {
           std::string text = "hello world";
           std::vector<int> numbers{1, 2, 3};
@@ -73,6 +78,8 @@ public class RealCppDebuggingTests
               worker_value += 10; // @jthread
             });
           }
+          int squared = square((int)numbers.size());
+          std::printf("squared %d\n", squared);
           std::printf("done %d %d %zu %d\n", total, worker_value, numbers.size(), (int)raw->area());
           return 0;
         }
@@ -306,6 +313,85 @@ public class RealCppDebuggingTests
         await Task.Delay(300, Ct);
         await rig.RunToEndAsync(type);
         Assert.Contains("caught boom", rig.OutputText, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(Adapters))]
+    public async Task A_vectors_buffer_reads_in_the_memory_window(string type)
+    {
+        await using var rig = await RigAsync(type);
+        rig.H.Breakpoints.Add(rig.SourceUri, Line("@values"));
+        await StartAsync(rig);
+        var loc = await rig.WaitForStopAsync(1);
+        IDebugSessionNative native = rig.Session!;
+        Assert.True(rig.Session!.Capabilities.SupportsReadMemory, "readMemory");
+        var numbers = (await rig.LocalsAsync())["numbers"];
+        var elements = await rig.ChildrenAsync(numbers);
+        Note(type, $"numbers = {numbers.Value} (memoryReference {numbers.MemoryReference}); elements {string.Join(", ", elements.Take(3).Select(e => $"{e.Name}={e.Value}@{e.MemoryReference}"))}");
+        // View Binary Data on [0], or the address of the data in the Memory window's address box
+        foreach (var expression in new[] { "numbers.data()", "&numbers[0]", "numbers.__begin_" })
+        {
+            var r = await TryEvaluateAsync(rig, expression, loc.FrameId);
+            Note(type, $"evaluate {expression} => {r}");
+        }
+        var first = elements.FirstOrDefault(e => e.Value == "1")?.MemoryReference;
+        var address = first ?? (await rig.Session.EvaluateAsync("&numbers[0]", loc.FrameId, "watch", Ct)).Result.TrimStart().Split(' ')[0];
+        var block = await native.ReadMemoryAsync(address, 0, 12, Ct);
+        Note(type, $"read 12 bytes at {address} ({(first is null ? "evaluated" : "element's memoryReference")}): {Convert.ToHexString(block.Data.ToArray())}");
+        Assert.Equal([1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0], block.Data.ToArray()); // std::vector<int>{1, 2, 3}, little-endian
+        rig.H.Breakpoints.RemoveAll();
+        await Task.Delay(300, Ct);
+        await rig.RunToEndAsync(type);
+    }
+
+    private static async Task<string> TryEvaluateAsync(Rig rig, string expression, int frameId)
+    {
+        try
+        {
+            var r = await rig.Session!.EvaluateAsync(expression, frameId, "watch", Ct);
+            return $"{r.Result} ({r.Type}) memoryReference {r.MemoryReference}";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { return "error: " + ex.Message; }
+    }
+
+    [Theory]
+    [MemberData(nameof(Adapters))]
+    public async Task An_inlined_function_disassembles_inside_its_caller_with_its_own_lines(string type)
+    {
+        await using var rig = await RigAsync(type);
+        // on the inlined body's own line (breakpoint, stop and instruction lines are 0-based; Line is 1-based)
+        var inlined = Line("@inlined") - 1;
+        rig.H.Breakpoints.Add(rig.SourceUri, inlined);
+        await StartAsync(rig);
+        var loc = await rig.WaitForStopAsync(1);
+        Assert.Equal(inlined, loc.Line);
+        IDebugSessionNative native = rig.Session!;
+        Assert.True(rig.Session!.Capabilities.SupportsDisassemble, "disassemble");
+        var frames = await rig.Session.GetStackTraceAsync(loc.ThreadId, 0, 4, Ct);
+        Note(type, "inlined stop: " + string.Join(" | ", frames.Select(f => $"{f.Name} @{Path.GetFileName(f.Source?.Path)}:{f.Line} ip={f.InstructionPointerReference} hint={f.PresentationHint}")));
+        Assert.Contains("square", frames[0].Name, StringComparison.Ordinal);
+        Assert.Contains(frames.Skip(1), f => f.Name.Contains("main", StringComparison.Ordinal));
+        Assert.True(DebugAddress.TryParse(frames[0].InstructionPointerReference, out var pc), frames[0].InstructionPointerReference);
+
+        // the Disassembly window's first page around the instruction pointer
+        var page = await native.DisassembleAsync(frames[0].InstructionPointerReference!, 0, -64, 128, Ct);
+        var at = page.ToList().FindIndex(i => i.Address == pc);
+        Note(type, $"{page.Count} instructions, pc at {at}; around it: " + string.Join(" / ", page.Skip(Math.Max(0, at - 3)).Take(7)
+            .Select(i => $"{i.AddressText} {i.Instruction} [{i.Symbol}] {i.Location?.Name}:{i.Line}")));
+        Note(type, "lines on the page: " + string.Join(", ", page.Where(i => i.Line is not null).GroupBy(i => (i.Symbol, i.Line)).Select(g => $"[{g.Key.Symbol}]:{g.Key.Line} x{g.Count()}")));
+        Assert.True(at >= 0, "the instruction pointer is on the page");
+        // the inlined body lies inside main's code: the instruction at the pc carries the inlined function's own line
+        Assert.Equal(inlined, page[at].Line);
+        Assert.EndsWith("matrix.cpp", page[at].Location?.Path ?? "", StringComparison.Ordinal);
+        // the call site's line is around the inlined copy
+        var callLine = Source.Split('\n').Select((l, i) => (l, i)).First(x => x.l.Contains("square((int)", StringComparison.Ordinal)).i;
+        Assert.Contains(page, i => i.Line == callLine);
+        // CodeLLDB names the containing function on every instruction; lldb-dap names none
+        if (type == CodeLldbAdapterFactory.PrimaryType) Assert.Contains("main", page[at].Symbol ?? "", StringComparison.Ordinal);
+        rig.H.Breakpoints.RemoveAll();
+        await Task.Delay(300, Ct);
+        await rig.RunToEndAsync(type);
+        Assert.Contains("squared 9", rig.OutputText, StringComparison.Ordinal);
     }
 
     [Theory]

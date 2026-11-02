@@ -11,7 +11,9 @@ using CsCode.Core.Languages;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Dap.Adapters;
+using CsCode.App.Menus;
 using CsCode.Panels.Debug.Exceptions;
+using CsCode.Panels.Debug.Native;
 using CsCode.Panels.Debug.Variables;
 using CsCode.TestDoubles;
 using Xunit;
@@ -24,7 +26,9 @@ namespace CsCode.App.Tests.RealApp;
 /// vector's and a map's size and elements, an optional's value, a smart pointer's target, a <c>Shape*</c> as the <c>Circle</c> it is); with
 /// CodeLLDB's "C++: on throw" filter (on by default) the program then stops at the throw as an exception, shown in the Exception window. Then
 /// Objective-C++ (<c>.mm</c>) and CUDA (<c>.cu</c>) files get clangd's diagnostics. Rendered frames are saved to
-/// <c>.scratch/screenshots/cpp-*.png</c>. Skips without clang++ or CodeLLDB (and, for the clangd part, clangd).
+/// <c>.scratch/screenshots/cpp-*.png</c>. A second program shows the native windows (stage 2) on C++: a <c>std::vector</c>'s buffer in the
+/// Memory window (View Binary Data on its first element), and an inlined function in the Disassembly window with its source line above the
+/// current instruction. Skips without clang++ or CodeLLDB (and, for the clangd part, clangd).
 /// </summary>
 public class CppDebugRealAppTests
 {
@@ -69,6 +73,23 @@ public class CppDebugRealAppTests
         }
         """;
 
+    private const string NativeProgram = """
+        #include <cstdio>
+        #include <vector>
+
+        __attribute__((always_inline)) inline int square(int x) {
+          return x * x; // @inlined
+        }
+
+        int main() {
+          std::vector<int> numbers{1, 2, 3};
+          int count = (int)numbers.size(); // @vector
+          int squared = square(count);
+          std::printf("squared %d\n", squared);
+          return 0;
+        }
+        """;
+
     private static string Capture(RealAppHost host, string name)
     {
         Dispatcher.UIThread.RunJobs();
@@ -80,7 +101,82 @@ public class CppDebugRealAppTests
         return path;
     }
 
-    private static int Line(string marker) => Program.Split('\n').Select((l, i) => (l, i)).First(x => x.l.Contains("// " + marker, StringComparison.Ordinal)).i;
+    private static int Line(string marker, string program = Program) => program.Split('\n').Select((l, i) => (l, i)).First(x => x.l.Contains("// " + marker, StringComparison.Ordinal)).i;
+
+    private static T? ViewModel<T>(RealAppHost host, string toolId) where T : class => host.Shell.Tools.Get(toolId)?.LiveView?.DataContext as T;
+
+    [AvaloniaFact(Timeout = 300_000)]
+    public async Task A_vectors_buffer_shows_in_the_memory_window_and_an_inlined_function_in_the_disassembly_window()
+    {
+        var cxx = new[] { "/usr/bin/clang++", "/usr/bin/c++" }.FirstOrDefault(File.Exists);
+        var codelldb = CodeLldbToolchain.FindAdapter();
+        Assert.SkipWhen(cxx is null, "no clang++ / c++ in /usr/bin");
+        Assert.SkipWhen(codelldb is null, "CodeLLDB's adapter was not found (tools/fetch-codelldb.sh, or CSCODE_CODELLDB)");
+        await using var host = RealAppHost.Create(h =>
+        {
+            h.Files.WriteFile("matrix.cpp", NativeProgram);
+            h.Files.WriteFile(".vscode/launch.json", LaunchJson);
+            var settingsPath = h.Home.Combine("config", "settings.json");
+            var settings = JsonNode.Parse(File.ReadAllText(settingsPath))!.AsObject();
+            settings[CodeLldbAdapterFactory.SettingPath] = codelldb;
+            File.WriteAllText(settingsPath, settings.ToJsonString());
+        });
+        using (var build = Process.Start(new ProcessStartInfo(cxx!, ["-g", "-O0", "-std=c++20", "-o", host.Files.Combine("matrix"), host.Files.Combine("matrix.cpp")]) { UseShellExecute = false })!)
+        {
+            await build.WaitForExitAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(0, build.ExitCode);
+        }
+        await host.StartAsync([host.Files.Path]);
+        var debug = host.Get<IDebugService>();
+        var commands = host.Get<ICommandService>();
+        var source = new Uri(host.Files.Combine("matrix.cpp"));
+        debug.Breakpoints.Add(source, Line("@vector", NativeProgram));
+        debug.Breakpoints.Add(source, Line("@inlined", NativeProgram));
+        await host.Get<INavigationService>().OpenAsync(source, TextRange.At(Line("@vector", NativeProgram), 2));
+        Assert.True(await RealAppHost.WaitFor(() => debug.Configurations.Selected?.Name == "C++: matrix (CodeLLDB)", 10_000), "launch.json read");
+        var start = commands.ExecuteAsync(KnownCommands.DebugStart).AsTask();
+        Assert.True(await RealAppHost.WaitFor(() => debug.State == DebugState.Stopped && debug.StopLocation is not null, 120_000), $"stopped (state {debug.State})");
+        await start;
+        Assert.Equal(Line("@vector", NativeProgram), debug.StopLocation!.Line);
+
+        // ---- Memory: View Binary Data on numbers[0] shows the vector's buffer
+        Assert.True(await host.Get<IViewActivator>().ShowViewAsync("debug.locals"));
+        Assert.True(await RealAppHost.WaitFor(() => ViewModel<LocalsViewModel>(host, "debug.locals")?.Tree.Rows.Any(r => r.Name == "numbers") == true, 30_000), "Locals lists numbers");
+        var locals = ViewModel<LocalsViewModel>(host, "debug.locals")!;
+        await locals.Tree.ExpandAsync(locals.Tree.Rows.First(r => r.Name == "numbers"));
+        Assert.True(await RealAppHost.WaitFor(() => locals.Tree.Rows.Any(r => r.Name == "[0]"), 20_000), "numbers' elements");
+        var first = locals.Tree.Rows.First(r => r.Name == "[0]");
+        Assert.True(locals.Tree.CanViewBinaryData(first));
+        await host.RunAsync(ShellMenus.ShowToolWindow, NativeViewRequests.MemoryViewId);
+        Assert.True(await RealAppHost.WaitFor(() => ViewModel<MemoryViewModel>(host, NativeViewRequests.MemoryViewId) is not null, 10_000), "the Memory window");
+        var memory = ViewModel<MemoryViewModel>(host, NativeViewRequests.MemoryViewId)!;
+        locals.Tree.ViewBinaryData(first);
+        memory.SetVisibleRows(MemoryViewModel.RowCount / 2, MemoryViewModel.RowCount / 2 + 16);
+        Assert.True(await RealAppHost.WaitFor(() => memory.TargetRow.Hex.StartsWith("01 00 00 00 02 00 00 00  03 00 00 00", StringComparison.Ordinal), 30_000),
+            $"the buffer of std::vector<int>{{1, 2, 3}} (row: {memory.TargetRow.AddressText} {memory.TargetRow.Hex}; {memory.StatusText})");
+        await DevScene.SettleAsync(10);
+        Capture(host, "cpp-memory-vector");
+
+        // ---- Disassembly: at the breakpoint in the inlined function, the current instruction is in main's code under square's source line
+        await commands.ExecuteAsync(KnownCommands.DebugContinue);
+        Assert.True(await RealAppHost.WaitFor(() => debug.State == DebugState.Stopped && debug.StopLocation?.Line == Line("@inlined", NativeProgram), 30_000),
+            $"stopped in the inlined function (line {debug.StopLocation?.Line})");
+        await host.RunAsync(ShellMenus.ShowToolWindow, NativeViewRequests.DisassemblyViewId);
+        Assert.True(await RealAppHost.WaitFor(() => ViewModel<DisassemblyViewModel>(host, NativeViewRequests.DisassemblyViewId)?.Rows.Any(r => r.IsCurrent) == true, 30_000),
+            "the Disassembly window marks the current instruction");
+        var disassembly = ViewModel<DisassemblyViewModel>(host, NativeViewRequests.DisassemblyViewId)!;
+        var rows = disassembly.Rows.ToList();
+        var current = rows.FindIndex(r => r.IsCurrent);
+        var sourceAbove = rows.Take(current).LastOrDefault(r => r.IsSource);
+        var symbolAbove = rows.Take(current).LastOrDefault(r => r.IsSymbol);
+        Assert.True(sourceAbove?.Text.Contains("return x * x", StringComparison.Ordinal) == true, $"square's line above the current instruction (got '{sourceAbove?.Text}')");
+        Assert.Contains("main", symbolAbove?.Text ?? rows[current].Symbol ?? "", StringComparison.Ordinal);
+        await DevScene.SettleAsync(10);
+        Capture(host, "cpp-disassembly-inlined");
+        debug.Breakpoints.RemoveAll();
+        await host.RunAsync(KnownCommands.DebugStop);
+        Assert.True(await RealAppHost.WaitFor(() => debug.Sessions.Count == 0, 30_000), "the session ended");
+    }
 
     [AvaloniaFact(Timeout = 300_000)]
     public async Task A_cpp_program_shows_libcxx_values_and_stops_at_a_throw_and_mm_and_cu_files_get_clangd()
