@@ -101,7 +101,7 @@ internal static class CargoArtifacts
         return result;
     }
 
-    private static string? FindCargo()
+    internal static string? FindCargo()
     {
         var name = OperatingSystem.IsWindows() ? "cargo.exe" : "cargo";
         foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
