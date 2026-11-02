@@ -77,6 +77,27 @@ public sealed class NewProjectViewTests
     }
 
     [AvaloniaFact]
+    public async Task Access_keys_reach_Location_and_the_Git_box()
+    {
+        using var rig = new Rig();
+        var vm = new NewProjectViewModel(rig.Services(new FakeGenerator("empty", 0)));
+        var view = new NewProjectView(vm);
+        var window = new Window { Content = view, Width = 1100, Height = 700 };
+        window.Show();
+        await SettleAsync(() => vm.Initialized.IsCompleted);
+        window.KeyPressQwerty(PhysicalKey.L, RawInputModifiers.Alt);
+        Dispatcher.UIThread.RunJobs();
+        var focused = window.FocusManager?.GetFocusedElement() as TextBox;
+        Assert.Equal(vm.Location, focused?.Text);
+        var before = vm.CreateGitRepository;
+        window.KeyPressQwerty(PhysicalKey.G, RawInputModifiers.Alt);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(!before, vm.CreateGitRepository); // an access key on a check box toggles it, as in Visual Studio
+        window.Close();
+        view.Dispose();
+    }
+
+    [AvaloniaFact]
     public async Task Escape_closes_the_page_when_nothing_runs()
     {
         using var rig = new Rig();

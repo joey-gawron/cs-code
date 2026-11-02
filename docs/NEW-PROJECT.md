@@ -44,8 +44,9 @@ New Project is a full page. Opening it again brings the open one to the front.
 * **Default location:** `cscode.newProject.defaultLocation` when set (`~` expanded), else the parent of the most recently opened folder, else
   the home folder. The proposed name is `untitled`, `untitled1`, … whichever is free there.
 * **Keyboard:** the page opens with the keyboard in Name, its text selected. Tab moves through the page; in the list the arrows choose a generator
-  (disabled ones are skipped); Alt+N, Alt+L, Alt+B, Alt+G and Alt+C reach Name, Location, Browse, the Git box and Create; **Enter** creates (unless a
-  button or an open drop-down takes it); **Esc** cancels a running creation, or closes the page when nothing runs.
+  (disabled ones are skipped); access keys: Alt+N and Alt+L move the keyboard to Name and Location, Alt+B browses, Alt+G toggles Create Git
+  repository, Alt+C creates (Alt+L and Alt+G are tested); **Enter** creates (unless a button or an open drop-down takes it); **Esc** cancels a
+  running creation, or closes the page when nothing runs.
 
 ## Generators
 
@@ -152,16 +153,36 @@ the page shows the error in red and brings the Output window to the front.
 * TypeScript needs the npm registry at creation (offline it fails, and the folder is removed); Python's pytest and C++'s GoogleTest/Catch2 also come
   from the network, the former at creation, the latter at the first configure.
 * Template options other than the target framework (`--aot`, `--use-program-main`, authentication…) are not offered.
-* The real-window check was done with the real composition in a headless window (below): computer use was not available to this session.
+* The check "in the real app" was made with the real composition in a headless window (below), not a visible window: the agent session that
+  built this had no display access (Avalonia.Native fails to start its render timer, CoreVideo error -6661, before any CsCode code runs) and no
+  computer use. A person should still open File ▸ New ▸ Project… once in the windowed app.
+
+## Evidence (this Mac, 2026-11-01)
+
+| Generator | Created with the real tool | Built and tested with its tasks' commands | Opened in the real app with its main file | F5 in the real app |
+|---|---|---|---|---|
+| Rust (bin, lib) | yes | `cargo build`, `cargo test`; the binary prints Hello, world! | yes | CodeLLDB stops at `main.rs:2` |
+| C (C11 exe, C17 lib, C23 exe) | yes | `cmake --preset debug`, `cmake --build --preset debug`, `ctest --preset debug` (100 %) | yes | CodeLLDB stops at `main.c:7` |
+| C++ (17 exe, 20 lib, 23 exe; GoogleTest; Catch2) | yes | as C; GoogleTest and Catch2 tests discovered and passing | yes | CodeLLDB stops at `main.cpp:6` |
+| C# (console + xUnit, classlib in .sln) | yes | `dotnet build`, `dotnet test`; the program prints Hello, World! | yes | netcoredbg stops at `Program.cs:1` |
+| JavaScript | yes | `node --test` (1 pass); `node src/index.js` | yes | js-debug stops at `index.js:3` |
+| Python (app with .venv) | yes | `python -m hello_py` with launch.json's PYTHONPATH; pytest only with downloads allowed | yes | not on main (debugpy) |
+| Empty, Static Website | yes | — | yes | — |
+| TypeScript | needs the npm registry: not run | — | — | — |
+| Zig | zig not installed: not run | — | — | — |
+
+Screenshots of the page (Rust and C# chosen) and of the Welcome link come from `RealApp/NewProjectTests.Screenshots_of_the_page` into
+`.scratch/screenshots/new-project-*.png` (not committed).
 
 ## Tests
 
 | Project | What | Command |
 |---|---|---|
 | `tests/CsCode.ProjectTemplates.Tests` | name rules, `dotnet new` parsers, creation and clean-up, Git; **real tools** (`Category=RealTools`): every generator makes a project with the real CLI, which is then built and tested with the commands its tasks use, and the program its launch.json names is run | `dotnet test tests/CsCode.ProjectTemplates.Tests` |
-| `tests/CsCode.Panels.NewProject.Tests` | the view model (generators, validation, options and the VCS link, remembering, create/fail/cancel, opening here or in a new window) and the real view headless (keyboard only: Name focused, typing, Enter, arrows, Esc), `LeakAssert` for the view model and the view | `dotnet test tests/CsCode.Panels.NewProject.Tests` |
+| `tests/CsCode.Panels.NewProject.Tests` | the view model (generators, validation, options and the VCS link, remembering, create/fail/cancel, opening here or in a new window) and the real view headless (keyboard only: Name focused, typing, Enter, arrows, Esc, Alt+L, Alt+G), `LeakAssert` for the view model and the view | `dotnet test tests/CsCode.Panels.NewProject.Tests` |
 | `tests/CsCode.App.Tests` (`RealApp/NewProjectTests`) | the real application (every module, `CSCODE_HOME` in a temp dir, headless window): the menu, the palette command and the Welcome link open the page; per installed toolchain a project made on the page opens with its main file and F5 builds it and stops at a breakpoint in it | `dotnet test tests/CsCode.App.Tests --blame-hang-timeout 12m --filter FullyQualifiedName~RealApp.NewProjectTests` |
 
-Real-tool tests skip with their reason when the tool is missing. Downloads only with the user's go-ahead: pytest and TypeScript run with
+Results on this Mac: ProjectTemplates 87 passed, 3 skipped (zig; pytest and TypeScript downloads); Panels.NewProject 21 passed; RealApp
+NewProjectTests 11 passed (with the menu, Welcome and session App tests: 54 passed). Real-tool tests skip with their reason when the tool is missing. Downloads only with the user's go-ahead: pytest and TypeScript run with
 `CSCODE_TEST_DOWNLOADS=1`; the C++ framework tests use the GoogleTest/Catch2 archives the C++ stage fetched into `.scratch/tools/cpp-test-frameworks`
 (`FETCHCONTENT_SOURCE_DIR_*`), and otherwise need the same variable. The F5 cases use CodeLLDB, netcoredbg and js-debug from `.scratch/tools`.
