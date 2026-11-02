@@ -195,7 +195,7 @@ public class CSharpRealAppTests
             var until = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 30 / 1000;
             while (Stopwatch.GetTimestamp() < until) { Dispatcher.UIThread.RunJobs(); await Task.Delay(1); }
         }
-        var report = probe.Stop();
+        var report = await probe.StopAsync(); // lets the ticks still queued run (Stop counted one posted just before it as pending)
         typing.Sort();
         var typingP99 = typing[(int)Math.Ceiling(typing.Count * 0.99) - 1];
         TestContext.Current.SendDiagnosticMessage($"Roslyn loaded the solution: {sinceLoaded is not null} ({loaded.Elapsed.TotalSeconds:F1} s in all); {report}; " +
