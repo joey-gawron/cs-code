@@ -203,7 +203,7 @@ plus `didChange`/`didSave`/`didOpen`/`didClose`/`willSave*`, watched files, exec
   host next to their files and bridged by CsCode.Remote (docs/REMOTE.md), so a remote file never starts a local server. With `cscode.languageHost =
   process` this manager is not constructed at all: the same code runs in a local `cscode-server` child.
 
-## 7a. Server extensions (one class per server: rust-analyzer now, clangd and Roslyn next)
+## 7a. Server extensions (one class per server: rust-analyzer, Roslyn, zls and clangd)
 
 What a server's own VS Code extension adds on top of plain LSP — experimental capabilities, its commands, its custom notifications, members it
 puts in standard answers — CsCode builds in as one `LanguageServerExtension` subclass per server (`src/CsCode.Lsp/Extensions/`), listed in
@@ -222,6 +222,9 @@ workspace root), created by `LanguageClient` when the server starts:
 * Client-side commands a server names in code actions, lenses or hovers (rust-analyzer's `runSingle`, Roslyn's `roslyn.client.*`) are
   ordinary commands the extension registers in `Register(host)`; the editor runs them through `ICommandService` with the server's arguments.
 * `AddExperimentalCapabilities(experimental)` fills `initialize`'s `capabilities.experimental`.
+* `AddClientCapabilities(capabilities)` adds capabilities outside `experimental` that the protocol model has no member for, and
+  `AddInitializationOptions(options)` adds to `initializationOptions` (the definition's, so a user's own stay): clangd's
+  `textDocument.inactiveRegionsCapabilities` and `clangdFileStatus` (`ClangdExtension`, docs/C-CPP.md §3a). With an extension, `initialize` goes as JSON.
 * `OnInitialized(session)` after the handshake (lane); `OnStopped(session)` when the server stops (crash, restart, shutdown), after which the
   session's `Disposables` are released, its `State` slot cleared and its notification sinks detached; the client drops the session, so a stopped
   server keeps nothing of the extension alive (`A_stopped_server_releases_its_session…`).

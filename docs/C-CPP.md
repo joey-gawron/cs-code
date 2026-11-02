@@ -110,6 +110,40 @@ cursor and opens on Ctrl/⌘+Click (a file in the editor, with VS Code's `#L12` 
 resolved first when the provider left the target out. A link wins over a definition on the same text. clangd 21 links every `#include` to the
 header it resolves (`RealClangdDocumentLinkTests`).
 
+## 3a. The clangd extension (`src/CsCode.Lsp/Extensions/Clangd`)
+
+Stage 2's per-server pattern (`LanguageServerExtension`, docs/LSP.md §7a), listed in `ServerExtensions.CreateBuiltins()`. Each method was
+checked against the installed Apple clangd 21.0.0 over stdio before it was written, then by `RealClangdExtensionTests`:
+
+| Feature | Protocol (as clangd 21 answers it) | In CsCode |
+|---|---|---|
+| Switch Between Source/Header | `textDocument/switchSourceHeader`; params are a bare `TextDocumentIdentifier` (`{"uri"}`: a `{"textDocument"}` wrapper is refused with -32602); answers the counterpart's URI or null | command `clangd.switchheadersource` (vscode-clangd's id and title); VS Code keymap Alt+O, ⌥⌘O on macOS (vscode-clangd's key); Visual Studio keymap Ctrl+K Ctrl+O, ⌘K ⌘O (Visual Studio's Toggle Header/Code File; ⌥⌘O already toggles Output there). No counterpart: a status-bar message |
+| Inactive preprocessor regions | the client offers `capabilities.textDocument.inactiveRegionsCapabilities.inactiveRegions`; clangd then advertises `inactiveRegionsProvider`, sends `textDocument/inactiveRegions` (`{textDocument:{uri}, regions: Range[]}`) after every parse, and stops colouring skipped code as comment tokens. The regions cover the skipped lines only, not the `#if 0` / `#endif` lines | additive Core `IInactiveRegionsProvider`; the editor's `InactiveRegionsFeature` draws those ranges at 55% opacity (vscode-clangd's `clangd.inactiveRegions.opacity` default), keeping each token's colour. Anchored, so they follow edits until the next report; a stopped server clears them. Bounded: 256 documents, 10,000 regions each |
+| Show AST | `textDocument/ast` with `{textDocument, range}`; `astProvider: true`; answers an `ASTNode` (`role`, `kind`, `detail`, `arcana`, `range`, `children`), the innermost node containing the range | command `clangd.ast` ("Show AST"), at the caret; the tree is shown as text in a read-only `cscode-virtual:` document (`main.ast [AST]`), labelled as vscode-clangd's AST view labels nodes (the kind alone for expressions, statements and declarations, else "kind role"), with the detail and 1-based lines; at most 20,000 nodes |
+| File status | `initializationOptions.clangdFileStatus: true` makes clangd send `textDocument/clangd.fileStatus` (`{uri, state}`: "parsing includes, running Update", "building AST", "idle") | status bar "clangd: &lt;state&gt;" for the active editor's file, as vscode-clangd shows it; nothing for files clangd has not reported; it goes when the server stops. The user's own `initializationOptions` are kept |
+
+Two hooks were added to the pattern for this, since the protocol model has no members for either: `AddClientCapabilities(capabilities)`
+(any capability outside `experimental`) and `AddInitializationOptions(options)`. With an extension, `initialize` is sent as JSON.
+
+### clangd's default arguments
+
+CsCode starts clangd with no arguments of its own (vscode-clangd's `clangd.arguments` is `[]` too), apart from `--compile-commands-dir` when
+the CMake integration points it at a build directory (§1). The defaults were checked with clangd 21 rather than taken from its `--help`, which
+does not print them:
+
+| Option | clangd 21's default | Kept because |
+|---|---|---|
+| `--background-index` | on | needed for workspace-wide references and symbols. The index goes next to the compilation database: `build/.cache/clangd/index/` with CMake (the source tree stays clean), or `.cache/clangd/index/` at the root of a project with its own `compile_commands.json` (worth a `.gitignore` line). It runs at `--background-index-priority=low`, and CsCode starts every server below normal priority already |
+| `--clang-tidy` | on | runs only the checks a `.clang-tidy` file (or `.clangd`'s `Diagnostics.ClangTidy`) enables: with no such file, no tidy check fires, and `--clang-tidy=false` silenced a configured one in the check |
+| `--header-insertion` | `iwyu` | completing a symbol from another header adds its `#include`, as in VS Code |
+| `--completion-style` | `detailed` | one item per overload. It only matters for C++; C has no overloads |
+
+### `.clang-format` and `.clang-tidy`
+
+Both are honoured with no setting (checked with clangd 21): a `.clang-format` with `IndentWidth: 7` made Format Document indent by 7 although
+the editor sent a tab size of 4, and a `.clang-tidy` enabling `readability-braces-around-statements` produced that diagnostic (source
+`clang-tidy`). Without a `.clang-format`, clangd formats in LLVM style (2 spaces) whatever the editor's tab size is.
+
 ## 4. Projects without CMake
 
 Not done in this stage (SHOULD): the "Create compile_flags.txt" command, Build and Run Active File, and docs for bear / compiledb. clangd
