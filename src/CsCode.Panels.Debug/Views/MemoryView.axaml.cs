@@ -17,6 +17,8 @@ public sealed partial class MemoryView : UserControl, IDisposable, IToolWindowFo
     private const double RowHeight = 18;
     private ScrollViewer? _scroll;
     private MemoryViewModel? _model;
+    private MemoryRow? _pendingReveal;
+    private bool _revealing;
 
     public MemoryView()
     {
@@ -39,6 +41,7 @@ public sealed partial class MemoryView : UserControl, IDisposable, IToolWindowFo
     {
         if (_model is { } old) old.RevealRequested -= Reveal;
         _model = model;
+        _pendingReveal = null;
         if (model is null) return;
         model.RevealRequested += Reveal;
         Dispatch(() => Reveal(model.TargetRow));
@@ -51,7 +54,12 @@ public sealed partial class MemoryView : UserControl, IDisposable, IToolWindowFo
         if (_scroll is not null) return;
         _scroll = Rows.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
         if (_scroll is null) return;
-        _scroll.ScrollChanged += (_, _) => ReportVisible();
+        _scroll.ScrollChanged += (_, _) =>
+        {
+            if (_revealing) return;
+            if (_pendingReveal is { } row) Reveal(row);
+            else ReportVisible();
+        };
     }
 
     private void ReportVisible()
@@ -62,11 +70,24 @@ public sealed partial class MemoryView : UserControl, IDisposable, IToolWindowFo
         m.SetVisibleRows(first, last);
     }
 
-    /// <summary>The reference's row at the top of the view (after a navigation).</summary>
+    /// <summary>
+    /// The reference's row at the top of the view (after a navigation). A window opened by View Binary Data gets its model, and the row, before
+    /// the shell lays it out: until the list has a viewport the offset would stay at the top of the range, so the row waits for the layout.
+    /// </summary>
     private void Reveal(MemoryRow row)
     {
-        Rows.ScrollIntoView(row);
-        if (_scroll is { } s) s.Offset = new Vector(s.Offset.X, row.Index * RowHeight);
+        _pendingReveal = row;
+        if (_revealing || _scroll is not { Viewport.Height: > 0 } s) return;
+        var top = row.Index * RowHeight;
+        _revealing = true;
+        try
+        {
+            Rows.ScrollIntoView(row);
+            s.Offset = new Vector(s.Offset.X, top);
+        }
+        finally { _revealing = false; }
+        if (Math.Abs(s.Offset.Y - top) >= 1) return; // the extent is not that long yet: the next layout
+        _pendingReveal = null;
         ReportVisible();
     }
 
