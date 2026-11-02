@@ -10,12 +10,16 @@ namespace CsCode.Panels.Testing;
 /// "Run Test | Debug Test" above each test the Test Explorer knows (the C# Dev Kit / rust-analyzer look), through the editor's code lens: the
 /// same tests as the gutter glyphs (<see cref="TestGutterProvider"/>), so they appear after discovery and follow the explorer's tree; only a
 /// change of the tests or their places refreshes them (<see cref="TestGutterProvider.TestsChanged"/>), never a result during a run. A click runs
-/// <see cref="RunCommand"/> / <see cref="DebugCommand"/> with the test's id. <c>testing.codeLens</c> = false turns them off.
+/// <see cref="RunCommand"/> / <see cref="DebugCommand"/> with the test's id. Above a group of tests a provider scans (a fixture class, a suite:
+/// <see cref="CsCode.Testing.Engine.ITestProvider.ScanGroups"/>) "Run All Tests | Debug All Tests" run its tests (<see cref="RunAllCommand"/> /
+/// <see cref="DebugAllCommand"/> with their ids). <c>testing.codeLens</c> = false turns them off.
 /// </summary>
 internal sealed class TestCodeLensProvider : ICodeLensProvider, IDisposable
 {
     public const string RunCommand = "testing.codeLens.run";
     public const string DebugCommand = "testing.codeLens.debug";
+    public const string RunAllCommand = "testing.codeLens.runAll";
+    public const string DebugAllCommand = "testing.codeLens.debugAll";
 
     private readonly TestGutterProvider _tests;
     private readonly Func<bool> _enabled;
@@ -47,13 +51,27 @@ internal sealed class TestCodeLensProvider : ICodeLensProvider, IDisposable
             lenses.Add(new CodeLens(at, new Command("Run Test", RunCommand, [id])));
             lenses.Add(new CodeLens(at, new Command("Debug Test", DebugCommand, [id])));
         }
-        return lenses;
+        foreach (var (group, ids) in _tests.GroupsIn(document))
+        {
+            var at = TextRange.At(group.Line, 0);
+            var arg = JsonSerializer.SerializeToElement(ids);
+            lenses.Add(new CodeLens(at, new Command("Run All Tests", RunAllCommand, [arg])));
+            lenses.Add(new CodeLens(at, new Command("Debug All Tests", DebugAllCommand, [arg])));
+        }
+        return [.. lenses.OrderBy(l => l.Range.Start.Line)];
     }
 
     /// <summary>The handler of both commands: the test id is the only argument.</summary>
     internal static async ValueTask<object?> RunAsync(TestGutterProvider tests, CommandInvocation invocation, bool debug)
     {
         if (invocation.Arg<string>(0) is { Length: > 0 } id) await tests.RunAsync(id, debug, invocation.Cancellation).ConfigureAwait(false);
+        return null;
+    }
+
+    /// <summary>The handler of the group commands: the tests' ids are the only argument.</summary>
+    internal static async ValueTask<object?> RunAllAsync(TestGutterProvider tests, CommandInvocation invocation, bool debug)
+    {
+        if (invocation.Arg<string[]>(0) is { Length: > 0 } ids) await tests.RunAsync(ids, debug).ConfigureAwait(false);
         return null;
     }
 

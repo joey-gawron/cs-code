@@ -71,6 +71,12 @@ public sealed record TestRunOutcome(int? ExitCode, string? Error = null)
 /// <summary>A test declared in a source file, as a scan of its text finds it: the provider's id (or the end of it) and its 0-based line.</summary>
 public sealed record SourceTest(string Name, int Line, string Label);
 
+/// <summary>
+/// Tests a source file declares together (a fixture class, a suite block), as a scan of its text finds them: where the group is declared
+/// (0-based line) and its tests, which the editor's "Run All Tests" lens runs.
+/// </summary>
+public sealed record SourceTestGroup(string Name, int Line, IReadOnlyList<SourceTest> Tests);
+
 /// <summary>Limits that keep a run's memory bounded (docs/MEMORY.md rule 3/4).</summary>
 public static class TestLimits
 {

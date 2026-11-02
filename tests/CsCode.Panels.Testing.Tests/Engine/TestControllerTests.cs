@@ -135,6 +135,49 @@ public sealed class TestControllerTests
         Assert.Equal(TestOutcome.None, c.Tree.Projects[0].Outcome); // a test that never ran
     }
 
+    private static async Task WaitUntil(Func<bool> condition, string what)
+    {
+        for (var i = 0; i < 200 && !condition(); i++) await Task.Delay(25, TestContext.Current.CancellationToken);
+        Assert.True(condition(), what);
+    }
+
+    [Fact]
+    public async Task A_provider_whose_projects_changed_is_detected_again_alone_and_after_a_run()
+    {
+        var calc = new FakeProvider();
+        var calcProject = calc.AddProject("Calc.Tests", "/w/calc", FakeProvider.Test("Calc.MathTests.Adds", "/w/calc/MathTests.cs", 5));
+        var native = new FakeProvider("native");
+        var first = native.AddProject("first_tests", "/w/native", FakeProvider.Test("first.Tests.A", "/w/native/a.cpp", 1));
+        using var c = new TestController([calc, native], Inline.Post);
+        native.Changed.Fire(true);
+        Assert.Equal(0, native.Detections); // before the first discovery: nothing to update
+        await c.SetFoldersAsync(["/w"]);
+        var calcDetections = calc.Detections;
+
+        // a build system's target went and another came: only this provider's projects change
+        native.Projects.Clear();
+        var second = native.AddProject("second_tests", "/w/native", FakeProvider.Test("second.Tests.B", "/w/native/b.cpp", 2));
+        native.Changed.Fire(true);
+        await WaitUntil(() => c.Tree.FindTest("second.Tests.B") is not null, "the new project's tests");
+        Assert.Null(c.Tree.FindProject(first.Key));
+        Assert.Equal(TestOutcome.None, c.Tree.FindTest("Calc.MathTests.Adds")!.Outcome);
+        Assert.NotNull(c.Tree.FindProject(calcProject.Key));
+        Assert.Equal(calcDetections, calc.Detections);
+
+        // while a run is going the tree waits: the run's results land on the nodes it has, then the provider is detected again
+        calc.RunGate = new TaskCompletionSource();
+        var run = c.RunAllAsync();
+        native.Tests[second.Key].Add(FakeProvider.Test("second.Tests.C", "/w/native/b.cpp", 5));
+        native.Changed.Fire(true);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        Assert.Null(c.Tree.FindTest("second.Tests.C"));
+        calc.RunGate.SetResult();
+        Assert.True(await run);
+        await WaitUntil(() => c.Tree.FindTest("second.Tests.C") is not null, "the test added during the run");
+        Assert.Equal(TestOutcome.Passed, c.Tree.FindTest("second.Tests.B")!.Outcome);
+        Assert.Equal(TestOutcome.Passed, c.Tree.FindTest("Calc.MathTests.Adds")!.Outcome);
+    }
+
     [Fact]
     public async Task A_result_for_an_unknown_test_adds_it()
     {

@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Text;
+using CsCode.Core.Build;
 using CsCode.Core.Text;
 
 namespace CsCode.Testing.Providers.Cpp;
@@ -203,6 +204,47 @@ public sealed class CppExecutables
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return CppFramework.None; }
         finally { ArrayPool<byte>.Shared.Return(buffer); }
+    }
+
+    /// <summary>
+    /// The framework a CMake target links, from the File API's view of it (<see cref="CMakeTarget"/>): one of the project's own framework
+    /// targets among its dependencies (<c>gtest_main</c>, <c>Catch2WithMain</c> when the framework comes from <c>FetchContent</c> or
+    /// <c>add_subdirectory</c>), else a framework library on its link line (an imported <c>GTest::gtest_main</c> or <c>Catch2::Catch2WithMain</c>
+    /// shows there as <c>libgtest_main.a</c>, <c>libCatch2Maind.a</c>, <c>-lgtest</c> or <c>gtest.lib</c>). doctest is header-only, so nothing
+    /// there names it unless the target links <c>doctest_with_main</c>: None.
+    /// </summary>
+    public static CppFramework FromTarget(CMakeTarget target)
+    {
+        foreach (var name in target.Dependencies.Concat(target.LinkLibraries.Select(LibraryName)))
+            if (FrameworkLibrary(name) is var f and not CppFramework.None) return f;
+        return CppFramework.None;
+    }
+
+    /// <summary>A framework's library by name, with or without the <c>d</c> debug postfix (GoogleTest's and Catch2's debug builds add it).</summary>
+    private static CppFramework FrameworkLibrary(string name) => Library(name) is var f and not CppFramework.None
+        ? f
+        : name.Length > 1 && name.EndsWith('d') ? Library(name[..^1]) : CppFramework.None;
+
+    private static CppFramework Library(string name) => name.ToLowerInvariant() switch
+    {
+        "gtest" or "gtest_main" or "gmock" or "gmock_main" => CppFramework.GoogleTest,
+        "catch2" or "catch2main" or "catch2withmain" => CppFramework.Catch2,
+        "doctest_with_main" => CppFramework.Doctest,
+        _ => CppFramework.None,
+    };
+
+    /// <summary>
+    /// A link-line fragment's library name: <c>-lgtest</c> → <c>gtest</c>; a path's file name up to its first dot, without <c>lib</c>
+    /// (<c>/x/lib/libgtest_main.a</c> → <c>gtest_main</c>, <c>libgtest.so.1.17.0</c> → <c>gtest</c>, <c>gtest.lib</c> → <c>gtest</c>).
+    /// </summary>
+    internal static string LibraryName(string fragment)
+    {
+        var f = fragment.Trim().Trim('"');
+        if (f.StartsWith("-l", StringComparison.Ordinal)) return f[2..];
+        if (f.StartsWith('-')) return "";
+        var name = f[(f.LastIndexOfAny(['/', '\\']) + 1)..];
+        if (name.IndexOf('.') is var dot and > 0) name = name[..dot];
+        return name.StartsWith("lib", StringComparison.Ordinal) && name.Length > 3 ? name[3..] : name;
     }
 
     /// <summary>A short name for the framework (the explorer shows it on the project).</summary>

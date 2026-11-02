@@ -193,6 +193,44 @@ public sealed class CppScannerTests
         ], found);
     }
 
+    [Fact]
+    public void Scanner_groups_tests_by_their_fixture_class_and_doctest_suite()
+    {
+        const string text = """
+            #include <gtest/gtest.h>
+            class Fixture : public ::testing::Test {
+             protected:
+              int value = 4;
+            };
+            TEST_F(Fixture, UsesValue) {}
+            TEST(MathTest, Adds) {}
+            // class Commented : public ::testing::Test {};
+            class Param : public testing::TestWithParam<int> {};
+            TEST_P(Param, IsPositive) {}
+            TEST_F(Fixture, Again) {}
+            struct Fx { int x = 1; };
+            enum class Color : int { Red };
+            TEST_CASE_METHOD(Fx, "fixture case", "[fx]") {}
+            TEST_SUITE("math") {
+              TEST_CASE("in suite") { if (true) {} }
+              TEST_CASE("also in suite") {}
+            }
+            TEST_CASE("outside") {}
+            TEST_SUITE_BEGIN("begun");
+            TEST_CASE("between") {}
+            TEST_SUITE_END();
+            TEST_SUITE("empty") {}
+            class Unused : public ::testing::Test {};
+            """;
+        var groups = CppTestScanner.ScanGroups(text);
+        Assert.Equal(
+        [
+            ("Fixture", 1, "Fixture.UsesValue, Fixture.Again"), ("Param", 8, "Param.IsPositive"), ("Fx", 11, "fixture case"),
+            ("math", 14, "in suite, also in suite"), ("begun", 19, "between"),
+        ], groups.Select(g => (g.Name, g.Line, string.Join(", ", g.Tests.Select(t => t.Name)))));
+        Assert.Empty(CppTestScanner.ScanGroups("class NoTests : public ::testing::Test {};"));
+    }
+
     [Theory]
     [InlineData("MathTest.Adds", "MathTest.Adds", true)]
     [InlineData("Numbers/Param.IsPositive/2", "Param.IsPositive", true)]
