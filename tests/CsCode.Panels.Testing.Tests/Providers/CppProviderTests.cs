@@ -123,8 +123,10 @@ public sealed class CppProviderTests
         Assert.Contains("gtest_tests/MathTest.Adds", sink.StartedIds); // the console's [ RUN ] lines, as they come
         var failed = sink.Result("gtest_tests/MathTest.Fails");
         Assert.Equal((TestOutcome.Failed, new TestLocation(source, 8), "from the test"), (failed.Outcome, failed.FailureLocation, failed.Output));
-        Assert.Equal(TestOutcome.Skipped, sink.Result("gtest_tests/MathTest.DISABLED_Later").Outcome);
-        Assert.Equal(11, sink.Results.Count); // the JSON settles nothing twice
+        // what the executable reported beyond the request is kept, except "skipped" for tests it did not run (doctest reports its filtered ones so)
+        Assert.Equal(TestOutcome.Passed, sink.Result("gtest_tests/MathTest.Adds").Outcome);
+        Assert.DoesNotContain(sink.Results, r => r.TestId is "gtest_tests/MathTest.DISABLED_Later" or "gtest_tests/MathTest.Skips");
+        Assert.Equal(9, sink.Results.Count); // the JSON settles nothing twice
         Assert.Contains(sink.Lines, l => l.StartsWith("> " + exe, StringComparison.Ordinal));
     }
 

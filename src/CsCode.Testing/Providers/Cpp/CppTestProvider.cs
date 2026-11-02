@@ -290,7 +290,7 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
             var spec = new ProcessSpec(project.FilePath, invocation.Arguments, WorkingDirectory(project));
             sink.Status($"Running {project.Name}…");
             sink.Output($"> {spec}");
-            var reporter = new Reporter(project, sink);
+            var reporter = new Reporter(project, sink, request.TestIds);
             GoogleTestFormat.ConsoleParser? console = framework == CppFramework.GoogleTest ? reporter.Console() : null;
             var exit = await context.Processes.RunAsync(spec, line => { sink.Output(line); console?.OnLine(line); }, sink.Output, ct).ConfigureAwait(false);
             if (exit is null) return TestRunOutcome.Cancelled;
@@ -318,7 +318,7 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
             sink.Output($"> {type}: {new ProcessSpec(project.FilePath, invocation.Arguments, WorkingDirectory(project))}");
             var session = await debugger.StartAsync(config, ct).ConfigureAwait(false);
             if (session is null) return new TestRunOutcome(-1, $"The debugger ({type}) did not start: see the Debug Console.");
-            var reporter = new Reporter(project, sink);
+            var reporter = new Reporter(project, sink, request.TestIds);
             var console = framework == CppFramework.GoogleTest ? reporter.Console() : null;
             var exit = console is null
                 ? await DebugSessions.WaitForEndAsync(session, ct).ConfigureAwait(false)
@@ -358,15 +358,18 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
     };
 
     /// <summary>Turns a framework's results into the sink's, with ids and places in the folder.</summary>
-    private sealed class Reporter(TestProject project, ITestRunSink sink)
+    private sealed class Reporter(TestProject project, ITestRunSink sink, IReadOnlyList<string>? requested)
     {
         private readonly string _prefix = Prefix(project) + "/";
         private readonly HashSet<string> _reported = new(StringComparer.Ordinal);
+        private readonly HashSet<string>? _requested = requested?.Select(RunnerName).ToHashSet(StringComparer.Ordinal);
 
         public GoogleTestFormat.ConsoleParser Console() => new(name => sink.Started(project, _prefix + name), Report);
 
         public void Report(CppTestResult r)
         {
+            // doctest reports the tests its filter left out as skipped: they were not run, and keep their last result
+            if (r.Outcome == TestOutcome.Skipped && _requested is not null && !_requested.Contains(r.Name)) return;
             lock (_reported) if (!_reported.Add(r.Name)) return;
             var failure = r.FailureFile is { Length: > 0 } f && r.Outcome == TestOutcome.Failed ? new TestLocation(Logical(f, project), Math.Max(0, r.FailureLine - 1)) : null;
             sink.Finished(project, new TestResult(_prefix + r.Name, r.Outcome, r.Duration, r.Message, null, r.Output, failure));
