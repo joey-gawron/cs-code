@@ -132,6 +132,22 @@ public class ZlsSupportTests
         Assert.Equal("Zig (zls): ZLS '0.17.0' does not support Zig '0.16.0'. A ZLS '0.16' release should be used instead.", Assert.Single(window.Messages).Message);
     }
 
+    [Fact]
+    public async Task Disposed_zls_support_leaves_nothing_behind_in_the_manager()
+    {
+        var servers = new FakeServers("zls");
+        await LeakAssert.NotRetainedAsync(async () =>
+        {
+            var support = new ZlsSupport(servers, new LspServices(new DocumentManager(), new LanguageFeatureRegistry(), new DiagnosticService()) { Configuration = new TestConfigurationService() },
+                () => new LspSettings(), NullLogger.Instance) { Run = (_, _, _) => Task.FromResult<string?>("0.17.0") };
+            servers.Changed.Fire([Running("0.17.0")]);
+            await Task.Delay(50, Ct);
+            support.Dispose();
+            servers.Changed.Fire([Running("0.17.0")]); // no handler left to start a check
+            return [support];
+        });
+    }
+
     // ------------------------------------------------------------------ real zls
 
     /// <summary>A real-zls environment with private HOME and caches, zig and zls from <see cref="ZigTools"/> (zls found through a search dir).</summary>
