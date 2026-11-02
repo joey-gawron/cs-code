@@ -8,6 +8,12 @@ namespace CsCode.Core.Languages;
 
 public sealed record MarkupContent(string Value, bool IsMarkdown = false)
 {
+    /// <summary>
+    /// VS Code's <c>MarkdownString.isTrusted</c>: its <c>command:</c> links run the command they name (<c>command:id?&lt;URI-encoded JSON
+    /// arguments&gt;</c>). Only CsCode's own code sets it (rust-analyzer's hover actions); a server's text never is. Additive (lang-2).
+    /// </summary>
+    public bool IsTrusted { get; init; }
+
     public static MarkupContent Plain(string text) => new(text, false);
     public static MarkupContent Markdown(string text) => new(text, true);
 }

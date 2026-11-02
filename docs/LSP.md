@@ -202,6 +202,44 @@ plus `didChange`/`didSave`/`didOpen`/`didClose`/`willSave*`, watched files, exec
   host next to their files and bridged by CsCode.Remote (docs/REMOTE.md), so a remote file never starts a local server. With `cscode.languageHost =
   process` this manager is not constructed at all: the same code runs in a local `cscode-server` child.
 
+## 7a. Server extensions (one class per server: rust-analyzer now, clangd and Roslyn next)
+
+What a server's own VS Code extension adds on top of plain LSP — experimental capabilities, its commands, its custom notifications, members it
+puts in standard answers — CsCode builds in as one `LanguageServerExtension` subclass per server (`src/CsCode.Lsp/Extensions/`), listed in
+`ServerExtensions.CreateBuiltins()`. There is no extension *system*: these are compiled in, one class each.
+
+**Lifetimes.** One extension instance per manager. `Register(host)` runs once when the manager is built: commands and other app-lifetime items go
+in `host.Disposables` (released with the manager), so a command exists before any server runs and, when invoked, asks the server for the active
+editor (`host.ActiveSession(this)`, `host.SessionFor(this, uri)`, `host.Sessions(this)`). One `ServerExtensionSession` per running server (per
+workspace root), created by `LanguageClient` when the server starts:
+* `Attach(session)` runs before the connection listens — the only time `session.OnNotification(method, handler, latestWins)` can add a
+  handler (StreamJsonRpc refuses new methods afterwards). A handler gets a copy of the params on the Language lane; `latestWins` drops a queued
+  one when a newer one arrives (status-like notifications).
+* `AddExperimentalCapabilities(experimental)` fills `initialize`'s `capabilities.experimental`.
+* `OnInitialized(session)` after the handshake (lane); `OnStopped(session)` when the server stops (crash, restart, shutdown), after which the
+  session's `Disposables` are released, its `State` slot cleared and its notification sinks detached; the client drops the session, so a stopped
+  server keeps nothing of the extension alive (`A_stopped_server_releases_its_session…`).
+* `session.RequestAsync(method, params)` / `RequestAsync(method, document, (id, mapper) => params)` (the document's pending edits reach the server
+  first; no feature registration gates it; never superseded by a later call) return the raw answer or null (not running, null answer, error,
+  timeout — logged); `Notify`, `Mapper` (Core ⇄ server positions), `Log` (the server's Output channel), `Post` (run on the lane).
+
+**Hooks into standard answers** (all on the Language lane, all optional): `WantsRawHover` + `AdjustHover(session, raw, hover, uri)` (members
+the protocol has no slot for, e.g. rust-analyzer's hover `actions`); `AdjustCodeLenses(session, lenses, uri)` (drop, keep or rewrite);
+`RewritesAnswerOf(method)` + `RewriteAnswer(session, method, raw)` (rewrite a typed request's raw answer before it is deserialised, e.g.
+snippet text edits). A hook that throws is logged in the server's Output channel ("<name> <hook> failed: …") and the session goes on as if the
+extension had not been there for that call.
+
+**Threading.** Command handlers run on the caller's thread (the UI thread from a key or the palette) and only enqueue; everything that maps or
+parses runs on the Language lane. **Adding one** (stage 3's clangd, stage 5's Roslyn): a class deriving from `LanguageServerExtension` whose
+`AppliesTo` matches the built-in definition's id, plus one line in `CreateBuiltins()`; tests drive it through
+`new LspTestEnv(extensions: [new MyExtension()])` against the fake server (`ServerExtensionTests` is the worked example) and a real-server suite.
+
+**Read-only results** (`ReadOnlyDocuments`, registered by `AddCsCodeLsp` as the `IFileSystemProvider` of the `lsp-readonly:` scheme):
+`Put(producer, kind, fileName, text)` returns `lsp-readonly:/<producer>/<kind>/<fileName>` to open with `INavigationService.OpenAsync`; its
+`StatAsync` says read-only, so the editor opens it like a file and refuses edits; the language comes from the file name; the 32 most recent are
+kept. Additive `LspServices` members for extensions: `StatusBar` (`IStatusBarService`), `ReadOnlyDocuments`, lazy `Debug` (`IDebugService`)
+and `TaskTerminals` (`ITaskTerminalHost`).
+
 ## 8. Settings
 
 | Key | Default | |
@@ -236,6 +274,8 @@ plus `didChange`/`didSave`/`didOpen`/`didClose`/`willSave*`, watched files, exec
 ## 9. Core changes made by this module (all additive)
 * Stage 5: `Core/Text/VirtualDocuments.cs` (`VirtualDocumentUri`, `VirtualDocumentKinds`, `IVirtualDocumentProvider`, `IVirtualDocumentService`,
   `VirtualDocumentService`, registered by `AddCsCodeCore` as the `cscode-virtual` scheme's `IFileSystemProvider`).
+* `Core/Languages/LanguageModels.cs`: `MarkupContent.IsTrusted` (lang-2): `command:` links of trusted content run their command (CsCode's own
+  content only, never a server's text: rust-analyzer's hover actions).
 * `Core/Languages/LanguageServers.cs`: `LanguageServerState.Unresponsive` appended to the enum. **A `switch` expression over the enum without a
   discard arm in other modules will need a case.**
 * New file `Core/Languages/AdditionalLanguageProviders.cs`: `ISemanticTokensRangeProvider`, `ILinkedEditingRangeProvider` (+`LinkedEditingRanges`),

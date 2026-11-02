@@ -158,6 +158,8 @@ public sealed class LspTestEnv : IAsyncDisposable
     /// <summary>Library and generated documents (go to definition into metadata): the shell's Core service.</summary>
     public VirtualDocumentService VirtualDocuments { get; } = new();
     public LanguageServerManager Manager { get; }
+    public TestStatusBarService StatusBar { get; } = new();
+    public CsCode.Lsp.Extensions.ReadOnlyDocuments ReadOnlyDocuments { get; } = new();
 
     public string Root => Dir.Path;
 
@@ -175,7 +177,8 @@ public sealed class LspTestEnv : IAsyncDisposable
     }
 
     /// <param name="realServers">Use the real child-process connection factory, the built-in definitions and the repo's tool directory (integration tests).</param>
-    public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false, bool memoryMonitor = false, IDiagnosticService? diagnostics = null, IOutputService? output = null, bool realServers = false, ILspConnectionFactory? connectionsOverride = null)
+    public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false, bool memoryMonitor = false, IDiagnosticService? diagnostics = null, IOutputService? output = null, bool realServers = false, ILspConnectionFactory? connectionsOverride = null,
+        IReadOnlyList<CsCode.Lsp.Extensions.LanguageServerExtension>? extensions = null)
     {
         if (realServers) builtins = true;
         Memory = memoryMonitor ? new FakeMemoryMonitor() : null;
@@ -192,7 +195,7 @@ public sealed class LspTestEnv : IAsyncDisposable
         if (!builtins) RemoveBuiltins(); // before the manager exists: no race with its first recompute
         Workspace.AddFolder(Dir.Path);
 
-        var services = new LspServices(Documents, Registry, Diagnostics)
+        var lsp = new LspServices(Documents, Registry, Diagnostics)
         {
             Configuration = Config,
             Workspace = Workspace,
@@ -205,8 +208,10 @@ public sealed class LspTestEnv : IAsyncDisposable
             Connections = connectionsOverride ?? (realServers ? null : Connections), // null: the manager uses the real DefaultLspConnectionFactory
             Memory = Memory,
             VirtualDocuments = VirtualDocuments,
+            StatusBar = StatusBar,
+            ReadOnlyDocuments = ReadOnlyDocuments,
         };
-        Manager = new LanguageServerManager(services);
+        Manager = extensions is null ? new LanguageServerManager(lsp) : new LanguageServerManager(lsp, extensions);
     }
 
     private void RemoveBuiltins()
@@ -311,5 +316,23 @@ public sealed class LspTestEnv : IAsyncDisposable
         await Manager.DisposeAsync();
         Paths.Dispose();
         Dir.Dispose();
+    }
+}
+
+/// <summary>A status bar that keeps its items (server extensions' status items).</summary>
+public sealed class TestStatusBarService : IStatusBarService
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<string, StatusBarItemModel> _items = new();
+    private readonly Emitter<IReadOnlyList<StatusBarItemModel>> _changed = new();
+
+    public IReadOnlyList<StatusBarItemModel> Items { get { lock (_gate) return [.. _items.Values]; } }
+    public IEventSource<IReadOnlyList<StatusBarItemModel>> Changed => _changed;
+    public StatusBarItemModel? Get(string id) { lock (_gate) return _items.GetValueOrDefault(id); }
+
+    public IDisposable Set(StatusBarItemModel item)
+    {
+        lock (_gate) _items[item.Id] = item;
+        return Disposable.Create(() => { lock (_gate) if (_items.TryGetValue(item.Id, out var cur) && ReferenceEquals(cur, item)) _items.Remove(item.Id); });
     }
 }
