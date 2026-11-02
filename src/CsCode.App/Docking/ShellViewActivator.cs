@@ -19,6 +19,20 @@ public sealed class ShellViewActivator(IServiceProvider services, IUiDispatcher 
         return await ui.InvokeAsync(() => Show(viewId)).ConfigureAwait(false);
     }
 
+    public async ValueTask<bool> CloseViewAsync(string viewId, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return await (await ui.InvokeAsync(() => CloseAsync(viewId)).ConfigureAwait(false)).ConfigureAwait(false);
+    }
+
+    /// <summary>UI thread: closes the document view <paramref name="viewId"/>'s tab (<see cref="DocumentWell.OpenView"/> keys it <c>view:id</c>).</summary>
+    private async Task<bool> CloseAsync(string viewId)
+    {
+        var well = services.GetRequiredService<DocumentWell>();
+        if (well.Tabs.FirstOrDefault(t => t.Id == "view:" + viewId) is not { } tab) return false;
+        return await well.CloseAsync(tab, prompt: false).ConfigureAwait(true);
+    }
+
     /// <summary>UI thread: shows the tool window, or opens the document view, <paramref name="viewId"/>. False when no such view is registered.</summary>
     public bool Show(string viewId)
     {

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Avalonia.Headless.XUnit" />
+    <PackageReference Include="Avalonia.Skia" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../../src/CsCode.Ui/CsCode.Ui.csproj" />
+    <ProjectReference Include="../../src/CsCode.ProjectTemplates/CsCode.ProjectTemplates.csproj" />
+    <ProjectReference Include="../../src/CsCode.Panels.NewProject/CsCode.Panels.NewProject.csproj" />
+    <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -56,7 +56,10 @@ public static class ShellMenus
     public static IReadOnlyList<MenuNode> Build() =>
     [
         Sub("_File",
-            M("_New File", KnownCommands.NewUntitledFile, icon: IconKey.NewFile),
+            // Visual Studio's File > New: a project (the New Project page, CsCode.Panels.NewProject) or an untitled file.
+            Sub("_New",
+                M("_Project...", Panels.NewProject.NewProjectHost.OpenCommand, icon: "new-folder"),
+                M("_File", KnownCommands.NewUntitledFile, icon: IconKey.NewFile)),
             // A new unnamed session (background mode: session processes register it); a foreground run is one window, so it stays disabled there.
             M("New Win_dow", Background.SessionCommandIds.NewWindow),
             M("_Open File...", KnownCommands.OpenFile, icon: IconKey.File),

@@ -18,6 +18,7 @@ using CsCode.Lsp;
 using CsCode.Panels.Debug;
 using CsCode.Panels.Git;
 using CsCode.Panels.Navigation;
+using CsCode.Panels.NewProject;
 using CsCode.Panels.Search;
 using CsCode.Panels.Testing;
 using CsCode.Panels.Terminal;
@@ -66,6 +67,7 @@ public static class AppServices
         services.AddCsCodeTerminal(); // the integrated terminal (ITerminalService) and its Terminal tool window
         services.AddCsCodeNavigationPanels(); // the Hierarchy window: call and type hierarchy (docs/NAVIGATION.md)
         services.AddCsCodeGit(); // source control: git status, Source Control window, Explorer decorations, gutter markers, blame
+        services.AddCsCodeNewProject(); // File > New > Project...: the New Project page and its generators (docs/NEW-PROJECT.md)
         services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
         services.AddCodeActionsOnSave(); // after AddCsCodeRemote (see there): editor.codeActionsOnSave, the first will-save participant
         configure?.Invoke(services); // dev/test host: replace anything above
