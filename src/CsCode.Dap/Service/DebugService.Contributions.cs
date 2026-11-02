@@ -70,6 +70,11 @@ public sealed partial class DebugService
             new ConfigurationProperty(CodeLldbAdapterFactory.ConsoleModeSetting, Json(CodeLldbAdapterFactory.DefaultConsoleMode),
                 "CodeLLDB's Debug Console mode (VS Code's CodeLLDB setting): 'evaluate' evaluates expressions (LLDB commands start with '`' or '/cmd'), 'commands' runs LLDB commands, 'split' does both.",
                 Schema("""{"type":"string","enum":["commands","evaluate","split"]}""")),
+            new ConfigurationProperty(DebugpyAdapterFactory.SettingPath, Json(""),
+                "The debugpy used for Python interpreters that have none: its package directory (the one holding adapter/) or the adapter directory. Empty: CSCODE_DEBUGPY, then the pinned copy CsCode installs (after asking). User settings only.")
+            { Scope = machine },
+            new ConfigurationProperty(DebugpyAdapterFactory.EnvFileSetting, Json("${workspaceFolder}/.env"),
+                "The env file debugging Python reads when a launch configuration names no envFile (its variables under the configuration's env)."),
         ];
     }
 
@@ -84,6 +89,7 @@ public sealed partial class DebugService
         DebuggersSetting, NetCoreDbgAdapterFactory.SettingPath, JsDebugAdapterFactory.SettingPath, JsDebugAdapterFactory.NodeSettingPath,
         GdbAdapterFactory.SettingPath, GdbAdapterFactory.ArgsSettingPath, RequestTimeoutSetting, RustDebuggerSetting,
         CodeLldbAdapterFactory.SettingPath, CodeLldbAdapterFactory.ConsoleModeSetting, LldbDapAdapterFactory.SettingPath,
+        DebugpyAdapterFactory.SettingPath, DebugpyAdapterFactory.EnvFileSetting,
     ];
 
     private void InitializeContributions()

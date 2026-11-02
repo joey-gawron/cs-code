@@ -44,15 +44,6 @@ public sealed class DebugpyAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         _p = platform;
         _logger = platform.Logger("CsCode.Dap.Debugpy");
         _installer = installer ?? new DebugpyInstaller(logger: _logger);
-        _p.Configuration?.RegisterProperties(
-        [
-            new ConfigurationProperty(SettingPath, null,
-                "The debugpy used for interpreters without one: its package directory (the one holding adapter/), or the adapter directory. Unset: the pinned copy CsCode installs.",
-                JsonDocument.Parse("""{"type":["string","null"]}""").RootElement.Clone()) { Scope = ConfigurationScope.Machine },
-            new ConfigurationProperty(EnvFileSetting, JsonSerializer.SerializeToElement("${workspaceFolder}/.env"),
-                "The env file debugging (and testing) Python reads when a launch configuration names none.",
-                JsonDocument.Parse("""{"type":"string"}""").RootElement.Clone()),
-        ]);
     }
 
     public static IEnumerable<BuiltinDebugAdapter> Builtins(DebugpyAdapterFactory factory) =>
