@@ -65,6 +65,21 @@ changes, and only then; a new directory restarts it once). `cscode.cmake.clangdC
 failed configure), `$(gear) Build [target]` (click: build; while building `Building …` and a click cancels), `[launch target]` (click:
 choose), `$(debug-alt)` (Debug) and `$(play)` (Run in the terminal). The items follow the project of the active editor.
 
+**Tasks** (`CMakeTaskProvider`, an `ITaskProvider`): Run Task lists VS Code CMake Tools' tasks for the folder's project: **CMake: configure**,
+**CMake: build** (the selected default target; build group), **CMake: clean**, **CMake: clean rebuild** (`--clean-first`; build group),
+**CMake: install** and **CMake: test** (ctest in the build directory, `-C <config>`, `--output-on-failure`; test group). Each runs the command
+line the status bar's command runs (same directories, presets, build type, generator and `cmake.*` settings) in a task terminal; the build
+tasks use `$gcc`, which finds the files because the CMake generators hand the compiler absolute source paths (checked with a real build:
+`/…/src/main.c:2:12: error: …`). They are usable as `preLaunchTask` and in `dependsOn` by label. Their definitions are CMake Tools'
+(`{"type": "cmake", "command": "build" | "configure" | "clean" | "cleanRebuild" | "install" | "test", "targets", "preset", "args",
+"options": {"cwd", "environment"}}`), so a tasks.json written for VS Code customises them; an entry with targets, a preset, args or options
+runs as written, and CMake Tools' template preset `${command:cmake.activeBuildPresetName}` means the selected preset. `workflow` and `package`
+are not run (the runner reports the entry).
+
+**Configures outside CsCode.** The integration watches each build directory's File API reply directory: when cmake writes a new reply (a
+**CMake: configure** task, a terminal, or the re-run `cmake --build` starts after a CMakeLists.txt edit), it reads the new targets. Listing
+the tasks writes CsCode's File API query into the build directory, as configuring does, so a configure run as a task leaves a reply.
+
 **Threading.** All state lives on the integration's own dedicated lane (`CMakeLane`, a below-normal thread with its own synchronisation
 context); every public call only enqueues. cmake and the build run as tracked child processes under `nice -n 10` (which the compilers
 inherit), their output batched (every 100 ms or 500 lines) to the channel and, on the lane, to the problem matcher. One operation per project

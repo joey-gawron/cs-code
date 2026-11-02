@@ -41,6 +41,10 @@ public sealed class CMakeService : ICMakeService, IDisposable
     private readonly ICMakeProcesses _processes;
     private readonly IConfigurationService? _config;
     private readonly IWorkspaceService? _workspace;
+    private readonly IFileWatcher? _watcher;
+    private readonly object _watchGate = new();
+    // per source directory: the reply directory watched and its subscription
+    private readonly Dictionary<string, (string ReplyDir, IDisposable Watch)> _replyWatches = new(StringComparer.Ordinal);
     private readonly IStateStorage? _state;
     private readonly IDiagnosticService? _diagnostics;
     private readonly IOutputService? _outputs;
@@ -58,13 +62,17 @@ public sealed class CMakeService : ICMakeService, IDisposable
     private IOutputChannel? _channel;
     private volatile bool _disposed;
 
+    /// <param name="watcher">Watches the build directories' File API replies, so a configure run outside CsCode (a <c>CMake: configure</c> task,
+    /// a terminal, the re-run <c>cmake --build</c> starts after a CMakeLists.txt edit) updates the targets; null: only CsCode's own configures do.</param>
     public CMakeService(IWorkspaceService? workspace, IConfigurationService? config, IStateStorage? state, IDiagnosticService? diagnostics,
-        IOutputService? outputs, IDocumentManager? documents = null, IMemoryMonitor? memory = null, ILoggerFactory? loggers = null)
-        : this(workspace, config, state, diagnostics, outputs, documents, new CMakeProcesses(memory), loggers, null) { }
+        IOutputService? outputs, IDocumentManager? documents = null, IMemoryMonitor? memory = null, ILoggerFactory? loggers = null, IFileWatcher? watcher = null)
+        : this(workspace, config, state, diagnostics, outputs, documents, new CMakeProcesses(memory), loggers, null, watcher) { }
 
     internal CMakeService(IWorkspaceService? workspace, IConfigurationService? config, IStateStorage? state, IDiagnosticService? diagnostics,
-        IOutputService? outputs, IDocumentManager? documents, ICMakeProcesses processes, ILoggerFactory? loggers, Func<string, string?>? environment)
+        IOutputService? outputs, IDocumentManager? documents, ICMakeProcesses processes, ILoggerFactory? loggers, Func<string, string?>? environment,
+        IFileWatcher? watcher = null)
     {
+        _watcher = watcher;
         _workspace = workspace;
         _config = config;
         _state = state;
@@ -275,7 +283,11 @@ public sealed class CMakeService : ICMakeService, IDisposable
             Reload(existing);
             next.Add(existing);
         }
-        foreach (var gone in _projects.Except(next)) gone.Current?.Cancel();
+        foreach (var gone in _projects.Except(next))
+        {
+            gone.Current?.Cancel();
+            Unwatch(gone.SourceDir);
+        }
         _projects.Clear();
         _projects.AddRange(next);
         Publish();
@@ -300,12 +312,45 @@ public sealed class CMakeService : ICMakeService, IDisposable
             p.Reply = null;
             p.State = CMakeProjectState.NotConfigured;
         }
-        if (p.State != CMakeProjectState.Configuring && File.Exists(Path.Combine(p.BuildDir, "CMakeCache.txt")) && CMakeFileApi.Read(p.BuildDir, p.Configuration) is { } reply)
+        ReadReply(p);
+        WatchReply(p);
+    }
+
+    /// <summary>Reads the File API reply cmake left in the build directory, unless CsCode's own configure is running (lane).</summary>
+    private void ReadReply(ProjectState p)
+    {
+        if (p.State == CMakeProjectState.Configuring || !File.Exists(Path.Combine(p.BuildDir, "CMakeCache.txt")) || CMakeFileApi.Read(p.BuildDir, p.Configuration) is not { } reply) return;
+        if (p.Reply is null || !SameTargets(p.Reply, reply)) p.Generation++;
+        p.Reply = reply;
+        p.State = CMakeProjectState.Configured;
+    }
+
+    /// <summary>
+    /// Watches <paramref name="p"/>'s reply directory (it need not exist yet): cmake writes the reply's index file last, so the change that
+    /// brings it reads the whole new reply. A configure CsCode runs reads it itself at the end (<see cref="ReadReply"/> skips it meanwhile).
+    /// </summary>
+    private void WatchReply(ProjectState p)
+    {
+        if (_watcher is null || _disposed) return;
+        var replyDir = CMakeFileApi.ReplyDirectory(p.BuildDir);
+        lock (_watchGate)
         {
-            if (p.Reply is null || !SameTargets(p.Reply, reply)) p.Generation++;
-            p.Reply = reply;
-            p.State = CMakeProjectState.Configured;
+            if (_replyWatches.TryGetValue(p.SourceDir, out var known) && PathsEqual(known.ReplyDir, replyDir)) return;
+            known.Watch?.Dispose();
+            var watch = _watcher.Watch(new Uri(replyDir), false, null, _ => _lane.Post(() =>
+            {
+                if (_disposed || !_projects.Contains(p)) return;
+                ReadReply(p);
+                Publish();
+            }));
+            _replyWatches[p.SourceDir] = (replyDir, watch);
         }
+    }
+
+    private void Unwatch(string sourceDir)
+    {
+        lock (_watchGate)
+            if (_replyWatches.Remove(sourceDir, out var known)) known.Watch.Dispose();
     }
 
     private string? Generator(ProjectState p) =>
@@ -610,6 +655,11 @@ public sealed class CMakeService : ICMakeService, IDisposable
         if (_disposed) return;
         _disposed = true;
         _shutdown.Cancel(); // every running configure or build is linked to it: their process trees are killed
+        lock (_watchGate)
+        {
+            foreach (var (_, watch) in _replyWatches.Values) watch.Dispose();
+            _replyWatches.Clear();
+        }
         _store.Dispose();
         _changed.Clear();
         _viewsChanged.Clear();
