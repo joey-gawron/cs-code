@@ -40,6 +40,12 @@ public interface ITestProvider
     IReadOnlyList<SourceTest> ScanSource(string filePath, string text);
 
     /// <summary>
+    /// The groups of tests the file declares (a fixture class, a suite block), from its text alone, for a "Run All Tests" lens above each;
+    /// cheap, as <see cref="ScanSource"/>. Default: none.
+    /// </summary>
+    IReadOnlyList<SourceTestGroup> ScanGroups(string filePath, string text) => [];
+
+    /// <summary>
     /// Fires (on any thread) when the provider's projects or their tests may have changed without a source file being saved: a build system
     /// configured or built them. The controller then detects this provider's projects again and discovers them (<see cref="TestController"/>).
     /// Default: never.

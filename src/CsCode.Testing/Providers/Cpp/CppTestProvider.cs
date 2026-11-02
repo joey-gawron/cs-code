@@ -356,6 +356,9 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
 
     public IReadOnlyList<SourceTest> ScanSource(string filePath, string text) => CppTestScanner.Scan(text);
 
+    /// <summary>GoogleTest fixture classes, Catch2 / doctest fixture classes and doctest suites, for the "Run All Tests" lens above each.</summary>
+    public IReadOnlyList<SourceTestGroup> ScanGroups(string filePath, string text) => CppTestScanner.ScanGroups(text);
+
     public bool Matches(DiscoveredTest test, string filePath, SourceTest source) =>
         test.Location is { } loc && ITestProvider.PathsEqual(loc.FilePath, filePath) && CppTestScanner.NameMatches(RunnerName(test.Id), source.Name);
 

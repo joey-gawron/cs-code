@@ -129,6 +129,40 @@ public sealed class TestGutterProvider : ITestGutterProvider, IDisposable
         return result;
     }
 
+    /// <summary>
+    /// The groups of tests the document declares (<see cref="ITestProvider.ScanGroups"/>: a fixture class, a suite block) with the ids of their
+    /// tests the explorer knows (each instance of a parameterized one), for the "Run All Tests" lenses; empty when there are none. Any thread.
+    /// </summary>
+    internal IReadOnlyList<(SourceTestGroup Group, IReadOnlyList<string> TestIds)> GroupsIn(ITextDocument document)
+    {
+        if (!document.Uri.IsFile || !_host.DiscoveryStarted) return [];
+        var path = document.Uri.LocalPath;
+        if (!_index.TryGetValue(path, out var entries) || entries.Length == 0) return [];
+        var text = document.GetText();
+        var result = new List<(SourceTestGroup, IReadOnlyList<string>)>();
+        foreach (var provider in _host.Controller.Providers.Where(p => p.LanguageIds.Contains(document.LanguageId)))
+        {
+            var own = entries.Where(e => e.ProviderId == provider.Id).ToList();
+            if (own.Count == 0) continue;
+            foreach (var group in provider.ScanGroups(path, text))
+            {
+                var ids = group.Tests
+                    .SelectMany(source => own.Where(e => provider.Matches(new DiscoveredTest(e.TestId, e.TestId, [], e.Location), path, source)).Select(e => e.TestId))
+                    .Distinct(StringComparer.Ordinal).ToList();
+                if (ids.Count > 0) result.Add((group, ids));
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Runs (or debugs) the tests with these ids (a group's: "Run All Tests").</summary>
+    internal ValueTask RunAsync(IReadOnlyList<string> testIds, bool debug) =>
+        new(_ui.InvokeAsync(async () =>
+        {
+            var nodes = testIds.Select(id => _host.Controller.Tree.FindTest(id)).OfType<TestNode>().ToList();
+            if (nodes.Count > 0) await _host.RunNodesAsync(nodes, debug).ConfigureAwait(true);
+        }).Unwrap());
+
     public ValueTask RunAsync(string testId, bool debug, CancellationToken ct = default) =>
         new(_ui.InvokeAsync(async () =>
         {
