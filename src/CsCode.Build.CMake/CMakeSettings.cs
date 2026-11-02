@@ -48,7 +48,7 @@ internal static class CMakeSettings
         new(ParallelJobs, J("0"), "--parallel for builds; 0 lets the build tool decide."),
         new(ConfigureOnOpen, J("null"), "Configure CMake projects when a folder opens. Null: ask the first time (the answer is saved here)."),
         new(ConfigureOnEdit, J("true"), "Configure again when a CMakeLists.txt or *.cmake file of a configured project is saved."),
-        new(BuildBeforeRun, J("true"), "Build the launch target before Run Target, Debug Target and ${command:cmake.launchTargetPath}."),
+        new(BuildBeforeRun, J("true"), "Build the launch target before Run Target, Debug Target and ${command:cmake.launchTargetPath}, and a C++ test executable's target before the Test Explorer runs or debugs its tests. (CTest's runs always build the targets of the tests they run.)"),
         new(UseCMakePresets, J("\"auto\""), "\"auto\": use CMakePresets.json / CMakeUserPresets.json when present; \"always\" or \"never\"."),
         new(DebugConfig, J("{}"), "Properties merged into the configuration Debug Target starts (e.g. args, env, stopOnEntry)."),
         new(CMakePath, J("\"cmake\""), "The cmake program: a path, or a name looked up on PATH and in the usual install directories.") { Scope = ConfigurationScope.Machine },
