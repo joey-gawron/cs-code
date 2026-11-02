@@ -220,6 +220,11 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 
 ## netcoredbg and other adapters
 
+> **Breakpoint paths (stage 5, docs/CSHARP.md §4).** netcoredbg binds a breakpoint only to the exact path in the PDB, which the compiler writes
+> with links resolved: a project under a linked folder (macOS's `/var/folders/…` → `/private/var/…`) never stopped. Sessions of `coreclr` /
+> `netcoredbg` now send breakpoint paths with links resolved and map stack-frame paths back to the folder as opened
+> (`NetCoreDbgAdapterQuirks.BindsPhysicalSourcePaths`, `SourcePathAliases`). The debug matrix measured on macOS arm64 is in docs/CSHARP.md.
+
 * Built-in `coreclr` (alias `netcoredbg`) → `netcoredbg --interpreter=vscode`. Binary lookup: setting `cscode.debug.netcoredbgPath` →
   `{ToolsDir}/netcoredbg/netcoredbg` → the copy installed with the app (`{InstallDir}/debug-adapters`, `BundledAdapters`) → `PATH`. If none is found the user is **offered** a download (never silent) through
   `IWindowService.ShowMessageAsync` + `WithProgressAsync`. `NetCoreDbgInstaller` resolves the latest release from the GitHub API, downloads

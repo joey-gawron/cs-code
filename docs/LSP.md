@@ -219,7 +219,23 @@ plus `didChange`/`didSave`/`didOpen`/`didClose`/`willSave*`, watched files, exec
 | `cscode.lsp.searchDirs` | per platform (Linux: `~/.nix-profile/bin`, `/nix/var/nix/profiles/default/bin`, `~/.cargo/bin`, `~/.local/bin`, `~/go/bin`, `~/.dotnet/tools`, `~/.local/share/coursier/bin`, `~/.ghcup/bin`) | directories searched for server executables after PATH (`~` and `%VAR%` expand); `[]` = PATH and the tools directory only |
 | `cscode.lsp.queueCapacity`, `breakerThreshold`, `breakerProbeMs`, `maxRestarts`, `restartWindowSeconds`, `restartBackoffMs` | 4096, 5, 5000, 5, 180, [500,1000,2000,4000,8000] | |
 
+## 8b. C# (stage 5, docs/CSHARP.md)
+
+* **Roslyn** (`roslyn`, `src/CsCode.Lsp/CSharp/`) is a built-in alternative to csharp-ls: `solution/open` / `project/open` after
+  `initialized`, ready on `workspace/projectInitializationComplete`, its client-side commands (`roslyn.client.nestedCodeAction`,
+  `fixAllCodeAction`, `completionComplexEdit`), toasts. It is a Roslyn-only hook (`LanguageClient.Roslyn`), to move onto stage 2's per-server
+  extension pattern when that is merged.
+* **`cscode.lsp.serverChoice`** (generic): which built-in of a group of alternatives runs (`{"csharp": "roslyn"}`; `BuiltinServer.Group`,
+  `IsGroupDefault`). An explicit `cscode.languageServers.<id>.enabled` still wins.
+* **Pull diagnostics with several identifiers.** A server may register several `textDocument/diagnostic` providers, each with an identifier
+  (Roslyn does): every one is pulled, and each publishes under its own owner (`lsp:<id>#<identifier>`). The client kept only the last one before.
+* **Library and generated code** (`ExternalDocuments`): a location a server's source classifies (csharp-ls `csharp:`, Roslyn's MetadataAsSource
+  files and `roslyn-source-generated:`) becomes a Core virtual document (`cscode-virtual://lsp/…`), synced back to that server under its own URI.
+* Launch variables `${cscodeLogsDir}` and `${cscodePid}` in a definition's `args`.
+
 ## 9. Core changes made by this module (all additive)
+* Stage 5: `Core/Text/VirtualDocuments.cs` (`VirtualDocumentUri`, `VirtualDocumentKinds`, `IVirtualDocumentProvider`, `IVirtualDocumentService`,
+  `VirtualDocumentService`, registered by `AddCsCodeCore` as the `cscode-virtual` scheme's `IFileSystemProvider`).
 * `Core/Languages/LanguageServers.cs`: `LanguageServerState.Unresponsive` appended to the enum. **A `switch` expression over the enum without a
   discard arm in other modules will need a case.**
 * New file `Core/Languages/AdditionalLanguageProviders.cs`: `ISemanticTokensRangeProvider`, `ILinkedEditingRangeProvider` (+`LinkedEditingRanges`),

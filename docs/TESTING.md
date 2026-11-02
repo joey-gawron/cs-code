@@ -227,10 +227,9 @@ then Continue and the result comes back from the session — under CodeLLDB on m
 
 * **Code lens.** "Run Test | Debug Test" only: no "Run All Tests" lens above a test class and no result in the lens text (the glyph shows the
   result). rust-analyzer's own run/debug lenses are hidden in favour of these (docs/EDITOR.md §7e).
-* **Microsoft.Testing.Platform-only projects** (MSTest runner / NUnit / TUnit without the VSTest adapter) run through `dotnet test` with the
-  VSTest TRX logger, which they may not support: they need `--report-trx` (MTP) and, for debugging, `--filter-uid` and a launch of the test
-  executable. xUnit v3 projects (MTP or VSTest) are fine: they run directly.
-* **F# / VB** test projects (`.fsproj`, `.vbproj`) are not detected: detection looks at `.csproj` files and discovery scans C#.
+* **Microsoft.Testing.Platform projects** (MSTest runner, NUnit runner, TUnit) and **F# / VB** test projects are handled since stage 5
+  (C#): listing with `--list-tests json`, runs with `--filter-uid` and `--report-trx`, debugging by launching the test executable (no TRX: it
+  moves the tests into a child host), F# discovery through the runner's listing. Details and what was checked: [CSHARP.md](CSHARP.md) §5.
 * **Theories with pre-enumerated data** show their cases after a run, not at discovery.
 * **Rust**: no per-test durations (stable libtest); `#[path]` modules and macros that generate tests are found by `--list` but get no location;
   doc-tests are not listed (cargo runs them separately); a debug run of several targets debugs the first.
@@ -239,8 +238,8 @@ then Continue and the result comes back from the session — under CodeLLDB on m
 * **Remote folders** (ssh) are not searched: the providers run tools locally. Running them through `cscode-server` is the remote workstream's.
 * **Output channel selection.** `testing.showMostRecentOutput` shows the Output window but cannot pick the "Tests" channel (the Output view has
   no command for it).
-* **Not verified end to end:** debugging a .NET test under netcoredbg (the real netcoredbg panel test is known not to stop on macOS arm64
-  here, see docs/handoff/known-issues.md) and a Jest/Vitest test under js-debug; their configurations are unit-tested with a scripted session.
+* **Not verified end to end:** a Jest/Vitest test under js-debug (debugging a .NET test under netcoredbg is: `RealTestingPlatformTests`
+  stops at a breakpoint in an MSTest and an NUnit test, docs/CSHARP.md); their configurations are unit-tested with a scripted session.
   Rust under CodeLLDB is verified by the real-app test on macOS; GDB on Linux is not (the shared VM has no GDB).
 * **Breakpoints and symlinked folders (macOS `/var` → `/private/var`)**: rustc records the directory as the OS resolves it, and the debugger
   matches breakpoints by that path, so a breakpoint set through a symbolic link of the folder does not bind. This is the debugger's matching
