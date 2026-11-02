@@ -10,7 +10,7 @@ and what is left. Brief: `docs/briefs/lang-5-csharp.md`.
 | Test Explorer | xUnit v3, VSTest (as before), now also **Microsoft.Testing.Platform** projects (MSTest runner, NUnit runner, TUnit) and **F# / VB** test projects; run and debug | `src/CsCode.Testing/Providers/DotNet/` |
 | Debugging | netcoredbg; breakpoints now bind on macOS (they never did for a project behind a symbolic link) | `src/CsCode.Dap/Session/SourcePathAliases.cs` |
 | Tasks | the .NET tasks.json template has a **`watch`** task (`dotnet watch run`, hot reload) tracked through `$dotnet-watch` | `src/CsCode.Dap/Tasks/ProblemMatchers.cs` |
-| NuGet, templates | **NuGet: Add / Update / Remove Package…**, **NuGet: Restore Packages**, **.NET: New Project… / New Item…** | `src/CsCode.App/DotNet/` |
+| NuGet | **NuGet: Add / Update / Remove Package…**, **NuGet: Restore Packages** | `src/CsCode.App/DotNet/` |
 
 ## 1. The two servers
 
@@ -184,7 +184,7 @@ Microsoft.Testing.Extensions.TrxReport 2.5.2; an F# xUnit v3 3.2.2 project), `Re
   `/private/var/…` (a terminal's `dotnet build` uses the physical path) were two projects to MSBuild, whose incremental clean deleted the other's
   outputs (`runtimeconfig.json` went missing and nothing ran).
 
-## 6. Tasks, NuGet and templates
+## 6. Tasks and NuGet
 
 * **`dotnet watch`.** The tasks.json template written with a new .NET launch.json has `build` and now `watch` (`dotnet watch run --project …`,
   `isBackground`, `"problemMatcher": "$dotnet-watch"`). `$dotnet-watch` is `$msCompile` plus dotnet watch's own error lines
@@ -197,8 +197,6 @@ Microsoft.Testing.Extensions.TrxReport 2.5.2; an F# xUnit v3 3.2.2 project), `Re
   as a task in a terminal. **Update Package…** picks among the project's references (`dotnet list package --format json`) and a version;
   **Remove Package…** runs `dotnet remove package`; **Restore Packages** runs `dotnet restore`. Sources that need credentials are not searched (no
   credential provider): they are listed in the NuGet output channel.
-* **.NET: New Project… / New Item…**: a pick of the installed templates (`dotnet new list --type project|item`), a name, then `dotnet new` as a
-  task (a project into a new folder of the workspace, an item next to the active file; the template's default language when it has several).
 
 ## 7. Seen in the real application (2026-11-01, macOS arm64)
 
@@ -224,6 +222,8 @@ printed the platform's telemetry banner (the debug launch now passes `TESTINGPLA
   only `quickfix`, `refactor`, `refactor.extract`, `refactor.inline`; it never returns `source.organizeImports` or `source.fixAll` and ignores
   `context.only`. Organize usings on save is done in VS Code by `csharp|formatting.dotnet_organize_imports_on_format = true` plus formatting; fix
   all on save has no server support. csharp-ls was not checked for it yet.
+* **`dotnet new`: New Project / New Item** — the brief's SHOULD item moved to stage 7 (the New Project page), which owns project creation and
+  the template listing (scope change, 2026-11-01). New Item can reuse that listing once stage 7 is merged.
 * **.NET tasks through `ITaskProvider`** (`dotnet build`, `test`, `run`, `clean` per project with `$msCompile`) — needs stage 2's (Rust) contract,
   not merged.
 * Roslyn's integration is a Roslyn-only hook (`LanguageClient.Roslyn`, a second JSON-RPC target, `RoslynCommands`) rather than stage 2's

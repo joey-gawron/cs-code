@@ -5,9 +5,8 @@ using Xunit;
 namespace CsCode.App.Tests.DotNet;
 
 /// <summary>
-/// The .NET commands' readers (docs/CSHARP.md, "NuGet and dotnet new"): package sources, NuGet's v3 search, a project's package list and
-/// <c>dotnet new list</c>'s table, from outputs copied from SDK 10.0.403 and nuget.org (2026-11-01); then the real SDK and nuget.org, skipped
-/// when either is unavailable.
+/// The .NET commands' readers (docs/CSHARP.md, "Tasks and NuGet"): package sources, NuGet's v3 search and a project's package list, from
+/// outputs copied from SDK 10.0.403 and nuget.org (2026-11-01); then the real SDK and nuget.org, skipped when either is unavailable.
 /// </summary>
 public class DotNetCliTests
 {
@@ -50,35 +49,12 @@ public class DotNetCliTests
     }
 
     [Fact]
-    public void Templates_are_read_from_the_dotnet_new_list_table()
-    {
-        var templates = DotNetCli.ParseTemplates("""
-            These templates matched your input: --type='project'
-
-            Template Name                                 Short Name           Language    Tags
-            --------------------------------------------  -------------------  ----------  ----------------------------------
-            ASP.NET Core Empty                            web                  [C#],F#     Web/Empty
-            ASP.NET Core Web App (Razor Pages)            webapp,razor         [C#]        Web/MVC/Razor Pages
-            dotnet gitignore file                         gitignore,.gitignore             Config
-            """);
-        Assert.Equal(["web", "webapp", "gitignore"], templates.Select(t => t.ShortName));
-        Assert.Equal(["C#", "F#"], templates[0].Languages);
-        Assert.Empty(templates[2].Languages);
-        Assert.Equal("ASP.NET Core Web App (Razor Pages)", templates[1].Name);
-        Assert.Equal("Web/MVC/Razor Pages", templates[1].Tags);
-    }
-
-    [Fact]
     [Trait("Category", "RealTools")]
-    public async Task The_real_sdk_lists_templates_and_nuget_org_answers_a_search()
+    public async Task The_folders_package_sources_are_read_and_nuget_org_answers_a_search()
     {
         var dotnet = DotNetCli.Find();
         Assert.SkipUnless(Path.IsPathRooted(dotnet) && File.Exists(dotnet), "dotnet is not installed");
         using var dir = new TempDirectory("cscode-dotnet-cli-");
-        var (exit, output) = await DotNetCli.RunAsync(dir.Path, ["new", "list", "--type", "project"], Ct);
-        Assert.Equal(0, exit);
-        Assert.Contains(DotNetCli.ParseTemplates(output), t => t.ShortName == "console" && t.Languages.Contains("C#"));
-
         var sources = await DotNetCli.SourcesAsync(dir.Path, Ct);
         var skipped = new List<string>();
         var found = await DotNetCli.SearchAsync(sources, "packageid:Newtonsoft.Json", prerelease: false, skipped.Add, Ct);

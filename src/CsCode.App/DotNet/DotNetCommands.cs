@@ -8,14 +8,13 @@ using Microsoft.Extensions.DependencyInjection;
 namespace CsCode.App.DotNet;
 
 /// <summary>
-/// The shell's .NET commands (docs/CSHARP.md, "NuGet, dotnet new and the server choice"), in the palette under "NuGet:", ".NET:" and "C#:":
+/// The shell's .NET commands (docs/CSHARP.md, "Tasks and NuGet"), in the palette under "NuGet:" and "C#:" (creating projects and items from
+/// <c>dotnet new</c> templates belongs to the New Project page, stage 7):
 /// <list type="bullet">
 /// <item><c>dotnet.addPackage</c>, <c>dotnet.updatePackage</c>, <c>dotnet.removePackage</c>: the project (the active file's, else a pick), the
 /// package (a search of the folder's NuGet sources, or the project's references) and the version; the change runs as a task in a terminal
 /// (<c>dotnet add package</c> / <c>dotnet remove package</c>), so its output and exit code are where a build's are.</item>
 /// <item><c>dotnet.restore</c>: <c>dotnet restore</c> of the active file's project (else the workspace folder) as a task.</item>
-/// <item><c>dotnet.newProject</c>, <c>dotnet.newItem</c>: a pick of the installed templates (<c>dotnet new list</c>), a name, then
-/// <c>dotnet new</c> as a task (a project into a new folder of the workspace, an item next to the active file).</item>
 /// <item><c>csharp.selectLanguageServer</c>: csharp-ls or Roslyn (<c>cscode.lsp.serverChoice</c>, user settings).</item>
 /// </list>
 /// Everything slow (processes, HTTP, JSON) runs off the UI thread; the window service's picks are awaited, never blocked on.
@@ -26,8 +25,6 @@ public sealed class DotNetCommands : IDisposable
     public const string UpdatePackage = "dotnet.updatePackage";
     public const string RemovePackage = "dotnet.removePackage";
     public const string Restore = "dotnet.restore";
-    public const string NewProject = "dotnet.newProject";
-    public const string NewItem = "dotnet.newItem";
     public const string SelectLanguageServer = "csharp.selectLanguageServer";
     /// <summary>Mirrors CsCode.Lsp's <c>cscode.lsp.serverChoice</c> (the App reads settings by key).</summary>
     internal const string ServerChoiceKey = "cscode.lsp.serverChoice";
@@ -62,8 +59,6 @@ public sealed class DotNetCommands : IDisposable
         Reg(UpdatePackage, "Update Package...", "NuGet", UpdatePackageAsync);
         Reg(RemovePackage, "Remove Package...", "NuGet", RemovePackageAsync);
         Reg(Restore, "Restore Packages", "NuGet", RestoreAsync);
-        Reg(NewProject, "New Project...", ".NET", ct => NewAsync(project: true, ct));
-        Reg(NewItem, "New Item...", ".NET", ct => NewAsync(project: false, ct));
         Reg(SelectLanguageServer, "Select Language Server...", "C#", SelectLanguageServerAsync);
     }
 
@@ -202,31 +197,6 @@ public sealed class DotNetCommands : IDisposable
         var picked = await _window.ShowQuickPickAsync([.. references.Select(r => new QuickPickItem(r.Id, r.Resolved ?? r.Requested, Tag: r))],
             new QuickPickOptions(title, Path.GetFileName(project)), ct).ConfigureAwait(true);
         return picked?.Tag as PackageReference;
-    }
-
-    // ------------------------------------------------------------------ dotnet new
-
-    private async Task NewAsync(bool project, CancellationToken ct)
-    {
-        var folder = Folder;
-        var target = project ? folder : ActiveFile is { } f ? Path.GetDirectoryName(f) : folder;
-        if (target is null) { await _window.ShowMessageAsync(MessageSeverity.Info, "Open a folder first.").ConfigureAwait(true); return; }
-        var (exit, output) = await Task.Run(() => DotNetCli.RunAsync(target, ["new", "list", "--type", project ? "project" : "item"], ct), ct).ConfigureAwait(true);
-        var templates = exit == 0 ? await Task.Run(() => DotNetCli.ParseTemplates(output), ct).ConfigureAwait(true) : [];
-        if (templates.Count == 0) { await _window.ShowMessageAsync(MessageSeverity.Warning, "dotnet new list found no templates: " + output.Trim()).ConfigureAwait(true); return; }
-        var kind = project ? "Project" : "Item";
-        var picked = await _window.ShowQuickPickAsync(
-            [.. templates.Select(t => new QuickPickItem(t.Name, t.ShortName + (t.Languages.Count > 0 ? " · " + string.Join(", ", t.Languages) : ""), t.Tags, Tag: t))],
-            new QuickPickOptions($".NET: New {kind}", "Choose a template", MatchOnDetail: true), ct).ConfigureAwait(true);
-        if (picked?.Tag is not DotNetTemplate template) return;
-        var name = await _window.ShowInputBoxAsync(new InputBoxOptions($".NET: New {kind}", $"Name of the new {template.Name}", Value: project ? "MyProject" : "MyClass",
-            Validate: n => n.Length == 0 || n.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ? "Enter a valid file name" : null), ct).ConfigureAwait(true);
-        if (string.IsNullOrWhiteSpace(name)) return;
-        var arguments = new List<string> { "new", template.ShortName, "--name", name.Trim() };
-        if (template.Languages.Count > 1) arguments.AddRange(["--language", template.Languages[0]]);
-        if (project) arguments.AddRange(["--output", Path.Combine(target, name.Trim())]);
-        var code = await RunTaskAsync($"dotnet new {template.ShortName}", target, arguments, ct).ConfigureAwait(true);
-        if (code != 0) await _window.ShowMessageAsync(MessageSeverity.Error, $"dotnet new {template.ShortName} failed (exit code {code}): see the terminal.").ConfigureAwait(true);
     }
 
     // ------------------------------------------------------------------ C# server

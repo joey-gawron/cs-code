@@ -12,11 +12,8 @@ public sealed record NuGetPackage(string Id, string Version, IReadOnlyList<strin
 /// <summary>A package reference of a project (<c>dotnet list package --format json</c>).</summary>
 public sealed record PackageReference(string Id, string? Requested, string? Resolved);
 
-/// <summary>A <c>dotnet new</c> template (<c>dotnet new list</c>): its name, the short name to pass, its languages (default first) and tags.</summary>
-public sealed record DotNetTemplate(string Name, string ShortName, IReadOnlyList<string> Languages, string Tags);
-
 /// <summary>
-/// The .NET command line and NuGet's v3 HTTP API as the shell's .NET commands use them (docs/CSHARP.md, "NuGet and dotnet new"). Every call is
+/// The .NET command line and NuGet's v3 HTTP API as the shell's .NET commands use them (docs/CSHARP.md, "Tasks and NuGet"). Every call is
 /// asynchronous and does its I/O and JSON off the caller's thread; nothing here touches the UI.
 /// <list type="bullet">
 /// <item>Package sources are the folder's own (<c>dotnet nuget list source --format short</c>, which reads every nuget.config above it and the
@@ -161,46 +158,6 @@ public static class DotNetCli
             return [.. refs.Values.OrderBy(r => r.Id, StringComparer.OrdinalIgnoreCase)];
         }
         catch (JsonException) { return []; }
-    }
-
-    /// <summary>
-    /// The templates of <c>dotnet new list</c>: the table under its dashed line, columns cut where the dashes are. A short name with aliases
-    /// (<c>webapp,razor</c>) gives its first; the default language is the bracketed one (<c>[C#],F#</c>).
-    /// </summary>
-    public static IReadOnlyList<DotNetTemplate> ParseTemplates(string output)
-    {
-        var lines = output.Replace("\r", "", StringComparison.Ordinal).Split('\n');
-        var dash = Array.FindIndex(lines, l => l.TrimStart().StartsWith("---", StringComparison.Ordinal));
-        if (dash < 0) return [];
-        var columns = new List<(int Start, int End)>();
-        var dashes = lines[dash];
-        for (var i = 0; i < dashes.Length;)
-        {
-            if (dashes[i] != '-') { i++; continue; }
-            var start = i;
-            while (i < dashes.Length && dashes[i] == '-') i++;
-            columns.Add((start, i));
-        }
-        if (columns.Count < 2) return [];
-        string Cell(string line, int c)
-        {
-            var start = columns[c].Start;
-            if (start >= line.Length) return "";
-            var end = c + 1 < columns.Count ? Math.Min(columns[c + 1].Start, line.Length) : line.Length;
-            return line[start..end].Trim();
-        }
-        var templates = new List<DotNetTemplate>();
-        foreach (var line in lines.Skip(dash + 1))
-        {
-            if (line.Trim().Length == 0) break;
-            var shortName = Cell(line, 1).Split(',')[0].Trim();
-            if (shortName.Length == 0) continue;
-            var languages = columns.Count > 2 ? Cell(line, 2) : "";
-            var ordered = languages.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .OrderBy(l => l.StartsWith('[') ? 0 : 1).Select(l => l.Trim('[', ']')).ToArray();
-            templates.Add(new DotNetTemplate(Cell(line, 0), shortName, ordered, columns.Count > 3 ? Cell(line, 3) : ""));
-        }
-        return templates;
     }
 
     private static bool IsProjectFile(string name) =>
