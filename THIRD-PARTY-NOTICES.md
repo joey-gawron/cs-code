@@ -73,6 +73,20 @@ conditions and disclaimer to be retained in binary distributions:
 | Microsoft.CodeAnalysis.BannedApiAnalyzers | MIT | Compile-time rule that bans blocking calls on the UI thread |
 | xUnit v3, Avalonia.Headless.XUnit, Microsoft.NET.Test.Sdk | Apache-2.0 / MIT | Tests and headless UI screenshots |
 
+## Downloaded on request (not shipped)
+
+Python support (docs/PYTHON.md) runs tools the user installs; CsCode ships none of them. Two kinds are fetched by CsCode or its scripts, always
+pinned and digest-checked, and never without consent:
+
+| Component | Licence | Fetched by | Notes |
+|---|---|---|---|
+| debugpy 1.8.22 (Microsoft) | MIT | `DebugpyInstaller` after the user accepts; `tools/fetch-debugpy.sh` | The pure-Python wheel, unpacked to `{ToolsDir}/debugpy/1.8.22`, run by the user's interpreter when it has no debugpy |
+| Ruff 0.17.3 (Astral) | MIT | `tools/fetch-lsp-tools.sh --with-python` | Tests and development only (a venv under `.scratch/tools/python`) |
+| Pyright 1.1.414 (Microsoft), basedpyright 1.40.2 | MIT | `tools/fetch-lsp-tools.sh --with-python` | Tests and development only (npm, `.scratch/tools/lsp`) |
+| pytest 9.2.0 with pluggy, iniconfig (MIT), packaging (Apache-2.0 or BSD-2-Clause), Pygments (BSD-2-Clause) | as listed | `tools/fetch-debugpy.sh` | Tests and development only (the same venv) |
+
+The built-in Python snippets (`src/CsCode.Editor/Snippets/Builtin/python.json`) are original to CsCode.
+
 ## Names and ids
 
 Colour ids (`editor.background`, `statusBar.background`, ...) and command ids (`workbench.action.*`) follow the Visual Studio Code naming

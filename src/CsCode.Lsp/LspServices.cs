@@ -36,6 +36,10 @@ public sealed record LspServices(IDocumentManager Documents, ILanguageFeatureReg
     public Func<Core.Debugging.IDebugService?>? Debug { get; init; }
     /// <summary>Task terminals (rust-analyzer's Run lens runs cargo in one), resolved lazily: the terminal comes with the shell's tool windows.</summary>
     public Func<Core.Tasks.ITaskTerminalHost?>? TaskTerminals { get; init; }
+    /// <summary>Values other modules add to the servers' settings (the selected Python interpreter); see <see cref="ILanguageServerSettingsContributor"/>.</summary>
+    public IReadOnlyList<ILanguageServerSettingsContributor> SettingsContributors { get; init; } = [];
+    /// <summary>The selected Python interpreters: a built-in Python tool server (Ruff, Pyright) runs the environment's own copy when it has one.</summary>
+    public CsCode.Core.Python.IPythonEnvironmentService? PythonEnvironments { get; init; }
 
     public static LspServices FromProvider(IServiceProvider sp) => new(
         sp.GetRequiredService<IDocumentManager>(),
@@ -59,5 +63,7 @@ public sealed record LspServices(IDocumentManager Documents, ILanguageFeatureReg
         ReadOnlyDocuments = sp.GetService<Extensions.ReadOnlyDocuments>(),
         Debug = () => sp.GetService<Core.Debugging.IDebugService>(),
         TaskTerminals = () => sp.GetService<Core.Tasks.ITaskTerminalHost>(),
+        SettingsContributors = sp.GetServices<ILanguageServerSettingsContributor>().ToArray(),
+        PythonEnvironments = sp.GetService<CsCode.Core.Python.IPythonEnvironmentService>(),
     };
 }

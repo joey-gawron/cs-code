@@ -31,6 +31,8 @@ internal interface INavigationFeature
 internal interface IFormattingFeature
 {
     Task FormatDocumentAsync();
+    /// <summary>Format Document With…: pick one of the document's formatters for this run (<c>editor.defaultFormatter</c> is not changed).</summary>
+    Task FormatDocumentWithAsync();
     Task FormatSelectionAsync();
     /// <summary>A paste landed on <paramref name="range"/>: formats it through the language server when <c>editor.formatOnPaste</c> is on.</summary>
     void OnPasted(Core.Text.TextRange range);

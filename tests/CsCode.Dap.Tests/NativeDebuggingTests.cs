@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using CsCode.Core.Debugging;
 using CsCode.Dap.Breakpoints;
 using CsCode.Dap.Protocol;
+using CsCode.Dap.Session;
 using CsCode.Dap.Tests.Fakes;
 using Xunit;
 using static CsCode.Dap.Tests.TestToken;
@@ -164,6 +165,22 @@ public class NativeDebuggingTests
         native.SetNativeEnabled(data.Id, false);
         await h.Adapter.WaitForRequestAsync("setDataBreakpoints", 2);
         Assert.Empty(h.Adapter.RequestsOf("setDataBreakpoints")[^1].Args<DapSetDataBreakpointsArguments>().Breakpoints);
+    }
+
+    [Fact]
+    public async Task A_data_breakpoint_changed_while_stopped_reaches_the_adapter_before_the_resume()
+    {
+        // a debounce far longer than the test: only the flush before a resume can send it in time
+        await using var h = await SessionHarness.StartAsync(NativeCapabilities,
+            settings: new DebugSessionSettings { RequestTimeout = TimeSpan.FromSeconds(5), StopTimeout = TimeSpan.FromSeconds(2), BreakpointDebounce = TimeSpan.FromSeconds(30) });
+        await h.StopAtBreakpointAsync();
+        ((INativeBreakpointManager)h.Breakpoints).AddData("0x16fdff0c8/4", "x", h.Session.Id, canPersist: false);
+        await h.Session.ContinueAsync(ct: Ct);
+        var received = h.Adapter.Received;
+        var sent = received.ToList().FindIndex(r => r.Command == "setDataBreakpoints"
+            && r.Args<DapSetDataBreakpointsArguments>().Breakpoints.Any(b => b.DataId == "0x16fdff0c8/4"));
+        var resumed = received.ToList().FindLastIndex(r => r.Command == "continue");
+        Assert.True(sent >= 0 && sent < resumed, string.Join(", ", received.Select(r => r.Command)));
     }
 
     [Fact]

@@ -106,6 +106,7 @@ public static class ShellMenus
             M("Find in F_iles...", "workbench.action.findInFiles", "workspaceFolderCount"),
             S,
             M("_Format Document", KnownCommands.FormatDocument, "hasOpenEditors && !editorReadonly"),
+            M("Format Document _With...", "editor.action.formatDocument.multiple", "hasOpenEditors && !editorReadonly"),
             M("Co_mment Selection", "editor.action.addCommentLine", "editorTextFocus && !editorReadonly"),
             M("Uncomme_nt Selection", "editor.action.removeCommentLine", "editorTextFocus && !editorReadonly")),
 

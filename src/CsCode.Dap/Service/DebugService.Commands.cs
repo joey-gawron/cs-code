@@ -221,6 +221,8 @@ public sealed partial class DebugService
     {
         var configs = await _configurations.GetLaunchConfigurationsAsync(null, ct);
         var cfg = _configurations.Selected ?? configs.FirstOrDefault();
+        // No configuration at all: a debugger that can run the active file on its own (debugpy's "Current File") does, as VS Code does.
+        if (cfg is null && CurrentFileConfiguration() is { } current) return await StartAsync(noDebug ? current with { NoDebug = true } : current, ct);
         if (cfg is null)
         {
             if (_p.Window is { } window && _p.PrimaryFolder is { } folder)
@@ -252,6 +254,18 @@ public sealed partial class DebugService
     /// <c>"gdb"</c> elsewhere (evaluated, the system's own debugger). Decided 2026-10-30 (docs/handoff/decisions.md).
     /// </summary>
     internal static string DefaultRustDebugger(bool macOS) => macOS ? "lldb" : "gdb";
+
+    /// <summary>The configuration a built-in debugger offers for the active file (<see cref="Configuration.IDebugCurrentFileProvider"/>), or null.</summary>
+    private DebugConfiguration? CurrentFileConfiguration()
+    {
+        if (_p.Navigation?.ActiveDocument is not { } doc) return null;
+        var folder = _p.Workspace?.Folders.Where(f => f.IsFile && doc.Uri.IsFile && doc.Uri.LocalPath.StartsWith(DapPlatform.NormalizeDir(f.LocalPath) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            .OrderByDescending(f => f.LocalPath.Length).FirstOrDefault() ?? _p.PrimaryFolder;
+        foreach (var builtin in _builtins.Values.Where(b => !b.IsAlias && b.Languages.Contains(doc.LanguageId, StringComparer.Ordinal)))
+            if (builtin.Provider is Configuration.IDebugCurrentFileProvider provider && provider.ForCurrentFile(doc.Uri, doc.LanguageId, folder) is { } config)
+                return config;
+        return null;
+    }
 
     /// <summary>The folder's default debugger (<see cref="DefaultDebugTypeAsync"/>), else the user picks one ("Select debugger", as VS Code asks).</summary>
     private async Task<string?> PickDebugTypeAsync(IWindowService window, Uri? folder, CancellationToken ct)
@@ -287,6 +301,9 @@ public sealed partial class DebugService
                 || n.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || n.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)))
                 return Known("coreclr");
             if (files.Contains("tsconfig.json") || files.Contains("package.json")) return Known(Adapters.JsDebugAdapterFactory.PrimaryType);
+            if (files.Contains("pyproject.toml") || files.Contains("setup.py") || files.Contains("setup.cfg") || files.Contains("requirements.txt")
+                || files.Any(n => n.EndsWith(".py", StringComparison.OrdinalIgnoreCase)))
+                return Known(Adapters.DebugpyAdapterFactory.PrimaryType);
         }
         return types.Count == 1 ? types[0].Type : null;
     }

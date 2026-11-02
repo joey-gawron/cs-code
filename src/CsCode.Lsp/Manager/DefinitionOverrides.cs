@@ -17,7 +17,8 @@ internal static class DefinitionOverrides
     public static Dictionary<string, Effective> Apply(IEnumerable<LanguageServerDefinition> registered, JsonElement? setting)
     {
         var result = new Dictionary<string, Effective>();
-        foreach (var d in registered) result[d.Id] = new Effective(d, true);
+        // a built-in that is off by default (basedpyright) stays off until its override says "enabled": true
+        foreach (var d in registered) result[d.Id] = new Effective(d, BuiltinLanguageServers.Find(d.Id)?.EnabledByDefault ?? true);
         if (setting is not { ValueKind: JsonValueKind.Object } obj) return result;
 
         foreach (var prop in obj.EnumerateObject())
@@ -25,11 +26,11 @@ internal static class DefinitionOverrides
             if (prop.Value.ValueKind != JsonValueKind.Object) continue;
             var id = prop.Name;
             var o = prop.Value;
-            var enabled = !(o.TryGetProperty("enabled", out var en) && en.ValueKind == JsonValueKind.False);
+            bool? enabled = o.TryGetProperty("enabled", out var en) && en.ValueKind is JsonValueKind.True or JsonValueKind.False ? en.GetBoolean() : null;
             if (result.TryGetValue(id, out var existing))
-                result[id] = new Effective(Merge(existing.Definition, o), enabled);
+                result[id] = new Effective(Merge(existing.Definition, o), enabled ?? existing.Enabled);
             else if (TryCreate(id, o) is { } created)
-                result[id] = new Effective(created, enabled);
+                result[id] = new Effective(created, enabled ?? true);
         }
         return result;
     }

@@ -24,6 +24,8 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<ILanguageServerManager>(sp => sp.GetRequiredService<LanguageServerManager>());
         services.AddSingleton<IWillSaveParticipant>(sp => sp.GetRequiredService<LanguageServerManager>());
         services.AddSingleton<IFileOperationParticipant>(sp => sp.GetRequiredService<LanguageServerManager>());
+        // the selected Python interpreter as Pyright's / basedpyright's python.pythonPath (nothing when no interpreter service is registered)
+        services.AddSingleton<ILanguageServerSettingsContributor>(sp => new PythonServerSettings(sp.GetService<CsCode.Core.Python.IPythonEnvironmentService>()));
         return services;
     }
 }
