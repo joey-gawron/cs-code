@@ -149,8 +149,9 @@ internal sealed record LspSettings
             "Directories searched for language-server executables after PATH and before the managed tools directory (~ = home directory). An editor started from a desktop launcher often lacks these in its PATH. User settings only.")
         { Scope = ConfigurationScope.Machine };
         yield return new(LspSettingKeys.ServerChoice, J(new Dictionary<string, string>()),
-            "Which built-in language server runs where several serve one language, by language group: { \"csharp\": \"csharp\" | \"roslyn\" }. "
-            + "Unset: the group's default (Roslyn for C#). An explicit cscode.languageServers.<id>.enabled still wins.");
+            "Which built-in language server runs where several serve one language, by language group: { \"csharp\": \"csharp\" | \"roslyn\", "
+            + "\"python\": \"basedpyright\" | \"python\" }. Unset: the group's default (Roslyn for C#, basedpyright for Python). "
+            + "An explicit cscode.languageServers.<id>.enabled still wins.");
         yield return new(LspSettingKeys.LanguageServers, null,
             "Language server definitions keyed by id: { command, args, env, workingDirectory, selector, initializationOptions, settings, enabled, autoStart, rootMarkers, restartAboveBytes }. "
             + "command, args, env and workingDirectory are taken from user settings only.")

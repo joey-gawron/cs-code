@@ -29,7 +29,7 @@ Two pieces are language-neutral and reused by later stages: **formatter choice /
   `VIRTUAL_ENV` (or `CONDA_PREFIX`) set, through an additive `ITerminalEnvironmentContributor`. A macOS login shell's `path_helper` (and Nix's
   profile scripts here) rebuild PATH and drop or demote that directory, so the shell integration (zsh, bash, fish) puts `CSCODE_PATH_PREPEND`
   first again after the user's startup files (`TerminalServiceTests.Contributed_PATH_directories_come_first_even_in_a_login_shell`).
-* Workspace trust: a folder's own `.venv/bin/python` is probed (with `-I`) and given to Pyright, as VS Code does in a trusted workspace. CsCode
+* Workspace trust: a folder's own `.venv/bin/python` is probed (with `-I`) and given to the type checker, as VS Code does in a trusted workspace. CsCode
   has no trust prompt; rust-analyzer already runs a folder's build scripts the same way.
 
 ## 2. Formatter choice and code actions on save
@@ -53,19 +53,24 @@ Two pieces are language-neutral and reused by later stages: **formatter choice /
 
 | Server | Id | Default | What it gives |
 |---|---|---|---|
-| Pyright `pyright-langserver --stdio` | `python` | on | types, completion, hover, navigation; gets the selected interpreter (no semantic tokens, no inlay hints) |
+| basedpyright `basedpyright-langserver --stdio` | `basedpyright` | **on (default type checker)** | types, completion, hover, navigation, semantic tokens, inlay hints, a stricter default rule set; gets the selected interpreter |
 | Ruff `ruff server` (Ruff ≥ 0.5.3) | `ruff` | on | lint diagnostics, Quick Fixes, `source.fixAll.ruff`, `source.organizeImports.ruff`, formatting; one server per workspace |
-| basedpyright `basedpyright-langserver --stdio` | `basedpyright` | **off** | Pyright's features plus semantic tokens, inlay hints and its stricter checks; turn it on and Pyright off: `"cscode.languageServers": { "basedpyright": { "enabled": true }, "python": { "enabled": false } }` |
+| Pyright `pyright-langserver --stdio` | `python` | off (alternative) | types, completion, hover, navigation, no semantic tokens or inlay hints; gets the selected interpreter |
 
 The Python tool servers run the selected environment's own copy when it has one (`.venv/bin/ruff`, as VS Code's Ruff extension does by
 default), else PATH, `cscode.lsp.searchDirs`, the tools directory. Install hints per platform are in docs/LANGUAGES.md.
 
-**Pyright or basedpyright as the default.** As the brief expected, only basedpyright has semantic highlighting and inlay hints
+**basedpyright is the default type checker, Pyright the alternative.** Only basedpyright has semantic highlighting and inlay hints
 (`RealPythonServerTests.What_Pyright_and_basedpyright_offer`: Pyright 1.1.414 registers neither; basedpyright 1.40.2 both, with the hints
-`: int`, `a=`, `b=`). Its other differences are a stricter default rule set, its baseline file and a few Pylance-like features. A first check
-said both servers had them: basedpyright's npm package also declares the commands `pyright` and `pyright-langserver`, npm had linked them to
-basedpyright, and the check ran basedpyright twice. tools/fetch-lsp-tools.sh now points them back at Pyright. Pyright stays the default
-until the user decides otherwise.
+`: int`, `a=`, `b=`), as the brief expected; its other differences are a stricter default rule set, its baseline file and a few Pylance-like
+features. The user chose basedpyright as the default on 2026-11-02. The two are one group in `cscode.lsp.serverChoice`, as Roslyn and
+csharp-ls are for C#: one runs. **Python: Select Language Server…** (`python.selectLanguageServer`) switches, writing
+`"cscode.lsp.serverChoice": { "python": "python" }` for Pyright next to the other languages' choices; an explicit
+`cscode.languageServers.<id>.enabled` still wins.
+
+A first check said both servers had semantic highlighting and inlay hints: basedpyright's npm package also declares the commands `pyright` and
+`pyright-langserver`, npm had linked them to basedpyright, and the check ran basedpyright twice. tools/fetch-lsp-tools.sh now points them back
+at Pyright.
 
 `pyproject.toml` schema validation through Taplo is **not verified**: Taplo is not installed on this Mac.
 
@@ -169,7 +174,7 @@ dotnet test tests/CsCode.MemoryTests --blame-hang-timeout 10m --filter "FullyQua
 ```
 
 Each real-tool test skips with its reason when its tool is missing. `PythonCompositionTests` checks the stage's "Done when" over the real
-composition root: a `.venv` folder's interpreter, Pyright and Ruff diagnostics, a save running fix-all, organize imports and Ruff's format,
+composition root: a `.venv` folder's interpreter, basedpyright and Ruff diagnostics, a save running fix-all, organize imports and Ruff's format,
 and debugpy stopping at a breakpoint with that interpreter. The same was seen by hand in the app window on macOS: F5 with no launch.json
 stops at a breakpoint, Cmd+S runs the save actions and Ruff's format, and the Test Explorer runs pytest's parametrized cases one by one.
 

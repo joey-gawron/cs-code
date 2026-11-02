@@ -18,7 +18,7 @@ namespace CsCode.MemoryTests.App;
 public sealed class MemoryAppHost : IAsyncDisposable
 {
     public static readonly string[] BuiltinServers =
-        ["typescript", "csharp", "roslyn", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua"];
+        ["typescript", "csharp", "roslyn", "python", "basedpyright", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua"];
 
     private readonly string? _previousHome;
     private readonly string? _previousData;

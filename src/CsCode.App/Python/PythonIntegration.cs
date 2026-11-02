@@ -2,6 +2,8 @@ using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Python;
 using CsCode.Core.Terminal;
+using CsCode.Lsp;
+using CsCode.Lsp.Manager;
 using CsCode.Ui.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -10,7 +12,8 @@ namespace CsCode.App.Python;
 
 /// <summary>
 /// Python in the shell (docs/PYTHON.md): <b>Python: Select Interpreter</b> (<c>python.setInterpreter</c>; the interpreters found for the active
-/// file's folder, "Enter interpreter path…" and a refresh), <b>Python: Clear Workspace Interpreter Setting</b>, <c>${command:python.interpreterPath}</c>, and the status bar item that shows
+/// file's folder, "Enter interpreter path…" and a refresh), <b>Python: Clear Workspace Interpreter Setting</b>, <b>Python: Select Language
+/// Server…</b> (basedpyright or Pyright), <c>${command:python.interpreterPath}</c>, and the status bar item that shows
 /// the active file's interpreter while a Python file is active (a click opens the picker). The interpreter is persisted per workspace folder by
 /// <see cref="IPythonEnvironmentService"/>, which feeds it to the language servers, the debugger, the test provider and new terminals.
 /// </summary>
@@ -25,6 +28,8 @@ public sealed class PythonIntegration : IDisposable
     public const string RunFile = "python.execInTerminal";
     /// <summary>Run Selection/Line in Python REPL (Shift+Enter): one REPL terminal per interpreter, reused.</summary>
     public const string RunSelection = "python.execSelectionInTerminal";
+    /// <summary>Python: Select Language Server…: basedpyright (the default) or Pyright, as <c>cscode.lsp.serverChoice</c>'s <c>python</c> member.</summary>
+    public const string SelectLanguageServer = "python.selectLanguageServer";
     private const string EnterPath = "enter";
     private const string Refresh = "refresh";
 
@@ -73,6 +78,11 @@ public sealed class PythonIntegration : IDisposable
                 await RunSelectionAsync(inv.Args is [string text, ..] ? text : null).ConfigureAwait(true);
                 return null;
             }, new CommandMetadata(RunSelection, "Run Selection/Line in Python REPL", "Python")));
+            _subs.Add(commands.Register(SelectLanguageServer, async _ =>
+            {
+                await SelectLanguageServerAsync().ConfigureAwait(true);
+                return null;
+            }, new CommandMetadata(SelectLanguageServer, "Select Language Server...", "Python")));
             _subs.Add(commands.Register(InterpreterPath, async inv =>
             {
                 var resource = inv.Args is [Uri uri, ..] ? uri : Navigation?.ActiveDocument?.Uri ?? _sp.GetService<IWorkspaceService>()?.PrimaryFolder;
@@ -153,6 +163,26 @@ public sealed class PythonIntegration : IDisposable
         }
         await _environments.SetActiveAsync(resource, env.Executable).ConfigureAwait(true);
         _sp.GetService<ILoggerFactory>()?.CreateLogger<PythonIntegration>().LogInformation("Python interpreter entered by hand: {Path} ({Label})", env.Executable, env.Label);
+    }
+
+    // ---- type checker ----
+
+    /// <summary>basedpyright (the default) or Pyright: written into <c>cscode.lsp.serverChoice</c> next to the other groups' choices (C#'s).</summary>
+    private async Task SelectLanguageServerAsync()
+    {
+        if (_sp.GetService<IConfigurationService>() is not { } config || Window is not { } window) return;
+        var choice = new Dictionary<string, string>(BuiltinLanguageServers.ReadChoice(config.GetRaw(LspSettingKeys.ServerChoice)), StringComparer.Ordinal);
+        var current = choice.GetValueOrDefault(BuiltinLanguageServers.PythonGroup) ?? "basedpyright"; // the group's default
+        QuickPickItem Item(string id, string label, string detail) => new(label, id == current ? "current" : null, detail, Tag: id);
+        var picked = await window.ShowQuickPickAsync(
+        [
+            Item("basedpyright", "basedpyright", "The default: Pyright's checks plus semantic highlighting, inlay hints and a stricter default rule set."),
+            Item("python", "Pyright", "Microsoft's open-source server: types, completion, hover and navigation; no semantic highlighting or inlay hints."),
+        ], new QuickPickOptions("Python: Select Language Server", "Which type checker should run on Python files?")).ConfigureAwait(true);
+        if (picked?.Tag is not string id || id == current) return;
+        choice[BuiltinLanguageServers.PythonGroup] = id;
+        await config.UpdateAsync(LspSettingKeys.ServerChoice, choice).ConfigureAwait(true);
+        window.SetStatusBarMessage($"Python: {picked.Label} checks Python files from now on", TimeSpan.FromSeconds(5));
     }
 
     // ---- running code ----
