@@ -54,7 +54,12 @@ public sealed partial class SessionWindowController
         }, new CommandMetadata(SessionCommandIds.OpenSession, "Open Session...", "Session")));
         AddWorkingOn(SessionCommandIds.SwitchSession, "Switch Session...", () => PickAndOpenAsync(switching: true));
         Add(SessionCommandIds.DeleteSession, "Delete Session...", DeleteSessionAsync);
-        Add(SessionCommandIds.NewWindow, "New Window", () => LaunchAsync(new SessionChoice(null, true), switching: false));
+        // Absolute paths as arguments (the New Project page: the new project's folder, then its main file) open in the new session's window.
+        _subs.Add(commands.Register(SessionCommandIds.NewWindow, async inv =>
+        {
+            await LaunchAsync(new SessionChoice(null, true), switching: false, [.. inv.Args.OfType<string>().Where(Path.IsPathFullyQualified)]).ConfigureAwait(true);
+            return null;
+        }, new CommandMetadata(SessionCommandIds.NewWindow, "New Window", "Session")));
         AddWorkingOn(SessionCommandIds.CloseWindow, "Close Window (Keep Running)", () => { Hide(); return Task.CompletedTask; });
         Add(SessionCommandIds.QuitSession, "Quit Session", async () => await QuitAsync(force: false).ConfigureAwait(true));
         Add(SessionCommandIds.ExitAll, "Exit All", ExitAllAsync);
@@ -146,11 +151,15 @@ public sealed partial class SessionWindowController
         await LaunchAsync(new SessionChoice(name, false), switching: false).ConfigureAwait(true);
     }
 
-    private async Task LaunchAsync(SessionChoice choice, bool switching)
+    private async Task LaunchAsync(SessionChoice choice, bool switching, IReadOnlyList<string>? paths = null)
     {
         var errors = new StringWriter();
-        var request = new LaunchRequest(LaunchKind.Open) { Session = choice.Name, NewWindow = choice.NewWindow };
-        var outcome = await Task.Run(() => NewLauncher(errors).RunAsync(request)).ConfigureAwait(true);
+        var outcome = await Task.Run(() =>
+        {
+            var targets = (paths ?? []).Select(p => new LaunchTarget(p, Directory.Exists(p))).ToArray(); // off the UI thread: it stats each path
+            var request = new LaunchRequest(LaunchKind.Open) { Session = choice.Name, NewWindow = choice.NewWindow, Targets = targets };
+            return NewLauncher(errors).RunAsync(request);
+        }).ConfigureAwait(true);
         if (outcome.ExitCode != 0) Notify(MessageSeverity.Error, "Could not open the session: " + errors.ToString().Trim());
         else if (switching) Hide();
     }

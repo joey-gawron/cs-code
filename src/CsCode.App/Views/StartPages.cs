@@ -46,6 +46,7 @@ public sealed class WelcomeView : UserControl
 
         var start = new StackPanel { Spacing = 2, Width = 360 };
         start.Children.Add(ViewHelpers.Label("Start", "foreground", 16, FontWeight.SemiBold));
+        start.Children.Add(Link("Create a new project", "new-folder", () => Run(Panels.NewProject.NewProjectHost.OpenCommand)));
         start.Children.Add(Link("Open a folder", IconKey.FolderOpened, () => Run(KnownCommands.OpenFolder)));
         start.Children.Add(Link("Open a file", IconKey.File, () => Run(KnownCommands.OpenFile)));
         start.Children.Add(Link("New file", IconKey.NewFile, () => Run(KnownCommands.NewUntitledFile)));

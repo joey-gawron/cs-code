@@ -10,4 +10,10 @@ public interface IViewActivator
 {
     /// <summary>Shows and focuses the view. Returns false when no view with that id is registered.</summary>
     ValueTask<bool> ShowViewAsync(string viewId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Closes a document view's tab (the New Project page once its project is open). False when it is not open, or the shell cannot close views.
+    /// Additive (New Project page): the default closes nothing.
+    /// </summary>
+    ValueTask<bool> CloseViewAsync(string viewId, CancellationToken ct = default) => ValueTask.FromResult(false);
 }

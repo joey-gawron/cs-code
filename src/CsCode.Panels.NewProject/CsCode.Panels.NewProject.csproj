@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The New Project page (File > New > Project...): a document view, its view model and command, over the generators of
+       CsCode.ProjectTemplates. docs/NEW-PROJECT.md. -->
+  <PropertyGroup>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../CsCode.Ui/CsCode.Ui.csproj" />
+    <ProjectReference Include="../CsCode.ProjectTemplates/CsCode.ProjectTemplates.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <!-- UI-facing project: blocking calls (Task.Wait/.Result/GetResult, Thread.Sleep, sync file I/O) are build errors. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <AdditionalFiles Include="BannedSymbols.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Panels.NewProject.Tests" />
+  </ItemGroup>
+
+</Project>

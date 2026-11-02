@@ -18,7 +18,7 @@ public sealed class ZigProjectGenerator(IToolRunner runner) : GeneratorBase(runn
     public override string Id => GeneratorId;
     public override string DisplayName => "Zig";
     public override string Description => "zig init: an executable and a library module";
-    public override string? IconKey => "zap";
+    public override string? IconKey => "flame";
     public override string? LanguageId => "zig";
     public override int Order => 60;
 

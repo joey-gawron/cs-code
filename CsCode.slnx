@@ -10,6 +10,7 @@
     <Project Path="src/CsCode.Panels.Debug/CsCode.Panels.Debug.csproj" />
     <Project Path="src/CsCode.Panels.Git/CsCode.Panels.Git.csproj" />
     <Project Path="src/CsCode.Panels.Navigation/CsCode.Panels.Navigation.csproj" />
+    <Project Path="src/CsCode.Panels.NewProject/CsCode.Panels.NewProject.csproj" />
     <Project Path="src/CsCode.Panels.Search/CsCode.Panels.Search.csproj" />
     <Project Path="src/CsCode.Panels.Terminal/CsCode.Panels.Terminal.csproj" />
     <Project Path="src/CsCode.Platform/CsCode.Platform.csproj" />
