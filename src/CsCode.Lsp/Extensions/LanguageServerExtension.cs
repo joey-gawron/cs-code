@@ -69,5 +69,5 @@ public abstract class LanguageServerExtension
 public static class ServerExtensions
 {
     /// <summary>Fresh instances for one manager (an extension may hold per-manager state).</summary>
-    public static IReadOnlyList<LanguageServerExtension> CreateBuiltins() => [];
+    public static IReadOnlyList<LanguageServerExtension> CreateBuiltins() => [new RustAnalyzer.RustAnalyzerExtension()];
 }

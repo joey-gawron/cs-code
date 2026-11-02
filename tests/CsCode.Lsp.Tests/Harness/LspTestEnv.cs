@@ -158,6 +158,9 @@ public sealed class LspTestEnv : IAsyncDisposable
     public LanguageServerManager Manager { get; }
     public TestStatusBarService StatusBar { get; } = new();
     public CsCode.Lsp.Extensions.ReadOnlyDocuments ReadOnlyDocuments { get; } = new();
+    /// <summary>What server extensions see as the debugger and the task terminals (null: none composed).</summary>
+    public CsCode.Core.Debugging.IDebugService? Debug { get; set; }
+    public CsCode.Core.Tasks.ITaskTerminalHost? TaskTerminals { get; set; }
 
     public string Root => Dir.Path;
 
@@ -207,6 +210,8 @@ public sealed class LspTestEnv : IAsyncDisposable
             Memory = Memory,
             StatusBar = StatusBar,
             ReadOnlyDocuments = ReadOnlyDocuments,
+            Debug = () => Debug,
+            TaskTerminals = () => TaskTerminals,
         };
         Manager = extensions is null ? new LanguageServerManager(lsp) : new LanguageServerManager(lsp, extensions);
     }

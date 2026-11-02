@@ -226,7 +226,7 @@ then Continue and the result comes back from the session — under CodeLLDB on m
 ## Known gaps / next steps
 
 * **Code lens.** "Run Test | Debug Test" only: no "Run All Tests" lens above a test class and no result in the lens text (the glyph shows the
-  result). rust-analyzer's own run/debug lenses are hidden in favour of these (docs/EDITOR.md §7e).
+  result). rust-analyzer's own Run/Debug lenses show only on binaries and examples (its server extension drops them on tests in favour of these: docs/RUST.md).
 * **Microsoft.Testing.Platform-only projects** (MSTest runner / NUnit / TUnit without the VSTest adapter) run through `dotnet test` with the
   VSTest TRX logger, which they may not support: they need `--report-trx` (MTP) and, for debugging, `--filter-uid` and a launch of the test
   executable. xUnit v3 projects (MTP or VSTest) are fine: they run directly.

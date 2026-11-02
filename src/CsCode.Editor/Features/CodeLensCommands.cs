@@ -29,10 +29,11 @@ internal static class CodeLensCommands
     };
 
     /// <summary>
-    /// Client-side commands of a server's VS Code extension that CsCode does not run and whose lens it hides: rust-analyzer's "▶︎ Run" /
-    /// "Debug" lenses, which the Test Explorer's own "Run Test | Debug Test" lenses replace (they would show twice, and be dead links).
+    /// Client-side commands of a server's VS Code extension that CsCode does not run and whose lens it hides. None today: rust-analyzer's
+    /// "▶︎ Run" / "Debug" lenses run through its server extension (CsCode.Lsp's RustAnalyzerExtension), which drops those on tests itself, where
+    /// the Test Explorer's own "Run Test | Debug Test" lenses replace them (lang-2).
     /// </summary>
-    private static readonly HashSet<string> HiddenCommands = new(StringComparer.Ordinal) { "rust-analyzer.runSingle", "rust-analyzer.debugSingle" };
+    private static readonly HashSet<string> HiddenCommands = new(StringComparer.Ordinal);
 
     /// <summary>Whether a lens with this command is not shown (see <see cref="HiddenCommands"/>).</summary>
     internal static bool IsHidden(Command? command) => command is not null && HiddenCommands.Contains(command.CommandId);

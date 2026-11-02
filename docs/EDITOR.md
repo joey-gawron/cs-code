@@ -545,8 +545,13 @@ What a click runs (`CodeLensCommands`): the reference commands servers borrow fr
 `cscode.references.show`, the shell's Find Symbol Results, else a quick pick; a command without locations asks the reference providers at its
 position). Everything else goes through `ICommandService` with the lens's arguments: a server's own commands are registered there by the LSP
 client (`workspace/executeCommand`), CsCode's own (the Test Explorer's `testing.codeLens.run` / `debug`) by their modules; an unknown command
-says so in the status bar. rust-analyzer's `rust-analyzer.runSingle` / `debugSingle` lenses (client-side commands of its VS Code extension) are
-hidden: the Test Explorer's "Run Test | Debug Test" lenses (docs/TESTING.md) replace them.
+says so in the status bar. rust-analyzer's `rust-analyzer.runSingle` / `debugSingle` lenses (client-side commands of its VS Code extension) run
+through its server extension (docs/RUST.md): they show on `fn main` and examples, and that extension drops them on tests, where the Test
+Explorer's "Run Test | Debug Test" lenses (docs/TESTING.md) replace them.
+
+Hover links: a `command:id?<URI-encoded JSON arguments>` link runs the command (an array spreads into several arguments) and closes the hover
+only in **trusted** content (`MarkupContent.IsTrusted`, set by CsCode's own code: rust-analyzer's hover actions, docs/RUST.md); in a server's
+own text it is not run.
 
 **Semantic highlighting** (`SemanticTokensFeature`, `SemanticTokenStore`, `SemanticTokenStyleResolver`). On per
 `editor.semanticHighlighting.enabled`: `true`, `false`, or `configuredByTheme` (the default) = the theme's own `"semanticHighlighting": true`
