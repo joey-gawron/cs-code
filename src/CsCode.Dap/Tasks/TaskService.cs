@@ -73,7 +73,17 @@ public sealed partial class TaskService : ITaskService, IDisposable
     private sealed record TaskModel(
         string Label, string Type, string? Command, IReadOnlyList<string> Args, string? Cwd, IReadOnlyDictionary<string, string> Env,
         string? ShellExecutable, IReadOnlyList<string> ShellArgs, IReadOnlyList<string> DependsOn, bool Sequence, string? Group, bool IsDefault, string? Detail,
-        JsonObject? Presentation = null, JsonNode? ProblemMatcher = null, bool IsBackground = false, int InstanceLimit = 1);
+        JsonObject? Presentation = null, JsonNode? ProblemMatcher = null, bool IsBackground = false, int InstanceLimit = 1)
+    {
+        /// <summary>The source of a detected task (<see cref="ProvidedTask.Source"/>); null for tasks.json's.</summary>
+        public string? Source { get; init; }
+        /// <summary>Runs <see cref="Command"/> directly, its arguments as they are: a detected task, or a tasks.json entry a provider resolved.</summary>
+        public bool Provided { get; init; }
+        /// <summary>The whole tasks.json entry when its type is neither shell nor process (a provider's type: TaskService.Providers.cs).</summary>
+        public JsonObject? Entry { get; init; }
+        /// <summary>Why the task cannot run (a provider's entry it could not resolve): running it reports this.</summary>
+        public string? Error { get; init; }
+    }
 
     private sealed record TasksFile(IReadOnlyList<TaskModel> Tasks, IReadOnlyDictionary<string, JsonElement> Inputs);
 
@@ -83,7 +93,7 @@ public sealed partial class TaskService : ITaskService, IDisposable
         new(_lane.RunAsync(async () =>
         {
             var file = await LoadAsync(folder ?? _p.PrimaryFolder, ct);
-            return (IReadOnlyList<TaskDefinition>)[.. file.Tasks.Select(t => new TaskDefinition(t.Label, t.Type, t.Group, t.IsDefault, t.Detail))];
+            return (IReadOnlyList<TaskDefinition>)[.. file.Tasks.Select(t => new TaskDefinition(t.Label, t.Type, t.Group, t.IsDefault, t.Detail) { Source = t.Source })];
         }, ct));
 
     public ValueTask<TaskResult> RunAsync(string taskLabel, Uri? folder = null, CancellationToken ct = default) =>
@@ -91,7 +101,10 @@ public sealed partial class TaskService : ITaskService, IDisposable
 
     // ------------------------------------------------------------------ loading
 
-    private async Task<TasksFile> LoadAsync(Uri? folder, CancellationToken ct)
+    /// <summary>tasks.json's tasks with the providers' detected ones (<see cref="WithProvidedTasksAsync"/>).</summary>
+    private async Task<TasksFile> LoadAsync(Uri? folder, CancellationToken ct) => await WithProvidedTasksAsync(folder, await LoadFileAsync(folder, ct), ct);
+
+    private async Task<TasksFile> LoadFileAsync(Uri? folder, CancellationToken ct)
     {
         if (folder is null || _p.Workspace is not { } ws) return new TasksFile([], new Dictionary<string, JsonElement>());
         foreach (var rel in Locations)
@@ -122,7 +135,9 @@ public sealed partial class TaskService : ITaskService, IDisposable
             {
                 var t = VariableResolver.MergePlatformBlock(node);
                 var label = t["label"]?.GetValue<string>() ?? t["taskName"]?.GetValue<string>();
-                if (label is null) continue; // (npm/typescript auto-detected tasks need a provider: not supported)
+                var type = t["type"]?.GetValue<string>() ?? "shell";
+                var ofProvider = type is not ("shell" or "process");
+                if (label is null && !ofProvider) continue; // (a provider's entry may leave the label to the task it customises)
                 var options = t["options"] as JsonObject ?? globalOptions;
                 var shell = options?["shell"] as JsonObject;
                 var env = new Dictionary<string, string>();
@@ -144,8 +159,8 @@ public sealed partial class TaskService : ITaskService, IDisposable
                 }
 
                 tasks.Add(new TaskModel(
-                    label,
-                    t["type"]?.GetValue<string>() ?? "shell",
+                    label ?? "",
+                    type,
                     t["command"] is JsonValue cv && cv.TryGetValue<string>(out var cs) ? cs : null,
                     [.. (t["args"] as JsonArray ?? []).Select(a => a is JsonObject ao ? ao["value"]?.ToString() ?? "" : a?.ToString() ?? "")],
                     options?["cwd"]?.GetValue<string>(),
@@ -159,7 +174,10 @@ public sealed partial class TaskService : ITaskService, IDisposable
                     MergePresentation(root["presentation"] as JsonObject, t["presentation"] as JsonObject),
                     t["problemMatcher"]?.DeepClone(),
                     t["isBackground"] is JsonValue bg && bg.TryGetValue<bool>(out var background) && background,
-                    t["runOptions"] is JsonObject ro && ro["instanceLimit"] is JsonValue il && il.TryGetValue<int>(out var limit) && limit > 1 ? limit : 1));
+                    t["runOptions"] is JsonObject ro && ro["instanceLimit"] is JsonValue il && il.TryGetValue<int>(out var limit) && limit > 1 ? limit : 1)
+                {
+                    Entry = ofProvider ? t : null,
+                });
             }
         return new TasksFile(tasks, inputs);
     }
@@ -246,6 +264,7 @@ public sealed partial class TaskService : ITaskService, IDisposable
                 if (failure is not null)
                     return failure with { Label = label, Error = failure.Error ?? $"Dependency '{failure.Label}' failed with exit code {failure.ExitCode}." };
             }
+            if (task.Error is { } error) return new TaskResult(label, -1, Error: error);
             if (task.Command is null) return new TaskResult(label, 0); // a pure "group" task made of dependencies
 
             return await ExecuteAsync(task, folder, resolver, channel, instance, key, stop);
@@ -406,9 +425,10 @@ public sealed partial class TaskService : ITaskService, IDisposable
     {
         // the task's shell or program inherits CsCode's environment: the login shell's on a Mac started from the Dock (lsp-6)
         await LoginShellEnvironment.WaitAsync(ct);
-        var command = await resolver.ResolveAsync(task.Command!, ct);
+        // a provider's program and arguments are passed as they are (ProvidedTask.Args)
+        var command = task.Provided ? task.Command! : await resolver.ResolveAsync(task.Command!, ct);
         var args = new List<string>();
-        foreach (var a in task.Args) args.Add(await resolver.ResolveAsync(a, ct));
+        foreach (var a in task.Args) args.Add(task.Provided ? a : await resolver.ResolveAsync(a, ct));
         var folderPath = folder is { IsFile: true } ? DapPlatform.NormalizeDir(folder.LocalPath) : null;
         var cwd = task.Cwd is null ? folderPath : await resolver.ResolveAsync(task.Cwd, ct);
 
@@ -428,7 +448,7 @@ public sealed partial class TaskService : ITaskService, IDisposable
         var taskEnv = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (var (k, v) in task.Env) psi.Environment[k] = taskEnv[k] = await resolver.ResolveAsync(v, ct);
 
-        if (string.Equals(task.Type, "process", StringComparison.OrdinalIgnoreCase))
+        if (task.Provided || string.Equals(task.Type, "process", StringComparison.OrdinalIgnoreCase))
         {
             psi.FileName = command;
             foreach (var a in args) psi.ArgumentList.Add(a);
