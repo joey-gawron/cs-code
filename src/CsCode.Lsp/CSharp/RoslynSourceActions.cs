@@ -39,10 +39,12 @@ internal sealed partial class RoslynSourceActions(ServerExtensionHost host, Rosl
     internal const int MaxFixAllIds = 16;
     private const string DocumentScope = "Document";
 
-    // on-save runs whose command has not run yet: the document and the participant's deadline, by id; gone when the deadline passes
+    // on-save runs whose command has not run yet: the document and the participant's deadline, by id; gone when the deadline passes, or a
+    // minute later at most (a participant that skipped the action disposes its deadline without cancelling it)
     private readonly ConcurrentDictionary<string, Pending> _pending = new(StringComparer.Ordinal);
+    private const long PendingForMs = 60_000;
 
-    private sealed record Pending(ITextDocument Document, CancellationToken Deadline)
+    private sealed record Pending(ITextDocument Document, CancellationToken Deadline, long Created)
     {
         public CancellationTokenRegistration Expiry { get; set; }
     }
@@ -68,8 +70,11 @@ internal sealed partial class RoslynSourceActions(ServerExtensionHost host, Rosl
         var args = new Dictionary<string, string> { ["uri"] = document.Uri.ToString() };
         if (context.TriggerKind == CodeActionTriggerKind.Automatic && deadline.CanBeCanceled)
         {
+            var now = Environment.TickCount64;
+            foreach (var (key, old) in _pending)
+                if (now - old.Created > PendingForMs && _pending.TryRemove(key, out _)) old.Expiry.Dispose();
             var id = Guid.NewGuid().ToString("N");
-            var pending = new Pending(document, deadline);
+            var pending = new Pending(document, deadline, now);
             _pending[id] = pending;
             pending.Expiry = deadline.Register(() => _pending.TryRemove(id, out _));
             args["op"] = id;

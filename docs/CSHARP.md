@@ -293,9 +293,12 @@ The Test Explorer check found two things fixed on the way: a runner project that
 yet (the packages' props set it), so `EnableMSTestRunner` / `EnableNUnitRunner` / a TUnit reference count too; and a debugged MTP program
 printed the platform's telemetry banner (the debug launch now passes `TESTINGPLATFORM_TELEMETRY_OPTOUT` like runs do).
 
-## 8. Deferred (open after the merge of every stage)
+## 8. What is left
 
-* **`dotnet new` New Project** — stage 7's New Project page creates .NET projects (scope change, 2026-11-01); New Item is here (section 6).
+* The brief's SHOULD items are all in since the follow-ups after the merge of every stage (2026-11-02): code actions on save (section 1), the
+  detected `dotnet` tasks, `dotnet watch`, NuGet and New Item (section 6). `dotnet new` New Project is stage 7's New Project page.
+* **STRETCH, not started** (each needs the user's go-ahead): a Solution view (projects, references and packages, after Visual Studio's
+  Solution Explorer); Razor and Blazor through Roslyn's Razor support.
 
 Stage 2's per-server extension pattern was cherry-picked from the Rust branch (its commits "Add the per-server LSP extension pattern…" and
 "Let server extensions answer server-to-client requests…", at the Rust session's suggestion) and Roslyn is built on it: `RoslynExtension`
@@ -309,8 +312,9 @@ fix with in-order delivery. Since the C# merge both stages run on main's copy of
 
 * Roslyn's `workspace/configuration` sections (`csharp|…`, `dotnet|…`) are answered from settings of the same name: VS Code's C# settings
   (`dotnet.*`) are not mapped, so Roslyn runs with its defaults (decompilation on). `--csharpDesignTimePath` is not passed.
-* Roslyn's light bulb "Fix All: Remove unnecessary usings" → Document fails on a using line (the `resolveFixAll` bug above: Sort Usings is at the
-  same range); Project and Solution work. Code actions on save are Roslyn's only: csharp-ls was not checked for source actions.
+* By Roslyn's code, its `resolveFixAll` bug (section 1) also hits the light bulb: "Fix All: Remove unnecessary usings" → Document on a using line,
+  where Sort Usings is offered too, fails (not tried in the app; Project and Solution have no such neighbour). Code actions on save are
+  Roslyn's only: csharp-ls was not checked for source actions.
 * `workspace/textDocumentContent/refresh` is not handled (a generated document opened before its generator reruns is stale).
 * Razor and Blazor still have highlighting only (STRETCH, not started).
 * NuGet: no credential providers, no package icons or README, no "outdated" view.
@@ -319,11 +323,13 @@ fix with in-order delivery. Since the C# merge both stages run on main's copy of
 
 ```
 tools/fetch-roslyn-ls.sh                                                       # Roslyn into .scratch/tools/roslyn-ls (once)
-dotnet tests/CsCode.Lsp.Tests/bin/Debug/net10.0/CsCode.Lsp.Tests.dll -class CsCode.Lsp.Tests.RealCSharpServerTests      # both servers, real
+dotnet tests/CsCode.Lsp.Tests/bin/Debug/net10.0/CsCode.Lsp.Tests.dll -class CsCode.Lsp.Tests.RealCSharpServerTests      # both servers, real; Roslyn's on-save source actions
 dotnet tests/CsCode.Lsp.Tests/bin/Debug/net10.0/CsCode.Lsp.Tests.dll -class CsCode.Lsp.Tests.CSharpServerTests          # no server
 CSCODE_CSHARP_EVAL=1 dotnet tests/CsCode.Lsp.Tests/bin/Debug/net10.0/CsCode.Lsp.Tests.dll -class CsCode.Lsp.Tests.CSharpServerEvaluation
 dotnet tests/CsCode.Panels.Testing.Tests/bin/Debug/net10.0/CsCode.Panels.Testing.Tests.dll -class CsCode.Panels.Testing.Tests.Providers.RealTestingPlatformTests
 dotnet tests/CsCode.Dap.Tests/bin/Debug/net10.0/CsCode.Dap.Tests.dll -class CsCode.Dap.Tests.RealNetCoreDbgMatrixTests -class CsCode.Dap.Tests.RealNetCoreDbgTests
+dotnet tests/CsCode.Dap.Tests/bin/Debug/net10.0/CsCode.Dap.Tests.dll -class CsCode.Dap.Tests.DotnetTaskProviderTests                # dotnet tasks; a real build and dotnet watch
+dotnet tests/CsCode.App.Tests/bin/Debug/net10.0/CsCode.App.Tests.dll -class CsCode.App.Tests.DotNet.DotNetNewItemTests               # New Item; real dotnet new
 dotnet tests/CsCode.Panels.Debug.Tests/bin/Debug/net10.0/CsCode.Panels.Debug.Tests.dll -class CsCode.Panels.Debug.Tests.RealDebuggerEndToEndTests
 dotnet tests/CsCode.App.Tests/bin/Debug/net10.0/CsCode.App.Tests.dll -class CsCode.App.Tests.RealApp.CSharpRealAppTests       # the real-app checks
 ```

@@ -208,10 +208,11 @@ public class RealCSharpServerTests
         """;
 
     /// <summary>What the will-save participant does for <paramref name="kind"/>: asks every provider, then runs the matching action's command.</summary>
-    private static async Task<bool> RunSourceActionAsync(LspTestEnv env, ITextDocument doc, string kind, CancellationToken deadline, Action? beforeCommand = null)
+    private static async Task<bool> RunSourceActionAsync(LspTestEnv env, ITextDocument doc, string kind, CancellationToken deadline, Action? beforeCommand = null,
+        CodeActionTriggerKind trigger = CodeActionTriggerKind.Automatic)
     {
         var whole = new TextRange(new TextPosition(0, 0), doc.PositionAt(doc.Length));
-        var context = new CodeActionContext(env.Diagnostics.Get(doc.Uri), [kind], CodeActionTriggerKind.Automatic);
+        var context = new CodeActionContext(env.Diagnostics.Get(doc.Uri), [kind], trigger);
         var offered = new List<CodeAction>();
         foreach (var provider in env.Registry.GetProviders<ICodeActionProvider>(doc))
             offered.AddRange(await provider.ProvideCodeActionsAsync(doc, whole, context, deadline) ?? []);
@@ -230,6 +231,7 @@ public class RealCSharpServerTests
         env.Dir.WriteFile(".editorconfig", "root = true\n[*.cs]\ncsharp_style_implicit_object_creation_when_type_is_apparent = true\ndotnet_diagnostic.IDE0090.severity = warning\n");
         var untidy = env.Open("Untidy.cs", Untidy("Untidy"), "csharp");
         var late = env.Open("Late.cs", Untidy("Late"), "csharp");
+        var asked = env.Open("Asked.cs", Untidy("Asked"), "csharp");
         var fixable = env.Open("Fixes.cs", Fixable, "csharp");
         await env.WaitForStateAsync(CSharpServers.RoslynId, LanguageServerState.Running, TimeSpan.FromSeconds(120));
         await RoslynOf(env).Ready.WaitAsync(TimeSpan.FromSeconds(180), Ct);
@@ -258,6 +260,10 @@ public class RealCSharpServerTests
             output?.WriteLine($"organize usings again (warm): {took.ElapsedMilliseconds} ms");
         }
         Assert.StartsWith("using System;\nusing System.Collections.Generic;\n\nnamespace Sample;", late.GetText().ReplaceLineEndings("\n"));
+
+        // Organize Imports (Shift+Alt+O): asked for, not on save, so no deadline comes with it
+        Assert.True(await RunSourceActionAsync(env, asked, "source.organizeImports", CancellationToken.None, trigger: CodeActionTriggerKind.Invoked));
+        Assert.StartsWith("using System;\nusing System.Collections.Generic;\n\nnamespace Sample;", asked.GetText().ReplaceLineEndings("\n"));
 
         // Fix All in Document: IDE0090 (raised to a warning) twice in one fix all; CS0219 (the compiler's) and suggestions stay
         await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(fixable.Uri).Any(d => d.Code == "IDE0090"),
