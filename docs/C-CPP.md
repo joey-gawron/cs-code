@@ -400,6 +400,10 @@ is still worth doing.
   (`cpp-debug-locals.png`); Continue stops at the `throw` as an exception, the Exception window says "C++ exception: A C++ exception was
   thrown." (`cpp-debug-throw.png`); then `view.mm` and `kernel.cu` get clangd's diagnostics, the status bar says "CUDA C++" and the Error List
   shows the CUDA-installation errors (`cpp-clangd-cu.png`).
+* **Beside CTest** (`CppTestExplorerRealAppTests.Tests_that_ctest_discovers_are_listed_once_in_the_real_app`, after the merge with stage 3): the
+  sample with `gtest_discover_tests` and `catch_discover_tests` (`CppTestSample.CTestDiscovery`) built, the folder opened, the Test Explorer
+  shown: the CMake project (CTest) holds `gtest_tests`, `catch_tests` and `doctest_tests` (its one `doctest_all` test), and the C++ provider
+  only `build/doctest_tests`; `MathTest.Adds` and `adds numbers` are each listed once (`cpp-ctest-listed-once.png`).
 
 ## 14. Done when (brief) — status
 
@@ -450,4 +454,4 @@ dotnet test tests/CsCode.App.Tests --filter "CppTestExplorerRealAppTests|CppDebu
   `gtest_discover_tests` and `catch_discover_tests` under the real CMake integration and ctest: CTest lists those tests, the C++ provider
   keeps only the doctest executable CTest runs whole.
 * `RealClangdDialectTests` (`RealTools`), `RealCppDebuggingTests` (`RealAdapter`; skips without the adapter, clang++ or, on macOS, Developer
-  Mode), the two real-app tests above (screenshots in `.scratch/screenshots/cpp-*.png`).
+  Mode), the three real-app tests above (screenshots in `.scratch/screenshots/cpp-*.png`).

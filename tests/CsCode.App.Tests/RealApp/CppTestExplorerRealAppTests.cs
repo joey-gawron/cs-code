@@ -66,7 +66,9 @@ public class CppTestExplorerRealAppTests
         var gtestSource = host.Files.Combine("gtest_tests.cpp");
         var catchSource = host.Files.Combine("catch_tests.cpp");
         Assert.Equal(new TestLocation(gtestSource, 5), tree.FindTest("gtest_tests/MathTest.Adds")!.Location);
-        Assert.Equal(["build/catch_tests", "build/doctest_tests", "build/gtest_tests"], tree.Projects.Select(p => p.Label).Order());
+        // the CTest provider lists the CMake project beside them (the sample registers no CTest tests, so none of these is left to it)
+        Assert.Equal(["build/catch_tests", "build/doctest_tests", "build/gtest_tests"],
+            tree.Projects.Where(p => p.Project.ProviderId == CppTestProvider.ProviderId).Select(p => p.Label).Order());
 
         // Run All: the failures are in the Error List at the failing assertions
         await testing.Controller.RunAllAsync();
@@ -103,5 +105,42 @@ public class CppTestExplorerRealAppTests
             Assert.True(await RealAppHost.WaitFor(() => !testing.Controller.IsRunning && debug.Sessions.Count == 0, 30_000), $"{id}: the debug run ended");
             Assert.Equal(TestOutcome.Passed, tree.FindTest(id)!.Outcome); // read from the results file the debugged executable wrote
         }
+    }
+
+    /// <summary>
+    /// The sample with <c>gtest_discover_tests</c> and <c>catch_discover_tests</c> (<see cref="CppTestSample.CTestDiscovery"/>) in the real app:
+    /// the CTest provider lists those tests and the C++ provider leaves their executables out, so each is listed once; the doctest executable,
+    /// which CTest runs whole, keeps its tests in the C++ provider.
+    /// </summary>
+    [AvaloniaFact(Timeout = 360_000)]
+    public async Task Tests_that_ctest_discovers_are_listed_once_in_the_real_app()
+    {
+        var skip = CppTestSample.SkipReason();
+        Assert.SkipWhen(skip is not null, skip ?? "");
+        var ct = TestContext.Current.CancellationToken;
+        await using var host = RealAppHost.Create(h =>
+        {
+            var settingsPath = h.Home.Combine("config", "settings.json");
+            var settings = JsonNode.Parse(File.ReadAllText(settingsPath))!.AsObject();
+            settings[TestingSettings.OpenTesting] = "neverOpen";
+            File.WriteAllText(settingsPath, settings.ToJsonString());
+        });
+        var failure = await CppTestSample.WriteAndBuildAsync(host.Files.Path, ct, ctest: true);
+        Assert.True(failure is null, failure);
+        await host.StartAsync([host.Files.Path]);
+        var testing = host.Get<TestingHost>();
+        var tree = testing.Controller.Tree;
+        string Output() => host.Get<Core.Platform.IOutputService>().GetOrCreate(TestingHost.OutputChannelName).GetText();
+        IReadOnlyList<string> CppProjects() => [.. tree.Projects.Where(p => p.Project.ProviderId == CppTestProvider.ProviderId).Select(p => p.Label).Order()];
+
+        await host.Get<Core.Platform.ICommandService>().ExecuteAsync(TestingHost.FocusView);
+        Assert.True(await RealAppHost.WaitFor(() => tree.FindTest("MathTest.Adds") is not null && tree.FindTest("adds numbers") is not null
+            && tree.FindTest("doctest_tests/adds") is not null && CppProjects() is ["build/doctest_tests"] && !testing.Controller.IsDiscovering, 120_000),
+            "projects: " + string.Join(", ", tree.Projects.Select(p => $"{p.Project.ProviderId}:{p.Label}")) + "; tests: "
+            + string.Join(", ", tree.AllTests().Select(t => t.TestId)) + "; output: " + Output());
+        Assert.Single(tree.AllTests(), t => t.TestId?.EndsWith("MathTest.Adds", StringComparison.Ordinal) == true);
+        Assert.Single(tree.AllTests(), t => t.TestId?.EndsWith("adds numbers", StringComparison.Ordinal) == true);
+        Assert.Null(tree.FindTest("gtest_tests/MathTest.Adds"));
+        Capture(host, "cpp-ctest-listed-once");
     }
 }
