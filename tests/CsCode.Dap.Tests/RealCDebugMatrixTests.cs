@@ -26,6 +26,7 @@ public sealed class RealCDebugMatrixTests
         #include <stdio.h>
         #include <stdlib.h>
         #include <string.h>
+        #include <unistd.h>
 
         struct point { int x; int y; };
         union number { int i; float f; };
@@ -33,6 +34,12 @@ public sealed class RealCDebugMatrixTests
         static int square(int n) {
             int result = n * n; /* @square */
             return result;
+        }
+
+        static volatile int keep_waiting = 1;
+
+        static int tick(int n) {
+            return n + 1; /* @tick */
         }
 
         static void *worker(void *arg) {
@@ -65,6 +72,13 @@ public sealed class RealCDebugMatrixTests
                 *bad = 1; /* @segv */
             }
             if (strcmp(mode, "abort") == 0) abort(); /* @abort */
+            if (strcmp(mode, "wait") == 0) {
+                int n = 0;
+                while (keep_waiting) {
+                    n = tick(n);
+                    usleep(50000);
+                }
+            }
             return 7;
         }
         """;
@@ -391,5 +405,43 @@ public sealed class RealCDebugMatrixTests
         await SettleAsync();
         await rig.ContinueAsync();
         await rig.EndAsync();
+    }
+
+    // ------------------------------------------------------------------ attach
+
+    [Theory, MemberData(nameof(Adapters))]
+    public async Task Attach_by_pid_stops_a_running_program_at_a_breakpoint(string type)
+    {
+        await using var rig = await RigAsync(type);
+        using var program = Process.Start(new ProcessStartInfo(rig.Binary, ["wait"]) { UseShellExecute = false, RedirectStandardOutput = true })!;
+        try
+        {
+            await Task.Delay(300, Ct); // let it reach its loop
+            Assert.False(program.HasExited);
+            var bp = rig.H.Breakpoints.Add(rig.SourceUri, Line("@tick"));
+            // the pid as text, as ${command:pickProcess} yields it: the factories turn it into the number the adapters want
+            var extra = new Dictionary<string, object?> { ["pid"] = program.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), ["program"] = rig.Binary };
+            var started = Stopwatch.GetTimestamp();
+            var session = (DebugSession)await rig.H.StartAsync(ServiceHarness.Config("C attach", type, request: "attach", extra: extra, folder: rig.H.Dir.Uri));
+            rig.Session = session;
+            var loc = await rig.WaitForStopAsync(1);
+            Note(type, $"attach to pid {program.Id}: first stop after {Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms, reason '{rig.LastStop.Reason}', line {loc.Line + 1}; verdict {rig.H.Breakpoints.GetStatus(bp.Id)?.Verified}");
+            AssertAt(loc, Line("@tick"));
+            var n = int.Parse(await rig.ValueAsync("n"), System.Globalization.CultureInfo.InvariantCulture);
+            Assert.True(n >= 0);
+
+            // ending an attach session detaches: the program runs on
+            rig.H.Breakpoints.Remove(bp.Id);
+            await SettleAsync();
+            await session.StopAsync(Ct);
+            await rig.EndAsync();
+            await Task.Delay(300, Ct);
+            Note(type, $"after the session ended the program is {(program.HasExited ? $"gone (exit {program.ExitCode})" : "still running (detached)")}");
+            Assert.False(program.HasExited);
+        }
+        finally
+        {
+            if (!program.HasExited) program.Kill();
+        }
     }
 }

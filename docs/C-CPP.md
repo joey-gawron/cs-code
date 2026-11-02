@@ -125,8 +125,8 @@ CodeLLDB's templates carry `"sourceLanguages": ["c"]`.
 ## 6. C debugging matrix on this Mac
 
 `tests/CsCode.Dap.Tests/RealCDebugMatrixTests.cs` runs every row against both adapters through the real `DebugService` on one C program built
-with `cc -g -O0 -pthread` (evidence: `CSCODE_DAP_TEST_METRICS=<file>`). 18/18 pass (CodeLLDB v1.12.3, Apple lldb-dap / LLVM 21, macOS 27 arm64,
-Developer Mode on).
+with `cc -g -O0 -pthread` (evidence: `CSCODE_DAP_TEST_METRICS=<file>`). 20/20 pass (CodeLLDB v1.12.3, Apple lldb-dap / LLVM 21, macOS 27 arm64,
+Developer Mode on). Line numbers below are the sample's (`RealCDebugMatrixTests.Program`).
 
 | Row | CodeLLDB (`lldb`) | lldb-dap | Evidence |
 |---|---|---|---|
@@ -135,8 +135,8 @@ Developer Mode on).
 | Conditional breakpoint (`i == 3`) | ✅ verified, "Resolved locations: 1" | ✅ verified | stops with `i = 3` |
 | Hit count (`2`) | ✅ second hit | ✅ second hit | set while `i = 3`: stops in `square` with `n = 4` |
 | Logpoint (`square of {n}`) | ✅ no stop | ✅ no stop | `square of 0` … `square of 4` in the console |
-| Function breakpoint (`square`) | ✅ | ✅ | stops at the first statement of `square` (line 10) |
-| Step into / out / over | ✅ | ✅ | into `square` (stack `square:10 \| main:29`), out to the loop, over to line 30 |
+| Function breakpoint (`square`) | ✅ | ✅ | stops at the first statement of `square` (line 11) |
+| Step into / out / over | ✅ | ✅ | into `square` (stack `square:11 \| main:36`), out to the loop, over to line 37 |
 | Struct | ✅ `{x:3, y:4}`, children x, y | ✅ `point @ 0x…`, children x, y | |
 | Array | ✅ `{1, 2, 3, 4}` | ✅ `int[4] @ 0x…`, children 1–4 | |
 | Pointer | ✅ value `3`, expands to `*ptr = 3` | ✅ value `0x…`, expands to `*ptr = 3` | `*ptr` evaluates to 3 in both |
@@ -145,6 +145,7 @@ Developer Mode on).
 | SIGSEGV | ✅ exception stop | ✅ exception stop | reason `exception`, `EXC_BAD_ACCESS (code=1, address=0x0)`, at the faulting line |
 | abort() | ✅ exception stop | ✅ exception stop | reason `exception`, `signal SIGABRT`; `main` at the `abort()` line in the stack under `__pthread_kill` / `pthread_kill` / `abort` (CodeLLDB shows system frames without a file) |
 | pthreads | ✅ 3 threads listed at once | ✅ after a fix (below) | breakpoint in `worker` stops that thread; `id` is 1 or 2 |
+| Attach by pid (`"pid"` as text, as `${command:pickProcess}` gives it) | ✅ first stop ~0.5 s | ✅ first stop ~0.3 s | a running program stops at a breakpoint in `tick` with no password dialog; ending the session detaches and the program runs on |
 | stdin through the integrated terminal | see §7 | see §7 | |
 | Memory window from a pointer, Disassembly, data breakpoints | deferred (stage 2's windows) | deferred | |
 
@@ -153,11 +154,11 @@ since (the one that stopped) was missing from the Threads window; 200 ms later t
 times, 100 ms apart) while the thread that stopped is not in the answer (`StaleThreadsTests`). Also fixed: `RealLldbDapTests`' C test
 continued within the breakpoint sync's 50 ms debounce after removing its breakpoint and hit it again; it now waits like a user would.
 
-**Attach by pid on macOS.** Attaching needs the debugger to be allowed to take another process's task port: Developer Mode on
-(`DevToolsSecurity -status`; `sudo DevToolsSecurity -enable`, and the user in the `_developer` group), and the target not hardened: a program
-built by the user (`cc -g`) attaches; Apple-signed and hardened-runtime binaries without the `com.apple.security.get-task-allow` entitlement
-do not (SIP). The templates offer `"pid": "${command:pickProcess}"` attach configurations for CodeLLDB and lldb-dap; with Developer Mode off,
-macOS asks for an administrator in a dialog first.
+**Attach by pid on macOS** works with both adapters (row above) with Developer Mode on (`DevToolsSecurity -status`; `sudo DevToolsSecurity
+-enable`), which this Mac has: no administrator dialog appears. With it off, macOS asks for an administrator in a dialog before the debugger
+may take the process's task port. Only processes that allow it can be attached: a program the user built (`cc -g`) can; Apple-signed and
+hardened-runtime binaries without the `com.apple.security.get-task-allow` entitlement cannot (System Integrity Protection). CodeLLDB's and
+lldb-dap's generic templates include an "Attach to process" configuration with `"pid": "${command:pickProcess}"`.
 
 ## 7. Seen in the real app
 
