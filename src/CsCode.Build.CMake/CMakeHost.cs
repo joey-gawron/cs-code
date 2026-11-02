@@ -405,19 +405,25 @@ public sealed class CMakeHost : IDisposable
 
     // ------------------------------------------------------------------------------------------------ status bar and clangd
 
-    private void OnViewsChanged(IReadOnlyList<CMakeProjectView> views)
+    /// <summary>
+    /// Shows the latest views (any thread: the lane's events and <see cref="Start"/>'s first call may race). Each call reads
+    /// <see cref="CMakeService.Views"/> under the lock rather than the views it was handed, so the last one to run shows the newest state; with
+    /// the views it was handed, Start's first call could land after the lane's and clear the items until the next change.
+    /// </summary>
+    private void OnViewsChanged(IReadOnlyList<CMakeProjectView> _)
     {
-        _clangd.Update(views.Select(v => v.Project).FirstOrDefault(p => p.State == CMakeProjectState.Configured && File.Exists(Path.Combine(p.BuildDirectory, "compile_commands.json")))?.BuildDirectory);
-        if (_status is null) return;
-        // the items follow the project of the active editor; with one project, that one
-        var view = views.Count == 1 ? views[0]
-            : _sp.GetService<INavigationService>()?.ActiveDocument?.Uri is { IsFile: true } u && _cmake.ProjectFor(u.LocalPath) is { } p
-                ? views.FirstOrDefault(v => v.Project.SourceDirectory == p.SourceDirectory) ?? views.FirstOrDefault()
-                : views.FirstOrDefault();
-        var models = view is null ? [] : StatusItems(view);
-        var key = string.Join('\u0001', models.Select(m => m.Id + "\u0002" + m.Text + "\u0002" + m.Tooltip + "\u0002" + m.CommandId));
         lock (_items)
         {
+            var views = _cmake.Views;
+            _clangd.Update(views.Select(v => v.Project).FirstOrDefault(p => p.State == CMakeProjectState.Configured && File.Exists(Path.Combine(p.BuildDirectory, "compile_commands.json")))?.BuildDirectory);
+            if (_status is null) return;
+            // the items follow the project of the active editor; with one project, that one
+            var view = views.Count == 1 ? views[0]
+                : _sp.GetService<INavigationService>()?.ActiveDocument?.Uri is { IsFile: true } u && _cmake.ProjectFor(u.LocalPath) is { } p
+                    ? views.FirstOrDefault(v => v.Project.SourceDirectory == p.SourceDirectory) ?? views.FirstOrDefault()
+                    : views.FirstOrDefault();
+            var models = view is null ? [] : StatusItems(view);
+            var key = string.Join('\u0001', models.Select(m => m.Id + "\u0002" + m.Text + "\u0002" + m.Tooltip + "\u0002" + m.CommandId));
             if (key == _itemsKey) return;
             _itemsKey = key;
             // Set replaces an item by id: set the new ones first, then remove only the ids that are gone
