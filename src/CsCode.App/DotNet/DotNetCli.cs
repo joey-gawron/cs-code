@@ -205,6 +205,112 @@ public static class DotNetCli
         return null;
     }
 
+    // ------------------------------------------------------------------ dotnet new items
+
+    /// <summary>
+    /// The item templates (<c>dotnet new list --type item</c>, parsed by the New Project page's <c>DotnetTemplates.ParseList</c>) that fit a project
+    /// in <paramref name="language"/> (<c>C#</c>, <c>F#</c>, <c>VB</c>): those of that language and those of none (configuration files), by name.
+    /// </summary>
+    public static IReadOnlyList<ProjectTemplates.Generators.DotnetTemplate> ItemTemplatesFor(IEnumerable<ProjectTemplates.Generators.DotnetTemplate> templates, string language) =>
+        [.. templates.Where(t => t.Languages.Length == 0 || LanguagesOf(t).Contains(language, StringComparer.OrdinalIgnoreCase))
+            .GroupBy(t => t.ShortName, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)];
+
+    /// <summary>A template's languages, its default in brackets: <c>[C#],F#,VB</c> → C#, F#, VB.</summary>
+    public static IReadOnlyList<string> LanguagesOf(ProjectTemplates.Generators.DotnetTemplate template) =>
+        [.. template.Languages.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(l => l.Trim('[', ']'))];
+
+    /// <summary>The language of a project file: <c>.fsproj</c> F#, <c>.vbproj</c> VB, anything else C#.</summary>
+    public static string LanguageOf(string? project) =>
+        project?.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase) == true ? "F#" : project?.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase) == true ? "VB" : "C#";
+
+    /// <summary>Whether a template writes a file of a fixed name (.editorconfig, global.json, Directory.Build.props), so it asks for no name.</summary>
+    public static bool HasFixedName(ProjectTemplates.Generators.DotnetTemplate template) =>
+        template.Tags.Split('/').FirstOrDefault() is "Config" or "MSBuild";
+
+    /// <summary>
+    /// The namespace of an item in <paramref name="directory"/> of <paramref name="project"/>: the project's <c>RootNamespace</c> (else its file
+    /// name) followed by the folders below the project, each made an identifier (VS's rule: <c>src/My-App/Api/V1</c> → <c>My_App.Api.V1</c>).
+    /// </summary>
+    public static string NamespaceFor(string project, string? projectXml, string directory)
+    {
+        string? root = null;
+        if (projectXml is not null)
+        {
+            try
+            {
+                root = System.Xml.Linq.XDocument.Parse(projectXml).Descendants().Where(e => e.Name.LocalName == "RootNamespace")
+                    .Select(e => e.Value.Trim()).FirstOrDefault(v => v.Length > 0 && !v.Contains("$(", StringComparison.Ordinal));
+            }
+            catch (System.Xml.XmlException) { /* named after its file */ }
+        }
+        var parts = new List<string> { root ?? Identifier(Path.GetFileNameWithoutExtension(project)) };
+        var below = Path.GetRelativePath(Path.GetDirectoryName(project)!, directory);
+        if (below != "." && !below.StartsWith("..", StringComparison.Ordinal))
+            parts.AddRange(below.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries).Select(Identifier));
+        return string.Join('.', parts);
+    }
+
+    private static string Identifier(string part)
+    {
+        var sb = new StringBuilder(part.Length + 1);
+        foreach (var c in part) sb.Append(char.IsLetterOrDigit(c) || c == '_' || c == '.' ? c : '_');
+        if (sb.Length == 0 || char.IsDigit(sb[0])) sb.Insert(0, '_');
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// What a <c>dotnet new … --dry-run</c> printed: the files it would create (relative to its directory, '/' separated), and the existing files it
+    /// would overwrite, which it refuses without <c>--force</c> (exit code 73: <c>Overwrite   ./Values.cs</c>).
+    /// </summary>
+    public static (IReadOnlyList<string> Created, IReadOnlyList<string> Overwritten) ParseDryRun(string output)
+    {
+        var created = new List<string>();
+        var overwritten = new List<string>();
+        foreach (var raw in output.ReplaceLineEndings("\n").Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith("Create:", StringComparison.Ordinal)) created.Add(Relative(line["Create:".Length..]));
+            else if (line.StartsWith("Overwrite:", StringComparison.Ordinal)) { var path = Relative(line["Overwrite:".Length..]); created.Add(path); overwritten.Add(path); }
+            else if (line.StartsWith("Overwrite ", StringComparison.Ordinal)) overwritten.Add(Relative(line["Overwrite".Length..]));
+        }
+        return (created, overwritten);
+
+        static string Relative(string path)
+        {
+            path = path.Trim().Replace('\\', '/');
+            while (path.StartsWith("./", StringComparison.Ordinal)) path = path[2..];
+            return path;
+        }
+    }
+
+    /// <summary>Whether a folder has a .NET project at its top or up to two levels down (bounded: the Explorer's "New .NET Item…" shows then).</summary>
+    public static async Task<bool> HasProjectNearTopAsync(Core.Platform.IFileSystem fs, string folder, CancellationToken ct)
+    {
+        string[] skipped = ["bin", "obj", ".git", "node_modules", ".vs", ".idea", ".scratch", "artifacts"];
+        var level = new List<string> { folder };
+        var scanned = 0;
+        for (var depth = 0; depth <= 2 && level.Count > 0; depth++)
+        {
+            var next = new List<string>();
+            foreach (var dir in level)
+            {
+                if (++scanned > 256) return false;
+                IReadOnlyList<Core.Platform.DirectoryEntry> entries;
+                try { entries = await fs.ReadDirectoryAsync(DirectoryUri(dir), ct).ConfigureAwait(false); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
+                foreach (var e in entries)
+                {
+                    if ((e.Type & Core.Platform.FileType.SymbolicLink) != 0) continue;
+                    if ((e.Type & Core.Platform.FileType.File) != 0 && (IsProjectFile(e.Name) || e.Name.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+                        || e.Name.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))) return true;
+                    if ((e.Type & Core.Platform.FileType.Directory) != 0 && !e.Name.StartsWith('.') && !skipped.Contains(e.Name, StringComparer.OrdinalIgnoreCase)) next.Add(Path.Combine(dir, e.Name));
+                }
+            }
+            level = next;
+        }
+        return false;
+    }
+
     /// <summary>A download count as NuGet shows it (12.3M, 456K).</summary>
     public static string Downloads(long n) => n switch
     {

@@ -94,6 +94,69 @@ public class CSharpServerTests
     }
 
     [Fact]
+    public void Organize_usings_spans_the_using_directives_and_not_using_statements()
+    {
+        var text = string.Join('\n',
+            "// header",
+            "global using System;",
+            "using static System.Math;",
+            "using Ints = System.Collections.Generic.List<int>;",
+            "using global::System.Text;",
+            "",
+            "namespace Sample",
+            "{",
+            "    using System.Linq;",
+            "    class C",
+            "    {",
+            "        void M()",
+            "        {",
+            "            using var a = Open();",
+            "            using (var b = Open()) { }",
+            "            using System.IO.Stream c = Open();",
+            "        }",
+            "    }",
+            "}");
+        Assert.Equal(new TextRange(new TextPosition(1, 0), new TextPosition(8, 22)), RoslynSourceActions.UsingsRange(text));
+        Assert.Null(RoslynSourceActions.UsingsRange("namespace Sample;\nclass C { void M() { using var s = Open(); } }\n"));
+    }
+
+    [Fact]
+    public void Fix_all_takes_analyzer_warnings_and_errors_in_document_order_one_id_at_a_time()
+    {
+        Assert.True(RoslynSourceActions.IsTarget(DiagnosticSeverity.Warning, "IDE0090"));
+        Assert.True(RoslynSourceActions.IsTarget(DiagnosticSeverity.Error, "CA1822"));
+        Assert.False(RoslynSourceActions.IsTarget(DiagnosticSeverity.Information, "IDE0028")); // a suggestion stays one
+        Assert.False(RoslynSourceActions.IsTarget(DiagnosticSeverity.Warning, "CS0219"));      // the compiler's own, as dotnet format leaves them
+        Assert.False(RoslynSourceActions.IsTarget(DiagnosticSeverity.Warning, "BC42024"));
+        Assert.False(RoslynSourceActions.IsTarget(DiagnosticSeverity.Warning, null));
+
+        var report = JsonDocument.Parse("""
+            {"kind":"full","items":[
+              {"range":{"start":{"line":9,"character":4},"end":{"line":9,"character":8}},"severity":2,"code":"IDE0059","message":"a"},
+              {"range":{"start":{"line":3,"character":20},"end":{"line":3,"character":23}},"severity":2,"code":"IDE0090","message":"b"},
+              {"range":{"start":{"line":2,"character":1},"end":{"line":2,"character":2}},"severity":3,"code":"IDE0028","message":"c"},
+              {"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":2}},"severity":2,"code":"CS0219","message":"d"},
+              {"range":{"start":{"line":3,"character":2},"end":{"line":3,"character":5}},"severity":2,"code":"IDE0090","message":"e"}]}
+            """).RootElement;
+        var first = RoslynSourceActions.NextTarget(report, new HashSet<string>())!.Value;
+        Assert.Equal(("IDE0090", "e"), (first.Code, first.Diagnostic.GetProperty("message").GetString()));
+        Assert.Equal("IDE0059", RoslynSourceActions.NextTarget(report, new HashSet<string> { "IDE0090" })!.Value.Code);
+        Assert.Null(RoslynSourceActions.NextTarget(report, new HashSet<string> { "IDE0090", "IDE0059" }));
+        Assert.Null(RoslynSourceActions.NextTarget(null, new HashSet<string>()));
+    }
+
+    [Fact]
+    public void The_source_actions_answer_their_own_kind_and_every_kind_above_it()
+    {
+        Assert.True(RoslynSourceActions.Asks(["source"], RoslynSourceActions.OrganizeKind));
+        Assert.True(RoslynSourceActions.Asks(["source.organizeImports"], RoslynSourceActions.OrganizeKind));
+        Assert.True(RoslynSourceActions.Asks(["source.fixAll.roslyn"], RoslynSourceActions.FixAllKind));
+        Assert.False(RoslynSourceActions.Asks(["source.fixAll.ruff"], RoslynSourceActions.FixAllKind));
+        Assert.False(RoslynSourceActions.Asks(["quickfix"], RoslynSourceActions.OrganizeKind));
+        Assert.False(RoslynSourceActions.Asks(["source.organize"], RoslynSourceActions.OrganizeKind));
+    }
+
+    [Fact]
     public async Task A_servers_library_locations_become_bounded_virtual_documents_served_by_that_server()
     {
         await using var env = new LspTestEnv();
