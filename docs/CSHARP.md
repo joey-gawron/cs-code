@@ -86,8 +86,9 @@ symbol of a referenced assembly answers nothing. One server per project (the nea
 
 `cscode.lsp.serverChoice` is a new, generic setting: which built-in runs where several serve one language, by group
 (`{"csharp": "csharp"}` runs csharp-ls). Unset, the group's default runs: Roslyn (the user's decision after the evaluation in section 3). An
-explicit `cscode.languageServers.<id>.enabled` still wins. The palette command **C#: Select Language Server…** writes it to user settings; the
-change applies at once (the other server is stopped). With Roslyn not installed, opening a C# file says how to install it or switch to csharp-ls.
+explicit `cscode.languageServers.<id>.enabled` still wins. The palette command **C#: Select Language Server…** writes it to user settings,
+changing only its `csharp` member (Python: Select Language Server… sets `python` beside it); the change applies at once (the other server is
+stopped). With Roslyn not installed, opening a C# file says how to install it or switch to csharp-ls.
 
 ## 2. Library and generated code (read-only virtual documents)
 

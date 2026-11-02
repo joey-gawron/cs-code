@@ -1,9 +1,10 @@
-using System.Text.Json;
 using CsCode.App.Docking;
 using CsCode.Core.Contributions;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Tasks;
+using CsCode.Lsp;
+using CsCode.Lsp.Manager;
 using CsCode.ProjectTemplates.Generators;
 using CsCode.Ui.Threading;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,8 +38,6 @@ public sealed class DotNetCommands : IDisposable
     /// <summary>Context key: a workspace folder has a .NET project or solution near its top (the Explorer's "New .NET Item…" shows then).</summary>
     public const string HasProjectKey = "dotnet.workspaceHasProject";
     private static readonly TimeSpan TemplatesCacheFor = TimeSpan.FromMinutes(5);
-    /// <summary>Mirrors CsCode.Lsp's <c>cscode.lsp.serverChoice</c> (the App reads settings by key).</summary>
-    internal const string ServerChoiceKey = "cscode.lsp.serverChoice";
 
     private readonly IServiceProvider _sp;
     private readonly IWindowService _window;
@@ -366,11 +365,12 @@ public sealed class DotNetCommands : IDisposable
 
     // ------------------------------------------------------------------ C# server
 
+    /// <summary>Roslyn (the default) or csharp-ls: written into <c>cscode.lsp.serverChoice</c> next to the other groups' choices (Python's).</summary>
     private async Task SelectLanguageServerAsync(CancellationToken ct)
     {
         if (_sp.GetService<IConfigurationService>() is not { } config) return;
-        var current = config.GetRaw(ServerChoiceKey) is { ValueKind: JsonValueKind.Object } o && o.TryGetProperty("csharp", out var c) ? c.GetString() : null;
-        current ??= "roslyn"; // the group's default (BuiltinLanguageServers)
+        var choice = new Dictionary<string, string>(BuiltinLanguageServers.ReadChoice(config.GetRaw(LspSettingKeys.ServerChoice)), StringComparer.Ordinal);
+        var current = choice.GetValueOrDefault(BuiltinLanguageServers.CSharpGroup) ?? "roslyn"; // the group's default
         QuickPickItem Item(string id, string label, string detail) => new(label, id == current ? "current" : null, detail, Tag: id);
         var picked = await _window.ShowQuickPickAsync(
         [
@@ -378,7 +378,8 @@ public sealed class DotNetCommands : IDisposable
             Item("csharp", "csharp-ls", "Lighter: loads the projects near the open files; compiler diagnostics only (docs/CSHARP.md)."),
         ], new QuickPickOptions("C#: Select Language Server", "Which server should run C# files?"), ct).ConfigureAwait(true);
         if (picked?.Tag is not string id || id == current) return;
-        await config.UpdateAsync(ServerChoiceKey, new Dictionary<string, string> { ["csharp"] = id }).ConfigureAwait(true);
+        choice[BuiltinLanguageServers.CSharpGroup] = id;
+        await config.UpdateAsync(LspSettingKeys.ServerChoice, choice).ConfigureAwait(true);
         _window.SetStatusBarMessage($"C#: {picked.Label} serves C# files from now on", TimeSpan.FromSeconds(5));
     }
 
