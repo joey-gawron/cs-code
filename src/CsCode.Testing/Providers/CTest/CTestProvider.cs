@@ -25,10 +25,21 @@ public sealed partial class CTestProvider(TestProviderContext context, ICMakeSer
     internal const int MaxFilteredTests = 400;
     private static readonly Version JUnitVersion = new(3, 21);
     private readonly Dictionary<string, Version?> _versions = new(StringComparer.Ordinal);
+    private readonly object _gate = new();
+    // per source directory: the configure (generation) a discovery last built for
+    private readonly Dictionary<string, long> _discoveryBuilds = new(StringComparer.Ordinal);
 
     public string Id => ProviderId;
     public string Label => "CTest";
     public IReadOnlyList<string> LanguageIds { get; } = ["cmake"];
+
+    /// <summary>
+    /// Fires when a configure changed the projects (new targets, a project that came or went) and after every finished build: a build can change
+    /// what ctest lists (gtest_discover_tests' <c>&lt;target&gt;_NOT_BUILT</c> placeholder becomes the executable's tests; a test added to its
+    /// source joins them; a command appears once its executable exists). The controller then detects and discovers the projects again, after a
+    /// run that is going; the tests keep their results.
+    /// </summary>
+    public Core.Lifecycle.IEventSource<bool> ProjectsChanged => cmake is null ? Core.Lifecycle.EventSource.Never<bool>() : new CMakeChanges(cmake);
 
     // ------------------------------------------------------------------------------------------------ detection
 
@@ -81,7 +92,7 @@ public sealed partial class CTestProvider(TestProviderContext context, ICMakeSer
             ?? throw new TestDiscoveryException($"ctest could not list the tests of {project.Name}: see the Tests output.");
         // ctest leaves a test's command out while its executable is not built (right after the first configure): build the project once, as
         // cargo's discovery builds its tests, so each test is listed under the executable it runs and can be debugged from the start
-        if (tests.Any(t => t.Executable is null) && p.Targets.Any(t => t.Executable is { } exe && !File.Exists(exe)) && cmake is not null)
+        if (tests.Any(t => t.Executable is null) && p.Targets.Any(t => t.Executable is { } exe && !File.Exists(exe)) && cmake is not null && FirstDiscoveryBuild(p))
         {
             log.Status($"Building {project.Name} to list its tests…");
             log.Output($"> Some tests' executables are not built yet: building {project.Name} (see the CMake output)");
@@ -94,6 +105,21 @@ public sealed partial class CTestProvider(TestProviderContext context, ICMakeSer
             else log.Output($"> The build did not succeed: the tests whose executables are missing are listed without them.");
         }
         return [.. tests.Take(TestLimits.MaxTestsPerProject).Select(t => Discovered(t, p))];
+    }
+
+    /// <summary>
+    /// True once per configure of <paramref name="p"/>: a discovery builds at most once per configure, so a build that fails (which, finished,
+    /// makes the explorer discover again: <see cref="ProjectsChanged"/>) does not lead to another discovery that builds again.
+    /// </summary>
+    private bool FirstDiscoveryBuild(CMakeProject p)
+    {
+        lock (_gate)
+        {
+            if (_discoveryBuilds.TryGetValue(p.SourceDirectory, out var generation) && generation == p.Generation) return false;
+            if (_discoveryBuilds.Count >= 64) _discoveryBuilds.Clear(); // bounded: a handful of projects in practice
+            _discoveryBuilds[p.SourceDirectory] = p.Generation;
+            return true;
+        }
     }
 
     /// <summary>The project's tests from <c>ctest --show-only=json-v1</c>, or null when ctest failed (the reason went to <paramref name="log"/>).</summary>

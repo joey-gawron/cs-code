@@ -157,6 +157,98 @@ public sealed class CTestProviderTests
         public IAsyncEnumerable<Uri> FindFilesAsync(string? includeGlob, int maxResults, CancellationToken ct = default) => AsyncEnumerable.Empty<Uri>();
     }
 
+    /// <summary>gtest_discover_tests' placeholder before the executable is built: ctest names no command for it.</summary>
+    private const string Placeholder = """
+        {"backtraceGraph":{"commands":["add_test"],"files":["/src/CMakeLists.txt"],"nodes":[{"file":0}]},"kind":"ctestInfo",
+         "tests":[{"backtrace":0,"name":"lister_NOT_BUILT","properties":[]}],"version":{"major":1,"minor":0}}
+        """;
+
+    [Fact]
+    public async Task Configures_and_builds_say_the_projects_changed_and_discovery_tries_a_failing_build_once_per_configure()
+    {
+        var lister = new CMakeTarget("lister", CMakeTargetType.Executable, ["/build/lister"], "/src", [], [], ["/src/lister.c"]);
+        var cmake = new CppCMakeTargetsTests.ScriptedCMake(Project(lister)) { Build = _ => new CMakeBuildResult(1, Errors: 1) };
+        var processes = new ScriptedProcesses { Answer = _ => (0, [Placeholder.Replace("\n", " ", StringComparison.Ordinal)], []) };
+        var provider = new CTestProvider(new TestProviderContext(processes), cmake);
+        var fired = 0;
+        using var subscription = provider.ProjectsChanged.Subscribe(_ => Interlocked.Increment(ref fired));
+        var project = new TestProject(CTestProvider.ProviderId, "src", "/src/CMakeLists.txt", "/src", "ctest");
+
+        var first = await provider.DiscoverAsync(project, new RecordingSink(), Ct);
+        Assert.Equal("lister_NOT_BUILT", Assert.Single(first).Id);
+        Assert.Single(cmake.Builds); // the executable is missing: discovery tried to build it
+        Assert.Equal(1, fired); // a finished build says the projects changed: the explorer discovers again
+
+        await provider.DiscoverAsync(project, new RecordingSink(), Ct); // that discovery: no second build for the same configure
+        Assert.Single(cmake.Builds);
+
+        cmake.Configured(cmake.Projects[0] with { Generation = 2 });
+        Assert.Equal(2, fired);
+        await provider.DiscoverAsync(project, new RecordingSink(), Ct); // a new configure may build once more
+        Assert.Equal(2, cmake.Builds.Count);
+
+        subscription.Dispose();
+        await cmake.BuildAsync(cmake.Projects[0], null, Ct);
+        Assert.Equal(3, fired);
+        Assert.Same(EventSource.Never<bool>(), new CTestProvider(new TestProviderContext(processes), null).ProjectsChanged);
+    }
+
+    /// <summary>
+    /// What gtest_discover_tests does, in plain C: after each build the executable writes its tests to a file that ctest includes; before the
+    /// first build ctest lists a <c>lister_NOT_BUILT</c> placeholder.
+    /// </summary>
+    private const string ListerCMakeLists = """
+        cmake_minimum_required(VERSION 3.20)
+        project(listed C)
+        enable_testing()
+        add_executable(lister lister.c)
+        set(tests_file "${CMAKE_CURRENT_BINARY_DIR}/lister_tests.cmake")
+        add_custom_command(TARGET lister POST_BUILD COMMAND lister "${tests_file}" BYPRODUCTS "${tests_file}")
+        file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/lister_include.cmake"
+          "if(EXISTS \"${tests_file}\")\n  include(\"${tests_file}\")\nelse()\n  add_test(lister_NOT_BUILT lister_NOT_BUILT)\nendif()\n")
+        set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES "${CMAKE_CURRENT_BINARY_DIR}/lister_include.cmake")
+        """;
+
+    private const string Lister = """
+        #include <stdio.h>
+        int main(int argc, char **argv) {
+            if (argc == 3) return 0; /* running a test */
+            FILE *f = fopen(argv[1], "w");
+            if (!f) return 1;
+            fprintf(f, "add_test([=[alpha]=] \"%s\" alpha run)\nadd_test([=[beta]=] \"%s\" beta run)\n", argv[0], argv[0]);
+            fclose(f);
+            return 0;
+        }
+        """;
+
+    [Fact]
+    [Trait("Category", "RealTools")]
+    public async Task Real_ctest_replaces_a_not_built_placeholder_with_the_tests_once_a_build_succeeds()
+    {
+        if (CMakeCSample.SkipReason() is { } why) Assert.Skip(why);
+        using var dir = new TempDirectory();
+        dir.WriteFile("CMakeLists.txt", ListerCMakeLists);
+        dir.WriteFile("lister.c", "int main(void) { return missing; }\n"); // the first build fails
+        var output = new InMemoryOutputService();
+        using var cmake = new CMakeService(new Folder(dir.Path), new TestConfigurationService(), null, null, output);
+        var provider = new CTestProvider(new TestProviderContext(new ProcessRunner()), cmake);
+        var project = Assert.Single(await provider.DetectAsync(dir.Path, Ct));
+
+        var before = await provider.DiscoverAsync(project, new RecordingSink(), Ct).WaitAsync(TimeSpan.FromMinutes(2), Ct);
+        Assert.Equal(["lister_NOT_BUILT"], before.Select(t => t.Id)); // discovery's build failed: the placeholder stays
+
+        var changes = 0;
+        using var changed = provider.ProjectsChanged.Subscribe(_ => Interlocked.Increment(ref changes));
+        dir.WriteFile("lister.c", Lister);
+        var built = await cmake.BuildAsync(cmake.Projects[0], null, Ct).AsTask().WaitAsync(TimeSpan.FromMinutes(2), Ct);
+        Assert.True(built.Succeeded, output.Text(CMakeService.OutputChannelName));
+        Assert.Equal(1, Volatile.Read(ref changes)); // the explorer is told: it discovers again
+
+        var after = await provider.DiscoverAsync(project, new RecordingSink(), Ct).WaitAsync(TimeSpan.FromMinutes(2), Ct);
+        Assert.Equal(["alpha", "beta"], after.Select(t => t.Id));
+        Assert.All(after, t => Assert.Equal("lister", Assert.Single(t.Groups).Label));
+    }
+
     [Fact]
     [Trait("Category", "RealTools")]
     public async Task Real_ctest_lists_runs_and_reports_the_sample_tests()
