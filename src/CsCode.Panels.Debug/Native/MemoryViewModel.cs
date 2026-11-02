@@ -65,7 +65,7 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         RefreshCommand = new UiCommand(() => { Invalidate(); return LoadVisibleAsync(); });
         EditCommand = new UiCommand(() => SelectedRow is { } r ? EditAsync(r) : Task.CompletedTask);
         _subs.Add(_s.NativeViews.MemoryRequested.Subscribe(t => _s.Ui.Post(() => Navigate(t))));
-        _target = _s.NativeViews.TakeMemory();
+        if (_s.NativeViews.TakeMemory() is { } pending) Aim(pending); // View Binary Data opened this window
         _tracker = new DebugFocusTracker(services, OnFocus);
         _tracker.Start();
     }
@@ -127,12 +127,18 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
     private void SetTarget(NativeTarget target)
     {
         Reset(null);
+        Aim(target);
+        RevealRequested?.Invoke(TargetRow);
+        if (_focus.IsStopped) _ = LoadVisibleAsync();
+    }
+
+    /// <summary>The window now shows <paramref name="target"/>: its address (when the reference is one), title and row addresses.</summary>
+    private void Aim(NativeTarget target)
+    {
         _target = target;
         _baseAddress = DebugAddress.TryParse(target.MemoryReference, out var a) ? a : null;
         UpdateTitle();
         foreach (var r in Rows) r.AddressText = AddressOf(r);
-        RevealRequested?.Invoke(TargetRow);
-        if (_focus.IsStopped) _ = LoadVisibleAsync();
     }
 
     /// <summary>The address box: an address goes as it is; an expression is evaluated in the focused frame and its memory reference used.</summary>

@@ -196,6 +196,21 @@ public class NativeWindowsTests
     }
 
     [AvaloniaFact]
+    public async Task A_Memory_window_opened_by_View_Binary_Data_starts_at_the_value()
+    {
+        var session = NativeSession();
+        using var rig = new PanelRig(session: session);
+        rig.StopAt(0);
+        await rig.Services.NativeViews.ShowMemory(new NativeTarget("0x40000", "v[0]")); // no Memory window yet: the request waits for one
+        using var vm = new MemoryViewModel(rig.Services);
+        Assert.Equal("v[0] at 0x0000000000040000", vm.Title);
+        Assert.Equal("0x0000000000040000", vm.TargetRow.AddressText);
+        vm.SetVisibleRows(MemoryViewModel.RowCount / 2, MemoryViewModel.RowCount / 2 + 4);
+        await PanelRig.Eventually(() => vm.TargetRow.Hex != MemoryRow.Unread, what: "read");
+        Assert.Null(rig.Services.NativeViews.TakeMemory()); // taken: a later window starts empty
+    }
+
+    [AvaloniaFact]
     public async Task Memory_refreshes_at_each_stop_and_keeps_a_bounded_number_of_pages()
     {
         var session = NativeSession();
