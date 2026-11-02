@@ -187,6 +187,13 @@ public sealed class ShellController : IDisposable
             _disposables.Add(markdown);
         }
 
+        // .NET (docs/CSHARP.md): NuGet Add/Update/Remove/Restore, the C# language server choice
+        if (global::CsCode.App.DotNet.DotNetCommands.TryCreate(_sp) is { } dotnet)
+        {
+            dotnet.Start();
+            _disposables.Add(dotnet);
+        }
+
         // Python (docs/PYTHON.md): Select Interpreter and the interpreter's status bar item.
         Python = global::CsCode.App.Python.PythonIntegration.TryCreate(_sp);
         if (Python is { } python)

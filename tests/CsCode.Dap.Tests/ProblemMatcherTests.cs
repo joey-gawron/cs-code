@@ -222,6 +222,43 @@ public sealed class ProblemMatcherTests
     }
 
     [Fact]
+    public void Dotnet_watch_is_tracked_through_builds_hot_reloads_and_compile_errors()
+    {
+        // what `dotnet watch run` (SDK 10.0.403) printed, 2026-11-01: a failing first build, the fix, a hot reload, an edit that does not compile
+        var c = Collector("\"$dotnet-watch\"", cwd: "/work/W");
+        var events = new List<string>();
+        c.BackgroundBegan = () => events.Add("began");
+        c.BackgroundEnded = () => events.Add("ended");
+        Assert.True(c.IsBusy); // the first build
+        c.Append("dotnet watch 🔥 Hot reload enabled. For a list of supported edits, see https://aka.ms/dotnet/hot-reload.\n");
+        c.Append("/work/W/Program.cs(1,136): error CS1002: ; expected [/work/W/W.csproj]\n");
+        c.Append("Build FAILED.\n");
+        c.Append("dotnet watch ⌚ Fix the error to continue or press Ctrl+C to exit.\n");
+        Assert.Equal(["ended"], events);
+        Assert.Equal(1, c.Errors);
+
+        c.Append("dotnet watch ⌚ Files updated: ./Program.cs\n");
+        Assert.True(c.IsBusy);
+        c.Append("Build succeeded.\n");
+        c.Append("dotnet watch ⌚ Waiting for changes\n");
+        Assert.Equal(["ended", "began", "ended"], events);
+        Assert.Empty(_diagnostics.GetAll()); // the cycle that fixed it replaced the error
+
+        c.Append("dotnet watch ⌚ File updated: ./Program.cs\n");
+        c.Append("dotnet watch 🔥 C# and Razor changes applied in 260ms.\n");
+        Assert.False(c.IsBusy);
+
+        // a hot reload that does not compile: dotnet watch prints the compiler's error after its own prefix
+        c.Append("dotnet watch ⌚ File updated: ./Program.cs\n");
+        c.Append("dotnet watch 🔥 Unable to apply changes due to compilation errors.\n");
+        c.Append("dotnet watch ❌ /work/W/Program.cs(1,44): error CS1002: ; expected\n");
+        Assert.False(c.IsBusy);
+        var (uri, d) = Single();
+        Assert.Equal("/work/W/Program.cs", uri.LocalPath);
+        Assert.Equal(("CS1002", 0, 43), (d.Code, d.Range.Start.Line, d.Range.Start.Character));
+    }
+
+    [Fact]
     public void A_custom_background_matcher_and_the_watching_alias_are_read()
     {
         var m = Assert.Single(ProblemMatchers.Parse(JsonNode.Parse("""

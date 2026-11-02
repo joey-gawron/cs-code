@@ -628,7 +628,7 @@ public class NetCoreDbgFactoryTests
         Assert.Equal([".NET: Launch", ".NET: Attach"], launch.Configurations.Select(c => c.Name));
         Assert.True(File.Exists(Path.Combine(dir.Path, ".cscode", "tasks.json")));
         var tasks = await new CsCode.Dap.Tasks.TaskService(lane, platform).GetTasksAsync(null, Ct);
-        Assert.Equal("build", Assert.Single(tasks).Label);
+        Assert.Equal(["build", "watch"], tasks.Select(t => t.Label)); // watch: dotnet watch run, tracked by $dotnet-watch
         Assert.True(tasks[0].IsDefaultBuild);
         await cfgs.DisposeAsync();
     }

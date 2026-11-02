@@ -36,6 +36,8 @@ internal sealed class ClientContext
     public required LanguageWorkQueue Queue { get; init; }
     public required ILspConnectionFactory Connections { get; init; }
     public required ILogger Logger { get; init; }
+    /// <summary>Library and generated documents of the servers, opened as virtual documents (null in hosts without them).</summary>
+    public CSharp.ExternalDocuments? External { get; init; }
     /// <summary>The manager's server extensions: a session of a server one applies to gets it (<see cref="Extensions.ServerExtensionSession"/>).</summary>
     public IReadOnlyList<Extensions.LanguageServerExtension> Extensions { get; init; } = [];
 }
@@ -86,8 +88,10 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         _breaker.HealthChanged += OnBreakerHealthChanged;
         _log = new ServerLog(ctx.Services.Output?.GetOrCreate($"{definition.DisplayName} (LSP)"), ctx.Queue);
         _features = new FeatureTable(this);
-        Mapper = new LspMapper(PositionEncoder.Utf16, LineSource);
+        Mapper = new LspMapper(PositionEncoder.Utf16, LineSource) { ExternalUri = ExternalUri };
     }
+
+    private Uri? ExternalUri(string serverUri) => _ctx.External?.ToVirtual(this, serverUri);
 
     public LanguageServerDefinition Definition { get; }
     public string SlotKey { get; }
@@ -211,7 +215,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             var launch = Definition with
             {
                 Command = await FromPythonEnvironmentAsync(ct).ConfigureAwait(false) ?? Definition.Command,
-                Args = LaunchVariables.Expand(Definition.Args, RootFolder),
+                Args = LaunchVariables.ExpandArguments(Definition.Args, RootFolder, _ctx.Services.Paths?.LogsDir),
                 // lsp-9, macOS only: elsewhere a definition's env is passed as written, as it always was
                 Env = OperatingSystem.IsMacOS() ? LaunchVariables.ExpandEnvironment(Definition.Env, RootFolder) : Definition.Env,
             };
@@ -252,7 +256,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             ServerName = init.ServerInfo?.Name;
             ServerVersion = init.ServerInfo?.Version;
             var encoding = ServerCapabilities.PositionEncoding?.Value;
-            Mapper = new LspMapper(settings.AutoPositionEncoding ? PositionEncoder.FromName(encoding) : PositionEncoder.Utf16, LineSource);
+            Mapper = new LspMapper(settings.AutoPositionEncoding ? PositionEncoder.FromName(encoding) : PositionEncoder.Utf16, LineSource) { ExternalUri = ExternalUri };
             ParseSyncOptions(ServerCapabilities);
 
             NotifyRaw(P.LspMethods.Initialized, new P.InitializedParams());

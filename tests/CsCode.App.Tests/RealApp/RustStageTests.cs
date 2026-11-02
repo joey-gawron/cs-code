@@ -241,9 +241,9 @@ public class RealAppRustStageTests
 
         // Expand Macro at the caret: a read-only Rust document
         await host.RunAsync(RustAnalyzerExtension.ExpandMacroCommand);
-        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Well.EditorTabs.Any(t => t.Title == "vec!.rs"), 30_000),
+        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Well.EditorTabs.Any(t => t.Title == "vec!.rs [expanded]"), 30_000),
             "the expansion opened: " + string.Join(", ", host.Shell.Well.EditorTabs.Select(t => t.Title)));
-        var expansion = host.Get<IDocumentManager>().Documents.OfType<IEditorDocument>().First(d => d.Uri.Scheme == "lsp-readonly");
+        var expansion = host.Get<IDocumentManager>().Documents.OfType<IEditorDocument>().First(d => VirtualDocumentUri.IsVirtual(d.Uri));
         Note($"Expand Macro: {expansion.Uri} read-only={expansion.IsReadOnly} language={expansion.LanguageId}: {expansion.GetText().Split('\n').Skip(3).FirstOrDefault()}");
         Assert.True(expansion.IsReadOnly);
         Assert.Equal("rust", expansion.LanguageId);

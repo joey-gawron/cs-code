@@ -31,7 +31,7 @@ public class FocusContextKeyTests
         // The terminal runs a sandboxed bash (never the user's rc files or config): docs/TERMINAL.md, tests/CsCode.Panels.Terminal.Tests.
         var settings = new Dictionary<string, object?>
         {
-            ["cscode.languageServers"] = new[] { "typescript", "csharp", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua" }
+            ["cscode.languageServers"] = new[] { "typescript", "csharp", "roslyn", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua" }
                 .ToDictionary(s => s, _ => (object)new { enabled = false }),
             ["workbench.startupEditor"] = "none",
             [CsCode.Terminal.Sessions.TerminalSettingKeys.ProfilesKey] = new Dictionary<string, object>

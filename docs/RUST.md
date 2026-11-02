@@ -52,9 +52,10 @@ work from anywhere. They ask the server that serves the active editor (`ServerEx
 caret: CsCode's navigation service exposes the caret, not the selection, so **Join Lines joins the caret's line with the next** (VS Code's
 behaviour for an empty selection) and Structural Search Replace runs over the whole workspace.
 
-* Results that are text open as **read-only documents** (`lsp-readonly:/rust-analyzer/<kind>/<name>`, `ReadOnlyDocuments`): the macro
-  expansion as `<macro>!.rs` (Rust colouring), the syntax tree as `<file>.rast` (rendered from the JSON tree as indented `KIND@start..end`
-  lines, capped at 200,000 lines), HIR as `<file>.hir`, MIR as `<file>.mir`.
+* Results that are text open as **read-only documents** (`ReadOnlyDocuments`: Core virtual documents,
+  `cscode-virtual://results/<kind>/rust-analyzer/<name>`, the same way as library and generated code, docs/CSHARP.md §2): the macro
+  expansion as `<macro>!.rs [expanded]` (Rust colouring), the syntax tree as `<file>.rast [syntax tree]` (rendered from the JSON tree as
+  indented `KIND@start..end` lines, capped at 200,000 lines), HIR as `<file>.hir [HIR]`, MIR as `<file>.mir [MIR]`.
 * Matching Brace moves the caret; Parent Module and Open Cargo.toml open the file (several parents: a pick); Open External Docs opens the
   browser; SSR asks for `pattern ==>> replacement` and applies the edit as one undoable step per file.
 
@@ -88,7 +89,8 @@ them into one more Markdown block under the hover, marked **trusted** (`MarkupCo
 
 `RealAppRustStageTests.Rust_analyzer_status_Expand_Macro_the_main_lens_and_the_cargo_tasks_show_in_the_app` (real app, headless window, real
 rust-analyzer 1.96.1, 2026-11-01): the status bar shows `✓ rust-analyzer` once it is quiescent; the lens providers give `▶︎ Run` and `⚙︎ Debug`
-on `fn main` (line 60 of the sample) and nothing on its tests; Expand Macro at `vec!` opens `lsp-readonly:/rust-analyzer/expand-macro/vec!.rs`,
+on `fn main` (line 60 of the sample) and nothing on its tests; Expand Macro at `vec!` opens `lsp-readonly:/rust-analyzer/expand-macro/vec!.rs` (since the C# merge: the tab `vec!.rs [expanded]`, a Core
+virtual document),
 read-only, language `rust` (`alloc::boxed::box_assume_init_into_vec_unsafe(…)`); Run Task lists `cargo: build`, `cargo: check`,
 `cargo: clippy`, `cargo: test`, `cargo: run`, `cargo: doc` (no tasks.json). Frames: `.scratch/screenshots/rust-analyzer-status.png`,
 `rust-main-lens.png`, `rust-expand-macro.png`, `rust-run-task.png`.

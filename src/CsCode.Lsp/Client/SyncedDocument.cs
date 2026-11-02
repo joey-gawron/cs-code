@@ -35,7 +35,8 @@ internal sealed class SyncedDocument(ITextDocument document, string uriString)
     public string ServerLanguageId = "";
     public bool Ignored;      // too large for this server
     public bool Detached;
-    public string? PullResultId;
+    /// <summary>The last pull result id per diagnostic provider identifier ("" for a provider without one).</summary>
+    public Dictionary<string, string?>? PullResultIds;
     public string? LastTraceText;
 
     /// <summary>Token cancelled whenever the document changes (in-flight requests for stale text are abandoned).</summary>

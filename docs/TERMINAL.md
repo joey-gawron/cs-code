@@ -185,7 +185,8 @@ terminal's PTY reader, or the process's pipes) is split into lines with escape s
 on the Dap lane; problems go to `IDiagnosticService` under the owner `task.<matcher owner>`, cleared when the task runs again, at most 2,000
 per run. Every trailing CR goes before overwrites are resolved (a program's `\r\n` arrives through the PTY as `\r\r\n`), and a cursor move to
 another line or column 1 or an erase of the line/screen starts the visible text afresh. Built in: `$msCompile` (also the SDK terminal
-logger's indented diagnostics, which `dotnet build` prints in a terminal), `$tsc`, `$tsc-watch` (with its background patterns), `$gcc`,
+logger's indented diagnostics, which `dotnet build` prints in a terminal), `$dotnet-watch` (`$msCompile` plus dotnet watch's own error lines,
+with background patterns from SDK 10's output: docs/CSHARP.md §6), `$tsc`, `$tsc-watch` (with its background patterns), `$gcc`,
 `$rustc` (cargo's two-line form), `$eslint-compact`, `$eslint-stylish` (regular expressions written for CsCode); custom matchers with
 `owner`, `source`, `severity`, `fileLocation` (absolute/relative/autoDetect, with a base), `pattern` (one, several, `loop`, or a "$name"),
 `base`, `background` (or the older `watching`: `activeBegins`, `beginsPattern`, `endsPattern`). Commands (registered when a task runner is
@@ -209,7 +210,7 @@ when the task's problem matchers' background patterns go idle (`endsPattern` aft
 terminal, each cycle's problems replace the last cycle's when it ends. A preLaunchTask that is already running and idle is ready at once; one
 that is compiling, at the end of that compilation. Readiness is followed from before the program starts: a fast watcher's whole first cycle
 can be printed while its terminal is still being shown. Without background patterns (no problem matcher, `"problemMatcher": []`, or one
-without `background`, such as `$msCompile` on `dotnet watch`) the task cannot be tracked: after 5 s the run returns VS Code's "cannot be
+without `background`, such as `$msCompile` on `dotnet watch`: use `$dotnet-watch`) the task cannot be tracked: after 5 s the run returns VS Code's "cannot be
 tracked" error (`TaskResult.NotTracked`) and the task runs on. As in VS Code only the debugger's preLaunchTask reports it (Debug Anyway /
 Abort); Run Task and Ctrl+Shift+B show nothing. A process that exits before it was ready reports its exit. Unlike VS Code, the debugger does not ask about errors the matchers found when the exit code (or the readiness) says
 success (`debug.onTaskErrors` is not implemented).

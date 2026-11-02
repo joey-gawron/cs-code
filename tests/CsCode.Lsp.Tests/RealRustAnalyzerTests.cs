@@ -106,14 +106,17 @@ public sealed class RealRustAnalyzerTests(RealRustAnalyzerTests.Fixture f) : ICl
 
     private Task RunAsync(string command, params object?[] args) => Env.Commands.ExecuteAsync(command, args).AsTask().Within(Long);
 
-    private string ReadOnlyText(Uri uri) => Encoding.UTF8.GetString(Env.ReadOnlyDocuments.ReadFileAsync(uri, Ct).AsTask().Result);
+    private string ReadOnlyText(Uri uri) => Encoding.UTF8.GetString(Env.VirtualDocuments.ReadFileAsync(uri, Ct).AsTask().Result);
 
     private (Uri Uri, TextRange? Selection) LastOpened() { lock (Env.Navigation.Opened) return Env.Navigation.Opened[^1]; }
 
     [Fact]
-    public void Server_status_reaches_the_status_bar_with_its_menu()
+    public async Task Server_status_reaches_the_status_bar_with_its_menu()
     {
         NeedsServer();
+        // an earlier test of the class may have edited a file: rust-analyzer is then "working" again for a moment
+        await TestHelpers.EventuallyAsync(() => Env.StatusBar.Get(ServerStatusDisplay.ItemId)?.Tooltip?.Contains("ready") == true,
+            () => "status tooltip: " + Env.StatusBar.Get(ServerStatusDisplay.ItemId)?.Tooltip, Long);
         var item = Env.StatusBar.Get(ServerStatusDisplay.ItemId)!;
         Assert.Equal(RustAnalyzerExtension.StatusMenuCommand, item.CommandId);
         Assert.Contains("ready", item.Tooltip);
@@ -126,9 +129,9 @@ public sealed class RealRustAnalyzerTests(RealRustAnalyzerTests.Fixture f) : ICl
         Focus(f.Main, 8, 14); // inside twice!(…)
         await RunAsync(RustAnalyzerExtension.ExpandMacroCommand);
         var (uri, _) = LastOpened();
-        Assert.Equal("lsp-readonly:/rust-analyzer/expand-macro/twice!.rs", uri.ToString());
+        Assert.Equal("twice!.rs [expanded]", VirtualDocumentUri.Title(uri));
         Assert.Contains("(v.len()) + (v.len())", ReadOnlyText(uri));
-        Assert.True((await Env.ReadOnlyDocuments.StatAsync(uri, Ct))!.IsReadOnly);
+        Assert.True((await Env.VirtualDocuments.StatAsync(uri, Ct))!.IsReadOnly);
     }
 
     [Fact]
@@ -138,10 +141,11 @@ public sealed class RealRustAnalyzerTests(RealRustAnalyzerTests.Fixture f) : ICl
         Focus(f.Main, 7, 8);
         await RunAsync(RustAnalyzerExtension.ViewSyntaxTreeCommand);
         var tree = LastOpened().Uri;
-        Assert.EndsWith("/syntax-tree/main.rast", tree.ToString());
+        Assert.Equal("main.rast [syntax tree]", VirtualDocumentUri.Title(tree));
         Assert.StartsWith("SOURCE_FILE@0..", ReadOnlyText(tree));
         Assert.Contains("  FN@", ReadOnlyText(tree));
         await RunAsync(RustAnalyzerExtension.ViewHirCommand);
+        Assert.Equal("main.hir [HIR]", VirtualDocumentUri.Title(LastOpened().Uri));
         Assert.StartsWith("fn main()", ReadOnlyText(LastOpened().Uri));
         await RunAsync(RustAnalyzerExtension.ViewMirCommand);
         Assert.Contains("let _0: ()", ReadOnlyText(LastOpened().Uri));
@@ -219,6 +223,8 @@ public sealed class RealRustAnalyzerTests(RealRustAnalyzerTests.Fixture f) : ICl
         NeedsServer();
         var lens = (await Env.Provider<ICodeLensProvider>(f.Main).ProvideCodeLensesAsync(f.Main, Ct).Within(Long))!
             .First(l => l.Command?.CommandId == RustAnalyzerExtension.RunSingleCommand).Command!;
+        f.Terminals.Requests.Clear(); // the class shares one recorder: another test may have run something first
+        f.Launched.Clear();
         await RunAsync(lens.CommandId, [.. lens.Arguments!.Cast<object?>()]);
         var run = Assert.Single(f.Terminals.Requests);
         Assert.Equal("cargo", Path.GetFileName(run.FileName));

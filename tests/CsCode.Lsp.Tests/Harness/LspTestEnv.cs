@@ -155,9 +155,12 @@ public sealed class LspTestEnv : IAsyncDisposable
     public TempDirectory Dir { get; } = new("cscode-lsp-");
     public RecordingNavigationService Navigation { get; }
     public FakeConnectionFactory Connections { get; } = new();
+    /// <summary>Library and generated documents (go to definition into metadata): the shell's Core service.</summary>
+    public VirtualDocumentService VirtualDocuments { get; } = new();
     public LanguageServerManager Manager { get; }
     public TestStatusBarService StatusBar { get; } = new();
-    public CsCode.Lsp.Extensions.ReadOnlyDocuments ReadOnlyDocuments { get; } = new();
+    /// <summary>Server extensions' results: the <c>results</c> provider of <see cref="VirtualDocuments"/>.</summary>
+    public CsCode.Lsp.Extensions.ReadOnlyDocuments ReadOnlyDocuments { get; }
     /// <summary>What server extensions see as the debugger and the task terminals (null: none composed).</summary>
     public CsCode.Core.Debugging.IDebugService? Debug { get; set; }
     public CsCode.Core.Tasks.ITaskTerminalHost? TaskTerminals { get; set; }
@@ -188,6 +191,7 @@ public sealed class LspTestEnv : IAsyncDisposable
         if (output is not null) Output = output;
         Navigation = new RecordingNavigationService(Documents);
         ProgressWindow = new ProgressRecordingWindow(Window);
+        ReadOnlyDocuments = new(VirtualDocuments);
         // Snappy defaults for tests; individual tests override before creating the manager when they need real budgets.
         Config.Set(LspSettingKeys.InteractiveTimeoutMs, 3000);
         Config.Set(LspSettingKeys.BackgroundTimeoutMs, 5000);
@@ -209,6 +213,7 @@ public sealed class LspTestEnv : IAsyncDisposable
             Paths = realServers ? new ToolsAppPaths(Paths, ToolsDir) : Paths,
             Connections = connectionsOverride ?? (realServers ? null : Connections), // null: the manager uses the real DefaultLspConnectionFactory
             Memory = Memory,
+            VirtualDocuments = VirtualDocuments,
             StatusBar = StatusBar,
             ReadOnlyDocuments = ReadOnlyDocuments,
             Debug = () => Debug,

@@ -182,6 +182,9 @@ public sealed partial class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDe
         var args = projectArg.Length > 0
             ? $"\"build\", {JsonSerializer.Serialize(projectArg, ReadableJson)}, \"/property:GenerateFullPaths=true\", \"/consoleloggerparameters:NoSummary\"" // a path may need escaping
             : "\"build\", \"/property:GenerateFullPaths=true\", \"/consoleloggerparameters:NoSummary\"";
+        // "watch" runs the project under dotnet watch (hot reload) as a background task: $dotnet-watch's begin and end patterns tell when a
+        // rebuild or reload is running and when the program is up again, so it can be a preLaunchTask or followed in Run Task
+        var watchArgs = projectArg.Length > 0 ? $"\"watch\", \"run\", \"--project\", {JsonSerializer.Serialize(projectArg, ReadableJson)}" : "\"watch\", \"run\"";
         var tasks = $$"""
             {
                 "version": "2.0.0",
@@ -193,6 +196,14 @@ public sealed partial class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDe
                         "args": [{{args}}],
                         "problemMatcher": "$msCompile",
                         "group": { "kind": "build", "isDefault": true }
+                    },
+                    {
+                        "label": "watch",
+                        "type": "process",
+                        "command": "dotnet",
+                        "args": [{{watchArgs}}],
+                        "isBackground": true,
+                        "problemMatcher": "$dotnet-watch"
                     }
                 ]
             }
@@ -364,8 +375,8 @@ public sealed partial class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDe
     /// </summary>
     public static IEnumerable<BuiltinDebugAdapter> Builtins(NetCoreDbgAdapterFactory factory) =>
     [
-        new BuiltinDebugAdapter("coreclr", ".NET (netcoredbg)", Languages, factory, factory),
-        new BuiltinDebugAdapter("netcoredbg", ".NET (legacy 'netcoredbg' type)", Languages, factory, factory) { IsAlias = true },
+        new BuiltinDebugAdapter("coreclr", ".NET (netcoredbg)", Languages, factory, factory) { Quirks = NetCoreDbgAdapterQuirks.Instance },
+        new BuiltinDebugAdapter("netcoredbg", ".NET (legacy 'netcoredbg' type)", Languages, factory, factory) { Quirks = NetCoreDbgAdapterQuirks.Instance, IsAlias = true },
     ];
 
     public static readonly IReadOnlyList<string> Languages = ["csharp", "fsharp", "vb"];

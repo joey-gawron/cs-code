@@ -21,7 +21,7 @@ public sealed class SessionProcessHarness : IDisposable
     private readonly bool _trace;
 
     private static readonly string[] BuiltinServers =
-        ["typescript", "csharp", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua"];
+        ["typescript", "csharp", "roslyn", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua"];
 
     /// <param name="trace">Write a per-phase timeline of every process to <see cref="TracePath"/> (adds file writes to the measured paths).</param>
     public SessionProcessHarness(string? extraSettings = null, bool trace = true)

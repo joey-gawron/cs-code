@@ -109,7 +109,7 @@ public sealed partial class RustAnalyzerExtension
         if (Services.Navigation is { } nav) await nav.OpenAsync(uri, range).ConfigureAwait(false);
     }
 
-    /// <summary>Shows server-computed text as a read-only document (<see cref="ReadOnlyDocuments"/>).</summary>
+    /// <summary>Shows server-computed text as a read-only document (<see cref="ReadOnlyDocuments"/>), its tab titled <c>name [kind]</c>.</summary>
     private async ValueTask ShowReadOnlyAsync(string kind, string fileName, string text)
     {
         if (Services.ReadOnlyDocuments is not { } store)
@@ -134,7 +134,7 @@ public sealed partial class RustAnalyzerExtension
             return;
         }
         var name = r.Str("name") ?? "macro";
-        await ShowReadOnlyAsync("expand-macro", name + ".rs", $"// Recursive expansion of {name} macro\n// {new string('=', 32 + name.Length)}\n\n{expansion}").ConfigureAwait(false);
+        await ShowReadOnlyAsync(VirtualDocumentKinds.Expanded, name + ".rs", $"// Recursive expansion of {name} macro\n// {new string('=', 32 + name.Length)}\n\n{expansion}").ConfigureAwait(false);
     }
 
     private async ValueTask JoinLinesAsync()
@@ -182,7 +182,7 @@ public sealed partial class RustAnalyzerExtension
         var answer = await a.Session.RequestAsync("rust-analyzer/viewSyntaxTree", a.Document, (id, _) => new { textDocument = id }, CancellationToken.None,
             TimeSpan.FromSeconds(30)).ConfigureAwait(false);
         if (answer is not { ValueKind: JsonValueKind.String } s) { Status("rust-analyzer returned no syntax tree"); return; }
-        await ShowReadOnlyAsync("syntax-tree", StemOf(a.Document.Uri) + ".rast", SyntaxTreeText.Render(s.GetString()!)).ConfigureAwait(false);
+        await ShowReadOnlyAsync("syntax tree", StemOf(a.Document.Uri) + ".rast", SyntaxTreeText.Render(s.GetString()!)).ConfigureAwait(false);
     }
 
     private async ValueTask ViewTextAsync(string method, string kind, string what)
@@ -190,7 +190,7 @@ public sealed partial class RustAnalyzerExtension
         var answer = await AtCaretAsync(method, "View " + what, out var a).ConfigureAwait(false);
         if (a is null) return;
         if (answer is not { ValueKind: JsonValueKind.String } s || s.GetString() is not { Length: > 0 } text) { Status($"No {what} for the function at the caret"); return; }
-        await ShowReadOnlyAsync(kind, StemOf(a.Value.Document.Uri) + "." + kind, text).ConfigureAwait(false);
+        await ShowReadOnlyAsync(what, StemOf(a.Value.Document.Uri) + "." + kind, text).ConfigureAwait(false); // main.hir [HIR]
     }
 
     private async ValueTask SsrAsync()

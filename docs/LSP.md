@@ -240,10 +240,11 @@ parses runs on the Language lane. **Adding one** (stage 3's clangd, stage 5's Ro
 `AppliesTo` matches the built-in definition's id, plus one line in `CreateBuiltins()`; tests drive it through
 `new LspTestEnv(extensions: [new MyExtension()])` against the fake server (`ServerExtensionTests` is the worked example) and a real-server suite.
 
-**Read-only results** (`ReadOnlyDocuments`, registered by `AddCsCodeLsp` as the `IFileSystemProvider` of the `lsp-readonly:` scheme):
-`Put(producer, kind, fileName, text)` returns `lsp-readonly:/<producer>/<kind>/<fileName>` to open with `INavigationService.OpenAsync`; its
-`StatAsync` says read-only, so the editor opens it like a file and refuses edits; the language comes from the file name; the 32 most recent are
-kept. Additive `LspServices` members for extensions: `StatusBar` (`IStatusBarService`), `ReadOnlyDocuments`, lazy `Debug` (`IDebugService`)
+**Read-only results** (`ReadOnlyDocuments`, registered by `AddCsCodeLsp`): `Put(producer, kind, fileName, text)` returns
+`cscode-virtual://results/<kind>/<producer>/<fileName>` to open with `INavigationService.OpenAsync`. It is the `results` provider of Core's
+virtual documents (the scheme library and generated code use, docs/CSHARP.md §2): the editor opens it like a file and refuses edits, the
+language comes from the file name, the tab says what it is (`vec!.rs [expanded]`), and session restore skips it; the 32 most recent are kept.
+Until the C# merge this was a scheme of its own (`lsp-readonly:`); see docs/CSHARP.md §2 for why the two were folded into Core's. Additive `LspServices` members for extensions: `StatusBar` (`IStatusBarService`), `ReadOnlyDocuments`, lazy `Debug` (`IDebugService`)
 and `TaskTerminals` (`ITaskTerminalHost`).
 
 ## 8. Settings
@@ -263,9 +264,25 @@ and `TaskTerminals` (`ITaskTerminalHost`).
 | `cscode.lsp.searchDirs` | per platform (Linux: `~/.nix-profile/bin`, `/nix/var/nix/profiles/default/bin`, `~/.cargo/bin`, `~/.local/bin`, `~/go/bin`, `~/.dotnet/tools`, `~/.local/share/coursier/bin`, `~/.ghcup/bin`) | directories searched for server executables after PATH (`~` and `%VAR%` expand); `[]` = PATH and the tools directory only |
 | `cscode.lsp.queueCapacity`, `breakerThreshold`, `breakerProbeMs`, `maxRestarts`, `restartWindowSeconds`, `restartBackoffMs` | 4096, 5, 5000, 5, 180, [500,1000,2000,4000,8000] | |
 
+## 8b. C# (stage 5, docs/CSHARP.md)
+
+* **Roslyn** (`roslyn`, `src/CsCode.Lsp/CSharp/`) is C#'s default server, csharp-ls the alternative: `solution/open` / `project/open` after
+  `initialized`, ready on `workspace/projectInitializationComplete`, its client-side commands (`roslyn.client.nestedCodeAction`,
+  `fixAllCodeAction`, `completionComplexEdit`), toasts. Built on the per-server extension pattern (§7a): `RoslynExtension`, its per-server
+  state `RoslynSession`, its commands `RoslynCommands`.
+* **`cscode.lsp.serverChoice`** (generic): which built-in of a group of alternatives runs (`{"csharp": "roslyn"}`; `BuiltinServer.Group`,
+  `BuiltinServer.EnabledByDefault` picks the group's default: unset, C# runs Roslyn). An explicit `cscode.languageServers.<id>.enabled` still wins.
+* **Pull diagnostics with several identifiers.** A server may register several `textDocument/diagnostic` providers, each with an identifier
+  (Roslyn does): every one is pulled, and each publishes under its own owner (`lsp:<id>#<identifier>`). The client kept only the last one before.
+* **Library and generated code** (`ExternalDocuments`): a location a server's source classifies (csharp-ls `csharp:`, Roslyn's MetadataAsSource
+  files and `roslyn-source-generated:`) becomes a Core virtual document (`cscode-virtual://lsp/…`), synced back to that server under its own URI.
+* Launch variables `${cscodeLogsDir}` and `${cscodePid}` in a definition's `args`.
+
 ## 9. Core changes made by this module (all additive)
 * `Core/Languages/LanguageModels.cs` + `LanguageProviders.cs` (lang-2): `InlayHint.LabelParts` / `InlayHint.CanResolve`, `InlayHintLabelPart`, and
   `IInlayHintsProvider.ResolveInlayHintAsync` (default: the hint as it is).
+* Stage 5: `Core/Text/VirtualDocuments.cs` (`VirtualDocumentUri`, `VirtualDocumentKinds`, `IVirtualDocumentProvider`, `IVirtualDocumentService`,
+  `VirtualDocumentService`, registered by `AddCsCodeCore` as the `cscode-virtual` scheme's `IFileSystemProvider`).
 * `Core/Languages/LanguageModels.cs`: `MarkupContent.IsTrusted` (lang-2): `command:` links of trusted content run their command (CsCode's own
   content only, never a server's text: rust-analyzer's hover actions).
 * `Core/Languages/LanguageServers.cs`: `LanguageServerState.Unresponsive` appended to the enum. **A `switch` expression over the enum without a

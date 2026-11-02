@@ -78,6 +78,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private bool _pauseRequested;
     private readonly System.Text.StringBuilder? _recentOutput;
     private readonly Dictionary<string, DebugModuleInfo> _modules = new();
+    /// <summary>Breakpoint paths with their links resolved and back, for an adapter that needs it (<see cref="DebugAdapterQuirks.BindsPhysicalSourcePaths"/>).</summary>
+    private readonly SourcePathAliases? _sourcePaths;
 
     public DebugSession(DebugSessionOptions options)
     {
@@ -86,6 +88,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         _lane = options.Lane;
         _logger = options.Logger ?? NullLogger.Instance;
         _quirks = options.Quirks;
+        _sourcePaths = _quirks.BindsPhysicalSourcePaths ? new SourcePathAliases() : null;
         _recentOutput = _quirks.SyntheticExceptionFilters.Count > 0 || _quirks.BreakpointExceptionFilters.Count > 0 ? new System.Text.StringBuilder() : null;
         _positions = new DapPositions(_settings.LinesStartAt1, _settings.ColumnsStartAt1);
         _output = new OutputBatcher(_lane, this, e => _outputEvent.Fire(e), _settings.OutputWindow);
@@ -166,7 +169,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     // ------------------------------------------------------------------ IBreakpointSyncHost
 
     IDebugSession IBreakpointSyncHost.Session => this;
-    string? IBreakpointSyncHost.AdapterPathOf(Uri uri) => uri.IsFile ? uri.LocalPath : _o.PathMapper?.ToAdapterPath(uri);
+    string? IBreakpointSyncHost.AdapterPathOf(Uri uri) =>
+        uri.IsFile ? (_sourcePaths is { } aliases ? aliases.ToAdapter(uri.LocalPath) : uri.LocalPath) : _o.PathMapper?.ToAdapterPath(uri);
     DapPositions IBreakpointSyncHost.Positions => _positions;
     DapCapabilities IBreakpointSyncHost.Capabilities => _dapCaps;
     bool IBreakpointSyncHost.IsLive => _client is { IsClosed: false } && State != DebugSessionState.Terminated;
