@@ -162,6 +162,38 @@ internal sealed partial class LanguageClient : IAsyncDisposable
     // Lifecycle
     // =================================================================================================================
 
+    /// <summary>
+    /// A built-in Python tool server (Ruff, Pyright, basedpyright) whose command is not overridden runs the selected environment's own copy
+    /// (<c>.venv/bin/ruff</c>) when there is one, as VS Code's Ruff extension does by default ("fromEnvironment"): the project's pinned version
+    /// and its plugins. Null: the usual lookup (PATH, search directories, tools directory). Waits at most 3 s for the interpreter to be known.
+    /// </summary>
+    private async Task<string?> FromPythonEnvironmentAsync(CancellationToken ct)
+    {
+        if (_ctx.Services.PythonEnvironments is not { } environments
+            || BuiltinLanguageServers.Find(Definition.Id) is not { FromPythonEnvironment: true } builtin || builtin.Definition.Command != Definition.Command)
+            return null;
+        Core.Python.PythonEnvironment? env;
+        try
+        {
+            env = await environments.GetActiveAsync(RootFolder is { } root ? new Uri(root) : null, ct).AsTask().WaitAsync(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+        if (env is not { IsEnvironment: true }) return null; // a global interpreter's bin is PATH's business
+        foreach (var name in OperatingSystem.IsWindows() ? new[] { Definition.Command + ".exe", Definition.Command + ".cmd" } : [Definition.Command])
+        {
+            var candidate = Path.Combine(env.BinDirectory, name);
+            if (ToolResolver.IsExecutableFile(candidate))
+            {
+                _log.Add($"Using {candidate} from the selected Python environment ({env.Label})");
+                return candidate;
+            }
+        }
+        return null;
+    }
+
     public async Task StartAsync(CancellationToken ct)
     {
         SetState(LanguageServerState.Starting);
@@ -174,6 +206,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             await LoginShellEnvironment.WaitAsync(ct).ConfigureAwait(false);
             var launch = Definition with
             {
+                Command = await FromPythonEnvironmentAsync(ct).ConfigureAwait(false) ?? Definition.Command,
                 Args = LaunchVariables.Expand(Definition.Args, RootFolder),
                 // lsp-9, macOS only: elsewhere a definition's env is passed as written, as it always was
                 Env = OperatingSystem.IsMacOS() ? LaunchVariables.ExpandEnvironment(Definition.Env, RootFolder) : Definition.Env,

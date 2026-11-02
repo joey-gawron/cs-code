@@ -173,7 +173,9 @@ public sealed class LspTestEnv : IAsyncDisposable
     }
 
     /// <param name="realServers">Use the real child-process connection factory, the built-in definitions and the repo's tool directory (integration tests).</param>
-    public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false, bool memoryMonitor = false, IDiagnosticService? diagnostics = null, IOutputService? output = null, bool realServers = false, ILspConnectionFactory? connectionsOverride = null)
+    /// <param name="python">The interpreter service a Python test uses (the servers get its python.pythonPath and prefer its tools).</param>
+    public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false, bool memoryMonitor = false, IDiagnosticService? diagnostics = null, IOutputService? output = null, bool realServers = false, ILspConnectionFactory? connectionsOverride = null,
+        CsCode.Core.Python.IPythonEnvironmentService? python = null)
     {
         if (realServers) builtins = true;
         Memory = memoryMonitor ? new FakeMemoryMonitor() : null;
@@ -202,6 +204,8 @@ public sealed class LspTestEnv : IAsyncDisposable
             Paths = realServers ? new ToolsAppPaths(Paths, ToolsDir) : Paths,
             Connections = connectionsOverride ?? (realServers ? null : Connections), // null: the manager uses the real DefaultLspConnectionFactory
             Memory = Memory,
+            PythonEnvironments = python,
+            SettingsContributors = python is null ? [] : [new PythonServerSettings(python)],
         };
         Manager = new LanguageServerManager(services);
     }
