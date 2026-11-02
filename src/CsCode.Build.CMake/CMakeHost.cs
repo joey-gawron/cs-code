@@ -393,6 +393,7 @@ public sealed class CMakeHost : IDisposable
         foreach (var view in _cmake.Views)
         {
             var source = view.Project.SourceDirectory;
+            if (_cmake.ConfiguredOnRequest(source)) continue; // New Project configured it with its preset: neither asked nor configured again
             lock (_askedToConfigure) if (view.Project.State is CMakeProjectState.Configuring || !_askedToConfigure.Add(source)) continue;
             var setting = Config?.Get<bool?>(CMakeSettings.ConfigureOnOpen);
             if (setting == false) continue;

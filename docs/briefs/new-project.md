@@ -36,7 +36,8 @@ Checked on `main` at `1f6e1f0`, 2026-11-01.
 
 ## Toolchain on this Mac (checked 2026-11-01)
 python3 3.14 (Homebrew; no uv, no pytest, no ruff installed), cargo/rustc 1.96.1 (`~/.cargo/bin`), .NET SDK 10.0.403 (`~/.dotnet`), CMake 4.4.2,
-Ninja 1.13.2, Apple clang 21 (`cc`, `c++`), git 2.54. **Not installed:** zig, uv, clang-format (the `.clang-format` file is still written).
+Ninja 1.13.2, Apple clang 21 (`cc`, `c++`), git 2.54. **Not installed:** zig, uv, clang-format (the `.clang-format` file is still written). Later, with the user's go-ahead: zig 0.17.0 and
+uv 0.13.6 (Homebrew, 2026-11-02).
 
 `dotnet new list` prints a fixed-width table (Template Name, Short Name, Language, Tags) whose column widths are given by the dashes line;
 `dotnet new sln` takes `--format sln|slnx` (default slnx); `dotnet new console --framework` lists its choices in `--help`; `cargo new` takes

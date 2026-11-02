@@ -8,7 +8,8 @@ namespace CsCode.Panels.NewProject;
 
 /// <summary>
 /// What the page uses. Only the generators, the creator and the dispatcher are required; without a workspace the new project is not opened,
-/// without a window service there is no folder browser and nothing is asked, without state nothing is remembered.
+/// without a window service there is no folder browser and nothing is asked, without state nothing is remembered, without follow-ups nothing
+/// runs after the project opened.
 /// </summary>
 public sealed record NewProjectServices(
     IReadOnlyList<IProjectGenerator> Generators,
@@ -21,7 +22,8 @@ public sealed record NewProjectServices(
     ICommandService? Commands = null,
     INavigationService? Navigation = null,
     IOutputService? Output = null,
-    IViewActivator? Views = null)
+    IViewActivator? Views = null,
+    ProjectFollowUps? FollowUps = null)
 {
     /// <summary>The user's home folder (tests point it at a temp folder).</summary>
     public string Home { get; init; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -37,5 +39,6 @@ public sealed record NewProjectServices(
         sp.GetService<ICommandService>(),
         sp.GetService<INavigationService>(),
         sp.GetService<IOutputService>(),
-        sp.GetService<IViewActivator>());
+        sp.GetService<IViewActivator>(),
+        sp.GetService<ProjectFollowUps>());
 }

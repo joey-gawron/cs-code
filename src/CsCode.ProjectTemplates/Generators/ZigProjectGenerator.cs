@@ -7,8 +7,8 @@ namespace CsCode.ProjectTemplates.Generators;
 /// <summary>
 /// A Zig package: <c>zig init</c> in the project folder (it takes the folder's name as the package's: <c>build.zig</c>, <c>build.zig.zon</c>,
 /// <c>src/main.zig</c>, <c>src/root.zig</c>), then the <c>zig build</c> tasks and CodeLLDB's launch of <c>zig-out/bin/name</c>. Only the
-/// flag-free <c>zig init</c> is used (it exists in every version since 0.12; zig was not installed where this was written, so nothing newer
-/// was checked).
+/// flag-free <c>zig init</c> is used (it exists in every version since 0.12; checked with zig 0.17.0, whose only flag is <c>--minimal</c>).
+/// <see cref="ProjectNames.Zig"/> keeps the name one zig init uses unchanged and builds with.
 /// </summary>
 public sealed class ZigProjectGenerator(IToolRunner runner) : GeneratorBase(runner)
 {

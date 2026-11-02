@@ -106,7 +106,10 @@ public static partial class ProjectNames
     /// <summary>The C identifier made of a CMake name (<c>-</c> becomes <c>_</c>, lower case): the prefix of the generated functions and the header's name.</summary>
     public static string CIdentifier(string name) => name.Replace('-', '_').ToLowerInvariant();
 
-    // ---- Zig (zig init uses the folder name as the package name, an identifier of at most 32 bytes since 0.14)
+    // ---- Zig (zig init uses the folder name as the package name, an identifier of at most 32 bytes since 0.14. It never refuses a name: it
+    // rewrites a bad one (hello-zig → hello_zig, fn → foo, 9lives → _9lives, longer ones cut to 32), so the executable would not be the
+    // zig-out/bin/name launch.json runs. The names below it keeps, but its src/main.zig, `const name = @import("name")`, then does not build;
+    // all checked with zig 0.17.0.)
     private static readonly HashSet<string> ZigKeywords = new(StringComparer.Ordinal)
     {
         "addrspace", "align", "allowzero", "and", "anyframe", "anytype", "asm", "break", "callconv", "catch", "comptime", "const", "continue", "defer",
@@ -115,12 +118,34 @@ public static partial class ProjectNames
         "volatile", "while",
     };
 
-    /// <summary>A Zig package name: an identifier (letters, digits, _; not starting with a digit), not a keyword, 32 characters at most.</summary>
+    // "name shadows primitive"; so does every u<digits> and i<digits> (ZigIntegerType).
+    private static readonly HashSet<string> ZigPrimitives = new(StringComparer.Ordinal)
+    {
+        "anyerror", "anyopaque", "bool", "c_char", "c_int", "c_long", "c_longdouble", "c_longlong", "c_short", "c_uint", "c_ulong", "c_ulonglong",
+        "c_ushort", "comptime_float", "comptime_int", "f16", "f32", "f64", "f80", "f128", "false", "isize", "noreturn", "null", "true", "type",
+        "undefined", "usize", "void",
+    };
+
+    // The built-in modules ("conflicts with builtin module"; std: "no member named 'lang'") and what zig 0.17's template declares in src/main.zig
+    // ("duplicate struct member name", "local constant shadows declaration").
+    private static readonly HashSet<string> ZigTemplateNames = new(StringComparer.Ordinal)
+    {
+        "std", "builtin", "root",
+        "main", "Io", "testOne", "init", "arena", "args", "arg", "io", "stdout_buffer", "stdout_file_writer", "stdout_writer", "gpa", "list", "context",
+        "smith", "slice", "len", "off",
+    };
+
+    /// <summary>
+    /// A Zig package name: an identifier (letters, digits, _; not starting with a digit), not a keyword, a primitive or a name zig init's code
+    /// uses, 32 characters at most.
+    /// </summary>
     public static string? Zig(string name)
     {
         if (Folder(name) is { } bad) return bad;
-        if (!ZigName().IsMatch(name)) return "A Zig package name uses letters, digits and _ and does not start with a digit.";
+        if (!ZigName().IsMatch(name) || name == "_") return "A Zig package name uses letters, digits and _ and does not start with a digit.";
         if (ZigKeywords.Contains(name)) return $"'{name}' is a Zig keyword.";
+        if (ZigPrimitives.Contains(name) || ZigIntegerType().IsMatch(name)) return $"'{name}' is a Zig primitive type or value.";
+        if (ZigTemplateNames.Contains(name)) return $"zig init's code already uses the name '{name}', so the project would not build.";
         if (Encoding.UTF8.GetByteCount(name) > 32) return "A Zig package name has 32 characters at most.";
         return null;
     }
@@ -156,4 +181,7 @@ public static partial class ProjectNames
 
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
     private static partial Regex ZigName();
+
+    [GeneratedRegex("^[iu][0-9]+$")]
+    private static partial Regex ZigIntegerType();
 }

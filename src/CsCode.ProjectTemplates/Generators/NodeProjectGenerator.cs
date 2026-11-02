@@ -28,7 +28,8 @@ public sealed class NodeProjectGenerator(IToolRunner runner, bool typeScript) : 
     private static string? Npm => OperatingSystem.IsWindows() ? ToolLocator.Find("npm.cmd", "npm") : ToolLocator.Find("npm");
     private static string? Node => ToolLocator.Find("node");
 
-    public override ValueTask<IReadOnlyList<ProjectOption>> GetOptionsAsync(CancellationToken ct) => ValueTask.FromResult<IReadOnlyList<ProjectOption>>([]);
+    public override ValueTask<IReadOnlyList<ProjectOption>> GetOptionsAsync(CancellationToken ct) =>
+        ValueTask.FromResult<IReadOnlyList<ProjectOption>>([SampleCode("src/greet: a greeting, the program that prints it, and its test")]);
 
     public override async ValueTask<ProjectToolCheck> CheckToolsAsync(CancellationToken ct)
     {
@@ -49,6 +50,7 @@ public sealed class NodeProjectGenerator(IToolRunner runner, bool typeScript) : 
 
         var files = new ProjectWriter(dir);
         var ext = typeScript ? "ts" : "js";
+        var sample = request.Flag(SampleOption, true);
         progress.Step("Writing package.json and the sources");
         var package = JsonNode.Parse(await File.ReadAllTextAsync(files.PathOf("package.json"), ct).ConfigureAwait(false))!.AsObject();
         package["name"] = request.Name;
@@ -58,19 +60,36 @@ public sealed class NodeProjectGenerator(IToolRunner runner, bool typeScript) : 
             ? new JsonObject { ["build"] = "tsc -p .", ["start"] = "node dist/index.js", ["test"] = "tsc -p . && node --test dist/" }
             : new JsonObject { ["start"] = "node src/index.js", ["test"] = "node --test" };
         await files.WriteJsonAsync("package.json", package, ct).ConfigureAwait(false);
-        await files.WriteAsync($"src/greet.{ext}", typeScript
-            ? "export function greet(name: string): string {\n    return `Hello, ${name}!`;\n}\n"
-            : "export function greet(name) {\n    return `Hello, ${name}!`;\n}\n", ct).ConfigureAwait(false);
-        await files.WriteAsync($"src/index.{ext}", "import { greet } from \"./greet.js\";\n\nconsole.log(greet(\"world\"));\n", ct).ConfigureAwait(false);
-        await files.WriteAsync(typeScript ? "src/greet.test.ts" : "test/greet.test.js", $$"""
-            import { test } from "node:test";
-            import assert from "node:assert/strict";
-            import { greet } from "{{(typeScript ? "./greet.js" : "../src/greet.js")}}";
+        if (sample)
+        {
+            await files.WriteAsync($"src/greet.{ext}", typeScript
+                ? "export function greet(name: string): string {\n    return `Hello, ${name}!`;\n}\n"
+                : "export function greet(name) {\n    return `Hello, ${name}!`;\n}\n", ct).ConfigureAwait(false);
+            await files.WriteAsync($"src/index.{ext}", "import { greet } from \"./greet.js\";\n\nconsole.log(greet(\"world\"));\n", ct).ConfigureAwait(false);
+            await files.WriteAsync(typeScript ? "src/greet.test.ts" : "test/greet.test.js", $$"""
+                import { test } from "node:test";
+                import assert from "node:assert/strict";
+                import { greet } from "{{(typeScript ? "./greet.js" : "../src/greet.js")}}";
 
-            test("greet greets", () => {
-                assert.equal(greet("world"), "Hello, world!");
-            });
-            """, ct).ConfigureAwait(false);
+                test("greet greets", () => {
+                    assert.equal(greet("world"), "Hello, world!");
+                });
+                """, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            // an ES module (so tsc's isolated modules accept it) whose main() the test can call
+            await files.WriteAsync($"src/index.{ext}", $"export function main(){(typeScript ? ": void" : "")} {{}}\n\nmain();\n", ct).ConfigureAwait(false);
+            await files.WriteAsync(typeScript ? "src/index.test.ts" : "test/index.test.js", $$"""
+                import { test } from "node:test";
+                import assert from "node:assert/strict";
+                import { main } from "{{(typeScript ? "./index.js" : "../src/index.js")}}";
+
+                test("main runs", () => {
+                    assert.doesNotThrow(main);
+                });
+                """, ct).ConfigureAwait(false);
+        }
 
         if (typeScript)
         {
@@ -127,7 +146,8 @@ public sealed class StaticSiteGenerator(IToolRunner runner) : GeneratorBase(runn
     public override string? LanguageId => "html";
     public override int Order => 80;
 
-    public override ValueTask<IReadOnlyList<ProjectOption>> GetOptionsAsync(CancellationToken ct) => ValueTask.FromResult<IReadOnlyList<ProjectOption>>([]);
+    public override ValueTask<IReadOnlyList<ProjectOption>> GetOptionsAsync(CancellationToken ct) =>
+        ValueTask.FromResult<IReadOnlyList<ProjectOption>>([SampleCode("A greeting the script writes into the page")]);
 
     public override ValueTask<ProjectToolCheck> CheckToolsAsync(CancellationToken ct) => ValueTask.FromResult(ProjectToolCheck.Available("no tools needed"));
 
@@ -138,6 +158,7 @@ public sealed class StaticSiteGenerator(IToolRunner runner) : GeneratorBase(runn
         var files = new ProjectWriter(request.Directory);
         progress.Step("Writing index.html, styles.css and script.js");
         var title = System.Net.WebUtility.HtmlEncode(request.Name);
+        var sample = request.Flag(SampleOption, true);
         await files.WriteAsync("index.html", $$"""
             <!doctype html>
             <html lang="en">
@@ -149,8 +170,7 @@ public sealed class StaticSiteGenerator(IToolRunner runner) : GeneratorBase(runn
             </head>
             <body>
                 <main>
-                    <h1>{{title}}</h1>
-                    <p id="greeting"></p>
+                    <h1>{{title}}</h1>{{(sample ? "\n            <p id=\"greeting\"></p>" : "")}}
                 </main>
                 <script src="script.js"></script>
             </body>
@@ -168,7 +188,7 @@ public sealed class StaticSiteGenerator(IToolRunner runner) : GeneratorBase(runn
                 padding: 0 1rem;
             }
             """, ct).ConfigureAwait(false);
-        await files.WriteAsync("script.js", "document.getElementById(\"greeting\").textContent = \"Hello, world!\";\n", ct).ConfigureAwait(false);
+        await files.WriteAsync("script.js", sample ? "document.getElementById(\"greeting\").textContent = \"Hello, world!\";\n" : "\"use strict\";\n", ct).ConfigureAwait(false);
         await files.WriteAsync(".gitignore", CommonFiles.GitIgnore(null), ct).ConfigureAwait(false);
         await files.WriteAsync(".editorconfig", CommonFiles.EditorConfig("[*.{html,css,js}]\nindent_size = 4"), ct).ConfigureAwait(false);
         var python = OperatingSystem.IsWindows() ? "python" : "python3";

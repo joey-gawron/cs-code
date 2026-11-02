@@ -62,6 +62,14 @@ changes, and only then; a new directory restarts it once). `cscode.cmake.clangdC
 *Not Now*; Always and Never are saved to the user settings. `cmake.configureOnEdit` (default on) configures again when a CMakeLists.txt or
 `*.cmake` of a configured project is saved; saving a presets file re-reads the presets.
 
+**Configure when opened** (added for New Project, docs/NEW-PROJECT.md). `ICMakeService.ConfigureWhenOpenedAsync(sourceDirectory,
+configurePreset)` (a Core default method that does nothing; `CMakeService` implements it) records a request for a project the workspace has
+not opened yet. The detection that first finds the project selects that configure preset (remembered like a picked one), marks the project
+*Configuring* before it is published and starts the configure, so configure-on-open neither asks about it nor offers a preset, and does not
+configure it a second time (`CMakeService.ConfiguredOnRequest`, which `CMakeHost` checks). A project already open is configured at once; a preset
+the presets do not have leaves the project to the usual flow. Every other project keeps the question and the preset picker. New Project asks for
+`debug` just before it opens a C or C++ project it created (tests: `ConfigureWhenOpenedTests`).
+
 **Status bar** (left): `$(tools) CMake: [<configure preset | build type>]` (click: choose; a spinner while configuring, a warning after a
 failed configure), `$(gear) Build [target]` (click: build; while building `Building …` and a click cancels), `[launch target]` (click:
 choose), `$(debug-alt)` (Debug) and `$(play)` (Run in the terminal). The items follow the project of the active editor.

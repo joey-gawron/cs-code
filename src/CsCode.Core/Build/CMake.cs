@@ -86,4 +86,14 @@ public interface ICMakeService
     /// the Error List; cancelling kills the build's process tree.
     /// </summary>
     ValueTask<CMakeBuildResult> BuildAsync(CMakeProject project, IReadOnlyList<string>? targets = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Configures the project in <paramref name="sourceDirectory"/> with the configure preset <paramref name="configurePreset"/> as soon as the
+    /// workspace opens it, without asking (New Project calls it just before it opens a project it created): the preset is selected and remembered
+    /// and the configure has started before the project is first published, so configure-on-open neither asks about it nor offers a preset. A
+    /// project already open is configured now. Completes with the configured snapshot; null when the configure failed, the presets have no such
+    /// configure preset (the project then behaves as any other) or the service does not do this. Cancelling drops the request or stops the configure.
+    /// </summary>
+    ValueTask<CMakeProject?> ConfigureWhenOpenedAsync(string sourceDirectory, string configurePreset, CancellationToken ct = default) =>
+        ValueTask.FromResult<CMakeProject?>(null);
 }
