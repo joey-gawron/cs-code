@@ -31,6 +31,7 @@ public static class ServiceCollectionExtensions
             sp.GetService<CsCode.Core.Platform.IWorkspaceService>(),
             sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger("CsCode.Dap.Breakpoints")));
         services.AddSingleton<IBreakpointManager>(sp => sp.GetRequiredService<BreakpointManager>());
+        services.AddSingleton<INativeBreakpointManager>(sp => sp.GetRequiredService<BreakpointManager>());
 
         services.AddSingleton<TaskService>(sp => new TaskService(sp.GetRequiredService<DebugLane>(), sp.GetRequiredService<DapPlatform>()));
         services.AddSingleton<ITaskService>(sp => sp.GetRequiredService<TaskService>());

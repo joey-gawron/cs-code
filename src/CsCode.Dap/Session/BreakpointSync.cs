@@ -49,8 +49,9 @@ internal sealed class BreakpointSync : IDisposable
     // Adapter ids of the adapter's own exception filters whose stops come as breakpoint stops (DebugAdapterQuirks.BreakpointExceptionFilters).
     private readonly Dictionary<int, SyntheticExceptionFilter> _filterByAdapterId = new();
     private readonly CancellationTokenSource _cts = new();
-    private bool _pendingFunctionsOrFilters, _flushScheduled, _flushRunning, _active, _disposed;
-    private string? _sentFunctions, _sentFilters;
+    private bool _pendingFunctionsOrFilters, _pendingNative, _flushScheduled, _flushRunning, _active, _disposed;
+    private string? _sentFunctions, _sentFilters, _sentData, _sentInstructions;
+    private int[] _nativeAdapterIds = [];
     private int _requestsSent;
 
     public BreakpointSync(IBreakpointSyncHost host, IBreakpointManager manager, DebugLane lane, ILogger logger, TimeSpan debounce)
@@ -87,7 +88,21 @@ internal sealed class BreakpointSync : IDisposable
         foreach (var uri in uris) await SendFileAsync(uri, ct);
         await SendFunctionsAsync(ct, force: false);
         await SendExceptionFiltersAsync(ct);
+        if (_manager is INativeBreakpointManager native)
+        {
+            _subs.Add(native.NativeChanged.Subscribe(_ => OnNativeChanged()));
+            await SendNativeAsync(ct);
+        }
     }
+
+    private void OnNativeChanged() => _lane.Post(() =>
+    {
+        if (_disposed || !_active) return;
+        _pendingNative = true;
+        if (_flushScheduled) return;
+        _flushScheduled = true;
+        _lane.PostDelayed(_debounce, () => _ = FlushAsync());
+    });
 
     // ------------------------------------------------------------------ incremental sync
 
@@ -117,8 +132,10 @@ internal sealed class BreakpointSync : IDisposable
         {
             var uris = _pendingUris.ToArray();
             var functions = _pendingFunctionsOrFilters;
+            var native = _pendingNative;
             _pendingUris.Clear();
             _pendingFunctionsOrFilters = false;
+            _pendingNative = false;
             if (!_host.IsLive) return;
             foreach (var uri in uris) await SendFileAsync(uri, _cts.Token);
             if (functions)
@@ -126,6 +143,7 @@ internal sealed class BreakpointSync : IDisposable
                 await SendFunctionsAsync(_cts.Token, force: false);
                 await SendExceptionFiltersAsync(_cts.Token);
             }
+            if (native) await SendNativeAsync(_cts.Token);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { _logger.LogDebug(ex, "Breakpoint mirroring to session {Session} failed", _host.Session.Id); }
@@ -318,6 +336,84 @@ internal sealed class BreakpointSync : IDisposable
             if (response[i].Id is { } adapterId && reported.FirstOrDefault(f => f.Filter == sent[i]) is { } filter) _filterByAdapterId[adapterId] = filter;
     }
 
+    /// <summary>
+    /// Data breakpoints (<c>setDataBreakpoints</c>) and instruction breakpoints (<c>setInstructionBreakpoints</c>) of this session — and data
+    /// breakpoints that persist — each list replace-all, sent when it changed (a first empty list is not sent). Kinds the adapter lacks are
+    /// reported unverified with the reason.
+    /// </summary>
+    private async Task SendNativeAsync(CancellationToken ct)
+    {
+        if (_manager is not INativeBreakpointManager native) return;
+        var sessionId = _host.Session.Id;
+        foreach (var id in _nativeAdapterIds) _breakpointIdByAdapterId.Remove(id);
+        var ids = new List<int>();
+
+        var data = native.DataBreakpoints.Where(d => d.Enabled && (d.SessionId == sessionId || d.CanPersist)).ToList();
+        var dataSignature = string.Join('|', data.Select(d => $"{d.Id}:{d.DataId}:{d.AccessType}:{d.Condition}:{d.HitCondition}"));
+        if (dataSignature != (_sentData ?? ""))
+        {
+            _sentData = dataSignature;
+            if (_host.Capabilities.SupportsDataBreakpoints != true)
+                foreach (var d in data) Report(new DebugBreakpointStatus(_host.Session, d.Id, false, null, "This debug adapter does not support data breakpoints."));
+            else
+                await SendListAsync("setDataBreakpoints", new DapSetDataBreakpointsArguments
+                {
+                    Breakpoints = [.. data.Select(d => new DapDataBreakpoint
+                    {
+                        DataId = d.DataId,
+                        AccessType = d.AccessType,
+                        Condition = d.Condition is { Length: > 0 } ? d.Condition : null,
+                        HitCondition = d.HitCondition is { Length: > 0 } ? d.HitCondition : null,
+                    })],
+                }, data.Select(d => d.Id).ToList(), ids, ct);
+        }
+
+        var instructions = native.InstructionBreakpoints.Where(i => i.Enabled && i.SessionId == sessionId).ToList();
+        var instructionSignature = string.Join('|', instructions.Select(i => $"{i.Id}:{i.InstructionReference}:{i.Offset}:{i.Condition}:{i.HitCondition}"));
+        if (instructionSignature != (_sentInstructions ?? ""))
+        {
+            _sentInstructions = instructionSignature;
+            if (_host.Capabilities.SupportsInstructionBreakpoints != true)
+                foreach (var i in instructions) Report(new DebugBreakpointStatus(_host.Session, i.Id, false, null, "This debug adapter does not support instruction breakpoints."));
+            else
+                await SendListAsync("setInstructionBreakpoints", new DapSetInstructionBreakpointsArguments
+                {
+                    Breakpoints = [.. instructions.Select(i => new DapInstructionBreakpoint
+                    {
+                        InstructionReference = i.InstructionReference,
+                        Offset = i.Offset == 0 ? null : i.Offset,
+                        Condition = i.Condition is { Length: > 0 } ? i.Condition : null,
+                        HitCondition = i.HitCondition is { Length: > 0 } ? i.HitCondition : null,
+                    })],
+                }, instructions.Select(i => i.Id).ToList(), ids, ct);
+        }
+        _nativeAdapterIds = [.. ids];
+    }
+
+    /// <summary>Sends one replace-all list and reports each breakpoint's verdict (the response lists them in the order sent).</summary>
+    private async Task SendListAsync(string command, object arguments, IReadOnlyList<string> ourIds, List<int> adapterIds, CancellationToken ct)
+    {
+        Interlocked.Increment(ref _requestsSent);
+        JsonElement body;
+        try { body = await _host.RequestAsync(command, arguments, ct); }
+        catch (DapRequestException ex)
+        {
+            foreach (var id in ourIds) Report(new DebugBreakpointStatus(_host.Session, id, false, null, ex.AdapterMessage));
+            return;
+        }
+        var response = DapJson.Deserialize<DapBreakpointsResponse>(body)?.Breakpoints ?? [];
+        for (var i = 0; i < ourIds.Count; i++)
+        {
+            var bp = i < response.Count ? response[i] : null;
+            if (bp?.Id is { } adapterId)
+            {
+                _breakpointIdByAdapterId[adapterId] = ourIds[i];
+                adapterIds.Add(adapterId);
+            }
+            Report(new DebugBreakpointStatus(_host.Session, ourIds[i], bp?.Verified ?? false, null, bp?.Message ?? (bp is null ? "The debug adapter did not answer for it." : null)));
+        }
+    }
+
     /// <summary>Adapter-initiated <c>breakpoint</c> event (e.g. a pending breakpoint got bound after a module loaded).</summary>
     public void OnAdapterBreakpointEvent(DapBreakpointEvent e)
     {
@@ -325,7 +421,8 @@ internal sealed class BreakpointSync : IDisposable
         if (e.Reason == "removed") { _breakpointIdByAdapterId.Remove(adapterId); return; }
         var pos = _host.Positions;
         // A function breakpoint's "line" is where the function is (GDB reports it): not a moved line of a source breakpoint.
-        var line = Array.IndexOf(_functionAdapterIds, adapterId) >= 0 ? null : e.Breakpoint.Line is { } l ? pos.ToCoreLine(l) : (int?)null;
+        var line = Array.IndexOf(_functionAdapterIds, adapterId) >= 0 || Array.IndexOf(_nativeAdapterIds, adapterId) >= 0 ? null
+            : e.Breakpoint.Line is { } l ? pos.ToCoreLine(l) : (int?)null;
         Report(new DebugBreakpointStatus(_host.Session, ourId, e.Breakpoint.Verified, line, e.Breakpoint.Message));
     }
 
@@ -354,6 +451,7 @@ internal sealed class BreakpointSync : IDisposable
         _syntheticByAdapterId.Clear();
         _filterByAdapterId.Clear();
         _functionAdapterIds = [];
+        _nativeAdapterIds = [];
         _manager.ClearStatuses(_host.Session.Id);
     }
 }

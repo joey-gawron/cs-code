@@ -20,7 +20,7 @@ public sealed record PersistedBreakpoints(
 /// copy-on-write snapshots so readers (editor gutter on the UI thread) never block on a writer. Persisted per workspace in
 /// <see cref="IStateStorage"/> with a debounce (the file is not rewritten once per click).
 /// </summary>
-public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable, IDisposable
+public sealed partial class BreakpointManager : IBreakpointManager, INativeBreakpointManager, IAsyncDisposable, IDisposable
 {
     public const string StateKey = "debug.breakpoints";
     private static readonly TimeSpan PersistDelay = TimeSpan.FromMilliseconds(400);
@@ -143,6 +143,7 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable, ID
     {
         Uri[] uris;
         bool hadFunctions;
+        RemoveAllNative();
         lock (_gate)
         {
             uris = [.. _source.Select(b => b.Uri).Distinct()];
@@ -159,17 +160,21 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable, ID
     public void SetEnabledAll(bool enabled)
     {
         Uri[] uris;
-        bool functions;
+        bool functions, native;
         lock (_gate)
         {
             uris = [.. _source.Where(b => b.Enabled != enabled).Select(b => b.Uri).Distinct()];
             functions = _functions.Any(f => f.Enabled != enabled);
-            if (uris.Length == 0 && !functions) return;
-            _source = [.. _source.Select(b => b with { Enabled = enabled })];
-            _functions = [.. _functions.Select(f => f with { Enabled = enabled })];
-            _dirty = true;
+            native = SetAllNativeEnabled(enabled);
+            if (uris.Length > 0 || functions)
+            {
+                _source = [.. _source.Select(b => b with { Enabled = enabled })];
+                _functions = [.. _functions.Select(f => f with { Enabled = enabled })];
+                _dirty = true;
+            }
         }
-        Raise(uris, functions);
+        if (native) _nativeChanged.Fire(null);
+        if (uris.Length > 0 || functions) Raise(uris, functions);
     }
 
     // ------------------------------------------------------------------ function / exception breakpoints
@@ -245,17 +250,20 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable, ID
     public void ReportStatus(DebugBreakpointStatus status)
     {
         Uri[] uris = [];
+        var native = false;
         lock (_gate)
         {
             var bp = _source.FirstOrDefault(b => b.Id == status.BreakpointId);
             var isFunction = bp is null && _functions.Any(f => f.Id == status.BreakpointId);
-            if (bp is null && !isFunction) return; // the breakpoint was removed while the adapter was answering
+            native = bp is null && !isFunction && IsNative(status.BreakpointId); // data / instruction breakpoints (BreakpointManager.Native.cs)
+            if (bp is null && !isFunction && !native) return; // the breakpoint was removed while the adapter was answering
             if (!_statuses.TryGetValue(status.BreakpointId, out var perSession)) _statuses[status.BreakpointId] = perSession = new();
             if (perSession.TryGetValue(status.Session.Id, out var old) && Same(old.Status, status)) return;
             perSession[status.Session.Id] = (++_statusSeq, status);
             if (bp is not null) uris = [bp.Uri];
         }
-        Raise(uris, uris.Length == 0);
+        if (native) _nativeChanged.Fire(null);
+        else Raise(uris, uris.Length == 0);
     }
 
     private static bool Same(DebugBreakpointStatus a, DebugBreakpointStatus b) =>
@@ -404,6 +412,7 @@ public sealed class BreakpointManager : IBreakpointManager, IAsyncDisposable, ID
         }
         _subs.Dispose();
         _changed.Clear();
+        _nativeChanged.Clear();
     }
 
     /// <summary>
