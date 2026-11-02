@@ -146,4 +146,44 @@ public class RealPythonServerTests
         Assert.Contains("x = \"hi\"\n", Apply(doc, formatted));
         Assert.Contains("print(x, sys.argv)\n", doc.GetText());
     }
+
+    /// <summary>
+    /// The comparison docs/PYTHON.md records for choosing the default type checker: what each server offers on the same file. Checked 2026-11-01:
+    /// Pyright 1.1.414's own server now has semantic tokens and inlay hints too (they used to be Pylance-only), as basedpyright 1.40.2 does.
+    /// </summary>
+    [Theory]
+    [InlineData("python", "pyright-langserver")]
+    [InlineData("basedpyright", "basedpyright-langserver")]
+    public async Task What_Pyright_and_basedpyright_offer(string id, string command)
+    {
+        if (!RequireTools()) return;
+        if (!File.Exists(Path.Combine(LspTestEnv.ToolsDir, "lsp", "node_modules", ".bin", command))) { Assert.Skip(command + " is not installed: run tools/fetch-lsp-tools.sh --with-python"); return; }
+        var python = new FixedEnvironments();
+        python.Select(ToolVenv);
+        await using var env = Create(python);
+        var other = id == "python" ? "basedpyright" : "python";
+        env.Config.Set(LspSettingKeys.LanguageServers, new Dictionary<string, object> { [id] = new { enabled = true }, [other] = new { enabled = false }, ["ruff"] = new { enabled = false } });
+        var doc = env.Open("main.py", "def add(a: int, b: int) -> int:\n    return a + b\n\ntotal = add(1, 2)\n", "python");
+        await env.WaitForStateAsync(id, LanguageServerState.Running, TimeSpan.FromSeconds(90));
+        await Task.Delay(2000, Ct); // dynamic registrations
+        var semantic = env.Registry.GetProviders<ISemanticTokensProvider>(doc).Count > 0;
+        var inlay = env.Registry.GetProviders<IInlayHintsProvider>(doc).Count > 0;
+        IReadOnlyList<InlayHint>? hints = null;
+        if (inlay)
+            hints = await UntilAsync(async () => await env.Provider<IInlayHintsProvider>(doc).ProvideInlayHintsAsync(doc, new TextRange(TextPosition.Zero, doc.PositionAt(doc.Length)), Ct),
+                "inlay hints", h => h.Count > 0, seconds: 30);
+        CsCodeTestNote.Report($"[{id}] semantic tokens: {semantic}; inlay hints: {inlay} ({string.Join(", ", hints?.Select(h => h.Label) ?? [])}); formatting: {env.Registry.GetProviders<IDocumentFormattingProvider>(doc).Count > 0}");
+        Assert.True(semantic);
+        Assert.True(inlay);
+        Assert.Contains(hints!, h => h.Label.Contains("int", StringComparison.Ordinal)); // the inferred type of `total`
+    }
+}
+
+internal static class CsCodeTestNote
+{
+    public static void Report(string text)
+    {
+        TestContext.Current.SendDiagnosticMessage(text);
+        if (System.Environment.GetEnvironmentVariable("CSCODE_LSP_TEST_NOTES") is { Length: > 0 } path) File.AppendAllText(path, text + "\n");
+    }
 }
