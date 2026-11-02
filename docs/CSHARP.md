@@ -46,7 +46,8 @@ the download on 2026-11-01). Everything below was checked against that build: it
   identifier. The client used to keep one identifier (the last registered): Roslyn's compiler errors never showed. It now pulls every registered
   identifier and publishes each under an owner of its own (`lsp:roslyn#<identifier>`), so one provider's report never replaces another's
   (`LanguageClient.Server.cs`).
-* **Client-side commands** Roslyn's answers name (its `executeCommandProvider` lists none of them, `RoslynCommands.cs`):
+* **Client-side commands** Roslyn's answers name (its `executeCommandProvider` lists none of them; `RoslynCommands.cs`, registered by
+  `RoslynExtension` through the per-server extension pattern):
   `roslyn.client.nestedCodeAction` (a code action that is a menu: a quick pick of its `NestedCodeActions`, then `codeAction/resolve`),
   `roslyn.client.fixAllCodeAction` ("Fix All: …": a pick of the scope among `FixAllFlavors`, then `codeAction/resolveFixAll`),
   `roslyn.client.completionComplexEdit` (override and partial-method completions: the edit, then the caret at `newOffset`).
@@ -226,8 +227,12 @@ printed the platform's telemetry banner (the debug launch now passes `TESTINGPLA
   the template listing (scope change, 2026-11-01). New Item can reuse that listing once stage 7 is merged.
 * **.NET tasks through `ITaskProvider`** (`dotnet build`, `test`, `run`, `clean` per project with `$msCompile`) — needs stage 2's (Rust) contract,
   not merged.
-* Roslyn's integration is a Roslyn-only hook (`LanguageClient.Roslyn`, a second JSON-RPC target, `RoslynCommands`) rather than stage 2's
-  per-server extension pattern, which was not merged either; it moves onto that pattern when both are in.
+
+Stage 2's per-server extension pattern was cherry-picked from the Rust branch (its commits "Add the per-server LSP extension pattern…" and
+"Let server extensions answer server-to-client requests…", at the Rust session's suggestion) and Roslyn is built on it: `RoslynExtension`
+(`src/CsCode.Lsp/CSharp/`) with `RoslynSession` as its per-server state and `RoslynCommands` registered through the extension host. One fix
+to the pattern came with it: an extension's notification or request handler now receives messages **without params** (Roslyn's
+`workspace/projectInitializationComplete` has none, and StreamJsonRpc matched no handler), told to the Rust session.
 
 ## 9. Limits
 

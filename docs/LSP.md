@@ -264,8 +264,8 @@ and `TaskTerminals` (`ITaskTerminalHost`).
 
 * **Roslyn** (`roslyn`, `src/CsCode.Lsp/CSharp/`) is a built-in alternative to csharp-ls: `solution/open` / `project/open` after
   `initialized`, ready on `workspace/projectInitializationComplete`, its client-side commands (`roslyn.client.nestedCodeAction`,
-  `fixAllCodeAction`, `completionComplexEdit`), toasts. It is a Roslyn-only hook (`LanguageClient.Roslyn`), to move onto stage 2's per-server
-  extension pattern when that is merged.
+  `fixAllCodeAction`, `completionComplexEdit`), toasts. Built on the per-server extension pattern (§7a): `RoslynExtension`, its per-server
+  state `RoslynSession`, its commands `RoslynCommands`.
 * **`cscode.lsp.serverChoice`** (generic): which built-in of a group of alternatives runs (`{"csharp": "roslyn"}`; `BuiltinServer.Group`,
   `IsGroupDefault`). An explicit `cscode.languageServers.<id>.enabled` still wins.
 * **Pull diagnostics with several identifiers.** A server may register several `textDocument/diagnostic` providers, each with an identifier
