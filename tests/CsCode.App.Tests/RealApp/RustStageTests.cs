@@ -1,7 +1,9 @@
 using System.Text.Json.Nodes;
+using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CsCode.App.Menus;
 using CsCode.App.QuickInput;
 using CsCode.App.Tests.Hosting;
@@ -82,6 +84,17 @@ public class RealAppRustStageTests
 
     private static T? ViewModel<T>(RealAppHost host, string toolId) where T : class => host.Shell.Tools.Get(toolId)?.LiveView?.DataContext as T;
 
+    /// <summary>How far below the top of the Memory window's list the reference's row is (null: not on screen).</summary>
+    private static double? MemoryTargetRowTop(RealAppHost host, MemoryViewModel memory)
+    {
+        Dispatcher.UIThread.RunJobs();
+        if (host.Shell.Tools.Get(NativeViewRequests.MemoryViewId)?.LiveView is not { } view) return null;
+        var list = view.GetVisualDescendants().OfType<Avalonia.Controls.ListBox>().FirstOrDefault(l => l.Name == "Rows");
+        var scroll = list?.GetVisualDescendants().OfType<Avalonia.Controls.ScrollViewer>().FirstOrDefault();
+        var row = list?.GetVisualDescendants().OfType<Avalonia.Controls.ListBoxItem>().FirstOrDefault(i => ReferenceEquals(i.DataContext, memory.TargetRow));
+        return scroll is null ? null : row?.TranslatePoint(default, scroll)?.Y;
+    }
+
     public static TheoryData<string> Adapters => new() { CodeLldbAdapterFactory.PrimaryType, LldbDapAdapterFactory.PrimaryType };
 
     [AvaloniaTheory(Timeout = 300_000)]
@@ -141,9 +154,7 @@ public class RealAppRustStageTests
         // ---- Memory: the Vec's buffer
         Assert.True(await RealAppHost.WaitFor(() => ViewModel<LocalsViewModel>(host, "debug.locals")?.Tree.Rows.Any(r => r.Name == "v") == true, 60_000), "Locals lists v");
         var locals = ViewModel<LocalsViewModel>(host, "debug.locals")!;
-        await host.RunAsync(ShellMenus.ShowToolWindow, NativeViewRequests.MemoryViewId);
-        Assert.True(await RealAppHost.WaitFor(() => ViewModel<MemoryViewModel>(host, NativeViewRequests.MemoryViewId) is not null, 10_000), "the Memory window");
-        var memory = ViewModel<MemoryViewModel>(host, NativeViewRequests.MemoryViewId)!;
+        MemoryViewModel memory;
         if (type == CodeLldbAdapterFactory.PrimaryType)
         {
             var v = locals.Tree.Rows.First(r => r.Name == "v");
@@ -151,10 +162,18 @@ public class RealAppRustStageTests
             Assert.True(await RealAppHost.WaitFor(() => locals.Tree.Rows.Any(r => r.Name == "[0]"), 20_000), "v's elements");
             var first = locals.Tree.Rows.First(r => r.Name == "[0]");
             Assert.True(locals.Tree.CanViewBinaryData(first));
+            Assert.Null(ViewModel<MemoryViewModel>(host, NativeViewRequests.MemoryViewId)); // closed: View Binary Data opens it
             locals.Tree.ViewBinaryData(first); // View Binary Data on v[0]
+            Assert.True(await RealAppHost.WaitFor(() => ViewModel<MemoryViewModel>(host, NativeViewRequests.MemoryViewId) is not null, 10_000), "the Memory window");
+            memory = ViewModel<MemoryViewModel>(host, NativeViewRequests.MemoryViewId)!;
+            Assert.True(await RealAppHost.WaitFor(() => MemoryTargetRowTop(host, memory) is > -1 and < 1, 10_000),
+                $"v[0]'s row at the top of the Memory window opened from closed ({MemoryTargetRowTop(host, memory)?.ToString() ?? "not on screen"})");
         }
         else
         {
+            await host.RunAsync(ShellMenus.ShowToolWindow, NativeViewRequests.MemoryViewId);
+            Assert.True(await RealAppHost.WaitFor(() => ViewModel<MemoryViewModel>(host, NativeViewRequests.MemoryViewId) is not null, 10_000), "the Memory window");
+            memory = ViewModel<MemoryViewModel>(host, NativeViewRequests.MemoryViewId)!;
             // lldb-dap has no Rust formatters on a Mac (LldbDapAdapterFactory.IsAppleLldbDap): the buffer pointer, in the address box. Right after
             // the instruction step lldb-dap may still call the process running: the user would press Enter again
             Assert.True(await RealAppHost.WaitFor(() => debug.State == DebugState.Stopped, 20_000), "stopped after the step");
@@ -166,7 +185,6 @@ public class RealAppRustStageTests
                 await Task.Delay(500);
             }
         }
-        memory.SetVisibleRows(MemoryViewModel.RowCount / 2, MemoryViewModel.RowCount / 2 + 16);
         Assert.True(await RealAppHost.WaitFor(() => memory.TargetRow.Hex.StartsWith("01 00 00 00 02 00 00 00  03 00 00 00", StringComparison.Ordinal), 30_000),
             $"the buffer of vec![1, 2, 3] (row: {memory.TargetRow.AddressText} {memory.TargetRow.Hex}; {memory.StatusText})");
         Note($"{type}: Memory {memory.Title}: {memory.TargetRow.AddressText}  {memory.TargetRow.Hex}");

@@ -1,8 +1,13 @@
+using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CsCode.Core.Debugging;
 using CsCode.Panels.Debug.Native;
 using CsCode.Panels.Debug.Tests.Fakes;
 using CsCode.Panels.Debug.Variables;
+using CsCode.Panels.Debug.Views;
 using CsCode.TestDoubles;
 using Xunit;
 
@@ -208,6 +213,48 @@ public class NativeWindowsTests
         vm.SetVisibleRows(MemoryViewModel.RowCount / 2, MemoryViewModel.RowCount / 2 + 4);
         await PanelRig.Eventually(() => vm.TargetRow.Hex != MemoryRow.Unread, what: "read");
         Assert.Null(rig.Services.NativeViews.TakeMemory()); // taken: a later window starts empty
+    }
+
+    /// <summary>
+    /// View Binary Data with the Memory window closed: the shell creates the view and its model (which takes the request) before it lays the
+    /// view out — a turn of the dispatcher later, or in a bottom panel that opens from no height. The value's row is at the top all the same
+    /// (it was the top of the 64 KiB range, docs/C-CPP.md §7), and only the value's pages are read.
+    /// </summary>
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_Memory_window_opened_from_closed_by_View_Binary_Data_shows_the_value_at_the_top(bool panelOpens)
+    {
+        var session = NativeSession();
+        using var rig = new PanelRig(session: session);
+        rig.StopAt(0);
+        await rig.Services.NativeViews.ShowMemory(new NativeTarget("0x40000", "v[0]")); // no Memory window yet: the request waits for one
+        var view = new MemoryView { DataContext = new MemoryViewModel(rig.Services) }; // MemoryToolWindow's view
+        var vm = (MemoryViewModel)view.DataContext!;
+        Dispatcher.UIThread.RunJobs();
+        var panel = new Border { Height = panelOpens ? 0 : 320, Child = view };
+        var window = new Window { Width = 900, Height = 400, Content = panel };
+        window.Show();
+        try
+        {
+            Dispatcher.UIThread.RunJobs();
+            if (panelOpens) panel.Height = 320;
+            var scroll = view.GetVisualDescendants().OfType<ListBox>().First(l => l.Name == "Rows").GetVisualDescendants().OfType<ScrollViewer>().First();
+            double? top = null;
+            await PanelRig.Eventually(() =>
+            {
+                Dispatcher.UIThread.RunJobs();
+                top = (view.GetVisualDescendants().OfType<ListBoxItem>().FirstOrDefault(i => ReferenceEquals(i.DataContext, vm.TargetRow)))?.TranslatePoint(default, scroll)?.Y;
+                return top is > -1 and < 1;
+            }, what: "the value's row at the top");
+            await PanelRig.Eventually(() => vm.TargetRow.Hex != MemoryRow.Unread, what: "its bytes read");
+            Assert.All(session.MemoryReads, r => Assert.Equal(0, r.Offset)); // the value's page, not the top of the range
+        }
+        finally
+        {
+            window.Close();
+            view.Dispose();
+        }
     }
 
     [AvaloniaFact]

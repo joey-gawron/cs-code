@@ -137,7 +137,7 @@ with a launch.json naming only `"preLaunchTask": "cargo: build"` (no tasks.json:
 | Disassembly window, current instruction | `0x1000081A0 ldr w8, [sp, #0x28c]`, 162 rows of which 33 source lines | same address, 152 rows, 24 source lines |
 | Keyboard in the window (View > Tool Windows) | `disassemblyViewFocus` = true | true |
 | Step Over (F10) | **one instruction**: `0x1000081A0 → 0x1000081A4`, still main.rs:97 | **same** |
-| A `Vec`'s buffer in the Memory window | View Binary Data on `v[0]`: `0x…c780  01 00 00 00 02 00 00 00  03 00 00 00 …` | address box `v.buf.inner.ptr.pointer.pointer` (no Rust formatters: see below): same bytes |
+| A `Vec`'s buffer in the Memory window | View Binary Data on `v[0]`, the window closed: it opens with that row at the top, `0x…c780  01 00 00 00 02 00 00 00  03 00 00 00 …` | address box `v.buf.inner.ptr.pointer.pointer` (no Rust formatters: see below): same bytes |
 | Registers window | General Purpose Registers: `x0=1, x1=0, x2=4295394984, …`, `pc` | same |
 | Break When Value Changes on `x` (Locals) | listed in Breakpoints, verified; Continue stops (reason `data breakpoint`) with `x` 41 → 42 | verified; stops (reason `breakpoint`) with `x` 41 → 42 |
 | Shift+F5 | the session-bound data breakpoint goes with the session | same |

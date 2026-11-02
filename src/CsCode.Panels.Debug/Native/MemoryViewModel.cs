@@ -50,7 +50,7 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
     private NativeTarget? _target;
     private ulong? _baseAddress;
     private long _generation, _loadedEpoch = -1;
-    private int _firstVisible, _lastVisible = 32;
+    private int _firstVisible = RowCount / 2, _lastVisible = RowCount / 2 + 32; // the reference's row at the top, as the view shows it
     private string? _status = "Not debugging", _addressInput, _title;
     private MemoryRow? _selected;
     private int _disposed;
