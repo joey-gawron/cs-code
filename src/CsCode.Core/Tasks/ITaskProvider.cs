@@ -43,7 +43,7 @@ public sealed record ProvidedTask(string Source, string Name, string Command, IR
 }
 
 /// <summary>
-/// Detects a folder's tasks without a tasks.json (VS Code's <c>TaskProvider</c>; CsCode has no extensions, so each is built in). The task runner
+/// Detects a folder's tasks without a tasks.json (VS Code's <c>TaskProvider</c>; CsCode has NO extension system, so each is built in). The task runner
 /// (<see cref="ITaskService"/>, CsCode.Dap) asks every <see cref="ITaskProvider"/> registered in DI, lists their tasks after tasks.json's own in
 /// <see cref="ITaskService.GetTasksAsync"/>, runs them by label in <see cref="ITaskService.RunAsync"/>, and hands a tasks.json entry of the
 /// provider's <see cref="Type"/> to <see cref="ResolveTaskAsync"/>. Register one with <c>services.AddSingleton&lt;ITaskProvider, MyProvider&gt;()</c>.

@@ -4,7 +4,7 @@ using CsCode.Core.Platform;
 namespace CsCode.Core.Text;
 
 // Additive (stage 5, C#): read-only documents whose text comes from a provider rather than a file on disk. The one scheme for every read-only
-// document a tool produces: library code (decompiled, metadata, SourceLink), source generators' output, and server extensions' results (Expand
+// document a tool produces: library code (decompiled, metadata, SourceLink), source generators' output, and per-server integrations' results (Expand
 // Macro, syntax trees: CsCode.Lsp's ReadOnlyDocuments, a provider of its own).
 
 /// <summary>
