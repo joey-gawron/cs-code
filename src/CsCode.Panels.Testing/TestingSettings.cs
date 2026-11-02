@@ -14,12 +14,14 @@ public static class TestingSettings
     public const string DotNetEnabled = "cscode.testing.dotnet.enabled";
     public const string RustEnabled = "cscode.testing.rust.enabled";
     public const string JavaScriptEnabled = "cscode.testing.javascript.enabled";
+    public const string ZigEnabled = "cscode.testing.zig.enabled";
 
     /// <summary>The provider id → its "enabled" setting.</summary>
     public static string EnabledKey(string providerId) => providerId switch
     {
         "dotnet" => DotNetEnabled,
         "rust" => RustEnabled,
+        "zig" => ZigEnabled,
         _ => JavaScriptEnabled,
     };
 
@@ -38,5 +40,6 @@ public static class TestingSettings
         P(DotNetEnabled, true, "Find .NET test projects (xUnit v3 run directly, xUnit v2 / NUnit / MSTest through dotnet test).", """{"type":"boolean"}"""),
         P(RustEnabled, true, "Find cargo packages and their #[test] functions.", """{"type":"boolean"}"""),
         P(JavaScriptEnabled, true, "Find JavaScript / TypeScript packages that use Jest or Vitest.", """{"type":"boolean"}"""),
+        P(ZigEnabled, true, "Find Zig projects (build.zig) and their test blocks.", """{"type":"boolean"}"""),
     ];
 }
