@@ -5,7 +5,7 @@ JavaScript/TypeScript packages that use Jest or Vitest. Two projects:
 
 | Project | References | Holds |
 |---|---|---|
-| `CsCode.Testing` | Core only (no Avalonia) | the providers (`Providers/DotNet`, `Providers/Rust`, `Providers/JavaScript`), their output parsers and source scanners, the process runner, the test tree and the run controller (`Engine/`) |
+| `CsCode.Testing` | Core only (no Avalonia) | the providers (`Providers/DotNet`, `Providers/Rust`, `Providers/JavaScript`, `Providers/CTest`), their output parsers and source scanners, the process runner, the test tree and the run controller (`Engine/`) |
 | `CsCode.Panels.Testing` | Core, Ui, Testing | the Test Explorer tool window and its view-model, `TestingHost` (commands, settings, Error List / Output glue, context keys), the editor's glyph provider |
 
 The editor side is `CsCode.Editor/Features/TestGutterFeature.cs`, over the new Core contract `ITestGutterProvider`
@@ -126,6 +126,22 @@ Linux install; GDB comes from the system).
   `autoAttachChildProcesses`, node internals and node_modules skipped); the report is read when the session ends.
 * Paths node reports are resolved through symbolic links (`/private/var/…` for `/var/…` on macOS): they are put back under the folder as it
   was opened (`PhysicalPaths`), so ids, Error List entries and glyphs match the open documents. .NET frames get the same treatment.
+
+### CTest (`CTestProvider`, stage 3 — docs/C-CPP.md)
+
+* **Detection.** Each CMake project of the CMake integration (`ICMakeService`, `src/CsCode.Build.CMake`) under the folder; the project is the
+  source directory, its "file" its `CMakeLists.txt`.
+* **Discovery** configures the project when it never was, then reads `ctest --test-dir <build> --show-only=json-v1 [-C <config>]`
+  (`CTestJson`): a test's id is its CTest name, its label carries its `LABELS`, it is grouped under the target whose executable it runs, and
+  its location is the `add_test` line its backtrace names, so the glyphs sit in CMakeLists.txt (the source scan finds `add_test(NAME …)`). A
+  `DISABLED` test is shown skipped. A new configure (a saved CMakeLists.txt, another preset) re-discovers the project.
+* **Run.** The targets whose executables the requested tests run are built through the CMake integration (all targets when a test runs
+  something else), then `ctest --test-dir <build> --output-on-failure --no-tests=ignore --output-junit <tmp> [-C <config>] [-R '^(a|b)$']`.
+  Passes are reported as their console lines arrive; the JUnit file (CTest 3.21+, checked with `ctest --version`) gives the failures' output
+  and messages at the end; an older ctest is read from its console output alone (`CTestResults`). ctest's exit code 8 means "a test failed".
+* **Debug.** One test: its command from the JSON (program and arguments) under the C debugger (`cscode.cmake.debugger`: CodeLLDB on macOS,
+  GDB elsewhere, `lldb-dap` on request) in its `WORKING_DIRECTORY` (default: the build directory of the CMakeLists.txt that added it), with its
+  `ENVIRONMENT`; the result is the program's exit code.
 
 ## The tree, runs and threading (`TestController`, `TestTree`)
 
