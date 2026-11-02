@@ -48,6 +48,7 @@ internal sealed partial class LanguageClient
         var text = p.Str("message");
         if (string.IsNullOrEmpty(text)) return;
         _log.Add($"[{type switch { 1 => "error", 2 => "warn", _ => "info" }}] {text}");
+        if (_ctx.InterceptShowMessage?.Invoke(Definition.Id, text) == true) return;
         var window = _ctx.Services.Window;
         if (window is null || !TakeMessageBudget()) return;
         var severity = type switch { 1 => MessageSeverity.Error, 2 => MessageSeverity.Warning, _ => MessageSeverity.Info };

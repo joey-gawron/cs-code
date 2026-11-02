@@ -36,6 +36,8 @@ internal sealed class ClientContext
     public required LanguageWorkQueue Queue { get; init; }
     public required ILspConnectionFactory Connections { get; init; }
     public required ILogger Logger { get; init; }
+    /// <summary>Sees each window/showMessage first (server id, text); true = handled, not shown (zls's version complaint: <see cref="Manager.ZlsSupport"/>).</summary>
+    public Func<string, string, bool>? InterceptShowMessage { get; init; }
 }
 
 /// <summary>

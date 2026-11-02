@@ -49,6 +49,8 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         _settings = LspSettings.Read(services.Configuration);
         var logger = services.Loggers?.CreateLogger("CsCode.Lsp") ?? NullLogger.Instance;
         _queue = new LanguageWorkQueue(_settings.WorkerThreads, _settings.QueueCapacity) { OnUnhandled = ex => logger.LogError(ex, "Unhandled exception on the language lane") };
+        var zls = new ZlsSupport(this, services, () => _settings, logger); // zls's settings and the zig/zls version check
+        _store.Add(zls);
         _ctx = new ClientContext
         {
             Services = services,
@@ -56,6 +58,7 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
             Queue = _queue,
             Connections = services.Connections ?? new DefaultLspConnectionFactory(),
             Logger = logger,
+            InterceptShowMessage = zls.Intercept,
         };
 
         if (services.Configuration is { } cfg) _store.Add(cfg.Changed.Subscribe(OnConfigurationChanged));
