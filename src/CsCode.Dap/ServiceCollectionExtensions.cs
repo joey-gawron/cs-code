@@ -15,7 +15,7 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Registers the DAP module: <see cref="IDebugService"/> (+ <see cref="IDebugFrameFocus"/>, <see cref="IDebugOutputHistory"/>,
     /// <see cref="IDebugSourceContentProvider"/> resolving to the same instance), <see cref="IBreakpointManager"/>,
-    /// <see cref="IDebugConfigurationService"/>, <see cref="ITaskService"/> and the built-in adapter factories (netcoredbg for
+    /// <see cref="IDebugConfigurationService"/>, <see cref="ITaskService"/> (with cargo's <see cref="ITaskProvider"/>) and the built-in adapter factories (netcoredbg for
     /// <c>coreclr</c>/<c>netcoredbg</c>; js-debug for <c>pwa-node</c>/<c>node</c>; GDB's native DAP for <c>gdb</c>/<c>rust-gdb</c>; CodeLLDB for
     /// <c>lldb</c>; LLVM's lldb-dap for <c>lldb-dap</c>; debugpy for <c>debugpy</c>/<c>python</c>). Every Core platform service it can use (settings, state storage, window, commands, output…)
     /// is optional. Resolve <see cref="IDebugService"/> once at startup: its constructor registers the debug commands,
@@ -31,9 +31,11 @@ public static class ServiceCollectionExtensions
             sp.GetService<CsCode.Core.Platform.IWorkspaceService>(),
             sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger("CsCode.Dap.Breakpoints")));
         services.AddSingleton<IBreakpointManager>(sp => sp.GetRequiredService<BreakpointManager>());
+        services.AddSingleton<INativeBreakpointManager>(sp => sp.GetRequiredService<BreakpointManager>());
 
         services.AddSingleton<TaskService>(sp => new TaskService(sp.GetRequiredService<DebugLane>(), sp.GetRequiredService<DapPlatform>()));
         services.AddSingleton<ITaskService>(sp => sp.GetRequiredService<TaskService>());
+        services.AddSingleton<ITaskProvider>(sp => new CargoTaskProvider(sp.GetRequiredService<DapPlatform>()));
 
         services.AddSingleton<DebugConfigurationService>(sp => new DebugConfigurationService(
             sp.GetRequiredService<DebugLane>(), sp.GetRequiredService<DapPlatform>(), () => sp.GetService<ITaskService>()));

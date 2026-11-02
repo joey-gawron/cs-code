@@ -27,9 +27,9 @@ public sealed partial class DebugService
         Reg(KnownCommands.DebugRestart, "Restart", async _ => { if (ActiveSession is { } s) await RootOf(s).RestartAsync(); return null; });
         Reg(KnownCommands.DebugContinue, "Continue", async _ => { if (ActiveSession is { State: DebugSessionState.Stopped } s) await s.ContinueAsync(); return null; });
         Reg(KnownCommands.DebugPause, "Pause", async _ => { if (ActiveSession is { State: DebugSessionState.Running } s) await s.PauseAsync(); return null; });
-        Reg(KnownCommands.DebugStepOver, "Step Over", async _ => { if (ActiveSession is { State: DebugSessionState.Stopped } s) await s.StepOverAsync(); return null; });
-        Reg(KnownCommands.DebugStepInto, "Step Into", async _ => { if (ActiveSession is { State: DebugSessionState.Stopped } s) await s.StepIntoAsync(); return null; });
-        Reg(KnownCommands.DebugStepOut, "Step Out", async _ => { if (ActiveSession is { State: DebugSessionState.Stopped } s) await s.StepOutAsync(); return null; });
+        Reg(KnownCommands.DebugStepOver, "Step Over", async _ => { await StepAsync(DebugStepAction.Over); return null; });
+        Reg(KnownCommands.DebugStepInto, "Step Into", async _ => { await StepAsync(DebugStepAction.Into); return null; });
+        Reg(KnownCommands.DebugStepOut, "Step Out", async _ => { await StepAsync(DebugStepAction.Out); return null; });
         Reg(KnownCommands.DebugToggleBreakpoint, "Toggle Breakpoint", _ =>
         {
             if (_p.Navigation is { ActiveDocument: { } doc, ActiveCaret: { } caret }) _breakpoints.Toggle(doc.Uri, caret.Line);
@@ -38,6 +38,24 @@ public sealed partial class DebugService
         Reg(PickProcessCommand, "Pick Process to Attach To", async inv => await PickProcessAsync(inv.Cancellation));
         Reg(ConfigureCommand, "Open launch.json", async inv => { await _lane.RunAsync(() => OpenLaunchJsonCoreAsync(inv.Cancellation), inv.Cancellation); return null; });
         Reg(AddConfigurationCommand, "Add Configuration...", async inv => { await _lane.RunAsync(() => AddConfigurationCoreAsync(inv.Cancellation), inv.Cancellation); return null; });
+    }
+
+    /// <summary>
+    /// The context key the Disassembly window sets while it has the keyboard (VS Code's <c>disassemblyViewFocus</c>): stepping then goes by
+    /// instruction (DAP <c>granularity: "instruction"</c>) when the adapter supports it, as in VS Code.
+    /// </summary>
+    public const string DisassemblyFocusKey = "disassemblyViewFocus";
+
+    private async ValueTask StepAsync(DebugStepAction action)
+    {
+        if (ActiveSession is not { State: DebugSessionState.Stopped } s) return;
+        var instruction = _p.ContextKeys?.Get(DisassemblyFocusKey) is true;
+        if (instruction && s is IDebugSessionNative { SupportsSteppingGranularity: true } native)
+        {
+            await native.StepAsync(action, null, instruction: true);
+            return;
+        }
+        await (action switch { DebugStepAction.Into => s.StepIntoAsync(), DebugStepAction.Out => s.StepOutAsync(), _ => s.StepOverAsync() });
     }
 
     /// <summary>VS Code's "Open launch.json" (Debug menu, Run view gear).</summary>

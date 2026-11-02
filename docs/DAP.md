@@ -33,6 +33,7 @@ and customisation is native and file based (`launch.json`, `tasks.json`, the `cs
 | `Service/` | `DebugService : IDebugService` (+ `IDebugFrameFocus`, `IDebugOutputHistory`, `IDebugSourceContentProvider`), commands, `cscode.debuggers` contributions. |
 | `Configuration/` | `DebugConfigurationService`, `LaunchJson`, `VariableResolver`, `DapPlatform` (optional Core services bundle). |
 | `Tasks/TaskService.cs` | Minimal `tasks.json` runner (`ITaskService`). |
+| `Tasks/TaskService.Providers.cs` | Detected tasks: every `ITaskProvider`'s tasks, and tasks.json entries that customise them. |
 | `Adapters/` | `NetCoreDbgAdapterFactory`, `NetCoreDbgInstaller`, `JsDebugAdapterFactory`, `JsDebugInstaller` (Node.js/TypeScript), `GdbAdapterFactory` + `GdbAdapterQuirks` + `CargoArtifacts` (Rust/C/C++ through GDB's native DAP; `Gdb/cscode_gdb.py`, copied to the output, summarises Rust values), `CodeLldbAdapterFactory` + `CodeLldbAdapterQuirks` + `CodeLldbInstaller` (Rust/C/C++ through CodeLLDB), `LldbDapAdapterFactory` (Rust/C/C++ through LLVM's lldb-dap), `RustToolchain` (the folder's sysroot and rustc commit, shared). |
 | `Session/DebugAdapterQuirks.cs` | What a built-in adapter does differently, compensated in one place (REPL input, completions, hit conditions, client-side and breakpoint-backed exception filters, output categories, frames, trailing output, `noDebug`, variable paging done by the session, a pause reported as a signal, frame ids renumbered per request); `BuiltinDebugAdapter.Quirks`, applied to every session of the type. |
 | `tools/fetch-netcoredbg.sh` | Fetches netcoredbg into `.scratch/tools/netcoredbg/` (SHA-256 verified, safe extraction). |
@@ -192,7 +193,7 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 * **Open launch.json** (`workbench.action.debug.configure`) opens the folder's launch.json, creating it first for the folder's debugger (or a
   picked one). **Add Configuration...** (`debug.addConfiguration`) picks a debugger, then one of its templates, and appends it to
   `configurations` in the editor (one undoable edit, unsaved, the rest of the file as written) and reveals it; without a launch.json it is
-  Open launch.json. CsCode detects no tasks (VS Code has `tsc: build` or cargo tasks without a tasks.json), so the task the added
+  Open launch.json. Templates do not rely on detected tasks (`ITaskProvider`, below), so the task the added
   configuration's `preLaunchTask`/`postDebugTask` names comes with it when the folder lacks it: appended to the tasks.json in use (in the
   editor when it is open there, else on disk; comments kept, no second default build task), or the template's tasks.json is written next to
   the launch.json. F5 opens the launch.json it created, and with a launch.json that holds no configuration (or does not parse) opens it
@@ -217,6 +218,60 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   Windows) with POSIX quoting of args. With the integrated terminal composed (`DapPlatform.TaskTerminals`, the Core seam `ITaskTerminalHost`)
   a task runs in a terminal named after it following its `presentation` (`TaskService.Terminal.cs`; details in docs/TERMINAL.md, "Tasks in
   terminals"). `preLaunchTask`/`postDebugTask` use it; a failed `preLaunchTask` offers "Debug Anyway".
+* **Detected tasks (`ITaskProvider`, lang-2).** A folder's tasks without a tasks.json, VS Code's `TaskProvider` built in (CsCode has no
+  extensions). The contract is Core's `src/CsCode.Core/Tasks/ITaskProvider.cs`:
+  * `ITaskProvider.Type` is the tasks.json `"type"` of its tasks (`"cargo"`); `ProvideTasksAsync(folder, ct)` returns `ProvidedTask`s;
+    `ResolveTaskAsync(folder, entry, ct)` returns the task a tasks.json entry of that type runs (default: the detected task whose
+    `Definition` members all appear, equal, in the entry — `TaskDefinitionMatch.Matches`).
+  * A `ProvidedTask` is a program run directly, no shell: `Source` + `Name` make its label `"cargo: build"`; `Command`, `Args` (passed as
+    they are: no quoting, no `${…}`), `Cwd` (default: the folder), `Env`, `Group` (`build`/`test`, never a default), `Detail` (default: the
+    command line), `ProblemMatchers` by name (`$rustc`), `IsBackground`, and the `Definition` that identifies it in tasks.json
+    (`{"type": "cargo", "command": "build"}`).
+  * **Registering one:** `services.AddSingleton<ITaskProvider, MyProvider>()` in the module's `AddCsCode…`; the runner reads every
+    `ITaskProvider` in DI (`DapPlatform.TaskProviders`, resolved lazily). Both methods run on the task runner's lane (the Debug lane), never
+    the UI thread; a provider that runs a tool caches its answer per folder until the files it read change. One that throws or takes longer
+    than 10 s (`TaskService.ProviderTimeout`) is left out and logged; the other providers still answer.
+  * **What the runner does with them** (`Tasks/TaskService.Providers.cs`): `GetTasksAsync` lists tasks.json's tasks, then the detected ones
+    (`TaskDefinition.Source` set, `Type` = the provider's type). `RunAsync("cargo: build")`, `preLaunchTask`, `postDebugTask` and
+    `dependsOn` name them by label, so Run Task, Run Build Task and the debugger need no change. A tasks.json entry of a provider's type
+    **customises** a detected task: what runs is the provider's, the entry's `label` (else the detected one), `group`, `problemMatcher`,
+    `presentation`, `dependsOn`, `options.cwd/env` and `isBackground` apply, and the detected task the provider resolved it to (same label)
+    is no longer listed on its own (as in VS Code). An entry no detected task matches stays listed and reports why when run. A tasks.json label wins over a detected task
+    of the same label. Without a provider for its type, an entry behaves as before (a labelled one runs as a shell task, an unlabelled one is
+    left out).
+  * Remote folders: the server's runner asks the server's providers (the Dap module registers the same ones there), so the same tasks show.
+  * Built-in providers: cargo (`Tasks/CargoTaskProvider.cs`, below). Later stages add theirs the same way (CMake, `zig build`, `dotnet`).
+
+## Native debugging: memory, disassembly, instruction stepping, data and instruction breakpoints (lang-2)
+
+The Core surface is `src/CsCode.Core/Debugging/DebugNative.cs` (additive): `IDebugSessionNative` (a companion of `IDebugSession`),
+`INativeBreakpointManager` (a companion of `IBreakpointManager`), `DataBreakpoint`, `InstructionBreakpoint`, `DebugMemoryBlock`,
+`DebugInstruction`, `DebugDataBreakpointInfo`, `DebugAddress`, and `DebugStackFrame.InstructionPointerReference`. The Disassembly, Memory and
+Registers windows use it (docs/PANELS-DEBUG.md); C, C++ and Zig reuse it unchanged.
+
+* `DebugSession` implements `IDebugSessionNative` (`Session/DebugSession.Native.cs`): `ReadMemoryAsync` (`readMemory`, base64 decoded off the
+  lane, ≤ 1 MiB), `WriteMemoryAsync` (`writeMemory`, `allowPartial`), `DisassembleAsync` (`disassemble` with `instructionOffset`, `resolveSymbols`,
+  ≤ 10,000; lines mapped to 0-based, `presentationHint: invalid` → `IsInvalid`), `StepAsync(action, thread, instruction)` (`granularity:
+  "instruction"` only when the adapter advertises `supportsSteppingGranularity`), `GetDataBreakpointInfoAsync` (`dataBreakpointInfo`), and the
+  flags `SupportsWriteMemory`, `SupportsInstructionBreakpoints`, `SupportsSteppingGranularity`. Each call is one enqueue onto the lane; a missing
+  capability throws `NotSupportedException`. Stack frames carry `InstructionPointerReference` (`DapMapping`).
+* **Step by instruction:** the step commands (`workbench.action.debug.stepOver/stepInto/stepOut`) step by instruction while the context key
+  `disassemblyViewFocus` is true (`DebugService.DisassemblyFocusKey`: the Disassembly window sets it while it has the keyboard) and the adapter
+  supports it; otherwise as before.
+* `BreakpointManager` implements `INativeBreakpointManager` (`Breakpoints/BreakpointManager.Native.cs`): data and instruction breakpoints, not
+  persisted, each with the `SessionId` it belongs to; `RemoveAll` / `SetEnabledAll` include them; `ReportStatus` accepts their verdicts and fires
+  `NativeChanged`. `DebugService` removes a session's instruction breakpoints, and its data breakpoints that cannot persist, when it ends.
+* `BreakpointSync` sends them (`setDataBreakpoints`, `setInstructionBreakpoints`): this session's (and data breakpoints that persist), each list
+  replace-all when its signature changed (a first empty list is not sent), verdicts per breakpoint from the response and later `breakpoint`
+  events; an adapter without the capability gets nothing and the breakpoint says why ("This debug adapter does not support data breakpoints.").
+* Checked on this Mac (`initialize`, 2026-11-01): CodeLLDB v1.12.3 and Apple's lldb-dap (Xcode 26 CLT) both advertise
+  `supportsDisassembleRequest`, `supportsReadMemoryRequest`, `supportsWriteMemoryRequest`, `supportsDataBreakpoints`,
+  `supportsInstructionBreakpoints` and `supportsSteppingGranularity` (CodeLLDB also `supportsDataBreakpointBytes`, not used).
+* Tests: `NativeDebuggingTests` (fake adapter: memory both ways, disassembly mapping, frames' instruction pointers, instruction steps with and
+  without the capability, `dataBreakpointInfo`, data and instruction breakpoints sent to their session only with verdicts, the unsupported
+  verdict, session-bound lifetime) and `RealNativeDebuggingTests` (`RealAdapter`, CodeLLDB and lldb-dap on the Rust sample: disassembly around
+  the instruction pointer with source lines, one instruction step, a `Vec`'s buffer read from its element's memory reference, the register
+  scope, a data breakpoint stopping when `x` changes; skips while macOS Developer Mode is off).
 
 ## netcoredbg and other adapters
 
@@ -329,10 +384,12 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   `IDebugService` (and the same instance as `IDebugFrameFocus`, `IDebugOutputHistory`, `IDebugSourceContentProvider`, `IDebugKnownCapabilities`)
   and the built-in adapters (netcoredbg for `coreclr`; js-debug for `pwa-node` and `node`; GDB for `gdb` and `rust-gdb`, with `GdbAdapterQuirks`; CodeLLDB for `lldb`, with `CodeLldbAdapterQuirks`). Every Core platform service it can use is **optional** (`DapPlatform.From(sp)` uses `GetService`).
   **Resolve `IDebugService` once at startup**: its constructor registers the commands, `${command:pickProcess}` and the context keys.
-* Additive Core files: `Core/Tasks/ITaskService.cs`; `Core/Debugging/DebugExtras.cs` (`IDebugFrameFocus`, `IDebugOutputHistory`,
+* Additive Core files: `Core/Tasks/ITaskService.cs` (+ `TaskDefinition.Source`, lang-2); `Core/Tasks/ITaskProvider.cs` (`ITaskProvider`,
+  `ProvidedTask`, `TaskDefinitionMatch`, lang-2); `Core/Debugging/DebugExtras.cs` (`IDebugFrameFocus`, `IDebugOutputHistory`,
   `IDebugSourceContentProvider`, `IDebugSessionHealth`, `IActiveSelectionProvider`, `DebugSourceUri`); `Core/Debugging/DebugKnownCapabilities.cs`
   (`IDebugKnownCapabilities` — DebugService remembers each type's last capabilities — and `DebugCapabilityGate`, which the breakpoint editors use
   to offer conditions/hit counts/logpoints only when supported); `Core/Debugging/DebugSessionPaging.cs` (`IDebugSessionVariablePaging`, filtered paging);
+  `Core/Debugging/DebugNative.cs` (lang-2: `IDebugSessionNative`, `INativeBreakpointManager` and their records; `DebugStackFrame.InstructionPointerReference`);
   `Core/Debugging/DebugSessionModules.cs` (`IDebugSessionModules`: the module list, `GetModulesAsync`, and `ModulesChanged`, fired once per
   burst of `module` events by posting behind them on the lane); `Core/Debugging/DebugSessionFrames.cs` (`IDebugSessionFrames.FrameGeneration`);
   `DebugVariable.IsLazy` (DAP `presentationHint.lazy`). They are *new interfaces/members* rather than changed signatures, so existing implementers
@@ -358,7 +415,7 @@ not abort the session: those breakpoints show unverified with the adapter's mess
 * A socket directory survives only a CsCode that was killed outright (`kill -9`, a crash): it is removed the next time a js-debug session
   starts, not at app start.
 * Shell tasks quote arguments POSIX-style; VS Code's `quoting` options and `isBackground` task readiness are not implemented. Auto-detected
-  task providers (npm, tsc…) are out of scope (no extensions).
+  task providers are built in (`ITaskProvider`, above): cargo's ships; npm, tsc and the like are not written yet.
 * A flood beyond the 128 K-chars/16 ms window drops the *oldest* text by design; the console shows a dropped-characters marker. The history
   for late subscribers keeps the newest 5,000 lines (the oldest batch is cut, not dropped whole).
 * js-debug: function breakpoints are unsupported by the adapter; async parent frames have no variables; see docs/DEBUGGING-RUST-TS.md.

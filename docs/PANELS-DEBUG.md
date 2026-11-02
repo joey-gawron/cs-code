@@ -21,6 +21,9 @@ services.AddCsCodeDebugPanels();   // registers the tool windows + DebugPanelsRu
 | `debug.console` | Debug Console | `debug-console` | `workbench.debug.action.toggleDebugConsole` | `inDebugMode` |
 | `debug.exception` | Exception | `error` | `workbench.debug.action.toggleException` | `cscode.debug.exceptionStopped` |
 | `debug.modules` | Modules | `package` | `workbench.debug.action.toggleModules` | manual |
+| `debug.disassembly` | Disassembly | `symbol-operator` | `workbench.debug.action.toggleDisassembly` | manual (and `debug.action.openDisassemblyView`) |
+| `debug.memory` | Memory 1 | `file-binary` | `workbench.debug.action.toggleMemory` | manual (and View Binary Data, `cscode.debug.viewMemory`) |
+| `debug.registers` | Registers | `symbol-numeric` | `workbench.debug.action.toggleRegisters` | manual |
 
 All dock at the bottom. The shell creates a window's view lazily and disposes it when the window is hidden; a view is a thin
 `UserControl` whose `DataContext` is a fully disposable view-model, so creating one is cheap and hiding one releases every subscription.
@@ -201,6 +204,44 @@ contract cannot update a function breakpoint, so its checkbox is read-only.
   runs appear at once. Other sessions are asked with the raw request through `CustomRequestAsync`; one that refused it shows the message and
   is not asked again at every stop (Refresh retries).
 
+### Native debugging: Disassembly, Memory, Registers, data breakpoints (lang-2)
+
+Built on the additive Core surface in `src/CsCode.Core/Debugging/DebugNative.cs` (`IDebugSessionNative`, `INativeBreakpointManager`,
+`DebugStackFrame.InstructionPointerReference`), which CsCode.Dap's `DebugSession` and `BreakpointManager` implement (docs/DAP.md). C, C++ and
+Zig use the same windows unchanged. Each window is gated on the adapter's capabilities and says so when the adapter lacks one.
+
+* **Disassembly** (`DisassemblyViewModel`, `DisassemblyView`). Opens at the focused frame's `instructionPointerReference` (the window, View >
+  Tool Windows, or **Open Disassembly View** — `debug.action.openDisassemblyView` — also on a Call Stack frame's menu), or at any address /
+  expression with a memory reference in its address box. Rows: the instruction (address, bytes, text) under the function name and the source
+  line it was compiled from, when the adapter gives `location`/`line` (text read from the open document, else the file through the workspace's
+  file system: 16 files, ≤ 4 MB each). **Paging:** 64 instructions each side of the anchor first (`disassemble` with `instructionOffset`
+  −64, count 128); scrolling within six rows of an edge asks for one more page there — one request in flight per direction, never one per
+  row — and the rows on screen stay in place; at most 4,096 instructions are kept (the far end is dropped). Overlapping pages are de-duplicated
+  by address. At each stop the marker (the editor's stack-frame colour and the `debug-stackframe` glyph) moves when the new instruction is
+  loaded, else the code around it is loaded and revealed a third down. **Instruction breakpoints:** a click in the left margin, F9 or the
+  menu (`setInstructionBreakpoints` through the breakpoint manager; faded until the adapter verifies it). **Stepping by instruction:** while
+  the window has the keyboard it sets VS Code's context key `disassemblyViewFocus`, and the debugger's Step Over / Into / Out send
+  `granularity: "instruction"` (when the adapter advertises `supportsSteppingGranularity`); the toolbar's debug buttons do not take the
+  keyboard, so they step by instruction too. Menu: Insert/Remove Breakpoint, View Memory at This Address, Copy Address, Copy Instruction, Go to
+  Source (source rows; also double-click / Enter).
+* **Memory** (`MemoryViewModel`, `MemoryView`). Hex + ASCII rows of 16 bytes, 4,096 rows (32 KiB each side of the reference, which is marked).
+  Opened by **View Binary Data** on a Locals / Watch row whose value has a `memoryReference` (a `Vec`'s pointer, an array), by
+  `cscode.debug.viewMemory`, or the address box (an address, or an expression evaluated in the focused frame: its memory reference). Only the
+  rows on screen are read, a 4 KiB page per `readMemory` request, one request per page in flight; at most 16 pages are kept (the least recent
+  show `??` again until read). Unreadable bytes show `??`. Every stop marks the pages stale and reads the visible ones again. **Edit Bytes…**
+  (Enter, double-click, the menu, the toolbar button) writes up to 16 hex bytes at the row with `writeMemory` (when the adapter supports it)
+  and reads the page back.
+* **Registers** (`RegistersViewModel` over the variables tree). The focused frame's register scope (hint `registers`, or a name containing
+  "regist": CodeLLDB and lldb-dap call it "Registers", with "General Purpose Registers" etc. under it). Adapters mark it expensive, so Locals
+  never loads it; this window does at each stop and frame change, with the tree's change highlighting and Edit Value.
+* **Data breakpoints.** **Break When Value Changes** on a Locals / Autos / Watch row (offered when the session's adapter advertises
+  `supportsDataBreakpoints`): `dataBreakpointInfo` for the child of its container (or a watch expression in the focused frame); when the
+  adapter gives no data id its reason shows in the status bar; else a data breakpoint (access `write`) is added to the breakpoint manager and
+  sent with `setDataBreakpoints`. **Breakpoints window:** data rows ("x (4 bytes)", "data, break when changed") and instruction rows
+  ("demo::main (0x100048)") under the Breakpoints header, with Enable/Disable and Delete; Enable/Disable/Delete All include them. They belong
+  to the session that created them (load addresses change between runs) and go when it ends, except data breakpoints the adapter says can
+  persist.
+
 ## Threading and memory
 
 Nothing blocks the UI thread (the banned-API analyzer is on). Results are applied in ≤ 4 ms slices; bursts of events are coalesced; every
@@ -235,6 +276,7 @@ real Skia headless platform.
 | `JsDebugPanelFixTests` | regression tests of the js-debug wave: deemphasized/label frames, quoted strings, lazy getters, filtered paging, `Return value` shape, opening the stop file, the throwing frame focus (fake and real), hit counts/logpoints per capability |
 | `ResponsivenessTests` | dispatcher heartbeat (p99 < 16 ms, max < 50 ms) under the hostile scenarios, including a sustained one-line-per-event flood from two sessions (~25,000 events/s for 3 s, about js-debug's rate; needs no Node.js: it runs in CI) that must change the console's list at most once per frame; `.scratch/responsiveness.log` has the measured numbers |
 | `LeakTests` | show/hide ×100 across 20 sessions: nothing reachable, no subscriptions left on service/sessions/breakpoint manager |
+| `NativeWindowsTests` | lang-2, against `FakeNativeDebugSession`: Disassembly around the instruction pointer with function and source rows, one page per edge with one request in flight and ≤ 4,096 instructions, the marker moving without a request, instruction breakpoints from a row (and refused without support), the `disassemblyViewFocus` key, Open Disassembly View and the address box; Memory from View Binary Data reading only visible pages, unreadable bytes, refresh at each stop, ≤ 16 pages kept, Edit Bytes through `writeMemory`; Registers showing the scope Locals leaves out; Break When Value Changes (and the adapter's refusal), data/instruction rows in the Breakpoints window; `LeakAssert` on the three view models with the service, session and breakpoint-manager subscriptions back to baseline |
 
 ## Trying it by hand
 

@@ -136,6 +136,37 @@ public class DiagnosticsHoverTests
     }
 
     [AvaloniaFact]
+    public async Task A_command_link_of_trusted_content_runs_the_command_with_its_arguments_and_closes_the_hover()
+    {
+        using var host = ViewHost.Create();
+        var trusted = new MarkupContent("[Run](command:test.run?%5B%7B%22label%22%3A%22run%20app%22%7D%2C2%5D)", IsMarkdown: true) { IsTrusted = true };
+        host.Factory.Services.Features.Register<IHoverProvider>(DocumentSelector.All,
+            new FakeHoverProvider((_, _, _) => Task.FromResult<Hover?>(new Hover([MarkupContent.Markdown("fn main()"), trusted]))));
+        var ran = new List<IReadOnlyList<object?>>();
+        using var reg = host.Commands.Register("test.run", inv => { ran.Add(inv.Args); return ValueTask.FromResult<object?>(null); });
+        var (_, view, _) = await host.OpenAsync("fn main() {}", "a.rs");
+        await Hover(view).HoverAtAsync(3);
+        ViewHost.Pump();
+        Assert.True(Hover(view).IsOpen);
+        Assert.Contains("Run", TextOf(Hover(view).PopupRoot));
+
+        Hover(view).OpenTrustedLink("command:test.run?%5B%7B%22label%22%3A%22run%20app%22%7D%2C2%5D");
+        await ViewHost.WaitFor(() => ran.Count == 1, "the command ran");
+        Assert.Equal("run app", ((System.Text.Json.JsonElement)ran[0][0]!).GetProperty("label").GetString());
+        Assert.Equal(2, ((System.Text.Json.JsonElement)ran[0][1]!).GetInt32());
+        Assert.False(Hover(view).IsOpen);
+    }
+
+    [AvaloniaFact]
+    public async Task An_unknown_command_link_says_so_and_runs_nothing()
+    {
+        using var host = ViewHost.Create();
+        var (_, view, _) = await host.OpenAsync("x", "a.rs");
+        Hover(view).OpenTrustedLink("command:nobody.registered");
+        await ViewHost.WaitFor(() => host.Window.StatusMessages.Any(m => m.Contains("'nobody.registered' is not available")), "status message");
+    }
+
+    [AvaloniaFact]
     public async Task Hover_over_a_squiggle_shows_the_message_and_a_quick_fix_link()
     {
         using var host = ViewHost.Create();

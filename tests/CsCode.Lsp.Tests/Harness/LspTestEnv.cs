@@ -156,6 +156,11 @@ public sealed class LspTestEnv : IAsyncDisposable
     public RecordingNavigationService Navigation { get; }
     public FakeConnectionFactory Connections { get; } = new();
     public LanguageServerManager Manager { get; }
+    public TestStatusBarService StatusBar { get; } = new();
+    public CsCode.Lsp.Extensions.ReadOnlyDocuments ReadOnlyDocuments { get; } = new();
+    /// <summary>What server extensions see as the debugger and the task terminals (null: none composed).</summary>
+    public CsCode.Core.Debugging.IDebugService? Debug { get; set; }
+    public CsCode.Core.Tasks.ITaskTerminalHost? TaskTerminals { get; set; }
 
     public string Root => Dir.Path;
 
@@ -175,7 +180,7 @@ public sealed class LspTestEnv : IAsyncDisposable
     /// <param name="realServers">Use the real child-process connection factory, the built-in definitions and the repo's tool directory (integration tests).</param>
     /// <param name="python">The interpreter service a Python test uses (the servers get its python.pythonPath and prefer its tools).</param>
     public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false, bool memoryMonitor = false, IDiagnosticService? diagnostics = null, IOutputService? output = null, bool realServers = false, ILspConnectionFactory? connectionsOverride = null,
-        CsCode.Core.Python.IPythonEnvironmentService? python = null)
+        IReadOnlyList<CsCode.Lsp.Extensions.LanguageServerExtension>? extensions = null, CsCode.Core.Python.IPythonEnvironmentService? python = null)
     {
         if (realServers) builtins = true;
         Memory = memoryMonitor ? new FakeMemoryMonitor() : null;
@@ -192,7 +197,7 @@ public sealed class LspTestEnv : IAsyncDisposable
         if (!builtins) RemoveBuiltins(); // before the manager exists: no race with its first recompute
         Workspace.AddFolder(Dir.Path);
 
-        var services = new LspServices(Documents, Registry, Diagnostics)
+        var lsp = new LspServices(Documents, Registry, Diagnostics)
         {
             Configuration = Config,
             Workspace = Workspace,
@@ -204,10 +209,14 @@ public sealed class LspTestEnv : IAsyncDisposable
             Paths = realServers ? new ToolsAppPaths(Paths, ToolsDir) : Paths,
             Connections = connectionsOverride ?? (realServers ? null : Connections), // null: the manager uses the real DefaultLspConnectionFactory
             Memory = Memory,
+            StatusBar = StatusBar,
+            ReadOnlyDocuments = ReadOnlyDocuments,
+            Debug = () => Debug,
+            TaskTerminals = () => TaskTerminals,
             PythonEnvironments = python,
             SettingsContributors = python is null ? [] : [new PythonServerSettings(python)],
         };
-        Manager = new LanguageServerManager(services);
+        Manager = extensions is null ? new LanguageServerManager(lsp) : new LanguageServerManager(lsp, extensions);
     }
 
     private void RemoveBuiltins()
@@ -312,5 +321,23 @@ public sealed class LspTestEnv : IAsyncDisposable
         await Manager.DisposeAsync();
         Paths.Dispose();
         Dir.Dispose();
+    }
+}
+
+/// <summary>A status bar that keeps its items (server extensions' status items).</summary>
+public sealed class TestStatusBarService : IStatusBarService
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<string, StatusBarItemModel> _items = new();
+    private readonly Emitter<IReadOnlyList<StatusBarItemModel>> _changed = new();
+
+    public IReadOnlyList<StatusBarItemModel> Items { get { lock (_gate) return [.. _items.Values]; } }
+    public IEventSource<IReadOnlyList<StatusBarItemModel>> Changed => _changed;
+    public StatusBarItemModel? Get(string id) { lock (_gate) return _items.GetValueOrDefault(id); }
+
+    public IDisposable Set(StatusBarItemModel item)
+    {
+        lock (_gate) _items[item.Id] = item;
+        return Disposable.Create(() => { lock (_gate) if (_items.TryGetValue(item.Id, out var cur) && ReferenceEquals(cur, item)) _items.Remove(item.Id); });
     }
 }

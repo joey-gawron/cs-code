@@ -257,6 +257,21 @@ public class LldbDapAdapterFactoryTests
     }
 
     [Fact]
+    public async Task Apples_lldb_dap_gets_no_toolchain_formatters_but_still_the_standard_library_map()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "POSIX shell stand-ins");
+        using var dir = new TempDirectory("lldbdap-");
+        dir.WriteFile("Cargo.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n");
+        var (bin, _) = FakeRust(dir);
+        var f = Make(env: new() { ["PATH"] = bin }, xcrun: _ => Task.FromResult<string?>("/Library/Developer/CommandLineTools/usr/bin/lldb-dap"));
+        var r = (await f.ResolveAsync(dir.Uri, Cfg(new { type = "lldb-dap", request = "launch", name = "r", program = "/p" }, dir.Uri), Ct))!;
+        Assert.False(r.Properties.ContainsKey("initCommands")); // rust 1.96's providers hang Apple's LLDB on a Result<i32, String>
+        Assert.Single(r.Properties["sourceMap"].EnumerateArray());
+        Assert.True(LldbDapAdapterFactory.IsAppleLldbDap("/Applications/Xcode.app/Contents/Developer/usr/bin/lldb-dap"));
+        Assert.False(LldbDapAdapterFactory.IsAppleLldbDap("/opt/homebrew/opt/llvm/bin/lldb-dap"));
+    }
+
+    [Fact]
     public async Task The_cargo_key_builds_with_cargo_and_its_executable_becomes_the_program()
     {
         var cargo = RustToolchainLocator.FindOnPath(System.Environment.GetEnvironmentVariable, OperatingSystem.IsWindows() ? "cargo.exe" : "cargo");

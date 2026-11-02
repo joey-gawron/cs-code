@@ -166,6 +166,36 @@ public sealed class DebugTests
     }
 
     [Fact]
+    public async Task Rust_debugs_the_requested_tests_of_several_targets_one_session_after_another_and_says_doc_tests_cannot_be_debugged()
+    {
+        var processes = new ScriptedProcesses
+        {
+            Answer = spec => spec.Arguments.Contains("--no-run")
+                ? (0, [
+                    """{"reason":"compiler-artifact","target":{"kind":["lib"],"name":"rs_sample","src_path":"/w/src/lib.rs"},"profile":{"test":true},"executable":"/w/target/debug/deps/rs_sample-2"}""",
+                    """{"reason":"compiler-artifact","target":{"kind":["test"],"name":"integ","src_path":"/w/tests/integ.rs"},"profile":{"test":true},"executable":"/w/target/debug/deps/integ-3"}""",
+                ], [])
+                : (0, [], []),
+        };
+        var provider = new RustTestProvider(new TestProviderContext(processes, key => key == RustTestProvider.RustDebuggerSetting ? "gdb" : null));
+        var project = new TestProject("rust", "rs_sample", "/w/Cargo.toml", "/w", "cargo");
+        var launcher = new ScriptedLauncher { Chunks = Chunk(Fixture.Read("libtest-lib.txt"), 33) };
+        var sink = new RecordingSink();
+        var outcome = await provider.DebugAsync(new TestRunRequest(project, ["lib/tests::adds", "test:integ/integration_works", "doc/src/lib.rs - add (line 3)"]), sink, launcher,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(["/w/target/debug/deps/rs_sample-2", "/w/target/debug/deps/integ-3"], launcher.Started.Select(c => c.GetString("program")));
+        Assert.Equal(["integration_works", "--exact", "--include-ignored", "--nocapture", "--test-threads=1"],
+            launcher.Started[1].Properties["args"].EnumerateArray().Select(a => a.GetString()));
+        Assert.Null(outcome.Error);
+        Assert.Contains(sink.Lines, l => l.Contains("Doc-tests cannot be debugged", StringComparison.Ordinal));
+
+        launcher.Started.Clear();
+        var docOnly = await provider.DebugAsync(new TestRunRequest(project, ["doc/src/lib.rs - add (line 3)"]), new RecordingSink(), launcher, TestContext.Current.CancellationToken);
+        Assert.Empty(launcher.Started);
+        Assert.Contains("Doc-tests cannot be debugged", docOnly.Error);
+    }
+
+    [Fact]
     public async Task Javascript_debugs_the_runner_under_js_debug_in_band()
     {
         using var dir = new TempDirectory();

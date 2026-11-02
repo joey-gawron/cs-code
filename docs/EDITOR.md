@@ -174,6 +174,12 @@ Numbers refer to the brief's MUST list.
 
 SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version and per set of symbol providers: a language server that starts after the file was opened is asked at the next request, without an edit), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
+Inlay hints' label parts (lang-2): each part is its own text. A hint with a tooltip, a part with a location or command, or one its provider can
+resolve takes the pointer (others let clicks through to the text): resting on it resolves it once (`IInlayHintsProvider.ResolveInlayHintAsync`,
+3 s budget; rust-analyzer sends tooltips and type locations only then) and shows the part's tooltip (else the hint's) with "Ctrl+click to go to
+mod.rs:438" (⌘ on a Mac); Ctrl/⌘+click on a part opens its location (rust-analyzer: the type's definition) or runs its command, without moving
+the caret (`InlayHintResolveTests`).
+
 ## 4. Threading rules and how they are verified
 
 The binding rule — *editing must never wait for language services* — in concrete form:
@@ -545,8 +551,13 @@ What a click runs (`CodeLensCommands`): the reference commands servers borrow fr
 `cscode.references.show`, the shell's Find Symbol Results, else a quick pick; a command without locations asks the reference providers at its
 position). Everything else goes through `ICommandService` with the lens's arguments: a server's own commands are registered there by the LSP
 client (`workspace/executeCommand`), CsCode's own (the Test Explorer's `testing.codeLens.run` / `debug`) by their modules; an unknown command
-says so in the status bar. rust-analyzer's `rust-analyzer.runSingle` / `debugSingle` lenses (client-side commands of its VS Code extension) are
-hidden: the Test Explorer's "Run Test | Debug Test" lenses (docs/TESTING.md) replace them.
+says so in the status bar. rust-analyzer's `rust-analyzer.runSingle` / `debugSingle` lenses (client-side commands of its VS Code extension) run
+through its server extension (docs/RUST.md): they show on `fn main` and examples, and that extension drops them on tests, where the Test
+Explorer's "Run Test | Debug Test" lenses (docs/TESTING.md) replace them.
+
+Hover links: a `command:id?<URI-encoded JSON arguments>` link runs the command (an array spreads into several arguments) and closes the hover
+only in **trusted** content (`MarkupContent.IsTrusted`, set by CsCode's own code: rust-analyzer's hover actions, docs/RUST.md); in a server's
+own text it is not run.
 
 **Semantic highlighting** (`SemanticTokensFeature`, `SemanticTokenStore`, `SemanticTokenStyleResolver`). On per
 `editor.semanticHighlighting.enabled`: `true`, `false`, or `configuredByTheme` (the default) = the theme's own `"semanticHighlighting": true`

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using CsCode.Core.Languages;
 using CsCode.Core.Text;
 using CsCode.Lsp.Client;
@@ -63,6 +64,17 @@ internal sealed class HoverProvider(LanguageClient client) : LspProvider(client,
         Client.DocRequestAsync<Hover>(Kind, Feature(), document, LanePriority.Interactive, async dr =>
         {
             var p = new P.HoverParams { TextDocument = dr.Id, Position = dr.Mapper.ToLsp(position, dr.Uri) };
+            if (Client.Extension is { Extension.WantsRawHover: true } ext)
+            {
+                // members the protocol has no slot for (rust-analyzer's hover actions) need the raw answer
+                var raw = await Client.SendAsync(P.LspRequests.TextDocumentHover.Method, p, dr.Ctx.Priority, dr.Token, dr.Doc).ConfigureAwait(false);
+                if (raw is not { ValueKind: JsonValueKind.Object } answer) return null;
+                await dr.Ctx.ResumeOnLane();
+                var mapped = dr.Mapper.ToCore(Client.Deserialize<P.Hover>(answer, P.LspRequests.TextDocumentHover.Method), dr.Uri);
+                var adjusted = mapped;
+                Client.RunExtension("AdjustHover", () => adjusted = ext.Extension.AdjustHover(ext, answer, mapped, dr.Uri));
+                return adjusted;
+            }
             var h = await dr.SendAsync(P.LspRequests.TextDocumentHover, p).ConfigureAwait(false);
             return dr.Mapper.ToCore(h, dr.Uri);
         }, ct);
@@ -238,7 +250,10 @@ internal sealed class CodeLensProvider(LanguageClient client) : LspProvider(clie
         Client.DocRequestAsync<IReadOnlyList<CodeLens>>(Kind, Feature(), document, LanePriority.Background, async dr =>
         {
             var r = await dr.SendAsync(P.LspRequests.TextDocumentCodeLens, new P.CodeLensParams { TextDocument = dr.Id }, contentModifiedRetries: 2).ConfigureAwait(false);
-            return r is null ? null : r.Take(5000).Select(l => dr.Mapper.ToCore(l, dr.Uri)).ToArray();
+            if (r is null) return null;
+            IReadOnlyList<CodeLens> lenses = r.Take(5000).Select(l => dr.Mapper.ToCore(l, dr.Uri)).ToArray();
+            if (Client.Extension is { } ext) Client.RunExtension("AdjustCodeLenses", () => lenses = ext.Extension.AdjustCodeLenses(ext, lenses, dr.Uri));
+            return lenses;
         }, ct);
 
     public async ValueTask<CodeLens> ResolveCodeLensAsync(CodeLens lens, CancellationToken ct)
@@ -438,15 +453,32 @@ internal sealed class SemanticTokensRangeProvider : LspProvider, ISemanticTokens
         }, ct);
 }
 
-internal sealed class InlayHintsProvider(LanguageClient client) : LspProvider(client, ProviderKind.InlayHint), IInlayHintsProvider
+internal sealed class InlayHintsProvider(LanguageClient client, FeatureEntry[] entries) : LspProvider(client, ProviderKind.InlayHint), IInlayHintsProvider
 {
+    // The client advertises resolveSupport for tooltips and label parts' tooltips, locations and commands (ClientCapabilitiesFactory): a server
+    // that resolves (rust-analyzer) leaves them out of textDocument/inlayHint and sends them on inlayHint/resolve, asked when the pointer rests on
+    // a hint or before a link is followed.
+    private readonly bool _resolve = entries.Any(e => e.Opt<P.InlayHintOptions>()?.ResolveProvider == true);
+
     public ValueTask<IReadOnlyList<InlayHint>?> ProvideInlayHintsAsync(ITextDocument document, TextRange range, CancellationToken ct) =>
         Client.DocRequestAsync<IReadOnlyList<InlayHint>>(Kind, Feature(), document, LanePriority.Background, async dr =>
         {
             var p = new P.InlayHintParams { TextDocument = dr.Id, Range = dr.Mapper.ToLsp(range, dr.Uri) };
             var r = await dr.SendAsync(P.LspRequests.TextDocumentInlayHint, p, contentModifiedRetries: 2).ConfigureAwait(false);
-            return r is null ? null : r.Take(5000).Select(h => dr.Mapper.ToCore(h, dr.Uri)).ToArray();
+            return r is null ? null : r.Take(5000).Select(h => dr.Mapper.ToCore(h, dr.Uri, _resolve)).ToArray();
         }, ct);
+
+    public async ValueTask<InlayHint> ResolveInlayHintAsync(InlayHint hint, CancellationToken ct)
+    {
+        var m = Client.Mapper;
+        if (!_resolve || !hint.CanResolve || !m.TryGetInlayHintOrigin(hint, out var origin)) return hint;
+        var resolved = await Client.PlainRequestAsync<InlayHint>(LanePriority.Interactive, default, async ctx =>
+        {
+            var r = await Client.RequestAsync(ctx, P.LspRequests.InlayHintResolve, origin.Hint, ctx.Token).ConfigureAwait(false);
+            return r is null ? null : m.ToCore(r, origin.DocumentUri) with { Position = hint.Position }; // where it is placed stays the editor's
+        }, ct).ConfigureAwait(false);
+        return resolved ?? hint;
+    }
 }
 
 internal sealed class LinkedEditingProvider(LanguageClient client) : LspProvider(client, ProviderKind.LinkedEditing), ILinkedEditingRangeProvider

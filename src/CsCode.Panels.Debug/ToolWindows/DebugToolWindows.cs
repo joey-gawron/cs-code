@@ -6,6 +6,7 @@ using CsCode.Panels.Debug.CallStack;
 using CsCode.Panels.Debug.Console;
 using CsCode.Panels.Debug.Exceptions;
 using CsCode.Panels.Debug.Modules;
+using CsCode.Panels.Debug.Native;
 using CsCode.Panels.Debug.Threads;
 using CsCode.Panels.Debug.Variables;
 using CsCode.Panels.Debug.Views;
@@ -141,4 +142,41 @@ public sealed class ModulesToolWindow(DebugPanelsRuntime runtime) : DebugToolWin
     public override string? ToggleCommandId => "workbench.debug.action.toggleModules";
     public override string? AutoShowWhen => null;
     protected override Control Create(DebugPanelServices services, DebugPanelsRuntime runtime) => new ModulesView { DataContext = new ModulesViewModel(services) };
+}
+
+/// <summary>Disassembly: the focused frame's code around its instruction pointer, or any address (lang-2). Opened by hand or by "Open Disassembly View".</summary>
+public sealed class DisassemblyToolWindow(DebugPanelsRuntime runtime) : DebugToolWindow(runtime)
+{
+    public override string Id => NativeViewRequests.DisassemblyViewId;
+    public override string Title => "Disassembly";
+    public override string? IconKey => "symbol-operator";
+    public override string? ToggleCommandId => "workbench.debug.action.toggleDisassembly";
+    public override string? AutoShowWhen => null;
+    protected override Control Create(DebugPanelServices services, DebugPanelsRuntime runtime) => new DisassemblyView { DataContext = new DisassemblyViewModel(services) };
+}
+
+/// <summary>Memory: hex + ASCII around an address or a variable's memory reference ("View Binary Data"), lang-2.</summary>
+public sealed class MemoryToolWindow(DebugPanelsRuntime runtime) : DebugToolWindow(runtime)
+{
+    public override string Id => NativeViewRequests.MemoryViewId;
+    public override string Title => "Memory 1";
+    public override string? IconKey => "file-binary";
+    public override string? ToggleCommandId => "workbench.debug.action.toggleMemory";
+    public override string? AutoShowWhen => null;
+    protected override Control Create(DebugPanelServices services, DebugPanelsRuntime runtime) => new MemoryView { DataContext = new MemoryViewModel(services) };
+}
+
+/// <summary>Registers: the focused frame's register scope (lang-2).</summary>
+public sealed class RegistersToolWindow(DebugPanelsRuntime runtime) : DebugToolWindow(runtime)
+{
+    public override string Id => NativeViewRequests.RegistersViewId;
+    public override string Title => "Registers";
+    public override string? IconKey => "symbol-numeric";
+    public override string? ToggleCommandId => "workbench.debug.action.toggleRegisters";
+    public override string? AutoShowWhen => null;
+    protected override Control Create(DebugPanelServices services, DebugPanelsRuntime runtime)
+    {
+        var vm = new RegistersViewModel(services);
+        return new VariablesPanelView(vm, vm.Tree);
+    }
 }

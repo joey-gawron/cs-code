@@ -241,6 +241,10 @@ public sealed record DapDisassembledInstruction
     public DapSource? Location { get; init; }
     public int? Line { get; init; }
     public int? Column { get; init; }
+    public int? EndLine { get; init; }
+    public int? EndColumn { get; init; }
+    /// <summary><c>normal</c> or <c>invalid</c> (filler where there is no code).</summary>
+    public string? PresentationHint { get; init; }
 }
 
 /// <summary>Error payload of a failed response (<c>body.error</c>).</summary>
@@ -510,6 +514,20 @@ public sealed record DapReadMemoryResponse
     public string Address { get; init; } = "";
     public int? UnreadableBytes { get; init; }
     public string? Data { get; init; }
+}
+
+public sealed record DapWriteMemoryArguments
+{
+    public string MemoryReference { get; init; } = "";
+    public int? Offset { get; init; }
+    public bool? AllowPartial { get; init; }
+    public string Data { get; init; } = "";
+}
+
+public sealed record DapWriteMemoryResponse
+{
+    public int? Offset { get; init; }
+    public int? BytesWritten { get; init; }
 }
 
 public sealed record DapDisassembleArguments

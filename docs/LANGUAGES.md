@@ -87,6 +87,9 @@ SQL, …) run one server for all workspace folders. `${workspaceFolder}` (the ro
   vue-language-server) are covered by configuration tests only (`BuiltinServerTests`: launch line, executable resolution and alternatives,
   install hints, root detection, options); their commands, arguments and install routes follow each project's documentation but were not
   run here.
+* **rust-analyzer** (1.96.1, lang-2): `RealRustAnalyzerTests` and the real-app `RealAppRustStageTests` run it with its LSP extensions
+  (server status, Expand Macro and the other commands, hover actions, Run | Debug lenses, runnables, inlay hint resolve) and cargo's detected
+  tasks; details in docs/RUST.md.
 * The *Formatter* column restates each server's documentation; only zls (zig fmt) and nil (nixfmt) were verified.
 * Marksman indexes a folder (and reports broken links) only when it holds `.marksman.toml` or `.git`; elsewhere it works file by file
   without link diagnostics, so both are its root markers. protols reports errors through `protoc`, which must be on its PATH.

@@ -36,6 +36,8 @@ internal sealed class ClientContext
     public required LanguageWorkQueue Queue { get; init; }
     public required ILspConnectionFactory Connections { get; init; }
     public required ILogger Logger { get; init; }
+    /// <summary>The manager's server extensions: a session of a server one applies to gets it (<see cref="Extensions.ServerExtensionSession"/>).</summary>
+    public IReadOnlyList<Extensions.LanguageServerExtension> Extensions { get; init; } = [];
 }
 
 /// <summary>
@@ -107,6 +109,8 @@ internal sealed partial class LanguageClient : IAsyncDisposable
     internal ServerLog Log => _log;
     internal CircuitBreaker Breaker => _breaker;
     internal FeatureTable Features => _features;
+    /// <summary>The server extension's view of this session (rust-analyzer's commands and notifications), when one applies.</summary>
+    internal Extensions.ServerExtensionSession? Extension { get; private set; }
     internal LspSettings Settings => _ctx.Settings();
 
     public LanguageServerState State => (LanguageServerState)Volatile.Read(ref _state);
@@ -223,6 +227,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             rpc.AddLocalRpcTarget(new ServerRequestTarget(this), new JsonRpcTargetOptions { DisposeOnDisconnect = false });
             rpc.Disconnected += OnRpcDisconnected;
             _rpc = rpc;
+            AttachExtension(rpc);
             rpc.StartListening();
             _ = WatchConnectionAsync(connection);
 
@@ -260,6 +265,8 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             SubscribeEnvironment();
             if (Definition.Settings is { } defSettings && defSettings.ValueKind == JsonValueKind.Object) PushConfiguration();
             TrackProcessMemory();
+
+            PostExtensionInitialized();
 
             _docsMayOpen = true;
             foreach (var sd in _docs.Values) PostOpen(sd);
@@ -308,10 +315,52 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             RootPath = rootPath,
             RootUri = RootUri is null ? null : LspMapper.ToUriString(RootUri),
             InitializationOptions = LaunchVariables.Expand(Definition.InitializationOptions, RootFolder),
-            Capabilities = ClientCapabilitiesFactory.Create(s.AutoPositionEncoding),
+            Capabilities = WithExperimental(ClientCapabilitiesFactory.Create(s.AutoPositionEncoding)),
             Trace = s.Trace switch { LspTraceMode.Verbose => P.TraceValues.Verbose, LspTraceMode.Messages => P.TraceValues.Messages, _ => P.TraceValues.Off },
             WorkspaceFolders = WorkspaceFolders.Select(f => new P.WorkspaceFolder { Uri = LspMapper.ToUriString(f), Name = FolderName(f) }).ToArray(),
         };
+    }
+
+    /// <summary>The extension's experimental client capabilities (rust-analyzer's hoverActions, serverStatusNotification…), when one applies.</summary>
+    private P.ClientCapabilities WithExperimental(P.ClientCapabilities capabilities)
+    {
+        if (Extension is not { } extension) return capabilities;
+        var experimental = capabilities.Experimental is { ValueKind: JsonValueKind.Object } e
+            ? System.Text.Json.Nodes.JsonNode.Parse(e.GetRawText())!.AsObject()
+            : new System.Text.Json.Nodes.JsonObject();
+        RunExtension("AddExperimentalCapabilities", () => extension.Extension.AddExperimentalCapabilities(experimental), extension.Extension);
+        return capabilities with { Experimental = JsonSerializer.SerializeToElement(experimental) };
+    }
+
+    /// <summary>Creates this session's extension view and lets the extension add its notification handlers (before the connection listens).</summary>
+    private void AttachExtension(JsonRpc rpc)
+    {
+        if (_ctx.Extensions.FirstOrDefault(e => e.AppliesTo(Definition)) is not { } extension) return;
+        var session = new Extensions.ServerExtensionSession(this, extension, rpc);
+        try { RunExtension("Attach", () => extension.Attach(session), extension); }
+        finally { session.EndAttach(); }
+        Extension = session;
+    }
+
+    /// <summary>
+    /// Tells the extension the server runs (on the lane). Not inline in <see cref="StartAsync"/>: a closure there would live in its state machine,
+    /// which the slot's start task keeps, and with it the extension's session after the server stopped.
+    /// </summary>
+    private void PostExtensionInitialized()
+    {
+        if (Extension is not { } extension) return;
+        _ctx.Queue.Post(LanePriority.Background, () => RunExtension("OnInitialized", () => extension.Extension.OnInitialized(extension), extension.Extension), exempt: true);
+    }
+
+    /// <summary>An extension's hook: a failure is logged, never fatal to the session.</summary>
+    internal void RunExtension(string what, Action hook, Extensions.LanguageServerExtension? extension = null)
+    {
+        try { hook(); }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _log.Add($"[client] {(extension ?? Extension?.Extension)?.Name ?? "extension"} {what} failed: {ex.Message}");
+            _ctx.Logger.LogWarning(ex, "Server extension hook {Hook} failed for {Server}", what, Definition.Id);
+        }
     }
 
     /// <summary>The directory the server works in: its root, else the first local workspace folder (also <c>${workspaceFolder}</c> in a definition).</summary>
@@ -404,6 +453,11 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             }
             _features.DisposeAll();
             try { _store.Dispose(); } catch (AggregateException) { /* a subscriber's dispose must not abort teardown */ }
+            if (Extension is { } extension)
+            {
+                RunExtension("OnStopped", extension.Dispose, extension.Extension);
+                Extension = null; // the slot may keep this stopped client: the extension's per-server state must not stay with it
+            }
             ClearAllDiagnostics();
             EndAllProgress();
             foreach (var sd in _docs.Values)
@@ -593,7 +647,10 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         var raw = await SendAsync(request.Method, @params, ctx.Priority, ct, doc, contentModifiedRetries, timeout).ConfigureAwait(false);
         if (raw is null) return default;
         await ctx.ResumeOnLane();
-        return Deserialize<TResult>(raw.Value, request.Method);
+        var answer = raw.Value;
+        if (Extension is { } extension && extension.Extension.RewritesAnswerOf(request.Method))
+            RunExtension("RewriteAnswer", () => answer = extension.Extension.RewriteAnswer(extension, request.Method, answer));
+        return Deserialize<TResult>(answer, request.Method);
     }
 
     internal TResult? Deserialize<TResult>(JsonElement raw, string method)
