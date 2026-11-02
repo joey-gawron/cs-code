@@ -27,6 +27,9 @@ namespace CsCode.Dap.Adapters;
 /// <c>sourceLanguages</c>, the Debug Console mode, the standard library's sources (<c>sourceMap</c> onto rust-src) and the program's output in
 /// the Debug Console (<c>terminal: "console"</c>) unless an integrated terminal was asked for. What CodeLLDB does differently is compensated by
 /// <see cref="CodeLldbAdapterQuirks"/>.</para>
+/// <para>Zig (<see cref="ZigDebugging"/>): a <c>build.zig</c> project gets Zig templates (the <c>zig build</c> executables, the current file's test
+/// binary, attach) and its configurations load Zig's LLDB pretty printers (<c>initCommands</c>, before the user's); <c>sourceLanguages</c>
+/// defaults to zig there, so the Rust formatters are not looked for.</para>
 /// </summary>
 public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigurationProvider, IDebugInitialFilesProvider
 {
@@ -37,7 +40,7 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
     public const string DefaultConsoleMode = "evaluate";
     public const string PrimaryType = "lldb";
     public static readonly IReadOnlyList<string> Types = [PrimaryType];
-    public static readonly IReadOnlyList<string> Languages = ["rust", "c", "cpp"];
+    public static readonly IReadOnlyList<string> Languages = ["rust", "c", "cpp", "zig"];
     /// <summary>The launch property VS Code's CodeLLDB extension passes the adapter settings in.</summary>
     internal const string AdapterSettingsKey = "_adapterSettings";
     /// <summary>Removed from the adapter's environment (CodeLLDB embeds its own Python; VS Code's extension removes the same).</summary>
@@ -48,6 +51,7 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _installGate = new(1, 1);
     private readonly RustToolchainLocator _rust;
+    private readonly ZigToolchainLocator _zig;
 
     public CodeLldbAdapterFactory(DapPlatform platform, CodeLldbInstaller? installer = null)
     {
@@ -55,15 +59,19 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
         _logger = platform.Logger("CsCode.Dap.CodeLldb");
         _installer = installer ?? new CodeLldbInstaller(logger: _logger);
         _rust = new RustToolchainLocator(name => Environment(name), _logger);
+        _zig = new ZigToolchainLocator(name => Environment(name), key => _p.Configuration?.Get<string>(key), _logger);
     }
 
     /// <summary>Environment seam (tests must not mutate process-wide variables while other tests spawn children).</summary>
     internal Func<string, string?> Environment { get; init; } = System.Environment.GetEnvironmentVariable;
 
+    /// <summary>Where <see cref="ZigDebugging.HelperScript"/> is looked for (the directory of this assembly; tests may point elsewhere).</summary>
+    internal string ZigHelperDirectory { get; init; } = ZigDebugging.DefaultHelperDirectory;
+
     /// <summary>The built-in adapter: <c>lldb</c> with the CodeLLDB quirks.</summary>
     public static IEnumerable<BuiltinDebugAdapter> Builtins(CodeLldbAdapterFactory factory) =>
     [
-        new(PrimaryType, "Rust / C / C++ (CodeLLDB)", Languages, factory, factory) { Quirks = CodeLldbAdapterQuirks.Instance },
+        new(PrimaryType, "Rust / C / C++ / Zig (CodeLLDB)", Languages, factory, factory) { Quirks = CodeLldbAdapterQuirks.Instance },
     ];
 
     // ------------------------------------------------------------------ adapter
@@ -94,7 +102,7 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
         ? "CodeLLDB was not found. On macOS it is the debugger for Rust, C and C++ (GDB cannot debug native arm64 macOS programs) and CsCode.app ships it in Contents/Resources/debug-adapters (tools/package-macos.sh); accept the download offer, install it with tools/fetch-codelldb.sh, or set 'cscode.debug.codelldbPath' or CSCODE_CODELLDB to its adapter (extension/adapter/codelldb)."
         : "CodeLLDB was not found. Install it with tools/fetch-codelldb.sh, set 'cscode.debug.codelldbPath' or CSCODE_CODELLDB to its adapter (extension/adapter/codelldb), or accept the download offer. GDB (type 'gdb') debugs Rust without a download.";
 
-    /// <summary>The configuration's <c>sourceLanguages</c>, else Rust (what this adapter is built in for).</summary>
+    /// <summary>The configuration's <c>sourceLanguages</c>, else Rust (what this adapter is built in for; a Zig configuration has them set by the provider).</summary>
     internal static IReadOnlyList<string> SourceLanguages(DebugConfiguration configuration) =>
         configuration.Properties.TryGetValue("sourceLanguages", out var langs) && langs.ValueKind == JsonValueKind.Array
             && langs.EnumerateArray().Where(l => l.ValueKind == JsonValueKind.String).Select(l => l.GetString()!).ToList() is { Count: > 0 } list
@@ -206,7 +214,11 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
         }
 
         if (!props.ContainsKey("relativePathBase") && folderPath is not null) props["relativePathBase"] = JsonSerializer.SerializeToElement(folderPath);
-        if (!props.ContainsKey("sourceLanguages")) props["sourceLanguages"] = JsonSerializer.SerializeToElement(SourceLanguages(configuration));
+        var zig = ZigDebugging.IsZig(props, folderPath) && !props.ContainsKey("cargo");
+        if (!props.ContainsKey("sourceLanguages"))
+            props["sourceLanguages"] = JsonSerializer.SerializeToElement(zig ? ["zig"] : SourceLanguages(configuration));
+        // Zig's pretty printers (slices, optionals, error unions, tagged unions by value), before the user's own init commands
+        if (zig) ZigDebugging.PrependInitCommands(props, ZigDebugging.PrettyPrinterCommands(await _zig.FindAsync(ct), ZigHelperDirectory));
 
         // The Debug Console evaluates expressions (the accepted Rust default; commands with a backtick, '/cmd ' or '-exec ').
         var adapterSettings = props.TryGetValue(AdapterSettingsKey, out var existing) && existing.ValueKind == JsonValueKind.Object
@@ -237,11 +249,18 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
 
     /// <summary>
     /// Templates for a cargo package (<c>Cargo.toml</c>): the binary built by the <c>cargo: build</c> pre-launch task, the unit tests through
-    /// <c>cargo test --no-run</c> (the <c>cargo</c> key) and attach to a running process; without a Cargo.toml, a plain program launch and attach.
+    /// <c>cargo test --no-run</c> (the <c>cargo</c> key) and attach to a running process; for a <c>build.zig</c> project the Zig ones
+    /// (<see cref="ZigDebugging.Templates"/>); otherwise a plain program launch and attach.
     /// </summary>
     public async ValueTask<IReadOnlyList<DebugConfiguration>> ProvideInitialAsync(Uri? folder, CancellationToken ct)
     {
         var package = await CargoPackage.ReadAsync(_p, folder, ct);
+        if (package is null && await ZigProject.ReadAsync(_p, folder, ct) is { } zig)
+            return ZigDebugging.Templates(zig, PrimaryType, "CodeLLDB", folder!, c =>
+            {
+                c["sourceLanguages"] = new JsonArray("zig");
+                c["terminal"] = "console";
+            });
         var configs = new List<JsonObject>();
         if (package is not null)
         {
@@ -306,10 +325,12 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
         return [.. configs.Select(c => DebugConfiguration.FromJson(JsonSerializer.SerializeToElement(c), folder))];
     }
 
-    /// <summary>The <c>cargo: build</c> task the binary template's preLaunchTask refers to (only for a cargo package), as the GDB adapter writes it.</summary>
+    /// <summary>The <c>cargo: build</c> task the binary template's preLaunchTask refers to (only for a cargo package), as the GDB adapter writes it;
+    /// for a <c>build.zig</c> project the Zig templates' tasks.</summary>
     public async ValueTask<IReadOnlyList<(string RelativePath, string Content)>> ProvideInitialFilesAsync(Uri? folder, CancellationToken ct)
     {
-        if (await CargoPackage.ReadAsync(_p, folder, ct) is null) return [];
-        return [("tasks.json", CargoPackage.BuildTasksJson)];
+        if (await CargoPackage.ReadAsync(_p, folder, ct) is not null) return [("tasks.json", CargoPackage.BuildTasksJson)];
+        if (await ZigProject.ReadAsync(_p, folder, ct) is not null) return [("tasks.json", ZigDebugging.TasksJson(ZigDebugging.TaskCommand(_zig, name => Environment(name))))];
+        return [];
     }
 }

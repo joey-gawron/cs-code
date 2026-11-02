@@ -30,7 +30,7 @@ internal sealed record ProblemBackground(Regex? Begins, Regex? Ends, bool Active
 
 /// <summary>
 /// tasks.json problem matchers: the built-in ones CsCode's languages need (<c>$msCompile</c>, <c>$tsc</c>/<c>$tsc-watch</c>, <c>$gcc</c>,
-/// <c>$rustc</c>, <c>$eslint-compact</c>, <c>$eslint-stylish</c>; regular expressions written for CsCode after the compilers' output) and the
+/// <c>$rustc</c>, <c>$zig</c>, <c>$eslint-compact</c>, <c>$eslint-stylish</c>; regular expressions written for CsCode after the compilers' output) and the
 /// object form (<c>owner</c>, <c>source</c>, <c>severity</c>, <c>fileLocation</c>, <c>pattern</c> as an object, an array or a "$name",
 /// <c>base</c> to extend a built-in). Unknown names are ignored. Patterns run with a time-out, so a pathological expression cannot hang
 /// the task runner.
@@ -64,6 +64,11 @@ internal static class ProblemMatchers
         P(@"^[\s\->=]*(.*?):(\d*):(\d*)\s*$", file: 1, line: 2, column: 3),
     ];
 
+    // file:line:col: error|note: message (zig build, zig build-exe, zig test; paths relative to the build root, absolute outside it). Zig has
+    // no warnings; a note follows the error it explains. Stack-trace lines of a failed test ("file:line:col: 0x1a2b in f (test)") do not match.
+    private static readonly ProblemPattern Zig = P(@"^(.+?):(\d+):(\d+): (error|note|warning): (.*)$",
+        file: 1, line: 2, column: 3, severity: 4, message: 5);
+
     // file: line 3, col 5, Error - message (rule)
     private static readonly ProblemPattern EslintCompact = P(@"^(.+):\sline\s(\d+),\scol\s(\d+),\s(Error|Warning|Info)\s-\s(.+)\s\((.+)\)$",
         file: 1, line: 2, column: 3, severity: 4, message: 5, code: 6);
@@ -91,6 +96,7 @@ internal static class ProblemMatchers
         "tsc-watch" => new("typescript", "ts", DiagnosticSeverity.Error, FileLocationKind.Relative, "${cwd}", [Tsc], TscWatch),
         "gcc" => new("cpp", "gcc", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${workspaceFolder}", [Gcc]),
         "rustc" => new("rustc", "rustc", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${workspaceFolder}", Rustc),
+        "zig" => new("zig", "zig", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${cwd}", [Zig]),
         "eslint-compact" => new("eslint", "eslint", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${workspaceFolder}", [EslintCompact]),
         "eslint-stylish" => new("eslint", "eslint", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${workspaceFolder}", EslintStylish),
         _ => null,
@@ -102,6 +108,7 @@ internal static class ProblemMatchers
         "tsc" or "tsc-watch" => [Tsc],
         "gcc" => [Gcc],
         "rustc" => Rustc,
+        "zig" => [Zig],
         "eslint-compact" => [EslintCompact],
         "eslint-stylish" => EslintStylish,
         _ => null,

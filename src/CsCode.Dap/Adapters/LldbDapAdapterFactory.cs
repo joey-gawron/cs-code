@@ -25,19 +25,22 @@ namespace CsCode.Dap.Adapters;
 /// shared with GDB and CodeLLDB), <c>cwd</c>, <c>env</c> as the <c>"NAME=value"</c> list every lldb-dap version reads, <c>console:
 /// integratedTerminal</c> as <c>runInTerminal</c> when there is a terminal, the Rust toolchain's LLDB formatters (<c>initCommands</c>, as
 /// <c>rust-lldb</c> loads them) and the standard library's sources (<c>sourceMap</c> onto rust-src), and a textual <c>pid</c> as a number.</para>
+/// <para>Zig (<see cref="ZigDebugging"/>): a <c>build.zig</c> project gets Zig templates and its configurations load Zig's LLDB pretty printers
+/// through CsCode's helper, which says in the Debug Console when this LLDB's Python is too old for them (Apple's lldb-dap embeds 3.9).</para>
 /// </summary>
 public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigurationProvider, IDebugInitialFilesProvider
 {
     public const string SettingPath = "cscode.debug.lldbDapPath";
     public const string PrimaryType = "lldb-dap";
     public static readonly IReadOnlyList<string> Types = [PrimaryType];
-    public static readonly IReadOnlyList<string> Languages = ["rust", "c", "cpp"];
+    public static readonly IReadOnlyList<string> Languages = ["rust", "c", "cpp", "zig"];
     /// <summary>Its names, newest first (LLVM 18 renamed lldb-vscode).</summary>
     public static readonly IReadOnlyList<string> ExecutableNames = OperatingSystem.IsWindows() ? ["lldb-dap.exe", "lldb-vscode.exe"] : ["lldb-dap", "lldb-vscode"];
 
     private readonly DapPlatform _p;
     private readonly ILogger _logger;
     private readonly RustToolchainLocator _rust;
+    private readonly ZigToolchainLocator _zig;
     private readonly SemaphoreSlim _xcrunGate = new(1, 1);
     private string? _xcrunFound;
     private bool _xcrunAsked;
@@ -47,10 +50,14 @@ public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         _p = platform;
         _logger = platform.Logger("CsCode.Dap.LldbDap");
         _rust = new RustToolchainLocator(name => Environment(name), _logger);
+        _zig = new ZigToolchainLocator(name => Environment(name), key => _p.Configuration?.Get<string>(key), _logger);
     }
 
     /// <summary>Environment seam (tests must not mutate process-wide variables while other tests spawn children).</summary>
     internal Func<string, string?> Environment { get; init; } = System.Environment.GetEnvironmentVariable;
+
+    /// <summary>Where <see cref="ZigDebugging.HelperScript"/> is looked for (the directory of this assembly; tests may point elsewhere).</summary>
+    internal string ZigHelperDirectory { get; init; } = ZigDebugging.DefaultHelperDirectory;
 
     /// <summary>Whether Apple's tools are asked (<c>xcrun</c>); macOS only by default.</summary>
     internal bool AskXcrun { get; init; } = OperatingSystem.IsMacOS();
@@ -69,7 +76,7 @@ public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigur
     /// <summary>The built-in adapter: <c>lldb-dap</c>, without quirks (LLVM's adapter is the protocol's reference implementation for LLDB).</summary>
     public static IEnumerable<BuiltinDebugAdapter> Builtins(LldbDapAdapterFactory factory) =>
     [
-        new(PrimaryType, "Rust / C / C++ (lldb-dap)", Languages, factory, factory),
+        new(PrimaryType, "Rust / C / C++ / Zig (lldb-dap)", Languages, factory, factory),
     ];
 
     // ------------------------------------------------------------------ adapter
@@ -290,6 +297,9 @@ public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigur
                 map.Add(new JsonArray(prefix, toolchain.SourceRoot));
         }
         if (map.Count > 0) props["sourceMap"] = JsonSerializer.SerializeToElement(map);
+        // Zig's pretty printers, before the user's own init commands (and after Rust's, which are never both)
+        if (!rust && ZigDebugging.IsZig(props, folderPath))
+            ZigDebugging.PrependInitCommands(props, ZigDebugging.PrettyPrinterCommands(await _zig.FindAsync(ct), ZigHelperDirectory));
         props.Remove("sourceLanguages"); // CodeLLDB's; lldb-dap does not know it
         return configuration with { Type = PrimaryType, Properties = props };
     }
@@ -325,12 +335,13 @@ public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigur
 
     /// <summary>
     /// What "Add Configuration…" offers (and a new launch.json for <c>lldb-dap</c> holds): for a cargo package the binary built by the
-    /// <c>cargo: build</c> pre-launch task, the unit tests through <c>cargo test --no-run</c> (the <c>cargo</c> key) and attach; otherwise a
-    /// C/C++ program launch and attach.
+    /// <c>cargo: build</c> pre-launch task, the unit tests through <c>cargo test --no-run</c> (the <c>cargo</c> key) and attach; for a
+    /// <c>build.zig</c> project the Zig ones (<see cref="ZigDebugging.Templates"/>); otherwise a C/C++ program launch and attach.
     /// </summary>
     public async ValueTask<IReadOnlyList<DebugConfiguration>> ProvideInitialAsync(Uri? folder, CancellationToken ct)
     {
         var package = await CargoPackage.ReadAsync(_p, folder, ct);
+        if (package is null && await ZigProject.ReadAsync(_p, folder, ct) is { } zig) return ZigDebugging.Templates(zig, PrimaryType, "lldb-dap", folder!);
         var configs = new List<JsonObject>();
         if (package is not null)
         {
@@ -389,10 +400,12 @@ public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         return [.. configs.Select(c => DebugConfiguration.FromJson(JsonSerializer.SerializeToElement(c), folder))];
     }
 
-    /// <summary>The <c>cargo: build</c> task the binary template's preLaunchTask refers to (only for a cargo package), as the GDB adapter writes it.</summary>
+    /// <summary>The <c>cargo: build</c> task the binary template's preLaunchTask refers to (only for a cargo package), as the GDB adapter writes it;
+    /// for a <c>build.zig</c> project the Zig templates' tasks.</summary>
     public async ValueTask<IReadOnlyList<(string RelativePath, string Content)>> ProvideInitialFilesAsync(Uri? folder, CancellationToken ct)
     {
-        if (await CargoPackage.ReadAsync(_p, folder, ct) is null) return [];
-        return [("tasks.json", CargoPackage.BuildTasksJson)];
+        if (await CargoPackage.ReadAsync(_p, folder, ct) is not null) return [("tasks.json", CargoPackage.BuildTasksJson)];
+        if (await ZigProject.ReadAsync(_p, folder, ct) is not null) return [("tasks.json", ZigDebugging.TasksJson(ZigDebugging.TaskCommand(_zig, name => Environment(name))))];
+        return [];
     }
 }
