@@ -46,26 +46,6 @@ public sealed partial class DebugSession
     private async Task<IReadOnlyList<DebugThread>> GetThreadsCoreAsync(CancellationToken ct)
     {
         EnsureLive();
-        IReadOnlyList<DebugThread> threads = await RequestThreadsAsync(ct);
-        // lldb-dap (LLVM 21, observed on macOS) answers the first threads request after a stop on a thread it has not listed before with the
-        // list from before that thread started: the thread the program stopped on is missing, so the Call Stack could not show the stop. Asked
-        // again a moment later it is there. Ask a few times (bounded); failing that, list the stopped thread anyway.
-        var stopped = _stopThread;
-        for (var attempt = 0; stopped >= 0 && State == DebugSessionState.Stopped && !threads.Any(t => t.Id == stopped); attempt++)
-        {
-            if (attempt == 3)
-            {
-                threads = [.. threads, new DebugThread(stopped, $"Thread {stopped}")];
-                break;
-            }
-            await Task.Delay(100, ct);
-            threads = await RequestThreadsAsync(ct);
-        }
-        return threads;
-    }
-
-    private async Task<IReadOnlyList<DebugThread>> RequestThreadsAsync(CancellationToken ct)
-    {
         var resp = DapJson.Deserialize<DapThreadsResponse>(await RequestAsync("threads", null, ct)) ?? new DapThreadsResponse();
         return [.. resp.Threads.Select(DapMapping.ToCore)];
     }

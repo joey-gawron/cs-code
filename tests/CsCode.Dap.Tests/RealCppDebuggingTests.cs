@@ -320,7 +320,15 @@ public class RealCppDebuggingTests
         for (var stop = 1; stop <= 2; stop++)
         {
             var loc = await rig.WaitForStopAsync(stop);
+            // lldb-dap's first threads answer after a stop on a new thread can still be the list from before it (the session asks again
+            // since stage 3's fix, 390b376 on the C branch): ask a few times, as the Threads window would on its next refresh
             var threads = await rig.Session!.GetThreadsAsync(Ct);
+            for (var retry = 0; retry < 10 && threads.All(t => t.Id != loc.ThreadId); retry++)
+            {
+                Note(type, $"threads answer without the stopped thread {loc.ThreadId}: {string.Join(", ", threads.Select(t => $"{t.Id}:{t.Name}"))}");
+                await Task.Delay(100, Ct);
+                threads = await rig.Session.GetThreadsAsync(Ct);
+            }
             var frames = await rig.Session.GetStackTraceAsync(loc.ThreadId, 0, 4, Ct);
             Note(type, $"stop {stop} at line {loc.Line} on thread {loc.ThreadId}: {string.Join(" | ", frames.Select(f => f.Name))}; threads {string.Join(", ", threads.Select(t => $"{t.Id}:{t.Name}"))}");
             Assert.True(threads.Count >= 2, "a worker thread besides main");

@@ -52,8 +52,6 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private DapCapabilities _dapCaps = new();
     private JsonObject _rawCaps = new();
     private int _focusedThread = -1;
-    /// <summary>Lane only: the thread the last stop named (-1: none); <see cref="GetThreadsAsync"/> makes sure it is listed.</summary>
-    private int _stopThread = -1;
     private int _unresponsive;
     private int _disposeState;
     private readonly TaskCompletionSource _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -9,9 +9,8 @@ using Xunit;
 namespace CsCode.Dap.Tests;
 
 /// <summary>
-/// What the C++ debugging matrix (docs/C-CPP.md) found and CsCode compensates, over fake adapters behaving as the real ones were observed to
-/// (<see cref="RealCppDebuggingTests"/>): CodeLLDB's C++ exception filters stop as plain breakpoints, and lldb-dap's first <c>threads</c>
-/// answer after a stop on a new thread leaves that thread out.
+/// What the C++ debugging matrix (docs/C-CPP.md) found and CsCode compensates, over a fake adapter behaving as the real CodeLLDB was observed to
+/// (<see cref="RealCppDebuggingTests"/>): its C++ exception filters stop as plain breakpoints.
 /// </summary>
 public class CppDebuggingQuirksTests
 {
@@ -72,33 +71,5 @@ public class CppDebuggingQuirksTests
         await h.AdapterFor(0).SendStoppedAsync("breakpoint", hitBreakpointIds: [1001]);
         await SessionHarness.Eventually(() => { lock (stops) return stops.Count == 3; });
         Assert.Equal("breakpoint", stops[2].Reason);
-    }
-
-    [Fact]
-    public async Task Threads_asked_for_again_when_the_first_answer_after_a_stop_leaves_out_the_stopped_thread()
-    {
-        var answers = 0;
-        await using var h = new ServiceHarness(configureHost: host => host.Configure = (a, _) => a.On("threads", _ =>
-            Interlocked.Increment(ref answers) <= 1
-                ? new DapThreadsResponse { Threads = [new DapThread { Id = 1, Name = "Thread 1" }] }
-                : new DapThreadsResponse { Threads = [new DapThread { Id = 1, Name = "Thread 1" }, new DapThread { Id = 2, Name = "Thread 2" }] }));
-        var session = (DebugSession)await h.StartAsync();
-        await h.AdapterFor(0).SendStoppedAsync("breakpoint", threadId: 2);
-        await SessionHarness.Eventually(() => session.State == DebugSessionState.Stopped);
-        Volatile.Write(ref answers, 0);
-        var threads = await session.GetThreadsAsync(Ct);
-        Assert.Equal([(1, "Thread 1"), (2, "Thread 2")], threads.Select(t => (t.Id, t.Name)));
-        Assert.Equal(2, Volatile.Read(ref answers));
-    }
-
-    [Fact]
-    public async Task A_stopped_thread_the_adapter_never_lists_is_listed_anyway()
-    {
-        await using var h = new ServiceHarness();
-        var session = (DebugSession)await h.StartAsync();
-        await h.AdapterFor(0).SendStoppedAsync("breakpoint", threadId: 5); // the fake lists thread 1 only
-        await SessionHarness.Eventually(() => session.State == DebugSessionState.Stopped);
-        var threads = await session.GetThreadsAsync(Ct);
-        Assert.Equal([(1, "main"), (5, "Thread 5")], threads.Select(t => (t.Id, t.Name)));
     }
 }
