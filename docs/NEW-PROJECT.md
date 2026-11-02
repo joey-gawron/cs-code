@@ -193,8 +193,9 @@ Screenshots of the page (Rust and C# chosen) and of the Welcome link come from `
 | `tests/CsCode.Panels.NewProject.Tests` | the view model (generators, validation, options and the VCS link, remembering, create/fail/cancel, opening here or in a new window) and the real view headless (keyboard only: Name focused, typing, Enter, arrows, Esc, Alt+L, Alt+G), `LeakAssert` for the view model and the view | `dotnet test tests/CsCode.Panels.NewProject.Tests` |
 | `tests/CsCode.App.Tests` (`RealApp/NewProjectTests`) | the real application (every module, `CSCODE_HOME` in a temp dir, headless window): the menu, the palette command and the Welcome link open the page; per installed toolchain a project made on the page opens with its main file and F5 builds it and stops at a breakpoint in it | `dotnet test tests/CsCode.App.Tests --blame-hang-timeout 12m --filter FullyQualifiedName~RealApp.NewProjectTests` |
 
-Results on this Mac (2026-11-02): ProjectTemplates 105 passed, 2 skipped (pytest and TypeScript downloads), and with `CSCODE_TEST_DOWNLOADS=1`
-those 2 pass; Panels.NewProject 21 passed; RealApp NewProjectTests 13 passed with downloads on (F5 for Rust, C, C++, Zig, C#, JavaScript and
-TypeScript; 12 passed and TypeScript skipped without; on 2026-11-01, with the menu, Welcome and session App tests: 54 passed). Real-tool tests skip with their reason when the tool is missing. Downloads only with the user's go-ahead: pytest and TypeScript run with
+Results on this Mac (2026-11-02): ProjectTemplates 112 passed, 4 skipped (uv not installed; pytest and two TypeScript downloads), and with
+`CSCODE_TEST_DOWNLOADS=1` the three download tests pass too; Panels.NewProject 22 passed; RealApp NewProjectTests 13 passed with downloads on
+(F5 for Rust, C, C++, Zig, C#, JavaScript, TypeScript and Python; 12 passed and TypeScript skipped without; on 2026-11-01, with the menu, Welcome
+and session App tests: 54 passed). Real-tool tests skip with their reason when the tool is missing. Downloads only with the user's go-ahead: pytest and TypeScript run with
 `CSCODE_TEST_DOWNLOADS=1`; the C++ framework tests use the GoogleTest/Catch2 archives the C++ stage fetched into `.scratch/tools/cpp-test-frameworks`
-(`FETCHCONTENT_SOURCE_DIR_*`), and otherwise need the same variable. The F5 cases use CodeLLDB, netcoredbg and js-debug from `.scratch/tools`.
+(`FETCHCONTENT_SOURCE_DIR_*`), and otherwise need the same variable. The F5 cases use CodeLLDB, netcoredbg, js-debug and the bundled debugpy (`tools/fetch-debugpy.sh`) from `.scratch/tools`.
