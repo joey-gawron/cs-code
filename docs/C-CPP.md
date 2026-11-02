@@ -181,7 +181,8 @@ directory upwards):
     (`make -n`), which is faster but misses commands that need the build to have happened.
 * **`compile_flags.txt`**, one flag per line, applied to every file below it: enough for a small project with one set of flags. **Create
   compile_flags.txt** (`cscode.c.createCompileFlags`, palette category C/C++) writes one in the active file's workspace folder: `-xc`,
-  `-std=c17`, `-Wall`, `-Wextra`, `-I.`, `-Iinclude` (clangd reads relative paths from the file's own directory). It opens it, keeps an
+  `-std=c17`, `-Wall`, `-Wextra`, `-I.`, `-Iinclude` (relative to the folder that holds compile_flags.txt, as `RealClangdDocumentLinkTests`
+  shows: `src/main.c` finds `include/mathlib.h`). It opens it, keeps an
   existing one as it is, says when the folder also has a `compile_commands.json` (which clangd prefers), and offers to restart a running
   clangd so open files get the flags. `-xc` makes clangd read `.h` headers as C, not C++.
 * **Nothing**: clangd guesses (`clang` with no flags), so headers outside the file's directory are not found.

@@ -21,7 +21,7 @@ internal sealed class CFileCommands(IServiceProvider services, ICMakeProcesses p
     public const string OutputChannelName = "C";
     private const string Category = "C/C++";
 
-    /// <summary>What Create compile_flags.txt writes: C17 with the usual warnings, the folder and its include/ on the include path.</summary>
+    /// <summary>What Create compile_flags.txt writes: C17 with the usual warnings, the folder and its include/ on the include path (clangd reads them relative to compile_flags.txt's folder).</summary>
     internal static readonly string[] DefaultFlags = ["-xc", "-std=c17", "-Wall", "-Wextra", "-I.", "-Iinclude"];
 
     private readonly DisposableStore _store = new();
