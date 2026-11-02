@@ -17,6 +17,7 @@ public static class TestingSettings
     public const string PythonEnabled = "cscode.testing.python.enabled";
     public const string CppEnabled = "cscode.testing.cpp.enabled";
     public const string ZigEnabled = "cscode.testing.zig.enabled";
+    public const string CTestEnabled = "cscode.testing.ctest.enabled";
 
     /// <summary>The provider id → its "enabled" setting.</summary>
     public static string EnabledKey(string providerId) => providerId switch
@@ -26,6 +27,7 @@ public static class TestingSettings
         "python" => PythonEnabled,
         "cpp" => CppEnabled,
         "zig" => ZigEnabled,
+        "ctest" => CTestEnabled,
         _ => JavaScriptEnabled,
     };
 
@@ -60,5 +62,6 @@ public static class TestingSettings
             """{"type":"string","enum":["","codelldb","lldb-dap","gdb"],"enumDescriptions":["cscode.cmake.debugger, else CodeLLDB on macOS, GDB elsewhere.","CodeLLDB (type lldb).","LLVM's lldb-dap.","GDB's own DAP (GDB 14+)."]}"""),
         P(CsCode.Testing.Providers.Cpp.CppTestProvider.BreakOnFailureSetting, true, "Debugging a C++ test stops in the debugger at the assertion that fails (GoogleTest's --gtest_break_on_failure, Catch2's --break, doctest's breaks).", """{"type":"boolean"}"""),
         P(ZigEnabled, true, "Find Zig projects (build.zig) and their test blocks.", """{"type":"boolean"}"""),
+        P(CTestEnabled, true, "Find the tests of CMake projects with CTest (ctest --show-only=json-v1 in the build directory).", """{"type":"boolean"}"""),
     ];
 }

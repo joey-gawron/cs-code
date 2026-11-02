@@ -148,6 +148,7 @@ Linux install; GDB comes from the system).
 * **Debug.** One test: its command from the JSON (program and arguments) under the C debugger (`cscode.cmake.debugger`: CodeLLDB on macOS,
   GDB elsewhere, `lldb-dap` on request) in its `WORKING_DIRECTORY` (default: the build directory of the CMakeLists.txt that added it), with its
   `ENVIRONMENT`; the result is the program's exit code.
+* **Off:** `cscode.testing.ctest.enabled: false` (on by default). The C++ provider then lists the executables CTest would have covered.
 
 ### C++ (`CppTestProvider`)
 
