@@ -229,6 +229,9 @@ public sealed partial class VariablesTreeView : UserControl, IClipboardTarget, I
             Add("Copy Name", () => tree.CopyNameAsync(row));
             Add("Copy Expression", () => tree.CopyExpressionAsync(row));
             if (row.Kind == VariableRowKind.Variable) AddSync("Add Watch", () => tree.AddToWatch(row));
+            if (tree.CanBreakWhenValueChanges(row) || tree.CanViewBinaryData(row)) menu.Items.Add(new Separator());
+            if (tree.CanBreakWhenValueChanges(row)) Add("Break When Value Changes", () => tree.BreakWhenValueChangesAsync(row));
+            if (tree.CanViewBinaryData(row)) AddSync("View Binary Data", () => tree.ViewBinaryData(row));
             if (row.CanViewAsNumber)
             {
                 menu.Items.Add(new Separator());

@@ -47,6 +47,12 @@ public sealed class DebugPanelServices(
     /// <summary>The watch list shared by every Watch window (persisted per workspace, reloaded when another folder is opened).</summary>
     public Variables.WatchStore Watches { get; } = new(debug, state, workspace);
 
+    /// <summary>Requests to the Disassembly and Memory windows from the other windows ("Open Disassembly View", "View Binary Data").</summary>
+    public Native.NativeViewRequests NativeViews { get; } = new();
+
+    /// <summary>Data and instruction breakpoints, when the debug service's breakpoint manager has them (CsCode.Dap's does).</summary>
+    public CsCode.Core.Debugging.INativeBreakpointManager? NativeBreakpoints => Debug.Breakpoints as CsCode.Core.Debugging.INativeBreakpointManager;
+
     /// <summary>The Debug Console's REPL history and transcript, which outlive the console window's view-model.</summary>
     public Console.ReplState Repl { get; } = new(state);
 

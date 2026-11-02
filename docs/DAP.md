@@ -242,6 +242,37 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   * Remote folders: the server's runner asks the server's providers (the Dap module registers the same ones there), so the same tasks show.
   * Built-in providers: cargo (`Tasks/CargoTaskProvider.cs`, below). Later stages add theirs the same way (CMake, `zig build`, `dotnet`).
 
+## Native debugging: memory, disassembly, instruction stepping, data and instruction breakpoints (lang-2)
+
+The Core surface is `src/CsCode.Core/Debugging/DebugNative.cs` (additive): `IDebugSessionNative` (a companion of `IDebugSession`),
+`INativeBreakpointManager` (a companion of `IBreakpointManager`), `DataBreakpoint`, `InstructionBreakpoint`, `DebugMemoryBlock`,
+`DebugInstruction`, `DebugDataBreakpointInfo`, `DebugAddress`, and `DebugStackFrame.InstructionPointerReference`. The Disassembly, Memory and
+Registers windows use it (docs/PANELS-DEBUG.md); C, C++ and Zig reuse it unchanged.
+
+* `DebugSession` implements `IDebugSessionNative` (`Session/DebugSession.Native.cs`): `ReadMemoryAsync` (`readMemory`, base64 decoded off the
+  lane, ≤ 1 MiB), `WriteMemoryAsync` (`writeMemory`, `allowPartial`), `DisassembleAsync` (`disassemble` with `instructionOffset`, `resolveSymbols`,
+  ≤ 10,000; lines mapped to 0-based, `presentationHint: invalid` → `IsInvalid`), `StepAsync(action, thread, instruction)` (`granularity:
+  "instruction"` only when the adapter advertises `supportsSteppingGranularity`), `GetDataBreakpointInfoAsync` (`dataBreakpointInfo`), and the
+  flags `SupportsWriteMemory`, `SupportsInstructionBreakpoints`, `SupportsSteppingGranularity`. Each call is one enqueue onto the lane; a missing
+  capability throws `NotSupportedException`. Stack frames carry `InstructionPointerReference` (`DapMapping`).
+* **Step by instruction:** the step commands (`workbench.action.debug.stepOver/stepInto/stepOut`) step by instruction while the context key
+  `disassemblyViewFocus` is true (`DebugService.DisassemblyFocusKey`: the Disassembly window sets it while it has the keyboard) and the adapter
+  supports it; otherwise as before.
+* `BreakpointManager` implements `INativeBreakpointManager` (`Breakpoints/BreakpointManager.Native.cs`): data and instruction breakpoints, not
+  persisted, each with the `SessionId` it belongs to; `RemoveAll` / `SetEnabledAll` include them; `ReportStatus` accepts their verdicts and fires
+  `NativeChanged`. `DebugService` removes a session's instruction breakpoints, and its data breakpoints that cannot persist, when it ends.
+* `BreakpointSync` sends them (`setDataBreakpoints`, `setInstructionBreakpoints`): this session's (and data breakpoints that persist), each list
+  replace-all when its signature changed (a first empty list is not sent), verdicts per breakpoint from the response and later `breakpoint`
+  events; an adapter without the capability gets nothing and the breakpoint says why ("This debug adapter does not support data breakpoints.").
+* Checked on this Mac (`initialize`, 2026-11-01): CodeLLDB v1.12.3 and Apple's lldb-dap (Xcode 26 CLT) both advertise
+  `supportsDisassembleRequest`, `supportsReadMemoryRequest`, `supportsWriteMemoryRequest`, `supportsDataBreakpoints`,
+  `supportsInstructionBreakpoints` and `supportsSteppingGranularity` (CodeLLDB also `supportsDataBreakpointBytes`, not used).
+* Tests: `NativeDebuggingTests` (fake adapter: memory both ways, disassembly mapping, frames' instruction pointers, instruction steps with and
+  without the capability, `dataBreakpointInfo`, data and instruction breakpoints sent to their session only with verdicts, the unsupported
+  verdict, session-bound lifetime) and `RealNativeDebuggingTests` (`RealAdapter`, CodeLLDB and lldb-dap on the Rust sample: disassembly around
+  the instruction pointer with source lines, one instruction step, a `Vec`'s buffer read from its element's memory reference, the register
+  scope, a data breakpoint stopping when `x` changes; skips while macOS Developer Mode is off).
+
 ## netcoredbg and other adapters
 
 * Built-in `coreclr` (alias `netcoredbg`) → `netcoredbg --interpreter=vscode`. Binary lookup: setting `cscode.debug.netcoredbgPath` →
@@ -358,6 +389,7 @@ not abort the session: those breakpoints show unverified with the adapter's mess
   `IDebugSourceContentProvider`, `IDebugSessionHealth`, `IActiveSelectionProvider`, `DebugSourceUri`); `Core/Debugging/DebugKnownCapabilities.cs`
   (`IDebugKnownCapabilities` — DebugService remembers each type's last capabilities — and `DebugCapabilityGate`, which the breakpoint editors use
   to offer conditions/hit counts/logpoints only when supported); `Core/Debugging/DebugSessionPaging.cs` (`IDebugSessionVariablePaging`, filtered paging);
+  `Core/Debugging/DebugNative.cs` (lang-2: `IDebugSessionNative`, `INativeBreakpointManager` and their records; `DebugStackFrame.InstructionPointerReference`);
   `Core/Debugging/DebugSessionModules.cs` (`IDebugSessionModules`: the module list, `GetModulesAsync`, and `ModulesChanged`, fired once per
   burst of `module` events by posting behind them on the lane); `Core/Debugging/DebugSessionFrames.cs` (`IDebugSessionFrames.FrameGeneration`);
   `DebugVariable.IsLazy` (DAP `presentationHint.lazy`). They are *new interfaces/members* rather than changed signatures, so existing implementers

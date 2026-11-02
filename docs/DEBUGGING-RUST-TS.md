@@ -637,6 +637,26 @@ CSCODE_CODELLDB_ARCHIVE=<vsix> dotnet test tests/CsCode.Dap.Tests --filter "Full
 point `CSCODE_CODELLDB` at a script that tees its stdin and stdout to files and runs the real adapter (`tee in | codelldb "$@" | tee out`);
 the adapter-crash test then kills the script rather than codelldb, so run that one without the recorder.
 
+### Native windows: Disassembly, Memory, Registers, data breakpoints (lang-2)
+
+The windows are in docs/PANELS-DEBUG.md ("Native debugging") and the DAP surface in docs/DAP.md ("Native debugging"). What each adapter offers
+on this Mac (its `initialize` answer, 2026-11-01):
+
+| Capability | CodeLLDB v1.12.3 | lldb-dap (Xcode 26 CLT) | Used by |
+|---|---|---|---|
+| `supportsDisassembleRequest` | yes | yes | Disassembly window |
+| `supportsSteppingGranularity` | yes | yes | Step Over / Into / Out by instruction while the Disassembly window has the keyboard |
+| `supportsInstructionBreakpoints` | yes | yes | breakpoints in the Disassembly window's margin |
+| `supportsReadMemoryRequest` / `supportsWriteMemoryRequest` | yes / yes | yes / yes | Memory window (View Binary Data, Edit Bytes…) |
+| `supportsDataBreakpoints` | yes (and `supportsDataBreakpointBytes`) | yes | Break When Value Changes |
+| register scope | "Registers" scope (expensive) | "Registers" scope | Registers window |
+
+The real-adapter suite is `RealNativeDebuggingTests` (CodeLLDB and lldb-dap on the Rust sample, stopped at `@loop`): the instruction pointer
+disassembles with `main.rs` source lines around it, one instruction step moves the pc to the next instruction (≤ 16 bytes on, not the next
+line), `vec![1, 2, 3]`'s buffer reads `01 00 00 00 02 00 00 00 03 00 00 00` from its first element's memory reference, the frame has a register
+scope with groups, and a data breakpoint on `x` stops when the loop changes it. It needs macOS Developer Mode (`sudo DevToolsSecurity -enable`);
+while that is off it skips with that reason. Results of runs with it on are recorded in docs/RUST.md ("Native debugging, seen").
+
 ## Which Rust debugger is the default
 
 **GDB on Linux, CodeLLDB on macOS** (`cscode.debug.rustDebugger`: `"gdb"` or `"lldb"` for CodeLLDB; `"codelldb"` is accepted too; decided
