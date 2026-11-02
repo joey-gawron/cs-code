@@ -286,6 +286,8 @@ public class ManagerTests
         Assert.True(all["typescript"].Selector.Score(new Uri("file:///a.tsx"), "typescriptreact") > 0);
         Assert.True(all["typescript"].Selector.Score(new Uri("file:///a.js"), "javascript") > 0);
         Assert.True(all["clangd"].Selector.Score(new Uri("file:///a.m"), "objective-c") > 0);
+        Assert.True(all["clangd"].Selector.Score(new Uri("file:///a.mm"), "objective-cpp") > 0);
+        Assert.True(all["clangd"].Selector.Score(new Uri("file:///a.cu"), "cuda-cpp") > 0);
         Assert.True(all["css"].Selector.Score(new Uri("file:///a.less"), "less") > 0);
         Assert.True(all["json"].Selector.Score(new Uri("file:///a.jsonc"), "jsonc") > 0);
         Assert.True(all["bash"].Selector.Score(new Uri("file:///a.sh"), "shellscript") > 0);

@@ -247,6 +247,7 @@ public sealed class GdbAdapterFactory : IDebugAdapterFactory, IDebugConfiguratio
         }
         else
         {
+            if (await CFolder.ReadAsync(_p, folder, ct) is { } c) configs.AddRange(CFolder.Configurations(c, PrimaryType, "GDB", sourceLanguages: false));
             configs.Add(new JsonObject
             {
                 ["name"] = "GDB: Launch program",
@@ -273,7 +274,8 @@ public sealed class GdbAdapterFactory : IDebugAdapterFactory, IDebugConfiguratio
     /// </summary>
     public async ValueTask<IReadOnlyList<(string RelativePath, string Content)>> ProvideInitialFilesAsync(Uri? folder, CancellationToken ct)
     {
-        if (await CargoPackage.ReadAsync(_p, folder, ct) is null) return [];
+        if (await CargoPackage.ReadAsync(_p, folder, ct) is null)
+            return await CFolder.ReadAsync(_p, folder, ct) is not null ? [("tasks.json", CFolder.BuildTasksJson)] : []; // the C single-file template's build task
         return [("tasks.json", CargoPackage.BuildTasksJson)];
     }
 }

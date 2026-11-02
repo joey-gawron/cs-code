@@ -159,7 +159,11 @@ public sealed class LspTestEnv : IAsyncDisposable
     public VirtualDocumentService VirtualDocuments { get; } = new();
     public LanguageServerManager Manager { get; }
     public TestStatusBarService StatusBar { get; } = new();
-    public CsCode.Lsp.Extensions.ReadOnlyDocuments ReadOnlyDocuments { get; } = new();
+    /// <summary>Server extensions' results: the <c>results</c> provider of <see cref="VirtualDocuments"/>.</summary>
+    public CsCode.Lsp.Extensions.ReadOnlyDocuments ReadOnlyDocuments { get; }
+    /// <summary>What server extensions see as the debugger and the task terminals (null: none composed).</summary>
+    public CsCode.Core.Debugging.IDebugService? Debug { get; set; }
+    public CsCode.Core.Tasks.ITaskTerminalHost? TaskTerminals { get; set; }
 
     public string Root => Dir.Path;
 
@@ -177,8 +181,9 @@ public sealed class LspTestEnv : IAsyncDisposable
     }
 
     /// <param name="realServers">Use the real child-process connection factory, the built-in definitions and the repo's tool directory (integration tests).</param>
+    /// <param name="python">The interpreter service a Python test uses (the servers get its python.pythonPath and prefer its tools).</param>
     public LspTestEnv(Action<TestConfigurationService>? configure = null, bool builtins = false, bool memoryMonitor = false, IDiagnosticService? diagnostics = null, IOutputService? output = null, bool realServers = false, ILspConnectionFactory? connectionsOverride = null,
-        IReadOnlyList<CsCode.Lsp.Extensions.LanguageServerExtension>? extensions = null)
+        IReadOnlyList<CsCode.Lsp.Extensions.LanguageServerExtension>? extensions = null, CsCode.Core.Python.IPythonEnvironmentService? python = null)
     {
         if (realServers) builtins = true;
         Memory = memoryMonitor ? new FakeMemoryMonitor() : null;
@@ -186,6 +191,7 @@ public sealed class LspTestEnv : IAsyncDisposable
         if (output is not null) Output = output;
         Navigation = new RecordingNavigationService(Documents);
         ProgressWindow = new ProgressRecordingWindow(Window);
+        ReadOnlyDocuments = new(VirtualDocuments);
         // Snappy defaults for tests; individual tests override before creating the manager when they need real budgets.
         Config.Set(LspSettingKeys.InteractiveTimeoutMs, 3000);
         Config.Set(LspSettingKeys.BackgroundTimeoutMs, 5000);
@@ -210,6 +216,10 @@ public sealed class LspTestEnv : IAsyncDisposable
             VirtualDocuments = VirtualDocuments,
             StatusBar = StatusBar,
             ReadOnlyDocuments = ReadOnlyDocuments,
+            Debug = () => Debug,
+            TaskTerminals = () => TaskTerminals,
+            PythonEnvironments = python,
+            SettingsContributors = python is null ? [] : [new PythonServerSettings(python)],
         };
         Manager = extensions is null ? new LanguageServerManager(lsp) : new LanguageServerManager(lsp, extensions);
     }

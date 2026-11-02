@@ -36,6 +36,9 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<SnippetService>(),
             sp.GetRequiredService<EditorWorker>()));
         services.AddSingleton<IEditorViewFactory>(sp => sp.GetRequiredService<EditorViewFactory>());
+        // editor.codeActionsOnSave. Registered as an IWillSaveParticipant by the shell (AddCodeActionsOnSave), not here: the remote module redirects
+        // the will-save participants registered before it to the out-of-process language host.
+        services.AddSingleton(sp => new Features.CodeActionsOnSaveParticipant(sp.GetRequiredService<EditorServices>()));
         // Markdown preview (docs/MARKDOWN.md): views the shell hosts in document tabs.
         services.AddSingleton(sp => new Markdown.Preview.MarkdownPreviewFactory(
             sp.GetRequiredService<EditorServices>(),
@@ -43,6 +46,18 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ColorThemeService>(),
             sp.GetRequiredService<TokenizationManager>(),
             sp.GetRequiredService<LanguageService>()));
+        return services;
+    }
+
+    /// <summary>
+    /// Makes <c>editor.codeActionsOnSave</c> (<see cref="Features.CodeActionsOnSaveParticipant"/>) the FIRST will-save participant, ahead of the language
+    /// servers' <c>willSaveWaitUntil</c>. Call after every other module that registers will-save participants (after <c>AddCsCodeRemote</c>, which
+    /// redirects the ones registered before it to the out-of-process language host).
+    /// </summary>
+    public static IServiceCollection AddCodeActionsOnSave(this IServiceCollection services)
+    {
+        var first = services.TakeWhile(d => d.ServiceType != typeof(IWillSaveParticipant)).Count();
+        services.Insert(first, ServiceDescriptor.Singleton<IWillSaveParticipant>(sp => sp.GetRequiredService<Features.CodeActionsOnSaveParticipant>()));
         return services;
     }
 }

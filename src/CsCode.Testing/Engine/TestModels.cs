@@ -16,7 +16,14 @@ public sealed record TestGroup(string Label, TestNodeKind Kind, TestLocation? Lo
 /// A test as a provider found it. <see cref="Id"/> is unique within its project and is what the provider's runner understands (a fully
 /// qualified .NET method name, a libtest path prefixed with the cargo target, a Jest file plus its describe/test names).
 /// </summary>
-public sealed record DiscoveredTest(string Id, string Label, IReadOnlyList<TestGroup> Groups, TestLocation? Location = null, string? SkipReason = null);
+public sealed record DiscoveredTest(string Id, string Label, IReadOnlyList<TestGroup> Groups, TestLocation? Location = null, string? SkipReason = null)
+{
+    /// <summary>
+    /// The test's cases known at discovery (pytest's parametrizations: <c>1-2</c> of <c>test_add[1-2]</c>), shown as its children before it ran;
+    /// results name them by <see cref="TestResult.CaseLabel"/>. Additive (language stage 1).
+    /// </summary>
+    public IReadOnlyList<string>? Cases { get; init; }
+}
 
 /// <summary>A test project: a .NET project, a cargo package, a package.json with Jest or Vitest.</summary>
 public sealed record TestProject(string ProviderId, string Name, string FilePath, string Directory, string Framework = "")

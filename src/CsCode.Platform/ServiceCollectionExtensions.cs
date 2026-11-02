@@ -89,6 +89,13 @@ public static class ServiceCollectionExtensions
             () => sp.GetServices<IFileSearchProvider>()));
         services.TryAddSingleton<IWorkspaceService>(sp => sp.GetRequiredService<WorkspaceService>());
 
+        // Python interpreters (language stage 1, docs/PYTHON.md): discovery, the per-folder pick, and new terminals' PATH / VIRTUAL_ENV.
+        services.TryAddSingleton(sp => new Python.PythonEnvironmentService(sp.GetRequiredService<IoLane>(), sp.GetService<IWorkspaceService>(),
+            sp.GetService<IConfigurationService>(), sp.GetService<IStateStorage>(), sp.GetService<ILogger<Python.PythonEnvironmentService>>()));
+        services.TryAddSingleton<Core.Python.IPythonEnvironmentService>(sp => sp.GetRequiredService<Python.PythonEnvironmentService>());
+        services.AddSingleton<Core.Terminal.ITerminalEnvironmentContributor>(sp => new Python.PythonTerminalEnvironment(
+            sp.GetRequiredService<Core.Python.IPythonEnvironmentService>(), sp.GetService<IConfigurationService>(), sp.GetService<IWorkspaceService>()));
+
         return services.AddCsCodeLogging();
     }
 

@@ -7,6 +7,7 @@ using CsCode.Core.Text;
 using CsCode.Lsp.Features;
 using CsCode.Lsp.Runtime;
 using P = CsCode.Lsp.Protocol;
+using Microsoft.Extensions.Logging;
 
 namespace CsCode.Lsp.Client;
 
@@ -371,13 +372,40 @@ internal sealed partial class LanguageClient
         {
             if (!string.IsNullOrEmpty(item.Section))
                 lock (_requestedSections) { if (_requestedSections.Count < 256) _requestedSections.Add(item.Section!); }
-            results.Add(ResolveSetting(item.Section));
+            results.Add(ResolveSetting(item.Section, LspMapper.ToUri(item.ScopeUri)));
         }
         // Array of values aligned with the request; JsonElement? null serialises as JSON null.
         return ValueTask.FromResult<object?>(results.ToArray());
     });
 
-    private JsonElement? ResolveSetting(string? section)
+    private JsonElement? ResolveSetting(string? section, Uri? scope = null) => Contribute(ResolveBaseSetting(section), section ?? "", scope);
+
+    /// <summary>
+    /// Merges what <see cref="LspServices.SettingsContributors"/> add for this server into <paramref name="value"/> (an object, or nothing yet): the
+    /// selected Python interpreter becomes <c>python.pythonPath</c>. A contributor that fails is left out.
+    /// </summary>
+    private JsonElement? Contribute(JsonElement? value, string section, Uri? scope)
+    {
+        if (_ctx.Services.SettingsContributors is not { Count: > 0 } contributors) return value;
+        if (value is { ValueKind: not (JsonValueKind.Object or JsonValueKind.Null or JsonValueKind.Undefined) }) return value;
+        System.Text.Json.Nodes.JsonObject? merged = null;
+        foreach (var contributor in contributors)
+        {
+            IReadOnlyDictionary<string, JsonElement>? members;
+            try { members = contributor.Contribute(Definition.Id, section, scope); }
+            catch (Exception ex)
+            {
+                _ctx.Logger.LogWarning(ex, "A settings contributor failed for {Server}/{Section}", Definition.Id, section);
+                continue;
+            }
+            if (members is not { Count: > 0 }) continue;
+            merged ??= value is { ValueKind: JsonValueKind.Object } o ? System.Text.Json.Nodes.JsonObject.Create(o.Clone()) ?? new() : new();
+            foreach (var (name, member) in members) merged[name] = System.Text.Json.Nodes.JsonNode.Parse(member.GetRawText());
+        }
+        return merged is null ? value : JsonSerializer.SerializeToElement(merged);
+    }
+
+    private JsonElement? ResolveBaseSetting(string? section)
     {
         if (Definition.Settings is { ValueKind: JsonValueKind.Object } s)
         {
@@ -485,6 +513,11 @@ internal sealed partial class LanguageClient
                 lock (_requestedSections) sections = [.. _requestedSections];
                 if (e.Affects(LspSettingKeys.LanguageServers + "." + Definition.Id) || sections.Any(e.Affects))
                     _ctx.Queue.Post(LanePriority.Background, PushConfiguration);
+            }));
+        foreach (var contributor in _ctx.Services.SettingsContributors)
+            _store.Add(contributor.Changed.Subscribe(id =>
+            {
+                if (id is null || id == Definition.Id) _ctx.Queue.Post(LanePriority.Background, PushConfiguration);
             }));
         if (_ctx.Services.Workspace is { } ws && FollowsWorkspaceFolders)
             _store.Add(ws.FoldersChanged.Subscribe(e => _ctx.Queue.Post(LanePriority.Interactive, () => OnFoldersChanged(e), exempt: true)));

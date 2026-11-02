@@ -238,15 +238,22 @@ public class ServerExtensionTests
     }
 
     [Fact]
-    public async Task Read_only_documents_are_bounded_read_only_and_readable_by_uri()
+    public async Task Read_only_documents_are_virtual_documents_bounded_read_only_and_readable_by_uri()
     {
-        var store = new ReadOnlyDocuments();
-        var uri = store.Put("rust-analyzer", "expand-macro", "vec!.rs", "expanded");
-        Assert.Equal("lsp-readonly:/rust-analyzer/expand-macro/vec!.rs", uri.ToString());
-        Assert.Equal("expanded", System.Text.Encoding.UTF8.GetString(await store.ReadFileAsync(uri, Ct)));
-        Assert.True((await store.StatAsync(uri, Ct))!.IsReadOnly);
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.WriteFileAsync(uri, new byte[1], ct: Ct).AsTask());
+        var files = new VirtualDocumentService(); // the cscode-virtual: file system the editor opens them through
+        using var store = new ReadOnlyDocuments(files);
+        var uri = store.Put("rust-analyzer", VirtualDocumentKinds.Expanded, "vec!.rs", "expanded");
+        Assert.True(VirtualDocumentUri.TryParse(uri, out var provider, out var kind, out var producer, out var name));
+        Assert.Equal((ReadOnlyDocuments.ProviderName, "expanded", "rust-analyzer", "vec!.rs"), (provider, kind, producer, name));
+        Assert.Equal("vec!.rs [expanded]", VirtualDocumentUri.Title(uri));
+        string Read(Uri u) => System.Text.Encoding.UTF8.GetString(files.ReadFileAsync(u, Ct).AsTask().Result);
+        Assert.Equal("expanded", Read(uri));
+        Assert.True((await files.StatAsync(uri, Ct))!.IsReadOnly);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => files.WriteFileAsync(uri, new byte[1], ct: Ct).AsTask());
+        store.Put("rust-analyzer", VirtualDocumentKinds.Expanded, "vec!.rs", "again");
+        Assert.Equal("again", Read(uri)); // the newest text, though the service had read the first
+        Assert.Equal("again", Read(new Uri(uri.ToString()))); // the URI as a tab or a session spells it
         for (var i = 0; i < ReadOnlyDocuments.Capacity; i++) store.Put("p", "k", $"f{i}.txt", "x");
-        Assert.Null(await store.StatAsync(uri, Ct)); // the oldest went
+        Assert.Null(await store.ProvideAsync(uri, Ct)); // the oldest went
     }
 }

@@ -95,6 +95,7 @@ public sealed partial class LibtestOutputParser(TestProject project, ITestRunSin
         return (output.Length > 0 ? output : null, message.Trim());
     }
 
-    [GeneratedRegex(@"^test (?<name>\S+) \.\.\. (?<outcome>ok|FAILED|ignored)(?:, (?<reason>.+))?$", RegexOptions.CultureInvariant)]
+    // a name may hold spaces: doc-tests are "src/lib.rs - add (line 3)"
+    [GeneratedRegex(@"^test (?<name>.+?) \.\.\. (?<outcome>ok|FAILED|ignored)(?:, (?<reason>.+))?$", RegexOptions.CultureInvariant)]
     private static partial Regex ResultLine();
 }

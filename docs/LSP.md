@@ -154,14 +154,15 @@ Providers are registered **per feature interface**, only while the server advert
 | formatting / rangeFormatting / onTypeFormatting | implemented | |
 | foldingRange, selectionRange | implemented | |
 | semanticTokens full + **delta** + **range** | implemented | `ISemanticTokensProvider` (+ additive `ISemanticTokensRangeProvider`); previous result cached (bounded, `IMemoryTrimmable`); capped at `maxSemanticTokens`; coloured over the grammar by the editor (docs/EDITOR.md §7e; range requests for the viewport of documents over 5000 lines) |
-| inlayHint | implemented / partial | `inlayHint/resolve` is not exposed (Core has no resolve hook) |
+| inlayHint | implemented | label parts (tooltip, location, command) mapped; `inlayHint/resolve` through Core's `IInlayHintsProvider.ResolveInlayHintAsync` (lang-2): the client offers `resolveSupport` for `tooltip`, `label.tooltip`, `label.location`, `label.command` (not `textEdits`: hints are not inserted), and a server with `resolveProvider` (rust-analyzer) sends them on resolve, which echoes the server's own hint (kept weakly beside the Core one, `data` included) |
 | codeLens (+resolve) | implemented | drawn above their lines by the editor, resolved near the viewport, commands through `workspace/executeCommand` or the editor's mapping of VS Code's reference commands (docs/EDITOR.md §7e) |
 | documentColor | implemented / partial | `colorPresentation` not implemented |
 | linkedEditingRange, callHierarchy, typeHierarchy | implemented | additive Core interfaces; UI: linked editing in the editor (docs/EDITOR.md §7d), the Hierarchy window (docs/NAVIGATION.md) |
 | `workspace/executeCommand` bridge | implemented | `executeCommandProvider.commands` registered into `ICommandService` (optional dependency) |
 | diagnostics: `publishDiagnostics` (version-checked), pull (`textDocument/diagnostic`, `workspace/diagnostic`) | implemented | cleared on close (push-only servers) and on stop/crash |
 | `willRenameFiles` / `didRenameFiles` / `didCreateFiles` / `didDeleteFiles` | implemented | `IFileOperationParticipant`, filters honoured |
-| documentLink, moniker, inlineValue, `willCreateFiles`/`willDeleteFiles`, notebook documents, proposed features (inline completion…) | not implemented | out of scope |
+| documentLink (+resolve) | implemented | additive Core `IDocumentLinkProvider` (stage 3, C); each link keeps the server's link in `Data` for `documentLink/resolve`; at most 5000 per document; the editor underlines a link while Ctrl/⌘ is held over it and opens it on Ctrl/⌘+Click (docs/C-CPP.md §3) |
+| moniker, inlineValue, `willCreateFiles`/`willDeleteFiles`, notebook documents, proposed features (inline completion…) | not implemented | out of scope |
 | partial results / client-initiated `workDoneToken` | not implemented | the client never sends partial-result tokens |
 
 Server → client: `window/logMessage`, `$/logTrace`, `window/showMessage` (rate-limited, 5 per 10 s), `window/showMessageRequest`, `window/showDocument`,
@@ -239,10 +240,11 @@ parses runs on the Language lane. **Adding one** (stage 3's clangd, stage 5's Ro
 `AppliesTo` matches the built-in definition's id, plus one line in `CreateBuiltins()`; tests drive it through
 `new LspTestEnv(extensions: [new MyExtension()])` against the fake server (`ServerExtensionTests` is the worked example) and a real-server suite.
 
-**Read-only results** (`ReadOnlyDocuments`, registered by `AddCsCodeLsp` as the `IFileSystemProvider` of the `lsp-readonly:` scheme):
-`Put(producer, kind, fileName, text)` returns `lsp-readonly:/<producer>/<kind>/<fileName>` to open with `INavigationService.OpenAsync`; its
-`StatAsync` says read-only, so the editor opens it like a file and refuses edits; the language comes from the file name; the 32 most recent are
-kept. Additive `LspServices` members for extensions: `StatusBar` (`IStatusBarService`), `ReadOnlyDocuments`, lazy `Debug` (`IDebugService`)
+**Read-only results** (`ReadOnlyDocuments`, registered by `AddCsCodeLsp`): `Put(producer, kind, fileName, text)` returns
+`cscode-virtual://results/<kind>/<producer>/<fileName>` to open with `INavigationService.OpenAsync`. It is the `results` provider of Core's
+virtual documents (the scheme library and generated code use, docs/CSHARP.md §2): the editor opens it like a file and refuses edits, the
+language comes from the file name, the tab says what it is (`vec!.rs [expanded]`), and session restore skips it; the 32 most recent are kept.
+Until the C# merge this was a scheme of its own (`lsp-readonly:`); see docs/CSHARP.md §2 for why the two were folded into Core's. Additive `LspServices` members for extensions: `StatusBar` (`IStatusBarService`), `ReadOnlyDocuments`, lazy `Debug` (`IDebugService`)
 and `TaskTerminals` (`ITaskTerminalHost`).
 
 ## 8. Settings
@@ -269,7 +271,7 @@ and `TaskTerminals` (`ITaskTerminalHost`).
   `fixAllCodeAction`, `completionComplexEdit`), toasts. Built on the per-server extension pattern (§7a): `RoslynExtension`, its per-server
   state `RoslynSession`, its commands `RoslynCommands`.
 * **`cscode.lsp.serverChoice`** (generic): which built-in of a group of alternatives runs (`{"csharp": "roslyn"}`; `BuiltinServer.Group`,
-  `IsGroupDefault`; unset, C# runs Roslyn). An explicit `cscode.languageServers.<id>.enabled` still wins.
+  `BuiltinServer.EnabledByDefault` picks the group's default: unset, C# runs Roslyn). An explicit `cscode.languageServers.<id>.enabled` still wins.
 * **Pull diagnostics with several identifiers.** A server may register several `textDocument/diagnostic` providers, each with an identifier
   (Roslyn does): every one is pulled, and each publishes under its own owner (`lsp:<id>#<identifier>`). The client kept only the last one before.
 * **Library and generated code** (`ExternalDocuments`): a location a server's source classifies (csharp-ls `csharp:`, Roslyn's MetadataAsSource
@@ -277,6 +279,8 @@ and `TaskTerminals` (`ITaskTerminalHost`).
 * Launch variables `${cscodeLogsDir}` and `${cscodePid}` in a definition's `args`.
 
 ## 9. Core changes made by this module (all additive)
+* `Core/Languages/LanguageModels.cs` + `LanguageProviders.cs` (lang-2): `InlayHint.LabelParts` / `InlayHint.CanResolve`, `InlayHintLabelPart`, and
+  `IInlayHintsProvider.ResolveInlayHintAsync` (default: the hint as it is).
 * Stage 5: `Core/Text/VirtualDocuments.cs` (`VirtualDocumentUri`, `VirtualDocumentKinds`, `IVirtualDocumentProvider`, `IVirtualDocumentService`,
   `VirtualDocumentService`, registered by `AddCsCodeCore` as the `cscode-virtual` scheme's `IFileSystemProvider`).
 * `Core/Languages/LanguageModels.cs`: `MarkupContent.IsTrusted` (lang-2): `command:` links of trusted content run their command (CsCode's own
@@ -314,6 +318,6 @@ that inherited `DOTNET_ROOT_<ARCH>`. The fake-server tests use an
 independent in-proc peer (`Harness/FakeLspServer`: own framing over `System.IO.Pipelines`, document mirror applying real LSP change semantics).
 
 ## 12. Known limits
-`inlayHint/resolve` and `workspaceSymbol/resolve` are not exposed; non-UTF-16 encodings don't convert ranges in closed files; `colorPresentation`,
-`documentLink`, notebooks and proposed features are absent; `Dispose()` (sync) blocks up to 15 s — prefer `DisposeAsync` off the UI thread; the manager starts
+`workspaceSymbol/resolve` is not exposed; non-UTF-16 encodings don't convert ranges in closed files; `colorPresentation`,
+notebooks and proposed features are absent; `Dispose()` (sync) blocks up to 15 s — prefer `DisposeAsync` off the UI thread; the manager starts
 observing documents when `ILanguageServerManager` is first resolved (resolve it at startup).

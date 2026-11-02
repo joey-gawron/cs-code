@@ -221,7 +221,9 @@ internal sealed class HoverFeature : IThemeAware, IDisposable
         }
     }
 
-    private sealed record Prepared(IReadOnlyList<IReadOnlyList<MdBlock>> Contents, IReadOnlyDictionary<MdCodeBlock, IReadOnlyList<CodeSpan>> Spans, MdCodeBlock? Folded);
+    /// <param name="Trusted">Per content: <see cref="MarkupContent.IsTrusted"/> (its <c>command:</c> links run commands).</param>
+    private sealed record Prepared(IReadOnlyList<IReadOnlyList<MdBlock>> Contents, IReadOnlyDictionary<MdCodeBlock, IReadOnlyList<CodeSpan>> Spans, MdCodeBlock? Folded,
+        IReadOnlyList<bool> Trusted);
 
     /// <summary>Markdown parsing + code colouring on the editor worker (the UI only builds controls from the result).</summary>
     private async Task<Prepared> PrepareAsync(List<MarkupContent> contents, string? folded, CancellationToken ct)
@@ -237,7 +239,7 @@ internal sealed class HoverFeature : IThemeAware, IDisposable
             var all = parsed.SelectMany(p => p).ToList();
             if (foldedBlock is not null) all.Add(foldedBlock);
             var spans = CodeHighlighter.HighlightBlocks(all, factory.Tokens, factory.Languages, theme, fg, language, token);
-            return new Prepared(parsed, spans, foldedBlock);
+            return new Prepared(parsed, spans, foldedBlock, [.. contents.Select(c => c.IsTrusted)]);
         }, ct).ConfigureAwait(true);
     }
 
@@ -303,7 +305,7 @@ internal sealed class HoverFeature : IThemeAware, IDisposable
         for (var i = 0; i < prepared.Contents.Count; i++)
         {
             if (i > 0 || stack.Children.Count > 0) stack.Children.Add(new Border { Height = 1, Background = p.WidgetBorder, Opacity = 0.7 });
-            stack.Children.Add(MarkdownView.Build(prepared.Contents[i], style, prepared.Spans, OpenLink));
+            stack.Children.Add(MarkdownView.Build(prepared.Contents[i], style, prepared.Spans, prepared.Trusted[i] ? OpenTrustedLink : OpenLink));
         }
         if (prepared.Folded is { } foldedBlock) stack.Children.Add(MarkdownView.Build([foldedBlock], style, prepared.Spans, null));
 
@@ -311,7 +313,48 @@ internal sealed class HoverFeature : IThemeAware, IDisposable
         _popup.ShowAt(scroll, _v.PositionOf(offset));
     }
 
-    private void OpenLink(string url)
+    /// <summary>
+    /// A link of trusted content (<see cref="MarkupContent.IsTrusted"/>: CsCode's own, such as rust-analyzer's hover actions): a
+    /// <c>command:id?&lt;URI-encoded JSON&gt;</c> link runs the command with those arguments (an array spreads into several) and closes the hover,
+    /// as in VS Code; any other link opens as usual.
+    /// </summary>
+    internal void OpenTrustedLink(string url)
+    {
+        if (!url.StartsWith("command:", StringComparison.Ordinal) || _v.Services.Commands is not { } commands)
+        {
+            OpenLink(url);
+            return;
+        }
+        var rest = url["command:".Length..];
+        var q = rest.IndexOf('?');
+        var id = q < 0 ? rest : rest[..q];
+        object?[] args = [];
+        if (q >= 0 && q + 1 < rest.Length)
+        {
+            try
+            {
+                using var json = System.Text.Json.JsonDocument.Parse(Uri.UnescapeDataString(rest[(q + 1)..]));
+                var root = json.RootElement;
+                args = root.ValueKind == System.Text.Json.JsonValueKind.Array ? [.. root.EnumerateArray().Select(a => (object?)a.Clone())] : [root.Clone()];
+            }
+            catch (System.Text.Json.JsonException) { /* not JSON: the command runs without arguments */ }
+        }
+        _popup.Hide();
+        if (!commands.Has(id))
+        {
+            FeatureSupport.Status(_v, $"The command '{id}' is not available");
+            return;
+        }
+        _ = RunAsync();
+
+        async Task RunAsync()
+        {
+            try { await commands.ExecuteAsync(id, args).ConfigureAwait(true); }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { FeatureSupport.Status(_v, $"'{id}' failed: {ex.Message}"); }
+        }
+    }
+
+    internal void OpenLink(string url)
     {
         if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" or "file" or "command") _ = _v.Services.Window?.OpenExternalAsync(uri);
     }

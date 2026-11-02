@@ -1,0 +1,72 @@
+Running main() from /third_party/googletest/googletest/src/gtest_main.cc
+[==========] Running 10 tests from 6 test suites.
+[----------] Global test environment set-up.
+[----------] 3 tests from MathTest
+[ RUN      ] MathTest.Adds
+[       OK ] MathTest.Adds (0 ms)
+[ RUN      ] MathTest.Fails
+from the test
+/work/cppsample/gtest_tests.cpp:9: Failure
+Expected equality of these values:
+  Add(2, 2)
+    Which is: 4
+  5
+two and two
+
+[  FAILED  ] MathTest.Fails (0 ms)
+[ DISABLED ] MathTest.DISABLED_Later
+[ RUN      ] MathTest.Skips
+/work/cppsample/gtest_tests.cpp:12: Skipped
+not yet
+
+[  SKIPPED ] MathTest.Skips (0 ms)
+[----------] 3 tests from MathTest (0 ms total)
+
+[----------] 1 test from Fixture
+[ RUN      ] Fixture.UsesValue
+[       OK ] Fixture.UsesValue (0 ms)
+[----------] 1 test from Fixture (0 ms total)
+
+[----------] 1 test from Typed/0, where TypeParam = int
+[ RUN      ] Typed/0.DefaultIsZero
+[       OK ] Typed/0.DefaultIsZero (0 ms)
+[----------] 1 test from Typed/0 (0 ms total)
+
+[----------] 1 test from Typed/1, where TypeParam = long
+[ RUN      ] Typed/1.DefaultIsZero
+[       OK ] Typed/1.DefaultIsZero (0 ms)
+[----------] 1 test from Typed/1 (0 ms total)
+
+[----------] 1 test from NsTest
+[ RUN      ] NsTest.Throws
+unknown file: Failure
+C++ exception with description "boom" thrown in the test body.
+
+[  FAILED  ] NsTest.Throws (0 ms)
+[----------] 1 test from NsTest (0 ms total)
+
+[----------] 3 tests from Numbers/Param
+[ RUN      ] Numbers/Param.IsPositive/0
+[       OK ] Numbers/Param.IsPositive/0 (0 ms)
+[ RUN      ] Numbers/Param.IsPositive/1
+[       OK ] Numbers/Param.IsPositive/1 (0 ms)
+[ RUN      ] Numbers/Param.IsPositive/2
+/work/cppsample/gtest_tests.cpp:18: Failure
+Expected: (GetParam()) > (0), actual: -3 vs 0
+
+[  FAILED  ] Numbers/Param.IsPositive/2, where GetParam() = -3 (0 ms)
+[----------] 3 tests from Numbers/Param (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 10 tests from 6 test suites ran. (0 ms total)
+[  PASSED  ] 6 tests.
+[  SKIPPED ] 1 test, listed below:
+[  SKIPPED ] MathTest.Skips
+[  FAILED  ] 3 tests, listed below:
+[  FAILED  ] MathTest.Fails
+[  FAILED  ] NsTest.Throws
+[  FAILED  ] Numbers/Param.IsPositive/2, where GetParam() = -3
+
+ 3 FAILED TESTS
+  YOU HAVE 1 DISABLED TEST
+

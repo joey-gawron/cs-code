@@ -459,12 +459,33 @@ internal sealed class LspMapper(PositionEncoder encoder, Func<Uri, int, string?>
         return new P.CodeLens { Range = ToLsp(l.Range, uri), Command = ToLsp(l.Command), Data = l.Data };
     }
 
-    public InlayHint ToCore(P.InlayHint h, Uri uri)
+    /// <summary>A hint (its label parts too: values, tooltips, locations, commands); <paramref name="canResolve"/> when the server resolves hints.
+    /// The protocol hint is kept beside it (weakly) so <c>inlayHint/resolve</c> echoes exactly what the server sent.</summary>
+    public InlayHint ToCore(P.InlayHint h, Uri uri, bool canResolve = false)
     {
         var label = h.Label.Match(s => s, parts => string.Concat(parts.Select(p => p.Value)));
         var tooltip = h.Tooltip is null ? null : ToCore(h.Tooltip.Value);
-        return new InlayHint(ToCore(h.Position, uri), label, h.Kind is { } k and (P.InlayHintKind.Type or P.InlayHintKind.Parameter) ? (InlayHintKind)(int)k : null,
-            h.PaddingLeft == true, h.PaddingRight == true, tooltip);
+        var result = new InlayHint(ToCore(h.Position, uri), label, h.Kind is { } k and (P.InlayHintKind.Type or P.InlayHintKind.Parameter) ? (InlayHintKind)(int)k : null,
+            h.PaddingLeft == true, h.PaddingRight == true, tooltip)
+        {
+            LabelParts = h.Label.Match<IReadOnlyList<InlayHintLabelPart>?>(_ => null, parts => [.. parts.Select(ToCore)]),
+            CanResolve = canResolve,
+        };
+        if (canResolve) _originals.AddOrUpdate(result, new InlayHintOrigin(h, uri));
+        return result;
+    }
+
+    private InlayHintLabelPart ToCore(P.InlayHintLabelPart p) =>
+        new(p.Value ?? "", p.Tooltip is null ? null : ToCore(p.Tooltip.Value), p.Location is { } l ? ToCore(l) : null, ToCore(p.Command));
+
+    /// <summary>The protocol hint behind a mapped one, plus the document it was requested for.</summary>
+    internal sealed record InlayHintOrigin(P.InlayHint Hint, Uri DocumentUri);
+
+    public bool TryGetInlayHintOrigin(InlayHint hint, out InlayHintOrigin origin)
+    {
+        if (_originals.TryGetValue(hint, out var o) && o is InlayHintOrigin io) { origin = io; return true; }
+        origin = null!;
+        return false;
     }
 
     public static ColorInformation ToCore(P.ColorInformation c, LspMapper m, Uri uri) =>

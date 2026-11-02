@@ -125,4 +125,11 @@ public class DebugAdapterQuirks
     /// to the folders as the editor opened them (<see cref="SourcePathAliases"/>).
     /// </summary>
     public virtual bool BindsPhysicalSourcePaths => false;
+
+    /// <summary>
+    /// A custom event of this adapter that asks the client to start a CHILD session, as DAP's <c>startDebugging</c> reverse request does: the
+    /// request ("attach"/"launch") and the child's configuration, or null for any other event. debugpy sends <c>debugpyAttach</c> for a
+    /// subprocess when the client does not advertise <c>supportsStartDebuggingRequest</c>. Language stage 1; additive.
+    /// </summary>
+    public virtual (string Request, System.Text.Json.Nodes.JsonObject Configuration)? ChildSessionFromEvent(string name, System.Text.Json.JsonElement body) => null;
 }

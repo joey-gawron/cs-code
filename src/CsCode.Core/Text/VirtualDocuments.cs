@@ -3,7 +3,9 @@ using CsCode.Core.Platform;
 
 namespace CsCode.Core.Text;
 
-// Additive (stage 5, C#): read-only documents whose text comes from a provider rather than a file on disk.
+// Additive (stage 5, C#): read-only documents whose text comes from a provider rather than a file on disk. The one scheme for every read-only
+// document a tool produces: library code (decompiled, metadata, SourceLink), source generators' output, and server extensions' results (Expand
+// Macro, syntax trees: CsCode.Lsp's ReadOnlyDocuments, a provider of its own).
 
 /// <summary>
 /// What a virtual document holds; its label is the suffix of the tab title (<c>String.cs [decompiled]</c>).
@@ -18,6 +20,8 @@ public static class VirtualDocumentKinds
     public const string Source = "library source";
     /// <summary>A file a source generator produced during compilation.</summary>
     public const string Generated = "generated";
+    /// <summary>Code with its macros expanded (rust-analyzer's Expand Macro).</summary>
+    public const string Expanded = "expanded";
 }
 
 /// <summary>
@@ -81,6 +85,9 @@ public interface IVirtualDocumentService
 
     /// <summary>The content of a virtual URI (null: not virtual, no provider, or the provider does not know it).</summary>
     ValueTask<VirtualDocumentContent?> GetAsync(Uri uri, CancellationToken ct = default);
+
+    /// <summary>Forgets the cached text of <paramref name="uri"/>: its provider has new text for it (the next open asks the provider again).</summary>
+    void Invalidate(Uri uri);
 }
 
 /// <summary>
@@ -157,6 +164,13 @@ public sealed class VirtualDocumentService : IVirtualDocumentService, IFileSyste
         return content;
     }
 
+    public void Invalidate(Uri uri)
+    {
+        lock (_gate)
+            for (var node = _cache.First; node is not null; node = node.Next)
+                if (node.Value.Uri == uri) { Evict(node); return; }
+    }
+
     private void Evict(LinkedListNode<(Uri Uri, VirtualDocumentContent Content)> node)
     {
         _cachedChars -= node.Value.Content.Text.Length;
@@ -188,5 +202,5 @@ public sealed class VirtualDocumentService : IVirtualDocumentService, IFileSyste
     public ValueTask CopyAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default) => ReadOnly(target);
 
     private static ValueTask ReadOnly(Uri uri) =>
-        ValueTask.FromException(new UnauthorizedAccessException($"{VirtualDocumentUri.Title(uri)} is read-only: it is library or generated code."));
+        ValueTask.FromException(new UnauthorizedAccessException($"{VirtualDocumentUri.Title(uri)} is read-only: it is library, generated or tool-produced text."));
 }

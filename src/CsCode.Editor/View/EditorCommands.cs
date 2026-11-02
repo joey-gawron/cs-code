@@ -192,6 +192,7 @@ internal static class EditorCommands
         Cmd(LinkedEditingFeature.StartCommand, "Start Linked Editing", (view, _) => view.Feature<LinkedEditingFeature>()?.ToggleAsync() ?? Task.CompletedTask);
         Cmd(KnownCommands.Rename, "Rename Symbol", (view, _) => view.Feature<INavigationFeature>()?.RenameAsync() ?? Task.CompletedTask);
         Cmd(KnownCommands.FormatDocument, "Format Document", (view, _) => view.Feature<IFormattingFeature>()?.FormatDocumentAsync() ?? Task.CompletedTask);
+        Cmd("editor.action.formatDocument.multiple", "Format Document With...", (view, _) => view.Feature<IFormattingFeature>()?.FormatDocumentWithAsync() ?? Task.CompletedTask);
         Cmd("editor.action.formatSelection", "Format Selection", (view, _) => view.Feature<IFormattingFeature>()?.FormatSelectionAsync() ?? Task.CompletedTask);
 
         // ---- folding ----

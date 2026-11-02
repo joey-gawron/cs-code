@@ -166,7 +166,20 @@ public sealed record SemanticTokensLegend(IReadOnlyList<string> TokenTypes, IRea
 public sealed record SemanticTokens(IReadOnlyList<uint> Data, string? ResultId = null);
 
 public enum InlayHintKind { Type = 1, Parameter = 2 }
-public sealed record InlayHint(TextPosition Position, string Label, InlayHintKind? Kind = null, bool PaddingLeft = false, bool PaddingRight = false, MarkupContent? Tooltip = null);
+public sealed record InlayHint(TextPosition Position, string Label, InlayHintKind? Kind = null, bool PaddingLeft = false, bool PaddingRight = false, MarkupContent? Tooltip = null)
+{
+    /// <summary>
+    /// The label in parts (LSP <c>InlayHintLabelPart[]</c>), when the provider gave parts: their values make <see cref="InlayHint.Label"/>; a part
+    /// with a <see cref="InlayHintLabelPart.Location"/> is a link (Ctrl/Cmd+click goes there: rust-analyzer's type names). Additive (lang-2).
+    /// </summary>
+    public IReadOnlyList<InlayHintLabelPart>? LabelParts { get; init; }
+
+    /// <summary>The provider may fill in the tooltip, label locations and commands later (<see cref="IInlayHintsProvider.ResolveInlayHintAsync"/>).</summary>
+    public bool CanResolve { get; init; }
+}
+
+/// <summary>One part of an inlay hint's label (LSP <c>InlayHintLabelPart</c>). Additive (lang-2).</summary>
+public sealed record InlayHintLabelPart(string Value, MarkupContent? Tooltip = null, Location? Location = null, Command? Command = null);
 
 public sealed record CodeLens(TextRange Range, Command? Command = null, JsonElement? Data = null);
 

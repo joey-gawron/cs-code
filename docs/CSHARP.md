@@ -66,8 +66,22 @@ A Core contract (additive, `src/CsCode.Core/Text/VirtualDocuments.cs`): one URI 
 `cscode-virtual://<provider>/<kind>/<id>/<file name>`, served by `IVirtualDocumentProvider`s through `IVirtualDocumentService`. Core's
 `VirtualDocumentService` is also that scheme's `IFileSystemProvider`, so the editor opens such a document like a file: read-only (writes,
 deletes and renames are refused), coloured by its file name's language. The tab is titled `String.cs [decompiled]` (kinds: `decompiled`,
-`metadata`, `library source` for SourceLink / embedded PDB sources, `generated`). Bounded: the service caches the last 16 texts (8 M characters
-in all); a document lives in the editor as long as a view shows it.
+`metadata`, `library source` for SourceLink / embedded PDB sources, `generated`, `expanded`). Bounded: the service caches the last 16 texts (8 M
+characters in all); a document lives in the editor as long as a view shows it; the window's session restore skips these tabs.
+
+**One scheme for every read-only document** (decided in the C# merge, 2026-11-02). Stage 2 (Rust) had built a second one, `lsp-readonly:`
+(`ReadOnlyDocuments`: a server extension puts text into a 32-entry store that is the scheme's file system), for Expand Macro and the syntax
+tree / HIR / MIR views. Core's design was kept and Rust's store became one of its providers (`results`; `Put` is unchanged for extensions):
+
+* it is a Core contract, so any module can serve such documents, not only LSP extensions;
+* text is pulled from its producer when a document is opened, so library and generated code (which the server can serve again) never needs a
+  copy kept in advance, and a document the cache dropped is fetched again while its server knows it; pushed results fit as a provider that
+  holds them (`IVirtualDocumentService.Invalidate` drops the cached copy when one is put again at the same URI);
+* the cache is bounded by size as well as count;
+* the tab title says what the document is (`vec!.rs [expanded]` next to `String.cs [decompiled]`), the window's session restore skips them,
+  and a document a server named is synced back to that server under its own URI (hover and go to definition inside library code).
+
+Library, decompiled, generated and macro-expansion documents therefore open the same way: one scheme, one file system, one title rule.
 
 The LSP module serves `lsp`: a location a server answers (definition, declaration, implementation, references…) is turned into a virtual URI
 when the server's source says it is library or generated code (`ExternalDocuments`, the newest 1024 names remembered):
@@ -218,22 +232,24 @@ The Test Explorer check found two things fixed on the way: a runner project that
 yet (the packages' props set it), so `EnableMSTestRunner` / `EnableNUnitRunner` / a TUnit reference count too; and a debugged MTP program
 printed the platform's telemetry banner (the debug launch now passes `TESTINGPLATFORM_TELEMETRY_OPTOUT` like runs do).
 
-## 8. Deferred (they need another stage's shared piece)
+## 8. Deferred (open after the merge of every stage)
 
-* **`codeActionsOnSave` with Roslyn** — needs stage 1's (Python) participant, not merged. What was found for it: Roslyn's code action kinds are
+* **`codeActionsOnSave` with Roslyn** — stage 1's (Python) participant is on main since the C# merge; wiring Roslyn to it is open. What was found for it: Roslyn's code action kinds are
   only `quickfix`, `refactor`, `refactor.extract`, `refactor.inline`; it never returns `source.organizeImports` or `source.fixAll` and ignores
   `context.only`. Organize usings on save is done in VS Code by `csharp|formatting.dotnet_organize_imports_on_format = true` plus formatting; fix
   all on save has no server support. csharp-ls was not checked for it yet.
 * **`dotnet new`: New Project / New Item** — the brief's SHOULD item moved to stage 7 (the New Project page), which owns project creation and
   the template listing (scope change, 2026-11-01). New Item can reuse that listing once stage 7 is merged.
-* **.NET tasks through `ITaskProvider`** (`dotnet build`, `test`, `run`, `clean` per project with `$msCompile`) — needs stage 2's (Rust) contract,
-  not merged.
+* **.NET tasks through `ITaskProvider`** (`dotnet build`, `test`, `run`, `clean` per project with `$msCompile`) — stage 2's (Rust) contract is on
+  main since the C# merge (`CargoTaskProvider` is the example); the .NET provider is open.
 
 Stage 2's per-server extension pattern was cherry-picked from the Rust branch (its commits "Add the per-server LSP extension pattern…" and
 "Let server extensions answer server-to-client requests…", at the Rust session's suggestion) and Roslyn is built on it: `RoslynExtension`
 (`src/CsCode.Lsp/CSharp/`) with `RoslynSession` as its per-server state and `RoslynCommands` registered through the extension host. One fix
 to the pattern came with it: an extension's notification or request handler now receives messages **without params** (Roslyn's
-`workspace/projectInitializationComplete` has none, and StreamJsonRpc matched no handler), told to the Rust session.
+`workspace/projectInitializationComplete` has none, and StreamJsonRpc matched no handler), told to the Rust session, which shipped the same
+fix with in-order delivery. Since the C# merge both stages run on main's copy of the pattern: `ServerExtensions.CreateBuiltins()` lists
+`RustAnalyzerExtension` and `RoslynExtension`.
 
 ## 9. Limits
 

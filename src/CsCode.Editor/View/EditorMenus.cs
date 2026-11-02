@@ -95,6 +95,7 @@ internal static class EditorMenus
             },
 
             new(Menu, KnownCommands.FormatDocument, "6_format@1", "editorHasDocumentFormattingProvider && " + Writable) { Title = "_Format Document" },
+            new(Menu, "editor.action.formatDocument.multiple", "6_format@1.5", "editorHasDocumentFormattingProvider && " + Writable) { Title = "Format Document _With..." },
             new(Menu, "editor.action.formatSelection", "6_format@2", "editorHasDocumentSelectionFormattingProvider && editorHasSelection && " + Writable) { Title = "Format _Selection" },
             new(Menu, "editor.action.addCommentLine", "6_format@3", Writable) { Title = "Co_mment Selection", Icon = "comment" },
             new(Menu, "editor.action.removeCommentLine", "6_format@4", Writable) { Title = "_Uncomment Selection" },

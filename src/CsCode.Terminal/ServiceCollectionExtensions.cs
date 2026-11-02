@@ -35,6 +35,7 @@ public static class ServiceCollectionExtensions
     {
         // A remote workspace's terminals run on its server (the Remote module registers the provider); resolved on the first terminal.
         Backends = () => sp.GetService<ITerminalBackendProvider>(),
+        Resolver = { Contributors = () => sp.GetServices<ITerminalEnvironmentContributor>() },
     };
 
     /// <summary>The shell's view activator depends on the tool windows (which include the terminal's): resolved when first needed.</summary>

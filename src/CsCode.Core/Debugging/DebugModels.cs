@@ -47,7 +47,12 @@ public sealed record DebugSource(string? Name, string? Path, int? SourceReferenc
 public sealed record DebugThread(int Id, string Name);
 
 /// <summary>Line/Column are 0-based here (the DAP client converts from the adapter's linesStartAt1/columnsStartAt1).</summary>
-public sealed record DebugStackFrame(int Id, string Name, DebugSource? Source, int Line, int Column, int? EndLine = null, int? EndColumn = null, string? PresentationHint = null, string? ModuleId = null);
+public sealed record DebugStackFrame(int Id, string Name, DebugSource? Source, int Line, int Column, int? EndLine = null, int? EndColumn = null, string? PresentationHint = null, string? ModuleId = null)
+{
+    /// <summary>DAP <c>instructionPointerReference</c>: the memory reference of the frame's current instruction (the Disassembly window opens
+    /// there). Additive (lang-2).</summary>
+    public string? InstructionPointerReference { get; init; }
+}
 
 public sealed record DebugScope(string Name, int VariablesReference, bool Expensive, int? NamedVariables = null, int? IndexedVariables = null, string? PresentationHint = null);
 

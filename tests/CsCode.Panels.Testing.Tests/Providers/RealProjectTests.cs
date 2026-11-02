@@ -158,6 +158,43 @@ public sealed class RealProjectTests
     }
 
     [Fact]
+    public async Task Cargo_doc_tests_are_listed_at_their_examples_and_run()
+    {
+        var cargo = ProcessRunner.FindCargo();
+        if (!Path.IsPathRooted(cargo)) Assert.Skip("cargo is not installed (not on PATH, not in ~/.cargo/bin)");
+        var ct = TestContext.Current.CancellationToken;
+        using var dir = new TempDirectory("cscode-cargo-doctests-");
+        dir.WriteFile("Cargo.toml", "[package]\nname = \"dt_sample\"\nversion = \"0.1.0\"\nedition = \"2024\"\n");
+        var lib = dir.WriteFile("src/lib.rs", """
+            /// Adds.
+            ///
+            /// ```
+            /// assert_eq!(dt_sample::add(1, 2), 3);
+            /// ```
+            pub fn add(a: i32, b: i32) -> i32 { a + b }
+
+            /// ```
+            /// assert_eq!(dt_sample::add(1, 1), 3);
+            /// ```
+            pub fn wrong() {}
+            """);
+        var provider = new RustTestProvider(Context());
+        var project = Assert.Single(await provider.DetectAsync(dir.Path, ct));
+        var tests = await provider.DiscoverAsync(project, new RecordingSink(), ct);
+        var docs = tests.Where(t => t.Id.StartsWith("doc/", StringComparison.Ordinal)).OrderBy(t => t.Id).ToList();
+        Assert.Equal(["doc/src/lib.rs - add (line 3)", "doc/src/lib.rs - wrong (line 8)"], docs.Select(t => t.Id));
+        Assert.Equal(("add (line 3)", "Doc-tests (dt_sample)"), (docs[0].Label, docs[0].Groups[0].Label));
+        var at = docs[0].Location!;
+        Assert.Equal(new TestLocation(TestDirectory(lib), 2), at with { FilePath = TestDirectory(at.FilePath) });
+
+        var sink = new RecordingSink();
+        var outcome = await provider.RunAsync(new TestRunRequest(project, ["doc/src/lib.rs - add (line 3)"]), sink, ct);
+        Assert.Equal(TestOutcome.Passed, sink.Result("doc/src/lib.rs - add (line 3)").Outcome);
+        Assert.Equal(TestOutcome.Failed, sink.Result("doc/src/lib.rs - wrong (line 8)").Outcome); // every doc-test runs (no filter with merged doctests)
+        Assert.NotEqual(0, outcome.ExitCode);
+    }
+
+    [Fact]
     public async Task Jest_package_runs_its_runner_with_node_and_reads_the_report()
     {
         if (ProcessRunner.FindOnPath("node") is null) Assert.Skip("node is not installed");
