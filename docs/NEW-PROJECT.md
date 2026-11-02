@@ -60,7 +60,7 @@ says so.
 | Rust (`rust`) | cargo 1.96.1 | `cargo init --bin\|--lib --edition E --vcs V --name N <dir>` (`init`: the page has made the folder) | Binary / Library; edition 2024, 2021, 2018, 2015; version control git, hg, pijul, fossil, none | cargo's: ASCII letters, digits, `-`, `_`, no leading digit, no keyword, not `test`/`std`/`core`/`alloc`/`proc_macro`/`build`/`deps`/… |
 | C (`cmake-c`), C++ (`cmake-cpp`) | CMake 4.4.2, Apple clang 21, Ninja 1.13 | files written by CsCode | C11 / C17 / C23 or C++17 / 20 / 23; Executable / Library; tests: CTest (C), GoogleTest / Catch2 / CTest only / none (C++) | letters, digits, `-`, `_`; not a target CMake reserves (`test`, `all`, `clean`, `install`, …) |
 | C# (`dotnet`) | .NET SDK 10.0.403 | `dotnet new sln --name N [--format slnx\|sln]`, `dotnet new <template> --name N --output src/N [--framework F]`, `dotnet sln add`, optionally `dotnet new xunit` in `tests/N.Tests` + `dotnet add … reference` + `dotnet sln add`, `dotnet new gitignore` | template (from `dotnet new list --type project --language C#`, console / classlib / webapi / xunit first); target framework (from the template's `--help`); solution format (when the SDK has `--format`); xUnit test project | dot-separated C# identifiers, no keyword |
-| Zig (`zig`) | zig (**not installed here**) | `zig init` in the folder | — | an identifier, no keyword, 32 bytes at most |
+| Zig (`zig`) | zig 0.17.0 (Homebrew) | `zig init` in the folder (it takes the folder's name; its only flag is `--minimal`) | — | an identifier of 32 bytes at most that is not a keyword, not a primitive (`u8`, `i32`, `usize`, `bool`, `true`, `null`, …), not `_`, `std`, `builtin` or `root`, and not a name zig init's `src/main.zig` declares (`main`, `io`, `Io`, `init`, `args`, `list`, `context`, …) |
 | TypeScript (Node.js) (`node-ts`) | node 24, npm 11 | `npm init -y`, package.json completed, `npm install --save-dev typescript @types/node`, `tsc --init --rootDir src --outDir dist --sourceMap --types node` | — | npm's: lower case, digits, `-` `.` `_` `~`, no leading `.`/`_` |
 | JavaScript (Node.js) (`node-js`) | node 24, npm 11 | `npm init -y`, package.json completed (ES module, `start` and `test` scripts) | — | as TypeScript |
 | Static Website (`static-site`) | — | `index.html`, `styles.css`, `script.js` | — | a portable folder name |
@@ -79,6 +79,10 @@ Details:
 * **C#:** templates are listed with `dotnet new list --type project --language C#` and parsed by the dash line's column widths; the target
   frameworks come from `dotnet new console --help` (`Type: choice` block); both are read off the UI thread and cached for 5 minutes. A template
   without `--framework` is not given one (its `--help` is checked first). CsCode owns this listing.
+* **Zig:** `zig init` never refuses a folder name: it rewrites it (`hello-zig` → `hello_zig`, `fn` → `foo`, `9lives` → `_9lives`, longer than 32
+  bytes → cut), so the executable would not be the `zig-out/bin/<name>` that launch.json runs; and with a name it keeps, its `src/main.zig`
+  (`const <name> = @import("<name>")`) does not build when the name is a primitive, a built-in module or one of that file's own names. The name
+  rule refuses all of these up front (each checked with zig 0.17.0: `zig init` then `zig build`).
 
 ## A good start
 
@@ -144,8 +148,7 @@ the page shows the error in red and brings the Output window to the front.
   first F5 or Ctrl+Shift+B configures through the `cmake: configure (debug)` task.
 * **`dotnet restore`**: needs no hook: `dotnet new` restores each project as it creates it (the templates' default), so the first build is offline.
 * **Python F5:** `debugpy` arrives with the Python stage; the configuration is written now.
-* **Zig:** zig is not installed on this Mac; the generator, its `zig init` step and its files are untested against a real zig (its real-tool test
-  skips). `uv` is not installed either: the `uv venv` / `uv pip install` path is untested.
+* **uv** is not installed on this Mac: the `uv venv` / `uv pip install` path is untested.
 
 ## Limits
 
@@ -169,7 +172,7 @@ the page shows the error in red and brings the Output window to the front.
 | Python (app with .venv) | yes | `python -m hello_py` with launch.json's PYTHONPATH; pytest only with downloads allowed | yes | not on main (debugpy) |
 | Empty, Static Website | yes | — | yes | — |
 | TypeScript | needs the npm registry: not run | — | — | — |
-| Zig | zig not installed: not run | — | — | — |
+| Zig (zig 0.17.0, installed 2026-11-02) | yes | `zig build`, `zig build test` | yes | CodeLLDB stops at `main.zig:8` |
 
 Screenshots of the page (Rust and C# chosen) and of the Welcome link come from `RealApp/NewProjectTests.Screenshots_of_the_page` into
 `.scratch/screenshots/new-project-*.png` (not committed).
@@ -182,7 +185,7 @@ Screenshots of the page (Rust and C# chosen) and of the Welcome link come from `
 | `tests/CsCode.Panels.NewProject.Tests` | the view model (generators, validation, options and the VCS link, remembering, create/fail/cancel, opening here or in a new window) and the real view headless (keyboard only: Name focused, typing, Enter, arrows, Esc, Alt+L, Alt+G), `LeakAssert` for the view model and the view | `dotnet test tests/CsCode.Panels.NewProject.Tests` |
 | `tests/CsCode.App.Tests` (`RealApp/NewProjectTests`) | the real application (every module, `CSCODE_HOME` in a temp dir, headless window): the menu, the palette command and the Welcome link open the page; per installed toolchain a project made on the page opens with its main file and F5 builds it and stops at a breakpoint in it | `dotnet test tests/CsCode.App.Tests --blame-hang-timeout 12m --filter FullyQualifiedName~RealApp.NewProjectTests` |
 
-Results on this Mac: ProjectTemplates 87 passed, 3 skipped (zig; pytest and TypeScript downloads); Panels.NewProject 21 passed; RealApp
-NewProjectTests 11 passed (with the menu, Welcome and session App tests: 54 passed). Real-tool tests skip with their reason when the tool is missing. Downloads only with the user's go-ahead: pytest and TypeScript run with
+Results on this Mac: ProjectTemplates 105 passed, 2 skipped (pytest and TypeScript downloads); Panels.NewProject 21 passed; RealApp
+NewProjectTests 12 passed, Zig's F5 among them (on 2026-11-01, with the menu, Welcome and session App tests: 54 passed). Real-tool tests skip with their reason when the tool is missing. Downloads only with the user's go-ahead: pytest and TypeScript run with
 `CSCODE_TEST_DOWNLOADS=1`; the C++ framework tests use the GoogleTest/Catch2 archives the C++ stage fetched into `.scratch/tools/cpp-test-frameworks`
 (`FETCHCONTENT_SOURCE_DIR_*`), and otherwise need the same variable. The F5 cases use CodeLLDB, netcoredbg and js-debug from `.scratch/tools`.

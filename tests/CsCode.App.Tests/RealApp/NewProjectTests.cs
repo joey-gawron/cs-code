@@ -25,7 +25,7 @@ namespace CsCode.App.Tests.RealApp;
 /// The New Project page in the REAL application (<see cref="RealAppHost"/>: every real module, <c>CSCODE_HOME</c> in a temp directory, headless
 /// window): File ▸ New ▸ Project…, the palette command and the Welcome page's link open it; for each installed toolchain a project made on the page
 /// opens in the window with its main file, and F5 (its generated launch.json and tasks.json) builds it and stops at a breakpoint in that file,
-/// wherever that language's debugger is on main (CodeLLDB for Rust, C and C++; netcoredbg for C#). Each case skips with its reason when its
+/// wherever that language's debugger is on main (CodeLLDB for Rust, C, C++ and Zig; netcoredbg for C#; js-debug for JavaScript). Each case skips with its reason when its
 /// tool or debugger is missing.
 /// </summary>
 public class NewProjectTests
@@ -106,7 +106,7 @@ public class NewProjectTests
         return null;
     }
 
-    public static TheoryData<string> Generators => ["rust", "cmake-c", "cmake-cpp", "dotnet", "node-js", "python", "empty", "static-site"];
+    public static TheoryData<string> Generators => ["rust", "cmake-c", "cmake-cpp", "zig", "dotnet", "node-js", "python", "empty", "static-site"];
 
     [AvaloniaTheory(Timeout = 600_000)]
     [MemberData(nameof(Generators))]
@@ -160,7 +160,7 @@ public class NewProjectTests
         // F5 where the language's debugger is on main.
         var debugger = generatorId switch
         {
-            "rust" or "cmake-c" or "cmake-cpp" => codelldb is null ? "CodeLLDB is not in .scratch/tools (tools/fetch-codelldb.sh)" : null,
+            "rust" or "cmake-c" or "cmake-cpp" or "zig" => codelldb is null ? "CodeLLDB is not in .scratch/tools (tools/fetch-codelldb.sh)" : null,
             "dotnet" => netcoredbg is null ? "netcoredbg is not in .scratch/tools" : null,
             "node-js" => jsDebug is null ? "js-debug is not in .scratch/tools" : null,
             "python" => "debugpy arrives with the Python stage",
@@ -171,7 +171,8 @@ public class NewProjectTests
         var debug = host.Get<IDebugService>();
         var lines = await File.ReadAllLinesAsync(main.LocalPath, TestContext.Current.CancellationToken);
         var line = Array.FindIndex(lines, l => l.Contains("println!", StringComparison.Ordinal) || l.Contains("puts(", StringComparison.Ordinal)
-            || l.Contains("std::cout", StringComparison.Ordinal) || l.Contains("Console.WriteLine", StringComparison.Ordinal) || l.Contains("console.log", StringComparison.Ordinal));
+            || l.Contains("std::cout", StringComparison.Ordinal) || l.Contains("std.debug.print(", StringComparison.Ordinal)
+            || l.Contains("Console.WriteLine", StringComparison.Ordinal) || l.Contains("console.log", StringComparison.Ordinal));
         Assert.True(line >= 0, "the print line of " + main.LocalPath);
         debug.Breakpoints.Add(main, line);
         Assert.True(await RealAppHost.WaitFor(() => debug.Configurations.Selected is not null, 20_000), "launch.json read");
