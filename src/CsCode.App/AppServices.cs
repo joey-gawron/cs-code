@@ -7,6 +7,7 @@ using CsCode.App.Services;
 using CsCode.App.Startup;
 using CsCode.App.ToolWindows;
 using CsCode.App.ToolWindows.FindResults;
+using CsCode.Build.CMake;
 using CsCode.Core;
 using CsCode.Core.Diagnostics;
 using CsCode.Core.Languages;
@@ -61,6 +62,7 @@ public static class AppServices
         services.AddCsCodeDebugPanels();
         services.AddCsCodeSearchPanels();
         services.AddCsCodeTestExplorer(); // the Test Explorer (.NET, Rust, Jest/Vitest tests), its commands and the editor's test glyphs
+        services.AddCsCodeCMake(); // CMake projects (ICMakeService; the CTest provider reads it): configure, build, targets, status bar (docs/C-CPP.md)
         services.AddCsCodeTerminal(); // the integrated terminal (ITerminalService) and its Terminal tool window
         services.AddCsCodeNavigationPanels(); // the Hierarchy window: call and type hierarchy (docs/NAVIGATION.md)
         services.AddCsCodeGit(); // source control: git status, Source Control window, Explorer decorations, gutter markers, blame

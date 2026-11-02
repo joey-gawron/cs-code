@@ -46,7 +46,8 @@ public sealed class CMakeHost : IDisposable
     private readonly ClangdCompileCommands _clangd;
     private readonly HashSet<string> _askedToConfigure = new(StringComparer.Ordinal);
     private IStatusBarService? _status;
-    private readonly List<IDisposable> _items = [];
+    private readonly List<(string Id, IDisposable Token)> _itemTokens = [];
+    private readonly object _items = new();
     private string _itemsKey = "";
     private bool _started;
 
@@ -385,7 +386,7 @@ public sealed class CMakeHost : IDisposable
         foreach (var view in _cmake.Views)
         {
             var source = view.Project.SourceDirectory;
-            if (view.Project.State is CMakeProjectState.Configuring || !_askedToConfigure.Add(source)) continue;
+            lock (_askedToConfigure) if (view.Project.State is CMakeProjectState.Configuring || !_askedToConfigure.Add(source)) continue;
             var setting = Config?.Get<bool?>(CMakeSettings.ConfigureOnOpen);
             if (setting == false) continue;
             if (setting is null)
@@ -415,11 +416,16 @@ public sealed class CMakeHost : IDisposable
                 : views.FirstOrDefault();
         var models = view is null ? [] : StatusItems(view);
         var key = string.Join('\u0001', models.Select(m => m.Id + "\u0002" + m.Text + "\u0002" + m.Tooltip + "\u0002" + m.CommandId));
-        if (key == _itemsKey) return;
-        _itemsKey = key;
-        foreach (var item in _items) item.Dispose();
-        _items.Clear();
-        foreach (var m in models) _items.Add(_status.Set(m));
+        lock (_items)
+        {
+            if (key == _itemsKey) return;
+            _itemsKey = key;
+            // Set replaces an item by id: set the new ones first, then remove only the ids that are gone
+            var next = models.Select(m => (m.Id, Token: _status.Set(m))).ToList();
+            foreach (var (id, token) in _itemTokens) if (next.All(n => n.Id != id)) token.Dispose();
+            _itemTokens.Clear();
+            _itemTokens.AddRange(next);
+        }
     }
 
     internal static IReadOnlyList<StatusBarItemModel> StatusItems(CMakeProjectView view)
@@ -466,8 +472,12 @@ public sealed class CMakeHost : IDisposable
 
     public void Dispose()
     {
-        foreach (var item in _items) item.Dispose();
-        _items.Clear();
+        lock (_items)
+        {
+            foreach (var (_, token) in _itemTokens) token.Dispose();
+            _itemTokens.Clear();
+            _itemsKey = "\u0000disposed";
+        }
         _store.Dispose();
     }
 }
