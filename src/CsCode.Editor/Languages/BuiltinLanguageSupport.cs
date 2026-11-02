@@ -24,7 +24,13 @@ public sealed record BuiltinLanguageSupportInfo(
     string? GrammarScope,
     string? GrammarSource,
     LanguageConfigurationOrigin Configuration,
-    bool HasBuiltinSnippets);
+    bool HasBuiltinSnippets)
+{
+    /// <summary>Whether CsCode's own snippet set (Snippets/Builtin, language stage 1) covers the language, besides or instead of VS Code's. Additive.</summary>
+    public bool HasOwnSnippets { get; init; }
+    /// <summary>Whether a VS Code extension's snippet file covers the language. Additive.</summary>
+    public bool HasVsCodeSnippets { get; init; }
+}
 
 /// <summary>Read-only view of the built-in language catalog for documentation and diagnostics. User contributions are not included.</summary>
 public static class BuiltinLanguageSupport
@@ -50,10 +56,15 @@ public static class BuiltinLanguageSupport
                     var p when p.StartsWith(BuiltinLanguages.BuiltinPathPrefix + BuiltinLanguages.OwnConfigurationPrefix, StringComparison.Ordinal) => LanguageConfigurationOrigin.CsCode,
                     _ => LanguageConfigurationOrigin.VsCode,
                 };
+                var snippets = catalog.Snippets.Where(s => s.LanguageId == l.Id).ToArray();
                 return new BuiltinLanguageSupportInfo(
                     l.Id, l.Aliases[0], l.Extensions, l.Filenames, l.FilenamePatterns, l.FirstLine,
                     scope, grammar is null ? null : PackageOf(grammar.ResourceName), config,
-                    catalog.Snippets.Any(s => s.LanguageId == l.Id));
+                    snippets.Length > 0)
+                {
+                    HasOwnSnippets = snippets.Any(s => s.ResourceName.StartsWith(BuiltinLanguages.OwnSnippetPrefix, StringComparison.Ordinal)),
+                    HasVsCodeSnippets = snippets.Any(s => !s.ResourceName.StartsWith(BuiltinLanguages.OwnSnippetPrefix, StringComparison.Ordinal)),
+                };
             })
             .ToArray();
     }
