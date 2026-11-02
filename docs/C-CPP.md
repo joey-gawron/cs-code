@@ -169,9 +169,29 @@ complete as you type. clangd offers its own code patterns (`for`, `#include`) be
 
 ## 4. Projects without CMake
 
-Not done in this stage (SHOULD): the "Create compile_flags.txt" command, Build and Run Active File, and docs for bear / compiledb. clangd
-still works with a hand-written `compile_flags.txt` or `compile_commands.json`; the single-file launch template (section 5) builds the
-active file.
+clangd needs each file's compile flags. Without CMake there are three ways to give them, in the order clangd looks (from the file's
+directory upwards):
+
+* **`compile_commands.json`** from the real build, best for a Makefile project. Two tools write it; neither is installed on this Mac (they
+  wait for the user's go-ahead), so these lines are their documented use, not checked here:
+  * **Bear** (`brew install bear`; Linux packages): `bear -- make` runs the build and records every compiler call into
+    `compile_commands.json` in the current directory (Bear 3; Bear 2 wrote `bear make`). Run a clean build (`make clean` first) or it
+    records only what was rebuilt; `bear --append -- make` adds to an existing file.
+  * **compiledb** (`pip install compiledb`): `compiledb make` parses make's output, and `compiledb -n make` only pretends to build
+    (`make -n`), which is faster but misses commands that need the build to have happened.
+* **`compile_flags.txt`**, one flag per line, applied to every file below it: enough for a small project with one set of flags. **Create
+  compile_flags.txt** (`cscode.c.createCompileFlags`, palette category C/C++) writes one in the active file's workspace folder: `-xc`,
+  `-std=c17`, `-Wall`, `-Wextra`, `-I.`, `-Iinclude` (clangd reads relative paths from the file's own directory). It opens it, keeps an
+  existing one as it is, says when the folder also has a `compile_commands.json` (which clangd prefers), and offers to restart a running
+  clangd so open files get the flags. `-xc` makes clangd read `.h` headers as C, not C++.
+* **Nothing**: clangd guesses (`clang` with no flags), so headers outside the file's directory are not found.
+
+**Build and Run Active File** (`C_Cpp.BuildAndRunFile`, cpptools' id; palette category C/C++, for a C file) saves the file, compiles it on
+its own with `clang -g -O0 -Wall <file> -o <dir>/<name>` (`cc` on Linux) through the same tracked, below-normal-priority runner as cmake,
+writes the output to the **C** output channel and the compiler's problems to the Error List (source `clang`), and runs the program in an
+integrated terminal, so it can read stdin. A failed build says how many errors and does not run. The single-file launch template (section 5)
+does the same build as a pre-launch task and debugs the program. Checked with the real clang (`CFileCommandsTests`): an undeclared name is
+reported at its line, the fixed file builds and runs (output `hello`, exit code 3), and the next build clears the problem.
 
 ## 5. C launch templates
 

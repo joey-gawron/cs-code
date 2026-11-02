@@ -44,6 +44,7 @@ public sealed class CMakeHost : IDisposable
     private readonly CMakeService _cmake;
     private readonly DisposableStore _store = new();
     private readonly ClangdCompileCommands _clangd;
+    private readonly CFileCommands _files;
     private readonly HashSet<string> _askedToConfigure = new(StringComparer.Ordinal);
     private IStatusBarService? _status;
     private readonly List<(string Id, IDisposable Token)> _itemTokens = [];
@@ -57,6 +58,8 @@ public sealed class CMakeHost : IDisposable
         _cmake = cmake;
         _clangd = new ClangdCompileCommands(services.GetService<ILanguageServerManager>(), () => Config?.Get<bool?>(CMakeSettings.PointClangd) ?? true);
         _store.Add(_clangd);
+        _files = new CFileCommands(services, new CMakeProcesses(services.GetService<Core.Diagnostics.IMemoryMonitor>()), Environment.GetEnvironmentVariable);
+        _store.Add(_files);
     }
 
     private IConfigurationService? Config => _sp.GetService<IConfigurationService>();
@@ -67,7 +70,11 @@ public sealed class CMakeHost : IDisposable
     {
         if (_started) return Disposable.Empty;
         _started = true;
-        if (_sp.GetService<ICommandService>() is { } commands) RegisterCommands(commands);
+        if (_sp.GetService<ICommandService>() is { } commands)
+        {
+            RegisterCommands(commands);
+            _files.Register(commands); // C without CMake: Build and Run Active File, Create compile_flags.txt
+        }
         _status = _sp.GetService<IStatusBarService>();
         _store.Add(_cmake.ViewsChanged.Subscribe(OnViewsChanged));
         OnViewsChanged(_cmake.Views);
