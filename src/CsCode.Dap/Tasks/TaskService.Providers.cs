@@ -14,7 +14,7 @@ public sealed partial class TaskService
 
     /// <summary>
     /// tasks.json's tasks — an entry of a provider's type resolved through that provider (its label, group, presentation, problem matchers and
-    /// dependsOn kept) — then each provider's detected tasks that no entry customises and whose label tasks.json does not already use. On the lane.
+    /// dependsOn kept) — then each provider's detected tasks that no entry resolved to and whose label tasks.json does not already use. On the lane.
     /// </summary>
     private async Task<TasksFile> WithProvidedTasksAsync(Uri? folder, TasksFile file, CancellationToken ct)
     {
@@ -23,7 +23,7 @@ public sealed partial class TaskService
             return file.Tasks.Any(t => t.Label.Length == 0) ? file with { Tasks = [.. file.Tasks.Where(t => t.Label.Length > 0)] } : file;
 
         var tasks = new List<TaskModel>(file.Tasks.Count);
-        var entries = new List<JsonElement>();
+        var customised = new HashSet<string>(StringComparer.Ordinal); // labels of the detected tasks entries resolved to
         foreach (var t in file.Tasks)
         {
             var provider = t.Entry is null ? null : providers.FirstOrDefault(p => string.Equals(p.Type, t.Type, StringComparison.Ordinal));
@@ -33,8 +33,8 @@ public sealed partial class TaskService
                 continue;
             }
             var entry = JsonSerializer.SerializeToElement(t.Entry);
-            entries.Add(entry);
             var resolved = await AskAsync(provider, (p, c) => p.ResolveTaskAsync(folder!, entry, c), ct);
+            if (resolved is not null) customised.Add(resolved.Label);
             tasks.Add(resolved is null
                 ? t with
                 {
@@ -48,8 +48,7 @@ public sealed partial class TaskService
         {
             foreach (var d in await AskAsync<IReadOnlyList<ProvidedTask>>(provider, async (p, c) => await p.ProvideTasksAsync(folder!, c), ct) ?? [])
             {
-                if (d.Definition is { } definition && entries.Any(e => TaskDefinitionMatch.Matches(definition, e))) continue;
-                if (tasks.Any(t => t.Label == d.Label)) continue;
+                if (customised.Contains(d.Label) || tasks.Any(t => t.Label == d.Label)) continue;
                 tasks.Add(FromProvided(d));
             }
         }

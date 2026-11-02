@@ -35,8 +35,9 @@ public sealed record ProvidedTask(string Source, string Name, string Command, IR
 
     /// <summary>
     /// The tasks.json object that names this task: its <c>"type"</c> is the provider's <see cref="ITaskProvider.Type"/>, its other members the
-    /// provider's own (<c>{"type": "cargo", "command": "build"}</c>). A tasks.json entry whose members include all of these customises this task
-    /// (label, group, problem matchers, presentation, dependsOn), and Run Task then lists only the customised one, as in VS Code.
+    /// provider's own (<c>{"type": "cargo", "command": "build"}</c>). A tasks.json entry customises the task <see cref="ITaskProvider.ResolveTaskAsync"/>
+    /// returns for it (by default the one whose definition members it all has): label, group, problem matchers, presentation and dependsOn are
+    /// the entry's, and Run Task then lists only the customised one, as in VS Code.
     /// </summary>
     public JsonElement? Definition { get; init; }
 }

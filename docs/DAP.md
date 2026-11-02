@@ -235,8 +235,8 @@ not abort the session: those breakpoints show unverified with the adapter's mess
     (`TaskDefinition.Source` set, `Type` = the provider's type). `RunAsync("cargo: build")`, `preLaunchTask`, `postDebugTask` and
     `dependsOn` name them by label, so Run Task, Run Build Task and the debugger need no change. A tasks.json entry of a provider's type
     **customises** a detected task: what runs is the provider's, the entry's `label` (else the detected one), `group`, `problemMatcher`,
-    `presentation`, `dependsOn`, `options.cwd/env` and `isBackground` apply, and the detected task it customises is no longer listed on its
-    own (as in VS Code). An entry no detected task matches stays listed and reports why when run. A tasks.json label wins over a detected task
+    `presentation`, `dependsOn`, `options.cwd/env` and `isBackground` apply, and the detected task the provider resolved it to (same label)
+    is no longer listed on its own (as in VS Code). An entry no detected task matches stays listed and reports why when run. A tasks.json label wins over a detected task
     of the same label. Without a provider for its type, an entry behaves as before (a labelled one runs as a shell task, an unlabelled one is
     left out).
   * Remote folders: the server's runner asks the server's providers (the Dap module registers the same ones there), so the same tasks show.
