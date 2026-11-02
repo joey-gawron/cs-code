@@ -4,6 +4,7 @@ using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Lsp.Client;
+using CsCode.Lsp.CSharp;
 using CsCode.Lsp.Runtime;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -32,6 +33,7 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
     private readonly object _gate = new();
     private readonly List<(long Seq, LanguageServerDefinition Def)> _registered = new();
     private readonly Dictionary<(string Id, string Key), ServerSlot> _slots = new();
+    private readonly ExternalDocuments _external;
     private readonly ConcurrentDictionary<Uri, DocRoute> _routes = new();
     private readonly List<Task> _pendingRemovals = new();
     private readonly Emitter<IReadOnlyList<LanguageServerInfo>> _changed = new();
@@ -49,6 +51,9 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         _settings = LspSettings.Read(services.Configuration);
         var logger = services.Loggers?.CreateLogger("CsCode.Lsp") ?? NullLogger.Instance;
         _queue = new LanguageWorkQueue(_settings.WorkerThreads, _settings.QueueCapacity) { OnUnhandled = ex => logger.LogError(ex, "Unhandled exception on the language lane") };
+        _external = new ExternalDocuments(ClientOf);
+        CSharpServers.AddExternalSources(_external);
+        if (services.VirtualDocuments is { } virtualDocuments) _store.Add(virtualDocuments.Register(_external));
         _ctx = new ClientContext
         {
             Services = services,
@@ -56,6 +61,7 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
             Queue = _queue,
             Connections = services.Connections ?? new DefaultLspConnectionFactory(),
             Logger = logger,
+            External = _external,
         };
 
         if (services.Configuration is { } cfg) _store.Add(cfg.Changed.Subscribe(OnConfigurationChanged));
@@ -164,7 +170,9 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         lock (_gate)
         {
             var latest = _registered.GroupBy(r => r.Def.Id).Select(g => g.MaxBy(x => x.Seq).Def);
-            _effective = DefinitionOverrides.Apply(latest, _services.Configuration?.GetRaw(LspSettingKeys.LanguageServers));
+            var choice = BuiltinLanguageServers.ReadChoice(_services.Configuration?.GetRaw(LspSettingKeys.ServerChoice));
+            _effective = DefinitionOverrides.Apply(latest, _services.Configuration?.GetRaw(LspSettingKeys.LanguageServers),
+                id => BuiltinLanguageServers.EnabledByDefault(id, choice));
             foreach (var slot in _slots.Values)
                 updates.Add((slot, _effective.TryGetValue(slot.Definition.Id, out var e) ? e : null));
         }
@@ -198,7 +206,7 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
     private void OnConfigurationChanged(ConfigurationChangedEventArgs e)
     {
         if (e.Affects("cscode.lsp")) _settings = LspSettings.Read(_services.Configuration);
-        if (e.Affects(LspSettingKeys.LanguageServers))
+        if (e.Affects(LspSettingKeys.LanguageServers) || e.Affects(LspSettingKeys.ServerChoice))
         {
             _queue.Post(LanePriority.Background, () => { RecomputeDefinitions(); RouteAll(); }, exempt: true);
         }
@@ -236,6 +244,7 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         if (Volatile.Read(ref _disposed) != 0 || !ReferenceEquals(_services.Documents.Get(doc.Uri), doc)) return; // closed before we got here
         // Documents of other schemes (ssh: remote workspaces) are served by the language host next to their files (CsCode.Server, bridged by
         // CsCode.Remote), never by servers started on this machine.
+        if (VirtualDocumentUri.IsVirtual(doc.Uri)) { RouteExternal(doc); return; }
         if (!ServesScheme(doc.Uri)) { Unroute(doc); return; }
 
         List<DefinitionOverrides.Effective> candidates;
@@ -259,6 +268,32 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         // The document may have been closed while we were attaching: never leave a closed document attached anywhere.
         if (!ReferenceEquals(_services.Documents.Get(doc.Uri), doc)) Unroute(doc);
     }
+
+    /// <summary>
+    /// A library or generated document (<c>cscode-virtual://lsp/…</c>) goes to the one server that named it, whatever its language and root
+    /// say: that server alone knows the document (its metadata, its generator output). One no longer known (an evicted name, a stopped server) is
+    /// served by none.
+    /// </summary>
+    private void RouteExternal(ITextDocument doc)
+    {
+        ServerSlot? slot = null;
+        if (_external.Find(doc.Uri) is { } entry)
+            lock (_gate) slot = _slots.GetValueOrDefault((entry.DefinitionId, entry.SlotKey));
+        if (slot is null) { Unroute(doc); return; }
+        _routes.TryGetValue(doc.Uri, out var previous);
+        foreach (var gone in (previous?.Slots ?? []).Where(s => s != slot)) gone.Detach(doc.Uri);
+        _routes[doc.Uri] = new DocRoute([slot]);
+        slot.Attach(doc);
+        if (!ReferenceEquals(_services.Documents.Get(doc.Uri), doc)) Unroute(doc);
+    }
+
+    private LanguageClient? ClientOf(string definitionId, string slotKey)
+    {
+        lock (_gate) return _slots.GetValueOrDefault((definitionId, slotKey))?.Client;
+    }
+
+    /// <summary>The library and generated documents named so far (tests).</summary>
+    internal ExternalDocuments External => _external;
 
     /// <summary>The schemes an in-process language host serves: files on this machine and untitled buffers.</summary>
     internal static bool ServesScheme(Uri uri) =>

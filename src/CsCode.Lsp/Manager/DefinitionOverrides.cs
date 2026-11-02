@@ -14,10 +14,14 @@ internal static class DefinitionOverrides
 {
     public readonly record struct Effective(LanguageServerDefinition Definition, bool Enabled);
 
-    public static Dictionary<string, Effective> Apply(IEnumerable<LanguageServerDefinition> registered, JsonElement? setting)
+    /// <param name="enabledByDefault">
+    /// Whether a definition runs when the setting says nothing about it (absent: yes). A built-in that is one of several servers for the same
+    /// language (csharp-ls or Roslyn) runs only when it is its group's choice (<see cref="BuiltinLanguageServers.EnabledByDefault"/>).
+    /// </param>
+    public static Dictionary<string, Effective> Apply(IEnumerable<LanguageServerDefinition> registered, JsonElement? setting, Func<string, bool>? enabledByDefault = null)
     {
         var result = new Dictionary<string, Effective>();
-        foreach (var d in registered) result[d.Id] = new Effective(d, true);
+        foreach (var d in registered) result[d.Id] = new Effective(d, enabledByDefault?.Invoke(d.Id) ?? true);
         if (setting is not { ValueKind: JsonValueKind.Object } obj) return result;
 
         foreach (var prop in obj.EnumerateObject())
@@ -27,7 +31,8 @@ internal static class DefinitionOverrides
             var o = prop.Value;
             var enabled = !(o.TryGetProperty("enabled", out var en) && en.ValueKind == JsonValueKind.False);
             if (result.TryGetValue(id, out var existing))
-                result[id] = new Effective(Merge(existing.Definition, o), enabled);
+                // an explicit "enabled" decides; without one a built-in keeps its default (the alternative not chosen stays off)
+                result[id] = new Effective(Merge(existing.Definition, o), en.ValueKind is JsonValueKind.True or JsonValueKind.False ? enabled : existing.Enabled);
             else if (TryCreate(id, o) is { } created)
                 result[id] = new Effective(created, enabled);
         }

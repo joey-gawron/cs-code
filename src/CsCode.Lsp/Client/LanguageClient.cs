@@ -36,6 +36,8 @@ internal sealed class ClientContext
     public required LanguageWorkQueue Queue { get; init; }
     public required ILspConnectionFactory Connections { get; init; }
     public required ILogger Logger { get; init; }
+    /// <summary>Library and generated documents of the servers, opened as virtual documents (null in hosts without them).</summary>
+    public CSharp.ExternalDocuments? External { get; init; }
 }
 
 /// <summary>
@@ -84,8 +86,10 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         _breaker.HealthChanged += OnBreakerHealthChanged;
         _log = new ServerLog(ctx.Services.Output?.GetOrCreate($"{definition.DisplayName} (LSP)"), ctx.Queue);
         _features = new FeatureTable(this);
-        Mapper = new LspMapper(PositionEncoder.Utf16, LineSource);
+        Mapper = new LspMapper(PositionEncoder.Utf16, LineSource) { ExternalUri = ExternalUri };
     }
+
+    private Uri? ExternalUri(string serverUri) => _ctx.External?.ToVirtual(this, serverUri);
 
     public LanguageServerDefinition Definition { get; }
     public string SlotKey { get; }
@@ -102,6 +106,8 @@ internal sealed partial class LanguageClient : IAsyncDisposable
     public int InFlightRequests => (int)Interlocked.Read(ref _inFlight);
     public int SyncedDocumentCount => _docs.Count;
     public Task Stopped => _stopped.Task;
+    /// <summary>Roslyn's session behaviour (opening the solution, readiness) when this client runs the Roslyn server, else null.</summary>
+    internal CSharp.RoslynSession? Roslyn { get; private set; }
     internal LspServices Services => _ctx.Services;
     internal ClientContext Context => _ctx;
     internal ServerLog Log => _log;
@@ -174,7 +180,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             await LoginShellEnvironment.WaitAsync(ct).ConfigureAwait(false);
             var launch = Definition with
             {
-                Args = LaunchVariables.Expand(Definition.Args, RootFolder),
+                Args = LaunchVariables.ExpandArguments(Definition.Args, RootFolder, _ctx.Services.Paths?.LogsDir),
                 // lsp-9, macOS only: elsewhere a definition's env is passed as written, as it always was
                 Env = OperatingSystem.IsMacOS() ? LaunchVariables.ExpandEnvironment(Definition.Env, RootFolder) : Definition.Env,
             };
@@ -188,6 +194,12 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             var rpc = new JsonRpc(new HeaderDelimitedMessageHandler(connection.Input, new FramingGuardStream(connection.Output, settings.MaxMessageBytes), formatter));
             rpc.CancelLocallyInvokedMethodsWhenConnectionIsClosed = true;
             rpc.AddLocalRpcTarget(new ServerRequestTarget(this), new JsonRpcTargetOptions { DisposeOnDisconnect = false });
+            // Roslyn's own notifications (solution loaded, toasts): added before the connection listens, the only time it can be
+            if (CSharp.CSharpServers.CreateSession(this) is { } roslyn)
+            {
+                Roslyn = roslyn;
+                rpc.AddLocalRpcTarget(roslyn, new JsonRpcTargetOptions { DisposeOnDisconnect = false });
+            }
             rpc.Disconnected += OnRpcDisconnected;
             _rpc = rpc;
             rpc.StartListening();
@@ -214,7 +226,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             ServerName = init.ServerInfo?.Name;
             ServerVersion = init.ServerInfo?.Version;
             var encoding = ServerCapabilities.PositionEncoding?.Value;
-            Mapper = new LspMapper(settings.AutoPositionEncoding ? PositionEncoder.FromName(encoding) : PositionEncoder.Utf16, LineSource);
+            Mapper = new LspMapper(settings.AutoPositionEncoding ? PositionEncoder.FromName(encoding) : PositionEncoder.Utf16, LineSource) { ExternalUri = ExternalUri };
             ParseSyncOptions(ServerCapabilities);
 
             NotifyRaw(P.LspMethods.Initialized, new P.InitializedParams());
@@ -231,6 +243,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             _docsMayOpen = true;
             foreach (var sd in _docs.Values) PostOpen(sd);
             SchedulePullAll();
+            Roslyn?.OnInitialized();
             _log.Add($"[client] started {ServerName ?? Definition.DisplayName} {ServerVersion} (pid {ProcessId}, encoding {Mapper.Encoder.Name})");
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)

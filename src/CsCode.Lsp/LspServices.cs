@@ -28,6 +28,10 @@ public sealed record LspServices(IDocumentManager Documents, ILanguageFeatureReg
     public ILanguageService? Languages { get; init; }
     public ILoggerFactory? Loggers { get; init; }
     public ILspConnectionFactory? Connections { get; init; }
+    /// <summary>Where library and generated documents are served from (go to definition into metadata, source-generated files).</summary>
+    public IVirtualDocumentService? VirtualDocuments { get; init; }
+    /// <summary>Per-workspace choices a server integration remembers (the solution Roslyn loads).</summary>
+    public IStateStorage? State { get; init; }
 
     public static LspServices FromProvider(IServiceProvider sp) => new(
         sp.GetRequiredService<IDocumentManager>(),
@@ -47,5 +51,7 @@ public sealed record LspServices(IDocumentManager Documents, ILanguageFeatureReg
         Languages = sp.GetService<ILanguageService>(),
         Loggers = sp.GetService<ILoggerFactory>(),
         Connections = sp.GetService<ILspConnectionFactory>(),
+        VirtualDocuments = sp.GetService<IVirtualDocumentService>(),
+        State = sp.GetService<IStateStorage>(),
     };
 }

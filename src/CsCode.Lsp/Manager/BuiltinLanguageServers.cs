@@ -32,7 +32,17 @@ public sealed record BuiltinServer(
     string Formatter,
     IReadOnlyList<ServerAlternative> Alternatives,
     RootStrategy Roots = RootStrategy.Nearest,
-    string? Notes = null);
+    string? Notes = null)
+{
+    /// <summary>
+    /// The language group of built-ins that are alternatives to one another (<c>"csharp"</c>: csharp-ls and Roslyn): one of them runs, the
+    /// group's default or the one <c>cscode.lsp.serverChoice</c> names. Null: not one of several.
+    /// </summary>
+    public string? Group { get; init; }
+
+    /// <summary>Whether this is its <see cref="Group"/>'s server when <c>cscode.lsp.serverChoice</c> names none.</summary>
+    public bool IsGroupDefault { get; init; } = true;
+}
 
 /// <summary>
 /// The language servers CsCode knows out of the box (data only: nothing here starts a process). Any stdio language server works by adding
@@ -59,6 +69,13 @@ public static class BuiltinLanguageServers
 
     private static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
+    /// <summary>The C# servers' group in <c>cscode.lsp.serverChoice</c>.</summary>
+    public const string CSharpGroup = "csharp";
+
+    /// <summary>Roslyn's command line (checked against its <c>--help</c> at 5.13.0-1.26514.10).</summary>
+    public static readonly string[] RoslynArgs =
+        ["--stdio", "--logLevel", "Information", "--extensionLogDirectory", "${cscodeLogsDir}/roslyn", "--telemetryLevel", "off", "--clientProcessId", "${cscodePid}"];
+
     private static LanguageServerDefinition Def(string id, string name, string[] languages, string command, string[] args, string[] markers,
         string? initOptions = null, string? settings = null) =>
         new(id, name, DocumentSelector.ForLanguages(languages), command, args,
@@ -83,9 +100,18 @@ public static class BuiltinLanguageServers
                 ["tsconfig.json", "jsconfig.json", "package.json"]) with { RestartAboveBytes = TypeScriptEngineCap },
             All3("Install it with: npm install -g typescript-language-server typescript (or run tools/fetch-lsp-tools.sh)."),
             "typescript-language-server (tsserver)"),
-        S(Def("csharp", "C# (csharp-ls)", ["csharp"], "csharp-ls", [], ["*.sln", "*.slnx", "*.csproj"]),
+        // --features metadata-uris (csharp-ls 0.28): go to definition into a referenced assembly answers a csharp: location whose decompiled text
+        // comes from csharp/metadata (without it, nothing); opened as a read-only virtual document, docs/CSHARP.md
+        S(Def("csharp", "C# (csharp-ls)", ["csharp"], "csharp-ls", ["--features", "metadata-uris"], ["*.sln", "*.slnx", "*.csproj"]),
             All3("Install it with: dotnet tool install --global csharp-ls"),
-            "csharp-ls"),
+            "csharp-ls") with { Group = CSharpGroup },
+        // Microsoft's Roslyn server (what VS Code's C# extension runs), docs/CSHARP.md. One server per solution: the outermost marked directory
+        // (a repository's .slnx, not each project's .csproj); the client then opens the solution (solution/open) or its projects (project/open).
+        // Telemetry off; logs into CsCode's logs directory; --clientProcessId ends it if CsCode dies without stopping it.
+        S(Def("roslyn", "C# (Roslyn)", ["csharp"], "roslyn-language-server", RoslynArgs, ["*.sln", "*.slnx", "*.csproj"]),
+            All3("Install it with: dotnet tool install --global roslyn-language-server --prerelease (CsCode's development checkout: tools/fetch-roslyn-ls.sh)"),
+            "Roslyn", RootStrategy.Outermost, [new ServerAlternative("Microsoft.CodeAnalysis.LanguageServer", RoslynArgs)])
+            with { Group = CSharpGroup, IsGroupDefault = false },
         S(Def("python", "Python (Pyright)", ["python"], "pyright-langserver", ["--stdio"],
                 ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"]),
             All3("Install it with: npm install -g pyright"),
@@ -265,6 +291,32 @@ public static class BuiltinLanguageServers
             All3("Install it with: npm install -g svelte-language-server"),
             "svelteserver (prettier-plugin-svelte)"),
     ];
+
+    /// <summary>The groups of alternative built-ins (<see cref="BuiltinServer.Group"/>) and their members, in catalog order.</summary>
+    public static IReadOnlyDictionary<string, IReadOnlyList<BuiltinServer>> Groups { get; } =
+        Catalog.Where(s => s.Group is not null).GroupBy(s => s.Group!).ToDictionary(g => g.Key, g => (IReadOnlyList<BuiltinServer>)g.ToArray(), StringComparer.Ordinal);
+
+    /// <summary><c>cscode.lsp.serverChoice</c> as group → definition id (members that are not strings are ignored).</summary>
+    public static IReadOnlyDictionary<string, string> ReadChoice(JsonElement? setting)
+    {
+        var choice = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (setting is { ValueKind: JsonValueKind.Object } obj)
+            foreach (var p in obj.EnumerateObject())
+                if (p.Value.ValueKind == JsonValueKind.String && p.Value.GetString() is { Length: > 0 } id) choice[p.Name] = id;
+        return choice;
+    }
+
+    /// <summary>
+    /// Whether a definition runs when <c>cscode.languageServers</c> does not say: yes, unless it is a member of a group whose choice (or, with no
+    /// valid choice, whose default) is another member.
+    /// </summary>
+    public static bool EnabledByDefault(string definitionId, IReadOnlyDictionary<string, string> choice)
+    {
+        if (!ById.TryGetValue(definitionId, out var s) || s.Group is not { } group) return true;
+        return choice.TryGetValue(group, out var chosen) && Groups[group].Any(m => m.Definition.Id == chosen)
+            ? chosen == definitionId
+            : s.IsGroupDefault;
+    }
 
     /// <summary>The built-in definitions (what <see cref="LanguageServerManager"/> registers at start-up).</summary>
     public static IReadOnlyList<LanguageServerDefinition> All { get; } = Catalog.Select(s => s.Definition).ToArray();

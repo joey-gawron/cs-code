@@ -129,15 +129,23 @@ internal sealed class LspMapper(PositionEncoder encoder, Func<Uri, int, string?>
 
     // ---- locations ----------------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// A location's URI as the editor opens it: a server's library or generated document (<c>csharp:/metadata/…</c>, Roslyn's decompiled
+    /// files) becomes a read-only virtual document (<see cref="CSharp.ExternalDocuments"/>); anything else is <see cref="ToUri"/>.
+    /// </summary>
+    public Func<string, Uri?>? ExternalUri { get; init; }
+
+    private Uri? ToLocationUri(string? s) => s is not null && ExternalUri?.Invoke(s) is { } external ? external : ToUri(s);
+
     public Location? ToCore(P.Location? l)
     {
-        if (l is null || ToUri(l.Uri) is not { } uri) return null;
+        if (l is null || ToLocationUri(l.Uri) is not { } uri) return null;
         return new Location(uri, ToCore(l.Range, uri));
     }
 
     public LocationLink? ToCore(P.LocationLink l)
     {
-        if (ToUri(l.TargetUri) is not { } uri) return null;
+        if (ToLocationUri(l.TargetUri) is not { } uri) return null;
         return new LocationLink(uri, ToCore(l.TargetRange, uri), ToCore(l.TargetSelectionRange, uri), null);
     }
 
