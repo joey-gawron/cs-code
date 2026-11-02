@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- CMake integration (stage 3, docs/C-CPP.md): presets, configure / build / clean through the cmake CLI, targets from the File API, the
+       ICMakeService Core contract the C++ test providers read, and the commands, status bar and clangd wiring. UI-free: references Core only. -->
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Build.CMake.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -60,6 +60,22 @@ public static class LaunchVariables
     public static IReadOnlyList<string> Expand(IReadOnlyList<string> args, string? workspaceFolder) =>
         args.Any(a => a.Contains("${", StringComparison.Ordinal)) ? args.Select(a => Expand(a, workspaceFolder)).ToArray() : args;
 
+    /// <summary>
+    /// A server's command-line arguments: <see cref="Expand(IReadOnlyList{string}, string?)"/>, plus <c>${cscodeLogsDir}</c> (CsCode's logs
+    /// directory, where a server that writes log files of its own puts them: Roslyn's <c>--extensionLogDirectory</c>) and <c>${cscodePid}</c>
+    /// (CsCode's process id: Roslyn's <c>--clientProcessId</c> ends the server if CsCode dies without stopping it). A host without a logs
+    /// directory uses <c>cscode-logs</c> in the temporary directory.
+    /// </summary>
+    public static IReadOnlyList<string> ExpandArguments(IReadOnlyList<string> args, string? workspaceFolder, string? logsDir)
+    {
+        if (!args.Any(a => a.Contains("${", StringComparison.Ordinal))) return args;
+        var pid = Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var logs = Path.TrimEndingDirectorySeparator(logsDir ?? Path.Combine(Path.GetTempPath(), "cscode-logs"));
+        return args.Select(a => Expand(a, workspaceFolder)
+            .Replace("${cscodePid}", pid, StringComparison.Ordinal)
+            .Replace("${cscodeLogsDir}", logs, StringComparison.Ordinal)).ToArray();
+    }
+
     public static JsonElement? Expand(JsonElement? options, string? workspaceFolder)
     {
         if (options is not { } o || !o.GetRawText().Contains("${", StringComparison.Ordinal)) return options;

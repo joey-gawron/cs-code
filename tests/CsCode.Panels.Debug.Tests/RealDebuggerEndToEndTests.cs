@@ -160,7 +160,7 @@ public class RealDebuggerEndToEndTests
         await using var provider = services.BuildServiceProvider();
         var debug = provider.GetRequiredService<IDebugService>();
         var tools = provider.GetServices<IToolWindow>().ToDictionary(t => t.Id);
-        Assert.Equal(["debug.autos", "debug.breakpoints", "debug.callstack", "debug.console", "debug.exception", "debug.locals", "debug.modules", "debug.threads", "debug.watch"], tools.Keys.Order());
+        Assert.Equal(["debug.autos", "debug.breakpoints", "debug.callstack", "debug.console", "debug.disassembly", "debug.exception", "debug.locals", "debug.memory", "debug.modules", "debug.registers", "debug.threads", "debug.watch"], tools.Keys.Order());
 
         var sourceUri = new Uri(sample.Source);
         debug.Breakpoints.Toggle(sourceUri, LineOf("add"));

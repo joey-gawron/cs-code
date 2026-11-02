@@ -20,7 +20,7 @@ namespace CsCode.Dap.Session;
 /// synchronously) and the volatile properties may be read from any thread. Events fire on the lane — subscribers must be cheap.
 /// Protocol order (spec): initialize → launch/attach → (adapter sends `initialized`) → breakpoints → configurationDone → running.
 /// </summary>
-public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, IDebugSessionVariablePaging, IDebugSessionFrames, IBreakpointSyncHost
+public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, IDebugSessionVariablePaging, IDebugSessionFrames, IBreakpointSyncHost, IDebugSessionNative
 {
     private readonly DebugSessionOptions _o;
     private readonly DebugSessionSettings _settings;
@@ -52,6 +52,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private DapCapabilities _dapCaps = new();
     private JsonObject _rawCaps = new();
     private int _focusedThread = -1;
+    /// <summary>Lane only: the thread the last <c>stopped</c> event named (null: none, or not stopped since).</summary>
+    private int? _stoppedThread;
     private int _unresponsive;
     private int _disposeState;
     private readonly TaskCompletionSource _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -76,6 +78,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     private bool _pauseRequested;
     private readonly System.Text.StringBuilder? _recentOutput;
     private readonly Dictionary<string, DebugModuleInfo> _modules = new();
+    /// <summary>Breakpoint paths with their links resolved and back, for an adapter that needs it (<see cref="DebugAdapterQuirks.BindsPhysicalSourcePaths"/>).</summary>
+    private readonly SourcePathAliases? _sourcePaths;
 
     public DebugSession(DebugSessionOptions options)
     {
@@ -84,6 +88,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         _lane = options.Lane;
         _logger = options.Logger ?? NullLogger.Instance;
         _quirks = options.Quirks;
+        _sourcePaths = _quirks.BindsPhysicalSourcePaths ? new SourcePathAliases() : null;
         _recentOutput = _quirks.SyntheticExceptionFilters.Count > 0 || _quirks.BreakpointExceptionFilters.Count > 0 ? new System.Text.StringBuilder() : null;
         _positions = new DapPositions(_settings.LinesStartAt1, _settings.ColumnsStartAt1);
         _output = new OutputBatcher(_lane, this, e => _outputEvent.Fire(e), _settings.OutputWindow);
@@ -164,7 +169,8 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
     // ------------------------------------------------------------------ IBreakpointSyncHost
 
     IDebugSession IBreakpointSyncHost.Session => this;
-    string? IBreakpointSyncHost.AdapterPathOf(Uri uri) => uri.IsFile ? uri.LocalPath : _o.PathMapper?.ToAdapterPath(uri);
+    string? IBreakpointSyncHost.AdapterPathOf(Uri uri) =>
+        uri.IsFile ? (_sourcePaths is { } aliases ? aliases.ToAdapter(uri.LocalPath) : uri.LocalPath) : _o.PathMapper?.ToAdapterPath(uri);
     DapPositions IBreakpointSyncHost.Positions => _positions;
     DapCapabilities IBreakpointSyncHost.Capabilities => _dapCaps;
     bool IBreakpointSyncHost.IsLive => _client is { IsClosed: false } && State != DebugSessionState.Terminated;
@@ -242,6 +248,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         subs.Add(client.Invalidated.Subscribe(OnInvalidatedEvent));
         subs.Add(client.RequestTimedOut.Subscribe(_ => SetUnresponsive(true)));
         subs.Add(client.ConnectionClosed.Subscribe(OnConnectionClosed));
+        if (_o.StartChild is not null && !ReferenceEquals(_o.Quirks, DebugAdapterQuirks.None)) subs.Add(client.UnknownEvent.Subscribe(OnUnknownEvent));
         client.SetReverseRequestHandler("runInTerminal", OnRunInTerminalAsync);
         if (_o.StartChild is not null) client.SetReverseRequestHandler("startDebugging", OnStartDebuggingAsync);
         _client = client;

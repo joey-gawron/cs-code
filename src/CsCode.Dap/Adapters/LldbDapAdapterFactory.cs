@@ -24,7 +24,7 @@ namespace CsCode.Dap.Adapters;
 /// <para>The provider fills in what LLVM's extension would and the user did not write: CodeLLDB's <c>cargo</c> key (<see cref="CargoArtifacts"/>,
 /// shared with GDB and CodeLLDB), <c>cwd</c>, <c>env</c> as the <c>"NAME=value"</c> list every lldb-dap version reads, <c>console:
 /// integratedTerminal</c> as <c>runInTerminal</c> when there is a terminal, the Rust toolchain's LLDB formatters (<c>initCommands</c>, as
-/// <c>rust-lldb</c> loads them) and the standard library's sources (<c>sourceMap</c> onto rust-src), and a textual <c>pid</c> as a number.</para>
+/// <c>rust-lldb</c> loads them; not into Apple's lldb-dap, where they hang the session: see <see cref="IsAppleLldbDap"/>) and the standard library's sources (<c>sourceMap</c> onto rust-src), and a textual <c>pid</c> as a number.</para>
 /// <para>Zig (<see cref="ZigDebugging"/>): a <c>build.zig</c> project gets Zig templates and its configurations load Zig's LLDB pretty printers
 /// through CsCode's helper, which says in the Debug Console when this LLDB's Python is too old for them (Apple's lldb-dap embeds 3.9).</para>
 /// </summary>
@@ -200,6 +200,10 @@ public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         return null;
     }
 
+    /// <summary>Apple's lldb-dap (Xcode or its Command Line Tools), which runs Apple's LLDB.</summary>
+    internal static bool IsAppleLldbDap(string? adapter) =>
+        adapter is not null && (adapter.StartsWith("/Library/Developer/", StringComparison.Ordinal) || adapter.Contains(".app/Contents/Developer/", StringComparison.Ordinal));
+
     /// <summary>lldb-dap (or lldb-vscode) in the newest <c>{VersionedLlvmRoot}/llvm-NN/bin</c>.</summary>
     private string? VersionedLlvm()
     {
@@ -282,10 +286,14 @@ public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         if (rust && await _rust.FindAsync(folderPath, ct) is { } toolchain)
         {
             // What rust-lldb does: the toolchain's formatters (String, Vec, HashMap, enums… by value), before the user's own init commands.
+            // Not into Apple's LLDB (lang-2, measured with rust 1.96.1 and lldb-2103): its provider for a Result<i32, String> holding Ok(12) reads
+            // the String at 0xc, fails, and LLDB then never answers: the Locals of any frame with such a value hang the whole session. Rust
+            // values show as their raw structs there instead (a launch.json's own initCommands can still load them).
             var etc = Path.Combine(toolchain.Sysroot, "lib", "rustlib", "etc");
             var init = new JsonArray();
-            if (File.Exists(Path.Combine(etc, "lldb_lookup.py"))) init.Add($"command script import \"{Path.Combine(etc, "lldb_lookup.py")}\"");
-            if (File.Exists(Path.Combine(etc, "lldb_commands"))) init.Add($"command source -s 0 \"{Path.Combine(etc, "lldb_commands")}\"");
+            var apple = IsAppleLldbDap(await LocateAsync(ct));
+            if (!apple && File.Exists(Path.Combine(etc, "lldb_lookup.py"))) init.Add($"command script import \"{Path.Combine(etc, "lldb_lookup.py")}\"");
+            if (!apple && File.Exists(Path.Combine(etc, "lldb_commands"))) init.Add($"command source -s 0 \"{Path.Combine(etc, "lldb_commands")}\"");
             if (init.Count > 0)
             {
                 if (props.TryGetValue("initCommands", out var mine) && mine.ValueKind == JsonValueKind.Array)
@@ -380,6 +388,7 @@ public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigur
         }
         else
         {
+            if (await CFolder.ReadAsync(_p, folder, ct) is { } c) configs.AddRange(CFolder.Configurations(c, PrimaryType, "lldb-dap", sourceLanguages: false));
             configs.Add(new JsonObject
             {
                 ["name"] = "lldb-dap: Launch program",
@@ -401,11 +410,11 @@ public sealed class LldbDapAdapterFactory : IDebugAdapterFactory, IDebugConfigur
     }
 
     /// <summary>The <c>cargo: build</c> task the binary template's preLaunchTask refers to (only for a cargo package), as the GDB adapter writes it;
-    /// for a <c>build.zig</c> project the Zig templates' tasks.</summary>
+    /// for a <c>build.zig</c> project the Zig templates' tasks; for a folder of C files the C single-file template's build task.</summary>
     public async ValueTask<IReadOnlyList<(string RelativePath, string Content)>> ProvideInitialFilesAsync(Uri? folder, CancellationToken ct)
     {
         if (await CargoPackage.ReadAsync(_p, folder, ct) is not null) return [("tasks.json", CargoPackage.BuildTasksJson)];
         if (await ZigProject.ReadAsync(_p, folder, ct) is not null) return [("tasks.json", ZigDebugging.TasksJson(ZigDebugging.TaskCommand(_zig, name => Environment(name))))];
-        return [];
+        return await CFolder.ReadAsync(_p, folder, ct) is not null ? [("tasks.json", CFolder.BuildTasksJson)] : []; // the C single-file template's build task
     }
 }

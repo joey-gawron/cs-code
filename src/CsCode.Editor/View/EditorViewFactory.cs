@@ -55,6 +55,8 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         _disposables.Add(services.Config.RegisterProperties(MultiCursorController.Properties));
         _disposables.Add(services.Config.RegisterProperties(Features.LinkedEditingFeature.Properties)); // editor.linkedEditing
         _disposables.Add(services.Config.RegisterProperties(LanguageRenderSettings.Properties)); // editor.codeLens*, editor.semanticHighlighting.enabled
+        _disposables.Add(services.Config.RegisterProperties(Features.FormatterChoice.Properties)); // editor.defaultFormatter
+        _disposables.Add(services.Config.RegisterProperties(Features.CodeActionsOnSaveParticipant.Properties)); // editor.codeActionsOnSave(Timeout)
         // the minimap's and the overview ruler's settings (editor.minimap.side, editor.overviewRulerLanes, ...)
         _disposables.Add(services.Config.RegisterProperties(View.Decorations.ScrollDecorations.Properties));
         _disposables.Add(services.Features.Register<ICompletionProvider>(DocumentSelector.All, new SnippetCompletionProvider(snippets), "cscode.snippets"));

@@ -5,7 +5,7 @@ using CsCode.Core.Platform;
 namespace CsCode.Panels.Debug.Tests.Fakes;
 
 /// <summary>In-memory <see cref="IBreakpointManager"/> with settable adapter statuses.</summary>
-public sealed class FakeBreakpointManager : IBreakpointManager
+public sealed class FakeBreakpointManager : IBreakpointManager, INativeBreakpointManager
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, DebugBreakpointStatus> _statuses = new();
@@ -103,6 +103,57 @@ public sealed class FakeBreakpointManager : IBreakpointManager
     }
 
     public void ApplyLineShift(Uri uri, int fromLine, int delta) { }
+
+    // ---- data and instruction breakpoints (INativeBreakpointManager, lang-2)
+    private readonly Emitter<object?> _native = new();
+    private List<DataBreakpoint> _data = new();
+    private List<InstructionBreakpoint> _instructions = new();
+    public IReadOnlyList<DataBreakpoint> DataBreakpoints { get { lock (_gate) return [.. _data]; } }
+    public IReadOnlyList<InstructionBreakpoint> InstructionBreakpoints { get { lock (_gate) return [.. _instructions]; } }
+    public IEventSource<object?> NativeChanged => _native;
+    public int NativeSubscriberCount => _native.SubscriberCount;
+
+    public DataBreakpoint AddData(string dataId, string description, string? sessionId, bool canPersist, string accessType = "write")
+    {
+        var d = new DataBreakpoint(Guid.NewGuid().ToString("N"), dataId, description, accessType) { SessionId = sessionId, CanPersist = canPersist };
+        lock (_gate) _data.Add(d);
+        _native.Fire(null);
+        return d;
+    }
+
+    public InstructionBreakpoint? ToggleInstruction(string instructionReference, string? label, string? sessionId)
+    {
+        InstructionBreakpoint? added = null;
+        lock (_gate)
+        {
+            if (_instructions.RemoveAll(i => i.InstructionReference == instructionReference && i.SessionId == sessionId) == 0)
+                _instructions.Add(added = new InstructionBreakpoint(Guid.NewGuid().ToString("N"), instructionReference, Label: label) { SessionId = sessionId });
+        }
+        _native.Fire(null);
+        return added;
+    }
+
+    public void SetNativeEnabled(string id, bool enabled)
+    {
+        lock (_gate)
+        {
+            _data = [.. _data.Select(d => d.Id == id ? d with { Enabled = enabled } : d)];
+            _instructions = [.. _instructions.Select(i => i.Id == id ? i with { Enabled = enabled } : i)];
+        }
+        _native.Fire(null);
+    }
+
+    public void RemoveNative(string id)
+    {
+        lock (_gate) { _data.RemoveAll(d => d.Id == id); _instructions.RemoveAll(i => i.Id == id); }
+        _native.Fire(null);
+    }
+
+    public void RemoveSessionBreakpoints(string sessionId)
+    {
+        lock (_gate) { _data.RemoveAll(d => d.SessionId == sessionId && !d.CanPersist); _instructions.RemoveAll(i => i.SessionId == sessionId); }
+        _native.Fire(null);
+    }
 
     private void Raise(IReadOnlyCollection<Uri> uris) => _changed.Fire(new BreakpointsChangedEventArgs(uris, uris.Count == 0));
 }

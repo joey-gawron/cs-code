@@ -272,9 +272,15 @@ public sealed class EditorTab : ShellDocument
         SavedViewState = null;
     }
 
+    /// <summary>The document's file name (a virtual document's without its "[decompiled]" suffix): <c>resourceFilename</c>, <c>resourceExtname</c>.</summary>
+    public static string FileNameFor(Uri uri) =>
+        Core.Text.VirtualDocumentUri.TryParse(uri, out _, out _, out _, out var name) ? name : TitleFor(uri);
+
     public static string TitleFor(Uri uri)
     {
         if (uri.Scheme == "untitled") return uri.AbsolutePath.Length > 0 ? uri.AbsolutePath : uri.ToString();
+        // library and generated code: "String.cs [decompiled]"
+        if (Core.Text.VirtualDocumentUri.IsVirtual(uri)) return Core.Text.VirtualDocumentUri.Title(uri);
         // A remote (ssh:) URI's path is escaped ("my%20file.cs"): titles show the file's real name.
         var path = uri.IsFile ? uri.LocalPath : Uri.UnescapeDataString(uri.AbsolutePath);
         return Path.GetFileName(path.TrimEnd('/', '\\')) is { Length: > 0 } n ? n : path;

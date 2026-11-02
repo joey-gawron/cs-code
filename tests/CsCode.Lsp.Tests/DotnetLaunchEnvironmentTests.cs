@@ -558,6 +558,7 @@ public class DotnetLaunchEnvironmentTests
             c.Set(LspSettingKeys.ShutdownTimeoutMs, 5_000);
             c.Set(LspSettingKeys.SearchDirs, searchDirs);
             c.Set(LspSettingKeys.LanguageServers, new Dictionary<string, object> { ["csharp"] = new { env } });
+            c.Set(LspSettingKeys.ServerChoice, new Dictionary<string, string> { [BuiltinLanguageServers.CSharpGroup] = "csharp" }); // Roslyn is C#'s default
         }, realServers: true);
         lsp.Open("Program.cs", "class P { static void Main() { } }\n", "csharp");
         try

@@ -15,6 +15,9 @@
     <ProjectReference Include="../../src/CsCode.Ui/CsCode.Ui.csproj" />
     <ProjectReference Include="../../src/CsCode.Testing/CsCode.Testing.csproj" />
     <ProjectReference Include="../../src/CsCode.Panels.Testing/CsCode.Panels.Testing.csproj" />
+    <!-- the real debugger (netcoredbg through CsCode.Dap) for the testing-platform debug test -->
+    <ProjectReference Include="../../src/CsCode.Dap/CsCode.Dap.csproj" />
+    <ProjectReference Include="../../src/CsCode.Build.CMake/CsCode.Build.CMake.csproj" />
     <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
   </ItemGroup>
 

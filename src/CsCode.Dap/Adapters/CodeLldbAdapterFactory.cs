@@ -304,6 +304,7 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
         }
         else
         {
+            if (await CFolder.ReadAsync(_p, folder, ct) is { } c) configs.AddRange(CFolder.Configurations(c, PrimaryType, "CodeLLDB", sourceLanguages: true));
             configs.Add(new JsonObject
             {
                 ["name"] = "LLDB: Launch program",
@@ -326,11 +327,11 @@ public sealed class CodeLldbAdapterFactory : IDebugAdapterFactory, IDebugConfigu
     }
 
     /// <summary>The <c>cargo: build</c> task the binary template's preLaunchTask refers to (only for a cargo package), as the GDB adapter writes it;
-    /// for a <c>build.zig</c> project the Zig templates' tasks.</summary>
+    /// for a <c>build.zig</c> project the Zig templates' tasks; for a folder of C files the C single-file template's build task.</summary>
     public async ValueTask<IReadOnlyList<(string RelativePath, string Content)>> ProvideInitialFilesAsync(Uri? folder, CancellationToken ct)
     {
         if (await CargoPackage.ReadAsync(_p, folder, ct) is not null) return [("tasks.json", CargoPackage.BuildTasksJson)];
         if (await ZigProject.ReadAsync(_p, folder, ct) is not null) return [("tasks.json", ZigDebugging.TasksJson(ZigDebugging.TaskCommand(_zig, name => Environment(name))))];
-        return [];
+        return await CFolder.ReadAsync(_p, folder, ct) is not null ? [("tasks.json", CFolder.BuildTasksJson)] : []; // the C single-file template's build task
     }
 }

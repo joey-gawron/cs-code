@@ -95,12 +95,12 @@ public class LeakTests
         using var sc = new Scenario(stopped: false);
         sc.Session.Terminate();
         sc.Rig.Debug.RemoveSession(sc.Session);
-        Assert.Equal(9, sc.Tools.Count);
+        Assert.Equal(12, sc.Tools.Count);
         // The app-lifetime runtime (exception context key) legitimately keeps ITS subscriptions; what must not change is everything else.
         var baseline = SubscriberSnapshot(sc);
 
         var weak = await RunSessionsAsync(sc, sessions: 20, cyclesPerSession: 5, showInWindow: false);
-        Assert.True(weak.Count >= 20 + 20 * 5 * 9 * 2 - 100); // sessions + 900 views + their view-models were tracked
+        Assert.True(weak.Count >= 20 + 20 * 5 * 12 * 2 - 100); // sessions + 1,200 views + their view-models were tracked
 
         await AssertNothingRetained(weak);
         await Task.Delay(200);

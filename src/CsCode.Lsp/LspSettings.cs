@@ -32,6 +32,8 @@ public static class LspSettingKeys
     public const string RestartBackoffMs = "cscode.lsp.restartBackoffMs";
     public const string ShutdownTimeoutMs = "cscode.lsp.shutdownTimeoutMs";
     public const string SearchDirs = "cscode.lsp.searchDirs";
+    /// <summary>Which of several built-in servers of one language runs: <c>{"csharp": "roslyn"}</c> (<see cref="Manager.BuiltinLanguageServers.Groups"/>).</summary>
+    public const string ServerChoice = "cscode.lsp.serverChoice";
 }
 
 /// <summary>Immutable snapshot of every tunable; re-read when configuration changes. Defaults are the documented ones.</summary>
@@ -146,6 +148,9 @@ internal sealed record LspSettings
         yield return new(LspSettingKeys.SearchDirs, J(ToolResolver.DefaultSearchDirs),
             "Directories searched for language-server executables after PATH and before the managed tools directory (~ = home directory). An editor started from a desktop launcher often lacks these in its PATH. User settings only.")
         { Scope = ConfigurationScope.Machine };
+        yield return new(LspSettingKeys.ServerChoice, J(new Dictionary<string, string>()),
+            "Which built-in language server runs where several serve one language, by language group: { \"csharp\": \"csharp\" | \"roslyn\" }. "
+            + "Unset: the group's default (Roslyn for C#). An explicit cscode.languageServers.<id>.enabled still wins.");
         yield return new(LspSettingKeys.LanguageServers, null,
             "Language server definitions keyed by id: { command, args, env, workingDirectory, selector, initializationOptions, settings, enabled, autoStart, rootMarkers, restartAboveBytes }. "
             + "command, args, env and workingDirectory are taken from user settings only.")

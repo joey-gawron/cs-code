@@ -13,12 +13,18 @@ namespace CsCode.Testing.Providers.Rust;
 /// cargo's <c>CARGO_MANIFEST_DIR</c>/<c>CARGO_PKG_NAME</c>), with <c>--exact</c> and the requested names, and reads libtest's plain output
 /// (<see cref="LibtestOutputParser"/>); a single requested test also runs if it is <c>#[ignore]</c>d. <b>Debugging</b> launches the test
 /// executable under the Rust debugger (<c>cscode.debug.rustDebugger</c>: CodeLLDB <c>lldb</c> on macOS, <c>gdb</c> on Linux) with
-/// <c>--exact --nocapture --test-threads=1</c>, results read from the session's output.
+/// <c>--exact --nocapture --test-threads=1</c>, results read from the session's output; a run over several targets debugs them one after another.
+/// <b>Doc-tests</b> (lang-2) of a package with a library are listed with <c>cargo test --doc -- --list</c> under a "Doc-tests" target (id
+/// <c>doc/src/lib.rs - add (line 3)</c>, located at the example's line) and run with <c>cargo test --doc</c> — all of the package's: with
+/// rustdoc's merged doctests (edition 2024, Rust 1.96) a name filter does not select one. They cannot be debugged (rustdoc compiles each when it
+/// runs); a debug run says so and debugs the other selected tests.
 /// </summary>
-public sealed class RustTestProvider(TestProviderContext context) : ITestProvider
+public sealed partial class RustTestProvider(TestProviderContext context) : ITestProvider
 {
     public const string ProviderId = "rust";
     public const string RustDebuggerSetting = "cscode.debug.rustDebugger";
+    /// <summary>The target key of doc-tests (<c>doc/&lt;rustdoc name&gt;</c>).</summary>
+    public const string DocTestsKey = "doc";
 
     internal const int MaxFilteredTests = 500;
 
@@ -130,8 +136,37 @@ public sealed class RustTestProvider(TestProviderContext context) : ITestProvide
                 if (tests.Count >= TestLimits.MaxTestsPerProject) return tests;
             }
         }
+        if (targets.FirstOrDefault(t => t.Key == "lib") is { } lib)
+        {
+            log.Status($"Listing the doc-tests of {project.Name}…");
+            var lines = new List<string>();
+            var exit = await context.Processes.RunAsync(new ProcessSpec(ProcessRunner.FindCargo(), ["test", "--manifest-path", project.FilePath, "--doc", "--", "--list", "--format", "terse"],
+                project.Directory, Environment(project)), lines.Add, log.Output, ct).ConfigureAwait(false);
+            if (exit is null) ct.ThrowIfCancellationRequested();
+            foreach (var line in lines)
+            {
+                if (DocTest(project, lib, line) is not { } doc) continue;
+                tests.Add(doc);
+                if (tests.Count >= TestLimits.MaxTestsPerProject) break;
+            }
+        }
         return tests;
     }
+
+    /// <summary>A doc-test from a <c>--list --format terse</c> line (<c>src/lib.rs - add (line 3): test</c>), at its example's line; null for other lines.</summary>
+    internal static DiscoveredTest? DocTest(TestProject project, Target lib, string line)
+    {
+        var m = DocTestLine().Match(line);
+        if (!m.Success) return null;
+        var name = m.Groups["name"].Value;
+        var file = Path.Combine(project.Directory, m.Groups["file"].Value.Replace('/', Path.DirectorySeparatorChar));
+        var at = int.Parse(m.Groups["line"].Value, System.Globalization.CultureInfo.InvariantCulture) - 1;
+        var groups = new List<TestGroup> { new($"Doc-tests ({lib.Name})", TestNodeKind.Target, new TestLocation(lib.SourcePath, 0)) };
+        return new DiscoveredTest(DocTestsKey + "/" + name, $"{m.Groups["item"].Value} (line {at + 1})", groups, new TestLocation(file, Math.Max(0, at)));
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(?<name>(?<file>.+?) - (?<item>.+) \(line (?<line>\d+)\)): test$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex DocTestLine();
 
     internal static DiscoveredTest Discovered(Target target, string libtestPath, TestLocation? location)
     {
@@ -202,6 +237,18 @@ public sealed class RustTestProvider(TestProviderContext context) : ITestProvide
             if (exit is null) return TestRunOutcome.Cancelled;
             worst = Math.Max(worst, exit.Value);
         }
+        if ((wanted is null || wanted.ContainsKey(DocTestsKey)) && targets.Any(t => t.Key == "lib"))
+        {
+            // every doc-test of the package: rustdoc's merged doctests ignore a name filter (and --exact filters them all out)
+            sink.Status($"Running the doc-tests of {project.Name}…");
+            var args = new List<string> { "test", "--manifest-path", project.FilePath, "--doc" };
+            sink.Output($"> cargo {string.Join(' ', args)}");
+            var parser = new LibtestOutputParser(project, sink, n => DocTestsKey + "/" + n);
+            var exit = await context.Processes.RunAsync(new ProcessSpec(ProcessRunner.FindCargo(), args, project.Directory, Environment(project)), parser.OnLine, parser.OnLine, ct).ConfigureAwait(false);
+            parser.Complete();
+            if (exit is null) return TestRunOutcome.Cancelled;
+            worst = Math.Max(worst, exit.Value);
+        }
         return new TestRunOutcome(worst);
     }
 
@@ -211,11 +258,27 @@ public sealed class RustTestProvider(TestProviderContext context) : ITestProvide
         var targets = await BuildAsync(project, sink, ct).ConfigureAwait(false);
         if (targets is null) return ct.IsCancellationRequested ? TestRunOutcome.Cancelled : new TestRunOutcome(101, $"cargo could not build the tests of {project.Name}: see the Tests output.");
         var wanted = ByTarget(request.TestIds);
-        // one session: the first target that has requested tests (a debug run of several targets debugs the first; the explorer says so)
-        var target = wanted is null ? targets.FirstOrDefault() : targets.FirstOrDefault(t => wanted.ContainsKey(t.Key));
-        if (target is null) return new TestRunOutcome(-1, "cargo built no test executable for the selected tests.");
-        List<string>? names = null;
-        wanted?.TryGetValue(target.Key, out names);
+        if (wanted is not null && wanted.ContainsKey(DocTestsKey))
+            sink.Output("> Doc-tests cannot be debugged (rustdoc compiles each one when it runs): run them instead.");
+        // one session per target with requested tests, one after another (lang-2: before, a run over several targets debugged only the first)
+        var chosen = wanted is null ? targets : [.. targets.Where(t => wanted.ContainsKey(t.Key))];
+        if (chosen.Count == 0)
+            return new TestRunOutcome(-1, wanted?.ContainsKey(DocTestsKey) == true ? "Doc-tests cannot be debugged: run them instead." : "cargo built no test executable for the selected tests.");
+        var worst = 0;
+        foreach (var target in chosen)
+        {
+            if (ct.IsCancellationRequested) return TestRunOutcome.Cancelled;
+            List<string>? names = null;
+            wanted?.TryGetValue(target.Key, out names);
+            var outcome = await DebugTargetAsync(project, target, names, sink, debugger, ct).ConfigureAwait(false);
+            if (outcome.Error is not null || outcome.ExitCode is null) return outcome; // the debugger did not start (the next would not either), or cancelled
+            worst = Math.Max(worst, outcome.ExitCode.Value);
+        }
+        return new TestRunOutcome(worst);
+    }
+
+    private async Task<TestRunOutcome> DebugTargetAsync(TestProject project, Target target, List<string>? names, ITestRunSink sink, ITestDebugLauncher debugger, CancellationToken ct)
+    {
         var args = RunArguments(names);
         args.Add("--nocapture");
         args.Add("--test-threads=1");

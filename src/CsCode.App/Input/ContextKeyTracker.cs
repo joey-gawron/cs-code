@@ -99,8 +99,8 @@ public sealed class ContextKeyTracker : IDisposable
         _keys.Set("editorReadonly", doc?.IsReadOnly ?? false);
         _keys.Set("editorLangId", doc?.LanguageId ?? "");
         _keys.Set("resourceScheme", doc?.Uri.Scheme ?? "");
-        _keys.Set("resourceFilename", editor is null ? "" : EditorTab.TitleFor(doc!.Uri));
-        _keys.Set("resourceExtname", editor is null ? "" : Path.GetExtension(EditorTab.TitleFor(doc!.Uri)));
+        _keys.Set("resourceFilename", editor is null ? "" : EditorTab.FileNameFor(doc!.Uri));
+        _keys.Set("resourceExtname", editor is null ? "" : Path.GetExtension(EditorTab.FileNameFor(doc!.Uri)));
         _keys.Set("editorHasSelection", false);
         _keys.Set("editorHasMultipleSelections", false);
         if (editor is null) return;

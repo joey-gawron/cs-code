@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doctest binary="./doctest_tests">
+  <Options order_by="file" rand_seed="0" first="0" last="4294967295" abort_after="0" subcase_filter_levels="2147483647" case_sensitive="false" no_throw="false" no_skip="false"/>
+  <TestSuite>
+    <TestCase name="adds" filename="/work/cppsample/doctest_tests.cpp" line="5">
+      <OverallResultsAsserts successes="1" failures="0" test_case_success="true" duration="5e-06"/>
+    </TestCase>
+    <TestCase name="fails" filename="/work/cppsample/doctest_tests.cpp" line="6">
+      <Expression success="false" type="CHECK" filename="/work/cppsample/doctest_tests.cpp" line="6">
+        <Original>
+          Add(2, 2) == 5
+        </Original>
+        <Expanded>
+          4 == 5
+        </Expanded>
+      </Expression>
+      <OverallResultsAsserts successes="0" failures="1" test_case_success="false" duration="6.8e-05"/>
+    </TestCase>
+  </TestSuite>
+  <TestSuite name="suite">
+    <TestCase name="in suite" filename="/work/cppsample/doctest_tests.cpp" line="8">
+      <OverallResultsAsserts successes="1" failures="0" test_case_success="true" duration="2e-06"/>
+    </TestCase>
+  </TestSuite>
+  <TestSuite>
+    <TestCase name="skipped" filename="/work/cppsample/doctest_tests.cpp" line="10" skipped="true"/>
+    <TestCase name="with subcases" filename="/work/cppsample/doctest_tests.cpp" line="11">
+      <SubCase name="a" filename="/work/cppsample/doctest_tests.cpp" line="12">
+      </SubCase>
+      <SubCase name="b" filename="/work/cppsample/doctest_tests.cpp" line="13">
+        <Expression success="false" type="CHECK" filename="/work/cppsample/doctest_tests.cpp" line="13">
+          <Original>
+            1 == 2
+          </Original>
+          <Expanded>
+            1 == 2
+          </Expanded>
+        </Expression>
+      </SubCase>
+      <OverallResultsAsserts successes="1" failures="1" test_case_success="false" duration="6.4e-05"/>
+    </TestCase>
+    <TestCase name="throws" filename="/work/cppsample/doctest_tests.cpp" line="15">
+      <Exception crash="false">
+        boom
+      </Exception>
+      <OverallResultsAsserts successes="0" failures="0" test_case_success="false" duration="0.000262"/>
+    </TestCase>
+  </TestSuite>
+  <OverallResultsAsserts successes="3" failures="2"/>
+  <OverallResultsTestCases successes="2" failures="3" skipped="1"/>
+</doctest>

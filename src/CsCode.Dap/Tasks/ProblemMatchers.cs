@@ -29,7 +29,7 @@ internal sealed record ProblemMatcher(string Owner, string? Source, DiagnosticSe
 internal sealed record ProblemBackground(Regex? Begins, Regex? Ends, bool ActiveBegins);
 
 /// <summary>
-/// tasks.json problem matchers: the built-in ones CsCode's languages need (<c>$msCompile</c>, <c>$tsc</c>/<c>$tsc-watch</c>, <c>$gcc</c>,
+/// tasks.json problem matchers: the built-in ones CsCode's languages need (<c>$msCompile</c>, <c>$dotnet-watch</c>, <c>$tsc</c>/<c>$tsc-watch</c>, <c>$gcc</c>,
 /// <c>$rustc</c>, <c>$zig</c>, <c>$eslint-compact</c>, <c>$eslint-stylish</c>; regular expressions written for CsCode after the compilers' output) and the
 /// object form (<c>owner</c>, <c>source</c>, <c>severity</c>, <c>fileLocation</c>, <c>pattern</c> as an object, an array or a "$name",
 /// <c>base</c> to extend a built-in). Unknown names are ignored. Patterns run with a time-out, so a pathological expression cannot hang
@@ -48,6 +48,22 @@ internal static class ProblemMatchers
     private static readonly ProblemPattern MsCompile = P(
         @"^\s*(?:\d+>)?(\S.*?)(?:\((\d+|\d+,\d+|\d+,\d+,\d+,\d+)\))?\s*:\s+(?:(\S+)\s+)?((?:fatal +)?error|warning|info)\s+(\w+\d+)?\s*:\s*(.*?)(?:\s+\[[^\]]*\])?$",
         file: 1, location: 2, severity: 4, code: 5, message: 6);
+
+    // $msCompile, plus the form dotnet watch prints for a hot reload that does not compile: "dotnet watch ❌ /src/Program.cs(1,44): error CS1002: ; expected"
+    private static readonly ProblemPattern DotnetWatch = P(
+        @"^(?:dotnet watch \S+ )?\s*(?:\d+>)?(\S.*?)(?:\((\d+|\d+,\d+|\d+,\d+,\d+,\d+)\))?\s*:\s+(?:(\S+)\s+)?((?:fatal +)?error|warning|info)\s+(\w+\d+)?\s*:\s*(.*?)(?:\s+\[[^\]]*\])?$",
+        file: 1, location: 2, severity: 4, code: 5, message: 6);
+
+    // dotnet watch (SDK 10, observed 2026-11-01): busy from the start (the first build); a cycle begins when files change or a restart is needed
+    // ("dotnet watch ⌚ Files updated: ./Program.cs", "dotnet watch 🔥 Restart is needed to apply the changes.") and ends when the program runs
+    // again or cannot ("⌚ Waiting for changes", "🔥 C# and Razor changes applied in 260ms.", "🔥 Unable to apply changes due to compilation
+    // errors.", "⌚ Fix the error to continue or press Ctrl+C to exit."). Matched on the words after the emoji, so a terminal without it still
+    // matches.
+    private static readonly ProblemBackground DotnetWatchBackground = new(
+        new Regex(@"^dotnet watch \S+ (?:Files? (?:updated|changed)|Restart is needed|Restarting|Building)", RegexOptions.CultureInvariant, RegexTimeout),
+        new Regex(@"^dotnet watch \S+ (?:Waiting for changes|Waiting for a file to change|Fix the error to continue|.*changes applied|Unable to apply changes|Started)",
+            RegexOptions.CultureInvariant, RegexTimeout),
+        ActiveBegins: true);
 
     // file(line,col): error TS1234: message, or file:line:col - error TS1234: message (tsc --pretty)
     private static readonly ProblemPattern Tsc = P(@"^([^\s].*)[\(:](\d+)[,:](\d+)(?:\):\s+|\s+-\s+)(error|warning|info)\s+TS(\d+)\s*:\s*(.*)$",
@@ -92,6 +108,7 @@ internal static class ProblemMatchers
     private static ProblemMatcher? Builtin(string name) => name.TrimStart('$') switch
     {
         "msCompile" => new("msCompile", "msCompile", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${workspaceFolder}", [MsCompile]),
+        "dotnet-watch" => new("msCompile", "dotnet watch", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${workspaceFolder}", [DotnetWatch], DotnetWatchBackground),
         "tsc" => new("typescript", "ts", DiagnosticSeverity.Error, FileLocationKind.Relative, "${cwd}", [Tsc]),
         "tsc-watch" => new("typescript", "ts", DiagnosticSeverity.Error, FileLocationKind.Relative, "${cwd}", [Tsc], TscWatch),
         "gcc" => new("cpp", "gcc", DiagnosticSeverity.Error, FileLocationKind.AutoDetect, "${workspaceFolder}", [Gcc]),
@@ -105,6 +122,7 @@ internal static class ProblemMatchers
     private static IReadOnlyList<ProblemPattern>? BuiltinPatterns(string name) => name.TrimStart('$') switch
     {
         "msCompile" => [MsCompile],
+        "dotnet-watch" => [DotnetWatch],
         "tsc" or "tsc-watch" => [Tsc],
         "gcc" => [Gcc],
         "rustc" => Rustc,

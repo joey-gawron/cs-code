@@ -43,10 +43,22 @@ public sealed partial class DebugSession
 
     public ValueTask<IReadOnlyList<DebugThread>> GetThreadsAsync(CancellationToken ct = default) => OnLane(() => GetThreadsCoreAsync(ct), ct);
 
+    /// <summary>How often <c>threads</c> is asked again when its answer lacks the thread that just stopped, and how long apart.</summary>
+    internal const int StaleThreadRetries = 5;
+    internal static readonly TimeSpan StaleThreadDelay = TimeSpan.FromMilliseconds(100);
+
     private async Task<IReadOnlyList<DebugThread>> GetThreadsCoreAsync(CancellationToken ct)
     {
         EnsureLive();
         var resp = DapJson.Deserialize<DapThreadsResponse>(await RequestAsync("threads", null, ct)) ?? new DapThreadsResponse();
+        // Apple's lldb-dap answers the first `threads` after a stop from the list it had while running (a C program's new pthreads are
+        // missing, the stopped one among them) and has the real list a moment later: ask again while the thread that stopped is not in it.
+        for (var retry = 0; retry < StaleThreadRetries && State == DebugSessionState.Stopped && _stoppedThread is { } stopped && resp.Threads.All(t => t.Id != stopped); retry++)
+        {
+            await Task.Delay(StaleThreadDelay, ct);
+            EnsureLive();
+            resp = DapJson.Deserialize<DapThreadsResponse>(await RequestAsync("threads", null, ct)) ?? new DapThreadsResponse();
+        }
         return [.. resp.Threads.Select(DapMapping.ToCore)];
     }
 
@@ -98,7 +110,7 @@ public sealed partial class DebugSession
         var gen = _handles.FrameGeneration;
         var resp = DapJson.Deserialize<DapStackTraceResponse>(await RequestAsync("stackTrace", args, ct)) ?? new DapStackTraceResponse();
         IEnumerable<DapStackFrame> frames = delayed ? resp.StackFrames : resp.StackFrames.Skip(startFrame);
-        var mapped = frames.Take(take).Select(f => _quirks.MapFrame(DapMapping.ToCore(f, _positions))).ToArray();
+        var mapped = frames.Take(take).Select(f => _quirks.MapFrame(WithEditorPath(DapMapping.ToCore(f, _positions)))).ToArray();
         if (gen == _handles.FrameGeneration) foreach (var f in mapped) _handles.RegisterFrame(f);
         return mapped;
     }
@@ -359,6 +371,8 @@ public sealed partial class DebugSession
         var tid = await ResolveThreadAsync(threadId, ct);
         if (command is "stepBack" or "reverseContinue" && !_caps.SupportsStepBack) throw new NotSupportedException("The debug adapter does not support reverse debugging.");
 
+        // breakpoint changes made while stopped reach the adapter before the program runs on (they wait for a debounce otherwise)
+        if (_sync is { } sync) await sync.FlushPendingAsync();
         var wasStopped = State == DebugSessionState.Stopped;
         var stopsBefore = _stopCounter;
         // Optimistic: the adapter's `stopped` may follow its response immediately, so we must already be Running when it lands
@@ -423,6 +437,16 @@ public sealed partial class DebugSession
         BreakMode = info.BreakMode,
         Details = new DapExceptionDetails { Message = info.Message, TypeName = info.TypeName, StackTrace = info.StackTrace },
     }, DapJson.Options);
+
+    /// <summary>
+    /// A frame whose source path the adapter reports physically (links resolved) under a directory whose breakpoints were sent that way, with the
+    /// path as the editor opened it (<see cref="DebugAdapterQuirks.BindsPhysicalSourcePaths"/>): the Call Stack, the stop location and the
+    /// editor's current-line marker then name the open document, not a second copy of it under /private/var.
+    /// </summary>
+    private DebugStackFrame WithEditorPath(DebugStackFrame frame) =>
+        _sourcePaths is { } aliases && frame.Source is { Path: { Length: > 0 } path } source && Path.IsPathFullyQualified(path) && aliases.FromAdapter(path) is { } logical
+            ? frame with { Source = source with { Path = logical } }
+            : frame;
 
     /// <summary>Maps an adapter source to a document URI: a real path → <c>file:</c>, adapter-only content → <c>debug:/session/ref/name</c>.</summary>
     public Uri? ResolveSourceUri(DebugSource? source)

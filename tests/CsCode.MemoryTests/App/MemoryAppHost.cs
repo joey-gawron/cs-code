@@ -18,7 +18,7 @@ namespace CsCode.MemoryTests.App;
 public sealed class MemoryAppHost : IAsyncDisposable
 {
     public static readonly string[] BuiltinServers =
-        ["typescript", "csharp", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua"];
+        ["typescript", "csharp", "roslyn", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua"];
 
     private readonly string? _previousHome;
     private readonly string? _previousData;
@@ -36,7 +36,8 @@ public sealed class MemoryAppHost : IAsyncDisposable
         foreach (var dir in new[] { "home", "config", "data" }) Directory.CreateDirectory(Sandbox.Combine(dir));
         var settings = new Dictionary<string, object?>
         {
-            ["cscode.languageServers"] = BuiltinServers.Where(s => !options.EnabledServers.Contains(s)).ToDictionary(s => s, _ => (object)new { enabled = false }),
+            // named servers are switched on explicitly: csharp-ls is not C#'s default (Roslyn is) and would not start otherwise
+            ["cscode.languageServers"] = BuiltinServers.ToDictionary(s => s, s => (object)new { enabled = options.EnabledServers.Contains(s) }),
             ["workbench.startupEditor"] = "none",
             [CsCode.Terminal.Sessions.TerminalSettingKeys.ProfilesKey] = new Dictionary<string, object>
             {

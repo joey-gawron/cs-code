@@ -36,7 +36,7 @@ public static class DotnetLaunchEnvironment
     /// </summary>
     public static IReadOnlySet<string> KnownDotnetServers { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "csharp-ls", "marksman", "fsautocomplete", "omnisharp", "Microsoft.CodeAnalysis.LanguageServer", "dotnet",
+        "csharp-ls", "marksman", "fsautocomplete", "omnisharp", "Microsoft.CodeAnalysis.LanguageServer", "roslyn-language-server", "dotnet",
     };
 
     /// <summary>Adjusts a server's environment (a copy of CsCode's, with the definition's <c>env</c> applied) as described on the class.</summary>

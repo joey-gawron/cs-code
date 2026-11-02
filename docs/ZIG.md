@@ -2,7 +2,7 @@
 
 Stage 6 of the language stages (`docs/briefs/lang-6-zig.md`, overview `docs/briefs/languages.md`). User request (2026-11-01): *"Lets break
 this up into stages/languages: … 6. Zig"*. The stage ran in parallel with stages 1 and 2 (the user's choice), so what needs their shared pieces
-is deferred: see [Deferred](#deferred-until-stages-1-and-2-merge).
+waited; main now has them, and the items still open are listed in [Open items](#open-items-their-pieces-are-on-main-since-stages-1-and-2-merged).
 
 Toolchain used for everything below: **Zig 0.17.0** and **zls 0.17.0** (`tools/fetch-zig.sh`: pinned tarballs from ziglang.org and the zls
 GitHub release, SHA-256 checked, into `.scratch/tools/zig/0.17.0/`; the user chose these over Homebrew), CodeLLDB v1.12.3 (LLDB 22.1.8, Python
@@ -14,8 +14,8 @@ GitHub release, SHA-256 checked, into `.scratch/tools/zig/0.17.0/`; the user cho
 | zls | already the built-in server; **new**: build-on-save on by default, one clear zig/zls version-mismatch message; real-server tests run on this Mac |
 | Debugging | **new**: `zig` in CodeLLDB's and lldb-dap's languages, `build.zig` templates and tasks, Zig values by value; matrix below |
 | Test Explorer | **new**: `ZigTestProvider` |
-| Tasks | **new**: the `$zig` problem matcher; the `zig build` task provider is deferred (needs stage 2's `ITaskProvider`) |
-| Snippets | deferred (needs stage 1's bundled snippets) |
+| Tasks | **new**: the `$zig` problem matcher; the `zig build` task provider is open (on stage 2's `ITaskProvider`) |
+| Snippets | open (stage 1's bundled snippets) |
 
 ## Using it
 
@@ -80,8 +80,8 @@ The sample (`RealZigDebuggingTests.Source`) is built with `zig build-exe` (Debug
 | Watch / hover expressions | `some` → `42`, `numbers` → `len=3` | same |
 | Parameters passed by reference | `pair = <variable not available>` (a `Pair(i32)` struct parameter Zig passes by reference without a location) | same |
 | End to end on `zig init` (`RealZigProjectTests`) | Create launch.json → Run Task `zig: build` with a type error → Problems: `7:25 Error expected type 'u32', found '*const [4:0]u8'`; the `zig build` template builds through its preLaunchTask and stops in `zig-out/bin/hello`: `window = len=3`, `maybe = 7` | — |
-| **Memory window** | deferred: stage 2's window (the adapters advertise what it needs) | deferred |
-| **Disassembly window** | deferred: stage 2's window | deferred |
+| **Memory window** | open: stage 2's window (the adapters advertise what it needs) | open |
+| **Disassembly window** | open: stage 2's window | open |
 
 ## Test Explorer (`src/CsCode.Testing/Providers/Zig/`)
 
@@ -126,15 +126,19 @@ The sample (`RealZigDebuggingTests.Source`) is built with `zig build-exe` (Debug
 * `$zig` problem matcher (`src/CsCode.Dap/Tasks/ProblemMatchers.cs`): `file:line:col: error|note: message` (owner and source `zig`); paths
   relative to the task's folder (`${cwd}`) or absolute; notes are Information; test stack-trace lines (`file:line:col: 0x… in f (test)`) do not
   match.
-* The Zig **task provider** (`zig build`, `zig build run`, `zig build test` and the steps of `zig build -l`) is deferred until stage 2's
-  `ITaskProvider` is merged. Until then Run Task shows what tasks.json has: Create launch.json in a build.zig folder writes `zig: build`.
+* The Zig **task provider** (`zig build`, `zig build run`, `zig build test` and the steps of `zig build -l`) on stage 2's `ITaskProvider` is
+  still open (see "Open items"). Until then Run Task shows what tasks.json has: Create launch.json in a build.zig folder writes `zig: build`.
 
-## zls (`src/CsCode.Lsp/Manager/ZlsSupport.cs`)
+## zls (`src/CsCode.Lsp/Extensions/Zls/ZlsExtension.cs`)
+
+zls's handling is a server extension on stage 2's per-server pattern (docs/LSP.md §7a), listed in `ServerExtensions.CreateBuiltins()`: it
+registers the settings below in `Register`, runs the version check in `OnInitialized`, and takes zls's own version complaint through the
+pattern's `HandleShowMessage` hook (added for it: an extension may keep a server's `window/showMessage` to itself).
 
 * **Build-on-save**: zls 0.17 asks for its whole `zls` section through `workspace/configuration`; CsCode answers from its settings, where it
   registers `zls.enable_build_on_save` = **true** (zls's own default turns it on only when build.zig declares a `check` step). zls then runs
   `zig build --watch` in a project with a build.zig — the `check` step when there is one (no code generation: fast), else the install step — and
-  publishes the compiler's errors. Turn it off with `"zls.enable_build_on_save": false`. Evidence: `ZlsSupportTests.Real_zls_reports_the_compilers_
+  publishes the compiler's errors. Turn it off with `"zls.enable_build_on_save": false`. Evidence: `ZlsExtensionTests.Real_zls_reports_the_compilers_
   errors_on_save…` — a `const wrong: u32 = "text";` that zls's own analysis does not flag is reported on its line (`expected type 'u32'…`).
 * **Version check**: zls must be built for the Zig it runs. When zls is running, CsCode asks the zig zls uses (`zls.zig_exe_path`, else the
   first zig on the PATH zls gets: its own directory first, then PATH, then the search directories) for `zig version` (bounded) and compares
@@ -142,19 +146,20 @@ The sample (`RealZigDebuggingTests.Source`) is built with `zig build-exe` (Debug
   built for Zig 0.17, but the zig it runs is 0.16.0 (/…/zig). Install the zls release for Zig 0.16 (github.com/zigtools/zls/releases;
   tools/fetch-zig.sh pins a matching pair), or set 'zls.zig_exe_path' to a Zig 0.17.* zls's own complaint (*ZLS '…' does not support Zig '…'*)
   is held back while the check runs and shown only when the check could not tell, so one problem is one message. Evidence: real zls 0.17.0
-  with a zig that reports 0.16.0 → exactly one version message (`ZlsSupportTests.Real_zls_with_a_zig_of_another_version…`).
+  with a zig that reports 0.16.0 → exactly one version message (`ZlsExtensionTests.Real_zls_with_a_zig_of_another_version…`).
 * The real-server test (`RealZlsAndNilServerTests.Zls_…`: initialize, diagnostics, hover, formatting, shutdown) **passes on this Mac** with zig
   and zls on PATH.
 * Not checked (SHOULD items): what zls offers for `build.zig.zon` editing and its highlighting, and whether zls's inlay hints display.
 
-## Deferred until stages 1 and 2 merge
+## Open items (their pieces are on main since stages 1 and 2 merged)
 
-| Item | Waits for |
+| Item | Builds on |
 |---|---|
-| Zig task provider (`zig build`, `run`, `test`, `zig build -l` steps; bounded, IO lane, cached until build.zig changes) | stage 2's `ITaskProvider` |
-| Matrix rows: Memory window, Disassembly window (and data breakpoints) | stage 2's native debugging windows |
-| Zig snippets | stage 1's bundled-snippets mechanism |
-| zls's held-back message as a `LanguageServerExtension` (today: a small `InterceptShowMessage` hook on `ClientContext`) | stage 2's per-server LSP extension pattern |
+| Zig task provider (`zig build`, `run`, `test`, `zig build -l` steps; bounded, cached until build.zig changes) | stage 2's `ITaskProvider` (Core `Tasks/ITaskProvider.cs`) |
+| Matrix rows: Memory window, Disassembly window (and data breakpoints) | stage 2's native debugging windows (CodeLLDB and lldb-dap already advertise the capabilities) |
+| Zig snippets | stage 1's bundled snippets (`src/CsCode.Editor/Snippets/Builtin/zig.json`) |
+
+Done in the merge with main: zls's handling moved onto stage 2's `LanguageServerExtension` pattern (above).
 
 ## Limits
 
@@ -171,7 +176,7 @@ tools/fetch-zig.sh                      # zig 0.17.0 + zls 0.17.0 into .scratch/
 tools/fetch-codelldb.sh                 # CodeLLDB for the debugging rows
 dotnet test tests/CsCode.Dap.Tests --filter "FullyQualifiedName~Zig" --blame-hang-timeout 5m
 dotnet test tests/CsCode.Panels.Testing.Tests --filter "FullyQualifiedName~ZigProviderTests"
-dotnet test tests/CsCode.Lsp.Tests --filter "FullyQualifiedName~ZlsSupportTests"
+dotnet test tests/CsCode.Lsp.Tests --filter "FullyQualifiedName~ZlsExtensionTests"
 PATH=$PWD/.scratch/tools/zig/0.17.0/zls:$PWD/.scratch/tools/zig/0.17.0/zig:$PATH dotnet test tests/CsCode.Lsp.Tests --filter "FullyQualifiedName~RealZlsAndNilServerTests.Zls"
 ```
 

@@ -3,20 +3,20 @@ using CsCode.Core.Languages;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
-using CsCode.Lsp.Manager;
+using CsCode.Lsp.Extensions.Zls;
+using CsCode.Lsp.Protocol;
 using CsCode.Lsp.Tests.Harness;
 using CsCode.TestDoubles;
-using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace CsCode.Lsp.Tests;
 
 /// <summary>
-/// zls support (docs/ZIG.md): the zig/zls version rule and message, zls's own complaint held back for CsCode's single message, the settings it
+/// zls's server extension (docs/ZIG.md): the zig/zls version rule and message, zls's own complaint held back for CsCode's single message, the settings it
 /// registers; and against the REAL zls (skips without it, tools/fetch-zig.sh): a mismatch reported once, and build-on-save diagnostics from
 /// <c>zig build</c> in a <c>zig init</c> project.
 /// </summary>
-public class ZlsSupportTests
+public class ZlsExtensionTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -29,18 +29,18 @@ public class ZlsSupportTests
     [InlineData("1.0.0", "0.17.0", false)]
     [InlineData("weird", "0.17.0", true)] // not judged
     public void Zls_serves_the_zig_of_its_own_major_and_minor_version(string zls, string zig, bool compatible) =>
-        Assert.Equal(compatible, ZlsSupport.Compatible(zls, zig));
+        Assert.Equal(compatible, ZlsExtension.Compatible(zls, zig));
 
     [Theory]
     [InlineData("ZLS '0.17.0' should be used with a Zig '0.17' release but found Zig '0.16.0'.", true)]
     [InlineData("ZLS '0.16.0' does not support Zig '0.17.0'. A ZLS '0.17' release should be used instead.", true)]
     [InlineData("zig executable could not be found", false)]
-    public void Zls_own_version_complaint_is_recognised(string text, bool expected) => Assert.Equal(expected, ZlsSupport.IsVersionMessage(text));
+    public void Zls_own_version_complaint_is_recognised(string text, bool expected) => Assert.Equal(expected, ZlsExtension.IsVersionMessage(text));
 
     [Fact]
     public void The_mismatch_message_names_both_versions_and_executables_and_the_way_out()
     {
-        var m = ZlsSupport.Mismatch("0.16.0", "/opt/zls/zls", "0.17.0", "/opt/zig/zig");
+        var m = ZlsExtension.Mismatch("0.16.0", "/opt/zls/zls", "0.17.0", "/opt/zig/zig");
         Assert.Equal("zls and Zig do not match: zls 0.16.0 (/opt/zls/zls) is built for Zig 0.16, but the zig it runs is 0.17.0 (/opt/zig/zig). " +
             "Install the zls release for Zig 0.17 (github.com/zigtools/zls/releases; tools/fetch-zig.sh pins a matching pair), or set 'zls.zig_exe_path' to a Zig 0.16.", m);
     }
@@ -48,38 +48,19 @@ public class ZlsSupportTests
     [Fact]
     public void Build_on_save_is_registered_on_by_default_and_the_zig_path_has_no_default()
     {
-        var props = ZlsSupport.Properties().ToDictionary(p => p.Key);
-        Assert.True(props[ZlsSupport.BuildOnSaveSetting].Default!.Value.GetBoolean());
-        Assert.Null(props[ZlsSupport.ZigExePathSetting].Default);
+        var props = ZlsExtension.Properties().ToDictionary(p => p.Key);
+        Assert.True(props[ZlsExtension.BuildOnSaveSetting].Default!.Value.GetBoolean());
+        Assert.Null(props[ZlsExtension.ZigExePathSetting].Default);
     }
 
-    private sealed class FakeServers(string zlsCommand) : ILanguageServerManager
-    {
-        public Emitter<IReadOnlyList<LanguageServerInfo>> Changed { get; } = new();
-        public IReadOnlyList<LanguageServerDefinition> Definitions { get; } =
-            [new("zls", "Zig (zls)", DocumentSelector.ForLanguages(["zig"]), zlsCommand, [])];
-        public IReadOnlyList<LanguageServerInfo> Servers => [];
-        public IDisposable AddDefinition(LanguageServerDefinition definition) => throw new NotSupportedException();
-        public ValueTask StartAsync(string id, CancellationToken ct = default) => ValueTask.CompletedTask;
-        public ValueTask StopAsync(string id, CancellationToken ct = default) => ValueTask.CompletedTask;
-        public ValueTask RestartAsync(string id, CancellationToken ct = default) => ValueTask.CompletedTask;
-        public ValueTask StopAllAsync(CancellationToken ct = default) => ValueTask.CompletedTask;
-        public IEventSource<IReadOnlyList<LanguageServerInfo>> ServersChanged => Changed;
-    }
-
-    private static (ZlsSupport Support, FakeServers Servers, RecordingWindowService Window, List<string> Runs, TempDirectory Dir) Make(string zigVersion)
+    /// <summary>The built-in zls definition served by a fake server (reports version 0.17.0) under the extension; its zig answers <paramref name="zigVersion"/>.</summary>
+    private static (LspTestEnv Env, List<string> Runs, TempDirectory Dir) Make(string zigVersion)
     {
         var dir = new TempDirectory("zlscheck-");
-        var zls = dir.WriteFile("bin/zls", "");
         var zig = dir.WriteFile("other/zig", "");
-        if (!OperatingSystem.IsWindows()) foreach (var f in new[] { zls, zig }) File.SetUnixFileMode(f, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        var config = new TestConfigurationService();
-        config.Set(ZlsSupport.ZigExePathSetting, zig);
-        var window = new RecordingWindowService();
-        var servers = new FakeServers(zls);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(zig, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         var runs = new List<string>();
-        var support = new ZlsSupport(servers, new LspServices(new DocumentManager(), new LanguageFeatureRegistry(), new DiagnosticService()) { Configuration = config, Window = window },
-            () => new LspSettings(), NullLogger.Instance)
+        var extension = new ZlsExtension
         {
             Run = (exe, args, _) =>
             {
@@ -87,65 +68,62 @@ public class ZlsSupportTests
                 return Task.FromResult<string?>(args == "version" ? zigVersion : "0.17.0");
             },
         };
-        return (support, servers, window, runs, dir);
+        var env = new LspTestEnv(c => c.Set(ZlsExtension.ZigExePathSetting, zig), builtins: true, extensions: [extension]);
+        env.Connections.OnConnect = (server, _) => server.Version = "0.17.0";
+        return (env, runs, dir);
     }
 
-    private static LanguageServerInfo Running(string? version) => new("zls", "Zig (zls)", LanguageServerState.Running, null, 1, "zls", version, null);
+    private static async Task<FakeLspServer> StartAsync(LspTestEnv env, int index = 0)
+    {
+        if (index == 0) env.Open("main.zig", "", "zig");
+        var server = await env.Connections.WaitForServerAsync(index);
+        await server.WaitForAsync(LspMethods.Initialized);
+        await env.WaitForStateAsync(ZlsExtension.ServerId, LanguageServerState.Running);
+        return server;
+    }
+
+    private static Task ComplainAsync(FakeLspServer server, string text) => server.NotifyAsync("window/showMessage", new { type = 2, message = text });
+
+    private const string Complaint = "ZLS '0.17.0' should be used with a Zig '0.17' release but found Zig '0.16.0'.";
 
     [Fact]
     public async Task A_running_zls_with_another_zig_gets_one_warning_and_zls_own_complaint_is_held_back()
     {
-        var (support, servers, window, runs, dir) = Make("0.16.0");
+        var (env, runs, dir) = Make("0.16.0");
         using var _ = dir;
-        using var __ = support;
-        servers.Changed.Fire([Running("0.17.0")]);
-        Assert.True(support.Intercept("zls", "ZLS '0.17.0' should be used with a Zig '0.17' release but found Zig '0.16.0'."));
-        Assert.False(support.Intercept("rust-analyzer", "ZLS '0.17.0' should be used with a Zig '0.17' release but found Zig '0.16.0'."));
-        Assert.False(support.Intercept("zls", "something else"));
-        await TestHelpers.EventuallyAsync(() => window.Messages.Count >= 1, "the mismatch warning", TimeSpan.FromSeconds(10));
+        await using var __ = env;
+        var server = await StartAsync(env);
+        await ComplainAsync(server, Complaint);
+        await ComplainAsync(server, "something else"); // not zls's version complaint: shown as usual
+        await TestHelpers.EventuallyAsync(() => env.Window.Messages.Count >= 2, () => "the mismatch warning and the other message: " + string.Join(" | ", env.Window.Messages), TimeSpan.FromSeconds(10));
         // the same pair again (a restart, zls complaining again): nothing more
-        await Task.Delay(300, Ct);
-        servers.Changed.Fire([Running("0.17.0")]);
-        Assert.True(support.Intercept("zls", "ZLS '0.17.0' should be used with a Zig '0.17' release but found Zig '0.16.0'."));
+        await env.Manager.RestartAsync(ZlsExtension.ServerId, Ct);
+        var restarted = await StartAsync(env, 1);
+        await ComplainAsync(restarted, Complaint);
         await Task.Delay(500, Ct);
-        var (severity, message) = Assert.Single(window.Messages);
+        var (severity, message) = Assert.Single(env.Window.Messages, m => !m.Message.EndsWith("something else", StringComparison.Ordinal));
         Assert.Equal(MessageSeverity.Warning, severity);
         Assert.StartsWith("zls and Zig do not match: zls 0.17.0", message, StringComparison.Ordinal);
         Assert.Contains("the zig it runs is 0.16.0", message, StringComparison.Ordinal);
-        Assert.DoesNotContain(runs, r => r.StartsWith("zls", StringComparison.Ordinal)); // the version zls reported in initialize is used
+        Assert.Equal("Zig (zls): something else", Assert.Single(env.Window.Messages, m => m.Message.EndsWith("something else", StringComparison.Ordinal)).Message);
+        lock (runs) Assert.DoesNotContain(runs, r => r.StartsWith("zls", StringComparison.Ordinal)); // the version zls reported in initialize is used
     }
 
     [Fact]
     public async Task When_the_versions_match_nothing_is_shown_unless_zls_complained_then_its_own_message_is()
     {
-        var (support, servers, window, runs, dir) = Make("0.17.0");
+        var (env, runs, dir) = Make("0.17.0");
         using var _ = dir;
-        using var __ = support;
-        servers.Changed.Fire([Running("0.17.0")]);
+        await using var __ = env;
+        var server = await StartAsync(env);
         await TestHelpers.EventuallyAsync(() => { lock (runs) return runs.Count > 0; }, "the check ran", TimeSpan.FromSeconds(10));
         await Task.Delay(300, Ct);
-        Assert.Empty(window.Messages);
+        Assert.Empty(env.Window.Messages);
 
         // a complaint the check cannot confirm (zls looked at another zig, say) is shown as zls said it
-        Assert.True(support.Intercept("zls", "ZLS '0.17.0' does not support Zig '0.16.0'. A ZLS '0.16' release should be used instead."));
-        await TestHelpers.EventuallyAsync(() => window.Messages.Count > 0, "zls's own message", TimeSpan.FromSeconds(10));
-        Assert.Equal("Zig (zls): ZLS '0.17.0' does not support Zig '0.16.0'. A ZLS '0.16' release should be used instead.", Assert.Single(window.Messages).Message);
-    }
-
-    [Fact]
-    public async Task Disposed_zls_support_leaves_nothing_behind_in_the_manager()
-    {
-        var servers = new FakeServers("zls");
-        await LeakAssert.NotRetainedAsync(async () =>
-        {
-            var support = new ZlsSupport(servers, new LspServices(new DocumentManager(), new LanguageFeatureRegistry(), new DiagnosticService()) { Configuration = new TestConfigurationService() },
-                () => new LspSettings(), NullLogger.Instance) { Run = (_, _, _) => Task.FromResult<string?>("0.17.0") };
-            servers.Changed.Fire([Running("0.17.0")]);
-            await Task.Delay(50, Ct);
-            support.Dispose();
-            servers.Changed.Fire([Running("0.17.0")]); // no handler left to start a check
-            return [support];
-        });
+        await ComplainAsync(server, "ZLS '0.17.0' does not support Zig '0.16.0'. A ZLS '0.16' release should be used instead.");
+        await TestHelpers.EventuallyAsync(() => env.Window.Messages.Count > 0, "zls's own message", TimeSpan.FromSeconds(10));
+        Assert.Equal("Zig (zls): ZLS '0.17.0' does not support Zig '0.16.0'. A ZLS '0.16' release should be used instead.", Assert.Single(env.Window.Messages).Message);
     }
 
     // ------------------------------------------------------------------ real zls
@@ -168,9 +146,9 @@ public class ZlsSupportTests
             c.Set(LspSettingKeys.ShutdownTimeoutMs, 5_000);
             c.Set(LspSettingKeys.SearchDirs, new[] { Path.GetDirectoryName(ZigTools.FindZls()!)! });
             c.Set(LspSettingKeys.LanguageServers, new Dictionary<string, object> { ["zls"] = new { env } });
-            c.Set(ZlsSupport.ZigExePathSetting, zig);
+            c.Set(ZlsExtension.ZigExePathSetting, zig);
             // the app's configuration service answers with the registered default (on); the test double answers only what is set
-            c.Set(ZlsSupport.BuildOnSaveSetting, buildOnSave);
+            c.Set(ZlsExtension.BuildOnSaveSetting, buildOnSave);
             // zls asks for its whole section ("zls"): the app's configuration service answers with the object its dotted keys make, the test
             // double only with what was set under that key
             c.Set("zls", new Dictionary<string, object> { ["zig_exe_path"] = zig, ["enable_build_on_save"] = buildOnSave });
@@ -202,7 +180,7 @@ public class ZlsSupportTests
             () => "the mismatch message\n" + string.Join("\n", env.Window.Messages) + "\n" + env.Dump(), TimeSpan.FromSeconds(60));
         await Task.Delay(2000, Ct); // zls's own complaint, if any, has arrived by now
         // only version messages count: the stand-in zig also makes zls say "zig executable could not be found" (it reads zig env differently)
-        var zigMessages = env.Window.Messages.Where(m => m.Message.Contains("do not match", StringComparison.Ordinal) || ZlsSupport.IsVersionMessage(m.Message)).ToList();
+        var zigMessages = env.Window.Messages.Where(m => m.Message.Contains("do not match", StringComparison.Ordinal) || ZlsExtension.IsVersionMessage(m.Message)).ToList();
         TestContext.Current.SendDiagnosticMessage("[zls] serverInfo " + info.ServerVersion + "; messages: " + string.Join(" | ", env.Window.Messages));
         var single = Assert.Single(zigMessages);
         Assert.Equal(MessageSeverity.Warning, single.Severity);

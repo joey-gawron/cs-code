@@ -7,6 +7,7 @@ using CsCode.Core.Text;
 using CsCode.Lsp.Features;
 using CsCode.Lsp.Runtime;
 using P = CsCode.Lsp.Protocol;
+using Microsoft.Extensions.Logging;
 
 namespace CsCode.Lsp.Client;
 
@@ -16,12 +17,21 @@ internal sealed partial class LanguageClient
     private const int DiagnosticsPullFeature = 1000;
     private const int MaxDiagnosticsPerFile = 2000;
 
-    private readonly ConcurrentDictionary<Uri, byte> _publishedUris = new();
+    // (document, diagnostics owner) pairs this session published: the session's owner, and one per pull identifier
+    private readonly ConcurrentDictionary<(Uri Uri, string Owner), byte> _publishedUris = new();
     private readonly LatestPerKeyMailbox<string, JsonElement> _diagMailbox = new(512);
     private int _diagScheduled;
     private bool _pullDiagnostics;
-    private string? _pullIdentifier;
-    private DocumentSelector? _pullSelector;
+    /// <summary>
+    /// The pull diagnostic providers the server registered. Roslyn registers several (syntax, compiler semantics, analyzers, …), each answering
+    /// for its own identifier only: every one is pulled, and each publishes under an owner of its own so one's report never replaces another's.
+    /// </summary>
+    private volatile PullProvider[] _pullProviders = [];
+
+    private sealed record PullProvider(string? Identifier, DocumentSelector? Selector, string Owner)
+    {
+        public string Key => Identifier ?? "";
+    }
     private readonly HashSet<string> _requestedSections = [];
     private int _messageBudget = 5;
     private long _messageBudgetResetTicks;
@@ -48,10 +58,15 @@ internal sealed partial class LanguageClient
         var text = p.Str("message");
         if (string.IsNullOrEmpty(text)) return;
         _log.Add($"[{type switch { 1 => "error", 2 => "warn", _ => "info" }}] {text}");
-        if (_ctx.InterceptShowMessage?.Invoke(Definition.Id, text) == true) return;
+        var severity = type switch { 1 => MessageSeverity.Error, 2 => MessageSeverity.Warning, _ => MessageSeverity.Info };
+        if (Extension is { } extension)
+        {
+            var handled = false;
+            RunExtension("HandleShowMessage", () => handled = extension.Extension.HandleShowMessage(extension, severity, text), extension.Extension);
+            if (handled) return;
+        }
         var window = _ctx.Services.Window;
         if (window is null || !TakeMessageBudget()) return;
-        var severity = type switch { 1 => MessageSeverity.Error, 2 => MessageSeverity.Warning, _ => MessageSeverity.Info };
         _ = window.ShowMessageAsync(severity, $"{Definition.DisplayName}: {text}").AsTask().ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
     }
 
@@ -112,19 +127,31 @@ internal sealed partial class LanguageClient
         SetDiagnostics(uri, pp.Diagnostics, pp.Version);
     }
 
-    private void SetDiagnostics(Uri uri, P.Diagnostic[]? diagnostics, int? version)
+    private void SetDiagnostics(Uri uri, P.Diagnostic[]? diagnostics, int? version, string? owner = null)
     {
+        owner ??= _owner;
         var count = Math.Min(diagnostics?.Length ?? 0, MaxDiagnosticsPerFile);
         var list = new List<Diagnostic>(count);
         for (var i = 0; i < count; i++) list.Add(Mapper.ToCore(diagnostics![i], uri));
-        if (list.Count > 0) _publishedUris[uri] = 0; else _publishedUris.TryRemove(uri, out _);
-        _ctx.Services.Diagnostics.Set(uri, _owner, list, version);
+        if (list.Count > 0) _publishedUris[(uri, owner)] = 0; else _publishedUris.TryRemove((uri, owner), out _);
+        _ctx.Services.Diagnostics.Set(uri, owner, list, version);
     }
 
     private void ClearAllDiagnostics()
     {
-        foreach (var uri in _publishedUris.Keys.ToArray()) _ctx.Services.Diagnostics.Clear(uri, _owner);
+        foreach (var (uri, owner) in _publishedUris.Keys.ToArray()) _ctx.Services.Diagnostics.Clear(uri, owner);
         _publishedUris.Clear();
+    }
+
+    /// <summary>Clears what this session published for one document (every owner).</summary>
+    private void ClearDiagnostics(Uri uri)
+    {
+        foreach (var key in _publishedUris.Keys.Where(k => k.Uri == uri).ToArray())
+        {
+            _publishedUris.TryRemove(key, out _);
+            _ctx.Services.Diagnostics.Clear(uri, key.Owner);
+        }
+        _ctx.Services.Diagnostics.Clear(uri, _owner);
     }
 
     // =================================================================================================================
@@ -133,12 +160,19 @@ internal sealed partial class LanguageClient
 
     internal void EnablePullDiagnostics(string? identifier, DocumentSelector? selector, bool workspace)
     {
-        _pullDiagnostics = true;
-        _pullIdentifier = identifier;
-        _pullSelector = selector;
+        var provider = new PullProvider(identifier, selector, identifier is null ? _owner : _owner + "#" + identifier);
+        lock (_diagGate)
+        {
+            // a provider registered again (same identifier) replaces the earlier registration
+            _pullProviders = [.. _pullProviders.Where(p => p.Key != provider.Key), provider];
+            _pullDiagnostics = true;
+        }
         if (workspace)
-            _ctx.Queue.Post(LanePriority.Idle, () => _ = _ctx.Queue.RunAsync<object>(LanePriority.Idle, new WorkKey(this, DiagnosticsPullFeature + 1), PullWorkspaceAsync));
+            _ctx.Queue.Post(LanePriority.Idle, () => _ = _ctx.Queue.RunAsync<object>(LanePriority.Idle, new WorkKey(this, DiagnosticsPullFeature + 1 + _pullProviders.Length),
+                ctx => PullWorkspaceAsync(ctx, provider)));
     }
+
+    private readonly object _diagGate = new();
 
     private void SchedulePullAll()
     {
@@ -148,7 +182,7 @@ internal sealed partial class LanguageClient
 
     internal void ScheduleDiagnosticsPull(SyncedDocument sd)
     {
-        if (!_pullDiagnostics || sd.Detached || (_pullSelector is not null && _pullSelector.Score(sd.Document) <= 0)) return;
+        if (!_pullDiagnostics || sd.Detached || !_pullProviders.Any(p => p.Selector is null || p.Selector.Score(sd.Document) > 0)) return;
         var queue = _ctx.Queue;
         if (queue.ShouldShed(LanePriority.Background)) return;
         // Keyed latest-wins: a newer change supersedes (cancels) the older pull while it is still in its debounce delay.
@@ -162,43 +196,50 @@ internal sealed partial class LanguageClient
 
     private async Task PullDocumentAsync(WorkContext ctx, SyncedDocument sd)
     {
+        foreach (var provider in _pullProviders)
+        {
+            if (provider.Selector is not null && provider.Selector.Score(sd.Document) <= 0) continue;
+            if (!await PullDocumentAsync(ctx, sd, provider).ConfigureAwait(false)) return;
+        }
+    }
+
+    /// <summary>One provider's report for one document; false when it is stale (the document changed: a newer pull follows).</summary>
+    private async Task<bool> PullDocumentAsync(WorkContext ctx, SyncedDocument sd, PullProvider provider)
+    {
         var version = sd.Document.Version;
         var p = new P.DocumentDiagnosticParams
         {
             TextDocument = new P.TextDocumentIdentifier { Uri = sd.UriString },
-            Identifier = _pullIdentifier,
-            PreviousResultId = sd.PullResultId,
+            Identifier = provider.Identifier,
+            PreviousResultId = sd.PullResultIds?.GetValueOrDefault(provider.Key),
         };
         var report = await RequestAsync(ctx, P.LspRequests.TextDocumentDiagnostic, p, ctx.Token, sd, contentModifiedRetries: 2).ConfigureAwait(false);
-        if (report.Index < 0 || sd.Document.Version != version) return; // no result, or stale
+        if (sd.Document.Version != version) return false;
+        if (report.Index < 0) return true; // no result
+        (sd.PullResultIds ??= new Dictionary<string, string?>(StringComparer.Ordinal))[provider.Key] = report.IsT0 ? report.AsT0.ResultId : report.AsT1.ResultId;
         if (report.IsT0)
         {
             var full = report.AsT0;
-            sd.PullResultId = full.ResultId;
-            SetDiagnostics(sd.Uri, full.Items, version);
-            if (full.RelatedDocuments is { } related) ApplyRelated(related);
+            SetDiagnostics(sd.Uri, full.Items, version, provider.Owner);
+            if (full.RelatedDocuments is { } related) ApplyRelated(related, provider.Owner);
         }
-        else
-        {
-            var unchanged = report.AsT1;
-            sd.PullResultId = unchanged.ResultId;
-            if (unchanged.RelatedDocuments is { } related) ApplyRelated(related);
-        }
+        else if (report.AsT1.RelatedDocuments is { } related) ApplyRelated(related, provider.Owner);
+        return true;
     }
 
-    private void ApplyRelated(Dictionary<string, P.OneOf<P.FullDocumentDiagnosticReport, P.UnchangedDocumentDiagnosticReport>> related)
+    private void ApplyRelated(Dictionary<string, P.OneOf<P.FullDocumentDiagnosticReport, P.UnchangedDocumentDiagnosticReport>> related, string owner)
     {
         var n = 0;
         foreach (var (uriString, report) in related)
         {
             if (++n > 500) break;
-            if (report.IsT0 && LspMapper.ToUri(uriString) is { } uri) SetDiagnostics(uri, report.AsT0.Items, null);
+            if (report.IsT0 && LspMapper.ToUri(uriString) is { } uri) SetDiagnostics(uri, report.AsT0.Items, null, owner);
         }
     }
 
-    private async ValueTask<object?> PullWorkspaceAsync(WorkContext ctx)
+    private async ValueTask<object?> PullWorkspaceAsync(WorkContext ctx, PullProvider provider)
     {
-        var p = new P.WorkspaceDiagnosticParams { Identifier = _pullIdentifier, PreviousResultIds = [] };
+        var p = new P.WorkspaceDiagnosticParams { Identifier = provider.Identifier, PreviousResultIds = [] };
         var report = await RequestAsync(ctx, P.LspRequests.WorkspaceDiagnostic, p, ctx.Token, null, 0, _ctx.Settings().BackgroundTimeout * 2).ConfigureAwait(false);
         if (report?.Items is not { } items) return null;
         var n = 0;
@@ -207,7 +248,7 @@ internal sealed partial class LanguageClient
             if (++n > 5000) break;
             if (!item.IsT0 || LspMapper.ToUri(item.AsT0.Uri) is not { } uri) continue;
             if (_ctx.Services.Documents.Get(uri) is not null) continue; // open documents are served by the per-document pull
-            SetDiagnostics(uri, item.AsT0.Items, item.AsT0.Version);
+            SetDiagnostics(uri, item.AsT0.Items, item.AsT0.Version, provider.Owner);
         }
         return null;
     }
@@ -337,13 +378,40 @@ internal sealed partial class LanguageClient
         {
             if (!string.IsNullOrEmpty(item.Section))
                 lock (_requestedSections) { if (_requestedSections.Count < 256) _requestedSections.Add(item.Section!); }
-            results.Add(ResolveSetting(item.Section));
+            results.Add(ResolveSetting(item.Section, LspMapper.ToUri(item.ScopeUri)));
         }
         // Array of values aligned with the request; JsonElement? null serialises as JSON null.
         return ValueTask.FromResult<object?>(results.ToArray());
     });
 
-    private JsonElement? ResolveSetting(string? section)
+    private JsonElement? ResolveSetting(string? section, Uri? scope = null) => Contribute(ResolveBaseSetting(section), section ?? "", scope);
+
+    /// <summary>
+    /// Merges what <see cref="LspServices.SettingsContributors"/> add for this server into <paramref name="value"/> (an object, or nothing yet): the
+    /// selected Python interpreter becomes <c>python.pythonPath</c>. A contributor that fails is left out.
+    /// </summary>
+    private JsonElement? Contribute(JsonElement? value, string section, Uri? scope)
+    {
+        if (_ctx.Services.SettingsContributors is not { Count: > 0 } contributors) return value;
+        if (value is { ValueKind: not (JsonValueKind.Object or JsonValueKind.Null or JsonValueKind.Undefined) }) return value;
+        System.Text.Json.Nodes.JsonObject? merged = null;
+        foreach (var contributor in contributors)
+        {
+            IReadOnlyDictionary<string, JsonElement>? members;
+            try { members = contributor.Contribute(Definition.Id, section, scope); }
+            catch (Exception ex)
+            {
+                _ctx.Logger.LogWarning(ex, "A settings contributor failed for {Server}/{Section}", Definition.Id, section);
+                continue;
+            }
+            if (members is not { Count: > 0 }) continue;
+            merged ??= value is { ValueKind: JsonValueKind.Object } o ? System.Text.Json.Nodes.JsonObject.Create(o.Clone()) ?? new() : new();
+            foreach (var (name, member) in members) merged[name] = System.Text.Json.Nodes.JsonNode.Parse(member.GetRawText());
+        }
+        return merged is null ? value : JsonSerializer.SerializeToElement(merged);
+    }
+
+    private JsonElement? ResolveBaseSetting(string? section)
     {
         if (Definition.Settings is { ValueKind: JsonValueKind.Object } s)
         {
@@ -426,7 +494,7 @@ internal sealed partial class LanguageClient
         // Core has no "invalidate" event, so a refresh re-registers the provider: ProvidersChanged makes consumers re-query.
         _ctx.Queue.Post(LanePriority.Background, () =>
         {
-            if (kind == RefreshKind.Diagnostics) { foreach (var sd in _docs.Values) sd.PullResultId = null; SchedulePullAll(); }
+            if (kind == RefreshKind.Diagnostics) { foreach (var sd in _docs.Values) sd.PullResultIds = null; SchedulePullAll(); }
             else _features.Refresh(kind);
         });
         return Task.FromResult<object?>(null);
@@ -451,6 +519,11 @@ internal sealed partial class LanguageClient
                 lock (_requestedSections) sections = [.. _requestedSections];
                 if (e.Affects(LspSettingKeys.LanguageServers + "." + Definition.Id) || sections.Any(e.Affects))
                     _ctx.Queue.Post(LanePriority.Background, PushConfiguration);
+            }));
+        foreach (var contributor in _ctx.Services.SettingsContributors)
+            _store.Add(contributor.Changed.Subscribe(id =>
+            {
+                if (id is null || id == Definition.Id) _ctx.Queue.Post(LanePriority.Background, PushConfiguration);
             }));
         if (_ctx.Services.Workspace is { } ws && FollowsWorkspaceFolders)
             _store.Add(ws.FoldersChanged.Subscribe(e => _ctx.Queue.Post(LanePriority.Interactive, () => OnFoldersChanged(e), exempt: true)));

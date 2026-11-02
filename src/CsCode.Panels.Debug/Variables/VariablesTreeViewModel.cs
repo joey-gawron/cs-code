@@ -891,6 +891,53 @@ public sealed class VariablesTreeViewModel : ObservableObject, IDisposable
 
     public void ViewAs(VariableNodeViewModel node, NumberFormat? format) => node.FormatOverride = format;
 
+    // ------------------------------------------------------------------ native debugging (lang-2)
+
+    /// <summary>
+    /// "Break When Value Changes" applies: a variable or watch row of the current stop, in a session whose adapter supports data breakpoints
+    /// (the adapter still decides per value: <see cref="BreakWhenValueChangesAsync"/> says when it cannot).
+    /// </summary>
+    public bool CanBreakWhenValueChanges(VariableNodeViewModel node) =>
+        node.Kind is VariableRowKind.Variable or VariableRowKind.Watch && node.IsDataRow && !node.IsError && node.Generation == Generation
+        && _session is { State: DebugSessionState.Stopped, Capabilities.SupportsDataBreakpoints: true } && _session is IDebugSessionNative && _s.NativeBreakpoints is not null;
+
+    /// <summary>
+    /// Adds a data breakpoint on the value (DAP <c>dataBreakpointInfo</c>, then <c>setDataBreakpoints</c> through the breakpoint manager): a child
+    /// of a container by its name, a watch expression in the focused frame. The adapter's reason is shown when it cannot watch the value.
+    /// </summary>
+    public async Task BreakWhenValueChangesAsync(VariableNodeViewModel node)
+    {
+        if (!CanBreakWhenValueChanges(node) || _session is not IDebugSessionNative native || _s.NativeBreakpoints is not { } breakpoints) return;
+        var session = _session;
+        var (reference, name, frame) = node.ParentReference > 0
+            ? ((int?)node.ParentReference, node.Name, (int?)null)
+            : (null, ExpressionOf(node), _s.FrameFocus?.FocusedFrameId);
+        DebugDataBreakpointInfo info;
+        try { info = await _s.Ui.OnUi(native.GetDataBreakpointInfoAsync(reference, name, frame)); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _s.Window?.SetStatusBarMessage($"Cannot set a data breakpoint on '{name}': {ex.Message}", TimeSpan.FromSeconds(6));
+            return;
+        }
+        if (info.DataId is not { Length: > 0 } dataId)
+        {
+            _s.Window?.SetStatusBarMessage($"No data breakpoint can be set on '{name}': {info.Description}", TimeSpan.FromSeconds(6));
+            return;
+        }
+        var access = info.AccessTypes.Count == 0 || info.AccessTypes.Contains("write") ? "write" : info.AccessTypes[0];
+        breakpoints.AddData(dataId, info.Description is { Length: > 0 } d ? d : name, session.Id, info.CanPersist, access);
+    }
+
+    /// <summary>"View Binary Data" applies: the value has a memory reference and the adapter reads memory.</summary>
+    public bool CanViewBinaryData(VariableNodeViewModel node) =>
+        node.IsDataRow && node.MemoryReference is { Length: > 0 } && _session is { Capabilities.SupportsReadMemory: true };
+
+    /// <summary>Opens the Memory window at the value's memory reference.</summary>
+    public void ViewBinaryData(VariableNodeViewModel node)
+    {
+        if (node.MemoryReference is { Length: > 0 } reference) _ = _s.NativeViews.ShowMemory(new Native.NativeTarget(reference, ExpressionOf(node)));
+    }
+
     // ------------------------------------------------------------------ lifetime
 
     public void Dispose()

@@ -28,6 +28,22 @@ public sealed record LspServices(IDocumentManager Documents, ILanguageFeatureReg
     public ILanguageService? Languages { get; init; }
     public ILoggerFactory? Loggers { get; init; }
     public ILspConnectionFactory? Connections { get; init; }
+    /// <summary>Where library and generated documents are served from (go to definition into metadata, source-generated files).</summary>
+    public IVirtualDocumentService? VirtualDocuments { get; init; }
+    /// <summary>Per-workspace choices a server integration remembers (the solution Roslyn loads).</summary>
+    public IStateStorage? State { get; init; }
+    /// <summary>Server extensions' status-bar items (rust-analyzer's server status).</summary>
+    public IStatusBarService? StatusBar { get; init; }
+    /// <summary>Where server extensions put read-only results (Expand Macro), opened as virtual documents; null: those commands say they cannot show them.</summary>
+    public Extensions.ReadOnlyDocuments? ReadOnlyDocuments { get; init; }
+    /// <summary>The debugger (rust-analyzer's Debug lens), resolved lazily: it is composed after the language servers.</summary>
+    public Func<Core.Debugging.IDebugService?>? Debug { get; init; }
+    /// <summary>Task terminals (rust-analyzer's Run lens runs cargo in one), resolved lazily: the terminal comes with the shell's tool windows.</summary>
+    public Func<Core.Tasks.ITaskTerminalHost?>? TaskTerminals { get; init; }
+    /// <summary>Values other modules add to the servers' settings (the selected Python interpreter); see <see cref="ILanguageServerSettingsContributor"/>.</summary>
+    public IReadOnlyList<ILanguageServerSettingsContributor> SettingsContributors { get; init; } = [];
+    /// <summary>The selected Python interpreters: a built-in Python tool server (Ruff, Pyright) runs the environment's own copy when it has one.</summary>
+    public CsCode.Core.Python.IPythonEnvironmentService? PythonEnvironments { get; init; }
 
     public static LspServices FromProvider(IServiceProvider sp) => new(
         sp.GetRequiredService<IDocumentManager>(),
@@ -47,5 +63,13 @@ public sealed record LspServices(IDocumentManager Documents, ILanguageFeatureReg
         Languages = sp.GetService<ILanguageService>(),
         Loggers = sp.GetService<ILoggerFactory>(),
         Connections = sp.GetService<ILspConnectionFactory>(),
+        VirtualDocuments = sp.GetService<IVirtualDocumentService>(),
+        State = sp.GetService<IStateStorage>(),
+        StatusBar = sp.GetService<IStatusBarService>(),
+        ReadOnlyDocuments = sp.GetService<Extensions.ReadOnlyDocuments>(),
+        Debug = () => sp.GetService<Core.Debugging.IDebugService>(),
+        TaskTerminals = () => sp.GetService<Core.Tasks.ITaskTerminalHost>(),
+        SettingsContributors = sp.GetServices<ILanguageServerSettingsContributor>().ToArray(),
+        PythonEnvironments = sp.GetService<CsCode.Core.Python.IPythonEnvironmentService>(),
     };
 }

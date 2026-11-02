@@ -7,6 +7,13 @@ typeset -g __cscode_installed=1
 typeset -g __cscode_nonce="${CSCODE_NONCE-}"
 builtin unset CSCODE_NONCE CSCODE_INJECTION
 
+# Directories CsCode put first on PATH (the selected Python environment's bin): a login shell's path_helper and the user's files may have moved
+# them behind the system's, so they go first again (as VS Code does for its environment collections).
+if [[ -n "${CSCODE_PATH_PREPEND-}" ]]; then
+    builtin export PATH="$CSCODE_PATH_PREPEND:$PATH"
+    builtin unset CSCODE_PATH_PREPEND
+fi
+
 typeset -g __cscode_status=0      # the last command's exit status, taken before any other precmd hook runs
 typeset -g __cscode_executing=     # a command line ran since the last prompt
 typeset -g __cscode_ps1=           # PS1 as wrapped last

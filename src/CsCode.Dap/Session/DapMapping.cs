@@ -54,7 +54,10 @@ internal static class DapMapping
         f.PresentationHint,
         f.ModuleId is { ValueKind: not JsonValueKind.Null and not JsonValueKind.Undefined } m
             ? (m.ValueKind == JsonValueKind.String ? m.GetString() : m.GetRawText())
-            : null);
+            : null)
+    {
+        InstructionPointerReference = f.InstructionPointerReference,
+    };
 
     public static DebugScope ToCore(DapScope s) =>
         new(s.Name, s.VariablesReference, s.Expensive, s.NamedVariables, s.IndexedVariables, s.PresentationHint);

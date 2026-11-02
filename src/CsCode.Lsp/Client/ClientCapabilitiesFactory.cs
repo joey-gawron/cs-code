@@ -109,6 +109,7 @@ internal static class ClientCapabilitiesFactory
                 },
                 CodeLens = new CodeLensClientCapabilities { DynamicRegistration = true },
                 ColorProvider = new DocumentColorClientCapabilities { DynamicRegistration = true },
+                DocumentLink = new DocumentLinkClientCapabilities { DynamicRegistration = true, TooltipSupport = true },
                 Formatting = new DocumentFormattingClientCapabilities { DynamicRegistration = true },
                 RangeFormatting = new DocumentRangeFormattingClientCapabilities { DynamicRegistration = true },
                 OnTypeFormatting = new DocumentOnTypeFormattingClientCapabilities { DynamicRegistration = true },
@@ -144,7 +145,13 @@ internal static class ClientCapabilitiesFactory
                     OverlappingTokenSupport = false,
                     MultilineTokenSupport = false,
                 },
-                InlayHint = new InlayHintClientCapabilities { DynamicRegistration = true },
+                // lang-2: tooltips and label parts' tooltips, locations and commands may come later, by inlayHint/resolve (not text edits: CsCode
+                // does not insert hints)
+                InlayHint = new InlayHintClientCapabilities
+                {
+                    DynamicRegistration = true,
+                    ResolveSupport = new InlayHintClientCapabilitiesResolveSupport { Properties = ["tooltip", "label.tooltip", "label.location", "label.command"] },
+                },
                 LinkedEditingRange = new LinkedEditingRangeClientCapabilities { DynamicRegistration = true },
                 CallHierarchy = new CallHierarchyClientCapabilities { DynamicRegistration = true },
                 TypeHierarchy = new TypeHierarchyClientCapabilities { DynamicRegistration = true },

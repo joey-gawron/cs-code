@@ -154,14 +154,15 @@ Providers are registered **per feature interface**, only while the server advert
 | formatting / rangeFormatting / onTypeFormatting | implemented | |
 | foldingRange, selectionRange | implemented | |
 | semanticTokens full + **delta** + **range** | implemented | `ISemanticTokensProvider` (+ additive `ISemanticTokensRangeProvider`); previous result cached (bounded, `IMemoryTrimmable`); capped at `maxSemanticTokens`; coloured over the grammar by the editor (docs/EDITOR.md §7e; range requests for the viewport of documents over 5000 lines) |
-| inlayHint | implemented / partial | `inlayHint/resolve` is not exposed (Core has no resolve hook) |
+| inlayHint | implemented | label parts (tooltip, location, command) mapped; `inlayHint/resolve` through Core's `IInlayHintsProvider.ResolveInlayHintAsync` (lang-2): the client offers `resolveSupport` for `tooltip`, `label.tooltip`, `label.location`, `label.command` (not `textEdits`: hints are not inserted), and a server with `resolveProvider` (rust-analyzer) sends them on resolve, which echoes the server's own hint (kept weakly beside the Core one, `data` included) |
 | codeLens (+resolve) | implemented | drawn above their lines by the editor, resolved near the viewport, commands through `workspace/executeCommand` or the editor's mapping of VS Code's reference commands (docs/EDITOR.md §7e) |
 | documentColor | implemented / partial | `colorPresentation` not implemented |
 | linkedEditingRange, callHierarchy, typeHierarchy | implemented | additive Core interfaces; UI: linked editing in the editor (docs/EDITOR.md §7d), the Hierarchy window (docs/NAVIGATION.md) |
 | `workspace/executeCommand` bridge | implemented | `executeCommandProvider.commands` registered into `ICommandService` (optional dependency) |
 | diagnostics: `publishDiagnostics` (version-checked), pull (`textDocument/diagnostic`, `workspace/diagnostic`) | implemented | cleared on close (push-only servers) and on stop/crash |
 | `willRenameFiles` / `didRenameFiles` / `didCreateFiles` / `didDeleteFiles` | implemented | `IFileOperationParticipant`, filters honoured |
-| documentLink, moniker, inlineValue, `willCreateFiles`/`willDeleteFiles`, notebook documents, proposed features (inline completion…) | not implemented | out of scope |
+| documentLink (+resolve) | implemented | additive Core `IDocumentLinkProvider` (stage 3, C); each link keeps the server's link in `Data` for `documentLink/resolve`; at most 5000 per document; the editor underlines a link while Ctrl/⌘ is held over it and opens it on Ctrl/⌘+Click (docs/C-CPP.md §3) |
+| moniker, inlineValue, `willCreateFiles`/`willDeleteFiles`, notebook documents, proposed features (inline completion…) | not implemented | out of scope |
 | partial results / client-initiated `workDoneToken` | not implemented | the client never sends partial-result tokens |
 
 Server → client: `window/logMessage`, `$/logTrace`, `window/showMessage` (rate-limited, 5 per 10 s), `window/showMessageRequest`, `window/showDocument`,
@@ -202,6 +203,51 @@ plus `didChange`/`didSave`/`didOpen`/`didClose`/`willSave*`, watched files, exec
   host next to their files and bridged by CsCode.Remote (docs/REMOTE.md), so a remote file never starts a local server. With `cscode.languageHost =
   process` this manager is not constructed at all: the same code runs in a local `cscode-server` child.
 
+## 7a. Server extensions (one class per server: rust-analyzer now, clangd and Roslyn next)
+
+What a server's own VS Code extension adds on top of plain LSP — experimental capabilities, its commands, its custom notifications, members it
+puts in standard answers — CsCode builds in as one `LanguageServerExtension` subclass per server (`src/CsCode.Lsp/Extensions/`), listed in
+`ServerExtensions.CreateBuiltins()`. There is no extension *system*: these are compiled in, one class each.
+
+**Lifetimes.** One extension instance per manager. `Register(host)` runs once when the manager is built: commands and other app-lifetime items go
+in `host.Disposables` (released with the manager), so a command exists before any server runs and, when invoked, asks the server for the active
+editor (`host.ActiveSession(this)`, `host.SessionFor(this, uri)`, `host.Sessions(this)`). One `ServerExtensionSession` per running server (per
+workspace root), created by `LanguageClient` when the server starts:
+* `Attach(session)` runs before the connection listens — the only time `session.OnNotification(method, handler, latestWins)` can add a
+  handler (StreamJsonRpc refuses new methods afterwards). A handler gets a copy of the params (`default`, kind `Undefined`, when there are none)
+  on the Language lane, in the order the server sent them, one at a time (a per-session queue drained by one lane item: the lane has several
+  threads; at most 4,096 wait, the oldest dropped beyond); `latestWins` drops a queued one when a newer one of the same method arrives
+  (status-like notifications). `session.OnRequest(method, (params, ct) => Task<object?>)` answers a
+  server-to-client request the same way (on the lane; its result is the response, a throw an error response; null once the server stopped).
+* Client-side commands a server names in code actions, lenses or hovers (rust-analyzer's `runSingle`, Roslyn's `roslyn.client.*`) are
+  ordinary commands the extension registers in `Register(host)`; the editor runs them through `ICommandService` with the server's arguments.
+* `AddExperimentalCapabilities(experimental)` fills `initialize`'s `capabilities.experimental`.
+* `OnInitialized(session)` after the handshake (lane); `OnStopped(session)` when the server stops (crash, restart, shutdown), after which the
+  session's `Disposables` are released, its `State` slot cleared and its notification sinks detached; the client drops the session, so a stopped
+  server keeps nothing of the extension alive (`A_stopped_server_releases_its_session…`).
+* `session.RequestAsync(method, params)` / `RequestAsync(method, document, (id, mapper) => params)` (the document's pending edits reach the server
+  first; no feature registration gates it; never superseded by a later call) return the raw answer or null (not running, null answer, error,
+  timeout — logged); `Notify`, `Mapper` (Core ⇄ server positions), `Log` (the server's Output channel), `Post` (run on the lane).
+
+**Hooks into standard answers** (all on the Language lane, all optional): `WantsRawHover` + `AdjustHover(session, raw, hover, uri)` (members
+the protocol has no slot for, e.g. rust-analyzer's hover `actions`); `AdjustCodeLenses(session, lenses, uri)` (drop, keep or rewrite);
+`RewritesAnswerOf(method)` + `RewriteAnswer(session, method, raw)` (rewrite a typed request's raw answer before it is deserialised, e.g.
+snippet text edits); `HandleShowMessage(session, severity, text)` (true keeps a `window/showMessage` from the user, logged either way; on
+the connection's reader, so it decides and posts: zls's version complaint, `ZlsExtension`). A hook that throws is logged in the server's Output channel ("<name> <hook> failed: …") and the session goes on as if the
+extension had not been there for that call.
+
+**Threading.** Command handlers run on the caller's thread (the UI thread from a key or the palette) and only enqueue; everything that maps or
+parses runs on the Language lane. **Adding one** (stage 3's clangd, stage 5's Roslyn): a class deriving from `LanguageServerExtension` whose
+`AppliesTo` matches the built-in definition's id, plus one line in `CreateBuiltins()`; tests drive it through
+`new LspTestEnv(extensions: [new MyExtension()])` against the fake server (`ServerExtensionTests` is the worked example) and a real-server suite.
+
+**Read-only results** (`ReadOnlyDocuments`, registered by `AddCsCodeLsp`): `Put(producer, kind, fileName, text)` returns
+`cscode-virtual://results/<kind>/<producer>/<fileName>` to open with `INavigationService.OpenAsync`. It is the `results` provider of Core's
+virtual documents (the scheme library and generated code use, docs/CSHARP.md §2): the editor opens it like a file and refuses edits, the
+language comes from the file name, the tab says what it is (`vec!.rs [expanded]`), and session restore skips it; the 32 most recent are kept.
+Until the C# merge this was a scheme of its own (`lsp-readonly:`); see docs/CSHARP.md §2 for why the two were folded into Core's. Additive `LspServices` members for extensions: `StatusBar` (`IStatusBarService`), `ReadOnlyDocuments`, lazy `Debug` (`IDebugService`)
+and `TaskTerminals` (`ITaskTerminalHost`).
+
 ## 8. Settings
 
 | Key | Default | |
@@ -219,7 +265,27 @@ plus `didChange`/`didSave`/`didOpen`/`didClose`/`willSave*`, watched files, exec
 | `cscode.lsp.searchDirs` | per platform (Linux: `~/.nix-profile/bin`, `/nix/var/nix/profiles/default/bin`, `~/.cargo/bin`, `~/.local/bin`, `~/go/bin`, `~/.dotnet/tools`, `~/.local/share/coursier/bin`, `~/.ghcup/bin`) | directories searched for server executables after PATH (`~` and `%VAR%` expand); `[]` = PATH and the tools directory only |
 | `cscode.lsp.queueCapacity`, `breakerThreshold`, `breakerProbeMs`, `maxRestarts`, `restartWindowSeconds`, `restartBackoffMs` | 4096, 5, 5000, 5, 180, [500,1000,2000,4000,8000] | |
 
+## 8b. C# (stage 5, docs/CSHARP.md)
+
+* **Roslyn** (`roslyn`, `src/CsCode.Lsp/CSharp/`) is C#'s default server, csharp-ls the alternative: `solution/open` / `project/open` after
+  `initialized`, ready on `workspace/projectInitializationComplete`, its client-side commands (`roslyn.client.nestedCodeAction`,
+  `fixAllCodeAction`, `completionComplexEdit`), toasts. Built on the per-server extension pattern (§7a): `RoslynExtension`, its per-server
+  state `RoslynSession`, its commands `RoslynCommands`.
+* **`cscode.lsp.serverChoice`** (generic): which built-in of a group of alternatives runs (`{"csharp": "roslyn"}`; `BuiltinServer.Group`,
+  `BuiltinServer.EnabledByDefault` picks the group's default: unset, C# runs Roslyn). An explicit `cscode.languageServers.<id>.enabled` still wins.
+* **Pull diagnostics with several identifiers.** A server may register several `textDocument/diagnostic` providers, each with an identifier
+  (Roslyn does): every one is pulled, and each publishes under its own owner (`lsp:<id>#<identifier>`). The client kept only the last one before.
+* **Library and generated code** (`ExternalDocuments`): a location a server's source classifies (csharp-ls `csharp:`, Roslyn's MetadataAsSource
+  files and `roslyn-source-generated:`) becomes a Core virtual document (`cscode-virtual://lsp/…`), synced back to that server under its own URI.
+* Launch variables `${cscodeLogsDir}` and `${cscodePid}` in a definition's `args`.
+
 ## 9. Core changes made by this module (all additive)
+* `Core/Languages/LanguageModels.cs` + `LanguageProviders.cs` (lang-2): `InlayHint.LabelParts` / `InlayHint.CanResolve`, `InlayHintLabelPart`, and
+  `IInlayHintsProvider.ResolveInlayHintAsync` (default: the hint as it is).
+* Stage 5: `Core/Text/VirtualDocuments.cs` (`VirtualDocumentUri`, `VirtualDocumentKinds`, `IVirtualDocumentProvider`, `IVirtualDocumentService`,
+  `VirtualDocumentService`, registered by `AddCsCodeCore` as the `cscode-virtual` scheme's `IFileSystemProvider`).
+* `Core/Languages/LanguageModels.cs`: `MarkupContent.IsTrusted` (lang-2): `command:` links of trusted content run their command (CsCode's own
+  content only, never a server's text: rust-analyzer's hover actions).
 * `Core/Languages/LanguageServers.cs`: `LanguageServerState.Unresponsive` appended to the enum. **A `switch` expression over the enum without a
   discard arm in other modules will need a case.**
 * New file `Core/Languages/AdditionalLanguageProviders.cs`: `ISemanticTokensRangeProvider`, `ILinkedEditingRangeProvider` (+`LinkedEditingRanges`),
@@ -253,6 +319,6 @@ that inherited `DOTNET_ROOT_<ARCH>`. The fake-server tests use an
 independent in-proc peer (`Harness/FakeLspServer`: own framing over `System.IO.Pipelines`, document mirror applying real LSP change semantics).
 
 ## 12. Known limits
-`inlayHint/resolve` and `workspaceSymbol/resolve` are not exposed; non-UTF-16 encodings don't convert ranges in closed files; `colorPresentation`,
-`documentLink`, notebooks and proposed features are absent; `Dispose()` (sync) blocks up to 15 s — prefer `DisposeAsync` off the UI thread; the manager starts
+`workspaceSymbol/resolve` is not exposed; non-UTF-16 encodings don't convert ranges in closed files; `colorPresentation`,
+notebooks and proposed features are absent; `Dispose()` (sync) blocks up to 15 s — prefer `DisposeAsync` off the UI thread; the manager starts
 observing documents when `ILanguageServerManager` is first resolved (resolve it at startup).

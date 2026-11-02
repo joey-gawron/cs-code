@@ -101,6 +101,13 @@ public interface ISemanticTokensProvider : ILanguageProvider
 public interface IInlayHintsProvider : ILanguageProvider
 {
     ValueTask<IReadOnlyList<InlayHint>?> ProvideInlayHintsAsync(ITextDocument document, TextRange range, CancellationToken ct);
+
+    /// <summary>
+    /// The hint with what its provider computes lazily (LSP <c>inlayHint/resolve</c>: tooltips, label parts' locations and commands), for a hint
+    /// with <see cref="InlayHint.CanResolve"/>; the editor asks when the pointer rests on it or before following a link. Additive (lang-2): the
+    /// default returns the hint as it is.
+    /// </summary>
+    ValueTask<InlayHint> ResolveInlayHintAsync(InlayHint hint, CancellationToken ct) => ValueTask.FromResult(hint);
 }
 
 public interface ICodeLensProvider : ILanguageProvider

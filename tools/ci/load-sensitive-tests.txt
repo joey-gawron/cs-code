@@ -28,9 +28,8 @@ macos: CsCode.App.Tests.Background.BackgroundSessionProcessTests.Cold_start_with
 macos: CsCode.App.Tests.Background.BackgroundSessionProcessTests.Concurrent_launches_of_one_session_start_one_process
 macos: CsCode.App.Tests.RealApp.Macros.MacroRealAppTests.Playing_ten_thousand_times
 
-# Panels.Debug, Panels.Terminal (macOS): a 20 ms enqueue budget; the real netcoredbg end to end; a task terminal's output order in the full run
+# Panels.Debug, Panels.Terminal (macOS): a 20 ms enqueue budget; a task terminal's output order in the full run
 macos: CsCode.Panels.Debug.Tests.ConsolePumpTests.The_producer_side_only_enqueues_and_a_flood_stays_bounded
-macos: CsCode.Panels.Debug.Tests.RealDebuggerEndToEndTests.The_panels_show_what_the_real_adapter_reports_through_a_whole_debug_session
 macos: CsCode.Panels.Terminal.Tests.RealAppTaskTests.A_pre_launch_task_runs_in_a_terminal_before_the_debugger_starts
 
 # Platform (macOS): a cancel-mid-write timing; the watcher's replaced-root race under load

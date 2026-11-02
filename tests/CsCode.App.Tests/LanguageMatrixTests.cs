@@ -115,15 +115,15 @@ public class LanguageMatrixTests
         foreach (var l in s.Languages.OrderBy(l => l.DisplayName, StringComparer.OrdinalIgnoreCase).ThenBy(l => l.Id, StringComparer.Ordinal))
         {
             var config = s.LanguageService.GetConfiguration(l.Id);
-            var servers = ServersFor(l.Id).ToArray();
+            var servers = ServersFor(l.Id).OrderBy(b => b.Group is not null && !b.EnabledByDefault).ToArray(); // a group's default first
             sb.Append("| ").Append(Cell($"{l.DisplayName} `{l.Id}`"))
               .Append(" | ").Append(Cell(Detection(l, s.LanguageService)))
               .Append(" | ").Append(Cell(Highlighting(l)))
               .Append(" | ").Append(Cell(Configuration(l, config)))
-              .Append(" | ").Append(l.HasBuiltinSnippets ? "built-in (VS Code)" : "user only")
+              .Append(" | ").Append(Snippets(l))
               .Append(" | ").Append(Cell(Folding(l.Id, config, servers.Length > 0)))
               .Append(" | ").Append(Cell(servers.Length == 0 ? "none built in" : string.Join("; ", servers.Select(Server))))
-              .Append(" | ").Append(Cell(servers.Length == 0 ? "none" : string.Join("; ", servers.Select(b => b.Formatter))))
+              .Append(" | ").Append(Cell(Formatter(servers)))
               .Append(" | ").Append(Cell(Debugger(l.Id, s.Debuggers)))
               .Append(" |\n");
         }
@@ -160,7 +160,26 @@ public class LanguageMatrixTests
     private static string Launch(string command, IReadOnlyList<string> args) => "`" + string.Join(" ", new[] { command }.Concat(args)) + "`";
 
     private static string Server(BuiltinServer b) =>
-        $"`{b.Definition.Id}`: " + string.Join(" / ", new[] { b.Definition.Command }.Concat(b.Alternatives.Select(a => a.Command)));
+        $"`{b.Definition.Id}`: " + string.Join(" / ", new[] { b.Definition.Command }.Concat(b.Alternatives.Select(a => a.Command)))
+        + (b.Group is not null ? (b.EnabledByDefault ? " (default)" : " (alternative, `cscode.lsp.serverChoice`)") : b.EnabledByDefault ? "" : " (off by default)");
+
+    /// <summary>What formats the language: the servers that do (enabled ones first); "none (…)" only when none of them formats.</summary>
+    private static string Formatter(BuiltinServer[] servers)
+    {
+        if (servers.Length == 0) return "none";
+        var formatting = servers.Where(b => !b.Formatter.StartsWith("none", StringComparison.Ordinal)).OrderBy(b => b.EnabledByDefault ? 0 : 1).ToArray();
+        return string.Join("; ", (formatting.Length > 0 ? formatting : servers).Select(b => b.Formatter));
+    }
+
+    /// <summary>Where a language's built-in snippets come from: VS Code's extension, CsCode's own set (language stage 1), or none (user snippets only).</summary>
+    private static string Snippets(BuiltinLanguageSupportInfo l) =>
+        (l.HasVsCodeSnippets, l.HasOwnSnippets) switch
+        {
+            (true, true) => "built-in (VS Code, CsCode)",
+            (false, true) => "built-in (CsCode)",
+            (true, false) => "built-in (VS Code)",
+            _ => "user only",
+        };
 
     /// <summary>Only what really detects the language through the live service (an extension shared with another language is not listed).</summary>
     private static string Detection(BuiltinLanguageSupportInfo l, ILanguageService service)

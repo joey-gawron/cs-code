@@ -36,8 +36,10 @@ internal sealed class ClientContext
     public required LanguageWorkQueue Queue { get; init; }
     public required ILspConnectionFactory Connections { get; init; }
     public required ILogger Logger { get; init; }
-    /// <summary>Sees each window/showMessage first (server id, text); true = handled, not shown (zls's version complaint: <see cref="Manager.ZlsSupport"/>).</summary>
-    public Func<string, string, bool>? InterceptShowMessage { get; init; }
+    /// <summary>Library and generated documents of the servers, opened as virtual documents (null in hosts without them).</summary>
+    public CSharp.ExternalDocuments? External { get; init; }
+    /// <summary>The manager's server extensions: a session of a server one applies to gets it (<see cref="Extensions.ServerExtensionSession"/>).</summary>
+    public IReadOnlyList<Extensions.LanguageServerExtension> Extensions { get; init; } = [];
 }
 
 /// <summary>
@@ -86,8 +88,10 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         _breaker.HealthChanged += OnBreakerHealthChanged;
         _log = new ServerLog(ctx.Services.Output?.GetOrCreate($"{definition.DisplayName} (LSP)"), ctx.Queue);
         _features = new FeatureTable(this);
-        Mapper = new LspMapper(PositionEncoder.Utf16, LineSource);
+        Mapper = new LspMapper(PositionEncoder.Utf16, LineSource) { ExternalUri = ExternalUri };
     }
+
+    private Uri? ExternalUri(string serverUri) => _ctx.External?.ToVirtual(this, serverUri);
 
     public LanguageServerDefinition Definition { get; }
     public string SlotKey { get; }
@@ -109,6 +113,8 @@ internal sealed partial class LanguageClient : IAsyncDisposable
     internal ServerLog Log => _log;
     internal CircuitBreaker Breaker => _breaker;
     internal FeatureTable Features => _features;
+    /// <summary>The server extension's view of this session (rust-analyzer's commands and notifications), when one applies.</summary>
+    internal Extensions.ServerExtensionSession? Extension { get; private set; }
     internal LspSettings Settings => _ctx.Settings();
 
     public LanguageServerState State => (LanguageServerState)Volatile.Read(ref _state);
@@ -164,6 +170,38 @@ internal sealed partial class LanguageClient : IAsyncDisposable
     // Lifecycle
     // =================================================================================================================
 
+    /// <summary>
+    /// A built-in Python tool server (Ruff, Pyright, basedpyright) whose command is not overridden runs the selected environment's own copy
+    /// (<c>.venv/bin/ruff</c>) when there is one, as VS Code's Ruff extension does by default ("fromEnvironment"): the project's pinned version
+    /// and its plugins. Null: the usual lookup (PATH, search directories, tools directory). Waits at most 3 s for the interpreter to be known.
+    /// </summary>
+    private async Task<string?> FromPythonEnvironmentAsync(CancellationToken ct)
+    {
+        if (_ctx.Services.PythonEnvironments is not { } environments
+            || BuiltinLanguageServers.Find(Definition.Id) is not { FromPythonEnvironment: true } builtin || builtin.Definition.Command != Definition.Command)
+            return null;
+        Core.Python.PythonEnvironment? env;
+        try
+        {
+            env = await environments.GetActiveAsync(RootFolder is { } root ? new Uri(root) : null, ct).AsTask().WaitAsync(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+        if (env is not { IsEnvironment: true }) return null; // a global interpreter's bin is PATH's business
+        foreach (var name in OperatingSystem.IsWindows() ? new[] { Definition.Command + ".exe", Definition.Command + ".cmd" } : [Definition.Command])
+        {
+            var candidate = Path.Combine(env.BinDirectory, name);
+            if (ToolResolver.IsExecutableFile(candidate))
+            {
+                _log.Add($"Using {candidate} from the selected Python environment ({env.Label})");
+                return candidate;
+            }
+        }
+        return null;
+    }
+
     public async Task StartAsync(CancellationToken ct)
     {
         SetState(LanguageServerState.Starting);
@@ -176,7 +214,8 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             await LoginShellEnvironment.WaitAsync(ct).ConfigureAwait(false);
             var launch = Definition with
             {
-                Args = LaunchVariables.Expand(Definition.Args, RootFolder),
+                Command = await FromPythonEnvironmentAsync(ct).ConfigureAwait(false) ?? Definition.Command,
+                Args = LaunchVariables.ExpandArguments(Definition.Args, RootFolder, _ctx.Services.Paths?.LogsDir),
                 // lsp-9, macOS only: elsewhere a definition's env is passed as written, as it always was
                 Env = OperatingSystem.IsMacOS() ? LaunchVariables.ExpandEnvironment(Definition.Env, RootFolder) : Definition.Env,
             };
@@ -192,6 +231,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             rpc.AddLocalRpcTarget(new ServerRequestTarget(this), new JsonRpcTargetOptions { DisposeOnDisconnect = false });
             rpc.Disconnected += OnRpcDisconnected;
             _rpc = rpc;
+            AttachExtension(rpc);
             rpc.StartListening();
             _ = WatchConnectionAsync(connection);
 
@@ -216,7 +256,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             ServerName = init.ServerInfo?.Name;
             ServerVersion = init.ServerInfo?.Version;
             var encoding = ServerCapabilities.PositionEncoding?.Value;
-            Mapper = new LspMapper(settings.AutoPositionEncoding ? PositionEncoder.FromName(encoding) : PositionEncoder.Utf16, LineSource);
+            Mapper = new LspMapper(settings.AutoPositionEncoding ? PositionEncoder.FromName(encoding) : PositionEncoder.Utf16, LineSource) { ExternalUri = ExternalUri };
             ParseSyncOptions(ServerCapabilities);
 
             NotifyRaw(P.LspMethods.Initialized, new P.InitializedParams());
@@ -229,6 +269,8 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             SubscribeEnvironment();
             if (Definition.Settings is { } defSettings && defSettings.ValueKind == JsonValueKind.Object) PushConfiguration();
             TrackProcessMemory();
+
+            PostExtensionInitialized();
 
             _docsMayOpen = true;
             foreach (var sd in _docs.Values) PostOpen(sd);
@@ -277,10 +319,52 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             RootPath = rootPath,
             RootUri = RootUri is null ? null : LspMapper.ToUriString(RootUri),
             InitializationOptions = LaunchVariables.Expand(Definition.InitializationOptions, RootFolder),
-            Capabilities = ClientCapabilitiesFactory.Create(s.AutoPositionEncoding),
+            Capabilities = WithExperimental(ClientCapabilitiesFactory.Create(s.AutoPositionEncoding)),
             Trace = s.Trace switch { LspTraceMode.Verbose => P.TraceValues.Verbose, LspTraceMode.Messages => P.TraceValues.Messages, _ => P.TraceValues.Off },
             WorkspaceFolders = WorkspaceFolders.Select(f => new P.WorkspaceFolder { Uri = LspMapper.ToUriString(f), Name = FolderName(f) }).ToArray(),
         };
+    }
+
+    /// <summary>The extension's experimental client capabilities (rust-analyzer's hoverActions, serverStatusNotification…), when one applies.</summary>
+    private P.ClientCapabilities WithExperimental(P.ClientCapabilities capabilities)
+    {
+        if (Extension is not { } extension) return capabilities;
+        var experimental = capabilities.Experimental is { ValueKind: JsonValueKind.Object } e
+            ? System.Text.Json.Nodes.JsonNode.Parse(e.GetRawText())!.AsObject()
+            : new System.Text.Json.Nodes.JsonObject();
+        RunExtension("AddExperimentalCapabilities", () => extension.Extension.AddExperimentalCapabilities(experimental), extension.Extension);
+        return capabilities with { Experimental = JsonSerializer.SerializeToElement(experimental) };
+    }
+
+    /// <summary>Creates this session's extension view and lets the extension add its notification handlers (before the connection listens).</summary>
+    private void AttachExtension(JsonRpc rpc)
+    {
+        if (_ctx.Extensions.FirstOrDefault(e => e.AppliesTo(Definition)) is not { } extension) return;
+        var session = new Extensions.ServerExtensionSession(this, extension, rpc);
+        try { RunExtension("Attach", () => extension.Attach(session), extension); }
+        finally { session.EndAttach(); }
+        Extension = session;
+    }
+
+    /// <summary>
+    /// Tells the extension the server runs (on the lane). Not inline in <see cref="StartAsync"/>: a closure there would live in its state machine,
+    /// which the slot's start task keeps, and with it the extension's session after the server stopped.
+    /// </summary>
+    private void PostExtensionInitialized()
+    {
+        if (Extension is not { } extension) return;
+        _ctx.Queue.Post(LanePriority.Background, () => RunExtension("OnInitialized", () => extension.Extension.OnInitialized(extension), extension.Extension), exempt: true);
+    }
+
+    /// <summary>An extension's hook: a failure is logged, never fatal to the session.</summary>
+    internal void RunExtension(string what, Action hook, Extensions.LanguageServerExtension? extension = null)
+    {
+        try { hook(); }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _log.Add($"[client] {(extension ?? Extension?.Extension)?.Name ?? "extension"} {what} failed: {ex.Message}");
+            _ctx.Logger.LogWarning(ex, "Server extension hook {Hook} failed for {Server}", what, Definition.Id);
+        }
     }
 
     /// <summary>The directory the server works in: its root, else the first local workspace folder (also <c>${workspaceFolder}</c> in a definition).</summary>
@@ -373,6 +457,11 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             }
             _features.DisposeAll();
             try { _store.Dispose(); } catch (AggregateException) { /* a subscriber's dispose must not abort teardown */ }
+            if (Extension is { } extension)
+            {
+                RunExtension("OnStopped", extension.Dispose, extension.Extension);
+                Extension = null; // the slot may keep this stopped client: the extension's per-server state must not stay with it
+            }
             ClearAllDiagnostics();
             EndAllProgress();
             foreach (var sd in _docs.Values)
@@ -562,7 +651,10 @@ internal sealed partial class LanguageClient : IAsyncDisposable
         var raw = await SendAsync(request.Method, @params, ctx.Priority, ct, doc, contentModifiedRetries, timeout).ConfigureAwait(false);
         if (raw is null) return default;
         await ctx.ResumeOnLane();
-        return Deserialize<TResult>(raw.Value, request.Method);
+        var answer = raw.Value;
+        if (Extension is { } extension && extension.Extension.RewritesAnswerOf(request.Method))
+            RunExtension("RewriteAnswer", () => answer = extension.Extension.RewriteAnswer(extension, request.Method, answer));
+        return Deserialize<TResult>(answer, request.Method);
     }
 
     internal TResult? Deserialize<TResult>(JsonElement raw, string method)

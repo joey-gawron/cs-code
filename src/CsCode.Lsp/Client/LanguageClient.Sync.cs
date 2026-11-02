@@ -68,7 +68,9 @@ internal sealed partial class LanguageClient
     public void AttachDocument(ITextDocument doc)
     {
         if (Volatile.Read(ref _tornDown) != 0) return;
-        var sd = new SyncedDocument(doc, LspMapper.ToUriString(doc.Uri)) { LastSeenVersion = doc.Version, ServerLanguageId = doc.LanguageId };
+        // a library or generated document goes to its server under the server's own name for it (csharp:/metadata/…, a decompiled file)
+        var uriString = (VirtualDocumentUri.IsVirtual(doc.Uri) ? _ctx.External?.ServerUriOf(doc.Uri) : null) ?? LspMapper.ToUriString(doc.Uri);
+        var sd = new SyncedDocument(doc, uriString) { LastSeenVersion = doc.Version, ServerLanguageId = doc.LanguageId };
         if (!_docs.TryAdd(doc.Uri, sd)) return;
         if (_docsMayOpen) PostOpen(sd);
     }
@@ -170,8 +172,7 @@ internal sealed partial class LanguageClient
             sd.OpenOnServer = false;
         }
         // Push-only servers never clear a closed file's diagnostics themselves; pull servers report per open document.
-        _publishedUris.TryRemove(sd.Uri, out _);
-        _ctx.Services.Diagnostics.Clear(sd.Uri, _owner);
+        ClearDiagnostics(sd.Uri);
     }
 
     /// <summary>Sends didOpen (full text) if not yet sent. Caller holds sd.Gate.</summary>

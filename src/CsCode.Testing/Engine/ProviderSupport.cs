@@ -10,6 +10,15 @@ public sealed class TestProviderContext(IProcessRunner processes, Func<string, s
     /// <summary>A string setting (null when unset).</summary>
     public string? Setting(string key) => setting?.Invoke(key);
 
+    /// <summary>A list-valued setting (<c>python.testing.pytestArgs</c>), or null when unset. Additive (language stage 1).</summary>
+    public Func<string, IReadOnlyList<string>?>? ListSetting { get; init; }
+
+    /// <summary>
+    /// The Python interpreter selected for a folder (Python: Select Interpreter), or null when none is known; the Python provider then uses
+    /// <c>python3</c> from PATH. Additive (language stage 1).
+    /// </summary>
+    public Func<string, CancellationToken, Task<string?>>? PythonInterpreter { get; init; }
+
     /// <summary>A fresh directory under the temp directory for one run's result files; the caller deletes it (<see cref="DeleteQuietly"/>).</summary>
     public static string NewTempDirectory()
     {
