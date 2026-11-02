@@ -9,8 +9,9 @@ using Xunit;
 namespace CsCode.Lsp.Tests;
 
 /// <summary>
-/// Language stage 1 against the REAL Python servers: Pyright (<c>pyright-langserver</c>, npm) and Ruff (<c>ruff server</c>) on one document, the
-/// selected interpreter reaching Pyright as <c>python.pythonPath</c>, and Ruff's formatting, fix-all and organize-imports actions. Install with
+/// Language stage 1 against the REAL Python servers: a type checker (basedpyright, the default, or Pyright when chosen; npm) and Ruff
+/// (<c>ruff server</c>) on one document, the selected interpreter reaching the type checker as <c>python.pythonPath</c>, and Ruff's formatting,
+/// fix-all and organize-imports actions. Install with
 /// <c>tools/fetch-lsp-tools.sh --with-python</c> and <c>tools/fetch-debugpy.sh</c> (the tool venv with pytest); without them every test SKIPS.
 /// Ruff is found the way the app finds a project's own copy: in the selected environment's <c>bin</c> (here the tool venv).
 /// </summary>
@@ -51,8 +52,10 @@ public class RealPythonServerTests
 
     private static PythonEnvironment ToolVenv => new(VenvPython, PythonEnvironmentKind.Venv, "3", Venv, "venv");
 
-    private static LspTestEnv Create(FixedEnvironments python) => new(c =>
+    /// <param name="checker">The Python type checker: <c>basedpyright</c> (the default) or Pyright (<c>python</c>, through <c>cscode.lsp.serverChoice</c>).</param>
+    private static LspTestEnv Create(FixedEnvironments python, string checker = "basedpyright") => new(c =>
     {
+        c.Set(LspSettingKeys.ServerChoice, new Dictionary<string, string> { ["python"] = checker });
         c.Set(LspSettingKeys.InteractiveTimeoutMs, 30_000);
         c.Set(LspSettingKeys.BackgroundTimeoutMs, 60_000);
         c.Set(LspSettingKeys.InitializeTimeoutMs, 120_000);
@@ -81,34 +84,37 @@ public class RealPythonServerTests
         return doc.GetText();
     }
 
-    [Fact]
-    public async Task Pyright_and_Ruff_both_report_on_one_file_and_Pyright_follows_the_selected_interpreter()
+    [Theory]
+    [InlineData("basedpyright")] // the default
+    [InlineData("python")] // Pyright, chosen
+    public async Task The_type_checker_and_Ruff_both_report_on_one_file_and_the_type_checker_follows_the_selected_interpreter(string checker)
     {
         if (!RequireTools()) return;
         var python = new FixedEnvironments();
         python.Select(ToolVenv); // has pytest, and Ruff in its bin
-        await using var env = Create(python);
+        await using var env = Create(python, checker);
         env.Dir.WriteFile("pyproject.toml", "[project]\nname = \"demo\"\nversion = \"0\"\n");
         var doc = env.Open("main.py", "import os\nimport pytest\n\ncount: int = \"oops\"\nprint(pytest.__name__)\n", "python");
         await env.WaitForStateAsync("ruff", LanguageServerState.Running, TimeSpan.FromSeconds(60));
-        await env.WaitForStateAsync("python", LanguageServerState.Running, TimeSpan.FromSeconds(90));
+        await env.WaitForStateAsync(checker, LanguageServerState.Running, TimeSpan.FromSeconds(90));
+        Assert.DoesNotContain(env.Manager.Servers, s => s.Id == (checker == "python" ? "basedpyright" : "python")); // one type checker at a time
 
-        // Ruff: F401 for the unused os; Pyright: the str assigned to an int
+        // Ruff: F401 for the unused os; the type checker: the str assigned to an int
         await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(doc.Uri).Any(d => d.Code == "F401"), () => "Ruff's F401\n" + env.Dump(), TimeSpan.FromSeconds(60));
         await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(doc.Uri).Any(d => d.Message.Contains("\"Literal['oops']\"", StringComparison.Ordinal) || d.Message.Contains("is not assignable to declared type \"int\"", StringComparison.Ordinal)),
-            () => "Pyright's type error\n" + env.Dump(), TimeSpan.FromSeconds(90));
+            () => "the type checker's error\n" + env.Dump(), TimeSpan.FromSeconds(90));
         Assert.DoesNotContain(env.Diagnostics.Get(doc.Uri), d => d.Message.Contains("\"pytest\" could not be resolved", StringComparison.Ordinal)); // the venv has pytest
 
-        // switch to an interpreter without pytest: Pyright is told (didChangeConfiguration), asks again, and now cannot resolve the import
+        // switch to an interpreter without pytest: the type checker is told (didChangeConfiguration), asks again, and now cannot resolve the import
         python.Select(new PythonEnvironment("/usr/bin/false", PythonEnvironmentKind.Global, "3", "/usr"));
         await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(doc.Uri).Any(d => d.Message.Contains("\"pytest\" could not be resolved", StringComparison.Ordinal)),
-            () => "Pyright re-resolved imports for the newly selected interpreter\n" + env.Dump(), TimeSpan.FromSeconds(90));
+            () => "the type checker re-resolved imports for the newly selected interpreter\n" + env.Dump(), TimeSpan.FromSeconds(90));
         python.Select(ToolVenv);
         await TestHelpers.EventuallyAsync(() => !env.Diagnostics.Get(doc.Uri).Any(d => d.Message.Contains("\"pytest\" could not be resolved", StringComparison.Ordinal)),
             () => "back on the venv with pytest\n" + env.Dump(), TimeSpan.FromSeconds(90));
     }
 
-    /// <summary>Typing, a key every 50 ms: once the keys stop, both servers report on the text as typed (Ruff's diagnostics are pulled, Pyright's pushed).</summary>
+    /// <summary>Typing, a key every 50 ms: once the keys stop, Ruff and basedpyright report on the text as typed.</summary>
     [Fact]
     public async Task Both_servers_report_on_what_was_typed_once_the_keys_stop()
     {
@@ -119,7 +125,7 @@ public class RealPythonServerTests
         env.Dir.WriteFile("pyproject.toml", "[project]\nname = \"demo\"\nversion = \"0\"\n");
         var doc = env.Open("main.py", "import json\nimport os\n\nprint(os.sep)\n", "python");
         await env.WaitForStateAsync("ruff", LanguageServerState.Running, TimeSpan.FromSeconds(60));
-        await env.WaitForStateAsync("python", LanguageServerState.Running, TimeSpan.FromSeconds(90));
+        await env.WaitForStateAsync("basedpyright", LanguageServerState.Running, TimeSpan.FromSeconds(90));
         await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(doc.Uri).Any(d => d.Code == "F401"), () => "Ruff's F401\n" + env.Dump(), TimeSpan.FromSeconds(60));
 
         foreach (var c in "print(os.sep, missing)\n")
@@ -128,7 +134,7 @@ public class RealPythonServerTests
             await Task.Delay(50, Ct);
         }
         await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(doc.Uri).Any(d => d.Code == "F821"), () => "Ruff's undefined name\n" + env.Dump(), TimeSpan.FromSeconds(30));
-        await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(doc.Uri).Any(d => d.Code == "reportUndefinedVariable"), () => "Pyright's undefined name\n" + env.Dump(), TimeSpan.FromSeconds(30));
+        await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(doc.Uri).Any(d => d.Code == "reportUndefinedVariable"), () => "basedpyright's undefined name\n" + env.Dump(), TimeSpan.FromSeconds(30));
     }
 
     [Fact]
@@ -138,7 +144,7 @@ public class RealPythonServerTests
         var python = new FixedEnvironments();
         python.Select(ToolVenv);
         await using var env = Create(python);
-        env.Config.Set(LspSettingKeys.LanguageServers, new Dictionary<string, object> { ["python"] = new { enabled = false } }); // Ruff alone
+        env.Config.Set(LspSettingKeys.LanguageServers, new Dictionary<string, object> { ["basedpyright"] = new { enabled = false } }); // Ruff alone
         var doc = env.Open("main.py", "import sys\nimport os\nx=f\"hi\"\nprint(x,sys.argv)\n", "python");
         await env.WaitForStateAsync("ruff", LanguageServerState.Running, TimeSpan.FromSeconds(60));
         Assert.Contains(env.Output.ChannelNames, n => n.Contains("Ruff", StringComparison.Ordinal));
@@ -198,6 +204,8 @@ public class RealPythonServerTests
                 "inlay hints", h => h.Count > 0, seconds: 30);
         CsCodeTestNote.Report($"[{id}] semantic tokens: {semantic}; inlay hints: {inlay} ({string.Join(", ", hints?.Select(h => h.Label) ?? [])}); formatting: {env.Registry.GetProviders<IDocumentFormattingProvider>(doc).Count > 0}");
         var based = id == "basedpyright";
+        if (based) // basedpyright registers formatting and answers nothing (format on save skips it for the next formatter)
+            Assert.Null(await env.Provider<IDocumentFormattingProvider>(doc).FormatDocumentAsync(doc, new FormattingOptions(4, true), Ct));
         Assert.Equal((based, based), (semantic, inlay));
         if (based) Assert.Contains(hints!, h => h.Label.Contains("int", StringComparison.Ordinal)); // the inferred type of `total`
     }

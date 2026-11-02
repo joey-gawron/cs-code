@@ -6,21 +6,36 @@ using Xunit;
 
 namespace CsCode.Lsp.Tests;
 
-/// <summary>Language stage 1: the Python servers in the catalog (Pyright, Ruff, basedpyright off by default) and Pyright's python.pythonPath.</summary>
+/// <summary>Language stage 1: the Python servers in the catalog (basedpyright and Ruff by default, Pyright when chosen) and the type checkers' python.pythonPath.</summary>
 public class PythonServerCatalogTests
 {
-    private static Dictionary<string, bool> Enabled(string setting) =>
-        DefinitionOverrides.Apply(BuiltinLanguageServers.All, JsonDocument.Parse(setting).RootElement).ToDictionary(kv => kv.Key, kv => kv.Value.Enabled);
+    private static Dictionary<string, bool> Enabled(string setting, string choice = "{}")
+    {
+        var chosen = BuiltinLanguageServers.ReadChoice(JsonDocument.Parse(choice).RootElement);
+        return DefinitionOverrides.Apply(BuiltinLanguageServers.All, JsonDocument.Parse(setting).RootElement, id => BuiltinLanguageServers.EnabledByDefault(id, chosen))
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Enabled);
+    }
 
     [Theory]
-    [InlineData("{}", true, true, false)]
-    [InlineData("""{"basedpyright": {"settings": {"basedpyright": {}}}}""", true, true, false)] // tuning it does not turn it on
-    [InlineData("""{"basedpyright": {"enabled": true}, "python": {"enabled": false}}""", false, true, true)]
-    [InlineData("""{"ruff": {"enabled": false}}""", true, false, false)]
-    public void Pyright_and_Ruff_run_by_default_and_basedpyright_only_when_turned_on(string setting, bool pyright, bool ruff, bool basedpyright)
+    [InlineData("{}", "{}", false, true, true)]
+    [InlineData("""{"python": {"settings": {"python": {}}}}""", "{}", false, true, true)] // tuning Pyright does not turn it on
+    [InlineData("{}", """{"python": "python"}""", true, true, false)] // Python: Select Language Server… → Pyright
+    [InlineData("{}", """{"python": "basedpyright", "csharp": "csharp"}""", false, true, true)]
+    [InlineData("{}", """{"python": "nonsense"}""", false, true, true)] // not a member: the group's default
+    [InlineData("""{"python": {"enabled": true}, "basedpyright": {"enabled": false}}""", "{}", true, true, false)] // explicit enabled wins
+    [InlineData("""{"ruff": {"enabled": false}}""", "{}", false, false, true)]
+    public void Basedpyright_and_Ruff_run_by_default_and_Pyright_when_chosen(string setting, string choice, bool pyright, bool ruff, bool basedpyright)
     {
-        var enabled = Enabled(setting);
+        var enabled = Enabled(setting, choice);
         Assert.Equal((pyright, ruff, basedpyright), (enabled["python"], enabled["ruff"], enabled["basedpyright"]));
+    }
+
+    [Fact]
+    public void Basedpyright_and_Pyright_are_one_group_and_basedpyright_is_its_default()
+    {
+        var group = BuiltinLanguageServers.Groups[BuiltinLanguageServers.PythonGroup];
+        Assert.Equal(["python", "basedpyright"], group.Select(s => s.Definition.Id));
+        Assert.Equal("basedpyright", Assert.Single(group, s => s.EnabledByDefault).Definition.Id);
     }
 
     [Fact]

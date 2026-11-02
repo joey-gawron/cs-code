@@ -18,13 +18,13 @@ internal static class DefinitionOverrides
 
     /// <param name="enabledByDefault">
     /// Whether a definition runs when the setting says nothing about it (absent: the built-in's own default with no <c>cscode.lsp.serverChoice</c>;
-    /// a definition that is not built in: yes). A built-in that is one of several servers for the same language (Roslyn or csharp-ls) runs only
-    /// when it is its group's choice; one that is off by default (basedpyright) stays off (<see cref="BuiltinLanguageServers.EnabledByDefault"/>).
+    /// a definition that is not built in: yes). A built-in that is one of several servers for the same language (Roslyn or csharp-ls,
+    /// basedpyright or Pyright) runs only when it is its group's choice (<see cref="BuiltinLanguageServers.EnabledByDefault"/>).
     /// </param>
     public static Dictionary<string, Effective> Apply(IEnumerable<LanguageServerDefinition> registered, JsonElement? setting, Func<string, bool>? enabledByDefault = null)
     {
         var result = new Dictionary<string, Effective>();
-        // without a delegate, a built-in's own default: off for basedpyright, and off for C#'s alternative server when no choice names it
+        // without a delegate, a built-in's own default: off for a group's alternative server (csharp-ls, Pyright) when no choice names it
         var byDefault = enabledByDefault ?? (id => BuiltinLanguageServers.EnabledByDefault(id, NoChoice));
         foreach (var d in registered) result[d.Id] = new Effective(d, byDefault(d.Id));
         if (setting is not { ValueKind: JsonValueKind.Object } obj) return result;
@@ -36,7 +36,7 @@ internal static class DefinitionOverrides
             var o = prop.Value;
             bool? enabled = o.TryGetProperty("enabled", out var en) && en.ValueKind is JsonValueKind.True or JsonValueKind.False ? en.GetBoolean() : null;
             if (result.TryGetValue(id, out var existing))
-                // an explicit "enabled" decides; without one a built-in keeps its default (basedpyright, the C# server not chosen stay off)
+                // an explicit "enabled" decides; without one a built-in keeps its default (the server its group did not choose stays off)
                 result[id] = new Effective(Merge(existing.Definition, o), enabled ?? existing.Enabled);
             else if (TryCreate(id, o) is { } created)
                 result[id] = new Effective(created, enabled ?? true);

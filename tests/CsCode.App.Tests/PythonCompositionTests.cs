@@ -17,10 +17,10 @@ namespace CsCode.App.Tests;
 
 /// <summary>
 /// Language stage 1's "Done when", over the REAL composition root (every module, CSCODE_HOME in a temp dir) with the real tools: a project with a
-/// <c>.venv</c> gets that interpreter; Pyright and Ruff both report on its file; a save runs Ruff's fix-all and organize imports and then Ruff's
+/// <c>.venv</c> gets that interpreter; basedpyright (Python's default type checker) and Ruff both report on its file; a save runs Ruff's fix-all and organize imports and then Ruff's
 /// formatting (<c>editor.defaultFormatter</c>, from the folder's .vscode/settings.json); debugpy, started from the debugger's "Current File"
 /// configuration, stops at a breakpoint with the .venv's interpreter. The project's <c>.venv</c> is the tool venv of tools/fetch-debugpy.sh and
-/// tools/fetch-lsp-tools.sh --with-python (it has debugpy, pytest and ruff); Pyright comes from the tools directory. Skips without them.
+/// tools/fetch-lsp-tools.sh --with-python (it has debugpy, pytest and ruff); basedpyright comes from the tools directory. Skips without them.
 /// </summary>
 [Trait("Category", "RealTools")]
 public class PythonCompositionTests
@@ -50,7 +50,7 @@ public class PythonCompositionTests
     {
         var tools = RepoTools();
         var venv = Path.Combine(tools, "python", "venv");
-        if (OperatingSystem.IsWindows() || !File.Exists(Path.Combine(venv, "bin", "ruff")) || !File.Exists(Path.Combine(tools, "lsp", "node_modules", ".bin", "pyright-langserver")))
+        if (OperatingSystem.IsWindows() || !File.Exists(Path.Combine(venv, "bin", "ruff")) || !File.Exists(Path.Combine(tools, "lsp", "node_modules", ".bin", "basedpyright-langserver")))
         {
             Assert.Skip("the Python tools are missing: run tools/fetch-lsp-tools.sh --with-python and tools/fetch-debugpy.sh");
             return;
@@ -61,7 +61,7 @@ public class PythonCompositionTests
         try
         {
             Directory.CreateDirectory(Path.Combine(home.Path, "data", "tools"));
-            Directory.CreateSymbolicLink(Path.Combine(home.Path, "data", "tools", "lsp"), Path.Combine(tools, "lsp")); // Pyright, as an install would put it
+            Directory.CreateSymbolicLink(Path.Combine(home.Path, "data", "tools", "lsp"), Path.Combine(tools, "lsp")); // basedpyright, as an install would put it
             var project = Path.Combine(home.Path, "proj");
             Directory.CreateDirectory(project);
             Directory.CreateSymbolicLink(Path.Combine(project, ".venv"), venv);
@@ -82,15 +82,16 @@ public class PythonCompositionTests
             Assert.Equal((PythonEnvironmentKind.Venv, ".venv"), (python.Kind, python.Name));
             Assert.Equal(Path.Combine(project, ".venv", "bin", "python"), python.Executable);
 
-            // 2. Pyright and Ruff both report on the file
+            // 2. basedpyright and Ruff both report on the file
             var factory = sp.GetRequiredService<IEditorViewFactory>();
             var doc = await factory.OpenDocumentAsync(new Uri(file));
             var diagnostics = sp.GetRequiredService<IDiagnosticService>();
             await Until(() => diagnostics.Get(doc.Uri).Any(d => d.Code == "F401"), "Ruff's unused import");
-            await Until(() => diagnostics.Get(doc.Uri).Any(d => d.Message.Contains("\"int\"", StringComparison.Ordinal) && d.Message.Contains("oops", StringComparison.Ordinal)), "Pyright's type error");
+            await Until(() => diagnostics.Get(doc.Uri).Any(d => d.Message.Contains("\"int\"", StringComparison.Ordinal) && d.Message.Contains("oops", StringComparison.Ordinal)), "basedpyright's type error");
             var servers = sp.GetRequiredService<ILanguageServerManager>().Servers;
             Assert.Contains(servers, s => s.Id == "ruff" && s.State == LanguageServerState.Running);
-            Assert.Contains(servers, s => s.Id == "python" && s.State == LanguageServerState.Running);
+            Assert.Contains(servers, s => s.Id == "basedpyright" && s.State == LanguageServerState.Running);
+            Assert.DoesNotContain(servers, s => s.Id == "python"); // Pyright only when chosen
 
             // 3. the shell's save: code actions on save (fix all, organize imports), then Ruff's format on save
             await Until(() => sp.GetRequiredService<ILanguageFeatureRegistry>().GetProviders<IDocumentFormattingProvider>(doc).Any(p => LanguageProviderSource.IdOf(p) == "ruff"), "Ruff's formatter registered");

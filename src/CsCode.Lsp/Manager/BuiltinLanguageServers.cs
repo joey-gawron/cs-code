@@ -25,9 +25,9 @@ public enum RootStrategy
 /// <summary>
 /// A built-in server: its <see cref="LanguageServerDefinition"/> plus what that Core record has no slot for. <paramref name="Formatter"/> is what
 /// formats documents of its languages (CsCode has no formatter of its own: formatting is always the language server's).
-/// <paramref name="EnabledByDefault"/> false: registered but off until <c>cscode.languageServers.&lt;id&gt;.enabled</c> is true (an alternative to
-/// another server of the same language, such as basedpyright for Pyright), or, for a member of a <see cref="Group"/>, until
-/// <c>cscode.lsp.serverChoice</c> names it (csharp-ls for Roslyn). <paramref name="FromPythonEnvironment"/>: a Python tool that a project
+/// <paramref name="EnabledByDefault"/> false: registered but off until <c>cscode.languageServers.&lt;id&gt;.enabled</c> is true, or, for a member
+/// of a <see cref="Group"/>, until <c>cscode.lsp.serverChoice</c> names it (csharp-ls for Roslyn, Pyright for basedpyright).
+/// <paramref name="FromPythonEnvironment"/>: a Python tool that a project
 /// installs into its environment; the selected interpreter's own copy (<c>.venv/bin/ruff</c>) is preferred over the one on PATH, as VS Code's
 /// Ruff and Python extensions do.
 /// </summary>
@@ -76,6 +76,9 @@ public static class BuiltinLanguageServers
     /// <summary>The C# servers' group in <c>cscode.lsp.serverChoice</c>.</summary>
     public const string CSharpGroup = "csharp";
 
+    /// <summary>The Python type checkers' group in <c>cscode.lsp.serverChoice</c>: basedpyright (the default) or Pyright (<c>"python"</c>).</summary>
+    public const string PythonGroup = "python";
+
     /// <summary>Roslyn's command line (checked against its <c>--help</c> at 5.13.0-1.26514.10).</summary>
     public static readonly string[] RoslynArgs =
         ["--stdio", "--logLevel", "Information", "--extensionLogDirectory", "${cscodeLogsDir}/roslyn", "--telemetryLevel", "off", "--clientProcessId", "${cscodePid}"];
@@ -118,11 +121,14 @@ public static class BuiltinLanguageServers
                 + "or run csharp-ls instead: C#: Select Language Server…"),
             "Roslyn", RootStrategy.Outermost, [new ServerAlternative("Microsoft.CodeAnalysis.LanguageServer", RoslynArgs)])
             with { Group = CSharpGroup },
+        // The alternative to basedpyright (cscode.lsp.serverChoice {"python": "python"}, Python: Select Language Server…): Pyright's own server,
+        // without semantic highlighting or inlay hints (docs/PYTHON.md §3).
         S(Def("python", "Python (Pyright)", ["python"], "pyright-langserver", ["--stdio"],
                 ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"]),
             All3("Install it with: npm install -g pyright (or pip install pyright in the project's environment)"),
-            "none (Pyright does not format)", fromPythonEnvironment: true,
-            notes: "Gets the selected interpreter (Python: Select Interpreter) as python.pythonPath."),
+            "none (Pyright does not format)", enabled: false, fromPythonEnvironment: true,
+            notes: "The alternative to basedpyright: \"cscode.lsp.serverChoice\": { \"python\": \"python\" } (Python: Select Language Server…). "
+                + "Gets the selected interpreter (Python: Select Interpreter) as python.pythonPath.") with { Group = PythonGroup },
         // Ruff's native server (`ruff server`, stable since Ruff 0.5.3): lint diagnostics, Quick Fixes, source.fixAll.ruff,
         // source.organizeImports.ruff and formatting. One server per workspace: Ruff finds the nested configurations itself.
         S(Def("ruff", "Python (Ruff)", ["python"], "ruff", ["server"], ["pyproject.toml", "ruff.toml", ".ruff.toml"]),
@@ -131,12 +137,13 @@ public static class BuiltinLanguageServers
                 "Install it with: pipx install ruff (or uv tool install ruff, or winget install astral-sh.ruff)"),
             "Ruff (ruff format)", RootStrategy.Outermost, fromPythonEnvironment: true,
             notes: "Needs Ruff 0.5.3 or newer (the native server). The selected environment's own ruff is preferred."),
-        // An alternative to Pyright (off by default: turn it on and Pyright off, see docs/PYTHON.md): semantic highlighting and inlay hints.
+        // Python's default type checker: Pyright's checks plus semantic highlighting and inlay hints, which Pyright's own server lacks (docs/PYTHON.md §3).
         S(Def("basedpyright", "Python (basedpyright)", ["python"], "basedpyright-langserver", ["--stdio"],
                 ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"]),
             All3("Install it with: npm install -g basedpyright (or pip install basedpyright, or pipx install basedpyright)"),
-            "none (basedpyright does not format)", enabled: false, fromPythonEnvironment: true,
-            notes: "Off by default: \"cscode.languageServers\": { \"basedpyright\": { \"enabled\": true }, \"python\": { \"enabled\": false } }."),
+            "none (basedpyright does not format)", fromPythonEnvironment: true,
+            notes: "Python's default type checker (Pyright instead: Python: Select Language Server…). "
+                + "Gets the selected interpreter (Python: Select Interpreter) as python.pythonPath.") with { Group = PythonGroup },
         S(Def("clangd", "C / C++ (clangd)", ["c", "cpp", "objective-c", "objective-cpp", "cuda-cpp"], "clangd", [], ["compile_commands.json", "compile_flags.txt", ".clangd"]),
             new("Install clangd from your LLVM / distribution package (e.g. sudo apt install clangd).",
                 "Install it with: brew install llvm (clangd is in $(brew --prefix llvm)/bin), or xcode-select --install for Apple's clangd.",
@@ -329,8 +336,8 @@ public static class BuiltinLanguageServers
 
     /// <summary>
     /// Whether a definition runs when <c>cscode.languageServers</c> does not say: a member of a group runs when the group's choice names it (with
-    /// no valid choice, when it is <see cref="BuiltinServer.EnabledByDefault"/>); any other built-in when it is enabled by default (not
-    /// basedpyright); a definition that is not built in, always.
+    /// no valid choice, when it is <see cref="BuiltinServer.EnabledByDefault"/>); any other built-in when it is enabled by default; a definition
+    /// that is not built in, always.
     /// </summary>
     public static bool EnabledByDefault(string definitionId, IReadOnlyDictionary<string, string> choice)
     {

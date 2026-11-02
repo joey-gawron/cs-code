@@ -302,7 +302,11 @@ public sealed partial class EditorDocument
         timeout.CancelAfter(TimeSpan.FromSeconds(3)); // a hung formatter must not block saving forever
         try
         {
-            var edits = await providers[0].FormatDocumentAsync(this, options, timeout.Token).ConfigureAwait(false);
+            // The first formatter that answers with edits, as Format Document does: a server can register formatting and answer nothing
+            // (basedpyright does), and without editor.defaultFormatter it may come first.
+            IReadOnlyList<TextEdit>? edits = null;
+            foreach (var provider in providers)
+                if ((edits = await provider.FormatDocumentAsync(this, options, timeout.Token).ConfigureAwait(false)) is { Count: > 0 }) break;
             // Stale result (the user kept typing): VS Code drops it as well; the save still goes ahead.
             if (edits is { Count: > 0 } && Version == versionBefore) ApplyEdits(edits);
         }

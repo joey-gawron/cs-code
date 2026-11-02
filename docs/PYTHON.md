@@ -29,14 +29,15 @@ Two pieces are language-neutral and reused by later stages: **formatter choice /
   `VIRTUAL_ENV` (or `CONDA_PREFIX`) set, through an additive `ITerminalEnvironmentContributor`. A macOS login shell's `path_helper` (and Nix's
   profile scripts here) rebuild PATH and drop or demote that directory, so the shell integration (zsh, bash, fish) puts `CSCODE_PATH_PREPEND`
   first again after the user's startup files (`TerminalServiceTests.Contributed_PATH_directories_come_first_even_in_a_login_shell`).
-* Workspace trust: a folder's own `.venv/bin/python` is probed (with `-I`) and given to Pyright, as VS Code does in a trusted workspace. CsCode
+* Workspace trust: a folder's own `.venv/bin/python` is probed (with `-I`) and given to the type checker, as VS Code does in a trusted workspace. CsCode
   has no trust prompt; rust-analyzer already runs a folder's build scripts the same way.
 
 ## 2. Formatter choice and code actions on save
 
 * **`editor.defaultFormatter`** (global or `"[python]": { … }`): a language server id (the `cscode.languageServers` key: `ruff`, `python`
   for Pyright); a VS Code extension id ending in it (`charliermarsh.ruff`) names it too. Format Document / Selection / on save / on paste / on
-  type use only that server. Unset: the first formatter that answers, as before. A chosen server that is not running formats nothing and says
+  type use only that server. Unset: the first formatter that answers with edits (basedpyright registers formatting and answers nothing, so
+  Ruff formats). A chosen server that is not running formats nothing and says
   so in the status bar. Providers say which server they come from through the additive `ILanguageProviderSource`; a remote workspace's bridged
   providers cannot yet, and keep formatting as before. **Format Document With…** (Edit menu, editor context menu,
   `editor.action.formatDocument.multiple`) picks one for a single run, the default marked.
@@ -52,19 +53,24 @@ Two pieces are language-neutral and reused by later stages: **formatter choice /
 
 | Server | Id | Default | What it gives |
 |---|---|---|---|
-| Pyright `pyright-langserver --stdio` | `python` | on | types, completion, hover, navigation; gets the selected interpreter (no semantic tokens, no inlay hints) |
+| basedpyright `basedpyright-langserver --stdio` | `basedpyright` | **on (default type checker)** | types, completion, hover, navigation, semantic tokens, inlay hints, a stricter default rule set; gets the selected interpreter |
 | Ruff `ruff server` (Ruff ≥ 0.5.3) | `ruff` | on | lint diagnostics, Quick Fixes, `source.fixAll.ruff`, `source.organizeImports.ruff`, formatting; one server per workspace |
-| basedpyright `basedpyright-langserver --stdio` | `basedpyright` | **off** | Pyright's features plus semantic tokens, inlay hints and its stricter checks; turn it on and Pyright off: `"cscode.languageServers": { "basedpyright": { "enabled": true }, "python": { "enabled": false } }` |
+| Pyright `pyright-langserver --stdio` | `python` | off (alternative) | types, completion, hover, navigation, no semantic tokens or inlay hints; gets the selected interpreter |
 
 The Python tool servers run the selected environment's own copy when it has one (`.venv/bin/ruff`, as VS Code's Ruff extension does by
 default), else PATH, `cscode.lsp.searchDirs`, the tools directory. Install hints per platform are in docs/LANGUAGES.md.
 
-**Pyright or basedpyright as the default.** As the brief expected, only basedpyright has semantic highlighting and inlay hints
+**basedpyright is the default type checker, Pyright the alternative.** Only basedpyright has semantic highlighting and inlay hints
 (`RealPythonServerTests.What_Pyright_and_basedpyright_offer`: Pyright 1.1.414 registers neither; basedpyright 1.40.2 both, with the hints
-`: int`, `a=`, `b=`). Its other differences are a stricter default rule set, its baseline file and a few Pylance-like features. A first check
-said both servers had them: basedpyright's npm package also declares the commands `pyright` and `pyright-langserver`, npm had linked them to
-basedpyright, and the check ran basedpyright twice. tools/fetch-lsp-tools.sh now points them back at Pyright. Pyright stays the default
-until the user decides otherwise.
+`: int`, `a=`, `b=`), as the brief expected; its other differences are a stricter default rule set, its baseline file and a few Pylance-like
+features. The user chose basedpyright as the default on 2026-11-02. The two are one group in `cscode.lsp.serverChoice`, as Roslyn and
+csharp-ls are for C#: one runs. **Python: Select Language Server…** (`python.selectLanguageServer`) switches, writing
+`"cscode.lsp.serverChoice": { "python": "python" }` for Pyright next to the other languages' choices; an explicit
+`cscode.languageServers.<id>.enabled` still wins.
+
+A first check said both servers had semantic highlighting and inlay hints: basedpyright's npm package also declares the commands `pyright` and
+`pyright-langserver`, npm had linked them to basedpyright, and the check ran basedpyright twice. tools/fetch-lsp-tools.sh now points them back
+at Pyright.
 
 `pyproject.toml` schema validation through Taplo is **not verified**: Taplo is not installed on this Mac.
 
@@ -168,36 +174,37 @@ dotnet test tests/CsCode.MemoryTests --blame-hang-timeout 10m --filter "FullyQua
 ```
 
 Each real-tool test skips with its reason when its tool is missing. `PythonCompositionTests` checks the stage's "Done when" over the real
-composition root: a `.venv` folder's interpreter, Pyright and Ruff diagnostics, a save running fix-all, organize imports and Ruff's format,
+composition root: a `.venv` folder's interpreter, basedpyright and Ruff diagnostics, a save running fix-all, organize imports and Ruff's format,
 and debugpy stopping at a breakpoint with that interpreter. The same was seen by hand in the app window on macOS: F5 with no launch.json
 stops at a breakpoint, Cmd+S runs the save actions and Ruff's format, and the Test Explorer runs pytest's parametrized cases one by one.
 
-## 9. UI budgets with Pyright, Ruff and debugpy running
+## 9. UI budgets with the type checker, Ruff and debugpy running
 
 The brief binds the hostile-server budgets with all three running: dispatcher p99 ≤ 16 ms and max ≤ 50 ms, typing p99 ≤ 20 ms, the heap back
 within 64 MB and the UI queues drained within 3 s (`HostileMatrix`). `PythonServersResponsivenessTests` (tests/CsCode.MemoryTests) measures
 them in the real app, headless, the way the hostile matrix does: keys posted to the UI thread at input priority, frames rasterised off the UI
-thread, best of three attempts, every attempt in the test output and `.scratch/w6-budgets.log`.
+thread, best of three attempts, every attempt in the test output and `.scratch/w6-budgets.log`. It runs once with each type checker.
 
-The scenario: a project with a `.venv`, Pyright and Ruff on its file, and a debugpy session running a program that prints 200 lines a second
-into the Debug Console. Three statements, `print(sys.argv, os.sep, missing); `, are typed at the end of the file: 102 keys, 50 ms apart, with a
-600 ms pause after each statement. Every key is a `didChange` to both servers, and `.` and `(` ask Pyright for completion and signature help. After
-the measured window the test checks that every key reached the buffer and that both servers reported on the typed text (Ruff's `F821` and
-Pyright's `reportUndefinedVariable`).
+The scenario: a project with a `.venv`, the type checker and Ruff on its file, and a debugpy session running a program that prints 200 lines a
+second into the Debug Console. Three statements, `print(sys.argv, os.sep, missing); `, are typed at the end of the file: 102 keys, 50 ms apart,
+with a 600 ms pause after each statement. Every key is a `didChange` to both servers, and `.` and `(` ask the type checker for completion and
+signature help. After the measured window the test checks that every key reached the buffer and that both servers reported on the typed text
+(Ruff's `F821` and the type checker's `reportUndefinedVariable`).
 
-| 2026-11-02, this Mac, load average 8.6 | Budget | Attempt 1 | Attempt 2 |
-|---|---|---|---|
-| Dispatcher p99 / max | ≤ 16 / ≤ 50 ms | **21.8** / 36.8 ms | 4.5 / 9.2 ms |
-| Typing p99 / max | ≤ 20 ms | 10.4 / 12.1 ms | 2.1 / 4.0 ms |
-| Heap after the run | ≤ +64 MB | +7.1 MB | +0.7 MB |
-| UI queues drained within 3 s | yes | yes | yes |
-| Diagnostics updates in the 7 s window | | 6 | 6 |
-| Debug output batches retained | | 384 | 389 |
+| 2026-11-02, this Mac | Budget | basedpyright, attempt 1 | basedpyright, attempt 2 | Pyright, attempt 1 |
+|---|---|---|---|---|
+| Load average | | 5.6 | 6.0 | 5.4 |
+| Dispatcher p99 / max | ≤ 16 / ≤ 50 ms | **24.1** / 34.3 ms | 4.9 / 6.0 ms | 3.2 / 8.2 ms |
+| Typing p99 / max | ≤ 20 ms | 12.0 / 15.7 ms | 1.5 / 4.3 ms | 3.2 / 4.5 ms |
+| Heap after the run | ≤ +64 MB | +27.7 MB | +8.4 MB | −0.3 MB |
+| UI queues drained within 3 s | yes | yes | yes | yes |
+| Diagnostics updates in the 7 s window | | 6 | 6 | 6 |
+| Debug output batches retained | | 419 | 417 | 422 |
 
-The first attempt in a fresh test process misses the dispatcher p99, in a second run too (24.1 ms; the second attempt 4.4 ms, max 14.0 ms, at
-load average 10.9). Its UI thread spent 671 ms (718 ms) in layout measure against 281 ms (283 ms) in the second attempt, which points at code
-running for the first time rather than at the servers. The matrix gives every row three attempts for the same reason. The second attempt is
-within every budget.
+The first attempt in a fresh test process misses the dispatcher p99, whichever type checker it runs with: basedpyright here (it runs first),
+Pyright in two earlier runs (21.8 and 24.1 ms, then 4.5 and 4.4 ms). That attempt's UI thread spends 2.5 times as long in layout measure
+(775 ms against 307 ms), which points at the app's code running for the first time rather than at the servers. The matrix gives every row
+three attempts for the same reason. Every later attempt is within every budget.
 
 Two things about typing into the app that the measurement depends on:
 
