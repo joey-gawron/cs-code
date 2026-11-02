@@ -131,19 +131,44 @@ public sealed class RealGeneratorTests
         else Assert.True(File.Exists(LaunchProgram(dir, "lldb")), "the test program launch.json debugs");
     }
 
+    /// <summary>
+    /// The framework's source archive the C++ stage fetched with the user's go-ahead (<c>.scratch/tools/cpp-test-frameworks</c>, found from the
+    /// test's directory up, as the CodeLLDB tests find theirs), so FetchContent takes it from disk; without it the test downloads only when
+    /// <see cref="Network.Variable"/> allows.
+    /// </summary>
+    private static string? LocalFrameworkArchive(string framework)
+    {
+        var (dir, archive) = framework == "gtest" ? ("googletest-1.17.0", "googletest-v1.17.0.tar.gz") : ("Catch2-3.8.1", "Catch2-v3.8.1.tar.gz");
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+            if (Path.Combine(d.FullName, ".scratch", "tools", "cpp-test-frameworks", dir, archive) is var path && File.Exists(path)) return path;
+        return null;
+    }
+
     [Theory]
     [InlineData("gtest")]
     [InlineData("catch2")]
     public async Task Cpp_with_a_fetched_test_framework_builds_and_passes_ctest(string framework)
     {
-        Network.RequireOrSkip(framework == "gtest" ? "GoogleTest (FetchContent)" : "Catch2 (FetchContent)");
+        var archive = LocalFrameworkArchive(framework);
+        if (archive is null) Network.RequireOrSkip(framework == "gtest" ? "GoogleTest (FetchContent)" : "Catch2 (FetchContent)");
         using var temp = new TempDirectory();
         var (dir, _, _) = await CreateAsync(new CMakeProjectGenerator(Runner, cpp: true), temp, "fetched-" + framework,
             new() { [CMakeProjectGenerator.TestsOption] = framework });
         var cmake = ToolLocator.Find("cmake")!;
-        await RunAsync(dir, cmake, "--preset", "debug");
+        string[] configure = ["--preset", "debug"];
+        if (archive is not null)
+        {
+            var sources = temp.Combine("sources");
+            Directory.CreateDirectory(sources);
+            await RunAsync(sources, "/usr/bin/tar", "xzf", archive);
+            var extracted = Directory.GetDirectories(sources).Single();
+            configure = [.. configure, $"-DFETCHCONTENT_SOURCE_DIR_{(framework == "gtest" ? "GOOGLETEST" : "CATCH2")}={extracted}"];
+        }
+        await RunAsync(dir, cmake, configure);
         await RunAsync(dir, cmake, "--build", "--preset", "debug");
-        Assert.Contains("100% tests passed", await RunAsync(dir, ToolLocator.Find("ctest")!, "--preset", "debug"), StringComparison.Ordinal);
+        var ctest = await RunAsync(dir, ToolLocator.Find("ctest")!, "--preset", "debug");
+        Assert.Contains("100% tests passed", ctest, StringComparison.Ordinal);
+        Assert.Contains(framework == "gtest" ? "Greets" : "greet greets", ctest, StringComparison.Ordinal); // the framework's own tests were discovered
     }
 
     [Fact]
