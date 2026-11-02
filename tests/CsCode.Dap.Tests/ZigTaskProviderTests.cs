@@ -8,6 +8,7 @@ using CsCode.Dap.Configuration;
 using CsCode.Dap.Tasks;
 using CsCode.Dap.Tests.Fakes;
 using CsCode.TestDoubles;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace CsCode.Dap.Tests;
@@ -161,10 +162,12 @@ public class ZigTaskProviderTests
     [Fact]
     public void The_task_provider_is_registered_beside_cargos()
     {
-        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        var services = new ServiceCollection();
         services.AddCsCodeDap();
-        Assert.Contains(services, d => d.ServiceType == typeof(Core.Tasks.ITaskProvider) && d.ImplementationFactory is not null);
-        Assert.Equal(2, services.Count(d => d.ServiceType == typeof(Core.Tasks.ITaskProvider)));
+        using var provider = services.BuildServiceProvider();
+        var providers = provider.GetServices<Core.Tasks.ITaskProvider>().ToList();
+        Assert.Single(providers.OfType<CargoTaskProvider>());
+        Assert.Single(providers.OfType<ZigTaskProvider>());
     }
 
     // ------------------------------------------------------------------ real zig
