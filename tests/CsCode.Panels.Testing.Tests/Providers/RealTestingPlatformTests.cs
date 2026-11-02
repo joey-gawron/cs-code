@@ -311,6 +311,8 @@ public sealed class RealTestingPlatformTests
         }
         Assert.Equal(TestOutcome.Passed, Assert.Single(sink.Results).Outcome);
         Assert.DoesNotContain(sink.Lines, l => l.Contains("--report-trx", StringComparison.Ordinal));
+        // the debugged program is opted out of the platform's telemetry like a run (it printed "Application Insights Telemetry: …" before)
+        Assert.DoesNotContain(sink.Lines, l => l.Contains("Telemetry", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string? FindNetCoreDbg()

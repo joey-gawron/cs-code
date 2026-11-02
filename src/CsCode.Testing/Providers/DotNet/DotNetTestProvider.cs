@@ -548,6 +548,8 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
             ["console"] = "internalConsole",
             ["stopAtEntry"] = false,
             ["justMyCode"] = true,
+            // a run opts out through NoLogo; the debugger starts the program with its own environment (MTP reports usage otherwise)
+            ["env"] = new Dictionary<string, string> { ["TESTINGPLATFORM_TELEMETRY_OPTOUT"] = "1", ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1", ["DOTNET_NOLOGO"] = "1" },
         });
         sink.Status($"Debugging {project.Name}…");
         var console = new TestingPlatform.ConsoleReporter(project, sink, listed ?? []);
@@ -576,6 +578,7 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
     private static readonly IReadOnlyDictionary<string, string> NoLogo = new Dictionary<string, string>
     {
         ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1",
+        ["TESTINGPLATFORM_TELEMETRY_OPTOUT"] = "1",
         ["DOTNET_NOLOGO"] = "1",
         ["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1",
         ["MSBUILDTERMINALLOGGER"] = "off",
