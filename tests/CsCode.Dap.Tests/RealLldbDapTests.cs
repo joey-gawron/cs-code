@@ -152,7 +152,6 @@ public class RealLldbDapTests
         Assert.Equal("0", locals["b"]);
 
         h.Breakpoints.RemoveAll();
-        await Task.Delay(400, Ct); // the removal reaches the adapter after the breakpoint sync's debounce; continuing sooner hits add() again
         await session.ContinueAsync(ct: Ct);
         await SessionHarness.Eventually(() => session.State == DebugSessionState.Terminated, 60_000, "the session ended");
     }

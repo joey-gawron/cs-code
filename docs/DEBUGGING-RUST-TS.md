@@ -444,6 +444,9 @@ pick "Rust / C / C++ (lldb-dap)" in *Add Configuration…*.
   `RealLldbDapTests` (the real adapter: the `initialize` handshake wherever it is found — passes on macOS with Apple's lldb-dap 21; a C program
   to a breakpoint, its locals, continue and exit, which on macOS needs Developer Mode: with it off, `DevToolsSecurity -status` says so and the
   test skips, because starting a debuggee would wait for an administrator in a dialog).
+* Apple's lldb-dap gets no Rust formatters (lang-2): with rust 1.96.1, Apple's LLDB (lldb-2103) hangs on the toolchain's provider for a
+  `Result<i32, String>` (CodeLLDB's own, newer LLDB formats the same value as `Ok(12)`), which froze every Locals view; Rust values show as
+  their raw structs there (docs/RUST.md, "Found and fixed on the way").
 * Not done: the Rust evaluation matrix has not been run against lldb-dap (only CodeLLDB's and GDB's); lldb-dap has no Rust panic filter
   (CodeLLDB's "Rust: on panic" and GDB's client-side one are not offered for it); hit counts and the Debug Console are lldb-dap's own
   (`--repl-mode auto`). Run the C session test on a Mac with `sudo DevToolsSecurity -enable` once.
@@ -636,6 +639,29 @@ CSCODE_CODELLDB_ARCHIVE=<vsix> dotnet test tests/CsCode.Dap.Tests --filter "Full
 `.scratch/downloads/codelldb/v1.12.3`). Run with `DISPLAY` and `SSH_AUTH_SOCK` unset and `CSCODE_HOME` in a temp directory. To see the wire,
 point `CSCODE_CODELLDB` at a script that tees its stdin and stdout to files and runs the real adapter (`tee in | codelldb "$@" | tee out`);
 the adapter-crash test then kills the script rather than codelldb, so run that one without the recorder.
+
+### Native windows: Disassembly, Memory, Registers, data breakpoints (lang-2)
+
+The windows are in docs/PANELS-DEBUG.md ("Native debugging") and the DAP surface in docs/DAP.md ("Native debugging"). What each adapter offers
+on this Mac (its `initialize` answer, 2026-11-01):
+
+| Capability | CodeLLDB v1.12.3 | lldb-dap (Xcode 26 CLT) | Used by |
+|---|---|---|---|
+| `supportsDisassembleRequest` | yes | yes | Disassembly window |
+| `supportsSteppingGranularity` | yes | yes | Step Over / Into / Out by instruction while the Disassembly window has the keyboard |
+| `supportsInstructionBreakpoints` | yes | yes | breakpoints in the Disassembly window's margin |
+| `supportsReadMemoryRequest` / `supportsWriteMemoryRequest` | yes / yes | yes / yes | Memory window (View Binary Data, Edit Bytes…) |
+| `supportsDataBreakpoints` | yes (and `supportsDataBreakpointBytes`) | yes | Break When Value Changes |
+| register scope | "Registers" scope (expensive) | "Registers" scope | Registers window |
+
+The real-adapter suite is `RealNativeDebuggingTests` (CodeLLDB and lldb-dap on the Rust sample, stopped at `@loop`): the instruction pointer
+disassembles with `main.rs` source lines around it, one instruction step moves the pc to the next instruction (≤ 16 bytes on, not the next
+line), `vec![1, 2, 3]`'s buffer reads `01 00 00 00 02 00 00 00 03 00 00 00` from its first element's memory reference, the frame has a register
+scope with groups, and a data breakpoint on `x` stops when the loop changes it. It needs macOS Developer Mode (`sudo DevToolsSecurity -enable`);
+while that is off it skips with that reason. With it on (2026-11-01) all six pass on this Mac, and the same checks pass in the real application
+(`RealAppRustStageTests`): one instruction step `0x1000081A0 → 0x1000081A4` under both adapters, the buffer `01 00 00 00 02 00 00 00 03 00 00 00`,
+the register groups, and the data breakpoint stopping as `x` goes 41 → 42 (CodeLLDB reports the stop as `data breakpoint`, lldb-dap as
+`breakpoint`). Details and the lldb-dap formatter hang found on the way: docs/RUST.md ("Native debugging, seen").
 
 ## Which Rust debugger is the default
 

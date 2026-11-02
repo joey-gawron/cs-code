@@ -22,6 +22,12 @@ public sealed class DebugPanelsRuntime : IDisposable
     /// <summary>The Visual Studio "Add Watch" chord, contributed to the keybinding service (only while a debug session exists).</summary>
     public const string AddToWatchKey = "ctrl+alt+w";
 
+    /// <summary>VS Code's "Open Disassembly View": the Disassembly window at the focused frame (argument: a memory reference to show instead).</summary>
+    public const string OpenDisassemblyCommand = "debug.action.openDisassemblyView";
+
+    /// <summary>The Memory window (argument: a memory reference to show; none: the address box takes the keyboard).</summary>
+    public const string ViewMemoryCommand = "cscode.debug.viewMemory";
+
     /// <summary>Context key that is true while the debuggee is stopped on an exception (the Exception window auto-shows on it).</summary>
     public const string ExceptionStoppedKey = "cscode.debug.exceptionStopped";
 
@@ -38,7 +44,11 @@ public sealed class DebugPanelsRuntime : IDisposable
     {
         _provider = provider;
         if (provider.GetService<ICommandService>() is { } commands)
+        {
             _subs.Add(commands.Register(AddToWatchCommand, AddToWatchAsync, new CommandMetadata(AddToWatchCommand, "Add Watch", "Debug")));
+            _subs.Add(commands.Register(OpenDisassemblyCommand, OpenDisassemblyAsync, new CommandMetadata(OpenDisassemblyCommand, "Open Disassembly View", "Debug", Enablement: "inDebugMode")));
+            _subs.Add(commands.Register(ViewMemoryCommand, ViewMemoryAsync, new CommandMetadata(ViewMemoryCommand, "View Memory...", "Debug", Enablement: "inDebugMode")));
+        }
         // The keybinding service picks up contributions live (built-in ones rank below the user's keybindings.json, which can remove it).
         if (provider.GetService<IContributionRegistry>() is { } contributions)
             _subs.Add(contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory,
@@ -58,6 +68,7 @@ public sealed class DebugPanelsRuntime : IDisposable
                 if (_services is not null)
                 {
                     _subs.Add(_services);
+                    _services.NativeViews.ShowView = ShowViewAsync;
                     StartExceptionKey(_services);
                     StartStopReveal(_services);
                 }
@@ -178,6 +189,33 @@ public sealed class DebugPanelsRuntime : IDisposable
     {
         try { return await views.ShowViewAsync(WatchToolWindow.ViewId); }
         catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException) { return false; }
+    }
+
+    /// <summary>Brings a tool window forward (the shell's optional view activator, resolved when used: resolving it while the tool windows are
+    /// constructed could be circular).</summary>
+    private async Task ShowViewAsync(string id)
+    {
+        if (_provider.GetService<IViewActivator>() is not { } views) return;
+        try { await views.ShowViewAsync(id); }
+        catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException) { }
+    }
+
+    private async ValueTask<object?> OpenDisassemblyAsync(CommandInvocation invocation)
+    {
+        if (GetServices() is not { } services) return null;
+        var reference = invocation.Arg<string>(0);
+        if (reference is { Length: > 0 }) await services.NativeViews.ShowDisassembly(new Native.NativeTarget(reference, invocation.Arg<string>(1)));
+        else await ShowViewAsync(Native.NativeViewRequests.DisassemblyViewId); // it starts at the focused frame's instruction
+        return null;
+    }
+
+    private async ValueTask<object?> ViewMemoryAsync(CommandInvocation invocation)
+    {
+        if (GetServices() is not { } services) return null;
+        var reference = invocation.Arg<string>(0);
+        if (reference is { Length: > 0 }) await services.NativeViews.ShowMemory(new Native.NativeTarget(reference, invocation.Arg<string>(1)));
+        else await ShowViewAsync(Native.NativeViewRequests.MemoryViewId);
+        return null;
     }
 
     public void Dispose() => _subs.Dispose();

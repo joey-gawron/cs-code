@@ -14,12 +14,14 @@ public static class TestingSettings
     public const string DotNetEnabled = "cscode.testing.dotnet.enabled";
     public const string RustEnabled = "cscode.testing.rust.enabled";
     public const string JavaScriptEnabled = "cscode.testing.javascript.enabled";
+    public const string PythonEnabled = "cscode.testing.python.enabled";
 
     /// <summary>The provider id → its "enabled" setting.</summary>
     public static string EnabledKey(string providerId) => providerId switch
     {
         "dotnet" => DotNetEnabled,
         "rust" => RustEnabled,
+        "python" => PythonEnabled,
         _ => JavaScriptEnabled,
     };
 
@@ -38,5 +40,13 @@ public static class TestingSettings
         P(DotNetEnabled, true, "Find .NET test projects (xUnit v3 run directly, xUnit v2 / NUnit / MSTest through dotnet test).", """{"type":"boolean"}"""),
         P(RustEnabled, true, "Find cargo packages and their #[test] functions.", """{"type":"boolean"}"""),
         P(JavaScriptEnabled, true, "Find JavaScript / TypeScript packages that use Jest or Vitest.", """{"type":"boolean"}"""),
+        P(PythonEnabled, true, "Find Python tests (pytest, else unittest) with the folder's selected interpreter.", """{"type":"boolean"}"""),
+        P(global::CsCode.Testing.Providers.Python.PythonTestProvider.PytestArgsSetting, Array.Empty<string>(), "Arguments pytest gets for discovery and runs (VS Code's python.testing.pytestArgs), e.g. [\"tests\"].",
+            """{"type":"array","items":{"type":"string"}}"""),
+        P(global::CsCode.Testing.Providers.Python.PythonTestProvider.UnittestArgsSetting, new[] { "-v", "-s", ".", "-p", "*test*.py" },
+            "unittest's discovery arguments: -s start directory, -p pattern, -t top-level directory (VS Code's python.testing.unittestArgs).",
+            """{"type":"array","items":{"type":"string"}}"""),
+        P(global::CsCode.Testing.Providers.Python.PythonTestProvider.CwdSetting, "", "The directory Python tests are discovered and run in (empty: the workspace folder; ${workspaceFolder} is expanded).",
+            """{"type":"string"}"""),
     ];
 }

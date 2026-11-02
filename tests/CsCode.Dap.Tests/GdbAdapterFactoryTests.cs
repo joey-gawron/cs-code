@@ -343,7 +343,8 @@ public class GdbAdapterFactoryTests
         Assert.All(gdb, b => Assert.Same(GdbAdapterQuirks.Instance, b.Quirks));
         Assert.All(gdb, b => Assert.Contains("rust", b.Languages));
         Assert.Same(gdb[0].Factory, sp.GetRequiredService<GdbAdapterFactory>());
-        Assert.All(builtins.Where(b => b.Type is not ("gdb" or "rust-gdb" or "lldb")), b => Assert.Null(b.Quirks)); // lldb: CodeLLDB's own quirks
+        // lldb: CodeLLDB's own quirks; debugpy / python: debugpy's (its debugpyAttach child event)
+        Assert.All(builtins.Where(b => b.Type is not ("gdb" or "rust-gdb" or "lldb" or "debugpy" or "python")), b => Assert.Null(b.Quirks));
     }
 
     // ------------------------------------------------------------------ stdio transport: priority, marker, orphans

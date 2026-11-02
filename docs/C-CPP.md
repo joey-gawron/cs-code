@@ -176,14 +176,16 @@ window checks below remain to be done:
 5. ⌘+hover over `#include "mathlib.h"` underlines it; ⌘+Click opens `include/mathlib.h`.
 6. With `"terminal": "integrated"` in `cmake.debugConfig`, a program reading stdin gets the keys typed in the integrated terminal.
 
-## 8. Deferred (waits for other stages)
+## 8. Deferred (waited for other stages)
 
-| Item | Waits for | Note |
+Stages 1 (Python) and 2 (Rust) are merged into this branch, so the first four rows are open work now rather than blocked.
+
+| Item | Builds on | Note |
 |---|---|---|
-| CMake tasks through `ITaskProvider` (`cmake: build`, … with `$gcc`) | stage 2 (Rust) | `ICMakeService.BuildAsync` is what the provider will call |
-| clangd extension: Switch Header/Source, inactive `#if 0` regions, View AST, file status, default-argument review | stage 2's per-server extension pattern | MUST 2 |
-| Matrix rows: Memory window from a pointer, Disassembly, data breakpoints | stage 2's windows | |
-| C snippets | stage 1 (Python)'s bundled snippets | MUST 7 |
+| CMake tasks through `ITaskProvider` (`cmake: build`, … with `$gcc`) | `Core/Tasks/ITaskProvider.cs`; `Dap/Tasks/CargoTaskProvider.cs` is the example | `ICMakeService.BuildAsync` is what the provider will call |
+| clangd extension: Switch Header/Source, inactive `#if 0` regions, View AST, file status, default-argument review | `Lsp/Extensions/LanguageServerExtension` (docs/LSP.md §7a) | MUST 2 |
+| Matrix rows: Memory window from a pointer, Disassembly, data breakpoints | `Core/Debugging/DebugNative.cs` and the `debug.memory` / `debug.disassembly` windows | breakpoints at the physical path (`TempDirectory.PhysicalPath`) |
+| C snippets | `Editor/Snippets/Builtin/<language id>.json` | MUST 7 |
 | cmake-language-server, bear | the user's go-ahead | not installed; nothing asked yet |
 
 ## 9. Tests

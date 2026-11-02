@@ -4,6 +4,7 @@ using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Lsp.Client;
+using CsCode.Lsp.Extensions;
 using CsCode.Lsp.Runtime;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -39,10 +40,16 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
     private volatile LspSettings _settings;
     private long _seq;
     private int _disposed;
+    private readonly IReadOnlyList<LanguageServerExtension> _extensions;
+    private readonly ServerExtensionHost _extensionHost;
 
-    public LanguageServerManager(LspServices services)
+    public LanguageServerManager(LspServices services) : this(services, ServerExtensions.CreateBuiltins()) { }
+
+    /// <summary>A manager with other server extensions than the built-in ones (tests).</summary>
+    internal LanguageServerManager(LspServices services, IReadOnlyList<LanguageServerExtension> extensions)
     {
         _services = services;
+        _extensions = extensions;
         // Registered BEFORE the first read: the registration carries the machine scope of cscode.lsp.searchDirs and of the servers' launch members,
         // so a workspace value is never seen, not even by this first read (lsp-core-1).
         if (services.Configuration is { } config) _store.Add(config.RegisterProperties(LspSettings.Properties()));
@@ -56,7 +63,15 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
             Queue = _queue,
             Connections = services.Connections ?? new DefaultLspConnectionFactory(),
             Logger = logger,
+            Extensions = _extensions,
         };
+        _extensionHost = new ServerExtensionHost(this, services);
+        _store.Add(_extensionHost.Disposables);
+        foreach (var extension in _extensions)
+        {
+            try { extension.Register(_extensionHost); }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { logger.LogError(ex, "Server extension {Name} failed to register", extension.Name); }
+        }
 
         if (services.Configuration is { } cfg) _store.Add(cfg.Changed.Subscribe(OnConfigurationChanged));
         if (services.Workspace is { } ws) _store.Add(ws.FoldersChanged.Subscribe(OnFoldersChanged));
@@ -347,6 +362,14 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
     // =================================================================================================================
 
     internal LanguageWorkQueue Queue => _queue;
+    internal ServerExtensionHost ExtensionHost => _extensionHost;
+    internal IReadOnlyList<LanguageServerExtension> Extensions => _extensions;
+
+    /// <summary>The session of <paramref name="extension"/> on a server <paramref name="document"/> is routed to, if any.</summary>
+    internal ServerExtensionSession? SessionServing(Uri document, LanguageServerExtension extension) =>
+        _routes.TryGetValue(document, out var route)
+            ? route.Slots.Select(s => s.Client?.Extension).FirstOrDefault(e => e is not null && ReferenceEquals(e.Extension, extension))
+            : null;
     internal IReadOnlyList<ServerSlot> Slots { get { lock (_gate) return _slots.Values.ToArray(); } }
     internal int RoutedDocumentCount => _routes.Count;
 

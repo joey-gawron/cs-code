@@ -77,6 +77,7 @@ public sealed class ShellController : IDisposable
     public Macros.MacroIntegration? Macros { get; private set; }
     /// <summary>The Markdown preview's commands and tabs (null when the composition has no editor module).</summary>
     public Markdown.MarkdownPreviewIntegration? Markdown { get; private set; }
+    public Python.PythonIntegration? Python { get; private set; }
     public ClipboardRouter Clipboard { get; private set; } = null!;
     public ShellContextMenus ContextMenus { get; private set; } = null!;
     public ShellDockFactory Factory => _sp.GetRequiredService<ShellDockFactory>();
@@ -184,6 +185,14 @@ public sealed class ShellController : IDisposable
         {
             markdown.Start();
             _disposables.Add(markdown);
+        }
+
+        // Python (docs/PYTHON.md): Select Interpreter and the interpreter's status bar item.
+        Python = global::CsCode.App.Python.PythonIntegration.TryCreate(_sp);
+        if (Python is { } python)
+        {
+            python.Start();
+            _disposables.Add(python);
         }
 
         Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs);

@@ -1,0 +1,71 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:CsCode.Panels.Debug.Native"
+             xmlns:icons="using:CsCode.Ui.Icons"
+             x:Class="CsCode.Panels.Debug.Views.DisassemblyView"
+             x:DataType="vm:DisassemblyViewModel">
+  <UserControl.Styles>
+    <StyleInclude Source="avares://CsCode.Panels.Debug/Views/DebugPanelStyles.axaml" />
+    <Style Selector="ListBox.asm > ListBoxItem">
+      <Setter Property="MinHeight" Value="18" />
+      <Setter Property="Height" Value="18" />
+    </Style>
+    <Style Selector="icons|Icon.bp">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:debugIcon.breakpointForeground}" />
+    </Style>
+    <Style Selector="icons|Icon.ip">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:debugIcon.continueForeground}" />
+    </Style>
+    <Style Selector="Border.current">
+      <Setter Property="Background" Value="{DynamicResource vsc:editor.stackFrameHighlightBackground}" />
+    </Style>
+    <Style Selector="TextBlock.source">
+      <Setter Property="Foreground" Value="{DynamicResource vsc:textLink.foreground}" />
+    </Style>
+    <Style Selector="TextBlock.symbol">
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*" Background="{DynamicResource vsc:panel.background}">
+    <Border Grid.Row="0" Background="{DynamicResource vsc:sideBarSectionHeader.background}" BorderBrush="{DynamicResource vsc:panel.border}" BorderThickness="0,0,0,1" Padding="4,2">
+      <Grid ColumnDefinitions="Auto,240,Auto,Auto,Auto,*">
+        <TextBlock Grid.Column="0" Text="Address:" VerticalAlignment="Center" Margin="2,0,6,0" />
+        <TextBox x:Name="Address" Grid.Column="1" Classes="inline" Text="{Binding AddressInput}" PlaceholderText="0x… or an expression"
+                 AutomationProperties.Name="Disassembly address" />
+        <Button Grid.Column="2" Classes="tool" Command="{Binding GoCommand}" ToolTip.Tip="Go to the address" AutomationProperties.Name="Go to address">
+          <icons:Icon Kind="arrow-right" Size="14" />
+        </Button>
+        <Button Grid.Column="3" Classes="tool" Command="{Binding CurrentCommand}" ToolTip.Tip="Show the current instruction" AutomationProperties.Name="Show current instruction">
+          <icons:Icon Kind="debug-stackframe" Size="14" />
+        </Button>
+        <Button Grid.Column="4" Classes="tool" Command="{Binding RefreshCommand}" ToolTip.Tip="Refresh" AutomationProperties.Name="Refresh Disassembly">
+          <icons:Icon Kind="refresh" Size="14" />
+        </Button>
+      </Grid>
+    </Border>
+    <ListBox x:Name="Rows" Grid.Row="1" Classes="debug asm" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+             SelectionMode="Single" AutomationProperties.Name="Disassembly">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="vm:DisassemblyRow">
+          <Border Classes.current="{Binding IsCurrent}">
+            <Grid ColumnDefinitions="18,16,150,120,*">
+              <Border x:Name="Margin" Grid.Column="0" Background="Transparent" Cursor="Hand" IsVisible="{Binding IsInstruction}" ToolTip.Tip="Toggle Breakpoint (F9)">
+                <Panel>
+                  <icons:Icon Classes="bp" Kind="circle-large-filled" Size="12" IsVisible="{Binding HasBreakpoint}" Opacity="{Binding BreakpointOpacity}" />
+                </Panel>
+              </Border>
+              <icons:Icon Grid.Column="1" Classes="ip" Kind="debug-stackframe" Size="12" IsVisible="{Binding IsCurrent}" />
+              <TextBlock Grid.Column="2" Classes="cell code dim" Text="{Binding AddressText}" IsVisible="{Binding IsInstruction}" />
+              <TextBlock Grid.Column="3" Classes="cell code dim" Text="{Binding Bytes}" IsVisible="{Binding IsInstruction}" />
+              <TextBlock Grid.Column="4" Classes="cell code" Classes.dim="{Binding IsInvalid}" Text="{Binding Text}" IsVisible="{Binding IsInstruction}" />
+              <TextBlock Grid.Column="2" Grid.ColumnSpan="3" Classes="cell code source" Text="{Binding Text}" IsVisible="{Binding IsSource}" />
+              <TextBlock Grid.Column="2" Grid.ColumnSpan="3" Classes="cell code symbol" Text="{Binding Text}" IsVisible="{Binding IsSymbol}" />
+            </Grid>
+          </Border>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+    <TextBlock Grid.Row="1" Classes="status" Text="{Binding StatusText}" IsVisible="{Binding ShowStatus}" VerticalAlignment="Top" HorizontalAlignment="Left" IsHitTestVisible="False" />
+  </Grid>
+</UserControl>

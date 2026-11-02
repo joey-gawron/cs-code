@@ -184,6 +184,9 @@ public sealed class ToolbarView : Border, IDisposable
     {
         var b = new Button { Content = ViewHelpers.Glyph(spec.Icon, 14, spec.ColorId), Padding = new Thickness(4), VerticalAlignment = VerticalAlignment.Center };
         b.Classes.Add("flat");
+        // The debug buttons leave the keyboard where it is (VS Code's debug toolbar does): stepping from here while the Disassembly window has
+        // the keyboard steps by instruction (its disassemblyViewFocus key), and the editor keeps its caret.
+        if (spec.DebugOnly) b.Focusable = false;
         ToolTip.SetTip(b, Tip(spec.Tooltip, spec.CommandId));
         b.Click += async (_, _) => await Run(spec.CommandId).ConfigureAwait(true);
         _buttons.Add((b, spec));

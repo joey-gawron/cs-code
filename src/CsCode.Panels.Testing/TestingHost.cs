@@ -74,9 +74,18 @@ public sealed class TestingHost : IDisposable
         _diagnostics = services.GetService<IDiagnosticService>();
         _window = services.GetService<IWindowService>();
         _channel = services.GetService<IOutputService>()?.GetOrCreate(OutputChannelName);
-        var context = new TestProviderContext(new ProcessRunner(services.GetService<Core.Diagnostics.IMemoryMonitor>()), key => _config?.Get<string>(key));
+        var python = services.GetService<Core.Python.IPythonEnvironmentService>();
+        var context = new TestProviderContext(new ProcessRunner(services.GetService<Core.Diagnostics.IMemoryMonitor>()), key => _config?.Get<string>(key))
+        {
+            ListSetting = key => _config?.GetRaw(key) is { ValueKind: System.Text.Json.JsonValueKind.Array } list
+                ? [.. list.EnumerateArray().Where(e => e.ValueKind == System.Text.Json.JsonValueKind.String).Select(e => e.GetString()!)]
+                : null,
+            // the folder's selected interpreter (Python: Select Interpreter)
+            PythonInterpreter = python is null ? null : async (folder, ct) => (await python.GetActiveAsync(new Uri(folder), ct).ConfigureAwait(false))?.Executable,
+        };
         var cmake = services.GetService<Core.Build.ICMakeService>();
-        providers ??= [new DotNetTestProvider(context), new RustTestProvider(context), new JavaScriptTestProvider(context), new CTestProvider(context, cmake)];
+        providers ??= [new DotNetTestProvider(context), new RustTestProvider(context), new JavaScriptTestProvider(context),
+            new global::CsCode.Testing.Providers.Python.PythonTestProvider(context), new CTestProvider(context, cmake)];
         Controller = new TestController(providers, a => _ui.Post(a, UiPriority.Background), line => _channel?.AppendLine(line),
             id => _config?.Get<bool?>(TestingSettings.EnabledKey(id)) ?? true);
         if (services.GetService<IDebugService>() is { } debug) Controller.Debugger = new DebugLauncher(debug, _ui);

@@ -20,7 +20,7 @@ namespace CsCode.Dap.Session;
 /// synchronously) and the volatile properties may be read from any thread. Events fire on the lane — subscribers must be cheap.
 /// Protocol order (spec): initialize → launch/attach → (adapter sends `initialized`) → breakpoints → configurationDone → running.
 /// </summary>
-public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, IDebugSessionVariablePaging, IDebugSessionFrames, IBreakpointSyncHost
+public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, IDebugSessionVariablePaging, IDebugSessionFrames, IBreakpointSyncHost, IDebugSessionNative
 {
     private readonly DebugSessionOptions _o;
     private readonly DebugSessionSettings _settings;
@@ -244,6 +244,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         subs.Add(client.Invalidated.Subscribe(OnInvalidatedEvent));
         subs.Add(client.RequestTimedOut.Subscribe(_ => SetUnresponsive(true)));
         subs.Add(client.ConnectionClosed.Subscribe(OnConnectionClosed));
+        if (_o.StartChild is not null && !ReferenceEquals(_o.Quirks, DebugAdapterQuirks.None)) subs.Add(client.UnknownEvent.Subscribe(OnUnknownEvent));
         client.SetReverseRequestHandler("runInTerminal", OnRunInTerminalAsync);
         if (_o.StartChild is not null) client.SetReverseRequestHandler("startDebugging", OnStartDebuggingAsync);
         _client = client;

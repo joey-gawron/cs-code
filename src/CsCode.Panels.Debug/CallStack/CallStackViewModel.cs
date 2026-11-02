@@ -499,6 +499,14 @@ public sealed class CallStackViewModel : ObservableObject, IDisposable
     /// <summary>The window service (Copy of one frame), null when none is registered.</summary>
     internal Core.Platform.IWindowService? Window => _s.Window;
 
+    /// <summary>"Open Disassembly View" on a frame: the Disassembly window at its instruction (the frame is also picked, as in VS Code).</summary>
+    public async Task OpenDisassemblyAsync(CallStackRow row)
+    {
+        if (row.Frame?.InstructionPointerReference is not { Length: > 0 } ip) return;
+        await ActivateAsync(row, takeFocus: false);
+        await _s.NativeViews.ShowDisassembly(new Native.NativeTarget(ip, row.Text));
+    }
+
     public async Task CopyCallStackAsync()
     {
         if (_s.Window is { } window) await window.CopyToClipboardAsync(GetCallStackText());

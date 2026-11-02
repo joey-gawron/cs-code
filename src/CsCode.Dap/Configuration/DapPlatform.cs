@@ -36,12 +36,16 @@ public sealed class DapPlatform
     public Func<ITerminalService?>? Terminals { get; init; }
     /// <summary>The tasks' terminal presentation, when the integrated terminal is composed: tasks then run in terminals (resolved lazily).</summary>
     public Func<ITaskTerminalHost?>? TaskTerminals { get; init; }
+    /// <summary>The task providers whose detected tasks the runner lists and runs (<see cref="ITaskProvider"/>, every one in DI), resolved lazily.</summary>
+    public Func<IEnumerable<ITaskProvider>>? TaskProviders { get; init; }
     /// <summary>Where tasks' problem matchers publish (the Error List reads it).</summary>
     public IDiagnosticService? Diagnostics { get; init; }
     /// <summary>The shell's view activator (a task's <c>revealProblems</c> shows the Error List), resolved lazily.</summary>
     public Func<IViewActivator?>? Views { get; init; }
     /// <summary>URIs of a remote workspace ⇄ the paths its adapters use (the Remote module's mapper); resolved lazily, optional.</summary>
     public Func<IDebugPathMapper?>? PathMappers { get; init; }
+    /// <summary>The selected Python interpreters (debugpy runs the folder's, and launches the program with it).</summary>
+    public CsCode.Core.Python.IPythonEnvironmentService? Python { get; init; }
 
     public IDebugPathMapper? PathMapper => PathMappers?.Invoke();
 
@@ -64,9 +68,11 @@ public sealed class DapPlatform
         LoggerFactory = sp.GetService<ILoggerFactory>(),
         Terminals = () => sp.GetService<ITerminalService>(),
         TaskTerminals = () => sp.GetService<ITaskTerminalHost>(),
+        TaskProviders = () => sp.GetServices<ITaskProvider>(),
         Diagnostics = sp.GetService<IDiagnosticService>(),
         Views = () => sp.GetService<IViewActivator>(),
         PathMappers = () => sp.GetService<IDebugPathMapper>(),
+        Python = sp.GetService<CsCode.Core.Python.IPythonEnvironmentService>(),
     };
 
     /// <summary>Folder to use when a caller passes none: the first workspace folder.</summary>

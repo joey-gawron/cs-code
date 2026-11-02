@@ -130,8 +130,38 @@ public sealed partial class TerminalLaunchResolver(IConfigurationService? config
         Apply(env, profile?.Env);
         if (config?.GetRaw(TerminalSettingKeys.EnvKey) is { ValueKind: JsonValueKind.Object } user)
             Apply(env, user.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.ValueKind == JsonValueKind.Null ? null : p.Value.ToString()));
+        ApplyContributions(env, options);
         Apply(env, options.Env);
         return env;
+    }
+
+    /// <summary>Other modules' additions (the selected Python environment): resolved by the container on the first terminal.</summary>
+    public Func<IEnumerable<ITerminalEnvironmentContributor>>? Contributors { get; set; }
+
+    /// <summary>The variable that hands the PATH additions to the shell integration, which puts them first again after the user's startup files.</summary>
+    public const string PathPrependVariable = "CSCODE_PATH_PREPEND";
+
+    private void ApplyContributions(Dictionary<string, string> env, TerminalCreateOptions options)
+    {
+        if (Contributors?.Invoke() is not { } contributors) return;
+        var prepend = new List<string>();
+        foreach (var contributor in contributors)
+        {
+            TerminalEnvironmentContribution? c;
+            try { c = contributor.Contribute(options); }
+            catch (Exception) { continue; } // a contributor's bug must never cost the user their terminal
+            if (c is null) continue;
+            foreach (var (k, v) in c.Variables)
+            {
+                if (v is null) env.Remove(k);
+                else env[k] = v;
+            }
+            prepend.AddRange(c.PathPrepend.Where(d => !string.IsNullOrEmpty(d) && !prepend.Contains(d)));
+        }
+        if (prepend.Count == 0) return;
+        var joined = string.Join(Path.PathSeparator, prepend);
+        env["PATH"] = env.TryGetValue("PATH", out var path) && path.Length > 0 ? joined + Path.PathSeparator + path : joined;
+        env[PathPrependVariable] = joined;
     }
 
     private void Apply(Dictionary<string, string> env, IReadOnlyDictionary<string, string?>? overrides)
