@@ -27,9 +27,9 @@ public sealed partial class DebugService
         Reg(KnownCommands.DebugRestart, "Restart", async _ => { if (ActiveSession is { } s) await RootOf(s).RestartAsync(); return null; });
         Reg(KnownCommands.DebugContinue, "Continue", async _ => { if (ActiveSession is { State: DebugSessionState.Stopped } s) await s.ContinueAsync(); return null; });
         Reg(KnownCommands.DebugPause, "Pause", async _ => { if (ActiveSession is { State: DebugSessionState.Running } s) await s.PauseAsync(); return null; });
-        Reg(KnownCommands.DebugStepOver, "Step Over", async _ => { if (ActiveSession is { State: DebugSessionState.Stopped } s) await s.StepOverAsync(); return null; });
-        Reg(KnownCommands.DebugStepInto, "Step Into", async _ => { if (ActiveSession is { State: DebugSessionState.Stopped } s) await s.StepIntoAsync(); return null; });
-        Reg(KnownCommands.DebugStepOut, "Step Out", async _ => { if (ActiveSession is { State: DebugSessionState.Stopped } s) await s.StepOutAsync(); return null; });
+        Reg(KnownCommands.DebugStepOver, "Step Over", async _ => { await StepAsync(DebugStepAction.Over); return null; });
+        Reg(KnownCommands.DebugStepInto, "Step Into", async _ => { await StepAsync(DebugStepAction.Into); return null; });
+        Reg(KnownCommands.DebugStepOut, "Step Out", async _ => { await StepAsync(DebugStepAction.Out); return null; });
         Reg(KnownCommands.DebugToggleBreakpoint, "Toggle Breakpoint", _ =>
         {
             if (_p.Navigation is { ActiveDocument: { } doc, ActiveCaret: { } caret }) _breakpoints.Toggle(doc.Uri, caret.Line);
@@ -38,6 +38,24 @@ public sealed partial class DebugService
         Reg(PickProcessCommand, "Pick Process to Attach To", async inv => await PickProcessAsync(inv.Cancellation));
         Reg(ConfigureCommand, "Open launch.json", async inv => { await _lane.RunAsync(() => OpenLaunchJsonCoreAsync(inv.Cancellation), inv.Cancellation); return null; });
         Reg(AddConfigurationCommand, "Add Configuration...", async inv => { await _lane.RunAsync(() => AddConfigurationCoreAsync(inv.Cancellation), inv.Cancellation); return null; });
+    }
+
+    /// <summary>
+    /// The context key the Disassembly window sets while it has the keyboard (VS Code's <c>disassemblyViewFocus</c>): stepping then goes by
+    /// instruction (DAP <c>granularity: "instruction"</c>) when the adapter supports it, as in VS Code.
+    /// </summary>
+    public const string DisassemblyFocusKey = "disassemblyViewFocus";
+
+    private async ValueTask StepAsync(DebugStepAction action)
+    {
+        if (ActiveSession is not { State: DebugSessionState.Stopped } s) return;
+        var instruction = _p.ContextKeys?.Get(DisassemblyFocusKey) is true;
+        if (instruction && s is IDebugSessionNative { SupportsSteppingGranularity: true } native)
+        {
+            await native.StepAsync(action, null, instruction: true);
+            return;
+        }
+        await (action switch { DebugStepAction.Into => s.StepIntoAsync(), DebugStepAction.Out => s.StepOutAsync(), _ => s.StepOverAsync() });
     }
 
     /// <summary>VS Code's "Open launch.json" (Debug menu, Run view gear).</summary>
@@ -203,6 +221,8 @@ public sealed partial class DebugService
     {
         var configs = await _configurations.GetLaunchConfigurationsAsync(null, ct);
         var cfg = _configurations.Selected ?? configs.FirstOrDefault();
+        // No configuration at all: a debugger that can run the active file on its own (debugpy's "Current File") does, as VS Code does.
+        if (cfg is null && CurrentFileConfiguration() is { } current) return await StartAsync(noDebug ? current with { NoDebug = true } : current, ct);
         if (cfg is null)
         {
             if (_p.Window is { } window && _p.PrimaryFolder is { } folder)
@@ -234,6 +254,18 @@ public sealed partial class DebugService
     /// <c>"gdb"</c> elsewhere (evaluated, the system's own debugger). Decided 2026-10-30 (docs/handoff/decisions.md).
     /// </summary>
     internal static string DefaultRustDebugger(bool macOS) => macOS ? "lldb" : "gdb";
+
+    /// <summary>The configuration a built-in debugger offers for the active file (<see cref="Configuration.IDebugCurrentFileProvider"/>), or null.</summary>
+    private DebugConfiguration? CurrentFileConfiguration()
+    {
+        if (_p.Navigation?.ActiveDocument is not { } doc) return null;
+        var folder = _p.Workspace?.Folders.Where(f => f.IsFile && doc.Uri.IsFile && doc.Uri.LocalPath.StartsWith(DapPlatform.NormalizeDir(f.LocalPath) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            .OrderByDescending(f => f.LocalPath.Length).FirstOrDefault() ?? _p.PrimaryFolder;
+        foreach (var builtin in _builtins.Values.Where(b => !b.IsAlias && b.Languages.Contains(doc.LanguageId, StringComparer.Ordinal)))
+            if (builtin.Provider is Configuration.IDebugCurrentFileProvider provider && provider.ForCurrentFile(doc.Uri, doc.LanguageId, folder) is { } config)
+                return config;
+        return null;
+    }
 
     /// <summary>The folder's default debugger (<see cref="DefaultDebugTypeAsync"/>), else the user picks one ("Select debugger", as VS Code asks).</summary>
     private async Task<string?> PickDebugTypeAsync(IWindowService window, Uri? folder, CancellationToken ct)
@@ -269,6 +301,9 @@ public sealed partial class DebugService
                 || n.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || n.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)))
                 return Known("coreclr");
             if (files.Contains("tsconfig.json") || files.Contains("package.json")) return Known(Adapters.JsDebugAdapterFactory.PrimaryType);
+            if (files.Contains("pyproject.toml") || files.Contains("setup.py") || files.Contains("setup.cfg") || files.Contains("requirements.txt")
+                || files.Any(n => n.EndsWith(".py", StringComparison.OrdinalIgnoreCase)))
+                return Known(Adapters.DebugpyAdapterFactory.PrimaryType);
         }
         return types.Count == 1 ? types[0].Type : null;
     }

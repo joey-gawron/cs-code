@@ -77,6 +77,7 @@ public sealed class ShellController : IDisposable
     public Macros.MacroIntegration? Macros { get; private set; }
     /// <summary>The Markdown preview's commands and tabs (null when the composition has no editor module).</summary>
     public Markdown.MarkdownPreviewIntegration? Markdown { get; private set; }
+    public Python.PythonIntegration? Python { get; private set; }
     public ClipboardRouter Clipboard { get; private set; } = null!;
     public ShellContextMenus ContextMenus { get; private set; } = null!;
     public ShellDockFactory Factory => _sp.GetRequiredService<ShellDockFactory>();
@@ -154,6 +155,9 @@ public sealed class ShellController : IDisposable
         // Remote editing: Connect to Host / Open Remote Folder / disconnect... commands and the remote indicator in the status bar.
         if (_sp.GetService<CsCode.Remote.Shell.RemoteShellContributions>() is { } remote) _disposables.Add(remote.Start());
 
+        // CMake (docs/C-CPP.md): the cmake.* commands, the configure / build / launch-target status bar items, configure on open, clangd's build directory.
+        if (_sp.GetService<CsCode.Build.CMake.CMakeHost>() is { } cmake) _disposables.Add(cmake.Start());
+
         Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window, context: keys);
         _disposables.Add(Keyboard);
 
@@ -181,6 +185,14 @@ public sealed class ShellController : IDisposable
         {
             markdown.Start();
             _disposables.Add(markdown);
+        }
+
+        // Python (docs/PYTHON.md): Select Interpreter and the interpreter's status bar item.
+        Python = global::CsCode.App.Python.PythonIntegration.TryCreate(_sp);
+        if (Python is { } python)
+        {
+            python.Start();
+            _disposables.Add(python);
         }
 
         Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs);

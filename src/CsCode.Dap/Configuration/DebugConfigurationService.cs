@@ -18,6 +18,16 @@ public interface IDebugInitialFilesProvider
     ValueTask<IReadOnlyList<(string RelativePath, string Content)>> ProvideInitialFilesAsync(Uri? folder, CancellationToken ct);
 }
 
+/// <summary>
+/// A provider with a configuration for "this file" (VS Code's dynamic "Python Debugger: Current File"): what F5 runs on the active file when the
+/// folder has no launch configuration at all. Language stage 1; later stages may add their own.
+/// </summary>
+public interface IDebugCurrentFileProvider
+{
+    /// <summary>The configuration that debugs <paramref name="file"/> (a document of <paramref name="languageId"/>), or null when it is not this debugger's.</summary>
+    DebugConfiguration? ForCurrentFile(Uri file, string languageId, Uri? folder);
+}
+
 internal sealed record PersistedSelection(string Name, string? Folder);
 
 /// <summary>
@@ -247,8 +257,51 @@ public sealed class DebugConfigurationService : IDebugConfigurationService, IAsy
         foreach (var (k, v) in configuration.Properties) obj[k] = VariableResolver.ToNode(v);
         obj = VariableResolver.MergePlatformBlock(obj); // programmatic configs may still carry windows/linux/osx blocks
         var resolved = (JsonObject)(await resolver.ResolveAsync(obj, ct))!;
+        await ApplyEnvFileAsync(resolved, folder, ct);
         var element = JsonSerializer.SerializeToElement(resolved);
         return DebugConfiguration.FromJson(element, configuration.WorkspaceFolder) with { NoDebug = configuration.NoDebug };
+    }
+
+    /// <summary>
+    /// <c>envFile</c> (any debugger, <see cref="EnvFile"/>): its variables go into <c>env</c> under the ones <c>env</c> already has, before the
+    /// providers run. The (resolved) key stays, so a provider can tell one was given; adapters that read it themselves (js-debug, CodeLLDB) find
+    /// the same values, which <c>env</c> now holds anyway. A relative path is the folder's; a missing or unreadable file is reported in the log
+    /// and skipped, as VS Code does.
+    /// </summary>
+    private async Task ApplyEnvFileAsync(JsonObject configuration, Uri? folder, CancellationToken ct)
+    {
+        if (configuration["envFile"] is not JsonValue v || !v.TryGetValue<string>(out var path) || string.IsNullOrWhiteSpace(path)) return;
+        if (!Path.IsPathRooted(path) && folder is { IsFile: true }) path = Path.Combine(folder.LocalPath, path);
+        if (await ReadEnvFileAsync(path, ct) is not { } text) return;
+        var env = configuration["env"] is JsonObject own ? JsonSerializer.SerializeToElement(own) : (JsonElement?)null;
+        configuration["env"] = JsonNode.Parse(EnvFile.Merge(env, EnvFile.Parse(text)).GetRawText());
+    }
+
+    /// <summary>The text of an env file (workspace file system, so remote folders work too), or null with a log line when it cannot be read.</summary>
+    internal async Task<string?> ReadEnvFileAsync(string path, CancellationToken ct)
+    {
+        try
+        {
+            var uri = new Uri(path);
+            byte[] bytes;
+            if (_p.Workspace is { } ws)
+            {
+                if (await ws.FileSystem.StatAsync(uri, ct) is not { Type: FileType.File } stat) { _logger.LogInformation("envFile {Path} does not exist; ignored", path); return null; }
+                if (stat.Size > EnvFile.MaxBytes) { _logger.LogWarning("envFile {Path} is larger than {Max} bytes; ignored", path, EnvFile.MaxBytes); return null; }
+                bytes = await ws.FileSystem.ReadFileAsync(uri, ct);
+            }
+            else
+            {
+                if (!File.Exists(path) || new FileInfo(path).Length > EnvFile.MaxBytes) { _logger.LogInformation("envFile {Path} is missing or too large; ignored", path); return null; }
+                bytes = await File.ReadAllBytesAsync(path, ct);
+            }
+            return Encoding.UTF8.GetString(bytes);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or UriFormatException)
+        {
+            _logger.LogWarning(ex, "envFile {Path} could not be read; ignored", path);
+            return null;
+        }
     }
 
     private Func<CancellationToken, ValueTask<string?>>? DefaultBuildTaskAsync(Uri? folder)

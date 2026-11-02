@@ -28,6 +28,19 @@ public static class CppTestSample
         target_link_libraries(doctest_tests doctest::doctest)
         """;
 
+    /// <summary>
+    /// Appended for <see cref="WriteAndBuildAsync"/>'s <c>ctest</c>: CTest lists the GoogleTest and Catch2 tests one by one through their
+    /// discovery modules, and the doctest executable as one test.
+    /// </summary>
+    public const string CTestDiscovery = """
+        enable_testing()
+        include(GoogleTest)
+        gtest_discover_tests(gtest_tests)
+        include(Catch)
+        catch_discover_tests(catch_tests)
+        add_test(NAME doctest_all COMMAND doctest_tests)
+        """;
+
     /// <summary>Line 8 (1-based) is <c>int sum = Add(2, 2);</c> in <c>MathTest.Adds</c>; the failure of <c>MathTest.Fails</c> is on line 14.</summary>
     public const string GoogleTestSource = """
         #include <gtest/gtest.h>
@@ -96,36 +109,28 @@ public static class CppTestSample
         return null;
     }
 
-    public static string? FindCMake() =>
-        OnPath("cmake") ?? new[] { "/opt/homebrew/bin/cmake", "/usr/local/bin/cmake", "/opt/local/bin/cmake", "/usr/bin/cmake" }.FirstOrDefault(File.Exists);
+    /// <summary>cmake and ninja are looked up as the C sample does (PATH, then Homebrew, MacPorts and CMake.app).</summary>
+    public static string? FindCMake() => CMakeCSample.Find("cmake");
 
-    public static string? FindNinja() =>
-        OnPath("ninja") ?? new[] { "/opt/homebrew/bin/ninja", "/usr/local/bin/ninja", "/opt/local/bin/ninja", "/usr/bin/ninja" }.FirstOrDefault(File.Exists);
-
-    private static string? OnPath(string name)
-    {
-        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var candidate = Path.Combine(dir, OperatingSystem.IsWindows() ? name + ".exe" : name);
-            if (File.Exists(candidate)) return candidate;
-        }
-        return null;
-    }
+    public static string? FindNinja() => CMakeCSample.Find("ninja");
 
     /// <summary>Null when everything is there; otherwise why the real C++ test-framework tests skip.</summary>
     public static string? SkipReason()
     {
         if (OperatingSystem.IsWindows()) return "the C++ test sample is built with CMake and a Unix compiler (macOS, Linux)";
         if (FindCMake() is null) return "cmake is not installed";
-        if (OnPath("c++") is null && OnPath("clang++") is null && OnPath("g++") is null) return "no C++ compiler (c++, clang++, g++) on PATH";
+        if (CMakeCSample.Find("c++") is null && CMakeCSample.Find("clang++") is null && CMakeCSample.Find("g++") is null) return "no C++ compiler (c++, clang++, g++) on PATH";
         if (FindPrefixPath() is null) return $"GoogleTest, Catch2 and doctest are not installed: run tools/fetch-cpp-test-frameworks.sh (or set {EnvironmentVariable})";
         return null;
     }
 
-    /// <summary>Writes the sample into <paramref name="folder"/> and builds it into <c>build/</c> (Debug); returns the build's output when it fails.</summary>
-    public static async Task<string?> WriteAndBuildAsync(string folder, CancellationToken ct)
+    /// <summary>
+    /// Writes the sample into <paramref name="folder"/> (with <see cref="CTestDiscovery"/> when <paramref name="ctest"/>) and builds it into
+    /// <c>build/</c> (Debug); returns the build's output when it fails.
+    /// </summary>
+    public static async Task<string?> WriteAndBuildAsync(string folder, CancellationToken ct, bool ctest = false)
     {
-        File.WriteAllText(Path.Combine(folder, "CMakeLists.txt"), CMakeLists);
+        File.WriteAllText(Path.Combine(folder, "CMakeLists.txt"), ctest ? CMakeLists + "\n" + CTestDiscovery + "\n" : CMakeLists);
         File.WriteAllText(Path.Combine(folder, "gtest_tests.cpp"), GoogleTestSource);
         File.WriteAllText(Path.Combine(folder, "catch_tests.cpp"), Catch2Source);
         File.WriteAllText(Path.Combine(folder, "doctest_tests.cpp"), DoctestSource);

@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.Json;
+using CsCode.Core.Build;
+using CsCode.Core.Lifecycle;
 using CsCode.Testing.Engine;
 using CsCode.Testing.Providers.Cpp;
 using CsCode.Testing.Providers.Rust;
@@ -55,6 +57,56 @@ public sealed class CppProviderTests
         var found = new CppExecutables().Find(dir.Path, CppExecutables.DefaultPatterns, TestContext.Current.CancellationToken);
         Assert.Equal([(gtest, CppFramework.GoogleTest), (catch2, CppFramework.Catch2), (doctest, CppFramework.Doctest)],
             found.Select(f => (f.Path, f.Framework)).OrderBy(f => f.Path.Contains("/out/", StringComparison.Ordinal)).ThenBy(f => f.Path, StringComparer.Ordinal));
+    }
+
+    /// <summary>A CMake integration that knows one project and does nothing else.</summary>
+    private sealed class OneProject(CMakeProject project) : ICMakeService
+    {
+        public IReadOnlyList<CMakeProject> Projects { get; } = [project];
+        public IEventSource<IReadOnlyList<CMakeProject>> ProjectsChanged => EventSource.Never<IReadOnlyList<CMakeProject>>();
+        public IEventSource<CMakeBuildFinished> BuildFinished => EventSource.Never<CMakeBuildFinished>();
+        public CMakeProject? ProjectFor(string path) => project;
+        public ValueTask<CMakeProject?> ConfigureAsync(CMakeProject p, CancellationToken ct = default) => ValueTask.FromResult<CMakeProject?>(p);
+        public ValueTask<CMakeBuildResult> BuildAsync(CMakeProject p, IReadOnlyList<string>? targets = null, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task Executables_whose_tests_ctest_lists_one_by_one_are_left_to_the_ctest_provider()
+    {
+        using var dir = new TempDirectory("cscode-cpp-ctest-");
+        var discovered = FakeExecutable(dir, "build/gtest_tests", "gtest_list_tests");   // gtest_discover_tests: no add_test line
+        var added = FakeExecutable(dir, "build/added_tests", "gtest_list_tests");        // gtest_add_tests: --gtest_filter= from an add_test line
+        var doctest = FakeExecutable(dir, "build/doc_tests", "list-test-cases");         // doctest_discover_tests: --test-case=
+        var whole = FakeExecutable(dir, "build/catch_tests", "Catch2TestRun");           // add_test(NAME all COMMAND catch_tests): one CTest test
+        FakeExecutable(dir, "build/sub/other_test", "gtest_list_tests");                // not a CTest test at all
+        dir.WriteFile("build/CTestTestfile.cmake", "");
+        var listing = JsonSerializer.Serialize(new
+        {
+            backtraceGraph = new { commands = new[] { "add_test" }, files = new[] { Path.Combine(dir.Path, "CMakeLists.txt") },
+                nodes = new object[] { new { file = 0 }, new { command = 0, file = 0, line = 4, parent = 0 } } },
+            kind = "ctestInfo",
+            tests = new object[]
+            {
+                new { command = new[] { discovered, "--gtest_filter=MathTest.Adds", "--gtest_also_run_disabled_tests" }, name = "MathTest.Adds" },
+                new { backtrace = 1, command = new[] { added, "--gtest_filter=Other.Test" }, name = "Other.Test" },
+                new { command = new[] { doctest, "--test-case=adds" }, name = "adds" },
+                new { backtrace = 1, command = new[] { whole }, name = "all" },
+            },
+            version = new { major = 1, minor = 0 },
+        });
+        var processes = new ScriptedProcesses { Answer = spec => spec.Arguments.Contains("--show-only=json-v1") ? (0, [listing], []) : (1, [], ["unexpected"]) };
+        var cmake = new OneProject(new CMakeProject(dir.Path, Path.Combine(dir.Path, "build"), CMakeProjectState.Configured, null, null, "Debug", "Ninja", [], "/usr/bin/ctest", 1));
+        var ct = TestContext.Current.CancellationToken;
+
+        var provider = new CppTestProvider(new TestProviderContext(processes), cmake: cmake);
+        Assert.Equal(["build/catch_tests", "build/sub/other_test"], (await provider.DetectAsync(dir.Path, ct)).Select(p => p.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(["--test-dir", Path.Combine(dir.Path, "build"), "--show-only=json-v1", "-C", "Debug"], Assert.Single(processes.Started).Arguments);
+
+        // CTest off, or a folder without the CMake integration: every executable is listed here
+        var off = new CppTestProvider(new TestProviderContext(processes), cmake: cmake) { CTestEnabled = () => false };
+        Assert.Equal(5, (await off.DetectAsync(dir.Path, ct)).Count);
+        Assert.Equal(5, (await new CppTestProvider(new TestProviderContext(processes)).DetectAsync(dir.Path, ct)).Count);
+        Assert.Single(processes.Started);
     }
 
     [Fact]
@@ -286,12 +338,15 @@ public sealed class CppProviderTests
     }
 
     [Theory]
-    [InlineData(null, true, "lldb")]
-    [InlineData(null, false, "gdb")]
-    [InlineData("codelldb", false, "lldb")]
-    [InlineData("lldb-dap", true, "lldb-dap")]
-    [InlineData("gdb", true, "gdb")]
-    public void Debug_type_follows_the_setting(string? setting, bool macOS, string expected) => Assert.Equal(expected, CppTestProvider.DebugType(setting, macOS));
+    [InlineData(null, null, true, "lldb")]
+    [InlineData(null, null, false, "gdb")]
+    [InlineData("codelldb", null, false, "lldb")]
+    [InlineData("lldb-dap", null, true, "lldb-dap")]
+    [InlineData("gdb", null, true, "gdb")]
+    [InlineData("", "lldb-dap", true, "lldb-dap")] // unset: the CMake integration's debugger
+    [InlineData("codelldb", "gdb", false, "lldb")]
+    public void Debug_type_follows_the_setting(string? setting, string? cmakeSetting, bool macOS, string expected) =>
+        Assert.Equal(expected, CppTestProvider.DebugType(setting, cmakeSetting, macOS));
 
     [Fact]
     public void Glyph_matching_uses_the_runner_name_after_the_executable()

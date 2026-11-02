@@ -25,6 +25,10 @@ public enum RootStrategy
 /// <summary>
 /// A built-in server: its <see cref="LanguageServerDefinition"/> plus what that Core record has no slot for. <paramref name="Formatter"/> is what
 /// formats documents of its languages (CsCode has no formatter of its own: formatting is always the language server's).
+/// <paramref name="EnabledByDefault"/> false: registered but off until <c>cscode.languageServers.&lt;id&gt;.enabled</c> is true (an alternative to
+/// another server of the same language, such as basedpyright for Pyright). <paramref name="FromPythonEnvironment"/>: a Python tool that a project
+/// installs into its environment; the selected interpreter's own copy (<c>.venv/bin/ruff</c>) is preferred over the one on PATH, as VS Code's
+/// Ruff and Python extensions do.
 /// </summary>
 public sealed record BuiltinServer(
     LanguageServerDefinition Definition,
@@ -32,7 +36,9 @@ public sealed record BuiltinServer(
     string Formatter,
     IReadOnlyList<ServerAlternative> Alternatives,
     RootStrategy Roots = RootStrategy.Nearest,
-    string? Notes = null);
+    string? Notes = null,
+    bool EnabledByDefault = true,
+    bool FromPythonEnvironment = false);
 
 /// <summary>
 /// The language servers CsCode knows out of the box (data only: nothing here starts a process). Any stdio language server works by adding
@@ -68,8 +74,8 @@ public static class BuiltinLanguageServers
             SettingsKey: LspSettingKeys.LanguageServers + "." + id);
 
     private static BuiltinServer S(LanguageServerDefinition def, InstallHints install, string formatter, RootStrategy roots = RootStrategy.Nearest,
-        ServerAlternative[]? alternatives = null, string? notes = null) =>
-        new(def, install, formatter, alternatives ?? [], roots, notes);
+        ServerAlternative[]? alternatives = null, string? notes = null, bool enabled = true, bool fromPythonEnvironment = false) =>
+        new(def, install, formatter, alternatives ?? [], roots, notes, enabled, fromPythonEnvironment);
 
     private static ServerAlternative Alt(string command, params string[] args) => new(command, args);
 
@@ -88,8 +94,23 @@ public static class BuiltinLanguageServers
             "csharp-ls"),
         S(Def("python", "Python (Pyright)", ["python"], "pyright-langserver", ["--stdio"],
                 ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"]),
-            All3("Install it with: npm install -g pyright"),
-            "none (Pyright does not format)"),
+            All3("Install it with: npm install -g pyright (or pip install pyright in the project's environment)"),
+            "none (Pyright does not format)", fromPythonEnvironment: true,
+            notes: "Gets the selected interpreter (Python: Select Interpreter) as python.pythonPath."),
+        // Ruff's native server (`ruff server`, stable since Ruff 0.5.3): lint diagnostics, Quick Fixes, source.fixAll.ruff,
+        // source.organizeImports.ruff and formatting. One server per workspace: Ruff finds the nested configurations itself.
+        S(Def("ruff", "Python (Ruff)", ["python"], "ruff", ["server"], ["pyproject.toml", "ruff.toml", ".ruff.toml"]),
+            new("Install it with: pipx install ruff (or uv tool install ruff, or pip install ruff in the project's environment)",
+                "Install it with: brew install ruff (or pipx install ruff, or uv tool install ruff)",
+                "Install it with: pipx install ruff (or uv tool install ruff, or winget install astral-sh.ruff)"),
+            "Ruff (ruff format)", RootStrategy.Outermost, fromPythonEnvironment: true,
+            notes: "Needs Ruff 0.5.3 or newer (the native server). The selected environment's own ruff is preferred."),
+        // An alternative to Pyright (off by default: turn it on and Pyright off, see docs/PYTHON.md): semantic highlighting and inlay hints.
+        S(Def("basedpyright", "Python (basedpyright)", ["python"], "basedpyright-langserver", ["--stdio"],
+                ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"]),
+            All3("Install it with: npm install -g basedpyright (or pip install basedpyright, or pipx install basedpyright)"),
+            "none (basedpyright does not format)", enabled: false, fromPythonEnvironment: true,
+            notes: "Off by default: \"cscode.languageServers\": { \"basedpyright\": { \"enabled\": true }, \"python\": { \"enabled\": false } }."),
         S(Def("clangd", "C / C++ (clangd)", ["c", "cpp", "objective-c", "objective-cpp", "cuda-cpp"], "clangd", [], ["compile_commands.json", "compile_flags.txt", ".clangd"]),
             new("Install clangd from your LLVM / distribution package (e.g. sudo apt install clangd).",
                 "Install it with: brew install llvm (clangd is in $(brew --prefix llvm)/bin), or xcode-select --install for Apple's clangd.",

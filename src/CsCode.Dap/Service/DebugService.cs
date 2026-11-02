@@ -493,6 +493,7 @@ public sealed partial class DebugService : IDebugService, IDebugFrameFocus, IDeb
             group?.Members.Remove(session);
         }
         hooks.Subscriptions.Dispose();
+        _breakpoints.RemoveSessionBreakpoints(session.Id); // its instruction breakpoints and data breakpoints that cannot persist
         ArchiveHistory(session);
         if (wasActive)
         {

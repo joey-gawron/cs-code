@@ -9,7 +9,8 @@ using CsCode.Ui.Collections;
 
 namespace CsCode.Panels.Debug.Breakpoints;
 
-public enum BreakpointRowKind { Header, Source, Function, Exception }
+/// <summary><see cref="Data"/> and <see cref="Instruction"/> (lang-2): <see cref="INativeBreakpointManager"/>'s, tied to a debug session.</summary>
+public enum BreakpointRowKind { Header, Source, Function, Exception, Data, Instruction }
 
 /// <summary>How the debug adapter treats a breakpoint (from <see cref="IBreakpointManager.GetStatus"/>).</summary>
 public enum BreakpointVerification
@@ -50,6 +51,8 @@ public sealed class BreakpointRow : ObservableObject
     public SourceBreakpoint? Source { get; internal set; }
     public FunctionBreakpoint? Function { get; internal set; }
     public ExceptionFilterSetting? Filter { get; internal set; }
+    public DataBreakpoint? Data { get; internal set; }
+    public InstructionBreakpoint? Instruction { get; internal set; }
     public string? Condition { get; internal set; }
     public string? HitCondition { get; internal set; }
     public string? LogMessage { get; internal set; }
@@ -60,7 +63,7 @@ public sealed class BreakpointRow : ObservableObject
 
     public bool IsFailed => Verification == BreakpointVerification.Failed;
     public bool IsHeader => Kind == BreakpointRowKind.Header;
-    public bool IsBreakpoint => Kind is BreakpointRowKind.Source or BreakpointRowKind.Function;
+    public bool IsBreakpoint => Kind is BreakpointRowKind.Source or BreakpointRowKind.Function or BreakpointRowKind.Data or BreakpointRowKind.Instruction;
     public bool HasCheckbox => Kind != BreakpointRowKind.Header;
 
     public bool IsEnabled
@@ -98,6 +101,8 @@ public sealed class BreakpointRow : ObservableObject
             if (Verification == BreakpointVerification.Failed) return "debug-breakpoint-unsupported";
             var unverified = Verification == BreakpointVerification.Unverified;
             if (Kind == BreakpointRowKind.Function) return _isEnabled ? "debug-breakpoint-function" : "circle";
+            if (Kind == BreakpointRowKind.Data) return !_isEnabled || unverified ? "circle" : "debug-breakpoint-log"; // VS Code's data glyph is a hexagon; the nearest codicon here
+            if (Kind == BreakpointRowKind.Instruction) return !_isEnabled || unverified ? "circle" : "circle-large-filled";
             if (!_isEnabled) return "circle";
             if (HasLogMessage) return "debug-breakpoint-log";
             if (HasCondition || HasHitCondition) return unverified ? "debug-breakpoint-conditional-unverified" : "debug-breakpoint-conditional";
@@ -115,7 +120,7 @@ public sealed class BreakpointRow : ObservableObject
     };
 
     /// <summary>Function breakpoints cannot be toggled (the manager contract has no update for them).</summary>
-    public bool CanToggle => Kind is BreakpointRowKind.Source or BreakpointRowKind.Exception;
+    public bool CanToggle => Kind is BreakpointRowKind.Source or BreakpointRowKind.Exception or BreakpointRowKind.Data or BreakpointRowKind.Instruction;
 
     public string Tooltip
     {
@@ -188,6 +193,7 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable
         _s = services;
         _manager = services.Breakpoints;
         _subs.Add(_manager.Changed.Subscribe(_ => QueueRefresh()));
+        if (services.NativeBreakpoints is { } native) _subs.Add(native.NativeChanged.Subscribe(_ => QueueRefresh()));
         // A session starting or ending changes what the adapters say about every breakpoint.
         _subs.Add(services.Debug.SessionStarted.Subscribe(_ => QueueRefresh()));
         _subs.Add(services.Debug.SessionTerminated.Subscribe(_ => QueueRefresh()));
@@ -235,14 +241,16 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable
         var source = _manager.SourceBreakpoints;
         var functions = _manager.FunctionBreakpoints;
         var filters = _manager.ExceptionFilters;
+        var data = _s.NativeBreakpoints?.DataBreakpoints ?? [];
+        var instructions = _s.NativeBreakpoints?.InstructionBreakpoints ?? [];
         List<BreakpointRow> rows;
         if (source.Count + functions.Count > OffThreadThreshold)
         {
-            rows = await Task.Run(() => BuildRows(source, functions, filters));
+            rows = await Task.Run(() => BuildRows(source, functions, filters, data, instructions));
             await _s.Ui.SwitchToUi();
             if (IsDisposed || version != Interlocked.Read(ref _refreshVersion)) return; // a newer refresh superseded this one
         }
-        else rows = BuildRows(source, functions, filters);
+        else rows = BuildRows(source, functions, filters, data, instructions);
 
         if (Rows.Count == rows.Count && Rows.Zip(rows).All(p => p.First.Id == p.Second.Id && p.First.Kind == p.Second.Kind))
         {
@@ -255,15 +263,18 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable
         if (keep is not null) SelectedRow = rows.FirstOrDefault(r => r.Id == keep && !r.IsHeader);
     }
 
-    private List<BreakpointRow> BuildRows(IReadOnlyList<SourceBreakpoint> source, IReadOnlyList<FunctionBreakpoint> functions, IReadOnlyList<ExceptionFilterSetting> filters)
+    private List<BreakpointRow> BuildRows(IReadOnlyList<SourceBreakpoint> source, IReadOnlyList<FunctionBreakpoint> functions, IReadOnlyList<ExceptionFilterSetting> filters,
+        IReadOnlyList<DataBreakpoint> data, IReadOnlyList<InstructionBreakpoint> instructions)
     {
-        var rows = new List<BreakpointRow>(source.Count + functions.Count + filters.Count + 2);
-        var count = source.Count + functions.Count;
+        var rows = new List<BreakpointRow>(source.Count + functions.Count + filters.Count + data.Count + instructions.Count + 2);
+        var count = source.Count + functions.Count + data.Count + instructions.Count;
         if (count > 0)
         {
             rows.Add(new BreakpointRow(BreakpointRowKind.Header, "header:breakpoints", $"Breakpoints ({count})", true, null));
             foreach (var bp in source.OrderBy(b => b.Uri.ToString(), StringComparer.Ordinal).ThenBy(b => b.Line)) rows.Add(SourceRow(bp));
             foreach (var fn in functions) rows.Add(FunctionRow(fn));
+            foreach (var d in data) rows.Add(DataRow(d));
+            foreach (var i in instructions) rows.Add(InstructionRow(i));
         }
         if (filters.Count > 0)
         {
@@ -291,6 +302,25 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable
         return new BreakpointRow(BreakpointRowKind.Function, fn.Id, fn.Name, fn.Enabled, OnEnabledChanged)
         {
             Function = fn, Detail = "function", Condition = fn.Condition, HitCondition = fn.HitCondition, Verification = verification, StatusMessage = message,
+        };
+    }
+
+    private BreakpointRow DataRow(DataBreakpoint d)
+    {
+        var (verification, message, _) = Verify(d.Id, null);
+        var access = d.AccessType switch { "read" => "when read", "readWrite" => "when accessed", _ => "when changed" };
+        return new BreakpointRow(BreakpointRowKind.Data, d.Id, d.Description, d.Enabled, OnEnabledChanged)
+        {
+            Data = d, Detail = $"data, break {access}", Condition = d.Condition, HitCondition = d.HitCondition, Verification = verification, StatusMessage = message,
+        };
+    }
+
+    private BreakpointRow InstructionRow(InstructionBreakpoint i)
+    {
+        var (verification, message, _) = Verify(i.Id, null);
+        return new BreakpointRow(BreakpointRowKind.Instruction, i.Id, i.Label ?? i.InstructionReference, i.Enabled, OnEnabledChanged)
+        {
+            Instruction = i, Detail = "instruction", Condition = i.Condition, HitCondition = i.HitCondition, Verification = verification, StatusMessage = message,
         };
     }
 
@@ -322,6 +352,9 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable
             case BreakpointRowKind.Exception when row.Filter is { } filter:
                 _manager.SetExceptionFilters([.. _manager.ExceptionFilters.Select(f => f.Filter == filter.Filter ? f with { Enabled = enabled } : f)]);
                 break;
+            case BreakpointRowKind.Data or BreakpointRowKind.Instruction:
+                _s.NativeBreakpoints?.SetNativeEnabled(row.Id, enabled);
+                break;
         }
     }
 
@@ -329,6 +362,7 @@ public sealed class BreakpointsViewModel : ObservableObject, IDisposable
     {
         if (row.Kind == BreakpointRowKind.Source) _manager.Remove(row.Id);
         else if (row.Kind == BreakpointRowKind.Function) _manager.RemoveFunction(row.Id);
+        else if (row.Kind is BreakpointRowKind.Data or BreakpointRowKind.Instruction) _s.NativeBreakpoints?.RemoveNative(row.Id);
     }
 
     private void DeleteSelected()

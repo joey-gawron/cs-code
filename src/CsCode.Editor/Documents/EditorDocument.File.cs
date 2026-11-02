@@ -287,7 +287,12 @@ public sealed partial class EditorDocument
     {
         var svc = _svc!;
         if (!settings.FormatOnSave || IsLargeFile) return;
-        var providers = svc.Features.GetProviders<IDocumentFormattingProvider>(this);
+        var (providers, missing) = CsCode.Editor.Features.FormatterChoice.Select(svc.Features.GetProviders<IDocumentFormattingProvider>(this), CsCode.Editor.Features.FormatterChoice.Configured(svc.Config, LanguageId));
+        if (missing is not null)
+        {
+            svc.LoggerFactory.CreateLogger<EditorDocument>().LogInformation("Format on save skipped for {Uri}: {Reason}", Uri, CsCode.Editor.Features.FormatterChoice.MissingMessage(missing, LanguageId));
+            return;
+        }
         if (providers.Count == 0) return;
         var tabSize = ec.EffectiveIndentSize ?? svc.Config.GetOr("editor.tabSize", LanguageId, 4);
         var insertSpaces = ec.IndentStyle is { } style ? style == "space" : svc.Config.GetOr("editor.insertSpaces", LanguageId, true);

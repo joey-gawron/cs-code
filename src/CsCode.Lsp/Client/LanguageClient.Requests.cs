@@ -31,12 +31,22 @@ internal sealed partial class LanguageClient
     /// handful of field reads plus one enqueue. On the lane: stale-check (cancelled before it is ever sent when the text moved on), run
     /// the body, stale-check again (a response for an older document version is dropped).
     /// </summary>
-    internal ValueTask<T?> DocRequestAsync<T>(ProviderKind kind, int feature, ITextDocument document, LanePriority priority, Func<DocRequest, ValueTask<T?>> body, CancellationToken ct)
+    internal ValueTask<T?> DocRequestAsync<T>(ProviderKind kind, int feature, ITextDocument document, LanePriority priority, Func<DocRequest, ValueTask<T?>> body, CancellationToken ct) =>
+        !_features.Allows(kind, document) ? default : DocRequestCoreAsync(document, priority, sd => new WorkKey(sd, feature), body, ct);
+
+    /// <summary>
+    /// A server extension's request about a document the server has open (Expand Macro, Matching Brace…): no feature registration gates it, and
+    /// two calls never supersede each other. Otherwise <see cref="DocRequestAsync{T}"/>.
+    /// </summary>
+    internal ValueTask<T?> ExtensionDocRequestAsync<T>(ITextDocument document, Func<DocRequest, ValueTask<T?>> body, CancellationToken ct) =>
+        DocRequestCoreAsync(document, LanePriority.Interactive, _ => default, body, ct);
+
+    private ValueTask<T?> DocRequestCoreAsync<T>(ITextDocument document, LanePriority priority, Func<SyncedDocument, WorkKey> key, Func<DocRequest, ValueTask<T?>> body, CancellationToken ct)
     {
-        if (!IsOperational || !_features.Allows(kind, document) || !_docs.TryGetValue(document.Uri, out var sd) || sd.Ignored) return default;
+        if (!IsOperational || !_docs.TryGetValue(document.Uri, out var sd) || sd.Ignored) return default;
         if (_ctx.Queue.ShouldShed(priority)) return default;
         var version = document.Version;
-        return _ctx.Queue.RunAsync<T>(priority, new WorkKey(sd, feature), async ctx =>
+        return _ctx.Queue.RunAsync<T>(priority, key(sd), async ctx =>
         {
             if (sd.Detached || Volatile.Read(ref _tornDown) != 0 || document.Version != version) return default;
             using var link = CancellationTokenSource.CreateLinkedTokenSource(ctx.Token, sd.GetVersionToken());

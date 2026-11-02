@@ -1,4 +1,6 @@
+using CsCode.Build.CMake;
 using CsCode.Testing.Engine;
+using CsCode.Testing.Providers.CTest;
 using CsCode.Testing.Providers.Cpp;
 using CsCode.TestDoubles;
 using Xunit;
@@ -131,5 +133,42 @@ public sealed class RealCppTests(CppSampleBuild sample) : IClassFixture<CppSampl
         var skipped = new RecordingSink();
         await provider.RunAsync(new TestRunRequest(project, ["doctest_tests/skipped"]), skipped, ct);
         Assert.Equal(TestOutcome.Passed, skipped.Result("doctest_tests/skipped").Outcome);
+    }
+}
+
+/// <summary>
+/// The C++ provider beside the CTest provider (stage 3) on the real CMake integration, for a sample whose GoogleTest and Catch2 tests CTest
+/// discovers (<c>gtest_discover_tests</c>, <c>catch_discover_tests</c>): those executables are listed by CTest only, each test once.
+/// </summary>
+[Trait("Category", CppTestSample.Category)]
+public sealed class RealCppCTestTests
+{
+    [Fact]
+    public async Task Executables_whose_tests_ctest_discovers_are_left_to_the_ctest_provider()
+    {
+        Assert.SkipWhen(CppTestSample.SkipReason() is not null, CppTestSample.SkipReason() ?? "");
+        var ct = TestContext.Current.CancellationToken;
+        using var dir = new TempDirectory("cscode-cpp-ctest-");
+        using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            timeout.CancelAfter(TimeSpan.FromMinutes(5));
+            var failure = await CppTestSample.WriteAndBuildAsync(dir.Path, timeout.Token, ctest: true);
+            Assert.True(failure is null, failure);
+        }
+        var output = new InMemoryOutputService();
+        using var cmake = new CMakeService(new CTestProviderTests.Folder(dir.Path), new TestConfigurationService(), null, null, output);
+        var context = new TestProviderContext(new ProcessRunner());
+
+        var ctest = new CTestProvider(context, cmake);
+        var project = Assert.Single(await ctest.DetectAsync(dir.Path, ct));
+        var tests = (await ctest.DiscoverAsync(project, new RecordingSink(), ct).WaitAsync(TimeSpan.FromMinutes(2), ct)).Select(t => t.Id).ToList();
+        Assert.True(new[] { "MathTest.Adds", "MathTest.Fails", "adds numbers", "fails", "doctest_all" }.All(tests.Contains),
+            string.Join(", ", tests) + "\n" + output.Text(CMakeService.OutputChannelName));
+
+        var cpp = new CppTestProvider(context, cmake: cmake);
+        Assert.Equal(["build/doctest_tests"], (await cpp.DetectAsync(dir.Path, ct)).Select(p => p.Name)); // CTest runs it whole: its tests stay here
+        var withoutCTest = new CppTestProvider(context, cmake: cmake) { CTestEnabled = () => false };
+        Assert.Equal(["build/catch_tests", "build/doctest_tests", "build/gtest_tests"],
+            (await withoutCTest.DetectAsync(dir.Path, ct)).Select(p => p.Name).Order(StringComparer.Ordinal));
     }
 }

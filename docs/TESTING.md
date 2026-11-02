@@ -5,7 +5,7 @@ JavaScript/TypeScript packages that use Jest or Vitest, and C++ test executables
 
 | Project | References | Holds |
 |---|---|---|
-| `CsCode.Testing` | Core only (no Avalonia) | the providers (`Providers/DotNet`, `Providers/Rust`, `Providers/JavaScript`, `Providers/Cpp`), their output parsers and source scanners, the process runner, the test tree and the run controller (`Engine/`) |
+| `CsCode.Testing` | Core only (no Avalonia) | the providers (`Providers/DotNet`, `Providers/Rust`, `Providers/JavaScript`, `Providers/CTest`, `Providers/Cpp`), their output parsers and source scanners, the process runner, the test tree and the run controller (`Engine/`) |
 | `CsCode.Panels.Testing` | Core, Ui, Testing | the Test Explorer tool window and its view-model, `TestingHost` (commands, settings, Error List / Output glue, context keys), the editor's glyph provider |
 
 The editor side is `CsCode.Editor/Features/TestGutterFeature.cs`, over the new Core contract `ITestGutterProvider`
@@ -107,7 +107,13 @@ Linux install; GDB comes from the system).
   for the failure location). Stable libtest reports no per-test time, so Rust tests show none (the JSON format with times needs nightly).
 * **Debug.** The test executable under the Rust debugger (`cscode.debug.rustDebugger`, read as the debugger module reads it: `lldb`/`codelldb`
   → CodeLLDB, `gdb` → GDB; unset: CodeLLDB on macOS, GDB elsewhere) with `<names> --exact --nocapture --test-threads=1`, `cwd` and `env` as for a
-  run. A debug run debugs one target (the first that holds a requested test). The libtest lines are read from the session's output.
+  run. A debug run over several targets debugs them one after another, one session each (lang-2; before, only the first). The libtest lines
+  are read from the session's output.
+* **Doc-tests** (lang-2). A package with a library also has its doc-tests listed (`cargo test --doc -- --list --format terse`) under a
+  "Doc-tests (<lib>)" target: id `doc/src/lib.rs - add (line 3)`, label `add (line 3)`, located at the example's line. They run with
+  `cargo test --doc` — all of the package's whenever any is asked for: with rustdoc's merged doctests (edition 2024, Rust 1.96.1) a name filter
+  does not select one (`--exact` filters every one out; a plain filter runs them all) — so running one also reports the others. They cannot be
+  debugged (rustdoc compiles each when it runs): a debug run says so in the Tests output and debugs the other selected tests.
 
 ### JavaScript / TypeScript (`JavaScriptTestProvider`)
 
@@ -127,6 +133,22 @@ Linux install; GDB comes from the system).
 * Paths node reports are resolved through symbolic links (`/private/var/…` for `/var/…` on macOS): they are put back under the folder as it
   was opened (`PhysicalPaths`), so ids, Error List entries and glyphs match the open documents. .NET frames get the same treatment.
 
+### CTest (`CTestProvider`, stage 3 — docs/C-CPP.md)
+
+* **Detection.** Each CMake project of the CMake integration (`ICMakeService`, `src/CsCode.Build.CMake`) under the folder; the project is the
+  source directory, its "file" its `CMakeLists.txt`.
+* **Discovery** configures the project when it never was, then reads `ctest --test-dir <build> --show-only=json-v1 [-C <config>]`
+  (`CTestJson`): a test's id is its CTest name, its label carries its `LABELS`, it is grouped under the target whose executable it runs, and
+  its location is the `add_test` line its backtrace names, so the glyphs sit in CMakeLists.txt (the source scan finds `add_test(NAME …)`). A
+  `DISABLED` test is shown skipped. A new configure (a saved CMakeLists.txt, another preset) re-discovers the project.
+* **Run.** The targets whose executables the requested tests run are built through the CMake integration (all targets when a test runs
+  something else), then `ctest --test-dir <build> --output-on-failure --no-tests=ignore --output-junit <tmp> [-C <config>] [-R '^(a|b)$']`.
+  Passes are reported as their console lines arrive; the JUnit file (CTest 3.21+, checked with `ctest --version`) gives the failures' output
+  and messages at the end; an older ctest is read from its console output alone (`CTestResults`). ctest's exit code 8 means "a test failed".
+* **Debug.** One test: its command from the JSON (program and arguments) under the C debugger (`cscode.cmake.debugger`: CodeLLDB on macOS,
+  GDB elsewhere, `lldb-dap` on request) in its `WORKING_DIRECTORY` (default: the build directory of the CMakeLists.txt that added it), with its
+  `ENVIRONMENT`; the result is the program's exit code.
+
 ### C++ (`CppTestProvider`)
 
 GoogleTest, Catch2 and doctest executables, each a project. Full description in [C-CPP.md](C-CPP.md) section 10; in short:
@@ -137,9 +159,12 @@ GoogleTest, Catch2 and doctest executables, each a project. Full description in 
   cached by the executable's size and modification time (listed again only after a rebuild). Ids are `<executable>/<runner name>`.
 * **Run.** The executable in its directory with the framework's filter; GoogleTest's console as it comes plus its JSON, Catch2's and doctest's
   XML report; a crash fails the test that was running. A disabled / hidden / skipped test runs when chosen by itself.
-* **Debug.** The same command under `cscode.testing.cpp.debugger` (CodeLLDB on macOS, GDB elsewhere, or lldb-dap), stopping at a failed
-  assertion (`cscode.testing.cpp.breakOnFailure`); results read when the session ends.
-* Building first and discovery through CMake wait for the C stage's CMake integration (C-CPP.md section 15).
+* **Debug.** The same command under `cscode.testing.cpp.debugger` (empty: CTest's `cscode.cmake.debugger`; CodeLLDB on macOS, GDB
+  elsewhere, or lldb-dap), stopping at a failed assertion (`cscode.testing.cpp.breakOnFailure`); results read when the session ends.
+* **Beside CTest.** An executable whose tests CTest lists one by one (`gtest_discover_tests`, `catch_discover_tests`,
+  `doctest_discover_tests`, `gtest_add_tests`, read from `ctest --show-only=json-v1`) is left to the CTest provider while it is on, so no test
+  is listed twice; one CTest runs whole stays here.
+* Building first and discovery through the CMake File API are open (C-CPP.md section 15): build, then Refresh.
 
 ## The tree, runs and threading (`TestController`, `TestTree`)
 
@@ -183,7 +208,7 @@ selection (a rebuild resets the list, which used to drop it).
 | `cscode.testing.autoDiscover` | `true` | Discover when an editor shows a file that declares tests (a Rust package is built to list them). Tests are always discovered when the explorer is first shown, a test command runs, or Refresh, and never just because a folder opened. Off: only then. |
 | `cscode.testing.dotnet.enabled` / `.rust.enabled` / `.javascript.enabled` / `.cpp.enabled` | `true` | Turn a provider off. |
 | `cscode.testing.cpp.executables` | TestMate's default | Globs naming the C++ test executables (C-CPP.md section 10). |
-| `cscode.testing.cpp.debugger` | `""` | `codelldb`, `lldb-dap` or `gdb` for C++ tests; empty: CodeLLDB on macOS, GDB elsewhere. |
+| `cscode.testing.cpp.debugger` | `""` | `codelldb`, `lldb-dap` or `gdb` for C++ tests; empty: `cscode.cmake.debugger`, then CodeLLDB on macOS, GDB elsewhere. |
 | `cscode.testing.cpp.breakOnFailure` | `true` | Debugging a C++ test stops at the failing assertion. |
 
 Also read: `cscode.debug.rustDebugger` (the Rust debugger) and `cscode.debug.nodePath` (node for Jest/Vitest runs).
@@ -243,14 +268,14 @@ then Continue and the result comes back from the session — under CodeLLDB on m
 ## Known gaps / next steps
 
 * **Code lens.** "Run Test | Debug Test" only: no "Run All Tests" lens above a test class and no result in the lens text (the glyph shows the
-  result). rust-analyzer's own run/debug lenses are hidden in favour of these (docs/EDITOR.md §7e).
+  result). rust-analyzer's own Run/Debug lenses show only on binaries and examples (its server extension drops them on tests in favour of these: docs/RUST.md).
 * **Microsoft.Testing.Platform-only projects** (MSTest runner / NUnit / TUnit without the VSTest adapter) run through `dotnet test` with the
   VSTest TRX logger, which they may not support: they need `--report-trx` (MTP) and, for debugging, `--filter-uid` and a launch of the test
   executable. xUnit v3 projects (MTP or VSTest) are fine: they run directly.
 * **F# / VB** test projects (`.fsproj`, `.vbproj`) are not detected: detection looks at `.csproj` files and discovery scans C#.
 * **Theories with pre-enumerated data** show their cases after a run, not at discovery.
 * **Rust**: no per-test durations (stable libtest); `#[path]` modules and macros that generate tests are found by `--list` but get no location;
-  doc-tests are not listed (cargo runs them separately); a debug run of several targets debugs the first.
+  running one doc-test runs all of the package's (no name filter with merged doctests), and doc-tests cannot be debugged.
 * **Jest/Vitest**: custom `testMatch`/`include` patterns are not read (the default patterns are); a watch mode is not offered; Vitest's browser
   mode is not handled. Debugging Vitest in a worker pool may need `--pool=forks`.
 * **Remote folders** (ssh) are not searched: the providers run tools locally. Running them through `cscode-server` is the remote workstream's.

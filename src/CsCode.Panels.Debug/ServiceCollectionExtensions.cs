@@ -9,8 +9,9 @@ public static class ServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the debug tool windows (<c>debug.callstack</c>, <c>debug.locals</c>, <c>debug.autos</c>, <c>debug.watch</c>,
-    /// <c>debug.breakpoints</c>, <c>debug.threads</c>, <c>debug.console</c>, <c>debug.exception</c>, <c>debug.modules</c>) as <see cref="IToolWindow"/> singletons, plus the shared
-    /// <see cref="DebugPanelsRuntime"/> (which registers the <c>debug.addToWatch</c> command). The panels consume
+    /// <c>debug.breakpoints</c>, <c>debug.threads</c>, <c>debug.console</c>, <c>debug.exception</c>, <c>debug.modules</c>, and lang-2's native windows
+    /// <c>debug.disassembly</c>, <c>debug.memory</c>, <c>debug.registers</c>) as <see cref="IToolWindow"/> singletons, plus the shared
+    /// <see cref="DebugPanelsRuntime"/> (which registers the <c>debug.addToWatch</c>, <c>debug.action.openDisassemblyView</c> and <c>cscode.debug.viewMemory</c> commands). The panels consume
     /// <c>IDebugService</c>, <c>IDebugFrameFocus</c>, <c>IDebugOutputHistory</c>, <c>INavigationService</c>, <c>IWindowService</c>,
     /// <c>ICommandService</c>, <c>IStateStorage</c>, <c>IDocumentManager</c> and <c>IUiDispatcher</c> from DI when a view is created; only
     /// <c>IDebugService</c> is required. The debug commands (<c>workbench.action.debug.*</c>) belong to the DAP module and the toggle
@@ -28,6 +29,9 @@ public static class ServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, DebugConsoleToolWindow>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, ExceptionToolWindow>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, ModulesToolWindow>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, DisassemblyToolWindow>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, MemoryToolWindow>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, RegistersToolWindow>());
         return services;
     }
 }

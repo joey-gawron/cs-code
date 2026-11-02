@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using CsCode.Core.Build;
 using CsCode.Core.Debugging;
 using CsCode.Testing.Engine;
+using CsCode.Testing.Providers.CTest;
 using CsCode.Testing.Providers.Rust;
 
 namespace CsCode.Testing.Providers.Cpp;
@@ -10,16 +12,19 @@ namespace CsCode.Testing.Providers.Cpp;
 /// C++ test executables built with GoogleTest, Catch2 (v3; v2 without locations) or doctest. <b>Detection</b>: the files matching the
 /// <c>cscode.testing.cpp.executables</c> globs (else C++ TestMate's <c>testMate.cpp.test.executables</c>, else TestMate's default
 /// <see cref="CppExecutables.DefaultPatterns"/>) that are native executables containing a framework's signature (<see cref="CppExecutables"/>);
-/// each is a project (its framework shown beside it). <b>Discovery</b> runs the executable's listing (GoogleTest's JSON listing, Catch2's and
+/// each is a project (its framework shown beside it), except an executable whose tests CTest already lists one by one (<c>gtest_discover_tests</c>,
+/// <c>catch_discover_tests</c>, <c>doctest_discover_tests</c>, <c>gtest_add_tests</c>: <see cref="RegisteredByCTestAsync"/>), which the CTest
+/// provider shows instead. <b>Discovery</b> runs the executable's listing (GoogleTest's JSON listing, Catch2's and
 /// doctest's XML listings, all with file and line), bounded in time and output, and caches it by the executable's size and modification time:
 /// an executable is listed again only after it was rebuilt. A test's id is <c>&lt;executable&gt;/&lt;runner name&gt;</c>
 /// (<c>math_tests/MathTest.Adds</c>, <c>catch_tests/adds numbers</c>, <c>doc_tests/suite::name</c>), so the same test name in two executables
 /// stays two tests. <b>Running</b> runs the executable in its own directory with the framework's filter and reads its results file
 /// (GoogleTest's console as it comes, too); a test the executable was running when it crashed fails with the exit code. <b>Debugging</b>
-/// launches it under <c>cscode.testing.cpp.debugger</c> (CodeLLDB on macOS, GDB elsewhere; lldb-dap as an alternative) with the same filter,
+/// launches it under <c>cscode.testing.cpp.debugger</c> (unset: the CMake integration's <c>cscode.cmake.debugger</c>, CodeLLDB on macOS, GDB
+/// elsewhere; lldb-dap as an alternative) with the same filter,
 /// breaking into the debugger at a failed assertion (<c>cscode.testing.cpp.breakOnFailure</c>), and reads the results file when the session ends.
 /// </summary>
-public sealed class CppTestProvider(TestProviderContext context, Func<string, JsonElement?>? rawSetting = null) : ITestProvider
+public sealed class CppTestProvider(TestProviderContext context, Func<string, JsonElement?>? rawSetting = null, ICMakeService? cmake = null) : ITestProvider
 {
     public const string ProviderId = "cpp";
     public const string ExecutablesSetting = "cscode.testing.cpp.executables";
@@ -35,6 +40,7 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
     private const int MaxCachedListings = 256;
 
     private readonly CppExecutables _executables = new();
+    private readonly CTestProvider? _ctest = cmake is null ? null : new CTestProvider(context, cmake);
     private readonly ConcurrentDictionary<string, Listing> _listings = new(StringComparer.Ordinal);
 
     /// <summary>An executable's tests as of one build (size and modification time), with each test's name for the runner's filter.</summary>
@@ -45,6 +51,9 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
     public IReadOnlyList<string> LanguageIds { get; } = ["cpp", "cuda-cpp", "objective-cpp"];
 
     internal CppExecutables Executables => _executables;
+
+    /// <summary>Whether the CTest provider is on (its executables are then left to it); the host passes the provider's enabled setting.</summary>
+    public Func<bool> CTestEnabled { get; init; } = () => true;
 
     // ------------------------------------------------------------------------------------------------ detection
 
@@ -57,12 +66,57 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
         return own is { Count: > 0 } ? own : CppExecutables.DefaultPatterns;
     }
 
-    public Task<IReadOnlyList<TestProject>> DetectAsync(string folder, CancellationToken ct)
+    public async Task<IReadOnlyList<TestProject>> DetectAsync(string folder, CancellationToken ct)
     {
         var result = new List<TestProject>();
-        foreach (var found in _executables.Find(folder, Patterns(), ct))
-            result.Add(new TestProject(ProviderId, ProjectName(folder, found.Path), found.Path, folder, CppExecutables.Label(found.Framework)));
-        return Task.FromResult<IReadOnlyList<TestProject>>(result);
+        var found = _executables.Find(folder, Patterns(), ct).ToList();
+        if (found.Count == 0) return result;
+        var registered = await RegisteredByCTestAsync(folder, ct).ConfigureAwait(false);
+        foreach (var exe in found)
+            if (registered.Count == 0 || !registered.Contains(PhysicalPaths.Resolve(exe.Path)))
+                result.Add(new TestProject(ProviderId, ProjectName(folder, exe.Path), exe.Path, folder, CppExecutables.Label(exe.Framework)));
+        return result;
+    }
+
+    /// <summary>
+    /// The executables (resolved paths) of the folder's CMake projects whose tests CTest lists one by one, so that they are not listed twice: those
+    /// a CTest test runs with a single test's filter (GoogleTest's <c>--gtest_filter=</c>, doctest's <c>--test-case=</c>), or with arguments from
+    /// a test that has no <c>add_test</c> line (the discovery modules add theirs from a generated file when ctest runs). Empty when the CTest
+    /// provider is off, or no project under the folder was built with CTest.
+    /// </summary>
+    internal async Task<IReadOnlySet<string>> RegisteredByCTestAsync(string folder, CancellationToken ct)
+    {
+        var result = new HashSet<string>(OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+        if (_ctest is null || cmake is null || !CTestEnabled()) return result;
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+        foreach (var p in cmake.Projects)
+        {
+            var inFolder = ITestProvider.PathsEqual(p.SourceDirectory, root) || StackTraces.IsUnder(p.SourceDirectory, root);
+            if (!inFolder || !File.Exists(Path.Combine(p.BuildDirectory, "CTestTestfile.cmake"))) continue;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(ListTimeout);
+            IReadOnlyList<CTestInfo>? tests;
+            try { tests = await _ctest.ListAsync(p, Quiet.Instance, timeout.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { continue; }
+            foreach (var t in tests ?? [])
+                if (t.Executable is { Length: > 0 } exe && RunsSingleTests(t))
+                    result.Add(PhysicalPaths.Resolve(Path.IsPathRooted(exe) ? exe : Path.Combine(t.WorkingDirectory ?? p.BuildDirectory, exe)));
+        }
+        return result;
+    }
+
+    private static bool RunsSingleTests(CTestInfo t) =>
+        t.Command.Skip(1).Any(a => a.StartsWith("--gtest_filter=", StringComparison.Ordinal) || a.StartsWith("--test-case=", StringComparison.Ordinal))
+        || (t.File is null && t.Command.Count > 1);
+
+    /// <summary>Drops the CTest listing's progress lines (detection has nowhere to show them).</summary>
+    private sealed class Quiet : ITestRunSink
+    {
+        public static readonly Quiet Instance = new();
+        public void Discovered(TestProject project, DiscoveredTest test) { }
+        public void Started(TestProject project, string testId) { }
+        public void Finished(TestProject project, TestResult result) { }
+        public void Output(string line) { }
     }
 
     /// <summary>The executable's path relative to the folder (<c>build/math_tests</c>), or its name when it is elsewhere.</summary>
@@ -312,7 +366,7 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
             var breakOnFailure = !string.Equals(context.Setting(BreakOnFailureSetting), "false", StringComparison.OrdinalIgnoreCase)
                 && rawSetting?.Invoke(BreakOnFailureSetting) is not { ValueKind: JsonValueKind.False };
             var invocation = Arguments(framework, names, tmp, debug: true, breakOnFailure, skipped);
-            var type = DebugType(context.Setting(DebuggerSetting), OperatingSystem.IsMacOS());
+            var type = DebugType(context.Setting(DebuggerSetting), context.Setting(CTestProvider.DebuggerSetting), OperatingSystem.IsMacOS());
             var config = Configuration(type, project, invocation.Arguments);
             sink.Status($"Debugging {project.Name}…");
             sink.Output($"> {type}: {new ProcessSpec(project.FilePath, invocation.Arguments, WorkingDirectory(project))}");
@@ -346,16 +400,12 @@ public sealed class CppTestProvider(TestProviderContext context, Func<string, Js
     }
 
     /// <summary>
-    /// The debug type for <see cref="DebuggerSetting"/>: <c>codelldb</c>/<c>lldb</c> → CodeLLDB (<c>lldb</c>), <c>lldb-dap</c>, <c>gdb</c>; unset:
+    /// The debug type for <see cref="DebuggerSetting"/>, or when it is unset for the CMake integration's <c>cscode.cmake.debugger</c>, through
+    /// <see cref="CTestProvider.DebugType"/>: <c>codelldb</c>/<c>lldb</c> → CodeLLDB (<c>lldb</c>), <c>lldb-dap</c>, <c>gdb</c>; both unset:
     /// CodeLLDB on macOS (GDB cannot debug arm64 macOS programs), GDB elsewhere.
     /// </summary>
-    internal static string DebugType(string? setting, bool macOS) => (setting?.Trim().ToLowerInvariant() ?? "") switch
-    {
-        "codelldb" or "lldb" => "lldb",
-        "lldb-dap" or "lldb-vscode" => "lldb-dap",
-        "gdb" => "gdb",
-        _ => macOS ? "lldb" : "gdb",
-    };
+    internal static string DebugType(string? setting, string? cmakeSetting, bool macOS) =>
+        CTestProvider.DebugType(string.IsNullOrWhiteSpace(setting) ? cmakeSetting : setting, macOS);
 
     /// <summary>Turns a framework's results into the sink's, with ids and places in the folder.</summary>
     private sealed class Reporter(TestProject project, ITestRunSink sink, IReadOnlyList<string>? requested)

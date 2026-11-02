@@ -5,6 +5,12 @@ namespace CsCode.Core.Tasks;
 public sealed record TaskDefinition(string Label, string Type, string? Group = null, bool IsDefault = false, string? Detail = null)
 {
     public bool IsDefaultBuild => IsDefault && string.Equals(Group, "build", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The <see cref="ProvidedTask.Source"/> of a task an <see cref="ITaskProvider"/> detected (<c>"cargo"</c>); null for a task of tasks.json,
+    /// also one that customises a detected task. Additive (lang-2).
+    /// </summary>
+    public string? Source { get; init; }
 }
 
 /// <param name="ExitCode">Exit code of the task's own process (or of the first failing dependency); -1 when it never started.</param>
@@ -27,7 +33,10 @@ public sealed record TaskResult(string Label, int ExitCode, bool Cancelled = fal
 /// </summary>
 public interface ITaskService
 {
-    /// <summary>Tasks of <c>.cscode/tasks.json</c> (falling back to <c>.vscode/tasks.json</c>) in the folder (default: primary workspace folder).</summary>
+    /// <summary>
+    /// Tasks of <c>.cscode/tasks.json</c> (falling back to <c>.vscode/tasks.json</c>) in the folder (default: primary workspace folder), then the
+    /// tasks the <see cref="ITaskProvider"/>s detected there that tasks.json does not customise (<see cref="TaskDefinition.Source"/> set).
+    /// </summary>
     ValueTask<IReadOnlyList<TaskDefinition>> GetTasksAsync(Uri? folder = null, CancellationToken ct = default);
 
     /// <summary>

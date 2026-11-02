@@ -362,7 +362,7 @@ public class EditorClipboardViewTests
             "(submenu)", "Run To C_ursor", "Add _Watch", "_QuickWatch...",
             "(submenu)",
             "Cu_t", "_Copy", "Copy wit_h Formatting", "_Paste",
-            "_Format Document", "Format _Selection", "Co_mment Selection", "_Uncomment Selection",
+            "_Format Document", "Format Document _With...", "Format _Selection", "Co_mment Selection", "_Uncomment Selection",
             "Command _Palette...",
         ], items);
         var breakpoint = registry.Of<MenuContribution>().Items.Select(i => i.Value).Where(i => i.MenuId == EditorMenus.BreakpointSubmenu).Select(i => i.Title);

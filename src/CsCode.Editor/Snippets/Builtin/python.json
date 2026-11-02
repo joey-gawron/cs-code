@@ -1,0 +1,423 @@
+{
+  "if": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition}:",
+      "\t${0:pass}"
+    ],
+    "description": "if statement"
+  },
+  "if/else": {
+    "prefix": "ifelse",
+    "body": [
+      "if ${1:condition}:",
+      "\t${2:pass}",
+      "else:",
+      "\t${0:pass}"
+    ],
+    "description": "if / else"
+  },
+  "elif": {
+    "prefix": "elif",
+    "body": [
+      "elif ${1:condition}:",
+      "\t${0:pass}"
+    ],
+    "description": "elif clause"
+  },
+  "else": {
+    "prefix": "else",
+    "body": [
+      "else:",
+      "\t${0:pass}"
+    ],
+    "description": "else clause"
+  },
+  "for": {
+    "prefix": "for",
+    "body": [
+      "for ${1:item} in ${2:items}:",
+      "\t${0:pass}"
+    ],
+    "description": "for loop"
+  },
+  "for range": {
+    "prefix": "forr",
+    "body": [
+      "for ${1:i} in range(${2:n}):",
+      "\t${0:pass}"
+    ],
+    "description": "for loop over a range"
+  },
+  "for enumerate": {
+    "prefix": "fore",
+    "body": [
+      "for ${1:index}, ${2:item} in enumerate(${3:items}):",
+      "\t${0:pass}"
+    ],
+    "description": "for loop with enumerate"
+  },
+  "for dict items": {
+    "prefix": "ford",
+    "body": [
+      "for ${1:key}, ${2:value} in ${3:mapping}.items():",
+      "\t${0:pass}"
+    ],
+    "description": "for loop over a dict's items"
+  },
+  "while": {
+    "prefix": "while",
+    "body": [
+      "while ${1:condition}:",
+      "\t${0:pass}"
+    ],
+    "description": "while loop"
+  },
+  "try/except": {
+    "prefix": "try",
+    "body": [
+      "try:",
+      "\t${1:pass}",
+      "except ${2:Exception} as ${3:error}:",
+      "\t${0:raise}"
+    ],
+    "description": "try / except"
+  },
+  "try/except/else/finally": {
+    "prefix": "tryf",
+    "body": [
+      "try:",
+      "\t${1:pass}",
+      "except ${2:Exception} as ${3:error}:",
+      "\t${4:raise}",
+      "else:",
+      "\t${5:pass}",
+      "finally:",
+      "\t${0:pass}"
+    ],
+    "description": "try / except / else / finally"
+  },
+  "with": {
+    "prefix": "with",
+    "body": [
+      "with ${1:expression} as ${2:target}:",
+      "\t${0:pass}"
+    ],
+    "description": "with statement"
+  },
+  "with open": {
+    "prefix": "wopen",
+    "body": [
+      "with open(${1:path}, ${2:\"r\"}, encoding=\"utf-8\") as ${3:file}:",
+      "\t${0:pass}"
+    ],
+    "description": "open a file with a context manager"
+  },
+  "function": {
+    "prefix": "def",
+    "body": [
+      "def ${1:name}(${2:args})${3: -> ${4:None}}:",
+      "\t\"\"\"${5:Docstring.}\"\"\"",
+      "\t${0:pass}"
+    ],
+    "description": "function definition"
+  },
+  "async function": {
+    "prefix": "adef",
+    "body": [
+      "async def ${1:name}(${2:args})${3: -> ${4:None}}:",
+      "\t${0:pass}"
+    ],
+    "description": "async function definition"
+  },
+  "method": {
+    "prefix": "defs",
+    "body": [
+      "def ${1:name}(self${2:, args})${3: -> ${4:None}}:",
+      "\t${0:pass}"
+    ],
+    "description": "method definition"
+  },
+  "class": {
+    "prefix": "class",
+    "body": [
+      "class ${1:Name}${2:(${3:Base})}:",
+      "\t\"\"\"${4:Docstring.}\"\"\"",
+      "",
+      "\tdef __init__(self${5:, args}) -> None:",
+      "\t\t${0:pass}"
+    ],
+    "description": "class definition"
+  },
+  "dataclass": {
+    "prefix": "dataclass",
+    "body": [
+      "@dataclass${1:(frozen=True)}",
+      "class ${2:Name}:",
+      "\t${3:field}: ${4:int}${5: = ${6:0}}",
+      "$0"
+    ],
+    "description": "dataclass (add: from dataclasses import dataclass)"
+  },
+  "__init__": {
+    "prefix": "init",
+    "body": [
+      "def __init__(self${1:, args}) -> None:",
+      "\t${0:pass}"
+    ],
+    "description": "__init__ method"
+  },
+  "__repr__": {
+    "prefix": "repr",
+    "body": [
+      "def __repr__(self) -> str:",
+      "\treturn f\"{type(self).__name__}(${1})\"$0"
+    ],
+    "description": "__repr__ method"
+  },
+  "property": {
+    "prefix": "property",
+    "body": [
+      "@property",
+      "def ${1:name}(self) -> ${2:int}:",
+      "\treturn self._${1:name}",
+      "",
+      "@${1:name}.setter",
+      "def ${1:name}(self, value: ${2:int}) -> None:",
+      "\tself._${1:name} = value$0"
+    ],
+    "description": "property with a setter"
+  },
+  "classmethod": {
+    "prefix": "classmethod",
+    "body": [
+      "@classmethod",
+      "def ${1:name}(cls${2:, args})${3: -> ${4:None}}:",
+      "\t${0:pass}"
+    ],
+    "description": "classmethod"
+  },
+  "staticmethod": {
+    "prefix": "staticmethod",
+    "body": [
+      "@staticmethod",
+      "def ${1:name}(${2:args})${3: -> ${4:None}}:",
+      "\t${0:pass}"
+    ],
+    "description": "staticmethod"
+  },
+  "abstractmethod": {
+    "prefix": "abstractmethod",
+    "body": [
+      "@abstractmethod",
+      "def ${1:name}(self${2:, args})${3: -> ${4:None}}:",
+      "\t${0:...}"
+    ],
+    "description": "abstract method (add: from abc import abstractmethod)"
+  },
+  "if __name__ == \"__main__\"": {
+    "prefix": "main",
+    "body": [
+      "def main() -> None:",
+      "\t${0:pass}",
+      "",
+      "",
+      "if __name__ == \"__main__\":",
+      "\tmain()"
+    ],
+    "description": "main function and its guard"
+  },
+  "ifmain": {
+    "prefix": "ifmain",
+    "body": [
+      "if __name__ == \"__main__\":",
+      "\t${0:main()}"
+    ],
+    "description": "if __name__ == \"__main__\""
+  },
+  "lambda": {
+    "prefix": "lambda",
+    "body": [
+      "lambda ${1:args}: ${0:expression}"
+    ],
+    "description": "lambda expression"
+  },
+  "list comprehension": {
+    "prefix": "lc",
+    "body": [
+      "[${1:value} for ${2:item} in ${3:items}${4: if ${5:condition}}]$0"
+    ],
+    "description": "list comprehension"
+  },
+  "dict comprehension": {
+    "prefix": "dc",
+    "body": [
+      "{${1:key}: ${2:value} for ${3:item} in ${4:items}${5: if ${6:condition}}}$0"
+    ],
+    "description": "dict comprehension"
+  },
+  "set comprehension": {
+    "prefix": "sc",
+    "body": [
+      "{${1:value} for ${2:item} in ${3:items}${4: if ${5:condition}}}$0"
+    ],
+    "description": "set comprehension"
+  },
+  "generator expression": {
+    "prefix": "ge",
+    "body": [
+      "(${1:value} for ${2:item} in ${3:items}${4: if ${5:condition}})$0"
+    ],
+    "description": "generator expression"
+  },
+  "match": {
+    "prefix": "match",
+    "body": [
+      "match ${1:subject}:",
+      "\tcase ${2:pattern}:",
+      "\t\t${3:pass}",
+      "\tcase _:",
+      "\t\t${0:pass}"
+    ],
+    "description": "match statement"
+  },
+  "async with": {
+    "prefix": "awith",
+    "body": [
+      "async with ${1:expression} as ${2:target}:",
+      "\t${0:pass}"
+    ],
+    "description": "async with statement"
+  },
+  "async for": {
+    "prefix": "afor",
+    "body": [
+      "async for ${1:item} in ${2:items}:",
+      "\t${0:pass}"
+    ],
+    "description": "async for loop"
+  },
+  "contextmanager": {
+    "prefix": "contextmanager",
+    "body": [
+      "@contextmanager",
+      "def ${1:name}(${2:args}) -> Iterator[${3:None}]:",
+      "\t${4:# set up}",
+      "\ttry:",
+      "\t\tyield${5}",
+      "\tfinally:",
+      "\t\t${0:# tear down}"
+    ],
+    "description": "context manager function (add: from contextlib import contextmanager)"
+  },
+  "enum": {
+    "prefix": "enum",
+    "body": [
+      "class ${1:Name}(Enum):",
+      "\t${2:FIRST} = ${3:1}",
+      "\t${0}"
+    ],
+    "description": "Enum class (add: from enum import Enum)"
+  },
+  "raise": {
+    "prefix": "raise",
+    "body": [
+      "raise ${1:ValueError}(${2:\"message\"})$0"
+    ],
+    "description": "raise an exception"
+  },
+  "f-string print": {
+    "prefix": "pf",
+    "body": [
+      "print(f\"${1:{${2:value}=}}\")$0"
+    ],
+    "description": "print an f-string"
+  },
+  "logging": {
+    "prefix": "logger",
+    "body": [
+      "logger = logging.getLogger(__name__)$0"
+    ],
+    "description": "module logger (add: import logging)"
+  },
+  "argparse": {
+    "prefix": "argparse",
+    "body": [
+      "parser = argparse.ArgumentParser(description=${1:\"\"})",
+      "parser.add_argument(${2:\"path\"}, help=${3:\"\"})",
+      "args = parser.parse_args()$0"
+    ],
+    "description": "argparse parser (add: import argparse)"
+  },
+  "pytest test": {
+    "prefix": "test",
+    "body": [
+      "def test_${1:name}(${2}) -> None:",
+      "\t${0:assert True}"
+    ],
+    "description": "pytest test function"
+  },
+  "pytest parametrize": {
+    "prefix": "param",
+    "body": [
+      "@pytest.mark.parametrize(\"${1:value}, ${2:expected}\", [",
+      "\t(${3:1}, ${4:1}),",
+      "])",
+      "def test_${5:name}(${1:value}, ${2:expected}) -> None:",
+      "\t${0:assert ${1:value} == ${2:expected}}"
+    ],
+    "description": "parametrized pytest test (add: import pytest)"
+  },
+  "pytest fixture": {
+    "prefix": "fixture",
+    "body": [
+      "@pytest.fixture",
+      "def ${1:name}()${2: -> ${3:None}}:",
+      "\t${0:return None}"
+    ],
+    "description": "pytest fixture (add: import pytest)"
+  },
+  "pytest raises": {
+    "prefix": "raises",
+    "body": [
+      "with pytest.raises(${1:ValueError}${2:, match=${3:\"message\"}}):",
+      "\t${0:pass}"
+    ],
+    "description": "assert that a block raises"
+  },
+  "unittest TestCase": {
+    "prefix": "testcase",
+    "body": [
+      "class ${1:Name}Tests(unittest.TestCase):",
+      "\tdef setUp(self) -> None:",
+      "\t\t${2:pass}",
+      "",
+      "\tdef test_${3:name}(self) -> None:",
+      "\t\t${0:self.assertTrue(True)}"
+    ],
+    "description": "unittest TestCase (add: import unittest)"
+  },
+  "TypedDict": {
+    "prefix": "typeddict",
+    "body": [
+      "class ${1:Name}(TypedDict):",
+      "\t${2:field}: ${3:str}$0"
+    ],
+    "description": "TypedDict (add: from typing import TypedDict)"
+  },
+  "Protocol": {
+    "prefix": "protocol",
+    "body": [
+      "class ${1:Name}(Protocol):",
+      "\tdef ${2:method}(self${3:, args}) -> ${4:None}: ..."
+    ],
+    "description": "Protocol (add: from typing import Protocol)"
+  },
+  "debugpy breakpoint": {
+    "prefix": "bp",
+    "body": [
+      "breakpoint()$0"
+    ],
+    "description": "stop in the debugger here"
+  }
+}

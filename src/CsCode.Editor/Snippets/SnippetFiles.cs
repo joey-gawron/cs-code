@@ -87,13 +87,18 @@ public sealed class SnippetService : IDisposable
         lock (_gate)
         {
             if (_merged.TryGetValue(languageId, out var cached)) return cached;
-            var list = new List<SnippetDefinition>(BuiltinFor(languageId));
+            var user = new List<SnippetDefinition>();
             foreach (var (contribution, defs) in _user)
             {
                 var global = contribution.LanguageId == "*";
                 if (!global && contribution.LanguageId != languageId) continue;
-                list.AddRange(global ? defs.Where(d => d.Languages is null || d.Languages.Contains(languageId)) : defs);
+                user.AddRange(global ? defs.Where(d => d.Languages is null || d.Languages.Contains(languageId)) : defs);
             }
+            // The user's snippets win: a built-in one with a prefix (or name) of theirs is left out, so typing the prefix offers theirs alone.
+            var taken = user.SelectMany(d => d.Prefixes).ToHashSet(StringComparer.Ordinal);
+            var names = user.Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
+            var list = BuiltinFor(languageId).Where(d => !names.Contains(d.Name) && !d.Prefixes.Any(taken.Contains)).ToList();
+            list.AddRange(user);
             return _merged[languageId] = list;
         }
     }

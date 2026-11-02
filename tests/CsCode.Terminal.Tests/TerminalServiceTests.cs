@@ -109,6 +109,33 @@ public sealed class TerminalServiceTests : IDisposable
         await WaitScreenAsync(t, $"[xterm-256color|truecolor|cscode|from settings {_sandbox.Home}|from caller|unset]");
     }
 
+    private sealed class FixedContribution(TerminalEnvironmentContribution contribution) : ITerminalEnvironmentContributor
+    {
+        public TerminalEnvironmentContribution? Contribute(TerminalCreateOptions options) => contribution;
+    }
+
+    /// <summary>
+    /// Language stage 1: the selected Python environment's bin goes first on PATH and VIRTUAL_ENV is set. A login shell (macOS's default: zsh -l,
+    /// bash -l) runs path_helper from /etc/zprofile or /etc/profile, which puts the system directories in front again; the shell integration puts
+    /// the contributed directories back in front after the startup files, and leaves no CSCODE_PATH_PREPEND behind.
+    /// </summary>
+    [Theory]
+    [InlineData("zsh")]
+    [InlineData("bash")]
+    public async Task Contributed_PATH_directories_come_first_even_in_a_login_shell(string shellName)
+    {
+        if (OperatingSystem.IsWindows() || ShellSandbox.Which(shellName) is not { } shell) { Assert.Skip($"{shellName} is not installed"); return; }
+        var env = _sandbox.Dir.Combine("venv");
+        var bin = Path.Combine(env, "bin");
+        Directory.CreateDirectory(bin);
+        File.WriteAllText(Path.Combine(bin, "python3"), "#!/bin/sh\necho fake\n");
+        File.SetUnixFileMode(Path.Combine(bin, "python3"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        _service.Resolver.Contributors = () => [new FixedContribution(new TerminalEnvironmentContribution(new Dictionary<string, string?> { ["VIRTUAL_ENV"] = env }, [bin]))];
+        var t = (TerminalSession)await _service.CreateAsync(new TerminalCreateOptions { ShellPath = shell, ShellArgs = ["-l"], Cwd = _sandbox.Home, Show = false, InitialSize = (400, 24) });
+        await t.SendTextAsync("echo \"[$(command -v python3)|$VIRTUAL_ENV|${CSCODE_PATH_PREPEND-gone}]\"");
+        await WaitScreenAsync(t, $"[{bin}/python3|{env}|gone]");
+    }
+
     /// <summary>
     /// T27: CsCode started by dotnet run/test carries DOTNET_ROOT_&lt;ARCH&gt; for its own apphost; shells and task programs get the language
     /// servers' rule (folded into DOTNET_ROOT when that is unset, dropped when it names the same directory, kept when it names another).

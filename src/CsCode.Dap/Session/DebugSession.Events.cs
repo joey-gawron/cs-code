@@ -34,6 +34,7 @@ public sealed partial class DebugSession
         _handles.Invalidate();
         _completions.Clear();
         if (e.ThreadId is { } threadId) Volatile.Write(ref _focusedThread, threadId);
+        _stoppedThread = e.ThreadId;
         LastException = null;
 
         // A stop at the breakpoint of a client-side exception filter (GDB: "Rust panics") is reported as the exception it stands for.
@@ -263,5 +264,32 @@ public sealed partial class DebugSession
         var child = await starter(this, a.Request, a.Configuration, ct);
         if (child is null) throw new InvalidOperationException("The child debug session could not be started.");
         return null;
+    }
+
+    /// <summary>
+    /// An adapter's own event asking for a child session (<see cref="DebugAdapterQuirks.ChildSessionFromEvent"/>: debugpy's <c>debugpyAttach</c>):
+    /// started as a <c>startDebugging</c> request would be. Never awaited by the read loop.
+    /// </summary>
+    private void OnUnknownEvent(DapUnknownEvent e)
+    {
+        if (_o.StartChild is not { } starter || _o.Quirks.ChildSessionFromEvent(e.Name, e.Body) is not { } child) return;
+        var configuration = child.Configuration;
+        if (!configuration.ContainsKey("type")) configuration["type"] = _o.Configuration.Type;
+        if (!configuration.ContainsKey("name")) configuration["name"] = $"{Name} (child)";
+        if (!configuration.ContainsKey("request")) configuration["request"] = child.Request;
+        _ = StartChildFromEventAsync(starter, child.Request, configuration, e.Name);
+    }
+
+    private async Task StartChildFromEventAsync(StartChildSession starter, string request, System.Text.Json.Nodes.JsonObject configuration, string eventName)
+    {
+        try
+        {
+            if (await starter(this, request, configuration, CancellationToken.None).ConfigureAwait(false) is null)
+                _logger.LogWarning("The child session asked for by the adapter's '{Event}' event could not be started", eventName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Starting the child session asked for by the adapter's '{Event}' event failed", eventName);
+        }
     }
 }

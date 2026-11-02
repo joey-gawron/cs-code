@@ -5,6 +5,7 @@ using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Testing.Engine;
 using CsCode.Testing.Providers.Cpp;
+using CsCode.Testing.Providers.CTest;
 using CsCode.Testing.Providers.DotNet;
 using CsCode.Testing.Providers.JavaScript;
 using CsCode.Testing.Providers.Rust;
@@ -74,8 +75,23 @@ public sealed class TestingHost : IDisposable
         _diagnostics = services.GetService<IDiagnosticService>();
         _window = services.GetService<IWindowService>();
         _channel = services.GetService<IOutputService>()?.GetOrCreate(OutputChannelName);
-        var context = new TestProviderContext(new ProcessRunner(services.GetService<Core.Diagnostics.IMemoryMonitor>()), key => _config?.Get<string>(key));
-        providers ??= [new DotNetTestProvider(context), new RustTestProvider(context), new JavaScriptTestProvider(context), new CppTestProvider(context, key => _config?.GetRaw(key))];
+        var python = services.GetService<Core.Python.IPythonEnvironmentService>();
+        var context = new TestProviderContext(new ProcessRunner(services.GetService<Core.Diagnostics.IMemoryMonitor>()), key => _config?.Get<string>(key))
+        {
+            ListSetting = key => _config?.GetRaw(key) is { ValueKind: System.Text.Json.JsonValueKind.Array } list
+                ? [.. list.EnumerateArray().Where(e => e.ValueKind == System.Text.Json.JsonValueKind.String).Select(e => e.GetString()!)]
+                : null,
+            // the folder's selected interpreter (Python: Select Interpreter)
+            PythonInterpreter = python is null ? null : async (folder, ct) => (await python.GetActiveAsync(new Uri(folder), ct).ConfigureAwait(false))?.Executable,
+        };
+        var cmake = services.GetService<Core.Build.ICMakeService>();
+        providers ??= [new DotNetTestProvider(context), new RustTestProvider(context), new JavaScriptTestProvider(context),
+            new global::CsCode.Testing.Providers.Python.PythonTestProvider(context), new CTestProvider(context, cmake),
+            new CppTestProvider(context, key => _config?.GetRaw(key), cmake)
+            {
+                // the executables whose tests CTest lists one by one (gtest_discover_tests) are left to it while it is on
+                CTestEnabled = () => _config?.Get<bool?>(TestingSettings.EnabledKey(CTestProvider.ProviderId)) ?? true,
+            }];
         Controller = new TestController(providers, a => _ui.Post(a, UiPriority.Background), line => _channel?.AppendLine(line),
             id => _config?.Get<bool?>(TestingSettings.EnabledKey(id)) ?? true);
         if (services.GetService<IDebugService>() is { } debug) Controller.Debugger = new DebugLauncher(debug, _ui);
@@ -101,6 +117,27 @@ public sealed class TestingHost : IDisposable
             _store.Add(workspace.FoldersChanged.Subscribe(e => _ui.Post(() => { if (_discovered is not null) _ = SyncFoldersAsync(); })));
         }
         if (services.GetService<IDocumentManager>() is { } documents) _store.Add(documents.Saved.Subscribe(e => _ui.Post(() => OnSaved(e.Document.Uri))));
+        // a CMake project that appears or is configured again (new targets, a changed CMakeLists.txt) changes its CTest tests
+        if (cmake is not null) _store.Add(cmake.ProjectsChanged.Subscribe(projects => _ui.Post(() => OnCMakeProjectsChanged(projects))));
+    }
+
+    private readonly Dictionary<string, long> _cmakeGenerations = new(StringComparer.Ordinal);
+
+    private void OnCMakeProjectsChanged(IReadOnlyList<Core.Build.CMakeProject> projects)
+    {
+        if (_disposed || _discovered is null) return;
+        var known = Controller.Tree.Projects.Select(r => r.Project).Where(p => p.ProviderId == CTestProvider.ProviderId).ToList();
+        if (projects.Any(p => known.All(k => k.Directory != p.SourceDirectory)) || known.Any(k => projects.All(p => p.SourceDirectory != k.Directory)))
+        {
+            _ = SyncFoldersAsync();
+            return;
+        }
+        foreach (var p in projects)
+        {
+            var before = _cmakeGenerations.GetValueOrDefault(p.SourceDirectory, -1);
+            _cmakeGenerations[p.SourceDirectory] = p.Generation;
+            if (before >= 0 && before != p.Generation && known.FirstOrDefault(k => k.Directory == p.SourceDirectory) is { } project) _ = Controller.RediscoverAsync(project);
+        }
     }
 
     public TestController Controller { get; }

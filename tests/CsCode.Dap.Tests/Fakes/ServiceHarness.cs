@@ -138,7 +138,7 @@ public sealed class ServiceHarness : IAsyncDisposable
     /// <param name="terminals">The integrated terminal (<c>runInTerminal</c> kind integrated runs there).</param>
     public ServiceHarness(DebugLane? lane = null, INavigationService? navigation = null, bool withPlatform = true, Action<TcpFakeAdapterHost>? configureHost = null,
         Func<DapPlatform, IEnumerable<BuiltinDebugAdapter>>? moreBuiltins = null, Uri? workspaceFolder = null, IDebugPathMapper? pathMapper = null,
-        CsCode.Core.Terminal.ITerminalService? terminals = null)
+        CsCode.Core.Terminal.ITerminalService? terminals = null, CsCode.Core.Python.IPythonEnvironmentService? python = null)
     {
         Lane = lane ?? new DebugLane("svc-lane");
         configureHost?.Invoke(Host);
@@ -151,6 +151,7 @@ public sealed class ServiceHarness : IAsyncDisposable
             Navigation = navigation,
             PathMappers = pathMapper is null ? null : () => pathMapper,
             Terminals = terminals is null ? null : () => terminals,
+            Python = python,
         };
         Breakpoints = new BreakpointManager(Platform.State, Workspace);
         Tasks = new TaskService(Lane, Platform);
