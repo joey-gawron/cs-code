@@ -4,7 +4,7 @@ using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Lsp.Extensions.Zls;
-using CsCode.Lsp.Protocol;
+using LspMethods = CsCode.Lsp.Protocol.LspMethods;
 using CsCode.Lsp.Tests.Harness;
 using CsCode.TestDoubles;
 using Xunit;
@@ -214,4 +214,103 @@ public class ZlsExtensionTests
         TestContext.Current.SendDiagnosticMessage("[zls] build-on-save: " + string.Join(" | ", env.Diagnostics.Get(doc.Uri).Select(d => $"{d.Range.Start.Line}: {d.Message} ({d.Source})")));
         await env.Manager.StopAllAsync(Ct);
     }
+
+    private static void Note(string text)
+    {
+        TestContext.Current.SendDiagnosticMessage("[zls] " + text);
+        if (System.Environment.GetEnvironmentVariable("CSCODE_LSP_TEST_NOTES") is { Length: > 0 } path) File.AppendAllText(path, "[zls] " + text + "\n");
+    }
+
+    /// <summary>Asks <paramref name="query"/> until its answer is accepted (a server that is still loading answers empty or null).</summary>
+    private static async Task<T> UntilAsync<T>(LspTestEnv env, Func<Task<T?>> query, string what, Func<T, bool> accept, int seconds = 60) where T : class
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(seconds);
+        T? last = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            last = await query();
+            if (last is not null && accept(last)) return last;
+            await Task.Delay(300, Ct);
+        }
+        Assert.Fail($"no usable answer for {what} (last: {last})\n{env.Dump()}");
+        return null!;
+    }
+
+    [Fact]
+    [Trait("Category", "RealTools")]
+    public async Task Real_zls_gives_the_editor_inlay_hints_for_parameter_names_and_inferred_types()
+    {
+        Assert.SkipWhen(ZigTools.ZlsSkipReason() is not null, ZigTools.ZlsSkipReason() ?? "");
+        using var home = new TempDirectory("cscode-zls-home-");
+        await using var env = RealEnv(home, ZigTools.FindZig()!, buildOnSave: false);
+        var doc = env.Open("main.zig", """
+            const std = @import("std");
+
+            fn add(first: u32, second: u32) u32 {
+                return first + second;
+            }
+
+            pub fn main() void {
+                const total = add(1, 2);
+                std.debug.print("{d}\n", .{total});
+            }
+
+            """, "zig");
+        await env.WaitForStateAsync("zls", LanguageServerState.Running, TimeSpan.FromSeconds(90));
+        // what the editor asks for the visible lines (editor.inlayHints.enabled is on by default)
+        var hints = await UntilAsync(env, async () => env.Registry.GetProviders<IInlayHintsProvider>(doc).Count == 0 ? null
+                : await env.Provider<IInlayHintsProvider>(doc).ProvideInlayHintsAsync(doc, new TextRange(TextPosition.Zero, doc.PositionAt(doc.Length)), Ct),
+            "inlay hints", h => h.Count >= 3);
+        Note("inlay hints: " + string.Join(" | ", hints.Select(h => $"{h.Position.Line}:{h.Position.Character} '{h.Label}' {h.Kind}")));
+        var call = doc.GetText().Split('\n').ToList().FindIndex(l => l.Contains("add(1, 2)", StringComparison.Ordinal));
+        Assert.Contains(hints, h => h.Position.Line == call && h.Kind == InlayHintKind.Parameter && h.Label.Contains("first", StringComparison.Ordinal));
+        Assert.Contains(hints, h => h.Position.Line == call && h.Kind == InlayHintKind.Parameter && h.Label.Contains("second", StringComparison.Ordinal));
+        Assert.Contains(hints, h => h.Position.Line == call && h.Kind == InlayHintKind.Type && h.Label.Contains("u32", StringComparison.Ordinal)); // total's type
+        await env.Manager.StopAllAsync(Ct);
+    }
+
+    [Fact]
+    [Trait("Category", "RealTools")]
+    public async Task Real_zls_reports_errors_formats_and_folds_zon_files()
+    {
+        Assert.SkipWhen(ZigTools.ZlsSkipReason() is not null, ZigTools.ZlsSkipReason() ?? "");
+        using var home = new TempDirectory("cscode-zls-home-");
+        var zig = ZigTools.FindZig()!;
+        await using var env = RealEnv(home, zig, buildOnSave: false);
+        var init = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(zig, "init") { WorkingDirectory = env.Root, RedirectStandardError = true, UseShellExecute = false })!;
+        await init.WaitForExitAsync(Ct);
+        Assert.Equal(0, init.ExitCode);
+        var zonPath = Path.Combine(env.Root, "build.zig.zon");
+        var zon = env.Open("build.zig.zon", File.ReadAllText(zonPath), "zig"); // .zon is a zig document (docs/LANGUAGES.md)
+        await env.WaitForStateAsync("zls", LanguageServerState.Running, TimeSpan.FromSeconds(90));
+        await Task.Delay(3000, Ct); // dynamic registrations and the first diagnostics
+        // evidence: what else zls answers on a ZON document (docs/ZIG.md: zls 0.17.0 gives no symbols, hover or completions there)
+        var text = zon.GetText();
+        var symbols = env.Registry.GetProviders<IDocumentSymbolProvider>(zon).Count == 0 ? null : await env.Provider<IDocumentSymbolProvider>(zon).ProvideDocumentSymbolsAsync(zon, Ct);
+        var hover = env.Registry.GetProviders<IHoverProvider>(zon).Count == 0 ? null
+            : await env.Provider<IHoverProvider>(zon).ProvideHoverAsync(zon, zon.PositionAt(text.IndexOf(".name", StringComparison.Ordinal) + 2), Ct);
+        var completions = env.Registry.GetProviders<ICompletionProvider>(zon).Count == 0 ? null
+            : await env.Provider<ICompletionProvider>(zon).ProvideCompletionAsync(zon, zon.PositionAt(text.IndexOf(".name", StringComparison.Ordinal) + 1), new CompletionContext(CompletionTriggerKind.Invoked), Ct);
+        var folding = env.Registry.GetProviders<IFoldingRangeProvider>(zon).Count == 0 ? null : await env.Provider<IFoldingRangeProvider>(zon).ProvideFoldingRangesAsync(zon, Ct);
+        Note("build.zig.zon: diagnostics " + string.Join(" | ", env.Diagnostics.Get(zon.Uri).Select(d => $"{d.Range.Start.Line}: {d.Message}"))
+            + $"; symbols {symbols?.Count.ToString() ?? "none"}; hover {(hover is null ? "none" : "yes")}; completions {completions?.Items.Count.ToString() ?? "none"}"
+            + $" ({string.Join(", ", completions?.Items.Take(8).Select(i => i.Label) ?? [])}); folding {folding?.Count.ToString() ?? "none"}");
+        Assert.NotEmpty(folding ?? []); // .dependencies, .paths
+
+        // a syntax error in a ZON file is reported on its line
+        var broken = env.Open("broken.zon", ".{\n    .name = .hello,\n    .version = ,\n}\n", "zig");
+        await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(broken.Uri).Any(d => d.Range.Start.Line == 2 && d.Severity == DiagnosticSeverity.Error),
+            () => "a ZON syntax error on line 3\n" + string.Join("\n", env.Diagnostics.Get(broken.Uri).Select(d => $"{d.Range.Start.Line}: {d.Message}")) + "\n" + env.Dump(), TimeSpan.FromSeconds(30));
+        Note("broken.zon: " + string.Join(" | ", env.Diagnostics.Get(broken.Uri).Select(d => $"{d.Range.Start.Line}: {d.Message}")));
+
+        // formatting follows zig fmt
+        var messy = env.Open("messy.zon", ".{ .name = .hello,\n.paths = .{ \"build.zig\" , \"src\" },\n}\n", "zig");
+        var edits = await UntilAsync(env, async () => env.Registry.GetProviders<IDocumentFormattingProvider>(messy).Count == 0 ? null
+            : await env.Provider<IDocumentFormattingProvider>(messy).FormatDocumentAsync(messy, new FormattingOptions(4, true), Ct), "format messy.zon", e => e.Count > 0, 30);
+        Assert.True(messy.ApplyEdits(edits));
+        Note("messy.zon formatted: " + messy.GetText().Replace("\n", "\\n"));
+        Assert.Equal(".{\n    .name = .hello,\n    .paths = .{ \"build.zig\", \"src\" },\n}\n", messy.GetText());
+        await env.Manager.StopAllAsync(Ct);
+    }
 }
+

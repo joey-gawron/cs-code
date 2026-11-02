@@ -160,7 +160,17 @@ pattern's `HandleShowMessage` hook (added for it: an extension may keep a server
   with a zig that reports 0.16.0 → exactly one version message (`ZlsExtensionTests.Real_zls_with_a_zig_of_another_version…`).
 * The real-server test (`RealZlsAndNilServerTests.Zls_…`: initialize, diagnostics, hover, formatting, shutdown) **passes on this Mac** with zig
   and zls on PATH.
-* Not checked (SHOULD items): what zls offers for `build.zig.zon` editing and its highlighting, and whether zls's inlay hints display.
+* **Inlay hints** (SHOULD): zls 0.17.0 answers `textDocument/inlayHint` with parameter names and inferred types; through CsCode's LSP client the
+  editor's provider gets, on `const total = add(1, 2);`, `: u32` (Type) after `total` and `first:` / `second:` (Parameter) before the
+  arguments, plus `fmt:` / `args:` on `std.debug.print` and `: type` on `const std` (`ZlsExtensionTests.Real_zls_gives_the_editor_inlay_hints…`).
+  The editor draws whatever that provider returns while `editor.inlayHints.enabled` is on (the default); seeing them drawn in the window is
+  the part not checked here (the tool shell cannot open an Avalonia window: RenderTimer -6661).
+* **build.zig.zon** (SHOULD): a `.zon` file is a `zig` document, so zls serves it. zls 0.17.0 reports its syntax errors on their line
+  (`expected expression, found ','`), formats it as `zig fmt` does and folds its `.{ … }` blocks; it answers no document symbols, hover or
+  completions in a ZON file (no field names for build.zig.zon) (`ZlsExtensionTests.Real_zls_reports_errors_formats_and_folds_zon_files`).
+  Highlighting is tree-sitter `zig`'s, and **not checked on this Mac**: there is no tree-sitter bundle here (building one runs
+  `tools/treesitter/fetch-grammars.sh`, a download this round did not ask for), so whether Zig's grammar reads a bare ZON expression without
+  an error node is open.
 
 ## What waited for stages 1 and 2 (done since they merged)
 
