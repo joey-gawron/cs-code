@@ -312,6 +312,36 @@ public class SessionLauncherTests
     }
 
     [Fact]
+    public async Task Quit_all_leaves_a_new_token_before_it_looks_and_each_spare_is_started_with_the_token_of_its_time()
+    {
+        using var rt = new TestRuntime();
+        using var spawner = new FakeSpawner(rt.Runtime);
+        var spareOn = new LaunchSettings { WarmSpare = true };
+        string LastSpareToken()
+        {
+            var args = spawner.Spawned.Last(a => a.Contains("--spare")).ToList();
+            return args[args.IndexOf("--quit-token") + 1];
+        }
+
+        await Launcher(rt, spawner, spareOn).RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "a" });
+        Assert.Equal(RuntimeDirectory.NoQuitAllToken, LastSpareToken());
+
+        // A spare still starting has no endpoint for the quit to find: the token it would see must be new before the quit looks for processes.
+        var spare = Assert.Single(spawner.Hosts, h => h.Session is null);
+        string? tokenWhenAsked = null;
+        spare.Seen = _ => tokenWhenAsked ??= rt.Runtime.QuitAllToken();
+        await Launcher(rt, spawner).RunAsync(new LaunchRequest(LaunchKind.Quit) { All = true });
+        var token = rt.Runtime.QuitAllToken();
+        Assert.NotEqual(RuntimeDirectory.NoQuitAllToken, token);
+        Assert.Equal(token, tokenWhenAsked);
+        Assert.True(spare.QuitRequested);
+
+        await Launcher(rt, spawner, spareOn).RunAsync(new LaunchRequest(LaunchKind.Open) { Session = "b" });
+        Assert.Equal(2, spawner.SpareStarts);
+        Assert.Equal(token, LastSpareToken());
+    }
+
+    [Fact]
     public async Task Quit_without_a_name_after_the_last_active_session_quit_asks_the_shown_window_and_says_which()
     {
         // The last active session has quit (its marker stays behind); a hidden session was shown more recently than the window still open.

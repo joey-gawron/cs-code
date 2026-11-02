@@ -87,6 +87,9 @@ public sealed class SessionLauncher
         if (gate is null) _err.WriteLine("cscode: another launcher is still busy; continuing without waiting for it");
         try
         {
+            // A spare still starting has no endpoint to be found below: the new token makes it quit once its endpoint is open (BackgroundHost).
+            // Written before the discovery, so either the discovery sees that endpoint or the spare sees this token.
+            if (request is { Kind: LaunchKind.Quit, All: true }) _runtime.NewQuitAllToken();
             var world = Gather();
             var plan = LaunchPlanner.Plan(request, world, _settings);
             if (plan.Action == LaunchAction.AwaitQuit) (world, plan) = AwaitQuit(request, plan);
@@ -256,7 +259,7 @@ public sealed class SessionLauncher
 
     private int? SpawnSpare()
     {
-        try { return _spawner.Spawn(["--host", "--spare"]).Pid; }
+        try { return _spawner.Spawn(["--host", "--spare", "--quit-token", _runtime.QuitAllToken()]).Pid; }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
         {
             _err.WriteLine("cscode: could not start the warm spare: " + ex.Message);
@@ -266,11 +269,13 @@ public sealed class SessionLauncher
 
     private int Quit(IReadOnlyList<int> pids)
     {
+        bool Gone(int pid) => !ResidentDiscovery.IsCsCodeAlive(pid) || (!OperatingSystem.IsWindows() && !File.Exists(_runtime.EndpointOf(pid)));
         var refused = new List<int>();
         foreach (var pid in pids)
         {
             var reply = TryRequest(pid, new IpcMessage { Type = IpcVerbs.Quit, Force = true }, TimeSpan.FromSeconds(10));
-            if (reply.Ok != true && reply.Error?.StartsWith(nameof(IpcFailure.NoEndpoint), StringComparison.Ordinal) != true)
+            // Gone: a spare that saw the new quit-all token closed its endpoint while being asked; it is leaving, not refusing.
+            if (reply.Ok != true && reply.Error?.StartsWith(nameof(IpcFailure.NoEndpoint), StringComparison.Ordinal) != true && !Gone(pid))
             {
                 _err.WriteLine($"cscode: process {pid} did not quit: {reply.Error}");
                 refused.Add(pid);
@@ -280,7 +285,7 @@ public sealed class SessionLauncher
         var remaining = pids.Except(refused).ToList();
         while (remaining.Count > 0 && clock.Elapsed < _timeouts.QuitWait)
         {
-            remaining.RemoveAll(pid => !ResidentDiscovery.IsCsCodeAlive(pid) || (!OperatingSystem.IsWindows() && !File.Exists(_runtime.EndpointOf(pid))));
+            remaining.RemoveAll(Gone);
             if (remaining.Count > 0) Thread.Sleep(50);
         }
         foreach (var pid in remaining) _err.WriteLine($"cscode: process {pid} has not exited yet");

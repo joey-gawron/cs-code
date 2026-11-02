@@ -142,7 +142,7 @@ public class BackgroundSessionProcessTests
         // 7. --quit --all: no process and no endpoint is left.
         var quit = await h.RunAsync("--quit", "--all");
         Assert.True(quit.ExitCode == 0, quit.Error);
-        Assert.True(await SessionProcessHarness.WaitUntilAsync(() => h.ProcessesOfThisHome().Count == 0, 15_000), "processes left: " + string.Join(", ", h.ProcessesOfThisHome()));
+        Assert.True(await SessionProcessHarness.WaitUntilAsync(() => h.ProcessesOfThisHome().Count == 0, 15_000), "processes left: " + h.Leftovers());
         Assert.Empty(Directory.GetFiles(h.Runtime.Path, "*.sock"));
         Assert.False(h.Store.Load("A").Session!.WasResident);
     }

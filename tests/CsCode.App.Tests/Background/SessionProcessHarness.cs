@@ -189,6 +189,11 @@ public sealed class SessionProcessHarness : IDisposable
 
     private static bool ProcessProbeIsLive(int pid) => Infrastructure.ProcessProbe.IsRunning(pid);
 
+    /// <summary>The processes of this home that are still running, each with its command line and parent, then the trace: for "nothing is left" failures.</summary>
+    public string Leftovers() =>
+        string.Join(", ", ProcessesOfThisHome().Select(pid => $"{pid} ({TestDoubles.ProcessTable.CommandLine(pid)}; parent {TestDoubles.ProcessTable.ParentOf(pid)})"))
+        + "\n" + Trace();
+
     /// <summary>CPU time (user + system) of a process in seconds (Linux).</summary>
     public static double CpuSeconds(int pid)
     {
