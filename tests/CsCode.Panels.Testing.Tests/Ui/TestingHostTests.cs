@@ -19,8 +19,9 @@ public sealed class TestingHostTests
         Assert.Equal("Test", rig.Commands.All.Single(c => c.Id == "testing.runAll").Category);
         Assert.Equal("Run All Tests", rig.Commands.All.Single(c => c.Id == "testing.runAll").Title);
         foreach (var key in new[] { TestingSettings.GutterEnabled, TestingSettings.DefaultGutterClickAction, TestingSettings.OpenTesting, TestingSettings.AutoDiscover,
-                     TestingSettings.DotNetEnabled, TestingSettings.RustEnabled, TestingSettings.JavaScriptEnabled })
+                     TestingSettings.DotNetEnabled, TestingSettings.RustEnabled, TestingSettings.JavaScriptEnabled, TestingSettings.CTestEnabled })
             Assert.Contains(rig.Config.Properties, p => p.Key == key && p.Description is { Length: > 0 });
+        Assert.Equal(TestingSettings.CTestEnabled, TestingSettings.EnabledKey("ctest")); // not JavaScript's switch
         var doc = new InMemoryTextDocument(new Uri("file:///w/calc/MathTests.cs"), "csharp", HostRig.MathSource);
         Assert.Same(rig.Host.Gutter, Assert.Single(rig.Features.GetProviders<ITestGutterProvider>(doc)));
         Assert.Empty(rig.Features.GetProviders<ITestGutterProvider>(new InMemoryTextDocument(new Uri("file:///w/x.md"), "markdown")));

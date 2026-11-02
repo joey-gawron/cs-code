@@ -138,6 +138,8 @@
 
   // ---- Python (docs/PYTHON.md): Run Selection/Line in Python REPL, VS Code's key, in both presets ----
   { "key": "shift+enter",        "command": "python.execSelectionInTerminal",     "when": "editorTextFocus && editorLangId == 'python'" },
+  // ---- clangd (docs/C-CPP.md §3a): vscode-clangd's Switch Between Source/Header key ----
+  { "key": "alt+o",              "command": "clangd.switchheadersource",          "when": "editorTextFocus && editorLangId =~ /^(c|cpp|objective-c|objective-cpp|cuda-cpp)$/", "mac": "cmd+alt+o" },
   // ---- Markdown preview (docs/MARKDOWN.md): VS Code's keys, in both presets ----
   { "key": "ctrl+shift+v",       "command": "markdown.showPreview",               "when": "editorLangId == 'markdown' && !markdownPreviewFocus", "mac": "cmd+shift+v" },
   { "key": "ctrl+k v",           "command": "markdown.showPreviewToSide",         "when": "editorLangId == 'markdown' && !markdownPreviewFocus", "mac": "cmd+k v" },

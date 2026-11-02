@@ -5,10 +5,9 @@ the C debugging matrix. Stage 4 (C++, `docs/briefs/lang-4-cpp.md`) adds the Goog
 provider, clangd for Objective-C++ and CUDA and the C++ debugging matrix in sections 10–16. The two stages ran at the same time on separate
 branches and were merged in that order.
 
-Stage 3 ran in parallel with stages 1 (Python) and 2 (Rust) instead of after them, so the pieces that build on theirs are **deferred**
-(section 8): CMake tasks through Rust's `ITaskProvider`, the clangd extension (Switch Header/Source, inactive regions, View AST, file status,
-the review of clangd's default arguments) on Rust's per-server extension pattern, the matrix rows that need the Memory / Disassembly windows
-and data breakpoints, and C snippets on Python's bundled-snippets mechanism.
+Stage 3 ran in parallel with stages 1 (Python) and 2 (Rust) instead of after them, so the pieces that build on theirs came after the merge
+(section 8): CMake tasks through Rust's `ITaskProvider`, the clangd extension on Rust's per-server extension pattern, the matrix rows for the
+Memory / Disassembly windows and data breakpoints, and C snippets on Python's bundled-snippets mechanism.
 
 Toolchain on this Mac (2026-11-01): Apple clang / clangd 21.0.0 (`/usr/bin`), CMake 3.31.12 (MacPorts, first on PATH; Homebrew's 4.4.2 is
 also installed), Ninja 1.13.2 (MacPorts), Apple lldb-dap (LLVM 21, `xcrun -f lldb-dap`), CodeLLDB v1.12.3 (`.scratch/tools/codelldb`). No
@@ -65,6 +64,21 @@ changes, and only then; a new directory restarts it once). `cscode.cmake.clangdC
 failed configure), `$(gear) Build [target]` (click: build; while building `Building …` and a click cancels), `[launch target]` (click:
 choose), `$(debug-alt)` (Debug) and `$(play)` (Run in the terminal). The items follow the project of the active editor.
 
+**Tasks** (`CMakeTaskProvider`, an `ITaskProvider`): Run Task lists VS Code CMake Tools' tasks for the folder's project: **CMake: configure**,
+**CMake: build** (the selected default target; build group), **CMake: clean**, **CMake: clean rebuild** (`--clean-first`; build group),
+**CMake: install** and **CMake: test** (ctest in the build directory, `-C <config>`, `--output-on-failure`; test group). Each runs the command
+line the status bar's command runs (same directories, presets, build type, generator and `cmake.*` settings) in a task terminal; the build
+tasks use `$gcc`, which finds the files because the CMake generators hand the compiler absolute source paths (checked with a real build:
+`/…/src/main.c:2:12: error: …`). They are usable as `preLaunchTask` and in `dependsOn` by label. Their definitions are CMake Tools'
+(`{"type": "cmake", "command": "build" | "configure" | "clean" | "cleanRebuild" | "install" | "test", "targets", "preset", "args",
+"options": {"cwd", "environment"}}`), so a tasks.json written for VS Code customises them; an entry with targets, a preset, args or options
+runs as written, and CMake Tools' template preset `${command:cmake.activeBuildPresetName}` means the selected preset. `workflow` and `package`
+are not run (the runner reports the entry).
+
+**Configures outside CsCode.** The integration watches each build directory's File API reply directory: when cmake writes a new reply (a
+**CMake: configure** task, a terminal, or the re-run `cmake --build` starts after a CMakeLists.txt edit), it reads the new targets. Listing
+the tasks writes CsCode's File API query into the build directory, as configuring does, so a configure run as a task leaves a reply.
+
 **Threading.** All state lives on the integration's own dedicated lane (`CMakeLane`, a below-normal thread with its own synchronisation
 context); every public call only enqueues. cmake and the build run as tracked child processes under `nice -n 10` (which the compilers
 inherit), their output batched (every 100 ms or 500 lines) to the channel and, on the lane, to the problem matcher. One operation per project
@@ -110,11 +124,74 @@ cursor and opens on Ctrl/⌘+Click (a file in the editor, with VS Code's `#L12` 
 resolved first when the provider left the target out. A link wins over a definition on the same text. clangd 21 links every `#include` to the
 header it resolves (`RealClangdDocumentLinkTests`).
 
+## 3a. The clangd extension (`src/CsCode.Lsp/Extensions/Clangd`)
+
+Stage 2's per-server pattern (`LanguageServerExtension`, docs/LSP.md §7a), listed in `ServerExtensions.CreateBuiltins()`. Each method was
+checked against the installed Apple clangd 21.0.0 over stdio before it was written, then by `RealClangdExtensionTests`:
+
+| Feature | Protocol (as clangd 21 answers it) | In CsCode |
+|---|---|---|
+| Switch Between Source/Header | `textDocument/switchSourceHeader`; params are a bare `TextDocumentIdentifier` (`{"uri"}`: a `{"textDocument"}` wrapper is refused with -32602); answers the counterpart's URI or null | command `clangd.switchheadersource` (vscode-clangd's id and title); VS Code keymap Alt+O, ⌥⌘O on macOS (vscode-clangd's key); Visual Studio keymap Ctrl+K Ctrl+O, ⌘K ⌘O (Visual Studio's Toggle Header/Code File; ⌥⌘O already toggles Output there). No counterpart: a status-bar message |
+| Inactive preprocessor regions | the client offers `capabilities.textDocument.inactiveRegionsCapabilities.inactiveRegions`; clangd then advertises `inactiveRegionsProvider`, sends `textDocument/inactiveRegions` (`{textDocument:{uri}, regions: Range[]}`) after every parse, and stops colouring skipped code as comment tokens. The regions cover the skipped lines only, not the `#if 0` / `#endif` lines | additive Core `IInactiveRegionsProvider`; the editor's `InactiveRegionsFeature` draws those ranges at 55% opacity (vscode-clangd's `clangd.inactiveRegions.opacity` default), keeping each token's colour. Anchored, so they follow edits until the next report; a stopped server clears them. Bounded: 256 documents, 10,000 regions each |
+| Show AST | `textDocument/ast` with `{textDocument, range}`; `astProvider: true`; answers an `ASTNode` (`role`, `kind`, `detail`, `arcana`, `range`, `children`), the innermost node containing the range | command `clangd.ast` ("Show AST"), at the caret; the tree is shown as text in a read-only `cscode-virtual:` document (`main.ast [AST]`), labelled as vscode-clangd's AST view labels nodes (the kind alone for expressions, statements and declarations, else "kind role"), with the detail and 1-based lines; at most 20,000 nodes |
+| File status | `initializationOptions.clangdFileStatus: true` makes clangd send `textDocument/clangd.fileStatus` (`{uri, state}`: "parsing includes, running Update", "building AST", "idle") | status bar "clangd: &lt;state&gt;" for the active editor's file, as vscode-clangd shows it; nothing for files clangd has not reported; it goes when the server stops. The user's own `initializationOptions` are kept |
+
+Two hooks were added to the pattern for this, since the protocol model has no members for either: `AddClientCapabilities(capabilities)`
+(any capability outside `experimental`) and `AddInitializationOptions(options)`. With an extension, `initialize` is sent as JSON.
+
+### clangd's default arguments
+
+CsCode starts clangd with no arguments of its own (vscode-clangd's `clangd.arguments` is `[]` too), apart from `--compile-commands-dir` when
+the CMake integration points it at a build directory (§1). The defaults were checked with clangd 21 rather than taken from its `--help`, which
+does not print them:
+
+| Option | clangd 21's default | Kept because |
+|---|---|---|
+| `--background-index` | on | needed for workspace-wide references and symbols. The index goes next to the compilation database: `build/.cache/clangd/index/` with CMake (the source tree stays clean), or `.cache/clangd/index/` at the root of a project with its own `compile_commands.json` (worth a `.gitignore` line). It runs at `--background-index-priority=low`, and CsCode starts every server below normal priority already |
+| `--clang-tidy` | on | runs only the checks a `.clang-tidy` file (or `.clangd`'s `Diagnostics.ClangTidy`) enables: with no such file, no tidy check fires, and `--clang-tidy=false` silenced a configured one in the check |
+| `--header-insertion` | `iwyu` | completing a symbol from another header adds its `#include`, as in VS Code |
+| `--completion-style` | `detailed` | one item per overload. It only matters for C++; C has no overloads |
+
+### `.clang-format` and `.clang-tidy`
+
+Both are honoured with no setting (checked with clangd 21): a `.clang-format` with `IndentWidth: 7` made Format Document indent by 7 although
+the editor sent a tab size of 4, and a `.clang-tidy` enabling `readability-braces-around-statements` produced that diagnostic (source
+`clang-tidy`). Without a `.clang-format`, clangd formats in LLVM style (2 spaces) whatever the editor's tab size is.
+
+## 3b. C snippets
+
+`src/CsCode.Editor/Snippets/Builtin/c.json` on stage 1's bundled-snippets mechanism (a user snippet with the same prefix wins): `main`,
+`mainv`, `func`, `for`, `forr`, `while`, `do`, `if`, `ifelse`, `elseif`, `else`, `switch`, `case`, `struct`, `tstruct`, `enum`, `union`,
+`typedef`, `include`, `includes`, `define`, `ifdef`, `ifndef`, `if0` (wraps the selection), `guard` (an include guard named after the file:
+`MATHLIB_H` in `mathlib.h`), `externc`, `printf`, `eprintf` and `malloc` (with its null check). The prefixes are words, without `#`, so they
+complete as you type. clangd offers its own code patterns (`for`, `#include`) beside them, as it does next to cpptools' snippets in VS Code.
+
 ## 4. Projects without CMake
 
-Not done in this stage (SHOULD): the "Create compile_flags.txt" command, Build and Run Active File, and docs for bear / compiledb. clangd
-still works with a hand-written `compile_flags.txt` or `compile_commands.json`; the single-file launch template (section 5) builds the
-active file.
+clangd needs each file's compile flags. Without CMake there are three ways to give them, in the order clangd looks (from the file's
+directory upwards):
+
+* **`compile_commands.json`** from the real build, best for a Makefile project. Two tools write it; neither is installed on this Mac (they
+  wait for the user's go-ahead), so these lines are their documented use, not checked here:
+  * **Bear** (`brew install bear`; Linux packages): `bear -- make` runs the build and records every compiler call into
+    `compile_commands.json` in the current directory (Bear 3; Bear 2 wrote `bear make`). Run a clean build (`make clean` first) or it
+    records only what was rebuilt; `bear --append -- make` adds to an existing file.
+  * **compiledb** (`pip install compiledb`): `compiledb make` parses make's output, and `compiledb -n make` only pretends to build
+    (`make -n`), which is faster but misses commands that need the build to have happened.
+* **`compile_flags.txt`**, one flag per line, applied to every file below it: enough for a small project with one set of flags. **Create
+  compile_flags.txt** (`cscode.c.createCompileFlags`, palette category C/C++) writes one in the active file's workspace folder: `-xc`,
+  `-std=c17`, `-Wall`, `-Wextra`, `-I.`, `-Iinclude` (relative to the folder that holds compile_flags.txt, as `RealClangdDocumentLinkTests`
+  shows: `src/main.c` finds `include/mathlib.h`). It opens it, keeps an
+  existing one as it is, says when the folder also has a `compile_commands.json` (which clangd prefers), and offers to restart a running
+  clangd so open files get the flags. `-xc` makes clangd read `.h` headers as C, not C++.
+* **Nothing**: clangd guesses (`clang` with no flags), so headers outside the file's directory are not found.
+
+**Build and Run Active File** (`C_Cpp.BuildAndRunFile`, cpptools' id; palette category C/C++, for a C file) saves the file, compiles it on
+its own with `clang -g -O0 -Wall <file> -o <dir>/<name>` (`cc` on Linux) through the same tracked, below-normal-priority runner as cmake,
+writes the output to the **C** output channel and the compiler's problems to the Error List (source `clang`), and runs the program in an
+integrated terminal, so it can read stdin. A failed build says how many errors and does not run. The single-file launch template (section 5)
+does the same build as a pre-launch task and debugs the program. Checked with the real clang (`CFileCommandsTests`): an undeclared name is
+reported at its line, the fixed file builds and runs (output `hello`, exit code 3), and the next build clears the problem.
 
 ## 5. C launch templates
 
@@ -129,7 +206,7 @@ CodeLLDB's templates carry `"sourceLanguages": ["c"]`.
 ## 6. C debugging matrix on this Mac
 
 `tests/CsCode.Dap.Tests/RealCDebugMatrixTests.cs` runs every row against both adapters through the real `DebugService` on one C program built
-with `cc -g -O0 -pthread` (evidence: `CSCODE_DAP_TEST_METRICS=<file>`). 20/20 pass (CodeLLDB v1.12.3, Apple lldb-dap / LLVM 21, macOS 27 arm64,
+with `cc -g -O0 -pthread` (evidence: `CSCODE_DAP_TEST_METRICS=<file>`). 26/26 pass (CodeLLDB v1.12.3, Apple lldb-dap / LLVM 21, macOS 27 arm64,
 Developer Mode on). Line numbers below are the sample's (`RealCDebugMatrixTests.Program`).
 
 | Row | CodeLLDB (`lldb`) | lldb-dap | Evidence |
@@ -151,12 +228,15 @@ Developer Mode on). Line numbers below are the sample's (`RealCDebugMatrixTests.
 | pthreads | ✅ 3 threads listed at once | ✅ after a fix (below) | breakpoint in `worker` stops that thread; `id` is 1 or 2 |
 | Attach by pid (`"pid"` as text, as `${command:pickProcess}` gives it) | ✅ first stop ~0.5 s | ✅ first stop ~0.3 s | a running program stops at a breakpoint in `tick` with no password dialog; ending the session detaches and the program runs on |
 | stdin through the integrated terminal | see §7 | see §7 | |
-| Memory window from a pointer, Disassembly, data breakpoints | deferred (stage 2's windows) | deferred | |
+| Memory window | ✅ an array's row reads its four ints; View Binary Data on the pointer row shows the **pointee** (its memory reference is `&numbers[2]`) | ✅ the array the same; the pointer's memory reference is the pointer's **own storage**, and its value (`0x…`) is the address to type in the Memory window | `numbers` reads `01 00 00 00 02 00 00 00 …`; the pointee reads `03 00 00 00 04 00 00 00` in both |
+| Disassembly | ✅ 128 instructions around the pc, none invalid, each with its `matrix.c` line and symbol (`square`) | ✅ the same, without the symbol name | at the breakpoint in `square` (line 11) the pc is `ldr w8, [sp, #0xc]`; one instruction step moves 4 bytes (arm64) and stays on line 11 |
+| Data breakpoint (`total`, on write) | ✅ stop reason `data breakpoint` | ✅ stop reason `breakpoint`, description `watchpoint 1` | `dataBreakpointInfo` offers read / write / readWrite and cannot persist (an address); set at `i == 1`, the next stop is the write that makes `total` 1, on the loop's line |
 
 **Fixed:** Apple's lldb-dap answers the first `threads` request after a stop with the list it had while the program ran, so a pthread created
 since (the one that stopped) was missing from the Threads window; 200 ms later the answer is right. `DebugSession` now asks again (up to 5
-times, 100 ms apart) while the thread that stopped is not in the answer (`StaleThreadsTests`). Also fixed: `RealLldbDapTests`' C test
-continued within the breakpoint sync's 50 ms debounce after removing its breakpoint and hit it again; it now waits like a user would.
+times, 100 ms apart) while the thread that stopped is not in the answer (`StaleThreadsTests`). `RealLldbDapTests`' C test used to continue
+within the breakpoint sync's 50 ms debounce after removing its breakpoint and hit it again; stage 1's flush of pending breakpoint changes
+before every resume covers it now, so the test's delay went in the merge.
 
 **Attach by pid on macOS** works with both adapters (row above) with Developer Mode on (`DevToolsSecurity -status`; `sudo DevToolsSecurity
 -enable`), which this Mac has: no administrator dialog appears. With it off, macOS asks for an administrator in a dialog before the debugger
@@ -166,39 +246,56 @@ lldb-dap's generic templates include an "Attach to process" configuration with `
 
 ## 7. Seen in the real app
 
-**Not yet.** On 2026-11-01 the Mac's screen was locked (`ioreg -n Root -d1` reports `CGSSessionScreenIsLocked=Yes`), and CsCode cannot start
-without an active display: Avalonia.Native fails to create its render timer (`CVDisplayLink`, CoreVideo error -6661) and the app exits with a
-crash report. Everything above is proven by the tests in section 9 against the real cmake, ninja, ctest, clangd, CodeLLDB and lldb-dap; the
-window checks below remain to be done:
+`tests/CsCode.App.Tests/RealApp/CStageRealAppTests.cs` runs the real application (`RealAppHost`: every real module, CsCode's own settings
+in a temp `CSCODE_HOME`, a headless window) on the CMake C sample with the real cmake, ninja, clang, clangd, ctest and CodeLLDB, and saves
+what the window draws to `.scratch/screenshots/c-*.png`. It is the in-app evidence the Rust and C++ stages also use. This session has no
+desktop-control tools, so nothing was clicked in an on-screen window; on 2026-11-01 the screen was also locked (CoreVideo -6661). All three
+tests pass (2026-11-02):
 
-1. Open a CMake C project with one visible configure preset (with `cmake.configureOnOpen: true`, or answer *Configure*): the status bar shows
-   `CMake: [debug]`, `build/<preset>/compile_commands.json` appears, and clangd resolves `#include "mathlib.h"` (no diagnostic; hover works).
-2. Click `Build` in the status bar: the CMake output channel shows the build; a deliberate error lands in the Error List at its line.
-3. Choose the launch target, click the bug button: the debugger stops at a breakpoint in `main.c` and the Locals show values.
-4. Test Explorer: the CTest tests appear (with `subtracts [fast, math]`), Run All shows `fails` failed with its output, Debug on a test stops
-   at a breakpoint in `tests/math_tests.c`.
-5. ⌘+hover over `#include "mathlib.h"` underlines it; ⌘+Click opens `include/mathlib.h`.
-6. With `"terminal": "integrated"` in `cmake.debugConfig`, a program reading stdin gets the keys typed in the integrated terminal.
+1. **Preset configure and clangd** (`c-clangd-main.png`). Opening the folder configures it on open from its only preset (`CMake: [debug]`
+   in the status bar) and exports `build/debug/compile_commands.json`. clangd starts with `--compile-commands-dir=build/debug`; its link for
+   `#include "mathlib.h"` names `include/mathlib.h`, which only the compile commands put on the include path; `main.c` has no "not found"
+   problem; the `#if 0` body is faded; the status bar shows `clangd: idle`. Switch Between Source/Header goes from `src/mathlib.c` to
+   `include/mathlib.h`.
+2. **Build from the status bar** (`c-build-error.png`). The `Build` item's command reports `missing_value` in the Error List at its line of
+   `src/mathlib.c`; fixed, the next build succeeds and clears it.
+3. **Debug Target** (`c-debug-disassembly.png`, `c-debug-memory.png`). After choosing `app` as the launch target, the status bar's Debug
+   builds it and stops at the breakpoint in `main.c`. The Disassembly window marks the current instruction among `main.c`'s source lines
+   (141 rows, 8 of them source). View Binary Data on `total` (5) shows `05 00 00 00` in the Memory window. Found on the way: when View Binary
+   Data opens the Memory window from closed, the frame shows the top of its range rather than the target row; with the window already open
+   (the order the test now uses, as stage 2's test does) the target row is at the top. Reported to the windows' owner; not changed here.
+4. **CTest** (`c-ctest-explorer.png`, `c-ctest-debug.png`). The Test Explorer lists `adds`, `subtracts [fast, math]`, `fails` and `in_dir`
+   under `math_tests`; Run All marks `fails` failed (in the Error List at its `add_test` line) and the rest passed; Debug on `adds` stops at
+   the breakpoint in `tests/math_tests.c` under CodeLLDB, and after Continue the test is passed. The first run of this check showed every
+   test under "(no command)": ctest names no command before the first build, so discovery now builds once (docs/TESTING.md).
 
-## 8. Deferred (waited for other stages)
+Not checked in the app: Ctrl/⌘+Click itself (the editor's handling is `DocumentLinkTests`, with headless input, and the link is real above),
+and stdin through the integrated terminal (`"terminal": "integrated"` in `cmake.debugConfig`: a program reading stdin gets the keys typed
+in the terminal).
 
-Stages 1 (Python) and 2 (Rust) are merged into this branch, so the first four rows are open work now rather than blocked.
+## 8. Items that waited for other stages (done on the follow-up branch)
 
-| Item | Builds on | Note |
+Stage 3 first ran beside stages 1 and 2; once they were merged, the items that built on their pieces were done on `claude/c-followups`:
+
+| Item | Built on | Where |
 |---|---|---|
-| CMake tasks through `ITaskProvider` (`cmake: build`, … with `$gcc`) | `Core/Tasks/ITaskProvider.cs`; `Dap/Tasks/CargoTaskProvider.cs` is the example | `ICMakeService.BuildAsync` is what the provider will call |
-| clangd extension: Switch Header/Source, inactive `#if 0` regions, View AST, file status, default-argument review | `Lsp/Extensions/LanguageServerExtension` (docs/LSP.md §7a) | MUST 2 |
-| Matrix rows: Memory window from a pointer, Disassembly, data breakpoints | `Core/Debugging/DebugNative.cs` and the `debug.memory` / `debug.disassembly` windows | breakpoints at the physical path (`TempDirectory.PhysicalPath`) |
-| C snippets | `Editor/Snippets/Builtin/<language id>.json` | MUST 7 |
-| cmake-language-server, bear | the user's go-ahead | not installed; nothing asked yet |
+| CMake tasks through `ITaskProvider` (`CMake: build`, … with `$gcc`) | stage 2's `ITaskProvider` | §1 Tasks |
+| clangd extension: Switch Between Source/Header, inactive regions, Show AST, file status, default-argument review | stage 2's `LanguageServerExtension` (two hooks added) | §3a |
+| Matrix rows: Memory window, Disassembly, data breakpoints | stage 2's `IDebugSessionNative` | §6 |
+| C snippets | stage 1's bundled snippets | §3b |
+| SHOULD: Create compile_flags.txt, Build and Run Active File, bear / compiledb, `.clang-format` / `.clang-tidy` | | §4, §3a |
+| `cscode.testing.ctest.enabled` (CTest had JavaScript's switch) | | docs/TESTING.md |
+
+Still waiting for the user's go-ahead: installing cmake-language-server and bear (nothing was installed).
 
 ## 9. Tests
 
 ```
-dotnet test tests/CsCode.Build.CMake.Tests                                   # presets, File API, output parser, service, host; real cmake + ninja
+dotnet test tests/CsCode.Build.CMake.Tests                                   # presets, File API, output parser, service, host, tasks, reply watch,
+                                                                             # C file commands; real cmake + ninja + clang
 dotnet test tests/CsCode.Panels.Testing.Tests --filter CTestProviderTests     # CTest JSON / JUnit / debug config; real ctest
-dotnet test tests/CsCode.Lsp.Tests --filter RealClangdDocumentLinkTests       # documentLink against the real clangd
-dotnet test tests/CsCode.Editor.Tests --filter DocumentLinkTests              # Ctrl/⌘ hover and click
+dotnet test tests/CsCode.Lsp.Tests --filter "ClangdExtensionTests|RealClangd" # the clangd extension (fake and real), documentLink
+dotnet test tests/CsCode.Editor.Tests --filter "DocumentLinkTests|InactiveRegionsFeatureTests|BundledSnippetTests"
 dotnet test tests/CsCode.Dap.Tests --filter "CLaunchTemplateTests|StaleThreadsTests|RealCDebugMatrixTests"
 ```
 

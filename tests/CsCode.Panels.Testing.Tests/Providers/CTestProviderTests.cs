@@ -176,6 +176,10 @@ public sealed class CTestProviderTests
         Assert.Equal("subtracts [fast, math]", tests[1].Label);
         Assert.Equal(Path.Combine(dir.Path, "CMakeLists.txt"), tests[0].Location?.FilePath);
         Assert.Equal(9, tests[0].Location?.Line); // add_test(NAME adds …) is line 10
+        // listed right after the first configure, before any build: ctest names no command then, so discovery built the project once and
+        // each test sits under the executable it runs
+        Assert.All(tests, t => Assert.Equal("math_tests", Assert.Single(t.Groups).Label));
+        Assert.Contains(log.Lines, l => l.Contains("not built yet", StringComparison.Ordinal));
 
         var sink = new RecordingSink();
         var outcome = await provider.RunAsync(new TestRunRequest(project, null), sink, Ct).WaitAsync(TimeSpan.FromMinutes(2), Ct);

@@ -33,6 +33,21 @@ public class BundledSnippetTests
         }
     }
 
+    [Fact]
+    public void C_gets_the_bundled_set_and_the_header_guard_is_named_after_the_file()
+    {
+        using var host = TestHost.Create(new ThreadAffinityUiThread());
+        using var svc = new SnippetService(host.Services);
+        var c = svc.GetSnippets("c");
+        Assert.True(c.Count >= 25, $"only {c.Count} C snippets");
+        Assert.Contains(c, s => s.Prefixes.Contains("main") && s.Body.Contains("int main(int argc, char *argv[])", StringComparison.Ordinal));
+        var guard = Assert.Single(c, s => s.Prefixes.Contains("guard"));
+        var text = SnippetResolver.Resolve(guard.Body, new SnippetVariableContext { FilePath = "/src/include/mathlib.h" }).Text;
+        Assert.Equal("#ifndef MATHLIB_H\n#define MATHLIB_H\n\n\n\n#endif /* MATHLIB_H */", text);
+        var printf = SnippetResolver.Resolve(Assert.Single(c, s => s.Prefixes.Contains("printf")).Body).Text;
+        Assert.Equal("printf(\"%d\\n\", value);", printf); // the \n stays an escape in the C source
+    }
+
     private static IEnumerable<SnippetNode> Flatten(IEnumerable<SnippetNode> nodes) =>
         nodes.SelectMany(n => n is PlaceholderNode p ? [n, .. Flatten(p.Children)] : new[] { n });
 

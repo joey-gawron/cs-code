@@ -32,6 +32,18 @@ public abstract class LanguageServerExtension
     /// <summary>Adds members to the <c>initialize</c> request's <c>capabilities.experimental</c> (merged with any other extension's: last write wins).</summary>
     public virtual void AddExperimentalCapabilities(JsonObject experimental) { }
 
+    /// <summary>
+    /// Adds client capabilities outside <c>experimental</c> that the protocol model has no member for (clangd's
+    /// <c>textDocument.inactiveRegionsCapabilities</c>), to the whole <c>capabilities</c> object of the <c>initialize</c> request.
+    /// </summary>
+    public virtual void AddClientCapabilities(JsonObject capabilities) { }
+
+    /// <summary>
+    /// Adds members to the <c>initialize</c> request's <c>initializationOptions</c> (clangd's <c>clangdFileStatus</c>): the definition's options
+    /// (the user's, when they set some), or an empty object when it has none. Not called when the definition's options are not an object.
+    /// </summary>
+    public virtual void AddInitializationOptions(JsonObject options) { }
+
     /// <summary>Once per manager: register commands and other app-lifetime items in <see cref="ServerExtensionHost.Disposables"/>.</summary>
     public virtual void Register(ServerExtensionHost host) { }
 
@@ -76,5 +88,6 @@ public abstract class LanguageServerExtension
 public static class ServerExtensions
 {
     /// <summary>Fresh instances for one manager (an extension may hold per-manager state).</summary>
-    public static IReadOnlyList<LanguageServerExtension> CreateBuiltins() => [new RustAnalyzer.RustAnalyzerExtension(), new CSharp.RoslynExtension(), new Zls.ZlsExtension()];
+    public static IReadOnlyList<LanguageServerExtension> CreateBuiltins() =>
+        [new RustAnalyzer.RustAnalyzerExtension(), new CSharp.RoslynExtension(), new Zls.ZlsExtension(), new Clangd.ClangdExtension()];
 }

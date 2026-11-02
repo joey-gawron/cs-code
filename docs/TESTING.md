@@ -140,7 +140,9 @@ Linux install; GDB comes from the system).
 * **Discovery** configures the project when it never was, then reads `ctest --test-dir <build> --show-only=json-v1 [-C <config>]`
   (`CTestJson`): a test's id is its CTest name, its label carries its `LABELS`, it is grouped under the target whose executable it runs, and
   its location is the `add_test` line its backtrace names, so the glyphs sit in CMakeLists.txt (the source scan finds `add_test(NAME …)`). A
-  `DISABLED` test is shown skipped. A new configure (a saved CMakeLists.txt, another preset) re-discovers the project.
+  `DISABLED` test is shown skipped. A new configure (a saved CMakeLists.txt, another preset) re-discovers the project. ctest leaves a test's
+  command out while its executable is not built (right after the first configure): discovery then builds the project once, as cargo's
+  discovery builds its tests, and lists again, so each test sits under its executable from the start.
 * **Run.** The targets whose executables the requested tests run are built through the CMake integration (all targets when a test runs
   something else), then `ctest --test-dir <build> --output-on-failure --no-tests=ignore --output-junit <tmp> [-C <config>] [-R '^(a|b)$']`.
   Passes are reported as their console lines arrive; the JUnit file (CTest 3.21+, checked with `ctest --version`) gives the failures' output
@@ -148,6 +150,7 @@ Linux install; GDB comes from the system).
 * **Debug.** One test: its command from the JSON (program and arguments) under the C debugger (`cscode.cmake.debugger`: CodeLLDB on macOS,
   GDB elsewhere, `lldb-dap` on request) in its `WORKING_DIRECTORY` (default: the build directory of the CMakeLists.txt that added it), with its
   `ENVIRONMENT`; the result is the program's exit code.
+* **Off:** `cscode.testing.ctest.enabled: false` (on by default). The C++ provider then lists the executables CTest would have covered.
 
 ### C++ (`CppTestProvider`)
 

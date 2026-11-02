@@ -44,6 +44,7 @@ public sealed class CMakeHost : IDisposable
     private readonly CMakeService _cmake;
     private readonly DisposableStore _store = new();
     private readonly ClangdCompileCommands _clangd;
+    private readonly CFileCommands _files;
     private readonly HashSet<string> _askedToConfigure = new(StringComparer.Ordinal);
     private IStatusBarService? _status;
     private readonly List<(string Id, IDisposable Token)> _itemTokens = [];
@@ -57,6 +58,8 @@ public sealed class CMakeHost : IDisposable
         _cmake = cmake;
         _clangd = new ClangdCompileCommands(services.GetService<ILanguageServerManager>(), () => Config?.Get<bool?>(CMakeSettings.PointClangd) ?? true);
         _store.Add(_clangd);
+        _files = new CFileCommands(services, new CMakeProcesses(services.GetService<Core.Diagnostics.IMemoryMonitor>()), Environment.GetEnvironmentVariable);
+        _store.Add(_files);
     }
 
     private IConfigurationService? Config => _sp.GetService<IConfigurationService>();
@@ -67,7 +70,11 @@ public sealed class CMakeHost : IDisposable
     {
         if (_started) return Disposable.Empty;
         _started = true;
-        if (_sp.GetService<ICommandService>() is { } commands) RegisterCommands(commands);
+        if (_sp.GetService<ICommandService>() is { } commands)
+        {
+            RegisterCommands(commands);
+            _files.Register(commands); // C without CMake: Build and Run Active File, Create compile_flags.txt
+        }
         _status = _sp.GetService<IStatusBarService>();
         _store.Add(_cmake.ViewsChanged.Subscribe(OnViewsChanged));
         OnViewsChanged(_cmake.Views);
@@ -405,19 +412,25 @@ public sealed class CMakeHost : IDisposable
 
     // ------------------------------------------------------------------------------------------------ status bar and clangd
 
-    private void OnViewsChanged(IReadOnlyList<CMakeProjectView> views)
+    /// <summary>
+    /// Shows the latest views (any thread: the lane's events and <see cref="Start"/>'s first call may race). Each call reads
+    /// <see cref="CMakeService.Views"/> under the lock rather than the views it was handed, so the last one to run shows the newest state; with
+    /// the views it was handed, Start's first call could land after the lane's and clear the items until the next change.
+    /// </summary>
+    private void OnViewsChanged(IReadOnlyList<CMakeProjectView> _)
     {
-        _clangd.Update(views.Select(v => v.Project).FirstOrDefault(p => p.State == CMakeProjectState.Configured && File.Exists(Path.Combine(p.BuildDirectory, "compile_commands.json")))?.BuildDirectory);
-        if (_status is null) return;
-        // the items follow the project of the active editor; with one project, that one
-        var view = views.Count == 1 ? views[0]
-            : _sp.GetService<INavigationService>()?.ActiveDocument?.Uri is { IsFile: true } u && _cmake.ProjectFor(u.LocalPath) is { } p
-                ? views.FirstOrDefault(v => v.Project.SourceDirectory == p.SourceDirectory) ?? views.FirstOrDefault()
-                : views.FirstOrDefault();
-        var models = view is null ? [] : StatusItems(view);
-        var key = string.Join('\u0001', models.Select(m => m.Id + "\u0002" + m.Text + "\u0002" + m.Tooltip + "\u0002" + m.CommandId));
         lock (_items)
         {
+            var views = _cmake.Views;
+            _clangd.Update(views.Select(v => v.Project).FirstOrDefault(p => p.State == CMakeProjectState.Configured && File.Exists(Path.Combine(p.BuildDirectory, "compile_commands.json")))?.BuildDirectory);
+            if (_status is null) return;
+            // the items follow the project of the active editor; with one project, that one
+            var view = views.Count == 1 ? views[0]
+                : _sp.GetService<INavigationService>()?.ActiveDocument?.Uri is { IsFile: true } u && _cmake.ProjectFor(u.LocalPath) is { } p
+                    ? views.FirstOrDefault(v => v.Project.SourceDirectory == p.SourceDirectory) ?? views.FirstOrDefault()
+                    : views.FirstOrDefault();
+            var models = view is null ? [] : StatusItems(view);
+            var key = string.Join('\u0001', models.Select(m => m.Id + "\u0002" + m.Text + "\u0002" + m.Tooltip + "\u0002" + m.CommandId));
             if (key == _itemsKey) return;
             _itemsKey = key;
             // Set replaces an item by id: set the new ones first, then remove only the ids that are gone
