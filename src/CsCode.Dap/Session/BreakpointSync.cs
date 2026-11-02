@@ -107,6 +107,17 @@ internal sealed class BreakpointSync : IDisposable
         });
     }
 
+    /// <summary>
+    /// Lane only. Sends the changes still waiting for the debounce NOW: before a resume, so a breakpoint removed (or added, or changed) while the
+    /// debuggee is stopped takes effect before it runs again. Otherwise the <c>continue</c> overtook the queued <c>setBreakpoints</c> and the
+    /// program stopped once more at the breakpoint the user had just removed (found with debugpy, language stage 1).
+    /// </summary>
+    public async Task FlushPendingAsync()
+    {
+        if (_disposed || !_active || _flushRunning || (_pendingUris.Count == 0 && !_pendingFunctionsOrFilters)) return;
+        await FlushAsync();
+    }
+
     private async Task FlushAsync()
     {
         _flushScheduled = false;

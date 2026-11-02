@@ -9,7 +9,7 @@ namespace CsCode.App.Python;
 
 /// <summary>
 /// Python in the shell (docs/PYTHON.md): <b>Python: Select Interpreter</b> (<c>python.setInterpreter</c>; the interpreters found for the active
-/// file's folder, "Enter interpreter path…" and a refresh), <b>Python: Clear Workspace Interpreter Setting</b>, and the status bar item that shows
+/// file's folder, "Enter interpreter path…" and a refresh), <b>Python: Clear Workspace Interpreter Setting</b>, <c>${command:python.interpreterPath}</c>, and the status bar item that shows
 /// the active file's interpreter while a Python file is active (a click opens the picker). The interpreter is persisted per workspace folder by
 /// <see cref="IPythonEnvironmentService"/>, which feeds it to the language servers, the debugger, the test provider and new terminals.
 /// </summary>
@@ -17,6 +17,8 @@ public sealed class PythonIntegration : IDisposable
 {
     public const string SelectInterpreter = "python.setInterpreter";
     public const string ClearInterpreter = "python.clearWorkspaceInterpreter";
+    /// <summary><c>${command:python.interpreterPath}</c> in launch configurations and tasks: the active file's (else the first folder's) interpreter.</summary>
+    public const string InterpreterPath = "python.interpreterPath";
     public const string StatusItemId = "python.interpreter";
     private const string EnterPath = "enter";
     private const string Refresh = "refresh";
@@ -56,6 +58,11 @@ public sealed class PythonIntegration : IDisposable
                 await _environments.SetActiveAsync(Navigation?.ActiveDocument?.Uri, null).ConfigureAwait(true);
                 return null;
             }, new CommandMetadata(ClearInterpreter, "Clear Workspace Interpreter Setting", "Python")));
+            _subs.Add(commands.Register(InterpreterPath, async inv =>
+            {
+                var resource = inv.Args is [Uri uri, ..] ? uri : Navigation?.ActiveDocument?.Uri ?? _sp.GetService<IWorkspaceService>()?.PrimaryFolder;
+                return (await _environments.GetActiveAsync(resource).ConfigureAwait(true))?.Executable;
+            }));
         }
         if (Navigation is { } nav) _subs.Add(nav.ActiveDocumentChanged.Subscribe(_ => _ui.PostCoalesced("python.status", UpdateStatus)));
         _subs.Add(_environments.ActiveChanged.Subscribe(_ => _ui.PostCoalesced("python.status", UpdateStatus)));

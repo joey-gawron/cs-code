@@ -42,6 +42,8 @@ public sealed class DapPlatform
     public Func<IViewActivator?>? Views { get; init; }
     /// <summary>URIs of a remote workspace ⇄ the paths its adapters use (the Remote module's mapper); resolved lazily, optional.</summary>
     public Func<IDebugPathMapper?>? PathMappers { get; init; }
+    /// <summary>The selected Python interpreters (debugpy runs the folder's, and launches the program with it).</summary>
+    public CsCode.Core.Python.IPythonEnvironmentService? Python { get; init; }
 
     public IDebugPathMapper? PathMapper => PathMappers?.Invoke();
 
@@ -67,6 +69,7 @@ public sealed class DapPlatform
         Diagnostics = sp.GetService<IDiagnosticService>(),
         Views = () => sp.GetService<IViewActivator>(),
         PathMappers = () => sp.GetService<IDebugPathMapper>(),
+        Python = sp.GetService<CsCode.Core.Python.IPythonEnvironmentService>(),
     };
 
     /// <summary>Folder to use when a caller passes none: the first workspace folder.</summary>

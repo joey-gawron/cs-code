@@ -242,6 +242,7 @@ public sealed partial class DebugSession : IDebugSession, IDebugSessionHealth, I
         subs.Add(client.Invalidated.Subscribe(OnInvalidatedEvent));
         subs.Add(client.RequestTimedOut.Subscribe(_ => SetUnresponsive(true)));
         subs.Add(client.ConnectionClosed.Subscribe(OnConnectionClosed));
+        if (_o.StartChild is not null && !ReferenceEquals(_o.Quirks, DebugAdapterQuirks.None)) subs.Add(client.UnknownEvent.Subscribe(OnUnknownEvent));
         client.SetReverseRequestHandler("runInTerminal", OnRunInTerminalAsync);
         if (_o.StartChild is not null) client.SetReverseRequestHandler("startDebugging", OnStartDebuggingAsync);
         _client = client;
