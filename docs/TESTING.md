@@ -1,11 +1,11 @@
 # Test Explorer (`CsCode.Testing`, `CsCode.Panels.Testing`)
 
-Discovering, running and debugging the workspace's tests, built in (there is no extension system): .NET test projects, cargo packages and
-JavaScript/TypeScript packages that use Jest or Vitest. Two projects:
+Discovering, running and debugging the workspace's tests, built in (there is no extension system): .NET test projects, cargo packages,
+JavaScript/TypeScript packages that use Jest or Vitest, and C++ test executables built with GoogleTest, Catch2 or doctest. Two projects:
 
 | Project | References | Holds |
 |---|---|---|
-| `CsCode.Testing` | Core only (no Avalonia) | the providers (`Providers/DotNet`, `Providers/Rust`, `Providers/JavaScript`), their output parsers and source scanners, the process runner, the test tree and the run controller (`Engine/`) |
+| `CsCode.Testing` | Core only (no Avalonia) | the providers (`Providers/DotNet`, `Providers/Rust`, `Providers/JavaScript`, `Providers/Cpp`), their output parsers and source scanners, the process runner, the test tree and the run controller (`Engine/`) |
 | `CsCode.Panels.Testing` | Core, Ui, Testing | the Test Explorer tool window and its view-model, `TestingHost` (commands, settings, Error List / Output glue, context keys), the editor's glyph provider |
 
 The editor side is `CsCode.Editor/Features/TestGutterFeature.cs`, over the new Core contract `ITestGutterProvider`
@@ -127,6 +127,20 @@ Linux install; GDB comes from the system).
 * Paths node reports are resolved through symbolic links (`/private/var/…` for `/var/…` on macOS): they are put back under the folder as it
   was opened (`PhysicalPaths`), so ids, Error List entries and glyphs match the open documents. .NET frames get the same treatment.
 
+### C++ (`CppTestProvider`)
+
+GoogleTest, Catch2 and doctest executables, each a project. Full description in [C-CPP.md](C-CPP.md) section 10; in short:
+
+* **Detection.** Files matching `cscode.testing.cpp.executables` (else C++ TestMate's `testMate.cpp.test.executables`, else test-named files
+  under `build/` or `out/`) that are native executables carrying a framework's signature in their bytes (never run to be classified).
+* **Discovery.** The framework's listing (GoogleTest's JSON listing, Catch2's and doctest's XML), with file and line; bounded (20 s, 16 MB),
+  cached by the executable's size and modification time (listed again only after a rebuild). Ids are `<executable>/<runner name>`.
+* **Run.** The executable in its directory with the framework's filter; GoogleTest's console as it comes plus its JSON, Catch2's and doctest's
+  XML report; a crash fails the test that was running. A disabled / hidden / skipped test runs when chosen by itself.
+* **Debug.** The same command under `cscode.testing.cpp.debugger` (CodeLLDB on macOS, GDB elsewhere, or lldb-dap), stopping at a failed
+  assertion (`cscode.testing.cpp.breakOnFailure`); results read when the session ends.
+* Building first and discovery through CMake wait for the C stage's CMake integration (C-CPP.md section 15).
+
 ## The tree, runs and threading (`TestController`, `TestTree`)
 
 * **Tree.** Project > grouping levels (namespace, target, module, file, class, describe block) > test > case. Groups show the aggregate of their
@@ -167,7 +181,10 @@ selection (a rebuild resets the list, which used to drop it).
 | `testing.defaultGutterClickAction` | `"run"` | `run`, `debug` or `contextMenu`. |
 | `testing.openTesting` | `"openOnTestStart"` | `neverOpen`, `openOnTestStart` / `openExplorerOnTestStart` (show the explorer when a run starts), `openOnTestFailure`. Shown without taking the keyboard. |
 | `cscode.testing.autoDiscover` | `true` | Discover when an editor shows a file that declares tests (a Rust package is built to list them). Tests are always discovered when the explorer is first shown, a test command runs, or Refresh, and never just because a folder opened. Off: only then. |
-| `cscode.testing.dotnet.enabled` / `.rust.enabled` / `.javascript.enabled` | `true` | Turn a provider off. |
+| `cscode.testing.dotnet.enabled` / `.rust.enabled` / `.javascript.enabled` / `.cpp.enabled` | `true` | Turn a provider off. |
+| `cscode.testing.cpp.executables` | TestMate's default | Globs naming the C++ test executables (C-CPP.md section 10). |
+| `cscode.testing.cpp.debugger` | `""` | `codelldb`, `lldb-dap` or `gdb` for C++ tests; empty: CodeLLDB on macOS, GDB elsewhere. |
+| `cscode.testing.cpp.breakOnFailure` | `true` | Debugging a C++ test stops at the failing assertion. |
 
 Also read: `cscode.debug.rustDebugger` (the Rust debugger) and `cscode.debug.nodePath` (node for Jest/Vitest runs).
 
@@ -189,7 +206,7 @@ Also read: `cscode.debug.rustDebugger` (the Rust debugger) and `cscode.debug.nod
   and the real-app Rust test (no discovery before the explorer is shown).
 * **Folders.** Only local (`file:`) workspace folders are searched. A remote (ssh) folder has no tests in the explorer yet.
 * **Editor glyphs.** `TestGutterProvider` is registered in `ILanguageFeatureRegistry` for every provider language (csharp, rust, javascript,
-  typescript, javascriptreact, typescriptreact). The editor asks it 300 ms after an edit and when it fires `StatesChanged`; it scans the
+  typescript, javascriptreact, typescriptreact, cpp, cuda-cpp, objective-cpp). The editor asks it 300 ms after an edit and when it fires `StatesChanged`; it scans the
   document's text (off the UI thread) and matches the tests found to the tree through an immutable index (file → tests and states) that the UI
   thread rebuilds after each change (coalesced). So the glyphs follow edits (lines come from the current text) and appear for tests the explorer
   knows (after discovery).
