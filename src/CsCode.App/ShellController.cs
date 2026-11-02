@@ -155,6 +155,9 @@ public sealed class ShellController : IDisposable
         // Remote editing: Connect to Host / Open Remote Folder / disconnect... commands and the remote indicator in the status bar.
         if (_sp.GetService<CsCode.Remote.Shell.RemoteShellContributions>() is { } remote) _disposables.Add(remote.Start());
 
+        // CMake (docs/C-CPP.md): the cmake.* commands, the configure / build / launch-target status bar items, configure on open, clangd's build directory.
+        if (_sp.GetService<CsCode.Build.CMake.CMakeHost>() is { } cmake) _disposables.Add(cmake.Start());
+
         Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window, context: keys);
         _disposables.Add(Keyboard);
 

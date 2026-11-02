@@ -43,10 +43,22 @@ public sealed partial class DebugSession
 
     public ValueTask<IReadOnlyList<DebugThread>> GetThreadsAsync(CancellationToken ct = default) => OnLane(() => GetThreadsCoreAsync(ct), ct);
 
+    /// <summary>How often <c>threads</c> is asked again when its answer lacks the thread that just stopped, and how long apart.</summary>
+    internal const int StaleThreadRetries = 5;
+    internal static readonly TimeSpan StaleThreadDelay = TimeSpan.FromMilliseconds(100);
+
     private async Task<IReadOnlyList<DebugThread>> GetThreadsCoreAsync(CancellationToken ct)
     {
         EnsureLive();
         var resp = DapJson.Deserialize<DapThreadsResponse>(await RequestAsync("threads", null, ct)) ?? new DapThreadsResponse();
+        // Apple's lldb-dap answers the first `threads` after a stop from the list it had while running (a C program's new pthreads are
+        // missing, the stopped one among them) and has the real list a moment later: ask again while the thread that stopped is not in it.
+        for (var retry = 0; retry < StaleThreadRetries && State == DebugSessionState.Stopped && _stoppedThread is { } stopped && resp.Threads.All(t => t.Id != stopped); retry++)
+        {
+            await Task.Delay(StaleThreadDelay, ct);
+            EnsureLive();
+            resp = DapJson.Deserialize<DapThreadsResponse>(await RequestAsync("threads", null, ct)) ?? new DapThreadsResponse();
+        }
         return [.. resp.Threads.Select(DapMapping.ToCore)];
     }
 

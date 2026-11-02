@@ -161,7 +161,8 @@ Providers are registered **per feature interface**, only while the server advert
 | `workspace/executeCommand` bridge | implemented | `executeCommandProvider.commands` registered into `ICommandService` (optional dependency) |
 | diagnostics: `publishDiagnostics` (version-checked), pull (`textDocument/diagnostic`, `workspace/diagnostic`) | implemented | cleared on close (push-only servers) and on stop/crash |
 | `willRenameFiles` / `didRenameFiles` / `didCreateFiles` / `didDeleteFiles` | implemented | `IFileOperationParticipant`, filters honoured |
-| documentLink, moniker, inlineValue, `willCreateFiles`/`willDeleteFiles`, notebook documents, proposed features (inline completion…) | not implemented | out of scope |
+| documentLink (+resolve) | implemented | additive Core `IDocumentLinkProvider` (stage 3, C); each link keeps the server's link in `Data` for `documentLink/resolve`; at most 5000 per document; the editor underlines a link while Ctrl/⌘ is held over it and opens it on Ctrl/⌘+Click (docs/C-CPP.md §3) |
+| moniker, inlineValue, `willCreateFiles`/`willDeleteFiles`, notebook documents, proposed features (inline completion…) | not implemented | out of scope |
 | partial results / client-initiated `workDoneToken` | not implemented | the client never sends partial-result tokens |
 
 Server → client: `window/logMessage`, `$/logTrace`, `window/showMessage` (rate-limited, 5 per 10 s), `window/showMessageRequest`, `window/showDocument`,
@@ -301,5 +302,5 @@ independent in-proc peer (`Harness/FakeLspServer`: own framing over `System.IO.P
 
 ## 12. Known limits
 `workspaceSymbol/resolve` is not exposed; non-UTF-16 encodings don't convert ranges in closed files; `colorPresentation`,
-`documentLink`, notebooks and proposed features are absent; `Dispose()` (sync) blocks up to 15 s — prefer `DisposeAsync` off the UI thread; the manager starts
+notebooks and proposed features are absent; `Dispose()` (sync) blocks up to 15 s — prefer `DisposeAsync` off the UI thread; the manager starts
 observing documents when `ILanguageServerManager` is first resolved (resolve it at startup).
