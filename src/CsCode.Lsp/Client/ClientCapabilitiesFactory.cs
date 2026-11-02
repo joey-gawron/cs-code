@@ -109,6 +109,7 @@ internal static class ClientCapabilitiesFactory
                 },
                 CodeLens = new CodeLensClientCapabilities { DynamicRegistration = true },
                 ColorProvider = new DocumentColorClientCapabilities { DynamicRegistration = true },
+                DocumentLink = new DocumentLinkClientCapabilities { DynamicRegistration = true, TooltipSupport = true },
                 Formatting = new DocumentFormattingClientCapabilities { DynamicRegistration = true },
                 RangeFormatting = new DocumentRangeFormattingClientCapabilities { DynamicRegistration = true },
                 OnTypeFormatting = new DocumentOnTypeFormattingClientCapabilities { DynamicRegistration = true },

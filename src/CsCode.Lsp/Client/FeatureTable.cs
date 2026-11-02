@@ -12,7 +12,7 @@ internal enum ProviderKind
 {
     Completion, Hover, SignatureHelp, Definition, References, DocumentHighlight, DocumentSymbol, WorkspaceSymbol, CodeAction, CodeLens,
     DocumentColor, Formatting, Rename, FoldingRange, SelectionRange, SemanticTokens, SemanticTokensRange, InlayHint, LinkedEditing,
-    CallHierarchy, TypeHierarchy,
+    CallHierarchy, TypeHierarchy, DocumentLink,
 }
 
 /// <summary>One static capability or dynamic registration contributing to a provider kind.</summary>
@@ -64,6 +64,7 @@ internal sealed class FeatureTable(LanguageClient client)
         P.LspMethods.TextDocumentLinkedEditingRange => ProviderKind.LinkedEditing,
         P.LspMethods.TextDocumentPrepareCallHierarchy => ProviderKind.CallHierarchy,
         P.LspMethods.TextDocumentPrepareTypeHierarchy => ProviderKind.TypeHierarchy,
+        P.LspMethods.TextDocumentDocumentLink => ProviderKind.DocumentLink,
         _ => null,
     };
 
@@ -190,6 +191,7 @@ internal sealed class FeatureTable(LanguageClient client)
             ProviderKind.LinkedEditing => reg.Register<ILinkedEditingRangeProvider>(sel, new LinkedEditingProvider(client), owner),
             ProviderKind.CallHierarchy => reg.Register<ICallHierarchyProvider>(sel, new CallHierarchyProvider(client), owner),
             ProviderKind.TypeHierarchy => reg.Register<ITypeHierarchyProvider>(sel, new TypeHierarchyProvider(client), owner),
+            ProviderKind.DocumentLink => reg.Register<IDocumentLinkProvider>(sel, new DocumentLinkProvider(client, entries), owner),
             _ => Disposable.Empty,
         };
     }
@@ -224,6 +226,7 @@ internal sealed class FeatureTable(LanguageClient client)
         Static(ProviderKind.LinkedEditing, P.LspMethods.TextDocumentLinkedEditingRange, c.LinkedEditingRangeProvider);
         Static(ProviderKind.CallHierarchy, P.LspMethods.TextDocumentPrepareCallHierarchy, c.CallHierarchyProvider);
         Static(ProviderKind.TypeHierarchy, P.LspMethods.TextDocumentPrepareTypeHierarchy, c.TypeHierarchyProvider);
+        Static(ProviderKind.DocumentLink, P.LspMethods.TextDocumentDocumentLink, c.DocumentLinkProvider);
 
         if (c.SemanticTokensProvider is { } st)
         {

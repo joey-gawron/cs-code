@@ -15,6 +15,9 @@ namespace CsCode.Editor.Features;
 
 /// <summary>
 /// Go to definition (F12; Ctrl+Click, ⌘-click on macOS, with the symbol underlined while the modifier is held), find references (Shift+F12) and rename (F2).
+/// Document links (<see cref="IDocumentLinkProvider"/>: clangd's <c>#include</c> targets) take the same gesture: underlined while the modifier is
+/// held over one, opened on click (resolved first when the provider left the target out); they are fetched once per document version, when the
+/// modifier is first held, and win over a definition on the same text.
 /// Every request goes to the providers off the UI thread with a deadline; a result for text that has changed since is never applied.
 /// Several locations are offered through <see cref="IWindowService.ShowQuickPickAsync"/>; for references the command
 /// <c>cscode.references.show</c> (args: <c>IReadOnlyList&lt;Location&gt;</c>, title) is the extension point for the shell's Find Results panel —
@@ -32,6 +35,11 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
     private (int Start, int End) _linkWord = (-1, -1);
     private IReadOnlyList<LocationLink>? _linkTargets;
     private Uri? _linkUrl;
+    private DocumentLink? _docLink;
+    private (int Version, IReadOnlyList<(IDocumentLinkProvider Provider, DocumentLink Link)> Links)? _docLinks;
+    private CancellationTokenSource? _docLinksCts;
+    private int _docLinksRequested = -1;
+    private int _hoverOffset = -1;
     private static readonly System.Text.RegularExpressions.Regex UrlPattern = new(@"https?://[^\s<>""'`\]\[{}|\\^]+", System.Text.RegularExpressions.RegexOptions.CultureInvariant | System.Text.RegularExpressions.RegexOptions.Compiled, TimeSpan.FromMilliseconds(20));
     private bool _disposed;
 
@@ -234,16 +242,29 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
         if (_disposed) return;
         if (!EditorKeys.HasCommand(e.KeyModifiers))
         {
+            _hoverOffset = -1;
             ClearLink();
             return;
         }
         var pos = _v.Editor.GetPositionFromPoint(e.GetPosition(_v.Editor));
         if (pos is not { } p || p.IsAtEndOfLine)
         {
+            _hoverOffset = -1;
             ClearLink();
             return;
         }
         var offset = _v.Document.OffsetAt(new TextPosition(p.Line - 1, p.Column - 1));
+        _hoverOffset = offset;
+        if (DocumentLinkAt(offset) is { } docLink)
+        {
+            if (ReferenceEquals(_docLink, docLink.Link)) return;
+            ClearLink();
+            _docLink = docLink.Link;
+            _underline.Range = (docLink.Start, docLink.End);
+            _v.Editor.Cursor = new Cursor(StandardCursorType.Hand);
+            _v.TextView.Redraw();
+            return;
+        }
         if (UrlAt(offset) is { } url)
         {
             if (_linkUrl == url.Uri) return;
@@ -287,6 +308,13 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
     {
         if (_disposed || !EditorKeys.HasCommand(e.KeyModifiers)) return;
         if (!e.GetCurrentPoint(_v.Editor).Properties.IsLeftButtonPressed) return;
+        if (_docLink is { } docLink)
+        {
+            e.Handled = true;
+            ClearLink();
+            _ = OpenDocumentLinkAsync(docLink);
+            return;
+        }
         if (_linkUrl is { } url)
         {
             e.Handled = true;
@@ -302,18 +330,25 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
 
     private void OnKeyUp(object? sender, KeyEventArgs e)
     {
-        if (EditorKeys.IsCommandKey(e.Key)) ClearLink();
+        if (!EditorKeys.IsCommandKey(e.Key)) return;
+        _hoverOffset = -1;
+        ClearLink();
     }
 
-    private void OnLostFocus(object? sender, RoutedEventArgs e) => ClearLink();
+    private void OnLostFocus(object? sender, RoutedEventArgs e)
+    {
+        _hoverOffset = -1;
+        ClearLink();
+    }
 
     private void ClearLink()
     {
         _linkCts?.Cancel();
         _linkWord = (-1, -1);
-        if (_linkTargets is null && _linkUrl is null && _underline.Range is null) return;
+        if (_linkTargets is null && _linkUrl is null && _docLink is null && _underline.Range is null) return;
         _linkTargets = null;
         _linkUrl = null;
+        _docLink = null;
         _underline.Range = null;
         _v.Editor.Cursor = null;
         if (!_disposed) _v.TextView.Redraw();
@@ -369,6 +404,98 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
         return null;
     }
 
+    // ---- document links ----
+
+    /// <summary>
+    /// The document link at <paramref name="offset"/> from the links of the current version, or null. When they are not known for this version
+    /// they are asked for (once per version) and the hover is looked at again when they arrive, if the modifier is still held.
+    /// </summary>
+    internal (DocumentLink Link, int Start, int End)? DocumentLinkAt(int offset)
+    {
+        var doc = _v.Document;
+        if (_docLinks is not { } cached || cached.Version != doc.Version)
+        {
+            RequestDocumentLinks();
+            return null;
+        }
+        foreach (var (_, link) in cached.Links)
+        {
+            var start = doc.OffsetAt(link.Range.Start);
+            var end = doc.OffsetAt(link.Range.End);
+            if (offset >= start && offset < end && end > start) return (link, start, end);
+        }
+        return null;
+    }
+
+    private void RequestDocumentLinks()
+    {
+        var doc = _v.Document;
+        var version = doc.Version;
+        if (_docLinksRequested == version) return;
+        var providers = _v.Services.Features.GetProviders<IDocumentLinkProvider>(doc);
+        if (providers.Count == 0) return;
+        _docLinksRequested = version;
+        _docLinksCts?.Cancel();
+        _docLinksCts?.Dispose();
+        var cts = _docLinksCts = new CancellationTokenSource();
+        _ = FetchDocumentLinksAsync(providers, version, cts.Token);
+    }
+
+    private async Task FetchDocumentLinksAsync(IReadOnlyList<IDocumentLinkProvider> providers, int version, CancellationToken ct)
+    {
+        var doc = _v.Document;
+        var calls = providers.Select(p => (Provider: p, Call: FeatureSupport.CallAsync(_v, c => p.ProvideDocumentLinksAsync(doc, c), ct, TimeSpan.FromSeconds(3)))).ToList();
+        var all = new List<(IDocumentLinkProvider, DocumentLink)>();
+        foreach (var (provider, call) in calls)
+            if (await call.ConfigureAwait(true) is { } links) all.AddRange(links.Select(l => (provider, l)));
+        if (_disposed || ct.IsCancellationRequested || doc.Version != version) return;
+        _docLinks = (version, all);
+        // the modifier may still be held over a link that just became known
+        if (_hoverOffset >= 0 && _docLink is null && DocumentLinkAt(_hoverOffset) is { } hit)
+        {
+            ClearLink();
+            _docLink = hit.Link;
+            _underline.Range = (hit.Start, hit.End);
+            _v.Editor.Cursor = new Cursor(StandardCursorType.Hand);
+            _v.TextView.Redraw();
+        }
+    }
+
+    private async Task OpenDocumentLinkAsync(DocumentLink link)
+    {
+        var target = link.Target;
+        if (target is null && _docLinks?.Links.FirstOrDefault(l => ReferenceEquals(l.Link, link)).Provider is { } provider)
+            target = (await FeatureSupport.CallAsync<DocumentLink>(_v, async c => await provider.ResolveDocumentLinkAsync(link, c).ConfigureAwait(false), CancellationToken.None, TimeSpan.FromSeconds(3))
+                .ConfigureAwait(true))?.Target;
+        if (_disposed) return;
+        if (target is null)
+        {
+            FeatureSupport.Status(_v, "The link has no target");
+            return;
+        }
+        if (target.IsFile)
+        {
+            var line = LineOfFragment(target.Fragment);
+            var file = new Uri(target.GetLeftPart(UriPartial.Query));
+            var at = new TextPosition(Math.Max(0, line.Line), Math.Max(0, line.Character));
+            await FeatureSupport.OpenLocationAsync(_v, file, new TextRange(at, at)).ConfigureAwait(true);
+            return;
+        }
+        if (target.Scheme is "http" or "https" or "mailto") _ = _v.Services.Window?.OpenExternalAsync(target);
+        else FeatureSupport.Status(_v, $"Links to {target.Scheme}: are not opened");
+    }
+
+    /// <summary>VS Code's line fragment on a file link: <c>#L12</c>, <c>#12</c> or <c>#12,5</c> (1-based) → 0-based line and column; none: (0, 0).</summary>
+    internal static (int Line, int Character) LineOfFragment(string fragment)
+    {
+        var f = fragment.TrimStart('#');
+        if (f.StartsWith('L') || f.StartsWith('l')) f = f[1..];
+        var parts = f.Split(',', 2);
+        return int.TryParse(parts[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var line) && line > 0
+            ? (line - 1, parts.Length > 1 && int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var col) && col > 0 ? col - 1 : 0)
+            : (0, 0);
+    }
+
     // ---- underline of the symbol under Ctrl ----
 
     private sealed class LinkUnderline(NavigationFeature owner) : DocumentColorizingTransformer
@@ -395,6 +522,9 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
         _disposed = true;
         _linkCts?.Cancel();
         _linkCts?.Dispose();
+        _docLinksCts?.Cancel();
+        _docLinksCts?.Dispose();
+        _docLinks = null;
         _d.Dispose();
     }
 }
