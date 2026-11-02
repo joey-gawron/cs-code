@@ -125,6 +125,20 @@ public static partial class ProjectNames
         return null;
     }
 
+    // ---- npm (the name in package.json: npm's validate-npm-package-name rules for a new, unscoped package)
+    /// <summary>An npm package name: lower case letters, digits, <c>-</c> <c>.</c> <c>_</c> and <c>~</c>, not starting with <c>.</c> or <c>_</c>, 214 characters at most.</summary>
+    public static string? Npm(string name)
+    {
+        if (Folder(name) is { } bad) return bad;
+        if (name.Length > 214) return "An npm package name has 214 characters at most.";
+        if (!NpmName().IsMatch(name)) return "An npm package name uses lower-case letters, digits, - . _ and ~, and does not start with . or _.";
+        if (name is "node_modules" or "favicon.ico") return $"npm reserves the name '{name}'.";
+        return null;
+    }
+
+    [GeneratedRegex("^[a-z0-9~-][a-z0-9._~-]*$")]
+    private static partial Regex NpmName();
+
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_-]*$")]
     private static partial Regex RustName();
 

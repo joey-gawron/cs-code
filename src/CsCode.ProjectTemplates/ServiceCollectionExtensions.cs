@@ -10,7 +10,7 @@ namespace CsCode.ProjectTemplates;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the built-in New Project generators as <see cref="IProjectGenerator"/>s (Empty, Python, Rust, C, C++, C#, Zig), the
+    /// Registers the built-in New Project generators as <see cref="IProjectGenerator"/>s (Empty, Python, Rust, C, C++, C#, Zig; TypeScript and JavaScript on Node.js, a static website), the
     /// <see cref="IToolRunner"/> they start their tools with (tracked by the memory monitor when there is one) and the <see cref="ProjectCreator"/>
     /// the page runs them through. Another module adds a generator by registering one more <see cref="IProjectGenerator"/>.
     /// </summary>
@@ -25,6 +25,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProjectGenerator>(sp => new CMakeProjectGenerator(sp.GetRequiredService<IToolRunner>(), cpp: true));
         services.AddSingleton<IProjectGenerator>(sp => new DotnetProjectGenerator(sp.GetRequiredService<IToolRunner>(), sp.GetService<TimeProvider>()));
         services.AddSingleton<IProjectGenerator>(sp => new ZigProjectGenerator(sp.GetRequiredService<IToolRunner>()));
+        services.AddSingleton<IProjectGenerator>(sp => new NodeProjectGenerator(sp.GetRequiredService<IToolRunner>(), typeScript: true));
+        services.AddSingleton<IProjectGenerator>(sp => new NodeProjectGenerator(sp.GetRequiredService<IToolRunner>(), typeScript: false));
+        services.AddSingleton<IProjectGenerator>(sp => new StaticSiteGenerator(sp.GetRequiredService<IToolRunner>()));
         return services;
     }
 }

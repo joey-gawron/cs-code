@@ -43,6 +43,11 @@ public static class Tools
         "Install Apple's command line tools: xcode-select --install",
         "Install it with: winget install LLVM.LLVM (or the Visual Studio Build Tools' C++ workload)");
 
+    public static readonly ToolInstallHint Node = new(
+        "Install Node.js (it includes npm): sudo apt install nodejs npm, or nvm (https://github.com/nvm-sh/nvm)",
+        "Install it with: brew install node",
+        "Install it with: winget install OpenJS.NodeJS.LTS");
+
     public static readonly ToolInstallHint Git = new(
         "Install it with: sudo apt install git",
         "Install Apple's command line tools (xcode-select --install), or: brew install git",

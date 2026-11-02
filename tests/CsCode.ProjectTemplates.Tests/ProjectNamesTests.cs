@@ -82,6 +82,16 @@ public sealed class ProjectNamesTests
     public void Zig_takes_identifiers_up_to_32_bytes(string name, bool valid) => Assert.Equal(valid, ProjectNames.Zig(name) is null);
 
     [Theory]
+    [InlineData("hello", true)]
+    [InlineData("hello-world.js", true)]
+    [InlineData("Hello", false)]
+    [InlineData(".hidden", false)]
+    [InlineData("_private", false)]
+    [InlineData("node_modules", false)]
+    [InlineData("has space", false)]
+    public void Npm_follows_package_name_rules(string name, bool valid) => Assert.Equal(valid, ProjectNames.Npm(name) is null);
+
+    [Theory]
     [InlineData("ok name")]
     [InlineData("Ünïcødé")]
     public void Folder_accepts_portable_names(string name) => Assert.Null(ProjectNames.Folder(name));

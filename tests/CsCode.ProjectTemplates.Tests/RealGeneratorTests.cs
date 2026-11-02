@@ -250,6 +250,42 @@ public sealed class RealGeneratorTests
     }
 
     [Fact]
+    public async Task JavaScript_package_runs_and_passes_node_test()
+    {
+        using var temp = new TempDirectory();
+        var (dir, result, _) = await CreateAsync(new NodeProjectGenerator(Runner, typeScript: false), temp, "hello-js");
+        Assert.Equal("src/index.js", result.MainFile);
+        var package = JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "package.json")))!;
+        Assert.Equal("hello-js", package["name"]!.GetValue<string>());
+        Assert.Equal("module", package["type"]!.GetValue<string>());
+        var node = ToolLocator.Find("node")!;
+        Assert.Contains("Hello, world!", await RunAsync(dir, node, LaunchProgram(dir, "pwa-node")), StringComparison.Ordinal);
+        Assert.Contains("pass 1", await RunAsync(dir, node, "--test"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TypeScript_package_builds_with_tsc_and_its_test_passes()
+    {
+        Network.RequireOrSkip("typescript and @types/node (from the npm registry)");
+        using var temp = new TempDirectory();
+        var (dir, result, _) = await CreateAsync(new NodeProjectGenerator(Runner, typeScript: true), temp, "hello-ts");
+        Assert.Equal("src/index.ts", result.MainFile);
+        Assert.True(File.Exists(Path.Combine(dir, "tsconfig.json")));
+        var npm = ToolLocator.Find("npm")!;
+        Assert.Contains("pass 1", await RunAsync(dir, npm, "test"), StringComparison.Ordinal);
+        Assert.Contains("Hello, world!", await RunAsync(dir, ToolLocator.Find("node")!, Path.Combine(dir, "dist", "index.js")), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Static_site_writes_its_page()
+    {
+        using var temp = new TempDirectory();
+        var (dir, result, _) = await CreateAsync(new StaticSiteGenerator(Runner), temp, "My Site");
+        Assert.Equal("index.html", result.MainFile);
+        Assert.Contains("<title>My Site</title>", File.ReadAllText(Path.Combine(dir, "index.html")), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Generated_launch_configurations_use_the_adapters_types()
     {
         Assert.Equal("lldb", RustProjectGenerator.Launch("x", lib: false)["configurations"]![0]!["type"]!.GetValue<string>());

@@ -42,6 +42,15 @@ public static class CommonFiles
         .cache/
         """;
 
+    public const string NodeIgnore = """
+        # Node.js
+        node_modules/
+        dist/
+        coverage/
+        *.tsbuildinfo
+        npm-debug.log*
+        """;
+
     public const string ZigIgnore = """
         # Zig
         .zig-cache/
