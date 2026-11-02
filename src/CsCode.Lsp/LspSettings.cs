@@ -150,7 +150,7 @@ internal sealed record LspSettings
         { Scope = ConfigurationScope.Machine };
         yield return new(LspSettingKeys.ServerChoice, J(new Dictionary<string, string>()),
             "Which built-in language server runs where several serve one language, by language group: { \"csharp\": \"csharp\" | \"roslyn\" }. "
-            + "Unset: the group's default (csharp-ls for C#). An explicit cscode.languageServers.<id>.enabled still wins.");
+            + "Unset: the group's default (Roslyn for C#). An explicit cscode.languageServers.<id>.enabled still wins.");
         yield return new(LspSettingKeys.LanguageServers, null,
             "Language server definitions keyed by id: { command, args, env, workingDirectory, selector, initializationOptions, settings, enabled, autoStart, rootMarkers, restartAboveBytes }. "
             + "command, args, env and workingDirectory are taken from user settings only.")

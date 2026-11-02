@@ -35,7 +35,7 @@ public sealed record BuiltinServer(
     string? Notes = null)
 {
     /// <summary>
-    /// The language group of built-ins that are alternatives to one another (<c>"csharp"</c>: csharp-ls and Roslyn): one of them runs, the
+    /// The language group of built-ins that are alternatives to one another (<c>"csharp"</c>: Roslyn, the default, and csharp-ls): one of them runs, the
     /// group's default or the one <c>cscode.lsp.serverChoice</c> names. Null: not one of several.
     /// </summary>
     public string? Group { get; init; }
@@ -100,18 +100,20 @@ public static class BuiltinLanguageServers
                 ["tsconfig.json", "jsconfig.json", "package.json"]) with { RestartAboveBytes = TypeScriptEngineCap },
             All3("Install it with: npm install -g typescript-language-server typescript (or run tools/fetch-lsp-tools.sh)."),
             "typescript-language-server (tsserver)"),
+        // The alternative to Roslyn (cscode.lsp.serverChoice {"csharp": "csharp"}, C#: Select Language Server…): lighter, one project at a time.
         // --features metadata-uris (csharp-ls 0.28): go to definition into a referenced assembly answers a csharp: location whose decompiled text
         // comes from csharp/metadata (without it, nothing); opened as a read-only virtual document, docs/CSHARP.md
         S(Def("csharp", "C# (csharp-ls)", ["csharp"], "csharp-ls", ["--features", "metadata-uris"], ["*.sln", "*.slnx", "*.csproj"]),
             All3("Install it with: dotnet tool install --global csharp-ls"),
-            "csharp-ls") with { Group = CSharpGroup },
-        // Microsoft's Roslyn server (what VS Code's C# extension runs), docs/CSHARP.md. One server per solution: the outermost marked directory
+            "csharp-ls") with { Group = CSharpGroup, IsGroupDefault = false },
+        // C#'s default server: Microsoft's Roslyn server (what VS Code's C# extension runs), docs/CSHARP.md §3. One server per solution: the outermost marked directory
         // (a repository's .slnx, not each project's .csproj); the client then opens the solution (solution/open) or its projects (project/open).
         // Telemetry off; logs into CsCode's logs directory; --clientProcessId ends it if CsCode dies without stopping it.
         S(Def("roslyn", "C# (Roslyn)", ["csharp"], "roslyn-language-server", RoslynArgs, ["*.sln", "*.slnx", "*.csproj"]),
-            All3("Install it with: dotnet tool install --global roslyn-language-server --prerelease (CsCode's development checkout: tools/fetch-roslyn-ls.sh)"),
+            All3("Install it with: dotnet tool install --global roslyn-language-server --prerelease (CsCode's development checkout: tools/fetch-roslyn-ls.sh), "
+                + "or run csharp-ls instead: C#: Select Language Server…"),
             "Roslyn", RootStrategy.Outermost, [new ServerAlternative("Microsoft.CodeAnalysis.LanguageServer", RoslynArgs)])
-            with { Group = CSharpGroup, IsGroupDefault = false },
+            with { Group = CSharpGroup },
         S(Def("python", "Python (Pyright)", ["python"], "pyright-langserver", ["--stdio"],
                 ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"]),
             All3("Install it with: npm install -g pyright"),

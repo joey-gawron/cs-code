@@ -11,13 +11,13 @@ namespace CsCode.App.Tests.Infrastructure;
 /// The REAL application (<see cref="AppServices.Build"/> with every real module, no fakes) in a headless <see cref="MainWindow"/>, for end-to-end
 /// tests of how the modules work together. <c>CSCODE_HOME</c> points at a temp directory for the host's lifetime, so the user's real settings,
 /// keybindings and state are never read or written. Every built-in language server is disabled through the user settings file (opening a file
-/// must not start csharp-ls or any other real server), and the Welcome page is off so tests start from an empty document well.
+/// must not start Roslyn or any other real server), and the Welcome page is off so tests start from an empty document well.
 /// <c>CSCODE_HOME</c> is process-wide: this relies on the assembly's disabled test parallelisation.
 /// </summary>
 public sealed class RealAppHost : IAsyncDisposable
 {
     private static readonly string[] BuiltinServers =
-        ["typescript", "csharp", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua"];
+        ["typescript", "csharp", "roslyn", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua"];
 
     private readonly string? _previousHome;
     private bool _disposed;

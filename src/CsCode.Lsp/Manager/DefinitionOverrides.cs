@@ -16,7 +16,7 @@ internal static class DefinitionOverrides
 
     /// <param name="enabledByDefault">
     /// Whether a definition runs when the setting says nothing about it (absent: yes). A built-in that is one of several servers for the same
-    /// language (csharp-ls or Roslyn) runs only when it is its group's choice (<see cref="BuiltinLanguageServers.EnabledByDefault"/>).
+    /// language (Roslyn or csharp-ls) runs only when it is its group's choice (<see cref="BuiltinLanguageServers.EnabledByDefault"/>).
     /// </param>
     public static Dictionary<string, Effective> Apply(IEnumerable<LanguageServerDefinition> registered, JsonElement? setting, Func<string, bool>? enabledByDefault = null)
     {

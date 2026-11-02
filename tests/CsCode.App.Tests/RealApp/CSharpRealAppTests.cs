@@ -23,7 +23,7 @@ namespace CsCode.App.Tests.RealApp;
 /// Stage 5's "Done when" in the REAL application (<see cref="RealAppHost"/>: the real composition in a window), each ending with a screenshot in
 /// <c>.scratch/screenshots</c> (docs/CSHARP.md):
 /// <list type="bullet">
-/// <item>CsCode's own repository opens with csharp-ls or Roslyn; F12 on <c>ConcurrentDictionary</c> opens <c>ConcurrentDictionary.cs [decompiled]</c>
+/// <item>CsCode's own repository opens with Roslyn (C#'s default: no <c>cscode.lsp.serverChoice</c>) or csharp-ls (chosen); F12 on <c>ConcurrentDictionary</c> opens <c>ConcurrentDictionary.cs [decompiled]</c>
 /// read-only; with Roslyn, Go to Implementation on a <c>[GeneratedRegex]</c> method opens <c>RegexGenerator.g.cs [generated]</c>;</item>
 /// <item>an MSTest-runner and an NUnit-runner project are discovered, run and debugged to a breakpoint in the Test Explorer;</item>
 /// <item>F5 on a console project (launch.json with a build preLaunchTask) stops at its breakpoint under netcoredbg, in a folder behind a link.</item>
@@ -106,7 +106,7 @@ public class CSharpRealAppTests
                 servers.Remove("csharp");
                 if (server == "roslyn")
                     servers["roslyn"] = new JsonObject { ["command"] = "dotnet", ["args"] = new JsonArray([roslyn!, .. BuiltinLanguageServersArgs()]) };
-                s["cscode.lsp.serverChoice"] = new JsonObject { ["csharp"] = server };
+                if (server != "roslyn") s["cscode.lsp.serverChoice"] = new JsonObject { ["csharp"] = server }; // Roslyn runs as C#'s default
                 s["cscode.lsp.interactiveTimeoutMs"] = 60_000;
                 s["cscode.lsp.backgroundTimeoutMs"] = 300_000;
                 s["cscode.lsp.initializeTimeoutMs"] = 300_000;
@@ -172,8 +172,7 @@ public class CSharpRealAppTests
         {
             var servers = s["cscode.languageServers"]!.AsObject();
             servers.Remove("csharp");
-            servers["roslyn"] = new JsonObject { ["command"] = "dotnet", ["args"] = new JsonArray([roslyn!, .. BuiltinLanguageServersArgs()]) };
-            s["cscode.lsp.serverChoice"] = new JsonObject { ["csharp"] = "roslyn" };
+            servers["roslyn"] = new JsonObject { ["command"] = "dotnet", ["args"] = new JsonArray([roslyn!, .. BuiltinLanguageServersArgs()]) }; // C#'s default
             s["cscode.lsp.initializeTimeoutMs"] = 300_000;
         }));
         await host.StartAsync([repo]);

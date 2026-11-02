@@ -264,12 +264,12 @@ and `TaskTerminals` (`ITaskTerminalHost`).
 
 ## 8b. C# (stage 5, docs/CSHARP.md)
 
-* **Roslyn** (`roslyn`, `src/CsCode.Lsp/CSharp/`) is a built-in alternative to csharp-ls: `solution/open` / `project/open` after
+* **Roslyn** (`roslyn`, `src/CsCode.Lsp/CSharp/`) is C#'s default server, csharp-ls the alternative: `solution/open` / `project/open` after
   `initialized`, ready on `workspace/projectInitializationComplete`, its client-side commands (`roslyn.client.nestedCodeAction`,
   `fixAllCodeAction`, `completionComplexEdit`), toasts. Built on the per-server extension pattern (§7a): `RoslynExtension`, its per-server
   state `RoslynSession`, its commands `RoslynCommands`.
 * **`cscode.lsp.serverChoice`** (generic): which built-in of a group of alternatives runs (`{"csharp": "roslyn"}`; `BuiltinServer.Group`,
-  `IsGroupDefault`). An explicit `cscode.languageServers.<id>.enabled` still wins.
+  `IsGroupDefault`; unset, C# runs Roslyn). An explicit `cscode.languageServers.<id>.enabled` still wins.
 * **Pull diagnostics with several identifiers.** A server may register several `textDocument/diagnostic` providers, each with an identifier
   (Roslyn does): every one is pulled, and each publishes under its own owner (`lsp:<id>#<identifier>`). The client kept only the last one before.
 * **Library and generated code** (`ExternalDocuments`): a location a server's source classifies (csharp-ls `csharp:`, Roslyn's MetadataAsSource

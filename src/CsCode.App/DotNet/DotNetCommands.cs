@@ -15,7 +15,7 @@ namespace CsCode.App.DotNet;
 /// package (a search of the folder's NuGet sources, or the project's references) and the version; the change runs as a task in a terminal
 /// (<c>dotnet add package</c> / <c>dotnet remove package</c>), so its output and exit code are where a build's are.</item>
 /// <item><c>dotnet.restore</c>: <c>dotnet restore</c> of the active file's project (else the workspace folder) as a task.</item>
-/// <item><c>csharp.selectLanguageServer</c>: csharp-ls or Roslyn (<c>cscode.lsp.serverChoice</c>, user settings).</item>
+/// <item><c>csharp.selectLanguageServer</c>: Roslyn (the default) or csharp-ls (<c>cscode.lsp.serverChoice</c>, user settings).</item>
 /// </list>
 /// Everything slow (processes, HTTP, JSON) runs off the UI thread; the window service's picks are awaited, never blocked on.
 /// </summary>
@@ -205,12 +205,12 @@ public sealed class DotNetCommands : IDisposable
     {
         if (_sp.GetService<IConfigurationService>() is not { } config) return;
         var current = config.GetRaw(ServerChoiceKey) is { ValueKind: JsonValueKind.Object } o && o.TryGetProperty("csharp", out var c) ? c.GetString() : null;
-        current ??= "csharp";
+        current ??= "roslyn"; // the group's default (BuiltinLanguageServers)
         QuickPickItem Item(string id, string label, string detail) => new(label, id == current ? "current" : null, detail, Tag: id);
         var picked = await _window.ShowQuickPickAsync(
         [
+            Item("roslyn", "Roslyn (Microsoft.CodeAnalysis.LanguageServer)", "The default; what VS Code's C# extension runs: the whole solution, analyzers and .editorconfig severities, source-generated files."),
             Item("csharp", "csharp-ls", "Lighter: loads the projects near the open files; compiler diagnostics only (docs/CSHARP.md)."),
-            Item("roslyn", "Roslyn (Microsoft.CodeAnalysis.LanguageServer)", "What VS Code's C# extension runs: the whole solution, analyzers and .editorconfig severities, source-generated files."),
         ], new QuickPickOptions("C#: Select Language Server", "Which server should run C# files?"), ct).ConfigureAwait(true);
         if (picked?.Tag is not string id || id == current) return;
         await config.UpdateAsync(ServerChoiceKey, new Dictionary<string, string> { ["csharp"] = id }).ConfigureAwait(true);

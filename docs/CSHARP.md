@@ -5,7 +5,7 @@ and what is left. Brief: `docs/briefs/lang-5-csharp.md`.
 
 | Area | What there is | Where |
 |---|---|---|
-| Language servers | csharp-ls (default) and **Roslyn** (Microsoft.CodeAnalysis.LanguageServer, what VS Code's C# extension runs), one of them at a time (`cscode.lsp.serverChoice`, **C#: Select Language Server…**) | `src/CsCode.Lsp/CSharp/`, `BuiltinLanguageServers.cs` |
+| Language servers | **Roslyn** (Microsoft.CodeAnalysis.LanguageServer, what VS Code's C# extension runs; the default) and csharp-ls (the lighter alternative), one of them at a time (`cscode.lsp.serverChoice`, **C#: Select Language Server…**) | `src/CsCode.Lsp/CSharp/`, `BuiltinLanguageServers.cs` |
 | Library and generated code | go to definition into the BCL / NuGet packages and into source generators' output opens **read-only virtual documents** (`String.cs [decompiled]`, `RegexGenerator.g.cs [generated]`), with highlighting, hover and go to definition inside | Core `VirtualDocuments.cs`, `CSharp/ExternalDocuments.cs` |
 | Test Explorer | xUnit v3, VSTest (as before), now also **Microsoft.Testing.Platform** projects (MSTest runner, NUnit runner, TUnit) and **F# / VB** test projects; run and debug | `src/CsCode.Testing/Providers/DotNet/` |
 | Debugging | netcoredbg; breakpoints now bind on macOS (they never did for a project behind a symbolic link) | `src/CsCode.Dap/Session/SourcePathAliases.cs` |
@@ -14,12 +14,7 @@ and what is left. Brief: `docs/briefs/lang-5-csharp.md`.
 
 ## 1. The two servers
 
-### csharp-ls (the default)
-
-`csharp-ls --features metadata-uris` (0.28.0, `dotnet tool install --global csharp-ls`). The flag matters: without it, go to definition on a
-symbol of a referenced assembly answers nothing. One server per project (the nearest `.sln`/`.slnx`/`.csproj`).
-
-### Roslyn
+### Roslyn (the default)
 
 `roslyn-language-server` from nuget.org (`dotnet tool install --global roslyn-language-server --prerelease`), or the
 `Microsoft.CodeAnalysis.LanguageServer` executable of an extracted package (the alternative the definition also looks for). A development checkout
@@ -53,11 +48,17 @@ the download on 2026-11-01). Everything below was checked against that build: it
   `roslyn.client.completionComplexEdit` (override and partial-method completions: the edit, then the caret at `newOffset`).
   `roslyn.client.peekReferences` (code lens) was already mapped by the editor. **Toasts** (`window/_roslyn_showToast`) show as messages.
 
+### csharp-ls (the alternative)
+
+`csharp-ls --features metadata-uris` (0.28.0, `dotnet tool install --global csharp-ls`). The flag matters: without it, go to definition on a
+symbol of a referenced assembly answers nothing. One server per project (the nearest `.sln`/`.slnx`/`.csproj`).
+
 ### Choosing
 
 `cscode.lsp.serverChoice` is a new, generic setting: which built-in runs where several serve one language, by group
-(`{"csharp": "roslyn"}`). Unset, the group's default runs (csharp-ls). An explicit `cscode.languageServers.<id>.enabled` still wins. The palette
-command **C#: Select Language Server…** writes it to user settings; the change applies at once (the other server is stopped).
+(`{"csharp": "csharp"}` runs csharp-ls). Unset, the group's default runs: Roslyn (the user's decision after the evaluation in section 3). An
+explicit `cscode.languageServers.<id>.enabled` still wins. The palette command **C#: Select Language Server…** writes it to user settings; the
+change applies at once (the other server is stopped). With Roslyn not installed, opening a C# file says how to install it or switch to csharp-ls.
 
 ## 2. Library and generated code (read-only virtual documents)
 
@@ -111,11 +112,11 @@ Neither offers a fix for CS0029 itself (both list refactorings at the range). An
 `.editorconfig` severities; csharp-ls 0.28 reports compiler diagnostics only. Both load the projects the solution references and go to library
 code; only Roslyn shows generated code.
 
-**Recommendation: make Roslyn the default.** It is what VS Code's C# extension runs, it reports analyzer and `.editorconfig` diagnostics, shows
-source-generated code, offers Fix All, and at the same scope (a whole solution) it was faster to the first diagnostic than csharp-ls with
-comparable memory. csharp-ls stays the lighter choice for one project at a time (≈ 300 MB). The costs: Roslyn ships as a prerelease .NET tool
-that changes often (two protocol changes since the VS Code C# extension's documentation: restore and generated text), and needs the .NET 10
-runtime. **The default is the user's decision** (asked at the end of this stage); until then csharp-ls stays the default.
+**Roslyn is the default** (recommended by this evaluation; the user's decision, 2026-11-02). It is what VS Code's C# extension runs, it reports
+analyzer and `.editorconfig` diagnostics, shows source-generated code, offers Fix All, and at the same scope (a whole solution) it was faster to
+the first diagnostic than csharp-ls with comparable memory. csharp-ls stays available as the lighter choice for one project at a time (≈ 300 MB)
+through **C#: Select Language Server…**. The costs: Roslyn ships as a prerelease .NET tool that changes often (two protocol changes since the
+VS Code C# extension's documentation: restore and generated text), and needs the .NET 10 runtime.
 
 ## 4. Debugging (netcoredbg on macOS arm64)
 

@@ -27,14 +27,15 @@ public class CSharpServerTests
         Assert.Equal(["--features", "metadata-uris"], BuiltinLanguageServers.Find(CSharpServers.CSharpLsId)!.Definition.Args);
 
         var none = BuiltinLanguageServers.ReadChoice(null);
-        Assert.True(BuiltinLanguageServers.EnabledByDefault(CSharpServers.CSharpLsId, none));
-        Assert.False(BuiltinLanguageServers.EnabledByDefault(CSharpServers.RoslynId, none));
-        var chosen = BuiltinLanguageServers.ReadChoice(JsonSerializer.SerializeToElement(new { csharp = "roslyn" }));
-        Assert.False(BuiltinLanguageServers.EnabledByDefault(CSharpServers.CSharpLsId, chosen));
-        Assert.True(BuiltinLanguageServers.EnabledByDefault(CSharpServers.RoslynId, chosen));
+        Assert.True(BuiltinLanguageServers.EnabledByDefault(CSharpServers.RoslynId, none)); // Roslyn is C#'s default (docs/CSHARP.md §3)
+        Assert.False(BuiltinLanguageServers.EnabledByDefault(CSharpServers.CSharpLsId, none));
+        var chosen = BuiltinLanguageServers.ReadChoice(JsonSerializer.SerializeToElement(new { csharp = "csharp" }));
+        Assert.False(BuiltinLanguageServers.EnabledByDefault(CSharpServers.RoslynId, chosen));
+        Assert.True(BuiltinLanguageServers.EnabledByDefault(CSharpServers.CSharpLsId, chosen));
         // a choice that names no member of the group falls back to the default
         var bogus = BuiltinLanguageServers.ReadChoice(JsonSerializer.SerializeToElement(new { csharp = "omnisharp" }));
-        Assert.True(BuiltinLanguageServers.EnabledByDefault(CSharpServers.CSharpLsId, bogus));
+        Assert.True(BuiltinLanguageServers.EnabledByDefault(CSharpServers.RoslynId, bogus));
+        Assert.False(BuiltinLanguageServers.EnabledByDefault(CSharpServers.CSharpLsId, bogus));
         Assert.True(BuiltinLanguageServers.EnabledByDefault("rust-analyzer", chosen));
     }
 
@@ -43,10 +44,10 @@ public class CSharpServerTests
     {
         var choice = BuiltinLanguageServers.ReadChoice(null);
         var effective = DefinitionOverrides.Apply(BuiltinLanguageServers.All,
-            JsonSerializer.SerializeToElement(new Dictionary<string, object> { ["roslyn"] = new { enabled = true }, ["csharp"] = new { args = new[] { "-l", "info" } } }),
+            JsonSerializer.SerializeToElement(new Dictionary<string, object> { ["csharp"] = new { enabled = true }, ["roslyn"] = new { args = new[] { "--stdio" } } }),
             id => BuiltinLanguageServers.EnabledByDefault(id, choice));
-        Assert.True(effective["roslyn"].Enabled);
-        Assert.True(effective["csharp"].Enabled); // tuned, not switched off: keeps its default
+        Assert.True(effective["csharp"].Enabled);
+        Assert.True(effective["roslyn"].Enabled); // tuned, not switched off: keeps its default
     }
 
     [Fact]

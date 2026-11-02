@@ -31,7 +31,7 @@ public class MenuBarTests
         foreach (var d in new[] { "home", "config", "data" }) Directory.CreateDirectory(sandbox.Combine(d));
         var settings = new Dictionary<string, object?>
         {
-            ["cscode.languageServers"] = new[] { "typescript", "csharp", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua" }
+            ["cscode.languageServers"] = new[] { "typescript", "csharp", "roslyn", "python", "clangd", "rust-analyzer", "gopls", "json", "html", "css", "bash", "yaml", "lua" }
                 .ToDictionary(s => s, _ => (object)new { enabled = false }),
             ["workbench.startupEditor"] = "none",
             [CsCode.Terminal.Sessions.TerminalSettingKeys.ProfilesKey] = new Dictionary<string, object>
