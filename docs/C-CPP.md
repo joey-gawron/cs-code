@@ -246,19 +246,32 @@ lldb-dap's generic templates include an "Attach to process" configuration with `
 
 ## 7. Seen in the real app
 
-**Not yet.** On 2026-11-01 the Mac's screen was locked (`ioreg -n Root -d1` reports `CGSSessionScreenIsLocked=Yes`), and CsCode cannot start
-without an active display: Avalonia.Native fails to create its render timer (`CVDisplayLink`, CoreVideo error -6661) and the app exits with a
-crash report. Everything above is proven by the tests in section 9 against the real cmake, ninja, ctest, clangd, CodeLLDB and lldb-dap; the
-window checks below remain to be done:
+`tests/CsCode.App.Tests/RealApp/CStageRealAppTests.cs` runs the real application (`RealAppHost`: every real module, CsCode's own settings
+in a temp `CSCODE_HOME`, a headless window) on the CMake C sample with the real cmake, ninja, clang, clangd, ctest and CodeLLDB, and saves
+what the window draws to `.scratch/screenshots/c-*.png`. It is the in-app evidence the Rust and C++ stages also use. This session has no
+desktop-control tools, so nothing was clicked in an on-screen window; on 2026-11-01 the screen was also locked (CoreVideo -6661). All three
+tests pass (2026-11-02):
 
-1. Open a CMake C project with one visible configure preset (with `cmake.configureOnOpen: true`, or answer *Configure*): the status bar shows
-   `CMake: [debug]`, `build/<preset>/compile_commands.json` appears, and clangd resolves `#include "mathlib.h"` (no diagnostic; hover works).
-2. Click `Build` in the status bar: the CMake output channel shows the build; a deliberate error lands in the Error List at its line.
-3. Choose the launch target, click the bug button: the debugger stops at a breakpoint in `main.c` and the Locals show values.
-4. Test Explorer: the CTest tests appear (with `subtracts [fast, math]`), Run All shows `fails` failed with its output, Debug on a test stops
-   at a breakpoint in `tests/math_tests.c`.
-5. ⌘+hover over `#include "mathlib.h"` underlines it; ⌘+Click opens `include/mathlib.h`.
-6. With `"terminal": "integrated"` in `cmake.debugConfig`, a program reading stdin gets the keys typed in the integrated terminal.
+1. **Preset configure and clangd** (`c-clangd-main.png`). Opening the folder configures it on open from its only preset (`CMake: [debug]`
+   in the status bar) and exports `build/debug/compile_commands.json`. clangd starts with `--compile-commands-dir=build/debug`; its link for
+   `#include "mathlib.h"` names `include/mathlib.h`, which only the compile commands put on the include path; `main.c` has no "not found"
+   problem; the `#if 0` body is faded; the status bar shows `clangd: idle`. Switch Between Source/Header goes from `src/mathlib.c` to
+   `include/mathlib.h`.
+2. **Build from the status bar** (`c-build-error.png`). The `Build` item's command reports `missing_value` in the Error List at its line of
+   `src/mathlib.c`; fixed, the next build succeeds and clears it.
+3. **Debug Target** (`c-debug-disassembly.png`, `c-debug-memory.png`). After choosing `app` as the launch target, the status bar's Debug
+   builds it and stops at the breakpoint in `main.c`. The Disassembly window marks the current instruction among `main.c`'s source lines
+   (141 rows, 8 of them source). View Binary Data on `total` (5) shows `05 00 00 00` in the Memory window. Found on the way: when View Binary
+   Data opens the Memory window from closed, the frame shows the top of its range rather than the target row; with the window already open
+   (the order the test now uses, as stage 2's test does) the target row is at the top. Reported to the windows' owner; not changed here.
+4. **CTest** (`c-ctest-explorer.png`, `c-ctest-debug.png`). The Test Explorer lists `adds`, `subtracts [fast, math]`, `fails` and `in_dir`
+   under `math_tests`; Run All marks `fails` failed (in the Error List at its `add_test` line) and the rest passed; Debug on `adds` stops at
+   the breakpoint in `tests/math_tests.c` under CodeLLDB, and after Continue the test is passed. The first run of this check showed every
+   test under "(no command)": ctest names no command before the first build, so discovery now builds once (docs/TESTING.md).
+
+Not checked in the app: Ctrl/⌘+Click itself (the editor's handling is `DocumentLinkTests`, with headless input, and the link is real above),
+and stdin through the integrated terminal (`"terminal": "integrated"` in `cmake.debugConfig`: a program reading stdin gets the keys typed
+in the terminal).
 
 ## 8. Items that waited for other stages (done on the follow-up branch)
 
