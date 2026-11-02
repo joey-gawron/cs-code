@@ -172,8 +172,7 @@ internal sealed partial class LanguageClient
             sd.OpenOnServer = false;
         }
         // Push-only servers never clear a closed file's diagnostics themselves; pull servers report per open document.
-        _publishedUris.TryRemove(sd.Uri, out _);
-        _ctx.Services.Diagnostics.Clear(sd.Uri, _owner);
+        ClearDiagnostics(sd.Uri);
     }
 
     /// <summary>Sends didOpen (full text) if not yet sent. Caller holds sd.Gate.</summary>

@@ -54,6 +54,8 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         _external = new ExternalDocuments(ClientOf);
         CSharpServers.AddExternalSources(_external);
         if (services.VirtualDocuments is { } virtualDocuments) _store.Add(virtualDocuments.Register(_external));
+        // the commands Roslyn's code actions and completions name for the client to run
+        if (services.Commands is { } commands) _store.Add(RoslynCommands.Register(commands, () => RunningClients(CSharpServers.RoslynId)));
         _ctx = new ClientContext
         {
             Services = services,
@@ -285,6 +287,12 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         _routes[doc.Uri] = new DocRoute([slot]);
         slot.Attach(doc);
         if (!ReferenceEquals(_services.Documents.Get(doc.Uri), doc)) Unroute(doc);
+    }
+
+    /// <summary>The running clients of a definition (all its roots).</summary>
+    internal IReadOnlyList<LanguageClient> RunningClients(string definitionId)
+    {
+        lock (_gate) return _slots.Where(kv => kv.Key.Id == definitionId).Select(kv => kv.Value.Client).OfType<LanguageClient>().Where(c => c.IsOperational).ToArray();
     }
 
     private LanguageClient? ClientOf(string definitionId, string slotKey)

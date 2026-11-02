@@ -20,14 +20,17 @@ internal static class CSharpServers
         external.AddSource(RoslynId, new RoslynDocumentSource());
     }
 
-    /// <summary><c>System.String.cs</c> → <c>String.cs</c>: a metadata file is named after the type's full name, a tab after the type.</summary>
+    /// <summary>
+    /// <c>System.String.cs</c> → <c>String.cs</c>, <c>System.Collections.Generic.List`1.cs</c> → <c>List.cs</c>: a metadata file is named after the
+    /// type's full metadata name, a tab after the type.
+    /// </summary>
     internal static string TypeFileName(string fileName)
     {
         if (!fileName.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) return fileName;
-        var stem = fileName[..^3];
-        var generic = stem.IndexOfAny(['<', '`']);
+        var stem = System.Text.RegularExpressions.Regex.Replace(fileName[..^3], @"`\d+", "");
+        var generic = stem.IndexOf('<');
         var dot = (generic >= 0 ? stem[..generic] : stem).LastIndexOf('.');
-        return dot >= 0 && dot < stem.Length - 1 ? stem[(dot + 1)..] + ".cs" : fileName;
+        return (dot >= 0 && dot < stem.Length - 1 ? stem[(dot + 1)..] : stem) + ".cs";
     }
 
     /// <summary>

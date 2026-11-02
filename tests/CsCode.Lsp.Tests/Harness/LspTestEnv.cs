@@ -155,6 +155,8 @@ public sealed class LspTestEnv : IAsyncDisposable
     public TempDirectory Dir { get; } = new("cscode-lsp-");
     public RecordingNavigationService Navigation { get; }
     public FakeConnectionFactory Connections { get; } = new();
+    /// <summary>Library and generated documents (go to definition into metadata): the shell's Core service.</summary>
+    public VirtualDocumentService VirtualDocuments { get; } = new();
     public LanguageServerManager Manager { get; }
 
     public string Root => Dir.Path;
@@ -202,6 +204,7 @@ public sealed class LspTestEnv : IAsyncDisposable
             Paths = realServers ? new ToolsAppPaths(Paths, ToolsDir) : Paths,
             Connections = connectionsOverride ?? (realServers ? null : Connections), // null: the manager uses the real DefaultLspConnectionFactory
             Memory = Memory,
+            VirtualDocuments = VirtualDocuments,
         };
         Manager = new LanguageServerManager(services);
     }
